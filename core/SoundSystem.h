@@ -72,8 +72,34 @@
     many-sources-one-buffer relationship, rebuilt out of the parts miniaudio gives.
 */
 
-#define  NUM_SOUND_BUFFERS 32   //distinct sound FILES that can be resident
-#define  NUM_SOUND_VOICES  16   //sounds that can be audible AT ONCE. The scarce one.
+/*
+    The limits. BUFFERS is only a guard against a runaway loop registering files - the buffers
+    are a vector, and what a loaded sound really costs is its decoded PCM (a second of 48 kHz
+    stereo is 188 KB), which AppendFile logs. 32 was hit on paper by the archer's cue plan before
+    a single footstep was recorded: four variations on three surfaces is twelve files on its own.
+
+    VOICES is the scarce one, but less scarce than it was. A voice costs nothing while idle and a
+    resampler while playing, and 16 had to hold music, an ambience loop, narration kept against
+    stealing, and every one-shot at once. A game that runs out of 32 wants a per-sound cap
+    (the cue layer's max_instances), not more voices.
+*/
+#define  NUM_SOUND_BUFFERS 256  //distinct sound FILES that can be resident
+#define  NUM_SOUND_VOICES  32   //sounds that can be audible AT ONCE. The scarce one.
+#define  NUM_SOUND_BUSES   8    //mix groups, the master included - see AddBus
+
+/*
+    How long a gain change takes to arrive, on a voice or a bus.
+
+    Without it a volume change lands on the next mixer block as a step, and a step in a waveform
+    is a click. A game changes gains once a TICK - a creak following the swing, a duck easing in -
+    so at 60 Hz that is a staircase of steps sixty times a second, heard as a buzz. 10 ms is under
+    a 60 Hz tick, so a ramp set each tick is a smooth line and never falls behind. It does not
+    delay a sound's START: miniaudio's first gain on a new voice is taken as-is, not ramped to.
+*/
+#define  SOUND_GAIN_SMOOTH_SECONDS 0.010f
+
+//The bus every sound plays on unless told otherwise, and which every other bus feeds.
+#define  SOUND_BUS_MASTER  0
 
 /*
     Names a single playing of a sound. Zero is never handed out, so a zero-initialised member is
@@ -106,6 +132,40 @@ typedef uint32_t soundhandle_t;
 #define SOUND_ONESHOT   0
 #define SOUND_KEEP      1
 
+/*
+    Everything a single playing can be started with. The long Play overload below takes the same
+    things one argument at a time and is kept for the calls that already use it.
+
+    `pan` is a stereo balance, not a position in a world: there is still no listener and no
+    spatializer, and a side-view game places a sound by turning its screen x into -1..1. A mono
+    file panned hard left is silent on the right; a stereo file keeps its own image and is
+    weighted toward one side.
+*/
+struct SoundParams{
+    float    gain = 1.0f;
+    float    pitch = 1.0f;          //playback rate: 2 is an octave up and half as long
+    float    pan = 0.0f;            //-1 left .. 0 centre .. +1 right
+    int      bus = SOUND_BUS_MASTER;
+    bool     f_looping = false;
+    uint32_t flags = 0;             //SOUND_ONESHOT or SOUND_KEEP, below
+    float    start_seconds = 0.0f;  //see the long Play
+};
+
+//One voice as ListVoices reports it: what is making noise right now, for telemetry and logs.
+struct SoundVoiceInfo{
+    soundhandle_t handle = 0;
+    std::string   name;             //the name it was played under; "(stream)" for PlayStream
+    int      bus = SOUND_BUS_MASTER;
+    float    gain = 1.0f;
+    float    pitch = 1.0f;
+    float    pan = 0.0f;
+    float    position = 0.0f;       //seconds into the sound
+    float    length = 0.0f;         //seconds, 0 for a stream
+    bool     f_looping = false;
+    bool     f_keep = false;
+    bool     f_held = false;        //held by SetPaused
+};
+
 class SoundSystem{
 public:
     SoundSystem(){};
@@ -113,6 +173,16 @@ public:
 
     bool f_initialised = false;
     void Initialise();
+    /*
+        The same engine with NO DEVICE: nothing is heard, and the mix is pulled out by Render
+        instead, as fast as the caller asks. For tests that measure what was mixed - that a pan
+        emptied a channel, that a bus at zero is silent - rather than listening for it, and for
+        rendering a run's audio to a file. Every other call behaves exactly as with a device.
+    */
+    bool InitialiseOffline(uint32_t sample_rate = 48000, uint32_t channels = 2);
+    //Mixes the next `frames` frames into `out` (interleaved float, the engine's channel count).
+    //Offline only - with a device the mixer thread owns the mix. Returns the frames written.
+    uint64_t Render(float* out, uint64_t frames);
 
     /*
         Loads a wav and gives it a name to play it by. Registering several names for one file is
@@ -137,6 +207,8 @@ public:
     */
     soundhandle_t Play(const char* handle_name, bool looping = false, float gain = 1.0f, uint32_t flags = SOUND_ONESHOT,
                        float start_seconds = 0.0f);
+    //The same, with everything a playing can start with - pitch, pan and bus included.
+    soundhandle_t Play(const char* handle_name, const SoundParams& params);
 
     /*
         Plays audio that is MADE rather than loaded: any miniaudio data source the caller owns -
@@ -148,7 +220,7 @@ public:
         own rate and skip a resample. Always SOUND_KEEP: a generated stream stolen for a
         footstep would fall silent and never come back.
     */
-    soundhandle_t PlayStream(ma_data_source* source, float gain = 1.0f);
+    soundhandle_t PlayStream(ma_data_source* source, float gain = 1.0f, int bus = SOUND_BUS_MASTER);
 
     //The device's sample rate, 0 before a successful Initialise.
     uint32_t GetSampleRate();
@@ -159,6 +231,10 @@ public:
         rather than typed, so a re-cut sound re-measures itself. -1 for a name not registered.
     */
     float LoudestAt(const char* handle_name, float window = 0.01f);
+    //How long a registered sound is, in seconds at its own rate (so before any pitch). -1 for a
+    //name not registered. For a subtitle that stays up as long as its line, or a gap measured
+    //from a sound's end rather than its start.
+    float LengthOf(const char* handle_name);
 
     /*
         HOLDS every sound where it is (true), or lets them all carry on (false) - for keeping sound
@@ -179,6 +255,42 @@ public:
     void Pause(soundhandle_t handle);
     void Resume(soundhandle_t handle);      //carries on from where Pause left it
     void Rewind(soundhandle_t handle);
+
+    /*
+        CHANGED WHILE IT PLAYS. For a sound that follows something - a rope's creak by its swing
+        speed, a scrape by how fast the crate is going, a sound panned after the thing it belongs
+        to as the camera moves. Gain is smoothed (SOUND_GAIN_SMOOTH_SECONDS), so setting it every
+        tick is the intended use. Pitch and pan are not: both are continuous already, and a small
+        change per tick is not a step anyone hears.
+    */
+    void SetGain(soundhandle_t handle, float gain);
+    void SetPitch(soundhandle_t handle, float pitch);  //clamped above zero
+    void SetPan(soundhandle_t handle, float pan);      //clamped to -1..1
+
+    /*
+        BUSES: groups of voices mixed together, with one gain for the lot. Effects, ambience,
+        voice and music on buses of their own is what lets one thing be turned down under another
+        - narration ducking the effects - and gives a settings screen its sliders.
+
+        A bus feeds its parent, and every chain ends at SOUND_BUS_MASTER, which exists from
+        Initialise on and is the one every sound uses by default. Its gain is the game's overall
+        volume. Adding a name that already exists returns that bus rather than a second one, so an
+        app need not remember whether it has. -1 when there is no device or no room (NUM_SOUND_BUSES);
+        a sound asked to play on a bus that does not exist plays on the master, and says so.
+
+        Bus gains are smoothed exactly as voice gains are, so a duck is a gain set each tick.
+    */
+    int   AddBus(const char* name, int parent = SOUND_BUS_MASTER);
+    int   FindBus(const char* name);         //-1 if there is none by that name
+    void  SetBusGain(int bus, float gain);
+    float GetBusGain(int bus);               //what it was set to, not where the smoothing is
+
+    /*
+        Every voice making noise, and what it is. `sounds_playing` said that something had
+        started; this says what, on which bus, how loud and how far in - which is what a cue log
+        and a replay comparison need. Voices held by SetPaused are listed, finished ones are not.
+    */
+    void ListVoices(std::vector<SoundVoiceInfo>& out);
 
     //True when this voice is not currently producing sound - finished, stopped, recycled, never
     //existed, or paused. A handle nobody recognises answers true rather than false, because a
@@ -214,7 +326,38 @@ private:
         bool f_held = false;                    //stopped by SetPaused, and to be restarted by it
         bool f_stream = false;                  //reads a caller's data source; `ref` is unused
         uint64_t started = 0;                   //play counter at start, so "oldest" is answerable
+        //What it is playing and how, kept for ListVoices - miniaudio can be asked most of these,
+        //but not what name the caller used.
+        int buffer = -1;                        //index into `buffers`, -1 for a stream
+        std::string name;
+        int bus = SOUND_BUS_MASTER;
+        float gain = 1.0f;
+        float pitch = 1.0f;
+        float pan = 0.0f;
+        bool f_looping = false;
     };
+
+    /*
+        One mix group. A FIXED ARRAY, not a vector: every voice on a bus holds a pointer to its
+        ma_sound_group inside miniaudio's node graph, so a bus must never move once it exists.
+        Created in order and a parent always before its children, so tearing down in reverse
+        index order never leaves a node feeding one that is gone.
+    */
+    struct SoundBus{
+        ma_sound_group group;
+        bool f_active = false;
+        std::string name;
+        int parent = -1;
+        float gain = 1.0f;
+    };
+    SoundBus buses[NUM_SOUND_BUSES];
+    //The node a voice on `bus` attaches to: that bus, or the master for one that does not exist.
+    ma_node* BusNode(int& bus);
+    //Initialise's second half, with or without a device: the master bus and the limits line.
+    bool FinishInitialise();
+    //The frames a gain change is smoothed over, at the engine's rate.
+    ma_uint32 SmoothFrames();
+    bool f_offline = false;
 
     /*
         One loaded file: the decoded PCM and what it takes to interpret it.

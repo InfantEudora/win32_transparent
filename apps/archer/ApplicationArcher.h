@@ -2,6 +2,7 @@
 #define _APPLICATION_ARCHER_H_
 
 #include <atomic>
+#include <chrono>
 #include <unordered_map>
 #include <mutex>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "TextMesh.h"
 #include "Sign.h"
 #include "SoundSystem.h"
+#include "CueLog.h"
 #include "SpringHinge.h"
 
 /*
@@ -141,6 +143,22 @@
 #define INPUT_ARCHER_AIM            INPUT_LAST+15
 //C, or X on a pad: kneel, and stand back up. A toggle, so it is read as a press edge.
 #define INPUT_ARCHER_KNEEL          INPUT_LAST+16
+/*
+    The title screen's "click to continue": a click anywhere on the window, Space, or A or Start on
+    a pad. Its own action rather than a reuse of JUMP, because the title is the one place a mouse
+    click means anything at all, and the click arrives through a full-window touch rect that only
+    this action is bound to - see LayoutTouchButtons.
+
+    NOT ENTER, which it used to be: Alt+Enter is the fullscreen toggle, and the Enter of it,
+    released on the title, dismissed the title as well as resizing the window.
+*/
+#define INPUT_ARCHER_CONTINUE       INPUT_LAST+17
+/*
+    Escape, or Back on a pad: from a level, back to the title - a pause, since nothing of the
+    level runs under it - and from the title, out of the game. Back was the recording toggle; that
+    is F9 alone now, because a dev feature should not sit on a button the game needs.
+*/
+#define INPUT_ARCHER_MENU           INPUT_LAST+18
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Both are intent arriving from OUTSIDE
 //the simulation - a key, an MCP call, later a replay - which is what the command queue is for:
@@ -162,6 +180,9 @@
 //Which camera - subtype is ARCHER_CAM_SIDE or ARCHER_CAM_ORBIT. The panel's radio buttons, for the
 //tools: the orbit could only be reached by clicking, and so could not be tested by a script.
 #define ARCHER_CMD_CAMERA           SIM_CMD_LAST+4
+//The master volume - value[0] = 0..1. The panel's slider, for the tools: an agent replaying a
+//recording at someone's desk wants it silent, and the cue log does not change with it.
+#define ARCHER_CMD_SOUND_VOLUME     SIM_CMD_LAST+5
 
 /*
     Collision filtering.
@@ -663,15 +684,30 @@ private:
     infinitely far away, and 0.0 nails it to the world and it slides past at the same rate as the
     ground. Anything between is a distance.
 
-    The image is 1152x1536 - PORTRAIT, against a 16:9 view - so it is fitted to COVER rather than
-    to contain: scaled until it fills the width, with the overflow running off the top and bottom.
-    Letterboxing a backdrop is worse than cropping one.
+    The image is 4096x2336, landscape and a hair narrower than 16:9, and it is fitted to COVER
+    rather than to contain: scaled until it fills the width, with the overflow running off the top
+    and bottom. Letterboxing a backdrop is worse than cropping one. (It used to be a 1152x1536
+    portrait PNG, which is why the panel still has an offset slider for choosing a band of it; on
+    this one the overflow is small and the slider mostly has nothing to do.)
 */
-#define BACKGROUND_ASSET            "images/background1.png"
-#define BACKGROUND_IMAGE_ASPECT     0.75f   //1152/1536
+#define BACKGROUND_ASSET            "images/background1.jpeg"
+#define BACKGROUND_IMAGE_ASPECT     (4096.0f / 2336.0f)
 #define BACKGROUND_DEPTH            40.0f   //behind the play plane, in world units
 #define BACKGROUND_FOLLOW           0.85f   //0 = nailed to the world, 1 = pinned to the camera
 #define BACKGROUND_COVER            1.15f   //margin over the view it has to fill
+
+/*
+    The title screen: the painted title art, with the loading progress over it while Init builds
+    the level, and "click to continue" once it has. See CreateTitleScene and LoadingStep.
+
+    Fitted to COVER like the backdrop - a window narrower than the art loses a little of each
+    side, one wider loses a little top and bottom, and neither gets bars. The art keeps the archer
+    well in from the left edge for exactly that reason.
+*/
+#define TITLE_ASSET                 "images/title_background.jpeg"
+#define TITLE_IMAGE_ASPECT          (4096.0f / 2336.0f)
+//One full breath of "click to continue", in TICKS - the title scene ticks like any other.
+#define TITLE_PULSE_TICKS           90
 
 //The camera trails the archer rather than being welded to them - see UpdateCamera.
 #define CAMERA_DISTANCE             26.0f
@@ -905,6 +941,8 @@ struct ArcherSnapshot{
     //up until that prop is kicked.
     int   arrows_on_props = 0;
     int   sounds_playing = -1;          //audible voices; -1 with no sound system
+    std::vector<SoundVoiceInfo> voices; //and what each one is - SoundSystem::ListVoices
+    float sound_volume = 0.0f;
     int   anim_source = ANIM_FROM_GAME;
 };
 
@@ -980,6 +1018,10 @@ public:
     void RestoreRecordingState(const json& state) override;
     //Render thread, before the scene is drawn. Services f_regenerate_terrain.
     void PreRender(void) override;
+    //Render thread. The title screen's text - the only 2D HUD this app has so far.
+    void DrawOverlay(void) override;
+    //Render thread, on a size change. Places the title's full-window click rect.
+    void LayoutTouchButtons(int w, int h) override;
 #ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
     //Add Object > Objects From Assets: at her feet on the play plane, and an archer.glb prop at
@@ -1182,10 +1224,22 @@ private:
         than an event, and so is the one sound this has to remember something to play.
     */
     void UpdateSound(const StageEvents& events);
+    /*
+        EVERY sound the game plays or stops goes through these two, which write the decision to
+        cue_log first. That log is the baseline the cue layer is proved against (cue_plan.md, step
+        1): the same recording replayed before and after the move must print the same lines.
+        `cue` names the reaction, `sound` the file's name; `gain` is the cue's own, and
+        sound_volume is applied here, after the log, because the master volume is not the cue's
+        decision. Logged whether or not a sound system exists to play it.
+    */
+    soundhandle_t PlayCue(const char* cue, const char* sound, float gain, float from = 0.0f);
+    void StopCue(const char* cue, const char* sound, soundhandle_t handle);
+    CueLog cue_log;
     //One arrow strike, at `point` and `speed`. Level hits come through UpdateSound, prop hits
     //from ResolveArrowsAgainstProps, which is the only place those are found.
     void PlayArrowHit(float x, float speed);
     //How loud an arrow sound is, by its speed and by how far from her it happens - see PlayArrowHit.
+    //The cue's gain: sound_volume is not in it, PlayCue applies that.
     float ArrowSoundGain(float x, float speed);
     /*
         THE INCOMING SWOOSH, timed so its loudest moment lands on the impact: for every arrow in
@@ -1861,6 +1915,55 @@ private:
     Scene* world_scene = NULL;
     Scene* range_scene = NULL;
     Scene* rope_scene = NULL;
+
+    /*
+        --- THE TITLE SCREEN ------------------------------------------------------------------------
+
+        A SCENE OF ITS OWN, as in apps/bomber: an ortho camera and one unlit quad. Being main_scene
+        is what keeps the level quiet behind it - nothing of the world ticks or draws while it is
+        up, and RunSimulationTick and UpdateView only have to step aside rather than be taught to
+        idle - which is also what makes Escape to the title a pause. It is never parked and never
+        swapped: the live members stay those of the level it was entered from (title_return_scene)
+        the whole time it is up, and OnActiveSceneChanged treats leaving it as leaving that level.
+
+        IT IS ALSO THE LOADING SCREEN, and the loading happens INSIDE Init. Init runs on the render
+        thread with the GL context current and every build step needs that context, so the work
+        cannot move to another thread; instead Init draws a frame of this scene between steps
+        (LoadingStep). The window stays responsive throughout, because its messages are pumped on
+        the main thread, not this one. When Init returns everything is built, so the screen simply
+        changes its text from the progress to "click to continue" and waits.
+    */
+    Scene*  title_scene = NULL;
+    Object* title_quad = NULL;
+    int     title_tap_button = -1;          //the full-window click, or -1 if the bind failed
+    //f_show_ui as it was before the title hid the panels, put back on leaving it.
+    bool    f_title_saved_show_ui = true;
+    /*
+        The level the title was entered from: the one whose members are live while it is up, and
+        the one continue goes back to. world_scene at startup. PHYSICS THREAD - written and read
+        only in OnActiveSceneChanged and UpdateTitle.
+    */
+    Scene*  title_return_scene = NULL;
+    void CreateTitleScene();
+    //Scales the quad to cover a w x h window. Render thread.
+    void FitTitleQuad(int w, int h);
+    //Physics thread, from UpdateView while the title is live: continue, or exit.
+    void UpdateTitle(InputController* input);
+    //The title coming up and going down: its click rect and the panels. Physics thread.
+    void EnterTitle();
+    void LeaveTitle();
+
+    //Loading progress, written and read on the render thread only - Init draws its own frames.
+    bool        f_loading = false;
+    int         loading_step = 0;
+    int         loading_steps = 1;
+    const char* loading_label = "";
+    std::chrono::steady_clock::time_point loading_step_start;
+    std::chrono::steady_clock::time_point loading_start;
+    //Starts step `index` of `count`: logs how long the previous one took, then draws a frame.
+    void LoadingStep(int index, int count, const char* label);
+    //One frame of the title scene and its overlay, drawn from inside Init. See the definition.
+    void DrawLoadingFrame();
     //Exchanges the live level's members with this parked slot's. See ArcherLevel.
     void SwapLevel(ArcherLevel& parked);
     //Builds `level` as a scene of its own called `name`, sharing the character. See the definition.

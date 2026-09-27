@@ -42,6 +42,8 @@ public:
     MusicParams GetParams();
     void Post(const MusicEvent& e);
     MusicStatus GetStatus();
+    //Plays one sample as it is, beside the music, replacing any audition already playing. Null stops it.
+    void Audition(std::shared_ptr<const MusicSample> sample);
     //The score playing now, shared: a caller on another thread keeps it alive for as long as it
     //holds the pointer, so a reload in the middle of an offline render cannot free it underneath.
     std::shared_ptr<const MusicScore> GetScore();
@@ -83,6 +85,13 @@ private:
     MusicParams params;
     bool f_params_dirty = false;
     std::vector<MusicEvent> queue;
+    /*
+        The last few auditioned samples, held HERE as well as by the engine. When the engine lets
+        go of one - the next audition replaces it - this is what stops that being the last
+        reference, which would free a few megabytes of PCM on the audio thread in the middle of a
+        block. It is freed here instead, on whichever thread auditions the one after.
+    */
+    std::shared_ptr<const MusicSample> audition_keep[3];
     MusicStatus status;
 };
 

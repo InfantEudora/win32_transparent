@@ -105,28 +105,46 @@ void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams&
         }
 
         //--- The big one, into the corner and to the back ------------------------------------------
+        /*
+            Which of the big shapes, from its own hash purpose (4) so choosing it leaves every
+            other draw for this corner where it was. Only among the kinds that have a size: one
+            whose mesh did not load has radius 0, and would otherwise be picked and draw nothing.
+        */
+        int big_kinds[BOULDER_BIG_KINDS];
+        int num_big = 0;
+        for (int k = BOULDER_BIG_1; k < BOULDER_BIG_1 + BOULDER_BIG_KINDS; k++){
+            if (params.radius[k] > 0.0f){
+                big_kinds[num_big++] = k;
+            }
+        }
+        if (num_big == 0){
+            continue;
+        }
+        int pick = (int)(HashUnit(seed,level,4u) * (float)num_big);
+        const int kind = big_kinds[pick < num_big ? pick : num_big - 1];
+
         //Its centre (1 - back_overhang) R in front of the back edge, so its front is at
         //back + (2 - back_overhang) R - which must not pass z_front_max.
         const float back = A.Back();
         const float depth_span = 2.0f - params.back_overhang;
         float s = params.big_scale_min + (params.big_scale_max - params.big_scale_min) * HashUnit(seed,level,1u);
-        float R = params.radius[BOULDER_BIG_1] * s;
+        float R = params.radius[kind] * s;
         if (back + depth_span * R > params.z_front_max){
             R = (params.z_front_max - back) / depth_span;
-            s = R / params.radius[BOULDER_BIG_1];
+            s = R / params.radius[kind];
         }
         if (s < params.big_scale_min * 0.5f){
             continue;       //this platform is too shallow behind her for a big rock
         }
         Boulder big;
-        big.kind = BOULDER_BIG_1;
+        big.kind = kind;
         big.scale = s;
         //Slightly INTO the wall: the terrain's fillet fills the foot of a wall, and a rock standing
         //clear of it leaves a gap that reads as the rock floating.
         big.x = c.x + c.side * R * 0.85f;
         big.z = back + (1.0f - params.back_overhang) * R;
         big.ground = A.Top();
-        big.y = A.Top() - params.sink * params.height[BOULDER_BIG_1] * s;
+        big.y = A.Top() - params.sink * params.height[kind] * s;
         big.yaw = 6.2831853f * HashUnit(seed,level,2u);
         out.push_back(big);
 

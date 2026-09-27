@@ -2437,10 +2437,14 @@ static void TestBoulders(){
     ScatterBoulders(s.blocks,params,rocks);
     FindBoulderCorners(s.blocks,params,corners);
     int bigs = 0, smalls = 0, bad_depth = 0, bad_top = 0, far_from_wall = 0;
+    int big_by_kind[BOULDER_KIND_COUNT] = {};
     for (size_t i = 0; i < rocks.size(); i++){
         const Boulder& b = rocks[i];
         float r = params.radius[b.kind] * b.scale;
-        (b.kind == BOULDER_BIG_1) ? bigs++ : smalls++;
+        IsBigBoulder(b.kind) ? bigs++ : smalls++;
+        if (IsBigBoulder(b.kind)){
+            big_by_kind[b.kind]++;
+        }
         if (b.z + r > params.z_front_max + 0.001f){
             bad_depth++;
         }
@@ -2459,12 +2463,28 @@ static void TestBoulders(){
                 nearest = fminf(nearest,fabsf(b.x - corners[k].x));
             }
         }
-        if (nearest > params.radius[BOULDER_BIG_1] * params.big_scale_max * 2.0f + params.small_reach + 0.5f){
+        float big_radius = fmaxf(params.radius[BOULDER_BIG_1],params.radius[BOULDER_BIG_2]);
+        if (nearest > big_radius * params.big_scale_max * 2.0f + params.small_reach + 0.5f){
             far_from_wall++;
         }
     }
     snprintf(detail,sizeof(detail),"%i corners, %i big, %i small",(int)corners.size(),bigs,smalls);
     Check(bigs >= 3 && smalls >= bigs * params.small_min / 2,"the level gets a few big rocks, each with small ones",detail);
+    snprintf(detail,sizeof(detail),"%i of rock_big_1, %i of rock_big_2",
+             big_by_kind[BOULDER_BIG_1],big_by_kind[BOULDER_BIG_2]);
+    Check(big_by_kind[BOULDER_BIG_1] > 0 && big_by_kind[BOULDER_BIG_2] > 0,"and both big shapes are used",detail);
+    //A big kind whose mesh is missing (radius 0) is never picked, so no cluster loses its big rock.
+    BoulderParams one = params;
+    one.radius[BOULDER_BIG_2] = 0.0f;
+    std::vector<Boulder> only_one;
+    ScatterBoulders(s.blocks,one,only_one);
+    int stray = 0, big_one = 0;
+    for (size_t i = 0; i < only_one.size(); i++){
+        stray += (only_one[i].kind == BOULDER_BIG_2) ? 1 : 0;
+        big_one += (only_one[i].kind == BOULDER_BIG_1) ? 1 : 0;
+    }
+    snprintf(detail,sizeof(detail),"%i of rock_big_2, %i of rock_big_1",stray,big_one);
+    Check(stray == 0 && big_one == bigs,"a big shape that did not load is never chosen",detail);
     snprintf(detail,sizeof(detail),"%i of %i",bad_depth,(int)rocks.size());
     Check(bad_depth == 0,"every rock stays behind z_front_max, off her walking line",detail);
     snprintf(detail,sizeof(detail),"%i of %i",bad_top,(int)rocks.size());

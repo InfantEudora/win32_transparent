@@ -90,6 +90,22 @@ void MusicPlayer::Post(const MusicEvent& e){
     queue.push_back(e);
 }
 
+void MusicPlayer::Audition(std::shared_ptr<const MusicSample> sample){
+    std::shared_ptr<const MusicSample> retired;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        retired = audition_keep[2];
+        audition_keep[2] = audition_keep[1];
+        audition_keep[1] = audition_keep[0];
+        audition_keep[0] = sample;
+        MusicEvent e;
+        e.type = MusicEvent::AUDITION;
+        e.sample = sample;
+        queue.push_back(e);
+    }
+    //`retired` goes out of scope here, outside the lock and on this thread.
+}
+
 std::shared_ptr<const MusicScore> MusicPlayer::GetScore(){
     std::lock_guard<std::mutex> lock(mutex);
     return score;

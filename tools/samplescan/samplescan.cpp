@@ -8,12 +8,14 @@
 
         samplescan                      scans ../../apps/music/samples
         samplescan <folder>             scans that folder instead
+        samplescan --new [folder]       measures only files the catalog has no row for yet
         samplescan --file <audio>       measures one file and prints every field
 
     The catalog is <folder>/catalog.csv. Four of its columns are YOURS - category, instrument,
     root and comment - and a re-scan keeps what you typed in them, matched by path. Everything
     else is rewritten from the audio every time, so a changed heuristic re-measures the whole
-    library rather than leaving old guesses behind.
+    library rather than leaving old guesses behind. --new is the exception: it measures only the
+    files that have no row yet and copies every other row as it is.
 
     Read the guess as a first sort, not an answer. The thresholds in GuessCategory were chosen
     on synthetic test tones and the handful of effects already in the repo; they want tuning on
@@ -335,10 +337,20 @@ std::vector<std::string> CsvSplit(const std::string& line, char sep){
 const char* kHumanColumns[] = {"category", "instrument", "root", "comment"};
 const int kNumHuman = 4;
 
-typedef std::map<std::string, std::vector<std::string>> HumanFields;    //file -> the four values
+//The catalog's columns, in order. A --new scan copies old rows across by these names.
+const char* kColumns = "file,category,instrument,root,comment"
+    ",guess,why,status,loopable,name_instrument,name_mood,name_note,name_vs_pitch,name_key,name_bpm"
+    ",pitch_kind,pitch_note,pitch_cents,pitch_hz,voiced,stability_cents,key,key_r,key_margin"
+    ",duration_s,channels,sample_rate,peak_db,rms_db,active_rms_db,clipped"
+    ",lead_ms,tail_ms,envelope,attack_ms,decay20_ms,sustain_db,head_tail_db"
+    ",centroid_hz,noisiness,low_share,onsets,onset_rate,bpm,beat_strength,note_count,notes,pitch_classes";
 
-HumanFields ReadPreviousCatalog(const fs::path& csv){
-    HumanFields out;
+typedef std::map<std::string, std::map<std::string, std::string>> PreviousRows;    //file -> column -> value
+
+//Every row of the catalog as it stands, by column name - so it reads back whatever order and
+//separator it was last saved with.
+PreviousRows ReadPreviousCatalog(const fs::path& csv){
+    PreviousRows out;
     std::ifstream in(csv, std::ios::binary);
     if (!in) return out;
     std::string line;
@@ -352,14 +364,12 @@ HumanFields ReadPreviousCatalog(const fs::path& csv){
             header = CsvSplit(line, sep);
             continue;
         }
+        if (line.empty()) continue;
         const std::vector<std::string> row = CsvSplit(line, sep);
-        std::string file;
-        std::vector<std::string> kept(kNumHuman);
-        for (size_t c = 0; c < header.size() && c < row.size(); c++){
-            if (header[c] == "file") file = row[c];
-            for (int h = 0; h < kNumHuman; h++) if (header[c] == kHumanColumns[h]) kept[h] = row[c];
-        }
-        if (!file.empty()) out[file] = kept;
+        std::map<std::string, std::string> cells;
+        for (size_t c = 0; c < header.size() && c < row.size(); c++) cells[header[c]] = row[c];
+        const std::string file = cells["file"];
+        if (!file.empty()) out[file] = cells;
     }
     return out;
 }
@@ -419,7 +429,13 @@ int ScanOne(const fs::path& file){
     return a.f_ok ? 0 : 1;
 }
 
-int ScanFolder(const fs::path& root){
+/*
+    Catalogues every audio file under root. With f_only_new, only the files the catalog has no row
+    for are measured, and every existing row - missing files included - is copied across as it
+    stands: the quick scan after dropping a few files into unsorted/, which leaves the rest of the
+    library alone. The full scan is the one to run after a heuristic changes.
+*/
+int ScanFolder(const fs::path& root, bool f_only_new){
     std::error_code ec;
     if (!fs::is_directory(root, ec)){
         fprintf(stderr, "samplescan: '%s' is not a folder\n", root.u8string().c_str());
@@ -436,13 +452,18 @@ int ScanFolder(const fs::path& root){
     std::sort(files.begin(), files.end());
 
     const fs::path csv = root / "catalog.csv";
-    const HumanFields previous = ReadPreviousCatalog(csv);
+    const PreviousRows previous = ReadPreviousCatalog(csv);
 
     std::vector<Row> rows;
+    std::vector<std::string> kept;          //--new: files whose old row is copied, not measured
     std::map<std::string, int> counts;
     for (const fs::path& p : files){
         Row r;
         r.file = fs::relative(p, root, ec).generic_u8string();
+        if (f_only_new && previous.count(r.file)){
+            kept.push_back(r.file);
+            continue;
+        }
         r.hints = ReadName(r.file);
         const std::string ext = Lower(p.extension().u8string());
         if (!ExtIn(ext, kDecodable, 3)) r.status = "unsupported " + ext;
@@ -466,19 +487,30 @@ int ScanFolder(const fs::path& root){
         fprintf(stderr, "samplescan: cannot write %s\n", csv.u8string().c_str());
         return 1;
     }
-    out << "file";
-    for (int h = 0; h < kNumHuman; h++) out << "," << kHumanColumns[h];
-    out << ",guess,why,status,loopable,name_instrument,name_mood,name_note,name_vs_pitch,name_key,name_bpm"
-           ",pitch_kind,pitch_note,pitch_cents,pitch_hz,voiced,stability_cents,key,key_r,key_margin"
-           ",duration_s,channels,sample_rate,peak_db,rms_db,active_rms_db,clipped"
-           ",lead_ms,tail_ms,envelope,attack_ms,decay20_ms,sustain_db,head_tail_db"
-           ",centroid_hz,noisiness,low_share,onsets,onset_rate,bpm,beat_strength,note_count,notes,pitch_classes\n";
+    out << kColumns << "\n";
+
+    //Old rows first when only the new files were measured: in a --new scan that is every file
+    //already catalogued, on disk or not, re-laid in this version's column order.
+    if (f_only_new){
+        const std::vector<std::string> columns = CsvSplit(kColumns, ',');
+        for (const auto& old : previous){
+            for (size_t c = 0; c < columns.size(); c++){
+                auto v = old.second.find(columns[c]);
+                out << (c ? "," : "") << CsvField(v != old.second.end() ? v->second : "");
+            }
+            out << "\n";
+        }
+    }
 
     for (const Row& r : rows){
         const SampleAnalysis& a = r.a;
         out << CsvField(r.file);
-        auto kept = previous.find(r.file);
-        for (int h = 0; h < kNumHuman; h++) out << "," << CsvField(kept != previous.end() ? kept->second[h] : "");
+        auto was = previous.find(r.file);
+        for (int h = 0; h < kNumHuman; h++){
+            std::string v;
+            if (was != previous.end()){ auto x = was->second.find(kHumanColumns[h]); if (x != was->second.end()) v = x->second; }
+            out << "," << CsvField(v);
+        }
         out << "," << r.guess << "," << CsvField(r.why) << "," << CsvField(r.status)
             << "," << (a.f_ok && Loopable(a) ? "yes" : "")
             << "," << r.hints.instruments << "," << r.hints.moods << "," << CsvField(r.hints.note);
@@ -512,7 +544,9 @@ int ScanFolder(const fs::path& root){
             << "\n";
     }
 
-    printf("\n%zu files -> %s\n", rows.size(), csv.u8string().c_str());
+    //MusicLibrary shows this line, up to " files".
+    if (f_only_new) printf("\n%zu new, %zu files -> %s\n", rows.size(), rows.size() + previous.size(), csv.u8string().c_str());
+    else printf("\n%zu files -> %s\n", rows.size(), csv.u8string().c_str());
     for (const auto& c : counts) printf("  %-15s %d\n", c.first.c_str(), c.second);
     return 0;
 }
@@ -522,6 +556,7 @@ int ScanFolder(const fs::path& root){
 int main(int argc, char** argv){
     if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")){
         printf("samplescan [folder]         catalogue every audio file under folder (default ../../apps/music/samples)\n"
+               "samplescan --new [folder]   measure only the files the catalog has no row for; keep every other row\n"
                "samplescan --file <audio>   measure one file and print every field\n"
                "samplescan --export <audio> <out.wav>        write it as the PCM16 wav the engine loads\n"
                "samplescan --export-trim <audio> <out.wav>   the same, with the silence cut off both ends\n");
@@ -537,5 +572,7 @@ int main(int argc, char** argv){
         }
         return 0;
     }
-    return ScanFolder(fs::u8path(argc >= 2 ? argv[1] : "../../apps/music/samples"));
+    const char* kDefault = "../../apps/music/samples";
+    if (argc >= 2 && std::string(argv[1]) == "--new") return ScanFolder(fs::u8path(argc >= 3 ? argv[2] : kDefault), true);
+    return ScanFolder(fs::u8path(argc >= 2 ? argv[1] : kDefault), false);
 }

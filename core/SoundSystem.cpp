@@ -23,8 +23,62 @@ void SoundSystem::Initialise(){
     debug->Ok("Got default device: %u Hz, %u channels\n",
               ma_engine_get_sample_rate(&engine),
               ma_engine_get_channels(&engine));
-    debug->Info("%i sound voices, %i buffer slots\n",NUM_SOUND_VOICES,NUM_SOUND_BUFFERS);
+    FinishInitialise();
+}
+
+bool SoundSystem::InitialiseOffline(uint32_t sample_rate, uint32_t channels){
+    ma_engine_config config = ma_engine_config_init();
+    //No device means no rate or channel count to inherit, so both have to be given.
+    config.noDevice = MA_TRUE;
+    config.sampleRate = sample_rate;
+    config.channels = channels;
+    ma_result result = ma_engine_init(&config, &engine);
+    if (result != MA_SUCCESS){
+        debug->Err("ma_engine_init (offline) failed (%s)\n",ma_result_description(result));
+        return false;
+    }
+    f_offline = true;
+    debug->Info("Offline sound engine: %u Hz, %u channels\n",sample_rate,channels);
+    return FinishInitialise();
+}
+
+/*
+    The master bus, which every sound feeds. Made here rather than on first use so that it is
+    ALWAYS there: a voice with nowhere to attach would go straight to the endpoint and skip the
+    game's volume, which is the kind of thing nobody notices until the settings slider does not
+    turn one sound down.
+*/
+bool SoundSystem::FinishInitialise(){
+    ma_sound_group_config config = ma_sound_group_config_init_2(&engine);
+    config.volumeSmoothTimeInPCMFrames = SmoothFrames();
+    SoundBus& master = buses[SOUND_BUS_MASTER];
+    ma_result result = ma_sound_group_init_ex(&engine,&config,&master.group);
+    if (result != MA_SUCCESS){
+        debug->Err("Could not make the master sound bus (%s) - continuing without sound\n",
+                   ma_result_description(result));
+        ma_engine_uninit(&engine);
+        return false;
+    }
+    master.f_active = true;
+    master.name = "master";
+    master.parent = -1;
+    master.gain = 1.0f;
+    debug->Info("%i sound voices, %i buffer slots, %i buses\n",NUM_SOUND_VOICES,NUM_SOUND_BUFFERS,NUM_SOUND_BUSES);
     f_initialised = true;
+    return true;
+}
+
+ma_uint32 SoundSystem::SmoothFrames(){
+    return (ma_uint32)(SOUND_GAIN_SMOOTH_SECONDS * (float)ma_engine_get_sample_rate(&engine));
+}
+
+uint64_t SoundSystem::Render(float* out, uint64_t frames){
+    if (!f_initialised || !f_offline || !out){
+        return 0;
+    }
+    ma_uint64 read = 0;
+    ma_engine_read_pcm_frames(&engine,out,frames,&read);
+    return (uint64_t)read;
 }
 
 /*
@@ -41,6 +95,13 @@ SoundSystem::~SoundSystem(){
     }
     for (int i = 0;i < NUM_SOUND_VOICES;i++){
         ReleaseVoice(&voices[i]);
+    }
+    //Children before parents - see SoundBus - and all of them before the engine they live in.
+    for (int i = NUM_SOUND_BUSES - 1;i >= 0;i--){
+        if (buses[i].f_active){
+            ma_sound_group_uninit(&buses[i].group);
+            buses[i].f_active = false;
+        }
     }
     ma_engine_uninit(&engine);
     f_initialised = false;
@@ -95,6 +156,13 @@ void SoundSystem::ReleaseVoice(SoundVoice* voice){
     voice->owner = SOUND_INVALID_HANDLE;
     voice->f_held = false;
     voice->f_keep = false;
+    voice->buffer = -1;
+    voice->name.clear();
+    voice->bus = SOUND_BUS_MASTER;
+    voice->gain = 1.0f;
+    voice->pitch = 1.0f;
+    voice->pan = 0.0f;
+    voice->f_looping = false;
 }
 
 /*
@@ -217,9 +285,25 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
     map_handles[handle_name] = (int)buffers.size();
     buffers.push_back(std::move(sb));
 
-    debug->Info("Loaded sound '%s' (%s): %u Hz, %u channels, %llu frames\n",
+    //With the running total, because decoded PCM is what the buffers actually cost - see
+    //NUM_SOUND_BUFFERS.
+    size_t total = 0;
+    for (size_t i = 0;i < buffers.size();i++){
+        total += buffers[i].pcm.size();
+    }
+    debug->Info("Loaded sound '%s' (%s): %u Hz, %u channels, %llu frames, %zu KB (%zu KB in %zu sounds)\n",
                 handle_name,filename,(ma_uint32)sample_rate,(ma_uint32)channels,
-                (unsigned long long)buffers.back().frame_count);
+                (unsigned long long)buffers.back().frame_count,buffers.back().pcm.size() / 1024,
+                total / 1024,buffers.size());
+}
+
+float SoundSystem::LengthOf(const char* handle_name){
+    int buffer_index = FindBufferByName(handle_name);
+    if (buffer_index < 0){
+        return -1.0f;
+    }
+    const SoundBuffer& sb = buffers[buffer_index];
+    return (sb.sample_rate > 0) ? (float)sb.frame_count / (float)sb.sample_rate : 0.0f;
 }
 
 float SoundSystem::LoudestAt(const char* handle_name, float window){
@@ -255,6 +339,23 @@ float SoundSystem::LoudestAt(const char* handle_name, float window){
 }
 
 soundhandle_t SoundSystem::Play(const char* handle_name, bool looping, float gain, uint32_t flags, float start_seconds){
+    SoundParams params;
+    params.f_looping = looping;
+    params.gain = gain;
+    params.flags = flags;
+    params.start_seconds = start_seconds;
+    return Play(handle_name,params);
+}
+
+ma_node* SoundSystem::BusNode(int& bus){
+    if (bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
+        debug->Err("No sound bus %i - playing on the master\n",bus);
+        bus = SOUND_BUS_MASTER;
+    }
+    return (ma_node*)&buses[bus].group;
+}
+
+soundhandle_t SoundSystem::Play(const char* handle_name, const SoundParams& params){
     if (!f_initialised){
         return SOUND_INVALID_HANDLE;
     }
@@ -298,24 +399,47 @@ soundhandle_t SoundSystem::Play(const char* handle_name, bool looping, float gai
     /*
         NO_SPATIALIZATION because nothing here is positional - there is no listener, no
         AL_POSITION was ever set, and the spatializer would otherwise run per voice for nothing.
+        Pan still works without it: miniaudio's panner is its own stage after the spatializer.
         Pitch is left enabled: it is the same resampler that does the rate conversion above.
+
+        Attached to its bus rather than to the endpoint, and with its gain smoothed - see
+        SOUND_GAIN_SMOOTH_SECONDS. The gain set just below is the first one, which miniaudio
+        takes as-is, so the smoothing does not soften the attack.
     */
-    result = ma_sound_init_from_data_source(&engine, &voice->ref,
-                                            MA_SOUND_FLAG_NO_SPATIALIZATION,
-                                            NULL, &voice->sound);
+    int bus = params.bus;
+    ma_sound_config config = ma_sound_config_init_2(&engine);
+    config.pDataSource = &voice->ref;
+    config.pInitialAttachment = BusNode(bus);
+    config.initialAttachmentInputBusIndex = 0;
+    config.flags = MA_SOUND_FLAG_NO_SPATIALIZATION;
+    config.volumeSmoothTimeInPCMFrames = SmoothFrames();
+    result = ma_sound_init_ex(&engine,&config,&voice->sound);
     if (result != MA_SUCCESS){
-        debug->Err("ma_sound_init_from_data_source failed for '%s' (%s)\n",
+        debug->Err("ma_sound_init_ex failed for '%s' (%s)\n",
                    handle_name,ma_result_description(result));
         ma_audio_buffer_ref_uninit(&voice->ref);
         return SOUND_INVALID_HANDLE;
     }
     voice->f_active = true;
+    voice->buffer = buffer_index;
+    voice->name = handle_name;
+    voice->bus = bus;
+    voice->f_looping = params.f_looping;
 
-    ma_sound_set_volume(&voice->sound,gain);
-    ma_sound_set_looping(&voice->sound,looping ? MA_TRUE : MA_FALSE);
+    voice->gain = params.gain;
+    ma_sound_set_volume(&voice->sound,params.gain);
+    ma_sound_set_looping(&voice->sound,params.f_looping ? MA_TRUE : MA_FALSE);
+    voice->pitch = (params.pitch > 0.01f) ? params.pitch : 0.01f;
+    if (voice->pitch != 1.0f){
+        ma_sound_set_pitch(&voice->sound,voice->pitch);
+    }
+    voice->pan = (params.pan < -1.0f) ? -1.0f : ((params.pan > 1.0f) ? 1.0f : params.pan);
+    if (voice->pan != 0.0f){
+        ma_sound_set_pan(&voice->sound,voice->pan);
+    }
     //Partway in - see Play. In the buffer's own frames, which is what the data source counts in.
-    if (start_seconds > 0.0f){
-        ma_uint64 frame = (ma_uint64)(start_seconds * (float)sb.sample_rate);
+    if (params.start_seconds > 0.0f){
+        ma_uint64 frame = (ma_uint64)(params.start_seconds * (float)sb.sample_rate);
         if (frame >= sb.frame_count){
             frame = (sb.frame_count > 0) ? sb.frame_count - 1 : 0;
         }
@@ -331,12 +455,12 @@ soundhandle_t SoundSystem::Play(const char* handle_name, bool looping, float gai
     }
 
     voice->owner = next_handle++;
-    voice->f_keep = ((flags & SOUND_KEEP) != 0);
+    voice->f_keep = ((params.flags & SOUND_KEEP) != 0);
     voice->started = play_counter++;
     return voice->owner;
 }
 
-soundhandle_t SoundSystem::PlayStream(ma_data_source* source, float gain){
+soundhandle_t SoundSystem::PlayStream(ma_data_source* source, float gain, int bus){
     if (!f_initialised || !source){
         return SOUND_INVALID_HANDLE;
     }
@@ -347,15 +471,23 @@ soundhandle_t SoundSystem::PlayStream(ma_data_source* source, float gain){
     }
     ReleaseVoice(voice);
 
-    //The same flags as Play, for the same reason: nothing here is positional.
-    ma_result result = ma_sound_init_from_data_source(&engine, source, MA_SOUND_FLAG_NO_SPATIALIZATION,
-                                                      NULL, &voice->sound);
+    //The same config as Play, for the same reasons: nothing positional, on a bus, smoothed.
+    ma_sound_config config = ma_sound_config_init_2(&engine);
+    config.pDataSource = source;
+    config.pInitialAttachment = BusNode(bus);
+    config.initialAttachmentInputBusIndex = 0;
+    config.flags = MA_SOUND_FLAG_NO_SPATIALIZATION;
+    config.volumeSmoothTimeInPCMFrames = SmoothFrames();
+    ma_result result = ma_sound_init_ex(&engine,&config,&voice->sound);
     if (result != MA_SUCCESS){
-        debug->Err("ma_sound_init_from_data_source failed for a stream (%s)\n",ma_result_description(result));
+        debug->Err("ma_sound_init_ex failed for a stream (%s)\n",ma_result_description(result));
         return SOUND_INVALID_HANDLE;
     }
     voice->f_active = true;
     voice->f_stream = true;
+    voice->name = "(stream)";
+    voice->bus = bus;
+    voice->gain = gain;
     ma_sound_set_volume(&voice->sound,gain);
 
     result = ma_sound_start(&voice->sound);
@@ -451,4 +583,132 @@ int SoundSystem::GetNumPlaying(){
         }
     }
     return num;
+}
+
+void SoundSystem::SetGain(soundhandle_t handle, float gain){
+    SoundVoice* voice = FindVoice(handle);
+    if (!voice || !voice->f_active){
+        return;
+    }
+    voice->gain = gain;
+    ma_sound_set_volume(&voice->sound,gain);
+}
+
+void SoundSystem::SetPitch(soundhandle_t handle, float pitch){
+    SoundVoice* voice = FindVoice(handle);
+    if (!voice || !voice->f_active){
+        return;
+    }
+    voice->pitch = (pitch > 0.01f) ? pitch : 0.01f;
+    ma_sound_set_pitch(&voice->sound,voice->pitch);
+}
+
+void SoundSystem::SetPan(soundhandle_t handle, float pan){
+    SoundVoice* voice = FindVoice(handle);
+    if (!voice || !voice->f_active){
+        return;
+    }
+    voice->pan = (pan < -1.0f) ? -1.0f : ((pan > 1.0f) ? 1.0f : pan);
+    ma_sound_set_pan(&voice->sound,voice->pan);
+}
+
+int SoundSystem::FindBus(const char* name){
+    if (!name){
+        return -1;
+    }
+    for (int i = 0;i < NUM_SOUND_BUSES;i++){
+        if (buses[i].f_active && buses[i].name == name){
+            return i;
+        }
+    }
+    return -1;
+}
+
+int SoundSystem::AddBus(const char* name, int parent){
+    if (!f_initialised || !name){
+        return -1;
+    }
+    int existing = FindBus(name);
+    if (existing >= 0){
+        return existing;
+    }
+    if (parent < 0 || parent >= NUM_SOUND_BUSES || !buses[parent].f_active){
+        debug->Err("Cannot add sound bus '%s': no parent bus %i\n",name,parent);
+        return -1;
+    }
+    //The first free slot. Slots are never freed, so it is always above every existing bus -
+    //which is what keeps the destructor's reverse-order teardown children-first.
+    int slot = -1;
+    for (int i = 1;i < NUM_SOUND_BUSES;i++){
+        if (!buses[i].f_active){
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0){
+        debug->Err("Cannot add sound bus '%s': all %i are in use\n",name,NUM_SOUND_BUSES);
+        return -1;
+    }
+    SoundBus& bus = buses[slot];
+    ma_sound_group_config config = ma_sound_group_config_init_2(&engine);
+    config.pInitialAttachment = (ma_node*)&buses[parent].group;
+    config.initialAttachmentInputBusIndex = 0;
+    config.volumeSmoothTimeInPCMFrames = SmoothFrames();
+    ma_result result = ma_sound_group_init_ex(&engine,&config,&bus.group);
+    if (result != MA_SUCCESS){
+        debug->Err("Could not make sound bus '%s' (%s)\n",name,ma_result_description(result));
+        return -1;
+    }
+    bus.f_active = true;
+    bus.name = name;
+    bus.parent = parent;
+    bus.gain = 1.0f;
+    debug->Info("Sound bus %i '%s', feeding '%s'\n",slot,name,buses[parent].name.c_str());
+    return slot;
+}
+
+void SoundSystem::SetBusGain(int bus, float gain){
+    if (bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
+        return;
+    }
+    buses[bus].gain = gain;
+    ma_sound_group_set_volume(&buses[bus].group,gain);
+}
+
+float SoundSystem::GetBusGain(int bus){
+    if (bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
+        return 0.0f;
+    }
+    return buses[bus].gain;
+}
+
+void SoundSystem::ListVoices(std::vector<SoundVoiceInfo>& out){
+    out.clear();
+    for (int i = 0;i < NUM_SOUND_VOICES;i++){
+        SoundVoice* v = &voices[i];
+        if (v->owner == SOUND_INVALID_HANDLE || !VoiceIsPlaying(v)){
+            continue;
+        }
+        SoundVoiceInfo info;
+        info.handle = v->owner;
+        info.name = v->name;
+        info.bus = v->bus;
+        info.gain = v->gain;
+        info.pitch = v->pitch;
+        info.pan = v->pan;
+        info.f_looping = v->f_looping;
+        info.f_keep = v->f_keep;
+        info.f_held = v->f_held;
+        //In the buffer's own frames, like the seek in Play - the data source counts in those.
+        if (v->buffer >= 0 && v->buffer < (int)buffers.size()){
+            const SoundBuffer& sb = buffers[v->buffer];
+            ma_uint64 cursor = 0;
+            ma_data_source_get_cursor_in_pcm_frames(&v->ref,&cursor);
+            if (sb.sample_rate > 0){
+                info.position = (float)cursor / (float)sb.sample_rate;
+                info.length = (float)sb.frame_count / (float)sb.sample_rate;
+            }
+        }
+        out.push_back(info);
+    }
 }

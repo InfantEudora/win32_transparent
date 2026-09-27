@@ -56,5 +56,7 @@
 - [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — --minimized app: screenshot include_ui returns no panels; restore with ShowWindow(h,4) to check UI
 - [Wind system plan](wind_system_plan.md) — archer wind: stream-function field from the blocks BUILT 2026-09-26 (Wind.cpp, make rules); debug view + archer_wind + sway, leaves, streaks, fireflies all BUILT; clouds left; leaves/grass lead, she is not pushed
 - [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change for one app, do not build/run the other apps to check them; the user updates them separately
-- [Adaptive music plan](adaptive_music_plan.md) — key/suspense-driven ambient music; apps/music bench BUILT (JSON score, music_* MCP, offline render checked with samplescan), run it on --mcp-port 8767
+- [Adaptive music plan](adaptive_music_plan.md) — key/suspense-driven ambient music; apps/music bench BUILT (JSON score with sections, music_* + library_* MCP, offline render checked with samplescan), run it on --mcp-port 8767
 - [Lock claim before build](lock_claim_before_build.md) — never fire a build/run in the same parallel step as its #build/#port claim; a refused claim does not stop it (slipped 2026-09-26)
+- [Cue plan](cue_plan.md) — archer event layer AGREED 2026-09-27 (apps/archer/cue_plan.md); steps 0 (SoundSystem buses/pan/offline render), 1 (CueLog + baselines, tools/cue_replay.py) and 2 (core/CueSystem + tools/cue_test.cpp) DONE; step 3 migrate archer next
+- [Archer grey slab is blockout](archer_level_grey_blockout.md) — the flat grey ground running right in archer's world is the undressed blockout half, not a bug; judge visuals on the left

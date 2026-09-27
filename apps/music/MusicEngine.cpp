@@ -42,21 +42,61 @@ void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed){
     mode = s->mode;
     pending_root = pending_mode = -1;
     params.bpm = s->bpm;
+    section = 0;
+    pending_section = -1;
+    section_bar = 0;
+    //Status is written by Render, so the first status after a reload would otherwise still say
+    //where the OLD score had got to.
+    status.time_s = 0;
+    status.bar = status.beat = 0;
+    status.root_pc = root_pc;
+    status.mode = mode;
+    status.pending_root_pc = status.pending_mode = -1;
+    status.section = 0;
+    status.pending_section = -1;
+    status.section_bar = 0;
+    status.section_bars = s->sections.empty() ? 0 : s->sections[0].bars;
+    status.section_names.clear();
+    for (const MusicSectionDef& d : s->sections) status.section_names.push_back(d.name);
 
     beds.assign(s->beds.size(), Bed());
     status.bed_names.clear();
+    status.bed_heights.clear();
+    status.bed_sections.clear();
     for (size_t i = 0; i < beds.size(); i++){
-        beds[i].def = &s->beds[i];
-        beds[i].transpose = BedTranspose(beds[i]);
-        StartBedPlay(beds[i], 0.0, 2.0f);
+        Bed& b = beds[i];
+        b.def = &s->beds[i];
+        b.transpose = BedTranspose(b);
+        b.presence = InSection(b.def->section) ? 1.0f : 0.0f;
+        status.bed_sections.push_back(b.def->section);
+        //A pitched bed sits where its note is; an unpitched one where its brightness is.
+        const MusicSample* sample = s->Sample(b.def->sample);
+        if (b.def->height >= 0) b.height = b.def->height;
+        else if (b.def->root_midi >= 0) b.height = HeightFromMidi((float)b.def->root_midi);
+        else if (sample && sample->zcr_hz > 0) b.height = HeightFromMidi(69.0f + 12.0f * std::log2(sample->zcr_hz / 440.0f));
+        if (b.presence > 0) StartBedPlay(b, 0.0, 2.0f);
         status.bed_names.push_back(s->beds[i].name);
+        status.bed_heights.push_back(b.height);
     }
     status.bed_gains.assign(beds.size(), 0.0f);
     status.bed_transpose.assign(beds.size(), 0);
 
     voices.assign(s->voices.size(), Voice());
-    for (size_t i = 0; i < voices.size(); i++) voices[i].def = &s->voices[i];
+    status.voice_names.clear();
+    status.voice_heights.clear();
+    status.voice_sections.clear();
+    for (size_t i = 0; i < voices.size(); i++){
+        Voice& v = voices[i];
+        v.def = &s->voices[i];
+        v.height = v.def->height >= 0 ? v.def->height : HeightFromMidi(0.5f * (v.def->low_midi + v.def->high_midi));
+        status.voice_names.push_back(v.def->name);
+        status.voice_sections.push_back(v.def->section);
+        status.voice_heights.push_back(v.height);
+    }
     notes.assign(kNotePool, Play());
+    audition = Play();
+    audition_sample.reset();
+    tilt_lp[0] = tilt_lp[1] = 0;
 
     status.recent.clear();
     status.notes_total = 0;
@@ -150,12 +190,50 @@ void MusicEngine::StartBedPlay(Bed& b, double pos, float fade_s){
     else slot->fade = 1;
 }
 
+//A bed's presence as heard: a quarter sine, so a bed going out and one coming in sum to the same
+//power all the way through the crossfade rather than dipping 3 dB in the middle.
+static float Heard(float presence){
+    return (float)std::sin(presence * kPi * 0.5);
+}
+
 void MusicEngine::RenderBeds(float* out, int frames, int64_t block_start){
     const float coef = 1.0f - std::exp(-(float)frames / (0.7f * rate));     //0.7 s to follow suspense
+    const float section_step = frames / (score->section_fade_s * rate);
+    for (Bed& b : beds){
+        const float want = InSection(b.def->section) ? 1.0f : 0.0f;
+        if (b.presence < want) b.presence = std::min(want, b.presence + section_step);
+        else if (b.presence > want) b.presence = std::max(want, b.presence - section_step);
+    }
+    //Brightness re-weights the beds against each other, not the level of the whole: scaled back so
+    //their summed energy is what it is at 0.5. Without this both ends of the slider came out 4-6 dB
+    //louder, into the limiter, because the part being lifted is often the one already loudest.
+    float e_scored = 0, e_weighted = 0;
+    for (const Bed& b : beds){
+        const float g = Lerp(b.def->gain_calm, b.def->gain_tense, params.suspense) * Heard(b.presence);
+        const float w = HeightGain(b.height);
+        e_scored += g * g;
+        e_weighted += g * g * w * w;
+    }
+    const float compensate = e_weighted > 1e-9f ? std::sqrt(e_scored / e_weighted) : 1.0f;
     for (Bed& b : beds){
         const MusicBedDef& d = *b.def;
-        const float target = Lerp(d.gain_calm, d.gain_tense, params.suspense) * params.bed_gain;
+        const float target = Lerp(d.gain_calm, d.gain_tense, params.suspense) * params.bed_gain * HeightGain(b.height) * compensate;
         b.gain += (target - b.gain) * coef;
+
+        //Out of the section and faded all the way: stop, so it costs nothing until it is back.
+        if (b.presence <= 0){
+            for (Play& p : b.plays) p.f_on = false;
+            continue;
+        }
+        //Coming back: from the top of the recording, in the key as it is now. The presence ramp is
+        //its fade-in, so the play itself starts at full.
+        bool f_any = false;
+        for (const Play& p : b.plays) f_any |= p.f_on;
+        if (!f_any){
+            b.transpose = BedTranspose(b);
+            StartBedPlay(b, 0.0, 0.0f);
+        }
+        const float heard = Heard(b.presence);
 
         //A key change reached this bed: cross over to a transposed copy from the same point in
         //the recording, so the texture carries on and only the pitch moves.
@@ -175,7 +253,7 @@ void MusicEngine::RenderBeds(float* out, int frames, int64_t block_start){
 
         for (Play& p : b.plays){
             if (!p.f_on) continue;
-            p.gain = b.gain;
+            p.gain = b.gain * heard;
             //The loop seam: fade_s of OUTPUT time before the end, start the next pass from the top
             //and cross into it. The sample frames that covers depend on the playback speed.
             const double xfade = std::min((double)p.sample->frames / 3.0, d.fade_s * rate * p.step);
@@ -203,11 +281,21 @@ void MusicEngine::RenderBeds(float* out, int frames, int64_t block_start){
 int MusicEngine::ChooseNote(Voice& v, bool& f_tension){
     const MusicVoiceDef& d = *v.def;
     f_tension = false;
-    const int last = v.last_midi >= 0 ? v.last_midi : (d.low_midi + d.high_midi) / 2;
+
+    /*
+        Brightness narrows the register towards one end of it: the upper half at 1, the lower half
+        at 0, all of it at 0.5. Inside the register the score gave, so a bright kalimba climbs to
+        its top notes rather than being dragged somewhere its sample was never meant to go.
+    */
+    const float t = 2.0f * params.brightness - 1.0f;
+    const int span = d.high_midi - d.low_midi;
+    const int low = d.low_midi + (t > 0 ? (int)std::lround(span * t * 0.5f) : 0);
+    const int high = d.high_midi + (t < 0 ? (int)std::lround(span * t * 0.5f) : 0);
+    const int last = v.last_midi >= 0 ? v.last_midi : (low + high) / 2;
 
     if (Random() < params.suspense * score->tension_max){
         int best = -1;
-        for (int m = d.low_midi; m <= d.high_midi; m++){
+        for (int m = low; m <= high; m++){
             const int pc = ((m - root_pc) % 12 + 12) % 12;
             if (pc != 1 && pc != 6) continue;
             if (best < 0 || std::abs(m - last) < std::abs(best - last)) best = m;
@@ -221,7 +309,7 @@ int MusicEngine::ChooseNote(Voice& v, bool& f_tension){
     int cand[64];
     int n = 0;
     const std::vector<int>& iv = MusicModeIntervals(mode);
-    for (int m = d.low_midi; m <= d.high_midi && n < 64; m++){
+    for (int m = low; m <= high && n < 64; m++){
         const int pc = ((m - root_pc) % 12 + 12) % 12;
         if (std::find(iv.begin(), iv.end(), pc) != iv.end()) cand[n++] = m;
     }
@@ -271,12 +359,29 @@ void MusicEngine::StartNote(const MusicSample* s, int root_midi, int midi, float
 }
 
 void MusicEngine::OnBeat(int64_t beat_frame){
-    if (beat_count % kBeatsPerBar == 0 && (pending_root >= 0 || pending_mode >= 0)){
-        ApplyKey(pending_root, pending_mode);
+    if (beat_count % kBeatsPerBar == 0){
+        if (pending_root >= 0 || pending_mode >= 0) ApplyKey(pending_root, pending_mode);
+        if (!score->sections.empty()){
+            if (beat_count > 0) section_bar++;
+            const int bars = score->sections[section].bars;
+            if (pending_section != -1) ApplySection(pending_section == -2 ? NextSection() : pending_section);
+            else if (bars > 0 && section_bar >= bars) ApplySection(NextSection());
+        }
     }
     const double beat_len = 60.0 * rate / std::max(20.0f, params.bpm);
+    //The beds' compensation, for voices: energy per beat is gain squared times how often it plays.
+    float e_scored = 0, e_weighted = 0;
+    for (const Voice& v : voices){
+        if (!InSection(v.def->section)) continue;
+        const float energy = v.def->gain * v.def->gain * Lerp(v.def->density_calm, v.def->density_tense, params.suspense);
+        const float w = HeightGain(v.height);
+        e_scored += energy;
+        e_weighted += energy * w * w;
+    }
+    const float compensate = e_weighted > 1e-9f ? std::sqrt(e_scored / e_weighted) : 1.0f;
     for (Voice& v : voices){
         const MusicVoiceDef& d = *v.def;
+        if (!InSection(d.section)) continue;
         if (Random() >= Lerp(d.density_calm, d.density_tense, params.suspense)) continue;
         int64_t start = beat_frame;
         if (Random() < d.offbeat) start += (int64_t)(beat_len / 2);
@@ -284,7 +389,7 @@ void MusicEngine::OnBeat(int64_t beat_frame){
         bool f_tension = false;
         const int midi = ChooseNote(v, f_tension);
         v.last_midi = midi;
-        const float gain = d.gain * params.voice_gain * (0.6f + 0.4f * Random());
+        const float gain = d.gain * params.voice_gain * HeightGain(v.height) * compensate * (0.6f + 0.4f * Random());
         const float pan = (Random() * 2.0f - 1.0f) * d.spread;
         const int64_t release = d.length_beats > 0 ? (int64_t)(d.length_beats * beat_len) : -1;
         StartNote(score->Sample(d.sample), d.root_midi, midi, gain, pan, start, release, d.release_s);
@@ -303,6 +408,22 @@ void MusicEngine::ApplyKey(int new_root, int new_mode){
     //their next note, which walks from wherever they were to the nearest note of the new scale.
 }
 
+int MusicEngine::NextSection(){
+    const int n = (int)score->sections.size();
+    if (n <= 1) return 0;
+    if (!score->f_section_random) return (section + 1) % n;
+    const int k = RandomInt(n - 1);         //any but the one playing: a repeat would be no change at all
+    return k >= section ? k + 1 : k;
+}
+
+void MusicEngine::ApplySection(int s){
+    if (s >= 0 && s < (int)score->sections.size()) section = s;
+    section_bar = 0;
+    pending_section = -1;
+    //RenderBeds sees the new section on its next block and starts the crossfade; OnBeat rolls only
+    //the new section's voices from the next beat on.
+}
+
 //--- the block -----------------------------------------------------------------------------
 
 void MusicEngine::Render(float* out, int frames){
@@ -319,6 +440,28 @@ void MusicEngine::Render(float* out, int frames){
         }
         else if (e.type == MusicEvent::SUSPENSE){
             params.suspense = std::max(0.0f, std::min(1.0f, e.value));
+        }
+        else if (e.type == MusicEvent::BRIGHTNESS){
+            params.brightness = std::max(0.0f, std::min(1.0f, e.value));
+        }
+        else if (e.type == MusicEvent::SECTION){
+            if (score->sections.empty()) continue;
+            const int want = e.name.empty() ? -2 : score->SectionIndex(e.name);
+            if (want == -1) continue;               //no such section; the tools check names before posting
+            if (e.f_now) ApplySection(want == -2 ? NextSection() : want);
+            else pending_section = want;
+        }
+        else if (e.type == MusicEvent::AUDITION){
+            audition = Play();
+            audition_sample = e.sample;
+            if (audition_sample && audition_sample->frames > 1){
+                audition.f_on = true;
+                audition.sample = audition_sample.get();
+                audition.step = (double)audition_sample->rate / rate;
+                audition.fade = 1;
+                audition.gain = 1;
+                audition.start_at = (int64_t)clock;
+            }
         }
         else{
             for (const MusicStingerDef& d : score->stingers){
@@ -352,6 +495,35 @@ void MusicEngine::Render(float* out, int frames){
     }
 
     /*
+        The brightness tilt: a one-pole split at 500 Hz, and the band on the far side of the slider
+        CUT, by up to 6 dB - the highs when dark, the lows when bright. Cut only, never boost: a
+        boost lands on whatever band holds the energy, and a first version that boosted one band as
+        it cut the other pushed the dark end 5 dB louder. Exactly flat at 0.5, where both gains
+        are 1 and the two bands sum back to the input.
+    */
+    const float tilt = 2.0f * params.brightness - 1.0f;
+    if (std::fabs(tilt) > 1e-3f){
+        const float a = 1.0f - std::exp(-2.0f * (float)kPi * 500.0f / rate);
+        const float g_low = tilt > 0 ? std::pow(10.0f, -6.0f * tilt / 20.0f) : 1.0f;
+        const float g_high = tilt < 0 ? std::pow(10.0f, 6.0f * tilt / 20.0f) : 1.0f;
+        for (int i = 0; i < frames; i++){
+            for (int c = 0; c < 2; c++){
+                float& x = out[i * 2 + c];
+                tilt_lp[c] += a * (x - tilt_lp[c]);
+                x = tilt_lp[c] * g_low + (x - tilt_lp[c]) * g_high;
+            }
+        }
+    }
+    else{
+        //Kept following the signal while flat, so moving the slider off 0.5 does not click.
+        const float a = 1.0f - std::exp(-2.0f * (float)kPi * 500.0f / rate);
+        for (int i = 0; i < frames; i++) for (int c = 0; c < 2; c++) tilt_lp[c] += a * (out[i * 2 + c] - tilt_lp[c]);
+    }
+
+    //The audition goes in AFTER the tilt: it is the file as recorded, the thing being judged.
+    if (audition.f_on && !Mix(audition, out, frames, (int64_t)clock)) audition.f_on = false;
+
+    /*
         Master gain, then a soft limiter above 0.8: transparent below it, and a curve into full
         scale above it rather than a hard clip. Counted when it has real work to do (over 1.0 in),
         so a score that keeps it busy says so instead of quietly squashing.
@@ -382,10 +554,37 @@ void MusicEngine::Render(float* out, int frames){
     status.mode = mode;
     status.pending_root_pc = pending_root;
     status.pending_mode = pending_mode;
+    status.section = section;
+    status.pending_section = pending_section;
+    status.section_bar = section_bar;
+    status.section_bars = score->sections.empty() ? 0 : score->sections[section].bars;
     for (size_t i = 0; i < beds.size(); i++){
-        status.bed_gains[i] = beds[i].gain;
+        status.bed_gains[i] = beds[i].presence > 0 ? beds[i].gain * Heard(beds[i].presence) : 0.0f;
         status.bed_transpose[i] = beds[i].transpose;
     }
     status.notes_sounding = 0;
     for (const Play& p : notes) if (p.f_on && p.start_at <= (int64_t)clock) status.notes_sounding++;
+    if (audition.f_on && audition_sample){
+        if (status.auditioning != audition_sample->name) status.auditioning = audition_sample->name;
+    }
+    else if (!status.auditioning.empty()) status.auditioning.clear();
+}
+
+//--- brightness ----------------------------------------------------------------------------
+
+//C2 is the bottom and C6 the top: below C2 is rumble, above C6 is air, and everything scored
+//here lives between them.
+float MusicEngine::HeightFromMidi(float midi){
+    return std::max(0.0f, std::min(1.0f, (midi - 36.0f) / 48.0f));
+}
+
+/*
+    What brightness does to one part's level: up to 9 dB either way, for the parts at the very
+    top and bottom, and nothing for a part in the middle or at brightness 0.5. dB rather than a
+    straight factor so dark and bright are symmetric - a part turned down 9 dB at 0 comes back up
+    by the same 9 dB at 1.
+*/
+float MusicEngine::HeightGain(float height) const{
+    const float db = 9.0f * (2.0f * params.brightness - 1.0f) * (2.0f * height - 1.0f);
+    return std::pow(10.0f, db / 20.0f);
 }

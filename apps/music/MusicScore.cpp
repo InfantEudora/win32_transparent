@@ -5,8 +5,10 @@
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 
 static Debugger* debug = new Debugger("MusicScore", DEBUG_ALL);
@@ -94,9 +96,12 @@ const MusicSample* MusicScore::Sample(const std::string& name) const{
     return it == samples.end() ? nullptr : it->second.get();
 }
 
-//--- loading -------------------------------------------------------------------------------
+int MusicScore::SectionIndex(const std::string& n) const{
+    for (size_t i = 0; i < sections.size(); i++) if (sections[i].name == n) return (int)i;
+    return -1;
+}
 
-namespace {
+//--- loading -------------------------------------------------------------------------------
 
 /*
     A PCM16 wav, by walking its chunks - not WaveFile, for two reasons. WaveFile goes through
@@ -106,12 +111,8 @@ namespace {
     assumes the data starts at byte 44, which is true of what samplescan writes and not of every
     wav an editor saves (a LIST chunk in front of the data is common).
 */
-bool LoadWav(const std::string& asset, MusicSample& out, std::string& error){
-    std::string path;
-    if (!ResolveAssetPath(asset.c_str(), path)){
-        error = "no such sample: " + asset + " (run `make samples` in apps/music?)";
-        return false;
-    }
+bool LoadMusicSampleFile(const std::string& path, const std::string& name, MusicSample& out, std::string& error){
+    const std::string& asset = name;
     std::string bytes;
     if (!ReadFileToString(path.c_str(), bytes) || bytes.size() < 12 ||
         bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0){
@@ -149,7 +150,35 @@ bool LoadWav(const std::string& asset, MusicSample& out, std::string& error){
         memcpy(&s, bytes.data() + data_at + i * 2, 2);
         out.pcm[i] = s / 32768.0f;
     }
+
+    /*
+        How bright it is, as a frequency: the zero-crossing rate of the first channel, halved.
+        For a clean tone that is its pitch; for noise and mixtures it lands near the spectral
+        centroid, which is what the brightness slider needs from an unpitched bed. Crossings below
+        -60 dBFS are not counted, so a silent tail's dither does not make a drone look like hiss.
+    */
+    size_t crossings = 0, counted = 0;
+    float prev = 0;
+    for (size_t f = 0; f < out.frames; f++){
+        const float v = out.pcm[f * out.channels];
+        if (std::fabs(v) < 0.001f) continue;
+        if ((v > 0) != (prev > 0) && counted > 0) crossings++;
+        prev = v;
+        counted++;
+    }
+    out.zcr_hz = counted > 0 ? 0.5f * crossings * out.rate / counted : 0.0f;
     return true;
+}
+
+namespace {
+
+bool LoadWav(const std::string& asset, MusicSample& out, std::string& error){
+    std::string path;
+    if (!ResolveAssetPath(asset.c_str(), path)){
+        error = "no such sample: " + asset + " (run `make samples` in apps/music?)";
+        return false;
+    }
+    return LoadMusicSampleFile(path, asset, out, error);
 }
 
 /*
@@ -209,8 +238,10 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
         return true;
     };
 
-    if (j.contains("beds") && j["beds"].is_array()){
-        for (const json& b : j["beds"]){
+    //The beds and voices of one level of the file: the top, where section is -1, or one section.
+    auto read_beds = [&](const json& parent, int section) -> bool {
+        if (!parent.contains("beds") || !parent["beds"].is_array()) return true;
+        for (const json& b : parent["beds"]){
             MusicBedDef d;
             d.name = Str(b, "name", Str(b, "sample"));
             d.sample = Str(b, "sample");
@@ -218,18 +249,23 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
             d.gain_tense = Num(b, "gain_tense", d.gain_calm);
             d.degree = (int)Num(b, "degree", 0);
             d.fade_s = Num(b, "fade_s", 3.0f);
-            const std::string where = "bed '" + d.name + "'";
+            d.height = Num(b, "height", -1.0f);
+            d.section = section;
+            const std::string where = (section >= 0 ? "section '" + s.sections[section].name + "', " : "") + "bed '" + d.name + "'";
             if (!Note(b, "root", -1, d.root_midi, where, error)) return false;
             if (!want_sample(d.sample, where)) return false;
             s.beds.push_back(d);
         }
-    }
-    if (j.contains("voices") && j["voices"].is_array()){
-        for (const json& v : j["voices"]){
+        return true;
+    };
+    auto read_voices = [&](const json& parent, int section) -> bool {
+        if (!parent.contains("voices") || !parent["voices"].is_array()) return true;
+        for (const json& v : parent["voices"]){
             MusicVoiceDef d;
             d.name = Str(v, "name", Str(v, "sample"));
             d.sample = Str(v, "sample");
-            const std::string where = "voice '" + d.name + "'";
+            d.section = section;
+            const std::string where = (section >= 0 ? "section '" + s.sections[section].name + "', " : "") + "voice '" + d.name + "'";
             if (!Note(v, "root", 60, d.root_midi, where, error)) return false;
             if (!Note(v, "low", d.root_midi - 3, d.low_midi, where, error)) return false;
             if (!Note(v, "high", d.root_midi + 12, d.high_midi, where, error)) return false;
@@ -241,6 +277,7 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
             d.release_s = Num(v, "release_s", 0.3f);
             d.offbeat = Num(v, "offbeat", 0.25f);
             d.spread = Num(v, "spread", 0.3f);
+            d.height = Num(v, "height", -1.0f);
             //A sample pushed more than an octave either way stops sounding like its instrument -
             //an octave up a kalimba is a music box, two down it is mud. Said, not refused: the
             //score may want exactly that.
@@ -252,7 +289,34 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
             if (!want_sample(d.sample, where)) return false;
             s.voices.push_back(d);
         }
+        return true;
+    };
+
+    if (!read_beds(j, -1) || !read_voices(j, -1)) return false;
+
+    s.section_fade_s = std::max(0.1f, Num(j, "section_fade_s", 6.0f));
+    const std::string order = Str(j, "section_order", "cycle");
+    if (order != "cycle" && order != "random"){
+        error = "section_order must be cycle or random";
+        return false;
     }
+    s.f_section_random = (order == "random");
+    const int default_bars = (int)Num(j, "section_bars", 0.0f);
+    if (j.contains("sections") && j["sections"].is_array()){
+        for (const json& sec : j["sections"]){
+            MusicSectionDef d;
+            d.name = Str(sec, "name", "section " + std::to_string(s.sections.size() + 1));
+            d.bars = std::max(0, (int)Num(sec, "bars", (float)default_bars));
+            if (s.SectionIndex(d.name) >= 0){
+                error = "two sections are called '" + d.name + "'";
+                return false;
+            }
+            s.sections.push_back(d);
+            const int index = (int)s.sections.size() - 1;
+            if (!read_beds(sec, index) || !read_voices(sec, index)) return false;
+        }
+    }
+
     if (j.contains("stingers") && j["stingers"].is_array()){
         for (const json& t : j["stingers"]){
             MusicStingerDef d;
@@ -264,8 +328,8 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
         }
     }
 
-    debug->Ok("Score '%s': %s %s at %.0f bpm, %zu beds, %zu voices, %zu stingers, %zu samples\n", s.name.c_str(),
-              MusicPitchClassName(s.root_pc).c_str(), MusicModeName(s.mode), s.bpm,
+    debug->Ok("Score '%s': %s %s at %.0f bpm, %zu sections, %zu beds, %zu voices, %zu stingers, %zu samples\n", s.name.c_str(),
+              MusicPitchClassName(s.root_pc).c_str(), MusicModeName(s.mode), s.bpm, s.sections.size(),
               s.beds.size(), s.voices.size(), s.stingers.size(), s.samples.size());
     out = std::move(s);
     return true;

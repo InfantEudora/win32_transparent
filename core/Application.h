@@ -378,6 +378,15 @@ public:
     //NULL once the frame thread is running, but IsReady() is false if the font or shader is
     //missing, in which case every Add* is a no-op rather than a crash.
     UIOverlay* overlay = NULL;
+    /*
+        Creates `overlay` if it does not exist yet. RENDER THREAD, context current.
+
+        Core calls this straight after the app's Init() returns, which is where every app gets its
+        overlay. An app that wants it EARLIER - one that draws loading frames from inside its own
+        Init, before the first real frame - calls this itself once its asset roots are in place,
+        and core's call then finds one already there and leaves it alone.
+    */
+    void EnsureOverlay();
     //Surface size the touch-button layout was last computed for, so DrawFrame can notice a
     //resize. -1 forces LayoutTouchButtons to run before the first frame.
     int touch_layout_w = -1;

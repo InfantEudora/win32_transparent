@@ -4,6 +4,7 @@
 #include "MusicScore.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,9 +28,26 @@
                  cheapest reliable way to make a scale sound uneasy.
       stingers   play when posted.
 
+    BRIGHTNESS is the second axis, beside suspense: 0 is rumble and bass, 1 is high and bright,
+    0.5 is the score exactly as written. Every part has a HEIGHT, 0..1 from C2 to C6: its note for
+    a pitched bed, the middle of its register for a voice, and for an unpitched bed how bright the
+    recording is (its zero-crossing rate); a score can set `height` itself. Brightness then does
+    three things, all centred on 0.5 so the middle of the slider changes nothing: parts are
+    weighted by height (up to 9 dB, low parts up when dark and high parts up when bright), each
+    voice's notes are confined to the lower or upper half of its register, and the whole mix gets
+    a tilt around 500 Hz that cuts the far side by up to 6 dB. Brightness re-weights the parts
+    against each other and leaves the overall level where it was.
+
     KEY CHANGES ARE QUANTISED TO THE BAR, as the design called for: a key event sets a pending key
     and it takes effect on the next downbeat, so a game can ask at any moment and the music moves
     at a musical one. Bars are four beats. A key event with f_now skips the wait.
+
+    SECTION CHANGES ARE TOO, and for the same reason. On the downbeat the new section's voices
+    start rolling and the old one's stop (their last notes ring out); the beds cross over more
+    slowly, over the score's section_fade_s, equal-power so the level does not dip in the middle.
+    A bed coming in starts its recording from the top; one going out stops once it is silent, so a
+    section that is not playing costs nothing. A section moves on by itself after its `bars`, or
+    when a SECTION event asks - by name, or the next one if the name is empty.
 
     Time here is output FRAMES, never seconds or ticks - it is presentation, not simulation, and
     it runs on the audio device's clock. It draws from its own random stream, never the
@@ -43,16 +61,18 @@ struct MusicParams{
     float master = 0.8f;
     float bed_gain = 1.0f;          //scales every bed
     float voice_gain = 1.0f;        //scales every voice
+    float brightness = 0.5f;        //0 dark - rumble, bass .. 1 bright - high, shimmering. 0.5 = as scored
 };
 
 struct MusicEvent{
-    enum Type{ KEY, STINGER, SUSPENSE };
+    enum Type{ KEY, STINGER, SUSPENSE, BRIGHTNESS, AUDITION, SECTION };
     Type type = KEY;
-    float value = 0;                //SUSPENSE: the new suspense - for scripting a render's arc
+    float value = 0;                //SUSPENSE, BRIGHTNESS: the new value - for scripting a render's arc
     int root_pc = -1;               //KEY: new root, or -1 to keep it
     int mode = -1;                  //KEY: new mode, or -1 to keep it
-    bool f_now = false;             //KEY: skip the wait for the downbeat
-    std::string name;               //STINGER: which
+    bool f_now = false;             //KEY, SECTION: skip the wait for the downbeat
+    std::string name;               //STINGER: which. SECTION: which, or empty for the next one
+    std::shared_ptr<const MusicSample> sample;  //AUDITION: what to play, or null to stop
 };
 
 //One note that sounded, for the log a person or an agent reads to see what the music is doing.
@@ -71,6 +91,18 @@ struct MusicStatus{
     std::vector<float> bed_gains;                   //each bed's current gain, after smoothing
     std::vector<std::string> bed_names;
     std::vector<int> bed_transpose;                 //semitones each bed is shifted by
+    std::vector<float> bed_heights;                 //0 low .. 1 high, what brightness weighs them by
+    std::vector<int> bed_sections;                  //the section each bed belongs to, -1 = every one
+    std::vector<std::string> voice_names;
+    std::vector<float> voice_heights;
+    std::vector<int> voice_sections;
+    std::vector<std::string> section_names;         //empty if the score has no sections
+    int section = 0;                                //the one playing
+    int pending_section = -1;                       //waiting for the bar line: -1 none, -2 the next one
+                                                    //(not known yet when the order is random)
+    int section_bar = 0;                            //whole bars it has played so far
+    int section_bars = 0;                           //how many it plays before moving on, 0 = until asked
+    std::string auditioning;                        //the sample being auditioned, or empty
     int notes_sounding = 0;
     int notes_total = 0;
     std::vector<MusicNoteLog> recent;               //newest last, at most 24
@@ -114,6 +146,14 @@ private:
     int pending_root = -1, pending_mode = -1;
     void ApplyKey(int new_root, int new_mode);
 
+    //--- sections -------------------------------------------------------------------------
+    int section = 0;
+    int pending_section = -1;       //-2 = the next one, whichever that is; -1 = none
+    int section_bar = 0;
+    bool InSection(int part_section) const { return part_section < 0 || part_section == section; }
+    int NextSection();
+    void ApplySection(int s);
+
     //--- one playing of one sample --------------------------------------------------------
     struct Play{
         bool f_on = false;
@@ -135,7 +175,9 @@ private:
         const MusicBedDef* def = nullptr;
         Play plays[3];              //the current one, plus whatever is crossfading out
         float gain = 0;             //smoothed towards the target the suspense asks for
+        float presence = 1;         //0..1 through a section crossfade, linear; heard as a sine
         int transpose = 0;
+        float height = 0.5f;
     };
     std::vector<Bed> beds;
     int BedTranspose(const Bed& b) const;
@@ -146,6 +188,7 @@ private:
     struct Voice{
         const MusicVoiceDef* def = nullptr;
         int last_midi = -1;
+        float height = 0.5f;
     };
     std::vector<Voice> voices;
     std::vector<Play> notes;        //fixed pool; a note steals the oldest when it is full
@@ -158,6 +201,16 @@ private:
     double meter_sq = 0;
     float meter_peak = 0;
     int meter_frames = 0;
+
+    //--- brightness -----------------------------------------------------------------------
+    static float HeightFromMidi(float midi);
+    float HeightGain(float height) const;
+    float tilt_lp[2] = {0, 0};      //the master tilt's one-pole low band, per channel
+
+    //--- audition -------------------------------------------------------------------------
+    //One library file played as it is, beside the music - its own slot, so no note steals it.
+    Play audition;
+    std::shared_ptr<const MusicSample> audition_sample;
 };
 
 #endif

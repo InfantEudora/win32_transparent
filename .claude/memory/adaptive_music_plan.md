@@ -18,4 +18,8 @@ Tuning round 2026-09-26 against the user's ears: 5 files confirmed by ear and re
 
 Bench BUILT 2026-09-26: apps/music (exe music_nophysics.exe), MusicEngine (pure DSP: beds w/ loop+key crossfade, pitched beds follow key, voices = random walk on scale, tension notes with suspense, bar-quantised key changes) + MusicPlayer (ma_data_source on SoundSystem::PlayStream, try_lock hand-off) + JSON score assets/music/jungle.json. Samples exported by `make samples` (wavs gitignored). Verify with music_render + samplescan --file (key line). Run on --mcp-port 8767 (engine-wide flag added) and drive via curl; archer/other sessions use 8765.
 
+2026-09-27: Library panel + library_* MCP tools (MusicLibrary runs samplescan.exe as a subprocess - the app must NOT link decoders) and a Brightness slider (part heights C2..C6, energy-compensated re-weighting, register half-window, cut-only 500 Hz tilt; centroid 178->699 Hz, level within 2 dB). Minimised runs save apps/music/imgui.ini at a 32x32 display, squashing the dock layout - engine-level, unfixed.
+
+2026-09-27 later: Scan new / samplescan --new (measures only uncatalogued files). Score SECTIONS: top-level parts play always, per-section parts take turns, bar-quantised, beds equal-power crossfade over section_fade_s, auto after `bars`; jungle.json = canopy (original set) + undergrowth (hang drums, bass, zanka, low wind, drums, whistles), both A minor within 1 dB. music_section tool. Balance by the catalog's active_rms_db: gain ~ 10^((target - active_rms)/20).
+
 **How to apply:** tune samplescan's GuessCategory thresholds on the real library once it lands, not on synthetic tones; ask the user to listen - Claude cannot judge whether it sounds right.

@@ -559,6 +559,22 @@ void ApplicationArcher::Init(void){
     //command handler), and it holds the primitive meshes below.
     assetmanager = new AssetManager();
 
+    /*
+        THE LOADING SCREEN GOES UP FIRST, before anything slow.
+
+        The window is sized now rather than at the end of Init, so the first loading frame is
+        already at the size the game runs at instead of the size the window was created at. The
+        overlay is made here rather than by core after Init returns, because the progress text is
+        drawn DURING Init - see EnsureOverlay. Everything from here to the end of Init is timed and
+        drawn step by step through LoadingStep.
+    */
+    main_window->Resize(1440,900);      //16:9; a side-scroller wants width far more than height
+    CreateTitleScene();
+    EnsureOverlay();
+    f_loading = true;
+    loading_start = std::chrono::steady_clock::now();
+    loading_step_start = loading_start;
+
     //The archer, the blocks and every prop are all scaled unit boxes, so one mesh serves them
     //all - and the archer's collider then cannot disagree with its own mesh, because both come
     //from the size passed to MakePlanarBody.
@@ -591,31 +607,46 @@ void ApplicationArcher::Init(void){
     main_scene->physics_world->SetGravity(vec3(0.0f,ARCHER_PROP_GRAVITY,0.0f));
     main_scene->physics_world->SetDebugRendering(false);
 
+    /*
+        The loading steps. Numbered by a counter rather than by hand, and checked against
+        LOADING_STEPS at the end, so adding a step and forgetting the total is a warning in the
+        log rather than a bar that stops short or runs past the end.
+    */
+    const int LOADING_STEPS = 14;
+    int step = 0;
+    LoadingStep(step++,LOADING_STEPS,"materials");
     BuildMaterials();
     /*
         The character's file holds the props as well as her, and the first of them - the crate - is
         wanted by BuildProps below, well before BuildArcherModel. So it is read once, here, rather
         than by BuildArcherModel; everything after this finds it already loaded.
     */
+    LoadingStep(step++,LOADING_STEPS,"reading the archer");
     gltfloader.LoadGLTFFile(ARCHER_MODEL_ASSET);
+    LoadingStep(step++,LOADING_STEPS,"props");
     BuildCrateMesh();
     BuildStandMesh();
     BuildStrawManMesh();
     #ifdef USE_IMGUI
     RegisterPlaceableProps();
     #endif
+    LoadingStep(step++,LOADING_STEPS,"the level");
     BuildBlocks();
     //After BuildBlocks, which it hides the melted half of - see the note on the declaration.
+    LoadingStep(step++,LOADING_STEPS,"terrain");
     BuildTerrain();
+    LoadingStep(step++,LOADING_STEPS,"the archer");
     BuildArcher();
     BuildArcherModel();
     //AFTER the model, for model_scale: an archery stand is drawn at the character's scale, and at
     //the 1.0 it has before BuildArcherModel measures her it came out a doll's-house stand.
+    LoadingStep(step++,LOADING_STEPS,"props and bow");
     BuildProps();
     //After it: the grip is derived from a posed clip, and both the bones and the clips arrive with
     //the model. See the note on the declaration.
     BuildBow();
     //After BuildArcherModel too, for the loader and the character's scale - see the declaration.
+    LoadingStep(step++,LOADING_STEPS,"foliage");
     BuildFoliage();
     //After BuildArcherModel too - the leaves are sized by model_scale.
     BuildWindLeaves();
@@ -624,9 +655,11 @@ void ApplicationArcher::Init(void){
     //a model_scale of 1, half size. Again now that the scale is known; placing is cheap, the wall's
     //mesh is not remade.
     PlaceAllBackdropPines();
+    LoadingStep(step++,LOADING_STEPS,"vines and rope");
     BuildVines();
     //After BuildProps (the chain it is laid over) and BuildArcherModel (her scale, and the loader).
     BuildRopeSkin();
+    LoadingStep(step++,LOADING_STEPS,"arrows and scenery");
     BuildArrowViews();
     BuildAimArc();
     BuildRopeAttachMarkers();
@@ -635,7 +668,8 @@ void ApplicationArcher::Init(void){
     //After it, for the glyphs. The main level has none yet; this is where they would come from.
     BuildSigns();
     BuildScenery();
-    //Only the line object here; the field itself is built the first time something reads it.
+    LoadingStep(step++,LOADING_STEPS,"lights and sound");
+    //Only the line object here; the field itself is built by the "wind" step below.
     wind_view.Init(main_scene);
     BuildWindStreaks();
     BuildFireflies();
@@ -648,8 +682,19 @@ void ApplicationArcher::Init(void){
     //LAST, because they share the character the lines above built - see the note on ArcherLevel.
     world_scene = main_scene;
     parked_levels.reserve(2);           //BuildExtraLevel holds a reference into it while it builds
+    LoadingStep(step++,LOADING_STEPS,"the range");
     range_scene = BuildExtraLevel(STAGE_LEVEL_RANGE,"Range");
+    LoadingStep(step++,LOADING_STEPS,"the rope course");
     rope_scene = BuildExtraLevel(STAGE_LEVEL_ROPE,"Rope");
+    /*
+        The wind field, which used to be solved on the first frame PreRender drew - a fifth of a
+        second with the level already on screen and nothing moving. Here it is one more line on
+        the loading screen instead. After the extra levels, which leave the main level live, so the
+        field is solved for the world's blocks and baked for the world's camera; Wind::Build then
+        finds nothing changed on the first real frame and costs nothing.
+    */
+    LoadingStep(step++,LOADING_STEPS,"wind");
+    UpdateWind();
 #ifdef USE_MCP
     RegisterMCPTools();
 #endif
@@ -669,10 +714,35 @@ void ApplicationArcher::Init(void){
     //in Stage.h, which is the one number they cannot look up for themselves.
     SetPhysicsTPS(ARCHER_TPS);
 
-    main_window->Resize(1440,900);      //16:9; a side-scroller wants width far more than height
-
     //One tick so the first frame is not an empty level.
     main_scene->StepPhysics(1);
+
+    //The last step's time, and the whole load's.
+    LoadingStep(step,LOADING_STEPS,NULL);
+    if (step != LOADING_STEPS){
+        debug->Warn("Loading ran %d steps against LOADING_STEPS %d - the bar was wrong\n",
+                    step,LOADING_STEPS);
+    }
+    f_loading = false;
+    debug->Ok("Loaded in %.0f ms\n",
+              std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - loading_start).count());
+
+    /*
+        AND THE TITLE BECOMES THE LIVE SCENE, now that everything is built: the loading text turns
+        into "click to continue", and UpdateTitle hands over to world_scene on the click.
+
+        A direct write is correct HERE and nowhere else, for the reason apps/bomber gives: Init runs
+        before Application::Start creates the physics thread, so nothing else reads main_scene yet.
+        After this, RequestActiveScene is the only safe way to change it - and since this write
+        does not go through OnActiveSceneChanged, the title is entered by hand.
+
+        The panels go down with it (EnterTitle). The loading frames never drew them, so leaving
+        them on would have them pop in over the art the moment loading finished - and they cover
+        the archer.
+    */
+    main_scene = title_scene;
+    title_return_scene = world_scene;
+    EnterTitle();
 }
 
 void ApplicationArcher::BuildMaterials(){
@@ -1538,6 +1608,15 @@ void ApplicationArcher::RegenerateTerrain(){
 }
 
 void ApplicationArcher::PreRender(void){
+    /*
+        On the title, only the title. Everything below is the world's view work and reads
+        main_scene for its camera and its tick, which here would be the title's - the wind grid
+        baked for an ortho camera two units wide. The flags it services keep until the world is up.
+    */
+    if (title_scene && (main_scene == title_scene)){
+        FitTitleQuad(main_window->width,main_window->height);
+        return;
+    }
     if (f_regenerate_terrain.exchange(false)){
         RegenerateTerrain();
     }
@@ -2186,7 +2265,7 @@ void ApplicationArcher::ScatterBoulderObjects(){
         o->SetMesh(mesh);
         o->TakeMaterialNames(boulder_materials[b.kind]);
         //Big ones are big enough to be worth a shadow; the small ones are the foliage's case.
-        o->SetCastsShadow(b.kind == BOULDER_BIG_1);
+        o->SetCastsShadow(IsBigBoulder(b.kind));
         o->SetPosition(vec3(b.x,b.y,b.z));
         //Tipped about a horizontal axis, after the yaw - a small rock lying the way it landed.
         quat yaw(vec3(0.0f,1.0f,0.0f),b.yaw);
@@ -2203,7 +2282,9 @@ void ApplicationArcher::ScatterBoulderObjects(){
     for (size_t i = used; i < boulder_objects.size(); i++){
         boulder_objects[i]->SetVisibility(false);
     }
-    debug->Info("Rocks: %i big, %i small\n",boulder_counts[BOULDER_BIG_1],boulder_counts[BOULDER_SMALL_1]);
+    debug->Info("Rocks: %i big (%i + %i), %i small\n",
+                boulder_counts[BOULDER_BIG_1] + boulder_counts[BOULDER_BIG_2],
+                boulder_counts[BOULDER_BIG_1],boulder_counts[BOULDER_BIG_2],boulder_counts[BOULDER_SMALL_1]);
 }
 
 //--- Signs --------------------------------------------------------------------------------------
@@ -4417,7 +4498,7 @@ void ApplicationArcher::RegisterTargetHit(PropView& view, const vec3& point){
         //the hit sound itself, so it lands on the tick the arrow does.
 #ifdef USE_SOUND
         if (soundsystem && points == STAND_POINTS[0]){
-            soundsystem->Play("nice_shot",false,0.8f * sound_volume);
+            PlayCue("nice_shot","nice_shot",0.8f);
         }
 #endif
         debug->Info("Stand %i: %i points (%i on it, %i this level)\n",
@@ -4545,8 +4626,8 @@ void ApplicationArcher::BuildBackground(){
 
         The view is a frustum, so what it covers at the backdrop's depth grows with the distance
         from the camera to it - and the camera can pull back as far as CAMERA_DISTANCE_MAX. The
-        aspect is the window's, which Init resizes to 16:9 a few lines further down; a backdrop
-        that is slightly too big is invisible, one that is slightly too small is a black edge.
+        aspect is taken as 16:9 rather than read off the window; a backdrop that is slightly too
+        big is invisible, one that is slightly too small is a black edge.
     */
     float far_distance = CAMERA_DISTANCE_MAX + BACKGROUND_DEPTH;
     float view_height = 2.0f * far_distance * tanf(0.5f * 38.0f * ARCHER_DEG2RAD);
@@ -4572,6 +4653,278 @@ void ApplicationArcher::BuildBackground(){
     main_scene->AddObject(background_object);
     debug->Info("Backdrop %s at %.0f x %.0f units, %.0f behind the play plane\n",
                 BACKGROUND_ASSET,background_base.x,background_base.y,BACKGROUND_DEPTH);
+}
+
+//--- The title and loading screen ---------------------------------------------------------------
+
+/*
+    An orthographic camera and one unlit quad, as in apps/bomber's CreateTitleScene. RENDER
+    THREAD, from the top of Init - it is the first thing on screen, so it is built before anything
+    slow.
+
+    With an orthographic camera `zoom` is the half-HEIGHT, so at 1 the view runs y -1..1 and
+    x -aspect..aspect, and Renderer::DrawFrame keeps the camera's aspect in step with the window
+    by itself. The quad is 1x1 and its SCALE is its size, set by FitTitleQuad - a transform rather
+    than a rebuilt mesh, because rebuilding means an upload on every frame of a resize drag.
+
+    Survivable without the image: the material falls back to a dark green, and the loading text
+    and the click still work over it.
+*/
+void ApplicationArcher::CreateTitleScene(){
+    title_scene = CreateNewScene("Title Screen");
+
+    Camera* camera = title_scene->camera;
+    camera->name = "Title Camera";
+    //Down -Z at the quad, which MakeQuad builds facing +Z. Engine forward is -Z.
+    camera->SetPosition(vec3(0,0,1));
+    camera->SetLookAt(vec3(0,0,0));
+    camera->SetupOrthographic((float)renderer->GetViewportWidth(),(float)renderer->GetViewportHeight(),
+                              1.0f,0.01f,10.0f);
+
+    Material m = {};
+    m.name = "ar_title";
+    m.glsl_material.color = vec4(1,1,1,1);
+    m.glsl_material.f_unlit = 1;
+    Texture* texture = renderer->LoadTexture(TITLE_ASSET);
+    if (texture){
+        m.glsl_material.diffuse_texture = 0;
+        m.glsl_material.handle_diffuse = texture->texture_handle;
+        m.diff_texture = texture;
+    }else{
+        debug->Err("Title screen: could not load %s\n",TITLE_ASSET);
+        m.glsl_material.color = vec4(0.05f,0.08f,0.06f,1.0f);
+    }
+    renderer->AddMaterial(m);
+
+    //flip_v, for the same reason as the backdrop's - see the note on MakeQuad.
+    Mesh* quad = MakeQuad(1.0f,1.0f,true);
+    if (!quad){
+        debug->Err("Title screen: could not build the quad\n");
+        return;
+    }
+    title_quad = new Object();
+    title_quad->name = "Title Art";
+    title_quad->SetMesh(quad);
+    title_quad->SetMaterialSlot(0,renderer->FindMaterialIndex(m.name));
+    title_quad->SetCastsShadow(false);
+    title_quad->SetPickability(false);
+    title_scene->AddObject(title_quad);
+    FitTitleQuad(main_window->width,main_window->height);
+}
+
+/*
+    COVER: the art fills the window at its own aspect and the excess runs off one axis. The view
+    is 2 tall, so the art is 2 tall unless the window is wider than it, in which case it grows
+    until its width matches the window's instead.
+*/
+void ApplicationArcher::FitTitleQuad(int w, int h){
+    if (!title_quad || (w <= 0) || (h <= 0)){
+        return;
+    }
+    float window_aspect = (float)w / (float)h;
+    float height = 2.0f * std::max(1.0f,window_aspect / TITLE_IMAGE_ASPECT);
+    title_quad->SetScale(vec3(height * TITLE_IMAGE_ASPECT,height,1.0f));
+}
+
+/*
+    Starts loading step `index` of `count`. RENDER THREAD, from Init only.
+
+    Logs what the PREVIOUS step cost, so the log answers "where does the load go" without anyone
+    having to add timers, then draws a frame showing this one. A NULL label is the call after the
+    last step: it logs that step's time and draws nothing, because the next frame is the core
+    loop's and shows "click to continue".
+
+    One frame per step, drawn BEFORE the step runs, so a long step shows its own name for as long
+    as it takes. There are few enough steps that the frames themselves cost nothing to speak of.
+*/
+void ApplicationArcher::LoadingStep(int index, int count, const char* label){
+    auto now = std::chrono::steady_clock::now();
+    if (index > 0){
+        debug->Info("Loading: %s took %.0f ms\n",loading_label,
+                    std::chrono::duration<float,std::milli>(now - loading_step_start).count());
+    }
+    loading_step_start = now;
+    loading_step = index;
+    loading_steps = std::max(count,1);
+    loading_label = label ? label : "";
+    if (label){
+        DrawLoadingFrame();
+    }
+}
+
+/*
+    One frame of the title scene with the loading text over it, from INSIDE Init.
+
+    The core frame loop has not started yet - it starts when Init returns - so this is the same
+    sequence Application::DrawFrame runs, minus everything that is not the title: no PreRender
+    (the world's view work, half built), no ImGui (its panels read the level being built), and
+    only the app's own overlay. It services a resize itself for the same reason, since the core
+    loop is not there yet to do it; Init's own Resize lands here first.
+*/
+void ApplicationArcher::DrawLoadingFrame(){
+    if (!title_scene || !renderer || !main_window){
+        return;
+    }
+    if (main_window->f_resized){
+        main_window->f_resized = false;
+        renderer->Resize(main_window->width,main_window->height);
+    }
+    FitTitleQuad(main_window->width,main_window->height);
+    title_scene->DrawFrame();
+    if (overlay){
+        overlay->Begin(main_window->width,main_window->height);
+        DrawOverlay();
+        renderer->BeginGPUPass(Renderer::GPU_PASS_OVERLAY);
+        overlay->Draw();
+        renderer->EndGPUPass(Renderer::GPU_PASS_OVERLAY);
+    }
+    renderer->EndGPUFrame();
+    main_window->SwapWindowBuffers();
+}
+
+#define TITLE_TEXT          UIColor(242,232,204,255)    //the parchment of the painted signs
+#define TITLE_TEXT_DIM      UIColor(242,232,204,150)
+#define TITLE_BAND          UIColor(  8, 14, 10,150)    //under the text, so busy art cannot eat it
+#define TITLE_BAR_BACK      UIColor(242,232,204, 45)
+#define TITLE_BAR_FILL      UIColor(150,196, 80,235)    //the moss
+
+/*
+    The title's text, low and centred over the art. RENDER THREAD: from DrawLoadingFrame during
+    Init, and from the core loop while the title is the live scene.
+
+    While loading: LOADING, a bar, and the name of the step under way. Once loaded: CLICK TO
+    CONTINUE, breathing on the title scene's own tick count so it pauses with the simulation like
+    every other duration here.
+
+    Sized off the window's height, so the text is the same fraction of the picture at any size.
+*/
+void ApplicationArcher::DrawOverlay(void){
+    if (!overlay || !overlay->IsReady() || !main_window){
+        return;
+    }
+    if (!f_loading && !(title_scene && (main_scene == title_scene))){
+        return;
+    }
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float size = clamp(h * 0.042f,16.0f,72.0f);
+    const float cx = w * 0.5f;
+    const float baseline = h * 0.86f;
+    const float bar_w = size * 9.0f;
+    const float pad = size * 0.9f;
+
+    if (f_loading){
+        const float bar_top = baseline + size * 0.45f;
+        const float bar_h = std::max(3.0f,size * 0.16f);
+        const float label_size = size * 0.5f;
+        const float label_baseline = bar_top + bar_h + label_size * 1.6f;
+        overlay->AddRect(vec2(cx - bar_w * 0.5f - pad,baseline - size * 1.1f),
+                         vec2(cx + bar_w * 0.5f + pad,label_baseline + label_size * 0.7f),
+                         size * 0.4f,TITLE_BAND);
+        overlay->AddText("LOADING",vec2(cx,baseline),size,TITLE_TEXT,UI_ALIGN_CENTER);
+        float fraction = clamp((float)loading_step / (float)loading_steps,0.0f,1.0f);
+        vec2 bar_min(cx - bar_w * 0.5f,bar_top);
+        vec2 bar_max(cx + bar_w * 0.5f,bar_top + bar_h);
+        overlay->AddRect(bar_min,bar_max,bar_h * 0.5f,TITLE_BAR_BACK);
+        if (fraction > 0.0f){
+            overlay->AddRect(bar_min,vec2(bar_min.x + bar_w * fraction,bar_max.y),bar_h * 0.5f,TITLE_BAR_FILL);
+        }
+        overlay->AddText(loading_label,vec2(cx,label_baseline),label_size,TITLE_TEXT_DIM,UI_ALIGN_CENTER);
+        return;
+    }
+
+    const char* text = "CLICK TO CONTINUE";
+    vec2 extent = overlay->MeasureText(text,size);
+    overlay->AddRect(vec2(cx - extent.x * 0.5f - pad,baseline - size * 1.1f),
+                     vec2(cx + extent.x * 0.5f + pad,baseline + size * 0.6f),
+                     size * 0.4f,TITLE_BAND);
+    double phase = (double)(title_scene->GetPhysicsTick() % TITLE_PULSE_TICKS) / (double)TITLE_PULSE_TICKS;
+    float breath = 0.5f + 0.5f * cosf((float)(phase * 2.0 * 3.14159265358979));
+    uint8_t alpha = (uint8_t)(140.0f + 115.0f * breath);
+    overlay->AddText(text,vec2(cx,baseline),size,UIColor(242,232,204,alpha),UI_ALIGN_CENTER);
+}
+
+/*
+    The title's click covers the whole window while the title is up and nothing otherwise. RENDER
+    THREAD, from core whenever the window changes size - which includes the first frame after
+    Init, with the title already live. UpdateTitle clears it on the way out, since leaving the
+    title is not a resize.
+*/
+void ApplicationArcher::LayoutTouchButtons(int w, int h){
+    InputController* input = main_window ? main_window->inputcontroller : NULL;
+    if (!input || (title_tap_button < 0)){
+        return;
+    }
+    if (title_scene && (main_scene == title_scene)){
+        input->SetTouchButtonRect(title_tap_button,{0.0f,0.0f,(float)w,(float)h});
+    }else{
+        input->SetTouchButtonRect(title_tap_button,InputController::TouchRect());
+    }
+}
+
+/*
+    PHYSICS THREAD, from UpdateView while the title is the live scene.
+
+    Both edges are READ every pass and ACTED ON only when the input is ours - raw input reports
+    keys typed into other programs, and a space typed into an editor should not start the game
+    behind it, nor an Escape close it. IsInputLive rather than HasFocus, so archer_hold 'continue'
+    gets through on a minimised window the way every other scripted action does.
+
+    Continue goes back to the level the title was entered from, by RequestActiveScene, which lands
+    at the top of the next pass. At startup that is the world, stepped once at the end of Init so
+    its first frame is not empty.
+
+    Escape or Back exits. By the flag rather than Window::Close, because this is not the thread
+    that pumps the window's messages - see RequestQuitAll. The frame loop sees it and shuts down
+    the usual way, this thread included.
+*/
+void ApplicationArcher::UpdateTitle(InputController* input){
+    if (!input){
+        return;
+    }
+    bool f_continue = input->WasKeyReleased(INPUT_ARCHER_CONTINUE);
+    bool f_exit = input->WasKeyReleased(INPUT_ARCHER_MENU);
+    if (!input->IsInputLive()){
+        return;
+    }
+    if (f_exit){
+        debug->Info("Exit from the title screen\n");
+        Window::RequestQuitAll();
+        return;
+    }
+    if (!f_continue){
+        return;
+    }
+    Scene* back = title_return_scene ? title_return_scene : world_scene;
+    RequestActiveScene(back);
+    debug->Info("Title screen dismissed, back to '%s'\n",back->name.c_str());
+}
+
+/*
+    The title's own state, in and out. PHYSICS THREAD from OnActiveSceneChanged, and once from the
+    end of Init, whose direct write to main_scene does not go through it.
+
+    The click rect covers the window only while the title is up - LayoutTouchButtons places it on
+    a resize, but going to the title is not one. And the panels go down, because they cover the
+    art: f_show_ui is saved and put back, on the same thread ServiceUIToggle writes it from, so
+    pressing U and this cannot fight.
+*/
+void ApplicationArcher::EnterTitle(){
+    InputController* input = main_window ? main_window->inputcontroller : NULL;
+    if (input && (title_tap_button >= 0)){
+        input->SetTouchButtonRect(title_tap_button,
+                                  {0.0f,0.0f,(float)main_window->width,(float)main_window->height});
+    }
+    f_title_saved_show_ui = f_show_ui;
+    f_show_ui = false;
+}
+
+void ApplicationArcher::LeaveTitle(){
+    InputController* input = main_window ? main_window->inputcontroller : NULL;
+    if (input && (title_tap_button >= 0)){
+        input->SetTouchButtonRect(title_tap_button,InputController::TouchRect());
+    }
+    f_show_ui = f_title_saved_show_ui;
 }
 
 void ApplicationArcher::SetupLights(){
@@ -4786,6 +5139,22 @@ void ApplicationArcher::OnActiveSceneChanged(Scene* from, Scene* to){
     if (!to){
         return;
     }
+    /*
+        THE TITLE IS NEVER SWAPPED IN OR OUT. Going to it leaves the live members as they are - they
+        are the level just left, frozen, and continue goes back to it. Leaving it is leaving THAT
+        level: a switch from the title straight to another one (the Scene panel can) must park the
+        live members under the level they belong to, not under the title, or they could never be
+        swapped back.
+    */
+    if (to == title_scene){
+        title_return_scene = from;
+        EnterTitle();
+        return;
+    }
+    if (from == title_scene){
+        LeaveTitle();
+        from = title_return_scene ? title_return_scene : world_scene;
+    }
     for (size_t i = 0; i < parked_levels.size(); i++){
         if (parked_levels[i].scene == to){
             SwapLevel(parked_levels[i]);
@@ -4879,11 +5248,35 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap('P',INPUT_PAUSE);
 
     /*
-        Input recording on the pad as well as F9, so a run can be recorded without taking a hand
-        off the controller. Back, because Start is already restart - and pressing restart when you
-        meant record throws away the very position you set up to record from.
+        Input recording is F9 alone, core's default - it used to be on the pad's Back as well, which
+        is now the menu below. A dev feature gives way to a button the game needs.
+
+        Escape and Back: the menu - to the title from a level, out of the game from the title. The
+        window stops closing itself on Escape, which is core's default for apps without a menu
+        (see f_escape_closes_window); exiting is now UpdateTitle's to decide.
     */
-    input->AddKeyMap(GAMEPAD_KEY_BACK,INPUT_RECORD_TOGGLE);
+    main_window->f_escape_closes_window = false;
+    input->AddKeyMap(VK_ESCAPE,INPUT_ARCHER_MENU);
+    input->AddKeyMap(GAMEPAD_KEY_BACK,INPUT_ARCHER_MENU);
+    //Not recorded: a replay that sent her to the title would stop playing the level it recorded.
+    input->SetRecorded(INPUT_ARCHER_MENU,false);
+
+    /*
+        The title's continue. Space and A are also the jump, and Start the restart, which is fine:
+        the title reads only this action, and each of those edges is spent on the title's own pass
+        before the world is live to see it. Not Enter - see INPUT_ARCHER_CONTINUE.
+
+        The click is a touch button, the same way apps/bomber's menu gets the mouse - bound here
+        and PLACED in LayoutTouchButtons, which covers the window with it while the title is up
+        and nothing otherwise. Never drawn: f_draw_touch_buttons is for on-screen game controls.
+    */
+    input->AddKeyMap(VK_SPACE,INPUT_ARCHER_CONTINUE);
+    input->AddKeyMap(GAMEPAD_KEY_A,INPUT_ARCHER_CONTINUE);
+    input->AddKeyMap(GAMEPAD_KEY_START,INPUT_ARCHER_CONTINUE);
+    title_tap_button = input->AddTouchButton(InputController::TouchRect(),INPUT_ARCHER_CONTINUE,"continue");
+    f_draw_touch_buttons = false;
+    //Not recorded: a recording starts in the world, where this action means nothing.
+    input->SetRecorded(INPUT_ARCHER_CONTINUE,false);
     //The view toggles are the person's, not the game's - a replay should not flip the panels.
     input->SetRecorded(INPUT_ARCHER_TOGGLE_UI,false);
     input->SetRecorded(INPUT_ARCHER_TOGGLE_BLOCKOUT,false);
@@ -4905,6 +5298,8 @@ void ApplicationArcher::SetupInput(){
     input->NameAction(INPUT_ARCHER_TOGGLE_BLOCKOUT,"toggle_blockout");
     input->NameAction(INPUT_ARCHER_MOVE,"move");
     input->NameAction(INPUT_ARCHER_AIM,"aim");
+    input->NameAction(INPUT_ARCHER_CONTINUE,"continue");
+    input->NameAction(INPUT_ARCHER_MENU,"menu");
 }
 
 /*
@@ -5053,6 +5448,12 @@ void ApplicationArcher::RegisterCommandHandlers(){
             return OBJECTID_INVALID;
         });
 
+    main_scene->RegisterCommandHandler(ARCHER_CMD_SOUND_VOLUME,
+        [this](const SimCommand& cmd) -> objectid_t {
+            sound_volume = clamp(cmd.value[0],0.0f,1.0f);
+            return OBJECTID_INVALID;
+        });
+
     main_scene->RegisterCommandHandler(ARCHER_CMD_PLACE,
         [this](const SimCommand& cmd) -> objectid_t {
             PlaceArcher(v2(cmd.value[0],cmd.value[1]));
@@ -5197,12 +5598,31 @@ void ApplicationArcher::UpdateView(void){
         step its arrow strikes. UpdateView runs on every pass and after the tick, and a paused loop
         still passes once a tick-length, so each step lets out about one tick of sound. See
         SoundSystem::SetPaused.
+
+        And held for the whole time the title is up: a level left by Escape is frozen behind it, so
+        its sounds are too, and a bow's creak picks up where it stopped on the way back.
     */
     if (soundsystem){
-        soundsystem->SetPaused(main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass());
+        soundsystem->SetPaused((main_scene == title_scene) ||
+                               (main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass()));
     }
 #endif
     InputController* input = main_scene->inputcontroller;
+    //The title screen waits for its click and nothing else: no camera, no picking, no toggles.
+    if (main_scene == title_scene){
+        UpdateTitle(input);
+        return;
+    }
+    /*
+        Escape, or Back: to the title, as a pause. Read every pass, acted on only when the input is
+        ours - IsInputLive, as for continue, so archer_hold 'menu' works on a minimised window.
+        The rest of the way in is OnActiveSceneChanged's, when the switch lands next pass.
+    */
+    bool f_menu = input->WasKeyReleased(INPUT_ARCHER_MENU);
+    if (f_menu && input->IsInputLive() && title_scene){
+        RequestActiveScene(title_scene);
+        debug->Info("To the title screen from '%s'\n",main_scene->name.c_str());
+    }
     /*
         F1 the engine panels, F2 the blockout back on top of the terrain.
 
@@ -5291,7 +5711,9 @@ void ApplicationArcher::UpdateView(void){
 //--- The tick -----------------------------------------------------------------------------------
 
 void ApplicationArcher::RunSimulationTick(void){
-    if (!main_scene){
+    //Nothing of the level runs under the title - the rules below are the world's, and `stage` is
+    //the world's the whole time the title is up.
+    if (!main_scene || (main_scene == title_scene)){
         return;
     }
     InputController* input = main_scene->inputcontroller;
@@ -5535,15 +5957,15 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
 #ifdef USE_SOUND
     if (soundsystem){
         if (f_nocked && !f_was_nocked){
-            snd_bow_tension = soundsystem->Play("bow_tension",false,0.7f * sound_volume);
+            snd_bow_tension = PlayCue("bow_tension","bow_tension",0.7f);
         }
         if (!f_nocked && f_was_nocked){
-            soundsystem->Stop(snd_bow_tension);     //inert if it already finished
+            StopCue("bow_tension","bow_tension",snd_bow_tension);     //inert if it already finished
             snd_bow_tension = SOUND_INVALID_HANDLE;
         }
         //Louder the harder the draw: a half-drawn lob leaves the string with far less in it.
         if (events.f_shot){
-            soundsystem->Play("arrow_leave",false,(0.55f + 0.45f * events.shot_power) * sound_volume);
+            PlayCue("arrow_leave","arrow_leave",0.55f + 0.45f * events.shot_power);
         }
         /*
             The kick is two sounds. The SWING is the leg going out, heard whether or not it finds
@@ -5562,10 +5984,10 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
         const KickSpec& kick = stage.Kick();
         int strike_shift = ((kick.active_from + kick.active_to) - (KICK_ACTIVE_FROM + KICK_ACTIVE_TO)) / 2;
         if (stage.kick_ticks == std::max(kick_swing_tick + strike_shift,1)){
-            soundsystem->Play("kick_swing",false,0.8f * sound_volume);
+            PlayCue("kick_swing","kick_swing",0.8f);
         }
         if (events.f_kick_connected){
-            soundsystem->Play("kick_land",false,0.8f * sound_volume);
+            PlayCue("kick_land","kick_land",0.8f);
         }
         /*
             And her shout, on SOME kicks and on a tick that wanders: whether, which one, and when,
@@ -5591,7 +6013,7 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
             }
         }
         if (kick_shout_tick > 0 && stage.kick_ticks == kick_shout_tick){
-            soundsystem->Play(KICK_SHOUTS[kick_shout],false,0.8f * sound_volume);
+            PlayCue("kick_shout",KICK_SHOUTS[kick_shout],0.8f);
         }
     }
 #endif
@@ -5614,7 +6036,45 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
 float ApplicationArcher::ArrowSoundGain(float x, float speed){
     float by_speed = 0.35f + 0.65f * clamp(speed / ARROW_SPEED_MAX,0.0f,1.0f);
     float by_distance = clamp(1.0f - (fabsf(x - stage.pos.x) - 12.0f) / 28.0f,0.15f,1.0f);
-    return by_speed * by_distance * sound_volume;
+    return by_speed * by_distance;
+}
+
+/*
+    See the declaration. The log line is written BEFORE the play, and whether or not the play
+    succeeds: it records what the game decided, and a voice that could not be had is the sound
+    system's business, not a different decision.
+*/
+soundhandle_t ApplicationArcher::PlayCue(const char* cue, const char* sound, float gain, float from){
+    CueLogEntry e;
+    e.tick = stage.ticks;
+    e.cue = cue;
+    e.what = "play";
+    e.sound = sound;
+    e.gain = gain;
+    e.from = from;
+    cue_log.Add(e);
+#ifdef USE_SOUND
+    if (soundsystem){
+        return soundsystem->Play(sound,false,gain * sound_volume,SOUND_ONESHOT,from);
+    }
+#endif
+    return SOUND_INVALID_HANDLE;
+}
+
+void ApplicationArcher::StopCue(const char* cue, const char* sound, soundhandle_t handle){
+    CueLogEntry e;
+    e.tick = stage.ticks;
+    e.cue = cue;
+    e.what = "stop";
+    e.sound = sound;
+    cue_log.Add(e);
+#ifdef USE_SOUND
+    if (soundsystem){
+        soundsystem->Stop(handle);
+    }
+#else
+    (void)handle;
+#endif
 }
 
 /*
@@ -5671,7 +6131,7 @@ void ApplicationArcher::StartArrowSwooshes(){
             continue;       //not yet
         }
         float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
-        soundsystem->Play("arrow_swoosh",false,ArrowSoundGain(x,speed),SOUND_ONESHOT,arrow_swoosh_peak - lead);
+        PlayCue("arrow_swoosh","arrow_swoosh",ArrowSoundGain(x,speed),arrow_swoosh_peak - lead);
         arrow_swooshed[i] = true;
         debug->Info("Arrow %i swoosh: strikes at level tick %llu (%i from now), started %.3fs in\n",i,
                     (unsigned long long)(stage.ticks + ticks),ticks,arrow_swoosh_peak - lead);
@@ -5684,7 +6144,7 @@ void ApplicationArcher::PlayArrowHit(float x, float speed){
     if (!soundsystem){
         return;
     }
-    soundsystem->Play("arrow_hit",false,ArrowSoundGain(x,speed));
+    PlayCue("arrow_hit","arrow_hit",ArrowSoundGain(x,speed));
 #else
     (void)x;
     (void)speed;
@@ -8077,6 +8537,12 @@ void ApplicationArcher::PublishSnapshot(){
     }
     //Here, on the physics thread, which is the one that starts them - not in the MCP handler.
     s.sounds_playing = soundsystem ? soundsystem->GetNumPlaying() : -1;
+#ifdef USE_SOUND
+    if (soundsystem){
+        soundsystem->ListVoices(s.voices);
+    }
+#endif
+    s.sound_volume = sound_volume;
     s.arrows_on_props = 0;
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         if (arrow_stuck[i].prop){ s.arrows_on_props++; }
@@ -8171,8 +8637,15 @@ void ApplicationArcher::WaitTicks(int ticks){
     if (ticks <= 0){
         return;
     }
-    uint64_t target = main_scene->GetPhysicsTick() + (uint64_t)ticks;
-    for (int waited = 0; waited < 8000 && main_scene->GetPhysicsTick() < target; waited += 4){
+    /*
+        Counted on the scene the wait STARTED on, and over when the live scene changes. Each scene
+        keeps its own tick count and only the live one advances, so a wait that re-read main_scene
+        across a switch - archer_hold 'continue' off the title, whose count is hundreds ahead of
+        the world's - sat out the whole eight-second cap.
+    */
+    Scene* scene = main_scene;
+    uint64_t target = scene->GetPhysicsTick() + (uint64_t)ticks;
+    for (int waited = 0; waited < 8000 && main_scene == scene && scene->GetPhysicsTick() < target; waited += 4){
         Sleep(4);
     }
 }
@@ -8605,11 +9078,14 @@ void ApplicationArcher::RegisterMCPTools(){
         "draw, kick, kneel (a toggle: any hold is one press), action, knife, and the arrow keys "
         "'up' / 'aim_down' - which tilt the aim, and on the rope CLIMB it. Held while 'kick' is "
         "pressed they choose the kick: 'aim_down' the low push kick (Kick_Front_2), 'up' the high "
-        "kick (Kick_Front_3); archer_state's archer.kick says which one is running.",
+        "kick (Kick_Front_3); archer_state's archer.kick says which one is running. 'continue' "
+        "dismisses the title screen the app starts on - nothing else in the level moves until it has - "
+        "and goes back to the level it was entered from. 'menu' (Escape) goes to the title from a "
+        "level, pausing it; ON THE TITLE, 'menu' EXITS THE APP.",
         json{
             {"type","object"},
             {"properties", {
-                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, kneel, action, knife, up or aim_down"}}},
+                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, continue or menu"}}},
                 {"ticks", {{"type","number"},{"description","simulation ticks to hold it, default 20, capped at 600"}}},
                 {"wait", {{"type","boolean"},{"description","block until the hold has finished, default true; false returns at once so another hold can be layered on top"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
@@ -8635,8 +9111,12 @@ void ApplicationArcher::RegisterMCPTools(){
             //The arrow keys: the aim's tilt - and on the rope, climbing. `down` is already S.
             else if (name == "up"){       action = INPUT_ARCHER_AIM_UP;   }
             else if (name == "aim_down"){ action = INPUT_ARCHER_AIM_DOWN; }
+            //The title screen's click - see UpdateTitle.
+            else if (name == "continue"){ action = INPUT_ARCHER_CONTINUE; }
+            //Escape: to the title from a level - and out of the app from the title.
+            else if (name == "menu"){     action = INPUT_ARCHER_MENU;     }
             else{
-                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, kneel, action, knife, up or aim_down"} };
+                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, continue or menu"} };
             }
             int ticks = (int)clamp(args.value("ticks",20.0f),0.0f,600.0f);
             input->HoldKey(action,(uint32_t)ticks);
@@ -8685,6 +9165,71 @@ void ApplicationArcher::RegisterMCPTools(){
             main_scene->SubmitCommand(cmd);
             WaitTicks(3);
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
+    /*
+        The game's reactions as they were decided - see CueLog and cue_plan.md. This is how a
+        replay is compared with another: clear, replay, read, and diff the lines. They are
+        CueLog's own lock's, not the simulation's, so this reads them directly.
+    */
+    MCPServer::Get()->RegisterTool("cue_log",
+        "What the game's reactions did, one line per decision: the LEVEL tick (which a replay "
+        "restores, so two replays of one recording number their lines alike), the cue, 'play' or "
+        "'stop', the sound, and its gain before the master volume, with pitch, pan and a start "
+        "offset when they are not the default. To compare two runs: call with clear true, "
+        "input_replay with wait true, read, and diff. Muting (archer_sound volume 0) does not "
+        "change the lines.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"last", {{"type","number"},{"description","only the last N lines; default all that are kept (1024)"}}},
+                {"clear", {{"type","boolean"},{"description","empty the log AFTER reading it, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            int last = (int)clamp(args.value("last",0.0f),0.0f,(float)CueLog::CAPACITY);
+            std::vector<std::string> lines = cue_log.Lines((size_t)last);
+            uint64_t total = cue_log.Total();
+            if (args.value("clear",false)){
+                cue_log.Clear();
+            }
+            return json{ {"total",total}, {"lines",lines} };
+        });
+
+    MCPServer::Get()->RegisterTool("archer_sound",
+        "The master volume, and every sound playing as of the last tick: name, bus, gain, pitch, "
+        "pan, how far in and how long. Pass 'volume' to set the master (0..1, the panel's slider) - "
+        "0 to replay recordings silently at someone's desk; cue_log is unaffected by it.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"volume", {{"type","number"},{"description","master volume 0..1; omit to leave it"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            if (args.contains("volume")){
+                SimCommand cmd;
+                cmd.type = ARCHER_CMD_SOUND_VOLUME;
+                cmd.value[0] = args.value("volume",sound_volume);
+                main_scene->SubmitCommand(cmd);
+                WaitTicks(2);
+            }
+            ArcherSnapshot s;
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                s = snapshot;
+            }
+            json voices = json::array();
+            for (const SoundVoiceInfo& v : s.voices){
+                voices.push_back(json{ {"name",v.name}, {"handle",v.handle}, {"bus",v.bus},
+                                       {"gain",v.gain}, {"pitch",v.pitch}, {"pan",v.pan},
+                                       {"position",v.position}, {"length",v.length},
+                                       {"looping",v.f_looping}, {"keep",v.f_keep}, {"held",v.f_held} });
+            }
+            return json{ {"volume",s.sound_volume}, {"sounds_playing",s.sounds_playing}, {"voices",voices} };
         });
 
     MCPServer::Get()->RegisterTool("archer_camera",
@@ -9185,7 +9730,7 @@ void ApplicationArcher::RegisterMCPTools(){
     names, which is what the menu lists and what PlaceMenuSpawn recognises.
 */
 static const char* ARCHER_PLACEABLE_NODES[] = {
-    "rock_big", "rock_small", "pine_tree", "tree_stump", "logs", "barrel", "wooden_crate",
+    "rock_big_1", "rock_big_2", "rock_small_1", "pine_tree", "tree_stump", "logs", "barrel", "wooden_crate",
     "wooden_panel", "signpost", "post_leaves", "pillar_lamp", "post_lamp", "sunflower", "flower",
     "fern_1", "fern_2", "grass_1", "grass_2", "leaf_small", "straw_man", "archery_target", "terrain_tile_big", "terrain_tile_round",
 };

@@ -30,12 +30,22 @@
     so she passes in front of the rocks rather than through them. A big rock that would not fit
     between the platform's back and that line is shrunk until it does.
 */
+/*
+    One kind per mesh in archer.glb, named after its node with the variant number dropped to the
+    enum's. A cluster's big rock is drawn from the BIG kinds by the corner's hash, so a level gets
+    both shapes and the same corner always gets the same one.
+*/
 enum BoulderKind{
-    BOULDER_BIG_1 = 0,        //rock_big
-    BOULDER_BIG_2,        //rock_big
-    BOULDER_SMALL_1,          //rock_small
+    BOULDER_BIG_1 = 0,      //rock_big_1
+    BOULDER_BIG_2,          //rock_big_2
+    BOULDER_SMALL_1,        //rock_small_1
     BOULDER_KIND_COUNT
 };
+#define BOULDER_BIG_KINDS   2   //BOULDER_BIG_1 .. BOULDER_BIG_1 + this - 1
+
+inline bool IsBigBoulder(int kind){
+    return (kind >= BOULDER_BIG_1) && (kind < BOULDER_BIG_1 + BOULDER_BIG_KINDS);
+}
 
 struct BoulderParams{
     float min_wall      = 0.8f;     //a face must rise this far above the top to be a corner
@@ -61,9 +71,11 @@ struct BoulderParams{
     float small_tilt_deg = 14.0f;   //a small rock is tipped by up to this, the way a fallen one is
 
     //Per-kind size at scale 1 - radius in the ground plane (the widest the yaw can make it) and
-    //height - measured off the meshes by the app. Defaults are the archer.glb rocks at her scale.
-    float radius[BOULDER_KIND_COUNT] = { 0.44f, 0.34f };
-    float height[BOULDER_KIND_COUNT] = { 0.67f, 0.24f };
+    //height - measured off the meshes by the app. Defaults are the archer.glb rocks at her scale,
+    //the second big one given the first's numbers until it is measured.
+    //A kind at radius 0 - its mesh did not load - is never chosen.
+    float radius[BOULDER_KIND_COUNT] = { 0.44f, 0.44f, 0.34f };
+    float height[BOULDER_KIND_COUNT] = { 0.67f, 0.67f, 0.24f };
 };
 
 struct Boulder{

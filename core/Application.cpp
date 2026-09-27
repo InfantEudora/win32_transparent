@@ -452,9 +452,11 @@ void Application::FrameThreadFunction(Application* app){
 
         A missing font or shader is not fatal: Init logs, returns false, and the overlay stays
         un-ready, so every Add* is a no-op and the app runs without a HUD rather than not at all.
+
+        ONLY IF THE APP HAS NOT ALREADY MADE ONE - see EnsureOverlay, which is how an app that
+        draws a loading screen from inside its own Init gets text on it before this line runs.
     */
-    app->overlay = new UIOverlay();
-    app->overlay->Init();
+    app->EnsureOverlay();
 
     //Before RegisterCoreMCPTools: those tools submit commands, so the handlers have to be in
     //place before any of them can be called.
@@ -539,6 +541,14 @@ void Application::FrameThreadFunction(Application* app){
     wglMakeCurrent(NULL,NULL);
 
     debug->Info("FrameThreadFunction terminated\n");
+}
+
+void Application::EnsureOverlay(){
+    if (overlay){
+        return;
+    }
+    overlay = new UIOverlay();
+    overlay->Init();
 }
 
 void Application::DrawFrame(){

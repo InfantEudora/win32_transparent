@@ -9,7 +9,7 @@
 /*
     A score: WHAT the music is made of, as opposed to what it is doing right now.
 
-    It is a JSON file (assets/music/*.json) rather than code, because the whole point of this
+    It is a JSON file (assets/music/<name>.json) rather than code, because the whole point of this
     system is authoring music by stating a key, a tempo, a set of instruments and how each of them
     responds to suspense - not by writing a sequence. A score names three kinds of part:
 
@@ -21,6 +21,12 @@
                 whatever the scale asks for. Each has a register, and a density (chance of a note
                 per beat) at calm and at tense.
       STINGERS  one-off hits the game fires on an event.
+
+    SECTIONS are sets of beds and voices that take turns, for variation over minutes rather than
+    bars: the same theme, played by a different band. Beds and voices at the top level of the file
+    play in every section; those listed inside a section play only while it is on. The engine moves
+    to the next section on a bar line - after the section's `bars`, or when asked - crossfading
+    the beds over section_fade_s. A score without sections is one section, as before.
 
     The key, mode and tempo here are only where the music STARTS; after that they are the
     engine's state, changed by key events. Every number is documented beside its default in
@@ -34,6 +40,7 @@ struct MusicSample{
     int channels = 0;
     int rate = 0;
     size_t frames = 0;
+    float zcr_hz = 0;               //how bright it is, as a frequency - see LoadMusicSampleFile
 };
 
 struct MusicBedDef{
@@ -44,6 +51,8 @@ struct MusicBedDef{
     int root_midi = -1;             //-1 = unpitched, never transposed
     int degree = 0;                 //semitones above the key's root that the root should sound at
     float fade_s = 3.0f;            //loop crossfade, and the crossfade on a key change
+    float height = -1.0f;           //0 low .. 1 high, for the brightness slider; -1 = work it out
+    int section = -1;               //index into MusicScore::sections; -1 = plays in every section
 };
 
 struct MusicVoiceDef{
@@ -59,6 +68,13 @@ struct MusicVoiceDef{
     float release_s = 0.3f;
     float offbeat = 0.25f;          //share of notes placed half a beat late
     float spread = 0.3f;            //random pan, 0 = centre
+    float height = -1.0f;           //0 low .. 1 high, for the brightness slider; -1 = from the register
+    int section = -1;               //as MusicBedDef::section
+};
+
+struct MusicSectionDef{
+    std::string name;
+    int bars = 0;                   //how long it plays before the next one takes over; 0 = until asked
 };
 
 struct MusicStingerDef{
@@ -77,10 +93,18 @@ struct MusicScore{
     std::vector<MusicBedDef> beds;
     std::vector<MusicVoiceDef> voices;
     std::vector<MusicStingerDef> stingers;
+    std::vector<MusicSectionDef> sections;                          //empty = one section, everything in it
+    float section_fade_s = 6.0f;    //the beds' crossfade from one section to the next
+    bool f_section_random = false;  //next section: a random other one, rather than the next in order
     std::map<std::string, std::shared_ptr<MusicSample>> samples;    //by asset name, shared by parts
 
     const MusicSample* Sample(const std::string& name) const;
+    int SectionIndex(const std::string& name) const;                //-1 if there is none by that name
 };
+
+//One PCM16 wav from a file path (not an asset name), under `name`. For auditioning a library file
+//that no score names; LoadMusicScore uses the same reader.
+bool LoadMusicSampleFile(const std::string& path, const std::string& name, MusicSample& out, std::string& error);
 
 //Loads a score and every sample it names. On failure returns false with `error` saying which
 //line of the score or which file is at fault; a score is never half-loaded.
