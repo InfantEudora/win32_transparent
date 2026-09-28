@@ -1,13 +1,48 @@
 #version 430 core
-layout (local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
 
-//These are set with glBindImageTexture
-layout(rgba8, binding = 0) uniform image2D imgOut;
+/*
+    SCREEN-SPACE AMBIENT OCCLUSION, the first of three stages - see Renderer::SSAOPass.
 
-//The textures we're sampling from
-layout (binding = 0) uniform sampler2D positiontexture;
-layout (binding = 1) uniform sampler2D normaltexture;
-layout (binding = 2) uniform sampler2D albedotexture;
+        1. this      raw occlusion from the G-buffer, into ssao_raw_tex_id
+        2. ssao_blur.comp, twice   an edge-aware blur, across then down, into ssao_tex_id
+        3. ssao_composite.frag     multiplies the solid scene by it, before the translucent pass
+
+    What lands in the image is the MULTIPLIER itself - strength and power already applied - so the
+    two "SSAO" view buffers show exactly what the composite will do to the frame, and there is no
+    second place that shapes the curve.
+
+    It started as LearnOpenGL's, and two things about it have been changed on purpose:
+
+    THE KERNEL IS FIXED AND ONLY ITS ROTATION VARIES PER PIXEL, IN A 4x4 TILE. The version this
+    replaces drew every sample direction AND every basis rotation from a hash of the pixel, which
+    is white noise: no small blur removes it, it only turns fine grain into coarse blotches. A fixed
+    kernel spun by one of 16 angles repeating every 4 pixels is noise with all of its energy at a
+    4-pixel period, and a Gaussian blur of radius 4 (sigma 2) takes a 4-pixel period down to under
+    1% - so the blur that follows removes the pattern rather than smearing it. That pairing is the
+    whole design; changing the tile size means changing the blur's default with it.
+
+    THE KERNEL IS COSINE-WEIGHTED. Directions come off a golden-angle spiral on the unit disk lifted
+    onto the hemisphere (Malley's method), so they crowd towards the normal the way light that
+    actually reaches a surface does. The tutorial's uniform hemisphere counts a sample skimming
+    along the surface as much as one straight up, which is what makes its flat floors grey.
+
+    AND IT READS THE G-BUFFER ONLY. It used to take the resolved colour for its alpha (and multiply
+    the colour in, which is how the one view of it was an already-composited picture). The
+    G-buffer's own w - the material's alpha, 0 where nothing was drawn - answers the same question
+    without this pass needing the colour pass to have run first, which is what lets it run BEFORE
+    the colour pass now.
+*/
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (rgba16f, binding = 0) uniform writeonly image2D imgOut;
+
+//The G-buffer, on the units CustomShaderPass binds it to - NOT 0, which is the shadow map; this
+//runs before the colour pass now and anything left on unit 0 would be sampled as the sun's shadow.
+layout (binding = TEXUNIT_GBUFFER_POSITION) uniform sampler2D positiontexture;
+layout (binding = TEXUNIT_GBUFFER_NORMAL)   uniform sampler2D normaltexture;
 
 uniform mat4 mat_worldcam;      //World -> clip. Camera::mat_cam, which is projection * view.
 
@@ -31,34 +66,34 @@ uniform vec3 eye_position;
 uniform vec3 camera_forward;
 
 //The destination image's real size in pixels. NOT derivable from gl_NumWorkGroups: the dispatch
-//rounds the width UP to a whole number of groups, so gl_NumWorkGroups.x*32 is a slightly too
-//large width to divide a uv by, and the picture comes out stretched by a fraction of a pixel.
+//rounds UP to a whole number of groups, so the last row and column of groups overhang the image.
 uniform vec2 target_size;
+/*
+    The scene viewport inside that image, (x, y, width, height) in render pixels - what
+    Renderer::SetSceneViewport handed glViewport for the G-buffer. A projected sample's 0..1 screen
+    position is a position within THIS rectangle, not within the whole texture. The two are the same
+    for every app but Tank, whose offset viewport made every sample here read the pixel half a
+    screen away from where it projected.
+*/
+uniform vec4 scene_viewport;
 
-//Actual voronoi from IQ: https://www.shadertoy.com/view/MslGD8
-vec2 hashwithoutsine22(vec2 p){
-	vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973));
-    p3 += dot(p3, p3.yzx+33.33);
-    return fract((p3.xx+p3.yz)*p3.zy);
-}
+//The Renderer panel's knobs - see the ssao_* fields in Renderer.h for what each one does.
+uniform float radius = 1.5;         //World units
+uniform float bias = 0.025;         //World units along the view axis
+uniform int   kernel_size = 32;
+uniform float strength = 1.0;       //0 = no effect, 1 = the occlusion as measured
+uniform float power = 1.0;          //Contrast: >1 deepens the creases, <1 lifts them
 
-vec3 hashwithoutsine32(vec2 p){
-	vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973));
-    p3 += dot(p3, p3.yxz+33.33);
-    return fract((p3.xxy+p3.yzz)*p3.zyx);
-}
+const float GOLDEN_ANGLE = 2.39996323;
+const float TWO_PI = 6.28318531;
 
-vec3 hashwithoutsine33(vec3 p3){
-	p3 = fract(p3 * vec3(.1031, .1030, .0973));
-    p3 += dot(p3, p3.yxz+33.33);
-    return fract((p3.xxy + p3.yxx)*p3.zyx);
-}
-
-vec2 hash(vec2 p){
-    p = vec2(dot(p,vec2(127.1,311.7)),
-             dot(p,vec2(269.5,183.3)));
-    return fract(sin(p)*18.5453);
-}
+//The 4x4 ordered-dither matrix, as an index 0..15. Neighbouring entries are as far apart in value
+//as a 4x4 tile allows, so adjacent pixels get very different rotations - which is what makes the
+//tile look like even grain before the blur rather than like a gradient.
+const float BAYER4[16] = float[16]( 0.0,  8.0,  2.0, 10.0,
+                                   12.0,  4.0, 14.0,  6.0,
+                                    3.0, 11.0,  1.0,  9.0,
+                                   15.0,  7.0, 13.0,  5.0);
 
 //Distance from the eye along the view axis, for a WORLD-space point. Positive in front of the
 //camera and growing with distance - the opposite sign to view-space .z, which is why the
@@ -67,36 +102,26 @@ float ViewDepth(vec3 world_p){
     return dot(world_p - eye_position, camera_forward);
 }
 
-//TODO: Provide it a random texture from RRandom.
-//This reads the texture in, and outputs to the texture out.
 void main(){
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
-    //The dispatch rounds up, so the rightmost group carries invocations past the edge of the image.
-    if (texelCoord.x >= int(target_size.x)){
+    if (any(greaterThanEqual(texelCoord, ivec2(target_size)))){
         return;
     }
-    //+0.5 samples the CENTRE of the texel. Without it every fetch sits on a texel corner, which
-    //under GL_NEAREST is a coin toss between two neighbours.
-    vec2 uv = (vec2(texelCoord) + 0.5) / target_size;
 
-    vec3 fragPos = texture(positiontexture, uv).xyz;
+    vec4 frag = texelFetch(positiontexture, texelCoord, 0);
+    float alpha = clamp(frag.w, 0.0, 1.0);
+    //Nothing drawn here (w is cleared to 0), or a surface too transparent to have been kept:
+    //unoccluded, so the composite leaves the pixel alone.
+    if (alpha < 0.1){
+        imageStore(imgOut, texelCoord, vec4(1.0));
+        return;
+    }
+    vec3 fragPos = frag.xyz;
     //Normalised because this arrives INTERPOLATED across the triangle and stored in RGBA16F, so it
     //is not unit length - and every dot() and cross() below assumes that it is.
-    vec3 normal    = normalize(texture(normaltexture, uv).xyz);
-    vec4 albedo    = texture(albedotexture, uv);
-    float alpha = albedo.w;
-    //float alpha = 1.0;
-    if (alpha < 0.1){
-        imageStore(imgOut, texelCoord, vec4(0,0,0,0));
-        return;
-    }
+    vec3 normal = normalize(texelFetch(normaltexture, texelCoord, 0).xyz);
 
     float frag_depth = ViewDepth(fragPos);
-
-    float occlusion = 0.0;
-    float radius = 1.5;
-    float bias = 0.025;
-    int kernelSize = 32;
 
     /*
         A reference axis that is NOT parallel to the normal, to build a basis out of.
@@ -107,76 +132,78 @@ void main(){
         normal can be. Every block face in bomber that faces along world Z made
         `randomVec - normal*dot(randomVec,normal)` collapse to nearly zero, and normalize() of that
         is garbage - so a whole family of surfaces got a different, meaningless basis per pixel.
-
-        Choosing the reference off the normal guarantees the cross product has something to work
-        with, whichever way the surface faces. It is also loop-invariant, unlike what it replaces.
     */
     vec3 ref = (abs(normal.z) < 0.9) ? vec3(0,0,1) : vec3(1,0,0);
-    vec3 base_tangent = normalize(cross(ref, normal));
+    vec3 tangent   = normalize(cross(ref, normal));
+    vec3 bitangent = cross(normal, tangent);
 
-    for(int i = 0; i < kernelSize; ++i){
-        //Jitter the basis per pixel so the fixed sample directions do not band across the screen.
-        //The rotation is about the normal, so the hemisphere stays a hemisphere.
-        vec2 rot = normalize(hashwithoutsine22(vec2(uv.x*120+i, uv.y*120-i)) * 2.0 - 1.0);
-        vec3 tangent   = normalize(base_tangent * rot.x + cross(normal,base_tangent) * rot.y);
-        vec3 bitangent = cross(normal, tangent);
-        mat3 TBN       = mat3(tangent, bitangent, normal);
+    //This pixel's place in the 4x4 tile: one spin for the whole kernel, and - through a second,
+    //differently ordered walk of the same 16 values (5 is coprime with 16, so *5 permutes them) -
+    //one shift of the sample lengths, so neighbouring pixels do not probe the same distances either.
+    float pattern = (BAYER4[(texelCoord.y & 3) * 4 + (texelCoord.x & 3)] + 0.5) / 16.0;
+    float spin = pattern * TWO_PI;
+    float length_shift = fract(pattern * 5.0);
 
-        // get sample in unit hemisphere
-        //hash*() return fract(), i.e. [0,1) on every component - so the -1..1 remap has to happen
-        //BEFORE the abs() that folds the sphere into a hemisphere. Without it `sampl.z =
-        //abs(sampl.z)` was a no-op and normalize() of an all-positive vector only ever produced
-        //the +++ octant: all 32 samples crowded into an eighth of the hemisphere they must cover.
-        vec3 sampl = hashwithoutsine33(tangent + vec3(float(i*3.1415))) * 2.0 - 1.0;
-        sampl.z = abs(sampl.z);
-        sampl = normalize(sampl);
-        float scale = float(i) / float(kernelSize);
-        scale   = mix(0.1f, 1.0f, scale * scale); //mix = lerp
-        sampl *= scale;
+    int n = clamp(kernel_size, 1, 128);
+    float occlusion = 0.0;
+    for (int i = 0; i < n; ++i){
+        //A point on the unit disk, evenly spread by the golden angle, lifted straight up onto the
+        //hemisphere: uniform over the disk's AREA is cosine-weighted over the hemisphere.
+        float t = (float(i) + 0.5) / float(n);
+        float r = sqrt(t);
+        float phi = float(i) * GOLDEN_ANGLE + spin;
+        vec3 dir = tangent * (r * cos(phi)) + bitangent * (r * sin(phi)) + normal * sqrt(1.0 - t);
 
-        vec3 samplePos = TBN * sampl; // tangent space to WORLD space - the normal is a world normal
-        samplePos = fragPos + samplePos * radius;
+        //How far out along that direction. Squared towards the short end, as the tutorial does:
+        //the creases a surface actually sits in are close to it, so that is where samples pay.
+        //Walked in a different order to the directions so length and angle are not tied together.
+        float l = fract(float(i) * 0.618034 + length_shift);
+        float scale = mix(0.1, 1.0, l * l);
+        vec3 samplePos = fragPos + dir * (scale * radius);
 
-        vec4 offset = vec4(samplePos, 1.0);
-        offset      = mat_worldcam * offset;    // from world to clip-space
+        vec4 clip = mat_worldcam * vec4(samplePos, 1.0);
         //Behind the eye: the perspective divide flips the sign and lands this sample on a
         //mirrored, meaningless pixel rather than off-screen where it belongs.
-        if (offset.w <= 0.0){
+        if (clip.w <= 0.0){
             continue;
         }
-        //offset.w is the sample's own distance from the eye: this projection has vertex[2].w = -1
+        //clip.w is the sample's own distance from the eye: this projection has vertex[2].w = -1
         //(see fmat4::perspectivematrix), so clip.w == -z_view == ViewDepth(samplePos) exactly.
-        float want_depth = offset.w;
-        offset.xyz /= offset.w;               // perspective divide
-        offset.xyz  = offset.xyz * 0.5 + 0.5; // transform to range 0.0 - 1.0
-        //An off-screen sample has no G-buffer to test against. CLAMP_TO_EDGE would hand back the
-        //border texel, which is a real world position somewhere else entirely and so occludes at
-        //random; skipping counts the sample as unoccluded, which is the honest answer.
-        if (any(lessThan(offset.xy, vec2(0.0))) || any(greaterThan(offset.xy, vec2(1.0)))){
+        float want_depth = clip.w;
+        vec2 screen01 = clip.xy / clip.w * 0.5 + 0.5;
+        //An off-screen sample has no G-buffer to test against. Skipping counts it as unoccluded,
+        //which is the honest answer - the border texel CLAMP_TO_EDGE would hand back is a real
+        //world position somewhere else entirely, and would occlude at random.
+        if (any(lessThan(screen01, vec2(0.0))) || any(greaterThanEqual(screen01, vec2(1.0)))){
             continue;
         }
+        ivec2 sample_px = ivec2(scene_viewport.xy + screen01 * scene_viewport.zw);
 
-        //Depth of whatever the camera actually SEES at the sample's pixel, against the depth the
-        //sample itself sits at. Both measured from the eye, so this is a like-for-like compare.
-        float sampleDepth = ViewDepth(texture(positiontexture, offset.xy).xyz);
-        float sampleAlpha = texture(albedotexture, offset.xy).w;
+        //Whatever the camera actually SEES at the sample's pixel, against the depth the sample
+        //itself sits at. Both measured from the eye, so this is a like-for-like compare.
+        vec4 seen = texelFetch(positiontexture, sample_px, 0);
+        float sampleDepth = ViewDepth(seen.xyz);
 
+        //A wall far behind (or a pole far in front of) the sample says nothing about THIS
+        //surface's crease; fade its vote out with the depth gap instead of letting it cast a
+        //dark halo round every silhouette.
         float rangeCheck = smoothstep(0.0, 1.0, radius / abs(frag_depth - sampleDepth));
         //Occluded when the visible geometry is NEARER than the sample point, i.e. something is in
         //the way. The tutorial's test reads the other way round only because view-space .z grows
-        //towards the camera where ViewDepth grows away from it.
-        occlusion       += (sampleDepth <= want_depth - bias ? 1.0 : 0.0) * rangeCheck * sampleAlpha;
+        //towards the camera where ViewDepth grows away from it. Weighted by the occluder's own
+        //alpha, which is also what makes an empty pixel (w cleared to 0) occlude nothing.
+        occlusion += (sampleDepth <= want_depth - bias ? 1.0 : 0.0) * rangeCheck * clamp(seen.w, 0.0, 1.0);
     }
-    //Divide by the FULL kernel size. This was `kernelSize * 0.5`, which maps half the samples
+    //Divide by the FULL kernel size. This was `kernelSize * 0.5` once, which maps half the samples
     //occluded - the value a broken depth test produces almost everywhere - to exactly zero, and
-    //anything past it to a negative number stored unclamped into an RGBA16F. That halving is what
-    //turned "wrong" into "solid black".
-    occlusion = clamp(1.0 - (occlusion / float(kernelSize)), 0.0, 1.0);
-    occlusion *= alpha;
+    //anything past it to a negative number stored unclamped into an RGBA16F.
+    float ao = clamp(1.0 - occlusion / float(n), 0.0, 1.0);
+    ao = pow(ao, max(power, 0.01));
+    ao = mix(1.0, ao, strength);
+    //A half-transparent surface is half there, so it is half as occluded.
+    ao = mix(1.0, ao, alpha);
 
-    vec4 outval;
-    outval = vec4(albedo.xyz * occlusion,alpha);
-    //outval = vec4(vec3(occlusion),1);
-
-    imageStore(imgOut, texelCoord, outval);
+    //Grey in rgb so a blit of this texture is directly viewable; alpha 1 because the window is
+    //composited with its alpha and a view buffer must not punch holes in it.
+    imageStore(imgOut, texelCoord, vec4(vec3(ao), 1.0));
 }

@@ -7,6 +7,11 @@
 
 #define DEFAULT_FRAMEBUFFER_ID  0
 
+//The deferred FBO's fifth attachment, the unblurred SSAO. Spelled as an offset because core/glad.h
+//was generated with GL_COLOR_ATTACHMENT0-3 only; the enums are consecutive by specification, and
+//every GL 4.x guarantees at least 8.
+static const GLenum ATTACHMENT_SSAO_RAW = GL_COLOR_ATTACHMENT0 + 4;
+
 static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
 
 Renderer::Renderer(int w, int h){
@@ -89,6 +94,10 @@ bool Renderer::Init(const char* vert_filename, const char* frag_filename, int _p
         }
         ssao_compute_shader = new Shader();
         ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
+        ssao_blur_shader = new Shader();
+        ssao_blur_shader->CreateComputeShader("shaders/ssao_blur.comp");
+        //The low-res composite's attribute-less full-screen triangle, reused as it is.
+        ssao_composite_shader = new Shader("shaders/lowres_composite.vert","shaders/ssao_composite.frag");
     }
 
     //Line meshes have a program of their own - see SSBO_VERTEX_PULL in Mesh.h and line.vert: a
@@ -506,8 +515,9 @@ void Renderer::DeferredPass(Camera* camera){
             DEPTH  depth              cleared to 1.0
             0      position   RGBA16F cleared to (0,0,0,0), w is the material's alpha
             1      normal     RGBA16F cleared to (1,0,0,0)
-            2      SSAO       RGBA16F cleared to (1,0,0,0), i.e. unoccluded
+            2      SSAO       RGBA16F not a draw buffer; SSAOPass writes it, blurred
             3      object id  int     cleared to -1, "no object"
+            4      SSAO raw   RGBA16F not a draw buffer; SSAOPass writes it, before the blur
 
         Of these, ONLY DEPTH AND OBJECT ID CARRY A CLEAR VALUE THAT MEANS "NOTHING WAS DRAWN
         HERE". 1.0 is outside the range a fragment can write and -1 is not an object; the colour
@@ -1072,13 +1082,33 @@ void Renderer::UploadFieldShadow(Shader* s){
     s->Setint("f_field_shadows",1);
 }
 
-//Uses a compute shader and uses the textures from deferred pass.
+/*
+    Occlusion and its blur, from the G-buffer alone - so it runs straight after DeferredPass, and
+    the colour pass that follows has nothing to do with it. See ssao_compute.comp.
+
+    THE G-BUFFER GOES ON ITS OWN UNITS, NOT 0-2. This used to bind the position buffer to unit 0,
+    which was harmless only because it ran after every pass that samples the shadow map. It runs
+    before them now, and unit 0 is the shadow map (TextureUnits.h) - DrawFrame does rebind it
+    after this, but nothing should depend on that. TEXUNIT_GBUFFER_* is where CustomShaderPass puts
+    exactly these textures anyway.
+*/
 void Renderer::SSAOPass(Camera* camera){
+    if (!ssao_compute_shader->f_compiled || !ssao_blur_shader->f_compiled){
+        return;
+    }
+    const GLuint groups_x = (GLuint)(render_width + 7)/8;
+    const GLuint groups_y = (GLuint)(render_height + 7)/8;
+    const vec2 target_size((float)render_width,(float)render_height);
+
+    int vx, vy, vw, vh;
+    GetSceneViewport(vx,vy,vw,vh);
+
+    glBindTextureUnit(TEXUNIT_GBUFFER_POSITION, deferred_position_tex_id);
+    glBindTextureUnit(TEXUNIT_GBUFFER_NORMAL, deferred_normal_tex_id);
+
+    BeginGPUPass(GPU_PASS_SSAO);
     ssao_compute_shader->Use();
-    glBindImageTexture(0, ssao_tex_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA16F);
-    glBindTextureUnit(0, deferred_position_tex_id);
-    glBindTextureUnit(1, deferred_normal_tex_id);
-    glBindTextureUnit(2, resolve_tex_id);
+    glBindImageTexture(0, ssao_raw_tex_id, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
     ssao_compute_shader->Setmat4("mat_worldcam",camera->mat_cam);
     /*
@@ -1089,13 +1119,108 @@ void Renderer::SSAOPass(Camera* camera){
     */
     ssao_compute_shader->Setvec3("eye_position",camera->GetPosition());
     ssao_compute_shader->Setvec3("camera_forward",camera->GetForward());
-    ssao_compute_shader->Setvec2("target_size",vec2((float)render_width,(float)render_height));
+    ssao_compute_shader->Setvec2("target_size",target_size);
+    ssao_compute_shader->Setvec4("scene_viewport",vec4((float)vx,(float)vy,(float)vw,(float)vh));
+    ssao_compute_shader->Setfloat("radius",ssao.radius);
+    ssao_compute_shader->Setfloat("bias",ssao.bias);
+    ssao_compute_shader->Setint("kernel_size",ssao.kernel_size);
+    ssao_compute_shader->Setfloat("strength",ssao.strength);
+    ssao_compute_shader->Setfloat("power",ssao.power);
 
-    //Round UP: `width/32` truncates, so on any width that is not a multiple of 32 the last few
-    //columns were never dispatched at all and kept whatever the texture held before. The shader
-    //drops the invocations that overshoot.
-    glDispatchCompute((render_width + 31)/32, render_height, 1);
+    //Round UP: a truncating divide never dispatches the last partial group of columns or rows,
+    //which then keep whatever the texture held before. The shader drops the invocations that
+    //overshoot.
+    glDispatchCompute(groups_x, groups_y, 1);
+    //The blur reads this with imageLoad; the raw view buffer blits it.
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_FRAMEBUFFER_BARRIER_BIT);
+    EndGPUPass(GPU_PASS_SSAO);
+
+    /*
+        Across into the scratch texture, then down into the final one. Always both, even at a
+        blur radius of 0 - the shader turns into a copy then - so the final texture is never
+        stale whatever the panel says.
+    */
+    BeginGPUPass(GPU_PASS_SSAO_BLUR);
+    ssao_blur_shader->Use();
+    ssao_blur_shader->Setvec3("eye_position",camera->GetPosition());
+    ssao_blur_shader->Setvec3("camera_forward",camera->GetForward());
+    ssao_blur_shader->Setvec2("target_size",target_size);
+    ssao_blur_shader->Setint("blur_radius",ssao.blur_radius);
+    ssao_blur_shader->Setfloat("edge_tolerance",ssao.blur_edge_tolerance);
+
+    ssao_blur_shader->Setvec2("direction",vec2(1,0));
+    glBindImageTexture(0, ssao_raw_tex_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
+    glBindImageTexture(1, ssao_blur_tex_id, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    glDispatchCompute(groups_x, groups_y, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+    ssao_blur_shader->Setvec2("direction",vec2(0,1));
+    glBindImageTexture(0, ssao_blur_tex_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
+    glBindImageTexture(1, ssao_tex_id, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    glDispatchCompute(groups_x, groups_y, 1);
+    //CompositeSSAO samples the result; the SSAO view buffer blits it.
+    glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_FRAMEBUFFER_BARRIER_BIT);
+    EndGPUPass(GPU_PASS_SSAO_BLUR);
+}
+
+void Renderer::RequestSSAO(const SSAOSettings& settings, int enabled, int view){
+    std::lock_guard<std::mutex> lock(ssao_request_mutex);
+    ssao_request = settings;
+    ssao_request_enabled = enabled;
+    ssao_request_view = view;
+    f_ssao_request_pending = true;
+}
+
+Renderer::SSAOSettings Renderer::GetSSAORequestBase(){
+    std::lock_guard<std::mutex> lock(ssao_request_mutex);
+    return f_ssao_request_pending ? ssao_request : ssao;
+}
+
+void Renderer::ApplySSAORequest(){
+    std::lock_guard<std::mutex> lock(ssao_request_mutex);
+    if (!f_ssao_request_pending){
+        return;
+    }
+    f_ssao_request_pending = false;
+    ssao = ssao_request;
+    if (ssao_request_enabled >= 0){
+        f_ssao = (ssao_request_enabled != 0);
+    }
+    if (ssao_request_view >= 0){
+        SelectViewBuffer(ssao_request_view);
+    }
+}
+
+/*
+    Multiplies the blurred occlusion into whatever framebuffer is bound - the MSAA target, from
+    DrawFrame. A blend rather than a read-modify-write of the colour: dst * src for rgb, alpha
+    kept, so every MSAA sample is darkened in place and no copy of the target is needed.
+*/
+void Renderer::CompositeSSAO(){
+    if (!ssao_composite_shader || !ssao_composite_shader->f_compiled){
+        return;
+    }
+    if (lowres_vao == (GLuint)-1){
+        //The same empty VAO RebuildLowResFBO would make - see there.
+        glCreateVertexArrays(1, &lowres_vao);
+    }
+    ssao_composite_shader->Use();
+    glBindTextureUnit(TEXUNIT_LOWRES_COMPOSITE, ssao_tex_id);
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glBlendFuncSeparate(GL_ZERO, GL_SRC_COLOR, GL_ZERO, GL_ONE);
+
+    glBindVertexArray(lowres_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    //Back to SetOpenGLState's, as CompositeLowRes does.
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 void Renderer::RenderSingleDepthPass(Camera* camera,Shader* shader, int mesh_mode){
@@ -1159,12 +1284,14 @@ static const char* gpu_pass_names[Renderer::GPU_PASS_COUNT] = {
     "Occluder field",
     "Field jump flood",
     "Deferred G-buffer",
+    "SSAO",
+    "SSAO blur",
     "Skybox",
     "Color",
     "Skinned",
+    "SSAO composite",
     "Custom shaders",
     "MSAA resolve",
-    "SSAO",
     "Buffer blit",
     "Upscale",
     "UI overlay",
@@ -1543,6 +1670,7 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
 
     //Before anything is drawn into the buffers it may reallocate.
     ApplyRenderScale();
+    ApplySSAORequest();
 
     PrepareObjects(objects);
 
@@ -1607,10 +1735,18 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     //
     //It is a second full geometry pass either way. If that ever needs to go, the fix is to make
     //the color pass write the G-buffer as extra render targets - not to move this back.
+    //Looking at the SSAO runs it whether or not it is applied - that is how it gets tuned.
+    const bool f_view_ssao = (view_buffer == VIEW_SSAO) || (view_buffer == VIEW_SSAO_RAW);
+    const bool f_run_ssao = (pipeline == PIPELINE_DEFERRED) && (f_ssao || f_view_ssao);
     if (pipeline == PIPELINE_DEFERRED){
         BeginGPUPass(GPU_PASS_DEFERRED);
         DeferredPass(camera);
         EndGPUPass(GPU_PASS_DEFERRED);
+    }
+    //Here, with only the G-buffer to go on, rather than after the resolve where it used to sit:
+    //see CompositeSSAO below for where the result is applied, and why there.
+    if (f_run_ssao){
+        SSAOPass(camera);
     }
 
     glBindTextureUnit(0, shadow_tex_id);
@@ -1686,6 +1822,15 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
         EndGPUPass(GPU_PASS_SKINNED);
     }
 
+    //The occlusion goes on once every SOLID surface is in the buffer and before anything
+    //translucent is: the G-buffer it was measured from holds only the solid scene, so darkening a
+    //volume or a firefly by it would be darkening them by a crease somewhere behind them.
+    if (f_run_ssao && f_ssao){
+        BeginGPUPass(GPU_PASS_SSAO_COMPOSITE);
+        CompositeSSAO();
+        EndGPUPass(GPU_PASS_SSAO_COMPOSITE);
+    }
+
     //Custom materials go last of the geometry passes, AFTER the skinned meshes: they are
     //typically translucent and do not write depth, so anything solid has to already be in the
     //buffer for them to blend over. A character standing inside a volume was previously drawn
@@ -1712,30 +1857,20 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
         }
     }
 
-    if (f_ssao){
-        BeginGPUPass(GPU_PASS_SSAO);
-        SSAOPass(camera);
-        EndGPUPass(GPU_PASS_SSAO);
-    }
-
-    //Look at one of the intermediate buffers
-    const bool f_blit_view = (view_buffer >= 1) && (view_buffer <= 3);
+    //Look at one of the intermediate buffers. All of them are G-buffer side, so a pipeline
+    //without one has nothing to show.
+    const bool f_blit_view = (pipeline == PIPELINE_DEFERRED) && (view_buffer > VIEW_FINAL) && (view_buffer < VIEW_BUFFER_COUNT);
     if (f_blit_view){
         BeginGPUPass(GPU_PASS_BLIT);
-    }
-    if (view_buffer == 1){
-        //Object position
-        BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT0);
-    }else if (view_buffer == 2){
-        //Normals
-        BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT1);
-    }else if (view_buffer == 3){
-        //SSAO output
-        BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT2);
-    }else{
-
-    }
-    if (f_blit_view){
+        //Attachment numbers as SetupDeferredBuffers attaches them - see the table in DeferredPass.
+        static const GLenum view_attachment[VIEW_BUFFER_COUNT] = {
+            GL_NONE,                //VIEW_FINAL, never blitted
+            GL_COLOR_ATTACHMENT0,   //VIEW_POSITION
+            GL_COLOR_ATTACHMENT1,   //VIEW_NORMAL
+            GL_COLOR_ATTACHMENT2,   //VIEW_SSAO
+            ATTACHMENT_SSAO_RAW,   //VIEW_SSAO_RAW
+        };
+        BlitBufferTarget(deferred_fbo_id,view_attachment[view_buffer]);
         EndGPUPass(GPU_PASS_BLIT);
     }
 
@@ -2148,16 +2283,22 @@ bool Renderer::RebuildDeferredFBO(){
     glNamedFramebufferTexture(deferred_fbo_id, GL_DEPTH_ATTACHMENT, deferred_depth_tex_id, 0);
     CheckFrameBuffer();
 
-    //We also generate a texture for the SSAO output, and attach it to the deferred FBO.
-    if (ssao_tex_id != -1){
-        glDeleteTextures(1, &ssao_tex_id);
+    //The SSAO chain: raw -> blur across -> blur down. RGBA16F because that is what the
+    //shaders' image qualifiers say, and immutable storage because an image binding needs it.
+    //The raw and final ones are also attached to the deferred FBO, only so BlitBufferTarget can
+    //show them - they are not in DeferredPass's draw-buffer list and nothing draws into them.
+    GLuint* ssao_chain[3] = { &ssao_raw_tex_id, &ssao_blur_tex_id, &ssao_tex_id };
+    for (GLuint* tex : ssao_chain){
+        if (*tex != (GLuint)-1){
+            glDeleteTextures(1, tex);
+        }
+        glCreateTextures(GL_TEXTURE_2D, 1, tex);
+        glTextureStorage2D(*tex, 1, GL_RGBA16F, render_width, render_height);
+        glTextureParameteri(*tex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(*tex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
-    glCreateTextures(GL_TEXTURE_2D, 1, &ssao_tex_id);
-
-    glTextureStorage2D(ssao_tex_id, 1, GL_RGBA16F, render_width, render_height);
-    glTextureParameteri(ssao_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTextureParameteri(ssao_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT2, ssao_tex_id, 0);
+    glNamedFramebufferTexture(deferred_fbo_id, ATTACHMENT_SSAO_RAW, ssao_raw_tex_id, 0);
     CheckFrameBuffer();
 
     //ObjectID buffer
@@ -2243,7 +2384,12 @@ void Renderer::BlitBufferTarget(GLuint framebuffer_id, GLenum attachment){
 }
 
 void Renderer::SelectViewBuffer(int view_id){
-    view_buffer = view_id;
+    view_buffer = ((view_id < 0) || (view_id >= VIEW_BUFFER_COUNT)) ? (int)VIEW_FINAL : view_id;
+}
+
+const char* Renderer::GetViewBufferName(int view){
+    static const char* names[VIEW_BUFFER_COUNT] = { "Final", "Position", "Normal", "SSAO", "SSAO (unblurred)" };
+    return ((view < 0) || (view >= VIEW_BUFFER_COUNT)) ? "?" : names[view];
 }
 
 //Returns true if the framebuffer checks OK.

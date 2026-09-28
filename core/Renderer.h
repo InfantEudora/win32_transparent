@@ -261,7 +261,16 @@ class Renderer{
     void UploadFieldShadow(Shader* s);
 
     void DeferredPass(Camera* camera);
+    /*
+        Screen-space ambient occlusion, in two halves because the two want different points in
+        the frame. SSAOPass needs only the G-buffer, so it runs straight after DeferredPass:
+        occlusion, then an edge-aware blur across and down. CompositeSSAO multiplies the result
+        into the MSAA colour after the solid and skinned passes and before the custom-material
+        pass, so translucent effects sit on top of the occlusion rather than under it. See
+        shaders/ssao_compute.comp for the method and the ssao_* settings below for the knobs.
+    */
     void SSAOPass(Camera* camera);
+    void CompositeSSAO();
     //`objects` is the scene's object list - see the note on CullObjects for why it is passed in.
     void DrawFrame(const std::vector<Object*>& objects, Camera* camera, Shader* shader, InputController* input);
 
@@ -421,7 +430,12 @@ class Renderer{
     GLuint deferred_objectid_tex_id = -1; // Object IDs of objects for selection
 
     //Buffers for stages that require the output of the deferred pipeline
-    GLuint ssao_tex_id = -1; // SSAO output texture
+    //All three RGBA16F with the multiplier in rgb, so the two a view buffer shows can be blitted
+    //as they are. Raw and final sit on the deferred FBO (ATTACHMENT4 and 2) for that blit only;
+    //neither is ever a draw buffer.
+    GLuint ssao_raw_tex_id = -1;  // SSAO before the blur - VIEW_SSAO_RAW
+    GLuint ssao_blur_tex_id = -1; // Between the two blur directions
+    GLuint ssao_tex_id = -1;      // SSAO, blurred: what CompositeSSAO multiplies in
 
     /*
         The reduced-resolution target the custom-material pass draws Shader::f_lowres shaders
@@ -555,6 +569,8 @@ class Renderer{
     //AddCustomShader rather than pushing here, so the index the caller stores is the real one.
     std::vector<Shader*> custom_shaders;
     Shader* ssao_compute_shader = NULL;
+    Shader* ssao_blur_shader = NULL;
+    Shader* ssao_composite_shader = NULL;   // lowres_composite.vert + ssao_composite.frag
     Shader* line_shader = NULL;             // Seperate shader for rendering line meshes.
 
     Shader* skybox_shader = NULL;
@@ -580,9 +596,61 @@ class Renderer{
     bool f_render_skybox = true;      // Enable/disable skybox rendering
     bool f_use_reflections = false;   // Enable/disable skybox reflections
     bool f_backface_culling = true;   //
-    bool f_ssao = false;              //
+    bool f_ssao = false;              // Darken the frame by the ambient occlusion
     bool f_msaa = true;               //
-    int view_buffer = 0;              // Output different intermediate buffers to view
+    int view_buffer = 0;              // Output different intermediate buffers to view - view_buffer_t
+    /*
+        What view_buffer shows instead of the frame. The two SSAO views make the pass run even
+        with f_ssao off - looking at it is how its settings get tuned - but only f_ssao puts it on
+        the frame, so a view is always the occlusion ALONE, never occlusion times colour.
+    */
+    enum view_buffer_t{
+        VIEW_FINAL = 0,
+        VIEW_POSITION,          //G-buffer world positions
+        VIEW_NORMAL,            //G-buffer normals
+        VIEW_SSAO,              //The multiplier CompositeSSAO applies, blurred
+        VIEW_SSAO_RAW,          //...and the same before the blur, 4x4 pattern and all
+        VIEW_BUFFER_COUNT
+    };
+    static const char* GetViewBufferName(int view);
+
+    /*
+        SSAO settings, pushed to the shaders every frame so the Renderer panel can drag them live.
+        A struct so that `ssao = SSAOSettings()` is the panel's reset, with the defaults written
+        once, here. Lengths are WORLD units, not pixels: the G-buffer is world space
+        (ssao_compute.comp says why), so a crease is judged at the same size near and far.
+    */
+    struct SSAOSettings{
+        float radius = 1.5f;        // How far round a point to look for occluders
+        float bias = 0.025f;        // How far behind geometry a sample must be to count - stops a flat surface occluding itself
+        int   kernel_size = 32;     // Samples per pixel; the cost goes with it
+        float strength = 1.0f;      // 0 leaves the frame untouched, 1 applies the occlusion as measured
+        float power = 1.0f;         // Contrast: above 1 deepens creases, below 1 lifts them
+        //The blur. Radius in PIXELS either side, Gaussian with sigma = radius/2: 4 is the smallest
+        //that erases the kernel's 4x4 rotation tile (ssao_compute.comp), 0 turns the blur off.
+        int   blur_radius = 4;
+        //How far off a pixel's surface plane a neighbour may lie before the blur stops at it, as a
+        //fraction of the pixel's distance from the eye (see ssao_blur.comp for why it scales).
+        float blur_edge_tolerance = 0.05f;
+    };
+    SSAOSettings ssao;
+    /*
+        The same three things - settings, on/off, view buffer - asked for from another thread (the
+        renderer_ssao MCP tool). The render thread reads `ssao` all through the frame and the panel
+        writes it from the render thread too, so another thread only ever leaves a request, taken
+        at the top of the next DrawFrame the way a render scale is. -1 leaves that one alone.
+    */
+    void RequestSSAO(const SSAOSettings& settings, int enabled, int view);
+    //What a new request should start from: a still-pending one if there is one, so two requests
+    //in the same frame add up rather than the second undoing the first.
+    SSAOSettings GetSSAORequestBase();
+    //The pending request itself, taken by ApplySSAORequest at the top of DrawFrame.
+    std::mutex ssao_request_mutex;
+    bool f_ssao_request_pending = false;
+    SSAOSettings ssao_request;
+    int ssao_request_enabled = -1;
+    int ssao_request_view = -1;
+    void ApplySSAORequest();
     int shadow_texture_size = 4096;   // Size for a single shadow texture
 
 
@@ -620,12 +688,14 @@ class Renderer{
         GPU_PASS_FIELD,         //Occluder field heights (apps that called EnableFieldShadows)
         GPU_PASS_FIELD_JFA,     //...and the jump flood that turns them into a distance field
         GPU_PASS_DEFERRED,      //G-buffer - a second full geometry pass, see DrawFrame
+        GPU_PASS_SSAO,          //Occlusion from the G-buffer (f_ssao, or an SSAO view buffer)
+        GPU_PASS_SSAO_BLUR,     //...its edge-aware blur, both directions
         GPU_PASS_SKYBOX,
         GPU_PASS_COLOR,         //The lit pass: static meshes, then lines
         GPU_PASS_SKINNED,
+        GPU_PASS_SSAO_COMPOSITE,//...multiplied into the frame, ahead of the translucent pass
         GPU_PASS_CUSTOM,        //CustomShaderPass - volumes and anything else translucent
         GPU_PASS_RESOLVE,       //MSAA resolve
-        GPU_PASS_SSAO,
         GPU_PASS_BLIT,          //Only when view_buffer selects an intermediate to look at
         GPU_PASS_UPSCALE,       //Only at a render scale above 1 - see SetRenderScale
         GPU_PASS_OVERLAY,       //UIOverlay - the app's own 2D HUD (Application::DrawFrame)

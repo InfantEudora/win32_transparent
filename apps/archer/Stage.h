@@ -47,6 +47,13 @@
     on it in core/physics/Physics.h, which was written after a breakout capsule drifted a unit out
     of plane and passed clean through the paddle.
 
+    ONE EXCEPTION, AND ONLY IN ONE LEVEL: the arrow, and the aim it leaves along, are 3D (v3). In
+    every level but the character scene the PLANE IS LOCKED (IsPlaneLocked) and the aim is
+    flattened into it, so an arrow's z and vz are exactly 0 for its whole flight and it flies
+    bit-for-bit the flight it flew when it was 2D. On the character scene's turntable she can face
+    any way, and the arrow leaves the way she faces. Nothing else - not her body, not a block, not
+    a prop - gains a z.
+
     Every duration in here is a count of SIMULATION TICKS. The app runs at ARCHER_TPS of them a
     second and must call SetPhysicsTPS with the same number - the rules have no engine types, so
     they cannot look the rate up for themselves.
@@ -72,6 +79,24 @@ struct v2{
     v2 operator+(const v2& o) const { return v2(x + o.x, y + o.y); };
     v2 operator-(const v2& o) const { return v2(x - o.x, y - o.y); };
     v2 operator*(float s) const { return v2(x * s, y * s); };
+};
+
+/*
+    A point or a direction off the play plane - for the arrow and the aim only (see above). Built
+    from a v2 only EXPLICITLY, with the z it is to have: a v2 quietly becoming a v3 at z 0 is how
+    an arrow on the turntable would be teleported back into the plane without anyone noticing.
+*/
+struct v3{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    v3(){};
+    v3(float _x, float _y, float _z):x(_x),y(_y),z(_z){};
+    explicit v3(const v2& p, float _z):x(p.x),y(p.y),z(_z){};
+    v3 operator+(const v3& o) const { return v3(x + o.x, y + o.y, z + o.z); };
+    v3 operator-(const v3& o) const { return v3(x - o.x, y - o.y, z - o.z); };
+    v3 operator*(float s) const { return v3(x * s, y * s, z * s); };
+    v2 xy() const { return v2(x,y); };
 };
 
 //--- The archer's body, in world units ----------------------------------------------------------
@@ -193,6 +218,14 @@ struct v2{
     every draw - measured, every quick shot went about 3 degrees high, and "release at one
     second" would have been a thing to learn. So each draw starts the drift at its own point,
     picked from the draw count (draws_started) - still no RNG, and still the same in a replay.
+
+    IT IS A CONE, not a line: a second drift, SIDEWAYS (AimSwaySideDeg), with periods of its own,
+    measured off the aim rather than about world up so it stays a cone at any elevation - a turn
+    about up would shrink to nothing aiming straight overhead. The up-and-down half is exactly the
+    drift above, untouched, and the sideways half is squeezed as that one nears its peak, so the
+    tip stays inside a circle of the amplitude rather than a square of it. On a locked plane the
+    sideways half is LOOKS ONLY: the bow wanders in and out of the screen, and the arrow leaves
+    flattened into the plane, where the camera can see where it goes and the props can be hit.
 */
 #define AIM_SWAY_STAND_DEG          4.0f
 #define AIM_SWAY_KNEEL_DEG          1.0f
@@ -657,11 +690,12 @@ struct StageBlock{
     //The rules never read it; to Stage it is an ordinary block of its kind.
     bool  f_invisible = false;
     /*
-        Through the slab: the centre, and the half-depth (0 is STAGE_BLOCK_HALF_DEPTH). LOOKS ONLY -
-        the rules are 2D and sweep the archer against x and y alone - but it is the level's shape,
-        so it lives with the rest of it: a stone set back, a thin slab, a deep one. See
-        STAGE_BLOCK_MIN_COVER for how far either may go. Last, so every brace-initialised block
-        keeps its meaning.
+        Through the slab: the centre, and the half-depth (0 is STAGE_BLOCK_HALF_DEPTH). LOOKS ONLY
+        on a locked plane - the rules sweep the archer against x and y alone, and a locked arrow is
+        at z 0, which every block covers - but it is the level's shape, so it lives with the rest
+        of it: a stone set back, a thin slab, a deep one. Off the plane (the character scene) an
+        arrow is swept through it too. See STAGE_BLOCK_MIN_COVER for how far either may go. Last,
+        so every brace-initialised block keeps its meaning.
     */
     float z = 0.0f;
     float depth = 0.0f;
@@ -1241,22 +1275,30 @@ struct StageLanding{
 struct StageArrowImpact{
     bool  f_hits = false;
     int   ticks = 0;
-    v2    point;
+    v3    point;
     int   block = -1;
 };
 
 /*
-    An arrow in flight, or stuck in something.
+    An arrow in flight, or stuck in something. 3D, with z exactly 0 on a locked plane - see the
+    play plane note at the top.
 
     prev_pos is kept because the app needs THIS TICK'S SEGMENT to ask rp3d whether the arrow
     passed through a crate or a target on its way - see the handshake note on Arrows() below. It
     is not used by the rules themselves.
+
+    ITS ATTITUDE IS TWO ANGLES, for the app to orient the mesh by (it runs along +X): `yaw` about
+    +Y, then `angle` about the turned Z - so the mesh's rotation is yaw(Y) * angle(Z). `yaw` is
+    within a quarter turn either way, which leaves `angle` carrying which way along X it points;
+    in the plane `yaw` is 0 and `angle` is atan2(vy, vx) exactly as it always was, so an arrow
+    stuck in a prop, which turns by `angle` alone, needs no idea of 3D.
 */
 struct Arrow{
-    v2    pos;
-    v2    prev_pos;
-    v2    vel;
-    float angle = 0.0f;         //radians, the direction of travel; the app orients the mesh by it
+    v3    pos;
+    v3    prev_pos;
+    v3    vel;
+    float angle = 0.0f;         //radians, the direction of travel in its own vertical plane
+    float yaw = 0.0f;           //radians about +Y, out of the play plane; 0 on a locked one
     int   age_ticks = 0;
     bool  f_live = false;
     bool  f_stuck = false;
@@ -1275,6 +1317,7 @@ struct StageEvents{
     bool  f_shot = false;
     float shot_power = 0.0f;        //0..1, the draw at the moment of release
     float shot_aim_deg = 0.0f;      //and the angle it left at, sway included
+    float shot_side_deg = 0.0f;     //the sideways sway it left with; flattened away on a locked plane
     bool  f_bumped_head = false;
     bool  f_grabbed_ledge = false;  //caught a lip this tick
     bool  f_released_ledge = false; //let go of one, by choice or by dropping
@@ -1341,8 +1384,8 @@ struct StageEvents{
     //instead - see Arrows().
     struct ArrowHit{
         int   arrow = -1;
-        v2    point;
-        v2    normal;
+        v3    point;
+        v3    normal;               //the face it went in through; z only off a locked plane
         float speed = 0.0f;
         int   block = -1;           //index into blocks; BREAKABLE is the interesting case
     };
@@ -1648,6 +1691,25 @@ public:
     float AimSwayDeg() const;
     //What the arrow is actually aimed at: aim_deg plus the sway. AimDirection follows it.
     float ShotAimDeg() const { return aim_deg + AimSwayDeg(); }
+    //The cone's other half: the sway SIDEWAYS off the aim, degrees, + to her left (anticlockwise
+    //from above). 0 unless nocked. On a locked plane only the bow shows it; see AIM_SWAY_STAND_DEG.
+    float AimSwaySideDeg() const;
+
+    /*
+        --- THE PLANE LOCK --------------------------------------------------------------------------
+        Locked, "ahead" is along facing - +X or -X - and the aim is flattened into the plane. Every
+        level but the character scene, whose turntable turns her to face anywhere; there "ahead" is
+        heading_deg, which the APP writes before each tick from the angle she is drawn at (the
+        turntable and a clip's own turn) - the same arrangement as SyncArcherFromRope, and for the
+        same reason: it is the view's to know, and the rules only follow it. Degrees about +Y, 0 is
+        +Z (toward the camera), + anticlockwise from above: the turntable's own convention.
+        Ignored while locked. A LEVEL property rather than a flag, so nothing can unlock a level
+        the props and the camera are planar in.
+    */
+    bool  IsPlaneLocked() const { return level != STAGE_LEVEL_CHARACTER; }
+    float heading_deg = 0.0f;
+    //Straight ahead, level, as a unit vector: (facing, 0, 0) locked, off heading_deg unlocked.
+    v3    Forward() const;
 
     /*
         The arrows, live and stuck.
@@ -1667,7 +1729,7 @@ public:
     Arrow arrows[ARROW_MAX_LIVE];
     int   NumLiveArrows() const;
 
-    void  StickArrow(int index, const v2& point);   //stop it dead and leave it embedded
+    void  StickArrow(int index, const v3& point);   //stop it dead and leave it embedded
     void  KillArrow(int index);                     //remove it entirely
 
     /*
@@ -1679,7 +1741,7 @@ public:
         are the flight. Stops at the first block the arc enters, so the preview also shows what it
         will hit. Returns how many points were written.
     */
-    int   PredictArc(v2* out_points, int max_points) const;
+    int   PredictArc(v3* out_points, int max_points) const;
 
     /*
         The same, for an arrow already in flight: where it will strike a block, and when, within
@@ -1689,15 +1751,17 @@ public:
         the positions the arrow sweeps through, one per tick after the first - the segments the
         app raycasts for props, as ResolveArrowsAgainstProps does the real ones.
     */
-    StageArrowImpact PredictArrowImpact(int index, int horizon, std::vector<v2>* path = NULL) const;
+    StageArrowImpact PredictArrowImpact(int index, int horizon, std::vector<v3>* path = NULL) const;
 
     //The nocked arrow's ANCHOR - where the string holds it - for the current facing and aim. An
-    //arrow's first sweep starts here; see ARROW_LENGTH.
-    v2    AnchorPosition() const;
+    //arrow's first sweep starts here; see ARROW_LENGTH. At her z (0), plus Forward's along it.
+    v3    AnchorPosition() const;
     //Where the arrow's TIP is at the loose: the anchor plus ARROW_LENGTH along the aim. Loose()
     //spawns the flying point here and PredictArc draws from here.
-    v2    MuzzlePosition() const;
-    v2    AimDirection() const;
+    v3    MuzzlePosition() const;
+    //The way the arrow leaves, a unit vector: the aim and both halves of the sway about Forward,
+    //or on a locked plane the aim and the up-and-down half only, with z exactly 0.
+    v3    AimDirection() const;
 
     /*
         Where and when she comes down, if she keeps doing what she is doing - PredictArc's idea
@@ -1810,7 +1874,7 @@ private:
         block struck, or -1; moves nothing but the velocity. TickArrows and PredictArrowImpact
         both fly by it, which is what keeps the forecast honest.
     */
-    int  FlyArrow(Arrow& a, v2& from, v2& next, v2& point, v2& normal) const;
+    int  FlyArrow(Arrow& a, v3& from, v3& next, v3& point, v3& normal) const;
     void Loose(StageEvents& events);
 
     //--- Hanging and climbing -------------------------------------------------------------------
@@ -1855,8 +1919,12 @@ private:
     void MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& events,
                         bool& out_hit_floor, bool& out_hit_ceiling, bool& out_hit_wall);
 
-    //Nearest block struck by the segment a->b, or -1. Fills the hit point and the face normal.
-    int   SegmentHitsBlock(const v2& a, const v2& b, v2& out_point, v2& out_normal) const;
+    /*
+        Nearest block struck by the segment a->b, or -1. Fills the hit point and the face normal.
+        In 3D, through each block's depth (StageBlock::Back/Front) as well as its x and y - which on
+        a locked plane never decides anything, since z is 0 and every block covers z 0.
+    */
+    int   SegmentHitsBlock(const v3& a, const v3& b, v3& out_point, v3& out_normal) const;
 
     int   next_arrow = 0;           //the ring buffer's write cursor
 };

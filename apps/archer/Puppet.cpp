@@ -211,6 +211,7 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.f_on_ground  = stage.f_on_ground;
     out.mode         = stage.mode;
     out.aim_deg      = stage.ShotAimDeg();  //the sway included, so the bow sways with the arc
+    out.aim_side_deg = stage.AimSwaySideDeg();
     out.draw_power   = stage.DrawPower();
     out.kneel_phase  = (stage.mode == MODE_KNEEL) ? stage.kneel_phase : -1;
     out.rope_climb   = (stage.mode == MODE_ROPE) ? stage.rope_climb : 0;

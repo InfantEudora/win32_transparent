@@ -480,7 +480,7 @@ static void TestBow(){
         and the flight are then the same function. If this drifts, that argument is void and the
         game is lying to the player about where their arrow will go.
     */
-    v2 arc[AIM_ARC_POINTS];
+    v3 arc[AIM_ARC_POINTS];
     int n = f.PredictArc(arc,AIM_ARC_POINTS);
     Check(n >= 4,"the preview produces an arc");
 
@@ -518,7 +518,7 @@ static void TestBow(){
         if (!f.arrows[idx].f_live || f.arrows[idx].f_stuck){
             break;      //the arc stopped at geometry and so did the arrow; that is agreement
         }
-        v2 a = f.arrows[idx].pos;
+        v3 a = f.arrows[idx].pos;
         float dx = a.x - arc[k].x;
         float dy = a.y - arc[k].y;
         float d = sqrtf(dx * dx + dy * dy);
@@ -601,9 +601,9 @@ static void TestBow(){
     Settle(m);
     m.aim_deg = 30.0f;
     m.facing = 1.0f;
-    v2 r = m.AimDirection();
+    v3 r = m.AimDirection();
     m.facing = -1.0f;
-    v2 l = m.AimDirection();
+    v3 l = m.AimDirection();
     CheckNear(r.y,l.y,0.0001f,"facing left mirrors the aim rather than inverting it");
     CheckNear(r.x,-l.x,0.0001f,"and flips only the horizontal");
     Check(r.y > 0.0f,"a positive aim angle points upward in both directions");
@@ -3202,7 +3202,7 @@ static void TestKneel(){
     draw.f_draw_down = true;
     Run(s,BOW_DRAW_TICKS + 20,draw);
     Check(s.IsNocked(),"she draws while kneeling");
-    v2 arc[AIM_ARC_POINTS];
+    v3 arc[AIM_ARC_POINTS];
     int n = s.PredictArc(arc,AIM_ARC_POINTS);
     Check(n > 0,"and the arc is drawn from the kneeling anchor");
     ArcherInput loose;
@@ -3290,21 +3290,45 @@ static void TestSway(){
     Run(s,BOW_NOCK_TICKS + 1,draw);
     Check(s.IsNocked(),"nocked");
     CheckNear(s.AimSwayDeg(),0.0f,0.0001f,"the sway is exactly zero on the nock, so the arc does not jump");
+    CheckNear(s.AimSwaySideDeg(),0.0f,0.0001f,"and so is its sideways half");
 
-    //Bounded by the amplitude, and actually moving.
+    //Bounded by the amplitude, and actually moving - both halves, inside the cone's circle.
     float lo = 0.0f;
     float hi = 0.0f;
+    float side_lo = 0.0f;
+    float side_hi = 0.0f;
+    float widest = 0.0f;
+    float apart = 0.0f;
+    bool  f_flat = true;
+    bool  f_as_2d = true;
+    const float D2R = 3.14159265358979f / 180.0f;
     for (int i = 0; i < 600; i++){
         Run(s,1,draw);
         float w = s.AimSwayDeg();
+        float side = s.AimSwaySideDeg();
         if (w < lo){ lo = w; }
         if (w > hi){ hi = w; }
+        if (side < side_lo){ side_lo = side; }
+        if (side > side_hi){ side_hi = side; }
+        widest = fmaxf(widest,sqrtf(w * w + side * side));
+        apart = fmaxf(apart,fabsf(w - side));
+        //On the range the plane is locked: the aim is the 2D one, to the bit, and never leaves it.
+        v3 d = s.AimDirection();
+        float a = s.ShotAimDeg() * D2R;
+        f_flat = f_flat && d.z == 0.0f;
+        f_as_2d = f_as_2d && d.x == cosf(a) * s.facing && d.y == sinf(a);
     }
     char detail[160];
     snprintf(detail,sizeof(detail),"%.2f .. %.2f over ten seconds",lo,hi);
     Check(hi <= AIM_SWAY_STAND_DEG && lo >= -AIM_SWAY_STAND_DEG,"standing, it stays inside AIM_SWAY_STAND_DEG",detail);
     Check(hi - lo > AIM_SWAY_STAND_DEG,"and really drifts",detail);
     CheckNear(s.ShotAimDeg(),s.aim_deg + s.AimSwayDeg(),0.0001f,"the shot's angle is the aim plus the sway");
+    snprintf(detail,sizeof(detail),"sideways %.2f .. %.2f, widest %.3f of %.1f, halves up to %.2f apart",
+             side_lo,side_hi,widest,AIM_SWAY_STAND_DEG,apart);
+    Check(side_hi - side_lo > AIM_SWAY_STAND_DEG,"the sideways half drifts as far",detail);
+    Check(widest <= AIM_SWAY_STAND_DEG + 0.0001f,"and the two together stay inside the cone's circle",detail);
+    Check(apart > 1.0f,"on a curve of their own - the halves are not one drift twice",detail);
+    Check(f_flat && f_as_2d,"on a locked plane the aim is the 2D aim exactly, with no z at all");
 
     //Kneeling narrows it.
     Stage k;
@@ -3318,14 +3342,18 @@ static void TestSway(){
     Run(k,BOW_NOCK_TICKS + 1,draw);
     float klo = 0.0f;
     float khi = 0.0f;
+    float kwidest = 0.0f;
     for (int i = 0; i < 600; i++){
         Run(k,1,draw);
         float w = k.AimSwayDeg();
+        float side = k.AimSwaySideDeg();
         if (w < klo){ klo = w; }
         if (w > khi){ khi = w; }
+        kwidest = fmaxf(kwidest,sqrtf(w * w + side * side));
     }
-    snprintf(detail,sizeof(detail),"%.2f .. %.2f kneeling",klo,khi);
+    snprintf(detail,sizeof(detail),"%.2f .. %.2f kneeling, widest %.3f",klo,khi,kwidest);
     Check(khi <= AIM_SWAY_KNEEL_DEG && klo >= -AIM_SWAY_KNEEL_DEG,"kneeling, it stays inside AIM_SWAY_KNEEL_DEG",detail);
+    Check(kwidest <= AIM_SWAY_KNEEL_DEG + 0.0001f,"and the whole cone narrows with it",detail);
 
     //Two draws do not sway alike, and the same draw in a second Stage does.
     Stage a;
@@ -3337,11 +3365,229 @@ static void TestSway(){
     Run(a,BOW_NOCK_TICKS + 40,draw);
     Run(b,BOW_NOCK_TICKS + 40,draw);
     CheckNear(a.AimSwayDeg(),b.AimSwayDeg(),0.0f,"the sway is the same in a replay");
+    CheckNear(a.AimSwaySideDeg(),b.AimSwaySideDeg(),0.0f,"both halves of it");
     ArcherInput loose;
     loose.f_draw_released = true;
     Run(a,1,loose);
     Run(a,BOW_NOCK_TICKS + 40,draw);
     Check(fabsf(a.AimSwayDeg() - b.AimSwayDeg()) > 0.05f,"but the next draw sways differently");
+    Check(fabsf(a.AimSwaySideDeg() - b.AimSwaySideDeg()) > 0.05f,"sideways too");
+
+    //A locked shot never leaves the plane: z, vz and yaw are exactly 0 from the loose to the wall.
+    Stage f;
+    f.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(f);
+    f.aim_deg = 10.0f;
+    Run(f,BOW_DRAW_TICKS + 30,draw);
+    StageEvents fe;
+    f.Tick(loose,fe);
+    bool f_in_plane = fe.f_shot;
+    for (int t = 0; t < 120; t++){
+        for (int i = 0; i < ARROW_MAX_LIVE; i++){
+            const Arrow& ar = f.arrows[i];
+            if (ar.f_live){
+                f_in_plane = f_in_plane && ar.pos.z == 0.0f && ar.prev_pos.z == 0.0f &&
+                             ar.vel.z == 0.0f && ar.yaw == 0.0f;
+            }
+        }
+        Run(f,1,idle);
+    }
+    Check(f_in_plane && f.arrows_hit_blocks > 0,"a locked shot flies and sticks with no z, no vz and no yaw");
+}
+
+/*
+    OFF THE PLANE: the character scene, where the turntable turns her to any heading and the arrow
+    leaves along it (Stage::IsPlaneLocked). The same rules as the locked plane, with the third
+    component switched on - so the checks are that it points where the heading says, that the arc
+    still IS the flight, that the attitude handed to the app rebuilds the direction, and that a
+    block's depth now decides a hit.
+*/
+static void TestAimOffPlane(){
+    printf("\naim off the plane\n");
+    char d[200];
+    ArcherInput draw;
+    draw.f_draw_down = true;
+    ArcherInput loose;
+    loose.f_draw_released = true;
+    ArcherInput idle;
+
+    Stage range;
+    range.SetLevel(STAGE_LEVEL_RANGE);
+    Stage c;
+    c.SetLevel(STAGE_LEVEL_CHARACTER);
+    Settle(c);
+    Check(range.IsPlaneLocked() && !c.IsPlaneLocked(),"every level is locked to the plane but the character scene");
+
+    //Ahead is the heading, in the turntable's convention: 0 toward the camera, 90 to +X.
+    c.aim_deg = 0.0f;
+    c.heading_deg = 0.0f;
+    v3 ahead = c.AimDirection();
+    snprintf(d,sizeof(d),"(%.4f,%.4f,%.4f)",ahead.x,ahead.y,ahead.z);
+    Check(fabsf(ahead.x) < 1e-6f && fabsf(ahead.y) < 1e-6f && fabsf(ahead.z - 1.0f) < 1e-6f,
+          "undrawn and level at heading 0, the aim is +Z",d);
+    CheckNear(c.AnchorPosition().z,BOW_NOCK_FWD,1e-6f,"and the anchor is ahead of her along it");
+    c.heading_deg = 90.0f;
+    ahead = c.AimDirection();
+    snprintf(d,sizeof(d),"(%.4f,%.4f,%.4f)",ahead.x,ahead.y,ahead.z);
+    Check(fabsf(ahead.x - 1.0f) < 1e-6f && fabsf(ahead.z) < 1e-6f,"at heading 90 it is +X",d);
+
+    //Drawn, both halves of the cone show in the direction, each on its own axis.
+    c.heading_deg = 30.0f;
+    c.aim_deg = 25.0f;
+    Run(c,BOW_DRAW_TICKS + 47,draw);
+    Check(c.IsNocked() && fabsf(c.AimSwaySideDeg()) > 0.2f,"drawn on the turntable, it sways sideways");
+    const float D2R = 3.14159265358979f / 180.0f;
+    v3 dir = c.AimDirection();
+    v3 fwd = c.Forward();
+    v3 left(fwd.z,0.0f,-fwd.x);
+    float up = c.ShotAimDeg() * D2R;
+    float side = c.AimSwaySideDeg() * D2R;
+    float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    float along_left = dir.x * left.x + dir.z * left.z;
+    snprintf(d,sizeof(d),"|d| %.6f, left %.6f for sin(side) %.6f, up %.6f for %.6f",
+             len,along_left,sinf(side),dir.y,sinf(up) * cosf(side));
+    CheckNear(len,1.0f,1e-5f,"the direction is a unit vector",d);
+    CheckNear(along_left,sinf(side),1e-5f,"its sideways part is the sideways sway, to her left",d);
+    CheckNear(dir.y,sinf(up) * cosf(side),1e-5f,"and its climb is the aim",d);
+
+    //The arc IS the flight, in 3D as on the plane - the same comparison as TestBow's.
+    v3 arc[AIM_ARC_POINTS];
+    int n = c.PredictArc(arc,AIM_ARC_POINTS);
+    StageEvents le;
+    c.Tick(loose,le);
+    int idx = -1;
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        if (c.arrows[i].f_live && !c.arrows[i].f_stuck){ idx = i; }
+    }
+    Check(le.f_shot && idx >= 0 && n >= 4,"it looses, with an arc drawn");
+    if (idx < 0){
+        return;
+    }
+    CheckNear(le.shot_side_deg,side / D2R,1e-4f,"and the shot reports the sideways sway it left with");
+    int compared = 0;
+    float worst = 0.0f;
+    bool  f_attitude = true;
+    for (int k = 0; k < n && k < 8; k++){
+        int want_steps = (k + 1) * AIM_ARC_TICK_STRIDE;
+        while (compared < want_steps - 1 && c.arrows[idx].f_live && !c.arrows[idx].f_stuck){
+            Run(c,1,idle);
+            compared++;
+        }
+        const Arrow& a = c.arrows[idx];
+        if (!a.f_live || a.f_stuck){
+            break;
+        }
+        v3 e = a.pos - arc[k];
+        worst = fmaxf(worst,sqrtf(e.x * e.x + e.y * e.y + e.z * e.z));
+        //The mesh is turned by yaw(Y) * angle(Z) from +X: that has to be the way it is going.
+        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
+        v3 rebuilt(cosf(a.angle) * cosf(a.yaw),sinf(a.angle),-cosf(a.angle) * sinf(a.yaw));
+        v3 diff = rebuilt - a.vel * (1.0f / speed);
+        f_attitude = f_attitude && sqrtf(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z) < 1e-5f;
+    }
+    snprintf(d,sizeof(d),"worst divergence %.6f over %i ticks",worst,compared);
+    Check(compared > 10 && worst < 0.0005f,"off the plane the drawn arc is still the flight, tick for tick",d);
+    Check(f_attitude,"and the attitude the app turns the mesh by is the way it flies");
+    snprintf(d,sizeof(d),"at (%.2f,%.2f,%.2f)",c.arrows[idx].pos.x,c.arrows[idx].pos.y,c.arrows[idx].pos.z);
+    Check(c.arrows[idx].pos.z > 1.0f && c.arrows[idx].pos.x > 0.5f,"it went off toward heading 30, out of the plane",d);
+
+    //Headings behind her and to -X, where the attitude has to carry the turn in `angle`.
+    const float headings[] = { 180.0f, -90.0f, -150.0f };
+    for (float h : headings){
+        Stage b;
+        b.SetLevel(STAGE_LEVEL_CHARACTER);
+        Settle(b);
+        b.heading_deg = h;
+        b.aim_deg = 15.0f;
+        Run(b,BOW_DRAW_TICKS + 5,draw);
+        b.Tick(loose,le);
+        int bi = -1;
+        for (int i = 0; i < ARROW_MAX_LIVE; i++){
+            if (b.arrows[i].f_live){ bi = i; }
+        }
+        if (bi < 0){
+            Check(false,"a shot at another heading looses");
+            continue;
+        }
+        const Arrow& a = b.arrows[bi];
+        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
+        v3 rebuilt(cosf(a.angle) * cosf(a.yaw),sinf(a.angle),-cosf(a.angle) * sinf(a.yaw));
+        v3 diff = rebuilt - a.vel * (1.0f / speed);
+        float hr = h * D2R;
+        float ahead_dot = (a.vel.x * sinf(hr) + a.vel.z * cosf(hr)) / speed;
+        snprintf(d,sizeof(d),"heading %.0f: yaw %.1f deg, angle %.1f deg, %.4f along the heading",
+                 h,a.yaw / D2R,a.angle / D2R,ahead_dot);
+        Check(sqrtf(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z) < 1e-5f && ahead_dot > 0.9f &&
+              fabsf(a.yaw) <= 1.5708f,"the attitude rebuilds the flight at any heading, yaw within a quarter turn",d);
+    }
+
+    //A block's depth decides a hit off the plane: the same block misses set back, hits at z 0.
+    for (int set_back = 0; set_back < 2; set_back++){
+        Stage b;
+        b.SetLevel(STAGE_LEVEL_CHARACTER);
+        Settle(b);
+        StageBlock wall = { 7.0f, 1.5f, 0.5f, 2.5f, BLOCK_SOLID, true };
+        //A unit either side: the sideways sway can carry the arrow half a unit off z 0 by here.
+        wall.z = set_back ? -3.0f : 0.0f;
+        wall.depth = 1.0f;
+        size_t wi = b.blocks.size();
+        b.blocks.push_back(wall);
+        b.heading_deg = 90.0f;
+        b.aim_deg = 0.0f;
+        Run(b,BOW_DRAW_TICKS + 5,draw);
+        b.Tick(loose,le);
+        bool f_hit = false;
+        StageEvents::ArrowHit hit;
+        for (int t = 0; t < 60 && !f_hit; t++){
+            StageEvents e;
+            b.Tick(idle,e);
+            for (const StageEvents::ArrowHit& h : e.arrow_hits){
+                if (h.block == (int)wi){ f_hit = true; hit = h; }
+            }
+        }
+        if (set_back){
+            Check(!f_hit,"a wall set back behind the arrow's line lets it pass in front");
+        }else{
+            snprintf(d,sizeof(d),"struck at (%.3f,%.3f,%.3f), normal (%.0f,%.0f,%.0f)",hit.point.x,hit.point.y,
+                     hit.point.z,hit.normal.x,hit.normal.y,hit.normal.z);
+            Check(f_hit && fabsf(hit.point.x - 6.5f) < 0.001f && hit.normal.x == -1.0f,
+                  "the same wall across its line stops it at the near face",d);
+        }
+    }
+
+    /*
+        And through a block's FRONT or BACK face: a wall across +Z, shot into at heading 20. Not
+        heading 0 with the wall across her: her own body is still swept in 2D, so a wall spanning
+        her x stands her on top of it. Off to her side, the arrow reaches its x range well before
+        its z range, so the face it goes in by is the back one.
+    */
+    {
+        Stage b;
+        b.SetLevel(STAGE_LEVEL_CHARACTER);
+        Settle(b);
+        StageBlock wall = { 3.1f, 1.5f, 1.9f, 2.5f, BLOCK_SOLID, true };
+        wall.z = 6.0f;
+        wall.depth = 0.5f;
+        size_t wi = b.blocks.size();
+        b.blocks.push_back(wall);
+        b.heading_deg = 20.0f;
+        b.aim_deg = 0.0f;
+        Run(b,BOW_DRAW_TICKS + 5,draw);
+        b.Tick(loose,le);
+        bool f_hit = false;
+        StageEvents::ArrowHit hit;
+        for (int t = 0; t < 60 && !f_hit; t++){
+            StageEvents e;
+            b.Tick(idle,e);
+            for (const StageEvents::ArrowHit& h : e.arrow_hits){
+                if (h.block == (int)wi){ f_hit = true; hit = h; }
+            }
+        }
+        snprintf(d,sizeof(d),"struck at (%.3f,%.3f,%.3f), normal z %.0f",hit.point.x,hit.point.y,hit.point.z,
+                 hit.normal.z);
+        Check(f_hit && fabsf(hit.point.z - 5.5f) < 0.001f && hit.normal.z == -1.0f,
+              "a wall across +Z stops it at its back face, with that face's normal",d);
+    }
 }
 
 //--- The kneel, animated ------------------------------------------------------------------------
@@ -4586,13 +4832,13 @@ static void TestArrowForecast(){
     if (index < 0){
         return;
     }
-    std::vector<v2> path;
+    std::vector<v3> path;
     StageArrowImpact f = s.PredictArrowImpact(index,600,&path);
     ArcherInput idle;
     int flown = 0;
     StageEvents::ArrowHit hit;
     bool f_hit = false;
-    std::vector<v2> swept;
+    std::vector<v3> swept;
     for (int i = 0; i < 600 && !f_hit; i++){
         StageEvents e;
         s.Tick(idle,e);
@@ -4606,11 +4852,11 @@ static void TestArrowForecast(){
     snprintf(d,sizeof(d),"forecast %i ticks to (%.3f,%.3f), struck after %i at (%.3f,%.3f)",
              f.ticks,f.point.x,f.point.y,flown,hit.point.x,hit.point.y);
     Check(f.f_hits && f_hit && f.ticks == flown,"it strikes on exactly the tick forecast",d);
-    Check(f.point.x == hit.point.x && f.point.y == hit.point.y && f.block == hit.block,
-          "at exactly the point, in the block forecast",d);
+    Check(f.point.x == hit.point.x && f.point.y == hit.point.y && f.point.z == hit.point.z &&
+          f.block == hit.block,"at exactly the point, in the block forecast",d);
     bool f_same = (path.size() == swept.size());
     for (size_t i = 0; f_same && i < path.size(); i++){
-        f_same = (path[i].x == swept[i].x && path[i].y == swept[i].y);
+        f_same = (path[i].x == swept[i].x && path[i].y == swept[i].y && path[i].z == swept[i].z);
     }
     snprintf(d,sizeof(d),"forecast %zu points, flown %zu",path.size(),swept.size());
     Check(f_same,"and the path handed back is the path it swept, so a prop raycast along it finds what the flight will",d);
@@ -5577,7 +5823,7 @@ static void TestCrumble(){
     Stage c = s;
     const int s3 = stones[3];
     c.arrows[0].f_live = true;
-    c.StickArrow(0,v2(c.blocks[s3].Left(),c.blocks[s3].y));
+    c.StickArrow(0,v3(c.blocks[s3].Left(),c.blocks[s3].y,0.0f));
     float stuck_y = c.arrows[0].pos.y;
     DropOnto(c,c.blocks[s3].x,c.blocks[s3].Top() + 0.3f);
     Run(c,CRUMBLE_SHAKE_TICKS + 10,ArcherInput());
@@ -6378,6 +6624,7 @@ int main(void){
     TestVines();
     TestKneel();
     TestSway();
+    TestAimOffPlane();
     TestKneelPuppet();
     TestRopeLevel();
     TestRopePits();

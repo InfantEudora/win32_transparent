@@ -1427,6 +1427,10 @@ void Stage::BuildRopeLevel(){
 */
 void Stage::BuildCharacterLevel(){
     AddScenery({ SCENERY_TILE_ROUND, 0.00f, 0.00f, 0.00f, 0.0f, 1.85f, 0.50f });
+    //The only level where the plane is not locked, so the only one where a block's depth decides
+    //where an arrow goes (see SegmentHitsBlock): as deep as the round tile is wide, not the default
+    //slab, or a shot at her feet toward the camera would fall past the front of the grass.
+    blocks.back().depth = 1.85f;
     AddZone("Character", -4.0f, 4.0f, -4.0f, 8.0f, v2(0.00f,ARCHER_HALF_H + 0.05f));
 }
 
@@ -1697,7 +1701,7 @@ void Stage::TickCrumbles(StageEvents& events){
                 arrow.pos.x > b.Left() - m && arrow.pos.x < b.Right() + m &&
                 arrow.pos.y > b.Bottom() - m && arrow.pos.y < b.Top() + m){
                 arrow.f_stuck = false;
-                arrow.vel = v2(0.0f,0.0f);
+                arrow.vel = v3(0.0f,0.0f,0.0f);
                 //Its first sweep from where it hangs, not from where it flew in from.
                 arrow.prev_pos = arrow.pos;
             }
@@ -3363,31 +3367,108 @@ float Stage::AimSwayDeg() const{
                                0.1f * sinf(TWO_PI * t / 0.7f));
 }
 
-v2 Stage::AimDirection() const{
+/*
+    The sideways half: the same three weights on periods of its own - 2.3s, 3.7s and 0.9s, none a
+    simple ratio of the up-and-down half's, so the tip traces a figure that never closes rather than
+    a line or an ellipse. The same entry point and the same ramp, so it too is exactly zero on the
+    nock and the same in a replay.
+
+    Then SQUEEZED into the circle: by sqrt(1 - (up/amplitude)^2), so up^2 + side^2 never passes
+    amplitude^2 and the up-and-down half is left exactly as it was (see AIM_SWAY_STAND_DEG).
+*/
+float Stage::AimSwaySideDeg() const{
+    if (!IsNocked()){
+        return 0.0f;
+    }
+    const float TWO_PI = 6.28318530718f;
+    float spread = (float)draws_started * 0.6180339887f;
+    float t = (spread - floorf(spread)) * 30.0f + (float)sway_ticks * ARCHER_DT;
+    float ramp = ClampF((float)sway_ticks / (float)AIM_SWAY_RAMP_TICKS,0.0f,1.0f);
+    ramp = ramp * ramp * (3.0f - 2.0f * ramp);
+    float k = KneelAmount();
+    float amplitude = AIM_SWAY_STAND_DEG + (AIM_SWAY_KNEEL_DEG - AIM_SWAY_STAND_DEG) * k;
+    if (amplitude <= 0.0f){
+        return 0.0f;
+    }
+    float side = amplitude * ramp * (0.6f * sinf(TWO_PI * t / 2.3f) +
+                                     0.3f * sinf(TWO_PI * t / 3.7f) +
+                                     0.1f * sinf(TWO_PI * t / 0.9f));
+    float up = AimSwayDeg() / amplitude;
+    return side * sqrtf(fmaxf(0.0f,1.0f - up * up));
+}
+
+v3 Stage::Forward() const{
+    if (IsPlaneLocked()){
+        return v3(facing,0.0f,0.0f);
+    }
+    float h = heading_deg * STAGE_DEG2RAD;
+    return v3(sinf(h),0.0f,cosf(h));
+}
+
+v3 Stage::AimDirection() const{
     float a = ShotAimDeg() * STAGE_DEG2RAD;
     //Mirrored through facing, so +30 degrees means "thirty up from straight ahead" whichever way
     //the archer is looking. A world-space angle would mean the same key tilted the wrong way
     //half the time.
-    return v2(cosf(a) * facing,sinf(a));
+    //Locked, the sideways sway is dropped - flattened into the plane - and this is the 2D aim
+    //exactly as it was, down to the bit, which is what keeps every shot on a locked plane the
+    //shot it was before the aim had a third dimension.
+    if (IsPlaneLocked()){
+        return v3(cosf(a) * facing,sinf(a),0.0f);
+    }
+    /*
+        Off the plane: tilt `a` up from level ahead, then turn it sideways by the sway, about the
+        aim's own up (the up that is square to it, in her vertical plane) - which is what keeps the
+        cone a cone at every elevation. That turn has a closed form: the tilted aim times cos(s),
+        plus her LEFT times sin(s), since up x (tilted aim) is left whatever the tilt. Left is
+        world up x Forward.
+    */
+    v3 f = Forward();
+    v3 left(f.z,0.0f,-f.x);
+    float s = AimSwaySideDeg() * STAGE_DEG2RAD;
+    v3 tilted = f * cosf(a) + v3(0.0f,sinf(a),0.0f);
+    return tilted * cosf(s) + left * sinf(s);
 }
 
-v2 Stage::AnchorPosition() const{
+v3 Stage::AnchorPosition() const{
     //Eased from the standing anchor to the kneeling one as she goes down, and back.
     float k = KneelAmount();
     float fwd = BOW_NOCK_FWD + (KNEEL_NOCK_FWD - BOW_NOCK_FWD) * k;
     float up = BOW_NOCK_UP + (KNEEL_NOCK_UP - BOW_NOCK_UP) * k;
-    return pos + v2(fwd * facing,up);
+    //Her body is at z 0 in every level; the anchor is ahead of her along Forward - which on a
+    //locked plane is (facing,0,0), and so is pos + (fwd * facing, up) as it always was.
+    v3 f = Forward();
+    return v3(pos.x + f.x * fwd,pos.y + up,f.z * fwd);
 }
 
-v2 Stage::MuzzlePosition() const{
+v3 Stage::MuzzlePosition() const{
     return AnchorPosition() + AimDirection() * ARROW_LENGTH;
+}
+
+/*
+    An arrow's attitude from its velocity - see Arrow. On the plane (vz exactly 0) it is the one
+    angle it has always been, atan2(vy, vx), and yaw 0; off it, yaw is the turn about +Y out of the
+    plane, kept within a quarter turn by measuring it off whichever way along X the arrow is
+    going, and `angle` is the climb in the vertical plane that turn leaves it in.
+*/
+static void ArrowAttitude(const v3& vel, float& out_angle, float& out_yaw){
+    if (vel.z == 0.0f){
+        out_angle = atan2f(vel.y,vel.x);
+        out_yaw = 0.0f;
+        return;
+    }
+    float along = (vel.x < 0.0f) ? -1.0f : 1.0f;
+    float level = sqrtf(vel.x * vel.x + vel.z * vel.z);
+    out_yaw = atan2f(-vel.z * along,vel.x * along);
+    out_angle = atan2f(vel.y,level * along);
 }
 
 void Stage::Loose(StageEvents& events){
     float power = DrawPower();
     float speed = ARROW_SPEED_MIN + (ARROW_SPEED_MAX - ARROW_SPEED_MIN) * power;
-    v2 dir = AimDirection();
+    v3 dir = AimDirection();
     float shot_aim_deg = ShotAimDeg();      //read before the draw is cleared below takes the sway
+    float shot_side_deg = AimSwaySideDeg();
 
     //A free slot, or the oldest arrow if every slot is live. Recycling rather than refusing: an
     //input that silently does nothing is the one failure mode a main verb must not have.
@@ -3419,7 +3500,7 @@ void Stage::Loose(StageEvents& events){
         those two the run speed has changed. A promise drawn on screen has to be keepable.
     */
     a.vel = dir * speed;
-    a.angle = atan2f(a.vel.y,a.vel.x);
+    ArrowAttitude(a.vel,a.angle,a.yaw);
     a.f_live = true;
     a.f_stuck = false;
 
@@ -3430,6 +3511,7 @@ void Stage::Loose(StageEvents& events){
     events.f_shot = true;
     events.shot_power = power;
     events.shot_aim_deg = shot_aim_deg;
+    events.shot_side_deg = shot_side_deg;
 }
 
 void Stage::TickArrows(StageEvents& events){
@@ -3453,18 +3535,18 @@ void Stage::TickArrows(StageEvents& events){
             it is the segment rp3d is asked about for crates and targets. See the handshake note
             on Stage::arrows.
         */
-        v2 from;
-        v2 next;
-        v2 point;
-        v2 normal;
+        v3 from;
+        v3 next;
+        v3 point;
+        v3 normal;
         int block = FlyArrow(a,from,next,point,normal);
         a.prev_pos = from;
         if (block >= 0){
-            float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
+            float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
             //Backed off along the face so the shaft is embedded rather than coplanar with the
             //surface, which z-fights.
             a.pos = point + normal * 0.02f;
-            a.vel = v2(0.0f,0.0f);
+            a.vel = v3(0.0f,0.0f,0.0f);
             a.f_stuck = true;
             a.age_ticks = 0;
             arrows_hit_blocks++;
@@ -3480,7 +3562,7 @@ void Stage::TickArrows(StageEvents& events){
         }
 
         a.pos = next;
-        a.angle = atan2f(a.vel.y,a.vel.x);
+        ArrowAttitude(a.vel,a.angle,a.yaw);
         a.age_ticks++;
         if (a.age_ticks > ARROW_MAX_AGE_TICKS || a.pos.y < -60.0f){
             a.f_live = false;
@@ -3488,14 +3570,14 @@ void Stage::TickArrows(StageEvents& events){
     }
 }
 
-int Stage::FlyArrow(Arrow& a, v2& from, v2& next, v2& point, v2& normal) const{
+int Stage::FlyArrow(Arrow& a, v3& from, v3& next, v3& point, v3& normal) const{
     from = (a.age_ticks == 0) ? a.prev_pos : a.pos;
     a.vel.y -= ARROW_GRAVITY * ARCHER_DT;
     next = a.pos + a.vel * ARCHER_DT;
     return SegmentHitsBlock(from,next,point,normal);
 }
 
-StageArrowImpact Stage::PredictArrowImpact(int index, int horizon, std::vector<v2>* path) const{
+StageArrowImpact Stage::PredictArrowImpact(int index, int horizon, std::vector<v3>* path) const{
     StageArrowImpact out;
     if (path){
         path->clear();
@@ -3505,10 +3587,10 @@ StageArrowImpact Stage::PredictArrowImpact(int index, int horizon, std::vector<v
     }
     Arrow a = arrows[index];
     for (int i = 1; i <= horizon; i++){
-        v2 from;
-        v2 next;
-        v2 point;
-        v2 normal;
+        v3 from;
+        v3 next;
+        v3 point;
+        v3 normal;
         int block = FlyArrow(a,from,next,point,normal);
         if (path){
             if (path->empty()){
@@ -3543,13 +3625,13 @@ int Stage::NumLiveArrows() const{
     return n;
 }
 
-void Stage::StickArrow(int index, const v2& point){
+void Stage::StickArrow(int index, const v3& point){
     if (index < 0 || index >= ARROW_MAX_LIVE){
         return;
     }
     Arrow& a = arrows[index];
     a.pos = point;
-    a.vel = v2(0.0f,0.0f);
+    a.vel = v3(0.0f,0.0f,0.0f);
     a.f_stuck = true;
     a.age_ticks = 0;
 }
@@ -3568,12 +3650,17 @@ void Stage::KillArrow(int index){
     test because at a full draw an arrow covers 0.77 units in a tick, which is wider than the
     cracked wall in this level is thick - a per-tick overlap test would let a fast arrow pass
     clean through it, and would do so only sometimes, which is the worst kind of bug to be handed.
+
+    Three pairs of faces, the third the block's depth through the slab. On a locked plane the
+    segment has no z to speak of - it is at z 0 and parallel to that pair - and every block covers
+    z 0 (STAGE_BLOCK_MIN_COVER), so the third pair can neither narrow the hit nor lose it and the
+    answer is the 2D one exactly. Off the plane it is what lets an arrow pass in front of a block.
 */
-int Stage::SegmentHitsBlock(const v2& a, const v2& b, v2& out_point, v2& out_normal) const{
-    v2 d = b - a;
+int Stage::SegmentHitsBlock(const v3& a, const v3& b, v3& out_point, v3& out_normal) const{
+    v3 d = b - a;
     float best_t = 2.0f;
     int best = -1;
-    v2 best_normal;
+    v3 best_normal;
 
     for (size_t i = 0; i < blocks.size(); i++){
         const StageBlock& blk = blocks[i];
@@ -3589,14 +3676,14 @@ int Stage::SegmentHitsBlock(const v2& a, const v2& b, v2& out_point, v2& out_nor
 
         float t_near = 0.0f;
         float t_far = 1.0f;
-        v2 normal;
+        v3 normal;
         bool f_miss = false;
 
-        for (int axis = 0; axis < 2 && !f_miss; axis++){
-            float da   = (axis == 0) ? d.x : d.y;
-            float orig = (axis == 0) ? a.x : a.y;
-            float lo   = (axis == 0) ? blk.Left()   : blk.Bottom();
-            float hi   = (axis == 0) ? blk.Right()  : blk.Top();
+        for (int axis = 0; axis < 3 && !f_miss; axis++){
+            float da   = (axis == 0) ? d.x : (axis == 1) ? d.y : d.z;
+            float orig = (axis == 0) ? a.x : (axis == 1) ? a.y : a.z;
+            float lo   = (axis == 0) ? blk.Left()   : (axis == 1) ? blk.Bottom() : blk.Back();
+            float hi   = (axis == 0) ? blk.Right()  : (axis == 1) ? blk.Top()    : blk.Front();
 
             if (da > -1e-8f && da < 1e-8f){
                 //Parallel to this pair of faces: either it is already between them for the whole
@@ -3619,7 +3706,7 @@ int Stage::SegmentHitsBlock(const v2& a, const v2& b, v2& out_point, v2& out_nor
             }
             if (t1 > t_near){
                 t_near = t1;
-                normal = (axis == 0) ? v2(n,0.0f) : v2(0.0f,n);
+                normal = (axis == 0) ? v3(n,0.0f,0.0f) : (axis == 1) ? v3(0.0f,n,0.0f) : v3(0.0f,0.0f,n);
             }
             if (t2 < t_far){
                 t_far = t2;
@@ -3695,26 +3782,26 @@ StageLanding Stage::PredictLanding(const ArcherInput& in, int horizon) const{
     at the first thing it would hit - so the dots are not a sketch of the flight, they are the
     flight, sampled. Any divergence between this function and TickArrows is a bug in one of them.
 */
-int Stage::PredictArc(v2* out_points, int max_points) const{
+int Stage::PredictArc(v3* out_points, int max_points) const{
     if (!out_points || max_points < 1){
         return 0;
     }
 
     float power = DrawPower();
     float speed = ARROW_SPEED_MIN + (ARROW_SPEED_MAX - ARROW_SPEED_MIN) * power;
-    v2 p = MuzzlePosition();
-    v2 v = AimDirection() * speed;
+    v3 p = MuzzlePosition();
+    v3 v = AimDirection() * speed;
     //The first step sweeps from the anchor, exactly as TickArrows does - see ARROW_LENGTH.
-    v2 from = AnchorPosition();
+    v3 from = AnchorPosition();
 
     int written = 0;
     int limit = (max_points < AIM_ARC_POINTS) ? max_points : AIM_ARC_POINTS;
     for (int i = 0; i < limit; i++){
         for (int s = 0; s < AIM_ARC_TICK_STRIDE; s++){
             v.y -= ARROW_GRAVITY * ARCHER_DT;
-            v2 next = p + v * ARCHER_DT;
-            v2 point;
-            v2 normal;
+            v3 next = p + v * ARCHER_DT;
+            v3 point;
+            v3 normal;
             int hit = SegmentHitsBlock(from,next,point,normal);
             from = next;
             if (hit >= 0){
@@ -3746,6 +3833,7 @@ std::string Stage::DebugLine() const{
 */
 void Stage::HashState(StateHash& h) const{
     auto add2 = [&h](const v2& v){ h.Add(v.x); h.Add(v.y); };
+    auto add3 = [&h](const v3& v){ h.Add(v.x); h.Add(v.y); h.Add(v.z); };
 
     h.Begin("her");
     add2(pos); add2(vel);
@@ -3762,13 +3850,13 @@ void Stage::HashState(StateHash& h) const{
     h.Add(rope_id); h.Add(rope_ticks); h.Add(rope_cooldown); h.Add(rope_s); h.Add(rope_climb);
     h.Add(rope_climbed); h.Add(rope_pump); add2(climb_from); add2(climb_to); h.Add(grab_cooldown);
     h.Add(bow_mode); h.Add(draw_ticks); h.Add(aim_deg); h.Add(draws_cancelled); h.Add(sway_ticks);
-    h.Add(draws_started);
+    h.Add(draws_started); h.Add(heading_deg);
 
     h.Begin("world");
     h.Add(ticks); h.Add(arrows_shot); h.Add(arrows_hit_blocks); h.Add(next_arrow);
     for (const Arrow& a : arrows){
-        add2(a.pos); add2(a.prev_pos); add2(a.vel);
-        h.Add(a.angle); h.Add(a.age_ticks); h.Add(a.f_live); h.Add(a.f_stuck);
+        add3(a.pos); add3(a.prev_pos); add3(a.vel);
+        h.Add(a.angle); h.Add(a.yaw); h.Add(a.age_ticks); h.Add(a.f_live); h.Add(a.f_stuck);
     }
     for (const StageBlock& b : blocks){
         h.Add(b.f_alive); h.Add(b.crumble_ticks);

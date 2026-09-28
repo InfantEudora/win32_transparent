@@ -557,8 +557,15 @@ enum ArcherAnimSource{
 */
 /*
     --- THE AIM OVERRIDE (animation_plan.md, Step 3) ---------------------------------------------
-    After the clips have posed her, the spine and shoulders are turned about the WORLD's Z - the
-    play plane's normal, the axis pointing at the camera - so the bow points along aim_deg.
+    After the clips have posed her, the spine and shoulders are turned about HER SIDE AXIS - level,
+    square to the way she faces (forward x up) - so the bow points along aim_deg. Side-on that axis
+    is the world's Z, the play plane's normal; on the character scene's turntable it turns with
+    her, which is what lets the override bend her there too.
+
+    Then a second turn, about the aim's own UP (square to the tilted aim, in her vertical plane),
+    for the cone's sideways half (Stage::AimSwaySideDeg). All the tilt first and all the sideways
+    turn after, so the bow ends up at sideways * tilt * pose: the sideways turn moves the aim out
+    of her vertical plane without changing its climb, and each half lands exactly on the rules'.
 
     Rotations about one shared world axis ADD, whichever bone they are applied to. So however the
     angle is split over the chain below, every bone downstream of all of it turns by exactly the
@@ -727,18 +734,23 @@ public:
     float overlay_time = 0.0f;
     float overlay_weight = 0.0f;
     float aim_target_deg = 0.0f;    //Stage::aim_deg
+    float aim_side_deg = 0.0f;      //Stage::AimSwaySideDeg, + to her left
     float aim_weight = 0.0f;        //0..1, from Puppet::aim_weight
-    float aim_facing = 1.0f;        //+1 right, -1 left
+    //Level ahead, a unit vector - Stage::Forward: (+-1,0,0) side-on, her heading on the turntable.
+    vec3  aim_forward = vec3(1.0f,0.0f,0.0f);
 
     /*
-        THE LIVE NEUTRAL, and the check on it: the angle the bow's front makes in the play plane,
-        relative to facing, + up - Stage::aim_deg's convention. `aim_pose_deg` is read after the
-        layers and BEFORE the aim turn, and the turn is aim_target_deg minus it, so a pose aiming
-        anywhere ends on the rules' angle. `aim_drawn_deg` is read after the turn - the check.
+        THE LIVE NEUTRAL, and the check on it: the angle the bow's front climbs above level ahead,
+        + up - Stage::aim_deg's convention - and how far it points off to her left, + left - the
+        sideways sway's. `aim_pose_*` are read after the layers and BEFORE the aim turns, and each
+        turn is its target minus that, so a pose aiming anywhere, a socket leaning a little off to
+        the side included, ends on the rules' angles. `aim_drawn_*` are read after - the check.
     */
     Object* aim_probe = NULL;       //the bow
     float   aim_pose_deg = 0.0f;
     float   aim_drawn_deg = 0.0f;
+    float   aim_pose_side_deg = 0.0f;
+    float   aim_drawn_side_deg = 0.0f;
 
     //--- The loose legs - see ARCHER_LEG_BONES ---
     //Finds both legs' bones. Call once the skeleton is loaded; a leg with any bone missing stays
@@ -858,7 +870,8 @@ private:
     void ApplyUpperLayer();
     void LayerClipModel(Animation* clip, float time, std::unordered_map<Object*,quat>& out_model,
                         std::unordered_map<Object*,vec3>& out_pos);
-    float BowAimDeg();              //the bow's front, in the play plane, relative to facing
+    float BowAimDeg();              //the bow's front, its climb above level ahead (aim_forward)
+    float BowSideDeg();             //and how far it points off to her left
 };
 
 /*
@@ -1058,6 +1071,10 @@ struct ArcherSnapshot{
     float aim_drawn_deg = 0.0f;
     float aim_weight = 0.0f;
     float aim_sway_deg = 0.0f;      //Stage::AimSwayDeg; aim_deg above already includes it
+    //The cone's sideways half (Stage::AimSwaySideDeg), and where the drawn bow actually leans
+    //(ArcherModel::aim_drawn_side_deg) - the same check as aim_drawn_deg, for the other axis.
+    float aim_side_deg = 0.0f;
+    float aim_drawn_side_deg = 0.0f;
     float aim_neutral_deg = 0.0f;   //the LIVE neutral - see ArcherModel::aim_pose_deg
     int   upper_clip = -1;          //the upper-body layer's clip, and its weight
     float upper_weight = 0.0f;
@@ -1124,8 +1141,10 @@ struct ArcherSnapshot{
     struct ArrowView{
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;             //0 on a locked plane, always
         float vx = 0.0f;
         float vy = 0.0f;
+        float vz = 0.0f;
         bool  f_stuck = false;
     };
     std::vector<ArrowView> arrows;
@@ -1135,7 +1154,11 @@ struct ArcherSnapshot{
     //shooting and looking.
     float predicted_x = 0.0f;
     float predicted_y = 0.0f;
+    float predicted_z = 0.0f;
     bool  f_predicted = false;
+    //Stage::IsPlaneLocked, and off the plane the heading the arrow leaves along.
+    bool  f_plane_locked = true;
+    float heading_deg = 0.0f;
 
     //What the model is doing, which is a different question from what the archer is doing - see
     //Puppet.h. `wanted_rate` against `rate` is the foot-slide readout, and it is here rather than
@@ -1562,7 +1585,7 @@ private:
     void ForecastArrowImpacts();
     float arrow_swoosh_peak = -1.0f;            //seconds into arrow_swoosh.wav it is loudest; -1 unloaded
     bool  arrow_in_flight[ARROW_MAX_LIVE] = {}; //the slot's `arrow` scope is open
-    std::vector<v2> arrow_path;                 //scratch for the forecast's path
+    std::vector<v3> arrow_path;                 //scratch for the forecast's path
     //The sound device, the cue table, and the output between them. Survivable throughout: a
     //missing file leaves its sound silent, a bad table leaves the cues it had (none at start).
     void SetupSound();
@@ -1722,7 +1745,7 @@ private:
     void SyncAimArc();
     //Cuts the aim arc short at the first PROP it would hit - the half of "what will this arrow
     //hit" that Stage cannot answer. See the note on the definition.
-    int  TruncateArcAgainstProps(v2* points, int count);
+    int  TruncateArcAgainstProps(v3* points, int count);
     void UpdateCamera();
     /*
         CAMERA SHAKE, the cue table's `shake` action. TRAUMA, not a random offset per shake: each
@@ -2276,6 +2299,14 @@ private:
         Object* prop = NULL;        //NULL means this arrow is loose in the world
         v2      local;              //where it went in, in the prop's own frame
         float   local_angle = 0.0f; //and at what angle, relative to the prop's
+        /*
+            OR IN THE CHARACTER SCENE'S TILE, which is not a prop and turns about +Y rather than
+            tipping in the plane: set when an arrow strikes a block there (HandleEvents), and the
+            arrow is carried round by each step the turntable takes past `turntable_deg`, the angle
+            it was last carried to. See SyncArrowViews.
+        */
+        bool    f_turntable = false;
+        float   turntable_deg = 0.0f;
     };
     StuckArrow arrow_stuck[ARROW_MAX_LIVE];
 
@@ -2377,6 +2408,12 @@ private:
     void TickTurntable();
     //Puts the tile (and with f_model, her) at turntable_deg without advancing it. Physics thread.
     void PoseTurntable(bool f_model);
+    /*
+        Which way she faces on the turntable, degrees about +Y with 0 toward the camera: the
+        turntable plus whatever a clip has turned her through - her model's yaw, as PoseTurntable
+        and SyncArcherAnimation set it. It is Stage::heading_deg, and the aim override's forward.
+    */
+    float CharacterHeadingDeg() const;
     //The bow, quiver and arrows as the panel's boxes say - after SyncBow, which shows the arrows.
     void ApplyCharacterPropVisibility();
     void DrawCharacterPanel();

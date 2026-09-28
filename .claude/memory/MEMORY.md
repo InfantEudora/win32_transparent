@@ -67,3 +67,4 @@
 - [Blender export speed](blender_export_speed.md) — archer glTF export 237 s -> 58 s with disable_viewport; Mirror-before-Armature re-evaluated per sampled frame; tools/blender_export_profile.py
 - [Archer hair chains](archer_hair_chains.md) — 3D DynamicChains + wind; core gained spheres/cone/max_accel; game gravity and jolts trap hair; crown weighted to hair_back.1 (artist fix pending)
 - [Replay determinism plan](replay_determinism_plan.md) — DONE: archer replays bit-exact; ONE test recording archer_test (.cues + .trace), re-check after every game change and --write if intended (CLAUDE.md)
+- [Archer 3D aim + plane lock](archer_3d_aim_plane_lock.md) — cone sway, v3 arrows, only the character scene unlocked; locked shots bit-identical; a zero TurnInWorld still changes bits

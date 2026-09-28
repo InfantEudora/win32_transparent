@@ -1,0 +1,90 @@
+#version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
+/*
+    SSAO, stage 2: one direction of a separable, EDGE-AWARE Gaussian blur. Renderer::SSAOPass runs
+    it twice, across then down.
+
+    Edge-aware, because the plain box blur LearnOpenGL pairs its SSAO with averages across
+    silhouettes: the dark crease at the foot of a wall bleeds out onto the sky behind the wall's top
+    edge, and a character standing in front of a cliff gets a grey outline taken from the cliff.
+    Here a neighbour only counts in proportion to how close it lies to THIS pixel's surface plane.
+
+    PLANE DISTANCE, NOT DEPTH DIFFERENCE. Comparing the two pixels' distances from the eye is the
+    usual test and fails on exactly the surfaces SSAO is most visible on: a floor seen at a grazing
+    angle changes depth quickly from one pixel to the next while being perfectly continuous, so a
+    depth test rejects its own neighbours and leaves the floor unblurred - the 4x4 grain standing
+    out on the one surface there is most of. The distance of the neighbour's world position from
+    the centre's tangent plane is ~0 all along a continuous surface however it is tilted, and large
+    across any real edge.
+
+    The tolerance scales with distance from the eye because the G-buffer's positions are RGBA16F:
+    their precision is relative, and a fixed tolerance small enough for the foreground would reject
+    every neighbour in the distance as an edge.
+*/
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (rgba16f, binding = 0) uniform readonly  image2D imgIn;
+layout (rgba16f, binding = 1) uniform writeonly image2D imgOut;
+
+layout (binding = TEXUNIT_GBUFFER_POSITION) uniform sampler2D positiontexture;
+layout (binding = TEXUNIT_GBUFFER_NORMAL)   uniform sampler2D normaltexture;
+
+uniform vec3 eye_position;
+uniform vec3 camera_forward;
+uniform vec2 target_size;
+uniform vec2 direction = vec2(1,0);  //(1,0) across, (0,1) down
+uniform int blur_radius = 4;         //Pixels either side; 0 is a copy. Sigma is half of it.
+uniform float edge_tolerance = 0.05; //Off-plane distance that stops the blur, per unit of depth
+
+float ViewDepth(vec3 world_p){
+    return dot(world_p - eye_position, camera_forward);
+}
+
+void main(){
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = ivec2(target_size);
+    if (any(greaterThanEqual(p, size))){
+        return;
+    }
+    float ao_centre = imageLoad(imgIn, p).r;
+    vec4 centre = texelFetch(positiontexture, p, 0);
+    int radius = clamp(blur_radius, 0, 16);
+    //Nothing drawn here - the value is the "unoccluded" 1 stage 1 wrote, and must stay that.
+    if ((centre.w < 0.1) || (radius == 0)){
+        imageStore(imgOut, p, vec4(vec3(ao_centre), 1.0));
+        return;
+    }
+    vec3 normal = normalize(texelFetch(normaltexture, p, 0).xyz);
+    float tolerance = max(edge_tolerance * ViewDepth(centre.xyz), 1e-4);
+
+    float sigma = float(radius) * 0.5;
+    float falloff = 1.0 / (2.0 * sigma * sigma);
+    ivec2 step_dir = ivec2(direction);
+
+    float sum = ao_centre;
+    float weight_sum = 1.0;
+    for (int k = -radius; k <= radius; ++k){
+        if (k == 0){
+            continue;
+        }
+        ivec2 q = p + step_dir * k;
+        if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size))){
+            continue;
+        }
+        vec4 neighbour = texelFetch(positiontexture, q, 0);
+        //Sky, or a surface stage 1 skipped: its 1.0 is not a measurement, and averaging it in
+        //would lighten every edge that borders empty space.
+        if (neighbour.w < 0.1){
+            continue;
+        }
+        float off_plane = abs(dot(neighbour.xyz - centre.xyz, normal));
+        float w = exp(-float(k * k) * falloff) * max(0.0, 1.0 - off_plane / tolerance);
+        sum += imageLoad(imgIn, q).r * w;
+        weight_sum += w;
+    }
+    float ao = sum / weight_sum;
+    imageStore(imgOut, p, vec4(vec3(ao), 1.0));
+}

@@ -1222,8 +1222,33 @@ void Application::RenderEngineWindow(){
         ImGui::Checkbox("Render reflections",&renderer->f_use_reflections);
 
         int view_buffer = renderer->view_buffer;
-        if (ImGui::SliderInt("View buffer",&view_buffer,0,8)){
-            renderer->SelectViewBuffer(view_buffer);
+        if (ImGui::BeginCombo("View buffer",Renderer::GetViewBufferName(view_buffer))){
+            for (int i = 0; i < Renderer::VIEW_BUFFER_COUNT; i++){
+                if (ImGui::Selectable(Renderer::GetViewBufferName(i),i == view_buffer)){
+                    renderer->SelectViewBuffer(i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        //Open while either the effect or one of its views is, since the views are what these are
+        //tuned against - an SSAO view runs the pass with the checkbox off. Watch the three SSAO
+        //rows in Performance while dragging radius and samples: those two are where the cost is.
+        if (renderer->f_ssao || (view_buffer == Renderer::VIEW_SSAO) || (view_buffer == Renderer::VIEW_SSAO_RAW)){
+            ImGui::SeparatorText("Ambient occlusion");
+            Renderer::SSAOSettings& ao = renderer->ssao;
+            ImGui::SliderFloat("AO radius",&ao.radius,0.05f,5.0f,"%.2f",ImGuiSliderFlags_Logarithmic);
+            ImGui::SliderFloat("AO bias",&ao.bias,0.0f,0.25f,"%.3f");
+            ImGui::SliderInt("AO samples",&ao.kernel_size,4,64);
+            ImGui::SliderFloat("AO strength",&ao.strength,0.0f,1.0f);
+            ImGui::SliderFloat("AO power",&ao.power,0.25f,4.0f,"%.2f",ImGuiSliderFlags_Logarithmic);
+            //0 is off - pick "SSAO (unblurred)" above to see what it is removing instead.
+            ImGui::SliderInt("AO blur radius",&ao.blur_radius,0,12);
+            ImGui::SliderFloat("AO blur edge",&ao.blur_edge_tolerance,0.002f,0.5f,"%.3f",ImGuiSliderFlags_Logarithmic);
+            if (ImGui::Button("AO defaults")){
+                ao = Renderer::SSAOSettings();
+            }
+            ImGui::Separator();
         }
         int num_samples = renderer->aa_samples;
         if (ImGui::SliderInt("MSAA samples",&num_samples,1,16)){

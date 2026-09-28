@@ -795,7 +795,20 @@ float ArcherModel::BowAimDeg(){
         return 0.0f;
     }
     vec3 front = aim_probe->GetWorldRotation() * vec3(0.0f,0.0f,1.0f);
-    return atan2f(front.y,front.x * aim_facing) / ARCHER_DEG2RAD;
+    //The climb against the level ahead, whatever the bow's sideways lean - so the lean and the
+    //climb are two separate numbers, each turned to its own target.
+    return atan2f(front.y,front.x * aim_forward.x + front.z * aim_forward.z) / ARCHER_DEG2RAD;
+}
+
+float ArcherModel::BowSideDeg(){
+    if (!aim_probe){
+        return 0.0f;
+    }
+    vec3 front = aim_probe->GetWorldRotation() * vec3(0.0f,0.0f,1.0f);
+    front.normalize();
+    //Her left is up x forward, as in Stage::AimDirection.
+    float s = front.x * aim_forward.z - front.z * aim_forward.x;
+    return asinf(clamp(s,-1.0f,1.0f)) / ARCHER_DEG2RAD;
 }
 
 void ArcherModel::ApplyAnimation(float time_delta){
@@ -824,14 +837,36 @@ void ArcherModel::ApplyAnimation(float time_delta){
 
     //The live neutral: where the layered pose points the bow, before the aim turns her.
     aim_pose_deg = BowAimDeg();
+    aim_pose_side_deg = BowSideDeg();
 
     if (f_aim){
-        const vec3 axis_world(0.0f,0.0f,1.0f);
-        //+ is up in both directions: facing +X, a positive turn about +Z lifts +X toward +Y;
-        //facing -X the same lift is a negative turn. Same mirroring as Stage::AimDirection.
-        float angle = (aim_target_deg - aim_pose_deg) * aim_weight * aim_facing * ARCHER_DEG2RAD;
+        /*
+            The tilt, about her side axis: forward x up. + lifts the bow whichever way she faces -
+            facing +X that axis is +Z, facing -X it is -Z, the mirroring Stage::AimDirection does
+            with facing, and on the turntable it is wherever her right is.
+        */
+        vec3 side_axis = aim_forward.cross(vec3(0.0f,1.0f,0.0f));
+        side_axis.normalize();
+        float angle = (aim_target_deg - aim_pose_deg) * aim_weight * ARCHER_DEG2RAD;
         for (int i = 0; i < ARCHER_AIM_BONES; i++){
-            TurnInWorld(aim_bones[i],axis_world,angle * aim_shares[i]);
+            TurnInWorld(aim_bones[i],side_axis,angle * aim_shares[i]);
+        }
+        /*
+            Then the cone's sideways half, about the aim's own up - square to the bow's climb as it
+            now is, in her vertical plane. A turn about that axis swings the front out of the plane
+            and leaves its climb where the tilt put it. The tilt, being about her side axis, left
+            the pose's own lean alone, so the lean read before either turn is still the one to take
+            away.
+        */
+        float climb = BowAimDeg() * ARCHER_DEG2RAD;
+        vec3 up_axis = aim_forward * -sinf(climb) + vec3(0.0f,cosf(climb),0.0f);
+        up_axis.normalize();
+        float swing = (aim_side_deg - aim_pose_side_deg) * aim_weight * ARCHER_DEG2RAD;
+        //Not even a turn of nothing: TurnInWorld renormalises, which is a change in the last bit.
+        if (swing != 0.0f){
+            for (int i = 0; i < ARCHER_AIM_BONES; i++){
+                TurnInWorld(aim_bones[i],up_axis,swing * aim_shares[i]);
+            }
         }
     }
 
@@ -843,8 +878,9 @@ void ArcherModel::ApplyAnimation(float time_delta){
     //Last, hanging off the head wherever everything above has put it. Every tick - see ApplyHairChains.
     ApplyHairChains(time_delta);
 
-    //What came out: the bow's front in the play plane, relative to facing. See aim_drawn_deg.
+    //What came out: the bow's climb and its lean. See aim_drawn_deg.
     aim_drawn_deg = BowAimDeg();
+    aim_drawn_side_deg = BowSideDeg();
 }
 
 ApplicationArcher::ApplicationArcher():Application(){
@@ -6188,6 +6224,11 @@ void ApplicationArcher::PoseTurntable(bool f_model){
     }
 }
 
+float ApplicationArcher::CharacterHeadingDeg() const{
+    float clip = archer_model ? archer_model->clip_yaw / ARCHER_DEG2RAD : 0.0f;
+    return turntable_deg + clip;
+}
+
 /*
     Every tick in every scene, because leaving the character scene has to put the bow back. The
     arrows only ever get HIDDEN here: SyncBow decides every tick whether one is showing, and this
@@ -7167,6 +7208,11 @@ void ApplicationArcher::RunSimulationTick(void){
     if (stage.mode == MODE_ROPE){
         SyncArcherFromRope();
     }
+    //Off the plane, "ahead" is the way the turntable has her facing - as drawn last tick, which is
+    //the pose the player is looking at when they let go. See Stage::heading_deg.
+    if (!stage.IsPlaneLocked()){
+        stage.heading_deg = CharacterHeadingDeg();
+    }
 
     StageEvents events;
     stage.Tick(intent,events);
@@ -7848,9 +7894,9 @@ void ApplicationArcher::ForecastArrowImpacts(){
             if (ticks > 0 && (int)k + 1 >= ticks){
                 break;
             }
-            vec3 from(arrow_path[k].x,arrow_path[k].y,0.0f);
-            vec3 to(arrow_path[k + 1].x,arrow_path[k + 1].y,0.0f);
-            if (from.x == to.x && from.y == to.y){
+            vec3 from(arrow_path[k].x,arrow_path[k].y,arrow_path[k].z);
+            vec3 to(arrow_path[k + 1].x,arrow_path[k + 1].y,arrow_path[k + 1].z);
+            if (from.x == to.x && from.y == to.y && from.z == to.z){
                 continue;
             }
             PhysicsWorld::RaycastHit hit = world->Raycast(from,to,exclude);
@@ -7868,7 +7914,7 @@ void ApplicationArcher::ForecastArrowImpacts(){
         if (ticks < 0){
             continue;
         }
-        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
+        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
         cues.Signal("arrow_impact",CuePayload().Set("in",(float)ticks).Set("x",x).Set("speed",speed),i);
     }
 }
@@ -7904,9 +7950,15 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
         int kind = (h.block >= 0 && h.block < (int)stage.blocks.size()) ? stage.blocks[h.block].kind : -1;
         //A hit on the cracked wall is the one the kick-and-break slice will care about, so it is
         //worth naming now rather than being one more anonymous thud.
-        debug->Info("Arrow %i hit block %i (%s) at (%.2f,%.2f) doing %.1f\n",
+        debug->Info("Arrow %i hit block %i (%s) at (%.2f,%.2f,%.2f) doing %.1f\n",
                     h.arrow,h.block,(kind == BLOCK_BREAKABLE) ? "breakable" : "solid",
-                    h.point.x,h.point.y,h.speed);
+                    h.point.x,h.point.y,h.point.z,h.speed);
+        //On the turntable the only block is the tile under her, and it is turning: pinned at the
+        //angle it is at now, before this tick's turn, so it rides every step of it from here.
+        if (IsCharacterScene() && h.arrow >= 0 && h.arrow < ARROW_MAX_LIVE){
+            arrow_stuck[h.arrow].f_turntable = true;
+            arrow_stuck[h.arrow].turntable_deg = turntable_deg;
+        }
     }
 }
 
@@ -7934,9 +7986,9 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
         if (!a.f_live || a.f_stuck){
             continue;
         }
-        vec3 from(a.prev_pos.x,a.prev_pos.y,0.0f);
-        vec3 to(a.pos.x,a.pos.y,0.0f);
-        if (from.x == to.x && from.y == to.y){
+        vec3 from(a.prev_pos.x,a.prev_pos.y,a.prev_pos.z);
+        vec3 to(a.pos.x,a.pos.y,a.pos.z);
+        if (from.x == to.x && from.y == to.y && from.z == to.z){
             continue;       //a degenerate segment is not a query rp3d can answer
         }
 
@@ -7964,7 +8016,7 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
             continue;
         }
 
-        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
+        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
         Physics* p = struck->GetPhysics();
         if (p && !p->IsStatic() && speed > 0.001f){
             /*
@@ -7980,7 +8032,7 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
                 rp3d clears external forces at the end of every step, so this is genuinely an
                 impulse and not something that keeps pushing.
             */
-            vec3 dir(a.vel.x / speed,a.vel.y / speed,0.0f);
+            vec3 dir(a.vel.x / speed,a.vel.y / speed,a.vel.z / speed);
             float dt = GetPhysicsTimestep();
             //Divided by the prop's HEFT - 1 for everything but an archery stand, which takes a sixth
             //of what a board does and so stays standing. See STAND_HEFT for why a mass alone
@@ -7991,8 +8043,10 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
         }
 
         //Stuck where it struck, in Stage, which keeps the arrow's position the rules' business
-        //even though this answer came from the solver.
-        stage.StickArrow(i,v2(hit.point.x,hit.point.y));
+        //even though this answer came from the solver. On a locked plane at z exactly 0, not the
+        //solver's idea of 0: an arrow there never has a z, and a hair of one would be the first.
+        float z = stage.IsPlaneLocked() ? 0.0f : hit.point.z;
+        stage.StickArrow(i,v3(hit.point.x,hit.point.y,z));
         //...and pinned to the thing it went into, so it rides a crate that is kicked and goes down
         //with a target that topples instead of hanging in the air where the target used to be.
         StickArrowToProp(i,struck,v2(hit.point.x,hit.point.y));
@@ -9470,8 +9524,19 @@ void ApplicationArcher::SyncArcherAnimation(){
             the clip choice, so the panel's aim slider bends her exactly as the game's aim does.
         */
         archer_model->aim_target_deg = params.aim_deg;
+        archer_model->aim_side_deg = params.aim_side_deg;
         archer_model->aim_weight = puppet.aim_weight;
-        archer_model->aim_facing = (params.facing < 0.0f) ? -1.0f : 1.0f;
+        /*
+            Level ahead: along facing side-on, and on the turntable the heading she is drawn at -
+            the same number RunSimulationTick hands the rules as Stage::heading_deg, so the bow
+            and the arrow agree on which way is ahead.
+        */
+        if (stage.IsPlaneLocked()){
+            archer_model->aim_forward = vec3((params.facing < 0.0f) ? -1.0f : 1.0f,0.0f,0.0f);
+        }else{
+            float h = CharacterHeadingDeg() * ARCHER_DEG2RAD;
+            archer_model->aim_forward = vec3(sinf(h),0.0f,cosf(h));
+        }
 
         /*
             The loose legs: the Puppet's weight and lead, and the gravity of the world she is
@@ -9544,11 +9609,6 @@ void ApplicationArcher::SyncArcherAnimation(){
             rate = showcase_rate;
             //From its first frame whenever it is a change, so every clip is seen whole.
             start_time = (clip != playing_clip) ? 0.0f : -1.0f;
-        }
-        //The aim bends her about the WORLD's Z, which is only her side-to-side axis while she is
-        //side-on. Turned on the turntable it would tip her over sideways instead, so off here.
-        if (IsCharacterScene()){
-            archer_model->aim_weight = 0.0f;
         }
         if (clip >= 0 && clip < CLIP_COUNT && archer_clips[clip]){
             /*
@@ -9869,7 +9929,7 @@ void ApplicationArcher::SyncArrowViews(){
             already welded to a crate. Checking f_stuck as well as f_live is what makes a recycled
             slot safe without the loose() path having to know this exists.
         */
-        if (stuck.prop && (!a.f_live || !a.f_stuck)){
+        if ((stuck.prop || stuck.f_turntable) && (!a.f_live || !a.f_stuck)){
             stuck = StuckArrow();
         }
 
@@ -9889,8 +9949,8 @@ void ApplicationArcher::SyncArrowViews(){
             float prop_angle = PropPlaneAngle(stuck.prop);
             float c = cosf(prop_angle);
             float s = sinf(prop_angle);
-            a.pos = v2(at.x + stuck.local.x * c - stuck.local.y * s,
-                       at.y + stuck.local.x * s + stuck.local.y * c);
+            a.pos = v3(at.x + stuck.local.x * c - stuck.local.y * s,
+                       at.y + stuck.local.x * s + stuck.local.y * c,a.pos.z);
             angle = stuck.local_angle + prop_angle;
             /*
                 AND WRITTEN BACK INTO Stage, which looks like the wrong direction and is the
@@ -9903,12 +9963,38 @@ void ApplicationArcher::SyncArrowViews(){
             */
             a.angle = angle;
         }
+        if (stuck.f_turntable){
+            /*
+                CARRIED BY THE TURNTABLE: the tile it went into is turning under her, about +Y
+                through x 0, z 0 (see PoseTurntable). Turned on by however far the turntable has
+                gone since last time, and written back into Stage for the same reason as a prop's.
+                By the step rather than from where it struck, because a turn of the whole slider
+                at once is as much a step as a tick's worth is. Its yaw goes round with it, which
+                can take it past the quarter turn a flight keeps it within; the mesh does not mind.
+            */
+            float turn = (turntable_deg - stuck.turntable_deg) * ARCHER_DEG2RAD;
+            if (turn != 0.0f){
+                float c = cosf(turn);
+                float s = sinf(turn);
+                float x = a.pos.x;
+                float z = a.pos.z;
+                a.pos.x = x * c + z * s;
+                a.pos.z = -x * s + z * c;
+                a.yaw += turn;
+                stuck.turntable_deg = turntable_deg;
+            }
+        }
 
-        o->SetPosition(vec3(a.pos.x,a.pos.y,0.0f));
-        //The mesh runs along +X, so one rotation about Z aims it. A loose stuck arrow keeps the
-        //angle it arrived at, which is why Stage stops updating `angle` once it sticks; one stuck
-        //in a prop is turned by the prop instead, above.
-        o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),angle));
+        o->SetPosition(vec3(a.pos.x,a.pos.y,a.pos.z));
+        //The mesh runs along +X, so one rotation about Z aims it in the plane - and off the plane
+        //the arrow's yaw turns that out of it (see Arrow). A loose stuck arrow keeps the angle it
+        //arrived at, which is why Stage stops updating `angle` once it sticks; one stuck in a prop
+        //is turned by the prop instead, above.
+        quat rotation = quat(vec3(0.0f,0.0f,1.0f),angle);
+        if (a.yaw != 0.0f){
+            rotation = quat(vec3(0.0f,1.0f,0.0f),a.yaw) * rotation;
+        }
+        o->SetRotation(rotation);
     }
 }
 
@@ -9928,7 +10014,7 @@ void ApplicationArcher::SyncArrowViews(){
 
     Returns the new point count, with the last point moved to the point of impact.
 */
-int ApplicationArcher::TruncateArcAgainstProps(v2* points, int count){
+int ApplicationArcher::TruncateArcAgainstProps(v3* points, int count){
     PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
     if (!world || !points || count < 1){
         return count;
@@ -9937,17 +10023,18 @@ int ApplicationArcher::TruncateArcAgainstProps(v2* points, int count){
 
     //From the ANCHOR, like the rules' own first sweep - so a crate between the string and the
     //arrowhead stops the preview too. See ARROW_LENGTH in Stage.h.
-    v2 from = stage.AnchorPosition();
+    v3 from = stage.AnchorPosition();
     for (int i = 0; i < count; i++){
-        v2 to = points[i];
-        if (from.x == to.x && from.y == to.y){
+        v3 to = points[i];
+        if (from.x == to.x && from.y == to.y && from.z == to.z){
             from = to;
             continue;
         }
-        PhysicsWorld::RaycastHit hit = world->Raycast(vec3(from.x,from.y,0.0f),
-                                                      vec3(to.x,to.y,0.0f),exclude);
+        PhysicsWorld::RaycastHit hit = world->Raycast(vec3(from.x,from.y,from.z),
+                                                      vec3(to.x,to.y,to.z),exclude);
         if (hit.hit){
-            points[i] = v2(hit.point.x,hit.point.y);
+            //On a locked plane the bead stays in it, as a struck arrow does.
+            points[i] = v3(hit.point.x,hit.point.y,stage.IsPlaneLocked() ? 0.0f : hit.point.z);
             return i + 1;
         }
         from = to;
@@ -9968,7 +10055,7 @@ void ApplicationArcher::SyncAimArc(){
         return;
     }
 
-    v2 points[AIM_ARC_POINTS];
+    v3 points[AIM_ARC_POINTS];
     int n = stage.PredictArc(points,AIM_ARC_POINTS);
     n = TruncateArcAgainstProps(points,n);
     for (int i = 0; i < AIM_ARC_POINTS; i++){
@@ -9980,7 +10067,7 @@ void ApplicationArcher::SyncAimArc(){
         if (i >= n){
             continue;
         }
-        o->SetPosition(vec3(points[i].x,points[i].y,0.0f));
+        o->SetPosition(vec3(points[i].x,points[i].y,points[i].z));
         //The last bead is where it stops - either where it hits, or the end of the preview. That
         //is the one the player is really reading, so it gets its own colour.
         o->SetMaterialSlot(0,(i == n - 1) ? material_dot_hot : material_dot);
@@ -10381,8 +10468,10 @@ void ApplicationArcher::PublishSnapshot(){
     s.draw_power = stage.DrawPower();
     s.aim_deg = stage.ShotAimDeg();     //what the arrow is aimed at, sway included
     s.aim_sway_deg = stage.AimSwayDeg();
+    s.aim_side_deg = stage.AimSwaySideDeg();
     if (archer_model){
         s.aim_drawn_deg = archer_model->aim_drawn_deg;
+        s.aim_drawn_side_deg = archer_model->aim_drawn_side_deg;
         s.aim_weight = archer_model->aim_weight;
     }
     s.aim_neutral_deg = archer_model ? archer_model->aim_pose_deg : 0.0f;
@@ -10390,13 +10479,16 @@ void ApplicationArcher::PublishSnapshot(){
     s.upper_weight = puppet.upper_weight;
     s.kneel_phase = (stage.mode == MODE_KNEEL) ? stage.kneel_phase : -1;
     s.body_height = stage.BodyHeight();
+    //"Forward" is the rules' ahead - along facing side-on, her heading on the turntable - and she
+    //stands at z 0 in every level.
+    v3 ahead = stage.Forward();
     if (bow_rig.arrow.object){
         vec3 nock = bow_rig.arrow.object->GetWorldPosition();
-        s.nock_fwd = (nock.x - stage.pos.x) * stage.facing;
+        s.nock_fwd = (nock.x - stage.pos.x) * ahead.x + nock.z * ahead.z;
         s.nock_up = nock.y - stage.pos.y;
     }
-    v2 anchor = stage.AnchorPosition();
-    s.anchor_fwd = (anchor.x - stage.pos.x) * stage.facing;
+    v3 anchor = stage.AnchorPosition();
+    s.anchor_fwd = (anchor.x - stage.pos.x) * ahead.x + anchor.z * ahead.z;
     s.anchor_up = anchor.y - stage.pos.y;
     s.string_draw = bow_draw_shown;
     s.f_arrow_on_string = f_arrow_nocked;
@@ -10543,8 +10635,10 @@ void ApplicationArcher::PublishSnapshot(){
         ArcherSnapshot::ArrowView av;
         av.x = a.pos.x;
         av.y = a.pos.y;
+        av.z = a.pos.z;
         av.vx = a.vel.x;
         av.vy = a.vel.y;
+        av.vz = a.vel.z;
         av.f_stuck = a.f_stuck;
         s.arrows.push_back(av);
     }
@@ -10556,7 +10650,7 @@ void ApplicationArcher::PublishSnapshot(){
         solve for the angle by bisection - set an aim, read the landing point, adjust - instead of
         loosing an arrow and waiting to see. Costs one run of the same integrator the arrow uses.
     */
-    v2 arc[AIM_ARC_POINTS];
+    v3 arc[AIM_ARC_POINTS];
     int n = stage.PredictArc(arc,AIM_ARC_POINTS);
     //The same truncation the on-screen arc gets, so a script reading this number and a player
     //reading the beads are told the same thing.
@@ -10564,8 +10658,11 @@ void ApplicationArcher::PublishSnapshot(){
     if (n > 0){
         s.predicted_x = arc[n - 1].x;
         s.predicted_y = arc[n - 1].y;
+        s.predicted_z = arc[n - 1].z;
         s.f_predicted = true;
     }
+    s.f_plane_locked = stage.IsPlaneLocked();
+    s.heading_deg = stage.heading_deg;
 
     std::lock_guard<std::mutex> lock(snapshot_mutex);
     snapshot = s;
@@ -10637,8 +10734,10 @@ json ApplicationArcher::BuildStateJson(){
         arrows.push_back(json{
             {"x",s.arrows[i].x},
             {"y",s.arrows[i].y},
+            {"z",s.arrows[i].z},
             {"vx",s.arrows[i].vx},
             {"vy",s.arrows[i].vy},
+            {"vz",s.arrows[i].vz},
             {"stuck",s.arrows[i].f_stuck}
         });
     }
@@ -10712,6 +10811,13 @@ json ApplicationArcher::BuildStateJson(){
             //The aim override's check - see ArcherSnapshot::aim_drawn_deg.
             {"aim_drawn_deg",s.aim_drawn_deg},
             {"aim_error_deg",s.aim_drawn_deg - s.aim_deg},
+            //The cone's other half, and the same check on it: + is to her left.
+            {"aim_side_deg",s.aim_side_deg},
+            {"aim_drawn_side_deg",s.aim_drawn_side_deg},
+            {"aim_side_error_deg",s.aim_drawn_side_deg - s.aim_side_deg},
+            //Locked, the arrow leaves flattened into the play plane; off it, along heading_deg.
+            {"plane_locked",s.f_plane_locked},
+            {"heading_deg",s.heading_deg},
             {"aim_weight",s.aim_weight},
             //The live neutral: where the clips alone point the bow, before the aim turns her.
             {"aim_pose_deg",s.aim_neutral_deg},
@@ -10725,7 +10831,8 @@ json ApplicationArcher::BuildStateJson(){
             {"hand_off_string",s.hand_off_string},
             {"arrow_in_hand",s.f_arrow_in_hand},
             {"hand_off_quiver",s.hand_off_quiver},
-            {"predicted_landing",s.f_predicted ? json{{"x",s.predicted_x},{"y",s.predicted_y}}
+            {"predicted_landing",s.f_predicted ? json{{"x",s.predicted_x},{"y",s.predicted_y},
+                                                      {"z",s.predicted_z}}
                                                : json(nullptr)}
         }},
         {"arrows_shot",s.arrows_shot},
@@ -12554,8 +12661,9 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::Text("velocity  %.2f, %.2f",stage.vel.x,stage.vel.y);
 
     ImGui::Separator();
-    ImGui::Text("aim       %.0f deg %s, sway %+.1f",stage.aim_deg,(stage.facing > 0.0f) ? "right" : "left",
-                stage.AimSwayDeg());
+    ImGui::Text("aim       %.0f deg %s, sway %+.1f up %+.1f left",stage.aim_deg,
+                stage.IsPlaneLocked() ? ((stage.facing > 0.0f) ? "right" : "left") : "off the plane",
+                stage.AimSwayDeg(),stage.AimSwaySideDeg());
     if (archer_model){
         //The override's check: the drawn bow against the rules' aim, and the live neutral it
         //corrected from. At full weight the drawn angle IS the aim; the pose angle is what the
@@ -12563,6 +12671,8 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::Text("bow at    %.1f deg (%+.1f), body %.0f%%, pose %.1f",
                     archer_model->aim_drawn_deg,archer_model->aim_drawn_deg - stage.ShotAimDeg(),
                     archer_model->aim_weight * 100.0f,archer_model->aim_pose_deg);
+        ImGui::Text("bow lean  %+.1f deg left (%+.1f), pose %+.1f",archer_model->aim_drawn_side_deg,
+                    archer_model->aim_drawn_side_deg - stage.AimSwaySideDeg(),archer_model->aim_pose_side_deg);
         int up = puppet.choice.upper_clip;
         ImGui::Text("upper     %s %.0f%%",(up >= 0 && up < CLIP_COUNT) ? ARCHER_CLIPS[up].name : "-",
                     puppet.upper_weight * 100.0f);

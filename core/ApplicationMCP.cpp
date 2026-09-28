@@ -1258,6 +1258,90 @@ void Application::RegisterCoreMCPTools(){
             };
         });
 
+    //The Renderer panel's SSAO block, for an agent - so the effect can be tuned by measurement
+    //and screenshot rather than by dragging sliders. A request, taken at the next frame.
+    MCPServer::Get()->RegisterTool("renderer_ssao",
+        "Screen-space ambient occlusion. Every field optional; the reply is the settings as the "
+        "render thread holds them when asked, so a change shows one frame later. `enabled` puts "
+        "the occlusion on the frame. `view` shows a buffer instead of the frame: 'final', "
+        "'position', 'normal', 'ssao' (the blurred multiplier) or 'ssao_raw' (before the blur) - "
+        "the two SSAO views run the pass even when `enabled` is false. `radius` and `bias` are "
+        "world units; `samples` is per pixel (4-128); `strength` 0..1 fades the effect; `power` "
+        "is contrast; `blur_radius` is pixels either side (0 = off, 4 erases the 4x4 sampling "
+        "tile); `blur_edge` is how far off its surface plane a neighbour may be before the blur "
+        "stops at it, as a fraction of view depth. `reset` true restores the defaults first. "
+        "Pair with screenshot include_ui:false, and renderer_timings for the three SSAO passes.",
+        json{ {"type","object"}, {"properties", {
+            {"enabled",     {{"type","boolean"}}},
+            {"view",        {{"type","string"},{"enum",{"final","position","normal","ssao","ssao_raw"}}}},
+            {"radius",      {{"type","number"}}},
+            {"bias",        {{"type","number"}}},
+            {"samples",     {{"type","integer"}}},
+            {"strength",    {{"type","number"}}},
+            {"power",       {{"type","number"}}},
+            {"blur_radius", {{"type","integer"}}},
+            {"blur_edge",   {{"type","number"}}},
+            {"reset",       {{"type","boolean"}}}
+        }} },
+        [this](const json &args) -> json {
+            if (!renderer){
+                return json{ {"error","no renderer"} };
+            }
+            static const char* view_names[Renderer::VIEW_BUFFER_COUNT] = { "final", "position", "normal", "ssao", "ssao_raw" };
+            Renderer::SSAOSettings s = renderer->GetSSAORequestBase();
+            if (args.contains("reset") && args["reset"].is_boolean() && args["reset"].get<bool>()){
+                s = Renderer::SSAOSettings();
+            }
+            auto number = [&](const char* key, float& out){
+                if (args.contains(key) && args[key].is_number()){
+                    out = args[key].get<float>();
+                }
+            };
+            auto integer = [&](const char* key, int& out){
+                if (args.contains(key) && args[key].is_number()){
+                    out = args[key].get<int>();
+                }
+            };
+            number("radius",s.radius);
+            number("bias",s.bias);
+            integer("samples",s.kernel_size);
+            number("strength",s.strength);
+            number("power",s.power);
+            integer("blur_radius",s.blur_radius);
+            number("blur_edge",s.blur_edge_tolerance);
+            int enabled = -1;
+            if (args.contains("enabled") && args["enabled"].is_boolean()){
+                enabled = args["enabled"].get<bool>() ? 1 : 0;
+            }
+            int view = -1;
+            if (args.contains("view") && args["view"].is_string()){
+                std::string v = args["view"].get<std::string>();
+                for (int i = 0; i < Renderer::VIEW_BUFFER_COUNT; i++){
+                    if (v == view_names[i]){
+                        view = i;
+                    }
+                }
+                if (view < 0){
+                    return json{ {"error","view must be final, position, normal, ssao or ssao_raw"} };
+                }
+            }
+            renderer->RequestSSAO(s,enabled,view);
+
+            const Renderer::SSAOSettings& now = renderer->ssao;
+            int shown = renderer->view_buffer;
+            return json{
+                {"enabled", renderer->f_ssao},
+                {"view", ((shown >= 0) && (shown < Renderer::VIEW_BUFFER_COUNT)) ? view_names[shown] : "?"},
+                {"radius", now.radius},
+                {"bias", now.bias},
+                {"samples", now.kernel_size},
+                {"strength", now.strength},
+                {"power", now.power},
+                {"blur_radius", now.blur_radius},
+                {"blur_edge", now.blur_edge_tolerance},
+            };
+        });
+
     MCPServer::Get()->RegisterTool("camera_get",
         "Report the active scene camera: world position, the point it is looking at, its "
         "forward/up/left vectors, its rotation quaternion, the orbit pivot (camera_target) the "

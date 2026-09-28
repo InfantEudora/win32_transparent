@@ -391,6 +391,7 @@ struct ArcherAnimParams{
     float action_phase = 0.0f;      //0..1 through whatever `action` is, for one-shot clips
     int   kick_kind = 0;            //KickKind, while action is ACTION_KICK
     float aim_deg = 0.0f;
+    float aim_side_deg = 0.0f;      //Stage::AimSwaySideDeg - the cone's sideways half, + to her left
     float draw_power = 0.0f;        //0..1
     int   kneel_phase = -1;         //KneelPhase while mode is MODE_KNEEL, else -1
     //On the rope: which way she is climbing this tick (+1 up, -1 down, 0 not), and how far she has
