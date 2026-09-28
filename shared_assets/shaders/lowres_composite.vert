@@ -2,7 +2,9 @@
 
 /*
     The vertex stage of Renderer::CompositeLowRes, which scales the reduced-resolution
-    custom-shader target back over the frame.
+    custom-shader target back over the frame - and of Renderer::UpscaleFrame, which does the same
+    for the whole scene at a render scale (render_upscale.frag). Both want exactly one triangle
+    over the viewport and gl_FragCoord, so they share this.
 
     NO VERTEX BUFFER AND NO ATTRIBUTES. The three positions are built from gl_VertexID, so the
     draw is glDrawArrays(GL_TRIANGLES,0,3) against an empty VAO and the renderer needs no mesh,

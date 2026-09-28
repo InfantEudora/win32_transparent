@@ -5,8 +5,10 @@ metadata:
   node_type: memory
   type: project
   originSessionId: bffdf4db-124b-4934-90e6-1b635860316c
-  modified: 2026-09-15T13:07:54.098Z
+  modified: 2026-09-27T20:07:44.241Z
 ---
+
+**VSYNC WORKS NOW (checked 2026-09-27): the NULL-wglSwapIntervalEXT paragraph below is stale.** The log says "VSync: Enabled", and `renderer_timings {"vsync": false}` switches it (applied on the render thread). Measured on archer, visible window: 75 fps on (the 75 Hz monitor), 145-150 fps off, GPU-bound at ~6.1 ms. `renderer_timings` also now reports `prerender_us`, `scene_draw_us` (minus `renderer_us` = physics_mutex wait), `physics_us`, and `cpu_avg_us` per pass. `renderer_us` minus the sum of the passes' `cpu_avg_us` is CPU time spent outside every pass, and that is how the 8.4 ms quadratic `GetChild(i)` loop in `CullLights` was found. A minimised window is still paced to 60 fps whatever vsync says, so restore it with ShowWindow(h,4) to measure frame rate.
 
 **SUPERSEDED IN PART since 2026-09-17: the renderer now has real per-pass GPU timers** - `Renderer::BeginGPUPass`, read out of the Engine panel's Performance section. For "what does this pass cost in milliseconds", use those, not what follows. See [[gpu-pass-timers]]. Everything below still holds for CPU timers, and the counting trick is still the better tool for sub-pass questions, where a whole-pass timer cannot separate the branch being changed from the rest of the pass.
 

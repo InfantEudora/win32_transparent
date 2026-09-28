@@ -66,6 +66,8 @@ void Stage::Reset(){
     branches.clear();
     ramps.clear();
     zones.clear();
+    crumble_groups.clear();
+    pending_effects.clear();
     BuildLevel();
     BuildTrees();
     //In none of them yet: the first tick finds the one she lands in and reports it entered.
@@ -309,11 +311,45 @@ void Stage::BuildMainLevel(){
         is onward. stage_test proves both routes, the stones and the pit with every stone gone.
     */
     blocks.push_back({ 205.00f, -6.00f,  9.00f, 2.00f, BLOCK_SOLID,   true });   //the pit's floor, x 196..214, top -4
-    blocks.push_back({ 240.00f, -2.00f, 26.00f, 2.00f, BLOCK_LEDGE,   true });   //the far rim and on, x 214..266
+    blocks.push_back({ 217.00f, -2.00f,  3.00f, 2.00f, BLOCK_LEDGE,   true });   //the far rim, x 214..220
     blocks.push_back({ 199.50f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone one,   x 198.9..200.1, top 0
     blocks.push_back({ 203.50f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone two
     blocks.push_back({ 207.50f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone three
     blocks.push_back({ 211.00f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone four,  x 210.4..211.6
+
+    /*
+        THE CHASE (bridge_crumble_plan.md section 2): a floor of crumble slabs over a second pit,
+        x 220..252, that falls away BEHIND her. Stepping onto its first slab enters a trigger that
+        starts the group, and from there a slab goes every CHASE_TICKS_PER_UNIT ticks per unit of
+        floor - a front at 7.5 a second behind her 9, so a clean run gains on it and a hesitation
+        at the start is paid for at once. One slab is left out at 236..238, a hole to jump while
+        running: the stumble the front's margin has to allow for.
+
+        Solid ground at the end, 252 on, and a LEDGE: the pit under the floor is the stones' again,
+        4 deep, so a fall is a walk to the far wall and a catch and a climb. The rim between the
+        two pits is a ledge on both sides, so either pit can be climbed out onto it.
+
+        The slabs start only from the group, never under her feet (StageBlock::crumble_group) -
+        a floor that went where she stood would not be a chase.
+    */
+    blocks.push_back({ 236.00f, -6.00f, 16.00f, 2.00f, BLOCK_SOLID,   true });   //the chase pit's floor, x 220..252, top -4
+    blocks.push_back({ 259.00f, -2.00f,  7.00f, 2.00f, BLOCK_LEDGE,   true });   //solid ground past it, x 252..266
+    const size_t chase_first = blocks.size();
+    for (float left = 220.0f; left < 251.9f; left += 2.0f){
+        if (left > 235.9f && left < 236.1f){
+            continue;               //the hole
+        }
+        blocks.push_back({ left + 1.0f, -0.30f, 1.00f, 0.30f, BLOCK_CRUMBLE, true });
+    }
+    {
+        int group = AddCrumbleGroup("chase",chase_first,CHASE_TICKS_PER_UNIT);
+        StageZoneEffect start;
+        start.kind = ZONE_START_CRUMBLE_GROUP;
+        start.target = group;
+        //Over the first slab and tall, so a jump from the rim over it still sets it off; its
+        //bottom above the pit, so climbing about down there does not.
+        AddTrigger("chase start",220.0f,222.0f,-1.0f,9.0f,start);
+    }
 
     //The right-hand wall, so a run to the end stops rather than falling off the world. Tall
     //enough that a jump off the canopy cannot clear it: 13.0 + 3.2 + her 1.8 is 18.0. At 175
@@ -338,8 +374,10 @@ void Stage::BuildMainLevel(){
     AddZone("Spring plants",    100.0f, 134.0f, zb, zt, v2(101.00f,0.30f));
     AddZone("Branches",         134.0f, 176.0f, zb, zt, v2(153.00f,0.30f));
     //The test ground, a zone per piece as each is built and the rest still "Test ground".
-    AddZone("Stepping stones",  176.0f, 218.0f, zb, zt, v2(192.00f,0.30f));
-    AddZone("Test ground",      218.0f, 264.0f, zb, zt, v2(222.00f,0.30f));
+    AddZone("Stepping stones",  176.0f, 214.0f, zb, zt, v2(192.00f,0.30f));
+    //From the rim, so a teleport lands her before the chase's trigger rather than setting it off.
+    AddZone("Chase",            214.0f, 254.0f, zb, zt, v2(216.00f,0.30f));
+    AddZone("Test ground",      254.0f, 264.0f, zb, zt, v2(256.00f,0.30f));
 
     //--- Props: everything reactphysics3d owns --------------------------------------------------
     /*
@@ -501,7 +539,8 @@ void Stage::BuildLevel(){
     switch (level){
         case STAGE_LEVEL_RANGE: BuildRangeLevel(); break;
         case STAGE_LEVEL_ROPE:  BuildRopeLevel();  break;
-        default:                BuildMainLevel();  break;
+        case STAGE_LEVEL_CHARACTER: BuildCharacterLevel(); break;
+        default:               BuildMainLevel();  break;
     }
 }
 
@@ -1041,6 +1080,9 @@ v2 Stage::StartPosition() const{
     if (level == STAGE_LEVEL_ROPE){
         return v2(-6.0f,2.0f);      //a run-up's distance from the rope
     }
+    if (level == STAGE_LEVEL_CHARACTER){
+        return v2(0.0f,ARCHER_HALF_H + 0.05f);     //on the tile; a drop of 0.05 is not a landing
+    }
     return v2(-6.0f,2.0f);
 }
 
@@ -1111,6 +1153,18 @@ void Stage::BuildRopeLevel(){
     //The rope and both pits right of the floor's lip; the gallery adds its own, left of it.
     AddZone("Rope", -17.0f, 31.0f, -20.0f, 48.0f, v2(-6.00f,0.30f));
     BuildSlideGallery();
+}
+
+/*
+    The character scene: one round tile, its walkable top at the origin, and nothing else.
+
+    The collider is the main level's round tile's, which the app already measures against the
+    mesh. There is nothing to fall off to - her feet are locked by the app - but a jump on the spot
+    comes back down onto the tile, which is why it has a collider at all rather than a floor at 0.
+*/
+void Stage::BuildCharacterLevel(){
+    AddScenery({ SCENERY_TILE_ROUND, 0.00f, 0.00f, 0.00f, 0.0f, 1.85f, 0.50f });
+    AddZone("Character", -4.0f, 4.0f, -4.0f, 8.0f, v2(0.00f,ARCHER_HALF_H + 0.05f));
 }
 
 /*
@@ -1359,7 +1413,7 @@ void Stage::TickCrumbles(StageEvents& events){
             continue;
         }
         if (b.crumble_ticks < 0){
-            if (StandingOn(b)){
+            if (b.crumble_group < 0 && StandingOn(b)){
                 b.crumble_ticks = 0;
                 events.crumbles_started.push_back((int)i);
             }
@@ -1385,6 +1439,48 @@ void Stage::TickCrumbles(StageEvents& events){
             }
         }
     }
+
+    /*
+        The started groups' next blocks, after the loop above: a block started here counts from
+        next tick, exactly as a stone does from the tick she lands, so it too is gone
+        CRUMBLE_SHAKE_TICKS after its start.
+    */
+    for (size_t g = 0; g < crumble_groups.size(); g++){
+        StageCrumbleGroup& group = crumble_groups[g];
+        if (group.ticks < 0 || group.f_done){
+            continue;
+        }
+        bool f_any_left = false;
+        for (size_t k = 0; k < group.blocks.size(); k++){
+            StageBlock& b = blocks[group.blocks[k]];
+            if (!b.f_alive){
+                continue;
+            }
+            f_any_left = true;
+            if (b.crumble_ticks < 0 && group.ticks >= group.starts[k]){
+                b.crumble_ticks = 0;
+                events.crumbles_started.push_back(group.blocks[k]);
+            }
+        }
+        group.ticks++;
+        if (!f_any_left){
+            group.f_done = true;
+            events.crumble_groups_done.push_back((int)g);
+        }
+    }
+}
+
+int Stage::AddCrumbleGroup(const char* name, size_t first, float ticks_per_unit){
+    StageCrumbleGroup group;
+    group.name = name;
+    const int id = (int)crumble_groups.size();
+    for (size_t i = first; i < blocks.size(); i++){
+        blocks[i].crumble_group = id;
+        group.blocks.push_back((int)i);
+        group.starts.push_back((int)lroundf((blocks[i].Left() - blocks[first].Left()) * ticks_per_unit));
+    }
+    crumble_groups.push_back(group);
+    return id;
 }
 
 //--- Zones -----------------------------------------------------------------------------------------
@@ -1401,6 +1497,26 @@ void Stage::AddZone(const char* name, float left, float right, float bottom, flo
     zones.push_back(z);
 }
 
+int Stage::AddTrigger(const char* name, float left, float right, float bottom, float top, const StageZoneEffect& effect){
+    AddZone(name,left,right,bottom,top,v2(0.0f,0.0f));
+    StageZone& z = zones.back();
+    z.f_area = false;
+    z.effects.push_back(effect);
+    return z.id;
+}
+
+void Stage::ApplyZoneEffect(const StageZoneEffect& effect, StageEvents& events){
+    switch (effect.kind){
+        case ZONE_START_CRUMBLE_GROUP:
+            if (effect.target >= 0 && effect.target < (int)crumble_groups.size() &&
+                crumble_groups[effect.target].ticks < 0){
+                crumble_groups[effect.target].ticks = 0;
+                events.crumble_groups_started.push_back(effect.target);
+            }
+            break;
+    }
+}
+
 /*
     Her body box against every zone, and the change since last tick. The standing box whatever she
     is doing - kneeling or hanging moves her a little, and a zone's edge flickering in and out as
@@ -1413,13 +1529,34 @@ void Stage::TickZones(StageEvents& events){
     const float l = pos.x - ARCHER_HALF_W, r = pos.x + ARCHER_HALF_W;
     const float b = pos.y - ARCHER_HALF_H, t = pos.y + ARCHER_HALF_H;
     for (size_t i = 0; i < zones.size(); i++){
-        uint8_t now = zones[i].Overlaps(l,r,b,t) ? 1 : 0;
+        StageZone& zone = zones[i];
+        uint8_t now = zone.Overlaps(l,r,b,t) ? 1 : 0;
         if (now && !zone_inside[i]){
             events.zones_entered.push_back((int)i);
+            //Once per run: the first entry queues them, and nothing does again until a restart.
+            if (!zone.f_fired && !zone.effects.empty()){
+                zone.f_fired = true;
+                for (const StageZoneEffect& effect : zone.effects){
+                    PendingEffect p;
+                    p.effect = effect;
+                    p.at = ticks + (uint64_t)((effect.delay > 0) ? effect.delay : 0);
+                    pending_effects.push_back(p);
+                }
+            }
         }else if (!now && zone_inside[i]){
             events.zones_left.push_back((int)i);
         }
         zone_inside[i] = now;
+    }
+    //Due ones in the order they were queued, which is the order the zones were entered.
+    for (size_t i = 0; i < pending_effects.size(); ){
+        if (pending_effects[i].at <= ticks){
+            StageZoneEffect effect = pending_effects[i].effect;
+            pending_effects.erase(pending_effects.begin() + i);
+            ApplyZoneEffect(effect,events);
+        }else{
+            i++;
+        }
     }
 }
 
@@ -1427,7 +1564,7 @@ int Stage::CurrentZone() const{
     int best = -1;
     float best_area = 0.0f;
     for (size_t i = 0; i < zones.size() && i < zone_inside.size(); i++){
-        if (!zone_inside[i]){
+        if (!zone_inside[i] || !zones[i].f_area){
             continue;
         }
         float area = zones[i].hw * zones[i].hh;

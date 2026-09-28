@@ -1229,6 +1229,25 @@ void Application::RenderEngineWindow(){
         if (ImGui::SliderInt("MSAA samples",&num_samples,1,16)){
             renderer->SetNumAASamples(num_samples);
         }
+
+        //The whole scene at 1/N and scaled back up - see Renderer::SetRenderScale. Both only ask;
+        //the renderer applies them at the start of the next frame, since this runs mid-frame.
+        static const char* scale_names[] = { "Full", "1/2", "1/3", "1/4" };
+        int scale_index = renderer->GetRenderScale() - 1;
+        if (ImGui::Combo("Render scale",&scale_index,scale_names,IM_ARRAYSIZE(scale_names))){
+            renderer->SetRenderScale(scale_index + 1);
+        }
+        int filter = renderer->GetUpscaleFilter();
+        if (ImGui::BeginCombo("Upscale filter",Renderer::GetUpscaleFilterName(filter))){
+            for (int i = 0; i < Renderer::UPSCALE_FILTER_COUNT; i++){
+                if (ImGui::Selectable(Renderer::GetUpscaleFilterName(i),i == filter)){
+                    renderer->SetUpscaleFilter(i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::Text("Scene drawn at %i x %i for a %i x %i window",renderer->render_width,renderer->render_height,
+                    renderer->width,renderer->height);
         ImGui::SliderFloat("Alpha clip",&renderer->alpha_clip,0.0f,1.0f);
         //In shadow-map texels. The GPU cost steps up at each whole number - 1, 9, 25, 49 gathers
         //a fragment - so watch the colour pass in Performance while dragging it.

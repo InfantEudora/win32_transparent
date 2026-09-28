@@ -61,6 +61,8 @@ Application::Application(){
     tmr_physics_loop = new PerfTimer("Physics Loop Time");
     tmr_physics_sleep = new PerfTimer("Physics Sleep Time");
     tmr_render_loop = new PerfTimer("Render Loop Time");
+    tmr_prerender = new PerfTimer("PreRender Time");
+    tmr_scene_draw = new PerfTimer("Scene Draw Time");
 };
 
 int2 Application::GetDisplaySettings(){
@@ -500,6 +502,10 @@ void Application::FrameThreadFunction(Application* app){
     while (app->main_window->f_should_quit == false){
         app->tmr_render_loop->Stop();
         app->tmr_render_loop->Restart();
+        int vsync = app->requested_vsync.exchange(-1);
+        if (vsync >= 0){
+            app->renderer->SetVSync(vsync != 0);
+        }
         if (app->main_window->f_resized){
             app->main_window->f_resized = false;
             app->renderer->Resize(app->main_window->width,app->main_window->height);
@@ -558,14 +564,18 @@ void Application::DrawFrame(){
     ServiceShaderReload();
 
     //Any GL work the app needs done before the scene is drawn - see Application::PreRender.
+    tmr_prerender->Restart();
     PreRender();
+    tmr_prerender->Stop();
 
     //Tell ImGui to start a new frame
     main_window->ImGuiNewFrame();
 
     //This should render the objects and whatever it wants
     if (main_scene){
+        tmr_scene_draw->Restart();
         main_scene->DrawFrame();
+        tmr_scene_draw->Stop();
     }
 
     /*

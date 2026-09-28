@@ -600,6 +600,9 @@ struct StageBlock{
     //BLOCK_CRUMBLE: -1 whole, else the ticks it has been shaking since she stood on it; at
     //CRUMBLE_SHAKE_TICKS it goes (f_alive clears). A restart rebuilds the block, whole.
     int   crumble_ticks = -1;
+    //BLOCK_CRUMBLE: the StageCrumbleGroup that starts it (an index into Stage::crumble_groups), or
+    //-1 for a stone that starts under her feet. A group's blocks ignore her standing on them.
+    int   crumble_group = -1;
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
@@ -624,7 +627,25 @@ struct StageBlock{
     use, so every mechanism area is one click away.
 
     Declared by the level, in BuildMainLevel and friends, beside what it covers.
+
+    TWO USES of the one type. An AREA names a stretch of the level: the HUD shows it, the panel
+    and archer_zone go to it, and a level's areas sit side by side. A TRIGGER (f_area false) is a
+    small box placed where something should happen - the start of the chase - and exists for its
+    EFFECTS: no label, no button, no arrival spot. Either can carry effects; see StageZoneEffect.
 */
+enum StageZoneEffectKind{
+    ZONE_START_CRUMBLE_GROUP = 0,   //target: an index into Stage::crumble_groups
+};
+/*
+    What entering a zone DOES - bridge_crumble_plan.md section 1: a Stage effect, `delay` ticks
+    after the tick she entered. Once per run: the zone's effects fire on its first entry and never
+    again until a restart rebuilds it. A short list on the zone, not a scripting language.
+*/
+struct StageZoneEffect{
+    int   kind = ZONE_START_CRUMBLE_GROUP;
+    int   target = -1;
+    int   delay = 0;
+};
 struct StageZone{
     float x = 0.0f;
     float y = 0.0f;
@@ -632,7 +653,10 @@ struct StageZone{
     float hh = 1.0f;
     std::string name;
     int   id = -1;              //its index in Stage::zones - stable for the level's lifetime
-    v2    arrive;               //feet, for a teleport; see above
+    v2    arrive;               //feet, for a teleport; see above. An area's only
+    bool  f_area = true;        //an area, or a trigger; see above
+    std::vector<StageZoneEffect> effects;
+    bool  f_fired = false;      //its effects are on their way; a restart rebuilds it clear
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
@@ -642,6 +666,30 @@ struct StageZone{
         return (r > Left()) && (l < Right()) && (t > Bottom()) && (b < Top());
     }
 };
+
+/*
+    A CRUMBLE GROUP: crumble blocks that go ONE AFTER ANOTHER once something starts them, rather
+    than each under her feet - the chase of bridge_crumble_plan.md section 2, a floor that falls
+    away behind her. Started by a zone's effect; from then block k begins its CRUMBLE_SHAKE_TICKS
+    shake `starts[k]` ticks in. The starts go by DISTANCE along the floor, not by count, so the
+    front runs at one speed across a gap left in it.
+
+    `blocks` are in the order they go, and each names its group back (StageBlock::crumble_group)
+    so standing on it starts nothing. Once started a group runs to its end; a restart rebuilds it.
+*/
+struct StageCrumbleGroup{
+    std::string name;
+    std::vector<int> blocks;
+    std::vector<int> starts;    //per block, ticks after the group's start
+    int   ticks = -1;           //-1 not started, else ticks since it was
+    bool  f_done = false;       //every block gone
+};
+/*
+    THE CHASE's pace, in ticks per unit of floor. 8 is a front moving at 7.5 units a second
+    against her 9: she gains 1.5 a second on a clean run, and gives it back in a stumble.
+    stage_test measures the margin - how long she can stand at the start and still make it.
+*/
+#define CHASE_TICKS_PER_UNIT        8.0f
 
 /*
     The terrain test bay - a stretch of level LEFT of the start that exists only to compare
@@ -703,11 +751,17 @@ enum StagePropKind{
 
     ROPE is the same idea for the rope: a floor, two walls and ONE long rope in the middle, and
     nothing else - the place to work on catching, swinging and climbing it.
+
+    CHARACTER is not a level to play at all: one round terrain tile with her standing on it, a
+    fixed camera and a turntable - the place to look at her animations, skinning and textures up
+    close. The app locks her feet there (GatherInput), so the only thing the rules do is hold her
+    on the tile and run whatever she does on the spot: a draw, a kick, a kneel, a jump.
 */
 enum StageLevel{
     STAGE_LEVEL_MAIN = 0,
     STAGE_LEVEL_RANGE,
     STAGE_LEVEL_ROPE,
+    STAGE_LEVEL_CHARACTER,
     STAGE_LEVEL_COUNT
 };
 
@@ -1233,6 +1287,10 @@ struct StageEvents{
     //drops its rubble, as for broken_blocks.
     std::vector<int> crumbles_started;
     std::vector<int> crumbled_blocks;
+    //Crumble groups that started this tick, and whose last block went - the chase's rumble is held
+    //between the two. Indices into Stage::crumble_groups.
+    std::vector<int> crumble_groups_started;
+    std::vector<int> crumble_groups_done;
 };
 
 /*
@@ -1356,13 +1414,15 @@ public:
     std::vector<StageBranch> branches;
     std::vector<StageRamp>  ramps;
     std::vector<StageZone>  zones;
+    std::vector<StageCrumbleGroup> crumble_groups;
 
     //--- Zones ------------------------------------------------------------------------------------
     //Whether she is in zone i as of the last tick. Sized to `zones` by Reset, and all clear then.
     std::vector<uint8_t> zone_inside;
     /*
-        The zone she is in, for the HUD and archer_state: the SMALLEST of those her body overlaps,
-        so a narrow area inside a wide one names the narrow one. -1 when she is in none.
+        The AREA she is in, for the HUD and archer_state: the SMALLEST of those her body overlaps,
+        so a narrow area inside a wide one names the narrow one. -1 when she is in none. Triggers
+        are never it.
     */
     int  CurrentZone() const;
     //By name, or -1.
@@ -1605,6 +1665,7 @@ private:
     void BuildMainLevel();
     void BuildRangeLevel();
     void BuildRopeLevel();
+    void BuildCharacterLevel();
     //Left of the rope level's shallow pit: ramps at fixed angles - see SLIDE_GALLERY_DEG.
     void BuildSlideGallery();
     //Adds `s` to `scenery`, and its invisible collider to `blocks` if it has one. See StageScenery.
@@ -1612,11 +1673,23 @@ private:
     //Declares a zone by its edges rather than its centre, which is how a level is read, and
     //with the spot a teleport to it lands her feet on. See StageZone.
     void AddZone(const char* name, float left, float right, float bottom, float top, v2 arrive);
-    //Which zones her body overlaps now, against last tick: the entered and left events. Last in
-    //Tick, once she has moved.
+    //A trigger - a zone that is not an area - by its edges, with one effect. Returns its index.
+    int  AddTrigger(const char* name, float left, float right, float bottom, float top, const StageZoneEffect& effect);
+    //A crumble group of the blocks from `first` to the end of `blocks`, in that order, starting
+    //`ticks_per_unit` apart along x from the first's left edge. Returns its index, for an effect.
+    int  AddCrumbleGroup(const char* name, size_t first, float ticks_per_unit);
+    //Which zones her body overlaps now, against last tick: the entered and left events, and a
+    //first entry's effects queued. Last in Tick, once she has moved.
     void TickZones(StageEvents& events);
-    //The crumble blocks: start the one she stands on, count the shaking ones, drop the done. After
-    //she moves, so the tick she lands is the tick it starts.
+    void ApplyZoneEffect(const StageZoneEffect& effect, StageEvents& events);
+    //Effects a zone fired, waiting out their delay: applied on the tick `ticks` reaches `at`.
+    struct PendingEffect{
+        StageZoneEffect effect;
+        uint64_t at = 0;
+    };
+    std::vector<PendingEffect> pending_effects;
+    //The crumble blocks: start the one she stands on, and a started group's next ones; count the
+    //shaking ones, drop the done. After she moves, so the tick she lands is the tick it starts.
     void TickCrumbles(StageEvents& events);
     //Whether she is standing on block `b` - on the ground, feet at its top, over it.
     bool StandingOn(const StageBlock& b) const;

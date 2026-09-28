@@ -407,6 +407,13 @@ public:
     PerfTimer* tmr_physics_sleep = NULL;    // Time physics took sleeping in order to achieve desired rate
 
     PerfTimer* tmr_render_loop = NULL;      // Used for timing how long the entire render loop costs, should yield FPS.
+    //The render loop's parts. scene_draw is Scene::DrawFrame INCLUDING taking physics_mutex, so
+    //scene_draw minus Renderer::tmr_frame is how long the frame waited for the physics tick.
+    PerfTimer* tmr_prerender = NULL;
+    PerfTimer* tmr_scene_draw = NULL;
+    //0 or 1 from renderer_timings, -1 for none: swap intervals are per GL context, so the render
+    //thread applies it at the top of its loop rather than the MCP thread calling SetVSync.
+    std::atomic<int> requested_vsync{-1};
 
     RRandom* rrand = NULL;
 

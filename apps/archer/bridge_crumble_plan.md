@@ -3,7 +3,7 @@
 Two pieces of level that fail under her: a **rope bridge** that sways, groans under hard landings
 and snaps - from overload or because she reached a spot - and **crumbling rocks** that give way a
 moment after she stands on them, so a crossing is a run of quick hops. Talked through 2026-09-27;
-nothing here is built yet except where a section says so.
+steps 1-3 are built (see the Status table at the end), the rest is plan.
 
 Both are blocked out in the main level like everything else, past the branches. What they look
 like is a later question; this plan is the rules, the blockout, the warnings and the sounds.
@@ -291,6 +291,45 @@ Later: the arrow cut on the anchor ropes, climbing a hanging half, the meshes.
 
 ---
 
+## Step 3, as built (2026-09-27)
+
+- **`StageCrumbleGroup`**: crumble blocks that go one after another once started - `blocks` in
+  order, `starts` (ticks after the group's start, per block), `ticks`, `f_done`. The starts go by
+  DISTANCE from the first block's left edge (`CHASE_TICKS_PER_UNIT` 8), so a hole in the floor does
+  not change the front's pace. A group's blocks name it back (`StageBlock::crumble_group`) and are
+  never started by her standing on them. `TickCrumbles` starts each block on its tick, after the
+  per-block pass, so it too goes exactly `CRUMBLE_SHAKE_TICKS` after its start. Events
+  `crumble_groups_started` and `crumble_groups_done`.
+- **Zone effects**: `StageZoneEffect` (kind, target, delay in ticks), a list on `StageZone`, fired
+  ONCE PER RUN on the first entry (`f_fired`; a restart rebuilds the zone) and queued in
+  `pending_effects` until their tick. The one kind so far is `ZONE_START_CRUMBLE_GROUP`; the zone
+  bridge adds its snap.
+- **Triggers**: a zone with `f_area` false - a small box placed where something should happen,
+  with effects and nothing else: not on the HUD, not a button or an `archer_zone` destination, not
+  one of the side-by-side areas the zone test checks. `AddTrigger`. Outlined magenta in the F2
+  view, against the areas' amber.
+- **The chase**, x 214..254 in the test ground, its own area "Chase" arriving on the rim at 216:
+  the stones' far rim is now 214..220 (a LEDGE both sides); a floor of fifteen 2-wide slabs over a
+  second pit, 220..252, with one slab left out at 236..238 as a hole to jump; the pit's floor at -4;
+  solid ground (a LEDGE, for the climb out) from 252 to the end wall. The trigger "chase start"
+  covers the first slab, from -1 to 9 high so jumping over it still sets it off. "Test ground" is
+  now 254..264.
+- **In the app**: nothing new for the slabs - they shake, go and throw rubble through step 2's
+  path. Triggers are left out of the zone buttons and `archer_zone` (the snapshot carries each
+  area's index). Signals `crumble_group_started` and `crumble_group_done` (x), for the rumble.
+- **Tests** (`TestChase`): the group, its trigger and its pace; a slab past the trigger ignores her;
+  standing still on the first slab, every slab goes on its tick and she drops with the first; the
+  group starts and ends once; entering the trigger again changes nothing; a restart brings it all
+  back unfired; a straight run outruns it, a walk does not. **The margin**: she can stand in the
+  trigger for up to **12 ticks (0.2 s)** and still make it, held between 6 and 40. It grows along the
+  floor, 1.5 units a second, so the start is the tight part. Route checks: **the chase is outrun**
+  (4.6 s; the hole's window 37, onto the ground 56) and **with the floor gone the chase pit's far
+  ledge is the way on** (5.9 s, the climb's window 82).
+- Checked in the app on 8767: from the Chase arrival, run right; slabs 221..249 went 16 ticks apart
+  in the log, the orange front one slab behind her, and she reached the ground at 258.5.
+
+---
+
 ## Open questions
 
 - The tuning: how many hard landings to a snap, the shake length, the chase's speed. The rules
@@ -307,7 +346,7 @@ Later: the arrow cut on the anchor ropes, climbing a hanging half, the meshes.
 |---|---|---|
 | 1 | Zone (minimal) and route checks | BUILT 2026-09-27 - see "Step 1, as built" |
 | 2 | Crumbling stones and detour | BUILT 2026-09-27 - see "Step 2, as built" |
-| 3 | The chase | planned |
+| 3 | The chase | BUILT 2026-09-27 - see "Step 3, as built" |
 | 4 | Bridge as a surface | planned |
 | 5 | Strain, warnings, snap | planned |
 | 6 | Zone-triggered bridge | planned |

@@ -83,7 +83,7 @@
     },
     "jump_takeoff": {
       "comment": "The push off the ground, on the tick she leaves it.",
-      "signal": "jumped", "sounds": "jump_takeoff", "gain": 1.0, "bus": "effects"
+      "signal": "jumped", "sounds": "jump_takeoff", "gain": 0.4, "bus": "effects"
     },
     "jump_voice": {
       "comment": "Her effort on a jump, the way she shouts on a kick: on some jumps (chance), on a tick that wanders a little (jitter), and each file moved so its loud part lands where jump_huh_1's does - which is why that one is first, being the latest to peak (9.6 ticks in; huh_2 7.2, ha 6.6). The loud part comes about a sixth of a second into the rise.",
@@ -93,7 +93,7 @@
     "jump_landing": {
       "comment": "Feet meeting the ground. The file builds for 0.13 s to its thud, so it starts that far AHEAD of the touchdown on the landing forecast (landing_ahead, like the arrow's swoosh) and the thud lands on the contact tick. Once per flight. Nothing under 5, which is a step off a kerb, not a landing (PUPPET_LAND_VEL); louder the harder she comes down, full at 25, where the hard landing starts.",
       "signal": "landing_ahead", "forecast": "in", "scope": "airborne", "once": true,
-      "when": [ ["speed", ">=", 5] ], "sounds": "jump_landing", "bus": "effects",
+      "when": [ ["speed", ">=", 5] ], "sounds": "jump_landing", "bus": "effects", "gain": 0.4,
       "gain_by": [ { "value": "speed", "in": [5, 25], "out": [0.35, 1.0] } ]
     },
     "land_grunt": {

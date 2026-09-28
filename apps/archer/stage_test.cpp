@@ -5409,8 +5409,14 @@ static void TestZones(){
         s.SetLevel(levels[li]);
         snprintf(d,sizeof(d),"%s: %i",level_names[li],(int)s.zones.size());
         Check(!s.zones.empty(),"every level declares zones",d);
-        //Side by side: sorted by their left edges, each starts where the last ended.
-        std::vector<StageZone> z = s.zones;
+        //Side by side: sorted by their left edges, each starts where the last ended. The areas;
+        //a trigger sits inside one, and has no arrival spot.
+        std::vector<StageZone> z;
+        for (const StageZone& zone : s.zones){
+            if (zone.f_area){
+                z.push_back(zone);
+            }
+        }
         std::sort(z.begin(),z.end(),[](const StageZone& a, const StageZone& b){ return a.Left() < b.Left(); });
         int gaps = 0, overlaps = 0;
         for (size_t i = 1; i < z.size(); i++){
@@ -5425,6 +5431,9 @@ static void TestZones(){
         for (size_t i = 0; i < s.zones.size(); i++){
             Stage t = s;
             const StageZone& zone = s.zones[i];
+            if (!zone.f_area){
+                continue;
+            }
             DropOnto(t,zone.arrive.x,zone.arrive.y);
             bool f_ok = t.f_on_ground && t.CurrentZone() == zone.id &&
                         fabsf(t.pos.y - ARCHER_HALF_H - zone.arrive.y) < 0.6f;
@@ -5456,8 +5465,8 @@ static void TestZones(){
     snprintf(d,sizeof(d),"entered %i, left %i, others %i, at x %.1f",entered,left,wrong,s.pos.x);
     Check(entered == 1 && left == 1 && wrong == 0,"running across the edge leaves one zone and enters the next, once each",d);
     Check(s.CurrentZone() == ground && s.pos.x > 185.0f,"and the level no longer ends at 176",d);
-    //From past the stones' pit, on to the new end wall.
-    DropOnto(s,230.0f,0.3f);
+    //From past the chase, on to the end wall.
+    DropOnto(s,254.0f,0.3f);
     Run(s,600,right);
     snprintf(d,sizeof(d),"stopped at x %.2f",s.pos.x);
     Check(s.pos.x < 264.0f && s.pos.x > 260.0f,"the end wall stops her at the test ground's end",d);
@@ -5474,11 +5483,12 @@ static void TestZones(){
     Check(f_reentered,"a restart enters the start zone again");
 }
 
-//The level's crumble stones, in block order - which is left to right in the pit.
+//The level's crumble stones, in block order - which is left to right in the pit. The ones that
+//start under her feet: the chase's slabs are a group's, and TestChase's.
 static std::vector<int> CrumbleStones(const Stage& s){
     std::vector<int> out;
     for (size_t i = 0; i < s.blocks.size(); i++){
-        if (s.blocks[i].kind == BLOCK_CRUMBLE){
+        if (s.blocks[i].kind == BLOCK_CRUMBLE && s.blocks[i].crumble_group < 0){
             out.push_back((int)i);
         }
     }
@@ -5535,7 +5545,7 @@ static void TestCrumble(){
     const int s1 = stones[1];
     DropOnto(b,b.blocks[s1].x,b.blocks[s1].Top() + 0.3f);
     Run(b,4,ArcherInput());
-    DropOnto(b,230.0f,0.3f);
+    DropOnto(b,256.0f,0.3f);
     Run(b,CRUMBLE_SHAKE_TICKS,ArcherInput());
     snprintf(d,sizeof(d),"stone two alive %i, stone three alive %i, whole %i",b.blocks[s1].f_alive ? 1 : 0,
              b.blocks[stones[2]].f_alive ? 1 : 0,b.blocks[stones[2]].crumble_ticks < 0 ? 1 : 0);
@@ -5563,6 +5573,177 @@ static void TestCrumble(){
     Run(c,CRUMBLE_SHAKE_TICKS + 10,ArcherInput());
     snprintf(d,sizeof(d),"stuck %i, y %.2f from %.2f",c.arrows[0].f_stuck ? 1 : 0,c.arrows[0].pos.y,stuck_y);
     Check(!c.blocks[s3].f_alive && c.arrows[0].pos.y < stuck_y - 0.1f,"an arrow stuck in a stone falls when it goes",d);
+}
+
+/*
+    Runs the chase from the rim: walks right at `axis` until the trigger starts the group, stands
+    `hesitate` ticks, then runs, jumping the hole from a fixed spot. True if she ends standing on
+    the solid ground past the floor; false once she is in the pit.
+*/
+static bool RunChase(Stage s, int hesitate, float axis){
+    const float jump_from = 234.0f;     //her centre; the hole is 236..238
+    int since_start = -1, jump_held = 0;
+    bool f_jumped = false;
+    for (int t = 0; t < 900; t++){
+        ArcherInput in;
+        if (since_start < 0){
+            in.move_axis = axis;
+        }else if (since_start >= hesitate){
+            in.move_axis = axis;
+        }
+        if (!f_jumped && s.f_on_ground && s.pos.x >= jump_from){
+            in.f_jump_pressed = true;
+            f_jumped = true;
+            jump_held = 12;
+        }
+        in.f_jump_down = jump_held > 0;
+        jump_held = (jump_held > 0) ? jump_held - 1 : 0;
+        StageEvents e;
+        s.Tick(in,e);
+        if (since_start >= 0){
+            since_start++;
+        }else if (!e.crumble_groups_started.empty()){
+            since_start = 0;
+        }
+        if (s.pos.y - ARCHER_HALF_H < -1.0f){
+            return false;
+        }
+        if (s.f_on_ground && s.pos.x - ARCHER_HALF_W > 252.0f){
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    THE CHASE (bridge_crumble_plan.md section 2): a floor of crumble slabs that a trigger starts
+    going one after another. The slabs ignore her standing on them; the trigger starts the group
+    once per run; each slab starts on its tick - by distance, so the hole does not change the pace
+    - and goes CRUMBLE_SHAKE_TICKS later; the group reports its start and its end once each; a
+    restart brings the floor back unfired. And the point of it: run at her speed it is outrun, with
+    a margin that is MEASURED - how long she can stand at the start and still make it - and at a
+    walk it catches her.
+*/
+static void TestChase(){
+    printf("\nthe chase\n");
+    char d[220];
+    Stage s;
+    int group = -1;
+    for (size_t g = 0; g < s.crumble_groups.size(); g++){
+        if (s.crumble_groups[g].name == "chase"){
+            group = (int)g;
+        }
+    }
+    int trigger = s.FindZone("chase start");
+    Check(group >= 0 && trigger >= 0,"the main level has the chase's group and its trigger");
+    if (group < 0 || trigger < 0){
+        return;
+    }
+    const StageCrumbleGroup& g0 = s.crumble_groups[group];
+    bool f_owned = true;
+    for (int b : g0.blocks){
+        f_owned = f_owned && s.blocks[b].kind == BLOCK_CRUMBLE && s.blocks[b].crumble_group == group;
+    }
+    snprintf(d,sizeof(d),"%i slabs",(int)g0.blocks.size());
+    Check(g0.blocks.size() == 15 && f_owned,"fifteen slabs, each naming the group back",d);
+    const StageZone& tz = s.zones[trigger];
+    Check(!tz.f_area && tz.effects.size() == 1 && tz.effects[0].kind == ZONE_START_CRUMBLE_GROUP &&
+          tz.effects[0].target == group,"its trigger is not an area, and starts the group");
+    //By distance: 8 ticks a unit from the first slab's left edge, across the hole too.
+    bool f_paced = true;
+    for (size_t k = 0; k < g0.blocks.size(); k++){
+        int want = (int)lroundf((s.blocks[g0.blocks[k]].Left() - 220.0f) * CHASE_TICKS_PER_UNIT);
+        f_paced = f_paced && g0.starts[k] == want;
+    }
+    Check(f_paced,"each slab's start is its distance along the floor, hole or no hole");
+
+    //Standing on a slab beyond the trigger starts nothing: they go by the group alone.
+    Stage a = s;
+    DropOnto(a,244.0f,0.3f);
+    Run(a,120,ArcherInput());
+    bool f_whole = true;
+    for (int b : g0.blocks){
+        f_whole = f_whole && a.blocks[b].f_alive && a.blocks[b].crumble_ticks < 0;
+    }
+    Check(f_whole && a.f_on_ground,"standing on a slab past the trigger starts nothing");
+
+    //On the first slab, in the trigger, doing nothing: every slab goes on its tick, in order.
+    Stage b = s;
+    b.pos = v2(221.0f,0.3f + ARCHER_HALF_H);
+    b.vel = v2(0.0f,0.0f);
+    b.mode = MODE_AIR;
+    b.f_on_ground = false;
+    std::vector<int> started_at(b.blocks.size(),-1), gone_at(b.blocks.size(),-1);
+    int group_started = -1, group_done = -1, starts = 0, dones = 0, landed_at = -1, fell_at = -1;
+    for (int t = 0; t < 400; t++){
+        StageEvents e;
+        b.Tick(ArcherInput(),e);
+        for (int i : e.crumble_groups_started){ starts++; group_started = (i == group) ? t : group_started; }
+        for (int i : e.crumble_groups_done){ dones++; group_done = (i == group) ? t : group_done; }
+        for (int i : e.crumbles_started){ started_at[i] = t; }
+        for (int i : e.crumbled_blocks){ gone_at[i] = t; }
+        if (landed_at < 0 && b.f_on_ground){ landed_at = t; }
+        if (landed_at >= 0 && fell_at < 0 && !b.f_on_ground){ fell_at = t; }
+    }
+    int off_pace = 0, never = 0;
+    for (size_t k = 0; k < g0.blocks.size(); k++){
+        int i = g0.blocks[k];
+        if (started_at[i] < 0 || gone_at[i] < 0){
+            never++;
+            continue;
+        }
+        //The group starts the tick she enters; its slabs count from the tick after.
+        bool f_ok = started_at[i] == group_started + 1 + g0.starts[k] &&
+                    gone_at[i] - started_at[i] == CRUMBLE_SHAKE_TICKS;
+        off_pace += f_ok ? 0 : 1;
+    }
+    snprintf(d,sizeof(d),"group started tick %i, done tick %i (%i, %i times); %i off pace, %i never went",
+             group_started,group_done,starts,dones,off_pace,never);
+    Check(starts == 1 && dones == 1,"the group starts once and ends once",d);
+    Check(off_pace == 0 && never == 0,"every slab starts on its tick and goes CRUMBLE_SHAKE_TICKS later",d);
+    int last = g0.blocks.back();
+    Check(group_done == gone_at[last],"and the group ends the tick its last slab goes",d);
+    snprintf(d,sizeof(d),"fell at tick %i, the first slab gone at %i; feet %.2f",fell_at,gone_at[g0.blocks[0]],
+             b.pos.y - ARCHER_HALF_H);
+    Check(fell_at >= 0 && fell_at <= gone_at[g0.blocks[0]] + 1 && b.f_on_ground &&
+          fabsf(b.pos.y - ARCHER_HALF_H - (-4.0f)) < 0.02f,"standing on it, she drops into the pit with the first slab",d);
+
+    //Once per run: back out and in again does not restart it. A restart brings it all back.
+    Stage c = s;
+    DropOnto(c,221.0f,0.3f);
+    int first_ticks = c.crumble_groups[group].ticks;
+    uint64_t then = c.ticks;
+    DropOnto(c,216.0f,0.3f);
+    bool f_out = !c.zone_inside[trigger];
+    //Over the first two slabs, still in the trigger: held up by the second if the first has gone.
+    DropOnto(c,222.2f,0.3f);
+    int want = first_ticks + (int)(c.ticks - then);
+    snprintf(d,sizeof(d),"group ticks %i, then %i against %i; left it %i, back in %i",first_ticks,
+             c.crumble_groups[group].ticks,want,f_out ? 1 : 0,c.zone_inside[trigger] ? 1 : 0);
+    Check(first_ticks > 0 && f_out && c.zone_inside[trigger] && c.crumble_groups[group].ticks == want,
+          "entering the trigger again does not restart the group",d);
+    c.Reset();
+    bool f_back = c.crumble_groups[group].ticks < 0 && !c.crumble_groups[group].f_done && !c.zones[trigger].f_fired;
+    for (int i : c.crumble_groups[group].blocks){
+        f_back = f_back && c.blocks[i].f_alive && c.blocks[i].crumble_ticks < 0;
+    }
+    Check(f_back,"a restart brings the floor back whole, and the trigger unfired");
+
+    //Outrun at her run speed; the margin is how long she can stand still in the trigger first.
+    Stage rim = s;
+    DropOnto(rim,216.0f,0.3f);
+    Run(rim,30,ArcherInput());
+    Check(RunChase(rim,0,1.0f),"running straight through, she outruns the floor");
+    int margin = -1;
+    for (int h = 0; h <= 120; h++){
+        if (!RunChase(rim,h,1.0f)){
+            break;
+        }
+        margin = h;
+    }
+    snprintf(d,sizeof(d),"stands up to %i ticks (%.2f s) in the trigger and still makes it",margin,margin / (float)ARCHER_TPS);
+    Check(margin >= 6 && margin <= 40,"the margin: a moment to react, never time to stand about",d);
+    Check(!RunChase(rim,0,0.5f),"at a walk, the floor catches her");
 }
 
 /*
@@ -5737,6 +5918,68 @@ static void TestRoutes(){
         detour.push_back(l);
     }
     CheckRoute("with every stone gone, the pit's far ledge is the way on",bare,detour,on_top(0.0f,far_rim,264.0f));
+
+    //--- The chase: from the rim, over the hole in the floor, onto the ground past it ---
+    //The trigger starts the floor falling as she steps on; the waits that make it are the ones
+    //the front has not caught.
+    const float chase_end = 252.0f;
+    Stage chase_rim;
+    DropOnto(chase_rim,216.0f,0.3f);
+    Run(chase_rim,30,ArcherInput());
+    std::vector<RouteLeg> chase;
+    {
+        RouteLeg l;
+        l.name = "over the hole";
+        l.goal = on_top(0.0f,238.0f,chase_end);
+        l.walk = 1;
+        l.wait_max = 150;
+        l.air_max = 40;
+        l.air_step = 2;
+        chase.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "onto the ground";
+        l.goal = on_top(0.0f,chase_end + ARCHER_HALF_W,264.0f);
+        l.walk = 1;
+        l.wait_max = 90;
+        l.air_max = 40;
+        l.air_step = 2;
+        chase.push_back(l);
+    }
+    CheckRoute("the chase is outrun",chase_rim,chase,on_top(0.0f,chase_end + ARCHER_HALF_W,264.0f));
+
+    //--- Its detour: the floor gone, down into the pit, along it and up the far wall ---
+    Stage fallen = chase_rim;
+    for (const StageCrumbleGroup& g : fallen.crumble_groups){
+        for (int i : g.blocks){
+            fallen.blocks[i].f_alive = false;
+        }
+    }
+    std::vector<RouteLeg> under;
+    {
+        RouteLeg l;
+        l.name = "into the pit";
+        l.goal = on_top(-4.0f,220.0f,chase_end);
+        l.walk = 1;
+        l.wait_max = 20;
+        l.air_max = 40;
+        l.air_step = 4;
+        l.f_timed = false;
+        under.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "catch and climb";
+        l.goal = on_top(0.0f,chase_end,264.0f);
+        l.walk = 1;
+        l.wait_max = 240;
+        l.air_max = 60;
+        l.air_step = 4;
+        l.f_climb = true;
+        under.push_back(l);
+    }
+    CheckRoute("with the floor gone, the chase pit's far ledge is the way on",fallen,under,on_top(0.0f,chase_end,264.0f));
 }
 
 /*
@@ -5983,6 +6226,7 @@ int main(void){
     TestBoulders();
     TestZones();
     TestCrumble();
+    TestChase();
     TestRoutes();
     TestVitals();
 

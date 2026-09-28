@@ -12,6 +12,7 @@ static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
 Renderer::Renderer(int w, int h){
     width = w;
     height = h;
+    UpdateRenderSize();
 }
 
 Renderer::~Renderer(){
@@ -118,6 +119,13 @@ bool Renderer::Init(const char* vert_filename, const char* frag_filename, int _p
 bool Renderer::Resize(int new_width, int new_height){
     width = new_width;
     height = new_height;
+    UpdateRenderSize();
+    //Only while a scale is in force; at 1 the resolve target is window-sized and IS the frame.
+    if ((render_scale > 1) && !RebuildUpscaleFBO()){
+        render_scale = 1;
+        requested_render_scale = 1;
+        UpdateRenderSize();
+    }
     if (!RebuildMSAAFBO()){
         return false;
     }
@@ -139,9 +147,13 @@ void Renderer::GetAllVisibleSubLights(Object* object,std::vector<Light*>&lights)
         return;
     }
 
-    //Check if any of the direct children are lights
-    for (int i=0;i<object->children.size();i++){
-        Object* child = object->GetChild(i);
+    /*
+        Check if any of the direct children are lights. By iterator, NEVER GetChild(i): children is
+        a std::list, so GetChild walks from the front and a loop over it is quadratic. Archer's
+        pool of 2000 wind leaves under one group made that 8.4 ms of every frame - two thirds of
+        the whole draw, and the reason turning vsync off gained almost nothing (2026-09-27).
+    */
+    for (Object* child : object->children){
         Light* light = dynamic_cast<Light*>(child);
         if (light && light->IsVisible()){
             lights.push_back(light);
@@ -486,7 +498,7 @@ void Renderer::DeferredPass(Camera* camera){
 
     //Viewport and clear - see the main color pass in DrawFrame for why this uses
     //GetViewportWidth/Height() (and the offset) instead of the raw width/height.
-    glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
+    SetSceneViewport();
     /*
         Which attachment is which, because the numbers here are not self-describing and reading
         them off wrongly is easy (see SetupDeferredBuffers for where they are attached):
@@ -602,8 +614,8 @@ bool Renderer::RebuildLowResFBO(void){
 
 
     int scale = (lowres_scale < 1) ? 1 : lowres_scale;
-    int w = (width  + scale - 1) / scale;
-    int h = (height + scale - 1) / scale;
+    int w = (render_width  + scale - 1) / scale;
+    int h = (render_height + scale - 1) / scale;
     if (w < 1){
         w = 1;
     }
@@ -727,6 +739,155 @@ void Renderer::CompositeLowRes(void){
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
+//--- Whole-frame render scale - see SetRenderScale in Renderer.h -------------------------------
+
+void Renderer::SetRenderScale(int scale){
+    requested_render_scale = (scale < 1) ? 1 : ((scale > 4) ? 4 : scale);
+}
+
+void Renderer::SetUpscaleFilter(int filter){
+    requested_upscale_filter = ((filter < 0) || (filter >= UPSCALE_FILTER_COUNT)) ? (int)UPSCALE_NEAREST : filter;
+}
+
+const char* Renderer::GetUpscaleFilterName(int filter){
+    static const char* names[UPSCALE_FILTER_COUNT] = { "None (pixelated)", "Bilinear", "Bicubic" };
+    return ((filter < 0) || (filter >= UPSCALE_FILTER_COUNT)) ? "?" : names[filter];
+}
+
+//Rounded UP, for the reason RebuildLowResFBO gives: a truncating divide leaves the last column
+//of window pixels with no texel of its own behind it.
+void Renderer::UpdateRenderSize(){
+    int s = (render_scale < 1) ? 1 : render_scale;
+    render_width  = (width  + s - 1) / s;
+    render_height = (height + s - 1) / s;
+    if (render_width < 1){
+        render_width = 1;
+    }
+    if (render_height < 1){
+        render_height = 1;
+    }
+}
+
+void Renderer::GetSceneViewport(int& x, int& y, int& w, int& h) const {
+    int s = (render_scale < 1) ? 1 : render_scale;
+    //The origin divides exactly whenever it is a multiple of the scale, which the full window
+    //(origin 0) always is. Tank's offset viewport is the one that might not be, and lands up to a
+    //texel out - the same trade SetCustomShaderScale makes, and for the same reason.
+    x = viewport_x / s;
+    y = viewport_y / s;
+    w = (GetViewportWidth()  + s - 1) / s;
+    h = (GetViewportHeight() + s - 1) / s;
+}
+
+void Renderer::SetSceneViewport() const {
+    int x, y, w, h;
+    GetSceneViewport(x,y,w,h);
+    glViewport(x,y,w,h);
+}
+
+/*
+    Takes a pending scale or filter. Called first thing in DrawFrame, which is the one point in the
+    frame where no buffer is in use - the panel that asks for a change runs AFTER the scene has been
+    drawn into these buffers and before the upscale target has been presented.
+
+    A failure falls back to scale 1, where the frame is exactly what it was before any of this.
+*/
+void Renderer::ApplyRenderScale(){
+    upscale_filter = requested_upscale_filter;
+    int scale = requested_render_scale;
+    if (scale == render_scale){
+        return;
+    }
+    render_scale = scale;
+    UpdateRenderSize();
+    if ((render_scale > 1) && !RebuildUpscaleFBO()){
+        debug->Err("Render scale 1/%i: the upscale target could not be built - staying at full size\n",render_scale);
+        render_scale = 1;
+        requested_render_scale = 1;
+        UpdateRenderSize();
+    }
+    debug->Info("Render scale 1/%i: the scene draws at %i x %i for a %i x %i window\n",
+                render_scale,render_width,render_height,width,height);
+    //Everything the scene draws into. The upscale target is left allocated at scale 1 for the
+    //reason SetCustomShaderScale leaves its own: somebody flipping the setting will be back.
+    RebuildMSAAFBO();
+    if (pipeline == PIPELINE_DEFERRED){
+        RebuildDeferredFBO();
+    }
+    if (lowres_scale > 1){
+        RebuildLowResFBO();
+    }
+}
+
+bool Renderer::RebuildUpscaleFBO(){
+    if (!upscale_shader){
+        upscale_shader = new Shader("shaders/lowres_composite.vert","shaders/render_upscale.frag");
+    }
+    if (!upscale_shader->f_compiled){
+        return false;
+    }
+    if (lowres_vao == (GLuint)-1){
+        //The same empty VAO CompositeLowRes draws its triangle with - see that shader.
+        glCreateVertexArrays(1, &lowres_vao);
+    }
+    if ((upscale_fbo_id != (GLuint)-1) && (upscale_tex_width == width) && (upscale_tex_height == height)){
+        return true;
+    }
+    if (upscale_fbo_id == (GLuint)-1){
+        glCreateFramebuffers(1, &upscale_fbo_id);
+    }
+    if (upscale_tex_id != (GLuint)-1){
+        glDeleteTextures(1, &upscale_tex_id);
+    }
+    glCreateTextures(GL_TEXTURE_2D, 1, &upscale_tex_id);
+    //The resolve target's own format: the overlay, ImGui and a layered window's per-pixel alpha
+    //all draw into and read from this exactly as they did from that.
+    glTextureStorage2D(upscale_tex_id, 1, GL_RGBA16F, width, height);
+    glTextureParameteri(upscale_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(upscale_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(upscale_fbo_id, GL_COLOR_ATTACHMENT0, upscale_tex_id, 0);
+    GLenum draw_buffer = GL_COLOR_ATTACHMENT0;
+    glNamedFramebufferDrawBuffers(upscale_fbo_id, 1, &draw_buffer);
+    GLenum status = glCheckNamedFramebufferStatus(upscale_fbo_id, GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE){
+        debug->Err("The upscale target is not complete (0x%04X)\n",status);
+        return false;
+    }
+    upscale_tex_width = width;
+    upscale_tex_height = height;
+    return true;
+}
+
+/*
+    The resolved scene, drawn over the whole window with the chosen filter. A plain copy: no blend
+    (the scene's alpha goes through untouched, which a layered window reads), no depth, no cull.
+    The filtering is all in shaders/render_upscale.frag, by texelFetch, so it depends on no sampler
+    state - resolve_tex_id stays NEAREST for everything else that reads it.
+*/
+void Renderer::UpscaleFrame(){
+    glBindFramebuffer(GL_FRAMEBUFFER, upscale_fbo_id);
+    glViewport(0, 0, width, height);
+    upscale_shader->Use();
+    //Free by now: the custom-shader composite that owns this unit finished inside the colour pass.
+    glBindTextureUnit(TEXUNIT_LOWRES_COMPOSITE, resolve_tex_id);
+    upscale_shader->Setint("render_scale",render_scale);
+    upscale_shader->Setint("upscale_filter",upscale_filter);
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+
+    glBindVertexArray(lowres_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glEnable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
+
 /*
     The custom-material pass: everything tagged MESH_MODE_SHADER, one sub-pass per registered
     shader. What a custom shader is given and what is expected of it is stated once, on
@@ -789,10 +950,12 @@ void Renderer::CustomShaderPass(Camera* camera){
         scale lands up to one block out. Nothing in the tree does both, and a block is the unit
         this whole feature deals in - noted rather than solved.
     */
-    glViewport(viewport_x / lowres_scale,
-               viewport_y / lowres_scale,
-               (GetViewportWidth()  + lowres_scale - 1) / lowres_scale,
-               (GetViewportHeight() + lowres_scale - 1) / lowres_scale);
+    int svx, svy, svw, svh;
+    GetSceneViewport(svx,svy,svw,svh);
+    glViewport(svx / lowres_scale,
+               svy / lowres_scale,
+               (svw + lowres_scale - 1) / lowres_scale,
+               (svh + lowres_scale - 1) / lowres_scale);
     /*
         SEPARATE alpha blending, and this is the one line that has to be right.
 
@@ -809,7 +972,7 @@ void Renderer::CustomShaderPass(Camera* camera){
     CustomShaderSubPasses(camera,true,true);
 
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
-    glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
+    SetSceneViewport();
     CompositeLowRes();
 }
 
@@ -829,7 +992,7 @@ int Renderer::CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres
     //number at full resolution and are not at all in the low-res half, which is exactly the trap
     //Shader::f_lowres warns about.
     vec2 target_size = f_lowres ? vec2((float)lowres_tex_width,(float)lowres_tex_height)
-                                : vec2((float)width,(float)height);
+                                : vec2((float)render_width,(float)render_height);
     int num_drawn = 0;
     for (int i = 0;i < (int)custom_shaders.size();i++){
         Shader* shader = custom_shaders.at(i);
@@ -926,12 +1089,12 @@ void Renderer::SSAOPass(Camera* camera){
     */
     ssao_compute_shader->Setvec3("eye_position",camera->GetPosition());
     ssao_compute_shader->Setvec3("camera_forward",camera->GetForward());
-    ssao_compute_shader->Setvec2("target_size",vec2((float)width,(float)height));
+    ssao_compute_shader->Setvec2("target_size",vec2((float)render_width,(float)render_height));
 
     //Round UP: `width/32` truncates, so on any width that is not a multiple of 32 the last few
     //columns were never dispatched at all and kept whatever the texture held before. The shader
     //drops the invocations that overshoot.
-    glDispatchCompute((width + 31)/32, height, 1);
+    glDispatchCompute((render_width + 31)/32, render_height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
@@ -1003,6 +1166,7 @@ static const char* gpu_pass_names[Renderer::GPU_PASS_COUNT] = {
     "MSAA resolve",
     "SSAO",
     "Buffer blit",
+    "Upscale",
     "UI overlay",
     "ImGui",
 };
@@ -1032,6 +1196,12 @@ const Renderer::GPUPassTimer* Renderer::GetGPUPassTimer(int pass){
     separates the two implementations.
 */
 bool Renderer::InitGPUPassTimers(){
+    //The CPU side needs no GL, so it exists whether or not the queries do.
+    static char cpu_names[GPU_PASS_COUNT][64];
+    for (int i=0;i<GPU_PASS_COUNT;i++){
+        snprintf(cpu_names[i],sizeof(cpu_names[i]),"%s (CPU)",gpu_pass_names[i]);
+        gpu_pass_timers[i].cpu_timer = new PerfTimer(cpu_names[i]);
+    }
     f_gpu_timers_supported = glGenQueries && glDeleteQueries && glBeginQuery && glEndQuery
                           && glGetQueryObjectuiv && glGetQueryObjectui64v;
     if (!f_gpu_timers_supported){
@@ -1073,6 +1243,7 @@ void Renderer::BeginGPUPass(int pass){
     if (glPushDebugGroup){
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION,(GLuint)pass,-1,gpu_pass_names[pass]);
     }
+    gpu_pass_timers[pass].cpu_start = std::chrono::steady_clock::now();
     if (!f_gpu_timers_supported){
         return;
     }
@@ -1118,6 +1289,10 @@ void Renderer::EndGPUPass(int pass){
     if (glPopDebugGroup){
         glPopDebugGroup();
     }
+    GPUPassTimer& t = gpu_pass_timers[pass];
+    if (t.cpu_timer){
+        t.cpu_timer->AddSample(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now() - t.cpu_start).count());
+    }
 }
 
 void Renderer::EndGPUFrame(){
@@ -1134,6 +1309,9 @@ void Renderer::EndGPUFrame(){
         //toggling one off visibly decay to zero instead of freezing at its last value.
         if (!t.f_begun_this_frame && t.timer){
             t.timer->AddSample(0.0);
+        }
+        if (!t.f_begun_this_frame && t.cpu_timer){
+            t.cpu_timer->AddSample(0.0);
         }
         t.f_begun_this_frame = false;
     }
@@ -1247,8 +1425,16 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
         return;
     }
     //Same convention as the synchronous version this replaced: the mouse is measured from the top
-    //of the window, GL reads from the bottom, and the deferred FBO is always full window size.
+    //of the window, GL reads from the bottom. The deferred FBO is the RENDER size, so a window
+    //pixel is divided down to the texel it was upscaled from - the same block UpscaleFrame's
+    //nearest filter shows it as, which is what keeps a hover on the object under the cursor.
     int gl_y = height - mouse_y;
+    //Tested HERE, in window pixels, as well as against the render size below: a mouse a pixel
+    //left of the window is -1, and -1 / 2 truncates to 0 - which would read texel 0 as if the
+    //cursor were over it.
+    bool f_outside = (mouse_x < 0) || (mouse_x >= width) || (gl_y < 0) || (gl_y >= height);
+    gl_y /= render_scale;
+    mouse_x /= render_scale;
     //The slot about to be reused is the OLDEST - written PICK_PBO_SLOTS frames ago - so it is the
     //one with the best chance of having landed. Consuming it here, immediately before overwriting
     //it, is the same trick BeginGPUPass uses on its query objects.
@@ -1308,7 +1494,7 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
     //The mouse outside the window would make glReadPixels read outside the framebuffer, which is
     //undefined rather than an error. Issue nothing, and mark the slot empty so a later frame does
     //not present whatever was in it as an answer.
-    if ((mouse_x < 0) || (mouse_x >= width) || (gl_y < 0) || (gl_y >= height)){
+    if (f_outside || (mouse_x >= render_width) || (gl_y >= render_height)){
         f_picking_pbo_has_data[slot] = false;
         picking_pbo_write_index = (slot + 1) % PICK_PBO_SLOTS;
         return;
@@ -1354,6 +1540,9 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     if (tmr_frame){
         tmr_frame->Restart();
     }
+
+    //Before anything is drawn into the buffers it may reallocate.
+    ApplyRenderScale();
 
     PrepareObjects(objects);
 
@@ -1445,7 +1634,7 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     //Viewport - confines the actual 3D draw calls below to the (optionally smaller,
     //optionally offset) sub-rectangle set via viewport_x/viewport_width/viewport_height;
     //see Renderer.h's comment on those fields.
-    glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
+    SetSceneViewport();
 
     { //We draw skybox before other stuff
         BeginGPUPass(GPU_PASS_SKYBOX);
@@ -1549,11 +1738,24 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     if (f_blit_view){
         EndGPUPass(GPU_PASS_BLIT);
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
 
-    //resolve_fbo_id's GL_COLOR_ATTACHMENT0 now holds this frame's fully-resolved output
-    //(see ResolveAA/BlitBufferTarget, which always blit into it) - the right place to grab
-    //a screenshot from, before anything else gets a chance to rebind the framebuffer.
+    /*
+        What the rest of the frame draws on and presents: the resolve target itself, or - at a
+        render scale above 1 - the window-sized target the scene is scaled up into. Either way it
+        is left bound, and Application::DrawFrame's overlay and ImGui, the UI-inclusive screenshot
+        and Window::SwapWindowBuffers all take it from there without knowing which it is.
+    */
+    if ((render_scale > 1) && (upscale_fbo_id != (GLuint)-1)){
+        BeginGPUPass(GPU_PASS_UPSCALE);
+        UpscaleFrame();
+        EndGPUPass(GPU_PASS_UPSCALE);
+    }else{
+        glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
+    }
+
+    //The bound target now holds this frame's fully-resolved output at window size - the right
+    //place to grab a screenshot from, before anything else gets a chance to rebind the framebuffer.
+    //So a scene-only screenshot shows the upscale filter too, which is the thing it is for.
     //
     //This is the scene-only capture point. The UI-inclusive one is in Application::DrawFrame,
     //after ImGui has drawn into this same buffer; a request picks one or the other.
@@ -1915,7 +2117,7 @@ bool Renderer::RebuildDeferredFBO(){
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_position_tex_id);
 
-    glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA16F, width, height);
+    glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA16F, render_width, render_height);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT0, deferred_position_tex_id, 0);
@@ -1928,7 +2130,7 @@ bool Renderer::RebuildDeferredFBO(){
 
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_normal_tex_id);
 
-    glTextureStorage2D(deferred_normal_tex_id, 1, GL_RGBA16F, width, height);
+    glTextureStorage2D(deferred_normal_tex_id, 1, GL_RGBA16F, render_width, render_height);
     glTextureParameteri(deferred_normal_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_normal_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT1, deferred_normal_tex_id, 0);
@@ -1940,7 +2142,7 @@ bool Renderer::RebuildDeferredFBO(){
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_depth_tex_id);
 
-    glTextureStorage2D(deferred_depth_tex_id, 1, GL_DEPTH_COMPONENT32F, width, height);
+    glTextureStorage2D(deferred_depth_tex_id, 1, GL_DEPTH_COMPONENT32F, render_width, render_height);
     glTextureParameteri(deferred_depth_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_depth_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_DEPTH_ATTACHMENT, deferred_depth_tex_id, 0);
@@ -1952,7 +2154,7 @@ bool Renderer::RebuildDeferredFBO(){
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &ssao_tex_id);
 
-    glTextureStorage2D(ssao_tex_id, 1, GL_RGBA16F, width, height);
+    glTextureStorage2D(ssao_tex_id, 1, GL_RGBA16F, render_width, render_height);
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT2, ssao_tex_id, 0);
@@ -1964,7 +2166,7 @@ bool Renderer::RebuildDeferredFBO(){
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_objectid_tex_id);
 
-    glTextureStorage2D(deferred_objectid_tex_id, 1, GL_R32I, width, height);
+    glTextureStorage2D(deferred_objectid_tex_id, 1, GL_R32I, render_width, render_height);
     glTextureParameteri(deferred_objectid_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_objectid_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT3, deferred_objectid_tex_id, 0);
@@ -1996,12 +2198,12 @@ bool Renderer::RebuildMSAAFBO(){
 
     //Setup buffers:
     //Mutisampled color 16bit float
-    glNamedRenderbufferStorageMultisample(color_rbo_id, aa_samples, GL_RGBA16F, width, height);
+    glNamedRenderbufferStorageMultisample(color_rbo_id, aa_samples, GL_RGBA16F, render_width, render_height);
     glNamedFramebufferRenderbuffer(msaa_fbo_id, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color_rbo_id);
     CheckFrameBuffer();
 
     //32-bit depth
-    glNamedRenderbufferStorageMultisample(depth_rbo_id, aa_samples, GL_DEPTH_COMPONENT32F, width, height);
+    glNamedRenderbufferStorageMultisample(depth_rbo_id, aa_samples, GL_DEPTH_COMPONENT32F, render_width, render_height);
     glNamedFramebufferRenderbuffer(msaa_fbo_id, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_rbo_id);
     CheckFrameBuffer();
 
@@ -2010,7 +2212,7 @@ bool Renderer::RebuildMSAAFBO(){
         glDeleteTextures(1, &resolve_tex_id);
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
-    glTextureStorage2D(resolve_tex_id, 1, GL_RGBA16F, width, height);
+    glTextureStorage2D(resolve_tex_id, 1, GL_RGBA16F, render_width, render_height);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(resolve_fbo_id, GL_COLOR_ATTACHMENT0, resolve_tex_id, 0);
@@ -2025,7 +2227,7 @@ void Renderer::ResolveAA(){
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve_fbo_id);
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glBlitFramebuffer(0, 0, render_width, render_height, 0, 0, render_width, render_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
 //Copy a renderbuffer target to main buffer
@@ -2037,7 +2239,7 @@ void Renderer::BlitBufferTarget(GLuint framebuffer_id, GLenum attachment){
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     //glBlitNamedFramebuffer exists, but you still have to bint the correct attachments...?
     //There is also glNamedFramebufferDrawBuffer
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glBlitFramebuffer(0, 0, render_width, render_height, 0, 0, render_width, render_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
 void Renderer::SelectViewBuffer(int view_id){

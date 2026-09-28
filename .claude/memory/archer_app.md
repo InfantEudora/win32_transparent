@@ -468,3 +468,15 @@ core/physics/SpringHinge at the foot about Z, tuned by hz + damping ratio; k inc
 PropView so it swaps with levels; DestroySprings in NewGame before the bodies go.
 MCP GOTCHA: archer_place always, and archer_hold unless "wait": false, block until ticks run - called while
 sim_pause'd they hang until the 30 s timeout. Place before pausing; hold with wait false, then sim_step.
+
+CHARACTER SCENE BUILT 2026-09-28 (scene "Character", STAGE_LEVEL_CHARACTER): a fourth BuildExtraLevel scene for
+animation fine-tuning and, later, the wardrobe (user is splitting clothing + hair into separate meshes; blink and
+breathing clips coming). One terrain_tile_round (terrain_tile_round_0) at the origin, feet locked in GatherInput
+(move_axis only - draw/kick/kneel/jump still work), fixed camera from CharacterCameraFraming (shots full/upper
+body/face, her at 66% across so the left stays free for UI), turntable (model + tile, pivot = tile's walkable top,
+also posed while paused via PoseTurntable), two cone lights of its own (key 24 / rim 30 - at 10 the key was
+invisible next to sun+fill), bow/quiver/arrows toggles, a "Character" ImGui panel docked with Archer. SHOWCASE:
+while the Puppet's choice is plain Idle it cycles Idle -> Idle_LookingAround -> Stretching -> Stretching2 (WarmUp,
+Dance optional), 0.6 s pair blend times, hands back to the game for any on-the-spot action. MCP: archer_character
+(angle/turn/speed/shot/showcase/clip/next/rate/bow/quiver/arrows/key/rim). Aim override is zeroed there (world-Z
+bend is wrong once she is turned). Bone renames to .L/.R are still pending in the game code (Bow.h, toe bones etc).

@@ -11,6 +11,7 @@ class Renderer;
 #include "Light.h"
 #include "InputController.h"
 #include "PerfTimer.h"
+#include <atomic>
 #include <mutex>
 #include <condition_variable>
 #include <cstdint>
@@ -99,6 +100,41 @@ class Renderer{
     int viewport_height = -1;
     int GetViewportWidth() const { return viewport_width > 0 ? viewport_width : width; }
     int GetViewportHeight() const { return viewport_height > 0 ? viewport_height : height; }
+
+    /*
+        WHOLE-FRAME RENDER SCALE: the scene drawn at 1/N of the window and scaled back up to it.
+
+        Not to be confused with SetCustomShaderScale further down, which puts only the
+        Shader::f_lowres custom shaders on a reduced target. The two compound - a volume at custom
+        scale 2 under render scale 2 is drawn at a quarter of the window.
+
+        width/height (and GetViewport*) KEEP MEANING WINDOW PIXELS, which is what every camera
+        setup, ray pick and HUD in the apps reads them as. render_width/render_height are what the
+        scene's buffers are actually sized to - the G-buffer, MSAA, SSAO, the resolve - and are the
+        window divided by the scale, rounded up so the last column and row have a texel behind them.
+        The upscale then draws the resolved scene into a window-sized target, and the overlay, the
+        ImGui panels, both screenshots and the present all happen on that, at full resolution: the
+        world is pixelated and the text is not.
+
+        At scale 1 none of this exists - no target, no pass - and the frame is exactly what it was.
+
+        Safe from any thread: both calls only record a request, and DrawFrame applies it when it
+        starts, since the panel that sets it runs mid-frame and a change reallocates buffers the
+        rest of that frame is drawing into.
+    */
+    enum upscale_filter_t{
+        UPSCALE_NEAREST = 0,    //Solid NxN blocks - the default, and the point for a pixelated look
+        UPSCALE_BILINEAR,
+        UPSCALE_BICUBIC,        //Catmull-Rom: sharper than bilinear, a slight ring on hard edges
+        UPSCALE_FILTER_COUNT
+    };
+    void SetRenderScale(int scale);         //1 (off) to 4
+    int  GetRenderScale() const { return render_scale; }
+    void SetUpscaleFilter(int filter);
+    int  GetUpscaleFilter() const { return upscale_filter; }
+    static const char* GetUpscaleFilterName(int filter);
+    int render_width = 1;
+    int render_height = 1;
 
     /*
         The world comes in as an argument, and the Renderer does not keep it.
@@ -416,6 +452,31 @@ class Renderer{
     bool RebuildLowResFBO(void);
     //Draws the low-res target over the frame, one nearest-neighbour block per low-res pixel.
     void CompositeLowRes(void);
+
+    //The render scale's half of that - see SetRenderScale. A window-sized colour target the
+    //resolved scene is scaled up into, which the rest of the frame (overlay, ImGui, screenshots,
+    //the present) then draws on. It shares lowres_vao, which is just as empty for this pass.
+    GLuint upscale_fbo_id = -1;
+    GLuint upscale_tex_id = -1;
+    int upscale_tex_width = 0;
+    int upscale_tex_height = 0;
+    Shader* upscale_shader = NULL;
+    int render_scale = 1;
+    int upscale_filter = UPSCALE_NEAREST;
+    //Requests, from whichever thread - applied by ApplyRenderScale at the top of DrawFrame.
+    std::atomic<int> requested_render_scale{1};
+    std::atomic<int> requested_upscale_filter{UPSCALE_NEAREST};
+    //render_width/height from width/height and render_scale.
+    void UpdateRenderSize();
+    //Takes the requests; reallocates every scene buffer when the scale changed. Render thread.
+    void ApplyRenderScale();
+    bool RebuildUpscaleFBO();
+    //Draws resolve_tex_id into upscale_fbo_id with the chosen filter, and leaves that bound.
+    void UpscaleFrame();
+    //The app's viewport (GetViewport*, window pixels) in render-target pixels - what every
+    //scene pass hands glViewport.
+    void GetSceneViewport(int& x, int& y, int& w, int& h) const;
+    void SetSceneViewport() const;
     //The body of CustomShaderPass, run once for the full-res shaders and once for the low-res
     //ones. `f_lowres` selects which half it draws and `f_lowres_pass` says whether there is a
     //low-res half at all this frame - which is what keeps an opted-in shader drawn, at full
@@ -566,6 +627,7 @@ class Renderer{
         GPU_PASS_RESOLVE,       //MSAA resolve
         GPU_PASS_SSAO,
         GPU_PASS_BLIT,          //Only when view_buffer selects an intermediate to look at
+        GPU_PASS_UPSCALE,       //Only at a render scale above 1 - see SetRenderScale
         GPU_PASS_OVERLAY,       //UIOverlay - the app's own 2D HUD (Application::DrawFrame)
         GPU_PASS_IMGUI,         //The debug panels (Application::DrawFrame)
         GPU_PASS_COUNT
@@ -588,6 +650,14 @@ class Renderer{
         bool f_has_run[2] = {false,false};
         bool f_begun_this_frame = false;
         PerfTimer* timer = NULL;        //Microseconds, to match every other timer in the panel
+        /*
+            The same scope on the CPU's wall clock: how long issuing the pass took, INCLUDING any
+            wait the driver made the thread do inside it (a buffer still in use, a sync). Beside
+            the GPU number it answers which side a slow pass is slow on; summed and taken from
+            tmr_frame it is the time spent outside every scope.
+        */
+        PerfTimer* cpu_timer = NULL;
+        std::chrono::steady_clock::time_point cpu_start;
     };
 
     bool InitGPUPassTimers();

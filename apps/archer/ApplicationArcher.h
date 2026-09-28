@@ -760,6 +760,37 @@ private:
 #define ARCHER_CAM_SIDE             0
 #define ARCHER_CAM_ORBIT            1
 #define CAMERA_FOV                  38.0f   //vertical, degrees - see SetupCamera
+
+/*
+    --- THE CHARACTER SCENE ---------------------------------------------------------------------
+    A turntable with her on it - see the note on character_scene. Its side camera does not follow
+    anything: it is one of CharacterShot's fixed framings, with her standing RIGHT of centre so the
+    left of the screen is free for the panels and, later, the wardrobe's own controls.
+*/
+enum CharacterShot{
+    CHARACTER_SHOT_FULL = 0,    //her and the tile
+    CHARACTER_SHOT_UPPER,       //waist up - hands, bow, clothing
+    CHARACTER_SHOT_FACE,        //the head - eyes, blinks, hair
+    CHARACTER_SHOT_COUNT
+};
+//Where she stands across the frame, as a fraction of the view's half-width right of centre: 0.32
+//puts her at 66% of the way across, with the round tile's rim still inside the right edge - its
+//near side is closer to the camera than she is, so it spreads wider on screen than its 3.9.
+#define CHARACTER_FRAME_X           0.32f
+//How far the fixed camera looks down on her, degrees. A little, so the tile reads as a platform.
+#define CHARACTER_CAMERA_PITCH_DEG  7.0f
+//The turntable, degrees per second: a full turn in 36 s, slow enough to follow a clip through it.
+#define CHARACTER_TURN_SPEED        10.0f
+/*
+    THE SHOWCASE: the clips the scene cycles through while she is idle, in order, each played once
+    through and then crossfaded into the next over CHARACTER_SHOWCASE_BLEND seconds - longer than
+    the game's 0.25 s default, because these are all slow standing clips and a quick fade between
+    two of them reads as a hitch. The table itself is SHOWCASE_CLIPS in ApplicationArcher.cpp; the
+    first CHARACTER_SHOWCASE_DEFAULT of it are on to begin with.
+*/
+#define CHARACTER_SHOWCASE_COUNT    6
+#define CHARACTER_SHOWCASE_DEFAULT  4
+#define CHARACTER_SHOWCASE_BLEND    0.6f
 /*
     How the side camera follows her: ONE set for every scene, on the panel's sliders so it can be
     tuned by feel. The range and the rope scene used to follow at a quarter of the main level's
@@ -809,9 +840,10 @@ struct ArcherSnapshot{
     int   level = STAGE_LEVEL_MAIN;
     //The zone she is in (Stage::CurrentZone), by name - empty in none. What the HUD shows.
     std::string zone;
-    //Every zone of the live level, by name, in Stage::zones order - what archer_zone lists and
-    //resolves a name against before sending ARCHER_CMD_ZONE.
+    //Every AREA of the live level, by name, and each one's index in Stage::zones - what
+    //archer_zone lists and resolves a name against before sending ARCHER_CMD_ZONE. No triggers.
     std::vector<std::string> zone_names;
+    std::vector<int> zone_ids;
     float x = 0.0f;
     float y = 0.0f;
     float vx = 0.0f;
@@ -1575,6 +1607,7 @@ private:
     int material_platform = 0;
     int material_breakable = 0;
     int material_zone = 0;          //a zone's outline, in the blockout view only
+    int material_trigger = 0;       //and a trigger's
     int material_crumble = 0;       //a crumble stone, whole
     int material_crumble_warn = 0;  //and shaking, once she has stood on it
     int material_trunk = 0;
@@ -1995,7 +2028,8 @@ private:
     /*
         EVERYTHING THAT BELONGS TO ONE LEVEL RATHER THAN TO THE APP - the parked half of it.
 
-        The app has three scenes - the main level, the test range and the rope test - and each has
+        The app has four scenes - the main level, the test range, the rope test and the character
+        turntable - and each has
         its own Stage, physics world, level objects and archer BODY. The live level's copy of all
         that sits in the ordinary members above, where the whole of this file has always found it;
         every other level's sits in one of these, in parked_levels. OnActiveSceneChanged swaps the
@@ -2055,6 +2089,83 @@ private:
     Scene* world_scene = NULL;
     Scene* range_scene = NULL;
     Scene* rope_scene = NULL;
+
+    /*
+        --- THE CHARACTER SCENE ---------------------------------------------------------------------
+
+        Her, one terrain tile, a fixed camera and a turntable: the place to look at the animations,
+        the skinning and the textures in detail, and where the wardrobe will go once the clothes and
+        hair are separate meshes. A level like the other two - built by BuildExtraLevel, with a
+        Stage of its own - so everything that is hers (the model, the bow, the Puppet, the vitals
+        and their HUD) works here without a line of new code, and what is NEW is only view-side:
+
+          - her feet are locked (GatherInput), but everything she does on the spot still works - a
+            draw, a kick, a kneel, a jump - because those are what the details are worth checking in;
+          - while the Puppet says she is simply standing, the SHOWCASE picks the clip instead,
+            cycling through the idles and stretches (SyncArcherAnimation);
+          - she and the tile turn together on a turntable, and the lights do not, so the shading
+            moves across her as she turns (TickTurntable);
+          - two lights of its own, a warm key and a cool rim, on top of the shared sun and fill;
+          - the bow, the quiver and the arrows can each be hidden (ApplyCharacterPropVisibility).
+
+        Every member below is written by the Character panel under physics_mutex and read on the
+        physics thread, like the rest of this file's sliders.
+    */
+    Scene* character_scene = NULL;
+    bool IsCharacterScene() const { return character_scene && main_scene == character_scene; }
+    //Builds what BuildExtraLevel does not: the lights, the tile's pivot, the showcase's fades.
+    //Render thread, from Init, after BuildExtraLevel has made the scene.
+    void BuildCharacterScene();
+    //The fixed camera for the current shot: where it is, what it looks at, and how far apart.
+    void CharacterCameraFraming(vec3& eye, vec3& target, float& distance) const;
+    //Advances the turntable a tick and turns the tile with it. Physics thread, character scene only.
+    void TickTurntable();
+    //Puts the tile (and with f_model, her) at turntable_deg without advancing it. Physics thread.
+    void PoseTurntable(bool f_model);
+    //The bow, quiver and arrows as the panel's boxes say - after SyncBow, which shows the arrows.
+    void ApplyCharacterPropVisibility();
+    void DrawCharacterPanel();
+    /*
+        The showcase's clip for this tick, or -1 when the game should have her: outside the
+        character scene, with the showcase off, or whenever the Puppet wants anything other than
+        plain standing - a draw, a kick, a kneel, a jump. Advances its own clock and moves on to the
+        next enabled clip a crossfade before the current one ends. Physics thread, after
+        Puppet::Tick, from SyncArcherAnimation.
+    */
+    int  StepShowcase();
+
+    bool  f_showcase = true;            //cycle clips while she is idle; off, she idles as in the game
+    bool  showcase_enabled[CHARACTER_SHOWCASE_COUNT] = {};
+    int   showcase_index = 0;           //into SHOWCASE_CLIPS
+    float showcase_elapsed = 0.0f;      //seconds of the current clip played, at showcase_rate
+    float showcase_rate = 1.0f;
+    bool  f_showcase_next = false;      //the panel's "next": move on at the next tick
+    int   showcase_clip_shown = -1;     //what the showcase put on screen; -1 while the game has her
+
+    bool  f_turntable = true;
+    float turntable_speed = CHARACTER_TURN_SPEED;   //degrees per second, + anticlockwise from above
+    float turntable_deg = 0.0f;         //0 faces the camera
+    /*
+        The tile turns about the point she stands on, not about its own origin - which sits inside
+        the rock, off-centre, so turning the Object as it is would swing the tile out from under
+        her. `character_tile_pivot` is that point in the tile's own (scaled) space.
+    */
+    Object* character_tile = NULL;
+    vec3  character_tile_pivot = vec3(0.0f,0.0f,0.0f);
+    vec3  character_tile_base = vec3(0.0f,0.0f,0.0f);   //where BuildScenery put it
+
+    int   character_shot = CHARACTER_SHOT_FULL;
+
+    bool  f_character_bow = true;
+    bool  f_character_quiver = true;
+    bool  f_character_arrows = true;
+
+    ConeLight* character_key = NULL;    //warm, high and front-left
+    ConeLight* character_rim = NULL;    //cool, behind her on the right - the outline
+    bool  f_character_key = true;
+    bool  f_character_rim = true;
+    float character_key_brightness = 24.0f;
+    float character_rim_brightness = 30.0f;
 
     /*
         --- THE TITLE SCREEN ------------------------------------------------------------------------

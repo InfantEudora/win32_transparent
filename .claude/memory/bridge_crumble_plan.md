@@ -5,10 +5,13 @@ metadata:
   node_type: memory
   type: project
   originSessionId: b04fed7a-08ad-4acc-b3d5-ba0760d5be55
-  modified: 2026-09-27T15:59:35.080Z
+  modified: 2026-09-27T21:16:32.645Z
 ---
 
-Plan at apps/archer/bridge_crumble_plan.md, written 2026-09-27; nothing built yet.
+Plan at apps/archer/bridge_crumble_plan.md, written 2026-09-27. Steps 1-3 BUILT 2026-09-27 (zones +
+RouteCheck, stepping stones, the chase via a trigger zone + StageCrumbleGroup); step 4 (bridge as a
+surface) is next. Zones come in two uses: areas (HUD/teleport, side by side) and triggers
+(f_area false, effects only, once per run).
 
 User's decisions: overload snap WITH warnings, and the warnings audible (creak following the load,
 then cracks, then the snap); the first trigger is reaching a spot (a zone); the sway is LOOKS ONLY

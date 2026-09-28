@@ -63,7 +63,8 @@
 
 /*
     The reduced-resolution custom-shader target, while CompositeLowRes is scaling it back over
-    the frame. Nothing else ever samples it.
+    the frame - and, later in the same frame, the resolved scene while UpscaleFrame scales THAT
+    back over the window at a render scale. The two never overlap, and each binds before it draws.
 
     A UNIT OF ITS OWN, and not unit 0, which is the obvious choice for a one-off full-screen pass
     and is a trap: UNIT 0 IS THE SHADOW MAP in this engine (DrawFrame binds shadow_tex_id there

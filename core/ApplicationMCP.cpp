@@ -1105,11 +1105,22 @@ void Application::RegisterCoreMCPTools(){
         "Performance section shows them. `gpu_passes` are GL_TIME_ELAPSED queries measuring real "
         "GPU execution; a pass that did not run this frame reads 0. `cpu` are wall-clock timers - "
         "`pick_readback` is the mouse-over readback, which is a CPU stall rather than GPU work. "
-        "Each value is a rolling average over the last 60 frames, with the peak alongside.",
-        json{ {"type","object"}, {"properties", json::object()} },
+        "`frame_us` is the whole render loop; its parts are `prerender_us`, `scene_draw_us` (which "
+        "includes waiting for physics_mutex - minus `renderer_us` it is that wait) and the rest. "
+        "`physics_us` is the tick's work, done holding physics_mutex, `physics_loop_us` its period. "
+        "Each value is a rolling average over the last 60 frames, with the peak alongside. "
+        "Optional `vsync` (boolean) sets the swap interval, applied by the render thread on its next "
+        "frame - so wait a second before reading timings that depend on it. A MINIMISED window is "
+        "paced to 60 fps whatever vsync says.",
+        json{ {"type","object"}, {"properties", {
+            {"vsync", {{"type","boolean"}}}
+        }} },
         [this](const json &args) -> json {
             if (!renderer){
                 return json{ {"error","no renderer"} };
+            }
+            if (args.contains("vsync") && args["vsync"].is_boolean()){
+                requested_vsync = args["vsync"].get<bool>() ? 1 : 0;
             }
             json passes = json::array();
             double total_us = 0;
@@ -1123,6 +1134,8 @@ void Application::RegisterCoreMCPTools(){
                     {"pass",   Renderer::GetGPUPassName(i)},
                     {"avg_us", pass->timer->avg},
                     {"max_us", pass->timer->max},
+                    //The same scope on the CPU clock - issuing it, and any wait the driver made
+                    {"cpu_avg_us", pass->cpu_timer ? pass->cpu_timer->avg : 0.0},
                 });
             }
             json cpu = json::object();
@@ -1134,12 +1147,63 @@ void Application::RegisterCoreMCPTools(){
             }
             if (tmr_render_loop){
                 cpu["frame_us"] = tmr_render_loop->avg;
+                cpu["frame_max_us"] = tmr_render_loop->max;
             }
+            auto add = [&](const char* key, const PerfTimer* t){
+                if (t){
+                    cpu[key] = t->avg;
+                }
+            };
+            add("prerender_us",tmr_prerender);
+            add("scene_draw_us",tmr_scene_draw);
+            add("physics_us",tmr_physics);
+            add("physics_loop_us",tmr_physics_loop);
             return json{
+                {"vsync", renderer->GetVSync()},
+                {"minimized", main_window && main_window->IsMinimized()},
                 {"gpu_timers_supported", renderer->GPUTimersSupported()},
                 {"gpu_passes", passes},
                 {"gpu_total_us", total_us},
                 {"cpu", cpu},
+            };
+        });
+
+    //The Renderer panel's "Render scale" and "Upscale filter", for an agent - see
+    //Renderer::SetRenderScale. Both are requests the render thread takes at its next frame.
+    MCPServer::Get()->RegisterTool("renderer_scale",
+        "The whole-frame render scale: the scene drawn at 1/`scale` of the window (1 = full, up to 4) "
+        "and scaled back up with `filter` - 'nearest' (pixelated, the default), 'bilinear' or "
+        "'bicubic'. The HUD and the ImGui panels stay at full resolution. Both optional; applied at "
+        "the start of the next frame, so the sizes returned are the ones in force when asked - call "
+        "again a frame later to see a change land. Screenshots show the upscaled frame.",
+        json{ {"type","object"}, {"properties", {
+            {"scale",  {{"type","integer"}}},
+            {"filter", {{"type","string"},{"enum",{"nearest","bilinear","bicubic"}}}}
+        }} },
+        [this](const json &args) -> json {
+            if (!renderer){
+                return json{ {"error","no renderer"} };
+            }
+            if (args.contains("scale") && args["scale"].is_number()){
+                renderer->SetRenderScale(args["scale"].get<int>());
+            }
+            if (args.contains("filter") && args["filter"].is_string()){
+                std::string f = args["filter"].get<std::string>();
+                if (f == "nearest"){
+                    renderer->SetUpscaleFilter(Renderer::UPSCALE_NEAREST);
+                }else if (f == "bilinear"){
+                    renderer->SetUpscaleFilter(Renderer::UPSCALE_BILINEAR);
+                }else if (f == "bicubic"){
+                    renderer->SetUpscaleFilter(Renderer::UPSCALE_BICUBIC);
+                }else{
+                    return json{ {"error","filter must be nearest, bilinear or bicubic"} };
+                }
+            }
+            return json{
+                {"scale", renderer->GetRenderScale()},
+                {"filter", Renderer::GetUpscaleFilterName(renderer->GetUpscaleFilter())},
+                {"render_size", { renderer->render_width, renderer->render_height }},
+                {"window_size", { renderer->width, renderer->height }},
             };
         });
 

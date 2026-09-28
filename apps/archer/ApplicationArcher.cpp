@@ -618,7 +618,7 @@ void ApplicationArcher::Init(void){
         LOADING_STEPS at the end, so adding a step and forgetting the total is a warning in the
         log rather than a bar that stops short or runs past the end.
     */
-    const int LOADING_STEPS = 14;
+    const int LOADING_STEPS = 15;
     int step = 0;
     LoadingStep(step++,LOADING_STEPS,"materials");
     BuildMaterials();
@@ -687,11 +687,14 @@ void ApplicationArcher::Init(void){
     RegisterCommandHandlers();
     //LAST, because they share the character the lines above built - see the note on ArcherLevel.
     world_scene = main_scene;
-    parked_levels.reserve(2);           //BuildExtraLevel holds a reference into it while it builds
+    parked_levels.reserve(3);           //BuildExtraLevel holds a reference into it while it builds
     LoadingStep(step++,LOADING_STEPS,"the range");
     range_scene = BuildExtraLevel(STAGE_LEVEL_RANGE,"Range");
     LoadingStep(step++,LOADING_STEPS,"the rope course");
     rope_scene = BuildExtraLevel(STAGE_LEVEL_ROPE,"Rope");
+    LoadingStep(step++,LOADING_STEPS,"the character scene");
+    character_scene = BuildExtraLevel(STAGE_LEVEL_CHARACTER,"Character");
+    BuildCharacterScene();
     /*
         The wind field's first request. The solve runs on the background worker, so this only
         sends it off: it goes on through the rest of loading and the title, and is adopted by the
@@ -821,7 +824,9 @@ void ApplicationArcher::BuildMaterials(){
         { "ar_vine_leaf",   vec4(0.30f,0.55f,0.24f,1.0f), 0.06f, &material_vine_leaf },
         //A zone's outline in the blockout view: a bright amber that nothing in the level uses, and
         //glowing, so an edge reads as a marking laid over the level rather than as part of it.
-        { "ar_zone",        vec4(1.00f,0.70f,0.15f,1.0f), 0.80f, &material_zone }
+        { "ar_zone",        vec4(1.00f,0.70f,0.15f,1.0f), 0.80f, &material_zone },
+        //A trigger's, magenta: a box that does something, told apart from the areas at a glance.
+        { "ar_trigger",     vec4(0.95f,0.25f,0.85f,1.0f), 0.80f, &material_trigger }
     };
     for (size_t i = 0; i < sizeof(table)/sizeof(table[0]); i++){
         Material m;
@@ -2787,7 +2792,7 @@ void ApplicationArcher::BuildZoneOutlines(){
             o->name = name;
             o->SetPosition(vec3(bars[i].x,bars[i].y,z));
             o->SetScale(vec3(bars[i].w,bars[i].h,bar));
-            o->SetMaterialSlot(0,material_zone);
+            o->SetMaterialSlot(0,zone.f_area ? material_zone : material_trigger);
             o->SetCastsShadow(false);
             o->SetPickability(false);
             o->SetVisibility(f_show_blockout);
@@ -5388,7 +5393,240 @@ void ApplicationArcher::RefreshViewAfterSwitch(){
     SyncAimArc();
     ClearHitPopups();
     UpdateCamera();
+    ApplyCharacterPropVisibility();
     PublishSnapshot();
+}
+
+//--- The character scene --------------------------------------------------------------------------
+
+/*
+    The clips the showcase cycles through, in order - see CHARACTER_SHOWCASE_BLEND. The first
+    CHARACTER_SHOWCASE_DEFAULT are the standing clips it was asked for; the rest are long in-place
+    clips worth being able to add from the panel. All six loop and none travels, so none of them
+    walks her off the tile or needs the rules to know about it.
+*/
+static const int SHOWCASE_CLIPS[CHARACTER_SHOWCASE_COUNT] = {
+    CLIP_IDLE, CLIP_IDLE_LOOK, CLIP_STRETCH, CLIP_STRETCH2, CLIP_WARMUP, CLIP_DANCE
+};
+
+/*
+    The fixed shots, as the view's half-height at her depth and the height it is centred on, both
+    above her feet in world units (she stands ARCHER_MODEL_HEIGHT, 1.8). The distance follows from
+    the half-height and CAMERA_FOV, so each shot frames the same thing whatever the fov is.
+    FULL is wide enough for the round tile's 3.9 to stay in frame as it turns; FACE is centred on
+    her eyes, a little under the top of the head.
+*/
+struct CharacterShotSpec{
+    const char* name;
+    float centre_y;
+    float half_h;
+};
+static const CharacterShotSpec CHARACTER_SHOTS[CHARACTER_SHOT_COUNT] = {
+    { "full",       0.60f, 2.30f },
+    { "upper body", 1.30f, 0.74f },
+    { "face",       1.62f, 0.26f },
+};
+
+/*
+    See the note on character_scene. Render thread, from Init, straight after BuildExtraLevel -
+    which has built the tile and shared her with the scene, and left the main level live.
+*/
+void ApplicationArcher::BuildCharacterScene(){
+    if (!character_scene){
+        return;
+    }
+    for (int i = 0; i < CHARACTER_SHOWCASE_COUNT; i++){
+        showcase_enabled[i] = (i < CHARACTER_SHOWCASE_DEFAULT);
+    }
+
+    /*
+        The tile's pivot. BuildScenery put its walkable top's x centre on her; the z centre was never
+        needed, so it comes from the mesh's bounds here. Turning about that point keeps the tile
+        under her feet; turning about the Object's own origin would swing it out from under her.
+    */
+    character_tile = character_scene->FindObject("terrain_tile_round_0");
+    if (character_tile){
+        character_tile_base = character_tile->GetPosition();
+        float cz = 0.0f;
+        Mesh* mesh = scenery_meshes[SCENERY_TILE_ROUND];
+        if (mesh && !mesh->GetVertices().empty()){
+            float lo = 1e30f, hi = -1e30f;
+            for (const vertex& v : mesh->GetVertices()){
+                lo = fminf(lo,v.pos.z);
+                hi = fmaxf(hi,v.pos.z);
+            }
+            cz = 0.5f * (lo + hi);
+        }
+        character_tile_pivot = vec3(scenery_top_x[SCENERY_TILE_ROUND] * model_scale,0.0f,cz * model_scale);
+    }else{
+        debug->Warn("Character scene: no terrain_tile_round_0 to turn - she turns on her own\n");
+    }
+
+    /*
+        The two lights, this scene's only. Cone lights, so each lights her and the tile and not the
+        backdrop 40 units behind. A cone's brightness is divided by its distance once (default.frag),
+        so the defaults put each at about one and a half times the sun's 4.0 at her - checked by
+        eye: at 10 the key made no difference anyone would notice next to the sun and the fill.
+    */
+    ConeLight* key = new ConeLight();
+    key->name = "Character key";
+    key->color = vec3(1.0f,0.86f,0.70f);
+    key->brightness = character_key_brightness;
+    key->cone_angle = 50.0f;
+    key->f_casts_shadow = false;
+    key->SetPosition(vec3(-2.4f,3.4f,3.2f));
+    key->SetLookAt(vec3(0.0f,1.0f,0.0f));
+    character_scene->AddObject(key);
+    character_key = key;
+
+    /*
+        The rim is NARROW and aimed at her chest: from behind, a wide cone mostly lit the tile's top
+        around her feet - measured, the difference it made was a green ellipse on the grass and a
+        faint line on her. At 28 degrees it covers her from the knees up and little else.
+    */
+    ConeLight* rim = new ConeLight();
+    rim->name = "Character rim";
+    rim->color = vec3(0.62f,0.78f,1.0f);
+    rim->brightness = character_rim_brightness;
+    rim->cone_angle = 28.0f;
+    rim->f_casts_shadow = false;
+    rim->SetPosition(vec3(1.8f,3.0f,-2.6f));
+    rim->SetLookAt(vec3(0.0f,1.35f,0.0f));
+    character_scene->AddObject(rim);
+    character_rim = rim;
+
+    //The showcase's fades, pair by pair. No wildcard: Idle is the game's too, and a slow fade INTO
+    //it from anything would be one out of every landing and every stop.
+    if (archer_model){
+        for (int a = 0; a < CHARACTER_SHOWCASE_COUNT; a++){
+            for (int b = 0; b < CHARACTER_SHOWCASE_COUNT; b++){
+                if (a != b){
+                    archer_model->SetBlendTime(ARCHER_CLIPS[SHOWCASE_CLIPS[a]].name,
+                                               ARCHER_CLIPS[SHOWCASE_CLIPS[b]].name,CHARACTER_SHOWCASE_BLEND);
+                }
+            }
+        }
+    }
+}
+
+/*
+    One of the fixed shots. Anchored to the TILE, not to her, so a jump on the spot leaves the
+    camera where it is - it is a fixed camera. She stands right of centre by CHARACTER_FRAME_X of
+    the half-width, and the camera looks down on her by CHARACTER_CAMERA_PITCH_DEG.
+*/
+void ApplicationArcher::CharacterCameraFraming(vec3& eye, vec3& target, float& distance) const{
+    int shot = (character_shot >= 0 && character_shot < CHARACTER_SHOT_COUNT) ? character_shot : 0;
+    const CharacterShotSpec& spec = CHARACTER_SHOTS[shot];
+    float stand_x = stage.scenery.empty() ? 0.0f : stage.scenery[0].x;
+    float stand_y = stage.scenery.empty() ? 0.0f : stage.scenery[0].y;
+    float aspect = (renderer && renderer->height > 0) ? (float)renderer->width / (float)renderer->height
+                                                      : 16.0f / 9.0f;
+    distance = spec.half_h / tanf(CAMERA_FOV * 0.5f * ARCHER_DEG2RAD);
+    target = vec3(stand_x - CHARACTER_FRAME_X * spec.half_h * aspect,stand_y + spec.centre_y,0.0f);
+    float pitch = CHARACTER_CAMERA_PITCH_DEG * ARCHER_DEG2RAD;
+    eye = target + vec3(0.0f,sinf(pitch) * distance,cosf(pitch) * distance);
+}
+
+/*
+    A tick of the turntable. In simulated time, like everything else here, so pausing freezes her
+    at an angle and sim_step turns her by an exact amount - which is when a detail is looked at.
+    The model's yaw is read from turntable_deg in SyncArcherAnimation; the tile is turned here.
+*/
+void ApplicationArcher::TickTurntable(){
+    if (f_turntable){
+        turntable_deg = fmodf(turntable_deg + turntable_speed * ARCHER_DT,360.0f);
+        if (turntable_deg < 0.0f){
+            turntable_deg += 360.0f;
+        }
+    }
+    PoseTurntable(false);
+}
+
+/*
+    The tile at turntable_deg - and, with f_model, her too, which is only for a pass that does NOT
+    tick: on a tick SyncArcherAnimation turns her along with everything else it places. Paused, it
+    is what lets the angle slider and archer_character's 'angle' turn her to look at a detail, which
+    is exactly when the simulation is likely to be paused.
+*/
+void ApplicationArcher::PoseTurntable(bool f_model){
+    if (f_model && archer_model){
+        archer_model->SetRotation(quat(vec3(0.0f,1.0f,0.0f),
+                                       turntable_deg * ARCHER_DEG2RAD + archer_model->clip_yaw));
+    }
+    if (character_tile){
+        quat turn(vec3(0.0f,1.0f,0.0f),turntable_deg * ARCHER_DEG2RAD);
+        vec3 swung = turn * character_tile_pivot;
+        character_tile->SetPosition(vec3(-swung.x,character_tile_base.y,-swung.z));
+        character_tile->SetRotation(turn);
+    }
+}
+
+/*
+    Every tick in every scene, because leaving the character scene has to put the bow back. The
+    arrows only ever get HIDDEN here: SyncBow decides every tick whether one is showing, and this
+    runs after it.
+*/
+void ApplicationArcher::ApplyCharacterPropVisibility(){
+    bool f_here = IsCharacterScene();
+    if (bow_rig.bow.object){
+        bow_rig.bow.object->SetVisibility(!f_here || f_character_bow);
+    }
+    if (bow_rig.quiver.object){
+        bow_rig.quiver.object->SetVisibility(!f_here || f_character_quiver);
+    }
+    if (f_here && !f_character_arrows){
+        if (bow_rig.arrow.object){
+            bow_rig.arrow.object->Hide();
+        }
+        if (bow_rig.arrow_hand.object){
+            bow_rig.arrow_hand.object->Hide();
+        }
+    }
+}
+
+int ApplicationArcher::StepShowcase(){
+    bool f_standing = IsCharacterScene() && f_showcase
+                      && puppet.choice.clip == CLIP_IDLE && puppet.choice.blend_clip < 0
+                      && puppet.choice.upper_clip < 0 && puppet.upper_weight <= 0.0f
+                      && stage.mode == MODE_GROUND && stage.f_on_ground;
+    //The next clip that is switched on and made it into the export, or `from` if none other is.
+    auto next_after = [&](int from) -> int {
+        for (int i = 1; i <= CHARACTER_SHOWCASE_COUNT; i++){
+            int j = (from + i) % CHARACTER_SHOWCASE_COUNT;
+            if (showcase_enabled[j] && archer_clips[SHOWCASE_CLIPS[j]]){
+                return j;
+            }
+        }
+        return from;
+    };
+    if (f_standing && !(showcase_enabled[showcase_index] && archer_clips[SHOWCASE_CLIPS[showcase_index]])){
+        showcase_index = next_after(showcase_index);
+        showcase_elapsed = 0.0f;
+        f_standing = showcase_enabled[showcase_index] && archer_clips[SHOWCASE_CLIPS[showcase_index]];
+    }
+    if (!f_standing){
+        showcase_clip_shown = -1;
+        return -1;
+    }
+
+    int clip = SHOWCASE_CLIPS[showcase_index];
+    if (showcase_clip_shown == clip && playing_clip == clip){
+        //Moved on a crossfade BEFORE the end, so the fade finishes on the clip's last frames
+        //rather than on its first ones again.
+        showcase_elapsed += ARCHER_DT * showcase_rate;
+        float end = archer_clips[clip]->duration - CHARACTER_SHOWCASE_BLEND;
+        if (f_showcase_next || showcase_elapsed >= end){
+            showcase_index = next_after(showcase_index);
+            showcase_elapsed = 0.0f;
+            clip = SHOWCASE_CLIPS[showcase_index];
+        }
+    }else if (showcase_clip_shown != clip){
+        //Taking her back from the game, or the panel switched clips: the clock starts again.
+        showcase_elapsed = 0.0f;
+    }
+    f_showcase_next = false;
+    showcase_clip_shown = clip;
+    return clip;
 }
 
 void ApplicationArcher::SetupInput(){
@@ -5780,7 +6018,7 @@ void ApplicationArcher::RegisterCommandHandlers(){
     main_scene->RegisterCommandHandler(ARCHER_CMD_ZONE,
         [this](const SimCommand& cmd) -> objectid_t {
             int index = (int)cmd.value[0];
-            if (index < 0 || index >= (int)stage.zones.size()){
+            if (index < 0 || index >= (int)stage.zones.size() || !stage.zones[index].f_area){
                 return OBJECTID_INVALID;
             }
             if (stage.mode == MODE_ROPE){
@@ -5977,6 +6215,10 @@ void ApplicationArcher::UpdateView(void){
         UpdateTitle(input);
         return;
     }
+    //Paused on the turntable, an angle set from the panel or over MCP still turns her.
+    if (IsCharacterScene() && main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass()){
+        PoseTurntable(true);
+    }
     /*
         Escape, or Back: to the title, as a pause. Read every pass, acted on only when the input is
         ours - IsInputLive, as for continue, so archer_hold 'menu' works on a minimised window.
@@ -6070,7 +6312,8 @@ void ApplicationArcher::UpdateView(void){
     //And not while the pointer is over a panel, or scrolling the clip list also flies the camera
     //across the level. UIWantsMouse is ImGui's own answer behind a name that exists in every
     //build, so this needs no #ifdef - see the note on it in core/Application.h.
-    if (wheel != 0 && input->HasFocus() && !UIWantsMouse()){
+    //Not on the turntable, whose camera is fixed - its shots are on the Character panel.
+    if (wheel != 0 && input->HasFocus() && !UIWantsMouse() && !IsCharacterScene()){
         camera_distance *= powf(1.0f - CAMERA_ZOOM_PER_NOTCH,(float)wheel);
         camera_distance = clamp(camera_distance,CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX);
     }
@@ -6217,8 +6460,12 @@ void ApplicationArcher::RunSimulationTick(void){
     UpdateHitPopups();
     DriveArcherBody();
     SyncArcherView();
+    if (IsCharacterScene()){
+        TickTurntable();
+    }
     SyncArcherAnimation();
     SyncBow();
+    ApplyCharacterPropVisibility();
     UpdateRopeAttachMarkers();
     SyncArrowViews();
     SyncSpringPlants();
@@ -6283,6 +6530,11 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     */
     move += input->GetAxis(INPUT_ARCHER_MOVE);
     out.move_axis = clamp(move,-1.0f,1.0f);
+    //On the turntable her feet stay put: running would take her off the tile and out of the shot.
+    //Everything done on the spot - the draw, the kicks, the kneel, a jump - still gets through.
+    if (IsCharacterScene()){
+        out.move_axis = 0.0f;
+    }
 
     float aim = 0.0f;
     if (input->IsKeyDown(INPUT_ARCHER_AIM_UP)){   aim += 1.0f; }
@@ -6440,7 +6692,9 @@ void ApplicationArcher::PollCueTable(){
       signal `landed`      speed (how hard she came down), x
       signal `block_broken`   count, x - once a tick, however many bricks went
       signal `crumble_started` x - a crumble stone she landed on, starting its shake
-      signal `crumble_fell`   x - and that stone going, CRUMBLE_SHAKE_TICKS later
+      signal `crumble_fell`   x - and that stone going, CRUMBLE_SHAKE_TICKS later (a chase slab too)
+      signal `crumble_group_started`, `crumble_group_done`   x - the chase's floor setting off, and
+                           its last slab gone
       signal `arrow_hit`   x, speed - level hits here, prop hits from ResolveArrowsAgainstProps
       signal `stand_hit`   points (RegisterTargetHit)
       scope `arrow`        one per flight, instance = the arrow's slot (ForecastArrowImpacts)
@@ -6525,6 +6779,18 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
     for (int b : events.crumbled_blocks){
         if (b >= 0 && b < (int)stage.blocks.size()){
             cues.Signal("crumble_fell",CuePayload().Set("x",stage.blocks[b].x));
+        }
+    }
+    //A group - the chase - starting and running out: the rumble held between the two. `x` is its
+    //first slab, where the front sets off from.
+    for (int g : events.crumble_groups_started){
+        if (g >= 0 && g < (int)stage.crumble_groups.size() && !stage.crumble_groups[g].blocks.empty()){
+            cues.Signal("crumble_group_started",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks[0]].x));
+        }
+    }
+    for (int g : events.crumble_groups_done){
+        if (g >= 0 && g < (int)stage.crumble_groups.size() && !stage.crumble_groups[g].blocks.empty()){
+            cues.Signal("crumble_group_done",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks.back()].x));
         }
     }
 
@@ -8383,13 +8649,32 @@ void ApplicationArcher::SyncArcherAnimation(){
         archer_model->overlay_time = puppet.choice.overlay_time;
         archer_model->overlay_weight = puppet.choice.overlay_weight;
 
+        /*
+            In the character scene, while she is simply standing, the SHOWCASE has the base clip
+            instead of the Puppet - see StepShowcase. Everything above still ran, so the layers
+            fade and the Puppet's own state stays current for the moment the game takes her back.
+        */
         int clip = puppet.choice.clip;
+        float rate = puppet.choice.rate;
+        float start_time = puppet.choice.start_time;
+        int showcase = StepShowcase();
+        if (showcase >= 0){
+            clip = showcase;
+            rate = showcase_rate;
+            //From its first frame whenever it is a change, so every clip is seen whole.
+            start_time = (clip != playing_clip) ? 0.0f : -1.0f;
+        }
+        //The aim bends her about the WORLD's Z, which is only her side-to-side axis while she is
+        //side-on. Turned on the turntable it would tip her over sideways instead, so off here.
+        if (IsCharacterScene()){
+            archer_model->aim_weight = 0.0f;
+        }
         if (clip >= 0 && clip < CLIP_COUNT && archer_clips[clip]){
             /*
                 Only on a CHANGE. Asking for the clip that is already playing would restart it
                 every tick.
             */
-            int second = puppet.choice.blend_clip;
+            int second = (showcase >= 0) ? -1 : puppet.choice.blend_clip;
             Animation* follow = (second >= 0 && second < CLIP_COUNT) ? archer_clips[second] : NULL;
             /*
                 INSIDE THE LADDER the pair is handed over whole, every tick, and the pose never
@@ -8434,8 +8719,8 @@ void ApplicationArcher::SyncArcherAnimation(){
                                     || (follow && (follow == posed_lead
                                                    || follow == posed_follow)));
             if (f_continuous){
-                archer_model->SetBlendPair(lead,follow,puppet.choice.blend,
-                                           puppet.choice.blend_phase_offset);
+                archer_model->SetBlendPair(lead,follow,(showcase >= 0) ? 0.0f : puppet.choice.blend,
+                                           (showcase >= 0) ? 0.0f : puppet.choice.blend_phase_offset);
                 if (clip != playing_clip){
                     archer_model->clip_yaw = 0.0f;
                 }
@@ -8454,22 +8739,22 @@ void ApplicationArcher::SyncArcherAnimation(){
                     destination is standing at - so setting the playhead afterwards would fade
                     into the start frame and only then jump to where it was asked to begin.
                 */
-                if (puppet.choice.start_time >= 0.0f){
-                    lead->time_index = puppet.choice.start_time;
+                if (start_time >= 0.0f){
+                    lead->time_index = start_time;
                 }
                 if (archer_model->TransitionToAnimation(lead)){
                     playing_clip = clip;
                     archer_model->clip_yaw = 0.0f;
                 }
             }
-            archer_model->SetAnimationRate(puppet.choice.rate);
+            archer_model->SetAnimationRate(rate);
             /*
                 A PINNED playhead (the rope climb): set, every tick, on the clip being shown - the
                 rate is 0, so the engine holds it there and still poses from it. During the fade in
                 the engine advances it by one tick first, which is a sixtieth of a second of pose
                 for the length of a 0.15s crossfade.
             */
-            if (puppet.choice.pinned_time >= 0.0f && playing_clip == clip){
+            if (showcase < 0 && puppet.choice.pinned_time >= 0.0f && playing_clip == clip){
                 lead->time_index = puppet.choice.pinned_time;
                 f_pinned = true;
                 base_pinned = puppet.choice.lift_base;
@@ -8499,7 +8784,9 @@ void ApplicationArcher::SyncArcherAnimation(){
     //No filtering here any more: clip_yaw only ever accumulates from a clip whose
     //extract_yaw_root_motion is set, which is the f_turns column, set once at load. A cycle's hip
     //rotation stays on the bone where it belongs instead of arriving here to be discarded.
-    float yaw = puppet.yaw_deg * ARCHER_DEG2RAD + archer_model->clip_yaw;
+    //On the turntable, the turntable's angle takes the Puppet's place - see TickTurntable.
+    float base_yaw = IsCharacterScene() ? turntable_deg : puppet.yaw_deg;
+    float yaw = base_yaw * ARCHER_DEG2RAD + archer_model->clip_yaw;
 
     /*
         AND ON THE ROPE, A TILT AS WELL - the one state where which way is up for her is not
@@ -8885,6 +9172,13 @@ void ApplicationArcher::UpdateCamera(){
     const ArcherCameraTuning& tune = camera_tuning;
     vec3 body(stage.pos.x,stage.pos.y + 0.5f,0.0f);
 
+    //The turntable's camera follows nothing: PlaceCamera frames the shot. The orbit still works.
+    if (IsCharacterScene() && camera_mode == ARCHER_CAM_SIDE){
+        last_camera_mode = camera_mode;
+        PlaceCamera();
+        return;
+    }
+
     if (camera_mode == ARCHER_CAM_ORBIT){
         if (last_camera_mode != ARCHER_CAM_ORBIT){
             orbit_follow_offset = camera_target - body;
@@ -9010,7 +9304,17 @@ void ApplicationArcher::Rumble(float low, float high){
 */
 void ApplicationArcher::PlaceCamera(){
     Camera* camera = main_scene ? main_scene->camera : NULL;
-    if (camera && camera_mode == ARCHER_CAM_SIDE){
+    //How far the view is from what it looks at, for the sun's shadow ortho below.
+    float view_distance = camera_distance;
+    if (camera && camera_mode == ARCHER_CAM_SIDE && IsCharacterScene()){
+        //A fixed shot, no shake: a jump's landing jolting the turntable's camera helps nobody.
+        vec3 eye;
+        CharacterCameraFraming(eye,camera_target,view_distance);
+        camera_ideal = camera_target;
+        camera->SetPosition(eye);
+        camera->SetLookAt(camera_target);
+        camera->CalculateLookatMatrix();
+    }else if (camera && camera_mode == ARCHER_CAM_SIDE){
         //Height in proportion to distance, so the zoom keeps one pitch - see CAMERA_HEIGHT.
         float height = CAMERA_HEIGHT * camera_distance / CAMERA_DISTANCE;
         //The shake moves the camera and what it looks at together - a slide of the view, never a
@@ -9045,11 +9349,16 @@ void ApplicationArcher::PlaceCamera(){
     if (sun_light){
         //Fit the ortho to how much of the level is on screen - see SUN_SHADOW_EXTENT. The side
         //camera's distance is camera_distance; the orbit keeps its own, as the length to the pivot.
-        float distance = camera_distance;
+        float distance = view_distance;
         if (camera && camera_mode == ARCHER_CAM_ORBIT){
             distance = (camera->GetPosition() - camera_target).length();
         }
         sun_light->viewport.zoom = SUN_SHADOW_EXTENT * distance / CAMERA_DISTANCE;
+        //Up close on the turntable that would shrink to under a unit, and the tile's own shadow and
+        //hers on it would be cut off at the edge of the map. Three covers the tile turned any way.
+        if (IsCharacterScene()){
+            sun_light->viewport.zoom = fmaxf(sun_light->viewport.zoom,3.0f);
+        }
 
         vec3 target(camera_target.x,camera_target.y,0.0f);
         sun_light->SetPosition(target + SUN_OFFSET);
@@ -9147,7 +9456,10 @@ void ApplicationArcher::PublishSnapshot(){
         int z = stage.CurrentZone();
         s.zone = (z >= 0) ? stage.zones[z].name : std::string();
         for (const StageZone& zone : stage.zones){
-            s.zone_names.push_back(zone.name);
+            if (zone.f_area){
+                s.zone_names.push_back(zone.name);
+                s.zone_ids.push_back(zone.id);
+            }
         }
     }
     s.x = stage.pos.x;
@@ -9452,7 +9764,8 @@ json ApplicationArcher::BuildStateJson(){
         //degrees, and how near falling, 0..1 - what the gauge beside her shows.
         {"balance",json{{"branch",s.branch_on},{"lean_deg",s.lean_deg},{"lean_rate_deg",s.lean_rate_deg},
                         {"danger",s.balance_danger},{"hanging_from",s.hang_branch}}},
-        {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" : "main"},
+        {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" :
+                 (s.level == STAGE_LEVEL_CHARACTER) ? "character" : "main"},
         //The zone she is in - see archer_zone for the list and for going to one.
         {"zone",s.zone},
         {"archer",json{
@@ -9901,7 +10214,8 @@ void ApplicationArcher::RegisterMCPTools(){
     */
     MCPServer::Get()->RegisterTool("archer_zone",
         "The live level's ZONES - its named areas: the main level's terrain bay, start, gaps and "
-        "rope, ledges and walls, tree, spring plants, branches and test ground; the range; the rope "
+        "rope, ledges and walls, tree, spring plants, branches, stepping stones, chase and test ground; "
+        "the range; the rope "
         "level's rope and slide gallery. With no name, lists them and says which she is in (also in "
         "archer_state as 'zone'). With a name (not case-sensitive, a unique prefix is enough), puts "
         "her standing at that zone's arrival spot - the quick way to a mechanism to test it. Only "
@@ -9918,10 +10232,12 @@ void ApplicationArcher::RegisterMCPTools(){
                 return json{ {"error","no scene"} };
             }
             std::vector<std::string> names;
+            std::vector<int> ids;
             std::string current;
             {
                 std::lock_guard<std::mutex> lock(snapshot_mutex);
                 names = snapshot.zone_names;
+                ids = snapshot.zone_ids;
                 current = snapshot.zone;
             }
             std::string want = args.value("name",std::string(""));
@@ -9953,7 +10269,7 @@ void ApplicationArcher::RegisterMCPTools(){
             }
             SimCommand cmd;
             cmd.type = ARCHER_CMD_ZONE;
-            cmd.value[0] = (float)found;
+            cmd.value[0] = (found < (int)ids.size()) ? (float)ids[found] : -1.0f;
             main_scene->SubmitCommand(cmd);
             //Long enough to have landed: the spot is 0.3 above the ground.
             WaitTicks(12);
@@ -10061,6 +10377,132 @@ void ApplicationArcher::RegisterMCPTools(){
                          {"fear",s.vitals.fear}, {"fear_target",s.vitals.fear_target},
                          {"heart_rate",s.vitals.heart_rate},
                          {"held",{ {"exertion",held(hold[0])}, {"fear",held(hold[1])} }} };
+        });
+
+    MCPServer::Get()->RegisterTool("archer_character",
+        "The character scene's turntable - switch to it with scene_set 'Character'. Everything the "
+        "Character panel does: 'angle' (degrees, 0 faces the camera; stops the turn), 'turn' "
+        "on/off and 'speed' in deg/s, 'shot' (full, upper body, face), 'showcase' on/off, 'clip' "
+        "to jump the cycle to one of its clips by name, 'next', 'rate', 'bow'/'quiver'/'arrows' "
+        "shown or hidden, and 'key'/'rim' brightness (0 turns a light off). Returns the state. "
+        "Settable from any scene; it only shows in the character one.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"angle",    {{"type","number"},{"description","turntable angle in degrees; stops the turn"}}},
+                {"turn",     {{"type","boolean"}}},
+                {"speed",    {{"type","number"},{"description","degrees per second, + anticlockwise from above"}}},
+                {"shot",     {{"type","string"},{"description","full, upper body or face"}}},
+                {"showcase", {{"type","boolean"},{"description","cycle clips while she stands"}}},
+                {"clip",     {{"type","string"},{"description","one of the showcase clips, by name"}}},
+                {"next",     {{"type","boolean"}}},
+                {"rate",     {{"type","number"}}},
+                {"bow",      {{"type","boolean"}}},
+                {"quiver",   {{"type","boolean"}}},
+                {"arrows",   {{"type","boolean"}}},
+                {"key",      {{"type","number"},{"description","warm key brightness; 0 is off"}}},
+                {"rim",      {{"type","number"},{"description","cool rim brightness; 0 is off"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            std::string error;
+            json out;
+            //All of it at a tick boundary on the physics thread, which is where these are read.
+            main_scene->AtTickBoundary([&](){
+                if (args.contains("angle")){
+                    turntable_deg = fmodf(fmodf(args.value("angle",0.0f),360.0f) + 360.0f,360.0f);
+                    f_turntable = false;
+                }
+                if (args.contains("turn")){     f_turntable = args.value("turn",true); }
+                if (args.contains("speed")){    turntable_speed = args.value("speed",CHARACTER_TURN_SPEED); }
+                if (args.contains("showcase")){ f_showcase = args.value("showcase",true); }
+                if (args.contains("next")){     f_showcase_next = args.value("next",false); }
+                if (args.contains("rate")){     showcase_rate = clamp(args.value("rate",1.0f),0.05f,4.0f); }
+                if (args.contains("bow")){      f_character_bow = args.value("bow",true); }
+                if (args.contains("quiver")){   f_character_quiver = args.value("quiver",true); }
+                if (args.contains("arrows")){   f_character_arrows = args.value("arrows",true); }
+                if (args.contains("shot")){
+                    std::string name = args.value("shot",std::string());
+                    int found = -1;
+                    for (int i = 0; i < CHARACTER_SHOT_COUNT; i++){
+                        if (name == CHARACTER_SHOTS[i].name){
+                            found = i;
+                        }
+                    }
+                    if (found < 0){
+                        error = "no shot called '" + name + "' - full, upper body or face";
+                    }else{
+                        character_shot = found;
+                    }
+                }
+                if (args.contains("clip")){
+                    std::string name = args.value("clip",std::string());
+                    int found = -1;
+                    for (int i = 0; i < CHARACTER_SHOWCASE_COUNT; i++){
+                        if (name == ARCHER_CLIPS[SHOWCASE_CLIPS[i]].name){
+                            found = i;
+                        }
+                    }
+                    if (found < 0){
+                        error = "'" + name + "' is not one of the showcase clips";
+                    }else{
+                        showcase_enabled[found] = true;
+                        showcase_index = found;
+                        showcase_clip_shown = -1;
+                        f_showcase = true;
+                        anim_source = ANIM_FROM_GAME;
+                    }
+                }
+                //The lights are the renderer's to read; a float written between ticks is what
+                //the panel does too.
+                if (args.contains("key")){
+                    float b = args.value("key",10.0f);
+                    f_character_key = b > 0.0f;
+                    if (b > 0.0f){ character_key_brightness = b; }
+                }
+                if (args.contains("rim")){
+                    float b = args.value("rim",12.0f);
+                    f_character_rim = b > 0.0f;
+                    if (b > 0.0f){ character_rim_brightness = b; }
+                }
+                if (character_key){
+                    character_key->SetVisibility(f_character_key);
+                    character_key->brightness = character_key_brightness;
+                }
+                if (character_rim){
+                    character_rim->SetVisibility(f_character_rim);
+                    character_rim->brightness = character_rim_brightness;
+                }
+
+                json enabled = json::array();
+                for (int i = 0; i < CHARACTER_SHOWCASE_COUNT; i++){
+                    if (showcase_enabled[i]){
+                        enabled.push_back(ARCHER_CLIPS[SHOWCASE_CLIPS[i]].name);
+                    }
+                }
+                int shown = showcase_clip_shown;
+                out = json{
+                    {"live",IsCharacterScene()},
+                    {"angle",turntable_deg}, {"turning",f_turntable}, {"speed",turntable_speed},
+                    {"shot",CHARACTER_SHOTS[character_shot].name},
+                    {"showcase",{ {"on",f_showcase}, {"clips",enabled}, {"rate",showcase_rate},
+                                  {"playing",(shown >= 0) ? json(ARCHER_CLIPS[shown].name) : json(nullptr)},
+                                  {"elapsed",showcase_elapsed} }},
+                    {"playing_clip",(playing_clip >= 0 && playing_clip < CLIP_COUNT) ?
+                                    json(ARCHER_CLIPS[playing_clip].name) : json(nullptr)},
+                    {"props",{ {"bow",f_character_bow}, {"quiver",f_character_quiver},
+                               {"arrows",f_character_arrows} }},
+                    {"lights",{ {"key",f_character_key ? character_key_brightness : 0.0f},
+                                {"rim",f_character_rim ? character_rim_brightness : 0.0f} }}
+                };
+            });
+            if (!error.empty()){
+                out["error"] = error;
+            }
+            return out;
         });
 
     MCPServer::Get()->RegisterTool("archer_sound",
@@ -11146,18 +11588,25 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::SameLine();
         ImGui::Checkbox("zone label",&f_show_zone_label);
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        //The areas only: a trigger has nowhere to arrive.
+        std::vector<int> areas;
         for (size_t i = 0; i < stage.zones.size(); i++){
-            const StageZone& zone = stage.zones[i];
+            if (stage.zones[i].f_area){
+                areas.push_back((int)i);
+            }
+        }
+        for (size_t a = 0; a < areas.size(); a++){
+            const StageZone& zone = stage.zones[areas[a]];
             if (ImGui::Button(zone.name.c_str())){
                 SimCommand cmd;
                 cmd.type = ARCHER_CMD_ZONE;
-                cmd.value[0] = (float)i;
+                cmd.value[0] = (float)areas[a];
                 SubmitUICommand(cmd);
             }
             ImGui::SetItemTooltip("To (%.1f, %.1f)",zone.arrive.x,zone.arrive.y);
             //Wrap the row: the next button on this line only if it fits.
-            if (i + 1 < stage.zones.size()){
-                float next = ImGui::CalcTextSize(stage.zones[i + 1].name.c_str()).x +
+            if (a + 1 < areas.size()){
+                float next = ImGui::CalcTextSize(stage.zones[areas[a + 1]].name.c_str()).x +
                              ImGui::GetStyle().FramePadding.x * 2.0f;
                 if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next < right_edge){
                     ImGui::SameLine();
@@ -11586,5 +12035,150 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::End();
     //After the Archer window, so the first frame can find the node it docks beside.
     DrawCuePanel();
+    DrawCharacterPanel();
+}
+
+/*
+    The turntable's controls - see the note on character_scene. Only while that scene is live, and
+    brought to the front of its dock the first frame it is, since arriving there is asking for it.
+    Docked beside the Archer window the way the Cues panel is, and for the same reason.
+
+    RENDER THREAD with physics_mutex held: the flags and sliders are written straight into the
+    members the physics thread reads, like the rest of the panels. The lights are the exception
+    that is applied HERE - a light's brightness and visibility are read by the renderer, on this
+    thread, and nothing in the tick touches them.
+*/
+void ApplicationArcher::DrawCharacterPanel(){
+    static bool f_was_shown = false;
+    if (!IsCharacterScene()){
+        f_was_shown = false;
+        return;
+    }
+    ImGuiWindow* archer_window = ImGui::FindWindowByName("Archer");
+    ImGuiWindow* own = ImGui::FindWindowByName("Character");
+    bool f_misplaced = !own || (own->DockId == 0 && own->Size.x < 120.0f);
+    if (f_misplaced && archer_window && archer_window->DockId != 0){
+        ImGui::SetNextWindowDockID(archer_window->DockId,ImGuiCond_Always);
+    }
+    if (!f_was_shown){
+        ImGui::SetNextWindowFocus();
+        f_was_shown = true;
+    }
+    ImGui::SetNextWindowSize(ImVec2(380.0f,560.0f),ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Character")){
+        ImGui::End();
+        return;
+    }
+
+    //--- What she plays ----------------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Animation",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::Checkbox("cycle while idle",&f_showcase);
+        ImGui::SetItemTooltip("Play the ticked clips one after another while she stands. Anything she "
+                              "does on the spot - J draw, K kick, C kneel, Space jump - takes over "
+                              "and hands back when she is standing again.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("next")){
+            f_showcase_next = true;
+        }
+        for (int i = 0; i < CHARACTER_SHOWCASE_COUNT; i++){
+            int clip = SHOWCASE_CLIPS[i];
+            ImGui::PushID(i);
+            bool f_now = (showcase_clip_shown == clip);
+            if (!archer_clips[clip]){
+                ImGui::TextDisabled("    %s - missing from the export",ARCHER_CLIPS[clip].name);
+                ImGui::PopID();
+                continue;
+            }
+            //Ticked, it joins the cycle in its place; unticked while playing, the cycle moves on.
+            ImGui::Checkbox("##on",&showcase_enabled[i]);
+            ImGui::SameLine();
+            //Clicking a name jumps straight to it.
+            if (ImGui::Selectable(ARCHER_CLIPS[clip].name,f_now)){
+                showcase_enabled[i] = true;
+                showcase_index = i;
+                showcase_clip_shown = -1;       //a change, so it starts from its first frame
+                f_showcase = true;
+                anim_source = ANIM_FROM_GAME;   //a clip preview would otherwise keep her
+            }
+            ImGui::PopID();
+        }
+        if (showcase_clip_shown >= 0 && archer_clips[showcase_clip_shown]){
+            float duration = archer_clips[showcase_clip_shown]->duration;
+            char label[64];
+            snprintf(label,sizeof(label),"%.1f / %.1f s",showcase_elapsed,duration);
+            ImGui::ProgressBar(duration > 0.0f ? showcase_elapsed / duration : 0.0f,ImVec2(-1,0),label);
+        }else{
+            const char* playing = (playing_clip >= 0 && playing_clip < CLIP_COUNT) ? ARCHER_CLIPS[playing_clip].name : "none";
+            ImGui::Text("the game has her: %s",playing);
+        }
+        ImGui::SliderFloat("rate",&showcase_rate,0.1f,2.0f,"%.2fx");
+        ImGui::SetItemTooltip("Playback rate of the cycled clips. Pause the simulation (sim_pause, or "
+                              "the Scene panel) to hold a frame - the turntable stops with it.");
+        ImGui::TextDisabled("Every clip is still in the Archer panel's list, for a single one on loop.");
+    }
+
+    //--- The turntable and the camera --------------------------------------------------------
+    if (ImGui::CollapsingHeader("View",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::Checkbox("turn",&f_turntable);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat("##speed",&turntable_speed,-45.0f,45.0f,"%.0f deg/s");
+        ImGui::SliderFloat("angle",&turntable_deg,0.0f,360.0f,"%.0f deg");
+        //The four views anyone wants first. They stop the turn, or it would carry on past them.
+        const char* faces[4] = { "front", "her left", "back", "her right" };
+        for (int i = 0; i < 4; i++){
+            if (i > 0){
+                ImGui::SameLine();
+            }
+            if (ImGui::SmallButton(faces[i])){
+                turntable_deg = 90.0f * (float)i;
+                f_turntable = false;
+            }
+        }
+        ImGui::Text("shot");
+        for (int i = 0; i < CHARACTER_SHOT_COUNT; i++){
+            ImGui::SameLine();
+            ImGui::RadioButton(CHARACTER_SHOTS[i].name,&character_shot,i);
+        }
+        if (camera_mode != ARCHER_CAM_SIDE){
+            ImGui::TextDisabled("The orbit camera is on (Archer panel) - the shots are the side camera's.");
+        }
+    }
+
+    //--- What she carries --------------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Props",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::Checkbox("bow",&f_character_bow);
+        ImGui::SameLine();
+        ImGui::Checkbox("quiver",&f_character_quiver);
+        ImGui::SameLine();
+        ImGui::Checkbox("arrows",&f_character_arrows);
+        ImGui::SetItemTooltip("The arrow in her hand and on the string during a draw. Hiding the bow "
+                              "hides the nocked arrow with it.");
+    }
+
+    //--- The scene's two lights --------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Lights",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::Checkbox("key",&f_character_key);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat("##key",&character_key_brightness,0.0f,30.0f,"warm key %.1f");
+        ImGui::Checkbox("rim",&f_character_rim);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat("##rim",&character_rim_brightness,0.0f,30.0f,"cool rim %.1f");
+        if (character_key){
+            character_key->SetVisibility(f_character_key);
+            character_key->brightness = character_key_brightness;
+        }
+        if (character_rim){
+            character_rim->SetVisibility(f_character_rim);
+            character_rim->brightness = character_rim_brightness;
+        }
+        ImGui::TextDisabled("The sun and the cool fill are the levels' own, shared.");
+    }
+
+    //Her heart and exertion, and the holds that pin them - what breathing and blinking will read.
+    DrawVitalsPanel();
+    ImGui::End();
 }
 #endif
