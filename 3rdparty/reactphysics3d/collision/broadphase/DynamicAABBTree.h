@@ -141,6 +141,9 @@ class DynamicAABBTreeRaycastCallback {
  */
 class DynamicAABBTree {
 
+    // (local fix) PhysicsWorld::computeStateHash() reads the nodes and the free list
+    friend class PhysicsWorld;
+
     private:
 
         // -------------------- Attributes -------------------- //

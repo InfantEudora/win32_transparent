@@ -419,6 +419,9 @@ class VehicleWheel {
 
         friend class VehicleConstraint;
         friend class SolveVehicleSystem;
+
+        // (local fix) PhysicsWorld hashes the wheel state and resets its warm start
+        friend class PhysicsWorld;
 };
 
 // Structure VehicleConstraintSettings

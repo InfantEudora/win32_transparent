@@ -208,6 +208,26 @@ exact run. Trimming a file is editing its `begin`/`end` lines. A replay reproduc
 exactly; how faithfully the run follows depends on what the app's `RestoreRecordingState` puts
 back, so compare replay against replay rather than against the original.
 
+**Archer's test recording: check it after every change to the game.** Archer replays are
+bit-exact - every tick the same state, in any app, in any order, debug or release
+(`docs/replay_determinism_plan.md`). `apps/archer/recordings/archer_test.rec` is the one kept as
+the test (28 s: running, jumps, kicks, three shots, breathing, heartbeat), with its baselines
+beside it: `archer_test.cues` (the sounds) and `archer_test.trace` (a state hash per tick). After
+a change, with archer running on port 8768 (claim `#port:8768`):
+
+```bash
+./build/archer.exe --minimized --mcp-port 8768 2>stderr.log &      # from apps/archer
+python tools/cue_replay.py                                         # from the repo root
+```
+
+It prints `state same` and `same`, or the FIRST tick and state part that differ (`her`/`world`
+the rules, `puppet`/`anim` the animation, `physics`, `body`, `cues`...) and a diff of the sounds.
+**A difference is expected when you changed the game** - any rule, clip, tuning value or asset
+moves it. Read the diff: if it is what your change should do, rewrite the baselines with
+`python tools/cue_replay.py --write archer_test` and check once more; if it is not, you have
+found a side effect. `--detail` gives every object and physics part its own hash to name what
+parted. Older recordings are in `recordings/archive/`, without baselines.
+
 **Pause before you measure.** A tool handler holds no lock, so reading a free-running simulation
 races the physics thread. `sim_pause` freezes the simulation while leaving the render loop running
 (the window stays responsive and `screenshot` still works), and `sim_step` then advances by an exact

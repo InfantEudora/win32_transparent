@@ -130,6 +130,11 @@ class Components {
 
         /// Return the index in the arrays for a given entity
         uint32 getEntityIndex(Entity entity) const;
+
+        /// (local fix) Put the components in the order of `entities`, which must list every entity
+        /// that has one. Enabled components keep coming first and disabled ones after them, each
+        /// group in the given order. See PhysicsWorld::rebuildInternalState().
+        void setEntitiesOrder(const Array<Entity>& entities);
 };
 
 // Return true if an entity is sleeping

@@ -520,6 +520,11 @@ class Map {
 
                 mNbAllocatedEntries = 0;
                 mHashSize = 0;
+
+                // (local fix) The loop above threaded every freed entry onto the free list, and
+                // that list lives in the arrays just released. Left pointing into them, the next
+                // add() takes a "free" entry instead of allocating and writes through a null array.
+                mFreeIndex = INVALID_INDEX;
             }
 
             mNbEntries = 0;

@@ -761,6 +761,14 @@ public:
         A new field that outlives a tick belongs here too.
     */
     void HashState(class StateHash& hash) const;
+    /*
+        Forget everything carried from earlier ticks - the same fields HashState covers - as a
+        fresh Puppet would have it, keeping what was measured off the clips. `facing` is where she
+        now faces, so the yaw starts there rather than turning round on the first tick. For a
+        replay's restore: without it the choice, the settle and the crossfade memory came from
+        whatever ran before the replay (docs/replay_determinism_plan.md, section 8).
+    */
+    void Reset(float facing);
 
     //One tick. The only thing that changes state here is the yaw slew; the clip choice is a pure
     //function of the parameters and could be asked for at any time.

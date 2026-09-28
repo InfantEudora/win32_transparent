@@ -1,7 +1,0 @@
-     218  kick_swing     play  kick_swing     gain 0.800
-     219  kick_shout     play  kick_hoowa     gain 0.800
-     227  kick_land      play  kick_land      gain 0.800
-     227  kick_shake     act   shake          gain 1.000
-     227  kick_shake     act   rumble         gain 1.000
-     227  wall_shake     act   shake          gain 0.700
-     227  wall_shake     act   rumble         gain 0.700

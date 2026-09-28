@@ -863,8 +863,10 @@ void Application::UpdatePhysics(){
     over nothing. The name keeps the tree's SHAPE in the hash - an object that exists in one run
     and not the other is a difference.
 
-    TWO PARTS: `bodies`, the objects with a rigid body - simulated, so they must come out the same -
-    with their velocities, which the next tick is built on; and `objects`, everything else.
+    THREE PARTS: `bodies`, the objects with a rigid body - simulated, so they must come out the same -
+    with their velocities, which the next tick is built on; `objects`, everything else; and
+    `physics`, the rp3d world's own state, order included (with `detail`, its nine `physics.*`
+    parts - see the end of the function).
 
     AN OBJECT MARKED f_visual_only IS LEFT OUT, and everything under it: the app's word that
     nothing in the simulation reads it. Unmarked, in archer on 2026-09-28, `objects` differed from
@@ -875,14 +877,27 @@ void Application::HashSimState(StateHash& hash){
     if (!main_scene){
         return;
     }
-    //f_trace_detail: a part per body, named and numbered in walk order, and the other objects a
-    //part per top-level object they hang under - to say WHICH one parted, or which the view moves.
+    //f_trace_detail: a part per body and a part per object, named and numbered in walk order, the
+    //objects under the top-level object they hang from - to say WHICH one parted, or which the view
+    //moves. A diagnosis: parts by the hundred.
     bool f_detail = f_trace_detail;
     int body_index = 0;
+    int object_index = 0;
     std::string top_part;
     //Depth-first in `objects` order, as Scene::ForEachObject walks - but able to skip a subtree.
     std::function<void(Object*)> walk = [&](Object* o){
-        if (!o || o->IsVisualOnly()){
+        if (!o){
+            return;
+        }
+        if (o->IsVisualOnly()){
+            //A rigid body is simulation by definition, so a visual-only one is a mistake that
+            //would hide the very state the hash is for. Said once; the promise is kept as made.
+            static bool f_warned = false;
+            if (o->HasPhysics() && !f_warned){
+                f_warned = true;
+                debug->Warn("'%s' is marked visual-only but has a rigid body - it is left out of the "
+                            "replay's state hash, which is almost certainly wrong\n",o->name.c_str());
+            }
             return;
         }
         bool f_body = o->HasPhysics();
@@ -890,7 +905,9 @@ void Application::HashSimState(StateHash& hash){
             std::string part = "body" + std::to_string(body_index++) + ":" + o->name;
             hash.Begin(part.c_str());
         }else if (f_detail){
-            hash.Begin(top_part.c_str());
+            //One part per object: with the show marked visual-only there are few enough left.
+            std::string part = top_part + "/" + std::to_string(object_index++) + ":" + o->name;
+            hash.Begin(part.c_str());
         }else{
             hash.Begin(f_body ? "bodies" : "objects");
         }
@@ -919,6 +936,36 @@ void Application::HashSimState(StateHash& hash){
         top_part = "obj" + std::to_string(i) + ":" + (o ? o->name : std::string());
         walk(o);
     }
+#ifdef USE_PHYSICS
+    /*
+        THE WORLD AS rp3d SEES IT, beside the bodies: the order it will solve them in, its
+        broad-phase, and the contacts and joint impulses it will warm-start from. A world that
+        differs only in ORDER cannot show in the bodies until they have already parted - archer's
+        rebuilt props, 2026-09-28, matched at tick 0 and parted at 1-2 - and this shows it at tick 0.
+        Order is exactly what a restart into a world with a history gets wrong: see
+        PhysicsWorld::rebuildInternalState() and PhysicsWorldState.cpp in the rp3d fork, which also
+        says what each part covers. Read on the physics thread, between steps, which this is.
+    */
+    if (main_scene->physics_world && main_scene->physics_world->rp_world){
+        const rp3d::PhysicsWorld::StateHash world = main_scene->physics_world->rp_world->computeStateHash();
+        if (f_detail){
+            const std::pair<const char*,uint64_t> parts[] = {
+                {"physics.world",world.world}, {"physics.bodies",world.bodies},
+                {"physics.colliders",world.colliders}, {"physics.order",world.order},
+                {"physics.broadphase",world.broadphase}, {"physics.pairs",world.pairs},
+                {"physics.contacts",world.contacts}, {"physics.joints",world.joints},
+                {"physics.constraints",world.constraints}
+            };
+            for (const auto& part : parts){
+                hash.Begin(part.first);
+                hash.Add(part.second);
+            }
+        }else{
+            hash.Begin("physics");
+            hash.Add(world.total);
+        }
+    }
+#endif
 }
 
 void Application::TraceTickStart(){

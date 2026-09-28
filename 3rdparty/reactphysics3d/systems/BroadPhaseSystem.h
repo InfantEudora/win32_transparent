@@ -110,6 +110,9 @@ class BroadPhaseRaycastCallback : public DynamicAABBTreeRaycastCallback {
  */
 class BroadPhaseSystem {
 
+    // (local fix) PhysicsWorld::computeStateHash() reads the tree and the moved-shapes set
+    friend class PhysicsWorld;
+
     protected :
 
         // -------------------- Attributes -------------------- //
@@ -171,6 +174,12 @@ class BroadPhaseSystem {
 
         /// Remove a collider from the broad-phase collision detection
         void removeCollider(Collider* collider);
+
+        /// (local fix) Return the empty broad-phase to its freshly constructed state: a new tree
+        /// with its node ids handed out from 0 again, and an unallocated moved-shapes set, whose
+        /// bucket count would otherwise stay at the largest it has ever been and change the order
+        /// it is walked in. Every collider must have been removed first.
+        void resetToFresh();
 
         /// Update the broad-phase state of a single collider
         void updateCollider(Entity colliderEntity);

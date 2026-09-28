@@ -1,7 +1,8 @@
 # Replay determinism: a state hash, and the leaks it has to close
 
-Status: **core steps 1-3 BUILT 2026-09-28** (section 7); the archer steps wait for the bridge
-work in `apps/archer` to land.
+Status: **DONE 2026-09-28** (sections 7-10). Every recording replays bit-identically on every
+tick - fresh app or warm, in any order, debug or release - and the baselines (`.cues` and
+`.trace`) are written from that state.
 
 The point of the deterministic sim (step 7 of the deterministic-sim plan: record and replay) is that a
 recording replays to the same result every time - in a fresh app, after other replays, in any
@@ -37,6 +38,12 @@ Found 2026-09-28 while rewriting the cue baselines.
    id counters from the bodies it had, so the same bodies are solved in a different order and the
    last bits differ. Fix: a fresh physics world on restart (the terrain, which deliberately
    survives a restart, re-added to it), rather than trying to make rp3d forget.
+   **Fixed in the rp3d fork instead** (the rp3d agent, 2026-09-28): `PhysicsWorld::
+   rebuildInternalState()` (local fix) leaves the world internally as if it had just been built
+   from the bodies and joints it holds, in the order they were created - so nothing on the app
+   side has to be torn down and re-added. `ApplicationArcher::RestoreRecordingState` calls it as
+   its very last statement, after every rebuilt body and placement. See `PhysicsWorldState.cpp`
+   in the fork for what it rebuilds.
 
 2. **Her animation state is not restored** - the prime suspect for (1), found when the recorder was
    built (2026-09-25) and left open. There is one `ArcherModel` and one `Puppet` for every scene:
@@ -136,13 +143,13 @@ dispatch). Cross-architecture replay is out of scope by decision.
    focus-loss release was the gap (2.3).
 2. **Core: the hasher, the hook, the per-tick collection and `replay_trace`.** DONE.
 3. **tools/cue_replay.py: `.trace` files**, first-divergence report. DONE.
-4. **Archer: mark the show and add its own parts.** *After the bridge work.* `SetVisualOnly` on
+4. **Archer: mark the show and add its own parts.** DONE - section 8. `SetVisualOnly` on
    the leaves, grass clumps, foliage, vine leaves, fireflies and streaks (and the hair and chest
    bones if they are to stay out - they are driven by the view's sims, not the rules); then
    `ApplicationArcher::HashSimState` calls the default for the objects and adds the parts only the
    app can see - Stage, the Puppet and animation, the body clocks, the cue history (section 3).
-5. **Fix the leaks** in the restore: a fresh physics world (2.1), then the Puppet and animation
-   state (2.2), then whatever the matrix finds next. *After the bridge work.*
+5. **Fix the leaks** in the restore: the Puppet and animation state (2.2) DONE, section 9; a fresh
+   physics world (2.1) with the rp3d agent.
 6. **Run the matrix** (section 6), then re-write baselines, `.cues` and `.trace`, from the
    finished state.
 
@@ -180,6 +187,13 @@ the restore missed.
   flag rather than the app listing them. A promise the app makes, not a switch: marked on
   anything the simulation reads, it hides the divergence the hash is for.
 - **`InputController`**: the focus-loss release skips keys a running replay owns (2.3).
+- **The physics world's own hash** (the rp3d agent): `PhysicsWorld::computeStateHash()` (local fix
+  in the fork) returns FNV-1a 64 parts over the raw bits of everything the next `update()` reads -
+  `world` (settings), `bodies`, `colliders`, `order` (the layout of every component array the
+  solver walks), `broadphase` (the AABB tree and free list), `pairs`, `contacts` (warm-start),
+  `joints`, `constraints` - and a total. The default `HashSimState` adds it as one `physics` part,
+  or with `detail` as the nine `physics.*` parts. It sees what no object shows: two worlds that
+  differ only in order are caught on the tick they differ.
 
 **Audit, 2026-09-28: nothing the leaves and wind use draws from `rrand`.** No archer code calls
 the engine's `RRandom` at all; `Leaves.h`, `Foliage.h`, `Vine.h` and `PlaceHash.h` take their
@@ -204,3 +218,116 @@ visual-only object drawing from a shared stream moves every draw the simulation 
 nearly every tick: in archer it is mostly show - grass, leaves and hair moved by the view each
 frame - which is why archer needs its own `HashSimState` (step 4) rather than the default.
 `bodies` is the useful signal today: exact when the history is the same, and it located 2.1.
+
+## 8. Step 4, built 2026-09-28: archer's own hash
+
+**What was marked visual-only** - found by measuring, not by reading: `replay_trace {"detail":
+true}` splits `objects` by top-level object too, and two fresh runs with `tick_starts` named every
+object that differed or was moved between ticks. Grass never appeared (it bends in its shader, not
+as objects). The list was `Main Camera`, `background`, `Sun` (all follow the view), the
+`firefly_light`s, `wind_leaves`, and `archer_model` - through its hair bones, which a wind published
+from another thread moves. Marked: the camera (in core, for every app - it is the view), the
+backdrop, the sun, the leaves group, the fireflies and their lights, the streaks, the hair bones.
+After it, `tick_starts` reports nothing changed between ticks.
+
+**`ApplicationArcher::HashSimState`** = core's `bodies` and `objects`, then `Stage::HashState`
+(`her`, `world`), `Puppet::HashState` (`puppet`), `anim` (the model's current, previous and blend
+clips by name with their time indices, the blend and transition, `clip_yaw`, the layer weights,
+`playing_clip`), `body` (breath, heart, blink, chest, footstep state, edge flags, shake) and `cues`
+(`CueSystem::CaptureHistory`). Stage and Puppet hash themselves, beside their fields, so a new
+field has an obvious place to go; `make rules` still builds them with no engine (712 + 77 checks).
+
+**Measured, release build, all seven recordings:**
+
+| part | fresh vs fresh | fresh vs warm (second pass, same app) |
+|---|---|---|
+| `her`, `world` | identical | identical, except the two longest: `world` from 209 / 327, `her` from 375 |
+| `bodies` | identical | part at tick 1-2 - the physics world (2.1) |
+| `puppet` | identical | differs from tick 0, every recording |
+| `anim` | **differs from tick 0 in 5 of 7**, for part of the run | differs from tick 0 |
+| `objects` | follows `anim` (the bone poses) | differs |
+| `body`, `cues` | identical | follow the rest late in the long recordings |
+
+Read together:
+
+1. **The animation is not restored (2.2), and it shows even between two fresh apps.** Between
+   replays the app keeps running on the wall clock, so the idle clip stands at a different time
+   whenever the next replay starts. The difference lasts until a clip restarts from its beginning.
+   It has not reached the rules in these recordings - `her` and `world` stay identical - but the
+   footsteps and the bow read the playhead, so it will. Fix: reset the model's clips, blend and
+   transition, `clip_yaw` and `playing_clip` in `RestoreRecordingState`.
+2. **The Puppet is not restored either** - identical fresh, different warm: it remembers its last
+   crossfade, settle and yaw from before the restart. Fix: a `Puppet::Reset` called by the restore.
+3. **The physics world (2.1)** is what carries into the rules in the long recordings - props
+   drift, and arrows and kicks meet them differently. With the rp3d agent.
+
+## 9. Step 5 (animation and pose), built 2026-09-28
+
+**More show marked visual-only** (the user: the grass and any visual prop can go, which also saves
+the hashing): the foliage group (2,498 objects - grass and plants), vines (506), boulders (62),
+the terrain meshes (`terrain_bay_*`, `terrain_back_*` - the blocks are what she stands on), the
+scenery tiles (their colliders are Stage blocks), the aim-arc dots, hit popups, arrow views (the
+view of `Stage::arrows`, which the rules hash), rope skin and markers, the wind debug view and the
+fill light. Of 5,415 objects about 150 non-physics ones are left in the hash - the blockout's
+looks and her skeleton. Core warns once if a visual-only object has a rigid body.
+
+**The restore now forgets the animation** (`ApplicationArcher::ResetAnimationForReplay`, the last
+thing `RestoreRecordingState` does): `Puppet::Reset(facing)` (every field `HashState` covers, back
+to its initialiser, the yaw set to where she faces; the measured tables kept); every clip rewound
+and Idle switched to from its first frame, no blend, no transition, rate 1, `clip_yaw` 0; and
+`ArcherModel::ResetPoseMemory` - the layer inputs the app sets a tick ahead (upper layer, overlay,
+aim, legs, chest scale), the saved base pose, the leg and hair chains. `NewGame` also clears the
+footstep tracker's last playhead with its validity flag.
+
+Found step by step with the trace: after the Puppet and clips, one tick of the upper body and the
+chest still differed at tick 0 - `detail` now gives each object its own part, which named the
+bones, and the cause was the layer inputs the model reads one tick late.
+
+**Measured on the 22:37 export (animations fixed), all seven recordings:**
+
+| comparison | result |
+|---|---|
+| fresh vs fresh, release | **identical, every part, every tick** |
+| debug vs release, fresh | **identical, every part, every tick** |
+| fresh vs warm, release | `bodies` part at tick 1-2 (2.1); the rules follow only in the two longest recordings (`world` from 209 / 327); every other part identical |
+
+So the compiler options question has its answer for this code: `-Og` and `-O3` give the same bits.
+What remains is the physics world, with the rp3d agent.
+
+One unexplained event: the first release pass of that run lost its MCP connection during the third
+recording (`ConnectionResetError`), and its log was overwritten by the next start before it could
+be read. A rerun completed and matched. If it recurs, keep the log - it may be a release-only crash.
+
+## 10. The physics world, and the result (2026-09-28)
+
+With the rp3d fork's `rebuildInternalState()` as the last line of the restore and its
+`computeStateHash()` in the trace (section 7), measured on all seven recordings:
+
+| comparison | result |
+|---|---|
+| fresh app vs fresh app (release) | identical, every part including `physics`, every tick |
+| fresh pass vs second pass, same app | identical |
+| fresh pass vs third pass, same app, reversed order | identical |
+| debug vs release (fresh) | identical, `physics` included |
+
+**Baselines re-written** from a fresh debug app with `tools/cue_replay.py --write` (`.cues` and,
+for the first time, `.trace`), then checked twice in that same app and once with the release exe:
+all seven the same in state and sounds every time. `archer_20260925_140425`'s sounds changed from
+the old baseline - the bridge rules - as expected.
+
+What made it: the focus-loss release sparing a replay's keys (2.3), the show marked visual-only
+(sections 8-9), the restore forgetting the animation, the Puppet and the model's pose memory
+(section 9), and the physics world rebuilding its internal state (2.1). From here, a check that
+differs between two runs of one exe is a new leak, and `--detail` names it.
+
+## 11. One test recording (2026-09-28)
+
+Every change to the game changes every recording's baselines, and re-recording seven by hand is
+too slow to do after each feature. So, the user's call: ONE recording is kept as the test -
+`apps/archer/recordings/archer_test.rec` (was `archer_20260925_140425`, the broadest: running,
+jumps, kicks, three shots, footsteps, breathing, heartbeat; not covered are a kick connecting, the
+landing grunt and the wall shake). The other six moved to `recordings/archive/` without their
+baselines. Every agent that changes the game runs `python tools/cue_replay.py` after, reads the
+diff, and rewrites with `--write archer_test` when the change is intended - the procedure is in
+CLAUDE.md under *Archer's test recording*. Its first rewrite was the same evening, for the 23:35
+export: the new clips moved a footstep a tick and the breaths with it.

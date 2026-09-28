@@ -41,6 +41,7 @@ bool WindViewRect(Camera* camera, float pad, float& x0, float& y0, float& x1, fl
 void WindView::Init(Scene* scene){
     object = new Object();
     object->name = "wind_debug";
+    object->SetVisualOnly(true);
     mesh = new Mesh();
     object->SetMesh(mesh);
     object->SetPickability(false);

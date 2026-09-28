@@ -306,6 +306,10 @@ class PhysicsWorld {
         /// Compute the islands using potential contacts and joints and create the actual contacts.
         void createIslands();
 
+        /// (local fix) Bodies, colliders and joints in creation order - the order a newly built
+        /// world would hold them in. See PhysicsWorldState.cpp.
+        void computeCanonicalOrder(Array<Entity>& bodies, Array<Entity>& colliders, Array<Entity>& joints) const;
+
         /// Put bodies to sleep if needed.
         void updateSleepingBodies(decimal timeStep);
 
@@ -363,6 +367,28 @@ class PhysicsWorld {
 
         /// Update the physics simulation
         void update(decimal timeStep);
+
+        /// (local fix) Named parts of computeStateHash(). Each is FNV-1a 64 over the raw bits of
+        /// the values it covers - never rounded - so equal parts mean bit-identical state.
+        struct StateHash {
+            uint64 total;       ///< all the parts below
+            uint64 world;       ///< the settings the step reads
+            uint64 bodies;      ///< per body: type, flags, sleep state, transform, velocities, forces, mass
+            uint64 colliders;   ///< per collider: shape, transforms, material, filters, broad-phase id
+            uint64 order;       ///< the layout of every component array the solver walks
+            uint64 broadphase;  ///< the AABB tree (ids, links, fat AABBs, free list) and moved shapes
+            uint64 pairs;       ///< overlapping pairs in order, their last-frame collision info
+            uint64 contacts;    ///< the contacts the next step warm-starts from
+            uint64 joints;      ///< joint parameters and warm-start impulses
+            uint64 constraints; ///< vehicle and upright constraints
+        };
+
+        /// (local fix) Leave the world internally as if it had just been built from the bodies
+        /// and joints it holds now, in the order they were created
+        void rebuildInternalState();
+
+        /// (local fix) Hash everything the next update() depends on, in a stable order
+        StateHash computeStateHash() const;
 
         /// Get the number of iterations for the velocity constraint solver
         uint16 getNbIterationsVelocitySolver() const;

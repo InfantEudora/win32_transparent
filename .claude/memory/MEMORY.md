@@ -66,4 +66,4 @@
 - [Background work](background_work.md) — core/BackgroundWork.h worker + LatestResult<T>, first used by archer wind 2026-09-27; async results must not reach the sim mid-run (user: a simple lock around sim-read areas)
 - [Blender export speed](blender_export_speed.md) — archer glTF export 237 s -> 58 s with disable_viewport; Mirror-before-Armature re-evaluated per sampled frame; tools/blender_export_profile.py
 - [Archer hair chains](archer_hair_chains.md) — 3D DynamicChains + wind; core gained spheres/cone/max_accel; game gravity and jolts trap hair; crown weighted to hair_back.1 (artist fix pending)
-- [Replay determinism plan](replay_determinism_plan.md) — core trace BUILT (StateHash, HashSimState, replay_trace, .trace files); leak #1 = rp3d world survives restart; archer HashSimState + restore fixes wait for the bridge agent
+- [Replay determinism plan](replay_determinism_plan.md) — DONE: archer replays bit-exact; ONE test recording archer_test (.cues + .trace), re-check after every game change and --write if intended (CLAUDE.md)

@@ -801,6 +801,14 @@ public:
     const char* HairChainName(int c) const;
     float hair_scalp_radius = 0.0f;     //world units, as last used - for the panel
 
+    /*
+        Forget the pose memory, for a replay's restore: the layer inputs the app sets a tick ahead
+        (upper layer, overlay, aim, legs, chest) and the base pose kept for undoing them, and the
+        leg and hair chains' motion. Without it the first tick after a restore was posed with the
+        layers from BEFORE it - measured, the whole upper body and the chest differed on tick 0.
+    */
+    void ResetPoseMemory();
+
     //--- The breathing chest - see ARCHER_CHEST_BONE ---
     Bone* chest_bone = NULL;            //found once in BuildBow, with the hair; NULL: none in this export
     vec3  chest_scale = vec3(1.0f,1.0f,1.0f);   //set by the app each tick, applied after the pose
@@ -1276,6 +1284,8 @@ public:
     //Her state at the end of a replay's tick, for the trace - see the definition and
     //docs/replay_determinism_plan.md. Physics thread.
     void HashSimState(StateHash& hash) override;
+    //The model's clips and the Puppet as a fresh start has them - the end of RestoreRecordingState.
+    void ResetAnimationForReplay();
     //Render thread, before the scene is drawn. Services f_regenerate_terrain.
     void PreRender(void) override;
     //Render thread. The title screen's text - the only 2D HUD this app has so far.

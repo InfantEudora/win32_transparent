@@ -176,6 +176,9 @@ class SpringJointComponents : public Components {
 
         friend class BroadPhaseSystem;
         friend class SolveSpringJointSystem;
+
+        // (local fix) PhysicsWorld::rebuildInternalState() resets the constraint part's warm start
+        friend class PhysicsWorld;
 };
 
 // Return a pointer to a given joint

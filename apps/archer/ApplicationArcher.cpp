@@ -611,6 +611,34 @@ bool ArcherModel::BuildUpperMask(){
     return !upper_share.empty();
 }
 
+void ArcherModel::ResetPoseMemory(){
+    upper_clip = NULL;
+    upper_time = 0.0f;
+    upper_weight = 0.0f;
+    upper_from_clip = NULL;
+    upper_from_time = 0.0f;
+    upper_mix = 1.0f;
+    overlay_clip = NULL;
+    overlay_time = 0.0f;
+    overlay_weight = 0.0f;
+    aim_weight = 0.0f;
+    leg_weight = 0.0f;
+    leg_lead_deg = 0.0f;
+    chest_scale = vec3(1.0f,1.0f,1.0f);
+    //The base comes from the clip on the next pass, so there is nothing of the old one to put back.
+    f_layered = false;
+    //A default chain resets itself from the pose on its first Step.
+    for (int leg = 0; leg < 2; leg++){
+        leg_chain[leg] = DynamicChain();
+    }
+    f_leg_yaw_seen = false;
+    for (int c = 0; c < ARCHER_HAIR_CHAINS; c++){
+        hair[c].chain = DynamicChain();
+    }
+    f_hair_yaw_seen = false;
+    hair_clock = 0.0f;
+}
+
 void ArcherModel::SaveBasePose(){
     for (size_t i = 0; i < layered_bones.size(); i++){
         layered_rot[i] = layered_bones[i]->GetRotation();
@@ -1655,6 +1683,7 @@ void ApplicationArcher::BuildTerrain(){
         snprintf(name,sizeof(name),"terrain_bay_%i",i);
         Object* object = new Object();
         object->name = name;
+        object->SetVisualOnly(true);        //the look of the blocks; the blocks are what she stands on
         /*
             IDENTITY TRANSFORM, because the mesh is already in world coordinates.
 
@@ -1676,6 +1705,7 @@ void ApplicationArcher::BuildTerrain(){
         snprintf(name,sizeof(name),"terrain_back_%i",i);
         Object* back = new Object();
         back->name = name;
+        back->SetVisualOnly(true);
         back->SetPosition(vec3(0.0f,0.0f,0.0f));
         back->SetScale(vec3(1.0f,1.0f,1.0f));
         back->SetMaterialSlot(0,material_grass_back);
@@ -2531,6 +2561,7 @@ void ApplicationArcher::BuildFoliage(){
 
     foliage_group = new Object();
     foliage_group->name = "foliage";
+    foliage_group->SetVisualOnly(true);     //the grass and plants, ~2500 objects the hash can skip
     main_scene->AddObject(foliage_group);
     ScatterFoliageObjects();
 }
@@ -2647,6 +2678,7 @@ void ApplicationArcher::BuildBoulders(){
     }
     boulder_group = new Object();
     boulder_group->name = "boulders";
+    boulder_group->SetVisualOnly(true);
     main_scene->AddObject(boulder_group);
     ScatterBoulderObjects();
 }
@@ -2862,6 +2894,7 @@ void ApplicationArcher::BuildScenery(){
         snprintf(name,sizeof(name),"%s_%i",SCENERY_NODES[s.variant],(int)i);
         Object* o = new Object();
         o->name = name;
+        o->SetVisualOnly(true);             //its collider is a Stage block; this is the look
         o->SetMesh(scenery_meshes[s.variant]);
         //TakeMaterialNames writes the list, so each Object hands over its own copy.
         std::vector<Material> materials = scenery_materials[s.variant];
@@ -3008,6 +3041,7 @@ void ApplicationArcher::BuildVines(){
 
     vine_group = new Object();
     vine_group->name = "vines";
+    vine_group->SetVisualOnly(true);
     main_scene->AddObject(vine_group);
 
     for (size_t v = 0; v < paths.size(); v++){
@@ -4892,6 +4926,7 @@ void ApplicationArcher::BuildArrowViews(){
         char name[32];
         snprintf(name,sizeof(name),"arrow_%i",i);
         Object* o = new Object();
+        o->SetVisualOnly(true);             //the view of Stage::arrows, which the rules hash
         o->name = name;
         if (flight){
             o->SetMesh(flight);
@@ -4915,6 +4950,7 @@ void ApplicationArcher::BuildAimArc(){
         char name[32];
         snprintf(name,sizeof(name),"arc_%i",i);
         Object* o = new Object();
+        o->SetVisualOnly(true);             //drawn from the rules' aim, which the rules hash
         o->SetMesh(dot_mesh);
         o->name = name;
         o->SetMaterialSlot(0,material_dot);
@@ -4978,6 +5014,7 @@ void ApplicationArcher::BuildHitPopups(){
         char name[32];
         snprintf(name,sizeof(name),"hit_popup_%i",i);
         Object* o = new Object();
+        o->SetVisualOnly(true);
         o->name = name;
         o->SetMesh(hit_number_meshes[1]);
         o->SetMaterialSlot(0,material_hit_text);
@@ -5598,6 +5635,7 @@ void ApplicationArcher::SetupLights(){
         //directional light costs one entry in the light SSBO and nothing else.
         DirectionalLight* fill = new DirectionalLight();
         fill->name = "Fill";
+        fill->SetVisualOnly(true);
         fill->SetPosition(vec3(18.0f,8.0f,26.0f));
         fill->SetLookAt(vec3(0.0f,3.0f,0.0f));
         fill->color = vec3(0.48f,0.62f,1.0f);
@@ -6358,8 +6396,9 @@ void ApplicationArcher::SetupInput(){
       her, world  the rules, Stage::HashState
       puppet      the animation's choices and memory, Puppet::HashState
       anim        the model's clips as playing: which, where, the blend and the transition
-      body        the view-side clocks that decide signals: breath, heart, blink, chest,
-                  footsteps, the edge flags, the shake
+      body        the view-side clocks that decide signals: breath, heart, blink, chest
+      steps       the footstep tracker: last tick's playhead and whose
+      edges       the edge flags the cue scopes open on, and the camera shake
       cues        what the cue system remembers - its picks and firings
 
     Each is its own part so a trace names which one parted. Clips go in by NAME: a pointer is an
@@ -6393,8 +6432,10 @@ void ApplicationArcher::HashSimState(StateHash& h){
     h.Add(breath_phase); h.Add(breath_out_ticks); h.Add(heart_phase); h.Add(heart_beat_age);
     h.Add(blink_wait); h.Add(blink_age);
     h.Add(chest_from); h.Add(chest_to); h.Add(chest_age); h.Add(chest_len);
+    h.Begin("steps");
     h.Add(f_step_valid); h.Add(step_prev_rel);
     h.Add(step_prev_lead ? step_prev_lead->name : std::string());
+    h.Begin("edges");
     h.Add(f_was_nocked); h.Add(f_was_kicking); h.Add(f_was_airborne);
     h.Add(shake_trauma);
 
@@ -6552,6 +6593,53 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
             p.qd = state["spring_plants"][i][1].get<float>();
         }
         SyncSpringPlants();
+    }
+    //Last, once her facing is known: the animation starts as a fresh one would.
+    ResetAnimationForReplay();
+    /*
+        AND THE PHYSICS WORLD AS A FRESH ONE WOULD HAVE IT - the very last thing, once every body
+        the restart rebuilt and every placement above is in. The world outlives a restart (the
+        terrain and her body are kept), and it kept its internal order - component arrays that
+        swap-remove, recycled ids, the broad-phase tree, the pair and contact caches - from the
+        bodies it had before, so the same rebuilt props were solved in a different order and a
+        second replay parted from the first at tick 1-2 (docs/replay_determinism_plan.md, 2.1).
+        rebuildInternalState is the rp3d fork's (local fix): the world as if just built from what
+        it holds, in creation order.
+    */
+    if (main_scene && main_scene->physics_world && main_scene->physics_world->rp_world){
+        main_scene->physics_world->rp_world->rebuildInternalState();
+    }
+}
+
+/*
+    THE ANIMATION FROM SCRATCH, for a replay - docs/replay_determinism_plan.md, section 8. Between
+    replays the app keeps running on the wall clock, so whatever clip was playing stood somewhere
+    different each time the next replay began; and the Puppet remembered its last crossfade,
+    settle and yaw from before the restart. Measured: the animation parted from tick 0 in five of
+    seven recordings even between two fresh apps, and the Puppet in every one run after another.
+    So: Idle from its first frame, no blend and no transition, every clip rewound (a transition
+    does not always rewind the clip it goes to), and the Puppet forgetting, facing where she faces.
+*/
+void ApplicationArcher::ResetAnimationForReplay(){
+    puppet.Reset(stage.facing);
+    playing_clip = -1;
+    if (!archer_model){
+        return;
+    }
+    for (int c = 0; c < CLIP_COUNT; c++){
+        if (archer_clips[c]){
+            archer_clips[c]->time_index = 0.0f;
+        }
+    }
+    archer_model->SwitchToAnimation(archer_clips[CLIP_IDLE]);   //NULL is the rest pose, also fine
+    archer_model->blend_phase = 0.0f;
+    archer_model->animation_transition_time = 0.0f;
+    archer_model->animation_transition_factor = 0.0f;
+    archer_model->SetAnimationRate(1.0f);
+    archer_model->clip_yaw = 0.0f;
+    archer_model->ResetPoseMemory();
+    if (archer_clips[CLIP_IDLE]){
+        playing_clip = CLIP_IDLE;
     }
 }
 
@@ -6780,6 +6868,8 @@ void ApplicationArcher::NewGame(){
     f_was_kicking = false;
     f_was_airborne = false;
     f_step_valid = false;
+    step_prev_rel = 0.0f;       //inert while f_step_valid is false, but stale is stale
+    step_prev_lead = NULL;
     shake_trauma = 0.0f;
     breath_phase = 0.0f;
     breath_out_ticks = 0;
@@ -8521,6 +8611,7 @@ void ApplicationArcher::BuildRopeSkin(){
 
     Skeleton* skin = new Skeleton();
     skin->name = "rope_skin";
+    skin->SetVisualOnly(true);              //the look of the rope; its segments are the bodies
     skin->num_bones = in.links;
     skin->SetPickability(false);
     Mesh* mesh = new Mesh();
@@ -8649,6 +8740,7 @@ void ApplicationArcher::BuildRopeAttachMarkers(){
     for (int i = 0; i < ROPE_MARK_COUNT; i++){
         Object* o = new Object();
         o->name = names[i];
+        o->SetVisualOnly(true);
         o->SetMesh(dot_mesh);
         o->SetMaterialSlot(0,materials[i]);
         o->SetScale(vec3(1.0f,1.0f,1.0f));

@@ -1054,3 +1054,32 @@ void Puppet::HashState(StateHash& h) const{
     h.Add(c.pinned_time); h.Add(c.lift); h.Add(c.lift_base);
     h.Add(c.overlay_clip); h.Add(c.overlay_time); h.Add(c.overlay_weight);
 }
+
+//See the declaration. Every value is the member's own initialiser in Puppet.h.
+void Puppet::Reset(float facing){
+    f_rope_climbing = false;
+    f_climb_playhead = false;
+    climb_playhead = 0.0f;
+    climb_target = 0.0f;
+    f_was_on_ground = true;
+    last_vel_y = 0.0f;
+    last_ground_speed = 0.0f;
+    settle_ticks = 0;
+    settle_clip = -1;
+    air_clip = -1;
+    lead_clip = -1;
+    fall_weight = 0.0f;
+    yaw_deg = (facing < 0.0f) ? PUPPET_YAW_LEFT : PUPPET_YAW_RIGHT;
+    aim_weight = 0.0f;
+    upper_weight = 0.0f;
+    upper_latched = -1;
+    leg_weight = 0.0f;
+    leg_lead_deg = 0.0f;
+    leg_gravity = PUPPET_LEG_GRAVITY_HANG;
+    upper_mix = 1.0f;
+    upper_xfade_serial = 0;
+    upper_from = -1;
+    upper_prev_clip = -1;
+    upper_prev_phase = -1.0f;
+    choice = PuppetChoice();
+}

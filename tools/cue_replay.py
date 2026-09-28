@@ -31,13 +31,14 @@ THE STATE TRACE is checked first: `replay_trace` hands back a hash of every tick
 (Application::HashSimState), --write keeps it as recordings/<name>.trace, and a check names the
 first tick and part that differ - where two runs parted, long before a sound shows it. See
 docs/replay_determinism_plan.md. --tick-starts reports state changed between ticks; --detail
-splits the physics bodies into a part each to name the one that parts first (diagnosis only).
+gives every physics body, every object and each part of the physics world a part of its own, to
+name the one that parts first (a diagnosis - never --write with it).
 
-BUT START THE APP FRESH for every --write and every check you mean to trust, until the plan's
-restore fixes land. Measured 2026-09-28 with the trace: from a fresh start the physics bodies
-repeat exactly, every tick of every recording; a second pass in the same app parts at tick 1-2,
-first in the props NewGame rebuilds (crates, targets, stands) - the physics world outlives the
-restart and remembers the bodies it had.
+REPLAYS ARE EXACT (2026-09-28): the same bits every tick, fresh app or not, in any order, debug
+or release - so any difference, in the state or the sounds, is a real change. It took the restore
+forgetting the animation and the Puppet, and the physics world rebuilding its internal state
+(section 9-10 of the plan); if a check ever differs between two runs of one exe, that is a new
+leak, and --detail is where to start.
 Windows Python; nothing beyond the standard library.
 """
 import argparse, difflib, glob, json, os, sys, time, urllib.request
@@ -54,7 +55,7 @@ def main():
     ap.add_argument("--tick-starts", action="store_true",
                     help="also report state changed BETWEEN ticks (the app's view, UI or a tool)")
     ap.add_argument("--detail", action="store_true",
-                    help="the default hash: one part per physics body, to name the one that parts first "
+                    help="a part per physics body, per object and per physics-world part, to name the one that parts first "
                          "(a diagnosis - do not --write baselines with it)")
     args = ap.parse_args()
 
