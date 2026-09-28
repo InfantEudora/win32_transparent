@@ -480,3 +480,22 @@ while the Puppet's choice is plain Idle it cycles Idle -> Idle_LookingAround -> 
 Dance optional), 0.6 s pair blend times, hands back to the game for any on-the-spot action. MCP: archer_character
 (angle/turn/speed/shot/showcase/clip/next/rate/bow/quiver/arrows/key/rim). Aim override is zeroed there (world-Z
 bend is wrong once she is turned). Bone renames to .L/.R are still pending in the game code (Bow.h, toe bones etc).
+Same day, round 2: per-shot wheel zoom (0.8..1.25x distance, CHARACTER_ZOOM_*), face shot widened to half_h 0.52
+(her head is 0.2-0.45 IN FRONT of her feet in the idle, so up close it is magnified up to 1.4x - frame shots wider
+than the head suggests), wind/gust/turbulence/grass-flex sliders on the Character panel (the levels' shared
+wind_params), and grass on the tile: GrowCharacterGrass drops jittered-grid spots onto the tile mesh's up-facing
+triangles, clumps are CHILDREN of the tile (turntable carries them), size 0.6x the level's (level grass is 0.39
+tall at her scale - a hayfield up close). WIND FINDING: the side-view field has a boundary layer - at 8 u/s it is
+1-2 u/s at 0.15 over the tile and 7.9 at y 1.0, so grass barely moves at gentle winds while hair at head height
+gets the full wind. archer_character gained zoom/wind/grass/grass_size.
+SPLIT EXPORT 2026-09-28 (12:14): archer.glb now has 8 skinned meshes on ONE skin (archer_body, _face, _hair, _cape,
+_belt_top, _belt_hip, _armband, _sachet), bones renamed .L/.R (code updated: Bow.h grip/nock, toe defines, aim +
+leg chains, finger + toe lookups), rig 0.9076 -> scale 1.983. archer_body is ARCHER_MODEL_NODE (the Skeleton's own
+mesh); every other skinned child of archer_armature is auto-loaded as a child Object at identity (archer_parts) -
+Renderer skins a mesh off its PARENT skeleton, no core change needed. Part visibility = wardrobe seed (Character
+panel "Parts", archer_character 'parts'). CORE: GLTFLoader now loads the UV set the material's
+baseColorTexture.texCoord names (was always TEXCOORD_0). UV STATE of that export: body/face/hair use material 1 ->
+TEXCOORD_1 = new unwrap, matches the new 4096 bake; cape/belts/armband/sachet use material 0 -> TEXCOORD_0 = OLD
+layout and their TEXCOORD_1 is all zeros, so they render scrambled until re-unwrapped in Blender. Checked by
+drawing UVs over the embedded image (scratchpad uvcheck.py - promote to tools/ if reused). Export also carries
+junk clips Jumping_InPlace.001-.008.

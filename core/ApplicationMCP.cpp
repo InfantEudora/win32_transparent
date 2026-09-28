@@ -733,6 +733,57 @@ void Application::RegisterCoreMCPTools(){
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
         });
 
+    //The last replay's state, tick by tick - see Application::HashSimState and
+    //docs/replay_determinism_plan.md. tools/cue_replay.py writes and compares these.
+    MCPServer::Get()->RegisterTool("replay_trace",
+        "The state hash of every tick of the last replay (or the one running): per tick the "
+        "recording's tick, a total and one hash per part (the app decides the parts), as 16 hex "
+        "digits. Two replays of one recording are deterministic when their traces are equal; the "
+        "first differing tick and part say where they parted. 'tick_starts' turns on (or off) a "
+        "check at the start of each tick in the NEXT replay: 'changed_between' then lists parts "
+        "changed between ticks - by the view, the UI or a tool - which no replay can reproduce.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"parts", {{"type","boolean"},{"description","include each part's hash, default true"}}},
+                {"tick_starts", {{"type","boolean"},{"description","check each tick's start against the last tick's end, from the next replay on"}}},
+                {"detail", {{"type","boolean"},{"description","the default hash splits `bodies` into one part per physics body and `objects` into one per top-level object, from the next replay on"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (args.contains("tick_starts")){
+                f_trace_tick_starts = args.value("tick_starts",false);
+            }
+            if (args.contains("detail")){
+                f_trace_detail = args.value("detail",false);
+            }
+            bool f_parts = args.value("parts",true);
+            std::vector<TraceTick> trace = GetReplayTrace();
+            json list = json::array();
+            size_t changed = 0;
+            for (const TraceTick& t : trace){
+                json row = { {"t",t.tick}, {"h",StateHash::Hex(t.state.Total())} };
+                if (f_parts){
+                    json parts = json::object();
+                    for (const StateHash::Part& p : t.state.parts){
+                        parts[p.name] = StateHash::Hex(p.hash);
+                    }
+                    row["parts"] = parts;
+                }
+                if (!t.changed_between.empty()){
+                    row["changed_between"] = t.changed_between;
+                    changed++;
+                }
+                list.push_back(row);
+            }
+            InputController* input = main_window ? main_window->inputcontroller : NULL;
+            return json{ {"ticks",trace.size()},
+                         {"replaying",input && input->IsReplaying()},
+                         {"tick_starts",f_trace_tick_starts.load()},
+                         {"ticks_changed_between",changed},
+                         {"trace",list} };
+        });
+
     /*
         Which scene is live, and switching it - so a change can be tested in the scene it is for.
 

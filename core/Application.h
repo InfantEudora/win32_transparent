@@ -35,6 +35,7 @@
 //the ones built with USE_PHYSICS=0, for a class none of them mention.
 #include "RawInput.h"
 #include "InputRecording.h"
+#include "StateHash.h"
 #include "skeleton/PlayerCharacter.h"
 //For MaybeAttachScreenshot's signature below. json.hpp only (not MCPServer.h): this is pure C++
 //with no winsock in it, so it sidesteps the include-order trap MCPServer.h documents.
@@ -606,6 +607,33 @@ public:
     virtual json CaptureRecordingState(){ return json::object(); }
     virtual void RestoreRecordingState(const json& state){ (void)state; }
 
+    /*
+        THE REPLAY'S STATE TRACE - docs/replay_determinism_plan.md. During a replay, at the end of
+        every tick (after the physics step, before the view), HashSimState is asked for the state
+        that tick ended in, in named parts; each tick's hashes are kept, by recording tick, and
+        the `replay_trace` tool hands them out - so two replays of one recording can be compared
+        tick by tick, and the first mismatch says when and in which part.
+
+        The default hashes every object's local transform in the active scene, depth-first -
+        coverage for an app that has written nothing, but it counts whatever moves only for show
+        (swaying plants, particles). An app with state of its own overrides it and hashes what its
+        simulation decides with, and only that. Physics thread, physics_mutex held.
+
+        f_trace_tick_starts adds a check at the START of each tick: the same hash, compared with the
+        last tick's end. A difference is state changed BETWEEN ticks - by the view, the UI, a tool -
+        which a replay cannot reproduce. Off by default: it doubles the cost.
+    */
+    virtual void HashSimState(StateHash& hash);
+    struct TraceTick{
+        uint32_t tick = 0;                  //the recording's tick
+        StateHash state;
+        std::vector<std::string> changed_between;  //parts that differed at this tick's start
+    };
+    std::atomic<bool> f_trace_tick_starts{false};  //set from any thread, read by the physics thread
+    std::atomic<bool> f_trace_detail{false};       //the default hash: one part per body, not one for all
+    //A copy of the last replay's trace, taken under its lock. Any thread.
+    std::vector<TraceTick> GetReplayTrace();
+
     //Relative to the working directory, which is the app's folder when started as CLAUDE.md
     //describes - so recordings land in apps/<name>/recordings/.
     std::string recordings_dir = "recordings";
@@ -690,6 +718,16 @@ protected:
     std::string recording_scene;
     std::string recording_started_at;       //"2026-09-25 14:03:11", for the file
     std::string recording_file_stamp;       //"20260925_140311", for its name
+
+    //--- The replay's state trace, see HashSimState ---------------------------------------------
+    //Physics thread, around each tick: the start check (if on) and the end hash, while replaying.
+    void TraceTickStart();
+    void TraceTickEnd();
+    std::mutex trace_mutex;                 //guards replay_trace against GetReplayTrace
+    std::vector<TraceTick> replay_trace;
+    bool f_tracing = false;                 //physics thread: this tick is a replay's
+    StateHash trace_last_end;               //physics thread: the last tick's end, for the start check
+    std::vector<std::string> trace_changed_between;     //physics thread: this tick's start check
 
     /*
         Does the debug UI want the mouse, or the keyboard?

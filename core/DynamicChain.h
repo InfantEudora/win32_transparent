@@ -27,7 +27,8 @@
          weight, 1 is exactly the pose, and the ends of a loose chain whip rather than follow;
       3. held at its segment's animated length;
       4. PLANAR (a side view): kept on the plane through its animated point, `plane_normal`;
-      5. and within its joint's limit (planar only), below.
+      5. and within its joint's limit, below - an angle range in the plane, or a cone in 3D;
+      6. and out of any of `spheres` - a head the hair hangs off - then back to its length.
 
     What comes out is the simulated points; turning the bones to them is the caller's, because it
     is rig and engine work (see ArcherModel::ApplyLegChains). SegmentDeviation gives each
@@ -39,6 +40,18 @@
 
     No engine type beyond core's maths: tools/dynamic_chain_test.cpp builds it standalone.
 */
+
+/*
+    A sphere the particles may not enter - a head the hair hangs off, a shoulder. Applied after a
+    particle's length (step 3), then its length is put back: pushed out along the line from the
+    centre, then pulled back onto its segment, so it ends ON the surface or just inside where the
+    two cannot both hold. The root is pinned and never pushed, so a sphere can sit round the very
+    thing the chain hangs from, as long as its radius is under the root's own distance from it.
+*/
+struct DynamicChainSphere{
+    vec3  centre = vec3(0.0f,0.0f,0.0f);
+    float radius = 0.0f;
+};
 
 struct DynamicChainParams{
     vec3  gravity = vec3(0.0f,-9.81f,0.0f);     //world, units per second squared
@@ -60,6 +73,27 @@ struct DynamicChainParams{
         tilting, accelerating - is left to inertia, which is the motion secondary animation is for.
     */
     float follow = 0.0f;
+    /*
+        The most ACCELERATION of the root the chain feels, world units per second squared; 0 for all
+        of it. A game character's body changes speed far faster than any real one - apps/archer's
+        archer goes from falling at 19 u/s to standing in ONE tick - and hair that feels all of that is
+        flung out flat behind her on every landing however it is tuned. With a cap, the chain feels
+        the root's velocity through a copy that may only change this fast; whatever the root does
+        beyond that is carried straight on (particle and previous position moved alike, no momentum).
+        So a landing is felt as a firm stop spread over a few ticks, and a steady motion is felt in
+        full once the copy has caught up.
+
+        NOT a share of the motion. "Hand on three quarters of the root's movement" was tried first and
+        cannot work: in a long fall the chain builds the missing quarter up as its own momentum, and
+        a quarter of 19 u/s is still enough to swing a 36 cm strand over the top. Wind and gravity are
+        forces, not the root's motion, and act in full either way.
+
+        Set it at or above any sustained acceleration that should be felt whole - her falling gravity,
+        if the chain is to go weightless in the air with her.
+    */
+    float max_accel = 0.0f;
+    //Spheres every particle is kept out of - see DynamicChainSphere. Empty for none.
+    std::vector<DynamicChainSphere> spheres;
 };
 
 /*
@@ -75,6 +109,18 @@ struct DynamicChainLimit{
     float lo = -3.2f;
     float hi = 3.2f;
     int   bend_sign = 0;
+    /*
+        FREE IN 3D ONLY: the most segment i may point away from the direction the POSE gives it, in
+        world space, in radians; 0 for no limit. Against the pose itself and deliberately NOT the
+        pose carried along the simulated parent (which is what the stiffness pull aims at): measured
+        that way the cones add up, and a three-bone hair chain limited to 50 degrees a segment still
+        turned its tip 150 and stood up off her head. A cone rather than lo/hi because off the plane
+        there is no one axis to measure an angle about.
+        Hair is what wants it: a short chain on a body that stops dead (a landing at 19 u/s) has the
+        energy to swing clean over the top of its pivot, which no amount of per-tick damping catches
+        in time, and hair standing straight up off a head reads as a bug, not as physics.
+    */
+    float cone = 0.0f;
 };
 
 class DynamicChain{
@@ -114,6 +160,7 @@ private:
     std::vector<vec3> previous;     //last tick's, for the verlet velocity
     std::vector<vec3> pose;         //the animated points of the last step
     quat last_frame = quat(0.0f,0.0f,0.0f,1.0f);  //and the frame they were in
+    vec3 felt = vec3(0.0f,0.0f,0.0f);   //the root's velocity as the chain feels it, per tick - see max_accel
 };
 
 #endif

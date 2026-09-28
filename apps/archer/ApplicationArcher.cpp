@@ -79,7 +79,7 @@ bool ArcherModel::BuildAimChain(){
     //world rotation, which has to already include the turn given to the bones above it.
     const char* names[ARCHER_AIM_BONES] = {
         "mixamorig:Spine","mixamorig:Spine1","mixamorig:Spine2",
-        "mixamorig:LeftShoulder","mixamorig:RightShoulder","mixamorig:Neck"
+        "mixamorig:Shoulder.L","mixamorig:Shoulder.R","mixamorig:Neck"
     };
     const float shares[ARCHER_AIM_BONES] = {
         ARCHER_AIM_SPINE_SHARE,ARCHER_AIM_SPINE_SHARE,ARCHER_AIM_SPINE_SHARE,
@@ -107,8 +107,8 @@ bool ArcherModel::BuildAimChain(){
 
 bool ArcherModel::BuildLegChains(){
     const char* names[2][ARCHER_LEG_BONES] = {
-        { "mixamorig:LeftUpLeg","mixamorig:LeftLeg","mixamorig:LeftFoot","mixamorig:LeftToeBase" },
-        { "mixamorig:RightUpLeg","mixamorig:RightLeg","mixamorig:RightFoot","mixamorig:RightToeBase" }
+        { "mixamorig:UpLeg.L","mixamorig:Leg.L","mixamorig:Foot.L","mixamorig:ToeBase.L" },
+        { "mixamorig:UpLeg.R","mixamorig:Leg.R","mixamorig:Foot.R","mixamorig:ToeBase.R" }
     };
     int found = 0;
     for (int leg = 0; leg < 2; leg++){
@@ -233,6 +233,291 @@ void ArcherModel::ApplyLegChains(float time_delta){
         vec3 thigh = leg_bones[leg][1]->GetWorldPosition() - leg_bones[leg][0]->GetWorldPosition();
         vec3 shin = leg_bones[leg][2]->GetWorldPosition() - leg_bones[leg][1]->GetWorldPosition();
         leg_knee_deg[leg] = DynamicChain::SignedAngle(thigh,shin,axis) * (float)knee_sign / ARCHER_DEG2RAD;
+    }
+}
+
+void ArcherModel::TurnInWorld(Bone* bone, const quat& rotation_world){
+    quat parent = bone->GetParent()->GetWorldRotation();
+    quat parent_inverse = parent;
+    parent_inverse.inverse();
+    quat local = parent_inverse * rotation_world * parent * bone->GetRotation();
+    local.normalize();
+    bone->SetRotation(local);
+}
+
+//--- The hair ---------------------------------------------------------------------------------------
+
+//Each chain's bones, root first, as the rig names them; NULL ends a shorter chain.
+static const char* HAIR_CHAIN_BONES[ARCHER_HAIR_CHAINS][ARCHER_HAIR_MAX_BONES] = {
+    { "hair_back.1", "hair_back.2", "hair_back.3" },
+    { "hair_side.L", NULL,          NULL },
+    { "hair_side.R", NULL,          NULL },
+};
+static const char* HAIR_CHAIN_NAMES[ARCHER_HAIR_CHAINS] = { "back", "side.L", "side.R" };
+
+const char* ArcherModel::HairChainName(int c) const{
+    return (c >= 0 && c < ARCHER_HAIR_CHAINS) ? HAIR_CHAIN_NAMES[c] : "?";
+}
+
+//How much a vertex hangs on joint `joint`, 0..1 - its weight there across the engine's three
+//influences (skinned_vertex keeps three; see the note on the rig in BuildArcherModel).
+static float JointWeight(const skinned_vertex& v, int joint){
+    float w = 0.0f;
+    if (v.bones.x == joint){ w += v.weights.x; }
+    if (v.bones.y == joint){ w += v.weights.y; }
+    if (v.bones.z == joint){ w += v.weights.z; }
+    return w;
+}
+
+//The uniform scale a world matrix carries - the model's, for everything under it.
+static float MatrixScale(const fmat4& m){
+    return (m * vec3(1.0f,0.0f,0.0f) - m * vec3(0.0f,0.0f,0.0f)).length();
+}
+
+void ArcherModel::HairPose(const HairChain& h, std::vector<vec3>& out) const{
+    out.clear();
+    for (int k = 0; k < h.count; k++){
+        out.push_back(h.bones[k]->GetWorldPosition());
+    }
+    //The tip: along the last bone's own +Y, which is along the bone on a Blender rig.
+    out.push_back(h.bones[h.count - 1]->GetWorldTransformScaleMatrix() * vec3(0.0f,h.tip,0.0f));
+}
+
+/*
+    MEASURED OFF THE MESH, BOTH OF THEM, in each bone's own space at bind - a vertex times its
+    joint's inverse bind matrix is where that vertex sits relative to the bone, with +Y along it.
+
+      - A chain's TIP: the furthest any vertex hanging mostly on its last bone reaches along that
+        bone. That is where the strand ends, and a chain stopped at the last bone's head would leave
+        the whole of its last segment unsimulated - the side strands are ONE bone each.
+      - The SCALP: see ARCHER_HAIR_SCALP_MARGIN.
+*/
+bool ArcherModel::BuildHairChains(const Mesh* hair_mesh, const std::vector<const Mesh*>& head_meshes){
+    hair_head = FindBone(ARCHER_HAIR_HEAD_BONE);
+    hair_chain_count = 0;
+    if (!hair_head){
+        debug->Err("Hair is OFF: no bone '%s'\n",ARCHER_HAIR_HEAD_BONE);
+        return false;
+    }
+    for (int c = 0; c < ARCHER_HAIR_CHAINS; c++){
+        HairChain& h = hair[c];
+        h.count = 0;
+        bool f_all = true;
+        for (int k = 0; k < ARCHER_HAIR_MAX_BONES && HAIR_CHAIN_BONES[c][k]; k++){
+            Bone* bone = FindBone(HAIR_CHAIN_BONES[c][k]);
+            if (!bone || !bone->GetParent()){
+                debug->Warn("Hair: no bone '%s' - the %s strand stays as the clip has it\n",
+                            HAIR_CHAIN_BONES[c][k],HAIR_CHAIN_NAMES[c]);
+                f_all = false;
+                break;
+            }
+            h.bones[h.count++] = bone;
+            //Show, and moved by a wind published from another thread - never the same two runs
+            //running. Out of the replay's state hash (Object::f_visual_only).
+            bone->SetVisualOnly(true);
+        }
+        if (!f_all || h.count == 0){
+            h.count = 0;
+            continue;
+        }
+        Bone* leaf = h.bones[h.count - 1];
+        float tip = 0.0f;
+        int carried = 0;
+        if (hair_mesh){
+            for (const skinned_vertex& v : hair_mesh->GetSkinnedVertices()){
+                if (JointWeight(v,leaf->bone_index) > 0.5f){
+                    vec3 local = leaf->inverse_bind_matrix * v.pos;
+                    tip = fmaxf(tip,local.y);
+                    carried++;
+                }
+            }
+        }
+        if (carried == 0 || tip < 1e-4f){
+            //Nothing to measure: the last segment's own length again, or a guess for a lone bone.
+            tip = (h.count > 1) ? leaf->GetPosition().length() : 0.1f;
+            debug->Warn("Hair: no vertices hang on '%s' - its tip is guessed at %.3f\n",leaf->name.c_str(),tip);
+        }
+        h.tip = tip;
+        for (int k = 0; k < h.count; k++){
+            if (std::find(layered_bones.begin(),layered_bones.end(),h.bones[k]) == layered_bones.end()){
+                layered_bones.push_back(h.bones[k]);
+            }
+        }
+        hair_chain_count++;
+        debug->Info("Hair: %s strand, %d bone(s) from %s, tip %.3f past %s (%d vertices on it)\n",
+                    HAIR_CHAIN_NAMES[c],h.count,h.bones[0]->name.c_str(),tip,leaf->name.c_str(),carried);
+    }
+    layered_rot.resize(layered_bones.size());
+    layered_pos.resize(layered_bones.size());
+    hair_params.stiffness = ARCHER_HAIR_STIFFNESS;
+    hair_params.damping = ARCHER_HAIR_DAMPING;
+    hair_params.follow = ARCHER_HAIR_FOLLOW;
+    hair_params.max_accel = ARCHER_HAIR_MAX_ACCEL;
+    hair_params.plane_normal = vec3(0.0f,0.0f,0.0f);
+
+    //The scalp: the head bone's vertices, boxed in its own space.
+    vec3 lo(1e9f,1e9f,1e9f), hi(-1e9f,-1e9f,-1e9f);
+    int on_head = 0;
+    for (const Mesh* mesh : head_meshes){
+        if (!mesh){
+            continue;
+        }
+        for (const skinned_vertex& v : mesh->GetSkinnedVertices()){
+            if (JointWeight(v,hair_head->bone_index) > 0.6f){
+                vec3 p = hair_head->inverse_bind_matrix * v.pos;
+                lo = vec3(fminf(lo.x,p.x),fminf(lo.y,p.y),fminf(lo.z,p.z));
+                hi = vec3(fmaxf(hi.x,p.x),fmaxf(hi.y,p.y),fmaxf(hi.z,p.z));
+                on_head++;
+            }
+        }
+    }
+    scalp_radius = 0.0f;
+    if (on_head > 20 && hair_chain_count > 0){
+        scalp_centre = (lo + hi) * 0.5f;
+        vec3 size = hi - lo;
+        float from_mesh = 0.5f * fminf(size.x,fminf(size.y,size.z));
+        //Then clear of every point of every chain at rest, which it is now relative to the head.
+        const fmat4& m = hair_head->GetWorldTransformScaleMatrix();
+        float s = MatrixScale(m);
+        vec3 centre_world = m * scalp_centre;
+        float clear = from_mesh;
+        std::vector<vec3> pose;
+        for (int c = 0; c < ARCHER_HAIR_CHAINS; c++){
+            if (hair[c].count == 0){
+                continue;
+            }
+            HairPose(hair[c],pose);
+            for (size_t i = 1; i < pose.size(); i++){
+                clear = fminf(clear,(pose[i] - centre_world).length() / fmaxf(s,1e-6f) * ARCHER_HAIR_SCALP_MARGIN);
+            }
+        }
+        scalp_radius = clear;
+        debug->Info("Hair: scalp sphere radius %.3f (the head's vertices give %.3f) at (%.3f, %.3f, %.3f) in %s, "
+                    "from %d vertices\n",scalp_radius,from_mesh,scalp_centre.x,scalp_centre.y,scalp_centre.z,
+                    ARCHER_HAIR_HEAD_BONE,on_head);
+    }else if (hair_chain_count > 0){
+        debug->Warn("Hair: too few vertices on %s (%d) to size a scalp - the strands may pass through her head\n",
+                    ARCHER_HAIR_HEAD_BONE,on_head);
+    }
+    return hair_chain_count > 0;
+}
+
+/*
+    The hair, one tick - after the aim, so the chains hang off the head where it finally is. Stepped
+    EVERY tick whatever the weight, for the legs' reason: a chain that comes on must come on from
+    one that has been following her, not from wherever it was left.
+
+    Her turns are CARRIED, as the legs' are: a facing flip in the game is a half turn in five ticks,
+    and left to the particles the hair would sweep through her face. The turntable's slow turn is
+    carried the same way. What is left to the simulation is everything else her body does.
+*/
+void ArcherModel::ApplyHairChains(float time_delta){
+    if (hair_chain_count == 0 || !hair_head){
+        return;
+    }
+    if (f_hair_yaw_seen && leg_drawn_yaw != hair_last_yaw){
+        quat tilt_inverse = leg_drawn_tilt;
+        tilt_inverse.inverse();
+        quat turn = leg_drawn_tilt * quat(vec3(0.0f,1.0f,0.0f),leg_drawn_yaw - hair_last_yaw) * tilt_inverse;
+        turn.normalize();
+        for (int c = 0; c < ARCHER_HAIR_CHAINS; c++){
+            if (hair[c].count > 0){
+                hair[c].chain.Carry(turn,GetWorldPosition());
+            }
+        }
+    }
+    hair_last_yaw = leg_drawn_yaw;
+    f_hair_yaw_seen = true;
+
+    bool f_step = time_delta > 0.0f;
+    if (f_step){
+        hair_clock += time_delta;
+    }
+    vec3 wind = hair_wind * hair_wind_gain;
+    float gust = wind.length();
+
+    const fmat4& head_m = hair_head->GetWorldTransformScaleMatrix();
+    float head_s = MatrixScale(head_m);
+    hair_params.spheres.clear();
+    hair_scalp_radius = 0.0f;
+    if (f_hair_collide && scalp_radius > 0.0f){
+        DynamicChainSphere scalp;
+        scalp.centre = head_m * scalp_centre;
+        scalp.radius = scalp_radius * head_s;
+        hair_params.spheres.push_back(scalp);
+        hair_scalp_radius = scalp.radius;
+    }
+    hair_params.dt = time_delta;
+    hair_params.plane_normal = vec3(0.0f,0.0f,0.0f);
+
+    std::vector<vec3> pose;
+    for (int c = 0; c < ARCHER_HAIR_CHAINS; c++){
+        HairChain& h = hair[c];
+        hair_swing_deg[c] = 0.0f;
+        if (h.count == 0){
+            continue;
+        }
+        HairPose(h,pose);
+        /*
+            The flutter: a few sines at unrelated rates, a phase apart per strand, so no two strands
+            move together and nothing repeats in a way the eye catches. Scaled by the wind, so a
+            still day is still. Simulated time, so a paused game holds it and a replay repeats it.
+        */
+        float ph = (float)c * 2.1f;
+        float t = hair_clock;
+        vec3 flutter(sinf(t * 7.3f + ph) + 0.5f * sinf(t * 13.1f + ph * 1.7f),
+                     0.6f * sinf(t * 9.7f + ph * 2.3f),
+                     cosf(t * 6.1f + ph) + 0.5f * sinf(t * 11.9f + ph * 0.7f));
+        float g = fmaxf(hair_gravity,hair_air_gravity);
+        hair_params.gravity = vec3(0.0f,-g,0.0f) + wind + flutter * (hair_flutter * gust * 0.67f);
+        if (f_step){
+            std::vector<DynamicChainLimit> limits(h.count);
+            for (DynamicChainLimit& lim : limits){
+                lim.cone = fmaxf(hair_cone_deg,0.0f) * ARCHER_DEG2RAD;
+            }
+            h.chain.Step(pose,hair_params,limits,GetWorldRotation());
+        }
+        if (!h.chain.IsStarted()){
+            continue;
+        }
+        const std::vector<vec3>& sim = h.chain.Points();
+        if (sim.size() != pose.size()){
+            continue;
+        }
+        //The WORST segment, not the first: the first is the shortest, and reading only it once hid
+        //a chain whose tip had turned 150 degrees behind a first segment at 44.
+        for (size_t i = 1; i < sim.size(); i++){
+            vec3 a = pose[i] - pose[i - 1];
+            vec3 b = sim[i] - sim[i - 1];
+            if (a.length() > 1e-6f && b.length() > 1e-6f){
+                a.normalize();
+                b.normalize();
+                hair_swing_deg[c] = fmaxf(hair_swing_deg[c],acosf(fminf(fmaxf(a.dot(b),-1.0f),1.0f)) / ARCHER_DEG2RAD);
+            }
+        }
+        if (hair_weight <= 0.0f){
+            continue;
+        }
+        //Root outward, each bone turned onto its simulated segment - turning a parent has already
+        //carried its children most of the way, so each turn is measured from where it is NOW.
+        for (int k = 0; k < h.count; k++){
+            Bone* bone = h.bones[k];
+            vec3 from = ((k + 1 < h.count) ? h.bones[k + 1]->GetWorldPosition()
+                                           : bone->GetWorldTransformScaleMatrix() * vec3(0.0f,h.tip,0.0f))
+                        - bone->GetWorldPosition();
+            vec3 to = sim[k + 1] - sim[k];
+            if (from.length() < 1e-6f || to.length() < 1e-6f){
+                continue;
+            }
+            from.normalize();
+            to.normalize();
+            quat r = quat::getquat(from,to);
+            if (hair_weight < 1.0f){
+                r = quat::slerp(quat(0.0f,0.0f,0.0f,1.0f),r,hair_weight);
+            }
+            r.normalize();
+            TurnInWorld(bone,r);
+        }
     }
 }
 
@@ -494,7 +779,8 @@ void ArcherModel::ApplyAnimation(float time_delta){
     bool f_upper = (upper_clip && upper_weight > 0.0f && !upper_share.empty());
     bool f_aim = (aim_bones[0] && aim_weight > 0.0f);
     bool f_legs = (leg_weight > 0.0f);
-    if (f_overlay || f_upper || f_aim || f_legs){
+    bool f_hair = (hair_chain_count > 0 && hair_weight > 0.0f);
+    if (f_overlay || f_upper || f_aim || f_legs || f_hair){
         SaveBasePose();
     }
     //Base, overlay, upper layer, legs, aim: the overlay is part of the whole-body pose the rest
@@ -520,6 +806,14 @@ void ArcherModel::ApplyAnimation(float time_delta){
             TurnInWorld(aim_bones[i],axis_world,angle * aim_shares[i]);
         }
     }
+
+    //Absolute, so nothing to undo first: no clip or layer ever writes a bone's scale.
+    if (chest_bone){
+        chest_bone->SetScale(chest_scale);
+    }
+
+    //Last, hanging off the head wherever everything above has put it. Every tick - see ApplyHairChains.
+    ApplyHairChains(time_delta);
 
     //What came out: the bow's front in the play plane, relative to facing. See aim_drawn_deg.
     aim_drawn_deg = BowAimDeg();
@@ -799,7 +1093,9 @@ void ApplicationArcher::BuildMaterials(){
         //A ramp: slate blue-grey. Its own colour because it is its own rule - past its slip angle
         //the feet do not hold - and it must not read as the plain ground beside it.
         { "ar_ramp",        vec4(0.42f,0.50f,0.62f,1.0f), 0.08f, &material_ramp },
-        { "ar_archer",      vec4(0.30f,0.72f,0.42f,1.0f), 0.18f, &material_archer },
+        //A bridge's planks: weathered timber, lighter and yellower than the trunks' bark.
+        { "ar_bridge",      vec4(0.62f,0.48f,0.30f,1.0f), 0.06f, &material_bridge },
+        { "ar_archer",     vec4(0.30f,0.72f,0.42f,1.0f), 0.18f, &material_archer },
         //The character herself. A plain warm off-white, because the model arrives with no textures
         //at all - see the note where it is assigned in BuildArcherModel.
         { "ar_archer_skin", vec4(0.82f,0.74f,0.68f,1.0f), 0.10f, &material_archer_skin },
@@ -1201,6 +1497,21 @@ void ApplicationArcher::BuildBlocks(){
         o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),angle));
     }
     /*
+        THE ROPE BRIDGES - Stage::bridges - as a plank between each pair of the chain's points,
+        placed by SyncBridges every tick. Sizes only here; a plank is a little shorter than the
+        gap between its points so the deck reads as planks rather than one bent board.
+    */
+    bridge_plank_objects.clear();
+    for (size_t i = 0; i < stage.bridges.size(); i++){
+        const StageBridge& br = stage.bridges[i];
+        for (int j = 0; j < br.planks; j++){
+            char name[48];
+            snprintf(name,sizeof(name),"bridge_%i_plank_%i",(int)i,j);
+            Object* o = plant_box(name,vec3(br.a.x,br.a.y,0.0f),vec3(br.link * 0.88f,0.12f,1.30f),material_bridge);
+            bridge_plank_objects.push_back(o);
+        }
+    }
+    /*
         THE BALANCE GAUGE, while she is on a branch: a dark upright bar beside her head and a marker
         on it at her lean - up the bar is leaning away from the camera, the way Up pushes her. The
         bar's ends are BALANCE_FALL_DEG, and the marker goes green to red as she nears one. It
@@ -1216,9 +1527,31 @@ void ApplicationArcher::BuildBlocks(){
         balance_marker->SetVisibility(false);
     }
     SyncSpringPlants();
-    debug->Info("Built %i level blocks, %i trees, %i spring plants, %i branches and %i ramps\n",
+    debug->Info("Built %i level blocks, %i trees, %i spring plants, %i branches, %i ramps and %i bridges\n",
                 (int)block_objects.size(),(int)stage.trees.size(),(int)stage.spring_plants.size(),
-                (int)stage.branches.size(),(int)stage.ramps.size());
+                (int)stage.branches.size(),(int)stage.ramps.size(),(int)stage.bridges.size());
+}
+
+//Each plank from its two points, its top face on the line she stands on, turned to its slope.
+void ApplicationArcher::SyncBridges(){
+    size_t o = 0;
+    for (size_t i = 0; i < stage.bridges.size(); i++){
+        const StageBridge& br = stage.bridges[i];
+        for (int j = 0; j < br.planks && j + 1 < (int)br.p.size(); j++, o++){
+            if (o >= bridge_plank_objects.size() || !bridge_plank_objects[o]){
+                continue;
+            }
+            Object* plank = bridge_plank_objects[o];
+            float dx = br.p[j + 1].x - br.p[j].x;
+            float dy = br.p[j + 1].y - br.p[j].y;
+            float angle = atan2f(dy,dx);
+            float thick = plank->GetScale().y;
+            vec3 mid((br.p[j].x + br.p[j + 1].x) * 0.5f,(br.p[j].y + br.p[j + 1].y) * 0.5f,0.0f);
+            vec3 down(sinf(angle),-cosf(angle),0.0f);
+            plank->SetPosition(mid + down * (thick * 0.5f));
+            plank->SetRotation(quat(vec3(0.0f,0.0f,1.0f),angle));
+        }
+    }
 }
 
 void ApplicationArcher::SyncBalanceGauge(){
@@ -1274,6 +1607,8 @@ void ApplicationArcher::SyncSpringPlants(){
         o->SetPosition(at);
         o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),p.side * p.q));
     }
+    //The bridges move every tick too, and are synced from every place the plants are.
+    SyncBridges();
 }
 
 #if ARCHER_TEST_BAY
@@ -1643,6 +1978,9 @@ void ApplicationArcher::PreRender(void){
     if (f_rescatter_foliage.exchange(false)){
         main_scene->AtTickBoundary([this](){ ScatterFoliageObjects(); });
     }
+    if (f_regrow_character_grass.exchange(false)){
+        main_scene->AtTickBoundary([this](){ GrowCharacterGrass(); });
+    }
     if (f_rope_skin_stale.exchange(false)){
         main_scene->AtTickBoundary([this](){ RebuildRopeSkinWeights(); });
     }
@@ -1664,9 +2002,15 @@ void ApplicationArcher::UpdateWind(){
     //the worker, which must hold nothing live.
     std::vector<StageBlock> blocks;
     int64_t tick = 0;
+    bool f_turntable_scene = false;
+    v2 stand(0.0f,0.0f);
     main_scene->AtTickBoundary([&](){
         blocks = stage.blocks;
         tick = (int64_t)main_scene->GetPhysicsTick();
+        f_turntable_scene = IsCharacterScene();
+        if (!stage.scenery.empty()){
+            stand = v2(stage.scenery[0].x,stage.scenery[0].y);
+        }
     });
     WindParams params;
     {
@@ -1720,7 +2064,22 @@ void ApplicationArcher::UpdateWind(){
         wind - otherwise every pan would shimmer the whole meadow.
     */
     float x0, y0, x1, y1;
-    if (WindViewRect(main_scene->camera,WIND_GRID_PAD,x0,y0,x1,y1)){
+    bool f_rect = WindViewRect(main_scene->camera,WIND_GRID_PAD,x0,y0,x1,y1);
+    /*
+        ON THE TURNTABLE, the tile and all of her, whatever the shot. WindViewRect frames the play
+        plane from the camera's own height, which suits the side camera; the turntable's close
+        shots look down on her from above her waist, so the plane's rect started at y 0.69 in the
+        upper-body shot and the grass - lower, and nearer the lens - sat outside it with no wind at
+        all (the shader gives none outside the grid). A fixed box costs a few hundred nodes.
+    */
+    if (f_turntable_scene){
+        x0 = f_rect ? fminf(x0,stand.x - 2.5f) : stand.x - 2.5f;
+        x1 = f_rect ? fmaxf(x1,stand.x + 2.5f) : stand.x + 2.5f;
+        y0 = f_rect ? fminf(y0,stand.y - 0.5f) : stand.y - 0.5f;
+        y1 = f_rect ? fmaxf(y1,stand.y + 2.5f) : stand.y + 2.5f;
+        f_rect = true;
+    }
+    if (f_rect){
         auto t0 = std::chrono::steady_clock::now();
         float gx0 = floorf(x0 / WIND_GRID_STEP) * WIND_GRID_STEP;
         float gy0 = floorf(y0 / WIND_GRID_STEP) * WIND_GRID_STEP;
@@ -1829,6 +2188,7 @@ void ApplicationArcher::BuildWindLeaves(){
 
     leaf_group = new Object();
     leaf_group->name = "wind_leaves";
+    leaf_group->SetVisualOnly(true);        //pure show - the whole pool hangs under it
     main_scene->AddObject(leaf_group);
     for (int i = 0; i < WIND_LEAF_POOL; i++){
         Object* o = new Object();
@@ -1911,6 +2271,7 @@ void ApplicationArcher::BuildWindStreaks(){
     streak_mesh->num_materials = 1;
     streak_object = new Object();
     streak_object->name = "wind_streaks";
+    streak_object->SetVisualOnly(true);
     streak_object->SetMesh(streak_mesh);
     streak_object->SetPickability(false);
     streak_object->SetCastsShadow(false);
@@ -1981,6 +2342,7 @@ void ApplicationArcher::BuildFireflies(){
     firefly_mesh->num_materials = 1;
     firefly_object = new Object();
     firefly_object->name = "fireflies";
+    firefly_object->SetVisualOnly(true);
     firefly_object->SetMesh(firefly_mesh);
     firefly_object->SetPickability(false);
     firefly_object->SetCastsShadow(false);
@@ -1991,6 +2353,7 @@ void ApplicationArcher::BuildFireflies(){
     for (int i = 0; i < FIREFLY_LIGHTS; i++){
         PointLight* light = new PointLight();
         light->name = "firefly_light." + std::to_string(i);
+        light->SetVisualOnly(true);         //follows the fireflies, which follow the view
         light->color = vec3(0.72f,1.0f,0.35f);
         light->brightness = 0.0f;
         //A glow, not a lamp: no shadow, which point lights could only get from the occluder field
@@ -3413,6 +3776,52 @@ void ApplicationArcher::BuildArcherModel(){
     }
 
     /*
+        AND HER OTHER PARTS: every skinned node under the armature that is not the body. Found
+        rather than listed, so splitting another piece off in Blender needs no code - see
+        ARCHER_MODEL_NODE. Each becomes a child of the skeleton at identity with the same material
+        steps as the body; the renderer finds the bones on the parent (see archer_parts).
+
+        Their skins all point at the one armature, so a vertex's joint index means the same bone in
+        every part - which is the only thing sharing a set of bone matrices asks of them.
+    */
+    std::vector<std::string> under_armature = gltfloader.GetNodeChildNames(ARCHER_MODEL_SKIN);
+    std::vector<std::string> skinned = gltfloader.GetSkinnedMeshNames();
+    for (const std::string& node : skinned){
+        if (node == ARCHER_MODEL_NODE ||
+            std::find(under_armature.begin(),under_armature.end(),node) == under_armature.end()){
+            continue;
+        }
+        std::vector<Material> part_materials;
+        Mesh* part_mesh = gltfloader.GetMeshFromNode(node.c_str(),&part_materials,true);
+        if (!part_mesh){
+            debug->Err("Skinned node '%s' would not load - she goes without it\n",node.c_str());
+            continue;
+        }
+        Object* part = new Object();
+        part->name = node;
+        part->SetMesh(part_mesh);
+        main_scene->renderer->AddMaterials(part_materials);
+        part->TakeMaterialNames(part_materials);
+        part->PickMaterials(part_materials,main_scene->renderer->materials);
+        //Picked like everything else: a click on her lands on the body's own object anyway.
+        part->SetPickability(false);
+        archer_model->AttachChild(part);
+        archer_parts.push_back(part);
+        archer_part_materials.push_back(-1);
+        debug->Info("Archer part '%s': %u vertices, %i shape keys\n",node.c_str(),part_mesh->num_vertices,
+                    part_mesh->num_morph_targets);
+        if (node == ARCHER_FACE_NODE){
+            archer_face = part;
+            if (part_mesh->num_morph_targets <= ARCHER_FACE_KEY_MOUTH_OPEN){
+                //Not fatal - she keeps whatever mouth the export baked in - but it is always the same
+                //cause, and it looks like a loader bug when it is an export setting.
+                debug->Warn("%s has no MouthOpen shape key - the dialog's Apply Modifiers drops keys through "
+                            "the Mirror; export with tools/blender_export_glb.py\n",ARCHER_FACE_NODE);
+            }
+        }
+    }
+
+    /*
         HOW BIG SHE IS, measured off the bind pose rather than typed in.
 
         The rig is authored around 0.89 units tall and the body box the whole level is built
@@ -3440,7 +3849,7 @@ void ApplicationArcher::BuildArcherModel(){
         Where her feet are once she has been scaled. The model is placed at the BOTTOM of the body
         box, so this is what stops her hovering or sinking.
 
-        FROM THE SKIN, NOT THE BONES. The lowest bone is LeftToe_End at 0.0254 rig units, and that
+        FROM THE SKIN, NOT THE BONES. The lowest bone is Toe_End.L at 0.0254 rig units, and that
         joint is inside the shoe: the sole is under it. Standing the lowest bone on the floor sank
         her by 0.0254 x 2.02 = 5.1cm in every pose, which looked like the collider sinking or the
         export not sitting on zero. Neither - measured off the .glb, the bind-pose sole is at
@@ -3448,14 +3857,23 @@ void ApplicationArcher::BuildArcherModel(){
         stays on the bones, because a scale measured to the top of the hair would make her
         shorter every time the hairstyle got taller.
     */
+    //Every part, not only the body: whichever piece the boots ended up in is the one on the floor.
     float sole = lo;
-    const std::vector<skinned_vertex>& skin = skinned_mesh->GetSkinnedVertices();
-    for (size_t i = 0; i < skin.size(); i++){
-        if (i == 0 || skin[i].pos.y < sole){
-            sole = skin[i].pos.y;
+    bool f_any_skin = false;
+    std::vector<Mesh*> skin_meshes = { skinned_mesh };
+    for (Object* part : archer_parts){
+        skin_meshes.push_back(part->GetMesh());
+    }
+    for (Mesh* m : skin_meshes){
+        const std::vector<skinned_vertex>& skin = m->GetSkinnedVertices();
+        for (size_t i = 0; i < skin.size(); i++){
+            if (!f_any_skin || skin[i].pos.y < sole){
+                sole = skin[i].pos.y;
+                f_any_skin = true;
+            }
         }
     }
-    if (skin.empty()){
+    if (!f_any_skin){
         debug->Err("No CPU copy of the skin - feet placed from the lowest bone, %.4f too low\n",lo);
     }
     model_foot_offset = sole * model_scale;
@@ -3641,6 +4059,27 @@ void ApplicationArcher::BuildBow(){
     archer_model->BuildOverlay();
     archer_model->BuildAimChain();
     archer_model->BuildLegChains();
+    /*
+        The hair, which needs its tips measured off the hair part and its scalp off the parts the
+        head deforms. Here with the other chains - the skeleton is posed at the draw's last frame
+        (Bow::Build), but the hair bones are at rest relative to the head in every clip, which is
+        all BuildHairChains asks.
+    */
+    const Mesh* hair_mesh = NULL;
+    std::vector<const Mesh*> head_meshes = { archer_model->GetMesh() };
+    for (Object* part : archer_parts){
+        if (part->name == ARCHER_HAIR_NODE){
+            hair_mesh = part->GetMesh();
+        }else{
+            head_meshes.push_back(part->GetMesh());
+        }
+    }
+    archer_model->BuildHairChains(hair_mesh,head_meshes);
+    hair_wind_bone = archer_model->FindBone(ARCHER_HAIR_HEAD_BONE);
+    archer_model->chest_bone = archer_model->FindBone(ARCHER_CHEST_BONE);
+    if (!archer_model->chest_bone){
+        debug->Info("No '%s' bone in this export: her breathing is heard, not seen\n",ARCHER_CHEST_BONE);
+    }
     archer_model->aim_probe = bow_rig.bow.object;
 }
 
@@ -3955,8 +4394,8 @@ void ApplicationArcher::MeasureAirClips(){
 */
 void ApplicationArcher::MeasureKickClip(){
     Bone* hip = archer_model ? archer_model->FindBone(ARCHER_MODEL_ROOT_BONE) : NULL;
-    Bone* toe[2] = { archer_model ? archer_model->FindBone("mixamorig:LeftToeBase") : NULL,
-                     archer_model ? archer_model->FindBone("mixamorig:RightToeBase") : NULL };
+    Bone* toe[2] = { archer_model ? archer_model->FindBone("mixamorig:ToeBase.L") : NULL,
+                     archer_model ? archer_model->FindBone("mixamorig:ToeBase.R") : NULL };
     if (!hip || !toe[0] || !toe[1]){
         return;
     }
@@ -4146,10 +4585,10 @@ void ApplicationArcher::MeasureLedgeHang(){
     if (!clip || !clip->root_track || clip->root_track->keyframes.empty() || !archer_model){
         return;
     }
-    const char* names[] = { "mixamorig:LeftHandMiddle1", "mixamorig:LeftHandMiddle2",
-                            "mixamorig:LeftHandMiddle3", "mixamorig:LeftHandMiddle4",
-                            "mixamorig:RightHandMiddle1", "mixamorig:RightHandMiddle2",
-                            "mixamorig:RightHandMiddle3", "mixamorig:RightHandMiddle4" };
+    const char* names[] = { "mixamorig:HandMiddle1.L", "mixamorig:HandMiddle2.L",
+                            "mixamorig:HandMiddle3.L", "mixamorig:HandMiddle4.L",
+                            "mixamorig:HandMiddle1.R", "mixamorig:HandMiddle2.R",
+                            "mixamorig:HandMiddle3.R", "mixamorig:HandMiddle4.R" };
     float t = clip->root_track->keyframes.front()->time;
     clip->SampleRootMotion(t,t);    //zero-width: poses, reports no motion
     clip->ApplyInterval(t);
@@ -4310,8 +4749,8 @@ void ApplicationArcher::MeasureKneelClips(){
     }
 
     Bone* head = archer_model->FindBone("mixamorig:HeadTop_End");
-    Bone* toe[2] = { archer_model->FindBone("mixamorig:LeftToeBase"),
-                     archer_model->FindBone("mixamorig:RightToeBase") };
+    Bone* toe[2] = { archer_model->FindBone("mixamorig:ToeBase.L"),
+                     archer_model->FindBone("mixamorig:ToeBase.R") };
     Animation* idle = archer_clips[CLIP_IDLE];
     Animation* kneel = archer_clips[CLIP_KNEEL_IDLE];
     if (!head || !toe[0] || !toe[1] || !idle || !kneel || !idle->root_track || !kneel->root_track ||
@@ -4757,6 +5196,7 @@ void ApplicationArcher::BuildBackground(){
     }
     background_object = new Object();
     background_object->name = "background";
+    background_object->SetVisualOnly(true); //kept behind the camera
     background_object->SetMesh(quad);
     background_object->SetMaterialSlot(0,material_background);
     background_object->SetCastsShadow(false);
@@ -5141,6 +5581,7 @@ void ApplicationArcher::SetupLights(){
         //shadow map spread that thin has no edges left.
         DirectionalLight* sun = new DirectionalLight();
         sun->name = "Sun";
+        sun->SetVisualOnly(true);           //moved with the camera, see above
         //Nearly overhead, leaning left and only a little toward the camera. A side view wants its
         //shadows ON THE GROUND beside things, where they read as contact - a sun raked in from the
         //front throws them backwards, behind the very objects casting them, and the level renders
@@ -5311,6 +5752,7 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(zone_outline_objects,parked.zone_outline_objects);
     std::swap(plant_objects,parked.plant_objects);
     std::swap(spring_plant_objects,parked.spring_plant_objects);
+    std::swap(bridge_plank_objects,parked.bridge_plank_objects);
     std::swap(balance_bar,parked.balance_bar);
     std::swap(balance_marker,parked.balance_marker);
     std::swap(blockout_group,parked.blockout_group);
@@ -5423,9 +5865,16 @@ struct CharacterShotSpec{
 };
 static const CharacterShotSpec CHARACTER_SHOTS[CHARACTER_SHOT_COUNT] = {
     { "full",       0.60f, 2.30f },
-    { "upper body", 1.30f, 0.74f },
-    { "face",       1.62f, 0.26f },
+    { "upper body", 1.38f, 0.78f },
+    { "face",       1.66f, 0.52f },     //head and shoulders
 };
+/*
+    WHY THE FACE SHOT IS WIDER THAN HER HEAD NEEDS. Her head is not over her feet: the idle carries
+    it 0.2 to 0.45 in FRONT of them (measured off Head and HeadTop_End), so facing the camera it is
+    that much nearer the lens than the plane these numbers frame. At a metre that is up to 1.4x on
+    screen - a half-height of 0.36 cropped the top of her hair off and still read as too close. At
+    0.52 the camera is 1.5 away and the lean costs about a fifth.
+*/
 
 /*
     See the note on character_scene. Render thread, from Init, straight after BuildExtraLevel -
@@ -5507,6 +5956,143 @@ void ApplicationArcher::BuildCharacterScene(){
             }
         }
     }
+    //After BuildFoliage, whose meshes and swaying materials it borrows.
+    GrowCharacterGrass();
+}
+
+/*
+    The grass on her tile - see the note on character_plants. Init, and later on the physics thread
+    at a tick boundary (PreRender, when the density slider is let go).
+
+    ON THE TILE'S OWN SURFACE, not the collider's flat top. The level's scatter can use the
+    collider because a level's blocks are the ground; here the ground is a mesh whose grass rolls
+    over a lip, dips and humps, and a clump stood at the collider's height floats over the dips and
+    is buried in the humps. So each spot on a jittered grid is dropped onto the highest UP-FACING
+    triangle under it (the same 0.9-ish test MeasureWalkableTop uses, which leaves the tile's own
+    near-vertical blades out). A spot with no such triangle is off the edge, and grows nothing -
+    that is also what keeps the grass inside the rim without knowing the rim's shape.
+
+    Everything is in the tile's local space, since the clumps are its children: the tile is drawn
+    at model_scale, so a clump's local scale is its world scale over that, and its local position
+    is a mesh coordinate. The spots come out of PlaceHash, so a regrow at the same density grows
+    the same lawn.
+*/
+void ApplicationArcher::GrowCharacterGrass(){
+    Mesh* tile_mesh = scenery_meshes[SCENERY_TILE_ROUND];
+    if (!character_tile || !tile_mesh || model_scale <= 0.0f){
+        return;
+    }
+    struct Up{ vec3 a, b, c; float x0, x1, z0, z1; };
+    std::vector<Up> up;
+    float lx0 = 1e30f, lx1 = -1e30f, lz0 = 1e30f, lz1 = -1e30f;
+    const std::vector<vertex>& v = tile_mesh->GetVertices();
+    for (size_t i = 0; i + 2 < v.size(); i += 3){
+        vec3 e1 = v[i + 1].pos - v[i].pos;
+        vec3 e2 = v[i + 2].pos - v[i].pos;
+        vec3 n(e1.y * e2.z - e1.z * e2.y,e1.z * e2.x - e1.x * e2.z,e1.x * e2.y - e1.y * e2.x);
+        float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
+        if (len < 1e-12f || n.y / len < 0.85f){
+            continue;
+        }
+        Up u;
+        u.a = v[i].pos;
+        u.b = v[i + 1].pos;
+        u.c = v[i + 2].pos;
+        u.x0 = fminf(u.a.x,fminf(u.b.x,u.c.x));
+        u.x1 = fmaxf(u.a.x,fmaxf(u.b.x,u.c.x));
+        u.z0 = fminf(u.a.z,fminf(u.b.z,u.c.z));
+        u.z1 = fmaxf(u.a.z,fmaxf(u.b.z,u.c.z));
+        up.push_back(u);
+        lx0 = fminf(lx0,u.x0); lx1 = fmaxf(lx1,u.x1);
+        lz0 = fminf(lz0,u.z0); lz1 = fmaxf(lz1,u.z1);
+    }
+    //The highest up-facing surface under (x, z), in mesh space; false where there is none.
+    auto surface = [&](float x, float z, float& y) -> bool {
+        bool f_found = false;
+        for (const Up& u : up){
+            if (x < u.x0 || x > u.x1 || z < u.z0 || z > u.z1){
+                continue;
+            }
+            float d = (u.b.z - u.c.z) * (u.a.x - u.c.x) + (u.c.x - u.b.x) * (u.a.z - u.c.z);
+            if (fabsf(d) < 1e-12f){
+                continue;
+            }
+            float w0 = ((u.b.z - u.c.z) * (x - u.c.x) + (u.c.x - u.b.x) * (z - u.c.z)) / d;
+            float w1 = ((u.c.z - u.a.z) * (x - u.c.x) + (u.a.x - u.c.x) * (z - u.c.z)) / d;
+            float w2 = 1.0f - w0 - w1;
+            if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f){
+                continue;
+            }
+            float h = w0 * u.a.y + w1 * u.b.y + w2 * u.c.y;
+            if (!f_found || h > y){
+                y = h;
+                f_found = true;
+            }
+        }
+        return f_found;
+    };
+
+    //Where her feet are in the tile's space: the turntable's pivot - see PoseTurntable.
+    float fx = character_tile_pivot.x / model_scale;
+    float fz = character_tile_pivot.z / model_scale;
+    float clear = CHARACTER_GRASS_CLEAR / model_scale;
+    float density = fmaxf(character_grass_density,0.0f);
+    float cell = (density > 0.01f) ? (1.0f / sqrtf(density)) / model_scale : 1e9f;
+    //The clumps' size in the world: the foliage's own scale, which starts at hers, times the tile's
+    //own factor - see CHARACTER_GRASS_SIZE.
+    float plant_scale = foliage_scale / model_scale * fmaxf(character_grass_size,0.05f);
+
+    int used = 0;
+    int counts[FOLIAGE_KIND_COUNT] = {};
+    if (f_character_grass && density > 0.01f && !up.empty()){
+        int nx = (int)ceilf((lx1 - lx0) / cell);
+        int nz = (int)ceilf((lz1 - lz0) / cell);
+        for (int j = 0; j < nz && used < CHARACTER_GRASS_MAX; j++){
+            for (int i = 0; i < nx && used < CHARACTER_GRASS_MAX; i++){
+                float x = lx0 + (i + 0.05f + 0.9f * Hash01((float)i,(float)j,701,0)) * cell;
+                float z = lz0 + (j + 0.05f + 0.9f * Hash01((float)i,(float)j,701,1)) * cell;
+                float y = 0.0f;
+                if (((x - fx) * (x - fx) + (z - fz) * (z - fz)) < clear * clear || !surface(x,z,y)){
+                    continue;
+                }
+                //Mostly the two grass clumps, with a flower or a low fern here and there.
+                float pick = Hash01((float)i,(float)j,701,2);
+                int kind = (pick < 0.03f) ? FOLIAGE_FLOWER :
+                           (pick < 0.10f) ? FOLIAGE_FERN_LOW :
+                           (pick < 0.55f) ? FOLIAGE_GRASS : FOLIAGE_GRASS_2;
+                if (!foliage_meshes[kind]){
+                    continue;
+                }
+                if (used >= (int)character_plants.size()){
+                    Object* o = new Object();
+                    o->SetPickability(false);
+                    o->SetCastsShadow(false);
+                    character_tile->AttachChild(o);
+                    character_plants.push_back(o);
+                }
+                Object* o = character_plants[used++];
+                char name[40];
+                snprintf(name,sizeof(name),"character_%s.%i",FOLIAGE_NODES[kind],counts[kind]++);
+                o->name = name;
+                o->SetMesh(foliage_meshes[kind]);
+                std::vector<Material> materials = foliage_materials[kind];
+                o->TakeMaterialNames(materials);
+                //A centimetre into the grass, so a clump on a slope does not show its base.
+                o->SetPosition(vec3(x,y - 0.01f / model_scale,z));
+                o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),Hash01((float)i,(float)j,701,3) * 6.2831853f));
+                float s = plant_scale * (0.75f + 0.4f * Hash01((float)i,(float)j,701,4));
+                o->SetScale(vec3(s,s,s));
+                o->SetVisibility(true);
+            }
+        }
+    }
+    for (size_t k = used; k < character_plants.size(); k++){
+        character_plants[k]->SetVisibility(false);
+    }
+    character_grass_count = used;
+    debug->Info("Character tile: %d plants on %d up-facing triangles (%d + %d grass, %d flowers, %d low ferns)\n",
+                used,(int)up.size(),counts[FOLIAGE_GRASS],counts[FOLIAGE_GRASS_2],counts[FOLIAGE_FLOWER],
+                counts[FOLIAGE_FERN_LOW]);
 }
 
 /*
@@ -5521,8 +6107,11 @@ void ApplicationArcher::CharacterCameraFraming(vec3& eye, vec3& target, float& d
     float stand_y = stage.scenery.empty() ? 0.0f : stage.scenery[0].y;
     float aspect = (renderer && renderer->height > 0) ? (float)renderer->width / (float)renderer->height
                                                       : 16.0f / 9.0f;
-    distance = spec.half_h / tanf(CAMERA_FOV * 0.5f * ARCHER_DEG2RAD);
-    target = vec3(stand_x - CHARACTER_FRAME_X * spec.half_h * aspect,stand_y + spec.centre_y,0.0f);
+    //The wheel scales the half-height rather than just the distance, so she stays at the same
+    //place across the frame as it zooms rather than drifting toward the centre.
+    float half_h = spec.half_h * clamp(character_zoom[shot],CHARACTER_ZOOM_MIN,CHARACTER_ZOOM_MAX);
+    distance = half_h / tanf(CAMERA_FOV * 0.5f * ARCHER_DEG2RAD);
+    target = vec3(stand_x - CHARACTER_FRAME_X * half_h * aspect,stand_y + spec.centre_y,0.0f);
     float pitch = CHARACTER_CAMERA_PITCH_DEG * ARCHER_DEG2RAD;
     eye = target + vec3(0.0f,sinf(pitch) * distance,cosf(pitch) * distance);
 }
@@ -5581,6 +6170,18 @@ void ApplicationArcher::ApplyCharacterPropVisibility(){
         if (bow_rig.arrow_hand.object){
             bow_rig.arrow_hand.object->Hide();
         }
+    }
+}
+
+//Her expression onto the face's keys - see archer_face. Every tick, in every scene: it is hers.
+void ApplicationArcher::ApplyFace(){
+    int keys = (archer_face && archer_face->GetMesh()) ? archer_face->GetMesh()->num_morph_targets : 0;
+    if (keys > ARCHER_FACE_KEY_MOUTH_OPEN){
+        archer_face->SetShapekey(ARCHER_FACE_KEY_MOUTH_OPEN,clamp(mouth_open,0.0f,1.0f));
+    }
+    if (keys > ARCHER_FACE_KEY_BLINK){
+        float shut = f_blinking ? BlinkClosed() : 0.0f;
+        archer_face->SetShapekey(ARCHER_FACE_KEY_BLINK,clamp(fmaxf(shut,eyes_closed),0.0f,1.0f));
     }
 }
 
@@ -5750,6 +6351,58 @@ void ApplicationArcher::SetupInput(){
 }
 
 /*
+    A replay's state, tick by tick - docs/replay_determinism_plan.md. On top of core's objects
+    (`bodies`, and `objects` less everything marked visual-only - leaves, fireflies, the backdrop,
+    the sun, the hair bones, the camera), the state only the app can see:
+
+      her, world  the rules, Stage::HashState
+      puppet      the animation's choices and memory, Puppet::HashState
+      anim        the model's clips as playing: which, where, the blend and the transition
+      body        the view-side clocks that decide signals: breath, heart, blink, chest,
+                  footsteps, the edge flags, the shake
+      cues        what the cue system remembers - its picks and firings
+
+    Each is its own part so a trace names which one parted. Clips go in by NAME: a pointer is an
+    address, and addresses differ from run to run.
+*/
+void ApplicationArcher::HashSimState(StateHash& h){
+    Application::HashSimState(h);
+    stage.HashState(h);
+    puppet.HashState(h);
+
+    h.Begin("anim");
+    if (archer_model){
+        const ArcherModel* m = archer_model;
+        auto clip = [&h](const Animation* a){
+            h.Add(a ? a->name : std::string());
+            h.Add(a ? a->time_index : -1.0f);
+        };
+        clip(m->current_animation);
+        clip(m->previous_animation);
+        clip(m->blend_animation);
+        h.Add(m->blend_factor); h.Add(m->blend_phase); h.Add(m->blend_phase_offset);
+        h.Add(m->animation_state); h.Add(m->animation_rate);
+        h.Add(m->animation_transition_time); h.Add(m->animation_transition_blend_time);
+        h.Add(m->animation_transition_factor);
+        h.Add(m->clip_yaw);
+        h.Add(m->aim_weight); h.Add(m->upper_weight); h.Add(m->leg_weight);
+    }
+    h.Add(playing_clip); h.Add(anim_source);
+
+    h.Begin("body");
+    h.Add(breath_phase); h.Add(breath_out_ticks); h.Add(heart_phase); h.Add(heart_beat_age);
+    h.Add(blink_wait); h.Add(blink_age);
+    h.Add(chest_from); h.Add(chest_to); h.Add(chest_age); h.Add(chest_len);
+    h.Add(f_step_valid); h.Add(step_prev_rel);
+    h.Add(step_prev_lead ? step_prev_lead->name : std::string());
+    h.Add(f_was_nocked); h.Add(f_was_kicking); h.Add(f_was_airborne);
+    h.Add(shake_trauma);
+
+    h.Begin("cues");
+    h.Add(cues.CaptureHistory().dump());
+}
+
+/*
     Where a recording starts from, written into its `state` line - see
     Application::CaptureRecordingState. PHYSICS THREAD, at a pass boundary.
 
@@ -5786,7 +6439,8 @@ json ApplicationArcher::CaptureRecordingState(){
         //Her body, and the clocks her breath and heartbeat run on: a recording that starts winded
         //replays winded, breathing where the original did.
         {"vitals",json::array({stage.vitals.exertion,stage.vitals.fear,stage.vitals.heart_rate})},
-        {"body_clocks",json::array({breath_phase,breath_out_ticks,heart_phase})},
+        {"body_clocks",json::array({breath_phase,breath_out_ticks,heart_phase,blink_wait,blink_age,
+                                    chest_from,chest_to,chest_age,chest_len})},
         //The spring she stands on, and every spring plant's state: a recording that starts on the
         //pad mid-bounce has to replay from that bounce, not from a cap at rest.
         {"spring_on",stage.spring_on},
@@ -5794,6 +6448,19 @@ json ApplicationArcher::CaptureRecordingState(){
             json list = json::array();
             for (const StageSpringPlant& p : stage.spring_plants){
                 list.push_back(json::array({p.q,p.qd}));
+            }
+            return list;
+        }()},
+        //Likewise the bridge she stands on and every bridge's points: x, y, vx, vy each, in order.
+        {"bridge_on",stage.bridge_on},
+        {"bridges",[&](){
+            json list = json::array();
+            for (const StageBridge& br : stage.bridges){
+                json points = json::array();
+                for (size_t j = 0; j < br.p.size(); j++){
+                    points.push_back(json::array({br.p[j].x,br.p[j].y,br.v[j].x,br.v[j].y}));
+                }
+                list.push_back(points);
             }
             return list;
         }()}
@@ -5826,10 +6493,22 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
         stage.vitals.heart_rate = (*vitals)[2].is_number() ? (*vitals)[2].get<float>() : VITALS_REST_BPM;
     }
     auto clocks = state.find("body_clocks");
-    if (clocks != state.end() && clocks->is_array() && clocks->size() == 3){
+    if (clocks != state.end() && clocks->is_array() && clocks->size() >= 3){
         breath_phase = (*clocks)[0].is_number() ? (*clocks)[0].get<float>() : 0.0f;
         breath_out_ticks = (*clocks)[1].is_number() ? (*clocks)[1].get<int>() : 0;
         heart_phase = (*clocks)[2].is_number() ? (*clocks)[2].get<float>() : 0.0f;
+    }
+    //The blink came later; a file without it blinks as a restart does.
+    if (clocks != state.end() && clocks->is_array() && clocks->size() >= 5){
+        blink_wait = (*clocks)[3].is_number() ? (*clocks)[3].get<int>() : BLINK_FIRST_TICKS;
+        blink_age = (*clocks)[4].is_number() ? (*clocks)[4].get<int>() : 1000;
+    }
+    //And the chest after it; without, she starts with her lungs empty.
+    if (clocks != state.end() && clocks->is_array() && clocks->size() >= 9){
+        chest_from = (*clocks)[5].is_number() ? (*clocks)[5].get<float>() : 0.0f;
+        chest_to = (*clocks)[6].is_number() ? (*clocks)[6].get<float>() : 0.0f;
+        chest_age = (*clocks)[7].is_number() ? (*clocks)[7].get<int>() : 0;
+        chest_len = (*clocks)[8].is_number() ? (*clocks)[8].get<int>() : 1;
     }
     PlaceArcher(v2(state.value("x",stage.pos.x),state.value("y",stage.pos.y)));
     stage.vel = v2(state.value("vx",0.0f),state.value("vy",0.0f));
@@ -5845,6 +6524,26 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
         if (stage.spring_on >= (int)stage.spring_plants.size()){
             stage.spring_on = -1;
         }
+        stage.bridge_on = state.value("bridge_on",-1);
+        if (stage.bridge_on >= (int)stage.bridges.size()){
+            stage.bridge_on = -1;
+        }
+    }
+    //A bridge whose point count no longer matches is from an older level, and is left at rest.
+    if (state.contains("bridges") && state["bridges"].size() == stage.bridges.size()){
+        for (size_t i = 0; i < stage.bridges.size(); i++){
+            StageBridge& br = stage.bridges[i];
+            const json& points = state["bridges"][i];
+            if (points.size() != br.p.size()){
+                continue;
+            }
+            for (size_t j = 0; j < br.p.size(); j++){
+                br.p[j] = v2(points[j][0].get<float>(),points[j][1].get<float>());
+                br.v[j] = v2(points[j][2].get<float>(),points[j][3].get<float>());
+            }
+            br.prev_p = br.p;
+        }
+        SyncBridges();
     }
     if (state.contains("spring_plants") && state["spring_plants"].size() == stage.spring_plants.size()){
         for (size_t i = 0; i < stage.spring_plants.size(); i++){
@@ -5870,6 +6569,7 @@ void ApplicationArcher::PlaceArcher(v2 pos){
     stage.coyote_ticks = 0;
     stage.buffer_ticks = 0;
     stage.spring_on = -1;       //or the plant she was on would go on carrying her weight
+    stage.bridge_on = -1;       //and the bridge
     stage.launch_lift = 0.0f;
     stage.bow_mode = BOW_IDLE;
     stage.draw_ticks = 0;
@@ -6085,6 +6785,12 @@ void ApplicationArcher::NewGame(){
     breath_out_ticks = 0;
     heart_phase = 0.0f;
     heart_beat_age = 1000;
+    blink_wait = BLINK_FIRST_TICKS;
+    blink_age = 1000;
+    chest_from = 0.0f;
+    chest_to = 0.0f;
+    chest_age = 0;
+    chest_len = 1;
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         arrow_in_flight[i] = false;
     }
@@ -6121,6 +6827,7 @@ void ApplicationArcher::NewGame(){
     }
     plant_objects.clear();
     spring_plant_objects.clear();
+    bridge_plank_objects.clear();
     balance_bar = NULL;
     balance_marker = NULL;
     /*
@@ -6312,8 +7019,13 @@ void ApplicationArcher::UpdateView(void){
     //And not while the pointer is over a panel, or scrolling the clip list also flies the camera
     //across the level. UIWantsMouse is ImGui's own answer behind a name that exists in every
     //build, so this needs no #ifdef - see the note on it in core/Application.h.
-    //Not on the turntable, whose camera is fixed - its shots are on the Character panel.
-    if (wheel != 0 && input->HasFocus() && !UIWantsMouse() && !IsCharacterScene()){
+    //On the turntable the wheel only gives a little either way inside the current shot - see
+    //CHARACTER_ZOOM_MIN. The shots themselves are on the Character panel.
+    if (wheel != 0 && input->HasFocus() && !UIWantsMouse() && IsCharacterScene()){
+        int shot = (character_shot >= 0 && character_shot < CHARACTER_SHOT_COUNT) ? character_shot : 0;
+        character_zoom[shot] = clamp(character_zoom[shot] * powf(1.0f - CHARACTER_ZOOM_PER_NOTCH,(float)wheel),
+                                     CHARACTER_ZOOM_MIN,CHARACTER_ZOOM_MAX);
+    }else if (wheel != 0 && input->HasFocus() && !UIWantsMouse()){
         camera_distance *= powf(1.0f - CAMERA_ZOOM_PER_NOTCH,(float)wheel);
         camera_distance = clamp(camera_distance,CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX);
     }
@@ -6466,6 +7178,7 @@ void ApplicationArcher::RunSimulationTick(void){
     SyncArcherAnimation();
     SyncBow();
     ApplyCharacterPropVisibility();
+    ApplyFace();
     UpdateRopeAttachMarkers();
     SyncArrowViews();
     SyncSpringPlants();
@@ -6877,22 +7590,30 @@ int ApplicationArcher::SignalFootsteps(){
     loop, so the rate can change between any two. How loud each is, and whether it is heard at
     all, is the table's: at rest both are signalled and the table keeps them silent.
 
-    THE BREATH is a pair: `breath_in` on the cycle, `breath_out` BREATH_OUT_TICKS later - fixed,
-    not a share of the cycle, because the files are a fixed length and a slow breath is a longer
-    pause after the out-breath, not a slower in-breath. The cycle runs from BREATH_REST_SECONDS
-    rested to BREATH_SPENT_SECONDS spent, by the square root of exertion: breathing quickens early
-    in an effort and then less and less, and linear left a five-second sprint breathing once every
-    2.4 s.
+    THE BREATH is a pair: `breath_in` on the cycle, `breath_out` when the in-breath is done -
+    BREATH_IN_SHARE of the cycle, and never sooner than BREATH_OUT_TICKS. It was BREATH_OUT_TICKS
+    flat until her chest moved with it (2026-09-28): the files are a fixed length, but a chest that
+    filled in half a second and emptied over three looked like sighing. Spent, the share IS
+    BREATH_OUT_TICKS (0.35 of 1.35 s), so a winded breath sounds as it did; rested, the out-breath
+    comes later, which is when the rested breaths are too quiet to hear anyway. The cycle runs from
+    BREATH_REST_SECONDS rested to BREATH_SPENT_SECONDS spent, by the square root of exertion:
+    breathing quickens early in an effort and then less and less, and linear left a five-second
+    sprint breathing once every 2.4 s.
+
+    THE CHEST follows the same two signals - filling from `breath_in` over the in-breath, emptying
+    from `breath_out` over BREATH_EXHALE_SHARE of the cycle, then still until the next. Each eases
+    from wherever the last left it, so an early breath (a footstep, the gasp after an effort) never
+    jumps.
 
     RUNNING, THE BREATH WAITS FOR A FOOT: from BREATH_STEP_EARLY of the cycle the next footstep
     takes it, and past BREATH_STEP_LATE it goes anyway - so she breathes on every second or third
     step, as runners do, without counting steps.
 
     AN EFFORT IS A BREATH OUT. A jump or a kick drops an out-breath still pending - the "huh", heard
-    or not, was it - and the gasp back in comes BREATH_AFTER_EFFORT_TICKS later, or sooner if one
-    was due anyway. Never later: restarting the whole cycle instead meant that someone jumping
-    every two seconds never breathed at all. The effort, not the voice line: the view never needs
-    to know whether the cues played one.
+    or not, was it, and the chest empties from it - and the gasp back in comes
+    BREATH_AFTER_EFFORT_TICKS later, or sooner if one was due anyway. Never later: restarting the
+    whole cycle instead meant that someone jumping every two seconds never breathed at all. The
+    effort, not the voice line: the view never needs to know whether the cues played one.
 
     THE HEART beats at heart_rate. `pound` is how loud it should be: fear, or the far end of
     exertion (spent, the pulse is in her ears) - see BODY_POUND_EXERTION.
@@ -6901,6 +7622,8 @@ int ApplicationArcher::SignalFootsteps(){
 #define BREATH_SPENT_SECONDS        1.35f
 //Past the longest in-breath (0.44 s), so her own out-breath never finds her voice still busy.
 #define BREATH_OUT_TICKS            28
+#define BREATH_IN_SHARE             0.35f
+#define BREATH_EXHALE_SHARE         0.45f
 #define BREATH_STEP_EARLY           0.8f
 #define BREATH_STEP_LATE            1.25f
 #define BREATH_AFTER_EFFORT_TICKS   30
@@ -6923,13 +7646,23 @@ void ApplicationArcher::SignalBody(const StageEvents& events, int steps){
 
     float period = BREATH_REST_SECONDS + (BREATH_SPENT_SECONDS - BREATH_REST_SECONDS) * sqrtf(v.exertion);
     breath_phase += ARCHER_DT / period;
+    chest_age = std::min(chest_age + 1,100000);
+    //The chest, toward `to` from wherever it is now, over `ticks`.
+    auto chest_toward = [&](float to, float seconds){
+        chest_from = ChestFill();
+        chest_to = to;
+        chest_age = 0;
+        chest_len = std::max((int)(seconds * ARCHER_TPS),1);
+    };
     if (events.f_jumped || events.f_kick_started){
         breath_phase = fmaxf(breath_phase,1.0f - (BREATH_AFTER_EFFORT_TICKS * ARCHER_DT) / period);
         breath_out_ticks = 0;
+        chest_toward(0.0f,BREATH_EXHALE_SHARE * period);
     }
     CuePayload breath = CuePayload().Set("exertion",v.exertion).Set("fear",v.fear);
     if (breath_out_ticks > 0 && --breath_out_ticks == 0){
         cues.Signal("breath_out",breath);
+        chest_toward(0.0f,BREATH_EXHALE_SHARE * period);
     }
     bool f_running = stage.mode == MODE_GROUND && stage.f_on_ground &&
                      fabsf(stage.vel.x) > VITALS_RUN_FROM * stage.RunSpeed();
@@ -6937,9 +7670,58 @@ void ApplicationArcher::SignalBody(const StageEvents& events, int steps){
                            : (breath_phase >= 1.0f);
     if (f_due){
         breath_phase = 0.0f;
-        breath_out_ticks = BREATH_OUT_TICKS;
+        breath_out_ticks = std::max(BREATH_OUT_TICKS,(int)(BREATH_IN_SHARE * period * ARCHER_TPS));
         cues.Signal("breath_in",breath);
+        chest_toward(1.0f,breath_out_ticks * ARCHER_DT);
     }
+
+    /*
+        THE BLINK - see BLINK_MIN_SECONDS for why it reads nothing. The draws are CueHash01 on the
+        level tick, like the kick's shout and the debris, so a replay (which restores the tick and
+        these clocks) blinks where the original did, and nothing else's draws move it.
+    */
+    blink_age = std::min(blink_age + 1,1000);
+    if (--blink_wait <= 0){
+        blink_age = 0;
+        if (CueHash01(0xB11Cu,0,stage.ticks,0) < BLINK_DOUBLE_CHANCE){
+            blink_wait = BLINK_DOUBLE_TICKS;
+        }else{
+            float u = CueHash01(0xB11Cu,0,stage.ticks,1);
+            float gap = BLINK_MIN_SECONDS - BLINK_MEAN_EXTRA_SECONDS * logf(1.0f - 0.999f * u);
+            blink_wait = (int)(fminf(gap,BLINK_MAX_SECONDS) * ARCHER_TPS);
+        }
+    }
+}
+
+//How full her lungs are: a half cosine from chest_from to chest_to - lungs start and stop gently.
+float ApplicationArcher::ChestFill() const{
+    float t = fminf((float)chest_age / (float)std::max(chest_len,1),1.0f);
+    return chest_from + (chest_to - chest_from) * (0.5f - 0.5f * cosf(t * 3.14159265f));
+}
+
+//The chest's scale at full lungs, over 1 - see CHEST_DEPTH_REST.
+float ApplicationArcher::ChestDepth() const{
+    float e = fminf(fmaxf(stage.vitals.exertion,0.0f),1.0f);
+    return chest_depth_rest + (chest_depth_spent - chest_depth_rest) * sqrtf(e);
+}
+
+//How shut her eyes are, BLINK_CLOSE_TICKS eased in, held, BLINK_OPEN_TICKS eased out.
+float ApplicationArcher::BlinkClosed() const{
+    int a = blink_age;
+    if (a < BLINK_CLOSE_TICKS){
+        float t = (float)(a + 1) / (float)BLINK_CLOSE_TICKS;
+        return t * t;                                       //accelerating shut
+    }
+    a -= BLINK_CLOSE_TICKS;
+    if (a < BLINK_HOLD_TICKS){
+        return 1.0f;
+    }
+    a -= BLINK_HOLD_TICKS;
+    if (a < BLINK_OPEN_TICKS){
+        float t = 1.0f - (float)(a + 1) / (float)BLINK_OPEN_TICKS;
+        return t * t;                                       //quick off the bottom, settling open
+    }
+    return 0.0f;
 }
 
 /*
@@ -8439,6 +9221,13 @@ void ApplicationArcher::SyncArcherView(){
             archer_model_material = archer_model->GetMaterialSlot(0);
         }
         archer_model->SetMaterialSlot(0,f_sliding ? material_archer_slide : archer_model_material);
+        //And every other part, or a slide would tint her skin and leave her clothes as they were.
+        for (size_t i = 0; i < archer_parts.size(); i++){
+            if (archer_part_materials[i] < 0){
+                archer_part_materials[i] = archer_parts[i]->GetMaterialSlot(0);
+            }
+            archer_parts[i]->SetMaterialSlot(0,f_sliding ? material_archer_slide : archer_part_materials[i]);
+        }
     }
     //The box is the fallback character when there is no model, and a debug draw when there is.
     archer_object->SetVisibility(!archer_model || f_show_collider);
@@ -8884,6 +9673,29 @@ void ApplicationArcher::SyncArcherAnimation(){
     archer_model->leg_drawn_tilt = body ? quat(vec3(0,0,1),roll) : quat(0.0f,0.0f,0.0f,1.0f);
     model_yaw_drawn = yaw / ARCHER_DEG2RAD;
     model_roll_drawn = roll / ARCHER_DEG2RAD;
+
+    /*
+        The wind at her head, for the hair - the field the grass bends in, sampled where the hair is
+        (last tick's pose; the engine poses before the tick). The field is the one published when the
+        tick started, as the leaves read it; Velocity is const, so holding the pointer is enough.
+    */
+    //Her falling gravity while she is in the air, as Stage::TickArcher applies it - see hair_air_gravity.
+    //Not on the rope, where the solver swings her under the props' gravity instead.
+    archer_model->hair_air_gravity = (!stage.f_on_ground && stage.mode == MODE_AIR)
+                                   ? ARCHER_GRAVITY * ((stage.vel.y > 0.0f) ? 1.0f : ARCHER_FALL_GRAVITY_MUL) : 0.0f;
+    archer_model->hair_wind = vec3(0.0f,0.0f,0.0f);
+    if (hair_wind_bone){
+        std::shared_ptr<const WindField> held = wind_field.Get();
+        if (held && held->IsBuilt()){
+            vec3 at = hair_wind_bone->GetWorldPosition();
+            WindVec v = held->Velocity(at.x,at.y,(int64_t)main_scene->GetPhysicsTick());
+            archer_model->hair_wind = vec3(v.x,v.y,0.0f);
+        }
+    }
+
+    //Her breath, seen - see ARCHER_CHEST_BONE. The fullness is SignalBody's, from this tick's breaths.
+    float fill = (chest_hold >= 0.0f) ? fminf(chest_hold,1.0f) : ChestFill();
+    archer_model->chest_scale = vec3(1.0f,1.0f,1.0f) + chest_axes * (ChestDepth() * fill);
 }
 
 /*
@@ -9528,6 +10340,15 @@ void ApplicationArcher::PublishSnapshot(){
     s.launch_lift = stage.launch_lift;
     s.slide_accel = stage.SlideAccel();
     s.ramp_on = stage.ramp_on;
+    s.bridge_on = stage.f_on_ground ? stage.bridge_on : -1;
+    //Of the one she is on, or else the level's first - there is one in the main level.
+    {
+        int b = (s.bridge_on >= 0) ? s.bridge_on : (stage.bridges.empty() ? -1 : 0);
+        if (b >= 0 && b < (int)stage.bridges.size()){
+            s.bridge_lowest = stage.bridges[b].Lowest();
+            s.bridge_sag = stage.bridges[b].a.y - s.bridge_lowest;
+        }
+    }
     s.slope_deg = stage.SlopeUnderFeetDeg();
     s.spring_cue = (spring_cue_plant >= 0) ? spring_cue : -1.0f;
     s.spring_boost = stage.SpringBoostNow();
@@ -9760,6 +10581,9 @@ json ApplicationArcher::BuildStateJson(){
         //The slide: the ramp she is on (-1 none), the slope under her feet in degrees (+ rising to
         //the right, whatever it is - leaf, branch or ramp), and the pull down it (0 when it holds her).
         {"slide",json{{"ramp",s.ramp_on},{"slope_deg",s.slope_deg},{"accel",s.slide_accel}}},
+        //The rope bridge: which she stands on (-1 none), and how low it hangs - of that one, or the
+        //level's first. `sag` is below the anchors.
+        {"bridge",json{{"on",s.bridge_on},{"lowest",s.bridge_lowest},{"sag",s.bridge_sag}}},
         //Balance on a branch: which (-1 none), her lean (+ away from the camera) and its rate in
         //degrees, and how near falling, 0..1 - what the gauge beside her shows.
         {"balance",json{{"branch",s.branch_on},{"lean_deg",s.lean_deg},{"lean_rate_deg",s.lean_rate_deg},
@@ -10172,7 +10996,9 @@ void ApplicationArcher::RegisterMCPTools(){
         "get-up if it is still playing. A DEVELOPMENT TOOL: the level "
         "runs from x -12 to 264 with two gaps in it (archer_zone jumps to each area by name), and iterating on one part of it should not mean "
         "flying the whole approach by script every time. Useful landmarks: the ground surface is "
-        "y 0, the start is (-6, 0.9), the grabbable-only ledge stands at x 44..48 with its lip at "
+        "y 0, the start is (-6, 0.9), a rope bridge hangs over the first gap from x 16.5 to 24 with "
+        "its anchors at 7.0 (slabs at x 10.5..12.5 top 4.4, 14.5..16.5 and 24..27 top 7.0; stand on "
+        "it at (20.25, 8.0)), the grabbable-only ledge stands at x 44..48 with its lip at "
         "4.2 (jump from x 43.1 to catch it), the cracked wall is at x 57 and the brick wall at "
         "x 49.5, and the tree stands at x 80 (arms at 2.5 right, 5.0 left, 7.5 right; stand under "
         "the first at x 81.45 and jump), the bounce pad's cap is at x 105 (top 1.2; drop onto it from "
@@ -10214,7 +11040,8 @@ void ApplicationArcher::RegisterMCPTools(){
     */
     MCPServer::Get()->RegisterTool("archer_zone",
         "The live level's ZONES - its named areas: the main level's terrain bay, start, gaps and "
-        "rope, ledges and walls, tree, spring plants, branches, stepping stones, chase and test ground; "
+        "rope, ledges and walls, tree, spring plants, branches, bridge (up over the first gap), stepping "
+        "stones, chase and test ground; "
         "the range; the rope "
         "level's rope and slide gallery. With no name, lists them and says which she is in (also in "
         "archer_state as 'zone'). With a name (not case-sensitive, a unique prefix is enough), puts "
@@ -10401,7 +11228,20 @@ void ApplicationArcher::RegisterMCPTools(){
                 {"quiver",   {{"type","boolean"}}},
                 {"arrows",   {{"type","boolean"}}},
                 {"key",      {{"type","number"},{"description","warm key brightness; 0 is off"}}},
-                {"rim",      {{"type","number"},{"description","cool rim brightness; 0 is off"}}}
+                {"rim",      {{"type","number"},{"description","cool rim brightness; 0 is off"}}},
+                {"zoom",     {{"type","number"},{"description","the current shot's distance factor, 0.8..1.25"}}},
+                {"wind",     {{"type","number"},{"description","wind speed u/s, signed - the levels' wind too"}}},
+                {"grass",    {{"type","number"},{"description","clumps per square unit on the tile; 0 for none"}}},
+                {"grass_size",{{"type","number"},{"description","the tile's plants as a factor on the level's"}}},
+                {"mouth",    {{"type","number"},{"description","the face's MouthOpen shape key, 0 closed .. 1 open"}}},
+                {"eyes",     {{"type","number"},{"description","the Blink key held at least this far, 0 .. 1, under the blinks"}}},
+                {"blink",    {{"type","string"},{"description","'on' or 'off' for the blink clock, 'now' to blink on the next tick"}}},
+                {"chest",    {{"type","object"},{"description","the breathing chest, any of: rest, spent (scale over 1 at full "
+                                                                 "lungs), axes [across, up, front-back shares], hold (0..1, or -1 free)"}}},
+                {"hair",     {{"type","object"},{"description","hair chain feel, any of: weight (0 clip, 1 simulated), "
+                                                                 "stiffness, damping, follow, gravity, wind_gain, flutter, collide"}}},
+                {"parts",    {{"type","object"},{"description","her skinned parts shown or hidden by node name, "
+                                                                 "e.g. {\"archer_hair\": false}"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -10424,6 +11264,74 @@ void ApplicationArcher::RegisterMCPTools(){
                 if (args.contains("bow")){      f_character_bow = args.value("bow",true); }
                 if (args.contains("quiver")){   f_character_quiver = args.value("quiver",true); }
                 if (args.contains("arrows")){   f_character_arrows = args.value("arrows",true); }
+                if (args.contains("zoom")){
+                    character_zoom[character_shot] = clamp(args.value("zoom",1.0f),CHARACTER_ZOOM_MIN,CHARACTER_ZOOM_MAX);
+                }
+                if (args.contains("wind")){
+                    std::lock_guard<std::mutex> lock(wind_mutex);
+                    wind_params.speed = args.value("wind",0.5f);
+                }
+                if (args.contains("mouth")){
+                    mouth_open = clamp(args.value("mouth",0.0f),0.0f,1.0f);
+                    ApplyFace();
+                }
+                if (args.contains("eyes")){
+                    eyes_closed = clamp(args.value("eyes",0.0f),0.0f,1.0f);
+                    ApplyFace();
+                }
+                if (args.contains("blink") && args["blink"].is_string()){
+                    std::string b = args["blink"].get<std::string>();
+                    if (b == "on"){ f_blinking = true; }
+                    if (b == "off"){ f_blinking = false; }
+                    if (b == "now"){ blink_wait = 1; }
+                }
+                if (args.contains("chest") && args["chest"].is_object()){
+                    const json& c = args["chest"];
+                    if (c.contains("rest")){  chest_depth_rest = c.value("rest",CHEST_DEPTH_REST); }
+                    if (c.contains("spent")){ chest_depth_spent = c.value("spent",CHEST_DEPTH_SPENT); }
+                    if (c.contains("hold")){  chest_hold = fminf(c.value("hold",-1.0f),1.0f); }
+                    if (c.contains("axes") && c["axes"].is_array() && c["axes"].size() == 3){
+                        chest_axes = vec3(c["axes"][0].get<float>(),c["axes"][1].get<float>(),c["axes"][2].get<float>());
+                    }
+                }
+                if (archer_model && args.contains("hair") && args["hair"].is_object()){
+                    const json& h = args["hair"];
+                    ArcherModel* m = archer_model;
+                    if (h.contains("weight")){    m->hair_weight = clamp(h.value("weight",1.0f),0.0f,1.0f); }
+                    if (h.contains("stiffness")){ m->hair_params.stiffness = clamp(h.value("stiffness",ARCHER_HAIR_STIFFNESS),0.0f,1.0f); }
+                    if (h.contains("damping")){   m->hair_params.damping = clamp(h.value("damping",ARCHER_HAIR_DAMPING),0.0f,1.0f); }
+                    if (h.contains("follow")){    m->hair_params.follow = clamp(h.value("follow",ARCHER_HAIR_FOLLOW),0.0f,1.0f); }
+                    if (h.contains("gravity")){   m->hair_gravity = h.value("gravity",ARCHER_HAIR_GRAVITY); }
+                    if (h.contains("wind_gain")){ m->hair_wind_gain = h.value("wind_gain",ARCHER_HAIR_WIND_GAIN); }
+                    if (h.contains("flutter")){   m->hair_flutter = h.value("flutter",ARCHER_HAIR_FLUTTER); }
+                    if (h.contains("collide")){   m->f_hair_collide = h.value("collide",true); }
+                    if (h.contains("cone")){      m->hair_cone_deg = h.value("cone",ARCHER_HAIR_CONE_DEG); }
+                    if (h.contains("max_accel")){ m->hair_params.max_accel = fmaxf(h.value("max_accel",ARCHER_HAIR_MAX_ACCEL),0.0f); }
+                }
+                if (args.contains("parts") && args["parts"].is_object()){
+                    for (auto it = args["parts"].begin(); it != args["parts"].end(); ++it){
+                        bool f_found = false;
+                        for (Object* part : archer_parts){
+                            if (part->name == it.key() && it.value().is_boolean()){
+                                part->SetVisibility(it.value().get<bool>());
+                                f_found = true;
+                            }
+                        }
+                        if (!f_found){
+                            error = "no part called '" + it.key() + "'";
+                        }
+                    }
+                }
+                if (args.contains("grass") || args.contains("grass_size")){
+                    if (args.contains("grass")){
+                        character_grass_density = fmaxf(args.value("grass",CHARACTER_GRASS_DENSITY),0.0f);
+                        f_character_grass = character_grass_density > 0.0f;
+                    }
+                    if (args.contains("grass_size")){
+                        character_grass_size = clamp(args.value("grass_size",CHARACTER_GRASS_SIZE),0.05f,3.0f);
+                    }
+                    GrowCharacterGrass();       //already at a tick boundary, on the physics thread
+                }
                 if (args.contains("shot")){
                     std::string name = args.value("shot",std::string());
                     int found = -1;
@@ -10484,10 +11392,52 @@ void ApplicationArcher::RegisterMCPTools(){
                     }
                 }
                 int shown = showcase_clip_shown;
+                float wind_speed = 0.0f;
+                {
+                    std::lock_guard<std::mutex> lock(wind_mutex);
+                    wind_speed = wind_params.speed;
+                }
+                json parts = json::object();
+                for (Object* part : archer_parts){
+                    parts[part->name] = part->IsVisible();
+                }
                 out = json{
+                    {"wind",wind_speed},
+                    {"parts",parts},
+                    {"hair",archer_model ? json{
+                        {"chains",archer_model->HairChainCount()},
+                        {"weight",archer_model->hair_weight},
+                        {"stiffness",archer_model->hair_params.stiffness},
+                        {"damping",archer_model->hair_params.damping},
+                        {"follow",archer_model->hair_params.follow},
+                        {"wind_at_head",{archer_model->hair_wind.x,archer_model->hair_wind.y}},
+                        {"scalp_radius",archer_model->hair_scalp_radius},
+                        {"swing_deg",{ {"back",archer_model->hair_swing_deg[0]},
+                                       {"side.L",archer_model->hair_swing_deg[1]},
+                                       {"side.R",archer_model->hair_swing_deg[2]} }} } : json(nullptr)},
+                    {"chest",{ {"bone",archer_model && archer_model->chest_bone != NULL},
+                               {"fill",ChestFill()},
+                               {"depth",ChestDepth()},
+                               {"hold",chest_hold},
+                               {"rest",chest_depth_rest}, {"spent",chest_depth_spent},
+                               {"axes",{chest_axes.x,chest_axes.y,chest_axes.z}},
+                               {"scale",archer_model ? json({archer_model->chest_scale.x,archer_model->chest_scale.y,
+                                                              archer_model->chest_scale.z}) : json(nullptr)},
+                               {"breath_out_in_ticks",breath_out_ticks} }},
+                    {"face",{ {"mouth",mouth_open},
+                              {"eyes",eyes_closed},
+                              {"blinking",f_blinking},
+                              {"blink_shut",f_blinking ? BlinkClosed() : 0.0f},
+                              {"blink_next_ticks",blink_wait},
+                              {"blink_age_ticks",blink_age},
+                              {"shape_keys",(archer_face && archer_face->GetMesh()) ?
+                                            archer_face->GetMesh()->num_morph_targets : 0} }},
                     {"live",IsCharacterScene()},
                     {"angle",turntable_deg}, {"turning",f_turntable}, {"speed",turntable_speed},
                     {"shot",CHARACTER_SHOTS[character_shot].name},
+                    {"zoom",character_zoom[character_shot]},
+                    {"grass",{ {"density",f_character_grass ? character_grass_density : 0.0f},
+                               {"size",character_grass_size}, {"plants",character_grass_count} }},
                     {"showcase",{ {"on",f_showcase}, {"clips",enabled}, {"rate",showcase_rate},
                                   {"playing",(shown >= 0) ? json(ARCHER_CLIPS[shown].name) : json(nullptr)},
                                   {"elapsed",showcase_elapsed} }},
@@ -12140,9 +13090,56 @@ void ApplicationArcher::DrawCharacterPanel(){
             ImGui::SameLine();
             ImGui::RadioButton(CHARACTER_SHOTS[i].name,&character_shot,i);
         }
+        int shot = (character_shot >= 0 && character_shot < CHARACTER_SHOT_COUNT) ? character_shot : 0;
+        ImGui::SliderFloat("zoom",&character_zoom[shot],CHARACTER_ZOOM_MIN,CHARACTER_ZOOM_MAX,"%.2fx distance");
+        ImGui::SetItemTooltip("The mouse wheel, over the view: a little in or out within this shot. "
+                              "Each shot keeps its own.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("1x")){
+            character_zoom[shot] = 1.0f;
+        }
         if (camera_mode != ARCHER_CAM_SIDE){
             ImGui::TextDisabled("The orbit camera is on (Archer panel) - the shots are the side camera's.");
         }
+    }
+
+    /*
+        --- The wind, and the grass it shows in -------------------------------------------------
+        The level's wind, not a copy: the same params the Archer panel's Wind section edits, solved
+        here round this scene's one tile (the field is built from the live level's blocks). Under
+        wind_mutex like that section. The flex is both grass clumps' at once.
+    */
+    if (ImGui::CollapsingHeader("Wind and grass",ImGuiTreeNodeFlags_DefaultOpen)){
+        {
+            std::lock_guard<std::mutex> lock(wind_mutex);
+            ImGui::SliderFloat("wind",&wind_params.speed,-8.0f,8.0f,"%.2f u/s");
+            ImGui::SetItemTooltip("Signed: + blows to the right. The levels' own wind - it is still "
+                                  "set when you go back to one.");
+            ImGui::SliderFloat("gusts",&wind_params.gust_strength,0.0f,1.5f,"%.2f");
+            ImGui::SliderFloat("turbulence",&wind_params.wave_strength,0.0f,0.5f,"%.2f");
+        }
+        float flex = foliage_wind_flex[FOLIAGE_GRASS];
+        if (ImGui::SliderFloat("grass flex",&flex,0.0f,1.0f,"%.3f")){
+            foliage_wind_flex[FOLIAGE_GRASS] = flex;
+            foliage_wind_flex[FOLIAGE_GRASS_2] = flex;
+            ApplyFoliageWindFlex();
+        }
+        bool f_regrow = ImGui::Checkbox("grass",&f_character_grass);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat("##density",&character_grass_density,0.0f,40.0f,"%.0f clumps / u^2");
+        f_regrow |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("grass size",&character_grass_size,0.2f,1.5f,"%.2fx the level's");
+        f_regrow |= ImGui::IsItemDeactivatedAfterEdit();
+        if (f_regrow){
+            f_regrow_character_grass = true;
+        }
+        ImGui::TextDisabled("%d plants on the tile", character_grass_count);
+        //Measured with archer_wind's sample at 8 u/s: 1.0-2.0 at 0.15 over the tile, 7.9 at 1.0.
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("The field slows near the ground: at grass height a quarter of the wind "
+                            "or less, at her waist and head all of it.");
+        ImGui::PopTextWrapPos();
     }
 
     //--- What she carries --------------------------------------------------------------------
@@ -12154,6 +13151,118 @@ void ApplicationArcher::DrawCharacterPanel(){
         ImGui::Checkbox("arrows",&f_character_arrows);
         ImGui::SetItemTooltip("The arrow in her hand and on the string during a draw. Hiding the bow "
                               "hides the nocked arrow with it.");
+    }
+
+    //--- Her face: the shape keys, one slider each, and the blink clock ------------------------------
+    if (archer_face && ImGui::CollapsingHeader("Face",ImGuiTreeNodeFlags_DefaultOpen)){
+        int keys = archer_face->GetMesh() ? archer_face->GetMesh()->num_morph_targets : 0;
+        if (keys > ARCHER_FACE_KEY_MOUTH_OPEN){
+            if (ImGui::SliderFloat("mouth open",&mouth_open,0.0f,1.0f,"%.2f")){
+                ApplyFace();        //now, so it shows with the simulation paused
+            }
+        }
+        if (keys > ARCHER_FACE_KEY_BLINK){
+            if (ImGui::SliderFloat("eyes closed",&eyes_closed,0.0f,1.0f,"%.2f")){
+                ApplyFace();
+            }
+            ImGui::SetItemTooltip("The Blink key held at least this far, under the blinks.");
+            ImGui::Checkbox("blinking",&f_blinking);
+            ImGui::SameLine();
+            if (ImGui::Button("blink now")){
+                //Only the countdown: the tick starts it, so the blink runs its course on ticks
+                //and a paused scene blinks on the next step.
+                blink_wait = 1;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("next in %.1f s",(float)blink_wait / ARCHER_TPS);
+        }
+        if (keys <= ARCHER_FACE_KEY_MOUTH_OPEN){
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("The face in this export has no shape keys. Blender's glTF dialog drops "
+                                "them through the Mirror modifier - export with tools/blender_export_glb.py.");
+            ImGui::PopTextWrapPos();
+        }
+    }
+
+    //--- Her breathing chest - see ARCHER_CHEST_BONE ------------------------------------------------
+    if (archer_model && ImGui::CollapsingHeader("Body",ImGuiTreeNodeFlags_DefaultOpen)){
+        if (!archer_model->chest_bone){
+            ImGui::TextDisabled("No '%s' bone in this export.",ARCHER_CHEST_BONE);
+        }else{
+            float fill = ChestFill();
+            ImGui::ProgressBar(fill,ImVec2(-1.0f,0.0f),"");
+            ImGui::SetItemTooltip("How full her lungs are, from the breath clock.");
+            ImGui::Text("chest x%.3f  y%.3f  z%.3f",archer_model->chest_scale.x,archer_model->chest_scale.y,
+                        archer_model->chest_scale.z);
+            ImGui::SliderFloat("depth rested",&chest_depth_rest,0.0f,0.3f,"%.3f");
+            ImGui::SliderFloat("depth spent",&chest_depth_spent,0.0f,0.3f,"%.3f");
+            ImGui::SetItemTooltip("The chest's scale over 1 at full lungs, rested and spent. "
+                                  "Hold exertion in the Vitals section to see one level.");
+            ImGui::SliderFloat3("axes",&chest_axes.x,0.0f,1.5f,"%.2f");
+            ImGui::SetItemTooltip("Each axis's share of the depth: across her, up the spine, front to back.");
+            bool f_hold = chest_hold >= 0.0f;
+            if (ImGui::Checkbox("hold",&f_hold)){
+                chest_hold = f_hold ? 1.0f : -1.0f;
+            }
+            ImGui::SetItemTooltip("Hold her lungs at a fullness, for looking at the weights.");
+            if (f_hold){
+                ImGui::SameLine();
+                ImGui::SliderFloat("##chest_hold",&chest_hold,0.0f,1.0f,"%.2f");
+            }
+        }
+    }
+
+    //--- Her hair: the chains' feel, on sliders - see ARCHER_HAIR_CHAINS ---------------------------
+    if (archer_model && archer_model->HairChainCount() > 0 && ImGui::CollapsingHeader("Hair",ImGuiTreeNodeFlags_DefaultOpen)){
+        ArcherModel* m = archer_model;
+        ImGui::SliderFloat("simulated",&m->hair_weight,0.0f,1.0f,"%.2f");
+        ImGui::SetItemTooltip("0 is the hair exactly as the clip has it, 1 all of it hanging free.");
+        ImGui::SliderFloat("stiffness",&m->hair_params.stiffness,0.0f,0.4f,"%.3f");
+        ImGui::SetItemTooltip("How well it keeps its style - the share back to the modelled shape each tick.");
+        ImGui::SliderFloat("damping",&m->hair_params.damping,0.0f,0.4f,"%.3f");
+        ImGui::SliderFloat("follow",&m->hair_params.follow,0.0f,1.0f,"%.2f");
+        ImGui::SetItemTooltip("How much of the clip's own head motion goes straight through. 0: it lags even "
+                              "her head turning in a clip. 1: only her body's motion swings it.");
+        ImGui::SliderFloat("gravity",&m->hair_gravity,0.0f,30.0f,"%.1f");
+        ImGui::SliderFloat("wind pull",&m->hair_wind_gain,0.0f,5.0f,"%.2f");
+        ImGui::SetItemTooltip("Acceleration per unit of wind speed. The wind itself is under Wind and grass.");
+        ImGui::SliderFloat("flutter",&m->hair_flutter,0.0f,1.5f,"%.2f");
+        ImGui::SliderFloat("max jolt",&m->hair_params.max_accel,0.0f,200.0f,"%.0f u/s^2");
+        ImGui::SetItemTooltip("The most of her body's acceleration the hair feels. A jump's takeoff and "
+                              "landing are far sharper than this; the rest is carried along. 0 feels all "
+                              "of it. Keep it above her falling gravity (57) or the hair droops in the air.");
+        ImGui::SliderFloat("swing limit",&m->hair_cone_deg,0.0f,120.0f,"%.0f deg");
+        ImGui::SetItemTooltip("The most a strand may swing off its style. 0 is no limit - a landing then "
+                              "flings the hair right over her head.");
+        ImGui::Checkbox("keep out of her head",&m->f_hair_collide);
+        ImGui::SameLine();
+        ImGui::TextDisabled("scalp %.3f", m->hair_scalp_radius);
+        ImGui::Text("wind at her head %.2f, %.2f",m->hair_wind.x,m->hair_wind.y);
+        for (int c = 0; c < ARCHER_HAIR_CHAINS; c++){
+            ImGui::Text("  %-7s %5.1f deg off its shape",m->HairChainName(c),m->hair_swing_deg[c]);
+        }
+    }
+
+    //--- What she wears: her skinned parts, each shown or hidden - the wardrobe, to begin with ------
+    if (!archer_parts.empty() && ImGui::CollapsingHeader("Parts",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::TextDisabled("body");
+        ImGui::SetItemTooltip("The body carries the skeleton, so it is always drawn.");
+        for (size_t i = 0; i < archer_parts.size(); i++){
+            Object* part = archer_parts[i];
+            //"archer_hair" reads as "hair"; the node's full name is the tooltip.
+            const std::string& node = part->name;
+            std::string label = (node.compare(0,7,"archer_") == 0) ? node.substr(7) : node;
+            bool f_shown = part->IsVisible();
+            if ((i % 3) != 2){
+                ImGui::SameLine();
+            }
+            ImGui::PushID((int)i);
+            if (ImGui::Checkbox(label.c_str(),&f_shown)){
+                part->SetVisibility(f_shown);
+            }
+            ImGui::SetItemTooltip("%s, %u vertices",node.c_str(),part->GetMesh() ? part->GetMesh()->num_vertices : 0);
+            ImGui::PopID();
+        }
     }
 
     //--- The scene's two lights --------------------------------------------------------------

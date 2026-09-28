@@ -478,13 +478,44 @@ static const int   STAND_POINTS[STAND_RING_COUNT] = { 10,    8,     6,     4,   
 */
 #define ARCHER_MODEL_ASSET          "meshes/archer.glb"
 #define ARCHER_MODEL_SKIN           "archer_armature"
-#define ARCHER_MODEL_NODE           "archer"
+/*
+    The part the skeleton itself carries. Since the 2026-09-28 export she is SEVERAL skinned meshes
+    on the one armature - body, face, hair, cape, belts, armband, sachet - and every other one is
+    found rather than listed: any skinned node that is a child of ARCHER_MODEL_SKIN becomes a part
+    (see BuildArcherModel), so a new split in Blender needs nothing here.
+*/
+#define ARCHER_MODEL_NODE           "archer_body"
+//The part with her expressions on it, and its keys in export order - see archer_face.
+#define ARCHER_FACE_NODE            "archer_face"
+//The part the hair bones deform - its vertices are what the chains' tips are measured off.
+#define ARCHER_HAIR_NODE            "archer_hair"
+#define ARCHER_FACE_KEY_MOUTH_OPEN  0
+#define ARCHER_FACE_KEY_BLINK       1
+/*
+    HER BLINKS - SignalBody's third clock. The gap between two is drawn fresh at every blink and
+    reads nothing: not exertion, not fear, not the breath. A person's blink rate does move with
+    all of those, but a blink that visibly follows the heart reads as a machine, and what makes a
+    face alive is that you cannot guess the next one.
+    The gap is BLINK_MIN_SECONDS plus an exponential draw of mean BLINK_MEAN_EXTRA_SECONDS, cut
+    at BLINK_MAX_SECONDS: mostly two to five seconds, now and then a long stare. BLINK_DOUBLE_CHANCE
+    of blinks are followed by a second one BLINK_DOUBLE_TICKS after. The blink itself shuts fast
+    and opens slower, as eyelids do: about a quarter of a second in all.
+*/
+#define BLINK_MIN_SECONDS           1.2f
+#define BLINK_MEAN_EXTRA_SECONDS    2.6f
+#define BLINK_MAX_SECONDS           9.0f
+#define BLINK_DOUBLE_CHANCE         0.15f
+#define BLINK_DOUBLE_TICKS          20
+#define BLINK_CLOSE_TICKS           4
+#define BLINK_HOLD_TICKS            2
+#define BLINK_OPEN_TICKS            9
+#define BLINK_FIRST_TICKS           90      //after a restart, before the first one
 #define ARCHER_MODEL_ROOT_BONE      "mixamorig:Hips"
 //The bone whose height says when a foot is DOWN - see MeasureClipPhases. The toe rather than the
 //ankle because it is the last thing to leave the ground and the first to touch it, so its minimum
 //is a sharper marker than the ankle's.
-#define ARCHER_MODEL_TOE_BONE       "mixamorig:LeftToeBase"
-#define ARCHER_MODEL_RIGHT_TOE_BONE "mixamorig:RightToeBase"   //the other plant, for footsteps
+#define ARCHER_MODEL_TOE_BONE       "mixamorig:ToeBase.L"
+#define ARCHER_MODEL_RIGHT_TOE_BONE "mixamorig:ToeBase.R"   //the other plant, for footsteps
 
 /*
     How tall the model is drawn, in world units.
@@ -531,18 +562,18 @@ enum ArcherAnimSource{
 
     Rotations about one shared world axis ADD, whichever bone they are applied to. So however the
     angle is split over the chain below, every bone downstream of all of it turns by exactly the
-    whole angle - and the bow hangs off LeftHand, downstream of Spine..Spine2 and LeftShoulder. The
+    whole angle - and the bow hangs off Hand.L, downstream of Spine..Spine2 and Shoulder.L. The
     shares on the bow's path therefore have to sum to 1, and that is what makes the drawn bow and
     Stage's arc agree to rounding rather than roughly. The neck's share is on top: the head is not
     on the bow's path, so it only decides how far she looks along the arrow.
 
-    The shoulders rather than the arms, for the nock: LeftShoulder and RightShoulder pivot close
+    The shoulders rather than the arms, for the nock: Shoulder.L and Shoulder.R pivot close
     together at the top of the chest, so turning both keeps the drawing hand near the string. The
     arms pivot a shoulder-width apart, and turning them would pull the hand off the nock by about
     that width times the angle.
 */
 #define ARCHER_AIM_SPINE_SHARE      0.15f   //each of Spine, Spine1, Spine2
-#define ARCHER_AIM_SHOULDER_SHARE   0.55f   //each of LeftShoulder, RightShoulder; 3*0.15 + 0.55 = 1
+#define ARCHER_AIM_SHOULDER_SHARE   0.55f   //each of Shoulder.L, Shoulder.R; 3*0.15 + 0.55 = 1
 #define ARCHER_AIM_NECK_SHARE       0.35f   //on top, so her head follows most of the way
 
 #define ARCHER_AIM_BONES            6
@@ -580,6 +611,79 @@ enum ArcherAnimSource{
 #define ARCHER_LEG_HIP_LIMIT        1.0f    //radians off the pose, either way
 #define ARCHER_LEG_KNEE_LIMIT       0.7f
 #define ARCHER_LEG_ANKLE_LIMIT      0.35f
+
+/*
+    --- THE HAIR --------------------------------------------------------------------------------
+    Her hair bones as core/DynamicChains, stepped every tick in world space, FREE IN 3D - the legs
+    swing in her plane, but hair on a turntable has to go every way. Three chains, each hung from
+    mixamorig:Head: the bulk down her back (hair_back.1 .2 .3) and a strand either side of her face
+    (hair_side.L, .R). A chain is its bones' heads plus a TIP past the last one, measured off the
+    hair mesh at bind (glTF carries no bone tails) - see BuildHairChains.
+
+    What moves it: her own motion (inertia - a turn, a jump, a landing, the clip's head moves), gravity,
+    and the WIND at her head, as an acceleration of ARCHER_HAIR_WIND_GAIN per unit of wind speed -
+    the same field the grass bends in, at head height where it blows at full strength. On top, a
+    FLUTTER: a small wandering push that grows with the wind, so the ends keep moving in a steady
+    breeze instead of settling into one lean. One sphere a little inside her scalp keeps the strands
+    out of her head. All of it view state: nothing in the rules reads it.
+*/
+#define ARCHER_HAIR_CHAINS          3
+#define ARCHER_HAIR_MAX_BONES       3       //the longest chain, the back
+#define ARCHER_HAIR_HEAD_BONE       "mixamorig:Head"
+/*
+    How well it holds its style (the fraction back to the pose each tick), how fast it calms down,
+    and how much of the clip's own head motion passes straight through (0: it lags her head turning
+    in a clip too; 1: only her body's motion swings it). From a sweep through a standing jump,
+    2026-09-28: follow made next to no difference; damping 0.08 left the back chain 20 degrees off
+    its style 1.5 s after landing and 0.15 left 11; stiffness 0.12 with it brought that to 7 and the
+    peak off the 50-degree cone.
+*/
+#define ARCHER_HAIR_STIFFNESS       0.12f
+#define ARCHER_HAIR_DAMPING         0.15f
+#define ARCHER_HAIR_FOLLOW          0.5f
+#define ARCHER_HAIR_GRAVITY         9.81f   //world units per second squared, down
+#define ARCHER_HAIR_WIND_GAIN       1.4f    //acceleration per unit of wind speed; 8 u/s ~ gravity
+#define ARCHER_HAIR_FLUTTER         0.35f   //the wandering push, as a fraction of the wind's own
+/*
+    The most any hair segment may swing off its style, degrees - DynamicChainLimit::cone. Without it
+    a standing jump's landing (19 u/s, stopped in a tick) swung the whole back chain over the top of
+    her head and stood it up like a candle flame. 50 still lets a landing flick it well out, and a
+    strong wind lay it over.
+*/
+#define ARCHER_HAIR_CONE_DEG        50.0f
+/*
+    The most of her BODY'S acceleration the hair feels, u/s^2 - DynamicChainParams::max_accel. Just
+    above her falling gravity (ARCHER_GRAVITY * ARCHER_FALL_GRAVITY_MUL, 56.7), so the hair goes
+    weightless in the air with her as hair_air_gravity intends, while a takeoff or a landing - 18 or
+    19 u/s gained or lost in ONE tick - is felt as a firm push spread over a third of a second. The
+    cone above was the first fix and is only a backstop now: felt in full, a jump flung the chain's
+    tip 130 degrees; capped, about 12 (tools/dynamic_chain_test.cpp, "a game's jump").
+*/
+#define ARCHER_HAIR_MAX_ACCEL       60.0f
+/*
+    THE SCALP SPHERE is measured, not typed: the box round every vertex weighted mostly to the head
+    bone, in that bone's own space at bind, gives the centre and the half of its smallest side the
+    radius. Then it is shrunk until every point of every chain AT REST is outside it by this margin
+    (as a fraction), so the hairstyle as modelled never touches it and only a swing does.
+    NOT from Head and HeadTop_End: on this rig HeadTop_End sits in FRONT of Head, not above it.
+*/
+#define ARCHER_HAIR_SCALP_MARGIN    0.97f
+/*
+    HER BREATHING, SEEN: the `chest` bone (a leaf off the spine, weight-painted over the ribcage)
+    scaled by how full her lungs are - SignalBody's breath clock, so what is seen and what is heard
+    are the same breaths. Scaling a spine bone scaled everything above it; a leaf scales only its
+    own vertices, and the clips never touch it (the loader drops scale channels).
+    How far is DEPTH, from CHEST_DEPTH_REST rested to CHEST_DEPTH_SPENT spent, by the same square
+    root of exertion as the breath's period; each axis takes its share of it (x across her, y up
+    the spine, z front to back), because a chest breathes forward and outward and hardly grows
+    taller - a uniform 1.2 makes her 20% longer in the body.
+*/
+#define ARCHER_CHEST_BONE           "chest"
+#define CHEST_DEPTH_REST            0.0f
+#define CHEST_DEPTH_SPENT           0.30f
+#define CHEST_AXIS_WIDTH            0.6f
+#define CHEST_AXIS_HEIGHT           1.0f
+#define CHEST_AXIS_DEPTH            0.6f
 
 class ArcherModel : public Skeleton{
 public:
@@ -662,8 +766,64 @@ public:
         turn about that. The aim and the legs both use it.
     */
     static void TurnInWorld(Bone* bone, const vec3& axis_world, float angle);
+    //The same, for a turn that is a whole rotation in world space rather than one angle.
+    static void TurnInWorld(Bone* bone, const quat& rotation_world);
+
+    //--- The hair - see ARCHER_HAIR_CHAINS ---
+    /*
+        Finds the chains, measures each one's tip off `hair_mesh` - the skinned part the hair bones
+        deform - and the scalp sphere off `head_meshes` (the parts the head bone deforms: face,
+        body). A chain with a bone missing is left out; true if any chain was built. Call once the
+        skeleton is loaded, like BuildLegChains, with the hair bones at rest relative to the head.
+    */
+    bool  BuildHairChains(const Mesh* hair_mesh, const std::vector<const Mesh*>& head_meshes);
+    int   HairChainCount() const { return hair_chain_count; }
+    float hair_weight = 1.0f;           //0 the clip's hair exactly, 1 all simulated - the panel's
+    DynamicChainParams hair_params;     //stiffness, damping, follow; gravity is set each tick
+    float hair_gravity = ARCHER_HAIR_GRAVITY;
+    float hair_wind_gain = ARCHER_HAIR_WIND_GAIN;
+    float hair_flutter = ARCHER_HAIR_FLUTTER;
+    float hair_cone_deg = ARCHER_HAIR_CONE_DEG;     //0 for no limit
+    bool  f_hair_collide = true;
+    //The wind where her head is, world units per second - set by the app each tick from the field.
+    vec3  hair_wind = vec3(0.0f,0.0f,0.0f);
+    /*
+        The gravity her BODY is falling under right now, or 0 on the ground - set by the app each tick
+        from the rules. The hair takes whichever of this and hair_gravity is stronger. The rules drop
+        her at 42 to 57 u/s^2 so a jump feels snappy; hair falling at a real 9.81 was out-fallen by
+        its own head at the top of every jump and floated up over it - measured, the side strands
+        stood 115 degrees off their shape halfway through a standing jump.
+    */
+    float hair_air_gravity = 0.0f;
+    //Measured each tick, per chain: how far its first segment hangs off the pose, degrees. For the
+    //panel and archer_character - it is what says the hair is doing anything at all.
+    float hair_swing_deg[ARCHER_HAIR_CHAINS] = {};
+    const char* HairChainName(int c) const;
+    float hair_scalp_radius = 0.0f;     //world units, as last used - for the panel
+
+    //--- The breathing chest - see ARCHER_CHEST_BONE ---
+    Bone* chest_bone = NULL;            //found once in BuildBow, with the hair; NULL: none in this export
+    vec3  chest_scale = vec3(1.0f,1.0f,1.0f);   //set by the app each tick, applied after the pose
 
 private:
+    struct HairChain{
+        Bone* bones[ARCHER_HAIR_MAX_BONES] = {};
+        int   count = 0;
+        float tip = 0.0f;               //past the last bone, in its own local units (+Y is along it)
+        DynamicChain chain;
+    };
+    HairChain hair[ARCHER_HAIR_CHAINS];
+    int   hair_chain_count = 0;
+    Bone* hair_head = NULL;
+    vec3  scalp_centre = vec3(0.0f,0.0f,0.0f);    //in the head bone's own space - see ARCHER_HAIR_SCALP_MARGIN
+    float scalp_radius = 0.0f;                    //in the same units; 0 for no sphere
+    bool  f_hair_yaw_seen = false;
+    float hair_last_yaw = 0.0f;
+    float hair_clock = 0.0f;            //simulated seconds, for the flutter
+    void  ApplyHairChains(float time_delta);
+    //The chain's points as posed now: its bones' heads, then the tip.
+    void  HairPose(const HairChain& h, std::vector<vec3>& out) const;
+
     Bone* leg_bones[2][ARCHER_LEG_BONES] = {};
     DynamicChain leg_chain[2];
     bool  f_leg_yaw_seen = false;
@@ -781,6 +941,28 @@ enum CharacterShot{
 #define CHARACTER_CAMERA_PITCH_DEG  7.0f
 //The turntable, degrees per second: a full turn in 36 s, slow enough to follow a clip through it.
 #define CHARACTER_TURN_SPEED        10.0f
+/*
+    The wheel's give on each shot, as a factor on its distance: in to 0.8, out to 1.25, 5% a notch.
+    Limited ON PURPOSE - the shots are the framing, and the wheel is for a closer look inside one,
+    not for turning the face shot into the full one.
+*/
+#define CHARACTER_ZOOM_MIN          0.80f
+#define CHARACTER_ZOOM_MAX          1.25f
+#define CHARACTER_ZOOM_PER_NOTCH    0.05f
+/*
+    The grass on her tile: clumps per square unit of its top, how close to her feet the nearest
+    may stand (her boots are about this wide - a clump inside them pokes through the leather), and
+    the pool's size, which caps the density slider's reach.
+*/
+#define CHARACTER_GRASS_DENSITY     11.0f
+/*
+    And their size, as a factor on the level's plants. The level grows them at her scale - a clump
+    0.39 tall, a fifth of her - which reads as grass from 26 units away and as a hayfield from 6.
+    0.6 is ankle-to-shin, a lawn she is standing IN rather than wading through. A slider.
+*/
+#define CHARACTER_GRASS_SIZE        0.6f
+#define CHARACTER_GRASS_CLEAR       0.22f
+#define CHARACTER_GRASS_MAX         700
 /*
     THE SHOWCASE: the clips the scene cycles through while she is idle, in order, each played once
     through and then crossfaded into the next over CHARACTER_SHOWCASE_BLEND seconds - longer than
@@ -976,6 +1158,10 @@ struct ArcherSnapshot{
     float launch_lift = 0.0f;
     float slide_accel = 0.0f;
     int   ramp_on = -1;
+    //The bridge she stands on (-1 none), and its lowest point and its sag below the anchors.
+    int   bridge_on = -1;
+    float bridge_lowest = 0.0f;
+    float bridge_sag = 0.0f;
     float slope_deg = 0.0f;         //Stage::SlopeUnderFeetDeg
     float spring_cue = -1.0f;           //the timing cue, 0..1, or -1 while there is none
     float spring_boost = 0.0f;          //what a jump now would add, and this bounce's best
@@ -1087,6 +1273,9 @@ public:
     //Where an input recording starts, and putting her back there for its replay. Physics thread.
     json CaptureRecordingState() override;
     void RestoreRecordingState(const json& state) override;
+    //Her state at the end of a replay's tick, for the trace - see the definition and
+    //docs/replay_determinism_plan.md. Physics thread.
+    void HashSimState(StateHash& hash) override;
     //Render thread, before the scene is drawn. Services f_regenerate_terrain.
     void PreRender(void) override;
     //Render thread. The title screen's text - the only 2D HUD this app has so far.
@@ -1314,13 +1503,34 @@ private:
         Her breathing and her heartbeat: the clocks that turn Stage::vitals into `breath_in`,
         `breath_out` and `heartbeat` signals - see the definition and vitals_plan.md. The view's,
         not the rules', because only sound reads them; in the recording state all the same, so a
-        replay breathes where the original did. `steps` is this tick's footsteps.
+        replay breathes where the original did. `steps` is this tick's footsteps. Her blinks run
+        here too, on a clock of their own that reads none of it - see BLINK_MIN_SECONDS.
     */
     void  SignalBody(const StageEvents& events, int steps);
     float breath_phase = 0.0f;          //0 at an in-breath .. 1 when the next one is due
     int   breath_out_ticks = 0;         //counting down to this breath's out-breath; 0 none pending
     float heart_phase = 0.0f;           //0 at a beat .. 1 at the next
     int   heart_beat_age = 1000;        //ticks since the last beat
+    /*
+        How full her lungs are, 0 .. 1, for the chest: eased from where it was toward full from each
+        in-breath and toward empty from each out-breath (or effort). In the recording state with the
+        other clocks. ChestFill is now; ChestDepth the scale at full, from her exertion.
+    */
+    float chest_from = 0.0f;
+    float chest_to = 0.0f;
+    int   chest_age = 0;
+    int   chest_len = 1;
+    float ChestFill() const;
+    float ChestDepth() const;
+    //The panel's: the depths and axis shares (see CHEST_DEPTH_REST), and a held fullness (<0 free).
+    float chest_depth_rest = CHEST_DEPTH_REST;
+    float chest_depth_spent = CHEST_DEPTH_SPENT;
+    vec3  chest_axes = vec3(CHEST_AXIS_WIDTH,CHEST_AXIS_HEIGHT,CHEST_AXIS_DEPTH);
+    float chest_hold = -1.0f;
+    //Her blinks, the third clock: nothing is signalled, the face reads blink_age (BlinkClosed).
+    int   blink_wait = BLINK_FIRST_TICKS;   //ticks until the next blink starts
+    int   blink_age = 1000;                 //ticks since the last one started
+    float BlinkClosed() const;              //0 open .. 1 shut, this tick's point in the blink
     //ARCHER_CMD_VITALS: exertion and fear held at these, or below 0 for free. Physics thread.
     float vitals_hold[2] = { -1.0f, -1.0f };
     /*
@@ -1496,6 +1706,7 @@ private:
     void SyncArrowViews();
     //Each spring plant's moving box, to where its spring is this tick.
     void SyncSpringPlants();
+    void SyncBridges();
     //The balance gauge beside her head, while she is on a branch.
     void SyncBalanceGauge();
     void SyncAimArc();
@@ -1614,6 +1825,7 @@ private:
     int material_spring_pad = 0;
     int material_leaf = 0;
     int material_ramp = 0;          //the slide gallery's ramps - see Stage::BuildSlideGallery
+    int material_bridge = 0;        //a rope bridge's planks
     //The timing cue's ramp, green (a jump now adds nothing) through yellow to red (this bounce's
     //best). See spring_cue.
     static const int SPRING_CUE_STEPS = 9;
@@ -1627,6 +1839,35 @@ private:
     int material_archer_hang = 0;
     int material_archer_slide = 0;  //her tint while she slides - there is no slide clip yet
     int archer_model_material = -1; //the model's own slot 0, put back when the slide tint comes off
+    /*
+        HER OTHER SKINNED MESHES - face, hair, cape, belts... everything but ARCHER_MODEL_NODE, which
+        archer_model carries itself. Each is a CHILD of archer_model at identity, with no bones of its
+        own: the renderer skins a mesh off its parent when the object is not a Skeleton
+        (Renderer::RenderBatches, the "nor it's parent" fallback), so all of them share her one set of
+        bone matrices and every clip, layer and override moves them without knowing they exist.
+        Named after their nodes. Hiding one is the wardrobe's first step - the Character panel does.
+    */
+    std::vector<Object*> archer_parts;
+    std::vector<int> archer_part_materials;     //each part's own slot 0, for the slide tint
+    /*
+        HER FACE, and its shape keys by index - the engine sets a morph target by its place in the
+        mesh, not by name, and the export writes them in the .blend's key order after the Basis.
+        MouthOpen and Blink today. Exported only through tools/blender_export_glb.py: the
+        dialog with Apply Modifiers drops every key of a mesh with a Mirror on it - see there.
+
+        mouth_open is hers rather than the scene's: 0 closed, 1 the key's full open. Set from the
+        Character panel and archer_character for now; breathing and speech are what will drive it.
+        Physics thread applies it every tick (ApplyFace), the panel also directly so it shows paused.
+        The eyes are the blink clock's (BlinkClosed) unless f_blinking is off; eyes_closed is a
+        manual floor under it, for looking at the key itself.
+    */
+    Object* archer_face = NULL;
+    float   mouth_open = 0.0f;
+    bool    f_blinking = true;
+    float   eyes_closed = 0.0f;
+    void ApplyFace();
+    //The head, where the hair reads the wind (ArcherModel::hair_wind). Found once in BuildBow.
+    Bone*   hair_wind_bone = NULL;
     int material_crate = 0;
     int material_target = 0;
     int material_target_hit = 0;
@@ -1682,6 +1923,9 @@ private:
     //to Stage::spring_plants, for SyncSpringPlants to place.
     std::vector<Object*> plant_objects;
     std::vector<Object*> spring_plant_objects;
+    //Every bridge's planks, bridge by bridge and in order along each - Stage::bridges' planks - for
+    //SyncBridges to place. Also in plant_objects, which is what destroys them.
+    std::vector<Object*> bridge_plank_objects;
     /*
         THE TIMING CUE, worked out each tick: which spring plant to tint (-1 none) and how well
         timed a jump pressed now would be, 0..1 - Stage::SpringBoostNow over this bounce's best,
@@ -2059,6 +2303,7 @@ private:
         std::vector<Object*> zone_outline_objects;
         std::vector<Object*> plant_objects;
         std::vector<Object*> spring_plant_objects;
+        std::vector<Object*> bridge_plank_objects;
         Object* balance_bar = NULL;
         Object* balance_marker = NULL;
         Object* blockout_group = NULL;
@@ -2155,6 +2400,25 @@ private:
     vec3  character_tile_base = vec3(0.0f,0.0f,0.0f);   //where BuildScenery put it
 
     int   character_shot = CHARACTER_SHOT_FULL;
+    //The wheel's zoom on each shot, as a factor on its distance - see CHARACTER_ZOOM_MIN.
+    float character_zoom[CHARACTER_SHOT_COUNT] = { 1.0f, 1.0f, 1.0f };
+
+    /*
+        THE GRASS ON HER TILE - the foliage's own clumps (and a few flowers and low ferns), on the
+        foliage's own swaying materials, so the wind bends them exactly as it bends the level's.
+        CHILDREN OF THE TILE, so the turntable carries them round with it and nothing has to move
+        them each tick; the shader bends each about its world origin, which is still correct. Stood
+        on the tile's real surface rather than on the collider's flat top - see GrowCharacterGrass.
+        Regrown on the physics thread at a tick boundary, from PreRender, when the density slider
+        is let go, like the level's foliage.
+    */
+    std::vector<Object*> character_plants;
+    float character_grass_density = CHARACTER_GRASS_DENSITY;
+    float character_grass_size = CHARACTER_GRASS_SIZE;
+    bool  f_character_grass = true;
+    int   character_grass_count = 0;
+    std::atomic<bool> f_regrow_character_grass{false};
+    void GrowCharacterGrass();
 
     bool  f_character_bow = true;
     bool  f_character_quiver = true;

@@ -137,6 +137,9 @@ class Object{
     //for what that is for and why it is per object rather than per light.
     void SetCastsShadow(bool flag){f_casts_shadow = flag;};
     bool CastsShadow(){return f_casts_shadow;};
+    //Pure show, left out of the replay's state hash with everything under it - see f_visual_only.
+    void SetVisualOnly(bool flag){f_visual_only = flag;};
+    bool IsVisualOnly(){return f_visual_only;};
 
     /*
         SPRITE-ATLAS SUB-RECT, uploaded per instance as InstanceDataGPU.uv_transform (see
@@ -565,6 +568,17 @@ protected:
         nothing to draw rather than being drawn and discarded.
     */
     bool f_casts_shadow = true;
+
+    /*
+        PURE SHOW: nothing in the simulation reads it - a leaf in the wind, a swaying plant, a
+        particle. Left out of the replay's state hash (Application::HashSimState) together with
+        everything under it, so a replay is judged on what decides the game and not on the view,
+        which moves these every frame whether or not a tick ran.
+        A PROMISE, not a switch: marked on something gameplay does read, it hides exactly the
+        divergence the hash exists to find. And a visual-only object may use no shared random
+        stream (RRandom) either - its draws would move every draw the simulation makes after it.
+    */
+    bool f_visual_only = false;
 
     //ALWAYS PRESENT, so Object's layout and every `if (physics)` test are the same in both
     //builds; without USE_PHYSICS nothing ever assigns it, so it is permanently NULL and every

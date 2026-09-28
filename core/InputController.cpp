@@ -490,6 +490,17 @@ void InputController::DrainAndApplyEvents(bool f_append, uint64_t sim_tick){
             if (!km.f_held){
                 continue;
             }
+            /*
+                NOT A KEY A REPLAY IS HOLDING. The drain above keeps live input off the recorded
+                actions while a replay runs; this is the one path around it. A minimised window
+                still gets activated - Windows hands the foreground to it when the window above
+                closes - and the next click elsewhere is a focus loss that let go of the replay's
+                `draw` mid-recording: an arrow loosed 180 ticks early, in one run of seven.
+                The person's own keys on those actions cannot be held here - the drain dropped them.
+            */
+            if (f_replaying && IsRecorded(km.mapped_keycode)){
+                continue;
+            }
             km.f_held = false;
             if (km.state && km.state->f_isdown > 0){
                 km.state->f_isdown--;

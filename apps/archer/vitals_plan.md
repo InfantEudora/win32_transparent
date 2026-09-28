@@ -237,6 +237,31 @@ question. Two files alternate, which keeps the beat from sounding looped.
   past a restart until let go. Checked: exertion 0.9 and fear 0.8 held took her heart to 161 bpm,
   with full-strength breaths and a heartbeat every 23 ticks.
 
+**2026-09-28, her blinks** - a third clock in `SignalBody`, driving the face's `Blink` shape key
+(`ARCHER_FACE_KEY_BLINK`, key 1 after MouthOpen). By the user's call it reads NOTHING - not
+exertion, fear or the breath - and signals no cue: the gap is 1.2 s plus an exponential draw of
+mean 2.6 s, cut at 9 s, with 15% of blinks doubled 20 ticks later; each draw is `CueHash01` on the
+level tick, and `blink_wait`/`blink_age` joined `body_clocks` (a file with the old three still
+loads), so replays blink where the original did. The blink shuts in 4 ticks, holds 2, opens in 9.
+Measured over 240 s: 79 blinks (~20 a minute), median gap 2.45 s, 12 doubles, five long stares at
+the cap. Character panel Face: `eyes closed` (a manual floor), `blinking`, `blink now`;
+`archer_character` `eyes` / `blink`.
+
+**2026-09-28, her breathing seen** - the user's `chest` bone (a leaf, re-parented to Spine1,
+weight-painted over the ribcage; scaling a spine bone scaled everything above it) is scaled by how
+full her lungs are (`ARCHER_CHEST_BONE`, `CHEST_*` in ApplicationArcher.h). The fullness is eased
+(half cosine) toward 1 from each `breath_in` over the in-breath and toward 0 from each `breath_out`
+or effort over `BREATH_EXHALE_SHARE` (0.45) of the cycle; the depth runs from 0.04 rested to 0.20
+spent by the square root of exertion, shared per axis (across 0.6, up 0.25, front-back 1.0). Set
+in SyncArcherAnimation, applied in ArcherModel::ApplyAnimation - one tick late, since the engine
+poses before the tick (a test that sets it and steps once sees the OLD scale). The loader drops
+scale channels, so no clip fights it. Chest state joined `body_clocks` (9 entries now).
+**The out-breath moved** (the user's option A): `BREATH_IN_SHARE` (0.35) of the cycle after the
+in-breath, never sooner than `BREATH_OUT_TICKS`. Measured: rested 84 ticks, half-spent 44, spent 28
+as before. Character panel "Body" (depths, axes, hold) and `archer_character` `chest`.
+Cue baselines NOT rewritten: they already differed from the user's cue-table retune (jump gains
+0.4, committed 2026-09-28 00:23) and the new export's footstep timing, besides the moved out-breaths.
+
 **Not built yet**: the duck (above). The breaths' and heartbeat's levels against the rest of the
 mix want ears.
 

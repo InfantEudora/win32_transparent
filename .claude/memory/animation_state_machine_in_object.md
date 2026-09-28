@@ -84,3 +84,10 @@ falls through to the ordinary path - latent and unexercised, nothing reaches it 
 
 The animation system is unfinished and the user expects to restructure it further; this was called a
 starting point, not a conclusion. See also [[bomber-app]] and `apps/bomber/engine_notes.md` §13-14.
+
+2026-09-28: Animation::Lerp (crossfades AND the sustained blend) now pairs tracks by TARGET OBJECT, not
+list index - it used to refuse any two clips with different track counts, and silently mis-blend two
+with equal counts in a different order. A bone only one clip animates blends against its
+Bone::reference_rotation/position; a non-bone keeps the one clip's value. Verified in archer by
+stripping the hair tracks from one clip (73 vs 68 tracks): the crossfade completed with no pop
+(hand <= 4 mm per 2 ticks). Other apps not rebuilt - per [[core-changes-other-apps-separately]].

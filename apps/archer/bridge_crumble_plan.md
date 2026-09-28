@@ -3,7 +3,7 @@
 Two pieces of level that fail under her: a **rope bridge** that sways, groans under hard landings
 and snaps - from overload or because she reached a spot - and **crumbling rocks** that give way a
 moment after she stands on them, so a crossing is a run of quick hops. Talked through 2026-09-27;
-steps 1-3 are built (see the Status table at the end), the rest is plan.
+steps 1-4 are built (see the Status table at the end), the rest is plan.
 
 Both are blocked out in the main level like everything else, past the branches. What they look
 like is a later question; this plan is the rules, the blockout, the warnings and the sounds.
@@ -330,6 +330,44 @@ Later: the arrow cut on the anchor ropes, climbing a hanging half, the meshes.
 
 ---
 
+## Step 4, as built (2026-09-28)
+
+- **Where**: not past the branches as section 5 had it, but UP OVER THE START (the user's call): the
+  step (1.8), then slab one (x 10.5..12.5, top 4.4) and slab two (14.5..16.5, top 7.0), each a 2.6
+  hop, and the bridge from two's corner across the first gap to slab three (24..27, top 7.0) above
+  the one-way platform. All three slabs float, SOLID: their undersides (3.8, 6.4) and the bridge's
+  lowest (5.2 at a hard landing) stay clear of the ground route - running under slab one, the
+  running jump across the gap (head at 5.0), standing on the one-way platform. A "Bridge" area,
+  a narrow one laid over Start and Gaps and rope (CurrentZone names the smaller), arriving on two.
+- **`StageBridge`**: `planks` + 1 points, the ends pinned at the anchors; each plank a spring that
+  pulls when stretched and never pushes (`BRIDGE_STIFFNESS`, `BRIDGE_PLANK_DAMPING`), every point
+  a mass (`BRIDGE_POINT_MASS`, 13 points about twice her) under gravity with air damping, stepped
+  semi-implicitly in `BRIDGE_SUBSTEPS` 12 fixed substeps. Hung as a parabola of the right length
+  and settled 10 s in `AddBridge`, so the level starts with it still - the same on every Reset.
+- **Her on it**: `SURFACE_BRIDGE` in the one surface test - one-way, dropped through with Down,
+  `f_ground` so walking off slab two onto its first plank keeps her feet. Her mass goes on the two
+  points either side of her, by where she is between them (`TickBridges`, before she moves); a
+  landing hands them her fall, momentum kept; and walking hands her vertical speed on to each
+  new pair. `bridge_on`. Slides past `BRIDGE_SLIP_DEG` 30; no kneeling on it; her weight near an
+  anchor drops the last plank, so she steps up to `BRIDGE_STEP_UP` 0.9 onto the block there.
+- **Three tunings that were needed** (all in Stage.h at the defines): handing her mass from plank to
+  plank WITHOUT her momentum pumped energy in - a run set it thrashing at 14 units a second; a light
+  chain (0.06 a point) whipped under a run even with that fixed, so the planks are heavier and the
+  air damping 4; and 8 substeps with a plank damping of 12 was past semi-implicit Euler's limit -
+  it never settled, holding a wobble of 0.9 a second.
+- **Measured** (stage_test `TestBridge`): sags 1.09 at rest, still; 1.33 with her standing in the
+  middle, the lowest point by her wherever she stands; a drop from 2 up takes it to 5.22 and it
+  settles back with her on it; she runs across slab to slab without leaving her feet, and it comes
+  back to rest after; Down drops her through; two builds identical. Route check **up from the step
+  and across the bridge**: 2.6 s, windows slab one 28, slab two 8, across 19.
+- **In the app**: a timber plank per pair of points, 0.88 of the gap so it reads as planks,
+  placed by `SyncBridges` every tick; `archer_state` has `bridge` (on, lowest, sag); a recording's
+  start state carries every bridge's points and speeds, so a replay started on it bounces as it did.
+  Checked on 8767: at rest, mid-run, and standing in the middle.
+- Nothing strains or snaps yet, and nothing sways - steps 5 and 7.
+
+---
+
 ## Open questions
 
 - The tuning: how many hard landings to a snap, the shake length, the chase's speed. The rules
@@ -347,7 +385,7 @@ Later: the arrow cut on the anchor ropes, climbing a hanging half, the meshes.
 | 1 | Zone (minimal) and route checks | BUILT 2026-09-27 - see "Step 1, as built" |
 | 2 | Crumbling stones and detour | BUILT 2026-09-27 - see "Step 2, as built" |
 | 3 | The chase | BUILT 2026-09-27 - see "Step 3, as built" |
-| 4 | Bridge as a surface | planned |
+| 4 | Bridge as a surface | BUILT 2026-09-28 - see "Step 4, as built" |
 | 5 | Strain, warnings, snap | planned |
 | 6 | Zone-triggered bridge | planned |
 | 7 | Sway, cues and sounds | planned |

@@ -754,6 +754,14 @@ public:
 
     PuppetChoice choice;
 
+    /*
+        What it carries from one tick to the next - the choice, the yaw, the weights, the settle and
+        crossfade memory - into a replay's state hash (core/StateHash.h), as the part `puppet`. The
+        measured tables (clip_speed, clip_phase...) are fixed once the clips are loaded and left out.
+        A new field that outlives a tick belongs here too.
+    */
+    void HashState(class StateHash& hash) const;
+
     //One tick. The only thing that changes state here is the yaw slew; the clip choice is a pure
     //function of the parameters and could be asked for at any time.
     void Tick(const ArcherAnimParams& in);

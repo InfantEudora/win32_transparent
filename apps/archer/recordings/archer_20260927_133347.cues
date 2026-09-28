@@ -9,4 +9,4 @@
    43125  kick_shout     skip                  (chance)
    43135  kick_swing     play  kick_swing     gain 0.800
    43156  breath_in      play  breathe_in_1   gain 0.339
-   43184  breath_out     play  breathe_out_2  gain 0.328
+   43215  breath_out     play  breathe_out_2  gain 0.316

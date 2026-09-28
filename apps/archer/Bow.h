@@ -58,8 +58,8 @@
 #define BOW_NODE                    "bow"
 #define BOW_ARROW_NODE              "arrow"
 #define BOW_QUIVER_NODE             "quiver"
-#define BOW_GRIP_BONE               "mixamorig:LeftHand"    //she holds the bow in her left
-#define BOW_NOCK_BONE               "mixamorig:RightHand"   //and draws with her right
+#define BOW_GRIP_BONE               "mixamorig:Hand.L"      //she holds the bow in her left
+#define BOW_NOCK_BONE               "mixamorig:Hand.R"      //and draws with her right
 
 /*
     --- SOCKET BONES ----------------------------------------------------------------------------

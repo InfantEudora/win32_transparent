@@ -961,6 +961,35 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         tinygltf::BufferView* bones_bufferview = NULL;
         tinygltf::BufferView* weights_bufferview = NULL;
 
+        /*
+            WHICH UV SET, from the material rather than always the first.
+
+            A vertex here carries ONE uv, and it used to be TEXCOORD_0 unconditionally. That is only
+            right while every mesh has one UV map. Blender exports EVERY map an object has, and
+            the material's baseColorTexture.texCoord says which one its texture is laid out on - so
+            an object re-unwrapped onto a second map, with the material pointed at it, came in
+            wearing the texture through the OLD unwrap. apps/archer's 2026-09-28 export is the
+            worked example: body, face and hair sample through TEXCOORD_1 (the new unwrap; their
+            TEXCOORD_0 is the old one) while the cape and belts sample through TEXCOORD_0 (their
+            TEXCOORD_1 is empty, every uv at zero).
+
+            So the set the material names is the one loaded, and TEXCOORD_0 stays the answer for a
+            material with no texture, no material, or a set the primitive does not have (said once).
+        */
+        int uv_set = 0;
+        if (gltfmaterial && gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
+            uv_set = gltfmaterial->pbrMetallicRoughness.baseColorTexture.texCoord;
+        }
+        std::string uv_attribute = "TEXCOORD_" + std::to_string(uv_set);
+        if (uv_set != 0 && primitive.attributes.find(uv_attribute) == primitive.attributes.end()){
+            debug->Warn("Material %s samples its texture through %s, which this primitive of %s does "
+                        "not have - using TEXCOORD_0\n",gltfmaterial->name.c_str(),uv_attribute.c_str(),node_name);
+            uv_attribute = "TEXCOORD_0";
+        }else if (uv_set != 0){
+            debug->Info("Material %s samples its texture through %s - loading that UV set for %s\n",
+                        gltfmaterial->name.c_str(),uv_attribute.c_str(),node_name);
+        }
+
         //Iterate over the accessors for each attribute.
         //Set the appropriate buffer views.
         //The we loop over the indices fetching the normals and postions for those
@@ -977,7 +1006,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
             }else if (it->first.compare("POSITION") == 0){
                 position_bufferview = &model.bufferViews[accessor.bufferView];
                 debug->Info("Position accessor.bufferView.count = %i\n",accessor.count);
-            }else if (it->first.compare("TEXCOORD_0") == 0){
+            }else if (it->first.compare(uv_attribute) == 0){
                 uv_bufferview = &model.bufferViews[accessor.bufferView];
             }else if (it->first.compare("JOINTS_0") == 0){
                 if (skinned){

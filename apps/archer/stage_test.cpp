@@ -4242,9 +4242,9 @@ static void TestBranchCatch(){
 
     //Caught in the air: a branch at 4.2 over open ground, above her feet's reach and under her hands'.
     Stage air;
-    air.branches.push_back({ v2(10.0f,4.2f), v2(13.5f,4.2f) });
+    air.branches.push_back({ v2(59.0f,4.2f), v2(62.5f,4.2f) });
     int test_branch = (int)air.branches.size() - 1;
-    DropOnto(air,11.75f,0.1f);
+    DropOnto(air,60.75f,0.1f);
     bool f_air_caught = false;
     ArcherInput hop;
     hop.f_jump_pressed = true;
@@ -4260,8 +4260,8 @@ static void TestBranchCatch(){
     Check(f_air_caught && air.mode == MODE_HANG && air.hang_branch == test_branch,
           "a jump that comes up short of a branch catches it, as it would a ledge",d);
     Stage miss;
-    miss.branches.push_back({ v2(10.0f,4.2f), v2(13.5f,4.2f) });
-    DropOnto(miss,11.75f,0.1f);
+    miss.branches.push_back({ v2(59.0f,4.2f), v2(62.5f,4.2f) });
+    DropOnto(miss,60.75f,0.1f);
     ArcherInput hop_down = jump;
     hop_down.f_down_held = true;
     bool f_miss_caught = false;
@@ -4307,8 +4307,8 @@ static void TestBranchCatch(){
 
         //Off the end of a branch that ends in the air - the test one at 4.2 - then Jump at once.
         Stage end;
-        end.branches.push_back({ v2(10.0f,4.2f), v2(13.5f,4.2f) });
-        DropOnto(end,12.8f,4.5f);
+        end.branches.push_back({ v2(59.0f,4.2f), v2(62.5f,4.2f) });
+        DropOnto(end,61.8f,4.5f);
         ArcherInput right;
         right.move_axis = 1.0f;
         bool f_end_jump = false;
@@ -5410,10 +5410,20 @@ static void TestZones(){
         snprintf(d,sizeof(d),"%s: %i",level_names[li],(int)s.zones.size());
         Check(!s.zones.empty(),"every level declares zones",d);
         //Side by side: sorted by their left edges, each starts where the last ended. The areas;
-        //a trigger sits inside one, and has no arrival spot.
+        //a trigger sits inside one, and has no arrival spot. So does a NESTED area - a shorter one
+        //laid over taller ones, like the bridge's up in the air, which CurrentZone names over them.
+        auto inside = [](const StageZone& in, const StageZone& out){
+            return in.id != out.id && in.hh < out.hh &&
+                   in.Overlaps(out.Left(),out.Right(),out.Bottom(),out.Top()) &&
+                   in.Bottom() >= out.Bottom() && in.Top() <= out.Top();
+        };
         std::vector<StageZone> z;
         for (const StageZone& zone : s.zones){
-            if (zone.f_area){
+            bool f_nested = false;
+            for (const StageZone& other : s.zones){
+                f_nested = f_nested || (other.f_area && inside(zone,other));
+            }
+            if (zone.f_area && !f_nested){
                 z.push_back(zone);
             }
         }
@@ -5746,6 +5756,130 @@ static void TestChase(){
     Check(!RunChase(rim,0,0.5f),"at a walk, the floor catches her");
 }
 
+//The fastest any point of a bridge is moving.
+static float BridgeSpeed(const StageBridge& br){
+    float top = 0.0f;
+    for (const v2& v : br.v){
+        top = fmaxf(top,sqrtf(v.x * v.x + v.y * v.y));
+    }
+    return top;
+}
+
+/*
+    THE ROPE BRIDGE as a surface (bridge_crumble_plan.md section 3): it hangs still from its two
+    anchors at rest, sagging within range; she stands on it, her feet on its planks, and it sags
+    further under her, the dip where she is; a landing drives it down past that and it settles
+    again; Down drops her through; she walks across it from slab to slab without leaving her feet;
+    and it comes back to rest once she is off. Two builds of it are identical. And it never hangs
+    into the ground route: loaded, it stays above the head of a jump across the gap below.
+*/
+static void TestBridge(){
+    printf("\nthe rope bridge\n");
+    char d[240];
+    Stage s;
+    Check(s.bridges.size() == 1,"the main level has one rope bridge");
+    if (s.bridges.empty()){
+        return;
+    }
+    const StageBridge& br = s.bridges[0];
+    const float anchor_y = br.a.y;
+    const float mid_x = (br.a.x + br.b.x) * 0.5f;
+    float worst_stretch = 0.0f;
+    for (size_t j = 0; j + 1 < br.p.size(); j++){
+        float dx = br.p[j + 1].x - br.p[j].x, dy = br.p[j + 1].y - br.p[j].y;
+        worst_stretch = fmaxf(worst_stretch,sqrtf(dx * dx + dy * dy) / br.link - 1.0f);
+    }
+    float rest_sag = anchor_y - br.Lowest();
+    snprintf(d,sizeof(d),"sag %.2f, fastest point %.4f, planks stretched up to %.2f%%, ends at (%.2f,%.2f) (%.2f,%.2f)",
+             rest_sag,BridgeSpeed(br),worst_stretch * 100.0f,br.p.front().x,br.p.front().y,br.p.back().x,br.p.back().y);
+    Check(rest_sag > 0.6f && rest_sag < 1.2f,"at rest it sags between 0.6 and 1.2",d);
+    Check(BridgeSpeed(br) < 0.01f,"and hangs still: the level starts with it settled",d);
+    Check(worst_stretch < 0.02f,"its planks barely stretched by its own weight, under 2%",d);
+    Stage twin;
+    bool f_same = twin.bridges.size() == 1 && twin.bridges[0].p.size() == br.p.size();
+    for (size_t j = 0; f_same && j < br.p.size(); j++){
+        f_same = twin.bridges[0].p[j].x == br.p[j].x && twin.bridges[0].p[j].y == br.p[j].y;
+    }
+    Check(f_same,"two builds of it are identical, point for point");
+
+    //Standing in the middle: on it, feet on its planks, the dip under her and deeper than at rest.
+    Stage a = s;
+    DropOnto(a,mid_x,br.SurfaceY(mid_x) + 0.3f);
+    Run(a,240,ArcherInput());
+    const StageBridge& la = a.bridges[0];
+    float loaded_sag = anchor_y - la.Lowest();
+    float feet_gap = (a.pos.y - ARCHER_HALF_H) - la.SurfaceY(a.pos.x);
+    snprintf(d,sizeof(d),"bridge_on %i, on ground %i, sag %.2f against %.2f at rest, feet %.3f off its surface, fastest %.3f",
+             a.bridge_on,a.f_on_ground ? 1 : 0,loaded_sag,rest_sag,feet_gap,BridgeSpeed(la));
+    Check(a.bridge_on == 0 && a.f_on_ground && fabsf(feet_gap) < 0.02f,"she stands on it, feet on its planks",d);
+    Check(loaded_sag > rest_sag + 0.2f && loaded_sag < 2.0f,"it sags further under her, and not past 2",d);
+    Check(BridgeSpeed(la) < 0.05f,"and has stopped bouncing four seconds later",d);
+    //Well clear of the ground route: a running jump over the gap lifts her head to 5.0.
+    snprintf(d,sizeof(d),"lowest %.2f",la.Lowest());
+    Check(la.Lowest() > 5.3f,"loaded, it still hangs above a jump across the gap below",d);
+
+    //Off-centre, the dip goes with her: the lowest point is by her, not in the middle.
+    Stage off = s;
+    DropOnto(off,br.a.x + 2.0f,br.SurfaceY(br.a.x + 2.0f) + 0.3f);
+    Run(off,240,ArcherInput());
+    float low_x = 0.0f, low_y = 1e30f;
+    for (const v2& q : off.bridges[0].p){
+        if (q.y < low_y){ low_y = q.y; low_x = q.x; }
+    }
+    snprintf(d,sizeof(d),"she is at %.2f, its lowest point at %.2f",off.pos.x,low_x);
+    Check(off.bridge_on == 0 && fabsf(low_x - off.pos.x) < br.link * 1.5f,"the dip is where she stands",d);
+
+    //A landing from 2 up drives it down past where standing leaves it, and it settles back.
+    Stage l = s;
+    DropOnto(l,mid_x,br.SurfaceY(mid_x) + 2.0f);
+    float deepest = 1e30f;
+    for (int t = 0; t < 120; t++){
+        StageEvents e;
+        l.Tick(ArcherInput(),e);
+        deepest = fminf(deepest,l.bridges[0].Lowest());
+    }
+    Run(l,240,ArcherInput());
+    snprintf(d,sizeof(d),"deepest %.2f, standing %.2f, after %.2f",deepest,la.Lowest(),l.bridges[0].Lowest());
+    Check(deepest < la.Lowest() - 0.1f,"a landing drives it down past where standing leaves it",d);
+    Check(fabsf(l.bridges[0].Lowest() - la.Lowest()) < 0.03f && l.bridge_on == 0,"then it settles back, her still on it",d);
+
+    //Down drops her through it.
+    Stage dn = a;
+    ArcherInput down;
+    down.f_down_held = true;
+    Run(dn,30,down);
+    snprintf(d,sizeof(d),"feet %.2f against its %.2f",dn.pos.y - ARCHER_HALF_H,dn.bridges[0].SurfaceY(dn.pos.x));
+    Check(dn.bridge_on < 0 && dn.pos.y - ARCHER_HALF_H < dn.bridges[0].SurfaceY(dn.pos.x) - 1.0f,"Down drops her through it",d);
+
+    //Walked across from slab two to slab three, never off her feet; then it comes back to rest.
+    Stage w = s;
+    DropOnto(w,15.5f,7.3f);
+    Run(w,10,ArcherInput());
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    int airborne = 0, on_it = 0;
+    for (int t = 0; t < 150 && w.pos.x < 25.5f; t++){
+        StageEvents e;
+        w.Tick(right,e);
+        airborne += w.f_on_ground ? 0 : 1;
+        on_it += (w.bridge_on == 0) ? 1 : 0;
+    }
+    snprintf(d,sizeof(d),"at x %.2f feet %.2f; %i ticks on it, %i off the ground",w.pos.x,w.pos.y - ARCHER_HALF_H,on_it,airborne);
+    Check(w.pos.x > 25.0f && fabsf(w.pos.y - ARCHER_HALF_H - 7.0f) < 0.02f && on_it > 20 && airborne == 0,
+          "she runs across it from slab two to slab three without leaving her feet",d);
+    Run(w,300,ArcherInput());
+    snprintf(d,sizeof(d),"sag %.2f against %.2f, fastest %.4f",anchor_y - w.bridges[0].Lowest(),rest_sag,BridgeSpeed(w.bridges[0]));
+    Check(fabsf((anchor_y - w.bridges[0].Lowest()) - rest_sag) < 0.03f && BridgeSpeed(w.bridges[0]) < 0.02f,
+          "with her off it, it comes back to rest",d);
+
+    //The Bridge area names it while she is up there, and not from the ground under it.
+    int zone = s.FindZone("Bridge");
+    Stage under = s;
+    DropOnto(under,20.0f,0.3f);
+    snprintf(d,sizeof(d),"up there %i, below %i, the zone %i",a.CurrentZone(),under.CurrentZone(),zone);
+    Check(zone >= 0 && a.CurrentZone() == zone && under.CurrentZone() != zone,"the Bridge area is up there, not under it",d);
+}
+
 /*
     ROUTE CHECKS (bridge_crumble_plan.md section 6): each designed way through the level, played
     against the rules by RouteCheck. Passable, with every timed leg leaving a player at least
@@ -5980,6 +6114,44 @@ static void TestRoutes(){
         under.push_back(l);
     }
     CheckRoute("with the floor gone, the chase pit's far ledge is the way on",fallen,under,on_top(0.0f,chase_end,264.0f));
+
+    //--- Up to the bridge and over it: the step, slab one, slab two, then run it to slab three ---
+    Stage step;
+    DropOnto(step,6.0f,2.1f);
+    Run(step,30,ArcherInput());
+    std::vector<RouteLeg> up;
+    {
+        RouteLeg l;
+        l.name = "slab one";
+        l.goal = on_top(4.4f,10.5f - ARCHER_HALF_W,12.5f + ARCHER_HALF_W);
+        l.walk = 1;
+        l.wait_max = 40;
+        l.air_max = 40;
+        l.air_step = 2;
+        up.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "slab two";
+        l.goal = on_top(7.0f,14.5f - ARCHER_HALF_W,16.5f + ARCHER_HALF_W);
+        l.walk = 1;
+        l.wait_max = 30;
+        l.air_max = 40;
+        l.air_step = 2;
+        up.push_back(l);
+    }
+    {
+        //Run along it and hop the last of it onto slab three.
+        RouteLeg l;
+        l.name = "across";
+        l.goal = on_top(7.0f,24.0f + ARCHER_HALF_W,27.0f);
+        l.walk = 1;
+        l.wait_max = 90;
+        l.air_max = 30;
+        l.air_step = 2;
+        up.push_back(l);
+    }
+    CheckRoute("up from the step and across the bridge",step,up,on_top(7.0f,24.0f + ARCHER_HALF_W,27.0f));
 }
 
 /*
@@ -6227,6 +6399,7 @@ int main(void){
     TestZones();
     TestCrumble();
     TestChase();
+    TestBridge();
     TestRoutes();
     TestVitals();
 

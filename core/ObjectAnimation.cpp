@@ -2,6 +2,8 @@
 #include "type_helpers.h"
 #include "skeleton/Bone.h"
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("ObjectAnimation", DEBUG_INFO);
@@ -118,65 +120,120 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
     }
 }
 
+/*
+    The pose a clip that does NOT animate `object` leaves it in, for blending against one that does:
+    a bone's reference (bind) pose - what LoadDefaultPose puts back. False for anything that is not
+    a bone, which has no pose to fall back to.
+*/
+static bool ReferenceKeyFrame(Object* object, ObjectAnimationKeyFrame& out){
+    Bone* bone = dynamic_cast<Bone*>(object);
+    if (!bone){
+        return false;
+    }
+    out.rotation = bone->reference_rotation;
+    out.position = bone->reference_position;
+    out.f_rotation = true;
+    out.f_position = true;
+    out.f_scale = false;
+    out.f_shapekeys = false;
+    return true;
+}
+
+//One object's blend of two samples, `factor` of the way from `start` to `end`. Only the channels
+//both carry are written; the animation mask is honoured as ApplyIntervalOnto honours it.
+static void ApplyLerped(Object* object, const ObjectAnimationKeyFrame& start, const ObjectAnimationKeyFrame& end,
+                        float factor){
+    if (start.f_position && end.f_position){
+        object->SetPosition(start.position.lerp(end.position,factor));
+    }
+    if (start.f_rotation && end.f_rotation){
+        quat merged_rot = quat::slerp(start.rotation,end.rotation,factor);
+        //Set rotation forces the bone into a specific rotation, ignoring existing rotation.
+        if (object->animation_mask < 1.0f){
+            object->SetRotation(quat::slerp(object->GetRotation(),merged_rot,object->animation_mask));
+        }else{
+            object->SetRotation(merged_rot);
+        }
+    }
+}
+
+/*
+    TRACKS ARE PAIRED BY THE OBJECT THEY DRIVE, not by their place in the list.
+
+    This used to take track i of one clip with track i of the other, and refused outright when the
+    two clips had different numbers of tracks - so a clip exported before a rig grew a bone (the
+    archer's hair bones, 2026-09-28) could not be blended with one exported after, or with anything
+    the exporter had trimmed a constant channel from. Worse, two clips with the SAME count in a
+    different order blended the wrong bones together without a word.
+
+    A bone only one of the two animates is blended against its reference pose on the other side -
+    what the clip that leaves it alone holds it at - so a clip without hair bones fades the hair
+    back to its modelled shape rather than stopping the whole blend. Something that is not a bone
+    has no such pose, and simply takes the one clip that has it, as ApplyInterval would.
+
+    The root bone is LerpRootMotion's, in either clip, and skipped here.
+*/
 void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor){
     if (!target){
         return;
     }
 
-    if (target->object_animations.size() != object_animations.size()){
-        //We can Lerp if we find the animation with the least amount of objects,
-        //and map those to the other animation.
-        //TODO
-
-        debug->Err("Lerp on these animations are incompatible (%s -> %s)\n",name.c_str(),target->name.c_str());
-        return;
+    //The target clip's tracks by what they drive. A few dozen entries, rebuilt per call: cheaper
+    //than keeping a cache honest across relinks.
+    std::unordered_map<Object*,ObjectAnimation*> theirs;
+    theirs.reserve(target->object_animations.size());
+    for (ObjectAnimation* track : target->object_animations){
+        if (track->target && track != target->root_track){
+            theirs[track->target] = track;
+        }
     }
 
-    for (int i=0;i<object_animations.size();i++){
-        ObjectAnimation* this_object_animation = object_animations.at(i);
-        ObjectAnimation* target_object_animation = target->object_animations.at(i);
-
+    std::unordered_set<Object*> done;
+    done.reserve(object_animations.size());
+    for (ObjectAnimation* this_object_animation : object_animations){
+        Object* object = this_object_animation->target;
         //The root bone is handled separately, uniformly, by LerpRootMotion - skip it here.
-        if (this_object_animation == root_track || target_object_animation == target->root_track){
+        if (!object || this_object_animation == root_track ||
+            (target->root_track && object == target->root_track->target)){
             continue;
         }
+        done.insert(object);
 
         ObjectAnimationKeyFrame start_sampled;
-        ObjectAnimationKeyFrame end_sampled;
-        ObjectAnimationKeyFrame* start_keyframe =
-            this_object_animation->Sample(this_interval,start_sampled) ? &start_sampled : NULL;
-        ObjectAnimationKeyFrame* end_keyframe =
-            target_object_animation->Sample(target_interval,end_sampled) ? &end_sampled : NULL;
-
-        if (!start_keyframe){
+        if (!this_object_animation->Sample(this_interval,start_sampled)){
             debug->Err("Failed to get start_keyframe for %s at %.3f\n",name.c_str(),this_interval);
             continue;
         }
-        if (!end_keyframe){
+        ObjectAnimationKeyFrame end_sampled;
+        std::unordered_map<Object*,ObjectAnimation*>::iterator match = theirs.find(object);
+        if (match != theirs.end()){
+            if (!match->second->Sample(target_interval,end_sampled)){
+                debug->Err("Failed to get end_keyframe for %s at %.3f\n",target->name.c_str(),target_interval);
+                continue;
+            }
+        }else if (!ReferenceKeyFrame(object,end_sampled)){
+            //Not a bone and not in the target clip: this clip's own value, as the target would leave it.
+            end_sampled = ObjectAnimationKeyFrame(&start_sampled);
+        }
+        ApplyLerped(object,start_sampled,end_sampled,factor);
+    }
+
+    //And what only the target clip animates, blended in from the reference pose.
+    for (std::unordered_map<Object*,ObjectAnimation*>::iterator it = theirs.begin(); it != theirs.end(); ++it){
+        Object* object = it->first;
+        if (done.count(object) || (root_track && object == root_track->target)){
+            continue;
+        }
+        ObjectAnimationKeyFrame end_sampled;
+        if (!it->second->Sample(target_interval,end_sampled)){
             debug->Err("Failed to get end_keyframe for %s at %.3f\n",target->name.c_str(),target_interval);
             continue;
         }
-
-        //Apply the Lerp value.
-        if (start_keyframe->f_position && end_keyframe->f_position){
-            vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
-            if (this_object_animation->target){
-                this_object_animation->target->SetPosition(pos);
-            }
+        ObjectAnimationKeyFrame start_sampled;
+        if (!ReferenceKeyFrame(object,start_sampled)){
+            start_sampled = ObjectAnimationKeyFrame(&end_sampled);
         }
-        if (start_keyframe->f_rotation && end_keyframe->f_rotation){
-            if (this_object_animation->target){
-                quat merged_rot = quat::slerp(start_keyframe->rotation,end_keyframe->rotation,factor);
-
-                //Set rotation forces the bone into a specific rotation, ignoring existing rotation.
-                if (this_object_animation->target->animation_mask < 1.0f){
-                    quat rot = quat::slerp(this_object_animation->target->GetRotation(),merged_rot,this_object_animation->target->animation_mask);
-                    this_object_animation->target->SetRotation(rot);
-                }else{
-                    this_object_animation->target->SetRotation(merged_rot);
-                }
-            }
-        }
+        ApplyLerped(object,start_sampled,end_sampled,factor);
     }
 }
 

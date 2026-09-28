@@ -1,4 +1,5 @@
 #include "Puppet.h"
+#include "StateHash.h"
 
 #include <math.h>
 
@@ -1033,4 +1034,23 @@ void Puppet::ChooseUpper(const ArcherAnimParams& in, PuppetChoice& out){
 bool Puppet::IsNocked(const ArcherAnimParams& in){
     return in.action == ACTION_DRAW &&
            in.action_phase * (float)BOW_DRAW_TICKS >= (float)BOW_NOCK_TICKS - 0.001f;
+}
+
+//See the declaration. Field by field, in the members' own order.
+void Puppet::HashState(StateHash& h) const{
+    h.Begin("puppet");
+    h.Add(f_rope_climbing); h.Add(f_climb_playhead); h.Add(climb_playhead); h.Add(climb_target);
+    h.Add(f_was_on_ground); h.Add(last_vel_y); h.Add(last_ground_speed);
+    h.Add(settle_ticks); h.Add(settle_clip); h.Add(air_clip); h.Add(lead_clip);
+    h.Add(fall_weight); h.Add(run_jump_rise); h.Add(stop_plant);
+    h.Add(yaw_deg); h.Add(aim_weight); h.Add(upper_weight); h.Add(upper_latched);
+    h.Add(leg_weight); h.Add(leg_lead_deg); h.Add(leg_gravity);
+    h.Add(upper_mix); h.Add(upper_xfade_serial); h.Add(upper_from);
+    h.Add(upper_prev_clip); h.Add(upper_prev_phase);
+    const PuppetChoice& c = choice;
+    h.Add(c.clip); h.Add(c.blend_clip); h.Add(c.blend); h.Add(c.blend_phase_offset);
+    h.Add(c.rate); h.Add(c.wanted_rate); h.Add(c.start_time); h.Add(c.f_placeholder);
+    h.Add(c.upper_clip); h.Add(c.upper_phase); h.Add(c.upper_from_clip);
+    h.Add(c.pinned_time); h.Add(c.lift); h.Add(c.lift_base);
+    h.Add(c.overlay_clip); h.Add(c.overlay_time); h.Add(c.overlay_weight);
 }

@@ -497,6 +497,75 @@ struct StageRamp{
 };
 
 /*
+    A ROPE BRIDGE - bridge_crumble_plan.md section 3. Planks hung between two pinned anchors, a
+    chain of POINTS stepped in the rules every tick: each point a small mass under gravity, each
+    plank a spring that pulls when stretched past its length and never pushes - a rope, not a rod.
+    Semi-implicit Euler in BRIDGE_SUBSTEPS fixed substeps, so it is deterministic and stable at the
+    stiffness a bridge wants.
+
+    IT SAGS under its own weight, and more under hers: while she stands on it her mass is on the
+    two points either side of her, shared by where she stands between them, so the dip travels
+    with her and the planks under her feet stay nearly level. A LANDING hands those two points
+    her fall as momentum, like a plant's, so a hard landing drives it down and it bounces back.
+
+    She stands on it as a surface (SURFACE_BRIDGE): one-way, landed on from above, dropped through
+    with Down like a branch; but held to like a ramp when she walks onto it off the block at an
+    anchor, since the first plank already hangs a little below that block's top.
+
+    `planks` and `slack` are the level's; the rest is state. Collides with nothing in rp3d: crates
+    and arrows pass through it. The app draws a plank between each pair of points.
+*/
+/*
+    Substeps and stiffness go together: the fastest thing the chain can do is two neighbours
+    zig-zagging, at sqrt(4 k / m), and semi-implicit Euler holds that only while the substep is
+    well inside its period - with the plank damping on top, which shortens the limit. At 8 substeps
+    and a damping of 12 it was past it: the bridge never settled, holding a wobble of 0.9 a second.
+*/
+#define BRIDGE_SUBSTEPS             12
+//Each point, in her masses: thirteen of them weigh about twice her, a plank bridge's heft, and
+//what keeps her run from whipping it - a lighter chain sent waves along it at 14 units a second.
+#define BRIDGE_POINT_MASS           0.15f
+#define BRIDGE_STIFFNESS            7500.0f //per plank: its own weight stretches the most-pulled 1.5%
+#define BRIDGE_PLANK_DAMPING        4.0f    //along each plank, on how fast it is stretching
+/*
+    On every point, per second - what settles a swing, and what keeps a run across from whipping
+    it. Heavy on purpose: a light chain carries waves at about twice her run speed, and at 1.5 a
+    run left it thrashing at 14 units a second. Ropes, knots and planks rubbing are a lot of friction.
+*/
+#define BRIDGE_AIR_DAMPING          4.0f
+//How far she steps UP off a bridge onto the block at an anchor: her weight near one pulls the last
+//plank down below the block's top by more than SPRING_STEP_UP, and she walked into its face.
+#define BRIDGE_STEP_UP              0.9f
+//Steeper than this under her feet and she slides - far past a leaf's, since a plank has grip
+//and her own weight keeps the planks under her level. What slides her is a broken half, later.
+#define BRIDGE_SLIP_DEG             30.0f
+struct StageBridge{
+    v2    a;                    //the left anchor, at the top corner of the block it is tied to
+    v2    b;                    //the right one
+    int   planks = 12;
+    float slack = 1.04f;        //its length over the span: how much it can hang
+    float link = 0.0f;          //one plank's length, from the two above (Stage::AddBridge)
+
+    //--- State, stepped by Stage::TickBridges ---
+    std::vector<v2> p;          //planks + 1 points; the first and last are the anchors
+    std::vector<v2> v;
+    std::vector<v2> prev_p;     //where the points were last tick - the surface she was above
+    //Her mass this tick, on points `load_at` and `load_at + 1`: the share on the second. -1 none.
+    int   load_at = -1;
+    float load_t = 0.0f;
+
+    bool  Covers(float x) const { return !p.empty() && x >= p.front().x && x <= p.back().x; }
+    //The plank under x: k such that p[k].x <= x <= p[k+1].x, and how far along it.
+    int   Plank(float x, const std::vector<v2>& pts, float* out_t) const;
+    float SurfaceY(float x) const;
+    float SurfaceYThen(float x) const;
+    float SurfaceVelY(float x) const;
+    float Slope(float x) const;             //dy/dx of the plank under x
+    float Lowest() const;                   //the lowest point's y
+    float Mass(int i) const;                //point i's, with her share on it
+};
+
+/*
     THE SLIDE GALLERY, in the rope level - Stage::BuildSlideGallery. Named here so the rules test
     and the level agree on where each hill is without either typing a coordinate.
 */
@@ -519,11 +588,13 @@ enum SurfaceKind{
     SURFACE_NONE = -1,
     SURFACE_PLANT = 0,
     SURFACE_BRANCH,
-    SURFACE_RAMP
+    SURFACE_RAMP,
+    SURFACE_BRIDGE,
+    SURFACE_KINDS
 };
 struct StageSurface{
     int   kind = SURFACE_NONE;
-    int   index = -1;               //into spring_plants, branches or ramps
+    int   index = -1;               //into spring_plants, branches, ramps or bridges
     float top = 0.0f;               //under her now
     float top_then = 0.0f;          //under where she started the move, as it was then
     float vel_y = 0.0f;             //its own vertical speed under her
@@ -1413,6 +1484,7 @@ public:
     std::vector<StageSpringPlant> spring_plants;
     std::vector<StageBranch> branches;
     std::vector<StageRamp>  ramps;
+    std::vector<StageBridge> bridges;
     std::vector<StageZone>  zones;
     std::vector<StageCrumbleGroup> crumble_groups;
 
@@ -1476,6 +1548,7 @@ public:
     */
     float SlideAccel() const;
     int   ramp_on = -1;             //the ramp she is standing on, or -1 - kept with f_on_ground
+    int   bridge_on = -1;           //the bridge she is standing on, or -1 - kept with f_on_ground
     //The slope under her feet in degrees, + rising to the right; 0 on flat ground or in the air.
     float SlopeUnderFeetDeg() const;
     //--- Pumping - see SPRING_STOMP_TICKS ---
@@ -1657,6 +1730,16 @@ public:
     //A one-line dump of the archer's state, for the log, the ImGui panel and the rules test.
     std::string DebugLine() const;
 
+    /*
+        Everything the rules carry from one tick to the next, into a replay's state hash - see
+        core/StateHash.h and docs/replay_determinism_plan.md. Two parts: `her` (the character,
+        her bow, her body) and `world` (arrows, blocks, plants, bridges, crumbles, pending zone
+        effects). A NEW FIELD THAT OUTLIVES A TICK BELONGS HERE TOO, or a replay can part over it
+        without the trace noticing. The layout (what BuildLevel lays down and never changes) is
+        left out; what the play changes of it - a block broken, a plant bent - is in.
+    */
+    void HashState(class StateHash& hash) const;
+
 private:
     int  level = STAGE_LEVEL_MAIN;
     //What KeepBlockLayout recorded, laid over BuildLevel's blocks by Reset. Empty until then.
@@ -1673,6 +1756,13 @@ private:
     //Declares a zone by its edges rather than its centre, which is how a level is read, and
     //with the spot a teleport to it lands her feet on. See StageZone.
     void AddZone(const char* name, float left, float right, float bottom, float top, v2 arrive);
+    //A bridge from anchor `a` to anchor `b`, hung and settled at rest so the level starts with
+    //it still. See StageBridge.
+    void AddBridge(v2 a, v2 b, int planks, float slack);
+    //Every bridge one tick: her weight on the one she stood on last tick, then the substeps.
+    //Before she moves, like the spring plants, so she lands on where it is now.
+    void TickBridges();
+    void StepBridge(StageBridge& br, float dt);
     //A trigger - a zone that is not an area - by its edges, with one effect. Returns its index.
     int  AddTrigger(const char* name, float left, float right, float bottom, float top, const StageZoneEffect& effect);
     //A crumble group of the blocks from `first` to the end of `blocks`, in that order, starting

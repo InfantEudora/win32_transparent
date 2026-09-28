@@ -228,6 +228,136 @@ static void TestPlaneAndLimits(){
           "tip off the vertical %.3f",flat.length());
 }
 
+static void TestSpheres(){
+    printf("\nspheres\n");
+    /*
+        Hair on a head: a limp two-segment chain rooted on top of a ball, held out sideways so it
+        falls round the ball. It must drape over the surface - never inside it - keep its lengths,
+        and leave the pinned root alone although the root is inside the radius's reach.
+    */
+    DynamicChainParams p;
+    p.stiffness = 0.0f;
+    p.damping = 0.05f;
+    DynamicChainSphere head;
+    head.centre = vec3(0.0f,2.0f,0.0f);
+    head.radius = 0.5f;
+    p.spheres.push_back(head);
+    std::vector<vec3> pose = { vec3(0.0f,2.55f,0.0f), vec3(0.4f,2.55f,0.1f), vec3(0.8f,2.55f,0.2f) };
+    DynamicChain c;
+    float deepest = 0.0f;
+    for (int t = 0; t < 1200; t++){
+        c.Step(pose,p,{});
+        for (size_t i = 1; i < c.Points().size(); i++){
+            deepest = fmaxf(deepest,head.radius - c.Points()[i].distance(head.centre));
+        }
+    }
+    Check("draped over a ball, no particle ends up inside it",deepest < 0.01f,"deepest %.4f",deepest);
+    Check("and the chain keeps its lengths doing it",WorstLengthError(c,pose) < 1e-3f,"worst %.2e",
+          WorstLengthError(c,pose));
+    Check("the root is pinned, not pushed",c.Points()[0].distance(pose[0]) < 1e-6f);
+    Check("and it has fallen round the side, not stayed out straight",c.Points().back().y < 2.3f,
+          "tip y %.3f",c.Points().back().y);
+}
+
+static void TestCone(){
+    printf("\nthe 3D cone\n");
+    /*
+        A landing: a short limp-ish chain hanging from a root that falls at 19 u/s and stops dead in
+        one tick, then stands still under ordinary gravity. Unlimited, that much energy on a 0.3
+        chain swings it far past sideways; within a 0.6 rad cone it must never point further than
+        that from its pose.
+    */
+    //Three segments, as the hair's back chain: the cones must NOT add up down it - every segment,
+    //the last included, stays within the cone of where the pose points it.
+    std::vector<float> lens = { 0.07f, 0.13f, 0.16f };
+    std::vector<float> bend = { 0.25f, 0.0f, 0.0f };
+    DynamicChainParams p;
+    p.stiffness = 0.06f;
+    p.damping = 0.08f;
+    std::vector<DynamicChainLimit> cone(3);
+    for (DynamicChainLimit& c : cone){
+        c.cone = 0.6f;
+    }
+    float worst_free = 0.0f, worst_cone = 0.0f;
+    for (int limited = 0; limited < 2; limited++){
+        DynamicChain c;
+        float y = 3.0f;
+        for (int t = 0; t < 300; t++){
+            if (t < 40){
+                y -= 19.0f / 60.0f;         //falling fast, then stopped dead at t 40
+            }
+            std::vector<vec3> pose = Limb(vec3(0.0f,y,0.0f),lens,bend,0.05f);
+            c.Step(pose,p,limited ? cone : std::vector<DynamicChainLimit>());
+            for (size_t i = 1; i < pose.size(); i++){
+                vec3 a = pose[i] - pose[i - 1];
+                vec3 b = c.Points()[i] - c.Points()[i - 1];
+                a.normalize();
+                b.normalize();
+                float angle = acosf(fminf(fmaxf(a.dot(b),-1.0f),1.0f));
+                if (limited){ worst_cone = fmaxf(worst_cone,angle); }else{ worst_free = fmaxf(worst_free,angle); }
+            }
+        }
+    }
+    Check("unlimited, stopping dead flings it far off its pose",worst_free > 1.5f,"%.2f rad",worst_free);
+    Check("within a cone NO segment points further off its pose than the cone",worst_cone < 0.6f + 1e-3f,
+          "worst %.3f of 0.600",worst_cone);
+
+    /*
+        A GAME'S JUMP, as apps/archer's rules make one: still, then 18 u/s up in one tick, flight
+        under 42 u/s^2 rising and 57 falling - with the chain's gravity matched to it, as the app
+        does, so it is weightless in the air with her - and a dead stop on landing, back to 9.81.
+        What the chain does STANDING STILL is the baseline: gravity alone sags this bent pose a long
+        way at this stiffness, so the checks are against that, not against zero.
+    */
+    auto worst_off_pose = [&](float max_accel, bool f_jump) -> float {
+        DynamicChainParams q = p;
+        q.max_accel = max_accel;
+        DynamicChain c;
+        float y = 0.0f, v = 0.0f;
+        bool f_air = false;
+        float worst = 0.0f;
+        for (int t = 0; t < 300; t++){
+            if (f_jump && t == 20){
+                v = 18.0f;
+                f_air = true;
+            }
+            float g = 9.81f;
+            if (f_air){
+                g = (v > 0.0f) ? 42.0f : 56.7f;
+                v -= g / 60.0f;
+                y += v / 60.0f;
+                if (y <= 0.0f){
+                    y = 0.0f;
+                    v = 0.0f;
+                    f_air = false;
+                    g = 9.81f;
+                }
+            }
+            q.gravity = vec3(0.0f,-g,0.0f);
+            std::vector<vec3> pose = Limb(vec3(0.0f,3.0f + y,0.0f),lens,bend,0.05f);
+            c.Step(pose,q,{});
+            for (size_t i = 1; i < pose.size(); i++){
+                vec3 a = pose[i] - pose[i - 1];
+                vec3 b = c.Points()[i] - c.Points()[i - 1];
+                a.normalize();
+                b.normalize();
+                worst = fmaxf(worst,acosf(fminf(fmaxf(a.dot(b),-1.0f),1.0f)));
+            }
+        }
+        return worst;
+    };
+    float still = worst_off_pose(0.0f,false);
+    float jump_free = worst_off_pose(0.0f,true);
+    float jump_capped = worst_off_pose(60.0f,true);
+    float jump_tiny = worst_off_pose(0.01f,true);
+    Check("a game's jump, felt in full, flings it well past its sag",jump_free > still + 0.5f,
+          "%.2f rad against %.2f standing",jump_free,still);
+    Check("capped at 60 u/s^2, the same jump barely moves it past its sag",jump_capped < still + 0.3f,
+          "%.2f rad against %.2f standing",jump_capped,still);
+    Check("a near-zero cap carries the body's motion whole - no worse than standing still",jump_tiny < still + 0.02f,
+          "%.3f rad against %.3f standing",jump_tiny,still);
+}
+
 static void TestHousekeeping(){
     printf("\nresets and repeats\n");
     std::vector<float> lens = { 0.45f, 0.45f };
@@ -331,6 +461,8 @@ int main(void){
     TestLimp();
     TestJerk();
     TestPlaneAndLimits();
+    TestSpheres();
+    TestCone();
     TestHousekeeping();
     printf("\n%i passed, %i failed\n",num_passed,num_failed);
     return num_failed ? 1 : 0;

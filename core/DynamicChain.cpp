@@ -25,6 +25,7 @@ void DynamicChain::Reset(const std::vector<vec3>& animated){
     points = animated;
     previous = animated;
     pose = animated;
+    felt = vec3(0.0f,0.0f,0.0f);        //a fresh chain starts still, whatever the root is doing
 }
 
 void DynamicChain::Carry(const quat& rotation, const vec3& about){
@@ -32,6 +33,9 @@ void DynamicChain::Carry(const quat& rotation, const vec3& about){
         points[i] = about + rotation * (points[i] - about);
         previous[i] = about + rotation * (previous[i] - about);
         pose[i] = about + rotation * (pose[i] - about);
+        if (i == 0){
+            felt = rotation * felt;     //a velocity, so turned but not moved
+        }
     }
     //The pose was turned with it, so the frame it was in was too.
     last_frame = rotation * last_frame;
@@ -74,6 +78,30 @@ void DynamicChain::Step(const std::vector<vec3>& animated, const DynamicChainPar
         }
     }
     last_frame = frame;
+    /*
+        0b. The root's acceleration, felt only up to max_accel. `felt` is the root's velocity as the
+        chain knows it, in units per tick, closing on the real one by at most max_accel dt^2 a tick;
+        the difference is carried straight on - a move, like step 0, so it carries no momentum. See
+        DynamicChainParams::max_accel.
+    */
+    vec3 moved = animated[0] - points[0];
+    vec3 carried(0.0f,0.0f,0.0f);
+    if (params.max_accel > 0.0f){
+        vec3 dv = moved - felt;
+        float limit = params.max_accel * params.dt * params.dt;
+        float dl = dv.length();
+        if (dl > limit){
+            dv = dv * (limit / dl);
+        }
+        felt = felt + dv;
+        carried = moved - felt;
+        for (size_t i = 1; i < n; i++){
+            points[i] = points[i] + carried;
+            previous[i] = previous[i] + carried;
+        }
+    }else{
+        felt = moved;
+    }
     vec3 nrm = params.plane_normal;
     bool f_planar = nrm.length() > 1e-6f;
     if (f_planar){
@@ -93,7 +121,18 @@ void DynamicChain::Step(const std::vector<vec3>& animated, const DynamicChainPar
 
         //1. Verlet: the velocity it had, damped, plus gravity.
         vec3 p = points[i];
-        vec3 v = (p - previous[i]) * keep;
+        /*
+            WITH A CAP, THE DAMPING IS THE CHAIN'S OWN - its motion relative to the root as the chain
+            feels it (`felt`) loses `damping` a tick, not its motion through the world. Both others
+            were tried and fling it: damped in the carried frame outright, a capped landing (that
+            frame still moving down while the root has stopped) slowed the particles against a root
+            that kept going and they trailed UP over it; damped against the world, the damping
+            became DRAG, and 8% of 20 u/s a tick streamed the hair straight up off a falling head. The
+            wind is where the air belongs.
+            Without a cap it is as it always was - against the world - which the legs are tuned to.
+        */
+        vec3 v = (params.max_accel > 0.0f) ? felt + ((p - previous[i]) - felt) * keep
+                                           : (p - previous[i]) * keep;
         previous[i] = p;
         p = p + v + fall;
 
@@ -142,8 +181,43 @@ void DynamicChain::Step(const std::vector<vec3>& animated, const DynamicChainPar
             if (clamped != dev){
                 d = quat(nrm,clamped - dev) * d;
             }
+        }else if (!f_planar && k < limits.size() && limits[k].cone > 0.0f){
+            //The 3D cone - see DynamicChainLimit::cone. Turned back onto its edge, about the axis
+            //between where it points and where the POSE points this segment - not the pose carried
+            //along the simulated parent, or the cones add up down the chain.
+            vec3 want = anim_seg;
+            float dl = d.length();
+            float wl = want.length();
+            if (dl > 1e-6f && wl > 1e-6f){
+                vec3 a = d * (1.0f / dl);
+                vec3 b = want * (1.0f / wl);
+                float angle = acosf(fminf(fmaxf(a.dot(b),-1.0f),1.0f));
+                if (angle > limits[k].cone){
+                    vec3 axis = a.cross(b);
+                    if (axis.length() < 1e-6f){
+                        //Pointing straight back against the pose: any perpendicular will do.
+                        axis = (fabsf(b.x) < 0.9f) ? b.cross(vec3(1.0f,0.0f,0.0f)) : b.cross(vec3(0.0f,1.0f,0.0f));
+                    }
+                    axis.normalize();
+                    d = quat(axis,angle - limits[k].cone) * d;
+                }
+            }
         }
         p = parent + d;
+
+        //6. Out of the spheres, then back to its length - see DynamicChainSphere.
+        for (const DynamicChainSphere& s : params.spheres){
+            vec3 out = p - s.centre;
+            float dist = out.length();
+            if (s.radius <= 0.0f || dist >= s.radius){
+                continue;
+            }
+            p = (dist > 1e-6f) ? s.centre + out * (s.radius / dist) : parent + d;
+            vec3 back = p - parent;
+            float bl = back.length();
+            p = (bl > 1e-6f) ? parent + back * (len / bl) : parent + d;
+            d = p - parent;
+        }
         points[i] = p;
 
         //What this segment's pose is turned by now, for its child's target.

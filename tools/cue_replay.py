@@ -26,6 +26,18 @@ no such lines at all. --with-skips compares them too, once every baseline was wr
 cues.
 Each replay restores its recording's start state, including the level tick every random draw is
 hashed from, so two runs of one recording print identical lines; a difference is a real change.
+
+THE STATE TRACE is checked first: `replay_trace` hands back a hash of every tick's state
+(Application::HashSimState), --write keeps it as recordings/<name>.trace, and a check names the
+first tick and part that differ - where two runs parted, long before a sound shows it. See
+docs/replay_determinism_plan.md. --tick-starts reports state changed between ticks; --detail
+splits the physics bodies into a part each to name the one that parts first (diagnosis only).
+
+BUT START THE APP FRESH for every --write and every check you mean to trust, until the plan's
+restore fixes land. Measured 2026-09-28 with the trace: from a fresh start the physics bodies
+repeat exactly, every tick of every recording; a second pass in the same app parts at tick 1-2,
+first in the props NewGame rebuilds (crates, targets, stands) - the physics world outlives the
+restart and remembers the bodies it had.
 Windows Python; nothing beyond the standard library.
 """
 import argparse, difflib, glob, json, os, sys, time, urllib.request
@@ -39,6 +51,11 @@ def main():
     ap.add_argument("--port", type=int, default=8768, help="the app's MCP port, default 8768")
     ap.add_argument("--write", action="store_true", help="write the baselines instead of checking")
     ap.add_argument("--with-skips", action="store_true", help="compare skip lines too")
+    ap.add_argument("--tick-starts", action="store_true",
+                    help="also report state changed BETWEEN ticks (the app's view, UI or a tool)")
+    ap.add_argument("--detail", action="store_true",
+                    help="the default hash: one part per physics body, to name the one that parts first "
+                         "(a diagnosis - do not --write baselines with it)")
     args = ap.parse_args()
 
     def compared(lines):
@@ -73,6 +90,37 @@ def main():
     call("archer_hold", {"action": "continue", "ticks": 5})
     time.sleep(1.0)
     call("archer_sound", {"volume": 0})
+    call("replay_trace", {"tick_starts": args.tick_starts, "detail": args.detail, "parts": False})
+
+    def trace_lines():
+        # The state trace (Application::HashSimState): one line per tick, `tick total part=hash ...`.
+        t = call("replay_trace", {})
+        if not isinstance(t, dict) or "trace" not in t:
+            return None, []
+        lines = []
+        between = []
+        for row in t["trace"]:
+            parts = " ".join("%s=%s" % (k, v) for k, v in sorted(row.get("parts", {}).items()))
+            lines.append("%6d %s %s\n" % (row["t"], row["h"], parts))
+            if row.get("changed_between"):
+                between.append((row["t"], row["changed_between"]))
+        return lines, between
+
+    def first_difference(baseline, run):
+        # The first tick whose line differs, and which parts - the line's `name=hash` words.
+        for i in range(max(len(baseline), len(run))):
+            a = baseline[i] if i < len(baseline) else None
+            b = run[i] if i < len(run) else None
+            if a == b:
+                continue
+            if a is None or b is None:
+                return "%s ends at line %d" % ("the baseline" if a is None else "this run", i + 1)
+            wa, wb = a.split(), b.split()
+            pa = dict(w.split("=", 1) for w in wa[2:])
+            pb = dict(w.split("=", 1) for w in wb[2:])
+            parts = sorted(k for k in set(pa) | set(pb) if pa.get(k) != pb.get(k))
+            return "from tick %s, in %s" % (wa[0], ", ".join(parts) if parts else "the total")
+        return None
 
     failures = 0
     for name in names:
@@ -90,11 +138,19 @@ def main():
         resets = [i for i, l in enumerate(lines) if len(l.split()) >= 3 and l.split()[2] == "reset"]
         if resets:
             lines = lines[resets[-1] + 1:]
+        trace, between = trace_lines()
+        for tick, parts in between:
+            print("%-28s changed between ticks at %d: %s" % (name, tick, ", ".join(parts)))
         path = os.path.join(folder, name + ".cues")
+        trace_path = os.path.join(folder, name + ".trace")
         if args.write:
             with open(path, "w", newline="\n") as f:
                 f.writelines(lines)
-            print("%-28s wrote %d lines" % (name, len(lines)))
+            if trace:
+                with open(trace_path, "w", newline="\n") as f:
+                    f.writelines(trace)
+            print("%-28s wrote %d lines, %s" % (name, len(lines),
+                  "%d traced ticks" % len(trace) if trace else "no state trace (the app has no replay_trace)"))
             continue
         if not os.path.exists(path):
             print("%-28s NO BASELINE (%s) - run with --write first" % (name, path))
@@ -103,13 +159,27 @@ def main():
         with open(path) as f:
             baseline = compared(f.readlines())
         run = compared(lines)
+        f_bad = False
+        # The state first: it says where two runs parted, which the sounds only show once it is loud.
+        if trace and os.path.exists(trace_path):
+            with open(trace_path) as f:
+                trace_baseline = f.readlines()
+            where = first_difference(trace_baseline, trace)
+            if where:
+                f_bad = True
+                print("%-28s STATE DIFFERENT %s" % (name, where))
+            else:
+                print("%-28s state same (%d ticks)" % (name, len(trace)))
+        elif trace:
+            print("%-28s no state baseline - run with --write to make one" % name)
         if run == baseline:
             skipped = len(lines) - len(run)
             print("%-28s same (%d lines%s)" % (name, len(run), ", %d skips not compared" % skipped if skipped else ""))
         else:
-            failures += 1
+            f_bad = True
             print("%-28s DIFFERENT" % name)
             sys.stdout.writelines(difflib.unified_diff(baseline, run, name + ".cues", "this run"))
+        failures += 1 if f_bad else 0
     print("%s (%d of %d different)" % ("FAILED" if failures else "ALL SAME", failures, len(names)))
     sys.exit(1 if failures else 0)
 

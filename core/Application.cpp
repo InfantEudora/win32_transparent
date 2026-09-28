@@ -773,10 +773,13 @@ void Application::PhysicsThreadFunction(Application* app){
                 //tick is cleared by NextInput() below without any gameplay seeing it - which is
                 //what made every edge-triggered action undeliverable under sim_step. Backlog
                 //item 84; the long version is on InputController::ApplyTickInput.
+                app->TraceTickStart();
                 app->UpdateTickInput();
                 app->UpdateAnimations();
                 app->RunSimulationTick();
                 app->UpdatePhysics();
+                //The state this tick ended in, while a replay runs - see HashSimState.
+                app->TraceTickEnd();
             }
 
             //View work runs AFTER the tick, and on the passes that did not tick as well. After,
@@ -852,6 +855,117 @@ void Application::UpdatePhysics(){
         return;
     }
     main_scene->UpdatePhysics(GetPhysicsTimestep());
+}
+
+/*
+    See the declaration. Names, not ids: an object rebuilt by a restart gets a new id and is still
+    the same object to the simulation, so an id would make a warm replay differ from a fresh one
+    over nothing. The name keeps the tree's SHAPE in the hash - an object that exists in one run
+    and not the other is a difference.
+
+    TWO PARTS: `bodies`, the objects with a rigid body - simulated, so they must come out the same -
+    with their velocities, which the next tick is built on; and `objects`, everything else.
+
+    AN OBJECT MARKED f_visual_only IS LEFT OUT, and everything under it: the app's word that
+    nothing in the simulation reads it. Unmarked, in archer on 2026-09-28, `objects` differed from
+    the first tick of every replay and changed between nearly every pair of ticks - leaves and
+    grass the view moves each frame.
+*/
+void Application::HashSimState(StateHash& hash){
+    if (!main_scene){
+        return;
+    }
+    //f_trace_detail: a part per body, named and numbered in walk order, and the other objects a
+    //part per top-level object they hang under - to say WHICH one parted, or which the view moves.
+    bool f_detail = f_trace_detail;
+    int body_index = 0;
+    std::string top_part;
+    //Depth-first in `objects` order, as Scene::ForEachObject walks - but able to skip a subtree.
+    std::function<void(Object*)> walk = [&](Object* o){
+        if (!o || o->IsVisualOnly()){
+            return;
+        }
+        bool f_body = o->HasPhysics();
+        if (f_body && f_detail){
+            std::string part = "body" + std::to_string(body_index++) + ":" + o->name;
+            hash.Begin(part.c_str());
+        }else if (f_detail){
+            hash.Begin(top_part.c_str());
+        }else{
+            hash.Begin(f_body ? "bodies" : "objects");
+        }
+        vec3 p = o->GetPosition();
+        quat r = o->GetRotation();
+        vec3 s = o->GetScale();
+        hash.Add(o->name);
+        hash.Add(p.x); hash.Add(p.y); hash.Add(p.z);
+        hash.Add(r.x); hash.Add(r.y); hash.Add(r.z); hash.Add(r.w);
+        hash.Add(s.x); hash.Add(s.y); hash.Add(s.z);
+#ifdef USE_PHYSICS
+        rp3d::RigidBody* body = f_body ? o->GetRigidBody() : NULL;
+        if (body){
+            rp3d::Vector3 v = body->getLinearVelocity();
+            rp3d::Vector3 w = body->getAngularVelocity();
+            hash.Add(v.x); hash.Add(v.y); hash.Add(v.z);
+            hash.Add(w.x); hash.Add(w.y); hash.Add(w.z);
+        }
+#endif
+        for (Object* child : o->children){
+            walk(child);
+        }
+    };
+    for (size_t i = 0; i < main_scene->objects.size(); i++){
+        Object* o = main_scene->objects[i];
+        top_part = "obj" + std::to_string(i) + ":" + (o ? o->name : std::string());
+        walk(o);
+    }
+}
+
+void Application::TraceTickStart(){
+    InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+    //Decided before the tick's input: the tick that ends a replay is still the replay's.
+    f_tracing = input && input->IsReplaying();
+    if (!f_tracing || !f_trace_tick_starts || trace_last_end.Empty()){
+        return;
+    }
+    StateHash now;
+    HashSimState(now);
+    std::vector<std::string> changed;
+    for (const StateHash::Part& p : now.parts){
+        bool f_same = false;
+        for (const StateHash::Part& q : trace_last_end.parts){
+            if (q.name == p.name){
+                f_same = (q.hash == p.hash);
+                break;
+            }
+        }
+        if (!f_same){
+            changed.push_back(p.name);
+        }
+    }
+    if (!changed.empty()){
+        //Kept for this tick's entry, which TraceTickEnd writes.
+        trace_changed_between = changed;
+    }
+}
+
+void Application::TraceTickEnd(){
+    if (!f_tracing){
+        return;
+    }
+    InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+    TraceTick t;
+    t.tick = input ? input->GetReplayPosition() : 0;
+    HashSimState(t.state);
+    t.changed_between.swap(trace_changed_between);
+    trace_last_end = t.state;
+    std::lock_guard<std::mutex> lock(trace_mutex);
+    replay_trace.push_back(std::move(t));
+}
+
+std::vector<Application::TraceTick> Application::GetReplayTrace(){
+    std::lock_guard<std::mutex> lock(trace_mutex);
+    return replay_trace;
 }
 
 //--- Generic object MCP tools -------------------------------------------------------------
@@ -1645,6 +1759,13 @@ void Application::ServiceInputRecording(){
             RestoreRecordingState(replay.state);
         }
         input->StartReplay(replay.events,replay.begin,replay.end);
+        //A new trace: the last replay's stays readable until this one starts.
+        {
+            std::lock_guard<std::mutex> lock(trace_mutex);
+            replay_trace.clear();
+        }
+        trace_last_end.Clear();
+        trace_changed_between.clear();
     }
 }
 
@@ -1723,6 +1844,9 @@ Scene* Application::CreateNewScene(const std::string& name){
     scene->camera->SetPosition(vec3(5,5,5));
     scene->camera->SetLookAt(vec3());
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    //The view, by definition: moved by the person, the tools and the view code between ticks,
+    //read by no simulation. Out of the replay's state hash - see Object::f_visual_only.
+    scene->camera->SetVisualOnly(true);
     scene->AddObject(scene->camera);
 
     scenes.push_back(scene);

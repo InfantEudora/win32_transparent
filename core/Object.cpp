@@ -58,6 +58,7 @@ Object::Object(Object* object):Object(){
     material_slot[1] = object->material_slot[1];
     material_slot[2] = object->material_slot[2];
     material_slot[3] = object->material_slot[3];
+    f_visual_only = object->f_visual_only;      //a copy of a leaf is still a leaf
     SetPosition(object->GetPosition());
 }
 
