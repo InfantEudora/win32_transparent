@@ -1058,6 +1058,12 @@ struct ArcherSnapshot{
     //archer_zone lists and resolves a name against before sending ARCHER_CMD_ZONE. No triggers.
     std::vector<std::string> zone_names;
     std::vector<int> zone_ids;
+    //Stage's floors, edges and wall feet (vine_plan.md section 15), for archer_edges and the
+    //debug view - both off other threads than the tick that rebuilds them.
+    std::vector<StageSpan>   spans;
+    std::vector<StageEdge>   edges;
+    std::vector<StageCorner> corners;
+    int   edges_generation = 0;
     float x = 0.0f;
     float y = 0.0f;
     float vx = 0.0f;
@@ -1161,6 +1167,20 @@ struct ArcherSnapshot{
         int   kind = ARROW_NORMAL;
     };
     std::vector<ArrowView> arrows;
+
+    //The grown vines (vine_plan.md step 5): where each grew from, how far the main strand is.
+    struct GrownView{
+        int   slot = -1;
+        float x = 0.0f;
+        float y = 0.0f;
+        int   strands = 0;
+        int   leaves = 0;
+        float length = 0.0f;        //the main strand's built curve
+        float front = 0.0f;         //and how far along it the growth is
+        int   ticks = 0;            //since the strike
+        bool  f_done = false;
+    };
+    std::vector<GrownView> grown;
 
     //Where the aim arc currently says an arrow would land, which is the single most useful number
     //for a program trying to hit something: it can solve for the angle by bisection instead of
@@ -1667,6 +1687,21 @@ private:
     //snapshot; render thread. The last kind drawn and the stage tick it changed on are the
     //render thread's own, for the flash a change gets.
     void DrawArrowHud();
+    /*
+        The floors' edges drawn over the level (vine_plan.md section 15): each floor a thin white
+        line along its top; each edge a drop line down its face - red past VITALS_DROP_FROM (a drop
+        she fears), amber past half a unit, grey for a step - with a stub out over the drop and a
+        blue bar on a grabbable lip; each wall's foot a green L up its face. Laid on the
+        blocks' front faces, pushed out past the terrain's lip, so the camera sees them. From the
+        snapshot; rebuilt in PreRender only when the edges have changed. archer_debug_view `edges`.
+    */
+    void BuildEdgeView();
+    void UpdateEdgeView();
+    bool     f_show_edges = false;
+    Object*  edge_view_object = NULL;
+    Mesh*    edge_view_mesh = NULL;
+    int      edge_view_generation = -1;
+    int      edge_view_level = -1;
     bool f_show_arrow_hud = true;
     int      arrow_hud_kind = -1;
     uint64_t arrow_hud_changed_tick = 0;
@@ -2091,6 +2126,88 @@ private:
     bool f_vine_trunk_from_asset = false;
     bool f_vine_wrap_from_asset = false;
     bool f_vine_leaf_from_asset[VINE_LEAF_KIND_COUNT] = {};
+    //The pieces BuildVines loaded, kept for the grown vines to be made of the same.
+    std::vector<vertex>   vine_tile;
+    std::vector<vertex>   vine_wrap_tile;
+    std::vector<Material> vine_trunk_materials;
+    std::vector<Material> vine_wrap_materials;
+    int   vine_trunk_num_materials = 1;
+    int   vine_wrap_num_materials = 1;
+    bool  f_vine_trunk_placeholder = true;
+    Mesh* vine_leaf_meshes[VINE_LEAF_KIND_COUNT] = {};
+    std::vector<Material> vine_leaf_materials[VINE_LEAF_KIND_COUNT];
+    float vine_leaf_to_world[VINE_LEAF_KIND_COUNT] = {};
+
+    /*
+        GROWN VINES - vine_plan.md sections 9-10. A vine arrow into an underside grows one; visual
+        only, so none of it is rules state and none of it is in the replay's hash (vine_group is
+        visual-only). Split three ways by thread:
+
+          PHYSICS THREAD   grown_vines: the walk (GrowVine, at the strike, off the Stage's blocks),
+                           the leaves (from a pool made at Init, only shown and moved - no Object
+                           is created mid-tick), and each strand's front, from the stage's own tick
+                           count, so growth pauses and steps with the simulation and a replay grows
+                           the same vine at the same tick.
+          SHARED           grown_shared, under grown_mutex: each slot's paths when it is (re)filled,
+                           and every tick its strands' fronts. Small; nothing else crosses.
+          RENDER THREAD    grown_drawn: the trunk and wrap Objects and meshes, re-deformed in
+                           PreRender only when a front has moved - so a grown vine costs nothing
+                           once it is done.
+
+        At most GROWN_VINE_MAX at once, in a ring: past it, the oldest goes. (Withering, the
+        oldest's leaves blowing off, is section 12 - a later step.) A restart clears them.
+    */
+#define GROWN_VINE_MAX          32
+#define GROWN_LEAF_POOL         512     //per leaf kind; a vine past what is left grows fewer leaves
+    struct GrownLeaf{
+        Object*  object = NULL;
+        int      pool = -1;             //its index in its kind's pool, to hand back
+        int      strand = 0;
+        VineLeaf leaf;
+        vec3     tangent;               //the stem's direction where it grows, for the fold
+    };
+    struct GrownVine{
+        bool     f_live = false;
+        bool     f_done = false;        //fully grown and open: nothing left to move
+        int      species = VINE_SPECIES_VINE;
+        uint64_t start_tick = 0;
+        vec3     anchor;
+        std::vector<VineStrand> strands;
+        std::vector<float> lengths;     //each strand's built curve, what the fronts run along
+        std::vector<GrownLeaf> leaves;
+    };
+    GrownVine grown_vines[GROWN_VINE_MAX];
+    int       grown_next = 0;
+    std::vector<Object*> grown_leaf_pool[VINE_LEAF_KIND_COUNT];
+    std::vector<int>     grown_leaf_free[VINE_LEAF_KIND_COUNT];
+    int       grown_leaves_short = 0;   //leaves not grown for want of a pooled one, since Init
+
+    struct GrownVineShared{
+        int   generation = 0;           //+1 whenever the slot is refilled or emptied
+        bool  f_live = false;
+        std::vector<VinePath> paths;
+        std::vector<float> fronts;
+    };
+    std::mutex      grown_mutex;
+    GrownVineShared grown_shared[GROWN_VINE_MAX];
+
+    struct GrownVineDrawn{
+        int     generation = -1;
+        std::vector<VinePath> paths;
+        std::vector<Spline>   splines;
+        std::vector<float>    fronts;   //as last uploaded
+        Object* trunk = NULL;
+        Object* wrap = NULL;
+    };
+    GrownVineDrawn grown_drawn[GROWN_VINE_MAX];
+    bool f_grown_vines_ready = false;
+
+    void BuildGrownVines();                                 //render thread, Init: the pools
+    void StartGrownVine(const StageEvents::ArrowHit& hit);  //physics thread, at the strike
+    void StepGrownVines();                                  //physics thread, every tick
+    void ReleaseGrownVine(int slot);                        //physics thread
+    void ClearGrownVines();                                 //physics thread, NewGame
+    void DrawGrownVines();                                  //render thread, PreRender
     //Which block objects BuildTerrain hid, so the debug view can put them back without having to
     //work out again which ones melted. Indices into block_objects.
     std::vector<int> melted_blocks;

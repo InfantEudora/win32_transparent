@@ -1021,6 +1021,8 @@ void ApplicationArcher::Init(void){
     PlaceAllBackdropPines();
     LoadingStep(step++,LOADING_STEPS,"vines and rope");
     BuildVines();
+    //After it: made of the same pieces.
+    BuildGrownVines();
     //After BuildProps (the chain it is laid over) and BuildArcherModel (her scale, and the loader).
     BuildRopeSkin();
     LoadingStep(step++,LOADING_STEPS,"arrows and scenery");
@@ -1035,6 +1037,7 @@ void ApplicationArcher::Init(void){
     LoadingStep(step++,LOADING_STEPS,"lights and sound");
     //Only the line object here; the field itself is built by the "wind" step below.
     wind_view.Init(main_scene);
+    BuildEdgeView();
     BuildWindStreaks();
     BuildFireflies();
     BuildBackground();
@@ -2067,6 +2070,8 @@ void ApplicationArcher::PreRender(void){
         main_scene->AtTickBoundary([this](){ RebuildRopeSkinWeights(); });
     }
     UpdateWind();
+    UpdateEdgeView();
+    DrawGrownVines();
 }
 
 //--- Wind ---------------------------------------------------------------------------------------
@@ -2189,6 +2194,100 @@ void ApplicationArcher::UpdateWind(){
     auto t0 = std::chrono::steady_clock::now();
     wind_view.Update(wind,tick,main_scene->camera);
     wind_view_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+//--- The floors' edges, drawn -------------------------------------------------------------------
+
+//RENDER THREAD, at Init: only the (hidden, empty) line object. See f_show_edges.
+void ApplicationArcher::BuildEdgeView(){
+    edge_view_object = new Object();
+    edge_view_object->name = "edge_debug";
+    edge_view_object->SetVisualOnly(true);
+    edge_view_mesh = new Mesh();
+    edge_view_object->SetMesh(edge_view_mesh);
+    edge_view_object->SetPickability(false);
+    edge_view_object->SetCastsShadow(false);
+    edge_view_object->SetVisibility(false);
+    main_scene->AddObject(edge_view_object);
+}
+
+#define EDGE_VIEW_Z_OUT     0.6f        //past the block's front, and past the terrain's lip over it
+#define EDGE_VIEW_DROP_MAX  3.0f        //a drop line is drawn this long at most
+#define EDGE_VIEW_STUB      0.35f       //the stub out over the drop, and a foot's L
+void ApplicationArcher::UpdateEdgeView(){
+    if (!edge_view_object || !edge_view_mesh){
+        return;
+    }
+    if (!f_show_edges){
+        edge_view_object->SetVisibility(false);
+        return;
+    }
+    std::vector<StageSpan> spans;
+    std::vector<StageEdge> edges;
+    std::vector<StageCorner> corners;
+    int generation = 0;
+    int level = 0;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        generation = snapshot.edges_generation;
+        level = snapshot.level;
+        //Only when it has changed: the copy and the upload are for a change, not for a frame.
+        if (generation == edge_view_generation && level == edge_view_level){
+            edge_view_object->SetVisibility(true);
+            return;
+        }
+        spans = snapshot.spans;
+        edges = snapshot.edges;
+        corners = snapshot.corners;
+    }
+    edge_view_generation = generation;
+    edge_view_level = level;
+
+    std::vector<line_vertex> verts;
+    auto line = [&verts](const vec3& a, const vec3& b, uint32_t color){
+        line_vertex v;
+        v.color = color;
+        v.pos = a;
+        verts.push_back(v);
+        v.pos = b;
+        verts.push_back(v);
+    };
+    //The front face of whichever block it belongs to - the snapshot has no blocks, so each piece
+    //carries its own; a span uses its left block's.
+    const uint32_t SPAN = 0xFFE8E8E8u, FEAR = 0xFFE83A2Eu, DROP = 0xFFF0A020u, STEP = 0xFF909090u;
+    const uint32_t GRAB = 0xFF3C8CFFu, FOOT = 0xFF50D060u;
+    std::vector<float> span_z(spans.size(),STAGE_BLOCK_HALF_DEPTH);
+    for (const StageEdge& e : edges){
+        if (e.span >= 0 && e.span < (int)span_z.size()){
+            span_z[e.span] = e.z_front;
+        }
+    }
+    for (size_t i = 0; i < spans.size(); i++){
+        float z = span_z[i] + EDGE_VIEW_Z_OUT;
+        line(vec3(spans[i].x0,spans[i].y,z),vec3(spans[i].x1,spans[i].y,z),SPAN);
+    }
+    for (const StageEdge& e : edges){
+        float z = e.z_front + EDGE_VIEW_Z_OUT;
+        uint32_t c = (e.drop >= VITALS_DROP_FROM) ? FEAR : ((e.drop >= 0.5f) ? DROP : STEP);
+        float down = std::min(e.drop,EDGE_VIEW_DROP_MAX);
+        line(vec3(e.x,e.y,z),vec3(e.x,e.y - down,z),c);
+        line(vec3(e.x,e.y,z),vec3(e.x + e.side * EDGE_VIEW_STUB,e.y,z),c);
+        if (e.f_grabbable){
+            line(vec3(e.x - 0.15f,e.y + 0.08f,z),vec3(e.x + 0.15f,e.y + 0.08f,z),GRAB);
+        }
+    }
+    for (const StageCorner& c : corners){
+        float z = ((c.span >= 0 && c.span < (int)span_z.size()) ? span_z[c.span] : STAGE_BLOCK_HALF_DEPTH) + EDGE_VIEW_Z_OUT;
+        float up = std::min(c.rise,EDGE_VIEW_STUB * 2.0f);
+        line(vec3(c.x - c.side * EDGE_VIEW_STUB,c.y,z),vec3(c.x,c.y,z),FOOT);
+        line(vec3(c.x,c.y,z),vec3(c.x,c.y + up,z),FOOT);
+    }
+    if (verts.empty()){
+        edge_view_object->SetVisibility(false);
+        return;
+    }
+    edge_view_mesh->SetLineMeshData(verts.data(),(int)verts.size());
+    edge_view_object->SetVisibility(true);
 }
 
 //--- Foliage ------------------------------------------------------------------------------------
@@ -3183,10 +3282,333 @@ void ApplicationArcher::BuildVines(){
         debug->Info("Vine %zu: %.2f long, %i tiles, %zu tris + %zu wrap, %zu leaves\n",v,
                     spline.GetLength(),tiles,verts.size() / 3,wrap_tris,leaves.size());
     }
+    //Kept, so a grown vine is made of exactly what these are - see BuildGrownVines.
+    vine_tile = tile;
+    vine_trunk_materials = trunk_materials;
+    vine_trunk_num_materials = trunk_source ? trunk_source->num_materials : 1;
+    f_vine_trunk_placeholder = (trunk_source == NULL);
+    vine_wrap_tile = wrap_tile;
+    vine_wrap_materials = wrap_materials;
+    vine_wrap_num_materials = wrap_source ? wrap_source->num_materials : 1;
+    for (int k = 0; k < VINE_LEAF_KIND_COUNT; k++){
+        vine_leaf_meshes[k] = leaf_meshes[k];
+        vine_leaf_materials[k] = leaf_materials[k];
+        vine_leaf_to_world[k] = leaf_to_world[k];
+    }
     debug->Info("Vines: %zu built, trunk from %s, leaves from %s / %s\n",vine_trunks.size(),
                 f_vine_trunk_from_asset ? "archer.glb" : "the placeholder",
                 f_vine_leaf_from_asset[VINE_LEAF_1] ? "archer.glb" : "the placeholder",
                 f_vine_leaf_from_asset[VINE_LEAF_2] ? "archer.glb" : "the placeholder");
+}
+
+//--- Grown vines --------------------------------------------------------------------------------
+
+/*
+    The pools a grown vine is drawn with - see GrownVine. RENDER THREAD, at Init, after BuildVines:
+    a trunk and a wrap Object per slot, each with a mesh of its own that DrawGrownVines fills, and
+    GROWN_LEAF_POOL leaves of each kind sharing that kind's mesh. All hidden, all under vine_group
+    (visual only). Nothing is made after this; a growth only borrows.
+*/
+void ApplicationArcher::BuildGrownVines(){
+    f_grown_vines_ready = false;
+    if (!vine_group || vine_tile.empty()){
+        return;
+    }
+    for (int i = 0; i < GROWN_VINE_MAX; i++){
+        char name[40];
+        GrownVineDrawn& d = grown_drawn[i];
+        snprintf(name,sizeof(name),"grown_vine_%i",i);
+        d.trunk = new Object();
+        d.trunk->name = name;
+        d.trunk->SetPosition(vec3(0.0f,0.0f,0.0f));     //world coordinates, like the static trunks
+        d.trunk->SetPickability(false);
+        Mesh* mesh = new Mesh();
+        mesh->num_materials = vine_trunk_num_materials;
+        d.trunk->SetMesh(mesh);
+        if (f_vine_trunk_placeholder){
+            d.trunk->SetMaterialSlot(0,material_vine);
+        }else{
+            d.trunk->TakeMaterialNames(vine_trunk_materials);
+        }
+        d.trunk->SetVisibility(false);
+        vine_group->AttachChild(d.trunk);
+        if (f_vine_wrap_from_asset){
+            snprintf(name,sizeof(name),"grown_vine_%i.wrap",i);
+            d.wrap = new Object();
+            d.wrap->name = name;
+            d.wrap->SetPosition(vec3(0.0f,0.0f,0.0f));
+            d.wrap->SetPickability(false);
+            Mesh* wmesh = new Mesh();
+            wmesh->num_materials = vine_wrap_num_materials;
+            d.wrap->SetMesh(wmesh);
+            d.wrap->TakeMaterialNames(vine_wrap_materials);
+            d.wrap->SetVisibility(false);
+            vine_group->AttachChild(d.wrap);
+        }
+    }
+    for (int k = 0; k < VINE_LEAF_KIND_COUNT; k++){
+        grown_leaf_pool[k].clear();
+        grown_leaf_free[k].clear();
+        if (!vine_leaf_meshes[k]){
+            continue;
+        }
+        for (int i = 0; i < GROWN_LEAF_POOL; i++){
+            char name[40];
+            snprintf(name,sizeof(name),"grown_leaf_%i_%i",k,i);
+            Object* o = new Object();
+            o->name = name;
+            o->SetPickability(false);
+            o->SetCastsShadow(false);   //as the static vines' leaves: a speckle, not a shape
+            o->SetMesh(vine_leaf_meshes[k]);
+            if (f_vine_leaf_from_asset[k]){
+                o->TakeMaterialNames(vine_leaf_materials[k]);
+            }else{
+                o->SetMaterialSlot(0,material_vine_leaf);
+            }
+            o->SetVisibility(false);
+            vine_group->AttachChild(o);
+            grown_leaf_pool[k].push_back(o);
+        }
+        //Handed out from the back, so the lowest indices go first.
+        for (int i = GROWN_LEAF_POOL - 1; i >= 0; i--){
+            grown_leaf_free[k].push_back(i);
+        }
+    }
+    f_grown_vines_ready = true;
+    debug->Info("Grown vines: %i slots, %i leaves of each kind pooled\n",GROWN_VINE_MAX,GROWN_LEAF_POOL);
+}
+
+//Hides its leaves and hands them back; the slot's trunk goes on the render thread's next look.
+void ApplicationArcher::ReleaseGrownVine(int slot){
+    GrownVine& g = grown_vines[slot];
+    for (GrownLeaf& l : g.leaves){
+        if (l.object){
+            l.object->SetVisibility(false);
+            grown_leaf_free[l.leaf.kind].push_back(l.pool);
+        }
+    }
+    g = GrownVine();
+    std::lock_guard<std::mutex> lock(grown_mutex);
+    grown_shared[slot].generation++;
+    grown_shared[slot].f_live = false;
+    grown_shared[slot].paths.clear();
+    grown_shared[slot].fronts.clear();
+}
+
+void ApplicationArcher::ClearGrownVines(){
+    for (int i = 0; i < GROWN_VINE_MAX; i++){
+        if (grown_vines[i].f_live){
+            ReleaseGrownVine(i);
+        }
+    }
+    grown_next = 0;
+}
+
+/*
+    A vine arrow struck an underside. PHYSICS THREAD, from HandleEvents: the walk reads the Stage's
+    blocks, which are this thread's. Walked in full now (Vine.cpp's GrowVine), its leaves scattered
+    and assigned from the pool, and the growth clock started at this tick; StepGrownVines reveals it
+    from here. The seed is the strike's point and the arrow's slot, so a replay grows the same vine.
+*/
+void ApplicationArcher::StartGrownVine(const StageEvents::ArrowHit& hit){
+    if (!f_grown_vines_ready){
+        return;
+    }
+    int slot = grown_next;
+    grown_next = (grown_next + 1) % GROWN_VINE_MAX;
+    if (grown_vines[slot].f_live){
+        ReleaseGrownVine(slot);     //the oldest; withering it away instead is section 12
+    }
+    const VineSpecies& sp = VineSpeciesFor(VINE_SPECIES_VINE);
+    vec3 anchor(hit.point.x,hit.point.y,hit.point.z);
+    vec3 normal(hit.normal.x,hit.normal.y,hit.normal.z);
+    VineGrowth growth;
+    if (!GrowVine(sp,vine_params,anchor,normal,VineGrowthSeed(anchor,hit.arrow),stage.blocks,growth)){
+        return;
+    }
+    GrownVine& g = grown_vines[slot];
+    g = GrownVine();
+    g.f_live = true;
+    g.species = VINE_SPECIES_VINE;
+    g.start_tick = stage.ticks;
+    g.anchor = anchor;
+    g.strands = growth.strands;
+    std::vector<VinePath> paths;
+    int short_before = grown_leaves_short;
+    for (size_t k = 0; k < g.strands.size(); k++){
+        Spline spline;
+        BuildVineSpline(g.strands[k].path,spline);
+        g.lengths.push_back(spline.GetLength());
+        paths.push_back(g.strands[k].path);
+        std::vector<VineLeaf> leaves;
+        ScatterVineLeaves(spline,g.strands[k].path,vine_params,&stage.blocks,leaves);
+        for (const VineLeaf& leaf : leaves){
+            int kind = (leaf.kind >= 0 && leaf.kind < VINE_LEAF_KIND_COUNT) ? leaf.kind : VINE_LEAF_1;
+            if (grown_leaf_free[kind].empty()){
+                grown_leaves_short++;
+                continue;
+            }
+            GrownLeaf gl;
+            gl.pool = grown_leaf_free[kind].back();
+            grown_leaf_free[kind].pop_back();
+            gl.object = grown_leaf_pool[kind][gl.pool];
+            gl.strand = (int)k;
+            gl.leaf = leaf;
+            gl.leaf.kind = kind;
+            gl.tangent = spline.TangentAt(leaf.s);
+            gl.object->SetPosition(leaf.position);
+            gl.object->SetVisibility(false);
+            g.leaves.push_back(gl);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(grown_mutex);
+        GrownVineShared& s = grown_shared[slot];
+        s.generation++;
+        s.f_live = true;
+        s.paths = paths;
+        s.fronts.assign(paths.size(),0.0f);
+    }
+    cues.Signal("vine_grow",CuePayload().Set("x",anchor.x).Set("length",g.lengths.empty() ? 0.0f : g.lengths[0]));
+    debug->Info("Vine grows from (%.2f,%.2f): %zu strands, %.2f long, %zu leaves%s\n",anchor.x,anchor.y,
+                g.strands.size(),g.lengths.empty() ? 0.0f : g.lengths[0],g.leaves.size(),
+                (grown_leaves_short > short_before) ? " (the leaf pool ran short)" : "");
+}
+
+/*
+    Every tick: each growing vine's strand fronts, from the ticks since its strike, into the shared
+    slot for the render thread; and its leaves, opening as the front passes them - scaled in from
+    nothing and folded up from lying along the stem to their lift. PHYSICS THREAD, like the wind's
+    leaves. A vine fully grown and open is left alone from then on.
+*/
+void ApplicationArcher::StepGrownVines(){
+    if (!f_grown_vines_ready || main_scene != world_scene){
+        return;
+    }
+    for (int slot = 0; slot < GROWN_VINE_MAX; slot++){
+        GrownVine& g = grown_vines[slot];
+        if (!g.f_live || g.f_done || g.strands.empty()){
+            continue;
+        }
+        const VineSpecies& sp = VineSpeciesFor(g.species);
+        int ticks = (int)(stage.ticks - g.start_tick);
+        /*
+            The main strand's front by the clock. A branch starts when that front passes where it
+            leaves, and runs faster or slower so that it finishes when the main strand does - the
+            whole plant arrives at once rather than a twig still creeping after the rest has stopped.
+        */
+        std::vector<float> fronts(g.strands.size(),0.0f);
+        float main_len = g.lengths[0];
+        fronts[0] = VineGrowthFront(sp,main_len,ticks);
+        for (size_t k = 1; k < g.strands.size(); k++){
+            const VineStrand& st = g.strands[k];
+            float left = main_len - st.s_on_parent;
+            float f = (left > 1e-3f) ? (fronts[0] - st.s_on_parent) * (g.lengths[k] / left) : g.lengths[k];
+            fronts[k] = (f < 0.0f) ? 0.0f : ((f > g.lengths[k]) ? g.lengths[k] : f);
+        }
+        bool f_all_open = true;
+        for (GrownLeaf& l : g.leaves){
+            float open = VineLeafOpen(sp,l.leaf.s,fronts[l.strand]);
+            //Fully grown, every leaf opens: the front stops at the end, and a leaf near it would
+            //otherwise wait for a front that never comes.
+            if (fronts[l.strand] >= g.lengths[l.strand] && ticks >= sp.grow_ticks){
+                float late = (float)(ticks - sp.grow_ticks) / (float)ARCHER_TPS;
+                open = fmaxf(open,fminf(1.0f,late / 0.4f));
+            }
+            if (open < 1.0f){
+                f_all_open = false;
+            }
+            if (open <= 0.0f){
+                l.object->SetVisibility(false);
+                continue;
+            }
+            //The fold: the blade turned from along the stem up to where the scatter put it.
+            quat rot = l.leaf.rotation;
+            vec3 blade = rot * vec3(0.0f,0.0f,1.0f);
+            vec3 axis = blade.cross(l.tangent);
+            float sa = axis.length();
+            if (sa > 1e-4f){
+                float ang = atan2f(sa,blade.dot(l.tangent));
+                rot = quat(axis / sa,ang * (1.0f - open)) * rot;
+            }
+            float s = l.leaf.scale * vine_leaf_to_world[l.leaf.kind] * fmaxf(open,0.02f);
+            l.object->SetRotation(rot);
+            l.object->SetScale(vec3(s,s,s));
+            l.object->SetVisibility(true);
+        }
+        bool f_grown = (ticks >= sp.grow_ticks);
+        {
+            std::lock_guard<std::mutex> lock(grown_mutex);
+            //Fully grown is -1, the plain sweep, so the finished vine is exactly the static kind.
+            GrownVineShared& s = grown_shared[slot];
+            for (size_t k = 0; k < fronts.size() && k < s.fronts.size(); k++){
+                s.fronts[k] = f_grown ? -1.0f : fronts[k];
+            }
+        }
+        if (f_grown && f_all_open){
+            g.f_done = true;
+        }
+    }
+}
+
+/*
+    RENDER THREAD, from PreRender: every slot whose fronts have moved since it was last drawn is
+    re-deformed - trunk and wrap, every strand, up to its front - and uploaded. A slot refilled
+    builds its curves once; a slot emptied is hidden.
+*/
+void ApplicationArcher::DrawGrownVines(){
+    if (!f_grown_vines_ready){
+        return;
+    }
+    for (int slot = 0; slot < GROWN_VINE_MAX; slot++){
+        GrownVineDrawn& d = grown_drawn[slot];
+        bool f_live = false;
+        std::vector<float> fronts;
+        {
+            std::lock_guard<std::mutex> lock(grown_mutex);
+            GrownVineShared& s = grown_shared[slot];
+            if (s.generation == d.generation && s.fronts == d.fronts){
+                continue;       //nothing has moved: the usual case, and it costs a compare
+            }
+            if (s.generation != d.generation){
+                d.generation = s.generation;
+                d.paths = s.paths;
+                d.splines.assign(d.paths.size(),Spline());
+                for (size_t k = 0; k < d.paths.size(); k++){
+                    BuildVineSpline(d.paths[k],d.splines[k]);
+                }
+            }
+            f_live = s.f_live;
+            fronts = s.fronts;
+        }
+        d.fronts = fronts;
+        std::vector<vertex> trunk, wrap;
+        if (f_live){
+            for (size_t k = 0; k < d.splines.size() && k < fronts.size(); k++){
+                if (fronts[k] == 0.0f){
+                    continue;
+                }
+                BuildVineTrunk(d.splines[k],d.paths[k],vine_tile,vine_params,trunk,fronts[k]);
+                if (d.wrap){
+                    BuildVineOverlay(d.splines[k],d.paths[k],vine_wrap_tile,vine_tile,vine_params,wrap,fronts[k]);
+                }
+            }
+        }
+        if (trunk.empty()){
+            d.trunk->SetVisibility(false);
+        }else{
+            d.trunk->GetMesh()->SetMeshData(trunk.data(),(int)trunk.size());
+            d.trunk->SetVisibility(true);
+        }
+        if (d.wrap){
+            if (wrap.empty()){
+                d.wrap->SetVisibility(false);
+            }else{
+                d.wrap->GetMesh()->SetMeshData(wrap.data(),(int)wrap.size());
+                d.wrap->SetVisibility(true);
+            }
+        }
+    }
 }
 
 /*
@@ -7228,6 +7650,10 @@ void ApplicationArcher::NewGame(){
             arrow_objects[i]->SetVisibility(false);
         }
     }
+    //The grown vines are the world's, and its clock has just gone back to 0.
+    if (main_scene == world_scene){
+        ClearGrownVines();
+    }
     debug->Info("New game\n");
 }
 
@@ -7538,6 +7964,7 @@ void ApplicationArcher::RunSimulationTick(void){
     UpdateCamera();
     //After the camera, so the leaves are kept in the view this tick will draw.
     StepWindLeaves();
+    StepGrownVines();
     PublishSnapshot();
 }
 
@@ -8200,6 +8627,10 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
         if (IsCharacterScene() && h.arrow >= 0 && h.arrow < ARROW_MAX_LIVE){
             arrow_stuck[h.arrow].f_turntable = true;
             arrow_stuck[h.arrow].turntable_deg = turntable_deg;
+        }
+        //A vine arrow into an underside grows a vine - on the world level, where the pieces are.
+        if (h.kind == ARROW_VINE && h.normal.y < -0.5f && main_scene == world_scene){
+            StartGrownVine(h);
         }
     }
 }
@@ -10715,6 +11146,11 @@ void ApplicationArcher::PublishSnapshot(){
     s.tick = main_scene->GetPhysicsTick();
     s.stage_ticks = stage.ticks;
     s.level = stage.GetLevel();
+    //The floors' edges: a few KB, copied whole, since the tick can rebuild them at any time.
+    s.spans = stage.spans;
+    s.edges = stage.edges;
+    s.corners = stage.corners;
+    s.edges_generation = stage.edges_generation;
     {
         int z = stage.CurrentZone();
         s.zone = (z >= 0) ? stage.zones[z].name : std::string();
@@ -10926,6 +11362,23 @@ void ApplicationArcher::PublishSnapshot(){
         av.kind = a.kind;
         s.arrows.push_back(av);
     }
+    for (int i = 0; i < GROWN_VINE_MAX; i++){
+        const GrownVine& g = grown_vines[i];
+        if (!g.f_live || g.lengths.empty()){
+            continue;
+        }
+        ArcherSnapshot::GrownView gv;
+        gv.slot = i;
+        gv.x = g.anchor.x;
+        gv.y = g.anchor.y;
+        gv.strands = (int)g.strands.size();
+        gv.leaves = (int)g.leaves.size();
+        gv.length = g.lengths[0];
+        gv.ticks = (int)(stage.ticks - g.start_tick);
+        gv.front = VineGrowthFront(VineSpeciesFor(g.species),g.lengths[0],gv.ticks);
+        gv.f_done = g.f_done;
+        s.grown.push_back(gv);
+    }
 
     /*
         Where a shot loosed right now would end up.
@@ -11132,6 +11585,15 @@ json ApplicationArcher::BuildStateJson(){
         {"arrows_shot",s.arrows_shot},
         {"arrows_in_blocks",s.arrows_hit_blocks},
         {"arrow_kind",ArrowKindName(s.arrow_kind)},
+        {"grown_vines",[&](){
+            json list = json::array();
+            for (const ArcherSnapshot::GrownView& g : s.grown){
+                list.push_back(json{{"slot",g.slot},{"x",g.x},{"y",g.y},{"strands",g.strands},
+                                    {"leaves",g.leaves},{"length",g.length},{"front",g.front},
+                                    {"ticks",g.ticks},{"done",g.f_done}});
+            }
+            return list;
+        }()},
         {"live_arrows",arrows},
         {"targets",targets},
         /*
@@ -12074,15 +12536,19 @@ void ApplicationArcher::RegisterMCPTools(){
         "rope_grip_s, and per hand its distance down the drawn rope and off it. `wind`: the wind "
         "field over what the camera sees - arrows coloured by speed (blue still, green the mean "
         "wind, red 2.5x it), grey streamlines from the upwind edge, pink streamlines and circles "
-        "for the eddies, orange crosses on the shedding corners; tune it with archer_wind. "
-        "Returns all four.",
+        "for the eddies, orange crosses on the shedding corners; tune it with archer_wind. `edges`: "
+        "the floors' edges on the world level (vine_plan.md section 15) - a white line along each "
+        "floor, a drop line down each edge (red a drop she fears, amber past half a unit, grey a "
+        "step) with a stub over the drop and a blue bar on a grabbable lip, a green L at each wall's "
+        "foot; the numbers are archer_edges. Returns all five.",
         json{
             {"type","object"},
             {"properties", {
                 {"collider",    {{"type","boolean"}}},
                 {"rope_links",  {{"type","boolean"}}},
                 {"rope_attach", {{"type","boolean"}}},
-                {"wind",        {{"type","boolean"}}}
+                {"wind",        {{"type","boolean"}}},
+                {"edges",       {{"type","boolean"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -12102,8 +12568,64 @@ void ApplicationArcher::RegisterMCPTools(){
             if (args.contains("wind") && args["wind"].is_boolean()){
                 f_show_wind = args["wind"].get<bool>();
             }
+            if (args.contains("edges") && args["edges"].is_boolean()){
+                f_show_edges = args["edges"].get<bool>();
+            }
             return json{ {"collider",f_show_collider},{"rope_links",f_show_rope_links},
-                         {"rope_attach",f_show_rope_attach},{"wind",f_show_wind.load()} };
+                         {"rope_attach",f_show_rope_attach},{"wind",f_show_wind.load()},
+                         {"edges",f_show_edges} };
+        });
+
+    //The floors' edges (vine_plan.md section 15), out of the snapshot: the list the debug view draws.
+    MCPServer::Get()->RegisterTool("archer_edges",
+        "The live level's floors, their edges and the feet of their walls, derived from the blocks "
+        "(vine_plan.md section 15). A SPAN is a floor: x0..x1 at height y, the blocks at each end. "
+        "An EDGE is an end where the floor drops away: side +1 means the drop is to the right; "
+        "`drop` down to the next floor (100 = none), `wall` the bare face under the lip, "
+        "`grabbable` for a ledge's lip. A CORNER is an end where a wall rises instead: side +1 is a "
+        "wall to the right, `rise` how high. Optional `x0`/`x1` keep only what lies between them. "
+        "`generation` counts the rebuilds - a wall kicked in or a stone crumbled makes one.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"x0", {{"type","number"},{"description","keep only what lies at or right of this x"}}},
+                {"x1", {{"type","number"},{"description","keep only what lies at or left of this x"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            float x0 = -1e9f, x1 = 1e9f;
+            if (args.contains("x0") && args["x0"].is_number()){ x0 = args["x0"].get<float>(); }
+            if (args.contains("x1") && args["x1"].is_number()){ x1 = args["x1"].get<float>(); }
+            std::vector<StageSpan> spans;
+            std::vector<StageEdge> edges;
+            std::vector<StageCorner> corners;
+            int generation = 0, level = 0;
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                spans = snapshot.spans;
+                edges = snapshot.edges;
+                corners = snapshot.corners;
+                generation = snapshot.edges_generation;
+                level = snapshot.level;
+            }
+            json js = json::array(), je = json::array(), jc = json::array();
+            for (size_t i = 0; i < spans.size(); i++){
+                const StageSpan& s = spans[i];
+                if (s.x1 < x0 || s.x0 > x1){ continue; }
+                js.push_back(json{{"index",(int)i},{"x0",s.x0},{"x1",s.x1},{"y",s.y},
+                                  {"block_left",s.block_left},{"block_right",s.block_right}});
+            }
+            for (const StageEdge& e : edges){
+                if (e.x < x0 || e.x > x1){ continue; }
+                je.push_back(json{{"x",e.x},{"y",e.y},{"side",e.side},{"drop",e.drop},{"wall",e.wall},
+                                  {"grabbable",e.f_grabbable},{"block",e.block},{"span",e.span}});
+            }
+            for (const StageCorner& c : corners){
+                if (c.x < x0 || c.x > x1){ continue; }
+                jc.push_back(json{{"x",c.x},{"y",c.y},{"side",c.side},{"rise",c.rise},
+                                  {"block",c.block},{"span",c.span}});
+            }
+            return json{{"level",level},{"generation",generation},{"spans",js},{"edges",je},{"corners",jc}};
         });
 
     /*
@@ -13050,6 +13572,11 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::Text("in: %s",(current >= 0) ? stage.zones[current].name.c_str() : "none");
         ImGui::SameLine();
         ImGui::Checkbox("zone label",&f_show_zone_label);
+        ImGui::SameLine();
+        ImGui::Checkbox("floor edges",&f_show_edges);
+        ImGui::SetItemTooltip("The floors, their edges and wall feet (vine_plan.md 15): red a drop she "
+                              "fears, amber past half a unit, grey a step, blue a grabbable lip, green a "
+                              "wall's foot. %i edges, %i feet.",(int)stage.edges.size(),(int)stage.corners.size());
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
         //The areas only: a trigger has nowhere to arrive.
         std::vector<int> areas;

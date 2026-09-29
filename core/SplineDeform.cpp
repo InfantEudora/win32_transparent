@@ -1,4 +1,5 @@
 #include <math.h>
+#include <algorithm>
 
 #include "SplineDeform.h"
 
@@ -13,8 +14,33 @@ static float Smooth01(float k){
     return k * k * (3.0f - 2.0f * k);
 }
 
+//Where the growing front is along the curve, or -1 when the sweep is whole - see
+//SplineDeformParams::grown.
+static float GrowthFront(const SplineDeformParams& params, float range_start, float range_end){
+    if (params.grown < 0.0f || params.grown >= range_end){
+        return -1.0f;
+    }
+    return (params.grown > range_start) ? params.grown : range_start;
+}
+
 float SplineDeformTaper(const SplineDeformParams& params, float s, float range_start, float range_end){
     float scale = 1.0f;
+    float front = GrowthFront(params,range_start,range_end);
+    if (front >= 0.0f && params.grow_tip_length > 0.0f){
+        /*
+            0 at the front, 1 a tip's length behind it. Eased OUT, 1 - (1 - k)^2, not smoothstepped:
+            its slope is finite at the front, so the point is a cone, and zero where it meets the
+            trunk, so there is no crease there. A smoothstep closes with zero slope and draws the
+            last of the tip as a needle.
+        */
+        float k = (front - s) / params.grow_tip_length;
+        k = (k < 0.0f) ? 0.0f : ((k > 1.0f) ? 1.0f : k);
+        float ease = 1.0f - (1.0f - k) * (1.0f - k);
+        float tip = params.grow_tip_scale + (1.0f - params.grow_tip_scale) * ease;
+        //Faded out over the last tip length before the end, onto the ordinary end taper.
+        float fade = Smooth01((range_end - front) / params.grow_tip_length);
+        scale *= 1.0f - fade * (1.0f - tip);
+    }
     if (params.taper_start_length > 0.0f){
         float k = Smooth01((s - range_start) / params.taper_start_length);
         scale *= params.taper_start_scale + (1.0f - params.taper_start_scale) * k;
@@ -55,13 +81,15 @@ bool SplineDeformMeasure(const std::vector<vertex>& tile, float& zmin, float& le
     (k nx, k ny, r nz - a nx - b ny). With no taper, no twist and r == k it is the plain rotation,
     which is why the rope - a straight, untapered, untwisted run - is unchanged by it.
 */
-static vec3 CarriedNormal(const SplineDeformParams& params, const vertex& v, float s, float r, float k,
-                          float range_start, float range_end){
-    //A central difference: the taper is a smoothstep, so this is as good as the closed form and
-    //does not have to know which ends are tapering.
+//The taper's slope, dr/ds: a central difference, as good as the closed form for a smoothstep and
+//with no need to know which ends are tapering.
+static float TaperSlope(const SplineDeformParams& params, float s, float range_start, float range_end){
     const float h = 1e-3f;
-    float slope = params.scale * (SplineDeformTaper(params,s + h,range_start,range_end) -
-                                  SplineDeformTaper(params,s - h,range_start,range_end)) / (2.0f * h);
+    return params.scale * (SplineDeformTaper(params,s + h,range_start,range_end) -
+                           SplineDeformTaper(params,s - h,range_start,range_end)) / (2.0f * h);
+}
+
+static vec3 CarriedNormal(const SplineDeformParams& params, const vertex& v, float r, float k, float slope){
     const vec3& n = v.normal;
     float a = k * (slope * v.pos.x - r * params.twist * v.pos.y);
     float b = k * (slope * v.pos.y + r * params.twist * v.pos.x);
@@ -191,13 +219,43 @@ int DeformAlongSpline(const Spline& spline, const std::vector<vertex>& tile,
     //would be a sawn-off stump the taper cannot hide.
     float stretch = range / ((float)copies * tile_len);
 
+    //Growing: the same copies, cut off at the front - see SplineDeformParams::grown.
+    float front = GrowthFront(params,range_start,range_end);
+
+    /*
+        Everything but a vertex's own x and y depends only on how far along the tile it is - the
+        frame, the twist, the taper and its slope - and a tile's vertices share a few heights: a
+        ring's all sit at one, and a UV seam duplicates them again. So those are worked out once per
+        distinct height per copy and shared. Measured on a 2,600-vertex tube with 10 rings: most of
+        the cost was the frame and the twist's trig, done again for every vertex of a ring.
+    */
+    std::vector<float> heights(tile.size());
+    for (size_t i = 0; i < tile.size(); i++){
+        heights[i] = tile[i].pos.z;
+    }
+    std::sort(heights.begin(),heights.end());
+    heights.erase(std::unique(heights.begin(),heights.end()),heights.end());
+    std::vector<int> height_of(tile.size());
+    for (size_t i = 0; i < tile.size(); i++){
+        height_of[i] = (int)(std::lower_bound(heights.begin(),heights.end(),tile[i].pos.z) - heights.begin());
+    }
+    struct AtHeight{ SplineFrame f; float r; float slope; };
+    std::vector<AtHeight> at(heights.size());
+
     size_t first = out.size();
     out.reserve(first + tile.size() * (size_t)copies);
+    int laid = 0;
     for (int c = 0; c < copies; c++){
         float base = range_start + (float)c * tile_len * stretch;
-        for (size_t i = 0; i < tile.size(); i++){
-            const vertex& v = tile[i];
-            float s = base + (v.pos.z - zmin) * params.scale * stretch;
+        if (front >= 0.0f && base >= front){
+            break;
+        }
+        laid++;
+        for (size_t j = 0; j < heights.size(); j++){
+            float s = base + (heights[j] - zmin) * params.scale * stretch;
+            if (front >= 0.0f && s > front){
+                s = front;
+            }
             /*
                 Past either end of the curve - an overlay's overhang on the first and last copy -
                 the frame is carried on straight along the end tangent. FrameAt clamps, and a
@@ -215,19 +273,24 @@ int DeformAlongSpline(const Spline& spline, const std::vector<vertex>& tile,
                 f.side = side;
                 f.normal = normal;
             }
-            float r = params.scale * SplineDeformTaper(params,s,range_start,range_end);
-
+            at[j].f = f;
+            at[j].r = params.scale * SplineDeformTaper(params,s,range_start,range_end);
+            at[j].slope = TaperSlope(params,s,range_start,range_end);
+        }
+        for (size_t i = 0; i < tile.size(); i++){
+            const vertex& v = tile[i];
+            const AtHeight& h = at[height_of[i]];
             vertex o = v;
-            o.pos = f.Place(v.pos.x * r,v.pos.y * r);
-            o.normal = f.Rotate(CarriedNormal(params,v,s,r,params.scale * stretch,range_start,range_end));
-            o.tangent = f.Rotate(v.tangent);
+            o.pos = h.f.Place(v.pos.x * h.r,v.pos.y * h.r);
+            o.normal = h.f.Rotate(CarriedNormal(params,v,h.r,params.scale * stretch,h.slope));
+            o.tangent = h.f.Rotate(v.tangent);
             SquareTangent(o);
             out.push_back(o);
         }
     }
 
-    if (params.f_weld_seams && !params.f_flat_normals && copies > 1){
-        WeldSeams(tile,copies,first,out);
+    if (params.f_weld_seams && !params.f_flat_normals && laid > 1){
+        WeldSeams(tile,laid,first,out);
     }
 
     if (params.f_flat_normals){
@@ -252,5 +315,5 @@ int DeformAlongSpline(const Spline& spline, const std::vector<vertex>& tile,
             }
         }
     }
-    return copies;
+    return laid;
 }

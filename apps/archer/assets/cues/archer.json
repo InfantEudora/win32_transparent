@@ -28,7 +28,8 @@
     "breathe_out_2": "sound/breathe_out_normal_2.wav",
     "breathe_out_3": "sound/breathe_out_normal_3.wav",
     "heartbeat_1":  "sound/heartbeat_1.wav",
-    "heartbeat_2":  "sound/heartbeat_2.wav"
+    "heartbeat_2":  "sound/heartbeat_2.wav",
+    "vine_grow":    "sound/rock_crumble_2.wav"
   },
 
   "groups": {
@@ -150,6 +151,14 @@
       "gain_by": [ { "value": "count", "in": [1, 6], "out": [0.7, 1.0] } ],
       "actions": [ { "kind": "shake", "amount": 0.8, "axes": [0.7, 1.0] },
                    { "kind": "rumble", "low": 0.9, "high": 0.5 } ]
+    },
+
+    "vine_grow": {
+      "comment": "A vine arrow's vine starting to grow out of an underside (vine_plan.md step 5). A PLACEHOLDER: the rock crumble, low and slowed, as earth giving way where it breaks out - a rustle and a creak of its own is what it wants. By distance and panned, like the arrow's hit; a longer vine a little louder.",
+      "signal": "vine_grow", "sounds": ["vine_grow"], "bus": "effects", "pitch": 0.75,
+      "gain_by": [ { "value": "length", "in": [3, 8], "out": [0.3, 0.45] },
+                   { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
     }
   }
 }

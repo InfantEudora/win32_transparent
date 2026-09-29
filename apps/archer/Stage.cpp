@@ -154,6 +154,9 @@ void Stage::Reset(){
     sway_ticks = 0;
     draws_started = 0;
     arrows_hit_blocks = 0;
+
+    //Last, over the level as built, trees' arms included. See StageEdge.
+    RebuildEdges();
 }
 
 /*
@@ -583,6 +586,8 @@ void Stage::AddScenery(const StageScenery& s){
 
 void Stage::KeepBlockLayout(){
     kept_layout = blocks;
+    //The editor has moved boxes: the one change the tick's count of live blocks cannot see.
+    RebuildEdges();
 }
 
 void Stage::BuildLevel(){
@@ -1731,6 +1736,12 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
     */
     static const ArcherInput no_input;
     const ArcherInput& in = (mode == MODE_GETUP) ? no_input : in_raw;
+
+    //The floors' edges, if last tick broke a wall or crumbled a stone - the cheap check, see
+    //RefreshEdges. Nothing here reads them yet; the vines and the fear will (vine_plan.md 15).
+    if (blocks.size() != edges_blocks || CountAliveBlocks() != edges_alive){
+        RebuildEdges();
+    }
 
     //First, so a pick and a release in one tick loose the kind just picked.
     SelectArrow(in_raw,events);

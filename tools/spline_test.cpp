@@ -604,6 +604,145 @@ static void TestCarriedNormals(){
     Check("a hard edge at the join is left alone",worst_hard < 1e-6f,"worst %.2e",worst_hard);
 }
 
+//--- Growth ---------------------------------------------------------------------------------------
+
+//The distance of a point from a straight run's axis (along +Z from the origin).
+static float OffAxis(const vec3& p){
+    return sqrtf(p.x * p.x + p.y * p.y);
+}
+
+static bool SameVertex(const vertex& a, const vertex& b){
+    return a.pos.x == b.pos.x && a.pos.y == b.pos.y && a.pos.z == b.pos.z &&
+           a.normal.x == b.normal.x && a.normal.y == b.normal.y && a.normal.z == b.normal.z;
+}
+
+static void TestGrowth(){
+    printf("\ngrowth (the reveal)\n");
+    std::vector<vertex> tube;
+    MakeLumpyTube(tube,16,9,2,0.2f,0.2f);
+    size_t per = tube.size();
+
+    /*
+        A straight run first, where "along the curve" is z and "off the axis" is x, y - with the
+        vine's own dressing on: a twist, both ends tapered, the seams welded.
+    */
+    Spline straight;
+    straight.points = { vec3(0,0,0), vec3(0,0,4.2f) };
+    straight.Build();
+    SplineDeformParams p;
+    p.twist = 0.9f;
+    p.taper_start_length = 0.6f;
+    p.taper_start_scale = 0.3f;
+    p.taper_end_length = 0.6f;
+    p.taper_end_scale = 0.3f;
+    p.f_weld_seams = true;
+    std::vector<vertex> full;
+    int full_n = DeformAlongSpline(straight,tube,p,full);
+
+    //Not growing, and grown to the end or past it: the plain sweep, bit for bit.
+    SplineDeformParams at_end = p;
+    at_end.grown = straight.GetLength();
+    std::vector<vertex> ended;
+    DeformAlongSpline(straight,tube,at_end,ended);
+    bool f_same = ended.size() == full.size();
+    for (size_t i = 0; f_same && i < full.size(); i++){
+        f_same = SameVertex(ended[i],full[i]);
+    }
+    Check("grown to the end is the plain sweep, bit for bit",f_same);
+    SplineDeformParams none = p;
+    none.grown = 0.0f;
+    std::vector<vertex> empty;
+    int none_n = DeformAlongSpline(straight,tube,none,empty);
+    Check("grown 0 lays nothing",none_n == 0 && empty.empty());
+
+    /*
+        Part grown: nothing past the front, the front closed to a point, everything more than a
+        tip's length behind the front the finished sweep's own vertices, and the copies whole ones
+        of the finished layout rather than a new, re-stretched count.
+    */
+    float g = 2.37f;
+    SplineDeformParams pg = p;
+    pg.grown = g;
+    std::vector<vertex> part;
+    int part_n = DeformAlongSpline(straight,tube,pg,part);
+    float past = 0.0f, tip_r = 0.0f;
+    int behind_diff = 0, behind = 0;
+    for (size_t i = 0; i < part.size(); i++){
+        past = fmaxf(past,part[i].pos.z - g);
+        if (part[i].pos.z > g - 1e-4f){ tip_r = fmaxf(tip_r,OffAxis(part[i].pos)); }
+        //By index: the partial sweep is the full one's first copies, in order.
+        if (full[i].pos.z < g - pg.grow_tip_length - 0.01f && tube[i % per].pos.z < 1.0f){
+            behind++;
+            if (!SameVertex(part[i],full[i])){ behind_diff++; }
+        }
+    }
+    Check("nothing is laid past the front",past <= 1e-4f,"furthest %.2e past",past);
+    Check("the front is closed to a point",tip_r < 1e-4f,"widest %.2e off the axis at the front",tip_r);
+    Check("behind the tip, the finished sweep's own vertices",behind > 0 && behind_diff == 0,
+          "%.0f of %.0f differ",(float)behind_diff,(float)behind);
+    Check("the copies so far, of the finished layout",part_n == (int)ceilf(g / (straight.GetLength() / full_n)) &&
+          part.size() == (size_t)part_n * per,"%.0f of %.0f",(float)part_n,(float)full_n);
+
+    //The tip's shape: a cone at the point (radius rising in step with the distance back), not a
+    //needle (rising with its square).
+    float h1 = 0.02f, h2 = 0.04f;
+    SplineDeformParams probe = pg;
+    float r1 = SplineDeformTaper(probe,g - h1,0.0f,straight.GetLength());
+    float r2 = SplineDeformTaper(probe,g - h2,0.0f,straight.GetLength());
+    Check("the point is a cone: twice as far back, twice as wide",fabsf(r2 / r1 - 2.0f) < 0.1f,
+          "ratio %.3f",r2 / r1);
+
+    /*
+        No popping. Grown in small steps along a BEND, every vertex present in two neighbouring
+        steps moves by little more than the step (a vertex at the front rides along with it, and
+        the section behind opens); a copy first appears collapsed at the front; and the last step
+        before the end lands on the finished sweep.
+    */
+    Spline bend;
+    bend.points = { vec3(0,0,0), vec3(1,0,2), vec3(3,1,3), vec3(5,0,3) };
+    bend.Build();
+    SplineDeformParams pb = p;
+    std::vector<vertex> prev;
+    float step = 0.01f;
+    float worst_move = 0.0f, worst_birth = 0.0f;
+    bool f_finite = true;
+    int births = 0;
+    size_t prev_size = 0;
+    for (float grow = step; grow < bend.GetLength() + step; grow += step){
+        pb.grown = grow;
+        std::vector<vertex> now;
+        DeformAlongSpline(bend,tube,pb,now);
+        for (size_t i = 0; i < now.size(); i++){
+            if (!isfinite(now[i].normal.x) || !isfinite(now[i].pos.x)){ f_finite = false; }
+            if (i < prev_size){
+                worst_move = fmaxf(worst_move,Dist(now[i].pos,prev[i].pos));
+            }
+        }
+        if (now.size() > prev_size && prev_size > 0){
+            births++;
+            vec3 at = bend.PositionAt(grow < bend.GetLength() ? grow : bend.GetLength());
+            for (size_t i = prev_size; i < now.size(); i++){
+                worst_birth = fmaxf(worst_birth,Dist(now[i].pos,at));
+            }
+        }
+        prev.swap(now);
+        prev_size = prev.size();
+    }
+    std::vector<vertex> bend_full;
+    pb.grown = -1.0f;
+    DeformAlongSpline(bend,tube,pb,bend_full);
+    Check("grown in steps of 0.01, no vertex jumps",worst_move < 0.05f,"worst move %.4f",worst_move);
+    Check("each new copy is born at the front, as a point",births > 0 && worst_birth < 0.02f,
+          "%.0f births, furthest %.4f from the front",(float)births,worst_birth);
+    Check("no NaN on the way, the point's normals included",f_finite);
+    float worst_end = 0.0f;
+    for (size_t i = 0; i < bend_full.size() && i < prev.size(); i++){
+        worst_end = fmaxf(worst_end,Dist(prev[i].pos,bend_full[i].pos));
+    }
+    Check("and the last step lands on the finished sweep",prev.size() == bend_full.size() && worst_end < 1e-5f,
+          "worst %.2e",worst_end);
+}
+
 int main(){
     printf("core/Spline + core/SplineDeform\n");
     TestThroughPoints();
@@ -615,6 +754,7 @@ int main(){
     TestClosest();
     TestDeform();
     TestCarriedNormals();
+    TestGrowth();
     printf("\n%i passed, %i failed\n",num_passed,num_failed);
     return num_failed ? 1 : 0;
 }

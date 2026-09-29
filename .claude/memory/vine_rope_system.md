@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-29T11:37:55.307Z
+  modified: 2026-09-29T14:33:12.583Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -98,7 +98,20 @@ with a real drop, but only the one she just left, inside the coyote window. Noth
 is approved (order in section 14).
 STEP 1 (arrow kinds) DONE 2026-09-29, details in vine_plan.md step 1: Stage::arrow_kind survives
 Reset (recording state carries it), keys 1-5 + d-pad, DrawArrowHud bottom right, BuildArrowDress
-tints by material index. archer_test.trace rewritten (only her/world parted, cues same). Next: step
-2, the `grown` reveal in SplineDeform.
+tints by material index. archer_test.trace rewritten (only her/world parted, cues same).
+STEP 2 (SplineDeformParams::grown reveal, cone tip) DONE 2026-09-29, 11 spline_test checks.
+STEP 3 (StageEdge list, apps/archer/StageEdges.cpp) DONE 2026-09-29: rebuilt by Reset,
+KeepBlockLayout and a per-tick live-block COUNT (not the full fingerprint - PredictLanding ticks a
+Stage copy 30x/tick); archer_edges MCP + archer_debug_view edges; fear/Foliage not rewired yet.
+STEP 4 (GrowVine walker + VineSpeciesFor(VINE_SPECIES_VINE)) DONE 2026-09-29, engine-free in
+Vine.cpp, 16 checks incl. a 200-seed sweep.
+STEP 5 DONE 2026-09-29: vine arrows grow vines on undersides in-game (StartGrownVine/StepGrownVines
+physics thread, DrawGrownVines in PreRender, grown_shared under grown_mutex, 32 slots + 512
+leaves/kind pooled, vine_grow cue is a rock_crumble PLACEHOLDER). Growth cost 5.6ms/frame debug ->
+fixed by per-distinct-height frame sharing in DeformAlongSpline (~2.2ms now). To test in-app:
+archer_place x 10.7 (NOT 9.2 - lands on the step), arrow_2, draw 45 wait false + up 17 -> hits
+slab one's underside (11.6..12.4, 3.8). Next: step 6 TerrainDistance, or 7 roots+tuft. Also done 2026-09-29 on the user's ask:
+the aim only tilts while drawn and returns to neutral after BOW_AIM_RETURN_TICKS of moving; the
+user will re-record archer_test at the end of the day (its target hit was lost).
 
 2026-09-26: four big CAVE vines added in the terrain bay (DeclareVines, #if ARCHER_TEST_BAY), two behind her and two in front at z 2+; hanging-start vines need up=+Z; see vine_plan.md "The cave vines".

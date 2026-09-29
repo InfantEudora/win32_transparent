@@ -100,9 +100,10 @@ bool  BuildVineSpline(const VinePath& path, Spline& out);
 float VineRadiusAt(const Spline& spline, const VinePath& path, const VineParams& params, float s);
 
 //Appends the trunk to `out`, world space, a triangle list for Mesh::SetMeshData. Returns the
-//number of tiles laid down, 0 if there was nothing to lay.
+//number of tiles laid down, 0 if there was nothing to lay. `grown` >= 0 lays only the trunk up to
+//that distance along the curve, closed to a growing point (SplineDeformParams::grown).
 int   BuildVineTrunk(const Spline& spline, const VinePath& path, const std::vector<vertex>& tile,
-                     const VineParams& params, std::vector<vertex>& out);
+                     const VineParams& params, std::vector<vertex>& out, float grown = -1.0f);
 
 /*
     Appends an OVERLAY - archer.glb's `vine_curl`, the thin strands wound round the trunk - laid
@@ -112,7 +113,7 @@ int   BuildVineTrunk(const Spline& spline, const VinePath& path, const std::vect
 */
 int   BuildVineOverlay(const Spline& spline, const VinePath& path, const std::vector<vertex>& overlay,
                        const std::vector<vertex>& trunk_tile, const VineParams& params,
-                       std::vector<vertex>& out);
+                       std::vector<vertex>& out, float grown = -1.0f);
 
 /*
     Appends the leaves along the trunk to `out`.
@@ -139,6 +140,113 @@ void  MakeVinePlaceholderLeaf(std::vector<vertex>& out);
 
 //The level's vines, placed by hand. `level` is a StageLevel; only the main level has any.
 void  DeclareVines(int level, std::vector<VinePath>& out);
+
+/*
+    --- GROWN VINES ------------------------------------------------------------------------------
+    vine_plan.md sections 9-11. A grown vine's shape is WALKED once, when the arrow strikes, and
+    growth only reveals it (SplineDeformParams::grown). The walk is a function of the hit, the
+    species, a seed and the blocks - nothing else - so the same shot always grows the same vine,
+    and a later step can move it into the rules unchanged.
+
+    A SPECIES is how a kind of plant grows and what it wears. One table (VineSpeciesFor), in code
+    until the numbers want tuning live; the vine is the first row, the rest (roots, bamboo, thorny,
+    grape) arrive with their art. Distances are world units, rates per unit of length walked.
+*/
+enum VineSpeciesKind{
+    VINE_SPECIES_VINE = 0,
+    VINE_SPECIES_COUNT
+};
+
+struct VineSpecies{
+    const char* name = "";
+
+    //--- The walk ---
+    float length_min = 3.0f;
+    float length_max = 8.0f;
+    float step = 0.08f;             //one step of the walk; the path keeps a point every point_spacing
+    float point_spacing = 0.3f;
+    /*
+        How the heading turns, per unit walked: toward straight down by `gravity` (negative: up, for
+        a cane), and sideways by a smooth wander of `wander` over a wavelength - never white noise,
+        which kinks. `wander_depth` is the share of the wander that goes into and out of the screen
+        rather than across it, so a vine hanging in the play plane still has some roundness.
+    */
+    float gravity = 2.4f;
+    float wander = 1.1f;
+    float wander_wavelength = 1.6f;
+    float wander_depth = 0.35f;
+    //Kept from the blocks on top of the trunk's own radius, so a vine lying on a floor beds in
+    //rather than sinking into it (negative) or hovering (large).
+    float clearance = -0.02f;
+    //Once it has come to rest on a floor, how much further it creeps along it before it stops.
+    float rest_length = 0.8f;
+
+    //--- Branches: side strands off the main one, one level deep ---
+    int   branch_min = 0;
+    int   branch_max = 2;
+    float branch_from = 0.35f;      //where along the main strand they may leave, as fractions
+    float branch_to = 0.8f;
+    float branch_angle_deg = 35.0f; //how far off the main strand's heading they leave
+    float branch_length = 0.4f;     //of the main strand's length
+
+    //--- The look ---
+    float thickness = 1.0f;         //VinePath::thickness, and the radius the walk keeps off the blocks
+    float thickness_jitter = 0.15f;
+    float branch_thickness = 0.6f;  //a branch's, relative to the main strand's
+
+    //--- The growth: how it is revealed (vine_plan.md section 9) ---
+    //Ticks from the strike to full length. The front eases out - fast from the arrow, slowing to
+    //a stop - because a constant rate reads as a progress bar.
+    int   grow_ticks = 150;
+    //A leaf appears once the front is this far past it, and opens over the next leaf_unfold: from
+    //nothing, lying along the stem, to its full size and lift. The delay is past the growing tip's
+    //taper (SplineDeformParams::grow_tip_length), so a leaf is never seated on a trunk that is
+    //still thinner than it will be.
+    float leaf_delay = 0.45f;
+    float leaf_unfold = 0.6f;
+};
+
+//Where the growing front of a strand is, `ticks` after the strike, as a distance along a curve
+//of `length`: eased out, and exactly `length` from grow_ticks on.
+float VineGrowthFront(const VineSpecies& species, float length, int ticks);
+/*
+    How far open a leaf at distance `s` is, 0 not yet there .. 1 fully open, with the front at
+    `front`. Eased out, like the front.
+*/
+float VineLeafOpen(const VineSpecies& species, float s, float front);
+
+const VineSpecies& VineSpeciesFor(int kind);
+
+//One strand of a grown vine: its path, and where it leaves its parent (-1: from the anchor).
+struct VineStrand{
+    VinePath path;
+    int   parent = -1;
+    float s_on_parent = 0.0f;
+    float length = 0.0f;            //as walked
+    bool  f_rested = false;         //came to rest on a floor rather than reaching its length
+};
+
+struct VineGrowth{
+    std::vector<VineStrand> strands;    //[0] the main one, from the anchor; branches after it
+};
+
+//The seed for a growth from where it struck and which arrow slot made it - distinct for two
+//arrows into one spot, the same for the same shot replayed.
+int   VineGrowthSeed(const vec3& point, int arrow);
+
+/*
+    Walks a vine out of `anchor` on a surface whose outward normal is `normal` (an underside is
+    (0,-1,0)), starting along the normal and bending with the species. It slides along any live
+    block rather than entering it - the trunk's radius (from `params` and the species' thickness)
+    plus the species' clearance kept off every face - and comes to rest on a floor it reaches.
+    False if it could not walk at all.
+*/
+bool  GrowVine(const VineSpecies& species, const VineParams& params, const vec3& anchor,
+               const vec3& normal, int seed, const std::vector<StageBlock>& blocks, VineGrowth& out);
+
+//The distance from p to the nearest live block, in the play plane (blocks fill the slab's depth);
+//negative inside one. What the walk keeps the trunk's radius clear of.
+float VineBlockDistance(const std::vector<StageBlock>& blocks, float x, float y);
 
 //The rotation taking local X, Y, Z onto the given orthonormal, right-handed axes.
 quat  QuatFromBasis(const vec3& x, const vec3& y, const vec3& z);

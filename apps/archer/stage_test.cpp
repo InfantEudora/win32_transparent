@@ -7071,6 +7071,386 @@ static void TestAimHold(){
     Check(HashOf(h1) != HashOf(h2),"the count is in the state hash");
 }
 
+/*
+    The floors' edges - vine_plan.md section 15, StageEdges.cpp. Each rule against a layout built
+    for it, then the main level's own landmarks, then the refresh: a block that changes changes the
+    edges on the next tick, and a rebuild equals a fresh build of the same blocks.
+*/
+static int FindEdge(const Stage& s, float x, float y, int side){
+    for (size_t i = 0; i < s.edges.size(); i++){
+        const StageEdge& e = s.edges[i];
+        if (fabsf(e.x - x) < 0.01f && fabsf(e.y - y) < 0.01f && e.side == side){ return (int)i; }
+    }
+    return -1;
+}
+static int FindCorner(const Stage& s, float x, float y, int side){
+    for (size_t i = 0; i < s.corners.size(); i++){
+        const StageCorner& c = s.corners[i];
+        if (fabsf(c.x - x) < 0.01f && fabsf(c.y - y) < 0.01f && c.side == side){ return (int)i; }
+    }
+    return -1;
+}
+//Blocks as (left, right, bottom, top) - easier to read in a test than centres and halves.
+static StageBlock Box(float l, float r, float b, float t, int kind = BLOCK_SOLID){
+    StageBlock k;
+    k.x = 0.5f * (l + r);
+    k.y = 0.5f * (b + t);
+    k.hw = 0.5f * (r - l);
+    k.hh = 0.5f * (t - b);
+    k.kind = kind;
+    return k;
+}
+static bool SameEdges(const Stage& a, const Stage& b){
+    if (a.spans.size() != b.spans.size() || a.edges.size() != b.edges.size() ||
+        a.corners.size() != b.corners.size()){
+        return false;
+    }
+    for (size_t i = 0; i < a.edges.size(); i++){
+        const StageEdge& p = a.edges[i];
+        const StageEdge& q = b.edges[i];
+        if (p.x != q.x || p.y != q.y || p.side != q.side || p.drop != q.drop || p.wall != q.wall ||
+            p.block != q.block || p.f_grabbable != q.f_grabbable){
+            return false;
+        }
+    }
+    for (size_t i = 0; i < a.corners.size(); i++){
+        const StageCorner& p = a.corners[i];
+        const StageCorner& q = b.corners[i];
+        if (p.x != q.x || p.y != q.y || p.side != q.side || p.rise != q.rise || p.block != q.block){
+            return false;
+        }
+    }
+    return true;
+}
+
+static void TestEdges(){
+    printf("\nthe floors' edges\n");
+    char d[200];
+    Stage s;
+
+    //Two boxes side by side at one height are one floor: no edge where they meet.
+    s.blocks = { Box(0,5,-2,0), Box(5,9,-2,0) };
+    s.RebuildEdges();
+    snprintf(d,sizeof(d),"%zu spans, %zu edges",s.spans.size(),s.edges.size());
+    Check(s.spans.size() == 1 && s.edges.size() == 2 && FindEdge(s,0,0,-1) >= 0 && FindEdge(s,9,0,1) >= 0,
+          "two boxes abutting at one height are one floor, with an edge at each end only",d);
+    Check(s.edges[0].drop == VITALS_NO_FLOOR && fabsf(s.edges[0].wall - 2.0f) < 0.001f,
+          "nothing below: VITALS_NO_FLOOR, and the whole face bare");
+
+    //A box on a box: the lower top is split around it, and each piece ends at a wall's foot.
+    s.blocks = { Box(0,10,-2,0), Box(4,6,0,1.5f) };
+    s.RebuildEdges();
+    int cl = FindCorner(s,4,0,1), cr = FindCorner(s,6,0,-1);
+    snprintf(d,sizeof(d),"%zu spans, %zu corners",s.spans.size(),s.corners.size());
+    Check(s.spans.size() == 3 && cl >= 0 && cr >= 0,"a box standing on a floor splits it, with a wall's foot either side",d);
+    Check(cl >= 0 && fabsf(s.corners[cl].rise - 1.5f) < 0.001f && s.corners[cl].block == 1,
+          "the foot knows the wall's block and how far it rises");
+    int top_l = FindEdge(s,4,1.5f,-1);
+    Check(top_l >= 0 && fabsf(s.edges[top_l].drop - 1.5f) < 0.001f && fabsf(s.edges[top_l].wall - 1.5f) < 0.001f,
+          "and its own top's edges drop to the floor it stands on");
+
+    //A step down: the drop is the step, and so is the bare face.
+    s.blocks = { Box(0,5,-2,0), Box(5,9,-2,-0.6f) };
+    s.RebuildEdges();
+    int step = FindEdge(s,5,0,1);
+    Check(step >= 0 && fabsf(s.edges[step].drop - 0.6f) < 0.001f && fabsf(s.edges[step].wall - 0.6f) < 0.001f,
+          "a step down drops, and bares, the step's height");
+    Check(FindCorner(s,5,-0.6f,-1) >= 0 && s.corners.size() == 1,"and the lower floor ends at its foot");
+
+    //A one-way platform over the end of a floor is not a wall: she walks up through it.
+    s.blocks = { Box(0,5,-2,0), Box(4,8,1.0f,1.2f,BLOCK_PLATFORM) };
+    s.RebuildEdges();
+    Check(s.corners.empty() && FindEdge(s,5,0,1) >= 0 && FindEdge(s,8,1.2f,1) >= 0,
+          "a platform is a floor with edges, never a wall");
+    int plat = FindEdge(s,4,1.2f,-1);
+    Check(plat >= 0 && fabsf(s.edges[plat].drop - 1.2f) < 0.001f && fabsf(s.edges[plat].wall - 0.2f) < 0.001f,
+          "and its face is its own thickness");
+
+    //A ledge's corners are the only grabbable ones; a gap narrower than a join is no gap.
+    s.blocks = { Box(0,5,-2,0), Box(5.01f,9,-2,0), Box(12,14,0,3,BLOCK_LEDGE) };
+    s.RebuildEdges();
+    Check(FindEdge(s,5,0,1) < 0 && FindEdge(s,5.01f,0,-1) < 0,"a gap narrower than STAGE_EDGE_JOIN is one floor");
+    int ledge = FindEdge(s,14,3,1);
+    Check(ledge >= 0 && s.edges[ledge].f_grabbable && FindEdge(s,0,0,-1) >= 0 && !s.edges[FindEdge(s,0,0,-1)].f_grabbable,
+          "a ledge's corners are grabbable, a solid block's are not");
+
+    //Queries.
+    s.blocks = { Box(0,5,-2,0), Box(8,12,-2,0) };
+    s.RebuildEdges();
+    int near_r = s.NearestEdge(4.4f,0.0f,1.0f);
+    Check(near_r >= 0 && s.edges[near_r].x == 5.0f,"NearestEdge finds the lip she is walking toward");
+    Check(s.NearestEdge(2.5f,0.0f,1.0f) < 0,"and nothing in the middle of a floor");
+    Check(s.NearestEdge(7.6f,0.0f,1.0f,1) < 0 && s.NearestEdge(7.6f,0.0f,1.0f,-1) >= 0,"by side, when asked");
+    Check(s.SpanAt(3.0f,0.0f) == 0 && s.SpanAt(6.5f,0.0f) < 0 && s.SpanAt(3.0f,1.0f) < 0,
+          "SpanAt: on a floor, over the gap, above it");
+
+    //--- The main level's landmarks ---
+    Stage m;
+    snprintf(d,sizeof(d),"%zu spans, %zu edges, %zu corners",m.spans.size(),m.edges.size(),m.corners.size());
+    Check(!m.spans.empty() && !m.edges.empty() && !m.corners.empty(),"the main level has floors, edges and wall feet",d);
+    Check(FindCorner(m,5,0,1) >= 0 && FindCorner(m,9,0,-1) >= 0,"the step by the start stands on the ground: a foot each side");
+    int step_r = FindEdge(m,9,1.8f,1);
+    Check(step_r >= 0 && fabsf(m.edges[step_r].drop - 1.8f) < 0.001f,"and its top drops 1.8 to it");
+    int hl = FindEdge(m,44,4.2f,-1), hr = FindEdge(m,48,4.2f,1);
+    Check(hl >= 0 && hr >= 0 && m.edges[hl].f_grabbable && m.edges[hr].f_grabbable,"the high ledge's lips are grabbable");
+    Check(hl >= 0 && fabsf(m.edges[hl].drop - 4.2f) < 0.001f && fabsf(m.edges[hl].wall - 4.2f) < 0.001f,
+          "a 4.2 drop and a 4.2 face");
+    Check(FindEdge(m,14,0,1) >= 0 && FindEdge(m,19,0,-1) >= 0,"the first gap, x 14 .. 19, has a lip each side");
+#if ARCHER_TEST_BAY
+    Check(FindEdge(m,-12,0,-1) < 0 && FindEdge(m,-12,0,1) < 0,"no edge where the bay's ground meets the start's");
+#endif
+    //Every edge is on its block's top, and every drop is real.
+    int wrong = 0;
+    for (const StageEdge& e : m.edges){
+        if (e.block < 0 || fabsf(m.blocks[e.block].Top() - e.y) > 0.001f || e.drop <= 0.0f){ wrong++; }
+    }
+    snprintf(d,sizeof(d),"%i of %zu",wrong,m.edges.size());
+    Check(wrong == 0,"every edge sits on its block's top, and drops",d);
+
+    //--- Refreshing ---
+    Stage fresh;
+    Check(SameEdges(m,fresh) && !m.RefreshEdges(),"two builds of one level agree, and an unchanged level is not rebuilt");
+    int wall_block = -1;
+    for (size_t i = 0; i < m.blocks.size(); i++){
+        if (m.blocks[i].kind == BLOCK_BREAKABLE){ wall_block = (int)i; break; }
+    }
+    int gen = m.edges_generation;
+    size_t corners_before = m.corners.size();
+    m.blocks[wall_block].f_alive = false;
+    ArcherInput idle;
+    Run(m,1,idle);
+    Check(m.edges_generation == gen + 1 && m.corners.size() < corners_before,
+          "a wall kicked in is gone from the edges on the next tick - its two feet with it");
+    Stage same;
+    same.blocks = m.blocks;
+    same.RebuildEdges();
+    Check(SameEdges(m,same),"and the refreshed edges equal a fresh build of the same blocks");
+    m.blocks[wall_block].f_alive = true;
+    m.blocks[wall_block].x += 0.5f;
+    Check(m.RefreshEdges(),"moving a box is noticed by RefreshEdges, not only a block going");
+    int gen_moved = m.edges_generation;
+    m.blocks[wall_block].x -= 0.5f;
+    m.KeepBlockLayout();
+    Check(m.edges_generation == gen_moved + 1 && SameEdges(m,fresh),
+          "and the editor's KeepBlockLayout rebuilds them, back to the level as built");
+}
+
+/*
+    The growth walker - vine_plan.md section 10, Vine.cpp's GrowVine. What the growth depends on:
+    it never enters a block, an underside vine hangs, a vine that reaches a floor lies on it and
+    stops, the same shot grows the same vine, and every strand builds into a trunk. Against the
+    main level's own undersides and a ceiling built to be landed under, then two hundred seeds.
+*/
+struct GrowCheck{
+    float worst_clear = 1e9f;       //nearest a walked point came to a block, less the trunk's keep
+    float worst_inside = 1e9f;      //nearest ANY walked point came, start included: never inside
+    float worst_curve = 1e9f;       //the built curve, sampled every 0.05
+    bool  f_built = true;
+    bool  f_lower = true;
+};
+static void CheckGrowth(const VineGrowth& g, const VineSpecies& sp, const VineParams& params,
+                        const std::vector<StageBlock>& blocks, const vec3& anchor, GrowCheck& c){
+    std::vector<vertex> tile;
+    MakeVinePlaceholderTile(tile);
+    for (size_t k = 0; k < g.strands.size(); k++){
+        const VineStrand& st = g.strands[k];
+        float keep = params.tile_radius * params.tile_scale * st.path.thickness + sp.clearance;
+        /*
+            Point 0 is inside the rock (or the parent) by design, and the walk starts just off the
+            face, within the keep while it leaves it - so the keep is asked of every point once the
+            walk is two keeps from where it began, and of all of them only that none is inside.
+        */
+        const vec3& begin = st.path.points[(st.path.points.size() > 1) ? 1 : 0];
+        for (size_t i = 1; i < st.path.points.size(); i++){
+            const vec3& p = st.path.points[i];
+            float dist = VineBlockDistance(blocks,p.x,p.y);
+            c.worst_inside = fminf(c.worst_inside,dist);
+            if ((p - begin).length() > 2.0f * keep){
+                c.worst_clear = fminf(c.worst_clear,dist - keep);
+            }
+        }
+        Spline sp_curve;
+        if (!BuildVineSpline(st.path,sp_curve)){
+            c.f_built = false;
+            continue;
+        }
+        for (float s = 0.2f; s < sp_curve.GetLength(); s += 0.05f){
+            vec3 p = sp_curve.PositionAt(s);
+            c.worst_curve = fminf(c.worst_curve,VineBlockDistance(blocks,p.x,p.y));
+        }
+        std::vector<vertex> trunk;
+        if (BuildVineTrunk(sp_curve,st.path,tile,params,trunk) <= 0){
+            c.f_built = false;
+        }
+    }
+    if (g.strands.empty() || g.strands[0].path.points.back().y > anchor.y - 1.0f){
+        c.f_lower = false;
+    }
+}
+
+static void TestVineGrowth(){
+    printf("\ngrowing vines\n");
+    char d[220];
+    Stage m;
+    const VineSpecies& sp = VineSpeciesFor(VINE_SPECIES_VINE);
+    //The game's numbers: vine_trunk's measured radius at her scale.
+    VineParams params;
+    params.tile_radius = 0.083f;
+    params.tile_scale = 2.02f;
+    const vec3 under(0.0f,-1.0f,0.0f);
+
+    //Under slab one (x 10.5 .. 12.5, underside 3.8), the ground 3.8 below.
+    vec3 a1(11.5f,3.8f,0.0f);
+    VineGrowth g1;
+    bool f_grew = GrowVine(sp,params,a1,under,VineGrowthSeed(a1,0),m.blocks,g1);
+    snprintf(d,sizeof(d),"%zu strands, main %zu points, %.2f walked",g1.strands.size(),
+             g1.strands.empty() ? 0 : g1.strands[0].path.points.size(),g1.strands.empty() ? 0.0f : g1.strands[0].length);
+    Check(f_grew && !g1.strands.empty() && g1.strands[0].path.points.size() >= 3,"a vine grows from an underside",d);
+    const vec3& first = g1.strands[0].path.points[0];
+    Check(first.y > a1.y && fabsf(first.x - a1.x) < 1e-4f,"its path starts inside the rock, so it comes out of it");
+    GrowCheck c1;
+    CheckGrowth(g1,sp,params,m.blocks,a1,c1);
+    snprintf(d,sizeof(d),"walked points %.3f clear of the keep, none nearer than %.3f, curve %.3f clear",
+             c1.worst_clear,c1.worst_inside,c1.worst_curve);
+    Check(c1.worst_clear >= -0.002f && c1.worst_inside > 0.0f && c1.worst_curve > 0.0f,
+          "it never enters a block, walked or curved",d);
+    Check(c1.f_lower && c1.f_built,"it ends lower than it started, and every strand builds a trunk");
+
+    //Under the high slab (x 84 .. 97, underside 9.2): more drop than any vine is long, so it hangs.
+    vec3 a2(90.0f,9.2f,0.0f);
+    VineGrowth g2;
+    GrowVine(sp,params,a2,under,VineGrowthSeed(a2,3),m.blocks,g2);
+    const std::vector<vec3>& pts = g2.strands[0].path.points;
+    Spline hang;
+    BuildVineSpline(g2.strands[0].path,hang);
+    vec3 from = hang.PositionAt(fminf(1.0f,hang.GetLength()));
+    vec3 fall = pts.back() - from;
+    fall.normalize();
+    float deg = acosf(fminf(1.0f,fmaxf(-1.0f,fall.dot(under)))) * 180.0f / 3.14159265f;
+    snprintf(d,sizeof(d),"%.1f deg off straight down past its first metre, %.2f long",deg,g2.strands[0].length);
+    Check(!g2.strands[0].f_rested && deg < 30.0f,"with nothing under it, it hangs",d);
+    Check(g2.strands[0].length >= sp.length_min - sp.step && g2.strands[0].length <= sp.length_max + sp.step,
+          "for a length the species allows",d);
+
+    //Under a low ceiling (underside 1.5 over a floor at 0): it lands, lies along the floor, stops.
+    std::vector<StageBlock> low(2);
+    low[0].x = 0.0f; low[0].y = -1.0f; low[0].hw = 10.0f; low[0].hh = 1.0f;
+    low[1].x = 0.0f; low[1].y = 2.0f;  low[1].hw = 2.0f;  low[1].hh = 0.5f;
+    vec3 a3(0.3f,1.5f,0.0f);
+    VineGrowth g3;
+    GrowVine(sp,params,a3,under,VineGrowthSeed(a3,0),low,g3);
+    const VineStrand& rest = g3.strands[0];
+    float keep = params.tile_radius * params.tile_scale * rest.path.thickness + sp.clearance;
+    const vec3& tip = rest.path.points.back();
+    snprintf(d,sizeof(d),"tip at (%.2f, %.3f), keep %.3f, walked %.2f",tip.x,tip.y,keep,rest.length);
+    Check(rest.f_rested,"under a low ceiling it reaches the floor and comes to rest",d);
+    Check(fabsf(tip.y - keep) < 0.03f && fabsf(tip.x - a3.x) > 0.3f,"lying on it, having crept along it",d);
+    Check(rest.length < sp.length_max,"and stops there rather than walking its whole length",d);
+
+    //Off a wall - the step's right face: out from it, then down.
+    vec3 a4(9.0f,1.2f,0.0f);
+    VineGrowth g4;
+    GrowVine(sp,params,a4,vec3(1.0f,0.0f,0.0f),VineGrowthSeed(a4,0),m.blocks,g4);
+    GrowCheck c4;
+    CheckGrowth(g4,sp,params,m.blocks,a4,c4);
+    snprintf(d,sizeof(d),"%zu strands, walked %.3f clear of the keep, none nearer than %.3f, curve %.3f",
+             g4.strands.size(),c4.worst_clear,c4.worst_inside,c4.worst_curve);
+    Check(!g4.strands.empty() && c4.worst_clear >= -0.002f && c4.worst_inside > 0.0f && c4.worst_curve > 0.0f &&
+          c4.f_built,"off a wall it grows clear of the face and the floor under it",d);
+
+    //The same shot, the same vine; another arrow in the same spot, another vine.
+    VineGrowth again;
+    GrowVine(sp,params,a1,under,VineGrowthSeed(a1,0),m.blocks,again);
+    bool f_same = again.strands.size() == g1.strands.size();
+    for (size_t k = 0; f_same && k < again.strands.size(); k++){
+        const std::vector<vec3>& p = again.strands[k].path.points;
+        const std::vector<vec3>& q = g1.strands[k].path.points;
+        f_same = (p.size() == q.size());
+        for (size_t i = 0; f_same && i < p.size(); i++){
+            f_same = (p[i].x == q[i].x && p[i].y == q[i].y && p[i].z == q[i].z);
+        }
+    }
+    Check(f_same,"the same shot grows the same vine, bit for bit");
+    Check(VineGrowthSeed(a1,0) != VineGrowthSeed(a1,1) && VineGrowthSeed(a1,0) == VineGrowthSeed(a1,0),
+          "another arrow into the same spot has another seed");
+
+    //Branches leave from their parent's own curve.
+    float worst_root = 0.0f;
+    int branches = 0;
+    Spline main_curve;
+    BuildVineSpline(g1.strands[0].path,main_curve);
+    for (const VineStrand& st : g1.strands){
+        if (st.parent < 0){ continue; }
+        branches++;
+        worst_root = fmaxf(worst_root,(st.path.points[0] - main_curve.PositionAt(st.s_on_parent)).length());
+    }
+    snprintf(d,sizeof(d),"%i branches, worst %.2e off",branches,worst_root);
+    Check(worst_root < 1e-4f,"every branch starts on its parent's curve",d);
+
+    //Two hundred seeds under slab one and under the low ceiling: every one holds.
+    GrowCheck all;
+    int failed_lower = 0, total_branches = 0, rested = 0;
+    for (int seed = 0; seed < 200; seed++){
+        VineGrowth g;
+        GrowVine(sp,params,a1,under,seed * 7919,m.blocks,g);
+        GrowCheck c;
+        CheckGrowth(g,sp,params,m.blocks,a1,c);
+        all.worst_clear = fminf(all.worst_clear,c.worst_clear);
+        all.worst_inside = fminf(all.worst_inside,c.worst_inside);
+        all.worst_curve = fminf(all.worst_curve,c.worst_curve);
+        all.f_built = all.f_built && c.f_built;
+        failed_lower += c.f_lower ? 0 : 1;
+        total_branches += (int)g.strands.size() - 1;
+        Spline parent;
+        if (!g.strands.empty() && BuildVineSpline(g.strands[0].path,parent)){
+            for (const VineStrand& st : g.strands){
+                if (st.parent >= 0){
+                    worst_root = fmaxf(worst_root,(st.path.points[0] - parent.PositionAt(st.s_on_parent)).length());
+                    branches++;
+                }
+            }
+        }
+        VineGrowth gl;
+        GrowVine(sp,params,a3,under,seed * 7919,low,gl);
+        GrowCheck cl;
+        CheckGrowth(gl,sp,params,low,vec3(a3.x,a3.y + 10.0f,0.0f),cl);  //not asked to end lower
+        all.worst_clear = fminf(all.worst_clear,cl.worst_clear);
+        all.worst_inside = fminf(all.worst_inside,cl.worst_inside);
+        all.worst_curve = fminf(all.worst_curve,cl.worst_curve);
+        all.f_built = all.f_built && cl.f_built;
+        rested += gl.strands[0].f_rested ? 1 : 0;
+    }
+    snprintf(d,sizeof(d),"walked %.3f clear of the keep, none nearer than %.3f, curve %.3f, %i branches, "
+             "%i of 200 rested under the ceiling",all.worst_clear,all.worst_inside,all.worst_curve,total_branches,rested);
+    Check(all.worst_clear >= -0.002f && all.worst_inside > 0.0f && all.worst_curve > 0.0f,"200 seeds: none enters a block",d);
+    Check(all.f_built && failed_lower == 0 && rested == 200,"all of them build, hang lower, and land under the ceiling",d);
+    snprintf(d,sizeof(d),"%i branches, worst %.2e off",branches,worst_root);
+    Check(branches > 50 && worst_root < 1e-4f,"and every one of their branches starts on its parent's curve",d);
+
+    //The clock: from nothing at the strike to the whole length at grow_ticks, never back, and
+    //faster at the start than the end - eased out, not a progress bar.
+    float L = 5.0f;
+    bool f_rising = true;
+    float prev_front = 0.0f;
+    for (int t = 0; t <= sp.grow_ticks + 10; t++){
+        float f = VineGrowthFront(sp,L,t);
+        if (f < prev_front){ f_rising = false; }
+        prev_front = f;
+    }
+    float first_tenth = VineGrowthFront(sp,L,sp.grow_ticks / 10);
+    float last_tenth = L - VineGrowthFront(sp,L,sp.grow_ticks - sp.grow_ticks / 10);
+    snprintf(d,sizeof(d),"first tenth of the time %.2f, last tenth %.2f",first_tenth,last_tenth);
+    Check(VineGrowthFront(sp,L,0) == 0.0f && VineGrowthFront(sp,L,sp.grow_ticks) == L && f_rising,
+          "the front runs from 0 at the strike to the length at grow_ticks, never back");
+    Check(first_tenth > 4.0f * last_tenth,"fast from the arrow, slowing to a stop",d);
+    Check(VineLeafOpen(sp,1.0f,1.0f + sp.leaf_delay - 0.01f) == 0.0f &&
+          VineLeafOpen(sp,1.0f,1.0f + sp.leaf_delay + sp.leaf_unfold + 0.01f) == 1.0f &&
+          VineLeafOpen(sp,1.0f,1.0f + sp.leaf_delay + 0.5f * sp.leaf_unfold) > 0.5f,
+          "a leaf waits leaf_delay behind the front, then opens over leaf_unfold");
+    Check(sp.leaf_delay >= SplineDeformParams().grow_tip_length,
+          "and waits until the growing tip's taper has passed, so it sits on the finished trunk");
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -7123,6 +7503,8 @@ int main(void){
     TestVitals();
     TestArrowKinds();
     TestAimHold();
+    TestEdges();
+    TestVineGrowth();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

@@ -75,19 +75,42 @@ struct SplineDeformParams{
     */
     float tile_start  = 0.0f;
     float tile_length = 0.0f;
+    /*
+        GROWTH: only the sweep up to `grown` (a distance along the curve, like start and end) is
+        laid down. < 0, or at or past the range's end, is all of it. See apps/archer/vine_plan.md
+        section 9.
+
+        Not a moving `end`, which would re-stretch every copy to fit and change the count as it
+        went - the whole trunk sliding and popping as it grows. The copies are laid out for the
+        FULL range, exactly as the finished sweep has them: a copy wholly past the front is left
+        out, and a vertex of the copy the front is inside is pulled back onto the front. Over the
+        last grow_tip_length behind the front the section closes to grow_tip_scale, so the front
+        is a closed point rather than a sawn ring - shaped as a cone at the point, meeting the trunk
+        with no crease. That closing fades out as the front nears the range's end, so a finished
+        sweep arrives at the ordinary end taper rather than jumping onto it.
+
+        A copy the front has just reached is born collapsed onto the point, so nothing appears out
+        of nowhere either, and everything more than a tip's length behind the front is the finished
+        sweep's own geometry, bit for bit.
+    */
+    float grown           = -1.0f;
+    float grow_tip_length = 0.35f;
+    float grow_tip_scale  = 0.0f;
 };
 
 //A tile's extent along its Z: where it starts and how long it is, in its own units. False for a
 //tile with no length.
 bool SplineDeformMeasure(const std::vector<vertex>& tile, float& zmin, float& length);
 
-//The cross-section scale at distance s under these params (1 away from the ends).
+//The cross-section scale at distance s under these params (1 away from the ends), the growing
+//tip's closing included.
 float SplineDeformTaper(const SplineDeformParams& params, float s, float range_start, float range_end);
 
 /*
     Appends the deformed copies to `out` (it is NOT cleared, so several sweeps can share one mesh)
-    and returns how many copies were laid down - 0 for an empty tile, a flat one, or a curve that
-    was not built.
+    and returns how many copies were laid down - 0 for an empty tile, a flat one, a curve that was
+    not built, or a sweep not grown yet. Growing, it is the copies laid SO FAR, each whole, the
+    last one partly collapsed onto the front.
 */
 int DeformAlongSpline(const Spline& spline, const std::vector<vertex>& tile,
                       const SplineDeformParams& params, std::vector<vertex>& out);

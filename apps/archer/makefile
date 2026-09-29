@@ -36,6 +36,8 @@ PROJECT := archer
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationArcher.cpp
 APP_SRCS += Stage.cpp
+#The floors' edges, spans and wall feet (vine_plan.md section 15) - Stage's own methods, a file of their own.
+APP_SRCS += StageEdges.cpp
 APP_SRCS += Puppet.cpp
 #The blockout, as terrain. The mesher itself is core/MarchingCubes.cpp and is picked up by the
 #core wildcard; this is the half that knows what a StageBlock is. See terrain_plan.md.
@@ -117,23 +119,23 @@ include $(ROOT)/engine.mk
 rules:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
-		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
+		stage_test.cpp Stage.cpp StageEdges.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
 		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe
 #The wind's checks, as their own exe so they need nothing from stage_test.cpp. -O2 because the
 #main level's flow solve takes seconds unoptimised, and its two timings are printed.
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/wind_test.exe \
-		wind_test.cpp Wind.cpp Stage.cpp
+		wind_test.cpp Wind.cpp Stage.cpp StageEdges.cpp
 	@./build/wind_test.exe
 #The leaves, the same way.
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/leaves_test.exe \
-		leaves_test.cpp Leaves.cpp Wind.cpp Stage.cpp
+		leaves_test.cpp Leaves.cpp Wind.cpp Stage.cpp StageEdges.cpp
 	@./build/leaves_test.exe
 #And the streaks.
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/streaks_test.exe \
-		streaks_test.cpp Streaks.cpp Wind.cpp Stage.cpp
+		streaks_test.cpp Streaks.cpp Wind.cpp Stage.cpp StageEdges.cpp
 	@./build/streaks_test.exe
 #And the fireflies.
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/fireflies_test.exe \
-		fireflies_test.cpp Fireflies.cpp Wind.cpp Stage.cpp
+		fireflies_test.cpp Fireflies.cpp Wind.cpp Stage.cpp StageEdges.cpp
 	@./build/fireflies_test.exe

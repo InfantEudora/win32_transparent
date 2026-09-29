@@ -19,6 +19,9 @@ static const float VINE_GOLDEN_ANGLE = 2.39996323f;
 
 //The channels a station draws from, so no two decisions share a number.
 enum{ VCH_SPACING = 0, VCH_COUNT, VCH_TURN, VCH_KIND, VCH_SCALE, VCH_LIFT, VCH_ROLL, VCH_SLIDE };
+//And a growth's. The wander takes two per strand from VCH_WANDER up, so it is left room.
+enum{ VCH_GROW_LENGTH = 16, VCH_GROW_THICK, VCH_BRANCH_COUNT, VCH_BRANCH_AT, VCH_BRANCH_SIDE,
+      VCH_BRANCH_LENGTH, VCH_REST_SIDE, VCH_WANDER = 32 };
 
 //--- Path -----------------------------------------------------------------------------------------
 
@@ -29,8 +32,10 @@ bool BuildVineSpline(const VinePath& path, Spline& out){
     return out.Build(0.02f);
 }
 
-static SplineDeformParams TrunkDeform(const Spline& spline, const VinePath& path, const VineParams& params){
+static SplineDeformParams TrunkDeform(const Spline& spline, const VinePath& path, const VineParams& params,
+                                      float grown = -1.0f){
     SplineDeformParams d;
+    d.grown = grown;       //growing: only this far along - see SplineDeformParams::grown
     d.scale = params.tile_scale * path.thickness;
     d.twist = params.twist;
     //Never more than half the vine each: a short vine tapers from both ends to its middle rather
@@ -62,20 +67,20 @@ float VineRadiusAt(const Spline& spline, const VinePath& path, const VineParams&
 }
 
 int BuildVineTrunk(const Spline& spline, const VinePath& path, const std::vector<vertex>& tile,
-                   const VineParams& params, std::vector<vertex>& out){
+                   const VineParams& params, std::vector<vertex>& out, float grown){
     if (!spline.IsBuilt()){
         return 0;
     }
-    return DeformAlongSpline(spline,tile,TrunkDeform(spline,path,params),out);
+    return DeformAlongSpline(spline,tile,TrunkDeform(spline,path,params,grown),out);
 }
 
 int BuildVineOverlay(const Spline& spline, const VinePath& path, const std::vector<vertex>& overlay,
                      const std::vector<vertex>& trunk_tile, const VineParams& params,
-                     std::vector<vertex>& out){
+                     std::vector<vertex>& out, float grown){
     if (!spline.IsBuilt()){
         return 0;
     }
-    SplineDeformParams d = TrunkDeform(spline,path,params);
+    SplineDeformParams d = TrunkDeform(spline,path,params,grown);
     if (!SplineDeformMeasure(trunk_tile,d.tile_start,d.tile_length)){
         return 0;
     }
@@ -322,6 +327,251 @@ void MakeVinePlaceholderLeaf(std::vector<vertex>& out){
             out.push_back(MakeVert(tri[q],n,t,tri[q].x / HW * 0.5f + 0.5f,tri[q].z / L));
         }
     }
+}
+
+//--- Grown vines ----------------------------------------------------------------------------------
+
+const VineSpecies& VineSpeciesFor(int kind){
+    static VineSpecies table[VINE_SPECIES_COUNT];
+    static bool f_built = false;
+    if (!f_built){
+        //The vine: hangs from an underside, swaying a little either way as it falls, comes to rest
+        //on whatever floor it reaches and creeps a short way along it. A branch or two.
+        VineSpecies& v = table[VINE_SPECIES_VINE];
+        v.name = "vine";
+        f_built = true;
+    }
+    return table[(kind >= 0 && kind < VINE_SPECIES_COUNT) ? kind : VINE_SPECIES_VINE];
+}
+
+float VineGrowthFront(const VineSpecies& sp, float length, int ticks){
+    if (ticks <= 0){
+        return 0.0f;
+    }
+    if (sp.grow_ticks <= 0 || ticks >= sp.grow_ticks){
+        return length;
+    }
+    float x = (float)ticks / (float)sp.grow_ticks;
+    return length * (1.0f - (1.0f - x) * (1.0f - x));
+}
+
+float VineLeafOpen(const VineSpecies& sp, float s, float front){
+    float unfold = (sp.leaf_unfold > 0.01f) ? sp.leaf_unfold : 0.01f;
+    float k = (front - s - sp.leaf_delay) / unfold;
+    if (k <= 0.0f){ return 0.0f; }
+    if (k >= 1.0f){ return 1.0f; }
+    return 1.0f - (1.0f - k) * (1.0f - k);
+}
+
+int VineGrowthSeed(const vec3& point, int arrow){
+    return (int)(Hash01(point.x,point.y,arrow,(int)lroundf(point.z * 1000.0f)) * 1000000.0f);
+}
+
+float VineBlockDistance(const std::vector<StageBlock>& blocks, float x, float y){
+    float best = 1e9f;
+    for (const StageBlock& b : blocks){
+        if (!b.f_alive){
+            continue;
+        }
+        //The box's signed distance: outside, the distance to its nearest point; inside, minus the
+        //distance to its nearest face.
+        float qx = fabsf(x - b.x) - b.hw;
+        float qy = fabsf(y - b.y) - b.hh;
+        float ox = (qx > 0.0f) ? qx : 0.0f;
+        float oy = (qy > 0.0f) ? qy : 0.0f;
+        float inside = (qx > qy) ? qx : qy;
+        float d = sqrtf(ox * ox + oy * oy) + ((inside < 0.0f) ? inside : 0.0f);
+        if (d < best){
+            best = d;
+        }
+    }
+    return best;
+}
+
+//The outward direction off the nearest block at (x, y), by central differences. Zero if the
+//field is flat there (nowhere near anything).
+static vec3 BlockNormal(const std::vector<StageBlock>& blocks, float x, float y){
+    const float h = 0.01f;
+    float dx = VineBlockDistance(blocks,x + h,y) - VineBlockDistance(blocks,x - h,y);
+    float dy = VineBlockDistance(blocks,x,y + h) - VineBlockDistance(blocks,x,y - h);
+    float l = sqrtf(dx * dx + dy * dy);
+    return (l > 1e-6f) ? vec3(dx / l,dy / l,0.0f) : vec3(0.0f,0.0f,0.0f);
+}
+
+//Smooth value noise in [-1, 1] along t: hashed values on the integers, smoothstepped between.
+static float SmoothNoise(float t, float seed, int channel){
+    float i = floorf(t);
+    float f = t - i;
+    float a = Signed(Hash01(i,seed,channel,0));
+    float b = Signed(Hash01(i + 1.0f,seed,channel,0));
+    float u = f * f * (3.0f - 2.0f * f);
+    return a + (b - a) * u;
+}
+
+/*
+    One strand, walked from `start` along `heading` for up to `length`, a point kept every
+    point_spacing. See VineSpecies for what turns it. `channel` keeps each strand's wander its own.
+*/
+#define VINE_Z_HOLD         1.5f    //per unit: how hard the heading is turned back toward the start's depth
+#define VINE_STUCK_STEPS    6       //this many steps in a row that barely move, and the walk gives up
+static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, const vec3& heading,
+                       float length, float seed, int channel, const std::vector<StageBlock>& blocks,
+                       VineStrand& out){
+    const float keep = radius + sp.clearance;
+    const float step = (sp.step > 0.005f) ? sp.step : 0.005f;
+    const vec3 down(0.0f,-1.0f,0.0f);
+    vec3 p = start;
+    vec3 h = heading;
+    h.normalize();
+    out.path.points.push_back(p);
+    float walked = 0.0f;
+    float since_point = 0.0f;
+    float rested = -1.0f;           //distance crept since first coming to rest, -1 not yet
+    int stuck = 0;
+    //Which way to creep if it lands heading straight down - fixed for the strand, so it does not
+    //dither between the two.
+    float rest_side = (Hash01(start.x,seed,VCH_REST_SIDE,channel) < 0.5f) ? -1.0f : 1.0f;
+
+    while (walked < length){
+        float t = walked / ((sp.wander_wavelength > 0.01f) ? sp.wander_wavelength : 0.01f);
+        float wx = SmoothNoise(t,seed,VCH_WANDER + 2 * channel);
+        float wz = SmoothNoise(t,seed,VCH_WANDER + 2 * channel + 1);
+        //Across the screen, square to the heading - or plain +X while it points into the screen.
+        vec3 side = h.cross(vec3(0.0f,0.0f,1.0f));
+        if (side.length() < 1e-3f){
+            side = vec3(1.0f,0.0f,0.0f);
+        }
+        side.normalize();
+        vec3 turn = down * sp.gravity + side * (wx * sp.wander) +
+                    vec3(0.0f,0.0f,1.0f) * (wz * sp.wander * sp.wander_depth - (p.z - start.z) * VINE_Z_HOLD);
+        h = h + turn * step;
+        h.normalize();
+
+        vec3 move = h * step;
+        vec3 next = p + move;
+        float d_here = VineBlockDistance(blocks,p.x,p.y);
+        float d_next = VineBlockDistance(blocks,next.x,next.y);
+        bool f_on_floor = false;
+        //Held off the blocks: a step that would come nearer than `keep` slides along the face -
+        //only one coming NEARER, so a strand can always leave the face it grew from.
+        if (d_next < keep && d_next < d_here){
+            vec3 n = BlockNormal(blocks,next.x,next.y);
+            if (n.length() > 0.5f){
+                float into = move.dot(n);
+                if (into < 0.0f){
+                    move = move - n * into;
+                }
+                //Straight into a face: nothing left to slide on, so creep along it to one side.
+                if (move.length() < 0.2f * step){
+                    vec3 along(-n.y,n.x,0.0f);
+                    float ad = along.dot(h);
+                    if ((fabsf(ad) > 1e-3f) ? (ad < 0.0f) : (rest_side < 0.0f)){
+                        along = along * -1.0f;
+                    }
+                    move = along * step;
+                }
+                next = p + move;
+                //And out to `keep`, if the slide still grazes it.
+                float d = VineBlockDistance(blocks,next.x,next.y);
+                if (d < keep){
+                    next = next + n * (keep - d);
+                }
+                f_on_floor = (n.y > 0.7f);
+                if (move.length() > 1e-6f){
+                    h = move;
+                    h.normalize();
+                }
+            }
+        }
+        stuck = ((next - p).length() < 0.1f * step) ? stuck + 1 : 0;
+        if (stuck >= VINE_STUCK_STEPS){
+            break;
+        }
+        p = next;
+        walked += step;
+        since_point += step;
+        //Counted only while it lies on a floor: one that creeps off the end falls on, and hangs.
+        if (f_on_floor){
+            rested = (rested < 0.0f) ? 0.0f : rested + step;
+            if (rested >= sp.rest_length){
+                out.f_rested = true;
+                break;
+            }
+        }
+        if (since_point >= sp.point_spacing){
+            out.path.points.push_back(p);
+            since_point = 0.0f;
+        }
+    }
+    if ((out.path.points.back() - p).length() > 0.25f * sp.point_spacing){
+        out.path.points.push_back(p);
+    }
+    out.length = walked;
+    //Up for the frame: anything not along the first heading. +Z unless it starts into the screen.
+    out.path.up = (fabsf(heading.z) > 0.9f) ? vec3(0.0f,1.0f,0.0f) : vec3(0.0f,0.0f,1.0f);
+}
+
+bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& anchor, const vec3& normal,
+              int seed, const std::vector<StageBlock>& blocks, VineGrowth& out){
+    out.strands.clear();
+    vec3 n = normal;
+    if (n.length() < 1e-6f){
+        return false;
+    }
+    n.normalize();
+    float fseed = (float)seed;
+    float thickness = sp.thickness * (1.0f + sp.thickness_jitter * Signed(Hash01(0.0f,fseed,VCH_GROW_THICK,0)));
+    float radius = params.tile_radius * params.tile_scale * thickness;
+    float length = sp.length_min + (sp.length_max - sp.length_min) * Hash01(0.0f,fseed,VCH_GROW_LENGTH,0);
+
+    /*
+        The main strand. Its path begins a little INSIDE the surface, so the trunk comes out of the
+        rock rather than starting on it; the walk begins just outside, heading out along the normal
+        until the species bends it.
+    */
+    VineStrand main;
+    main.path.seed = seed;
+    main.path.thickness = thickness;
+    WalkStrand(sp,radius,anchor + n * 0.02f,n,length,fseed,0,blocks,main);
+    main.path.points.insert(main.path.points.begin(),anchor - n * 0.1f);
+    if (main.path.points.size() < 3){
+        return false;
+    }
+    out.strands.push_back(main);
+
+    //--- Branches: off the main strand's built curve, turned off its heading to one side ---
+    Spline trunk;
+    if (!BuildVineSpline(out.strands[0].path,trunk)){
+        return true;
+    }
+    int span = sp.branch_max - sp.branch_min + 1;
+    int count = sp.branch_min + ((span > 0) ? (int)(Hash01(0.0f,fseed,VCH_BRANCH_COUNT,0) * (float)span) : 0);
+    if (count > sp.branch_max){ count = sp.branch_max; }
+    for (int b = 0; b < count; b++){
+        float frac = sp.branch_from + (sp.branch_to - sp.branch_from) * Hash01(0.0f,fseed,VCH_BRANCH_AT,b);
+        float s_b = frac * trunk.GetLength();
+        vec3 at = trunk.PositionAt(s_b);
+        vec3 t = trunk.TangentAt(s_b);
+        float a = sp.branch_angle_deg * (VINE_PI / 180.0f) *
+                  ((Hash01(0.0f,fseed,VCH_BRANCH_SIDE,b) < 0.5f) ? -1.0f : 1.0f);
+        //Turned about the view axis, so the branch leaves across the screen where it shows.
+        vec3 dir(t.x * cosf(a) - t.y * sinf(a),t.x * sinf(a) + t.y * cosf(a),t.z);
+        dir.normalize();
+        VineStrand br;
+        br.parent = 0;
+        br.s_on_parent = s_b;
+        br.path.seed = seed + 1 + b;
+        br.path.thickness = thickness * sp.branch_thickness;
+        float br_radius = radius * sp.branch_thickness;
+        float br_length = length * sp.branch_length * (0.7f + 0.6f * Hash01(0.0f,fseed,VCH_BRANCH_LENGTH,b));
+        WalkStrand(sp,br_radius,at + dir * (radius * 0.5f),dir,br_length,fseed,1 + b,blocks,br);
+        //From inside the parent's trunk, like the main strand from inside the rock.
+        br.path.points.insert(br.path.points.begin(),at);
+        if (br.path.points.size() >= 3){
+            out.strands.push_back(br);
+        }
+    }
+    return true;
 }
 
 //--- The level's vines ----------------------------------------------------------------------------

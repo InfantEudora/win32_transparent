@@ -792,6 +792,54 @@ struct StageBlock{
 };
 
 /*
+    THE FLOORS' EDGES - vine_plan.md section 15. What the fear of heights, a teeter and a catch at
+    a lip, a creeper turning over one and a tuft on top of a platform all ask about: where a floor
+    ends, and what is past the end.
+
+    DERIVED FROM THE BLOCKS, never authored and never hashed - the blocks are, and these follow
+    from them. Rebuilt by Reset, by the tick after play changes a block (a wall kicked in, a stone
+    crumbled), and by KeepBlockLayout after the editor moves one; RefreshEdges is there for any
+    other code that edits blocks by hand. See StageEdges.cpp for how.
+
+      SPAN     a floor: the top of one or more blocks at one height, less whatever stands on it,
+               with neighbours at the same height joined into one. A one-way platform is a floor.
+      EDGE     an end of a span where the floor drops away.
+      CORNER   an end of a span where a wall rises instead - the foot of a face. A platform is
+               never a wall: she walks through one from below.
+*/
+#define STAGE_EDGE_JOIN             0.02f   //gaps narrower than this, and heights closer, are one floor
+
+struct StageSpan{
+    float x0 = 0.0f;
+    float x1 = 0.0f;
+    float y = 0.0f;
+    int   block_left = -1;          //whose top each end is
+    int   block_right = -1;
+};
+
+struct StageEdge{
+    float x = 0.0f;                 //the collider's corner, where she can go over
+    float y = 0.0f;
+    int   side = 1;                 //+1: the floor to the left and the drop to the right; -1 the mirror
+    int   block = -1;
+    int   span = -1;
+    float drop = 0.0f;              //down to the next floor just past it; VITALS_NO_FLOOR for none
+    float wall = 0.0f;              //the bare face under the lip, down to where it meets anything
+    float z_front = 0.0f;           //the block's depth, for anything placed along the lip
+    float z_back = 0.0f;
+    bool  f_grabbable = false;      //a BLOCK_LEDGE's corner: the level lets her hang here
+};
+
+struct StageCorner{
+    float x = 0.0f;
+    float y = 0.0f;
+    int   side = 1;                 //+1: the wall rises to the right of the floor; -1 to the left
+    int   block = -1;               //the block that rises
+    int   span = -1;
+    float rise = 0.0f;              //how far the face goes up before it is open again
+};
+
+/*
     A ZONE: a named stretch of the level that knows when she is in it - cue_plan.md section 8, and
     bridge_crumble_plan.md section 1, which is where it was first built.
 
@@ -1620,6 +1668,32 @@ public:
 
     //--- The world ------------------------------------------------------------------------------
     std::vector<StageBlock> blocks;
+
+    //The floors, their edges and the feet of their walls, from the blocks - see StageEdge.
+    std::vector<StageSpan>   spans;
+    std::vector<StageEdge>   edges;
+    std::vector<StageCorner> corners;
+    int   edges_generation = 0;     //+1 on every rebuild, so a copy knows when it is stale
+    //Rebuilds them from the blocks as they are now. Reset and KeepBlockLayout (the editor's
+    //moves) both do.
+    void  RebuildEdges();
+    /*
+        Rebuilds them if anything about the blocks has changed since the last build - every box,
+        kind and f_alive, fingerprinted - true if it did. For code that edits blocks by hand.
+
+        Tick does something cheaper: it counts the live blocks and rebuilds if the count moved,
+        which is exactly what play can do to them (a wall kicked in, a stone crumbled - f_alive
+        only ever clears until a restart). The full fingerprint over every block, on every tick of
+        every landing forecast (which ticks a copy of the Stage up to 30 times), would cost more
+        than the forecast itself.
+    */
+    bool  RefreshEdges();
+    //The nearest edge of the floor at floor_y (within STAGE_EDGE_JOIN of it) within max_d of x
+    //across, of `side` (0 either), or -1.
+    int   NearestEdge(float x, float floor_y, float max_d, int side = 0) const;
+    //The span under x at height y (within `tol`), or -1 - "is this top open here".
+    int   SpanAt(float x, float y, float tol = 0.05f) const;
+
     std::vector<StageProp>  props;
     std::vector<StageSign>  signs;
     std::vector<StageScenery> scenery;
@@ -2042,6 +2116,14 @@ private:
     int   SegmentHitsBlock(const v3& a, const v3& b, v3& out_point, v3& out_normal) const;
 
     int   next_arrow = 0;           //the ring buffer's write cursor
+
+    //What the blocks were when the edges were last built - see RefreshEdges - and the cheap
+    //version Tick checks: how many there were, and how many alive.
+    uint64_t edges_signature = 0;
+    size_t   edges_blocks = 0;
+    int      edges_alive = -1;
+    uint64_t BlocksSignature() const;
+    int      CountAliveBlocks() const;
 };
 
 #endif

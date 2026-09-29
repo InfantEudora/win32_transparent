@@ -544,12 +544,118 @@ meshes. That move is cheap exactly because sections 9 and 10 keep the walker out
    - Not done here: the cue does not yet tell a vine arrow's thud from a normal one's. That is
      for step 5, together with the `vine_grow` cue, so the `.cues` baseline moves once.
 2. **The reveal** in `SplineDeform` (`grown`, the tip), with its `spline_test` checks.
+   *(DONE 2026-09-29.)*
+   - `SplineDeformParams::grown`, `grow_tip_length` (0.35) and `grow_tip_scale` (0).
+     `SplineDeformTaper` includes the tip, so a leaf seated by `VineRadiusAt` will follow it.
+     `DeformAlongSpline` returns the copies laid so far.
+   - **The tip is a cone, not a needle.** It closes by an ease-out, 1 - (1 - k)^2, whose slope is
+     finite at the point and zero where it meets the trunk. The plain smoothstep closed with zero
+     slope and drew the last of it hair-thin. The closing fades out over the last tip length, onto
+     the ordinary end taper.
+   - 11 checks, 57 in `spline_test`:
+     - grown to the end is the plain sweep, bit for bit, and grown 0 lays nothing;
+     - nothing lies past the front, and the front closes to a point;
+     - all 1,440 vertices more than a tip behind the front are the finished sweep's own, and the
+       copies are whole ones of the finished layout (3 of 4);
+     - the point is a cone (radius ratio 1.94 at double the distance);
+     - grown along a bend in steps of 0.01, no vertex moves more than 0.0102, so nothing pops;
+     - every new copy is born at the front as a point, and no NaNs appear;
+     - the last step lands exactly on the finished sweep.
+   - Not yet passed through `Vine.cpp`: `BuildVineTrunk` / `BuildVineOverlay` get a `grown`
+     argument with step 5, where something first grows.
 3. **The edge list** (section 15) with its `make rules` checks. It comes before the walker, which
    needs it to turn a creeper over a lip, and it can land while the art is still coming.
+   *(DONE 2026-09-29.)*
+   - The types are `StageSpan` / `StageEdge` / `StageCorner` in Stage.h. The builder is
+     `apps/archer/StageEdges.cpp`, added to the app and to all five `make rules` exes.
+   - Queries: `Stage::NearestEdge`, `SpanAt`. A platform is a floor but never a wall. A gap
+     narrower than `STAGE_EDGE_JOIN` (0.02) is no gap.
+   - **Rebuilt by** Reset, by `KeepBlockLayout` (the editor's moves), and by the tick after the
+     count of live blocks moves, which is all play can do to blocks: a wall kicked in, a stone
+     crumbled. The full fingerprint over every block (`RefreshEdges`) is for code that edits
+     blocks by hand. It is deliberately not run per tick, because `PredictLanding` ticks a copy of
+     the Stage up to 30 times a tick.
+   - The main level has 52 spans, 80 edges and 24 wall feet.
+   - 28 checks in `make rules` (809 in all): each rule on a layout built for it, then the main
+     level's landmarks (the step's feet, the high ledge's grabbable 4.2 lips, the first gap, no
+     edge where the bay meets the start), then the refresh and the editor path. The archer test
+     replay is unchanged, since nothing reads the edges yet.
+   - The view is `archer_debug_view edges` or the panel's "floor edges" box: white floors, drop
+     lines (red past `VITALS_DROP_FROM`, amber past 0.5, grey a step), a blue bar on a grabbable
+     lip, green feet. `archer_edges` (with `x0`/`x1`) gives the numbers. Both come out of the
+     snapshot. World level only, like the wind view. Checked in a screenshot at the start.
+   - Not done here: fear reading the edges instead of its column scan, and Foliage sharing the
+     spans. Each changes what exists today (the trace, the plants), so each is its own change.
 4. **The walker** and a `VineSpecies` row for the vine, checked in `make rules`.
+   *(DONE 2026-09-29.)*
+   - In Vine.h/.cpp: `VineSpecies` + `VineSpeciesFor`, `VineStrand` / `VineGrowth`, `GrowVine`,
+     `VineGrowthSeed` (from the hit point and the arrow slot) and `VineBlockDistance`, the blocks'
+     2D signed distance the walk keeps clear of.
+   - The walk takes 0.08 steps and keeps a point every 0.3. The heading turns toward down (or up)
+     by `gravity`, sideways by a smoothed hashed noise of distance (`wander` over
+     `wander_wavelength`, some of it into the screen), and back toward its start's depth.
+   - A step that would come nearer a block than the trunk's radius plus `clearance` slides along
+     the face instead. Only a step coming *nearer* does, so it can leave the face it grew from. A
+     step straight into a face creeps to one side, fixed per strand. On a floor it counts toward
+     `rest_length` and then stops. A strand that creeps off the end falls on and hangs.
+   - The path starts 0.1 inside the rock, so the trunk comes out of it. Branches (0-2 for the
+     vine) leave the main strand's built curve, turned 35 degrees to a hashed side, from inside
+     it.
+   - 16 checks (825 in all):
+     - under slab one it grows, ends lower and builds;
+     - under the high slab it hangs 2.7 degrees off straight down, for a length in range;
+     - under a low ceiling it lands, lies at its keep and crept 1.3 along the floor, stopping
+       short of its full length;
+     - off the step's wall it grows clear;
+     - the same shot is bit-identical, and another arrow gets another seed;
+     - 200 seeds under slab one and under the ceiling: none enters a block, all build, all hang
+       lower, all 200 land, and all 198 branches start on their parent's curve.
+   - **Known, and left:** the built curve rounds the walk's corners, so where a hanging strand
+     lands it can dip up to 0.09 inside its own keep (the walked points never do). On a floor
+     that sinks the trunk's belly a little into the grass, which the terrain hides. If it ever
+     shows, walk with a keep a little larger than the drawn radius.
 5. **The vine arrow grows a vine on an underside**, visual only: the queue, PreRender re-deforms,
    the leaf pool, unfolding, the cue, the cap of 32. Judged in screenshots at fixed ticks under
    `sim_step`, which the tick clock is there for. The start is offset by `round_r` until:
+   *(DONE 2026-09-29, and not offset: the vine starts inside the box, and so inside the drawn
+   rock, which hides its first few tenths. Step 6 still wants the query, for the walk's
+   collisions against the drawn surface.)*
+   - **The trigger:** `HandleEvents` catches an `ArrowHit` of `ARROW_VINE` with `normal.y < -0.5`,
+     on the world level only.
+   - **Physics thread** (`StartGrownVine`, `StepGrownVines`):
+     - it walks the vine with `GrowVine` off `stage.blocks`, scatters its leaves and borrows them
+       from a pool;
+     - each tick it computes every strand's front from the ticks since the strike
+       (`VineGrowthFront`, eased out over `grow_ticks` = 150);
+     - branches start when the main front passes their root, and run to finish together with it;
+     - leaves open by `VineLeafOpen` (0.45 behind the front, over 0.6), scaled in and folded up
+       from lying along the stem, and any still closed at the end open over 0.4 s;
+     - a vine grown and open is left alone.
+   - **Render thread** (`DrawGrownVines` in PreRender): re-deforms a slot's trunk and wrap with
+     `grown` only when its fronts moved. Fully grown is the plain sweep, identical to a static
+     vine.
+   - **Shared:** `grown_shared` under `grown_mutex` (paths on refill, fronts every tick).
+   - **Pools:** 32 slots (a ring; past it the oldest goes, withering is step 9) and 512 leaves per
+     kind, all under the visual-only `vine_group`. Nothing is created mid-tick. A restart clears
+     them.
+   - **Sound:** `vine_grow` in archer.json, a PLACEHOLDER (rock_crumble_2 at pitch 0.75, quiet,
+     by distance and panned). It wants a rustle and creak of its own.
+   - **Read-out:** `archer_state` has `grown_vines` (slot, where, strands, leaves, length, front,
+     ticks, done).
+   - **Checked in the game:** a vine arrow under slab one grew 3 strands, 4.7 long, 37 leaves, from
+     the underside to the floor, lying along it at the foot. A second, stepped with `sim_step` and
+     shot at ticks 6/20/40/70/120, grows down with a pointed tip and its leaves opening behind the
+     front. The restart cleared both. The archer test replay is unchanged.
+   - **Cost, and the fix it needed.** PreRender went from about 0.5 to 5.6 ms while a vine grew
+     (debug), because every vertex worked out its own curve frame and twist though a tile's
+     vertices share a few heights. `DeformAlongSpline` now does those once per distinct height:
+     the same values, three times faster on a bench. In the game a growing vine now adds at most
+     about 2.2 ms. Once grown it costs nothing.
+     - If several growing at once ever shows: every copy more than a tip behind the front is
+       already final, bit for bit, so those can be cached and only the last one or two re-laid.
+       The weld needs the copy before the first re-laid one included, then dropped.
+   - 5 more checks in `make rules` (829): the clock's shape and the leaf opening.
+   - Not done: `arrow_hit` does not yet tell a vine arrow's thud from a normal one's.
 6. **`TerrainDistance`**, for the start and for the walker's collisions.
 7. **Plants have roots**: the roots species; the normal arrow's roots, then its tuft on the top
    above.
