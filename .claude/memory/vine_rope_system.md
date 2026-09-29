@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-25T11:04:30.358Z
+  modified: 2026-09-29T11:11:04.723Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -81,5 +81,20 @@ delivers it. To frame a close screenshot use `archer_camera orbit` then `camera_
 camera overrides camera_set. Blocks span z -1.5..1.5, so a vine at z -1 is hidden behind a
 block's front face from a straight-on camera.
 Related: [[archer-app]], [[shell-heredoc-limit]].
+
+2026-09-29: FACETED TRUNK FIXED - TrunkDeform had f_flat_normals on (left from the placeholder);
+vine_trunk/vine_curl are smooth in the glb. SplineDeform now carries normals through the deform's
+inverse transpose (taper/twist/stretch) and has f_weld_seams (tile end-ring normals disagree ~11
+deg). Verified in-app. GROWING VINES PLANNED (not built) in vine_plan.md sections 7-14: arrow kinds
+as RULES state (Stage::arrow_kind, Arrow::kind, keys 1-5 recorded, DrawArrowHud via UIOverlay),
+SplineDeform `grown` reveal laid for full length (no popping), engine-free walker GrowVine, species
+table (roots/bamboo/vine/thorny/grape). User decided same day: every plant has roots (shown only
+out of undersides); normal arrow in an underside = roots then a tuft on the top ABOVE (confirmed),
+into a wall/top = a small tuft; walls grow creepers by arrow kind; cap 32 with withering leaves
+blown off. Section 15: platform edges become a derived Stage list (StageEdge) - today fear,
+FindGrabbableLedge and Foliage each find edges their own way; the user wants edges easy to look up
+for a coming teeter / fall-and-catch animation (fear of heights). Fall-and-catch AGREED: any edge
+with a real drop, but only the one she just left, inside the coyote window. Nothing open; the plan
+is approved, not started (order in section 14).
 
 2026-09-26: four big CAVE vines added in the terrain bay (DeclareVines, #if ARCHER_TEST_BAY), two behind her and two in front at z 2+; hanging-start vines need up=+Z; see vine_plan.md "The cave vines".

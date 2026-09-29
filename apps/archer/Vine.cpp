@@ -43,9 +43,16 @@ static SplineDeformParams TrunkDeform(const Spline& spline, const VinePath& path
     d.taper_start_scale = params.tip_scale;
     d.taper_end_length = taper;
     d.taper_end_scale = params.tip_scale;
-    //The reference model is faceted, flat-shaded low poly: bending tilts every face, and only a
-    //normal recomputed from the bent corners knows by how much.
-    d.f_flat_normals = true;
+    /*
+        SMOOTH, carrying the tile's own normals. vine_trunk and vine_curl are smooth-shaded in
+        archer.glb (not one split normal between them, measured 2026-09-29), and this used to be
+        f_flat_normals - written for the faceted placeholder - which threw those normals away and
+        drew every triangle. The placeholder carries one normal per quad, so it stays faceted near
+        enough, softened only at its joins. The seams are welded because a tile smoothed on its own
+        leans its end rings toward its middle; see SplineDeformParams::f_weld_seams.
+    */
+    d.f_flat_normals = false;
+    d.f_weld_seams = true;
     return d;
 }
 

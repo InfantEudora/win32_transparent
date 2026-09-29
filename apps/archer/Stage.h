@@ -572,11 +572,43 @@ struct StageRamp{
 //Steeper than this under her feet and she slides - far past a leaf's, since a plank has grip
 //and her own weight keeps the planks under her level. What slides her is a broken half, later.
 #define BRIDGE_SLIP_DEG             30.0f
+//Steeper than this and a plank is no floor at all: she falls off it. A snapped half swinging down
+//goes from walkable, through sliding (past BRIDGE_SLIP_DEG), to this.
+#define BRIDGE_STAND_DEG            50.0f
+
+/*
+    --- STRAIN (bridge_crumble_plan.md section 3, "Strain, warnings and the snap") ---------------
+    A breakable bridge keeps a STRAIN per plank, 0 sound .. 1 snapped, and it never heals within a
+    run. Only LANDINGS add to it - walking, running and standing add nothing, however it bounces:
+    what hurts a bridge is her coming down on it. By how hard, against the bridge's own speed under
+    her, past BRIDGE_COMFORT_SPEED; a stomp (the aim held down through the fall, as on the pad)
+    lands harder still, and drives it down harder too.
+
+    The plank she lands on takes it all, its neighbours half, and the rest of the bridge a share -
+    so landing on one spot breaks it there sooner, but spreading the landings about does not make
+    it last for ever. Warnings at a third and two thirds, each reported once with the plank and the
+    level: `strained`, `cracking`. At 1 that plank SNAPS: it is no longer a spring or a floor, and the
+    two halves swing down from their anchors, still simulated.
+*/
+#define BRIDGE_COMFORT_SPEED        8.0f    //a landing slower than this adds nothing
+#define BRIDGE_STRAIN_PER_SPEED     0.026f  //per unit/s past it, on the plank she lands on
+#define BRIDGE_STRAIN_NEIGHBOUR     0.5f    //of that, on the planks either side
+#define BRIDGE_STRAIN_SPREAD        0.2f    //and on every other plank
+#define BRIDGE_STRAINED             0.33f
+#define BRIDGE_CRACKING             0.66f
+enum BridgeLevel{
+    BRIDGE_SOUND = 0,
+    BRIDGE_LEVEL_STRAINED,
+    BRIDGE_LEVEL_CRACKING,
+    BRIDGE_LEVEL_SNAPPED
+};
+
 struct StageBridge{
     v2    a;                    //the left anchor, at the top corner of the block it is tied to
     v2    b;                    //the right one
     int   planks = 12;
     float slack = 1.04f;        //its length over the span: how much it can hang
+    bool  f_breakable = false;  //strains under landings and snaps - see STRAIN
     float link = 0.0f;          //one plank's length, from the two above (Stage::AddBridge)
 
     //--- State, stepped by Stage::TickBridges ---
@@ -586,12 +618,22 @@ struct StageBridge{
     //Her mass this tick, on points `load_at` and `load_at + 1`: the share on the second. -1 none.
     int   load_at = -1;
     float load_t = 0.0f;
+    std::vector<float> strain;  //per plank, 0..1
+    std::vector<uint8_t> broken;//per plank: snapped, neither spring nor floor
+    int   level = BRIDGE_SOUND; //the worst warning reported so far, a BridgeLevel
 
-    bool  Covers(float x) const { return !p.empty() && x >= p.front().x && x <= p.back().x; }
-    //The plank under x: k such that p[k].x <= x <= p[k+1].x, and how far along it.
+    bool  Covers(float x) const { return Plank(x,p,NULL) >= 0; }
+    /*
+        The plank under x that is a floor: whole, spanning x, no steeper than BRIDGE_STAND_DEG -
+        the highest there if more than one is (a snapped half folds back under itself). And how far
+        along it x is. -1 for none. Whole, the points run left to right and it is the one plank.
+    */
     int   Plank(float x, const std::vector<v2>& pts, float* out_t) const;
+    float MaxStrain() const;
     float SurfaceY(float x) const;
-    float SurfaceYThen(float x) const;
+    //The plank under `x_now`, as it was last tick, under `x_then` - clamped to its ends, so a move
+    //that starts off the bridge's end is measured against its end plank rather than against nothing.
+    float SurfaceYThen(float x_then, float x_now) const;
     float SurfaceVelY(float x) const;
     float Slope(float x) const;             //dy/dx of the plank under x
     float Lowest() const;                   //the lowest point's y
@@ -1405,6 +1447,26 @@ struct StageEvents{
     //between the two. Indices into Stage::crumble_groups.
     std::vector<int> crumble_groups_started;
     std::vector<int> crumble_groups_done;
+
+    //A landing on a bridge - any bridge - and how hard, against its own speed under her, stomp
+    //included: the plank knock and the heavier creak. `strain` is the worst plank's after it.
+    struct BridgeLanding{
+        int   bridge = -1;
+        int   plank = -1;
+        float speed = 0.0f;
+        float strain = 0.0f;
+        float x = 0.0f;
+    };
+    std::vector<BridgeLanding> bridge_landings;
+    //A breakable bridge passing a warning level - BRIDGE_LEVEL_STRAINED, _CRACKING, _SNAPPED -
+    //once each per run, with the plank that took it there and where that plank is.
+    struct BridgeWarning{
+        int   bridge = -1;
+        int   plank = -1;
+        int   level = BRIDGE_SOUND;
+        v2    at;
+    };
+    std::vector<BridgeWarning> bridge_warnings;
 };
 
 /*
@@ -1822,7 +1884,9 @@ private:
     void AddZone(const char* name, float left, float right, float bottom, float top, v2 arrive);
     //A bridge from anchor `a` to anchor `b`, hung and settled at rest so the level starts with
     //it still. See StageBridge.
-    void AddBridge(v2 a, v2 b, int planks, float slack);
+    void AddBridge(v2 a, v2 b, int planks, float slack, bool f_breakable = false);
+    //A landing's strain on a breakable bridge, its warnings and its snap. See STRAIN.
+    void StrainBridge(int bridge, int plank, float speed, StageEvents& events);
     //Every bridge one tick: her weight on the one she stood on last tick, then the substeps.
     //Before she moves, like the spring plants, so she lands on where it is now.
     void TickBridges();

@@ -1159,6 +1159,9 @@ void ApplicationArcher::BuildMaterials(){
         { "ar_ramp",        vec4(0.42f,0.50f,0.62f,1.0f), 0.08f, &material_ramp },
         //A bridge's planks: weathered timber, lighter and yellower than the trunks' bark.
         { "ar_bridge",      vec4(0.62f,0.48f,0.30f,1.0f), 0.06f, &material_bridge },
+        //And a breakable one's planks as they strain: orange, then red - SyncBridges.
+        { "ar_bridge_strained", vec4(0.90f,0.55f,0.18f,1.0f), 0.20f, &material_bridge_strained },
+        { "ar_bridge_cracking", vec4(0.92f,0.20f,0.12f,1.0f), 0.35f, &material_bridge_cracking },
         { "ar_archer",     vec4(0.30f,0.72f,0.42f,1.0f), 0.18f, &material_archer },
         //The character herself. A plain warm off-white, because the model arrives with no textures
         //at all - see the note where it is assigned in BuildArcherModel.
@@ -1596,7 +1599,12 @@ void ApplicationArcher::BuildBlocks(){
                 (int)stage.branches.size(),(int)stage.ramps.size(),(int)stage.bridges.size());
 }
 
-//Each plank from its two points, its top face on the line she stands on, turned to its slope.
+/*
+    Each plank from its two points, its top face on the line she stands on, turned to its slope. A
+    snapped one hidden; on a breakable bridge, each tinted by its own strain - timber, then orange
+    past BRIDGE_STRAINED, red past BRIDGE_CRACKING - the warning in the blockout until the creaks
+    and cracks have sounds.
+*/
 void ApplicationArcher::SyncBridges(){
     size_t o = 0;
     for (size_t i = 0; i < stage.bridges.size(); i++){
@@ -1606,6 +1614,14 @@ void ApplicationArcher::SyncBridges(){
                 continue;
             }
             Object* plank = bridge_plank_objects[o];
+            bool f_broken = j < (int)br.broken.size() && br.broken[j];
+            plank->SetVisibility(!f_broken);
+            if (f_broken){
+                continue;
+            }
+            float s = (j < (int)br.strain.size()) ? br.strain[j] : 0.0f;
+            plank->SetMaterialSlot(0,(s >= BRIDGE_CRACKING) ? material_bridge_cracking :
+                                     (s >= BRIDGE_STRAINED) ? material_bridge_strained : material_bridge);
             float dx = br.p[j + 1].x - br.p[j].x;
             float dy = br.p[j + 1].y - br.p[j].y;
             float angle = atan2f(dy,dx);
@@ -6534,6 +6550,8 @@ json ApplicationArcher::CaptureRecordingState(){
             return list;
         }()},
         //Likewise the bridge she stands on and every bridge's points: x, y, vx, vy each, in order.
+        //And each one's strain - per plank, the strain and whether it has snapped - and its level:
+        //a recording that starts on a cracking bridge has to snap where the original did.
         {"bridge_on",stage.bridge_on},
         {"bridges",[&](){
             json list = json::array();
@@ -6543,6 +6561,17 @@ json ApplicationArcher::CaptureRecordingState(){
                     points.push_back(json::array({br.p[j].x,br.p[j].y,br.v[j].x,br.v[j].y}));
                 }
                 list.push_back(points);
+            }
+            return list;
+        }()},
+        {"bridge_strain",[&](){
+            json list = json::array();
+            for (const StageBridge& br : stage.bridges){
+                json planks = json::array();
+                for (size_t k = 0; k < br.strain.size(); k++){
+                    planks.push_back(json::array({br.strain[k],(int)br.broken[k]}));
+                }
+                list.push_back(json{{"level",br.level},{"planks",planks}});
             }
             return list;
         }()}
@@ -6624,6 +6653,22 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
                 br.v[j] = v2(points[j][2].get<float>(),points[j][3].get<float>());
             }
             br.prev_p = br.p;
+        }
+        SyncBridges();
+    }
+    if (state.contains("bridge_strain") && state["bridge_strain"].size() == stage.bridges.size()){
+        for (size_t i = 0; i < stage.bridges.size(); i++){
+            StageBridge& br = stage.bridges[i];
+            const json& b = state["bridge_strain"][i];
+            const json& planks = b.value("planks",json::array());
+            if (planks.size() != br.strain.size()){
+                continue;
+            }
+            br.level = b.value("level",(int)BRIDGE_SOUND);
+            for (size_t k = 0; k < br.strain.size(); k++){
+                br.strain[k] = planks[k][0].get<float>();
+                br.broken[k] = (uint8_t)(planks[k][1].get<int>() != 0);
+            }
         }
         SyncBridges();
     }
@@ -7544,6 +7589,10 @@ void ApplicationArcher::PollCueTable(){
       signal `crumble_fell`   x - and that stone going, CRUMBLE_SHAKE_TICKS later (a chase slab too)
       signal `crumble_group_started`, `crumble_group_done`   x - the chase's floor setting off, and
                            its last slab gone
+      signal `bridge_landed`   speed (against the plank, stomp in), strain (the worst plank's
+                           after it), x, bridge - every landing on a bridge
+      signal `bridge_strained`, `bridge_cracking`, `bridge_snapped`   x, y, bridge - a breakable
+                           bridge's warnings, once each per run, at the plank that took it there
       signal `arrow_hit`   x, speed - level hits here, prop hits from ResolveArrowsAgainstProps
       signal `stand_hit`   points (RegisterTargetHit)
       scope `arrow`        one per flight, instance = the arrow's slot (ForecastArrowImpacts)
@@ -7636,6 +7685,20 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
         if (g >= 0 && g < (int)stage.crumble_groups.size() && !stage.crumble_groups[g].blocks.empty()){
             cues.Signal("crumble_group_started",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks[0]].x));
         }
+    }
+    /*
+        The bridges: every landing on one, by how hard (the knock and the heavier creak), and a
+        breakable one's warnings, once each - the groan, the crack, the snap. bridge_crumble_plan.md
+        section 4 has the sounds they are for; no rows yet.
+    */
+    for (const StageEvents::BridgeLanding& l : events.bridge_landings){
+        cues.Signal("bridge_landed",CuePayload().Set("speed",l.speed).Set("strain",l.strain).Set("x",l.x)
+                                                .Set("bridge",(float)l.bridge));
+    }
+    for (const StageEvents::BridgeWarning& w : events.bridge_warnings){
+        const char* name = (w.level == BRIDGE_LEVEL_SNAPPED) ? "bridge_snapped" :
+                           (w.level == BRIDGE_LEVEL_CRACKING) ? "bridge_cracking" : "bridge_strained";
+        cues.Signal(name,CuePayload().Set("x",w.at.x).Set("y",w.at.y).Set("bridge",(float)w.bridge));
     }
     for (int g : events.crumble_groups_done){
         if (g >= 0 && g < (int)stage.crumble_groups.size() && !stage.crumble_groups[g].blocks.empty()){
@@ -8343,6 +8406,29 @@ void ApplicationArcher::BreakBlocks(const StageEvents& events){
         //throws different rubble.
         debug->Info("Broke block %i at (%.2f,%.2f), level tick %llu\n",index,centre.x,centre.y,
                     (unsigned long long)stage.ticks);
+    }
+    /*
+        A bridge's plank snapping: the plank goes (SyncBridges keeps it hidden) and falls as
+        splinters from where it was, dropped like a stone's rubble. The halves are the rules'.
+    */
+    for (const StageEvents::BridgeWarning& w : events.bridge_warnings){
+        if (w.level != BRIDGE_LEVEL_SNAPPED || w.bridge < 0 || w.bridge >= (int)stage.bridges.size()){
+            continue;
+        }
+        size_t at = (size_t)w.plank;
+        for (int i = 0; i < w.bridge; i++){
+            at += (size_t)stage.bridges[i].planks;
+        }
+        if (at >= bridge_plank_objects.size() || !bridge_plank_objects[at]){
+            continue;
+        }
+        Object* plank = bridge_plank_objects[at];
+        vec3 size = plank->GetScale();
+        plank->SetVisibility(false);
+        SpawnDebris(plank->GetWorldPosition(),vec3(size.x * 0.5f,size.y * 0.5f,size.z * 0.5f),
+                    vec3(0.0f,-0.5f,0.0f),material_bridge);
+        debug->Info("Bridge %i snapped at plank %i (%.2f,%.2f), level tick %llu\n",w.bridge,w.plank,
+                    w.at.x,w.at.y,(unsigned long long)stage.ticks);
     }
 }
 
@@ -10532,6 +10618,16 @@ void ApplicationArcher::PublishSnapshot(){
             s.bridge_lowest = stage.bridges[b].Lowest();
             s.bridge_sag = stage.bridges[b].a.y - s.bridge_lowest;
         }
+        for (const StageBridge& br : stage.bridges){
+            ArcherSnapshot::BridgeView v;
+            v.f_breakable = br.f_breakable;
+            v.level = br.level;
+            v.strain = br.MaxStrain();
+            for (size_t k = 0; k < br.broken.size(); k++){
+                v.snapped = br.broken[k] ? (int)k : v.snapped;
+            }
+            s.bridges.push_back(v);
+        }
     }
     s.slope_deg = stage.SlopeUnderFeetDeg();
     s.spring_cue = (spring_cue_plant >= 0) ? spring_cue : -1.0f;
@@ -10775,6 +10871,15 @@ json ApplicationArcher::BuildStateJson(){
         //The rope bridge: which she stands on (-1 none), and how low it hangs - of that one, or the
         //level's first. `sag` is below the anchors.
         {"bridge",json{{"on",s.bridge_on},{"lowest",s.bridge_lowest},{"sag",s.bridge_sag}}},
+        //Each bridge's strain: level 0 sound, 1 strained, 2 cracking, 3 snapped (at plank `snapped`).
+        {"bridges",[&](){
+            json list = json::array();
+            for (const ArcherSnapshot::BridgeView& v : s.bridges){
+                list.push_back(json{{"breakable",v.f_breakable},{"level",v.level},{"strain",v.strain},
+                                    {"snapped",v.snapped}});
+            }
+            return list;
+        }()},
         //Balance on a branch: which (-1 none), her lean (+ away from the camera) and its rate in
         //degrees, and how near falling, 0..1 - what the gauge beside her shows.
         {"balance",json{{"branch",s.branch_on},{"lean_deg",s.lean_deg},{"lean_rate_deg",s.lean_rate_deg},
@@ -11196,8 +11301,10 @@ void ApplicationArcher::RegisterMCPTools(){
         "runs from x -12 to 264 with two gaps in it (archer_zone jumps to each area by name), and iterating on one part of it should not mean "
         "flying the whole approach by script every time. Useful landmarks: the ground surface is "
         "y 0, the start is (-6, 0.9), a rope bridge hangs over the first gap from x 16.5 to 24 with "
-        "its anchors at 7.0 (slabs at x 10.5..12.5 top 4.4, 14.5..16.5 and 24..27 top 7.0; stand on "
-        "it at (20.25, 8.0)), the grabbable-only ledge stands at x 44..48 with its lip at "
+        "its anchors at 7.0 (slabs at x 10.5..12.5 top 4.4, 14.5..16.5 and 24..26 top 7.0; stand on "
+        "it at (20.25, 8.0)) and a second, SNAPPING one on from it to x 30.5 (slab 30.5..31.9; hops "
+        "in its middle at (28.25, 8.0) strain it, archer_state 'bridges' says how far), the "
+        "grabbable-only ledge stands at x 44..48 with its lip at "
         "4.2 (jump from x 43.1 to catch it), the cracked wall is at x 57 and the brick wall at "
         "x 49.5, and the tree stands at x 80 (arms at 2.5 right, 5.0 left, 7.5 right; stand under "
         "the first at x 81.45 and jump), the bounce pad's cap is at x 105 (top 1.2; drop onto it from "
@@ -11239,7 +11346,8 @@ void ApplicationArcher::RegisterMCPTools(){
     */
     MCPServer::Get()->RegisterTool("archer_zone",
         "The live level's ZONES - its named areas: the main level's terrain bay, start, gaps and "
-        "rope, ledges and walls, tree, spring plants, branches, bridge (up over the first gap), stepping "
+        "rope, ledges and walls, tree, spring plants, branches, bridge (up over the first gap), snapping "
+        "bridge (the second, on from it), stepping "
         "stones, chase and test ground; "
         "the range; the rope "
         "level's rope and slide gallery. With no name, lists them and says which she is in (also in "

@@ -1193,6 +1193,15 @@ struct ArcherSnapshot{
     int   bridge_on = -1;
     float bridge_lowest = 0.0f;
     float bridge_sag = 0.0f;
+    //Every bridge's strain: whether it can break, its warning level, its worst plank's strain, and
+    //the plank that snapped (-1 none).
+    struct BridgeView{
+        bool  f_breakable = false;
+        int   level = 0;
+        float strain = 0.0f;
+        int   snapped = -1;
+    };
+    std::vector<BridgeView> bridges;
     float slope_deg = 0.0f;         //Stage::SlopeUnderFeetDeg
     float spring_cue = -1.0f;           //the timing cue, 0..1, or -1 while there is none
     float spring_boost = 0.0f;          //what a jump now would add, and this bounce's best
@@ -1859,6 +1868,8 @@ private:
     int material_leaf = 0;
     int material_ramp = 0;          //the slide gallery's ramps - see Stage::BuildSlideGallery
     int material_bridge = 0;        //a rope bridge's planks
+    int material_bridge_strained = 0;
+    int material_bridge_cracking = 0;
     //The timing cue's ramp, green (a jump now adds nothing) through yellow to red (this bounce's
     //best). See spring_cue.
     static const int SPRING_CUE_STEPS = 9;

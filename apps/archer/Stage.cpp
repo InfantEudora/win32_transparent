@@ -210,20 +210,29 @@ void Stage::BuildMainLevel(){
           one       4.4   x 10.5 .. 12.5 - a hop up and across from the step, 2.6 up
           two       7.0   x 14.5 .. 16.5 - a running jump across from one, 2.6 up
           bridge    7.0   x 16.5 .. 24, hung from two's corner to three's, sagging about 0.9
-          three     7.0   x 24 .. 27
+          three     7.0   x 24 .. 26
+          bridge 2  7.0   x 26 .. 30.5, the one that SNAPS - see STRAIN in Stage.h
+          four      7.0   x 30.5 .. 31.9
 
         EVERYTHING HERE IS CLEAR OF THE GROUND ROUTE, and that sets the heights: slab one's
         underside at 3.8 is headroom to run under it; two and three have theirs at 6.4, above the
         5.0 a jump across the gap lifts her head and the 3.6 of room left standing on the one-way
         platform. The bridge's lowest, under her weight, stays above that jump's head too.
 
+        THE SECOND BRIDGE holds a gentle crossing and gives way to a few hard landings; snapped,
+        its halves hang from three and four above the ledge, and the way on is the ground again.
+        Slab four stops short of 32: the rope is caught by a running jump off the ledge's end at
+        33, which lifts her head to 7.6 over x 32.3 on - a slab there took that jump's head off.
+
         SOLID, not LEDGE, so none of them is the first high ledge stage_test's hang tests take.
-        stage_test proves the climb and the crossing as route checks.
+        stage_test proves the climb and the crossings as route checks.
     */
     blocks.push_back({ 11.50f,  4.10f,  1.00f, 0.30f, BLOCK_SOLID,  true });    //slab one,   top 4.4
     blocks.push_back({ 15.50f,  6.70f,  1.00f, 0.30f, BLOCK_SOLID,  true });    //slab two,   top 7.0
-    blocks.push_back({ 25.50f,  6.70f,  1.50f, 0.30f, BLOCK_SOLID,  true });    //slab three, top 7.0
+    blocks.push_back({ 25.00f,  6.70f,  1.00f, 0.30f, BLOCK_SOLID,  true });    //slab three, top 7.0
+    //Slab four is at the END of this function - see there for why.
     AddBridge(v2(16.50f,7.00f),v2(24.00f,7.00f),12,1.04f);
+    AddBridge(v2(26.00f,7.00f),v2(30.50f,7.00f),7,1.04f,true);
 
     //A cracked wall across the path, 2.5 tall. Solid to the archer and to arrows until the
     //kick-and-break slice knocks it out - so for now the target behind it has to be LOBBED over,
@@ -401,7 +410,9 @@ void Stage::BuildMainLevel(){
     AddZone("Branches",         134.0f, 176.0f, zb, zt, v2(153.00f,0.30f));
     //Up in the air over the first two, from slab one's top to above the far anchor: a narrow area
     //inside the wide ones, which CurrentZone names while she is up there. Arrives on slab two.
-    AddZone("Bridge",            10.5f,  27.0f, 5.2f, 16.0f, v2( 15.50f,7.00f));
+    AddZone("Bridge",            10.5f,  25.0f, 5.2f, 16.0f, v2( 15.50f,7.00f));
+    //And the snapping one past it, arriving on slab three.
+    AddZone("Snapping bridge",   25.0f,  32.5f, 5.2f, 16.0f, v2( 25.20f,7.00f));
     //The test ground, a zone per piece as each is built and the rest still "Test ground".
     AddZone("Stepping stones",  176.0f, 214.0f, zb, zt, v2(192.00f,0.30f));
     //From the rim, so a teleport lands her before the chase's trigger rather than setting it off.
@@ -549,6 +560,15 @@ void Stage::BuildMainLevel(){
     */
     AddScenery({ SCENERY_TILE_BIG,   -7.50f, 9.60f, 0.00f, 0.0f, 1.60f, 0.76f });
     AddScenery({ SCENERY_TILE_ROUND, -2.00f, 8.40f, 0.00f, 0.0f, 1.85f, 0.50f });
+
+    /*
+        SLAB FOUR, the snapping bridge's right anchor (see THE ROPE BRIDGE above), LAST so that no
+        block before it moves in the list. The dressing is seeded by block INDEX - the bay's backdrop
+        ridges, its trees, the boulders - so a block added up with the others reshuffled the whole
+        dressed start behind her, and stage_test's backdrop check with it. New level blocks that
+        are not part of the bay go here, after everything the dressing is built from.
+    */
+    blocks.push_back({ 31.20f,  6.70f,  0.70f, 0.30f, BLOCK_SOLID,  true });    //slab four,  x 30.5..31.9, top 7.0
 }
 
 void Stage::AddScenery(const StageScenery& s){
@@ -711,21 +731,49 @@ void Stage::TickSpringPlants(){
 
 //--- Rope bridges ----------------------------------------------------------------------------------
 
+/*
+    Every plank asked, rather than walking the points left to right: a snapped half hangs from its
+    anchor with its points doubling back under it, and the first plank to span x is then not the
+    one she is on. A plank on end spans nothing worth standing on, so past BRIDGE_STAND_DEG it is
+    skipped - which is how a half swinging down drops her.
+*/
 int StageBridge::Plank(float x, const std::vector<v2>& pts, float* out_t) const{
+    static const float max_rise = tanf(BRIDGE_STAND_DEG * 3.14159265358979f / 180.0f);
     const int n = (int)pts.size();
-    if (n < 2){
-        return -1;
+    int best = -1;
+    float best_y = 0.0f, best_t = 0.0f;
+    for (int k = 0; k + 1 < n; k++){
+        if (k < (int)broken.size() && broken[k]){
+            continue;
+        }
+        float x0 = pts[k].x, x1 = pts[k + 1].x;
+        if (x < fminf(x0,x1) || x > fmaxf(x0,x1)){
+            continue;
+        }
+        float dx = x1 - x0, dy = pts[k + 1].y - pts[k].y;
+        if (fabsf(dx) < 1e-6f || fabsf(dy) > fabsf(dx) * max_rise){
+            continue;
+        }
+        float t = (x - x0) / dx;
+        float y = pts[k].y + dy * t;
+        if (best < 0 || y > best_y){
+            best = k;
+            best_y = y;
+            best_t = t;
+        }
     }
-    int k = 0;
-    while (k < n - 2 && x > pts[k + 1].x){
-        k++;
-    }
-    float dx = pts[k + 1].x - pts[k].x;
-    float t = (dx > 1e-6f) ? (x - pts[k].x) / dx : 0.0f;
     if (out_t){
-        *out_t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+        *out_t = (best_t < 0.0f) ? 0.0f : ((best_t > 1.0f) ? 1.0f : best_t);
     }
-    return k;
+    return best;
+}
+
+float StageBridge::MaxStrain() const{
+    float top = 0.0f;
+    for (float s : strain){
+        top = fmaxf(top,s);
+    }
+    return top;
 }
 
 float StageBridge::SurfaceY(float x) const{
@@ -734,11 +782,27 @@ float StageBridge::SurfaceY(float x) const{
     return (k < 0) ? 0.0f : p[k].y + (p[k + 1].y - p[k].y) * t;
 }
 
-float StageBridge::SurfaceYThen(float x) const{
+/*
+    Last tick's plank under where she started the move - or, where there was none (she started it
+    past the bridge's end, below an anchor), the plank under her now, clamped to its end. Answering
+    0 there, "no surface", read as a floor at y 0 that she had been above, and a running jump across
+    the gap UNDER the bridge landed on it.
+*/
+float StageBridge::SurfaceYThen(float x_then, float x_now) const{
     const std::vector<v2>& pts = (prev_p.size() == p.size()) ? prev_p : p;
     float t = 0.0f;
-    int k = Plank(x,pts,&t);
-    return (k < 0) ? 0.0f : pts[k].y + (pts[k + 1].y - pts[k].y) * t;
+    int k = Plank(x_then,pts,&t);
+    if (k >= 0){
+        return pts[k].y + (pts[k + 1].y - pts[k].y) * t;
+    }
+    k = Plank(x_now,p,NULL);
+    if (k < 0){
+        return 1e30f;           //nothing to have been above
+    }
+    float dx = pts[k + 1].x - pts[k].x;
+    t = (fabsf(dx) > 1e-6f) ? (x_then - pts[k].x) / dx : 0.0f;
+    t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+    return pts[k].y + (pts[k + 1].y - pts[k].y) * t;
 }
 
 float StageBridge::SurfaceVelY(float x) const{
@@ -781,12 +845,15 @@ float StageBridge::Mass(int i) const{
     stepped ten seconds with nobody on it, so the level starts with it still rather than settling
     under her while she looks at it. The same steps on every Reset, so every run starts alike.
 */
-void Stage::AddBridge(v2 a, v2 b, int planks, float slack){
+void Stage::AddBridge(v2 a, v2 b, int planks, float slack, bool f_breakable){
     StageBridge br;
     br.a = a;
     br.b = b;
     br.planks = (planks < 2) ? 2 : planks;
     br.slack = (slack < 1.0f) ? 1.0f : slack;
+    br.f_breakable = f_breakable;
+    br.strain.assign(br.planks,0.0f);
+    br.broken.assign(br.planks,0);
     float span = sqrtf((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
     br.link = span * br.slack / (float)br.planks;
     //A parabola's length is about span + 8 d^2 / (3 span): the sag d that gives this slack.
@@ -823,6 +890,9 @@ void Stage::StepBridge(StageBridge& br, float dt){
             force[j] = v2(0.0f,-ARCHER_GRAVITY * br.Mass(j));
         }
         for (int j = 0; j + 1 < n; j++){
+            if (j < (int)br.broken.size() && br.broken[j]){
+                continue;           //snapped: the two halves hang apart
+            }
             float dx = br.p[j + 1].x - br.p[j].x;
             float dy = br.p[j + 1].y - br.p[j].y;
             float len = sqrtf(dx * dx + dy * dy);
@@ -892,6 +962,65 @@ void Stage::TickBridges(){
 }
 
 /*
+    See STRAIN in Stage.h. `speed` is the landing's, against the plank under her and with the
+    stomp in. Every landing is reported, breakable or not - the knock and the creak are the same on
+    either - and a breakable bridge's strain, warnings and snap follow from it.
+
+    THE SNAP is the most strained plank reaching 1: it stops being a spring, so its two ends part,
+    and stops being a floor, so she falls through the gap if that is where she stands. Everything
+    else stays simulated - the halves swing down from their anchors under their own weight.
+*/
+void Stage::StrainBridge(int bi, int plank, float speed, StageEvents& events){
+    StageBridge& br = bridges[bi];
+    if (br.f_breakable && br.level < BRIDGE_LEVEL_SNAPPED && plank >= 0){
+        float add = (speed - BRIDGE_COMFORT_SPEED) * BRIDGE_STRAIN_PER_SPEED;
+        if (add > 0.0f){
+            for (int k = 0; k < (int)br.strain.size(); k++){
+                if (br.broken[k]){
+                    continue;
+                }
+                int d = abs(k - plank);
+                float share = (d == 0) ? 1.0f : ((d == 1) ? BRIDGE_STRAIN_NEIGHBOUR : BRIDGE_STRAIN_SPREAD);
+                br.strain[k] = fminf(br.strain[k] + add * share,1.0f);
+            }
+        }
+        //Which plank is worst, and whether that has passed a level not yet reported. Levels go up
+        //one landing at a time or several at once - a hard stomp on a strained bridge can go
+        //straight past cracking to snapped, and each is still reported, in order.
+        int worst = 0;
+        for (int k = 1; k < (int)br.strain.size(); k++){
+            if (br.strain[k] > br.strain[worst]){
+                worst = k;
+            }
+        }
+        float s = br.strain.empty() ? 0.0f : br.strain[worst];
+        int level = (s >= 1.0f) ? BRIDGE_LEVEL_SNAPPED :
+                    (s >= BRIDGE_CRACKING) ? BRIDGE_LEVEL_CRACKING :
+                    (s >= BRIDGE_STRAINED) ? BRIDGE_LEVEL_STRAINED : BRIDGE_SOUND;
+        v2 at((br.p[worst].x + br.p[worst + 1].x) * 0.5f,(br.p[worst].y + br.p[worst + 1].y) * 0.5f);
+        while (br.level < level){
+            br.level++;
+            StageEvents::BridgeWarning w;
+            w.bridge = bi;
+            w.plank = worst;
+            w.level = br.level;
+            w.at = at;
+            events.bridge_warnings.push_back(w);
+        }
+        if (level == BRIDGE_LEVEL_SNAPPED){
+            br.broken[worst] = 1;
+        }
+    }
+    StageEvents::BridgeLanding l;
+    l.bridge = bi;
+    l.plank = plank;
+    l.speed = speed;
+    l.strain = br.MaxStrain();
+    l.x = pos.x;
+    events.bridge_landings.push_back(l);
+}
+
+/*
     Every surface under x that is not a block - see StageSurface. A plant's surface is where it was
     last tick under x_from, since it moves, and a bridge's likewise; the others' are simply where
     they are. Down drops her through a plant, a branch and a bridge, as through a one-way platform.
@@ -937,7 +1066,7 @@ void Stage::GatherSurfaces(float x, float x_from, bool f_down_held, std::vector<
             c.kind = SURFACE_BRIDGE;
             c.index = (int)i;
             c.top = br.SurfaceY(x);
-            c.top_then = br.SurfaceYThen(x_from);
+            c.top_then = br.SurfaceYThen(x_from,x);
             c.vel_y = br.SurfaceVelY(x);
             c.slope = br.Slope(x);
             c.f_ground = true;
@@ -1041,13 +1170,19 @@ void Stage::CollideSurfaces(const v2& from, bool f_down_held, bool f_on_block, b
             A fresh landing: the two points under her take her fall, each by its share of her,
             momentum kept - her mass is on them from here on, so they move together at what the
             three of them had. A drop onto it drives it down; walking on off an anchor's block
-            brings nothing (she was not falling).
+            brings nothing (she was not falling). A STOMP drives her into it harder than she fell,
+            as on the pad - and so strains it harder too.
         */
         StageBridge& br = bridges[c.index];
         if (c.index != was_on[SURFACE_BRIDGE] && fall_vel_y < 0.0f){
             float t = 0.0f;
             int k = br.Plank(pos.x,br.p,&t);
             if (k >= 0){
+                float stomp = (float)(stomp_ticks < SPRING_STOMP_TICKS ? stomp_ticks : SPRING_STOMP_TICKS) /
+                              (float)SPRING_STOMP_TICKS;
+                float into = fall_vel_y * (1.0f + SPRING_STOMP_GAIN * stomp);
+                //How hard, against the plank's own speed: onto one already dropping away is softer.
+                float speed = c.vel_y - into;
                 const int last = (int)br.p.size() - 1;
                 for (int j = k; j <= k + 1; j++){
                     if (j <= 0 || j >= last){
@@ -1055,9 +1190,14 @@ void Stage::CollideSurfaces(const v2& from, bool f_down_held, bool f_on_block, b
                     }
                     float w = (j == k) ? (1.0f - t) : t;
                     float m = BRIDGE_POINT_MASS;
-                    br.v[j].y = (m * br.v[j].y + w * fall_vel_y) / (m + w);
+                    br.v[j].y = (m * br.v[j].y + w * into) / (m + w);
                 }
                 vel.y = br.SurfaceVelY(pos.x);
+                //A step down off an anchor's block is not a landing worth the name.
+                if (speed > 2.0f){
+                    events.stomp = stomp;
+                    StrainBridge(c.index,k,speed,events);
+                }
             }
         }
         bridge_on = c.index;
@@ -3869,6 +4009,9 @@ void Stage::HashState(StateHash& h) const{
         for (const v2& q : br.v){ add2(q); }
         for (const v2& q : br.prev_p){ add2(q); }
         h.Add(br.load_at); h.Add(br.load_t);
+        for (float s : br.strain){ h.Add(s); }
+        for (uint8_t b : br.broken){ h.Add(b); }
+        h.Add(br.level);
     }
     for (const StageCrumbleGroup& g : crumble_groups){
         h.Add(g.ticks); h.Add(g.f_done);

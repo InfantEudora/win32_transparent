@@ -205,7 +205,8 @@ The chain in `BuildRope` stays. What changes is only how it is drawn.
    Hanging_Rope's grip being higher above her feet than the top of the 1.8 box, a fixed offset
    to take out one of two ways: hang the MODEL by its hands (place it so the clip's measured
    grip meets the joint), or move the joint's body anchor up to the clip's grip height.
-6. **Gameplay**: rope arrow, cutting, growth - if wanted.
+6. **Gameplay**: rope arrow, cutting, growth - if wanted. *(Growth is now planned in full: see
+   "Growing vines", sections 7-14 below.)*
 
 ## The cave vines (2026-09-26)
 
@@ -217,3 +218,422 @@ x -19; onto the stone at x -14). Thickness 1.5 .. 1.8, which also lengthens the 
 tiles for 12 .. 21 units. Resting points sit 0.2 over the top they lie on. A vine that starts
 hanging straight down needs `up = +Z`, or the frame starts parallel to the tangent. The front two
 start at y 33+: begun at 20, their tapered tops showed in mid-air at the camera's widest.
+
+## The trunk's shading (FIXED 2026-09-29)
+
+The trunk rendered faceted, one flat shade per triangle, although `vine_trunk` is smooth-shaded in
+Blender. The cause: `TrunkDeform` set `SplineDeformParams::f_flat_normals`, written in step 2 for
+the faceted placeholder, which replaces every normal with its face's. The file was never the
+problem - measured on archer.glb, `vine_trunk` and `vine_curl` have not one split normal between
+them, and their vertex normals sit 23-36 degrees off their faces, which is what smooth looks like.
+
+Turning the flag off exposed two more things, both fixed in `core/SplineDeform`:
+
+- **A rotated normal is not a deformed normal.** The stretch-to-fit is a non-uniform scale, the
+  taper makes the trunk a cone and the twist shears it. The carried normal now goes through the
+  deform's inverse transpose (`CarriedNormal`, derivation at the function): on a lumpy tapered
+  twisted test tube, 0.43 degrees off the true surface against 15.5 for rotating alone. It is
+  exactly the old rotation on a straight, untapered, untwisted run, so the rope is unchanged.
+- **The tile's end rings disagree.** A tile smoothed on its own leans its end-ring normals toward
+  its middle: `vine_trunk`'s two rings sit on the same positions exactly but their normals differ
+  by 11 degrees median, 16 at worst, so every join creased. Blender hides this only when an Array
+  modifier merges the copies first. `f_weld_seams` averages each pair across a join, leaving a pair
+  more than 60 degrees apart alone as an authored hard edge. The vine turns it on.
+
+7 new checks in `tools/spline_test.cpp` (46 in all), and `make rules` still passes at 751.
+
+**For the next tiles:** a smooth tile needs nothing special now. Flat-shaded art should turn
+`f_flat_normals` back on for its own species. Authored hard edges survive both the deform and the
+weld.
+
+---
+
+# Growing vines
+
+Agreed direction 2026-09-29, not yet built. Arrow types are chosen with the number keys and shown
+bottom-right. An arrow of the vine type that sticks in the underside of the terrain grows a vine
+down from where it hit. A normal arrow in the same place grows roots out of the underside first,
+and then a tuft on the top above (section 11). A vine arrow in a wall grows a creeper. It is a
+visual effect first, to see whether it reads, and a mechanic later. Five kinds of growth are
+planned, and they are one system. The walker and the later animations also need platform edges
+the stage can look up, which is section 15.
+
+The argument for that is the same as section 1's: everything here is **already parameterised by
+distance along a curve**, so growth is revealing a curve up to a length `g` that rises over ticks.
+Leaves already know their `s`, so they unfold as the tip passes them. None of the five kinds is a
+new mechanism. Each is a different *path generator* and a different *recipe* of the three
+operations.
+
+## 7. What is already in place
+
+| piece | where | what growth takes from it |
+|---|---|---|
+| curve, frame, arc length | `core/Spline` | the grown shape, and `s` for everything along it |
+| deform, now smooth | `core/SplineDeform` | the trunk, root, cane or strand; needs a *reveal* (section 9) |
+| scatter | `ScatterVineLeaves` | leaves with their `s`, kept out of the blocks |
+| the hit | `Stage::TickArrows` -> `StageEvents::ArrowHit{arrow, point, normal, speed, block}` (Stage.h:1427) | where, which face, which block. `normal.y == -1` **is** "an underside" |
+| the stuck arrow | `Arrow::f_stuck`, `ARROW_STUCK_TICKS` 600 | the anchor. It expires after 10 s, and a vine must outlive it |
+| HUD | `UIOverlay` via `ApplicationArcher::DrawOverlay`, e.g. `DrawVitalsHud` | the arrow card. Not ImGui, so it survives `make ship` |
+| input | `INPUT_ARCHER_*` (next free is `INPUT_LAST+20`), `AddKeyMap`, `NameAction`, `ArcherInput` | the number keys. Nothing maps a digit today |
+| wind leaves | `leaf_small`, `LeafSwarm` | bamboo's leaves, and what a withering vine drops |
+| leaf flutter | `material_t::wind_mode` 1 (LEAF) | every new leaf kind, as the vine leaves do now |
+| rope | `BuildRope` chain + `RopeMesh` skin, which already **takes a tile** | the swingable vine, later: RopeMesh with `vine_trunk` |
+| determinism | `Stage::HashState`; the `SetVisualOnly` subtrees are skipped by the hash | visual growth costs the trace nothing; rules state must be hashed |
+| async | `core/BackgroundWork.h` | not needed. One walk is microseconds |
+
+## 8. Arrow types
+
+**The selection belongs to the rules**, because what an arrow does on landing is gameplay the
+moment any kind has a mechanic, and a replay has to reproduce it.
+
+- `Stage` gets `int arrow_kind` (the selected kind) and `Arrow` gets `int kind`, copied from the
+  selection in `Loose`. A change while nocked applies to the arrow already on the string, so what
+  the HUD shows is what flies. Both go into `HashState` in member order. The archer test's trace
+  will then differ from its first tick with every value still 0; that is expected, rewrite it.
+- `ArcherInput` gets `int arrow_select = -1` (an edge: the kind asked for this tick) and
+  `f_arrow_next`, for a pad.
+- Keys `1`..`5` map to `INPUT_ARCHER_ARROW_1..5`, and one `ARROW_NEXT` goes on a pad shoulder or
+  the d-pad. **They are recorded** (not `SetRecorded(false)`), because they change rules state.
+  `NameAction` names them `arrow_1`...; add them to `archer_hold`'s table so an agent can pick one.
+- `StageEvents::ArrowHit` gains `kind`. `SignalArrowHit`'s cue can then tell a vine arrow's thud
+  from a normal one's.
+- **HUD, `DrawArrowHud`**: a card in the bottom-right corner in the vitals card's style
+  (`TITLE_*`). It holds the selected kind's name, large, and under it a row of the kinds with
+  their keys (`1 Arrow  2 Vine`) with the current one lit. It flashes briefly on a change. The
+  kind reaches it through `ArcherSnapshot` like the vitals do. Later it gets an icon per kind
+  (`AddSprite`) and, if special arrows become limited, a count.
+- The arrow looks different: an `arrow_vine` node if the file has one, else the normal arrow with
+  a green-tinted head, so a vine arrow can be told apart in flight.
+
+Kinds to start with: `ARROW_NORMAL`, `ARROW_VINE`. The rest (`ARROW_BAMBOO`, `ARROW_THORN`,
+`ARROW_GRAPE`) land with their species. Roots have no arrow of their own; they are what a normal
+arrow leaves behind.
+
+## 9. Growth, seen
+
+### Revealing the curve without popping
+
+`DeformAlongSpline` **stretches** its copies to fit the range. Grown by moving `end`, the tile count
+would step and every copy would slide at each step. So the deform gets a reveal instead of a range:
+
+- `SplineDeformParams::grown` (< 0 = all of it). The copies are laid out **for the full length**, so
+  every copy stays where it will finally be. A copy wholly past `grown` is skipped. A vertex of a
+  partly grown copy that lies past `grown` is pulled back onto the tip.
+- The end taper runs against `grown`, not the curve's end, down to a **growing tip** of scale about
+  0, so the front is a closed point rather than a sawn ring. `tip_scale` still applies once fully
+  grown.
+- Checks for `spline_test`: no vertex past `grown`; every copy's vertices wholly inside `grown`
+  identical to the full build; the tip closes to a point; `grown == length` identical to the
+  plain call.
+
+### The leaves unfold
+
+Each scattered leaf already carries `s`. At a growth front `g`, a leaf appears once `g > s + delay`
+and over the next `unfold` distance scales from 0 and swings from lying along the stem up to its
+lift. That is a young leaf opening, and it reads as growth far more than the length does. Fruit and
+thorns do the same with their own delays. Grapes come last, a cluster swelling some time after
+the leaves near it.
+
+### The clock
+
+In **ticks**, as always. `g(t) = L * ease(t / grow_ticks)`, fast out of the arrow and slowing to
+full length. Slowing matters: a constant rate looks like a progress bar. The view records the hit's
+tick and computes `g` from the snapshot's tick, so a replay, `sim_step` and a paused screenshot all
+show the same growth at the same tick.
+
+### Where the work happens
+
+- The hit is a rules event on the physics thread, which has no GL. The view **queues** a growth
+  request, and `PreRender` builds and uploads it, the way `RegenerateTerrain` does.
+- While a vine grows, PreRender re-deforms it every frame: a 12-tile vine is about 1.8k vertices,
+  well under a tenth of a millisecond, and `SetMeshData` on the render thread. Once full grown it is
+  frozen and never touched again.
+- Leaves come from a **pool per kind**, pre-created at Init under `vine_group` (visual only) and
+  handed out on growth, like the wind leaves and the hit popups. No object is created mid-tick.
+- Everything goes under `vine_group`, so none of it enters the state hash. A **cue** (`vine_grow`,
+  rustle and creak) is the one thing that does, through `cues`. Add it knowing the `.cues`
+  baseline moves.
+- **Live growths are capped at 32** (agreed 2026-09-29). Past that, the oldest withers, see
+  section 12. `NewGame` sets a request flag, and PreRender clears them. At 32 the leaves are the
+  cost to watch: 32 vines of about 50 leaves is 1,600 leaf Objects. They share a mesh per kind, so
+  the draw count stays low, but each one still has a transform to update. Measure it with
+  `renderer_timings` before reaching for anything else. The fix, if needed, is not baking: LEAF
+  wind mode bends each leaf about its own origin, which a baked mesh no longer has. It would be a
+  per-vertex stem position, or instancing.
+
+### Where it starts
+
+The hit point is on the **block's** face, but the drawn terrain is rounded outward and hangs a
+belly and drips below it (up to 0.35 on an underside, Terrain.h). A vine started at the box face
+would begin inside the drawn rock, or in mid-air under a drip. So:
+
+- `Terrain.cpp` exposes its field as an engine-free query, `TerrainDistance(blocks, params, p)`
+  (and a gradient). The start is then marched out along the hit normal to the drawn surface and
+  set a radius back in, so it beds in. The same query later serves the walker's collisions, and
+  any other prop that wants to sit *on* the drawn terrain and not on the box.
+- Until that exists, offsetting by the block's `round_r` plus a bed-in gets it roughly right.
+
+## 10. The path generator: a walker
+
+The hand-typed vines stay hand-typed. Grown ones come from a **walker**, engine-free in
+`Vine.cpp` (or a new `VineGrowth.cpp`), tested in `make rules`:
+
+```
+VineGrowth GrowVine(const VineSpecies& species, vec3 anchor, vec3 surface_normal,
+                    uint32_t seed, const std::vector<StageBlock>& blocks);
+```
+
+It returns one `VinePath` per strand plus its branches, each with where it leaves its parent
+(`parent`, `s_on_parent`). It steps about 0.08 at a time:
+
+- **heading** = keep going (`stiffness`) + gravity or anti-gravity (`habit`) + wander (a smooth
+  hashed noise of `s` with its own amplitude and wavelength, never white noise, or it kinks) +
+  surface-hugging for a creeper;
+- **collision**: a step that would bring the centre within a radius of a live block (and later of
+  the drawn surface, via `TerrainDistance`) is slid along the face instead. A hanging vine that
+  reaches the ground lies along it for a while and stops, which is what a real one does;
+- **stop** at the length drawn for it, or when it has crept a set distance flat.
+
+The whole shape is walked **once, at the hit**, and growth only reveals it. A hanging vine
+therefore does not droop more as it lengthens. That is right for anything that holds its shape
+(roots, bamboo, thorns). For a long hanging vine it may want a *sag while growing* later, the tip
+end relaxed by a few verlet iterations per frame, visual only. Try without first.
+
+**Deterministic by construction.** The seed is the hash of the quantised hit point and the arrow's
+slot (PlaceHash, never `RRandom`, see the rrand note), so the same shot always grows the same vine.
+Checks: a grown vine never enters a block; an underside vine ends lower than it started; bamboo
+stays within 8 degrees of vertical; roots stay short; the same input gives bit-identical points;
+branches start on their parent's surface.
+
+**Branches** are strands of their own, started at `s_on_parent` and turned off the parent's
+heading. Each one's clock starts when the parent's front passes that point, and its base sits a
+little inside the parent's radius under a tapered start. All the strands of one growth share one
+mesh.
+
+## 11. The species
+
+One table, `VineSpecies`, holds per kind: the pieces (node names, each falling back to a
+placeholder as the current vine does); the walker's `habit`, lengths, stiffness, wander, gravity;
+branching; the tile layout (stretched to fit, or at a **fixed period**); the growth clock; and the
+scatter (`VineParams` as today, plus fruit and thorns). In code first. It moves to a JSON file
+beside the cues once the numbers want tuning live, since the asset watcher already hot-reloads.
+
+**Every plant has roots** (agreed 2026-09-29). A growth is a *plant*: an optional **roots** part
+and a **shoot** part, each a set of strands from the walker. The roots grow first, the shoot once
+they are nearly done. Roots are only worth growing where they can be seen, which means out of an
+underside. Into a top or a wall they would be inside the rock, so there the species simply shows
+none, which is what every vine does today. The roots are a species of their own (the first column
+below) that any plant can name as its roots, so all plants share one root look.
+
+**What each arrow grows, by the face it hits:**
+
+| hit | normal arrow | vine | bamboo | thorny | grape |
+|---|---|---|---|---|---|
+| **underside** | roots down, then a **tuft on the top above** | roots, then a hanging vine | roots, then a cane that curves down and turns up | roots, then hanging, coiled | roots, then hanging, fruiting |
+| **wall** | a small tuft | a **creeper** along the face and over the lip | a cane out of the wall, bending up | a creeper, dense | a creeper, fruit hanging off it |
+| **top** | a small tuft | a creeper along the top and over an edge, to hang | canes straight up | a low thicket | a creeper |
+
+**The tuft on the top above.** A normal arrow in an underside plants a seed *through* the
+platform. Its roots come out of the underside where the arrow is, and the plant they belong to
+comes up on the top directly above: a small foliage clump, with Foliage's own meshes scaling in.
+It needs the top above to be exposed (an edge-list span, section 15) and the platform thin enough
+to be believable, about 2 units at most. Otherwise it is roots only. (Confirmed 2026-09-29: the tuft comes up on the top above, not at
+the roots.) Into a wall or a top a normal arrow grows a small tuft where it sticks, with no roots.
+
+| | roots | bamboo | vine | thorny | grape |
+|---|---|---|---|---|---|
+| from | undersides, under any plant | tops, walls, undersides | undersides, walls, tops | undersides, walls | undersides, walls |
+| habit | hang, heavy wander | climb, straight up | hang, then creep on contact | hang, coiled | hang, like the vine |
+| length | 0.3-0.9, 2-4 roots | 2-4, 1-3 canes | 3-8 | 2-5 | 3-7 |
+| grows in | ~0.4 s | ~0.6 s, fast | ~2 s | ~2.5 s | ~2 s, fruit after |
+| branches | 1-2 per root, near the tip | none | a few side runners | many, short | a few |
+| tile | `root_tile`, dark brown, thin | `bamboo_tile` = one internode, **fixed period** | `vine_trunk` | `thorn_tile` | `vine_trunk` or `grape_tile` |
+| overlay | - | - | `vine_curl`, **optional** (with or without the wrap) | 2-3 strands coiled round one path | - |
+| at the end | fine point (tip scale 0.05) | `bamboo_tip`, the sharp point | tapered | tapered | tendril curl |
+| along it | nothing | `leaf_small` at the upper nodes | `vine_leaf_1/2` | `thorn_1..n`, dense | `grape_leaf_1/2`, `grape_cluster` |
+
+Notes per kind:
+
+- **Roots.** They must stay small and quick. Every normal arrow into an underside leaves them,
+  and they sit under every other plant, so they are seen dozens of times. A little earth falling from the hit (a few debris
+  specks, or the Leaves swarm with a soil tint) sells them more than their length does.
+- **Bamboo** is the one that does not stretch. A culm is a whole number of internodes, laid at the
+  tile's own period, so every node ring sits where the artist put it. The growing tip is the
+  `bamboo_tip` piece riding the front (placed at `g` in the frame there), not a taper. Real
+  internodes shorten toward the top; a per-copy scale along the cane would give that cheaply.
+  Leaves come in sprays on short twigs at the upper nodes, from `leaf_small` in LEAF wind mode.
+- **Vine** is today's vine grown. The wrap overlay is a per-species flag, so "vine" and "bare
+  vine" are two rows sharing everything else.
+- **A creeper** is the walker's *hug* habit. It keeps a set distance off the face it grew from, and
+  wanders in the face's plane with a bias up and along. When it reaches the lip above (the edge
+  list gives the height of the face, section 15), it turns over onto the top. At a side edge it
+  turns the corner or hangs off. The frame's `up` starts as the face normal, so the leaves stand
+  out of the wall, and the scatter's block test already turns buried leaves to the open side.
+- **Thorny** is where section 1's **Derive** operation finally earns its place: two or three thin
+  strands wound as a helix *around* the walked centre line (radius 0.1-0.2, a pitch that shortens
+  as it goes, different phases), which is the dense, tightly curved look, rather than one wandering
+  strand. Thorns scatter along the strands, tipped **back toward the base** as real ones hook.
+- **Grape** grows like the vine, with its own leaves, plus clusters every ~1.2 along it. A cluster
+  hangs by **gravity** (its own down, not the trunk's frame) from a short stem, and swells in after
+  the leaves around it. The tendrils are small log-spiral curls, the curl shape section 3 had.
+
+**Asset convention for the new pieces**, the same as the existing ones: a tile runs along
+Blender -Y with matching end rings (smooth shading is fine now, the joins are welded); leaves,
+thorns, fruit and tips have their origin at the attach point, blade or point along +Z (glTF), and
+upper face +Y. A cluster is authored hanging, with its stem at the origin. Names as in the table.
+Each kind falls back to a coloured placeholder until its nodes exist, so the system can be built
+and tested ahead of the art.
+
+## 12. Withering, and the level changing under a vine
+
+- **Withering** (agreed 2026-09-29) is growth in reverse. The leaves let go first, handed to the
+  wind `LeafSwarm` so they drift off rather than shrink away, and are tinted toward brown over a
+  moment beforehand. Then `g` falls from the tip back to the arrow, the roots last. It is how the
+  oldest growth leaves when the cap of 32 is reached, and it gives a vine arrow a lifetime if that
+  is ever wanted. The swarm needs a way to take a leaf mid-flight from a given pose and kind; today
+  it spawns its own.
+- **The block it grows from crumbles** (bridge_crumble_plan): its vines wither fast, or better,
+  fall with the rubble. The ArrowHit event's `block` is kept with the growth for exactly this.
+
+## 13. Mechanics, later
+
+Each kind has an obvious job, which is why the arrow type is rules state from the start:
+
+- **Vine: a rope.** A grown hanging vine becomes swingable: `BuildRope` anchored at the arrow, its
+  length the grown length, drawn by `RopeMesh` with `vine_trunk` as the tile, which RopeMesh
+  already takes. The swap from the grown mesh to the chain is invisible if the swingable kind's
+  walker hangs almost straight. This is section 5's rope arrow, and it wants grip-at-a-point.
+- **Bamboo: a pole and a lift.** It climbs like a ladder. Grown under a crate or under her, it
+  *lifts*, and the fixed-period growth makes the lift speed a clean number. The sharp tips hurt
+  anything standing where it sprouts.
+- **Thorny: a barrier.** It blocks a passage or a chaser (the crumble chase), hurts to touch, and
+  cuts a rope that swings through it.
+- **Grape: a pickup** that calms her: it lowers fear and exertion (vitals_plan), so breathing and
+  heartbeat settle. Shot, a cluster drops.
+- **Roots: handholds.** Hanging from an overhang's underside by a root is a small traversal verb,
+  if normal arrows should ever matter for climbing. Otherwise they stay cosmetic.
+- **Limited special arrows**, found in the level, would give the HUD its count and the kinds their
+  value.
+
+For any of this the growth itself moves into `Stage`: the seed, anchor, kind and start tick are
+rules state (hashed), and the walker, already engine-free, runs there. The view keeps only the
+meshes. That move is cheap exactly because sections 9 and 10 keep the walker out of the view now.
+
+## 14. Order
+
+0. **Smooth trunk normals.** *(DONE 2026-09-29, above.)*
+1. **Arrow kinds**: the Stage fields and hash, the keys, the HUD card, the tinted arrow. `make
+   rules` checks that selection edges set the kind, `Loose` copies it, and the hash covers both.
+   Then rewrite the archer test's baselines.
+2. **The reveal** in `SplineDeform` (`grown`, the tip), with its `spline_test` checks.
+3. **The edge list** (section 15) with its `make rules` checks. It comes before the walker, which
+   needs it to turn a creeper over a lip, and it can land while the art is still coming.
+4. **The walker** and a `VineSpecies` row for the vine, checked in `make rules`.
+5. **The vine arrow grows a vine on an underside**, visual only: the queue, PreRender re-deforms,
+   the leaf pool, unfolding, the cue, the cap of 32. Judged in screenshots at fixed ticks under
+   `sim_step`, which the tick clock is there for. The start is offset by `round_r` until:
+6. **`TerrainDistance`**, for the start and for the walker's collisions.
+7. **Plants have roots**: the roots species; the normal arrow's roots, then its tuft on the top
+   above.
+8. **Creepers** from wall hits.
+9. **Withering**, and growths on crumbling blocks.
+10. **The other species** as their assets arrive: bamboo (fixed period, the tip), thorny (the coil
+    derive, thorns), grape (fruit, gravity-hung).
+11. **Mechanics**: growth into `Stage`, then the vine rope first.
+
+Separately, from step 3 on: fear from the edge list, then the teeter and the catch (section 15).
+Those belong to the animation plan when they start, not here.
+
+### Decided 2026-09-29
+
+- Every plant has roots, shown only where they can be seen: out of undersides.
+- A normal arrow into an underside grows roots, then a tuft on the top above. Into a wall or a
+  top, a small tuft where it sticks.
+- A wall grows a creeper, its kind set by the arrow.
+- The cap is 32 live growths, the oldest withering with its leaves blown off.
+- Platform edges become something the stage lists and looks up (section 15).
+- The fall-and-catch works on any edge with a real drop, but only the one she has just gone over
+  and only inside the window after leaving it (section 15).
+
+Nothing is open.
+
+## 15. Edges, as something the Stage knows
+
+For the creepers, for the fear of heights, and for the teeter and fall-and-catch animations to
+come. Asked 2026-09-29: how are platform edges treated today?
+
+### Today: nowhere, and in three places
+
+Nothing in `Stage` is an edge. Three pieces of code each find them their own way:
+
+- **Fear** (`Stage.cpp`, the vitals on a floor): every tick it steps out 0.1 at a time to
+  `VITALS_EDGE_REACH` (0.9) either side of her, calling `DropBelow`, which is a column scan over
+  every block. The first column that drops more than `VITALS_DROP_FROM` is the edge.
+- **Hanging** (`FindGrabbableLedge`): only the side faces of `BLOCK_LEDGE` blocks, at hand
+  height. That is deliberate: a level states where she can hang, and a `SOLID` block of the same
+  shape is not catchable.
+- **Foliage** (Foliage.h, step 1): the "exposed tops", each block's top minus whatever sits on it.
+  Its occlusion score gives a convex corner 0, so plants do not crowd a drop.
+
+Also relevant: the **drawn** lip is not the collider's. Terrain rounds outward by `round_r` (0.2)
+and the cap overhangs by `cap_lip_x` (0.10), so turf reaches about 0.3 past the corner she can
+actually fall from.
+
+### Proposed: `StageEdge`, derived from the blocks
+
+```
+struct StageEdge{
+    float x, y;             //the collider's corner: the end of a floor
+    int   side;             //+1: floor to the left, drop to the right; -1 the mirror
+    int   block;            //whose corner it is
+    float drop;             //down to the next floor past it, VITALS_NO_FLOOR if none
+    float wall;             //the face below the lip, down to where another block meets it
+    float z_front, z_back;
+    bool  f_grabbable;      //a BLOCK_LEDGE corner: she may hang here
+};
+```
+
+- **Built from the exposed-top spans.** Foliage's step-1 rule moves into Stage so both share it.
+  Spans of neighbouring blocks at the same height merge, because a floor made of several boxes
+  (the main ground run, the bay against it) has no edge where the boxes meet. A span end is an
+  **edge** where the floor drops away, and an **inner corner** where a block rises instead. Inner
+  corners go in a list of their own: they are where a creeper starts up a wall, and where foliage
+  crowds.
+- **Rebuilt, not ticked.** It is rebuilt at `BuildLevel`/`Reset`, and wherever a block's `f_alive`
+  changes: a broken breakable, a crumbled stone (the two `f_alive = false` sites). It is derived
+  from hashed state, so it is never hashed itself. A `make rules` check proves a rebuild after a
+  crumble equals a fresh build of the same blocks.
+- **Queries**, const and cheap (a level has tens of edges): `NearestEdge(x, floor_y, max_d,
+  side)`, `EdgesBetween(x0, x1)`, and `SpanAt(x, y)` for "is this top exposed here" (the tuft).
+- Branches, bridges, ramps and pads are not blocks and keep their own ends. A branch already has
+  its balance.
+
+### Who uses it
+
+- **Fear** reads the nearest edge on her floor within `VITALS_EDGE_REACH`, with the same formula
+  as now, at the exact distance rather than the 0.1 step. The values move slightly, so this is its
+  own change, with the trace rewritten. A `make rules` check shows the old and new agree to within
+  one step first.
+- **The teeter** ("almost falls off"). She is on a floor within about 0.3 of an edge whose drop
+  is past `VITALS_DROP_FROM`, slow or stopped, with her centre at or past the lip. Then the teeter
+  clip plays (arms wheeling, hips back), fear gets a burst, and pushing on takes her over. Her box
+  stays supported until its far side leaves the corner, so "centre past the lip" needs no change
+  to the collider. The turf drawn past the corner may want the trigger moved out by about 0.2, or
+  she teeters with grass under her toes. Tune that by eye.
+- **Fall and catch.** She walks or slides off an edge: `coyote_ticks` already opens a window
+  after leaving a floor. Within it, turned back toward the edge she just left, she can catch it
+  and go straight into the existing hang (`EnterHang`). This is a *save* rather than traversal, so
+  it applies to **every edge with a real drop**, not only `BLOCK_LEDGE` (agreed 2026-09-29). But
+  it applies only to **the edge she has just left, inside the window**. That keeps today's "the
+  level says where she can hang" rule for everything else, and keeps every wall from becoming a
+  ladder. `FindGrabbableLedge` stays as it is, and the catch is a separate test that remembers
+  the edge she left.
+- **Vines:**
+  - A creeper climbs a wall face as far as `wall` says, then turns over the lip.
+  - A vine grown from an underside knows where its platform ends.
+  - Drapes (section 5) run lip to lip.
+  - The normal arrow's tuft checks `SpanAt` above it.
+- **Foliage** reads the shared spans instead of its own copy.
+- **An edge hint**: a debug view drawing every edge with its drop, as `archer_debug_view` does for
+  the rope, and an `archer_edges` MCP read-out. This is how an agent checks the list against a
+  screenshot.

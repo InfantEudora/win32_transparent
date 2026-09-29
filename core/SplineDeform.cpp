@@ -41,6 +41,124 @@ bool SplineDeformMeasure(const std::vector<vertex>& tile, float& zmin, float& le
     return length > 1e-6f;
 }
 
+/*
+    A tile vertex's normal, in the frame's (side, normal, tangent) basis, after the deform.
+
+    Locally the deform maps the tile's (x, y, z) to r(s) * (x side + y normal) + s tangent, with
+    s = k z and the side/normal pair turning at `twist` per unit - so its Jacobian in the frame is
+
+        | r  0  a |     a = k (r' x - r twist y)     r' = dr/ds, the taper's slope
+        | 0  r  b |     b = k (r' y + r twist x)
+        | 0  0  k |
+
+    and a normal goes by the inverse transpose. Scaled by r k to clear the fractions, that is
+    (k nx, k ny, r nz - a nx - b ny). With no taper, no twist and r == k it is the plain rotation,
+    which is why the rope - a straight, untapered, untwisted run - is unchanged by it.
+*/
+static vec3 CarriedNormal(const SplineDeformParams& params, const vertex& v, float s, float r, float k,
+                          float range_start, float range_end){
+    //A central difference: the taper is a smoothstep, so this is as good as the closed form and
+    //does not have to know which ends are tapering.
+    const float h = 1e-3f;
+    float slope = params.scale * (SplineDeformTaper(params,s + h,range_start,range_end) -
+                                  SplineDeformTaper(params,s - h,range_start,range_end)) / (2.0f * h);
+    const vec3& n = v.normal;
+    float a = k * (slope * v.pos.x - r * params.twist * v.pos.y);
+    float b = k * (slope * v.pos.y + r * params.twist * v.pos.x);
+    vec3 c = vec3(k * n.x,k * n.y,r * n.z - a * n.x - b * n.y);
+    float l = c.length();
+    if (l <= 1e-12f){
+        return n;       //a degenerate scale: the rotation alone is the best there is
+    }
+    return c / l;
+}
+
+//The tangent squared off against the normal, so a normal map still has a basis on the surface.
+static void SquareTangent(vertex& o){
+    vec3 t = o.tangent - o.normal * o.normal.dot(o.tangent);
+    float tl = t.length();
+    if (tl > 1e-6f){
+        o.tangent = t / tl;
+    }
+}
+
+/*
+    See SplineDeformParams::f_weld_seams. The pairs are found on the TILE, once, and every seam
+    reuses them: copy c's high-ring vertex h meets copy c+1's low-ring vertex l.
+
+    A position on a ring usually has several vertices (a UV seam duplicates them), so each vertex is
+    paired with the most alike vertex at its position on the other ring, from both sides. Every
+    average is taken from the unwelded normals before any is written, so a vertex in two pairs gets
+    the same answer from each.
+*/
+static void WeldSeams(const std::vector<vertex>& tile, int copies, size_t first, std::vector<vertex>& out){
+    float zmin = 0.0f, extent = 0.0f;
+    if (!SplineDeformMeasure(tile,zmin,extent)){
+        return;
+    }
+    //A ring is not quite flat in an authored tile - vine_trunk's lean by 0.0007 in a length of 1.
+    float ring_tol = 0.005f * extent;
+    float match_tol = 1e-4f * extent;
+    std::vector<int> low, high;
+    for (size_t i = 0; i < tile.size(); i++){
+        if (tile[i].pos.z < zmin + ring_tol){ low.push_back((int)i); }
+        if (tile[i].pos.z > zmin + extent - ring_tol){ high.push_back((int)i); }
+    }
+    struct Pair{ int h, l; };
+    std::vector<Pair> pairs;
+    //from_ring's vertices each look for their best partner on to_ring.
+    for (int pass = 0; pass < 2; pass++){
+        const std::vector<int>& from_ring = (pass == 0) ? high : low;
+        const std::vector<int>& to_ring = (pass == 0) ? low : high;
+        for (size_t i = 0; i < from_ring.size(); i++){
+            const vertex& a = tile[from_ring[i]];
+            int best = -1;
+            float best_dot = 0.5f;      //cos 60: anything less alike is a hard edge, left alone
+            for (size_t j = 0; j < to_ring.size(); j++){
+                const vertex& b = tile[to_ring[j]];
+                float dx = a.pos.x - b.pos.x, dy = a.pos.y - b.pos.y;
+                if (dx * dx + dy * dy > match_tol * match_tol){
+                    continue;
+                }
+                float d = a.normal.dot(b.normal);
+                if (d > best_dot){
+                    best_dot = d;
+                    best = to_ring[j];
+                }
+            }
+            if (best >= 0){
+                Pair p;
+                p.h = (pass == 0) ? from_ring[i] : best;
+                p.l = (pass == 0) ? best : from_ring[i];
+                pairs.push_back(p);
+            }
+        }
+    }
+    if (pairs.empty()){
+        return;
+    }
+
+    size_t per = tile.size();
+    std::vector<vec3> welded(pairs.size());
+    for (int c = 0; c + 1 < copies; c++){
+        size_t lower = first + (size_t)c * per;
+        size_t upper = lower + per;
+        for (size_t p = 0; p < pairs.size(); p++){
+            vec3 n = out[lower + pairs[p].h].normal + out[upper + pairs[p].l].normal;
+            float l = n.length();
+            welded[p] = (l > 1e-12f) ? n / l : out[lower + pairs[p].h].normal;
+        }
+        for (size_t p = 0; p < pairs.size(); p++){
+            vertex& vh = out[lower + pairs[p].h];
+            vertex& vl = out[upper + pairs[p].l];
+            vh.normal = welded[p];
+            vl.normal = welded[p];
+            SquareTangent(vh);
+            SquareTangent(vl);
+        }
+    }
+}
+
 int DeformAlongSpline(const Spline& spline, const std::vector<vertex>& tile,
                       const SplineDeformParams& params, std::vector<vertex>& out){
     if (tile.size() < 3 || !spline.IsBuilt()){
@@ -101,10 +219,15 @@ int DeformAlongSpline(const Spline& spline, const std::vector<vertex>& tile,
 
             vertex o = v;
             o.pos = f.Place(v.pos.x * r,v.pos.y * r);
-            o.normal = f.Rotate(v.normal);
+            o.normal = f.Rotate(CarriedNormal(params,v,s,r,params.scale * stretch,range_start,range_end));
             o.tangent = f.Rotate(v.tangent);
+            SquareTangent(o);
             out.push_back(o);
         }
+    }
+
+    if (params.f_weld_seams && !params.f_flat_normals && copies > 1){
+        WeldSeams(tile,copies,first,out);
     }
 
     if (params.f_flat_normals){

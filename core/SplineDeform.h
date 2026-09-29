@@ -42,11 +42,26 @@ struct SplineDeformParams{
     float taper_end_scale    = 1.0f;
     /*
         Recompute each triangle's normal from its deformed corners instead of carrying the tile's
-        normals round the bend. For faceted, flat-shaded art this is the exact answer - the bend
-        and the taper tilt every face, and a rotated normal does not know that. Leave it off for a
-        smooth-shaded tile, where it would facet the surface.
+        normals round the bend. For faceted, flat-shaded art this is the exact answer. Leave it off
+        for a smooth-shaded tile: it throws the authored normals away and facets the surface.
+
+        Off, the tile's own normals are carried - not merely rotated, but corrected for what the
+        deform does to the surface under them: the stretch-to-fit (a non-uniform scale), the taper
+        (a cone tilts its normals toward the thin end) and the twist (a shear). What is NOT
+        corrected is the bend's own squash on the inside of a curve, which is small at a trunk's
+        radius and which Blender's Curve modifier leaves out too.
     */
     bool  f_flat_normals = false;
+    /*
+        Smooth tiles: average the normals where one copy's z-max ring meets the next copy's z-min
+        ring. A tile smoothed in Blender on its own has end-ring normals that lean toward its own
+        middle - measured on archer.glb's vine_trunk, the two ends disagree by 11 degrees median,
+        16 at worst - so every join would show as a soft crease. Blender hides it only when an
+        Array modifier merges the copies first. Vertices are paired by position on the tile's two
+        end rings; a pair more than 60 degrees apart is taken as an authored hard edge and left.
+        Nothing is done at the curve's two ends, or where the rings do not line up (an overlay).
+    */
+    bool  f_weld_seams = false;
     /*
         The period, when it is not the tile's own extent. `tile_length` > 0 replaces the measured
         z max - z min, and `tile_start` replaces z min as the tile's local zero.

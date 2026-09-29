@@ -3,7 +3,7 @@
 Two pieces of level that fail under her: a **rope bridge** that sways, groans under hard landings
 and snaps - from overload or because she reached a spot - and **crumbling rocks** that give way a
 moment after she stands on them, so a crossing is a run of quick hops. Talked through 2026-09-27;
-steps 1-4 are built (see the Status table at the end), the rest is plan.
+steps 1-5 are built (see the Status table at the end), the rest is plan.
 
 Both are blocked out in the main level like everything else, past the branches. What they look
 like is a later question; this plan is the rules, the blockout, the warnings and the sounds.
@@ -368,6 +368,50 @@ Later: the arrow cut on the anchor ropes, climbing a hanging half, the meshes.
 
 ---
 
+## Step 5, as built (2026-09-29)
+
+- **Where**: a SECOND bridge on from the first (the user's call), slab three (now x 24..26) to a
+  new slab four (30.5..31.9, top 7.0), 7 planks over the ledge. The first bridge never strains.
+  Slab four stops short of 32 so the running jump off the ledge's end for the rope keeps its
+  headroom, and it is pushed LAST in BuildMainLevel: the dressing (the bay's backdrop, trees,
+  boulders) is seeded by block index, and a block added among the others reshuffled the dressed
+  start and failed stage_test's backdrop check. A "Snapping bridge" area beside "Bridge",
+  arriving on slab three.
+- **Strain** (`StageBridge::strain`, per plank, never heals): only LANDINGS add, by her speed
+  against the plank's own past `BRIDGE_COMFORT_SPEED` 8, at `BRIDGE_STRAIN_PER_SPEED` 0.026 - the
+  plank she lands on all of it, its neighbours half, every other a fifth. A stomp (aim held down
+  through the fall) lands harder, as on the pad, and drives the bridge down harder too. Walking,
+  running and standing add nothing.
+- **Warnings and the snap**: the worst plank passing a third, two thirds and 1 reports
+  `bridge_strained`, `bridge_cracking`, `bridge_snapped` once each per run (`StageEvents::
+  bridge_warnings`, with the plank and where), in order even when one landing passes two. At 1
+  that plank is `broken`: no longer a spring nor a floor, and the halves swing down from their
+  anchors, still simulated. Every landing on any bridge is `bridge_landings` (speed, strain).
+- **The surface after a snap**: `StageBridge::Plank` now asks every whole plank (a hanging half
+  folds back under itself) and skips any steeper than `BRIDGE_STAND_DEG` 50, so a half swinging
+  down slides her past 30 and drops her past 50. A bug that came with it: "where the plank was"
+  for a move that started past the bridge's end answered 0, a floor she had been above, and the
+  running jump across the gap under the first bridge landed on it - `SurfaceYThen` now falls back
+  to the plank she is over now, clamped to its end.
+- **Measured** (`TestSnapBridge`): a run across leaves it sound; plain hops in its middle snap it
+  on the 4th (strain 0.25, 0.54, 0.75, 1.00), stomps on the 3rd (0.38, 0.85, 1.00); the warnings
+  come strained, cracking, snapped, once each; snapped, she lands on the ledge (feet 2.6), the
+  halves hang from both anchors, their ends 4.5 apart, settled; a restart brings it back sound;
+  two runs of the same hops give the same bridge bit for bit; eight stomps on the first bridge
+  leave it at 0.
+- **In the app**: a breakable bridge's planks tint by their own strain (timber, orange past a
+  third, red past two thirds) - the warning until the creaks have sounds; the snapped plank goes
+  and falls as splinters; signals `bridge_landed` (speed, strain, x, bridge) and
+  `bridge_strained` / `bridge_cracking` / `bridge_snapped` (x, y, bridge), no cue rows yet;
+  `archer_state` has `bridges` (breakable, level, strain, snapped); a recording's start state
+  carries every plank's strain. Checked on 8768: warnings on hops 2 and 3, the snap on hop 4, her
+  on the ledge under it.
+- **archer_test**: state different from tick 0 in world, bodies, objects and physics - the new
+  bridge, slab four's collider and its planks - with `her` and the sounds unchanged; baselines
+  rewritten and re-checked, ALL SAME.
+
+---
+
 ## Open questions
 
 - The tuning: how many hard landings to a snap, the shake length, the chase's speed. The rules
@@ -386,6 +430,6 @@ Later: the arrow cut on the anchor ropes, climbing a hanging half, the meshes.
 | 2 | Crumbling stones and detour | BUILT 2026-09-27 - see "Step 2, as built" |
 | 3 | The chase | BUILT 2026-09-27 - see "Step 3, as built" |
 | 4 | Bridge as a surface | BUILT 2026-09-28 - see "Step 4, as built" |
-| 5 | Strain, warnings, snap | planned |
+| 5 | Strain, warnings, snap | BUILT 2026-09-29 - see "Step 5, as built" |
 | 6 | Zone-triggered bridge | planned |
 | 7 | Sway, cues and sounds | planned |

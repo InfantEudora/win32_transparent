@@ -19,6 +19,8 @@
 #include <stdio.h>
 #include <math.h>
 #include <vector>
+#include <map>
+#include <tuple>
 
 #include "Spline.h"
 #include "SplineDeform.h"
@@ -426,6 +428,182 @@ static void TestDeform(){
           "worst %.2e",worst_over);
 }
 
+//--- Carried normals ------------------------------------------------------------------------------
+
+static vec3 LumpyPoint(float a, float z, int lumps, float depth){
+    float r = 0.1f * (1.0f + depth * cosf((float)lumps * a));
+    return vec3(r * cosf(a),r * sinf(a),z);
+}
+
+/*
+    A SMOOTH tube along +Z, 1 long: `lumps` bumps round it of relative `depth`, so its normals are
+    not radial and a twist has something to shear, and its end rings' normals leaned along the
+    tube by +lean at z 0 and -lean at z 1 - how a tile smoothed on its own comes out of Blender.
+*/
+static void MakeLumpyTube(std::vector<vertex>& out, int sides, int rings, int lumps, float depth, float lean){
+    out.clear();
+    auto corner = [&](int i, int r){
+        float a = 2.0f * PI * (float)(i % sides) / (float)sides;
+        float z = (float)r / (float)(rings - 1);
+        const float h = 1e-3f;
+        vec3 round = LumpyPoint(a + h,z,lumps,depth) - LumpyPoint(a - h,z,lumps,depth);
+        vec3 n = round.cross(vec3(0,0,1));
+        n.normalize();
+        if (r == 0){ n.z += lean; }
+        if (r == rings - 1){ n.z -= lean; }
+        n.normalize();
+        vertex v;
+        v.pos = LumpyPoint(a,z,lumps,depth);
+        v.normal = n;
+        v.tangent = vec3(0,0,1);
+        v.uv = vec2(0,0);
+        v.matid = 0;
+        return v;
+    };
+    for (int r = 0; r + 1 < rings; r++){
+        for (int i = 0; i < sides; i++){
+            vertex a = corner(i,r), b = corner(i + 1,r), c = corner(i + 1,r + 1), d = corner(i,r + 1);
+            out.push_back(a); out.push_back(b); out.push_back(c);
+            out.push_back(a); out.push_back(c); out.push_back(d);
+        }
+    }
+}
+
+static float AngleDeg(const vec3& a, const vec3& b){
+    float d = a.dot(b);
+    if (d > 1.0f){ d = 1.0f; }
+    if (d < -1.0f){ d = -1.0f; }
+    return acosf(d) * 180.0f / PI;
+}
+
+static void TestCarriedNormals(){
+    printf("\ncarried (smooth) normals\n");
+
+    /*
+        Tapered, twisted and stretched: the carried normal must agree with the SURFACE the deform
+        actually made, which is measured by averaging the faces round each vertex (a fine enough
+        tube that this is the smooth normal to well under a degree). Beside it, what the plain
+        rotation the deform used to do would have given: on a straight run along +Z from the
+        origin the frame is side +X, normal +Y, turned by twist * s, and s is the vertex's z.
+    */
+    std::vector<vertex> tube;
+    MakeLumpyTube(tube,96,81,3,0.3f,0.0f);
+    Spline straight;
+    straight.points = { vec3(0,0,0), vec3(0,0,3.2f) };
+    straight.Build();
+    SplineDeformParams p;
+    p.twist = 1.5f;
+    p.taper_end_length = 0.6f;
+    p.taper_end_scale = 0.2f;
+    std::vector<vertex> out;
+    DeformAlongSpline(straight,tube,p,out);
+
+    std::map<std::tuple<long,long,long>,vec3> around;
+    auto key = [](const vec3& q){
+        return std::make_tuple(lroundf(q.x * 1e5f),lroundf(q.y * 1e5f),lroundf(q.z * 1e5f));
+    };
+    for (size_t i = 0; i + 2 < out.size(); i += 3){
+        vec3 n = (out[i + 1].pos - out[i].pos).cross(out[i + 2].pos - out[i].pos);
+        for (int k = 0; k < 3; k++){
+            around[key(out[i + k].pos)] += n;
+        }
+    }
+    float worst_carried = 0.0f, worst_rotated = 0.0f;
+    size_t per = tube.size();
+    for (size_t i = 0; i < out.size(); i++){
+        float s = out[i].pos.z;
+        if (s < 0.03f || s > 3.2f - 0.03f){
+            continue;       //the open ends have faces on one side only
+        }
+        vec3 surface = around[key(out[i].pos)];
+        surface.normalize();
+        const vec3& v = tube[i % per].normal;
+        float t = p.twist * s;
+        vec3 rotated = vec3(v.x * cosf(t) - v.y * sinf(t),v.x * sinf(t) + v.y * cosf(t),v.z);
+        float ec = AngleDeg(out[i].normal,surface);
+        float er = AngleDeg(rotated,surface);
+        if (ec > worst_carried){ worst_carried = ec; }
+        if (er > worst_rotated){ worst_rotated = er; }
+    }
+    Check("taper + twist: carried normal on the surface",worst_carried < 1.5f,
+          "worst %.2f deg",worst_carried);
+    Check("...where rotating alone is well off it",worst_rotated > 4.0f * worst_carried,
+          "rotation alone %.2f deg",worst_rotated);
+
+    //Plain: no taper, no twist, no stretch - the carried normal is exactly the rotation.
+    Spline plain;
+    plain.points = { vec3(0,0,0), vec3(0,0,3.0f) };
+    plain.Build();
+    SplineDeformParams pp;
+    out.clear();
+    DeformAlongSpline(plain,tube,pp,out);
+    float worst_plain = 0.0f;
+    for (size_t i = 0; i < out.size(); i++){
+        float e = Dist(out[i].normal,tube[i % per].normal);
+        if (e > worst_plain){ worst_plain = e; }
+    }
+    Check("untapered, untwisted: the plain rotation, unchanged",worst_plain < 1e-5f,"worst %.2e",worst_plain);
+
+    /*
+        The seams. A tube whose end rings lean 11 degrees each way, down a bend: unwelded, the two
+        sides of every join disagree; welded, they agree, and nothing else moves - not the curve's
+        two open ends, not the tube's middle.
+    */
+    MakeLumpyTube(tube,16,5,2,0.2f,0.2f);
+    per = tube.size();
+    Spline bend;
+    bend.points = { vec3(0,0,0), vec3(1,0,2), vec3(3,1,3), vec3(5,0,3) };
+    bend.Build();
+    SplineDeformParams ps;
+    std::vector<vertex> loose, welded;
+    int copies = DeformAlongSpline(bend,tube,ps,loose);
+    ps.f_weld_seams = true;
+    DeformAlongSpline(bend,tube,ps,welded);
+    float worst_loose = 0.0f, worst_welded = 0.0f;
+    int pairs = 0;
+    for (int c = 0; c + 1 < copies; c++){
+        for (size_t i = 0; i < per; i++){
+            if (tube[i].pos.z < 0.999f){ continue; }
+            for (size_t j = 0; j < per; j++){
+                if (tube[j].pos.z > 1e-3f || tube[j].pos.x != tube[i].pos.x || tube[j].pos.y != tube[i].pos.y){
+                    continue;
+                }
+                pairs++;
+                float el = AngleDeg(loose[c * per + i].normal,loose[(c + 1) * per + j].normal);
+                float ew = AngleDeg(welded[c * per + i].normal,welded[(c + 1) * per + j].normal);
+                if (el > worst_loose){ worst_loose = el; }
+                if (ew > worst_welded){ worst_welded = ew; }
+            }
+        }
+    }
+    Check("unwelded, the joins crease",worst_loose > 15.0f,"worst %.1f deg",worst_loose);
+    Check("welded, both sides of every join agree",pairs > 0 && worst_welded < 0.05f,
+          "worst %.3f deg over %.0f pairs",worst_welded,(float)pairs);
+    int moved = 0;
+    for (size_t i = 0; i < loose.size(); i++){
+        float z = tube[i % per].pos.z;
+        int c = (int)(i / per);
+        bool f_join = (z > 0.999f && c + 1 < copies) || (z < 1e-3f && c > 0);
+        if (!f_join && Dist(loose[i].normal,welded[i].normal) > 1e-6f){ moved++; }
+    }
+    Check("...and nothing but the joins moved",moved == 0,"%.0f moved",(float)moved);
+
+    //Leaned 45 degrees each way the two sides are 90 apart: that is an authored hard edge.
+    MakeLumpyTube(tube,16,5,2,0.2f,1.0f);
+    loose.clear();
+    welded.clear();
+    ps.f_weld_seams = false;
+    DeformAlongSpline(bend,tube,ps,loose);
+    ps.f_weld_seams = true;
+    DeformAlongSpline(bend,tube,ps,welded);
+    float worst_hard = 0.0f;
+    for (size_t i = 0; i < loose.size(); i++){
+        float e = Dist(loose[i].normal,welded[i].normal);
+        if (e > worst_hard){ worst_hard = e; }
+    }
+    Check("a hard edge at the join is left alone",worst_hard < 1e-6f,"worst %.2e",worst_hard);
+}
+
 int main(){
     printf("core/Spline + core/SplineDeform\n");
     TestThroughPoints();
@@ -436,6 +614,7 @@ int main(){
     TestHelixTwist();
     TestClosest();
     TestDeform();
+    TestCarriedNormals();
     printf("\n%i passed, %i failed\n",num_passed,num_failed);
     return num_failed ? 1 : 0;
 }

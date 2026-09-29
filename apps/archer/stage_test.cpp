@@ -6023,7 +6023,7 @@ static void TestBridge(){
     printf("\nthe rope bridge\n");
     char d[240];
     Stage s;
-    Check(s.bridges.size() == 1,"the main level has one rope bridge");
+    Check(s.bridges.size() == 2 && !s.bridges[0].f_breakable,"the main level has two rope bridges, the first unbreakable");
     if (s.bridges.empty()){
         return;
     }
@@ -6042,7 +6042,7 @@ static void TestBridge(){
     Check(BridgeSpeed(br) < 0.01f,"and hangs still: the level starts with it settled",d);
     Check(worst_stretch < 0.02f,"its planks barely stretched by its own weight, under 2%",d);
     Stage twin;
-    bool f_same = twin.bridges.size() == 1 && twin.bridges[0].p.size() == br.p.size();
+    bool f_same = twin.bridges.size() == s.bridges.size() && twin.bridges[0].p.size() == br.p.size();
     for (size_t j = 0; f_same && j < br.p.size(); j++){
         f_same = twin.bridges[0].p[j].x == br.p[j].x && twin.bridges[0].p[j].y == br.p[j].y;
     }
@@ -6124,6 +6124,178 @@ static void TestBridge(){
     DropOnto(under,20.0f,0.3f);
     snprintf(d,sizeof(d),"up there %i, below %i, the zone %i",a.CurrentZone(),under.CurrentZone(),zone);
     Check(zone >= 0 && a.CurrentZone() == zone && under.CurrentZone() != zone,"the Bridge area is up there, not under it",d);
+}
+
+/*
+    One hop on a bridge from standing: Jump held 12 ticks, the aim held down through the fall if
+    `f_stomp`, until she stands again and a moment after. The landing it made, or none.
+*/
+struct BridgeHop{
+    bool  f_landed = false;
+    float speed = 0.0f;
+    std::vector<StageEvents::BridgeWarning> warnings;
+};
+static BridgeHop HopOnBridge(Stage& s, bool f_stomp){
+    BridgeHop out;
+    bool f_left = false;
+    for (int t = 0; t < 120; t++){
+        ArcherInput in;
+        in.f_jump_pressed = (t == 0);
+        in.f_jump_down = (t < 12);
+        if (f_stomp && !s.f_on_ground && s.vel.y < 0.0f){
+            in.aim_axis = -1.0f;
+        }
+        StageEvents e;
+        s.Tick(in,e);
+        for (const StageEvents::BridgeLanding& l : e.bridge_landings){
+            out.f_landed = true;
+            out.speed = l.speed;
+        }
+        for (const StageEvents::BridgeWarning& w : e.bridge_warnings){
+            out.warnings.push_back(w);
+        }
+        f_left = f_left || !s.f_on_ground;
+        if (f_left && s.f_on_ground && t > 20){
+            break;
+        }
+    }
+    Run(s,30,ArcherInput());
+    return out;
+}
+
+/*
+    THE SNAPPING BRIDGE (bridge_crumble_plan.md section 3, "Strain, warnings and the snap"): the
+    second bridge, slab three to slab four. A gentle crossing leaves it sound. Hops in its middle
+    strain it - each landing more than the last, the warnings in order and once each - until it
+    snaps on the landing the tuning says; a stomp strains it more than a plain hop, so fewer snap it.
+    The first bridge takes any number of hops and never strains. Snapped: she falls to the ground
+    below, the halves hang from their anchors apart and settle, and a restart brings it back sound.
+    Two identical runs of hops give identical bridges.
+*/
+static void TestSnapBridge(){
+    printf("\nthe snapping bridge\n");
+    char d[260];
+    Stage s;
+    if (s.bridges.size() < 2){
+        Check(false,"the main level has the snapping bridge");
+        return;
+    }
+    const int bi = 1;
+    const StageBridge& br = s.bridges[bi];
+    Check(br.f_breakable && br.level == BRIDGE_SOUND && br.MaxStrain() == 0.0f,"the second bridge is breakable, and starts sound");
+    const float mid_x = (br.a.x + br.b.x) * 0.5f;
+
+    //Run across it, slab three to slab four: nothing.
+    Stage run = s;
+    DropOnto(run,25.2f,7.3f);
+    Run(run,10,ArcherInput());
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    int warnings = 0, on_it = 0;
+    for (int t = 0; t < 120 && run.pos.x < 31.3f; t++){
+        StageEvents e;
+        run.Tick(right,e);
+        warnings += (int)e.bridge_warnings.size();
+        on_it += (run.bridge_on == bi) ? 1 : 0;
+    }
+    snprintf(d,sizeof(d),"at x %.2f feet %.2f, %i ticks on it, strain %.3f, %i warnings",run.pos.x,
+             run.pos.y - ARCHER_HALF_H,on_it,run.bridges[bi].MaxStrain(),warnings);
+    Check(run.pos.x > 30.8f && fabsf(run.pos.y - ARCHER_HALF_H - 7.0f) < 0.02f && on_it > 10 &&
+          run.bridges[bi].MaxStrain() == 0.0f && warnings == 0,"a run across it leaves it sound",d);
+
+    //Hop in the middle until it goes: count, the strain after each, the warnings in order.
+    auto hops_to_snap = [&](bool f_stomp, std::string& log, std::vector<int>& levels, Stage& end){
+        Stage h = s;
+        DropOnto(h,mid_x,h.bridges[bi].SurfaceY(mid_x) + 0.3f);
+        Run(h,60,ArcherInput());
+        //The drop onto it was a landing too: from 0.3 it is under the comfort speed.
+        for (int n = 1; n <= 12; n++){
+            BridgeHop hop = HopOnBridge(h,f_stomp);
+            char one[64];
+            snprintf(one,sizeof(one),"%s%.1f->%.2f",log.empty() ? "" : ", ",hop.speed,h.bridges[bi].MaxStrain());
+            log += one;
+            for (const StageEvents::BridgeWarning& w : hop.warnings){
+                levels.push_back(w.level);
+            }
+            if (h.bridges[bi].level == BRIDGE_LEVEL_SNAPPED){
+                end = h;
+                return n;
+            }
+        }
+        end = h;
+        return -1;
+    };
+    std::string plain_log, stomp_log;
+    std::vector<int> plain_levels, stomp_levels;
+    Stage snapped, stomped;
+    int plain = hops_to_snap(false,plain_log,plain_levels,snapped);
+    int stomp = hops_to_snap(true,stomp_log,stomp_levels,stomped);
+    snprintf(d,sizeof(d),"plain hops snap it on %i (%s); stomps on %i (%s)",plain,plain_log.c_str(),stomp,stomp_log.c_str());
+    Check(plain >= 3 && plain <= 5,"plain hops in the middle snap it on the 3rd to 5th",d);
+    Check(stomp > 0 && stomp < plain,"stomping snaps it in fewer",d);
+    bool f_order = plain_levels.size() == 3 && plain_levels[0] == BRIDGE_LEVEL_STRAINED &&
+                   plain_levels[1] == BRIDGE_LEVEL_CRACKING && plain_levels[2] == BRIDGE_LEVEL_SNAPPED;
+    snprintf(d,sizeof(d),"%i warnings",(int)plain_levels.size());
+    Check(f_order,"strained, then cracking, then snapped - each once",d);
+
+    //Snapped: she drops to the ground or the ledge under it, the halves hang apart and settle.
+    Run(snapped,360,ArcherInput());
+    const StageBridge& sb = snapped.bridges[bi];
+    int cut = -1;
+    for (int k = 0; k < (int)sb.broken.size(); k++){
+        cut = sb.broken[k] ? k : cut;
+    }
+    float gap = (cut >= 0) ? sqrtf((sb.p[cut + 1].x - sb.p[cut].x) * (sb.p[cut + 1].x - sb.p[cut].x) +
+                                   (sb.p[cut + 1].y - sb.p[cut].y) * (sb.p[cut + 1].y - sb.p[cut].y)) : 0.0f;
+    snprintf(d,sizeof(d),"plank %i snapped, its ends %.2f apart; she is at (%.2f, feet %.2f), on ground %i; lowest %.2f, fastest %.3f; ends (%.2f,%.2f) (%.2f,%.2f)",
+             cut,gap,snapped.pos.x,snapped.pos.y - ARCHER_HALF_H,snapped.f_on_ground ? 1 : 0,sb.Lowest(),BridgeSpeed(sb),
+             sb.p.front().x,sb.p.front().y,sb.p.back().x,sb.p.back().y);
+    Check(cut >= 0 && gap > sb.link * 2.0f,"one plank snapped, and its two ends have parted",d);
+    Check(snapped.f_on_ground && snapped.pos.y - ARCHER_HALF_H < 2.7f && snapped.bridge_on < 0,"she fell with it, to the ledge or the ground under it",d);
+    Check(sb.p.front().x == sb.a.x && sb.p.front().y == sb.a.y && sb.p.back().x == sb.b.x && sb.p.back().y == sb.b.y &&
+          sb.Lowest() < sb.a.y - 1.5f && BridgeSpeed(sb) < 0.05f,"the halves hang from their anchors, and have settled",d);
+    //Gone stays gone - hops on what is left do nothing - until a restart.
+    snapped.Reset();
+    const StageBridge& rb = snapped.bridges[bi];
+    bool f_whole = rb.level == BRIDGE_SOUND && rb.MaxStrain() == 0.0f;
+    for (uint8_t b : rb.broken){
+        f_whole = f_whole && !b;
+    }
+    Check(f_whole,"a restart brings it back whole and sound");
+
+    //The same hops twice give the same bridge, bit for bit.
+    std::string again_log;
+    std::vector<int> again_levels;
+    Stage again;
+    hops_to_snap(false,again_log,again_levels,again);
+    Stage first;
+    std::string first_log;
+    std::vector<int> first_levels;
+    hops_to_snap(false,first_log,first_levels,first);
+    bool f_same = true;
+    for (size_t j = 0; j < first.bridges[bi].p.size(); j++){
+        f_same = f_same && first.bridges[bi].p[j].x == again.bridges[bi].p[j].x &&
+                 first.bridges[bi].p[j].y == again.bridges[bi].p[j].y;
+    }
+    for (size_t k = 0; k < first.bridges[bi].strain.size(); k++){
+        f_same = f_same && first.bridges[bi].strain[k] == again.bridges[bi].strain[k];
+    }
+    Check(f_same,"two runs of the same hops give the same bridge");
+
+    //The first bridge takes any number of hops and never strains.
+    Stage one = s;
+    const StageBridge& b0 = one.bridges[0];
+    float x0 = (b0.a.x + b0.b.x) * 0.5f;
+    DropOnto(one,x0,b0.SurfaceY(x0) + 0.3f);
+    Run(one,60,ArcherInput());
+    int landed = 0;
+    for (int n = 0; n < 8; n++){
+        BridgeHop hop = HopOnBridge(one,true);
+        landed += hop.f_landed ? 1 : 0;
+    }
+    snprintf(d,sizeof(d),"%i landings, strain %.3f, level %i",landed,one.bridges[0].MaxStrain(),one.bridges[0].level);
+    Check(landed == 8 && one.bridges[0].MaxStrain() == 0.0f && one.bridges[0].level == BRIDGE_SOUND,
+          "eight stomps on the first bridge and it is still sound",d);
 }
 
 /*
@@ -6390,14 +6562,14 @@ static void TestRoutes(){
         //Run along it and hop the last of it onto slab three.
         RouteLeg l;
         l.name = "across";
-        l.goal = on_top(7.0f,24.0f + ARCHER_HALF_W,27.0f);
+        l.goal = on_top(7.0f,24.0f + ARCHER_HALF_W,26.0f);
         l.walk = 1;
         l.wait_max = 90;
         l.air_max = 30;
         l.air_step = 2;
         up.push_back(l);
     }
-    CheckRoute("up from the step and across the bridge",step,up,on_top(7.0f,24.0f + ARCHER_HALF_W,27.0f));
+    CheckRoute("up from the step and across the bridge",step,up,on_top(7.0f,24.0f + ARCHER_HALF_W,26.0f));
 }
 
 /*
@@ -6647,6 +6819,7 @@ int main(void){
     TestCrumble();
     TestChase();
     TestBridge();
+    TestSnapBridge();
     TestRoutes();
     TestVitals();
 
