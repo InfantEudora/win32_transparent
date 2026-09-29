@@ -1702,7 +1702,8 @@ void ApplicationArcher::SyncSpringPlants(){
 //mesher and by ApplyBlockoutVisibility, so what is hidden is exactly what was melted.
 static TerrainRegion TerrainBayRegion(int bay){
     TerrainRegion r;
-    r.x_min = ARCHER_TEST_BAY_X_MIN;
+    //From the cave's far end: its floor and walls melt with the ground, its roof with the island.
+    r.x_min = ARCHER_CAVE_X_MIN;
     r.x_max = ARCHER_TEST_BAY_X_MAX;
     r.y_min = (bay == 0) ? -1e30f : ARCHER_TEST_BAY_SPLIT_Y;
     r.y_max = (bay == 0) ? ARCHER_TEST_BAY_SPLIT_Y : 1e30f;
@@ -8562,6 +8563,35 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
             cues.Signal("crumble_group_done",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks.back()].x));
         }
     }
+
+    /*
+        The waterfalls' loops (water_plan.md): a `waterfall` scope per StageWater, open while she is
+        within earshot, carrying the fall's x. The table's follow does the rest - loudness by how
+        far she is from that x, pan by which side of it - re-read every tick as she moves, so the
+        loop is steered from here without a parameter.
+
+        Opened and closed on her distance with a margin between the two, so she cannot stand on
+        the edge and restart a 29-second loop every other tick. Both have to be beyond where the
+        table's curve reaches silence (36), or the loop starts or stops audibly. And instances past
+        this level's count are closed: a level switch does not reset the cues, and the world's
+        waterfall kept playing on the range.
+    */
+    const float waterfall_open = 40.0f, waterfall_close = 44.0f;
+    const int n_waters = (int)stage.waters.size();
+    for (int i = 0; i < std::max(n_waters,waterfall_scopes); i++){
+        bool f_open = cues.IsScopeOpen("waterfall",i);
+        bool f_near = false;
+        if (i < n_waters){
+            float d = fabsf(stage.pos.x - stage.waters[i].x);
+            f_near = d < (f_open ? waterfall_close : waterfall_open);
+        }
+        if (f_near && !f_open){
+            cues.BeginScope("waterfall",i,CuePayload().Set("x",stage.waters[i].x));
+        }else if (!f_near && f_open){
+            cues.EndScope("waterfall",i);
+        }
+    }
+    waterfall_scopes = std::max(waterfall_scopes,n_waters);
 
     //The level's strikes. The props' come from ResolveArrowsAgainstProps, which finds them.
     for (size_t i = 0; i < events.arrow_hits.size(); i++){

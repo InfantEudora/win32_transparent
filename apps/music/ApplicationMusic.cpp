@@ -26,6 +26,7 @@ ApplicationMusic::ApplicationMusic():Application(){
 
 ApplicationMusic::~ApplicationMusic(){
     if (audition_thread.joinable()) audition_thread.join();
+    if (export_thread.joinable()) export_thread.join();
 }
 
 void ApplicationMusic::Init(void){
@@ -46,9 +47,11 @@ void ApplicationMusic::Init(void){
     }
     LoadAndPlay(score_file);
 
-    //The library and the tool that measures it, both found from the exe like the asset roots.
+    //The library, the tool that measures it and the folder its exports go to, all found from the
+    //exe like the asset roots. assets/sound is this app's own root, so a score names an export as
+    //sound/<name>.wav.
     const std::string exe = GetExecutableDirectory();
-    library.SetPaths(exe + "/../samples", exe + "/../../../tools/samplescan/build/samplescan.exe");
+    library.SetPaths(exe + "/../samples", exe + "/../../../tools/samplescan/build/samplescan.exe", exe + "/../assets/sound");
     std::string error;
     if (!library.Refresh(error)) debug->Warn("Library: %s\n", error.c_str());
 
@@ -383,10 +386,30 @@ bool ApplicationMusic::AuditionFile(const std::string& file, std::string& error)
     return true;
 }
 
+void ApplicationMusic::StartPanelExport(const std::string& file, const std::string& name, bool f_trim, bool f_replace, bool f_missing){
+    if (f_export_busy.exchange(true)) return;
+    if (export_thread.joinable()) export_thread.join();
+    export_thread = std::thread([this, file, name, f_trim, f_replace, f_missing](){
+        std::string error;
+        if (f_missing) library.ExportMissing(error);
+        else library.ExportToSound(file, name, f_trim, f_replace, error);
+        {
+            std::lock_guard<std::mutex> lock(audition_mutex);
+            export_error = error;
+        }
+        f_export_busy = false;
+    });
+}
+
 json ApplicationMusic::EntryJson(const MusicLibrary::Entry& e, bool f_full){
     json j;
     j["file"] = e.file;
     j["state"] = MusicLibrary::StateName(e.state);
+    if (!e.exported_as.empty()){
+        json names = json::array();
+        for (const std::string& n : e.exported_as) names.push_back("sound/" + n + ".wav");
+        j["exported_as"] = names;
+    }
     if (f_full){
         for (const auto& kv : e.fields) if (!kv.second.empty()) j[kv.first] = kv.second;
         return j;
@@ -409,6 +432,9 @@ void ApplicationMusic::SelectLibraryFile(const MusicLibrary::Entry& e){
     snprintf(edit_instrument, sizeof edit_instrument, "%s", e.Get("instrument").c_str());
     snprintf(edit_root, sizeof edit_root, "%s", e.Get("root").c_str());
     snprintf(edit_comment, sizeof edit_comment, "%s", e.Get("comment").c_str());
+    snprintf(edit_export_name, sizeof edit_export_name, "%s", MusicLibrary::SuggestExportName(e).c_str());
+    edit_export_trim = MusicLibrary::SuggestTrim(e);
+    for (const MusicLibrary::ExportDef& d : library.Exports()) if (d.file == e.file && d.name == edit_export_name) edit_export_trim = d.f_trim;
 }
 
 void ApplicationMusic::RenderLibraryPanel(void){
@@ -439,12 +465,25 @@ void ApplicationMusic::RenderLibraryPanel(void){
         ImGui::SameLine();
         if (ImGui::Button("Refresh")){ std::string error; library.Refresh(error); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-read the catalog and look for new files, without measuring");
+        //On a fresh checkout every wav is missing - exports.csv is kept, the wavs are not.
+        int missing = 0;
+        for (const MusicLibrary::ExportDef& d : library.Exports()) missing += !d.f_on_disk;
+        if (missing){
+            ImGui::SameLine();
+            char label[48];
+            snprintf(label, sizeof label, "Export missing (%d)", missing);
+            ImGui::BeginDisabled(f_export_busy);
+            if (ImGui::Button(label)) StartPanelExport("", "", false, false, true);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Write every wav samples/exports.csv lists that is not in assets/sound - what make samples does");
+        }
     }
     const std::string message = library.Message();
     if (!message.empty()){ ImGui::SameLine(); ImGui::TextWrapped("%s", message.c_str()); }
 
     ImGui::SetNextItemWidth(160);
-    ImGui::Combo("##filter", &library_filter, "Needs attention\0Classified\0All\0");
+    ImGui::Combo("##filter", &library_filter, "Needs attention\0Classified\0Classified, not exported\0All\0");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##find", "find", library_find, sizeof library_find);
@@ -466,7 +505,8 @@ void ApplicationMusic::RenderLibraryPanel(void){
             if (e.file == library_selected) selected = &e;
             const bool f_attention = e.state == MusicLibrary::NOT_SCANNED || e.state == MusicLibrary::UNCLASSIFIED;
             if (library_filter == 0 && !f_attention) continue;
-            if (library_filter == 1 && e.state != MusicLibrary::CLASSIFIED) continue;
+            if ((library_filter == 1 || library_filter == 2) && e.state != MusicLibrary::CLASSIFIED) continue;
+            if (library_filter == 2 && !e.exported_as.empty()) continue;
             if (!find.empty() && e.file.find(find) == std::string::npos) continue;
 
             ImGui::TableNextRow();
@@ -483,6 +523,8 @@ void ApplicationMusic::RenderLibraryPanel(void){
             std::string shown = e.file;
             if (shown.rfind("unsorted/", 0) == 0) shown = shown.substr(9);
             ImGui::TextUnformatted(shown.c_str());
+            //What a score calls it, where it has a name yet.
+            for (const std::string& n : e.exported_as){ ImGui::SameLine(); ImGui::TextDisabled("-> %s", n.c_str()); }
             ImGui::TableSetColumnIndex(2);
             //A role typed by hand, or the guess in grey - so the list says which is which.
             if (!e.Get("category").empty()) ImGui::TextUnformatted(e.Get("category").c_str());
@@ -586,6 +628,42 @@ void ApplicationMusic::RenderLibraryPanel(void){
         library.Classify(e.file, {{"category", edit_category >= 0 ? cats[edit_category] : std::string()},
                                   {"instrument", edit_instrument}, {"root", edit_root}, {"comment", edit_comment}}, error);
         if (error.empty()) library.Refresh(error);
+    }
+
+    //--- exporting ------------------------------------------------------------------------
+    //To assets/sound/<name>.wav, where a score names it as sound/<name>.wav - and into
+    //exports.csv, so `make samples` makes it again on a fresh checkout.
+    ImGui::Separator();
+    if (!e.exported_as.empty()){
+        std::string names;
+        for (const std::string& n : e.exported_as) names += (names.empty() ? "" : ", ") + ("sound/" + n + ".wav");
+        ImGui::Text("Exported as %s", names.c_str());
+    }
+    else ImGui::TextDisabled("Not exported - a score cannot use it yet");
+    std::string taken_by;
+    for (const MusicLibrary::ExportDef& d : library.Exports()) if (d.name == edit_export_name && d.file != e.file) taken_by = d.file;
+    const bool f_valid = MusicLibrary::ValidExportName(edit_export_name);
+
+    ImGui::SetNextItemWidth(200);
+    ImGui::InputText("##exportname", edit_export_name, sizeof edit_export_name);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The wav's name: a score plays it as sound/<name>.wav");
+    ImGui::SameLine();
+    ImGui::Checkbox("Trim", &edit_export_trim);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the silence off both ends. On for notes, hits and most beds;\n"
+                                                  "off for a loop, whose seam is its first and last sample.");
+    ImGui::SameLine();
+    const bool f_exporting = f_export_busy;
+    const char* export_label = f_exporting ? "Exporting..." : !taken_by.empty() ? "Replace" : "Export";
+    ImGui::BeginDisabled(f_exporting || !f_valid);
+    if (ImGui::Button(export_label)) StartPanelExport(e.file, edit_export_name, edit_export_trim, !taken_by.empty(), false);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Write assets/sound/%s.wav. A score already playing it hears the new one after Reload.", edit_export_name);
+    if (!f_valid) ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "Letters, digits, _ and - only");
+    else if (!taken_by.empty()) ImGui::TextColored(ImVec4(1,0.8f,0.3f,1), "sound/%s.wav is %s now - Replace re-points it", edit_export_name, taken_by.c_str());
+    {
+        std::lock_guard<std::mutex> lock(audition_mutex);
+        if (!export_error.empty()) ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "%s", export_error.c_str());
     }
     ImGui::End();
 }
@@ -835,6 +913,40 @@ void ApplicationMusic::RegisterMCPTools(void){
             std::string error;
             if (!AuditionFile(args.value("file", std::string()), error)) return json{{"error", error}};
             return json{{"auditioning", args.value("file", std::string())}};
+        });
+
+    MCPServer::Get()->RegisterTool("library_export",
+        "Export one library file as assets/sound/<name>.wav, so a score can name it as "
+        "sound/<name>.wav, and record it in samples/exports.csv (which `make samples` rebuilds the "
+        "wavs from). `name` defaults to instrument_root (kalimba_Fs3); `trim` cuts the silence off "
+        "both ends and defaults to on unless the file is loopable. A name another file already has "
+        "is refused unless `replace` is true. `missing`: true instead writes every listed export "
+        "whose wav is not on disk. A score playing the wav hears the new one after music_reload.",
+        json{{"type","object"},{"properties",{
+            {"file",{{"type","string"}}}, {"name",{{"type","string"}}}, {"trim",{{"type","boolean"}}},
+            {"replace",{{"type","boolean"}}}, {"missing",{{"type","boolean"}}}}}},
+        [this](const json& args) -> json {
+            std::string error;
+            library.Refresh(error);
+            error.clear();
+            if (args.contains("missing") && args["missing"].is_boolean() && args["missing"].get<bool>()){
+                const int n = library.ExportMissing(error);
+                json j{{"written", n}, {"message", library.Message()}};
+                if (!error.empty()) j["error"] = error;
+                return j;
+            }
+            const std::string file = args.value("file", std::string());
+            const MusicLibrary::Entry* found = nullptr;
+            const std::vector<MusicLibrary::Entry> all = library.Snapshot();
+            for (const MusicLibrary::Entry& e : all) if (e.file == file) found = &e;
+            if (!found) return json{{"error", "no such file in the library: " + file + " - see library_list"}};
+            const std::string name = (args.contains("name") && args["name"].is_string()) ? args["name"].get<std::string>()
+                                                                                        : MusicLibrary::SuggestExportName(*found);
+            const bool f_trim = (args.contains("trim") && args["trim"].is_boolean()) ? args["trim"].get<bool>()
+                                                                                    : MusicLibrary::SuggestTrim(*found);
+            const bool f_replace = args.contains("replace") && args["replace"].is_boolean() && args["replace"].get<bool>();
+            if (!library.ExportToSound(file, name, f_trim, f_replace, error)) return json{{"error", error}};
+            return json{{"sample", "sound/" + name + ".wav"}, {"trim", f_trim}, {"message", library.Message()}};
         });
 }
 #endif

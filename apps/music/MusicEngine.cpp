@@ -409,11 +409,20 @@ void MusicEngine::ApplyKey(int new_root, int new_mode){
 }
 
 int MusicEngine::NextSection(){
-    const int n = (int)score->sections.size();
-    if (n <= 1) return 0;
-    if (!score->f_section_random) return (section + 1) % n;
-    const int k = RandomInt(n - 1);         //any but the one playing: a repeat would be no change at all
-    return k >= section ? k + 1 : k;
+    //Only the sections in the rotation: one asked for by name (a cave, the title) is never where
+    //the music wanders to by itself, and "next" from inside one goes back to the rotation.
+    std::vector<int> rotation;
+    for (int i = 0; i < (int)score->sections.size(); i++) if (score->sections[i].f_rotation) rotation.push_back(i);
+    if (rotation.empty()) return section;
+    if (!score->f_section_random){
+        for (int i : rotation) if (i > section) return i;
+        return rotation[0];
+    }
+    //Any but the one playing: a repeat would be no change at all.
+    std::vector<int> others;
+    for (int i : rotation) if (i != section) others.push_back(i);
+    if (others.empty()) return section;
+    return others[RandomInt((int)others.size())];
 }
 
 void MusicEngine::ApplySection(int s){

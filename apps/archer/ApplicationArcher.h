@@ -447,7 +447,7 @@ static const int   STAND_POINTS[STAND_RING_COUNT] = { 10,    8,     6,     4,   
     no shadows", so without it everything under the slab came out black. A far layer lit by the sky
     is what this stands in for.
 */
-#define BACKDROP_FILL               0.35f
+#define BACKDROP_FILL               0.0f
 
 /*
     And until then a floating target is DAMPED, each one differently.
@@ -2290,6 +2290,8 @@ private:
     bool f_was_nocked = false;
     bool f_was_kicking = false;
     bool f_was_airborne = false;        //the `airborne` scope's edge
+    //How many `waterfall` scope instances any level has had, so a level with fewer closes the rest.
+    int  waterfall_scopes = 0;
     /*
         Master gain for the lot, 0..1, on the panel. The master bus's gain, set every pass in
         UpdateView - so, unlike before the cues, moving the slider turns down what is ALREADY

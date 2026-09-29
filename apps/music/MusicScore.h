@@ -75,6 +75,13 @@ struct MusicVoiceDef{
 struct MusicSectionDef{
     std::string name;
     int bars = 0;                   //how long it plays before the next one takes over; 0 = until asked
+    /*
+        False for a section the game asks for by name - a title screen, a cave - rather than one
+        that takes its turn: the rotation never moves INTO it, and it holds until asked to move
+        (section_bars does not apply; its own `bars` still can, and then it hands back to the
+        rotation). "rotation": false in the score.
+    */
+    bool f_rotation = true;
 };
 
 struct MusicStingerDef{

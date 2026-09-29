@@ -196,7 +196,7 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         is extracted, and played ONCE - the recovery is the point of it (Puppet::teeter_ticks).
         To be renamed Teeter_Forward in the export; the row follows it then.
     */
-    { "LosingBalance",       false, false,  false, false, false },
+    { "Teeter_Forward",       false, false,  false, false, false },
 };
 
 bool Puppet::IsDrawPose(int clip){

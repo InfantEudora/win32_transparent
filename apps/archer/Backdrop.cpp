@@ -106,18 +106,23 @@ void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, flo
         }
 
         /*
-            The waterfalls standing on this ground, cut in AFTER the ridge line is drawn and
-            before anything is built from it: every hash above is still drawn for every column,
-            so with no water the bank is bit for bit what it was, and with one only the columns
-            the water touches move.
+            The waterfalls, cut in AFTER the ridge line is drawn and before anything is built from
+            it: every hash above is still drawn for every column, so with no water the bank is bit
+            for bit what it was, and with one only the columns the water touches move.
+
+            EVERY water, each laid out from its own ground, and not only the ones standing on this
+            one: a stream runs on past its ground's end - the bay's into the cave - and the ridges
+            it passes on the next ground have to stand back for it too. The notch below only ever
+            touches columns over the fall, which are its own ground's.
         */
         std::vector<WaterLayout> falls;
         std::vector<float> lips;
         if (waters){
             for (const StageWater& w : *waters){
-                if (w.x >= g.Left() && w.x < g.Right()){
+                int wg = WaterGround(w,blocks);
+                if (wg >= 0){
                     WaterLayout l;
-                    LayoutWater(w,g,params,WaterParams(),l);
+                    LayoutWater(w,blocks[wg],params,WaterParams(),l);
                     falls.push_back(l);
                     lips.push_back(w.lip_y);
                 }
@@ -141,6 +146,25 @@ void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, flo
                 bool f_beside = !notched[k] && ((k > 0 && notched[k - 1]) || (k < n - 1 && notched[k + 1]));
                 if (f_beside && tops[k] < lips[f] + params.notch_rise){
                     tops[k] = lips[f] + params.notch_rise;
+                }
+            }
+        }
+        /*
+            A ROOF: any block that reaches back into the bank - the cave's roof, its far wall, the
+            lip of its mouth. The wall behind it rises to over its top, so the two close: without
+            this the ridge line is wherever the noise put it, and where that is under the roof the
+            painted sky shows between the roof and the wall. Nothing else in the level is that
+            deep, so nothing else moves.
+        */
+        for (const StageBlock& b : blocks){
+            if (&b == &g || b.kind != BLOCK_SOLID || !b.f_alive || b.f_invisible ||
+                b.Back() > wall_front + 0.001f){
+                continue;
+            }
+            for (int k = 0; k < n; k++){
+                float core_l = left + width * (float)k;
+                if (core_l + width > b.Left() && core_l < b.Right() && tops[k] < b.Top() + params.roof_rise){
+                    tops[k] = b.Top() + params.roof_rise;
                 }
             }
         }

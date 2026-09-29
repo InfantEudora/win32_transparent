@@ -1,3 +1,4 @@
+       1  waterfall      play  waterfall      gain 0.275 pan -0.50
      137  bow_tension    play  bow_tension    gain 0.700
      205  bow_tension    stop  bow_tension
      205  arrow_leave    play  arrow_leave    gain 1.000
@@ -46,6 +47,7 @@
     1143  jump_takeoff   play  jump_takeoff   gain 0.400
     1143  jump_voice     skip                  (chance)
     1156  heartbeat      play  heartbeat_1    gain 0.556
+    1169  waterfall      stop  waterfall
     1173  jump_landing   play  jump_landing   gain 0.300 from 0.013
     1173  breath_in      play  breathe_in_1   gain 0.319
     1188  jump_takeoff   play  jump_takeoff   gain 0.400
@@ -78,6 +80,7 @@
     1533  heartbeat      play  heartbeat_2    gain 0.878
     1552  breath_out     play  breathe_out_3  gain 0.482
     1564  heartbeat      play  heartbeat_1    gain 0.972
+    1584  waterfall      play  waterfall      gain 0.275 pan -0.50
     1589  jump_landing   play  jump_landing   gain 0.222 from 0.013
     1593  heartbeat      play  heartbeat_2    gain 0.958
     1621  heartbeat      play  heartbeat_1    gain 0.879

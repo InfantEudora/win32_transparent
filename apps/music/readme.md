@@ -35,17 +35,33 @@ top level of the file play in every section, and those inside a section play onl
 is on. A section change waits for a bar line: the new voices start on the downbeat and the beds
 crossfade over `section_fade_s`. Sections move on by themselves after `bars` (or
 `section_bars` for all of them), in order or at random (`section_order`), or when asked.
-jungle.json has two, 16 bars each, with the tension drones shared:
+A section with `"rotation": false` is one the game asks for by name - a title screen, a cave -
+rather than one that takes its turn: the rotation never wanders into it, it holds until asked to
+move (`section_bars` does not apply to it), and "next" from inside it goes back to the rotation.
+jungle.json has two in the rotation, 16 bars each, and two asked for by name, all sharing the
+tension drones:
 
 - **canopy**: the bright day set. Bamboo jungle, desert wind, the flute loop and violin; kalimbas, pan flute, high flute.
 - **undergrowth**: lower and earthier. Low wind, cemetery wind, the atmospheric drums (moved from
   A# to A), the jungle at a distance, and creepy whistles that come in with suspense; the hang drums,
   a bass note, zanka, a metallophone sparkle, the bamboo-flute flourish, and a low string that
   plays only when tense.
+- **menu** (not in the rotation): the title screen, a night clearing. The jungle night pad moved
+  from B to A, frogs and crickets, and a slow tribal drum loop that happens to be 16 beats at
+  60 bpm; a tremolo flute on long notes, a second hang drum, the kalimba and a low guitar pluck.
+  The `horn` stinger (a war horn) is meant for Start.
+- **cave** (not in the rotation): no wind, since it is indoors. A synth bass on A under a
+  dungeon rumble moved to E; a spirit cello on D and a scary texture that come in only with
+  suspense; metallophone and hang "drips" panned wide, and a cello walking slowly in the bass.
+  The `gust` stinger (a creepy wind gust) is for the cave mouth, `sweep` for bats or falling
+  rocks.
 
-Measured on 60-second renders at suspense 0.2: both read as A minor, and they are within 1 dB of
-each other (−25.7 and −24.9 dB RMS); the undergrowth carries 69% of its energy under 200 Hz
-against the canopy's 51%. The level holds through the crossfade.
+Measured on 60-second renders at suspense 0.2: canopy and undergrowth both read as A minor, and
+they are within 1 dB of each other (−25.7 and −25.6 dB RMS); the undergrowth carries 68% of its
+energy under 200 Hz against the canopy's 51%. The level holds through the crossfade. The menu is
+the lightest, at −27.7 dB with 26% under 200 Hz; the cave is the darkest, at −29.4 dB with 64%,
+and becomes −25.1 dB with 77% at suspense 0.8. Both centre on A (A2 and A1), too strongly for
+samplescan to name a key.
 
 The "Music" panel and the MCP tools do the same things: `music_state`, `music_set`
 (suspense, brightness, bpm, gains), `music_key` (root / shift / mode, at the next bar or now),
@@ -77,8 +93,20 @@ and set its category, instrument, root and comment. **Accept guess** fills the f
 **Save** writes them to the catalog. **Scan new** measures only the files that are not scanned
 yet and leaves every other row as it is (`samplescan --new`); **Scan all** re-measures the
 whole library, which is the one to run after a threshold changes. Both keep what you typed.
-The MCP tools are `library_list`, `library_get`, `library_scan`,
-`library_classify` and `library_audition`.
+
+**Export** writes the selected file to `assets/sound/<name>.wav`, which a score names as
+`sound/<name>.wav`. The name starts as instrument and root (`kalimba_Fs3`), and **Trim** starts
+on unless samplescan found the file loopable, because a loop's seam is its first and last
+sample. Every export is recorded in `samples/exports.csv` (`name,file,trim`), and that list is
+what `make samples` rebuilds the wavs from. So an export made in the panel is one a fresh
+checkout gets back: the wavs are not in git, and the list is. A name another file already has
+turns the button into **Replace**. **Export missing** writes every listed wav that is not on
+disk, which does what `make samples` does without leaving the bench. The filter's
+"Classified, not exported" list is what is still waiting for a wav. A score that is already
+playing a wav hears the new one after Reload.
+
+The MCP tools are `library_list`, `library_get`, `library_scan`, `library_classify`,
+`library_audition` and `library_export`.
 
 The analysis stays in samplescan, which the app runs as a process: this app links the
 engine's miniaudio, which has no decoders, and it cannot also carry samplescan's build. So

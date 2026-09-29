@@ -51,6 +51,9 @@ public:
     void SetPitch(uint32_t handle, float pitch) override {
         if (sound) sound->SetPitch(handle,pitch);
     }
+    void SetPan(uint32_t handle, float pan) override {
+        if (sound) sound->SetPan(handle,pan);
+    }
     int AddBus(const char* name, const char* parent) override {
         if (!sound) return -1;
         int parent_id = SOUND_BUS_MASTER;

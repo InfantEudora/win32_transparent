@@ -50,6 +50,7 @@ struct FakeOutput : public CueOutput {
     std::map<std::string, float> length, peak;
     std::vector<std::string> calls;
     std::map<uint32_t, float> gain_of;
+    std::map<uint32_t, float> pan_of;
     std::map<int, float> bus_gain;
     std::map<std::string, int> bus_id;
     uint32_t next = 1;
@@ -65,11 +66,13 @@ struct FakeOutput : public CueOutput {
         snprintf(b, sizeof(b), "play %s bus %d gain %.3f", n, p.bus, p.gain);
         calls.push_back(b);
         gain_of[next] = p.gain;
+        pan_of[next] = p.pan;
         return next++;
     }
     void Stop(uint32_t h) override { calls.push_back("stop " + std::to_string(h)); }
     void SetGain(uint32_t h, float g) override { gain_of[h] = g; }
     void SetPitch(uint32_t, float) override {}
+    void SetPan(uint32_t h, float p) override { pan_of[h] = p; }
     int AddBus(const char* name, const char*) override {
         if (!bus_id.count(name)) bus_id[name] = (int)bus_id.size() + 1;
         return bus_id[name];
@@ -593,6 +596,58 @@ static void audition_checks() {
     check(cs.log.Lines().empty(), "a name the table does not have does nothing");
 }
 
+/*
+    A loop that stands in the level - the archer's waterfall: gain follows the distance from where
+    it was begun to the listener, pan the signed offset, both re-read every tick as she moves, and
+    a follow on a parameter still reads the parameter.
+*/
+static void follow_checks() {
+    printf("follow\n");
+    FakeOutput out;
+    CueSystem cs;
+    cs.Init(60.0f, &out);
+    load(cs, R"({"sounds":{"a":"a.wav","b":"b.wav"},
+                 "cues":{"fall":{"begin":"fall","sounds":"a","looping":true,"on_end":"stop",
+                                 "follow":{"value":"distance","gain":{"in":[0,10],"out":[1,0]},
+                                           "pan":{"value":"dx","in":[-10,10],"out":[-1,1]}}},
+                         "swing":{"begin":"swing","sounds":"b","looping":true,
+                                  "follow":{"value":"speed","gain":{"in":[0,4],"out":[0,1]}}}}})");
+    cs.SetListener(0.0f);
+    cs.BeginScope("fall", 0, CuePayload().Set("x", 5.0f));
+    cs.Tick(1);
+    uint32_t h = out.next - 1;
+    char d[96];
+    snprintf(d, sizeof(d), "gain %.3f pan %.3f", out.gain_of[h], out.pan_of[h]);
+    check(fabsf(out.gain_of[h] - 0.5f) < 1e-4f && fabsf(out.pan_of[h] - 0.5f) < 1e-4f,
+          "it starts at the distance and side it was begun at", d);
+    cs.SetListener(5.0f);
+    cs.Tick(2);
+    snprintf(d, sizeof(d), "gain %.3f pan %.3f", out.gain_of[h], out.pan_of[h]);
+    check(fabsf(out.gain_of[h] - 1.0f) < 1e-4f && fabsf(out.pan_of[h]) < 1e-4f,
+          "loudest and centred with the listener on it", d);
+    cs.SetListener(20.0f);
+    cs.Tick(3);
+    snprintf(d, sizeof(d), "gain %.3f pan %.3f", out.gain_of[h], out.pan_of[h]);
+    check(out.gain_of[h] == 0.0f && out.pan_of[h] == -1.0f, "silent and hard left once she is past it", d);
+    cs.EndScope("fall", 0);
+    cs.Tick(4);
+    check(!out.calls.empty() && out.calls.back() == "stop " + std::to_string(h), "and stopped with its scope",
+          out.calls.empty() ? "" : out.calls.back());
+    cs.SetParameter("speed", 2.0f);
+    cs.BeginScope("swing");
+    cs.Tick(5);
+    uint32_t s = out.next - 1;
+    cs.SetParameter("speed", 4.0f);
+    cs.Tick(6);
+    check(fabsf(out.gain_of[s] - 1.0f) < 1e-4f, "a follow on a parameter still reads the parameter");
+    std::string error;
+    CueSystem bad;
+    bad.Init(60.0f, &out);
+    bool loaded = bad.LoadTableText(R"({"sounds":{"a":"a.wav"},
+        "cues":{"x":{"signal":"x","sounds":"a","follow":{"gain":{"in":[0,1],"out":[0,1]}}}}})", error, "test");
+    check(!loaded && error.find("needs a value") != std::string::npos, "a part with no value anywhere is an error", error);
+}
+
 int main() {
     table_checks();
     trigger_checks();
@@ -600,6 +655,7 @@ int main() {
     rule_checks();
     sound_checks();
     audition_checks();
+    follow_checks();
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

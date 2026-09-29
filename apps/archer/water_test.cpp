@@ -61,9 +61,9 @@ static void Lay(Laid& d){
     }
     LayoutWater(d.w,d.stage.blocks[d.ground],d.bank_params,d.params,d.l);
     //The ground bay, as the app builds its bank - with the water, and without for comparison.
-    BuildBackdropBlocks(d.stage.blocks,ARCHER_TEST_BAY_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,
+    BuildBackdropBlocks(d.stage.blocks,ARCHER_CAVE_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,
                         d.bank_params,d.bank,&d.trees,NULL,&d.stage.waters);
-    BuildBackdropBlocks(d.stage.blocks,ARCHER_TEST_BAY_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,
+    BuildBackdropBlocks(d.stage.blocks,ARCHER_CAVE_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,
                         d.bank_params,d.bank_plain);
     BuildWaterRocks(d.w,d.l,d.params,d.rocks);
     d.f_ok = true;
@@ -93,10 +93,14 @@ static void TestLayout(const Laid& d){
           "the spill lands in the gap behind the ground",detail);
     Check(d.w.stream_y < g.Top() && d.w.basin_y > g.Top(),
           "the pool stands over the ground's top and the stream runs under it");
-    snprintf(detail,sizeof(detail),"stream %.2f .. %.2f, ground %.2f .. %.2f",l.stream_l,l.stream_r,
-             g.Left(),g.Right());
-    Check(l.stream_l >= g.Left() && l.stream_r <= l.shelf_r,
-          "the stream runs within the ground's length and ends under the shelf",detail);
+    //It may run on past its own ground onto the next - the bay's into the cave's - so where its
+    //edges are is TestEdges' business; here only that it starts under the shelf and goes the
+    //way it was asked to.
+    snprintf(detail,sizeof(detail),"stream %.2f .. %.2f, asked to end at %.2f",l.stream_l,l.stream_r,
+             d.w.stream_x_end);
+    Check(l.stream_r <= l.shelf_r && fabsf(l.stream_l - d.w.stream_x_end) < 0.001f,
+          "the stream starts under the shelf and runs to its end",detail);
+    Check(d.w.stream_x_end < ARCHER_TEST_BAY_X_MIN,"and on into the cave");
 }
 
 static void TestNotch(const Laid& d){
@@ -173,9 +177,15 @@ static void TestEdges(const Laid& d){
     const WaterLayout& l = d.l;
     const WaterParams& p = d.params;
     const StageBlock& g = d.stage.blocks[d.ground];
+    //Rock is the bank, the pool's own rocks, and every live block of the level - the stream's front
+    //edge runs under the bay's floor and then the cave's.
     std::vector<StageBlock> all = d.bank;
     all.insert(all.end(),d.rocks.begin(),d.rocks.end());
-    all.push_back(g);
+    for (const StageBlock& b : d.stage.blocks){
+        if (b.kind == BLOCK_SOLID && b.f_alive && !b.f_invisible){
+            all.push_back(b);
+        }
+    }
 
     const float px0 = l.shelf_l + p.rim_depth * 0.5f, px1 = l.shelf_r - p.rim_depth * 0.5f;
     const float pz0 = l.recess_front - 0.3f, pz1 = l.pool_front;

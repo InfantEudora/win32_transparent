@@ -81,7 +81,12 @@
           "looping":  false
           "follow":   { "value": "swing_speed", "gain": { "in": [0, 5], "out": [0, 1] },
                         "pitch": { "in": [0, 5], "out": [0.9, 1.1] } }
-                                        a playing sound tracks a SetParameter every tick
+                                        a playing sound tracks a SetParameter every tick. Each of
+                                        gain, pitch and pan may name a "value" of its own instead;
+                                        "distance" and "dx" are from the trigger's "x" to the
+                                        listener AS IT MOVES, so a loop standing in the level -
+                        "pan": { "value": "dx", "in": [-20, 20], "out": [-0.7, 0.7] }
+                                        - is steered as she walks past it. pan replaces pan_by.
           "group":    "her"             one line at a time per group
           "priority": 0
           "busy":     "skip"            the group is speaking: skip, queue (for max_wait ticks),
@@ -135,6 +140,9 @@ public:
     virtual void     Stop(uint32_t handle) = 0;
     virtual void     SetGain(uint32_t handle, float gain) = 0;
     virtual void     SetPitch(uint32_t handle, float pitch) = 0;
+    //Only a following sound's pan moves once it has started. Not pure, so an output that has no
+    //stereo to steer does not have to say so.
+    virtual void     SetPan(uint32_t handle, float pan) { (void)handle; (void)pan; }
     //A bus by name, made if need be; `parent` empty or "master" for the master. -1 on failure.
     virtual int      AddBus(const char* name, const char* parent) = 0;
     virtual void     SetBusGain(int bus, float gain) = 0;
@@ -269,6 +277,7 @@ private:
         bool  f_looping = false;
         Curve follow_gain;
         Curve follow_pitch;
+        Curve follow_pan;
         std::string group;
         int   priority = 0;
         int   busy = BUSY_SKIP;
@@ -343,8 +352,12 @@ private:
         int         priority = 0;
         Curve       follow_gain;
         Curve       follow_pitch;
+        Curve       follow_pan;
         float       base_gain = 1.0f;
         float       base_pitch = 1.0f;
+        //Where its trigger said it was, for a follow of "distance" or "dx".
+        bool        f_has_x = false;
+        float       x = 0.0f;
     };
 
     float tps = 60.0f;
@@ -388,6 +401,9 @@ private:
     void Retire();
 
     float Value(const std::string& name, const CuePayload& payload) const;
+    //What a playing sound's follow reads right now: "distance" and "dx" from where it started to
+    //the listener, anything else the parameter of that name.
+    float FollowValue(const std::string& name, const Playing& p) const;
     float Eval(const Curve& c, float v) const;
     bool  GroupBusy(const std::string& group, uint64_t at, const Playing** speaking) const;
     uint64_t LengthTicks(const std::string& sound, float from, float pitch) const;

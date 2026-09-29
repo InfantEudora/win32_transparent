@@ -941,6 +941,19 @@ struct StageCrumbleGroup{
 #define ARCHER_TEST_BAY_X_MIN       (-40.0f)
 #define ARCHER_TEST_BAY_X_MAX       (-12.0f)
 #define ARCHER_TEST_BAY_SPLIT_Y     6.0f
+/*
+    THE CAVE (apps/archer/cave_plan.md), left of the bay through a mouth where the bay's left-hand
+    wall used to be: a floor of its own, a roof, a far wall, and the bank behind closing its back
+    (Backdrop.h - a block reaching back into the bank raises it to over its top). Enclosed on every
+    side but the camera's, for lighting without the sun.
+
+    The terrain bays' regions start at ARCHER_CAVE_X_MIN rather than ARCHER_TEST_BAY_X_MIN, so the
+    cave's blocks melt with the bay's: its floor and far wall with the ground, its roof and the
+    mouth's lip with the island above the split. Everything else that means "the bay" still reads
+    ARCHER_TEST_BAY_X_MIN.
+*/
+#define ARCHER_CAVE_X_MIN           (-66.0f)    //the cave floor's left end; the far wall stands on it
+#define ARCHER_CAVE_ROOF_Y          9.0f        //the roof's underside
 
 /*
     Something the APP builds a rigid body for, described here so that the whole level layout lives
@@ -1107,8 +1120,8 @@ struct StageWater{
     float basin_hw = 1.8f;      //the shelf holding the pool, either side of x
     float spill_dx = -0.6f;     //where the pool spills over the shelf's front, from x
     float stream_y = -0.12f;    //the stream's surface, just under the ground's top
-    //Where the stream runs to - toward the cave, so left of x. Inside the ground's length, or its
-    //front edge is out in the open: -39.8 ends it behind the bay's left wall, until the cave.
+    //Where the stream runs to - toward the cave, so left of x. It may run on past its own ground
+    //onto the next, but not past the last, or its front edge is out in the open (water_test).
     float stream_x_end = -39.8f;
 };
 

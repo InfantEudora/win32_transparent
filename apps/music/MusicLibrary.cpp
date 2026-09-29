@@ -93,9 +93,10 @@ MusicLibrary::~MusicLibrary(){
     if (scan_thread.joinable()) scan_thread.join();
 }
 
-void MusicLibrary::SetPaths(const std::string& samples, const std::string& tool){
+void MusicLibrary::SetPaths(const std::string& samples, const std::string& tool, const std::string& sound){
     samples_dir = samples;
     samplescan_exe = tool;
+    sound_dir = sound;
 }
 
 bool MusicLibrary::Refresh(std::string& error){
@@ -161,10 +162,41 @@ bool MusicLibrary::Refresh(std::string& error){
         return a.file < b.file;
     });
 
+    //Which of them are exported as what. No exports.csv is not an error: nothing is exported yet.
+    std::vector<ExportDef> new_exports;
+    std::ifstream ex(root / "exports.csv", std::ios::binary);
+    if (ex){
+        std::string line;
+        bool f_header = true;
+        while (std::getline(ex, line)){
+            if (line.size() >= 3 && (unsigned char)line[0] == 0xEF) line = line.substr(3);
+            if (line.empty() || line == "\r" || line.rfind("sep=", 0) == 0) continue;
+            const char sep = std::count(line.begin(), line.end(), ';') > std::count(line.begin(), line.end(), ',') ? ';' : ',';
+            const std::vector<std::string> cells = CsvSplit(line, sep);
+            if (f_header){ f_header = false; continue; }
+            if (cells.size() < 2 || cells[0].empty()) continue;
+            ExportDef d;
+            d.name = cells[0];
+            d.file = cells[1];
+            d.f_trim = cells.size() > 2 && Lower(cells[2]) == "yes";
+            d.f_on_disk = fs::is_regular_file(fs::u8path(sound_dir) / fs::u8path(d.name + ".wav"), ec);
+            new_exports.push_back(d);
+        }
+    }
+    for (Entry& e : rows){
+        for (const ExportDef& d : new_exports) if (d.file == e.file) e.exported_as.push_back(d.name);
+    }
+
     std::lock_guard<std::mutex> lock(mutex);
     header = new_header;
     entries = rows;
+    exports = new_exports;
     return true;
+}
+
+std::vector<MusicLibrary::ExportDef> MusicLibrary::Exports(){
+    std::lock_guard<std::mutex> lock(mutex);
+    return exports;
 }
 
 std::vector<MusicLibrary::Entry> MusicLibrary::Snapshot(){
@@ -333,6 +365,143 @@ bool MusicLibrary::Export(const std::string& file, const std::string& out_path, 
     const int code = RunTool({f_trim ? "--export-trim" : "--export", in_path, out_path}, output);
     if (code != 0){
         error = code < 0 ? "could not run samplescan - build tools/samplescan first" : "samplescan could not export " + file;
+        return false;
+    }
+    return true;
+}
+
+//--- exporting to the score's folder ---------------------------------------------------------
+
+bool MusicLibrary::ValidExportName(const std::string& name){
+    //It becomes a file name and an asset name, and `make samples` reads it back with a shell loop,
+    //so: letters, digits, '_' and '-', and nothing that is a path.
+    if (name.empty() || name.size() > 64) return false;
+    for (char c : name) if (!std::isalnum((unsigned char)c) && c != '_' && c != '-') return false;
+    return true;
+}
+
+std::string MusicLibrary::SuggestExportName(const Entry& e){
+    if (!e.exported_as.empty()) return e.exported_as[0];
+    //The instrument as typed, else as the name says, else the role - first word only, since
+    //"flute+transition" names the thing and then says what it is doing.
+    std::string what = e.Get("instrument");
+    if (what.empty()) what = e.Get("name_instrument");
+    if (what.empty()) what = e.Get("category");
+    if (what.empty()) what = e.Get("guess");
+    what = what.substr(0, what.find_first_of("+ ,"));
+    std::string name;
+    for (char c : Lower(what)) name += std::isalnum((unsigned char)c) ? c : '_';
+    //"F#3" -> "Fs3", the way kalimba_Fs3.wav already is: '#' does not belong in a file name.
+    std::string root;
+    for (char c : e.Get("root")){
+        if (c == '#') root += 's';
+        else if (std::isalnum((unsigned char)c)) root += c;
+    }
+    if (!root.empty()) name += (name.empty() ? "" : "_") + root;
+    return name.empty() ? "sample" : name;
+}
+
+bool MusicLibrary::SuggestTrim(const Entry& e){
+    //A loop's seam is its first and last sample, so a loop is exported whole. Everything else is
+    //trimmed: silence in front of a note is latency on every note, and silence after a bed is a
+    //gap in it every time round.
+    return e.Get("loopable") != "yes";
+}
+
+bool MusicLibrary::ExportToSound(const std::string& file, const std::string& name, bool f_trim, bool f_replace, std::string& error){
+    if (!ValidExportName(name)){
+        error = "'" + name + "' is not a usable name - letters, digits, _ and - only";
+        return false;
+    }
+    //`make samples` splits exports.csv on ',' and ';' with no quoting, so a file whose name has
+    //either could be exported here and never again.
+    if (file.find_first_of(",;\"") != std::string::npos){
+        error = "rename " + file + " first: a comma, semicolon or quote in it breaks exports.csv";
+        return false;
+    }
+    std::lock_guard<std::mutex> export_lock(export_mutex);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        bool f_known = false;
+        for (const Entry& e : entries) f_known |= (e.file == file && e.state != MISSING);
+        if (!f_known){
+            error = "no such file in the library: " + file;
+            return false;
+        }
+        for (const ExportDef& d : exports){
+            if (d.name == name && d.file != file && !f_replace){
+                error = "sound/" + name + ".wav is already " + d.file + " - pick another name, or replace it";
+                return false;
+            }
+        }
+    }
+
+    std::error_code ec;
+    fs::create_directories(fs::u8path(sound_dir), ec);
+    const std::string out_path = (fs::u8path(sound_dir) / fs::u8path(name + ".wav")).u8string();
+    const std::string in_path = (fs::u8path(samples_dir) / fs::u8path(file)).u8string();
+    std::string output;
+    const int code = RunTool({f_trim ? "--export-trim" : "--export", in_path, out_path}, output);
+    if (code != 0){
+        error = code < 0 ? "could not run samplescan - build tools/samplescan first" : "samplescan could not export " + file;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex);
+    //One row per name: a replace re-points it, a re-export updates the trim.
+    ExportDef d;
+    d.name = name;
+    d.file = file;
+    d.f_trim = f_trim;
+    d.f_on_disk = true;
+    bool f_found = false;
+    for (ExportDef& x : exports) if (x.name == name){ x = d; f_found = true; }
+    if (!f_found) exports.push_back(d);
+    for (Entry& e : entries){
+        e.exported_as.erase(std::remove(e.exported_as.begin(), e.exported_as.end(), name), e.exported_as.end());
+        if (e.file == file) e.exported_as.push_back(name);
+    }
+    if (!WriteExports(error)) return false;
+
+    //samplescan's last line is "  2 ch, 44100 Hz, 3.20 s (trimmed)" - the part worth showing.
+    std::string summary = output;
+    while (!summary.empty() && (summary.back() == '\n' || summary.back() == '\r')) summary.pop_back();
+    summary = summary.substr(summary.rfind('\n') == std::string::npos ? 0 : summary.rfind('\n') + 1);
+    summary.erase(0, summary.find_first_not_of(' '));
+    message = "Exported sound/" + name + ".wav: " + summary;
+    debug->Info("%s\n", message.c_str());
+    return true;
+}
+
+int MusicLibrary::ExportMissing(std::string& error){
+    int written = 0;
+    for (const ExportDef& d : Exports()){
+        if (d.f_on_disk) continue;
+        if (!ExportToSound(d.file, d.name, d.f_trim, false, error)) return written;
+        written++;
+    }
+    std::lock_guard<std::mutex> lock(mutex);
+    message = written ? "Exported " + std::to_string(written) + " missing wav" + (written == 1 ? "" : "s") : "Every export is on disk";
+    return written;
+}
+
+bool MusicLibrary::WriteExports(std::string& error){
+    //As the catalog: whole, to a temporary, then moved over the old one.
+    const fs::path root = fs::u8path(samples_dir);
+    const fs::path tmp = root / "exports.csv.tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary);
+        if (!out){
+            error = "cannot write exports.csv";
+            return false;
+        }
+        out << "name,file,trim\n";
+        for (const ExportDef& d : exports) out << d.name << "," << d.file << "," << (d.f_trim ? "yes" : "no") << "\n";
+    }
+    std::error_code ec;
+    fs::rename(tmp, root / "exports.csv", ec);
+    if (ec){
+        error = "cannot replace exports.csv: " + ec.message();
         return false;
     }
     return true;

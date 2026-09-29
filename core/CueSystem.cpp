@@ -560,29 +560,37 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
         auto jf = o.find("follow");
         if (jf != o.end()){
             std::string fat = at + ": follow";
-            if (!jf->is_object() || !OnlyKeys(*jf,{"value","gain","pitch"},fat,error)){
+            if (!jf->is_object() || !OnlyKeys(*jf,{"value","gain","pitch","pan"},fat,error)){
                 if (error.empty()) error = fat + " must be an object";
                 return false;
             }
             std::string value;
-            if (!Str(*jf,"value","",value) || value.empty()){
-                error = fat + " needs the value it follows";
+            if (!Str(*jf,"value","",value)){
+                error = fat + ": value is a name";
                 return false;
             }
-            //Each of gain and pitch is a curve without its own value - the follow names that once.
-            for (int k = 0; k < 2; k++){
-                const char* part = k ? "pitch" : "gain";
-                auto jp = jf->find(part);
+            //Each part is a curve on the follow's value, unless it names one of its own - pan
+            //following "dx" while gain follows "distance", say.
+            static const char* parts[3] = { "gain", "pitch", "pan" };
+            Curve* into[3] = { &c.follow_gain, &c.follow_pitch, &c.follow_pan };
+            for (int k = 0; k < 3; k++){
+                auto jp = jf->find(parts[k]);
                 if (jp == jf->end()){
                     continue;
                 }
-                if (!jp->is_object() || jp->contains("value")){
-                    error = fat + "." + part + " is { in, out, min, max } - the value is the follow's";
+                if (!jp->is_object()){
+                    error = fat + "." + parts[k] + " is { in, out, min, max }, and may name its own value";
                     return false;
                 }
                 json with_value = *jp;
-                with_value["value"] = value;
-                if (!curve(with_value,k ? c.follow_pitch : c.follow_gain,fat + "." + part)) return false;
+                if (!jp->contains("value")){
+                    if (value.empty()){
+                        error = fat + "." + parts[k] + " needs a value - the follow's or its own";
+                        return false;
+                    }
+                    with_value["value"] = value;
+                }
+                if (!curve(with_value,*into[k],fat + "." + parts[k])) return false;
             }
         }
         auto ja = o.find("actions");
@@ -809,14 +817,14 @@ void CueSystem::Retire(){
             //Still going: a following sound reads its parameter.
             if (output && p.handle){
                 if (p.follow_gain.f_set){
-                    auto it = parameters.find(p.follow_gain.value);
-                    float v = (it == parameters.end()) ? 0.0f : it->second;
-                    output->SetGain(p.handle,p.base_gain * Eval(p.follow_gain,v));
+                    output->SetGain(p.handle,p.base_gain * Eval(p.follow_gain,FollowValue(p.follow_gain.value,p)));
                 }
                 if (p.follow_pitch.f_set){
-                    auto it = parameters.find(p.follow_pitch.value);
-                    float v = (it == parameters.end()) ? 0.0f : it->second;
-                    output->SetPitch(p.handle,p.base_pitch * Eval(p.follow_pitch,v));
+                    output->SetPitch(p.handle,p.base_pitch * Eval(p.follow_pitch,FollowValue(p.follow_pitch.value,p)));
+                }
+                if (p.follow_pan.f_set){
+                    float pan = Eval(p.follow_pan,FollowValue(p.follow_pan.value,p));
+                    output->SetPan(p.handle,(pan < -1.0f) ? -1.0f : ((pan > 1.0f) ? 1.0f : pan));
                 }
             }
             i++;
@@ -852,6 +860,18 @@ float CueSystem::Value(const std::string& name, const CuePayload& payload) const
     }
     if (payload.Has(name)){
         return payload.Get(name);
+    }
+    auto it = parameters.find(name);
+    return (it == parameters.end()) ? 0.0f : it->second;
+}
+
+float CueSystem::FollowValue(const std::string& name, const Playing& p) const{
+    if (name == "distance" || name == "dx"){
+        if (!p.f_has_x){
+            return 0.0f;
+        }
+        float dx = p.x - listener_x;
+        return (name == "dx") ? dx : fabsf(dx);
     }
     auto it = parameters.find(name);
     return (it == parameters.end()) ? 0.0f : it->second;
@@ -1085,16 +1105,23 @@ void CueSystem::Fire(Waiting& w){
     }
     if (!sound.empty()){
         float gain = cue_gain;
+        //A following sound STARTS where its follow says, rather than a tick late - so it is set up
+        //first, and read the way Retire will read it every tick after.
+        Playing p;
+        p.f_has_x = w.payload.Has("x");
+        p.x = w.payload.Get("x");
         float pan = cue.pan_by.f_set ? Eval(cue.pan_by,Value(cue.pan_by.value,w.payload)) : 0.0f;
+        if (cue.follow_pan.f_set){
+            pan = Eval(cue.follow_pan,FollowValue(cue.follow_pan.value,p));
+        }
         pan = (pan < -1.0f) ? -1.0f : ((pan > 1.0f) ? 1.0f : pan);
-        //A following sound STARTS where its parameter says, rather than a tick late.
         float base_gain = gain;
         float pitch = cue.pitch;
         if (cue.follow_gain.f_set){
-            gain *= Eval(cue.follow_gain,Value(cue.follow_gain.value,CuePayload()));
+            gain *= Eval(cue.follow_gain,FollowValue(cue.follow_gain.value,p));
         }
         if (cue.follow_pitch.f_set){
-            pitch *= Eval(cue.follow_pitch,Value(cue.follow_pitch.value,CuePayload()));
+            pitch *= Eval(cue.follow_pitch,FollowValue(cue.follow_pitch.value,p));
         }
 
         CueLogEntry e;
@@ -1108,7 +1135,6 @@ void CueSystem::Fire(Waiting& w){
         e.from = w.from;
         log.Add(e);
 
-        Playing p;
         p.cue = cue.name;
         p.sound = sound;
         p.started = now;
@@ -1119,6 +1145,7 @@ void CueSystem::Fire(Waiting& w){
         p.priority = cue.priority;
         p.follow_gain = cue.follow_gain;
         p.follow_pitch = cue.follow_pitch;
+        p.follow_pan = cue.follow_pan;
         p.base_gain = base_gain;
         p.base_pitch = cue.pitch;
         if (output){
@@ -1295,18 +1322,6 @@ void CueSystem::EndScopeNow(const std::string& name, int instance){
 }
 
 void CueSystem::Reset(){
-    /*
-        A MARKER IN THE LOG, first. A restart is where one run ends and the next begins, and a log
-        read across one mixes them: a replay's lines come after its own restart, so a tool that
-        keeps only what follows the last `reset` cannot pick up a stray line from whatever ran
-        before it (tools/cue_replay.py does exactly that). Logged at the clock as it stood - the
-        restart is what resets the game's clock, after this.
-    */
-    CueLogEntry marker;
-    marker.tick = now;
-    marker.cue = "level";
-    marker.what = "reset";
-    log.Add(marker);
     pending.clear();
     //Newest first, so a scope opened inside another ends before it.
     while (!scopes.empty()){
@@ -1317,6 +1332,25 @@ void CueSystem::Reset(){
         Skip(w.cue,"","reset");
     }
     waiting.clear();
+    /*
+        A MARKER IN THE LOG, once the run that is ending has said everything it has to. A restart
+        is where one run ends and the next begins, and a log read across one mixes them: a replay's
+        lines come after its own restart, so a tool that keeps only what follows the last `reset`
+        cannot pick up a stray line from whatever ran before it (tools/cue_replay.py does exactly
+        that). Logged at the clock as it stood - the restart is what resets the game's clock, after
+        this.
+
+        AFTER THE SCOPES END, NOT BEFORE, and that order is the whole of the marker's job. It was
+        logged first, so the stops and skips of the run that was ending landed on the new run's
+        side of it - stamped with whatever tick the old run had reached, which is wall-clock time
+        for a free-running app. Nothing was open across a restart until the archer's waterfall
+        loop, and then the replay check differed from one run to the next by that one line.
+    */
+    CueLogEntry marker;
+    marker.tick = now;
+    marker.cue = "level";
+    marker.what = "reset";
+    log.Add(marker);
     for (Playing& p : playing){
         p.group.clear();
     }

@@ -29,7 +29,8 @@
     "breathe_out_3": "sound/breathe_out_normal_3.wav",
     "heartbeat_1":  "sound/heartbeat_1.wav",
     "heartbeat_2":  "sound/heartbeat_2.wav",
-    "vine_grow":    "sound/rock_crumble_2.wav"
+    "vine_grow":    "sound/rock_crumble_2.wav",
+    "waterfall":    "sound/waterfall.wav"
   },
 
   "groups": {
@@ -39,7 +40,7 @@
   "buses": {
     "effects":  { "comment": "everything that is not her voice or, later, the narrator and the music" },
     "voice":    { "comment": "her lines" },
-    "ambience": { "comment": "loops of the place - the range, wind and birds; nothing on it yet" },
+    "ambience": { "comment": "loops of the place - the waterfall so far; the range, wind and birds later" },
     "body":     { "comment": "her heartbeat - not her voice, so it overlaps everything, and has its own fader" }
   },
 
@@ -159,6 +160,14 @@
       "gain_by": [ { "value": "length", "in": [3, 8], "out": [0.3, 0.45] },
                    { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
       "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+
+    "waterfall": {
+      "comment": "The bay's waterfall (water_plan.md), looping while she is in earshot - ApplicationArcher::SignalCues opens a `waterfall` scope within 40 of it, with its x. Loudest within 4 of it and gone by 36, before the scope closes; panned by which side of it she is, never hard over - it is a wide thing, heard with both ears. Both follow her as she moves.",
+      "begin": "waterfall", "sounds": "waterfall", "looping": true, "bus": "ambience", "gain": 0.55, "on_end": "stop",
+      "follow": { "value": "distance",
+                  "gain": { "in": [4, 36], "out": [1, 0] },
+                  "pan":  { "value": "dx", "in": [-24, 24], "out": [-0.6, 0.6] } }
     }
   }
 }

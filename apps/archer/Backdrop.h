@@ -89,6 +89,9 @@ struct BackdropParams{
     float notch_rise   = 2.5f;
     //...cut this much wider than the pool's shelf each side, for the neighbours' rounding.
     float notch_margin = 0.6f;
+    //Behind a block that reaches back into the bank (a cave's roof), the wall stands at least
+    //this far over its top, so the two close - see A ROOF in Backdrop.cpp.
+    float roof_rise    = 1.5f;
 };
 
 struct BackdropTree{
@@ -102,9 +105,13 @@ struct BackdropTree{
     [y_min, y_max). `out` and `trees` are cleared first; `grounds`, if given, gets the index into
     `blocks` of each ground block used. Wall columns come first in `out`, then ridges.
 
-    `waters`, if given, are cut into it: over each one standing on a ground block used here the
-    wall is notched and set back (see WaterLayout), no ridge stands in its pool or its stream, and
-    no pine grows in the notch. Without them the bank is exactly what it always was.
+    `waters`, if given, are cut into it: over each fall the wall is notched and set back (see
+    WaterLayout), no ridge stands in its pool, the ridges along its stream stand back from it -
+    on whichever ground they are, since a stream runs on past its own - and no pine grows in the
+    notch. Without them the bank is exactly what it always was.
+
+    And wherever a block reaches back into the bank (Back() at or behind the wall's face - a cave's
+    roof and walls), the wall under it rises roof_rise over its top, so the two close.
 */
 void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, float x_max,
                          float y_min, float y_max, const BackdropParams& params,

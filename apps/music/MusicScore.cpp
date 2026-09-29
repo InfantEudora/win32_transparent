@@ -306,7 +306,8 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
         for (const json& sec : j["sections"]){
             MusicSectionDef d;
             d.name = Str(sec, "name", "section " + std::to_string(s.sections.size() + 1));
-            d.bars = std::max(0, (int)Num(sec, "bars", (float)default_bars));
+            d.f_rotation = !(sec.contains("rotation") && sec["rotation"].is_boolean() && !sec["rotation"].get<bool>());
+            d.bars = std::max(0, (int)Num(sec, "bars", d.f_rotation ? (float)default_bars : 0.0f));
             if (s.SectionIndex(d.name) >= 0){
                 error = "two sections are called '" + d.name + "'";
                 return false;

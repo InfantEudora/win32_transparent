@@ -58,6 +58,44 @@
                 {"name": "low string",   "sample": "sound/string_B1.wav",       "root": "B1", "low": "A1", "high": "E2",
                  "density_calm": 0.00, "density_tense": 0.10, "gain": 0.45, "spread": 0.1, "offbeat": 0.0}
             ]
+        },
+        {
+            "name": "menu",
+            "rotation": false,
+            "beds": [
+                {"name": "night pad",    "sample": "sound/night_pad_B2.wav",  "gain_calm": 0.16, "gain_tense": 0.10, "root": "B2", "degree": 0, "fade_s": 5},
+                {"name": "frogs",        "sample": "sound/frog_croaks.wav",   "gain_calm": 0.45, "gain_tense": 0.20},
+                {"name": "crickets",     "sample": "sound/crickets.wav",      "gain_calm": 0.90, "gain_tense": 0.40},
+                {"name": "tribal drums", "sample": "sound/tribal_drums.wav",  "gain_calm": 0.30, "gain_tense": 0.45, "fade_s": 1}
+            ],
+            "voices": [
+                {"name": "flute",        "sample": "sound/flute_Ds4.wav",  "root": "D#4", "low": "A3", "high": "C5",
+                 "density_calm": 0.10, "density_tense": 0.06, "gain": 0.70, "length_beats": 4, "release_s": 1.5, "offbeat": 0.0, "spread": 0.2},
+                {"name": "hang",         "sample": "sound/hang2_F3.wav",   "root": "F3",  "low": "C3", "high": "C4",
+                 "density_calm": 0.20, "density_tense": 0.12, "gain": 0.25, "spread": 0.4},
+                {"name": "kalimba",      "sample": "sound/kalimba_G3.wav", "root": "G3",  "low": "E3", "high": "G4",
+                 "density_calm": 0.10, "density_tense": 0.05, "gain": 0.40, "spread": 0.5, "offbeat": 0.5},
+                {"name": "guitar",       "sample": "sound/guitar_A2.wav",  "root": "A2",  "low": "E2", "high": "A2",
+                 "density_calm": 0.06, "density_tense": 0.04, "gain": 0.80, "spread": 0.1, "offbeat": 0.0, "length_beats": 4, "release_s": 1.0}
+            ]
+        },
+        {
+            "name": "cave",
+            "rotation": false,
+            "beds": [
+                {"name": "bass drone",   "sample": "sound/synth_bass_A1.wav",   "gain_calm": 0.10, "gain_tense": 0.14, "root": "A1", "degree": 0, "fade_s": 3},
+                {"name": "rumble",       "sample": "sound/rumble_G2.wav",       "gain_calm": 0.15, "gain_tense": 0.30, "root": "G2", "degree": 7, "fade_s": 4},
+                {"name": "spirit cello", "sample": "sound/spirit_cello_D4.wav", "gain_calm": 0.00, "gain_tense": 0.35, "root": "D4", "degree": 5, "fade_s": 4},
+                {"name": "scary",        "sample": "sound/scary_texture.wav",   "gain_calm": 0.00, "gain_tense": 0.50}
+            ],
+            "voices": [
+                {"name": "drip",         "sample": "sound/metallophone_E6.wav", "root": "E6", "low": "A5", "high": "E6",
+                 "density_calm": 0.06, "density_tense": 0.03, "gain": 0.25, "spread": 0.8, "offbeat": 0.5},
+                {"name": "drip low",     "sample": "sound/hang_G4.wav",         "root": "G4", "low": "D4", "high": "A4",
+                 "density_calm": 0.08, "density_tense": 0.05, "gain": 0.35, "spread": 0.8, "offbeat": 0.5},
+                {"name": "cello",        "sample": "sound/cello_C2.wav",        "root": "C2", "low": "A1", "high": "E2",
+                 "density_calm": 0.06, "density_tense": 0.12, "gain": 0.45, "spread": 0.0, "offbeat": 0.0, "length_beats": 6, "release_s": 2.0}
+            ]
         }
     ],
 
@@ -66,6 +104,10 @@
         {"name": "scare 2",   "sample": "sound/scare_2.wav",        "gain": 0.7},
         {"name": "harp fall", "sample": "sound/harp_fall.wav",      "gain": 0.6},
         {"name": "low hit",   "sample": "sound/low_hit.wav",        "gain": 0.6},
-        {"name": "swell",     "sample": "sound/reverse_cymbal.wav", "gain": 0.5}
+        {"name": "swell",     "sample": "sound/reverse_cymbal.wav", "gain": 0.5},
+        {"name": "horn",      "sample": "sound/war_horn_D2.wav",    "gain": 0.5},
+        {"name": "parrot",    "sample": "sound/parrot.wav",         "gain": 0.6},
+        {"name": "gust",      "sample": "sound/wind_gust.wav",      "gain": 0.4},
+        {"name": "sweep",     "sample": "sound/sweep.wav",          "gain": 0.7}
     ]
 }

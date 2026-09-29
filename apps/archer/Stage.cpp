@@ -406,6 +406,10 @@ void Stage::BuildMainLevel(){
         with the area in front of her; stage_test drops her on every one.
     */
     const float zb = -6.0f, zt = 30.0f;
+#if ARCHER_TEST_BAY
+    //From two units past the far wall, so a teleport or a stray step at the wall is still in it.
+    AddZone("Cave",             ARCHER_CAVE_X_MIN - 2.0f, ARCHER_TEST_BAY_X_MIN, zb, zt, v2(-44.00f,0.30f));
+#endif
     AddZone("Terrain bay",      ARCHER_TEST_BAY_X_MIN, ARCHER_TEST_BAY_X_MAX, zb, zt, v2(-24.00f,0.30f));
     AddZone("Start",            ARCHER_TEST_BAY_X_MAX,  14.0f, zb, zt, v2( -6.00f,0.30f));
     AddZone("Gaps and rope",     14.0f,  39.5f, zb, zt, v2( 21.00f,0.30f));
@@ -482,10 +486,14 @@ void Stage::BuildMainLevel(){
 
         See the SOLID-only and append-at-the-end rules in the ARCHER_TEST_BAY note in Stage.h.
     */
-    //The left-hand wall, mirroring the one at x 71 for the same reason. Kept INSIDE the ground
-    //bay so that it melts with the rest of it - a lone blockout box at the end of a row of terrain
-    //reads as something that failed to build rather than as a deliberate boundary.
-    blocks.push_back({ ARCHER_TEST_BAY_X_MIN + 0.25f, 4.00f, 0.25f, 4.00f, BLOCK_SOLID, true });
+    /*
+        The cave's MOUTH: a lip hanging from the roof over the way in (cave_plan.md). This was the
+        bay's left-hand wall, the level's end on this side, before the cave went in beyond it;
+        still the same block, so no index after it moves. Its underside at 6.0 is clear of her
+        head at the top of a full jump (5.0), so she runs and jumps through without a bonk. Deep,
+        like the roof it hangs from, and above the split, so it melts with the roof.
+    */
+    blocks.push_back({ ARCHER_TEST_BAY_X_MIN,  7.60f, 0.60f, 1.60f, BLOCK_SOLID, true, false, -2.25f, 3.75f }); //lip, x -40.6..-39.4, y 6.0..9.2
 
     //ONE floor under the whole ground bay. It used to be four abutting segments, one per bay, and
     //a smooth union over a seam between two equal tops lifts the surface there by up to k/4.
@@ -564,6 +572,8 @@ void Stage::BuildMainLevel(){
     StageWater fall;
     fall.x = -26.0f;
     fall.lip_y = 12.5f;
+    //Into the cave, and on to just short of its far wall.
+    fall.stream_x_end = ARCHER_CAVE_X_MIN + 4.0f;
     waters.push_back(fall);
 #endif
 
@@ -589,6 +599,32 @@ void Stage::BuildMainLevel(){
         are not part of the bay go here, after everything the dressing is built from.
     */
     blocks.push_back({ 31.20f,  6.70f,  0.70f, 0.30f, BLOCK_SOLID,  true });    //slab four,  x 30.5..31.9, top 7.0
+
+#if ARCHER_TEST_BAY
+    /*
+        --- The cave, x -66 .. -40 (cave_plan.md) --------------------------------------------------
+        Last, after slab four, by the rule above: nothing before them moves.
+
+        A FLOOR OF ITS OWN rather than the bay's carried on, and that is to keep the bay as it is:
+        the bank behind a ground block is laid in columns across its length, so a longer floor
+        would have redrawn the whole skyline behind the bay - and the vines laid on its crest by
+        hand. The two floors meet under the mouth, where the smooth union's lift at a seam (k/4,
+        under a tenth) is a threshold rather than a bump in the open.
+
+        The ROOF and the FAR WALL are deep, back to z -6: past the bank's face (-4.5), so the bank
+        closes behind them with no gap for the painted sky to show through, and Backdrop.cpp raises
+        the bank over them wherever they reach back into it.
+    */
+    blocks.push_back({ (ARCHER_CAVE_X_MIN + ARCHER_TEST_BAY_X_MIN) * 0.5f, -2.00f,
+                       (ARCHER_TEST_BAY_X_MIN - ARCHER_CAVE_X_MIN) * 0.5f, 2.00f,
+                       BLOCK_SOLID, true });                                        //cave floor, top 0
+    blocks.push_back({ (ARCHER_CAVE_X_MIN + ARCHER_TEST_BAY_X_MIN) * 0.5f, ARCHER_CAVE_ROOF_Y + 1.00f,
+                       (ARCHER_TEST_BAY_X_MIN - ARCHER_CAVE_X_MIN) * 0.5f, 1.00f,
+                       BLOCK_SOLID, true, false, -2.25f, 3.75f });                  //roof, 9 .. 11
+    blocks.push_back({ ARCHER_CAVE_X_MIN + 1.00f, (ARCHER_CAVE_ROOF_Y + 2.00f) * 0.5f,
+                       1.00f, (ARCHER_CAVE_ROOF_Y + 2.00f) * 0.5f,
+                       BLOCK_SOLID, true, false, -2.25f, 3.75f });                  //far wall, x -66..-64, 0 .. 11
+#endif
 }
 
 void Stage::AddScenery(const StageScenery& s){

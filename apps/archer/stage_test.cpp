@@ -7851,6 +7851,108 @@ static void TestCreepers(){
     Check(bad == 0 && climbed >= 95 && over >= 80,"a hundred seeds: they climb, most come over, none goes in",d);
 }
 
+#if ARCHER_TEST_BAY
+/*
+    The cave (cave_plan.md): that it is there and closed, that she can get in and through the
+    mouth without a bonk and cannot get out past the far wall, that its zone names it, and that the
+    bank behind closes it - the check a screenshot only makes from one angle.
+*/
+static void TestCave(){
+    printf("the cave\n");
+    char d[200];
+    const Stage level;
+    int floor = BlockAt(level,-53.0f,0.0f);
+    int bay_floor = BlockAt(level,-26.0f,0.0f);
+    int roof = -1, wall = -1, lip = -1;
+    for (size_t i = 0; i < level.blocks.size(); i++){
+        const StageBlock& b = level.blocks[i];
+        if (fabsf(b.Bottom() - ARCHER_CAVE_ROOF_Y) < 0.01f && b.x < ARCHER_TEST_BAY_X_MIN) roof = (int)i;
+        if (b.Right() > ARCHER_CAVE_X_MIN && b.Left() < ARCHER_CAVE_X_MIN + 3.0f && b.Bottom() > -0.01f &&
+            b.Top() >= ARCHER_CAVE_ROOF_Y) wall = (int)i;
+        if (fabsf(b.x - ARCHER_TEST_BAY_X_MIN) < 0.01f && b.Bottom() > 3.0f) lip = (int)i;
+    }
+    Check(floor >= 0 && bay_floor >= 0 && roof >= 0 && wall >= 0 && lip >= 0,
+          "the cave's floor, roof, far wall and mouth are where this test looks");
+    if (floor < 0 || bay_floor < 0 || roof < 0 || wall < 0 || lip < 0){
+        return;
+    }
+    const StageBlock& f = level.blocks[floor];
+    const StageBlock& bf = level.blocks[bay_floor];
+    const StageBlock& r = level.blocks[roof];
+    const StageBlock& w = level.blocks[wall];
+    const StageBlock& m = level.blocks[lip];
+    Check(fabsf(f.Right() - bf.Left()) < 0.001f && f.Top() == bf.Top() && f.Back() == bf.Back(),
+          "its floor meets the bay's under the mouth, level with it and as deep, so the stream runs on");
+    Check(f.Left() <= ARCHER_CAVE_X_MIN + 0.001f && r.Left() <= w.Left() + 0.001f && r.Right() >= f.Right() - 0.001f,
+          "the roof covers it from the far wall to the mouth");
+    Check(w.Top() >= r.Bottom() && fabsf(w.Bottom() - f.Top()) < 0.001f,"the far wall stands on the floor, up into the roof");
+    snprintf(d,sizeof(d),"lip underside %.2f, head at the top of a jump %.2f",m.Bottom(),ApexRise() + 2.0f * ARCHER_HALF_H);
+    Check(m.Bottom() > ApexRise() + 2.0f * ARCHER_HALF_H + 0.3f && m.Top() >= r.Bottom(),
+          "the mouth's lip hangs from the roof, clear of her head at the top of a jump",d);
+
+    //In on foot - from past the bay's mound, which is a step up she has to jump - in on a jump off
+    //the mound's top, the tightest one under the lip, and not out past the far wall.
+    Stage s = level;
+    DropOnto(s,-39.0f,0.0f);
+    ArcherInput left;
+    left.move_axis = -1.0f;
+    Run(s,240,left);
+    snprintf(d,sizeof(d),"at x %.2f",s.pos.x);
+    Check(s.f_on_ground && s.pos.x < -45.0f,"she walks in through the mouth",d);
+    Run(s,1200,left);
+    snprintf(d,sizeof(d),"stopped at x %.3f",s.pos.x);
+    Check(s.f_on_ground && s.pos.x - ARCHER_HALF_W >= w.Right() - 0.001f && s.pos.x < w.Right() + 1.0f,
+          "and the far wall stops her",d);
+    Stage j = level;
+    DropOnto(j,-37.0f,0.0f);
+    ArcherInput jump = left;
+    jump.f_jump_down = true;
+    jump.f_jump_pressed = true;
+    float peak_vy_cut = 0.0f;
+    for (int t = 0; t < 120; t++){
+        StageEvents e;
+        float vy_before = j.vel.y;
+        j.Tick(jump,e);
+        jump.f_jump_pressed = false;
+        //A bonk is her rising speed cut to nothing in one tick, under a roof.
+        if (vy_before > 2.0f && j.vel.y <= 0.0f && j.pos.x < -38.0f){
+            peak_vy_cut = vy_before;
+        }
+    }
+    snprintf(d,sizeof(d),"at x %.2f, rising %.2f cut",j.pos.x,peak_vy_cut);
+    Check(j.f_on_ground && j.pos.x < -42.0f && peak_vy_cut == 0.0f,"and jumps in through it without a bonk",d);
+
+    //Its zone names it.
+    Stage z = level;
+    DropOnto(z,-50.0f,0.0f);
+    int cave_zone = -1;
+    for (const StageZone& zone : level.zones){
+        cave_zone = (zone.name == "Cave") ? zone.id : cave_zone;
+    }
+    Check(cave_zone >= 0 && z.CurrentZone() == cave_zone,"inside, the zone is the cave");
+
+    //The bank closes it: under the roof every wall column stands roof_rise over it, and the roof
+    //and far wall reach back into the bank, so there is no gap for the sky between.
+    BackdropParams bp;
+    std::vector<StageBlock> bank;
+    BuildBackdropBlocks(level.blocks,ARCHER_CAVE_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,bp,bank);
+    const float wall_front = f.Back() - bp.wall_gap;
+    int columns = 0, low = 0;
+    for (const StageBlock& b : bank){
+        //Wall columns only, and only those behind the roof over their whole core.
+        if (fabsf(b.Front() - wall_front) > 0.001f || b.x < r.Left() || b.x > r.Right()){
+            continue;
+        }
+        columns++;
+        low += (b.Top() < r.Top() + bp.roof_rise - 0.001f) ? 1 : 0;
+    }
+    snprintf(d,sizeof(d),"%i of %i columns behind the roof are low",low,columns);
+    Check(columns >= 10 && low == 0,"the bank stands over the roof all along the cave",d);
+    Check(r.Back() < wall_front && w.Back() < wall_front && m.Back() < wall_front,
+          "and the roof, the far wall and the lip reach back into it");
+}
+#endif
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -7892,6 +7994,7 @@ int main(void){
 #if ARCHER_TEST_BAY
     TestBayClimb();
     TestBackdrop();
+    TestCave();
 #endif
     TestBoulders();
     TestZones();

@@ -70,3 +70,4 @@
 - [Archer 3D aim + plane lock](archer_3d_aim_plane_lock.md) — cone sway, v3 arrows, only the character scene unlocked; locked shots bit-identical; a zero TurnInWorld still changes bits
 - [Archer fall animation](archer_fall_animation.md) — 2026-09-29 walk-off no longer plays Running_Jump, spent run jump hands over to the fall, fall-pose overlay OFF (PUPPET_FALL_POSE_MAX 0); bench = Rope scene x 23 y 100
 - [Archer water](archer_water.md) — waterfall BUILT 2026-09-29: lighting.glsl split + Shader::f_lit for lit custom shaders; one discard kills early-z for a whole program; 0.35-0.40 ms GPU in view after the split
+- [Archer cave](archer_cave.md) — BUILT 2026-09-29 left of the bay for lighting experiments: own floor, deep roof/walls raise the bank to close it; fill light still leaks in, hazed back wall

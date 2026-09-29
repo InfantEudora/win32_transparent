@@ -16,9 +16,10 @@ One `StageWater` in `Stage::BuildMainLevel` (x -26). Looks only; the rules never
 - **Pool.** Shelf, rims and a dam, meshed as their own object (`water_rocks`) with the ground's
   sharper mesher settings. The bank's 0.6 rounding turned half-unit rims into blobs.
 - **Spill.** A short sheet out through a gap in the front rim, down into the gap behind the ground.
-- **Stream.** Flat, just under the grass, running left to `stream_x_end` (-39.8, behind the bay's
-  left wall). **Extend it into the cave when the cave exists.** It must stay within the ground
-  block's length, or its front edge is out in the open (`water_test` checks).
+- **Stream.** Flat, just under the grass, running left to `stream_x_end`: -62, into the cave
+  (cave_plan.md), across from the bay's floor onto the cave's. It may cross grounds but not run
+  past the last, or its front edge is out in the open (`water_test` checks every edge against
+  every block of the level).
 - Ridges along the stream are set back to leave it a channel; none stand in the pool's cleft;
   no pine grows in the notch.
 
@@ -42,11 +43,26 @@ One `StageWater` in `Stage::BuildMainLevel` (x -26). Looks only; the rules never
   height difference is the foam shoreline, round every rim and bump, with nothing baked in.
 - Clock: simulation ticks (`water_seconds`), so it freezes under `sim_pause`.
 
+## Sound
+
+`assets/sound/waterfall.wav` loops on the `ambience` bus (the `waterfall` row in
+`assets/cues/archer.json`). `ApplicationArcher::SignalCues` opens a `waterfall` scope per water
+while she is within 40 of it, closes it past 44, and closes any instance the active level does
+not have: a level switch does not reset the cues. The scope carries the fall's x. The row's
+`follow` does the rest, re-read every tick: loudness by `distance`, pan by `dx`. That needed two
+things in core/CueSystem, both covered by `tools/cue_test.cpp`'s follow checks:
+
+- A follow part may name its own value, and there is a `pan` part (`CueOutput::SetPan`).
+- `distance`/`dx` in a follow measure from the trigger's x to the listener AS IT MOVES.
+
+And one fix: `CueSystem::Reset` logged its `reset` marker BEFORE ending the old run's scopes,
+so a loop open when a replay started left a `stop` on the new run's side, stamped with
+wall-clock time. The replay check then differed run to run. The marker now comes after. The
+archer_test baselines gained exactly the waterfall's three lines (plays at 1 and 1584, stops at
+1169); every other part of the state trace is unchanged.
+
 ## Next
 
-- **Sound.** `assets/sound/waterfall.wav` is in. A looping cue on the `ambience` bus with gain
-  and pan by distance from x -26. It needs a scope begun by the game, so it enters the cue log
-  and the `archer_test` baselines move: re-check with `tools/cue_replay.py`, then `--write`.
 - Mist puffs at the foot of each sheet (the fireflies' glow shader, low strength); the wind
   pushing foam and mist; an arrow into the pool throwing a burst of foam.
 - The cave: the stream runs into it; Bomber's Worley caustic net as light on the cave's ceiling.

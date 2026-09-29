@@ -19,7 +19,8 @@
     the "Music" panel steers it - suspense, brightness, tempo, key, stingers - and the music_* MCP
     tools do the same from outside, so an agent can tune it with the person listening. The
     "Library" panel and the library_* tools are the sample library behind the scores: what has
-    been classified and how, what is new in unsorted/, and the means to audition and classify it. music_render writes an
+    been classified and how, what is new in unsorted/, and the means to audition and classify it,
+    and to export it to assets/sound as a wav a score can name. music_render writes an
     offline render to apps/music/renders/, which tools/samplescan can then measure: that is how
     the agent half of the loop hears anything.
 
@@ -79,6 +80,13 @@ private:
     std::atomic<bool> f_audition_busy{false};
     std::string audition_error;         //the panel's last audition failure, under audition_mutex
 
+    //The panel's exports to assets/sound, on their own thread for the same reason: a minute-long
+    //bed takes a few seconds to decode, and the panel must not stop drawing for it.
+    std::thread export_thread;
+    std::atomic<bool> f_export_busy{false};
+    std::string export_error;           //under audition_mutex, like audition_error
+    void StartPanelExport(const std::string& file, const std::string& name, bool f_trim, bool f_replace, bool f_missing);
+
     json StateJson();
     //"up a fifth" and friends: a key event from a root name, a mode name and/or a shift.
     bool KeyEventFromJson(const json& args, int current_root, MusicEvent& e, std::string& error);
@@ -97,6 +105,8 @@ private:
     char edit_instrument[128] = "";
     char edit_root[16] = "";
     char edit_comment[256] = "";
+    char edit_export_name[64] = "";     //sound/<this>.wav
+    bool edit_export_trim = true;
     void SelectLibraryFile(const MusicLibrary::Entry& e);
 #endif
 #ifdef USE_MCP

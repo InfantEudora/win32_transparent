@@ -19,6 +19,10 @@ build/
 #The music bench's wavs are GENERATED from apps/music/samples by `make samples` in apps/music -
 #22 MB of PCM16 that the library already holds as a third of that in mp3.
 apps/music/assets/sound/*.wav
-/apps/music/samples
+#The samples themselves stay local; the two lists that describe them are kept - the catalog, and
+#exports.csv, which says which of them become those wavs.
+/apps/music/samples/*
+!/apps/music/samples/catalog.csv
+!/apps/music/samples/exports.csv
 /apps/music/renders
 *.rec
