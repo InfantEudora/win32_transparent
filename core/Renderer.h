@@ -621,17 +621,17 @@ class Renderer{
         (ssao_compute.comp says why), so a crease is judged at the same size near and far.
     */
     struct SSAOSettings{
-        float radius = 1.5f;        // How far round a point to look for occluders
-        float bias = 0.025f;        // How far behind geometry a sample must be to count - stops a flat surface occluding itself
-        int   kernel_size = 32;     // Samples per pixel; the cost goes with it
+        float radius = 0.15f;        // How far round a point to look for occluders
+        float bias = 0.040f;        // How far behind geometry a sample must be to count - stops a flat surface occluding itself
+        int   kernel_size = 24;     // Samples per pixel; the cost goes with it
         float strength = 1.0f;      // 0 leaves the frame untouched, 1 applies the occlusion as measured
-        float power = 1.0f;         // Contrast: above 1 deepens creases, below 1 lifts them
+        float power = 1.5f;         // Contrast: above 1 deepens creases, below 1 lifts them
         //The blur. Radius in PIXELS either side, Gaussian with sigma = radius/2: 4 is the smallest
         //that erases the kernel's 4x4 rotation tile (ssao_compute.comp), 0 turns the blur off.
         int   blur_radius = 4;
         //How far off a pixel's surface plane a neighbour may lie before the blur stops at it, as a
         //fraction of the pixel's distance from the eye (see ssao_blur.comp for why it scales).
-        float blur_edge_tolerance = 0.05f;
+        float blur_edge_tolerance = 0.07f;
     };
     SSAOSettings ssao;
     /*

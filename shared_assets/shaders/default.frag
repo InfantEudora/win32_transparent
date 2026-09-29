@@ -510,10 +510,41 @@ float CalcFieldShadow(vec3 world_position, vec3 normal, vec3 light_position, flo
     */
     float min_step = dist / float(field_shadow_steps);
 
-    float visibility = 1.0;
-    float t = min_step;
+    /*
+        Only the part of the ray over the field is worth marching: off its edge every step below
+        is a `continue`. That used to cost nothing because the field covered everything the camera
+        saw, and costs a great deal once it does not - archer's covers one bay of a long level,
+        and every receiver outside it spent all field_shadow_steps finding nothing, 4.5 ms of
+        colour pass at 1440x900. So the segment is clipped to the field's square first.
 
-    for (int i = 0; (i < field_shadow_steps) && (t < dist); i++){
+        The field camera is orthographic (EnableFieldShadows' contract), so clip space is linear
+        along the segment and a fraction of it there is the same fraction of `dist`. Inside the
+        field this changes nothing: the march starts at min_step exactly as before.
+    */
+    vec2 clip_a = (mat_field * vec4(origin,1.0)).xy;
+    vec2 clip_d = (mat_field * vec4(light_position,1.0)).xy - clip_a;
+    float s_in = 0.0, s_out = 1.0;
+    for (int k = 0; k < 2; k++){
+        if (abs(clip_d[k]) < 1.0e-6){
+            if (abs(clip_a[k]) > 1.0){
+                return 1.0;         //parallel to this edge and outside it: never over the field
+            }
+        }else{
+            float s0 = (-1.0 - clip_a[k]) / clip_d[k];
+            float s1 = ( 1.0 - clip_a[k]) / clip_d[k];
+            s_in  = max(s_in,min(s0,s1));
+            s_out = min(s_out,max(s0,s1));
+        }
+    }
+    if (s_in >= s_out){
+        return 1.0;
+    }
+    float t_end = s_out * dist;
+
+    float visibility = 1.0;
+    float t = max(min_step,s_in * dist);
+
+    for (int i = 0; (i < field_shadow_steps) && (t < t_end); i++){
         vec3 p = origin + dir * t;
 
         vec4 clip = mat_field * vec4(p,1.0);
