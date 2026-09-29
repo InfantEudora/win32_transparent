@@ -29,6 +29,7 @@
 #include "Vine.h"
 #include "RopeMesh.h"
 #include "RouteCheck.h"
+#include "StateHash.h"
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -1816,6 +1817,81 @@ static void TestPuppet(){
         jp.Tick(a);
         Check(jp.choice.clip == CLIP_JUMP_RISE,"and a standing jump after it gets the standing rise");
     }
+    {
+        /*
+            ONLY A JUMP IS A RUNNING JUMP. Running off an edge leaves the ground already falling,
+            and used to play Running_Jump's push off one foot anyway - then hold its last frame to
+            the bottom of the drop. A jump in the coyote window after it is a real push, and gets it.
+        */
+        ArcherAnimParams a;
+        a.f_on_ground = true;
+        a.speed = ARCHER_RUN_SPEED;
+        a.ground_speed = ARCHER_RUN_SPEED;
+        Puppet wp;
+        wp.run_jump_rise = 0.333f;
+        wp.Tick(a);
+        a.f_on_ground = false;
+        a.vel_y = -0.95f;           //the first tick off the lip, as measured in the rope scene
+        wp.Tick(a);
+        Check(wp.choice.clip == CLIP_FALL,"running off an edge is a fall, not a running jump");
+        Check(wp.air_clip < 0,"and does not latch the running set");
+        Puppet cp = wp;
+        a.vel_y = ARCHER_JUMP_SPEED;
+        cp.Tick(a);
+        Check(cp.choice.clip == CLIP_RUN_JUMP,"a jump in the coyote window after it is a running jump");
+        Check(cp.choice.start_time == 0.0f,"from its takeoff frame");
+        //Well past the window, a rise cannot be that press - nothing latches.
+        a.vel_y = -2.0f;
+        for (int i = 0; i < ARCHER_COYOTE_TICKS + 2; i++){ wp.Tick(a); }
+        a.vel_y = ARCHER_JUMP_SPEED;
+        wp.Tick(a);
+        Check(wp.air_clip < 0,"a rise long after walking off is not a coyote jump");
+
+        //Letting go of a rope while swinging up at speed: a flight, but no push off the feet.
+        Puppet rp;
+        rp.run_jump_rise = 0.333f;
+        a.f_on_ground = false;
+        a.mode = MODE_ROPE;
+        a.vel_y = 3.0f;
+        rp.Tick(a);
+        a.mode = MODE_AIR;
+        a.vel_y = 6.0f;
+        rp.Tick(a);
+        Check(rp.choice.clip == CLIP_JUMP_RISE,"swinging off a rope rises in the standing set");
+    }
+    {
+        /*
+            A SPENT ARC HANDS OVER. With the clip's length known, a running jump still in the air
+            when Running_Jump has played out goes to the standing set: the fall, then the landing's
+            lead-in - where it used to hold its last frame all the way down.
+        */
+        Puppet sp;
+        sp.run_jump_rise = 0.333f;
+        sp.clip_duration[CLIP_RUN_JUMP] = 0.933f;
+        sp.clip_duration[CLIP_LAND_HARD] = 1.100f;
+        sp.clip_entry[CLIP_LAND_HARD] = 0.300f;
+        ArcherAnimParams a;
+        a.f_on_ground = true;
+        a.speed = ARCHER_RUN_SPEED;
+        a.ground_speed = ARCHER_RUN_SPEED;
+        sp.Tick(a);
+        a.f_on_ground = false;
+        a.mode = MODE_AIR;
+        a.vel_y = ARCHER_JUMP_SPEED;
+        sp.Tick(a);
+        Check(sp.choice.clip == CLIP_RUN_JUMP,"a running jump into a pit starts as one");
+        //Ticks for the clip to play out at its fitted rate, one to spare either side.
+        int spent = (int)ceilf(0.933f / (sp.RunJumpRate() * ARCHER_DT));
+        a.vel_y = -20.0f;
+        for (int i = 0; i < spent - 2; i++){ sp.Tick(a); }
+        Check(sp.choice.clip == CLIP_RUN_JUMP,"and stays one while the clip still has frames to play");
+        for (int i = 0; i < 3; i++){ sp.Tick(a); }
+        Check(sp.air_clip < 0 && sp.choice.clip == CLIP_FALL,"played out, the rest of the drop is the fall");
+        a.land_speed = PUPPET_HARD_LAND_VEL + 5.0f;
+        a.land_in_ticks = 10;
+        sp.Tick(a);
+        Check(sp.choice.clip == CLIP_LAND_HARD,"and the hard landing's lead-in meets the ground");
+    }
 
     //Both grips are authored now, and they are two clips rather than one because a lip is braced
     //against and a rope is hung from.
@@ -1903,7 +1979,7 @@ static void TestPuppet(){
         lp.Tick(a);
         Check(lp.choice.clip == CLIP_LAND_HARD,"at contact the clip the lead-in chose IS the landing, not re-chosen");
 
-        //A running jump keeps its own arc.
+        //A running jump keeps its own arc - taking off rising, since that is what makes it a jump.
         Puppet rp;
         rp.clip_entry[CLIP_LAND_SOFT] = 0.267f;
         ArcherAnimParams r;
@@ -1912,13 +1988,33 @@ static void TestPuppet(){
         r.ground_speed = ARCHER_RUN_SPEED;
         rp.Tick(r);
         r.f_on_ground = false;
+        r.vel_y = ARCHER_JUMP_SPEED;
+        rp.Tick(r);
         r.vel_y = -10.0f;
         r.land_speed = ARCHER_JUMP_SPEED;
         r.land_in_ticks = 5;
         rp.Tick(r);
         Check(rp.choice.clip == CLIP_RUN_JUMP,"a running jump keeps its own arc to the ground");
 
-        //THE FALL POSE: grows with the fall speed, eased; gone in a lead-in, on the ground, rising.
+        /*
+            THE FALL POSE: grows with the fall speed, eased; gone in a lead-in, on the ground,
+            rising. OFF TODAY (PUPPET_FALL_POSE_MAX 0) - Falling_Idle has motion of its own now and
+            the pose froze it - so the fall must stay the clip as authored. The weights below are
+            checked as a share of the ceiling, and run again the day it is raised.
+        */
+        if (PUPPET_FALL_POSE_MAX <= 0.0f){
+            Puppet op;
+            op.clip_entry[CLIP_LAND_HARD] = 0.300f;
+            ArcherAnimParams o;
+            o.f_on_ground = true;
+            op.Tick(o);
+            o.f_on_ground = false;
+            o.mode = MODE_AIR;
+            o.vel_y = -PUPPET_FALL_POSE_VEL * 2.0f;
+            for (int i = 0; i < 30; i++){ op.Tick(o); }
+            Check(op.choice.clip == CLIP_FALL && op.fall_weight == 0.0f && op.choice.overlay_clip < 0,
+                  "the fall pose is off: a long fall is Falling_Idle as authored, nothing laid over it");
+        }else{
         Puppet fp;
         fp.clip_entry[CLIP_LAND_HARD] = 0.300f;
         fp.clip_entry[CLIP_LAND_SOFT] = 0.267f;
@@ -1933,18 +2029,21 @@ static void TestPuppet(){
         f.vel_y = -PUPPET_FALL_POSE_VEL * 0.5f;
         float was = fp.fall_weight;
         fp.Tick(f);
-        CheckNear(fp.fall_weight - was,1.0f / (float)PUPPET_FALL_BLEND_TICKS,1e-5f,"falling, it eases in a crossfade's step a tick");
+        float step = 1.0f / (float)PUPPET_FALL_BLEND_TICKS;
+        CheckNear(fp.fall_weight - was,fminf(step,0.5f * PUPPET_FALL_POSE_MAX),1e-5f,
+                  "falling, it eases in a crossfade's step a tick");
         for (int i = 0; i < 30; i++){ fp.Tick(f); }
-        CheckNear(fp.fall_weight,0.5f,1e-4f,"to smoothstep of the fall speed over PUPPET_FALL_POSE_VEL - half at half");
+        CheckNear(fp.fall_weight,0.5f * PUPPET_FALL_POSE_MAX,1e-4f,
+                  "to smoothstep of the fall speed over PUPPET_FALL_POSE_VEL - half at half");
         Check(fp.choice.overlay_clip == CLIP_LAND_HARD && fp.choice.overlay_time == 0.0f && fp.choice.overlay_weight == fp.fall_weight,
               "laid over the fall as the hard landing's airborne opening");
         f.vel_y = -PUPPET_FALL_POSE_VEL * 2.0f;
-        for (int i = 0; i < 30; i++){ fp.Tick(f); }
-        CheckNear(fp.fall_weight,1.0f,1e-5f,"and all of it past that speed");
+        for (int i = 0; i < 60; i++){ fp.Tick(f); }
+        CheckNear(fp.fall_weight,PUPPET_FALL_POSE_MAX,1e-5f,"and all of it past that speed");
         f.land_speed = PUPPET_HARD_LAND_VEL + 5.0f;
         f.land_in_ticks = 10;
         fp.Tick(f);
-        CheckNear(fp.fall_weight,1.0f - 1.0f / (float)PUPPET_FALL_BLEND_TICKS,1e-5f,
+        CheckNear(fp.fall_weight,fmaxf(0.0f,PUPPET_FALL_POSE_MAX - step),1e-5f,
                   "a lead-in takes over, and the fall pose fades out as long as its crossfade takes");
         f.f_on_ground = true;
         f.mode = MODE_GROUND;
@@ -1952,6 +2051,7 @@ static void TestPuppet(){
         f.land_in_ticks = -1;
         for (int i = 0; i < PUPPET_FALL_BLEND_TICKS; i++){ fp.Tick(f); }
         Check(fp.fall_weight == 0.0f && fp.choice.overlay_clip < 0,"and it is gone on the ground");
+        }
     }
 
     /*
@@ -6772,6 +6872,205 @@ static void TestVitals(){
           "a restart puts her body back at rest");
 }
 
+/*
+    The arrow kinds - vine_plan.md section 8. The rules only CARRY a kind, so that is what is
+    checked: the pick and the step set it, a kind that does not exist is ignored, Loose puts it on
+    the arrow, the hit hands it back, a restart leaves it, and the state hash sees both copies of
+    it - a kind a replay could lose without the trace noticing would defeat the point of making it
+    rules state.
+*/
+static uint64_t HashOf(const Stage& s){
+    StateHash h;
+    s.HashState(h);
+    return h.Total();
+}
+
+static void TestArrowKinds(){
+    printf("\narrow kinds\n");
+    Stage s;
+    Settle(s);
+    Check(s.arrow_kind == ARROW_NORMAL,"she starts with normal arrows");
+
+    ArcherInput pick;
+    pick.arrow_select = ARROW_VINE;
+    StageEvents e1;
+    s.Tick(pick,e1);
+    Check(s.arrow_kind == ARROW_VINE && e1.f_arrow_kind_changed,"a pick selects that kind, and says so");
+    StageEvents e2;
+    s.Tick(pick,e2);
+    Check(!e2.f_arrow_kind_changed,"picking the kind already chosen is no change");
+    ArcherInput nothing;
+    nothing.arrow_select = ARROW_KIND_COUNT + 2;
+    Run(s,1,nothing);
+    Check(s.arrow_kind == ARROW_VINE,"a key for a kind that does not exist yet is ignored, not clamped");
+
+    ArcherInput next;
+    next.arrow_step = 1;
+    Run(s,1,next);
+    Check(s.arrow_kind == (ARROW_VINE + 1) % ARROW_KIND_COUNT,"a step forward goes round to the next");
+    ArcherInput back;
+    back.arrow_step = -1;
+    Stage w;
+    Settle(w);
+    Run(w,1,back);
+    Check(w.arrow_kind == ARROW_KIND_COUNT - 1,"a step back from the first wraps to the last");
+    ArcherInput both;
+    both.arrow_select = ARROW_NORMAL;
+    both.arrow_step = 1;
+    Run(w,1,both);
+    Check(w.arrow_kind == ARROW_NORMAL,"a pick wins over a step in the same tick");
+
+    //Picked WHILE NOCKED: the arrow on the string goes as the new kind.
+    Stage n;
+    Settle(n);
+    ArcherInput hold;
+    hold.f_draw_down = true;
+    Run(n,BOW_NOCK_TICKS + 4,hold);
+    ArcherInput switch_kind = hold;
+    switch_kind.arrow_select = ARROW_VINE;
+    Run(n,1,switch_kind);
+    ArcherInput letgo;
+    letgo.f_draw_released = true;
+    StageEvents shot;
+    n.Tick(letgo,shot);
+    int idx = -1;
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        if (n.arrows[i].f_live){ idx = i; }
+    }
+    Check(shot.f_shot && shot.shot_kind == ARROW_VINE,"a kind picked while nocked is the kind loosed");
+    Check(idx >= 0 && n.arrows[idx].kind == ARROW_VINE,"and the arrow carries it");
+
+    //Into the ground, and the hit hands the kind back.
+    Stage g;
+    Settle(g);
+    g.arrow_kind = ARROW_VINE;
+    g.aim_deg = BOW_AIM_MIN_DEG;
+    Run(g,BOW_DRAW_TICKS,hold);
+    StageEvents loosed;
+    g.Tick(letgo,loosed);
+    //Aimed at her feet it can strike on the tick it leaves (Loose, then TickArrows).
+    int hit_kind = loosed.arrow_hits.empty() ? -1 : loosed.arrow_hits[0].kind;
+    ArcherInput idle;
+    for (int t = 0; t < 120 && hit_kind < 0; t++){
+        StageEvents e;
+        g.Tick(idle,e);
+        if (!e.arrow_hits.empty()){
+            hit_kind = e.arrow_hits[0].kind;
+        }
+    }
+    Check(loosed.f_shot && hit_kind == ARROW_VINE,"the hit reports the kind of arrow that struck");
+
+    //The get-up takes every order but this one.
+    Stage u;
+    u.StartGetUp();
+    Run(u,1,pick);
+    Check(u.mode == MODE_GETUP && u.arrow_kind == ARROW_VINE,"a pick during the get-up still counts");
+
+    //A restart leaves her choice.
+    Stage r;
+    r.arrow_kind = ARROW_VINE;
+    r.Reset();
+    Check(r.arrow_kind == ARROW_VINE,"a restart leaves the kind she chose");
+
+    //Both copies are in the trace.
+    Stage h1;
+    Stage h2;
+    Settle(h1);
+    Settle(h2);
+    Check(HashOf(h1) == HashOf(h2),"two identical stages hash alike");
+    h2.arrow_kind = ARROW_VINE;
+    Check(HashOf(h1) != HashOf(h2),"the selected kind is in the state hash");
+    h2.arrow_kind = ARROW_NORMAL;
+    h2.arrows[3].kind = ARROW_VINE;
+    Check(HashOf(h1) != HashOf(h2),"and so is each arrow's");
+
+    Check(strcmp(ArrowKindName(ARROW_NORMAL),"arrow") == 0 && strcmp(ArrowKindName(ARROW_VINE),"vine") == 0 &&
+          strcmp(ArrowKindName(-1),"?") == 0,"every kind has a name, and out of range is '?'");
+}
+
+/*
+    The aim moves only with the bow drawn, is kept standing still, and goes back to neutral after
+    BOW_AIM_RETURN_TICKS of moving - see the note at the constant. Against the constants: the
+    running is back and forth on the floor by the start, fast enough to count as moving.
+*/
+static void RunAbout(Stage& s, int ticks){
+    for (int t = 0; t < ticks; t++){
+        ArcherInput run;
+        run.move_axis = ((t / 30) % 2) ? -1.0f : 1.0f;
+        StageEvents e;
+        s.Tick(run,e);
+    }
+}
+
+static void TestAimHold(){
+    printf("\nthe aim, undrawn\n");
+    char d[160];
+    Stage s;
+    Settle(s);
+    ArcherInput tilt;
+    tilt.aim_axis = -1.0f;
+    Run(s,60,tilt);
+    snprintf(d,sizeof(d),"aim %.2f",s.aim_deg);
+    CheckNear(s.aim_deg,BOW_AIM_NEUTRAL_DEG,0.0001f,"Down with the bow away leaves the aim alone",d);
+
+    ArcherInput draw_tilt;
+    draw_tilt.f_draw_down = true;
+    draw_tilt.aim_axis = -1.0f;
+    Run(s,30,draw_tilt);
+    //The draw's first tick does not tilt: it reads last tick's bow.
+    float want = BOW_AIM_NEUTRAL_DEG - BOW_AIM_RATE_DEG * ARCHER_DT * 29.0f;
+    CheckNear(s.aim_deg,want,0.01f,"drawn, it tilts at BOW_AIM_RATE_DEG");
+    float aimed = s.aim_deg;
+    ArcherInput letgo;
+    letgo.f_draw_released = true;
+    Run(s,1,letgo);
+    ArcherInput idle;
+    Run(s,600,idle);
+    CheckNear(s.aim_deg,aimed,0.0001f,"loosed and standing still ten seconds, the aim is kept for the next shot");
+
+    int back_at = BOW_AIM_RETURN_TICKS / 2;
+    RunAbout(s,back_at);
+    snprintf(d,sizeof(d),"aim %.2f after %i ticks of running, roam %i",s.aim_deg,back_at,s.aim_roam_ticks);
+    CheckNear(s.aim_deg,aimed,0.0001f,"a second of running about keeps it too",d);
+    Check(s.aim_roam_ticks > back_at / 2,"...while counting the running",d);
+
+    //Long enough to reach the count and then turn all the way back.
+    int to_neutral = (int)ceilf(fabsf(BOW_AIM_NEUTRAL_DEG - aimed) / (BOW_AIM_RETURN_RATE_DEG * ARCHER_DT));
+    RunAbout(s,BOW_AIM_RETURN_TICKS + to_neutral + 30);
+    snprintf(d,sizeof(d),"aim %.2f, roam %i",s.aim_deg,s.aim_roam_ticks);
+    CheckNear(s.aim_deg,BOW_AIM_NEUTRAL_DEG,0.0001f,"after a couple of seconds more, it is back at neutral",d);
+
+    //A draw clears the count.
+    Stage r;
+    Settle(r);
+    RunAbout(r,BOW_AIM_RETURN_TICKS - 10);
+    int roamed = r.aim_roam_ticks;
+    ArcherInput draw;
+    draw.f_draw_down = true;
+    Run(r,2,draw);
+    snprintf(d,sizeof(d),"roam %i before, %i after",roamed,r.aim_roam_ticks);
+    Check(roamed > 0 && r.aim_roam_ticks == 0,"a draw starts the count again",d);
+
+    //Started back, it finishes even if she stops.
+    Stage b;
+    Settle(b);
+    b.aim_deg = -60.0f;
+    b.aim_roam_ticks = BOW_AIM_RETURN_TICKS;
+    Run(b,(int)ceilf(80.0f / (BOW_AIM_RETURN_RATE_DEG * ARCHER_DT)) + 2,idle);
+    CheckNear(b.aim_deg,BOW_AIM_NEUTRAL_DEG,0.0001f,"once on its way back, standing still does not stop it");
+
+    //A restart puts both back, and the count is in the trace.
+    b.aim_roam_ticks = 50;
+    b.Reset();
+    Check(b.aim_deg == BOW_AIM_NEUTRAL_DEG && b.aim_roam_ticks == 0,"a restart starts at neutral with no count");
+    Stage h1;
+    Stage h2;
+    Settle(h1);
+    Settle(h2);
+    h2.aim_roam_ticks = 7;
+    Check(HashOf(h1) != HashOf(h2),"the count is in the state hash");
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -6822,6 +7121,8 @@ int main(void){
     TestSnapBridge();
     TestRoutes();
     TestVitals();
+    TestArrowKinds();
+    TestAimHold();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

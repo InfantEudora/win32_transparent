@@ -119,7 +119,8 @@ void Stage::Reset(){
 
     bow_mode = BOW_IDLE;
     draw_ticks = 0;
-    aim_deg = 20.0f;
+    aim_deg = BOW_AIM_NEUTRAL_DEG;
+    aim_roam_ticks = 0;
 
     hang_block = -1;
     hang_side = -1.0f;
@@ -1731,6 +1732,9 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
     static const ArcherInput no_input;
     const ArcherInput& in = (mode == MODE_GETUP) ? no_input : in_raw;
 
+    //First, so a pick and a release in one tick loose the kind just picked.
+    SelectArrow(in_raw,events);
+
     /*
         Order matters and is not arbitrary:
 
@@ -2123,22 +2127,30 @@ void Stage::TickVitals(const StageEvents& events){
 void Stage::TickBow(const ArcherInput& in, StageEvents& events){
     (void)events;
 
-    //Aim tilts whether or not the bow is drawn, so the next shot starts where the last one was
-    //pointed and a player can line up before committing to a draw.
-    //Except on the rope, where the same keys climb - see ROPE_CLIMB_SPEED. The aim is simply left
-    //where it was, so she comes off the rope pointing where she got on.
-    //Nor on a branch, unless drawing: there the same keys keep her balance, and an aim that wandered
-    //with every correction would be a bow pointing anywhere by the far end. Drawing, both happen at
-    //once - aiming from a branch costs balance, which is the point of shooting from one.
-    bool f_balancing = f_on_ground && branch_on >= 0 && bow_mode != BOW_DRAWING;
-    if (mode != MODE_ROPE && !f_balancing){
+    /*
+        The aim tilts only with the bow drawn - see BOW_AIM_RETURN_TICKS. So the rope's climb, a
+        branch's balance and the kick's choice all have the keys to themselves, and on a branch
+        with the bow drawn both happen at once: aiming from a branch costs balance, which is the
+        point of shooting from one. Read off last tick's bow, so the tick a draw starts does not
+        tilt yet; a tick is nothing to the eye.
+    */
+    if (bow_mode == BOW_DRAWING){
         aim_deg = ClampF(aim_deg + in.aim_axis * BOW_AIM_RATE_DEG * ARCHER_DT,
                          BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
+        aim_roam_ticks = 0;
+    }else{
+        bool f_moving = fabsf(vel.x) > BOW_AIM_RETURN_SPEED || fabsf(vel.y) > BOW_AIM_RETURN_SPEED;
+        if (f_moving && aim_roam_ticks < BOW_AIM_RETURN_TICKS){
+            aim_roam_ticks++;
+        }
+        //Once started back it carries on to neutral, even if she stops on the way.
+        if (aim_roam_ticks >= BOW_AIM_RETURN_TICKS){
+            aim_deg = MoveToward(aim_deg,BOW_AIM_NEUTRAL_DEG,BOW_AIM_RETURN_RATE_DEG * ARCHER_DT);
+        }
     }
 
-    //Both hands are on the rock. Aiming still tilts - it costs nothing and lets a player line up
-    //the shot they are about to take on landing - but no draw can START while hanging or climbing,
-    //and EnterHang cancels one already under way.
+    //Both hands are on the rock: no draw can START while hanging or climbing, and EnterHang cancels
+    //one already under way.
     bool f_hands_full = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE);
 
     if (in.f_draw_down && !f_hands_full){
@@ -3603,6 +3615,33 @@ static void ArrowAttitude(const v3& vel, float& out_angle, float& out_yaw){
     out_angle = atan2f(vel.y,level * along);
 }
 
+const char* ArrowKindName(int kind){
+    static const char* names[ARROW_KIND_COUNT] = { "arrow", "vine" };
+    return (kind >= 0 && kind < ARROW_KIND_COUNT) ? names[kind] : "?";
+}
+
+/*
+    The number keys, or a pad's step round the kinds. From the RAW input, not the get-up's empty
+    one (see Tick): choosing an arrow is not an action she performs, and a press swallowed by the
+    get-up would be a key that silently did nothing. A pick of a kind that does not exist yet (key
+    3 while there are two) is ignored rather than clamped, so it never picks the wrong one.
+*/
+void Stage::SelectArrow(const ArcherInput& in, StageEvents& events){
+    int kind = arrow_kind;
+    if (in.arrow_select >= 0){
+        if (in.arrow_select < ARROW_KIND_COUNT){
+            kind = in.arrow_select;
+        }
+    }else if (in.arrow_step != 0){
+        int step = (in.arrow_step > 0) ? 1 : -1;
+        kind = (arrow_kind + step + ARROW_KIND_COUNT) % ARROW_KIND_COUNT;
+    }
+    if (kind != arrow_kind){
+        arrow_kind = kind;
+        events.f_arrow_kind_changed = true;
+    }
+}
+
 void Stage::Loose(StageEvents& events){
     float power = DrawPower();
     float speed = ARROW_SPEED_MIN + (ARROW_SPEED_MAX - ARROW_SPEED_MIN) * power;
@@ -3643,6 +3682,7 @@ void Stage::Loose(StageEvents& events){
     ArrowAttitude(a.vel,a.angle,a.yaw);
     a.f_live = true;
     a.f_stuck = false;
+    a.kind = arrow_kind;
 
     bow_mode = BOW_IDLE;
     draw_ticks = 0;
@@ -3652,6 +3692,7 @@ void Stage::Loose(StageEvents& events){
     events.shot_power = power;
     events.shot_aim_deg = shot_aim_deg;
     events.shot_side_deg = shot_side_deg;
+    events.shot_kind = a.kind;
 }
 
 void Stage::TickArrows(StageEvents& events){
@@ -3697,6 +3738,7 @@ void Stage::TickArrows(StageEvents& events){
             hit.normal = normal;
             hit.speed = speed;
             hit.block = block;
+            hit.kind = a.kind;
             events.arrow_hits.push_back(hit);
             continue;
         }
@@ -3989,14 +4031,16 @@ void Stage::HashState(StateHash& h) const{
     h.Add(kneel_phase); h.Add(kneel_ticks); h.Add(getup_ticks);
     h.Add(rope_id); h.Add(rope_ticks); h.Add(rope_cooldown); h.Add(rope_s); h.Add(rope_climb);
     h.Add(rope_climbed); h.Add(rope_pump); add2(climb_from); add2(climb_to); h.Add(grab_cooldown);
-    h.Add(bow_mode); h.Add(draw_ticks); h.Add(aim_deg); h.Add(draws_cancelled); h.Add(sway_ticks);
-    h.Add(draws_started); h.Add(heading_deg);
+    h.Add(bow_mode); h.Add(draw_ticks); h.Add(aim_deg); h.Add(aim_roam_ticks); h.Add(draws_cancelled);
+    h.Add(sway_ticks);
+    h.Add(draws_started); h.Add(arrow_kind); h.Add(heading_deg);
 
     h.Begin("world");
     h.Add(ticks); h.Add(arrows_shot); h.Add(arrows_hit_blocks); h.Add(next_arrow);
     for (const Arrow& a : arrows){
         add3(a.pos); add3(a.prev_pos); add3(a.vel);
         h.Add(a.angle); h.Add(a.yaw); h.Add(a.age_ticks); h.Add(a.f_live); h.Add(a.f_stuck);
+        h.Add(a.kind);
     }
     for (const StageBlock& b : blocks){
         h.Add(b.f_alive); h.Add(b.crumble_ticks);

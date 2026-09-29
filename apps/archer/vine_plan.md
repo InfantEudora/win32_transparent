@@ -524,7 +524,25 @@ meshes. That move is cheap exactly because sections 9 and 10 keep the walker out
 0. **Smooth trunk normals.** *(DONE 2026-09-29, above.)*
 1. **Arrow kinds**: the Stage fields and hash, the keys, the HUD card, the tinted arrow. `make
    rules` checks that selection edges set the kind, `Loose` copies it, and the hash covers both.
-   Then rewrite the archer test's baselines.
+   Then rewrite the archer test's baselines. *(DONE 2026-09-29.)*
+   - `ArrowKind` in Stage.h (`ARROW_NORMAL`, `ARROW_VINE`), `Stage::arrow_kind`, `Arrow::kind`,
+     `ArrowHit::kind`, `StageEvents::shot_kind` and `f_arrow_kind_changed`.
+   - `ArcherInput::arrow_select` / `arrow_step`, read by `Stage::SelectArrow` from the *raw* input,
+     so a pick during the get-up still counts.
+   - Keys 1..5 and d-pad left/right, recorded, named `arrow_1..5` / `arrow_next` / `arrow_prev`,
+     and in `archer_hold`. A key for a kind that is not built yet does nothing.
+   - The selection **survives a restart** (Reset leaves it). A recording's state line carries it
+     (`arrow_kind`), and a file without one replays with normal arrows.
+   - `DrawArrowHud`: the bottom-right card, with a rim flash for 30 stage ticks on a change and
+     the panel's "arrow card" box.
+   - A vine arrow wears greened copies of the arrow's materials (`BuildArrowDress`), swapped by
+     index in `SyncArrowViews`. `archer_state` reports `arrow_kind` and each live arrow's `kind`.
+   - 16 checks in `make rules` (767 in all). The archer test's trace parted from tick 0 in `her`
+     and `world` only, the two new hashed fields. Every other part and all 84 cue lines were the
+     same, so the trace was rewritten and `.cues` left alone. Checked in-app: the card, and a vine
+     arrow stuck beside a normal one.
+   - Not done here: the cue does not yet tell a vine arrow's thud from a normal one's. That is
+     for step 5, together with the `vine_grow` cue, so the `.cues` baseline moves once.
 2. **The reveal** in `SplineDeform` (`grown`, the tip), with its `spline_test` checks.
 3. **The edge list** (section 15) with its `make rules` checks. It comes before the walker, which
    needs it to turn a creeper over a lip, and it can land while the art is still coming.

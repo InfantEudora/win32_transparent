@@ -4995,6 +4995,64 @@ void ApplicationArcher::BuildArrowViews(){
         main_scene->AddObject(o);
         arrow_objects[i] = o;
     }
+    BuildArrowDress(flight);
+}
+
+/*
+    The kinds' dress - see arrow_dress. RENDER THREAD, from BuildArrowViews at Init: it adds
+    materials. Each kind is a copy of the normal arrow's materials, tinted; the normal one is the
+    arrow's own, looked up by the names the pool was just given.
+*/
+void ApplicationArcher::BuildArrowDress(Mesh* flight){
+    f_arrow_dress = false;
+    int normal[NUM_MATERIAL_SLOTS];
+    int slots = 0;
+    if (flight){
+        const std::array<std::string,NUM_MATERIAL_SLOTS>& names = bow_rig.arrow.object->GetMaterialNames();
+        slots = std::min((int)flight->num_materials,(int)NUM_MATERIAL_SLOTS);
+        for (int s = 0; s < slots; s++){
+            normal[s] = renderer->FindMaterialIndex(names[s]);
+            if (normal[s] < 0){
+                debug->Warn("The arrow's material '%s' is not registered - every kind of arrow will "
+                            "look the same\n",names[s].c_str());
+                return;
+            }
+        }
+    }else{
+        slots = 1;
+        normal[0] = material_arrow;
+    }
+    //Per kind: a multiplier on the colour, and a faint glow of the same hue so the tint still
+    //reads in shade. The normal arrow is its own materials, untouched.
+    static const struct { float r, g, b, glow; } TINT[ARROW_KIND_COUNT] = {
+        { 1.00f, 1.00f, 1.00f, 0.00f },
+        { 0.55f, 1.05f, 0.42f, 0.10f },     //vine: moss
+    };
+    for (int k = 0; k < ARROW_KIND_COUNT; k++){
+        for (int s = 0; s < slots; s++){
+            if (k == ARROW_NORMAL){
+                arrow_dress[k][s] = normal[s];
+                continue;
+            }
+            Material m = renderer->materials[normal[s]];
+            m.name += std::string("@arrow_") + ArrowKindName(k);
+            vec4& c = m.glsl_material.color;
+            c = vec4(c.x * TINT[k].r,c.y * TINT[k].g,c.z * TINT[k].b,c.w);
+            m.glsl_material.emissive = vec4(TINT[k].r * 0.5f,TINT[k].g * 0.7f,TINT[k].b * 0.5f,TINT[k].glow);
+            renderer->AddMaterial(m);
+            arrow_dress[k][s] = renderer->FindMaterialIndex(m.name);
+        }
+    }
+    arrow_dress_slots = slots;
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        arrow_dressed_as[i] = ARROW_NORMAL;
+        if (arrow_objects[i]){
+            for (int s = 0; s < slots; s++){
+                arrow_objects[i]->SetMaterialSlot(s,arrow_dress[ARROW_NORMAL][s]);
+            }
+        }
+    }
+    f_arrow_dress = true;
 }
 
 void ApplicationArcher::BuildAimArc(){
@@ -5447,6 +5505,7 @@ void ApplicationArcher::DrawOverlay(void){
     if (!f_loading && !(title_scene && (main_scene == title_scene))){
         DrawZoneLabel();
         DrawVitalsHud();
+        DrawArrowHud();
         return;
     }
     const float w = (float)main_window->width;
@@ -5578,6 +5637,83 @@ void ApplicationArcher::DrawVitalsHud(){
     if (e > 0.01f){
         overlay->AddRect(bar_min,vec2(bar_left + (bar_right - bar_left) * e,bar_max.y),bar_h * 0.5f,
                          (e > 0.6f) ? VITALS_HUD_TIRED : TITLE_BAR_FILL);
+    }
+}
+
+/*
+    The kind of arrow she will loose, in a card at the bottom right - vine_plan.md section 8. The
+    kind's name large, with a swatch in its colour, and under it every kind with its key, the
+    chosen one lit. A change flashes the card's rim for half a second, so a pick made without
+    looking down still gets seen. RENDER THREAD, from DrawOverlay while a level is live, off the
+    snapshot like the vitals card and in its style. Timed in STAGE ticks, so the flash holds while
+    paused and plays out under sim_step like everything else. Off with the panel's "arrow" box.
+*/
+#define ARROW_HUD_FLASH_TICKS   30
+static uint32_t ArrowKindColour(int kind, uint8_t alpha){
+    switch (kind){
+        case ARROW_VINE: return UIColor(150,196, 80,alpha);     //TITLE_BAR_FILL's moss
+        default:         return UIColor(242,232,204,alpha);     //TITLE_TEXT's parchment
+    }
+}
+void ApplicationArcher::DrawArrowHud(){
+    if (!f_show_arrow_hud){
+        return;
+    }
+    int kind = ARROW_NORMAL;
+    uint64_t now = 0;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        kind = snapshot.arrow_kind;
+        now = snapshot.stage_ticks;
+    }
+    //The first frame only notes the kind: a card that flashes as the level appears is noise.
+    if (kind != arrow_hud_kind){
+        arrow_hud_changed_tick = (arrow_hud_kind < 0) ? 0 : now;
+        arrow_hud_kind = kind;
+    }
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float size = clamp(h * 0.022f,12.0f,28.0f);
+    const float pad = size * 0.6f;
+    const float row_size = size * 0.72f;
+    const float gap = size * 0.9f;
+
+    //The row first, since it decides how wide the card is: "1 arrow   2 vine".
+    char labels[ARROW_KIND_COUNT][32];
+    float row_w = 0.0f;
+    for (int k = 0; k < ARROW_KIND_COUNT; k++){
+        snprintf(labels[k],sizeof(labels[k]),"%i %s",k + 1,ArrowKindName(k));
+        row_w += overlay->MeasureText(labels[k],row_size).x + ((k > 0) ? gap : 0.0f);
+    }
+    const char* name = ArrowKindName(kind);
+    const float swatch = size * 0.5f;
+    float name_w = swatch + size * 0.45f + overlay->MeasureText(name,size).x;
+    float inner_w = std::max(row_w,name_w);
+
+    const float right = w - 26.0f;
+    const float bottom = h - 26.0f;
+    const float left = right - inner_w - 2.0f * pad;
+    const float line2 = bottom - pad;
+    const float line1 = line2 - row_size * 1.45f;
+    const float top = line1 - size * 0.85f - pad;
+    const float radius = size * 0.5f;
+    overlay->AddRect(vec2(left,top),vec2(right,bottom),radius,TITLE_BAND);
+
+    uint64_t since = now - arrow_hud_changed_tick;
+    if (arrow_hud_changed_tick > 0 && since < ARROW_HUD_FLASH_TICKS){
+        float f = 1.0f - (float)since / (float)ARROW_HUD_FLASH_TICKS;
+        overlay->AddRectOutline(vec2(left,top),vec2(right,bottom),radius,std::max(1.5f,size * 0.12f),
+                                ArrowKindColour(kind,(uint8_t)(255.0f * f)));
+    }
+
+    vec2 sw_min(left + pad,line1 - size * 0.62f);
+    overlay->AddRect(sw_min,vec2(sw_min.x + swatch,sw_min.y + swatch),swatch * 0.3f,ArrowKindColour(kind,255));
+    overlay->AddText(name,vec2(sw_min.x + swatch + size * 0.45f,line1),size,TITLE_TEXT);
+
+    float x = left + pad;
+    for (int k = 0; k < ARROW_KIND_COUNT; k++){
+        overlay->AddText(labels[k],vec2(x,line2),row_size,(k == kind) ? ArrowKindColour(k,255) : TITLE_TEXT_DIM);
+        x += overlay->MeasureText(labels[k],row_size).x + gap;
     }
 }
 
@@ -6374,6 +6510,12 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap('K',INPUT_ARCHER_KICK);
     input->AddKeyMap('L',INPUT_ARCHER_KNIFE);
     input->AddKeyMap('C',INPUT_ARCHER_KNEEL);
+    //The number row picks the kind of arrow, and the d-pad - otherwise unused - steps round them.
+    for (int k = 0; k < INPUT_ARCHER_ARROW_KEYS; k++){
+        input->AddKeyMap('1' + k,INPUT_ARCHER_ARROW_1 + k);
+    }
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_RIGHT,INPUT_ARCHER_ARROW_NEXT);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_LEFT,INPUT_ARCHER_ARROW_PREV);
 
     //Restart is on Home and Start, well away from everything else. It used to be R, next to E,
     //and one slip off the action key threw the whole level away.
@@ -6443,6 +6585,11 @@ void ApplicationArcher::SetupInput(){
     input->NameAction(INPUT_ARCHER_CONTINUE,"continue");
     input->NameAction(INPUT_ARCHER_MENU,"menu");
     input->NameAction(INPUT_ARCHER_TELEPORT,"teleport");
+    for (int k = 0; k < INPUT_ARCHER_ARROW_KEYS; k++){
+        input->NameAction(INPUT_ARCHER_ARROW_1 + k,("arrow_" + std::to_string(k + 1)).c_str());
+    }
+    input->NameAction(INPUT_ARCHER_ARROW_NEXT,"arrow_next");
+    input->NameAction(INPUT_ARCHER_ARROW_PREV,"arrow_prev");
 }
 
 /*
@@ -6523,6 +6670,11 @@ json ApplicationArcher::CaptureRecordingState(){
         {"vy",stage.vel.y},
         {"facing",stage.facing},
         {"aim_deg",stage.aim_deg},
+        //And how far she is into the run that sends it back to neutral (BOW_AIM_RETURN_TICKS).
+        {"aim_roam_ticks",stage.aim_roam_ticks},
+        //The kind of arrow she has chosen: a restart leaves it (Stage::arrow_kind), so a recording
+        //has to say which one it started with or a replay looses whatever the person had picked.
+        {"arrow_kind",stage.arrow_kind},
         //Standing, as opposed to anything else. It matters more than it looks: placed in the air,
         //her first tick of input is air control rather than ground acceleration, and a recording
         //that starts with a step replayed 0.03 units short of the original.
@@ -6626,6 +6778,22 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
     stage.facing = (state.value("facing",stage.facing) < 0.0f) ? -1.0f : 1.0f;
     if (state.contains("aim_deg")){
         stage.aim_deg = clamp(state.value("aim_deg",stage.aim_deg),BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
+    }
+    //A file from before it has none, and starts the count from nothing, as a restart does.
+    {
+        auto roam = state.find("aim_roam_ticks");
+        int r = (roam != state.end() && roam->is_number_integer()) ? roam->get<int>() : 0;
+        stage.aim_roam_ticks = std::max(0,std::min(r,BOW_AIM_RETURN_TICKS));
+    }
+    /*
+        A file from before the kinds had only normal arrows, so it replays with them - NOT with
+        whatever is selected now, or the same file would replay differently by what was last
+        picked. Read by type: a wrong type through json::value is an abort in this build.
+    */
+    {
+        auto kind = state.find("arrow_kind");
+        int k = (kind != state.end() && kind->is_number_integer()) ? kind->get<int>() : ARROW_NORMAL;
+        stage.arrow_kind = (k >= 0 && k < ARROW_KIND_COUNT) ? k : ARROW_NORMAL;
     }
     if (state.value("on_ground",false)){
         stage.mode = MODE_GROUND;
@@ -7391,6 +7559,15 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     bool f_action        = input->WasKeyPressed(INPUT_ARCHER_ACTION);
     bool f_kick          = input->WasKeyPressed(INPUT_ARCHER_KICK);
     bool f_kneel         = input->WasKeyPressed(INPUT_ARCHER_KNEEL);
+    //The lowest key pressed this tick wins, should two land together.
+    int arrow_select = -1;
+    for (int k = INPUT_ARCHER_ARROW_KEYS - 1; k >= 0; k--){
+        if (input->WasKeyPressed(INPUT_ARCHER_ARROW_1 + k)){
+            arrow_select = k;
+        }
+    }
+    int arrow_step = (input->WasKeyPressed(INPUT_ARCHER_ARROW_NEXT) ? 1 : 0) -
+                     (input->WasKeyPressed(INPUT_ARCHER_ARROW_PREV) ? 1 : 0);
 
     //Act on input only when it is ours to act on: this window in front, or a scripted hold running
     //(which is not OS input, and happens precisely when the window is NOT in front). One predicate
@@ -7449,6 +7626,8 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     out.f_action_pressed = f_action;
     out.f_kick_pressed  = f_kick;
     out.f_kneel_pressed = f_kneel;
+    out.arrow_select    = arrow_select;
+    out.arrow_step      = arrow_step;
 }
 
 //--- Sound --------------------------------------------------------------------------------------
@@ -10023,6 +10202,13 @@ void ApplicationArcher::SyncArrowViews(){
         if (!a.f_live){
             continue;
         }
+        //Dressed as its kind - on the change only, since a slot is recycled for every new arrow.
+        if (f_arrow_dress && a.kind != arrow_dressed_as[i] && a.kind >= 0 && a.kind < ARROW_KIND_COUNT){
+            for (int s = 0; s < arrow_dress_slots; s++){
+                o->SetMaterialSlot(s,arrow_dress[a.kind][s]);
+            }
+            arrow_dressed_as[i] = a.kind;
+        }
 
         float angle = a.angle;
         if (stuck.prop){
@@ -10584,6 +10770,7 @@ void ApplicationArcher::PublishSnapshot(){
     s.live_arrows = stage.NumLiveArrows();
     s.arrows_shot = stage.arrows_shot;
     s.arrows_hit_blocks = stage.arrows_hit_blocks;
+    s.arrow_kind = stage.arrow_kind;
     s.f_paused = main_scene->IsPhysicsPaused();
 
     s.clip = playing_clip;
@@ -10736,6 +10923,7 @@ void ApplicationArcher::PublishSnapshot(){
         av.vy = a.vel.y;
         av.vz = a.vel.z;
         av.f_stuck = a.f_stuck;
+        av.kind = a.kind;
         s.arrows.push_back(av);
     }
 
@@ -10834,7 +11022,8 @@ json ApplicationArcher::BuildStateJson(){
             {"vx",s.arrows[i].vx},
             {"vy",s.arrows[i].vy},
             {"vz",s.arrows[i].vz},
-            {"stuck",s.arrows[i].f_stuck}
+            {"stuck",s.arrows[i].f_stuck},
+            {"kind",ArrowKindName(s.arrows[i].kind)}
         });
     }
 
@@ -10942,6 +11131,7 @@ json ApplicationArcher::BuildStateJson(){
         }},
         {"arrows_shot",s.arrows_shot},
         {"arrows_in_blocks",s.arrows_hit_blocks},
+        {"arrow_kind",ArrowKindName(s.arrow_kind)},
         {"live_arrows",arrows},
         {"targets",targets},
         /*
@@ -11243,7 +11433,8 @@ void ApplicationArcher::RegisterMCPTools(){
         "ledge, 'action' and 'knife' are wired but not yet used. Several of these can be layered by "
         "calling with wait false and then holding the next one. Actions: left, right, down, jump, "
         "draw, kick, kneel (a toggle: any hold is one press), action, knife, and the arrow keys "
-        "'up' / 'aim_down' - which tilt the aim, and on the rope CLIMB it. Held while 'kick' is "
+        "'up' / 'aim_down' - which tilt the aim while the bow is drawn (layer them over a 'draw' "
+        "hold with wait false; undrawn they leave it), and on the rope CLIMB it. Held while 'kick' is "
         "pressed they choose the kick: 'aim_down' the low push kick (Kick_Front_2), 'up' the high "
         "kick (Kick_Front_3); archer_state's archer.kick says which one is running. 'continue' "
         "dismisses the title screen the app starts on - nothing else in the level moves until it has - "
@@ -11252,7 +11443,7 @@ void ApplicationArcher::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties", {
-                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, continue or menu"}}},
+                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, arrow_1 .. arrow_5, arrow_next, arrow_prev, continue or menu"}}},
                 {"ticks", {{"type","number"},{"description","simulation ticks to hold it, default 20, capped at 600"}}},
                 {"wait", {{"type","boolean"},{"description","block until the hold has finished, default true; false returns at once so another hold can be layered on top"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
@@ -11282,8 +11473,16 @@ void ApplicationArcher::RegisterMCPTools(){
             else if (name == "continue"){ action = INPUT_ARCHER_CONTINUE; }
             //Escape: to the title from a level - and out of the app from the title.
             else if (name == "menu"){     action = INPUT_ARCHER_MENU;     }
+            //The kind of arrow: arrow_1 .. arrow_5 pick one (a kind not built yet does nothing),
+            //arrow_next / arrow_prev step round them.
+            else if (name.size() == 7 && name.compare(0,6,"arrow_") == 0 && name[6] >= '1' &&
+                     name[6] < '1' + INPUT_ARCHER_ARROW_KEYS){
+                action = INPUT_ARCHER_ARROW_1 + (uint32_t)(name[6] - '1');
+            }
+            else if (name == "arrow_next"){ action = INPUT_ARCHER_ARROW_NEXT; }
+            else if (name == "arrow_prev"){ action = INPUT_ARCHER_ARROW_PREV; }
             else{
-                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, continue or menu"} };
+                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, arrow_1 .. arrow_5, arrow_next, arrow_prev, continue or menu"} };
             }
             int ticks = (int)clamp(args.value("ticks",20.0f),0.0f,600.0f);
             input->HoldKey(action,(uint32_t)ticks);
@@ -12798,6 +12997,10 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::ProgressBar(bow_draw_shown,ImVec2(-1,0),f_arrow_nocked ? "string (arrow on)" : "string");
     ImGui::Text("arrows    %i live, %i shot, %i in walls",
                 stage.NumLiveArrows(),stage.arrows_shot,stage.arrows_hit_blocks);
+    ImGui::Text("kind      %s (1 .. %i to pick)",ArrowKindName(stage.arrow_kind),(int)ARROW_KIND_COUNT);
+    ImGui::SameLine();
+    ImGui::Checkbox("arrow card",&f_show_arrow_hud);
+    ImGui::SetItemTooltip("The kind of arrow at the bottom right of the game, panels or not.");
 
     ImGui::Separator();
     //The one number worth a slider: how much of an arrow's speed its target takes. Everything else
@@ -13282,7 +13485,8 @@ void ApplicationArcher::DrawImGuiUI(void){
 
     ImGui::Separator();
     ImGui::TextWrapped("A/D or arrows run.  Space jumps - hold it for height.  J draws the bow, "
-                       "release to loose; Up/Down tilt the aim.  E catches the rope over the second gap - lean "
+                       "release to loose; Up/Down tilt the aim while it is drawn, and it is kept for the next shot "
+                       "until you have run about for a couple of seconds; 1 and 2 pick the arrow.  E catches the rope over the second gap - lean "
                        "into the swing to build it, then let go with E to keep the speed or with "
                        "Space to add height.  K kicks: it punts a crate far "
                        "harder than walking into one does, and brings down the brick wall or the "

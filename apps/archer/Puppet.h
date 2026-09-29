@@ -274,6 +274,7 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
     choice re-made every tick would swap clips in mid-air.
 
     Set at the slow run's world speed: jogging jumps like a runner, a shuffle jumps like a stander.
+    And it is a JUMP'S speed - running off an edge at any speed is a fall (Puppet::air_clip).
 */
 #define PUPPET_RUN_JUMP_SPEED       2.90f
 
@@ -357,6 +358,19 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 //crossfade's worth of ticks (0.15s, animation_transition_time_max).
 #define PUPPET_FALL_POSE_VEL        20.0f
 #define PUPPET_FALL_BLEND_TICKS     9
+/*
+    The most of it that is ever laid on - and it is ZERO, which switches the fall pose off.
+
+    It was written for a Falling_Idle that stood still. The one exported now is a real 0.917s loop,
+    one arm up and the legs cycling, and the pose froze it: at 1.0 every bone was slerped onto one
+    frame, so a long drop was a photograph again, and 0.5 only halved motion that is gentle to start
+    with. The reach for the ground it added is the hard landing's lead-in's job, which starts 0.37s
+    out. Compared side by side on the rope scene's x 23, y 100 drop at 0, 0.5 and 1 (2026-09-29).
+
+    Left as a dial rather than deleted: the overlay is also the natural way to lean a clip toward a
+    pose - a teeter, a catch - and the easing it rides on is tested at any ceiling above zero.
+*/
+#define PUPPET_FALL_POSE_MAX        0.0f
 //How far the pump swings her legs toward the way she is pushing, in degrees about the camera
 //axis. A real swinger pumps WITH the legs; this is the input made visible, and the chain's spring
 //turns the step into a kick.
@@ -640,9 +654,28 @@ public:
         swap a running jump for a standing one halfway through the arc.
 
         CLIP_RUN_JUMP for a running jump; -1 for the standing set, which then splits on vel_y.
-        Set at takeoff whether she jumped or simply walked off a ledge, because both are flights.
+
+        ONLY A JUMP GETS THE RUNNING JUMP. Running_Jump opens on a push off one foot, and running
+        off a ledge used to play exactly that - a takeoff she never made - and then hold its last
+        frame for the rest of a fifteen-unit drop. What tells the two apart is vel_y on the tick she
+        leaves: a jump leaves rising, a walk-off leaves already falling (-0.95 measured). A jump in
+        the coyote window after walking off is the same push, only a few ticks late, so it latches
+        too - see UpdateAir. Letting go of a rope or a ledge never does: that is no push at all.
     */
     int   air_clip = -1;
+    /*
+        THE FLIGHT'S CLOCK. `f_was_flying` is last tick's "in the air and holding nothing", so a
+        flight starting is an edge whatever it started from; `air_ticks` counts from that edge,
+        which is what bounds the coyote latch above.
+
+        `run_jump_time` is where Running_Jump's playhead has got to, in seconds of the clip - it
+        runs at RunJumpRate from its first frame. When it reaches the end the arc is SPENT and the
+        flight goes over to the standing set: Falling_Idle, then the landing's lead-in. A running
+        jump into a pit used to hold the clip's last frame all the way down and land without one.
+    */
+    bool  f_was_flying = false;
+    int   air_ticks = 0;
+    float run_jump_time = 0.0f;
 
     /*
         THE LANDING'S LEAD-IN (animation_plan.md, *Meeting the ground*). While the forecast landing
@@ -659,8 +692,9 @@ public:
 
     /*
         THE FALL POSE, 0..1: how much of the hard landing's airborne opening (arms up, legs
-        reaching) is laid over Falling_Idle - which is a photograph, 0.0005 of hip motion in
-        0.733s, so without this the second half of every flight was one still pose. Aims at
+        reaching) is laid over Falling_Idle. Written when that clip was a photograph - 0.0005 of
+        hip motion in 0.733s - and OFF since the re-export gave it a loop of its own: see
+        PUPPET_FALL_POSE_MAX, which caps it. Aims at PUPPET_FALL_POSE_MAX times
         smoothstep(fall speed / PUPPET_FALL_POSE_VEL) and eases there over PUPPET_FALL_BLEND_TICKS,
         so it grows as she speeds up and fades out, crossfade-length, when a lead-in or anything
         else takes over. Standing set only, falling only, and not while a lead-in plays.
@@ -800,6 +834,9 @@ public:
     //The rate Running_ToStop plays at, after the clamp. Shared so UpdateAir holds it for exactly
     //as many ticks as it will actually take.
     float StopRate() const;
+    //And the rate Running_Jump plays at, shared the same way: UpdateAir needs it to know when the
+    //arc has played out.
+    float RunJumpRate() const;
 
     //A clip's forward speed in WORLD units per second, or 0 if it does not travel.
     float WorldClipSpeed(int clip) const;

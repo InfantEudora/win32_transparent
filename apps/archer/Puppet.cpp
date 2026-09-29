@@ -308,6 +308,15 @@ float Puppet::StopRate() const{
     return (rate > PUPPET_ACTION_RATE_MAX) ? PUPPET_ACTION_RATE_MAX : rate;
 }
 
+//Fitted to the climb - see the running jump in Choose.
+float Puppet::RunJumpRate() const{
+    if (run_jump_rise <= 0.01f || PUPPET_RISE_TIME <= 0.0f){
+        return 1.0f;
+    }
+    float rate = run_jump_rise / PUPPET_RISE_TIME;
+    return (rate > PUPPET_ACTION_RATE_MAX) ? PUPPET_ACTION_RATE_MAX : rate;
+}
+
 PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
     PuppetChoice out;
 
@@ -478,8 +487,8 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         /*
             A RUNNING JUMP IS ONE WHOLE ARC, so it neither splits on vel_y nor needs the fall loop.
             It was latched at takeoff (see air_clip) and simply runs; if she is still airborne when
-            it ends, a non-looping clip holds its last frame, which is already a descending
-            pre-landing pose and a better thing to hold than a static float.
+            it ends, UpdateAir lets go of it and the rest of the flight is the standing set's - the
+            fall, and the landing's lead-in - rather than its last frame held all the way down.
 
             Fitted to the RISE only - its climb is 0.367s against the game's 0.390s, so 0.94x. Its
             descent is 0.566s against the game's 0.327s and no single rate can serve both; the rise
@@ -491,9 +500,8 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
             out.start_time = 0.0f;      //every flight starts at the takeoff frame
             if (run_jump_rise > 0.01f && PUPPET_RISE_TIME > 0.0f){
                 out.wanted_rate = run_jump_rise / PUPPET_RISE_TIME;
-                out.rate = out.wanted_rate;
-                if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
             }
+            out.rate = RunJumpRate();
             return out;
         }
         /*
@@ -707,15 +715,48 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
         TAKEOFF: choose the air set once, from the speed she LEFT THE GROUND at.
 
         Latched rather than derived, because ARCHER_AIR_FRICTION would otherwise decide it again
-        halfway through the arc - see air_clip. Fires for walking off a ledge as well as for
-        jumping, because the animation cannot tell those apart and should not try: what it needs to
-        know is how fast she is travelling, not why.
+        halfway through the arc - see air_clip. And only a JUMP at speed is a running jump: the
+        vel_y she leaves with says which it was, since a jump leaves rising and walking off an edge
+        leaves already falling. The walk-off is the standing set's fall, however fast she ran.
     */
+    bool f_rising = in.vel_y > PUPPET_RISE_VEL;
+    bool f_run_jump = f_rising && in.ground_speed >= PUPPET_RUN_JUMP_SPEED;
     if (!in.f_on_ground && f_was_on_ground){
-        air_clip = (in.ground_speed >= PUPPET_RUN_JUMP_SPEED) ? CLIP_RUN_JUMP : -1;
+        air_clip = f_run_jump ? CLIP_RUN_JUMP : -1;
+        run_jump_time = 0.0f;
     }
-    if (in.f_on_ground){
+    /*
+        THE COYOTE JUMP: walked off, then jumped in the grace window. The same push as a jump from
+        the edge, a few ticks late, so it latches the same way. Recognised as vel_y turning upward
+        early in a flight - nothing else in the air raises it from falling - and bounded by the
+        window, so the edge cannot come from anywhere but that press.
+    */
+    bool f_flying = !in.f_on_ground &&
+                    in.mode != MODE_HANG && in.mode != MODE_ROPE && in.mode != MODE_CLIMB;
+    air_ticks = (f_flying && f_was_flying) ? air_ticks + 1 : 0;
+    if (f_flying && f_was_flying && air_clip != CLIP_RUN_JUMP && f_run_jump &&
+        last_vel_y <= PUPPET_RISE_VEL && air_ticks <= ARCHER_COYOTE_TICKS + 1){
+        air_clip = CLIP_RUN_JUMP;
+        run_jump_time = 0.0f;
+    }
+    //On the ground, or holding on to something: no flight, so no air set to carry into the next.
+    //Letting go of a rope or a ledge starts a flight from the standing set.
+    if (!f_flying){
         air_clip = -1;
+    }
+    /*
+        THE ARC PLAYED OUT. The clip runs from its first frame at RunJumpRate, so this is where its
+        playhead is; at the end, the flight is handed to the standing set - before the lead-in
+        below is chosen, so a landing already in sight takes over on this same tick. Only once the
+        clip's length is known: unmeasured, there is no end to hand over at.
+    */
+    if (air_clip == CLIP_RUN_JUMP){
+        float dur = clip_duration[CLIP_RUN_JUMP];
+        if (dur > 0.0f && run_jump_time >= dur){
+            air_clip = -1;
+        }else{
+            run_jump_time += ARCHER_DT * RunJumpRate();
+        }
     }
     //Which landing's lead-in is playing, remembered for the contact below. After air_clip, which
     //it reads.
@@ -794,6 +835,7 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
     }
 
     f_was_on_ground = in.f_on_ground;
+    f_was_flying = f_flying;
     last_vel_y = in.vel_y;
     last_ground_speed = in.ground_speed;
 }
@@ -827,7 +869,7 @@ float Puppet::FallPoseTarget(const ArcherAnimParams& in) const{
     }
     float x = -in.vel_y / PUPPET_FALL_POSE_VEL;
     if (x > 1.0f){ x = 1.0f; }
-    return x * x * (3.0f - 2.0f * x);
+    return PUPPET_FALL_POSE_MAX * x * x * (3.0f - 2.0f * x);
 }
 
 void Puppet::UpdateRope(const ArcherAnimParams& in){
@@ -1043,6 +1085,7 @@ void Puppet::HashState(StateHash& h) const{
     h.Add(f_rope_climbing); h.Add(f_climb_playhead); h.Add(climb_playhead); h.Add(climb_target);
     h.Add(f_was_on_ground); h.Add(last_vel_y); h.Add(last_ground_speed);
     h.Add(settle_ticks); h.Add(settle_clip); h.Add(air_clip); h.Add(lead_clip);
+    h.Add(f_was_flying); h.Add(air_ticks); h.Add(run_jump_time);
     h.Add(fall_weight); h.Add(run_jump_rise); h.Add(stop_plant);
     h.Add(yaw_deg); h.Add(aim_weight); h.Add(upper_weight); h.Add(upper_latched);
     h.Add(leg_weight); h.Add(leg_lead_deg); h.Add(leg_gravity);
@@ -1068,6 +1111,9 @@ void Puppet::Reset(float facing){
     settle_ticks = 0;
     settle_clip = -1;
     air_clip = -1;
+    f_was_flying = false;
+    air_ticks = 0;
+    run_jump_time = 0.0f;
     lead_clip = -1;
     fall_weight = 0.0f;
     yaw_deg = (facing < 0.0f) ? PUPPET_YAW_LEFT : PUPPET_YAW_RIGHT;

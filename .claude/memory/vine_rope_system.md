@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-29T11:11:04.723Z
+  modified: 2026-09-29T11:37:55.307Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -95,6 +95,10 @@ blown off. Section 15: platform edges become a derived Stage list (StageEdge) - 
 FindGrabbableLedge and Foliage each find edges their own way; the user wants edges easy to look up
 for a coming teeter / fall-and-catch animation (fear of heights). Fall-and-catch AGREED: any edge
 with a real drop, but only the one she just left, inside the coyote window. Nothing open; the plan
-is approved, not started (order in section 14).
+is approved (order in section 14).
+STEP 1 (arrow kinds) DONE 2026-09-29, details in vine_plan.md step 1: Stage::arrow_kind survives
+Reset (recording state carries it), keys 1-5 + d-pad, DrawArrowHud bottom right, BuildArrowDress
+tints by material index. archer_test.trace rewritten (only her/world parted, cues same). Next: step
+2, the `grown` reveal in SplineDeform.
 
 2026-09-26: four big CAVE vines added in the terrain bay (DeclareVines, #if ARCHER_TEST_BAY), two behind her and two in front at z 2+; hanging-start vines need up=+Z; see vine_plan.md "The cave vines".

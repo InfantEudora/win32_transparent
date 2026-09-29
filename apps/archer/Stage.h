@@ -185,6 +185,22 @@ struct v3{
 #define BOW_AIM_MIN_DEG             -85.0f
 #define BOW_AIM_MAX_DEG             85.0f
 #define BOW_AIM_RATE_DEG            110.0f      //degrees per second while a tilt key is held
+#define BOW_AIM_NEUTRAL_DEG         20.0f       //where a level starts her aim, and where it goes back to
+/*
+    THE AIM ONLY MOVES WHILE THE BOW IS DRAWN. The rest of the time Up/Down mean other things -
+    her balance on a branch, climbing the rope, which kick - and an aim that tilted along with them
+    was a bow pointing at the ground on the next draw. (It used to tilt undrawn on purpose, so a
+    shot could be lined up before the draw; in play that read as the aim having a mind of its own.)
+
+    Standing still it is KEPT, however long, so shot after shot can go to the same place. But after
+    BOW_AIM_RETURN_TICKS of moving without a draw she has plainly stopped shooting at that spot,
+    and it goes back to neutral at BOW_AIM_RETURN_RATE_DEG. Moving is her speed past
+    BOW_AIM_RETURN_SPEED either way, so running, jumping, falling, climbing and swinging all count;
+    standing still pauses the count without clearing it, and a draw clears it.
+*/
+#define BOW_AIM_RETURN_TICKS        120         //2 s
+#define BOW_AIM_RETURN_RATE_DEG     90.0f       //degrees per second on the way back
+#define BOW_AIM_RETURN_SPEED        0.5f        //units per second
 /*
     THE ARROW IS A SEGMENT: an ANCHOR (the nock, on the string), a direction (the aim) and a
     length. The tip - the point that flies and strikes - starts ARROW_LENGTH along the aim from
@@ -240,6 +256,21 @@ struct v3{
 #define ARROW_STUCK_TICKS           600         //how long an arrow stays stuck in a wall
 #define ARROW_MAX_AGE_TICKS         900         //a miss that flew off the level is reaped
 #define ARROW_HALF_LEN              0.40f       //visual only; the sweep is a point
+
+/*
+    WHICH ARROW she takes from the quiver - apps/archer/vine_plan.md section 8. RULES STATE, not the
+    view's: what an arrow does when it lands is gameplay the moment any kind has a mechanic, and a
+    replay has to reproduce which one was loosed. For now the rules only CARRY the kind - from the
+    selection onto the arrow in Loose, and out on its hit - and nothing here treats the kinds
+    differently: the vine a vine arrow grows is the view's, and visual only (section 9).
+*/
+enum ArrowKind{
+    ARROW_NORMAL = 0,
+    ARROW_VINE,
+    ARROW_KIND_COUNT
+};
+//A kind's name, for the HUD, the log and MCP; "?" out of range.
+const char* ArrowKindName(int kind);
 
 //How far the aim preview is drawn, and at what resolution. Whole ticks, so the dots are literally
 //where the arrow will be on those ticks.
@@ -1294,6 +1325,10 @@ struct ArcherInput{
     bool  f_kick_pressed = false;   //edge: kick
     bool  f_action_pressed = false; //edge: take the rope - the later slice
     bool  f_kneel_pressed = false;  //edge: kneel, or stand back up
+    //Edges: this kind of arrow (an ArrowKind; -1 none, and out of range is ignored), or a step
+    //round the kinds, +1 or -1, for a pad. The pick wins if both come in one tick.
+    int   arrow_select = -1;
+    int   arrow_step = 0;
 };
 
 /*
@@ -1344,6 +1379,7 @@ struct Arrow{
     int   age_ticks = 0;
     bool  f_live = false;
     bool  f_stuck = false;
+    int   kind = ARROW_NORMAL;      //an ArrowKind, the selection's when it was loosed
 };
 
 /*
@@ -1360,6 +1396,8 @@ struct StageEvents{
     float shot_power = 0.0f;        //0..1, the draw at the moment of release
     float shot_aim_deg = 0.0f;      //and the angle it left at, sway included
     float shot_side_deg = 0.0f;     //the sideways sway it left with; flattened away on a locked plane
+    int   shot_kind = ARROW_NORMAL; //and which kind it was
+    bool  f_arrow_kind_changed = false; //the selection moved this tick, to Stage::arrow_kind
     bool  f_bumped_head = false;
     bool  f_grabbed_ledge = false;  //caught a lip this tick
     bool  f_released_ledge = false; //let go of one, by choice or by dropping
@@ -1430,6 +1468,7 @@ struct StageEvents{
         v3    normal;               //the face it went in through; z only off a locked plane
         float speed = 0.0f;
         int   block = -1;           //index into blocks; BREAKABLE is the interesting case
+        int   kind = ARROW_NORMAL;  //the arrow's ArrowKind - what, if anything, grows from here
     };
     std::vector<ArrowHit> arrow_hits;
 
@@ -1739,8 +1778,11 @@ public:
     //--- The bow --------------------------------------------------------------------------------
     int   bow_mode = BOW_IDLE;
     int   draw_ticks = 0;           //0..BOW_DRAW_TICKS
-    float aim_deg = 20.0f;          //relative to facing; + is up. Survives a release, so the next
-                                    //shot starts where the last one was aimed.
+    float aim_deg = BOW_AIM_NEUTRAL_DEG;    //relative to facing; + is up. Survives a release, so
+                                            //the next shot starts where the last one was aimed.
+    //Ticks spent moving since the last draw, up to BOW_AIM_RETURN_TICKS, where the aim starts
+    //back to neutral.
+    int   aim_roam_ticks = 0;
     //0..1: BOW_MIN_POWER at the nock, rising over the pull to 1 at BOW_DRAW_TICKS. Before the nock
     //there is no shot to have a power; it reads BOW_MIN_POWER so the arc has something to draw.
     float DrawPower() const;
@@ -1749,6 +1791,14 @@ public:
     int   draws_cancelled = 0;      //let go before the nock; see BOW_NOCK_TICKS
     int   sway_ticks = 0;           //ticks since the nock, uncapped - draw_ticks stops at full
     int   draws_started = 0;        //every draw begun; picks where its sway starts
+    /*
+        The ArrowKind the next arrow is loosed as - chosen with the number keys, and taken by Loose,
+        so a change while nocked applies to the arrow already on the string: what the HUD shows is
+        what flies. Reset LEAVES IT, because it is her choice rather than the level's, and a
+        restart should not quietly swap her quiver; a recording carries it in its state line
+        instead, so a replay starts with the kind the original did.
+    */
+    int   arrow_kind = ARROW_NORMAL;
     //The sway on top of aim_deg right now, degrees - 0 unless nocked. See AIM_SWAY_STAND_DEG.
     float AimSwayDeg() const;
     //What the arrow is actually aimed at: aim_deg plus the sway. AimDirection follows it.
@@ -1940,6 +1990,7 @@ private:
     */
     int  FlyArrow(Arrow& a, v3& from, v3& next, v3& point, v3& normal) const;
     void Loose(StageEvents& events);
+    void SelectArrow(const ArcherInput& in, StageEvents& events);
 
     //--- Hanging and climbing -------------------------------------------------------------------
     //A grabbable lip within reach right now, or -1. Fills the side of the block the archer is on.

@@ -98,13 +98,14 @@
         S                                    drop through a one-way platform; let go of a ledge
         Space                   A            jump (hold for height, tap for a hop); climb up
         J                       L1           hold to draw the bow, release to loose
-        Up / Down               right stick  tilt the aim, whether or not the bow is drawn; on a
-                                             branch, keep her balance (Up leans away from the camera)
+        Up / Down               right stick  tilt the aim while the bow is drawn (BOW_AIM_RETURN_TICKS);
+                                             on a branch, keep her balance (Up leans away from the camera)
         K                       B            kick - shoves props hard, breaks walls
         Down+K / Up+K           B + stick    the low push kick / the high rising kick (KICK_SPECS)
         C                       X            kneel / stand up - a toggle; kneeling she can draw
         E                       Y            action - take the rope             (later slice)
         L                       R1           knife                             (later slice)
+        1 .. 5                  D-pad L / R  the kind of arrow: pick one / step round them
         Home                    Start        restart
         Escape                  Back         to the title; on the title, exit
         T                                    put her at the mouse cursor (a testing aid)
@@ -164,6 +165,16 @@
 #define INPUT_ARCHER_MENU           INPUT_LAST+18
 //T: put her at the mouse cursor, for testing - the key form of archer_place. See TeleportToCursor.
 #define INPUT_ARCHER_TELEPORT       INPUT_LAST+19
+/*
+    The kind of arrow (vine_plan.md section 8): 1 .. 5 pick one outright, the d-pad steps round
+    them on a pad. Five keys for the kinds planned, though fewer exist - a key for a kind not built
+    yet does nothing (Stage::SelectArrow). RECORDED, unlike the view toggles: the kind is rules
+    state, and a replay that lost the pick would loose the wrong arrow.
+*/
+#define INPUT_ARCHER_ARROW_1        INPUT_LAST+20       //..INPUT_LAST+24, one per key
+#define INPUT_ARCHER_ARROW_KEYS     5
+#define INPUT_ARCHER_ARROW_NEXT     INPUT_LAST+25
+#define INPUT_ARCHER_ARROW_PREV     INPUT_LAST+26
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Both are intent arriving from OUTSIDE
 //the simulation - a key, an MCP call, later a replay - which is what the command queue is for:
@@ -1099,6 +1110,7 @@ struct ArcherSnapshot{
     int   live_arrows = 0;
     int   arrows_shot = 0;
     int   arrows_hit_blocks = 0;
+    int   arrow_kind = ARROW_NORMAL;    //Stage::arrow_kind - what the HUD card shows
     bool  f_paused = false;
 
     //Every target, so a script can check its own shooting without a screenshot. `knocked` is the
@@ -1146,6 +1158,7 @@ struct ArcherSnapshot{
         float vy = 0.0f;
         float vz = 0.0f;
         bool  f_stuck = false;
+        int   kind = ARROW_NORMAL;
     };
     std::vector<ArrowView> arrows;
 
@@ -1650,6 +1663,13 @@ private:
     //snapshot. Render thread, from DrawOverlay while a level is live.
     void DrawVitalsHud();
     bool f_show_vitals_hud = true;
+    //Bottom right: the kind of arrow she will loose, and the keys for the others. From the
+    //snapshot; render thread. The last kind drawn and the stage tick it changed on are the
+    //render thread's own, for the flash a change gets.
+    void DrawArrowHud();
+    bool f_show_arrow_hud = true;
+    int      arrow_hud_kind = -1;
+    uint64_t arrow_hud_changed_tick = 0;
     //The other half of the arrow hit test - the half that knows about rigid bodies. See the
     //handshake note on Stage::arrows.
     void ResolveArrowsAgainstProps();
@@ -2320,6 +2340,20 @@ private:
         float   turntable_deg = 0.0f;
     };
     StuckArrow arrow_stuck[ARROW_MAX_LIVE];
+    /*
+        What each kind of arrow is dressed in, as material INDICES per slot, and the kind each
+        pooled arrow wears now. A vine arrow is the same mesh in greened copies of its materials,
+        so it can be told apart in flight until it has a model of its own (vine_plan.md section 8).
+        Indices rather than names so SyncArrowViews can swap them on the physics thread, the way
+        the spring cue's ramp is swapped. The pool is shared by every scene, so what an arrow
+        wears is the OBJECT's, not the level's, and is not parked with it. f_arrow_dress is false
+        if the arrow's materials could not be found, and every arrow keeps the one look.
+    */
+    int  arrow_dress[ARROW_KIND_COUNT][NUM_MATERIAL_SLOTS] = {};
+    int  arrow_dressed_as[ARROW_MAX_LIVE] = {};
+    int  arrow_dress_slots = 0;
+    bool f_arrow_dress = false;
+    void BuildArrowDress(Mesh* flight);
 
     /*
         EVERYTHING THAT BELONGS TO ONE LEVEL RATHER THAN TO THE APP - the parked half of it.
