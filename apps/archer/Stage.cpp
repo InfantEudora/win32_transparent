@@ -62,6 +62,7 @@ void Stage::Reset(){
     props.clear();
     signs.clear();
     scenery.clear();
+    waters.clear();
     trees.clear();
     spring_plants.clear();
     branches.clear();
@@ -549,6 +550,21 @@ void Stage::BuildMainLevel(){
     */
     blocks.push_back({ -30.00f,  6.50f, 1.00f, 0.30f, BLOCK_SOLID, true, false, -0.35f, 1.00f }); //under the island, top 6.8
     blocks.push_back({ -23.00f, 16.10f, 1.20f, 0.30f, BLOCK_SOLID, true, false, -0.40f, 1.10f }); //over it, bottom 15.8
+
+    /*
+        The waterfall (water_plan.md), behind the middle of the ground: over the back wall BEHIND
+        the island, into a pool on a shelf 2.6 up, over the shelf's front and away LEFT along the
+        gap behind the ground, to the bay's left end - where the cave will be. Between the floater
+        under the island (x -31 .. -29) and stone one (-20.5), so neither stands in front of it.
+
+        The lip at 12.5 is where the island hides it from the ground: the camera there sees the
+        wall behind the island from about 11.4 to 13.4. At 8.5, under the island, the notch was a
+        pale window onto the painted backdrop with the water coming out of the bottom of it.
+    */
+    StageWater fall;
+    fall.x = -26.0f;
+    fall.lip_y = 12.5f;
+    waters.push_back(fall);
 #endif
 
     /*

@@ -341,31 +341,53 @@ const VineSpecies& VineSpeciesFor(int kind){
             Roots: out of an underside and down a little way, wandering hard on a short wavelength
             - a root feels its way, it does not hang - with a fork near the tip, and quick: a
             normal arrow grows these every time it goes into an underside, so they are seen dozens
-            of times and must never be a wait. Thin: the root tile is the placeholder octagon, 0.1
-            in radius, so 0.35 is 0.035.
+            of times and must never be a wait. The root tile is the placeholder octagon, 0.1 in
+            radius, so 0.7 is 0.07. Doubled in every length on 2026-09-29 (the user: "the size of
+            the roots and tufts can be double"), the turning rates halved to keep the same shape.
         */
         VineSpecies& r = table[VINE_SPECIES_ROOTS];
         r.name = "roots";
-        r.length_min = 0.30f;
-        r.length_max = 0.90f;
-        r.step = 0.04f;
-        r.point_spacing = 0.10f;
-        r.gravity = 3.0f;
-        r.wander = 3.2f;
-        r.wander_wavelength = 0.35f;
+        r.length_min = 0.60f;
+        r.length_max = 1.80f;
+        r.step = 0.08f;
+        r.point_spacing = 0.20f;
+        r.gravity = 1.5f;
+        r.wander = 1.6f;
+        r.wander_wavelength = 0.70f;
         r.wander_depth = 0.5f;
         r.clearance = 0.0f;
-        r.rest_length = 0.15f;
+        r.rest_length = 0.30f;
         r.branch_min = 1;
         r.branch_max = 2;
         r.branch_from = 0.45f;
         r.branch_to = 0.85f;
         r.branch_angle_deg = 45.0f;
         r.branch_length = 0.45f;
-        r.thickness = 0.35f;
+        r.thickness = 0.70f;
         r.thickness_jitter = 0.25f;
         r.branch_thickness = 0.6f;
         r.grow_ticks = 24;
+        /*
+            The creeper: the vine, hugging. Lies right against the face (a hair into it, so it
+            beds in), climbs, wanders a little across the face, over the lip, across the top and
+            down the far side if it is long enough. Longer than a hanging vine can be, since it is
+            laid out along the level rather than dropped. A branch or two, which hug too.
+        */
+        VineSpecies& c = table[VINE_SPECIES_CREEPER];
+        c = table[VINE_SPECIES_VINE];
+        c.name = "creeper";
+        c.length_min = 3.5f;
+        c.length_max = 7.0f;
+        c.gravity = 2.0f;
+        c.wander = 1.0f;
+        c.wander_wavelength = 1.4f;
+        c.wander_depth = 0.0f;
+        c.clearance = -0.03f;
+        c.hug = 10.0f;
+        c.hug_reach = 0.6f;
+        c.hug_gap = 0.0f;
+        c.climb = 2.5f;
+        c.grow_ticks = 180;
         f_built = true;
     }
     return table[(kind >= 0 && kind < VINE_SPECIES_COUNT) ? kind : VINE_SPECIES_VINE];
@@ -497,6 +519,10 @@ static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, c
     //Which way to creep if it lands heading straight down - fixed for the strand, so it does not
     //dither between the two.
     float rest_side = (Hash01(start.x,seed,VCH_REST_SIDE,channel) < 0.5f) ? -1.0f : 1.0f;
+    //A creeper that has come over onto a top stops climbing - see VineSpecies::hug. One grown out
+    //of a top starts there.
+    bool f_hugging = (sp.hug > 0.0f);
+    bool f_climbed = f_hugging && (heading.y < -0.5f || field.Normal(start).y > 0.7f);
 
     while (walked < length){
         float t = walked / ((sp.wander_wavelength > 0.01f) ? sp.wander_wavelength : 0.01f);
@@ -510,6 +536,42 @@ static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, c
         side.normalize();
         vec3 turn = down * sp.gravity + side * (wx * sp.wander) +
                     vec3(0.0f,0.0f,1.0f) * (wz * sp.wander * sp.wander_depth - (p.z - start.z) * VINE_Z_HOLD);
+        /*
+            THE HUG: near a surface, lie on it and move along it. The bias - up while climbing,
+            down once over a lip - is taken in the surface's own plane, so on a wall "up" climbs
+            and on a top it is nothing, and the heading's persistence carries it across. The pull
+            toward the surface is what bends it round a lip: past the corner the field's normal
+            turns, and the strand turns with it. Wander in the surface's plane too.
+        */
+        if (f_hugging){
+            float d = field.Distance(p);
+            vec3 n = field.Normal(p);
+            if (d < keep + sp.hug_reach && n.length() > 0.5f){
+                /*
+                    Over the lip only once it LIES on the top - the normal up AND the heading
+                    mostly level. Just past a corner the normal already points up while the strand
+                    is still rising into the air beside it; taken as "over" there, gravity pulled
+                    it straight back down the face it had climbed (measured: 36 of 100 did).
+                */
+                if (n.y > 0.7f && h.y < 0.35f){
+                    f_climbed = true;
+                }
+                vec3 bias = f_climbed ? down * sp.gravity : vec3(0.0f,1.0f,0.0f) * sp.climb;
+                bias = bias - n * bias.dot(n);
+                float pull = (d - (keep + sp.hug_gap)) / ((sp.hug_reach > 0.01f) ? sp.hug_reach : 0.01f);
+                pull = (pull < -1.0f) ? -1.0f : ((pull > 1.0f) ? 1.0f : pull);
+                vec3 across = n.cross(h);
+                if (across.length() < 1e-3f){
+                    across = side;
+                }
+                across.normalize();
+                //On a top, across the plane is into the screen; a little of that is roundness, all
+                //of it is a zigzag against the hold back to the walk line.
+                across.z *= 0.3f;
+                turn = bias + across * (wx * sp.wander) - n * (pull * sp.hug) +
+                       vec3(0.0f,0.0f,1.0f) * (-(p.z - start.z) * VINE_Z_HOLD);
+            }
+        }
         h = h + turn * step;
         h.normalize();
 
@@ -557,7 +619,8 @@ static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, c
         walked += step;
         since_point += step;
         //Counted only while it lies on a floor: one that creeps off the end falls on, and hangs.
-        if (f_on_floor){
+        //A creeper never rests - lying on a floor is what it does.
+        if (f_on_floor && !f_hugging){
             rested = (rested < 0.0f) ? 0.0f : rested + step;
             if (rested >= sp.rest_length){
                 out.f_rested = true;
@@ -628,7 +691,29 @@ bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& ancho
     main.path.seed = seed;
     main.path.thickness = thickness;
     main.path.f_rooted = true;      //out of the rock, full thickness - see VinePath::f_rooted
-    WalkStrand(sp,radius,surface + n * 0.02f,n,length,fseed,0,field,main);
+    /*
+        A hanging plant starts out along the normal and lets gravity bend it. A creeper starts
+        ALONG the face: up a wall (leaning off it a little), or across a top to a hashed side -
+        and its leaves' frame stands out of the face, so they grow off the wall, not into it.
+    */
+    vec3 heading = n;
+    if (sp.hug > 0.0f){
+        vec3 up_along = vec3(0.0f,1.0f,0.0f) - n * n.y;
+        if (up_along.length() > 0.3f){
+            up_along.normalize();
+            heading = up_along + n * 0.3f;
+        }else{
+            float side = (Hash01(0.0f,fseed,VCH_BRANCH_SIDE,99) < 0.5f) ? -1.0f : 1.0f;
+            heading = vec3(side,0.0f,0.0f) + n * 0.2f;
+        }
+        heading.normalize();
+    }
+    //A creeper starts lying against the face at its keep; a hanging plant just off it.
+    float lift = (sp.hug > 0.0f) ? fmaxf(radius + sp.clearance,0.02f) : 0.02f;
+    WalkStrand(sp,radius,surface + n * lift,heading,length,fseed,0,field,main);
+    if (sp.hug > 0.0f){
+        main.path.up = n;
+    }
     main.path.points.insert(main.path.points.begin(),surface - n * 0.1f);
     if (main.path.points.size() < 3){
         return false;
@@ -690,9 +775,9 @@ bool GrowRoots(const VineSpecies& sp, const VineParams& params, const vec3& anch
     bool f_any = false;
     for (int i = 0; i < count; i++){
         //Spread a hand's width along the surface, each leaning a little out from the middle.
-        float along = 0.18f * Signed(Hash01(anchor.x,fs,VCH_ROOT_ALONG,i));
-        float into = 0.12f * Signed(Hash01(anchor.x,fs,VCH_ROOT_DEPTH,i));
-        float lean = 0.35f * Signed(Hash01(anchor.x,fs,VCH_ROOT_LEAN,i)) + 1.2f * along;
+        float along = 0.36f * Signed(Hash01(anchor.x,fs,VCH_ROOT_ALONG,i));
+        float into = 0.24f * Signed(Hash01(anchor.x,fs,VCH_ROOT_DEPTH,i));
+        float lean = 0.35f * Signed(Hash01(anchor.x,fs,VCH_ROOT_LEAN,i)) + 0.6f * along;
         vec3 at = anchor + across * along + depth * into;
         vec3 dir = n + across * lean;
         VineGrowth one;

@@ -69,6 +69,9 @@ APP_SRCS += Leaves.cpp
 APP_SRCS += Streaks.cpp
 #Fireflies living in the plants, and their group of lights.
 APP_SRCS += Fireflies.cpp
+#The waterfall: where its pieces go and its foam, engine-free (water_test), and its objects.
+APP_SRCS += Water.cpp
+APP_SRCS += ApplicationArcherWater.cpp
 
 #SOUND, for the bow: the string's creak from the nock, the loose, and the arrow striking
 #something - assets/sound/*.wav, played from ApplicationArcher::UpdateSound. The jump, the
@@ -121,7 +124,7 @@ include $(ROOT)/engine.mk
 rules:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
-		stage_test.cpp Stage.cpp StageEdges.cpp TerrainField.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
+		stage_test.cpp Stage.cpp StageEdges.cpp TerrainField.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Water.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
 		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe
 #The wind's checks, as their own exe so they need nothing from stage_test.cpp. -O2 because the
@@ -141,3 +144,7 @@ rules:
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/fireflies_test.exe \
 		fireflies_test.cpp Fireflies.cpp Wind.cpp Stage.cpp StageEdges.cpp
 	@./build/fireflies_test.exe
+#And the waterfall - its layout against the real bay, the notch it cuts in the bank, the foam.
+	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/water_test.exe \
+		water_test.cpp Water.cpp Backdrop.cpp Stage.cpp StageEdges.cpp
+	@./build/water_test.exe

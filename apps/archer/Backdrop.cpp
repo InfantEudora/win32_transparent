@@ -1,4 +1,5 @@
 #include "Backdrop.h"
+#include "Water.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -62,7 +63,7 @@ static StageBlock Column(float left, float right, float bottom, float top, float
 void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, float x_max,
                          float y_min, float y_max, const BackdropParams& params,
                          std::vector<StageBlock>& out, std::vector<BackdropTree>* trees,
-                         std::vector<int>* grounds){
+                         std::vector<int>* grounds, const std::vector<StageWater>* waters){
     out.clear();
     if (trees){
         trees->clear();
@@ -102,9 +103,51 @@ void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, flo
                 top = g.Top() + 0.2f;
             }
             tops[k] = top;
+        }
+
+        /*
+            The waterfalls standing on this ground, cut in AFTER the ridge line is drawn and
+            before anything is built from it: every hash above is still drawn for every column,
+            so with no water the bank is bit for bit what it was, and with one only the columns
+            the water touches move.
+        */
+        std::vector<WaterLayout> falls;
+        std::vector<float> lips;
+        if (waters){
+            for (const StageWater& w : *waters){
+                if (w.x >= g.Left() && w.x < g.Right()){
+                    WaterLayout l;
+                    LayoutWater(w,g,params,WaterParams(),l);
+                    falls.push_back(l);
+                    lips.push_back(w.lip_y);
+                }
+            }
+        }
+        std::vector<float> fronts(n,wall_front);
+        std::vector<char> notched(n,0);
+        for (size_t f = 0; f < falls.size(); f++){
+            for (int k = 0; k < n; k++){
+                float core_l = left + width * (float)k;
+                if (core_l + width > falls[f].notch_l && core_l < falls[f].notch_r){
+                    tops[k] = lips[f];
+                    fronts[k] = falls[f].recess_front;
+                    notched[k] = 1;
+                }
+            }
+        }
+        //And the cleft's two sides, up over the lip - wherever the ridge line happened to be low.
+        for (size_t f = 0; f < falls.size(); f++){
+            for (int k = 0; k < n; k++){
+                bool f_beside = !notched[k] && ((k > 0 && notched[k - 1]) || (k < n - 1 && notched[k + 1]));
+                if (f_beside && tops[k] < lips[f] + params.notch_rise){
+                    tops[k] = lips[f] + params.notch_rise;
+                }
+            }
+        }
+        for (int k = 0; k < n; k++){
             float l = left + width * (float)k - params.overlap;
             float r = l + width + 2.0f * params.overlap;
-            out.push_back(Column(l,r,bottom,top,wall_front,params.wall_half_depth));
+            out.push_back(Column(l,r,bottom,tops[k],fronts[k],params.wall_half_depth));
         }
 
         //--- The trees, on the wall's high points -------------------------------------------------
@@ -117,7 +160,8 @@ void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, flo
                 bool f_high = (k == 0 || top >= tops[k - 1] - params.tree_max_step) &&
                               (k == n - 1 || top >= tops[k + 1] - params.tree_max_step);
                 float cx = left + width * ((float)k + 0.5f);
-                if (!f_high || top < g.Top() + params.tree_min_rise || cx - last_x < params.tree_spacing ||
+                //Not in a notch: the water runs over its top.
+                if (notched[k] || !f_high || top < g.Top() + params.tree_min_rise || cx - last_x < params.tree_spacing ||
                     HashUnit(seed,(uint32_t)k,2u) > params.tree_chance){
                     continue;
                 }
@@ -145,6 +189,18 @@ void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, flo
             float cx = left + params.ridge_spacing * ((float)k + 0.5f)
                      + params.ridge_spacing * 0.3f * (2.0f * HashUnit(seed,(uint32_t)k,8u) - 1.0f);
             float hw = params.ridge_hw_min + (params.ridge_hw_max - params.ridge_hw_min) * HashUnit(seed,(uint32_t)k,9u);
+            //None in a waterfall's pool, and the ones along its stream stand back from it.
+            bool f_in_pool = false;
+            float front = g.Back() - params.front_gap;
+            for (const WaterLayout& l : falls){
+                f_in_pool = f_in_pool || (cx + hw > l.clear_l && cx - hw < l.clear_r);
+                if (cx + hw > l.channel_l && cx - hw < l.channel_r && front > l.channel_back){
+                    front = l.channel_back;
+                }
+            }
+            if (f_in_pool){
+                continue;
+            }
             //Under the wall where it stands, so it reads as part of it rather than a pillar before it.
             int col = (int)floorf((cx - left) / width);
             col = (col < 0) ? 0 : ((col >= n) ? n - 1 : col);
@@ -155,7 +211,6 @@ void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, flo
                 top = g.Top() + 0.5f;
             }
             //From its own front back INTO the wall, so the two are one piece of rock.
-            float front = g.Back() - params.front_gap;
             float half_depth = (front - (wall_front - 0.5f)) * 0.5f;
             ridges.push_back(Column(cx - hw,cx + hw,bottom,top,front,half_depth));
         }

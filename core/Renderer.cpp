@@ -1024,6 +1024,11 @@ int Renderer::CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres
         glBindTextureUnit(TEXUNIT_GBUFFER_DEPTH,deferred_depth_tex_id);
         glBindTextureUnit(TEXUNIT_GBUFFER_POSITION,deferred_position_tex_id);
         glBindTextureUnit(TEXUNIT_GBUFFER_NORMAL,deferred_normal_tex_id);
+        //A surface lit through shaders/lighting.glsl, which needs the sun's matrix and the rest.
+        //The shadow map itself is still on unit 0 from the colour pass; nothing here rebinds it.
+        if (shader->f_lit){
+            UploadLighting(shader);
+        }
 
         //We'd like a callback so the custom shader can set its own uniforms and such.
         if (shader->uniform_callback){
@@ -1080,6 +1085,41 @@ void Renderer::UploadFieldShadow(Shader* s){
     s->Setfloat("field_normal_bias",field_normal_bias);
     s->Setint("field_shadow_steps",field_shadow_steps);
     s->Setint("f_field_shadows",1);
+}
+
+/*
+    Everything shaders/lighting.glsl reads that is a uniform rather than an SSBO, for one program.
+
+    ONE LIST FOR EVERY LIT PROGRAM, and that is the reason it is a function: the default and
+    skinned shaders used to be handed theirs line by line in DrawFrame, and a third program lit
+    the same way - a custom shader with Shader::f_lit - would have been a third copy to keep in
+    step with the other two.
+
+    mat_shadow IS THE ONE THAT WAS NEVER HERE. The default and skinned shaders get it as a side
+    effect of their own depth pass (RenderSingleDepthPass sets it on the program it draws the
+    shadow map with, which is the same program), and it simply stays set. A custom shader never
+    draws a shadow map, so without this it would sample the sun's depth map through an identity
+    matrix and shadow itself in a pattern that tracks nothing. For the two that already had it
+    this sets the value they already hold.
+*/
+void Renderer::UploadLighting(Shader* s){
+    if (!s){
+        return;
+    }
+    s->Setint("f_environment_reflections",f_use_reflections);
+    s->Setfloat("cone_softness",cone_softness);
+    s->Setfloat("shadow_pcf_radius",shadow_pcf_radius);
+    s->Setint("f_materialindex_is_color",0);
+    for (Light* l : visible_lights){
+        DirectionalLight* sun = dynamic_cast<DirectionalLight*>(l);
+        if (sun){
+            //The same light and the same matrix RenderDepthPasses drew the map with.
+            s->Setmat4("mat_shadow",dynamic_cast<Camera*>(sun)->mat_cam);
+            break;
+        }
+    }
+    UploadCloudShadow(s);
+    UploadFieldShadow(s);
 }
 
 /*
@@ -1785,12 +1825,7 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     UploadMaterials();
     UploadLights();
 
-    shader->Setint("f_environment_reflections",f_use_reflections);
-    shader->Setfloat("cone_softness",cone_softness);
-    shader->Setfloat("shadow_pcf_radius",shadow_pcf_radius);
-    shader->Setint("f_materialindex_is_color",0);
-    UploadCloudShadow(shader);
-    UploadFieldShadow(shader);
+    UploadLighting(shader);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
     //Lines through their own program - see line.vert. f_materialindex_is_color, which used to
     //make default.frag paint them white, is no longer part of this pass.
@@ -1811,13 +1846,8 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
         if (!skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
             debug->Fatal("Could not set f_normal_mapping in skinned shader\n");
         }
-        skinned_shader->Setint("f_environment_reflections",f_use_reflections);
-        skinned_shader->Setfloat("cone_softness",cone_softness);
-        skinned_shader->Setfloat("shadow_pcf_radius",shadow_pcf_radius);
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
-        skinned_shader->Setint("f_materialindex_is_color",0);
-        UploadCloudShadow(skinned_shader);
-        UploadFieldShadow(skinned_shader);
+        UploadLighting(skinned_shader);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
         EndGPUPass(GPU_PASS_SKINNED);
     }

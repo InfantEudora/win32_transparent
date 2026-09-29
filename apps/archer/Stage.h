@@ -1090,6 +1090,29 @@ struct StageScenery{
 };
 
 /*
+    A waterfall, and where its water goes - apps/archer/water_plan.md. LOOKS ONLY: nothing here
+    collides, and the rules never read it. It lives in the Stage for the reason the props do, so
+    the whole layout of a level is in one file.
+
+    It pours from a notch in the back wall of a terrain bay (Backdrop.h cuts it) into a pool on a
+    rock shelf, spills over the shelf's front into the gap between the ground and the bank, and
+    runs along that gap to stream_x_end. Water.h turns this into the shelf's rocks, the surfaces
+    and the foam; every z comes from the ground block and BackdropParams, so none is given here.
+*/
+struct StageWater{
+    float x = 0.0f;             //the fall's centre line
+    float half_width = 0.9f;    //the fall's half width
+    float lip_y = 8.5f;         //where it pours off the wall
+    float basin_y = 2.6f;       //the pool's surface
+    float basin_hw = 1.8f;      //the shelf holding the pool, either side of x
+    float spill_dx = -0.6f;     //where the pool spills over the shelf's front, from x
+    float stream_y = -0.12f;    //the stream's surface, just under the ground's top
+    //Where the stream runs to - toward the cave, so left of x. Inside the ground's length, or its
+    //front edge is out in the open: -39.8 ends it behind the bay's left wall, until the cave.
+    float stream_x_end = -39.8f;
+};
+
+/*
     A PROP, AS THE RULES SEE IT: a box in the way, refreshed every tick.
 
     This is how "a crate blocks you" is expressed without the rules learning what a rigid body is.
@@ -1697,6 +1720,7 @@ public:
     std::vector<StageProp>  props;
     std::vector<StageSign>  signs;
     std::vector<StageScenery> scenery;
+    std::vector<StageWater> waters;
     std::vector<StageTree>  trees;
     //Declared by the level and stepped every tick: their state is theirs, so a Reset rebuilds them.
     std::vector<StageSpringPlant> spring_plants;

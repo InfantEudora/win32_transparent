@@ -196,10 +196,15 @@ class Renderer{
                               below, NOT by textureSize(gbuffer_depth,0): the two agree until the
                               shader opts into Shader::f_lowres, and then they do not.
 
-        And what it does NOT: the shadow matrices, the cloud-shadow and occluder-field uniforms.
-        Those go to the shaders the renderer owns. Reusing shaders/default.vert is a convenience
-        that hands you the usual varyings, not a requirement - but note that vshadow is then
-        meaningless here, because mat_shadow is never set.
+        And what it does NOT, unless you set Shader::f_lit: the shadow matrices, the cloud-shadow
+        and occluder-field uniforms. Those go to the shaders the renderer owns. Reusing
+        shaders/default.vert is a convenience that hands you the usual varyings, not a requirement
+        - but note that vshadow is then meaningless here, because mat_shadow is never set.
+
+        A SURFACE THAT COLOURS ITSELF BUT IS LIT LIKE EVERYTHING ELSE: default.vert as the vertex
+        stage, #include "lighting.glsl" in the fragment stage, call SelectMaterial and then
+        LightSurface(your_albedo), and set Shader::f_lit so UploadLighting runs for it. See
+        apps/archer's shaders/archer_water.glsl.
 
         A MISSING UNIFORM IS A WARNING, NOT A DEATH. GLSL strips a uniform that is declared but
         unused, so a custom shader that does not happen to use mat_worldcam is the ordinary case,
@@ -259,6 +264,10 @@ class Renderer{
     void UploadCloudShadow(Shader* s);
     //Binds the occluder field (if an app enabled one) and tells `s` whether to use it.
     void UploadFieldShadow(Shader* s);
+    //Everything shaders/lighting.glsl reads besides the SSBOs: the sun's matrix, the filter, the
+    //switches and both shadow volumes. The default and skinned shaders get it in the colour pass,
+    //a custom shader in its sub-pass if it sets Shader::f_lit.
+    void UploadLighting(Shader* s);
 
     void DeferredPass(Camera* camera);
     /*

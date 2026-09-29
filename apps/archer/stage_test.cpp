@@ -7288,6 +7288,144 @@ static void CheckGrowth(const VineGrowth& g, const VineSpecies& sp, const VinePa
     }
 }
 
+/*
+    The teeter (Puppet::teeter_ticks): LosingBalance once, standing still past a lip she faces over a
+    real drop. Looks only, so this is the Puppet and DescribeArcher - the rules are not asked.
+*/
+static void TestTeeter(){
+    printf("the teeter\n");
+    const float dur = 6.0f;
+    auto at_lip = [](){
+        ArcherAnimParams a;
+        a.f_on_ground = true;
+        a.mode = MODE_GROUND;
+        a.edge_over = 0.2f;
+        a.edge_drop = 15.0f;
+        return a;
+    };
+    {
+        Puppet p;
+        p.clip_duration[CLIP_TEETER] = dur;
+        ArcherAnimParams a = at_lip();
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_TEETER && p.choice.start_time == 0.0f,
+              "stopped past a lip she faces, over a real drop: the teeter, from its first frame");
+        int ticks = (int)(dur * ARCHER_TPS);
+        for (int i = 0; i < ticks - 2; i++){ p.Tick(a); }
+        Check(p.choice.clip == CLIP_TEETER,"and it plays through");
+        for (int i = 0; i < 4; i++){ p.Tick(a); }
+        Check(p.choice.clip == CLIP_IDLE,"once - then she idles there, not a six-second loop");
+        for (int i = 0; i < 100; i++){ p.Tick(a); }
+        Check(p.choice.clip == CLIP_IDLE,"and stays idle for as long as she stands there");
+        a.ground_speed = 1.0f;
+        a.speed = -1.0f;
+        p.Tick(a);
+        a.ground_speed = 0.0f;
+        a.speed = 0.0f;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_TEETER,"a step and a stop at the lip again is a new teeter");
+    }
+    {
+        Puppet p;
+        p.clip_duration[CLIP_TEETER] = dur;
+        ArcherAnimParams a = at_lip();
+        a.edge_over = PUPPET_TEETER_FROM - 0.05f;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_IDLE,"short of the lip, no teeter");
+        a = at_lip();
+        a.edge_drop = PUPPET_TEETER_DROP - 0.5f;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_IDLE,"nor over a drop too small to fear");
+        a = at_lip();
+        a.ground_speed = PUPPET_IDLE_SPEED + 0.5f;
+        a.speed = a.ground_speed;
+        p.Tick(a);
+        Check(p.choice.clip != CLIP_TEETER,"nor on the move - a run past the lip is a run, or a fall");
+    }
+    {
+        //Drawing takes over, and a loose does not set her wobbling again.
+        Puppet p;
+        p.clip_duration[CLIP_TEETER] = dur;
+        ArcherAnimParams a = at_lip();
+        for (int i = 0; i < 10; i++){ p.Tick(a); }
+        a.action = ACTION_DRAW;
+        p.Tick(a);
+        Check(p.choice.clip != CLIP_TEETER,"drawing at the lip is the draw, not the teeter");
+        a.action = ACTION_NONE;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_IDLE,"and after the shot she stands, rather than teetering again");
+    }
+    {
+        //Braked into it: the run-to-stop gives way to the teeter once she is still.
+        Puppet p;
+        p.clip_duration[CLIP_TEETER] = dur;
+        p.clip_duration[CLIP_STOP] = 1.0f;
+        p.stop_plant = 0.3f;
+        ArcherAnimParams a = at_lip();
+        a.edge_over = -1.0f;
+        a.ground_speed = ARCHER_RUN_SPEED;
+        a.speed = ARCHER_RUN_SPEED;
+        p.Tick(a);
+        float v = ARCHER_RUN_SPEED;
+        while (v > 0.0f){
+            v -= PUPPET_FRICTION_STEP;
+            a.ground_speed = a.speed = (v > 0.0f) ? v : 0.0f;
+            a.edge_over = (v > 0.0f) ? -0.1f : 0.2f;
+            p.Tick(a);
+        }
+        Check(p.choice.clip == CLIP_TEETER,"a late brake that leaves her past the lip teeters rather than settling");
+        Check(p.settle_ticks == 0,"and the stop is let go");
+    }
+    {
+        //Landing at the lip: the landing first, then the teeter.
+        Puppet p;
+        p.clip_duration[CLIP_TEETER] = dur;
+        p.clip_duration[CLIP_LAND_SOFT] = 0.4f;
+        ArcherAnimParams a;
+        a.f_on_ground = false;
+        a.mode = MODE_AIR;
+        a.vel_y = -ARCHER_JUMP_SPEED;
+        p.Tick(a);
+        a = at_lip();
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_LAND_SOFT,"landing at the lip lands first");
+        for (int i = 0; i < 30; i++){ p.Tick(a); }
+        Check(p.choice.clip == CLIP_TEETER,"and teeters once it has");
+    }
+    {
+        //DescribeArcher, on the rope level's floor lip: a 15-unit drop to the deep pit.
+        Stage s;
+        s.SetLevel(STAGE_LEVEL_ROPE);
+        int lip = -1;
+        for (size_t i = 0; i < s.edges.size(); i++){
+            const StageEdge& e = s.edges[i];
+            if (e.side == 1 && fabsf(e.y) < 0.01f && e.drop >= PUPPET_TEETER_DROP && e.x > 0.0f){
+                lip = (int)i;
+                break;
+            }
+        }
+        Check(lip >= 0,"the rope level's floor ends in a real drop on its right");
+        if (lip < 0){
+            return;
+        }
+        float x = s.edges[lip].x;
+        PlaceOn(s,x + 0.2f,0.0f);
+        ArcherAnimParams got;
+        DescribeArcher(s,got);
+        Check(s.f_on_ground,"placed 0.2 past the lip, she is still standing - the box holds her");
+        CheckNear(got.edge_over,0.2f,0.01f,"and DescribeArcher reports her 0.2 past it");
+        CheckNear(got.edge_drop,s.edges[lip].drop,1e-4f,"with its drop");
+        Check(Puppet::AtLip(got),"which is a lip to teeter at");
+        s.facing = -1.0f;
+        DescribeArcher(s,got);
+        Check(got.edge_over < 0.0f && !Puppet::AtLip(got),"facing away from it, she does not teeter");
+        s.facing = 1.0f;
+        PlaceOn(s,x - 3.0f,0.0f);
+        DescribeArcher(s,got);
+        Check(got.edge_drop == 0.0f && !Puppet::AtLip(got),"and three units short of it there is no lip at all");
+    }
+}
+
 static void TestVineGrowth(){
     printf("\ngrowing vines\n");
     char d[220];
@@ -7576,7 +7714,7 @@ static void TestRootsAndTufts(){
     Check(worst_count_lo >= 2 && worst_count_hi <= 4 && forks > 100,"two to four roots from a strike, forking",d);
     Check(bad_parent == 0,"every fork hangs off its own root, pointing into the plant's list");
     snprintf(d,sizeof(d),"%.2f .. %.2f long, %.3f thick at most",shortest,longest,thickest);
-    Check(shortest >= rs.length_min - rs.step && longest <= rs.length_max + rs.step && thickest < 0.06f,
+    Check(shortest >= rs.length_min - rs.step && longest <= rs.length_max + rs.step && thickest < 0.12f,
           "short and thin: roots, not vines",d);
     snprintf(d,sizeof(d),"%i points inside a block, %i roots not lower than the strike",inside,not_lower);
     Check(inside == 0 && not_lower == 0,"down out of the underside, never into the rock",d);
@@ -7608,6 +7746,109 @@ static void TestRootsAndTufts(){
                   again[i].position.z == top[i].position.z && again[i].scale == top[i].scale);
     }
     Check(f_same && wall[0].up.x == 1.0f,"the same spot grows the same tuft, and a wall's stands out of the wall");
+}
+
+/*
+    Creepers - vine_plan.md step 8, the walker's hug. A wall 3 tall standing on a floor: a creeper
+    struck into its face climbs it, comes over the lip onto the top, keeps against the surface the
+    whole way and never goes into it; one struck into a top creeps along it. A hundred seeds hold.
+*/
+struct CreepCheck{
+    float top = -1e9f;          //highest point reached
+    bool  f_over = false;       //a point lying on the wall's top
+    int   near = 0, points = 0; //points within hug reach of a surface, of the points counted
+    float worst_inside = 1e9f;  //nearest any point came, start included
+    float worst_keep = 1e9f;    //nearest a point came less the keep, once clear of the start
+};
+static void MeasureCreeper(const VineGrowth& g, const VineSpecies& sp, const VineParams& params,
+                           const std::vector<StageBlock>& blocks, float wall_l, float wall_r, float wall_top,
+                           CreepCheck& c){
+    for (const VineStrand& st : g.strands){
+        float keep = params.tile_radius * params.tile_scale * st.path.thickness + sp.clearance;
+        const vec3& begin = st.path.points[1];
+        for (size_t i = 1; i < st.path.points.size(); i++){
+            const vec3& p = st.path.points[i];
+            float d = VineBlockDistance(blocks,p.x,p.y);
+            c.worst_inside = fminf(c.worst_inside,d);
+            if ((p - begin).length() > 2.0f * keep){
+                c.worst_keep = fminf(c.worst_keep,d - keep);
+            }
+            if (i >= 2){
+                c.points++;
+                c.near += (d < keep + sp.hug_reach) ? 1 : 0;
+            }
+            c.top = fmaxf(c.top,p.y);
+            if (p.x > wall_l + 0.1f && p.x < wall_r - 0.1f && p.y >= wall_top && p.y < wall_top + keep + 0.3f){
+                c.f_over = true;
+            }
+        }
+    }
+}
+
+static void TestCreepers(){
+    printf("\ncreepers\n");
+    char d[220];
+    const VineSpecies& cs = VineSpeciesFor(VINE_SPECIES_CREEPER);
+    VineParams params;
+    params.tile_radius = 0.083f;
+    params.tile_scale = 2.02f;
+    std::vector<StageBlock> blocks = { Box(-10,10,-2,0), Box(2,4,0,3) };
+    VineBlockField field(blocks);
+
+    vec3 a(2.0f,1.0f,0.0f);
+    VineGrowth g;
+    bool f_grew = GrowVine(cs,params,a,vec3(-1.0f,0.0f,0.0f),VineGrowthSeed(a,0),field,g);
+    CreepCheck c;
+    if (f_grew){
+        MeasureCreeper(g,cs,params,blocks,2.0f,4.0f,3.0f,c);
+        if (getenv("STAGE_TEST_CREEPER")){
+            for (const vec3& p : g.strands[0].path.points){
+                printf("      creeper (%.2f, %.2f, %.2f) d %.3f\n",p.x,p.y,p.z,VineBlockDistance(blocks,p.x,p.y));
+            }
+        }
+    }
+    snprintf(d,sizeof(d),"%zu strands, %.2f walked, up to y %.2f, %i of %i points against a surface",
+             g.strands.size(),f_grew ? g.strands[0].length : 0.0f,c.top,c.near,c.points);
+    Check(f_grew && c.top >= 3.0f,"a creeper struck into a wall climbs it",d);
+    Check(c.f_over,"comes over the lip onto the top",d);
+    Check(c.points > 0 && c.near >= (int)(0.9f * (float)c.points),"and lies against the surface the whole way",d);
+    snprintf(d,sizeof(d),"none nearer than %.3f, %.3f clear of the keep once off the start",c.worst_inside,c.worst_keep);
+    Check(c.worst_inside > 0.0f && c.worst_keep >= -0.01f,"never into the rock",d);
+    Check(!g.strands.empty() && fabsf(g.strands[0].path.up.x + 1.0f) < 1e-5f,
+          "its leaves' frame stands out of the wall it grew from");
+
+    //Struck into a top: along it, never resting, never lifting off.
+    vec3 f0(-5.0f,0.0f,0.0f);
+    VineGrowth gf;
+    GrowVine(cs,params,f0,vec3(0.0f,1.0f,0.0f),VineGrowthSeed(f0,0),field,gf);
+    float highest = -1e9f, travelled = 0.0f;
+    if (!gf.strands.empty()){
+        for (const vec3& p : gf.strands[0].path.points){
+            highest = fmaxf(highest,p.y);
+        }
+        travelled = fabsf(gf.strands[0].path.points.back().x - f0.x);
+    }
+    snprintf(d,sizeof(d),"highest y %.2f, %.2f along the floor, rested %s",highest,travelled,
+             (!gf.strands.empty() && gf.strands[0].f_rested) ? "yes" : "no");
+    Check(!gf.strands.empty() && highest < 0.5f && travelled > 1.5f && !gf.strands[0].f_rested,
+          "struck into a top it creeps along it, low, and does not stop to rest",d);
+
+    //A hundred seeds up the same wall.
+    int over = 0, climbed = 0, bad = 0;
+    for (int seed = 0; seed < 100; seed++){
+        VineGrowth s;
+        if (!GrowVine(cs,params,a,vec3(-1.0f,0.0f,0.0f),seed * 977 + 3,field,s)){
+            bad++;
+            continue;
+        }
+        CreepCheck k;
+        MeasureCreeper(s,cs,params,blocks,2.0f,4.0f,3.0f,k);
+        over += k.f_over ? 1 : 0;
+        climbed += (k.top >= 2.5f) ? 1 : 0;
+        if (k.worst_inside <= 0.0f || k.worst_keep < -0.01f){ bad++; }
+    }
+    snprintf(d,sizeof(d),"%i climbed, %i came over the top, %i went into the rock or failed",climbed,over,bad);
+    Check(bad == 0 && climbed >= 95 && over >= 80,"a hundred seeds: they climb, most come over, none goes in",d);
 }
 
 int main(void){
@@ -7663,8 +7904,10 @@ int main(void){
     TestArrowKinds();
     TestAimHold();
     TestEdges();
+    TestTeeter();
     TestVineGrowth();
     TestRootsAndTufts();
+    TestCreepers();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

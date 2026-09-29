@@ -324,8 +324,9 @@ void ScatterTuft(const vec3& at, const vec3& up_in, int seed, float radius, std:
         p.position = at + u * (r * cosf(a)) + v * (r * sinf(a));
         p.up = up;
         p.yaw = 2.0f * FOLIAGE_PI * Hash01(at.x,fs,CH_TUFT_YAW,i);
-        //Smaller than the garden's: a tuft is young growth.
-        p.scale = 0.55f + 0.35f * Hash01(at.x,fs,CH_TUFT_SCALE,i);
+        //The garden's own size and a little more - doubled from young growth's 0.55 .. 0.9 on
+        //2026-09-29, when the user found the tufts too small to read.
+        p.scale = 1.10f + 0.70f * Hash01(at.x,fs,CH_TUFT_SCALE,i);
         p.delay_ticks = (i == 0) ? 0 : (int)(Hash01(at.x,fs,CH_TUFT_DELAY,i) * 10.0f);
         out.push_back(p);
     }

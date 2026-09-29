@@ -98,6 +98,7 @@ enum ArcherClip{
     CLIP_KNEEL_UP,          //Kneel_ToStand          one knee -> standing, fitted to KNEEL_UP_TICKS
     CLIP_LAYING_UP,         //Laying_StandingUp      the level entry, MODE_GETUP; plays whole
     CLIP_ROPE_CLIMB,        //Rope_Climbing          hand over hand; playhead pinned to the distance climbed
+    CLIP_TEETER,            //LosingBalance          stopped past a lip, falling FORWARD over it; to be Teeter_Forward
     CLIP_COUNT
 };
 
@@ -294,6 +295,27 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 #define PUPPET_STOP_TIME            (ARCHER_RUN_SPEED / ARCHER_RUN_FRICTION)
 
 /*
+    THE TEETER: standing still with her centre past a lip she is facing, over a real drop - and
+    LOOKS ONLY. The rules do not know it is happening: she is as supported as ever (her box holds
+    until its far side leaves the corner, ARCHER_HALF_W past the lip), pushing on walks her off
+    and pulling back steps her away, exactly as before. Teeter_Forward is her falling FORWARD over
+    the lip; the thin branch's sideways loss of balance is a different clip and a different system.
+
+    WHERE SHE ENDS UP PAST THE LIP is the whole trigger, and the rules already put her there: a
+    stop from a full run carries her 0.34 on, so letting go at the lip leaves her standing over it.
+    Only just - 0.35 of release point is two ticks at a sprint - so it is mostly reached by
+    creeping up, a tap or the stick at a time.
+
+    PUPPET_TEETER_FROM is how far past the lip her centre has to be, which is where the drawn turf
+    decides it: past its lip the grass reads as floor, so tune it by eye. The drop is fear's own
+    line, so a teeter and the fear of that edge start at the same height. PUPPET_TEETER_REACH is how
+    far short of the lip DescribeArcher still reports the edge, for the panel and the tests.
+*/
+#define PUPPET_TEETER_FROM          0.0f
+#define PUPPET_TEETER_DROP          VITALS_DROP_FROM
+#define PUPPET_TEETER_REACH         0.5f
+
+/*
     HOW MUCH SPEED FRICTION CAN POSSIBLY REMOVE IN ONE TICK, and therefore the line between
     stopping and being stopped.
 
@@ -422,6 +444,13 @@ struct ArcherAnimParams{
     float land_speed = 0.0f;
     //Hanging from a branch rather than a ledge: nothing to brace the feet on, so the rope's grip.
     bool  f_free_hang = false;
+    /*
+        The lip she is FACING on the floor she stands on, from Stage::edges: how far her centre is
+        past it (negative: short of it; -1 with edge_drop 0 when there is none within
+        PUPPET_TEETER_REACH), and how far it drops. What the teeter is decided on.
+    */
+    float edge_over = -1.0f;
+    float edge_drop = 0.0f;
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and
@@ -678,6 +707,19 @@ public:
     float run_jump_time = 0.0f;
 
     /*
+        THE TEETER'S CLOCK: ticks she has stood still at the lip, -1 when she is not at one. The
+        clip plays ONCE from its first frame - tip, wobble, the throw back upright, settled - and
+        then she idles there, so standing at a ledge is not a six-second loop.
+
+        `f_teeter_spent` keeps it from starting again for as long as she stays: set when the clip
+        has played out, and when the bow or a kick took over before it did, because aiming down
+        from a ledge is a thing she will do, and every loose would otherwise set her wobbling
+        again. Stepping off the spot - moving at all - re-arms it.
+    */
+    int   teeter_ticks = -1;
+    bool  f_teeter_spent = false;
+
+    /*
         THE LANDING'S LEAD-IN (animation_plan.md, *Meeting the ground*). While the forecast landing
         is closer than a landing clip's contact frame, that clip plays in the air, its playhead
         pinned so the contact frame falls on the contact tick. `lead_clip` is the one playing, -1
@@ -822,6 +864,14 @@ public:
     //Latches f_rope_climbing and moves the climb's playhead. Called by Tick before Choose, like
     //UpdateAir.
     void UpdateRope(const ArcherAnimParams& in);
+    //Runs the teeter's clock. After UpdateAir, whose stop it takes over and whose landing it
+    //waits for.
+    void UpdateTeeter(const ArcherAnimParams& in);
+    //Is she standing where a teeter belongs - on the ground, past a lip she faces, over a real
+    //drop? Where only, not whether she is still: pure, from `in`.
+    static bool AtLip(const ArcherAnimParams& in);
+    //Is the teeter on screen this tick? Reads the clock; Choose asks it.
+    bool  TeeterPlaying(const ArcherAnimParams& in) const;
     /*
         The climb's playhead for a climbed distance, in seconds - wrapped into one cycle either way,
         so climbing down past where she caught the rope keeps cycling backwards - and in `lift` the

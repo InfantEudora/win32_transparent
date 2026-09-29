@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-29T17:39:05.862Z
+  modified: 2026-09-29T19:43:11.399Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -118,7 +118,12 @@ start marched out of drawn rock, VinePath::f_rooted (no start taper). Bay test s
 STEP 7 DONE 2026-09-29: VINE_SPECIES_ROOTS + GrowRoots, Foliage ScatterTuft, app growth is a
 PLANT (strands with look/species/start + tufts), StartGrowth decides per strike, two rings of 32
 (vine / small). The user often runs their own archer on 8765 (PID differs): stop MY instance by
-PID, never `taskkill //IM archer.exe`. Next: step 8, creepers from wall hits. Also done 2026-09-29 on the user's ask:
+PID, never `taskkill //IM archer.exe`.
+2026-09-29: roots/tufts DOUBLED (user). STEP 8 DONE: creepers = VineSpecies hug habit (hug/
+hug_reach/hug_gap/climb in WalkStrand; "over the lip" only when normal up AND heading level),
+VINE_SPECIES_CREEPER for a vine arrow into a wall/top. In-app test: place x 12.5, hold left 3,
+arrow_2, draw 45 wait false + aim_down 10 -> step's right face (9, 1.49). Next: step 9 withering
+(leaves to LeafSwarm) + growths falling with crumbling blocks. Also done 2026-09-29 on the user's ask:
 the aim only tilts while drawn and returns to neutral after BOW_AIM_RETURN_TICKS of moving; the
 user will re-record archer_test at the end of the day (its target hit was lost).
 

@@ -125,6 +125,18 @@ public:
     */
     bool f_writes_gbuffer = false;
 
+    /*
+        CUSTOM-MATERIAL PASS ONLY: this program lights its surface with shaders/lighting.glsl, so
+        hand it what the default shader is handed for that - the sun's shadow matrix and filter
+        radius, the cone softness, the reflections switch, the cloud and occluder-field shadows.
+        See Renderer::UploadLighting.
+
+        Its own flag rather than something every custom shader gets, because most of them are
+        volumes and glows that never light anything, and the uniforms are per program: each costs
+        a lookup and, for one the program does not have, a warning.
+    */
+    bool f_lit = false;
+
     Shader();
     Shader(const char* vert,const char* frag);
     ~Shader();

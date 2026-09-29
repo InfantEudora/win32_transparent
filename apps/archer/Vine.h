@@ -161,6 +161,9 @@ enum VineSpeciesKind{
     //Every plant's roots, and all a normal arrow grows under a platform: short, dark and quick,
     //wandering hard, a fork or two near the tip, no leaves (vine_plan.md section 11).
     VINE_SPECIES_ROOTS,
+    //The vine as a creeper: what a vine arrow grows into a wall or a top - up the face, over the
+    //lip, across and down (vine_plan.md step 8). The vine's look, the hug habit.
+    VINE_SPECIES_CREEPER,
     VINE_SPECIES_COUNT
 };
 
@@ -187,6 +190,18 @@ struct VineSpecies{
     float clearance = -0.02f;
     //Once it has come to rest on a floor, how much further it creeps along it before it stops.
     float rest_length = 0.8f;
+    /*
+        THE HUG, for a creeper (vine_plan.md step 8); 0 is a hanging plant. Within hug_reach of a
+        surface (beyond its keep) the heading is drawn toward lying hug_gap off it at `hug` per
+        unit, and the bias runs ALONG the surface rather than through it: up at `climb` until it
+        has come over onto a top, then `gravity`, so it crosses the top and drapes down the far
+        side instead of climbing back. The wander is in the surface's plane. Further from any
+        surface than hug_reach it hangs, as a vine does. It never comes to rest: it creeps.
+    */
+    float hug = 0.0f;
+    float hug_reach = 0.6f;
+    float hug_gap = 0.0f;
+    float climb = 0.0f;
 
     //--- Branches: side strands off the main one, one level deep ---
     int   branch_min = 0;

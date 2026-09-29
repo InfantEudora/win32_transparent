@@ -10,7 +10,7 @@
 
     The marching-cubes slab is a few units deep and ends; behind it the camera saw the painted
     backdrop, so the level read as a shelf floating in front of a picture. This is a tall wall of
-    rock set back in z, reaching well below the slab and rising well above it, with RIDGES standing
+    rock set back in z, reaching down to the slab's bottom and rising well above it, with RIDGES standing
     forward out of it and pines on its high points. The slab stands in front of it the way a ledge
     stands in a cave.
 
@@ -48,7 +48,13 @@
     finished mesh rather than trusting it.
 */
 struct BackdropParams{
-    float drop_below   = 16.0f;     //how far under the ground block's bottom everything reaches
+    /*
+        How far under the ground block's bottom everything reaches. ZERO: the bank ends where the
+        slab does, and the camera - always above the slab's bottom, and nearer the slab than the
+        bank - sees that edge behind the slab, never under it. It was 16, and hung below the slab
+        as a pale apron with nothing in front of it and nothing standing on it.
+    */
+    float drop_below   = 0.0f;
     //The wall.
     float wall_gap     = 3.0f;      //its front, this far behind the ground block's back
     float wall_half_depth = 2.5f;
@@ -76,6 +82,13 @@ struct BackdropParams{
     float tree_chance  = 0.7f;
     float tree_scale_min = 0.7f;    //multiplier on the pine's own scale, hashed between these
     float tree_scale_max = 1.4f;
+    //A waterfall's notch (Water.h): its stretch of wall cut down to the lip and set back by this,
+    //so the water comes out of a cleft...
+    float notch_recess = 2.0f;
+    //...with the columns either side standing at least this far over the lip, so it reads as one,
+    float notch_rise   = 2.5f;
+    //...cut this much wider than the pool's shelf each side, for the neighbours' rounding.
+    float notch_margin = 0.6f;
 };
 
 struct BackdropTree{
@@ -88,10 +101,15 @@ struct BackdropTree{
     The wall, ridges and tree spots behind every ground block whose centre is in [x_min, x_max) x
     [y_min, y_max). `out` and `trees` are cleared first; `grounds`, if given, gets the index into
     `blocks` of each ground block used. Wall columns come first in `out`, then ridges.
+
+    `waters`, if given, are cut into it: over each one standing on a ground block used here the
+    wall is notched and set back (see WaterLayout), no ridge stands in its pool or its stream, and
+    no pine grows in the notch. Without them the bank is exactly what it always was.
 */
 void BuildBackdropBlocks(const std::vector<StageBlock>& blocks, float x_min, float x_max,
                          float y_min, float y_max, const BackdropParams& params,
                          std::vector<StageBlock>& out, std::vector<BackdropTree>* trees = NULL,
-                         std::vector<int>* grounds = NULL);
+                         std::vector<int>* grounds = NULL,
+                         const std::vector<StageWater>* waters = NULL);
 
 #endif

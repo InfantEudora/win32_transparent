@@ -1909,7 +1909,8 @@ void ApplicationArcher::PlaceAllBackdropPines(){
         BackdropParams bparams;
         std::vector<StageBlock> bank;
         std::vector<BackdropTree> trees;
-        BuildBackdropBlocks(stage.blocks,region.x_min,region.x_max,region.y_min,region.y_max,bparams,bank,&trees);
+        BuildBackdropBlocks(stage.blocks,region.x_min,region.x_max,region.y_min,region.y_max,bparams,bank,&trees,
+                            NULL,&stage.waters);
         PlaceBackdropPines(terrain_back_objects[bay],trees);
     }
 #endif
@@ -1937,8 +1938,10 @@ void ApplicationArcher::RemeshBackdrop(int bay){
     std::vector<int> grounds;
     std::vector<BackdropTree> trees;
     BuildBackdropBlocks(stage.blocks,region.x_min,region.x_max,region.y_min,region.y_max,bparams,bank,
-                        &trees,&grounds);
+                        &trees,&grounds,&stage.waters);
     PlaceBackdropPines(object,trees);
+    //The waterfall is cut into this bank and stands on the same ground, so it goes with it.
+    RebuildWater();
 
     //Its own blocks and nothing else, so an all-space region: every one of them melts.
     TerrainRegion all;
@@ -2073,6 +2076,7 @@ void ApplicationArcher::PreRender(void){
         main_scene->AtTickBoundary([this](){ RebuildRopeSkinWeights(); });
     }
     UpdateWind();
+    UpdateWater();
     UpdateEdgeView();
     DrawGrownVines();
 }
@@ -3552,7 +3556,7 @@ void ApplicationArcher::AddGrownStrands(GrownVine& g, const VineGrowth& growth, 
 //A tuft at `at`, standing along `up`, coming up from `start` ticks after the strike.
 void ApplicationArcher::AddGrownTuft(GrownVine& g, const vec3& at, const vec3& up, int seed, int start){
     std::vector<TuftPlant> plants;
-    ScatterTuft(at,up,seed,0.28f,plants);
+    ScatterTuft(at,up,seed,0.56f,plants);      //doubled with the plants, 2026-09-29
     for (const TuftPlant& p : plants){
         if (p.kind < 0 || p.kind >= FOLIAGE_KIND_COUNT || grown_tuft_free[p.kind].empty()){
             grown_tufts_short++;
@@ -3611,9 +3615,6 @@ void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
     vec3 normal(hit.normal.x,hit.normal.y,hit.normal.z);
     bool f_under = normal.y < -0.5f;
     bool f_vine = (hit.kind == ARROW_VINE);
-    if (f_vine && !f_under){
-        return;         //a vine arrow into a wall or a top grows a creeper - step 8
-    }
     int seed = VineGrowthSeed(anchor,hit.arrow);
 
     /*
@@ -3644,10 +3645,16 @@ void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
             AddGrownStrands(g,rg,GROWN_LOOK_ROOT,VINE_SPECIES_ROOTS,0,field);
         }
     }
-    if (f_vine){
+    if (f_vine && f_under){
         VineGrowth vg;
         if (GrowVine(VineSpeciesFor(VINE_SPECIES_VINE),vine_params,anchor,normal,seed,field,vg)){
             AddGrownStrands(g,vg,GROWN_LOOK_VINE,VINE_SPECIES_VINE,GROWN_ROOTS_LEAD,field);
+        }
+    }else if (f_vine){
+        //Into a wall or a top: a creeper - up the face, over the lip, across and down (step 8).
+        VineGrowth cg;
+        if (GrowVine(VineSpeciesFor(VINE_SPECIES_CREEPER),vine_params,anchor,normal,seed,field,cg)){
+            AddGrownStrands(g,cg,GROWN_LOOK_VINE,VINE_SPECIES_CREEPER,0,field);
         }
     }else if (f_under){
         /*

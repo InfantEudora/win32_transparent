@@ -190,6 +190,13 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         frame, which sits within 0.03 of the hang.
     */
     { "Rope_Climbing",       true,  false,  false, false, false },
+    /*
+        THE TEETER, falling forward over a lip: tips over 0-0.8s, windmills bent over the drop to
+        4.2, throws herself back upright by 5.0 and stands settled to 6.0. On the spot, so nothing
+        is extracted, and played ONCE - the recovery is the point of it (Puppet::teeter_ticks).
+        To be renamed Teeter_Forward in the export; the row follows it then.
+    */
+    { "LosingBalance",       false, false,  false, false, false },
 };
 
 bool Puppet::IsDrawPose(int clip){
@@ -218,6 +225,26 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.rope_climbed = (stage.mode == MODE_ROPE) ? stage.rope_climbed : 0.0f;
     out.rope_pump = (stage.mode == MODE_ROPE) ? stage.rope_pump : 0.0f;
     out.f_free_hang = (stage.mode == MODE_HANG && stage.hang_branch >= 0);
+
+    /*
+        The lip ahead of her, from the floors' edges: the nearest end of the floor she stands on,
+        on the side she faces, where it drops away. Standing only, and not on a branch - a branch
+        is not a block, and its loss of balance is sideways and its own.
+    */
+    out.edge_over = -1.0f;
+    out.edge_drop = 0.0f;
+    if (stage.f_on_ground && stage.mode == MODE_GROUND && stage.branch_on < 0){
+        int side = (stage.facing < 0.0f) ? -1 : 1;
+        float feet = stage.pos.y - ARCHER_HALF_H;
+        int e = stage.NearestEdge(stage.pos.x,feet,ARCHER_HALF_W + PUPPET_TEETER_REACH,side);
+        if (e >= 0){
+            float over = (stage.pos.x - stage.edges[e].x) * (float)side;
+            if (over >= -PUPPET_TEETER_REACH){
+                out.edge_over = over;
+                out.edge_drop = stage.edges[e].drop;
+            }
+        }
+    }
 
     /*
         The action, and its phase.
@@ -528,6 +555,17 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
             return out;
         }
         out.clip = (in.vel_y > PUPPET_RISE_VEL) ? CLIP_JUMP_RISE : CLIP_FALL;
+        return out;
+    }
+
+    /*
+        THE TEETER, from its first frame. Above the settle because it takes the run-to-stop's
+        place - a late brake is how she gets there - and it never meets a landing's, which it waits
+        for (UpdateTeeter). Not while the bow or a kick has her.
+    */
+    if (in.action == ACTION_NONE && TeeterPlaying(in)){
+        out.clip = CLIP_TEETER;
+        out.start_time = 0.0f;
         return out;
     }
 
@@ -872,6 +910,49 @@ float Puppet::FallPoseTarget(const ArcherAnimParams& in) const{
     return PUPPET_FALL_POSE_MAX * x * x * (3.0f - 2.0f * x);
 }
 
+bool Puppet::AtLip(const ArcherAnimParams& in){
+    return in.f_on_ground && in.mode == MODE_GROUND && in.edge_drop >= PUPPET_TEETER_DROP &&
+           in.edge_over >= PUPPET_TEETER_FROM;
+}
+
+bool Puppet::TeeterPlaying(const ArcherAnimParams& in) const{
+    if (!AtLip(in) || in.ground_speed >= PUPPET_IDLE_SPEED || teeter_ticks < 0 || f_teeter_spent){
+        return false;
+    }
+    //Unmeasured - no clip, or a rules test - it has no end to reach.
+    float dur = clip_duration[CLIP_TEETER];
+    return dur <= 0.0f || (float)teeter_ticks * ARCHER_DT < dur;
+}
+
+void Puppet::UpdateTeeter(const ArcherAnimParams& in){
+    //Anywhere else, or on the move: nothing to teeter at, and the next stop at a lip is a new one.
+    if (!AtLip(in) || in.ground_speed >= PUPPET_IDLE_SPEED){
+        teeter_ticks = -1;
+        f_teeter_spent = false;
+        return;
+    }
+    if (teeter_ticks < 0){
+        //Landed at the lip: the landing plays out first, and the teeter follows it.
+        if (settle_ticks > 0 && settle_clip >= 0 && settle_clip != CLIP_STOP){
+            return;
+        }
+        teeter_ticks = 0;
+        //Braked into it: the plant-and-settle is what the teeter replaces.
+        if (settle_clip == CLIP_STOP){
+            settle_ticks = 0;
+        }
+    }else if (!f_teeter_spent){
+        teeter_ticks++;
+    }
+    if (in.action != ACTION_NONE){
+        f_teeter_spent = true;
+    }
+    float dur = clip_duration[CLIP_TEETER];
+    if (dur > 0.0f && (float)teeter_ticks * ARCHER_DT >= dur){
+        f_teeter_spent = true;
+    }
+}
+
 void Puppet::UpdateRope(const ArcherAnimParams& in){
     if (in.mode != MODE_ROPE){
         f_rope_climbing = false;
@@ -936,6 +1017,7 @@ float Puppet::ClimbTimeAt(float climbed, float& lift) const{
 void Puppet::Tick(const ArcherAnimParams& in){
     UpdateAir(in);
     UpdateRope(in);
+    UpdateTeeter(in);
     choice = Choose(in);
     //The fall pose is eased state, so it goes on here rather than in Choose, which stays pure. Its
     //frame is the hard landing's first: the airborne opening its own lead-in starts from.
@@ -1086,6 +1168,7 @@ void Puppet::HashState(StateHash& h) const{
     h.Add(f_was_on_ground); h.Add(last_vel_y); h.Add(last_ground_speed);
     h.Add(settle_ticks); h.Add(settle_clip); h.Add(air_clip); h.Add(lead_clip);
     h.Add(f_was_flying); h.Add(air_ticks); h.Add(run_jump_time);
+    h.Add(teeter_ticks); h.Add(f_teeter_spent);
     h.Add(fall_weight); h.Add(run_jump_rise); h.Add(stop_plant);
     h.Add(yaw_deg); h.Add(aim_weight); h.Add(upper_weight); h.Add(upper_latched);
     h.Add(leg_weight); h.Add(leg_lead_deg); h.Add(leg_gravity);
@@ -1114,6 +1197,8 @@ void Puppet::Reset(float facing){
     f_was_flying = false;
     air_ticks = 0;
     run_jump_time = 0.0f;
+    teeter_ticks = -1;
+    f_teeter_spent = false;
     lead_clip = -1;
     fall_weight = 0.0f;
     yaw_deg = (facing < 0.0f) ? PUPPET_YAW_LEFT : PUPPET_YAW_RIGHT;

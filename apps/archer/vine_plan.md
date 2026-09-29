@@ -732,6 +732,40 @@ meshes. That move is cheap exactly because sections 9 and 10 keep the walker out
    - **Wants art:** a `root_tile` would soften the placeholder's blockiness up close. The faceted
      octagon reads as roots at play distance, as short dark spikes.
 8. **Creepers** from wall hits.
+   *(DONE 2026-09-29.)* `StartGrowth` grows a `VINE_SPECIES_CREEPER` in the vine's look for a
+   vine arrow into a wall or a top. Checked in the game: a vine arrow into the step's right face
+   (x 9, y 1.49) grew a 6.4-long creeper that comes out of the face, curls up over the lip and
+   runs along the top. The doubled tuft is seen round a normal arrow in the ground. The archer
+   test replay is unchanged.
+   - **The hug habit** (`VineSpecies::hug`, `hug_reach`, `hug_gap`, `climb`) is in `WalkStrand`,
+     and the hanging plants are untouched by it. Within `hug_reach` of a surface:
+     - the heading is drawn to lie at the keep;
+     - the bias is taken in the surface's own plane: up at `climb` while climbing, gravity once
+       over a lip, so on a top it is nothing and persistence carries it across;
+     - the wander is in the surface's plane, its into-the-screen part damped to 0.3 on a top,
+       where it only zigzagged against the hold back to the walk line.
+
+     Further from any surface it hangs. It never rests.
+   - **It needed no edge list:** the field's normal turning round a corner is what bends it over
+     the lip.
+   - **The one trap, found by printing a path:** just past a corner the normal already points up
+     while the strand is still rising in the air beside it. Counted as "over the lip" there,
+     gravity pulled it straight back down the face it had climbed (36 of 100 seeds did). It
+     counts only once the normal is up AND the heading is mostly level, and the pull is 10.
+   - **It starts** lying against the face at its keep, heading up the face (or across a top to a
+     hashed side). Its leaves' frame `up` is the face normal, so they stand off the wall.
+   - **`VINE_SPECIES_CREEPER`:** the vine's look, 3.5-7 long, climb 2.5, hug 10 within 0.6,
+     clearance -0.03, 180 ticks.
+   - **Roots and tufts doubled** at the user's word the same day: roots 0.6-1.8 long, 0.07 thick,
+     the step, spacing, wavelength and spread doubled and the turning rates halved to keep the
+     shape; tuft plants 1.1-1.8 of the garden's size on a 0.56 disc.
+   - 7 checks (870):
+     - a creeper struck into a wall 3 tall climbs it, comes over onto the top, and lies against
+       a surface at every point (23 of 23);
+     - it goes nowhere near the rock, 0.083 at worst;
+     - its frame stands out of the wall;
+     - struck into a top, it creeps 5.1 along it, low, without resting;
+     - 100 seeds: 100 climb, 100 come over, none goes in.
 9. **Withering**, and growths on crumbling blocks.
 10. **The other species** as their assets arrive: bamboo (fixed period, the tip), thorny (the coil
     derive, thorns), grape (fruit, gravity-hung).

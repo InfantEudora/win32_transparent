@@ -21,6 +21,7 @@
 #include "Leaves.h"
 #include "Streaks.h"
 #include "Fireflies.h"
+#include "Water.h"
 #include "RopeMesh.h"
 #include "DynamicChain.h"
 #include "Bow.h"
@@ -2151,7 +2152,7 @@ private:
           normal arrow, underside roots, then a tuft on the top above, if that is open and the
                                   platform no thicker than GROWN_TUFT_THROUGH
           normal arrow, wall/top  a small tuft where it stuck
-          vine arrow, wall/top    nothing yet: the creepers are step 8
+          vine arrow, wall/top    a creeper: up the face, over the lip, across and down (step 8)
 
         Split three ways by thread:
           PHYSICS THREAD   grown_vines: the walks (GrowVine / GrowRoots, at the strike, off the
@@ -2437,6 +2438,38 @@ private:
     void SetFireflyUniforms();
     //For archer_wind. Hold wind_mutex.
     json FireflySummary();
+
+    /*
+        THE WATERFALL (water_plan.md; Water.h does all the placing). Every StageWater of the main
+        level in these few objects: the pool's rocks (terrain, on the bank's materials), the sheets
+        and the flat water (two lit custom shaders from shaders/archer_water.glsl), and a pool of
+        foam balls - one shared sphere, drawn by the ordinary lit shader.
+
+        RebuildWater runs from RemeshBackdrop, because the water stands on the same blocks as the
+        bank and the bank's notch is cut for it: the two are rebuilt together. UpdateWater steps
+        the foam from PreRender, catching up ticks the way the streaks do. RENDER THREAD, both, and
+        only ever for water_scene - the world, which is built first; the other levels' remeshes
+        leave it alone. Code in ApplicationArcherWater.cpp.
+    */
+    Scene*    water_scene = NULL;
+    Object*   water_rocks = NULL;
+    Object*   water_sheets = NULL;
+    Object*   water_flats = NULL;
+    Object*   foam_root = NULL;         //identity; the balls are its children
+    std::vector<Object*> foam_objects;  //and in slot order, one per FoamSwarm ball
+    Mesh*     foam_mesh = NULL;
+    Shader*   water_sheet_shader = NULL;
+    Shader*   water_flat_shader = NULL;
+    int       water_sheet_shader_index = -1;
+    int       water_flat_shader_index = -1;
+    int       material_water = -1;
+    int       material_foam = -1;
+    FoamSwarm foam_swarm;
+    int64_t   foam_last_tick = -1;
+    void RebuildWater();
+    void UpdateWater();
+    void SetWaterSheetUniforms();
+    void SetWaterFlatUniforms();
     //Measured every tick on the rope, -1 off it. World units.
     float   rope_joint_gap = -1.0f;         //red to blue
     float   rope_hands_off = -1.0f;         //red to the point between the yellows

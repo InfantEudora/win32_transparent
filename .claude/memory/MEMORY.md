@@ -69,3 +69,4 @@
 - [Replay determinism plan](replay_determinism_plan.md) — DONE: archer replays bit-exact; ONE test recording archer_test (.cues + .trace), re-check after every game change and --write if intended (CLAUDE.md)
 - [Archer 3D aim + plane lock](archer_3d_aim_plane_lock.md) — cone sway, v3 arrows, only the character scene unlocked; locked shots bit-identical; a zero TurnInWorld still changes bits
 - [Archer fall animation](archer_fall_animation.md) — 2026-09-29 walk-off no longer plays Running_Jump, spent run jump hands over to the fall, fall-pose overlay OFF (PUPPET_FALL_POSE_MAX 0); bench = Rope scene x 23 y 100
+- [Archer water](archer_water.md) — waterfall BUILT 2026-09-29: lighting.glsl split + Shader::f_lit for lit custom shaders; one discard kills early-z for a whole program; 0.35-0.40 ms GPU in view after the split
