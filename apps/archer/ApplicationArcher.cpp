@@ -1188,6 +1188,9 @@ void ApplicationArcher::BuildMaterials(){
         //vine lying on grass still reads as a separate thing.
         { "ar_vine",        vec4(0.36f,0.42f,0.20f,1.0f), 0.04f, &material_vine },
         { "ar_vine_leaf",   vec4(0.30f,0.55f,0.24f,1.0f), 0.06f, &material_vine_leaf },
+        //A grown plant's roots: a dark earth brown, a shade under the soil, so a root hanging
+        //out of a platform's underside reads against the rock it came out of.
+        { "ar_root",        vec4(0.24f,0.16f,0.10f,1.0f), 0.03f, &material_root },
         //A zone's outline in the blockout view: a bright amber that nothing in the level uses, and
         //glowing, so an edge reads as a marking laid over the level rather than as part of it.
         { "ar_zone",        vec4(1.00f,0.70f,0.15f,1.0f), 0.80f, &material_zone },
@@ -3301,39 +3304,79 @@ void ApplicationArcher::BuildVines(){
                 f_vine_leaf_from_asset[VINE_LEAF_2] ? "archer.glb" : "the placeholder");
 }
 
-//--- Grown vines --------------------------------------------------------------------------------
+//--- Grown plants -------------------------------------------------------------------------------
+
+static const char* ROOT_TILE_NODE = "root_tile";
 
 /*
-    The pools a grown vine is drawn with - see GrownVine. RENDER THREAD, at Init, after BuildVines:
-    a trunk and a wrap Object per slot, each with a mesh of its own that DrawGrownVines fills, and
-    GROWN_LEAF_POOL leaves of each kind sharing that kind's mesh. All hidden, all under vine_group
+    The pools a grown plant is drawn with - see GrownVine. RENDER THREAD, at Init, after BuildVines
+    and BuildFoliage: per slot a trunk Object for each look and a wrap, each with a mesh of its own
+    that DrawGrownVines fills; GROWN_LEAF_POOL leaves of each vine leaf kind and GROWN_TUFT_POOL
+    plants of each foliage kind, sharing their kinds' meshes. All hidden, all under vine_group
     (visual only). Nothing is made after this; a growth only borrows.
+
+    The root look is root_tile from archer.glb when the file has one, and until then the vine's
+    placeholder octagon in its own dark brown, 0.1 in radius in world units.
 */
 void ApplicationArcher::BuildGrownVines(){
     f_grown_vines_ready = false;
     if (!vine_group || vine_tile.empty()){
         return;
     }
-    for (int i = 0; i < GROWN_VINE_MAX; i++){
-        char name[40];
+    root_materials.clear();
+    Mesh* root_source = gltfloader.GetMeshFromNode(ROOT_TILE_NODE,&root_materials,false);
+    f_root_from_asset = (root_source != NULL);
+    root_params = VineParams();
+    if (root_source){
+        root_tile = root_source->GetVertices();
+        renderer->AddMaterials(root_materials);
+        root_num_materials = root_source->num_materials;
+        root_params.tile_scale = model_scale;
+    }else{
+        MakeVinePlaceholderTile(root_tile);
+        root_num_materials = 1;
+        root_params.tile_scale = 1.0f;
+    }
+    root_params.tile_radius = VineTileRadius(root_tile);
+    //A root ends in a fine point, and twists harder than a stem - it has felt its way.
+    root_params.taper_length = 0.25f;
+    root_params.tip_scale = 0.06f;
+    root_params.twist = 1.6f;
+
+    for (int i = 0; i < GROWN_SLOTS; i++){
         GrownVineDrawn& d = grown_drawn[i];
-        snprintf(name,sizeof(name),"grown_vine_%i",i);
-        d.trunk = new Object();
-        d.trunk->name = name;
-        d.trunk->SetPosition(vec3(0.0f,0.0f,0.0f));     //world coordinates, like the static trunks
-        d.trunk->SetPickability(false);
-        Mesh* mesh = new Mesh();
-        mesh->num_materials = vine_trunk_num_materials;
-        d.trunk->SetMesh(mesh);
-        if (f_vine_trunk_placeholder){
-            d.trunk->SetMaterialSlot(0,material_vine);
-        }else{
-            d.trunk->TakeMaterialNames(vine_trunk_materials);
+        for (int look = 0; look < GROWN_LOOK_COUNT; look++){
+            char name[48];
+            snprintf(name,sizeof(name),"grown_%i.%s",i,(look == GROWN_LOOK_VINE) ? "vine" : "roots");
+            Object* o = new Object();
+            o->name = name;
+            o->SetPosition(vec3(0.0f,0.0f,0.0f));     //world coordinates, like the static trunks
+            o->SetPickability(false);
+            Mesh* mesh = new Mesh();
+            if (look == GROWN_LOOK_VINE){
+                mesh->num_materials = vine_trunk_num_materials;
+                o->SetMesh(mesh);
+                if (f_vine_trunk_placeholder){
+                    o->SetMaterialSlot(0,material_vine);
+                }else{
+                    o->TakeMaterialNames(vine_trunk_materials);
+                }
+            }else{
+                mesh->num_materials = root_num_materials;
+                o->SetMesh(mesh);
+                if (f_root_from_asset){
+                    o->TakeMaterialNames(root_materials);
+                }else{
+                    o->SetMaterialSlot(0,material_root);
+                }
+            }
+            o->SetVisibility(false);
+            vine_group->AttachChild(o);
+            d.part[look] = o;
         }
-        d.trunk->SetVisibility(false);
-        vine_group->AttachChild(d.trunk);
         if (f_vine_wrap_from_asset){
-            snprintf(name,sizeof(name),"grown_vine_%i.wrap",i);
+            char name[48];
+            snprintf(name,sizeof(name),"grown_%i.wrap",i);
             d.wrap = new Object();
             d.wrap->name = name;
             d.wrap->SetPosition(vec3(0.0f,0.0f,0.0f));
@@ -3374,11 +3417,38 @@ void ApplicationArcher::BuildGrownVines(){
             grown_leaf_free[k].push_back(i);
         }
     }
+    //The tufts' plants: the garden's own meshes and materials (BuildFoliage), so a tuft is the
+    //same grass that grows everywhere else, swaying the same.
+    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+        grown_tuft_pool[k].clear();
+        grown_tuft_free[k].clear();
+        if (!foliage_meshes[k]){
+            continue;
+        }
+        for (int i = 0; i < GROWN_TUFT_POOL; i++){
+            char name[40];
+            snprintf(name,sizeof(name),"grown_tuft_%i_%i",k,i);
+            Object* o = new Object();
+            o->name = name;
+            o->SetPickability(false);
+            o->SetCastsShadow(false);
+            o->SetMesh(foliage_meshes[k]);
+            o->TakeMaterialNames(foliage_materials[k]);
+            o->SetVisibility(false);
+            vine_group->AttachChild(o);
+            grown_tuft_pool[k].push_back(o);
+        }
+        for (int i = GROWN_TUFT_POOL - 1; i >= 0; i--){
+            grown_tuft_free[k].push_back(i);
+        }
+    }
     f_grown_vines_ready = true;
-    debug->Info("Grown vines: %i slots, %i leaves of each kind pooled\n",GROWN_VINE_MAX,GROWN_LEAF_POOL);
+    debug->Info("Grown plants: %i + %i slots, %i leaves and %i tuft plants of each kind pooled, roots "
+                "from %s\n",GROWN_VINE_MAX,GROWN_SMALL_MAX,GROWN_LEAF_POOL,GROWN_TUFT_POOL,
+                f_root_from_asset ? "archer.glb" : "the placeholder");
 }
 
-//Hides its leaves and hands them back; the slot's trunk goes on the render thread's next look.
+//Hides its leaves and tuft plants and hands them back; its trunks go on the render thread's next look.
 void ApplicationArcher::ReleaseGrownVine(int slot){
     GrownVine& g = grown_vines[slot];
     for (GrownLeaf& l : g.leaves){
@@ -3387,61 +3457,77 @@ void ApplicationArcher::ReleaseGrownVine(int slot){
             grown_leaf_free[l.leaf.kind].push_back(l.pool);
         }
     }
+    for (GrownTuft& t : g.tufts){
+        if (t.object){
+            t.object->SetVisibility(false);
+            grown_tuft_free[t.plant.kind].push_back(t.pool);
+        }
+    }
     g = GrownVine();
     std::lock_guard<std::mutex> lock(grown_mutex);
-    grown_shared[slot].generation++;
-    grown_shared[slot].f_live = false;
-    grown_shared[slot].paths.clear();
-    grown_shared[slot].fronts.clear();
+    GrownVineShared& s = grown_shared[slot];
+    s.generation++;
+    s.f_live = false;
+    s.paths.clear();
+    s.looks.clear();
+    s.fronts.clear();
 }
 
 void ApplicationArcher::ClearGrownVines(){
-    for (int i = 0; i < GROWN_VINE_MAX; i++){
+    for (int i = 0; i < GROWN_SLOTS; i++){
         if (grown_vines[i].f_live){
             ReleaseGrownVine(i);
         }
     }
     grown_next = 0;
+    grown_small_next = 0;
+}
+
+//The next slot of a ring - the vine arrow's or the small one - emptied if it was in use (the
+//oldest of that ring; withering it away instead is section 12).
+int ApplicationArcher::TakeGrownSlot(bool f_vine){
+    int slot;
+    if (f_vine){
+        slot = grown_next;
+        grown_next = (grown_next + 1) % GROWN_VINE_MAX;
+    }else{
+        slot = GROWN_VINE_MAX + grown_small_next;
+        grown_small_next = (grown_small_next + 1) % GROWN_SMALL_MAX;
+    }
+    if (grown_vines[slot].f_live){
+        ReleaseGrownVine(slot);
+    }
+    grown_vines[slot] = GrownVine();
+    return slot;
 }
 
 /*
-    A vine arrow struck an underside. PHYSICS THREAD, from HandleEvents: the walk reads the Stage's
-    blocks, which are this thread's. Walked in full now (Vine.cpp's GrowVine), its leaves scattered
-    and assigned from the pool, and the growth clock started at this tick; StepGrownVines reveals it
-    from here. The seed is the strike's point and the arrow's slot, so a replay grows the same vine.
+    Appends a growth's strands to a plant, in one look and species, starting `start` ticks after
+    the strike; a vine's leaves are scattered (off the level as drawn) and borrowed from the pool.
+    Branch parents are moved to point into the plant's own list.
 */
-void ApplicationArcher::StartGrownVine(const StageEvents::ArrowHit& hit){
-    if (!f_grown_vines_ready){
-        return;
-    }
-    int slot = grown_next;
-    grown_next = (grown_next + 1) % GROWN_VINE_MAX;
-    if (grown_vines[slot].f_live){
-        ReleaseGrownVine(slot);     //the oldest; withering it away instead is section 12
-    }
-    const VineSpecies& sp = VineSpeciesFor(VINE_SPECIES_VINE);
-    vec3 anchor(hit.point.x,hit.point.y,hit.point.z);
-    vec3 normal(hit.normal.x,hit.normal.y,hit.normal.z);
-    VineGrowth growth;
-    if (!GrowVine(sp,vine_params,anchor,normal,VineGrowthSeed(anchor,hit.arrow),stage.blocks,growth)){
-        return;
-    }
-    GrownVine& g = grown_vines[slot];
-    g = GrownVine();
-    g.f_live = true;
-    g.species = VINE_SPECIES_VINE;
-    g.start_tick = stage.ticks;
-    g.anchor = anchor;
-    g.strands = growth.strands;
-    std::vector<VinePath> paths;
-    int short_before = grown_leaves_short;
-    for (size_t k = 0; k < g.strands.size(); k++){
+void ApplicationArcher::AddGrownStrands(GrownVine& g, const VineGrowth& growth, int look, int species,
+                                        int start, const VineField& field){
+    int base = (int)g.strands.size();
+    const VineParams& params = (look == GROWN_LOOK_ROOT) ? root_params : vine_params;
+    for (size_t k = 0; k < growth.strands.size(); k++){
+        VineStrand st = growth.strands[k];
+        if (st.parent >= 0){
+            st.parent += base;
+        }
+        int index = (int)g.strands.size();
+        g.strands.push_back(st);
+        g.looks.push_back(look);
+        g.species.push_back(species);
+        g.starts.push_back(start);
         Spline spline;
-        BuildVineSpline(g.strands[k].path,spline);
+        BuildVineSpline(st.path,spline);
         g.lengths.push_back(spline.GetLength());
-        paths.push_back(g.strands[k].path);
+        if (look != GROWN_LOOK_VINE){
+            continue;       //a root has no leaves
+        }
         std::vector<VineLeaf> leaves;
-        ScatterVineLeaves(spline,g.strands[k].path,vine_params,&stage.blocks,leaves);
+        ScatterVineLeaves(spline,st.path,params,&field,leaves);
         for (const VineLeaf& leaf : leaves){
             int kind = (leaf.kind >= 0 && leaf.kind < VINE_LEAF_KIND_COUNT) ? leaf.kind : VINE_LEAF_1;
             if (grown_leaf_free[kind].empty()){
@@ -3452,7 +3538,7 @@ void ApplicationArcher::StartGrownVine(const StageEvents::ArrowHit& hit){
             gl.pool = grown_leaf_free[kind].back();
             grown_leaf_free[kind].pop_back();
             gl.object = grown_leaf_pool[kind][gl.pool];
-            gl.strand = (int)k;
+            gl.strand = index;
             gl.leaf = leaf;
             gl.leaf.kind = kind;
             gl.tangent = spline.TangentAt(leaf.s);
@@ -3461,58 +3547,191 @@ void ApplicationArcher::StartGrownVine(const StageEvents::ArrowHit& hit){
             g.leaves.push_back(gl);
         }
     }
-    {
-        std::lock_guard<std::mutex> lock(grown_mutex);
-        GrownVineShared& s = grown_shared[slot];
-        s.generation++;
-        s.f_live = true;
-        s.paths = paths;
-        s.fronts.assign(paths.size(),0.0f);
+}
+
+//A tuft at `at`, standing along `up`, coming up from `start` ticks after the strike.
+void ApplicationArcher::AddGrownTuft(GrownVine& g, const vec3& at, const vec3& up, int seed, int start){
+    std::vector<TuftPlant> plants;
+    ScatterTuft(at,up,seed,0.28f,plants);
+    for (const TuftPlant& p : plants){
+        if (p.kind < 0 || p.kind >= FOLIAGE_KIND_COUNT || grown_tuft_free[p.kind].empty()){
+            grown_tufts_short++;
+            continue;
+        }
+        GrownTuft t;
+        t.pool = grown_tuft_free[p.kind].back();
+        grown_tuft_free[p.kind].pop_back();
+        t.object = grown_tuft_pool[p.kind][t.pool];
+        t.plant = p;
+        t.start = start;
+        //Stood along `up`, turned about it: the plant's +Y onto up, then its yaw.
+        quat rot = quat::getquat(vec3(0.0f,1.0f,0.0f),p.up) * quat(vec3(0.0f,1.0f,0.0f),p.yaw);
+        t.object->SetPosition(p.position);
+        t.object->SetRotation(rot);
+        t.object->SetVisibility(false);
+        g.tufts.push_back(t);
     }
-    cues.Signal("vine_grow",CuePayload().Set("x",anchor.x).Set("length",g.lengths.empty() ? 0.0f : g.lengths[0]));
-    debug->Info("Vine grows from (%.2f,%.2f): %zu strands, %.2f long, %zu leaves%s\n",anchor.x,anchor.y,
-                g.strands.size(),g.lengths.empty() ? 0.0f : g.lengths[0],g.leaves.size(),
-                (grown_leaves_short > short_before) ? " (the leaf pool ran short)" : "");
+}
+
+//The plant's paths to the render thread, and its clock started at this tick.
+void ApplicationArcher::CommitGrownVine(int slot){
+    GrownVine& g = grown_vines[slot];
+    g.f_live = true;
+    g.start_tick = stage.ticks;
+    std::vector<VinePath> paths;
+    for (const VineStrand& st : g.strands){
+        paths.push_back(st.path);
+    }
+    std::lock_guard<std::mutex> lock(grown_mutex);
+    GrownVineShared& s = grown_shared[slot];
+    s.generation++;
+    s.f_live = true;
+    s.paths = paths;
+    s.looks = g.looks;
+    s.fronts.assign(paths.size(),0.0f);
 }
 
 /*
-    Every tick: each growing vine's strand fronts, from the ticks since its strike, into the shared
-    slot for the render thread; and its leaves, opening as the front passes them - scaled in from
-    nothing and folded up from lying along the stem to their lift. PHYSICS THREAD, like the wind's
-    leaves. A vine fully grown and open is left alone from then on.
+    An arrow struck a block: what grows there - see GrownVine for the table. PHYSICS THREAD, from
+    HandleEvents: the walks read the Stage's blocks, which are this thread's. The seed is the
+    strike's point and the arrow's slot, so a replay grows the same plant.
+
+    Not on a wall that is about to be kicked in or a stone about to crumble - a tuft left floating
+    where the block was is the wrong kind of surprise, until section 12 makes them fall with it.
+*/
+void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
+    if (!f_grown_vines_ready || hit.block < 0 || hit.block >= (int)stage.blocks.size()){
+        return;
+    }
+    const StageBlock& block = stage.blocks[hit.block];
+    if (block.kind == BLOCK_BREAKABLE || block.kind == BLOCK_CRUMBLE){
+        return;
+    }
+    vec3 anchor(hit.point.x,hit.point.y,hit.point.z);
+    vec3 normal(hit.normal.x,hit.normal.y,hit.normal.z);
+    bool f_under = normal.y < -0.5f;
+    bool f_vine = (hit.kind == ARROW_VINE);
+    if (f_vine && !f_under){
+        return;         //a vine arrow into a wall or a top grows a creeper - step 8
+    }
+    int seed = VineGrowthSeed(anchor,hit.arrow);
+
+    /*
+        What it grows against is the level AS DRAWN: each terrain bay's surface, built from the
+        same region and params its mesh was (RemeshTerrainBay), and every other block's box. Built
+        per strike off the blocks as they are now - a few copies and a floating test, nothing to
+        keep in step with an edit.
+    */
+    std::vector<const TerrainSurface*> surfaces;
+#if ARCHER_TEST_BAY
+    TerrainSurface bays[ARCHER_TEST_BAY_COUNT];
+    for (int bay = 0; bay < ARCHER_TEST_BAY_COUNT; bay++){
+        bays[bay].Build(stage.blocks,TerrainBayRegion(bay),TerrainParams());
+        surfaces.push_back(&bays[bay]);
+    }
+#endif
+    VineLevelField field(stage.blocks,surfaces);
+
+    int slot = TakeGrownSlot(f_vine);
+    GrownVine& g = grown_vines[slot];
+    g.anchor = anchor;
+    int short_before = grown_leaves_short + grown_tufts_short;
+    const VineSpecies& roots = VineSpeciesFor(VINE_SPECIES_ROOTS);
+    if (f_under){
+        //Every plant's roots, first - out of the underside, where they can be seen.
+        VineGrowth rg;
+        if (GrowRoots(roots,root_params,anchor,normal,seed,field,rg)){
+            AddGrownStrands(g,rg,GROWN_LOOK_ROOT,VINE_SPECIES_ROOTS,0,field);
+        }
+    }
+    if (f_vine){
+        VineGrowth vg;
+        if (GrowVine(VineSpeciesFor(VINE_SPECIES_VINE),vine_params,anchor,normal,seed,field,vg)){
+            AddGrownStrands(g,vg,GROWN_LOOK_VINE,VINE_SPECIES_VINE,GROWN_ROOTS_LEAD,field);
+        }
+    }else if (f_under){
+        /*
+            The seed went through: the roots are its underside, and the tuft comes up on the top
+            directly above - if that top is open there and the platform is thin enough for the
+            story to hold. Otherwise it is roots only.
+        */
+        float top = block.Top();
+        if (top - block.Bottom() <= GROWN_TUFT_THROUGH && stage.SpanAt(anchor.x,top) >= 0){
+            AddGrownTuft(g,vec3(anchor.x,top,anchor.z),vec3(0.0f,1.0f,0.0f),seed,roots.grow_ticks + 4);
+        }
+    }else{
+        //Into a wall or a top: a small tuft where it stuck, out of the surface as drawn.
+        AddGrownTuft(g,VineMarchOut(field,anchor,normal),normal,seed,0);
+    }
+    if (g.strands.empty() && g.tufts.empty()){
+        return;         //nothing to grow here; the slot stays empty
+    }
+    CommitGrownVine(slot);
+    if (f_vine){
+        float length = 0.0f;
+        for (size_t k = 0; k < g.strands.size(); k++){
+            if (g.looks[k] == GROWN_LOOK_VINE && g.strands[k].parent < 0){
+                length = g.lengths[k];
+            }
+        }
+        cues.Signal("vine_grow",CuePayload().Set("x",anchor.x).Set("length",length));
+    }
+    debug->Info("%s at (%.2f,%.2f): %zu strands, %zu leaves, %zu tuft plants%s\n",
+                f_vine ? "A vine grows" : (g.strands.empty() ? "A tuft grows" : "Roots grow"),
+                anchor.x,anchor.y,g.strands.size(),g.leaves.size(),
+                g.tufts.size(),(grown_leaves_short + grown_tufts_short > short_before) ? " (a pool ran short)" : "");
+}
+
+/*
+    Every tick: each growing plant's strand fronts, each on its own species' clock from its own
+    start, into the shared slot for the render thread; its leaves, opening as the front passes them
+    - scaled in from nothing and folded up from lying along the stem to their lift; and its tufts,
+    each plant coming up in its turn. PHYSICS THREAD, like the wind's leaves. A plant fully grown
+    and open is left alone from then on.
 */
 void ApplicationArcher::StepGrownVines(){
     if (!f_grown_vines_ready || main_scene != world_scene){
         return;
     }
-    for (int slot = 0; slot < GROWN_VINE_MAX; slot++){
+    for (int slot = 0; slot < GROWN_SLOTS; slot++){
         GrownVine& g = grown_vines[slot];
-        if (!g.f_live || g.f_done || g.strands.empty()){
+        if (!g.f_live || g.f_done){
             continue;
         }
-        const VineSpecies& sp = VineSpeciesFor(g.species);
         int ticks = (int)(stage.ticks - g.start_tick);
+        size_t n = g.strands.size();
         /*
-            The main strand's front by the clock. A branch starts when that front passes where it
-            leaves, and runs faster or slower so that it finishes when the main strand does - the
-            whole plant arrives at once rather than a twig still creeping after the rest has stopped.
+            A strand from the plant's root runs by its species' clock from its own start. A branch
+            starts when its parent's front passes where it leaves, and runs faster or slower so that
+            it finishes when the parent does - the whole plant arrives at once rather than a twig
+            still creeping after the rest has stopped. Parents always come first in the list.
         */
-        std::vector<float> fronts(g.strands.size(),0.0f);
-        float main_len = g.lengths[0];
-        fronts[0] = VineGrowthFront(sp,main_len,ticks);
-        for (size_t k = 1; k < g.strands.size(); k++){
+        std::vector<float> fronts(n,0.0f);
+        std::vector<bool>  grown(n,false);
+        for (size_t k = 0; k < n; k++){
+            const VineSpecies& sp = VineSpeciesFor(g.species[k]);
             const VineStrand& st = g.strands[k];
-            float left = main_len - st.s_on_parent;
-            float f = (left > 1e-3f) ? (fronts[0] - st.s_on_parent) * (g.lengths[k] / left) : g.lengths[k];
-            fronts[k] = (f < 0.0f) ? 0.0f : ((f > g.lengths[k]) ? g.lengths[k] : f);
+            int t = ticks - g.starts[k];
+            if (st.parent < 0 || st.parent >= (int)k){
+                fronts[k] = VineGrowthFront(sp,g.lengths[k],t);
+            }else{
+                float parent_len = g.lengths[st.parent];
+                float left = parent_len - st.s_on_parent;
+                float f = (left > 1e-3f) ? (fronts[st.parent] - st.s_on_parent) * (g.lengths[k] / left)
+                                         : g.lengths[k];
+                fronts[k] = (f < 0.0f) ? 0.0f : ((f > g.lengths[k]) ? g.lengths[k] : f);
+            }
+            grown[k] = (t >= sp.grow_ticks);
         }
         bool f_all_open = true;
         for (GrownLeaf& l : g.leaves){
+            const VineSpecies& sp = VineSpeciesFor(g.species[l.strand]);
             float open = VineLeafOpen(sp,l.leaf.s,fronts[l.strand]);
             //Fully grown, every leaf opens: the front stops at the end, and a leaf near it would
             //otherwise wait for a front that never comes.
-            if (fronts[l.strand] >= g.lengths[l.strand] && ticks >= sp.grow_ticks){
-                float late = (float)(ticks - sp.grow_ticks) / (float)ARCHER_TPS;
+            int t = ticks - g.starts[l.strand];
+            if (grown[l.strand]){
+                float late = (float)(t - sp.grow_ticks) / (float)ARCHER_TPS;
                 open = fmaxf(open,fminf(1.0f,late / 0.4f));
             }
             if (open < 1.0f){
@@ -3536,16 +3755,33 @@ void ApplicationArcher::StepGrownVines(){
             l.object->SetScale(vec3(s,s,s));
             l.object->SetVisibility(true);
         }
-        bool f_grown = (ticks >= sp.grow_ticks);
+        for (GrownTuft& t : g.tufts){
+            float k = (float)(ticks - t.start - t.plant.delay_ticks) / (float)GROWN_TUFT_TICKS;
+            if (k <= 0.0f){
+                t.object->SetVisibility(false);
+                f_all_open = false;
+                continue;
+            }
+            if (k < 1.0f){
+                f_all_open = false;
+            }
+            k = (k > 1.0f) ? 1.0f : k;
+            float up = 1.0f - (1.0f - k) * (1.0f - k);
+            float s = foliage_scale * t.plant.scale * fmaxf(up,0.02f);
+            t.object->SetScale(vec3(s,s,s));
+            t.object->SetVisibility(true);
+        }
+        bool f_all_grown = true;
         {
             std::lock_guard<std::mutex> lock(grown_mutex);
-            //Fully grown is -1, the plain sweep, so the finished vine is exactly the static kind.
+            //Fully grown is -1, the plain sweep, so a finished strand is exactly the static kind.
             GrownVineShared& s = grown_shared[slot];
-            for (size_t k = 0; k < fronts.size() && k < s.fronts.size(); k++){
-                s.fronts[k] = f_grown ? -1.0f : fronts[k];
+            for (size_t k = 0; k < n && k < s.fronts.size(); k++){
+                s.fronts[k] = grown[k] ? -1.0f : fronts[k];
+                f_all_grown = f_all_grown && grown[k];
             }
         }
-        if (f_grown && f_all_open){
+        if (f_all_grown && f_all_open){
             g.f_done = true;
         }
     }
@@ -3553,14 +3789,14 @@ void ApplicationArcher::StepGrownVines(){
 
 /*
     RENDER THREAD, from PreRender: every slot whose fronts have moved since it was last drawn is
-    re-deformed - trunk and wrap, every strand, up to its front - and uploaded. A slot refilled
-    builds its curves once; a slot emptied is hidden.
+    re-deformed - each strand in its look, up to its front; a vine's wrap over it - and uploaded. A
+    slot refilled builds its curves once; a slot emptied is hidden.
 */
 void ApplicationArcher::DrawGrownVines(){
     if (!f_grown_vines_ready){
         return;
     }
-    for (int slot = 0; slot < GROWN_VINE_MAX; slot++){
+    for (int slot = 0; slot < GROWN_SLOTS; slot++){
         GrownVineDrawn& d = grown_drawn[slot];
         bool f_live = false;
         std::vector<float> fronts;
@@ -3573,6 +3809,7 @@ void ApplicationArcher::DrawGrownVines(){
             if (s.generation != d.generation){
                 d.generation = s.generation;
                 d.paths = s.paths;
+                d.looks = s.looks;
                 d.splines.assign(d.paths.size(),Spline());
                 for (size_t k = 0; k < d.paths.size(); k++){
                     BuildVineSpline(d.paths[k],d.splines[k]);
@@ -3582,23 +3819,30 @@ void ApplicationArcher::DrawGrownVines(){
             fronts = s.fronts;
         }
         d.fronts = fronts;
-        std::vector<vertex> trunk, wrap;
+        std::vector<vertex> verts[GROWN_LOOK_COUNT], wrap;
         if (f_live){
-            for (size_t k = 0; k < d.splines.size() && k < fronts.size(); k++){
+            for (size_t k = 0; k < d.splines.size() && k < fronts.size() && k < d.looks.size(); k++){
                 if (fronts[k] == 0.0f){
                     continue;
                 }
-                BuildVineTrunk(d.splines[k],d.paths[k],vine_tile,vine_params,trunk,fronts[k]);
+                if (d.looks[k] == GROWN_LOOK_ROOT){
+                    BuildVineTrunk(d.splines[k],d.paths[k],root_tile,root_params,verts[GROWN_LOOK_ROOT],fronts[k]);
+                    continue;
+                }
+                BuildVineTrunk(d.splines[k],d.paths[k],vine_tile,vine_params,verts[GROWN_LOOK_VINE],fronts[k]);
                 if (d.wrap){
                     BuildVineOverlay(d.splines[k],d.paths[k],vine_wrap_tile,vine_tile,vine_params,wrap,fronts[k]);
                 }
             }
         }
-        if (trunk.empty()){
-            d.trunk->SetVisibility(false);
-        }else{
-            d.trunk->GetMesh()->SetMeshData(trunk.data(),(int)trunk.size());
-            d.trunk->SetVisibility(true);
+        for (int look = 0; look < GROWN_LOOK_COUNT; look++){
+            Object* o = d.part[look];
+            if (verts[look].empty()){
+                o->SetVisibility(false);
+            }else{
+                o->GetMesh()->SetMeshData(verts[look].data(),(int)verts[look].size());
+                o->SetVisibility(true);
+            }
         }
         if (d.wrap){
             if (wrap.empty()){
@@ -8628,9 +8872,9 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
             arrow_stuck[h.arrow].f_turntable = true;
             arrow_stuck[h.arrow].turntable_deg = turntable_deg;
         }
-        //A vine arrow into an underside grows a vine - on the world level, where the pieces are.
-        if (h.kind == ARROW_VINE && h.normal.y < -0.5f && main_scene == world_scene){
-            StartGrownVine(h);
+        //Something grows where it struck - see GrownVine. On the world level, where the pieces are.
+        if (main_scene == world_scene){
+            StartGrowth(h);
         }
     }
 }
@@ -11362,9 +11606,9 @@ void ApplicationArcher::PublishSnapshot(){
         av.kind = a.kind;
         s.arrows.push_back(av);
     }
-    for (int i = 0; i < GROWN_VINE_MAX; i++){
+    for (int i = 0; i < GROWN_SLOTS; i++){
         const GrownVine& g = grown_vines[i];
-        if (!g.f_live || g.lengths.empty()){
+        if (!g.f_live){
             continue;
         }
         ArcherSnapshot::GrownView gv;
@@ -11373,9 +11617,21 @@ void ApplicationArcher::PublishSnapshot(){
         gv.y = g.anchor.y;
         gv.strands = (int)g.strands.size();
         gv.leaves = (int)g.leaves.size();
-        gv.length = g.lengths[0];
+        gv.tufts = (int)g.tufts.size();
         gv.ticks = (int)(stage.ticks - g.start_tick);
-        gv.front = VineGrowthFront(VineSpeciesFor(g.species),g.lengths[0],gv.ticks);
+        //The main strand: the plant's vine if it has one, else its first root.
+        for (size_t k = 0; k < g.strands.size(); k++){
+            if (g.strands[k].parent >= 0){
+                continue;
+            }
+            if (g.looks[k] == GROWN_LOOK_ROOT){
+                gv.roots++;
+            }
+            if (gv.length == 0.0f || g.looks[k] == GROWN_LOOK_VINE){
+                gv.length = g.lengths[k];
+                gv.front = VineGrowthFront(VineSpeciesFor(g.species[k]),g.lengths[k],gv.ticks - g.starts[k]);
+            }
+        }
         gv.f_done = g.f_done;
         s.grown.push_back(gv);
     }
@@ -11589,8 +11845,9 @@ json ApplicationArcher::BuildStateJson(){
             json list = json::array();
             for (const ArcherSnapshot::GrownView& g : s.grown){
                 list.push_back(json{{"slot",g.slot},{"x",g.x},{"y",g.y},{"strands",g.strands},
-                                    {"leaves",g.leaves},{"length",g.length},{"front",g.front},
-                                    {"ticks",g.ticks},{"done",g.f_done}});
+                                    {"roots",g.roots},{"leaves",g.leaves},{"tufts",g.tufts},
+                                    {"length",g.length},{"front",g.front},{"ticks",g.ticks},
+                                    {"done",g.f_done}});
             }
             return list;
         }()},

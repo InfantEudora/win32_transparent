@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-29T14:33:12.583Z
+  modified: 2026-09-29T17:39:05.862Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -110,7 +110,15 @@ physics thread, DrawGrownVines in PreRender, grown_shared under grown_mutex, 32 
 leaves/kind pooled, vine_grow cue is a rock_crumble PLACEHOLDER). Growth cost 5.6ms/frame debug ->
 fixed by per-distinct-height frame sharing in DeformAlongSpline (~2.2ms now). To test in-app:
 archer_place x 10.7 (NOT 9.2 - lands on the step), arrow_2, draw 45 wait false + up 17 -> hits
-slab one's underside (11.6..12.4, 3.8). Next: step 6 TerrainDistance, or 7 roots+tuft. Also done 2026-09-29 on the user's ask:
+slab one's underside (11.6..12.4, 3.8). User: 2.2ms accepted; a GPU deform later maybe.
+STEP 6 DONE 2026-09-29: TerrainField.{h,cpp} (engine-free field moved out of Terrain.cpp, verified
+identical by the tri/dip/rise stats), TerrainSurface, VineField/VineBlockField/VineLevelField,
+start marched out of drawn rock, VinePath::f_rooted (no start taper). Bay test shot: place
+(-15, 3.4) on the hill, draw 50 wait false + up 27 -> stone two underside (-14, 6.4).
+STEP 7 DONE 2026-09-29: VINE_SPECIES_ROOTS + GrowRoots, Foliage ScatterTuft, app growth is a
+PLANT (strands with look/species/start + tufts), StartGrowth decides per strike, two rings of 32
+(vine / small). The user often runs their own archer on 8765 (PID differs): stop MY instance by
+PID, never `taskkill //IM archer.exe`. Next: step 8, creepers from wall hits. Also done 2026-09-29 on the user's ask:
 the aim only tilts while drawn and returns to neutral after BOW_AIM_RETURN_TICKS of moving; the
 user will re-record archer_test at the end of the day (its target hit was lost).
 

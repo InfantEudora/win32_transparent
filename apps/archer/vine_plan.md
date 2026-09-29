@@ -654,11 +654,83 @@ meshes. That move is cheap exactly because sections 9 and 10 keep the walker out
      - If several growing at once ever shows: every copy more than a tip behind the front is
        already final, bit for bit, so those can be cached and only the last one or two re-laid.
        The weld needs the copy before the first re-laid one included, then dropped.
+     - **Or on the GPU** (the user's suggestion, 2026-09-29). The deform is a pure function of
+       the tile vertex, the curve and `grown`, so a vertex or compute shader could do it. It would
+       upload the tile once and the curve's sampled frames as a buffer, and each frame pass only
+       the front. The CPU version stays as the reference the tests check it against. 2.2 ms is
+       accepted for now, for a few events at a time.
    - 5 more checks in `make rules` (829): the clock's shape and the leaf opening.
    - Not done: `arrow_hit` does not yet tell a vine arrow's thud from a normal one's.
 6. **`TerrainDistance`**, for the start and for the walker's collisions.
+   *(DONE 2026-09-29, as `TerrainField` rather than one function.)*
+   - **`apps/archer/TerrainField.{h,cpp}`, engine-free:** the terrain's field and its shape
+     helpers, moved unchanged out of Terrain.cpp (which kept the mesher and calls
+     `TerrainFieldAt` / `TerrainFindFloating`). `TerrainParams` and `TerrainRegion` moved with
+     them. Proven unchanged by the build's own stats, identical before and after:
+     - bay 0, 20,178 tris (dip 0, rise 4.80);
+     - bay 1, 10,071 tris (dip 0, rise 5.45);
+     - the back wall, 66,672 tris.
+   - **`TerrainSurface`:** one region's drawn surface to sample (Build / Distance / Normal), made
+     from the same region and params as its mesh.
+   - **`VineField` in Vine.h:** what a vine grows against.
+     - `VineBlockField` is the boxes, the old behaviour, bit for bit.
+     - `VineLevelField` is every box except the melted blocks, which are their surfaces instead.
+     - `GrowVine` and `ScatterVineLeaves` take a field. The blocks versions wrap
+       `VineBlockField`, so the static vines and every earlier check are unchanged.
+   - **The start is marched out** along the normal (0.05 at a time, 3 units at most) to where the
+     field is open. So a strike on a box the terrain has drawn a belly under grows from the belly.
+     The collisions and the leaves' burial test then use the drawn surface too.
+   - **`VinePath::f_rooted`:** a grown strand's buried start has no taper. Seen in the bay: the
+     trunk came out of the stone pinched like a stalk. It is now full thickness out of the rock,
+     and so is a branch out of its parent.
+   - `StartGrownVine` builds each bay's surface per strike (the same regions and default params
+     `RemeshTerrainBay` meshes with) and grows against a `VineLevelField`.
+   - 5 checks (834):
+     - with no surfaces the level field is exactly the boxes;
+     - a floating stone's drawn belly hangs below its box (-0.53 just under it);
+     - against the boxes the vine started 0.61 inside the drawn rock, against the drawing on the
+       belly, 0.65 lower;
+     - neither the walk nor any of 24 leaf tips goes into the drawn rock;
+     - rooted is full radius at the root.
+   - **Checked in the game:** a vine arrow into stone two's underside (x -14, 6.4) in the terrain
+     bay grows out of the bottom of its drawn belly at full thickness, down to the hill under it
+     and along it. The archer test replay is unchanged.
 7. **Plants have roots**: the roots species; the normal arrow's roots, then its tuft on the top
    above.
+   *(DONE 2026-09-29.)*
+   - **`VINE_SPECIES_ROOTS`:** 0.3-0.9 long, 0.04 steps, hard short wander, 1-2 forks near the
+     tip, thickness 0.35 (0.035 on the placeholder octagon), 24 ticks to grow.
+   - **`GrowRoots`:** 2 to 4 roots from one strike, spread a hand's width along the surface and
+     leaning out, every fork's parent kept pointing into the plant's list.
+   - **`ScatterTuft`** in Foliage: 3-5 of the garden's own plants, mostly grass, now and then one
+     low fern or one flower, on a disc square to `up`, staggered by up to 10 ticks.
+   - **The app's growth is now a PLANT** (`GrownVine`): strands each with a look (vine or root), a
+     species and a start tick, plus tufts. `StartGrowth` decides per strike:
+     - vine arrow into an underside: roots, then the vine `GROWN_ROOTS_LEAD` (16) ticks later;
+     - normal arrow into an underside: roots, then a tuft on the top above, if that top is open
+       (`SpanAt`) and the platform at most 2 thick;
+     - normal arrow into a wall or a top: a small tuft where it stuck, marched out onto the drawn
+       surface (`VineMarchOut`);
+     - vine arrow into a wall or a top: nothing yet (step 8).
+   - Not on BREAKABLE or CRUMBLE blocks, until section 12 makes growths fall with them.
+   - **Two rings of 32:** vine-arrow plants, and a normal arrow's roots and tufts. Normal shots
+     never push a vine out.
+   - The root look is `root_tile` from archer.glb if it is added, otherwise the placeholder
+     octagon in `ar_root`, a dark earth brown. Roots taper to a 0.06 point and twist harder.
+   - **Tuft plants:** a pool of 64 per foliage kind, the garden's meshes and materials, so they
+     sway the same. They scale in over 30 ticks.
+   - `archer_state` `grown_vines` gains `roots` and `tufts`.
+   - 8 checks (842), over 100 strikes: 2..4 roots a strike, 451 forks, 0.32-0.92 long, at most
+     0.046 thick, none into the rock, all lower. The tuft is 3-5 plants, mostly grass, on the
+     surface it was asked for, a wall's out of the wall, and the same spot gives the same tuft.
+   - **Checked in the game:**
+     - a normal arrow under slab two grew 2 forked roots and a 5-plant tuft on its top;
+     - a vine arrow under slab one grew 3 roots and then its vine;
+     - a normal arrow into the ground grew a tuft round it.
+     The archer test replay is unchanged, though its shots now grow roots and tufts: all
+     visual-only, no cue.
+   - **Wants art:** a `root_tile` would soften the placeholder's blockiness up close. The faceted
+     octagon reads as roots at play distance, as short dark spikes.
 8. **Creepers** from wall hits.
 9. **Withering**, and growths on crumbling blocks.
 10. **The other species** as their assets arrive: bamboo (fixed period, the tip), thorny (the coil

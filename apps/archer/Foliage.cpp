@@ -288,3 +288,45 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
         }
     }
 }
+
+//--- Tufts ----------------------------------------------------------------------------------------
+
+//A tuft's channels, clear of the garden's so it moves none of them.
+enum{ CH_TUFT_COUNT = 40, CH_TUFT_KIND, CH_TUFT_R, CH_TUFT_A, CH_TUFT_YAW, CH_TUFT_SCALE, CH_TUFT_DELAY };
+
+void ScatterTuft(const vec3& at, const vec3& up_in, int seed, float radius, std::vector<TuftPlant>& out){
+    out.clear();
+    vec3 up = up_in;
+    if (up.length() < 1e-6f){
+        up = vec3(0.0f,1.0f,0.0f);
+    }
+    up.normalize();
+    //Two directions in the plane square to `up`, to spread the clump over.
+    vec3 u = (fabsf(up.z) < 0.9f) ? up.cross(vec3(0.0f,0.0f,1.0f)) : up.cross(vec3(1.0f,0.0f,0.0f));
+    u.normalize();
+    vec3 v = up.cross(u);
+    float fs = (float)seed;
+    int count = 3 + (int)(Hash01(at.x,fs,CH_TUFT_COUNT,0) * 3.0f);     //3..5
+    for (int i = 0; i < count; i++){
+        TuftPlant p;
+        //Mostly grass; now and then one low fern or one flower, never more than one of either.
+        float k = Hash01(at.x,fs,CH_TUFT_KIND,i);
+        if (i == 0 && k < 0.30f){
+            p.kind = FOLIAGE_FERN_LOW;
+        }else if (i == 1 && k < 0.20f){
+            p.kind = FOLIAGE_FLOWER;
+        }else{
+            p.kind = (k < 0.5f) ? FOLIAGE_GRASS : FOLIAGE_GRASS_2;
+        }
+        //Uniform on the disc (the square root), the first one near the middle.
+        float r = radius * sqrtf(Hash01(at.x,fs,CH_TUFT_R,i)) * ((i == 0) ? 0.35f : 1.0f);
+        float a = 2.0f * FOLIAGE_PI * Hash01(at.x,fs,CH_TUFT_A,i);
+        p.position = at + u * (r * cosf(a)) + v * (r * sinf(a));
+        p.up = up;
+        p.yaw = 2.0f * FOLIAGE_PI * Hash01(at.x,fs,CH_TUFT_YAW,i);
+        //Smaller than the garden's: a tuft is young growth.
+        p.scale = 0.55f + 0.35f * Hash01(at.x,fs,CH_TUFT_SCALE,i);
+        p.delay_ticks = (i == 0) ? 0 : (int)(Hash01(at.x,fs,CH_TUFT_DELAY,i) * 10.0f);
+        out.push_back(p);
+    }
+}

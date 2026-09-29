@@ -3210,7 +3210,7 @@ static void TestVines(){
     Spline sp;
     BuildVineSpline(paths[0],sp);
     std::vector<VineLeaf> blind;
-    ScatterVineLeaves(sp,paths[0],params,NULL,blind);
+    ScatterVineLeaves(sp,paths[0],params,(const std::vector<StageBlock>*)NULL,blind);
     int blind_buried = 0;
     for (size_t i = 0; i < blind.size(); i++){
         vec3 tip = blind[i].position + (blind[i].rotation * vec3(0.0f,0.0f,1.0f)) * (params.leaf_length * blind[i].scale);
@@ -7449,6 +7449,165 @@ static void TestVineGrowth(){
           "a leaf waits leaf_delay behind the front, then opens over leaf_unfold");
     Check(sp.leaf_delay >= SplineDeformParams().grow_tip_length,
           "and waits until the growing tip's taper has passed, so it sits on the finished trunk");
+
+    /*
+        Against the DRAWN surface - vine_plan.md step 6. A stone floating over a floor: the terrain
+        draws a belly under it, so the box's underside, where an arrow sticks, is inside the rock
+        you see. With no surfaces the level field is exactly the boxes; with the stone's surface,
+        the vine starts on the belly, not inside it, and nothing it walks or grows a leaf into is
+        inside the drawn rock.
+    */
+    std::vector<StageBlock> stone(2);
+    stone[0].x = 0.0f; stone[0].y = -1.0f; stone[0].hw = 10.0f; stone[0].hh = 1.0f;
+    stone[1].x = 0.0f; stone[1].y = 5.5f;  stone[1].hw = 2.0f;  stone[1].hh = 0.5f;
+    TerrainRegion above;
+    above.x_min = -20.0f; above.x_max = 20.0f; above.y_min = 3.0f; above.y_max = 20.0f;
+    TerrainSurface drawn;
+    drawn.Build(stone,above,TerrainParams());
+    std::vector<const TerrainSurface*> none;
+    VineLevelField plain(stone,none);
+    float worst_same = 0.0f;
+    for (float x = -4.0f; x <= 4.0f; x += 0.37f){
+        for (float y = -1.0f; y <= 8.0f; y += 0.41f){
+            worst_same = fmaxf(worst_same,fabsf(plain.Distance(vec3(x,y,0.0f)) - VineBlockDistance(stone,x,y)));
+        }
+    }
+    Check(worst_same == 0.0f,"with no terrain surfaces the level field is exactly the boxes");
+    std::vector<const TerrainSurface*> surfaces(1,&drawn);
+    VineLevelField level(stone,surfaces);
+    float belly = level.Distance(vec3(0.0f,4.9f,0.0f));
+    snprintf(d,sizeof(d),"drawn distance %.3f just under the box's underside",belly);
+    Check(belly < 0.0f,"the stone's drawn belly hangs below its box",d);
+
+    vec3 a5(0.0f,5.0f,0.0f);
+    VineGrowth boxed, drawn_vine;
+    GrowVine(sp,params,a5,under,VineGrowthSeed(a5,0),stone,boxed);
+    GrowVine(sp,params,a5,under,VineGrowthSeed(a5,0),level,drawn_vine);
+    const vec3& box_start = boxed.strands[0].path.points[1];
+    const vec3& drawn_start = drawn_vine.strands[0].path.points[1];
+    snprintf(d,sizeof(d),"against the boxes it starts at y %.2f (drawn distance %.2f); against the "
+             "drawing at y %.2f (%.3f)",box_start.y,level.Distance(box_start),drawn_start.y,level.Distance(drawn_start));
+    Check(level.Distance(box_start) < 0.0f && level.Distance(drawn_start) >= 0.0f && drawn_start.y < box_start.y,
+          "against the drawing it starts on the belly, not up inside it",d);
+    float worst_walk = 1e9f, worst_leaf = 1e9f;
+    int leaves_checked = 0;
+    float drawn_keep = params.tile_radius * params.tile_scale * drawn_vine.strands[0].path.thickness + sp.clearance;
+    for (const VineStrand& st : drawn_vine.strands){
+        const vec3& begin = st.path.points[1];
+        for (size_t i = 1; i < st.path.points.size(); i++){
+            const vec3& p = st.path.points[i];
+            if ((p - begin).length() > 2.0f * drawn_keep){
+                worst_walk = fminf(worst_walk,level.Distance(p) - drawn_keep);
+            }
+        }
+        Spline curve;
+        BuildVineSpline(st.path,curve);
+        std::vector<VineLeaf> lv;
+        ScatterVineLeaves(curve,st.path,params,&level,lv);
+        for (const VineLeaf& l : lv){
+            vec3 tip = l.position + (l.rotation * vec3(0.0f,0.0f,1.0f)) * (params.leaf_length * l.scale);
+            worst_leaf = fminf(worst_leaf,level.Distance(tip));
+            leaves_checked++;
+        }
+    }
+    snprintf(d,sizeof(d),"walked points %.3f clear of the keep, leaf tips %.3f clear, %i leaves",
+             worst_walk,worst_leaf,leaves_checked);
+    Check(worst_walk >= -0.01f && leaves_checked > 0 && worst_leaf >= 0.0f,
+          "and neither the walk nor a leaf goes into the drawn rock",d);
+    //Rooted: full thickness where it comes out, tapered only at its free end.
+    Spline rooted;
+    BuildVineSpline(drawn_vine.strands[0].path,rooted);
+    float full = params.tile_radius * params.tile_scale * drawn_vine.strands[0].path.thickness;
+    float r0 = VineRadiusAt(rooted,drawn_vine.strands[0].path,params,0.0f);
+    float r1 = VineRadiusAt(rooted,drawn_vine.strands[0].path,params,rooted.GetLength());
+    snprintf(d,sizeof(d),"radius %.3f at the root, %.3f at the tip, %.3f full",r0,r1,full);
+    Check(drawn_vine.strands[0].path.f_rooted && fabsf(r0 - full) < 1e-5f && r1 < 0.5f * full,
+          "a grown vine is full thickness out of the rock and tapers only at its tip",d);
+}
+
+/*
+    Roots and tufts - vine_plan.md step 7. The roots are a species of the same walker, so what is
+    checked is what makes them roots: a few of them from one strike, short, thin, quick, forked,
+    down and clear of the rock; and a tuft is a few small plants on the surface it was asked for.
+*/
+static void TestRootsAndTufts(){
+    printf("\nroots and tufts\n");
+    char d[200];
+    Stage m;
+    const VineSpecies& rs = VineSpeciesFor(VINE_SPECIES_ROOTS);
+    //The placeholder octagon, as the app uses until root_tile exists.
+    std::vector<vertex> tile;
+    MakeVinePlaceholderTile(tile);
+    VineParams params;
+    params.tile_scale = 1.0f;
+    params.tile_radius = VineTileRadius(tile);
+    VineBlockField field(m.blocks);
+    const vec3 under(0.0f,-1.0f,0.0f);
+
+    int worst_count_lo = 99, worst_count_hi = 0, bad_parent = 0, inside = 0, not_lower = 0, forks = 0;
+    float longest = 0.0f, shortest = 1e9f, thickest = 0.0f;
+    for (int seed = 0; seed < 100; seed++){
+        vec3 a(11.5f + 0.01f * (float)(seed % 20),3.8f,0.0f);
+        VineGrowth g;
+        bool f_grew = GrowRoots(rs,params,a,under,seed * 31 + 7,field,g);
+        int roots = 0;
+        for (size_t k = 0; k < g.strands.size(); k++){
+            const VineStrand& st = g.strands[k];
+            if (st.parent < 0){
+                roots++;
+                longest = fmaxf(longest,st.length);
+                shortest = fminf(shortest,st.length);
+                if (st.path.points.back().y >= a.y - 0.1f){ not_lower++; }
+            }else{
+                forks++;
+                if (st.parent >= (int)k || g.strands[st.parent].parent >= 0){ bad_parent++; }
+            }
+            thickest = fmaxf(thickest,params.tile_radius * params.tile_scale * st.path.thickness);
+            for (size_t i = 2; i < st.path.points.size(); i++){
+                const vec3& p = st.path.points[i];
+                if (VineBlockDistance(m.blocks,p.x,p.y) < 0.0f){ inside++; }
+            }
+        }
+        if (!f_grew){ roots = 0; }
+        worst_count_lo = std::min(worst_count_lo,roots);
+        worst_count_hi = std::max(worst_count_hi,roots);
+    }
+    snprintf(d,sizeof(d),"%i .. %i roots a strike, %i forks over 100 strikes",worst_count_lo,worst_count_hi,forks);
+    Check(worst_count_lo >= 2 && worst_count_hi <= 4 && forks > 100,"two to four roots from a strike, forking",d);
+    Check(bad_parent == 0,"every fork hangs off its own root, pointing into the plant's list");
+    snprintf(d,sizeof(d),"%.2f .. %.2f long, %.3f thick at most",shortest,longest,thickest);
+    Check(shortest >= rs.length_min - rs.step && longest <= rs.length_max + rs.step && thickest < 0.06f,
+          "short and thin: roots, not vines",d);
+    snprintf(d,sizeof(d),"%i points inside a block, %i roots not lower than the strike",inside,not_lower);
+    Check(inside == 0 && not_lower == 0,"down out of the underside, never into the rock",d);
+    Check(rs.grow_ticks <= 30 && rs.grow_ticks < VineSpeciesFor(VINE_SPECIES_VINE).grow_ticks / 4,
+          "quick - they are grown by every normal arrow into an underside");
+
+    //A tuft on a top, and one out of a wall.
+    std::vector<TuftPlant> top, wall, again;
+    ScatterTuft(vec3(3.0f,0.0f,0.0f),vec3(0.0f,1.0f,0.0f),5,0.28f,top);
+    ScatterTuft(vec3(9.0f,1.0f,0.0f),vec3(1.0f,0.0f,0.0f),5,0.28f,wall);
+    ScatterTuft(vec3(3.0f,0.0f,0.0f),vec3(0.0f,1.0f,0.0f),5,0.28f,again);
+    float off_plane = 0.0f, spread = 0.0f;
+    int grass = 0;
+    for (const TuftPlant& p : top){
+        off_plane = fmaxf(off_plane,fabsf(p.position.y - 0.0f));
+        spread = fmaxf(spread,(p.position - vec3(3.0f,0.0f,0.0f)).length());
+        grass += (p.kind == FOLIAGE_GRASS || p.kind == FOLIAGE_GRASS_2) ? 1 : 0;
+    }
+    for (const TuftPlant& p : wall){
+        off_plane = fmaxf(off_plane,fabsf(p.position.x - 9.0f));
+    }
+    snprintf(d,sizeof(d),"%zu plants on the top (%i grass), %.3f off its surface at most, %.2f across",
+             top.size(),grass,off_plane,spread);
+    Check(top.size() >= 3 && top.size() <= 5 && grass >= (int)top.size() - 2,"a tuft is three to five plants, mostly grass",d);
+    Check(off_plane < 1e-5f && spread <= 0.28f + 1e-4f,"on the surface it was asked for, within its radius - a wall's too",d);
+    bool f_same = (again.size() == top.size());
+    for (size_t i = 0; f_same && i < top.size(); i++){
+        f_same = (again[i].kind == top[i].kind && again[i].position.x == top[i].position.x &&
+                  again[i].position.z == top[i].position.z && again[i].scale == top[i].scale);
+    }
+    Check(f_same && wall[0].up.x == 1.0f,"the same spot grows the same tuft, and a wall's stands out of the wall");
 }
 
 int main(void){
@@ -7505,6 +7664,7 @@ int main(void){
     TestAimHold();
     TestEdges();
     TestVineGrowth();
+    TestRootsAndTufts();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

@@ -1168,14 +1168,16 @@ struct ArcherSnapshot{
     };
     std::vector<ArrowView> arrows;
 
-    //The grown vines (vine_plan.md step 5): where each grew from, how far the main strand is.
+    //The grown plants (vine_plan.md steps 5 and 7): where each grew from, how far along it is.
     struct GrownView{
         int   slot = -1;
         float x = 0.0f;
         float y = 0.0f;
         int   strands = 0;
+        int   roots = 0;            //of them, roots out of the rock
         int   leaves = 0;
-        float length = 0.0f;        //the main strand's built curve
+        int   tufts = 0;            //tuft plants
+        float length = 0.0f;        //the main strand's built curve: the vine's, or the first root's
         float front = 0.0f;         //and how far along it the growth is
         int   ticks = 0;            //since the strike
         bool  f_done = false;
@@ -1987,6 +1989,7 @@ private:
     //The placeholder vine's two, used only for a piece archer.glb does not have yet.
     int material_vine = 0;
     int material_vine_leaf = 0;
+    int material_root = 0;          //a grown plant's roots, until root_tile has its own
 
     //--- The scene --------------------------------------------------------------------------------
     /*
@@ -2139,26 +2142,47 @@ private:
     float vine_leaf_to_world[VINE_LEAF_KIND_COUNT] = {};
 
     /*
-        GROWN VINES - vine_plan.md sections 9-10. A vine arrow into an underside grows one; visual
-        only, so none of it is rules state and none of it is in the replay's hash (vine_group is
-        visual-only). Split three ways by thread:
+        GROWN PLANTS - vine_plan.md sections 9-11. What an arrow grows where it strikes, visual only,
+        so none of it is rules state and none of it is in the replay's hash (vine_group is
+        visual-only). A PLANT is a set of strands - each with its own look (a vine or a root), its
+        own species and the tick after the strike it starts on - and a few tufts:
 
-          PHYSICS THREAD   grown_vines: the walk (GrowVine, at the strike, off the Stage's blocks),
-                           the leaves (from a pool made at Init, only shown and moved - no Object
-                           is created mid-tick), and each strand's front, from the stage's own tick
-                           count, so growth pauses and steps with the simulation and a replay grows
-                           the same vine at the same tick.
-          SHARED           grown_shared, under grown_mutex: each slot's paths when it is (re)filled,
-                           and every tick its strands' fronts. Small; nothing else crosses.
-          RENDER THREAD    grown_drawn: the trunk and wrap Objects and meshes, re-deformed in
-                           PreRender only when a front has moved - so a grown vine costs nothing
+          vine arrow, underside   roots, then (GROWN_ROOTS_LEAD later) a hanging vine
+          normal arrow, underside roots, then a tuft on the top above, if that is open and the
+                                  platform no thicker than GROWN_TUFT_THROUGH
+          normal arrow, wall/top  a small tuft where it stuck
+          vine arrow, wall/top    nothing yet: the creepers are step 8
+
+        Split three ways by thread:
+          PHYSICS THREAD   grown_vines: the walks (GrowVine / GrowRoots, at the strike, off the
+                           Stage's blocks), the leaves and tuft plants (from pools made at Init,
+                           only shown and moved - no Object is created mid-tick), and each strand's
+                           front, from the stage's own tick count, so growth pauses and steps with
+                           the simulation and a replay grows the same plant at the same tick.
+          SHARED           grown_shared, under grown_mutex: each slot's paths and looks when it is
+                           (re)filled, and every tick its strands' fronts. Small; nothing else.
+          RENDER THREAD    grown_drawn: a trunk Object per look and the vine's wrap, re-deformed in
+                           PreRender only when a front has moved - so a grown plant costs nothing
                            once it is done.
 
-        At most GROWN_VINE_MAX at once, in a ring: past it, the oldest goes. (Withering, the
-        oldest's leaves blowing off, is section 12 - a later step.) A restart clears them.
+        Two rings: GROWN_VINE_MAX for what a vine arrow grows, GROWN_SMALL_MAX for a normal arrow's
+        roots and tufts - so shooting about with normal arrows never pushes a vine out. Past a
+        ring's size its oldest goes. (Withering, the leaves blowing off, is section 12.) A restart
+        clears both.
     */
 #define GROWN_VINE_MAX          32
+#define GROWN_SMALL_MAX         32
+#define GROWN_SLOTS             (GROWN_VINE_MAX + GROWN_SMALL_MAX)
 #define GROWN_LEAF_POOL         512     //per leaf kind; a vine past what is left grows fewer leaves
+#define GROWN_TUFT_POOL         64      //per foliage kind, the same
+#define GROWN_TUFT_TICKS        30      //a tuft's plant comes up over this
+#define GROWN_ROOTS_LEAD        16      //ticks the roots grow before a vine starts after them
+#define GROWN_TUFT_THROUGH      2.0f    //thicker than this, a platform grows no tuft on its top
+    enum GrownLook{
+        GROWN_LOOK_VINE = 0,            //vine_trunk (and vine_curl over it), with leaves
+        GROWN_LOOK_ROOT,                //root_tile, or the placeholder octagon, dark brown
+        GROWN_LOOK_COUNT
+    };
     struct GrownLeaf{
         Object*  object = NULL;
         int      pool = -1;             //its index in its kind's pool, to hand back
@@ -2166,44 +2190,70 @@ private:
         VineLeaf leaf;
         vec3     tangent;               //the stem's direction where it grows, for the fold
     };
+    struct GrownTuft{
+        Object*   object = NULL;
+        int       pool = -1;
+        TuftPlant plant;
+        int       start = 0;            //ticks after the strike
+    };
     struct GrownVine{
         bool     f_live = false;
         bool     f_done = false;        //fully grown and open: nothing left to move
-        int      species = VINE_SPECIES_VINE;
         uint64_t start_tick = 0;
         vec3     anchor;
         std::vector<VineStrand> strands;
         std::vector<float> lengths;     //each strand's built curve, what the fronts run along
+        std::vector<int>   looks;       //per strand: GrownLook
+        std::vector<int>   species;     //per strand: VineSpeciesKind
+        std::vector<int>   starts;      //per strand: ticks after the strike it starts growing
         std::vector<GrownLeaf> leaves;
+        std::vector<GrownTuft> tufts;
     };
-    GrownVine grown_vines[GROWN_VINE_MAX];
-    int       grown_next = 0;
+    GrownVine grown_vines[GROWN_SLOTS];
+    int       grown_next = 0;           //the vine ring's cursor, 0 .. GROWN_VINE_MAX - 1
+    int       grown_small_next = 0;     //the small ring's, slots GROWN_VINE_MAX + this
     std::vector<Object*> grown_leaf_pool[VINE_LEAF_KIND_COUNT];
     std::vector<int>     grown_leaf_free[VINE_LEAF_KIND_COUNT];
-    int       grown_leaves_short = 0;   //leaves not grown for want of a pooled one, since Init
+    std::vector<Object*> grown_tuft_pool[FOLIAGE_KIND_COUNT];
+    std::vector<int>     grown_tuft_free[FOLIAGE_KIND_COUNT];
+    int       grown_leaves_short = 0;   //leaves and tuft plants not grown for want of a pooled one
+    int       grown_tufts_short = 0;
+    //The root look: root_tile from archer.glb if it has one, else the placeholder octagon.
+    std::vector<vertex>   root_tile;
+    std::vector<Material> root_materials;
+    int        root_num_materials = 1;
+    bool       f_root_from_asset = false;
+    VineParams root_params;
 
     struct GrownVineShared{
         int   generation = 0;           //+1 whenever the slot is refilled or emptied
         bool  f_live = false;
         std::vector<VinePath> paths;
-        std::vector<float> fronts;
+        std::vector<int>      looks;
+        std::vector<float>    fronts;
     };
     std::mutex      grown_mutex;
-    GrownVineShared grown_shared[GROWN_VINE_MAX];
+    GrownVineShared grown_shared[GROWN_SLOTS];
 
     struct GrownVineDrawn{
         int     generation = -1;
         std::vector<VinePath> paths;
+        std::vector<int>      looks;
         std::vector<Spline>   splines;
         std::vector<float>    fronts;   //as last uploaded
-        Object* trunk = NULL;
+        Object* part[GROWN_LOOK_COUNT] = {};
         Object* wrap = NULL;
     };
-    GrownVineDrawn grown_drawn[GROWN_VINE_MAX];
+    GrownVineDrawn grown_drawn[GROWN_SLOTS];
     bool f_grown_vines_ready = false;
 
     void BuildGrownVines();                                 //render thread, Init: the pools
-    void StartGrownVine(const StageEvents::ArrowHit& hit);  //physics thread, at the strike
+    void StartGrowth(const StageEvents::ArrowHit& hit);     //physics thread, at the strike
+    int  TakeGrownSlot(bool f_vine);                        //physics thread
+    void AddGrownStrands(GrownVine& g, const VineGrowth& growth, int look, int species, int start,
+                         const VineField& field);
+    void AddGrownTuft(GrownVine& g, const vec3& at, const vec3& up, int seed, int start);
+    void CommitGrownVine(int slot);                         //physics thread: hand the paths over
     void StepGrownVines();                                  //physics thread, every tick
     void ReleaseGrownVine(int slot);                        //physics thread
     void ClearGrownVines();                                 //physics thread, NewGame

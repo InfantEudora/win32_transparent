@@ -2,6 +2,7 @@
 #define _ARCHER_FOLIAGE_H_
 
 #include "Stage.h"
+#include "type_vec3.h"
 
 #include <vector>
 
@@ -135,5 +136,26 @@ float FoliageOcclusion(const std::vector<StageBlock>& blocks, float x, float y,
 */
 void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<bool>& grows,
                     const FoliageParams& params, std::vector<FoliagePlant>& out);
+
+/*
+    A TUFT - the small clump an arrow leaves where it grows something (vine_plan.md section 11):
+    on the top above an underside it struck, or where it stuck in a wall or a top. A few of the
+    garden's own plants, mostly grass, now and then a low fern or a flower, spread on a disc
+    around `at` in the plane square to `up` - so on a wall it grows out sideways. Each staggered
+    by a few ticks, so the clump comes up rather than appearing whole.
+
+    Hashed on where and the seed, like the rest of the garden, and nothing here is placed against
+    the blocks: a tuft is small enough that the surface it stands on is the one it was asked for.
+    The app turns each into a pooled plant; `scale` is a multiplier on the kind's own mesh.
+*/
+struct TuftPlant{
+    int   kind = FOLIAGE_GRASS;
+    vec3  position;
+    vec3  up;                   //the plant's +Y
+    float yaw = 0.0f;           //about `up`
+    float scale = 1.0f;
+    int   delay_ticks = 0;      //after the tuft starts
+};
+void ScatterTuft(const vec3& at, const vec3& up, int seed, float radius, std::vector<TuftPlant>& out);
 
 #endif

@@ -44,7 +44,8 @@ static SplineDeformParams TrunkDeform(const Spline& spline, const VinePath& path
     if (taper > spline.GetLength() * 0.5f){
         taper = spline.GetLength() * 0.5f;
     }
-    d.taper_start_length = taper;
+    //A rooted start is buried, so it keeps its full thickness to where it comes out.
+    d.taper_start_length = path.f_rooted ? 0.0f : taper;
     d.taper_start_scale = params.tip_scale;
     d.taper_end_length = taper;
     d.taper_end_scale = params.tip_scale;
@@ -131,22 +132,18 @@ static float Signed(float u){
     return 2.0f * u - 1.0f;
 }
 
-//Is the point inside any live block? Blocks fill the slab's whole depth, so this is a 2D test.
-static bool InsideBlock(const std::vector<StageBlock>* blocks, const vec3& p){
+void ScatterVineLeaves(const Spline& spline, const VinePath& path, const VineParams& params,
+                       const std::vector<StageBlock>* blocks, std::vector<VineLeaf>& out){
     if (!blocks){
-        return false;
+        ScatterVineLeaves(spline,path,params,(const VineField*)NULL,out);
+        return;
     }
-    for (size_t i = 0; i < blocks->size(); i++){
-        const StageBlock& b = (*blocks)[i];
-        if (b.f_alive && p.x > b.Left() && p.x < b.Right() && p.y > b.Bottom() && p.y < b.Top()){
-            return true;
-        }
-    }
-    return false;
+    VineBlockField field(*blocks);
+    ScatterVineLeaves(spline,path,params,&field,out);
 }
 
 void ScatterVineLeaves(const Spline& spline, const VinePath& path, const VineParams& params,
-                       const std::vector<StageBlock>* blocks, std::vector<VineLeaf>& out){
+                       const VineField* field, std::vector<VineLeaf>& out){
     float length = spline.GetLength();
     float s_from = params.leaf_end_margin;
     float s_to = length - params.leaf_end_margin;
@@ -207,7 +204,8 @@ void ScatterVineLeaves(const Spline& spline, const VinePath& path, const VinePar
 
                 vec3 stem = stem_on_axis + out_dir * (radius * params.leaf_seat);
                 vec3 tip = stem + fwd * (params.leaf_length * scale);
-                if (InsideBlock(blocks,tip)){
+                //Buried: in a box, or in the drawn rock, whichever the field is.
+                if (field && field->Distance(tip) < 0.0f){
                     continue;
                 }
                 VineLeaf leaf;
@@ -339,6 +337,35 @@ const VineSpecies& VineSpeciesFor(int kind){
         //on whatever floor it reaches and creeps a short way along it. A branch or two.
         VineSpecies& v = table[VINE_SPECIES_VINE];
         v.name = "vine";
+        /*
+            Roots: out of an underside and down a little way, wandering hard on a short wavelength
+            - a root feels its way, it does not hang - with a fork near the tip, and quick: a
+            normal arrow grows these every time it goes into an underside, so they are seen dozens
+            of times and must never be a wait. Thin: the root tile is the placeholder octagon, 0.1
+            in radius, so 0.35 is 0.035.
+        */
+        VineSpecies& r = table[VINE_SPECIES_ROOTS];
+        r.name = "roots";
+        r.length_min = 0.30f;
+        r.length_max = 0.90f;
+        r.step = 0.04f;
+        r.point_spacing = 0.10f;
+        r.gravity = 3.0f;
+        r.wander = 3.2f;
+        r.wander_wavelength = 0.35f;
+        r.wander_depth = 0.5f;
+        r.clearance = 0.0f;
+        r.rest_length = 0.15f;
+        r.branch_min = 1;
+        r.branch_max = 2;
+        r.branch_from = 0.45f;
+        r.branch_to = 0.85f;
+        r.branch_angle_deg = 45.0f;
+        r.branch_length = 0.45f;
+        r.thickness = 0.35f;
+        r.thickness_jitter = 0.25f;
+        r.branch_thickness = 0.6f;
+        r.grow_ticks = 24;
         f_built = true;
     }
     return table[(kind >= 0 && kind < VINE_SPECIES_COUNT) ? kind : VINE_SPECIES_VINE];
@@ -388,14 +415,51 @@ float VineBlockDistance(const std::vector<StageBlock>& blocks, float x, float y)
     return best;
 }
 
-//The outward direction off the nearest block at (x, y), by central differences. Zero if the
-//field is flat there (nowhere near anything).
-static vec3 BlockNormal(const std::vector<StageBlock>& blocks, float x, float y){
+//--- What a vine grows against ---
+
+vec3 VineField::Normal(const vec3& p) const{
     const float h = 0.01f;
-    float dx = VineBlockDistance(blocks,x + h,y) - VineBlockDistance(blocks,x - h,y);
-    float dy = VineBlockDistance(blocks,x,y + h) - VineBlockDistance(blocks,x,y - h);
-    float l = sqrtf(dx * dx + dy * dy);
-    return (l > 1e-6f) ? vec3(dx / l,dy / l,0.0f) : vec3(0.0f,0.0f,0.0f);
+    float dx = Distance(vec3(p.x + h,p.y,p.z)) - Distance(vec3(p.x - h,p.y,p.z));
+    float dy = Distance(vec3(p.x,p.y + h,p.z)) - Distance(vec3(p.x,p.y - h,p.z));
+    float dz = Distance(vec3(p.x,p.y,p.z + h)) - Distance(vec3(p.x,p.y,p.z - h));
+    float l = sqrtf(dx * dx + dy * dy + dz * dz);
+    return (l > 1e-6f) ? vec3(dx / l,dy / l,dz / l) : vec3(0.0f,0.0f,0.0f);
+}
+
+float VineBlockField::Distance(const vec3& p) const{
+    return VineBlockDistance(blocks,p.x,p.y);
+}
+
+VineLevelField::VineLevelField(const std::vector<StageBlock>& blocks,
+                               const std::vector<const TerrainSurface*>& s) : surfaces(s){
+    for (const StageBlock& b : blocks){
+        if (!b.f_alive){
+            continue;
+        }
+        bool f_melted = false;
+        for (const TerrainSurface* surface : surfaces){
+            if (surface && surface->Region().Contains(b)){
+                f_melted = true;
+                break;
+            }
+        }
+        if (!f_melted){
+            boxes.push_back(b);
+        }
+    }
+}
+
+float VineLevelField::Distance(const vec3& p) const{
+    float d = VineBlockDistance(boxes,p.x,p.y);
+    for (const TerrainSurface* surface : surfaces){
+        if (surface && !surface->IsEmpty()){
+            float t = surface->Distance(p);
+            if (t < d){
+                d = t;
+            }
+        }
+    }
+    return d;
 }
 
 //Smooth value noise in [-1, 1] along t: hashed values on the integers, smoothstepped between.
@@ -414,8 +478,10 @@ static float SmoothNoise(float t, float seed, int channel){
 */
 #define VINE_Z_HOLD         1.5f    //per unit: how hard the heading is turned back toward the start's depth
 #define VINE_STUCK_STEPS    6       //this many steps in a row that barely move, and the walk gives up
+#define VINE_MARCH_STEP     0.05f   //out of the drawn rock to its surface, this far at a time...
+#define VINE_MARCH_STEPS    60      //...and at most this often: 3 units, past any belly or drip
 static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, const vec3& heading,
-                       float length, float seed, int channel, const std::vector<StageBlock>& blocks,
+                       float length, float seed, int channel, const VineField& field,
                        VineStrand& out){
     const float keep = radius + sp.clearance;
     const float step = (sp.step > 0.005f) ? sp.step : 0.005f;
@@ -449,13 +515,13 @@ static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, c
 
         vec3 move = h * step;
         vec3 next = p + move;
-        float d_here = VineBlockDistance(blocks,p.x,p.y);
-        float d_next = VineBlockDistance(blocks,next.x,next.y);
+        float d_here = field.Distance(p);
+        float d_next = field.Distance(next);
         bool f_on_floor = false;
         //Held off the blocks: a step that would come nearer than `keep` slides along the face -
         //only one coming NEARER, so a strand can always leave the face it grew from.
         if (d_next < keep && d_next < d_here){
-            vec3 n = BlockNormal(blocks,next.x,next.y);
+            vec3 n = field.Normal(next);
             if (n.length() > 0.5f){
                 float into = move.dot(n);
                 if (into < 0.0f){
@@ -472,7 +538,7 @@ static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, c
                 }
                 next = p + move;
                 //And out to `keep`, if the slide still grazes it.
-                float d = VineBlockDistance(blocks,next.x,next.y);
+                float d = field.Distance(next);
                 if (d < keep){
                     next = next + n * (keep - d);
                 }
@@ -511,8 +577,31 @@ static void WalkStrand(const VineSpecies& sp, float radius, const vec3& start, c
     out.path.up = (fabsf(heading.z) > 0.9f) ? vec3(0.0f,1.0f,0.0f) : vec3(0.0f,0.0f,1.0f);
 }
 
+vec3 VineMarchOut(const VineField& field, const vec3& p, const vec3& normal){
+    vec3 n = normal;
+    if (n.length() < 1e-6f){
+        return p;
+    }
+    n.normalize();
+    vec3 surface = p;
+    if (field.Distance(p + n * 0.02f) < 0.0f){
+        for (int i = 0; i < VINE_MARCH_STEPS; i++){
+            surface = surface + n * VINE_MARCH_STEP;
+            if (field.Distance(surface + n * 0.02f) >= 0.0f){
+                break;
+            }
+        }
+    }
+    return surface;
+}
+
 bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& anchor, const vec3& normal,
               int seed, const std::vector<StageBlock>& blocks, VineGrowth& out){
+    return GrowVine(sp,params,anchor,normal,seed,VineBlockField(blocks),out);
+}
+
+bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& anchor, const vec3& normal,
+              int seed, const VineField& field, VineGrowth& out){
     out.strands.clear();
     vec3 n = normal;
     if (n.length() < 1e-6f){
@@ -525,6 +614,12 @@ bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& ancho
     float length = sp.length_min + (sp.length_max - sp.length_min) * Hash01(0.0f,fseed,VCH_GROW_LENGTH,0);
 
     /*
+        Out to the DRAWN surface first: the strike is on the box, and where the terrain has drawn
+        a belly or a drip under it, that point is inside the rock. Marched out along the normal
+        until the field is open. Against the plain boxes it already is, and nothing moves.
+    */
+    vec3 surface = VineMarchOut(field,anchor,n);
+    /*
         The main strand. Its path begins a little INSIDE the surface, so the trunk comes out of the
         rock rather than starting on it; the walk begins just outside, heading out along the normal
         until the species bends it.
@@ -532,8 +627,9 @@ bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& ancho
     VineStrand main;
     main.path.seed = seed;
     main.path.thickness = thickness;
-    WalkStrand(sp,radius,anchor + n * 0.02f,n,length,fseed,0,blocks,main);
-    main.path.points.insert(main.path.points.begin(),anchor - n * 0.1f);
+    main.path.f_rooted = true;      //out of the rock, full thickness - see VinePath::f_rooted
+    WalkStrand(sp,radius,surface + n * 0.02f,n,length,fseed,0,field,main);
+    main.path.points.insert(main.path.points.begin(),surface - n * 0.1f);
     if (main.path.points.size() < 3){
         return false;
     }
@@ -562,9 +658,10 @@ bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& ancho
         br.s_on_parent = s_b;
         br.path.seed = seed + 1 + b;
         br.path.thickness = thickness * sp.branch_thickness;
+        br.path.f_rooted = true;    //out of its parent, as thick as it will be there
         float br_radius = radius * sp.branch_thickness;
         float br_length = length * sp.branch_length * (0.7f + 0.6f * Hash01(0.0f,fseed,VCH_BRANCH_LENGTH,b));
-        WalkStrand(sp,br_radius,at + dir * (radius * 0.5f),dir,br_length,fseed,1 + b,blocks,br);
+        WalkStrand(sp,br_radius,at + dir * (radius * 0.5f),dir,br_length,fseed,1 + b,field,br);
         //From inside the parent's trunk, like the main strand from inside the rock.
         br.path.points.insert(br.path.points.begin(),at);
         if (br.path.points.size() >= 3){
@@ -572,6 +669,46 @@ bool GrowVine(const VineSpecies& sp, const VineParams& params, const vec3& ancho
         }
     }
     return true;
+}
+
+//The channels a spray of roots draws from, clear of a single growth's.
+enum{ VCH_ROOT_COUNT = 64, VCH_ROOT_ALONG, VCH_ROOT_DEPTH, VCH_ROOT_LEAN };
+
+bool GrowRoots(const VineSpecies& sp, const VineParams& params, const vec3& anchor, const vec3& normal,
+               int seed, const VineField& field, VineGrowth& out){
+    vec3 n = normal;
+    if (n.length() < 1e-6f){
+        return false;
+    }
+    n.normalize();
+    //Along the surface: across the screen, and into it.
+    vec3 across = (fabsf(n.z) < 0.9f) ? n.cross(vec3(0.0f,0.0f,1.0f)) : vec3(1.0f,0.0f,0.0f);
+    across.normalize();
+    vec3 depth = n.cross(across);
+    float fs = (float)seed;
+    int count = 2 + (int)(Hash01(anchor.x,fs,VCH_ROOT_COUNT,0) * 3.0f);     //2..4
+    bool f_any = false;
+    for (int i = 0; i < count; i++){
+        //Spread a hand's width along the surface, each leaning a little out from the middle.
+        float along = 0.18f * Signed(Hash01(anchor.x,fs,VCH_ROOT_ALONG,i));
+        float into = 0.12f * Signed(Hash01(anchor.x,fs,VCH_ROOT_DEPTH,i));
+        float lean = 0.35f * Signed(Hash01(anchor.x,fs,VCH_ROOT_LEAN,i)) + 1.2f * along;
+        vec3 at = anchor + across * along + depth * into;
+        vec3 dir = n + across * lean;
+        VineGrowth one;
+        if (!GrowVine(sp,params,at,dir,seed * 7 + 13 * (i + 1),field,one)){
+            continue;
+        }
+        int base = (int)out.strands.size();
+        for (VineStrand& st : one.strands){
+            if (st.parent >= 0){
+                st.parent += base;
+            }
+            out.strands.push_back(st);
+        }
+        f_any = true;
+    }
+    return f_any;
 }
 
 //--- The level's vines ----------------------------------------------------------------------------

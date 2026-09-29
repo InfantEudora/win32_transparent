@@ -42,6 +42,8 @@ APP_SRCS += Puppet.cpp
 #The blockout, as terrain. The mesher itself is core/MarchingCubes.cpp and is picked up by the
 #core wildcard; this is the half that knows what a StageBlock is. See terrain_plan.md.
 APP_SRCS += Terrain.cpp
+#Its field on its own, engine-free - what the mesher samples, and what a vine grows against.
+APP_SRCS += TerrainField.cpp
 #Equipping the bow and the arrow to the hand bones, and bending the bow. See bow_plan.md.
 APP_SRCS += Bow.cpp
 #Where the ferns and flowers grow on the blockout. Engine-free, so `rules` tests it too.
@@ -119,7 +121,7 @@ include $(ROOT)/engine.mk
 rules:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
-		stage_test.cpp Stage.cpp StageEdges.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
+		stage_test.cpp Stage.cpp StageEdges.cpp TerrainField.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
 		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe
 #The wind's checks, as their own exe so they need nothing from stage_test.cpp. -O2 because the

@@ -8,6 +8,7 @@
 #include "type_quat.h"
 #include "type_vertex.h"
 #include "Stage.h"
+#include "TerrainField.h"
 
 /*
     The vines - a trunk bent along a curve, with leaves along it. See apps/archer/vine_plan.md;
@@ -46,6 +47,9 @@ struct VinePath{
     vec3  up = vec3(0.0f,1.0f,0.0f);
     int   seed = 0;                 //which leaves it grows; two vines on one path differ by this
     float thickness = 1.0f;         //on the cross-section, on top of VineParams::tile_scale
+    //Its start is buried - in the rock it grew out of, or the trunk a branch leaves - so it has
+    //no taper there: full thickness where it comes out, as a rooted stem is, rather than pinched.
+    bool  f_rooted = false;
 };
 
 struct VineParams{
@@ -154,6 +158,9 @@ void  DeclareVines(int level, std::vector<VinePath>& out);
 */
 enum VineSpeciesKind{
     VINE_SPECIES_VINE = 0,
+    //Every plant's roots, and all a normal arrow grows under a platform: short, dark and quick,
+    //wandering hard, a fork or two near the tip, no leaves (vine_plan.md section 11).
+    VINE_SPECIES_ROOTS,
     VINE_SPECIES_COUNT
 };
 
@@ -235,6 +242,41 @@ struct VineGrowth{
 int   VineGrowthSeed(const vec3& point, int arrow);
 
 /*
+    WHAT A VINE GROWS AGAINST: a signed distance, negative inside, anywhere. Two of them:
+
+      VineBlockField   the blocks' boxes, in the play plane - what the walk used first, and still
+                       right wherever the box IS the look (the blockout, the ledges, the platforms).
+      VineLevelField   the level as drawn: every box, except the blocks a terrain surface has
+                       melted, which are that surface instead - the rounded lips, the drips, the
+                       bellies under floating stones (TerrainField.h). vine_plan.md step 6.
+*/
+class VineField{
+public:
+    virtual ~VineField(){}
+    virtual float Distance(const vec3& p) const = 0;
+    //The outward direction at p, by central differences; zero where the field is flat.
+    vec3 Normal(const vec3& p) const;
+};
+
+class VineBlockField : public VineField{
+public:
+    explicit VineBlockField(const std::vector<StageBlock>& b) : blocks(b){}
+    float Distance(const vec3& p) const override;
+private:
+    const std::vector<StageBlock>& blocks;
+};
+
+class VineLevelField : public VineField{
+public:
+    //`surfaces` must outlive the field; the blocks are copied.
+    VineLevelField(const std::vector<StageBlock>& blocks, const std::vector<const TerrainSurface*>& surfaces);
+    float Distance(const vec3& p) const override;
+private:
+    std::vector<StageBlock> boxes;      //the live blocks no surface melts
+    std::vector<const TerrainSurface*> surfaces;
+};
+
+/*
     Walks a vine out of `anchor` on a surface whose outward normal is `normal` (an underside is
     (0,-1,0)), starting along the normal and bending with the species. It slides along any live
     block rather than entering it - the trunk's radius (from `params` and the species' thickness)
@@ -243,6 +285,27 @@ int   VineGrowthSeed(const vec3& point, int arrow);
 */
 bool  GrowVine(const VineSpecies& species, const VineParams& params, const vec3& anchor,
                const vec3& normal, int seed, const std::vector<StageBlock>& blocks, VineGrowth& out);
+/*
+    The same against any field. The start is first marched out along the normal to where the
+    field is open - so a vine struck into a box the terrain has drawn a belly under begins on the
+    belly, not up inside it - and its path starts a trunk's radius back in, so it comes out of the
+    rock there. Against the plain blocks nothing needs marching, and this is the version above.
+*/
+bool  GrowVine(const VineSpecies& species, const VineParams& params, const vec3& anchor,
+               const vec3& normal, int seed, const VineField& field, VineGrowth& out);
+/*
+    A spray of roots out of one strike: GrowVine with the roots species, two to four times, each
+    from a little way along the surface and leaning a little away from the rest, appended to `out`
+    (every strand's parent index kept pointing into `out`). The number, the spread and every root
+    are hashed on the seed. False if none could grow.
+*/
+bool  GrowRoots(const VineSpecies& species, const VineParams& params, const vec3& anchor,
+                const vec3& normal, int seed, const VineField& field, VineGrowth& out);
+//From p out along `normal` to where the field is open - p itself if it already is. At most 3 units.
+vec3  VineMarchOut(const VineField& field, const vec3& p, const vec3& normal);
+//ScatterVineLeaves, keeping the leaves out of any field rather than out of the blocks' boxes.
+void  ScatterVineLeaves(const Spline& spline, const VinePath& path, const VineParams& params,
+                        const VineField* field, std::vector<VineLeaf>& out);
 
 //The distance from p to the nearest live block, in the play plane (blocks fill the slab's depth);
 //negative inside one. What the walk keeps the trunk's radius clear of.
