@@ -30,7 +30,7 @@ int MusicEngine::RandomInt(int n){
 
 //--- setup ---------------------------------------------------------------------------------
 
-void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed){
+void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed, int start_section){
     score = s;
     rate = out_rate > 0 ? out_rate : 48000;
     rng = seed ? seed : 1;
@@ -42,7 +42,9 @@ void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed){
     mode = s->mode;
     pending_root = pending_mode = -1;
     params.bpm = s->bpm;
-    section = 0;
+    //Set before the beds below read it, so the section's beds are simply the ones playing from the
+    //first sample - a SECTION event would crossfade in from the first section instead.
+    section = (start_section >= 0 && start_section < (int)s->sections.size()) ? start_section : 0;
     pending_section = -1;
     section_bar = 0;
     //A reload starts from the top, so it starts playing too: a paused score is not the new one.
@@ -57,10 +59,10 @@ void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed){
     status.root_pc = root_pc;
     status.mode = mode;
     status.pending_root_pc = status.pending_mode = -1;
-    status.section = 0;
+    status.section = section;
     status.pending_section = -1;
     status.section_bar = 0;
-    status.section_bars = s->sections.empty() ? 0 : s->sections[0].bars;
+    status.section_bars = s->sections.empty() ? 0 : s->sections[section].bars;
     status.section_names.clear();
     for (const MusicSectionDef& d : s->sections) status.section_names.push_back(d.name);
 
@@ -141,13 +143,17 @@ bool MusicEngine::Mix(Play& p, float* out, int frames, int64_t block_start){
         //below the noise floor of the recordings themselves.
         const size_t k = (size_t)p.pos;
         const float t = (float)(p.pos - k);
+        //PCM16 as the file had it, to a float here - 2^-15 is exact, so these are the same floats
+        //a sample stored as floats gave, at half the memory. See MusicSample.
+        const int16_t* pcm = s.pcm.data();
+        auto at = [pcm](size_t i){ return pcm[i] * (1.0f / 32768.0f); };
         float l, r;
         if (ch == 2){
-            l = s.pcm[k * 2] + (s.pcm[k * 2 + 2] - s.pcm[k * 2]) * t;
-            r = s.pcm[k * 2 + 1] + (s.pcm[k * 2 + 3] - s.pcm[k * 2 + 1]) * t;
+            l = at(k * 2) + (at(k * 2 + 2) - at(k * 2)) * t;
+            r = at(k * 2 + 1) + (at(k * 2 + 3) - at(k * 2 + 1)) * t;
         }
         else{
-            l = r = s.pcm[k] + (s.pcm[k + 1] - s.pcm[k]) * t;
+            l = r = at(k) + (at(k + 1) - at(k)) * t;
         }
         const float g = p.gain * p.fade;
         out[i * 2] += l * g * p.pan_l;
@@ -467,6 +473,8 @@ void MusicEngine::Render(float* out, int frames){
         }
         else if (e.type == MusicEvent::PAUSE){
             f_paused = e.value > 0.5f;
+            //Now: no fade - straight to held, or straight back to full.
+            if (e.f_now) pause_pos = f_paused ? 0.0f : 1.0f;
         }
         else if (e.type == MusicEvent::AUDITION){
             audition = Play();

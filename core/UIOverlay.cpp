@@ -4,8 +4,10 @@
 #include "File.h"
 #include <string.h>
 #include <stddef.h>
-//sqrtf, for AddLine's direction. The only maths in this file that is not add and multiply.
+//sqrtf, for AddLine's direction, and fabsf for AddVignette's reach.
 #include <math.h>
+//std::min/max, for AddVignette's clamps.
+#include <algorithm>
 
 static Debugger* debug = new Debugger("UIOverlay", DEBUG_INFO);
 
@@ -57,6 +59,7 @@ bool UIOverlay::InitBuffers(){
     //GL_TRUE: the four bytes arrive in the shader as a 0..1 vec4 rather than 0..255.
     UI_ATTRIB(7,4,GL_UNSIGNED_BYTE,GL_TRUE,color)
     UI_ATTRIB(8,1,GL_FLOAT,GL_FALSE,sprite)
+    UI_ATTRIB(9,1,GL_FLOAT,GL_FALSE,soft)
     #undef UI_ATTRIB
 
     glBindVertexArray(0);
@@ -80,6 +83,7 @@ bool UIOverlay::InitBuffers(){
     UI_ATTRIB(6,1,GL_FLOAT,GL_FALSE,distance_scale)
     UI_ATTRIB(7,4,GL_UNSIGNED_BYTE,GL_TRUE,color)
     UI_ATTRIB(8,1,GL_FLOAT,GL_FALSE,sprite)
+    UI_ATTRIB(9,1,GL_FLOAT,GL_FALSE,soft)
     #undef UI_ATTRIB
 #endif
     return true;
@@ -325,6 +329,7 @@ void UIOverlay::AddQuadShaped(vec2 min, vec2 max, vec2 shape_min, vec2 shape_max
         v.outline        = outline;
         v.distance_scale = distance_scale;
         v.sprite         = sprite;
+        v.soft           = 1.0f;
         v.color          = color;
         vertices.push_back(v);
     }
@@ -589,6 +594,7 @@ void UIOverlay::AddRectOutline(vec2 min, vec2 max, float radius, float thickness
         //Explicit although the member defaults to it now: this emitter sets every field by hand,
         //and a list with one silently missing is exactly how that turned into a bug.
         v.sprite         = 0.0f;
+        v.soft           = 1.0f;
         v.distance_scale = font.distance_range_px;
         v.color          = color;
         vertices.push_back(v);
@@ -654,7 +660,57 @@ void UIOverlay::AddLine(vec2 a, vec2 b, float thickness, uint32_t color){
         v.radius         = hy;
         v.outline        = 0.0f;
         v.sprite         = 0.0f;
+        v.soft           = 1.0f;
         v.distance_scale = font.distance_range_px;
+        v.color          = color;
+        vertices.push_back(v);
+    }
+}
+
+void UIOverlay::AddVignette(vec2 centre, vec2 half_extent, float radius, float soft, uint32_t color){
+    if (!f_ready){
+        return;
+    }
+    if (soft < 1.0f){
+        soft = 1.0f;
+    }
+    /*
+        The ring's half-width. Its outer edge lands 2W out from the box, so W past the whole
+        surface (and past how far the box has been shrunk) puts that edge off screen for any
+        centre on it.
+    */
+    const float W = (float)(screen_w + screen_h) + soft + fabsf(half_extent.x) + fabsf(half_extent.y);
+    //The shader's ramp is centred on its edge; grown by half a ramp, the ramp STARTS at the box.
+    const float grow = soft * 0.5f;
+    float inner = std::min(half_extent.x,half_extent.y);
+    radius = std::max(0.0f,std::min(radius,inner));
+    vec2 half = vec2(half_extent.x + grow + W,half_extent.y + grow + W);
+    //Shrunk past zero the grown radius would outrun the box; the clamp keeps it a box (a capsule).
+    float big_radius = std::min(radius + grow + W,std::min(half.x,half.y));
+
+    const vec2 corner_pos[4] = {
+        vec2(0.0f,0.0f), vec2((float)screen_w,0.0f), vec2((float)screen_w,(float)screen_h), vec2(0.0f,(float)screen_h)
+    };
+    const int order[6] = {0,1,2, 0,2,3};
+    for (int i = 0; i < 6; i++){
+        int c = order[i];
+        ui_vertex v;
+        v.pos            = corner_pos[c];
+        v.uv             = SolidUV(font);
+        v.local          = vec2(corner_pos[c].x - centre.x,corner_pos[c].y - centre.y);
+        v.half_extent    = half;
+        v.radius         = big_radius;
+        v.outline        = W;
+        v.sprite         = 0.0f;
+        v.soft           = soft;
+        /*
+            NOT the font's range, as every other untextured quad here has. The shader takes the max
+            of the box and the solid texel's glyph term, and at the font's range that term is only a
+            few pixels inside - which is plenty for a box, whose alpha is 1 by then, and would clip
+            this ring's inside, thousands of pixels deep, to a few pixels, and darken it. Scaled up,
+            the solid texel is always the deeper of the two.
+        */
+        v.distance_scale = 1.0e6f;
         v.color          = color;
         vertices.push_back(v);
     }

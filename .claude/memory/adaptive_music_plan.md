@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: f48f1106-0612-4b9f-b48d-224679e62ba1
-  modified: 2026-09-26T19:18:25.293Z
+  modified: 2026-09-30T12:13:12.229Z
 ---
 
 2026-09-26: user wants dynamic background music for the games (archer's jungle vibe first) - ambient layers plus generated notes driven by parameters (key, instruments, tempo, suspense), with key changes on game events that can go EITHER way (brighter or darker, the game asks). Deliberately vague: "as we zone in we'll figure out what works" - propose small steps, don't over-design.
@@ -21,5 +21,9 @@ Bench BUILT 2026-09-26: apps/music (exe music_nophysics.exe), MusicEngine (pure 
 2026-09-27: Library panel + library_* MCP tools (MusicLibrary runs samplescan.exe as a subprocess - the app must NOT link decoders) and a Brightness slider (part heights C2..C6, energy-compensated re-weighting, register half-window, cut-only 500 Hz tilt; centroid 178->699 Hz, level within 2 dB). Minimised runs save apps/music/imgui.ini at a 32x32 display, squashing the dock layout - engine-level, unfixed.
 
 2026-09-27 later: Scan new / samplescan --new (measures only uncatalogued files). Score SECTIONS: top-level parts play always, per-section parts take turns, bar-quantised, beds equal-power crossfade over section_fade_s, auto after `bars`; jungle.json = canopy (original set) + undergrowth (hang drums, bass, zanka, low wind, drums, whistles), both A minor within 1 dB. music_section tool. Balance by the catalog's active_rms_db: gain ~ 10^((target - active_rms)/20).
+
+2026-09-29/30: Library Export (samples/exports.csv is the one list; `make samples` reads it); sections `"rotation": false` (menu, cave - asked for by name only); engine PAUSE (fade out, then HOLD: clock frozen, resume is sample-exact - tested offline by pause_test render pair). USER DECISIONS: apps/music is the DESIGNER, games keep their OWN git copy (`make publish GAME=archer` copies score + only named wavs; both use music/sounds/ names); sim_pause and Escape-to-title behave the same (fade out, resume where left).
+
+2026-09-30 MOVED TO CORE: core/MusicScore|MusicEngine|MusicPlayer (USE_SOUND only; samples stored PCM16, renders byte-identical to float). Archer plays it: title_music (menu) + world_music (held until first continue, horn once) on a `music` bus NOT under any level bus (level buses are hard-held by UpdateView); UpdateMusic pauses via engine fade; `music` cue action (section/stinger/key, world cues only); `cave` scope -> music_cave rows; suspense from vitals fear. archer_sound shows `music`. Later 2026-09-30: SoundSystem::SetBusPaused(bus, paused, fade_s) + UpdateFades (bus fader, then hold) - level sounds fade 1.5 s / back 0.5 s like the music; hard holds again once sim_step is used in a pause; sound_test.cpp offline checks. Archer "Music" ImGui tab beside Cues (sections, suspense Hold, brightness, key, stingers, volume, graphs); world starts in undergrowth. NEXT the user wants: asset size via OGG (engine miniaudio has MA_NO_DECODING in 3rdparty/miniaudio_config.h - would need vorbis enabled); brightness from zones.
 
 **How to apply:** tune samplescan's GuessCategory thresholds on the real library once it lands, not on synthetic tones; ask the user to listen - Claude cannot judge whether it sounds right.

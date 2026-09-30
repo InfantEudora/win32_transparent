@@ -17,9 +17,16 @@
     THREE KINDS OF THREAD TOUCH THIS, and the rule is that only one of them touches the engine.
 
       the AUDIO thread     miniaudio's mixer, calling OnRead. It owns `engine` outright.
-      the RENDER thread    the ImGui panel, and Start/Stop - which call SoundSystem, and
-                           SoundSystem has no lock of its own, so exactly one thread may.
-      MCP threads          the music_* tools, which only ever call the thread-safe half below.
+      the SOUND thread     whichever thread the app calls SoundSystem from, which has no lock
+                           of its own, so exactly one thread may: Start and Stop call it. The
+                           music bench's is the render thread (its panel); the archer's is the
+                           physics thread, and Init before that thread starts.
+      any other thread     the MCP tools, a game's cue handlers, which only ever call the
+                           thread-safe half below.
+
+    It is its own thread already, in the sense that matters: the music is rendered on the audio
+    thread, block by block, as the device asks - about a third of a percent of one core for the
+    jungle score, measured - so a game only ever posts to it and never waits on it.
 
     Everything that crosses to the audio thread goes through `mutex`: parameters are copied in and
     events queued, and the audio thread takes them with try_lock at the top of each block. It
@@ -32,8 +39,17 @@ public:
     MusicPlayer();
     ~MusicPlayer();
 
-    //RENDER THREAD. Starts playing `score` from the top, taking it over. Stops whatever was playing.
-    bool Start(SoundSystem* sound, std::shared_ptr<MusicScore> score, uint32_t seed = 1);
+    /*
+        SOUND THREAD. Starts playing `score` from the top, taking it over; stops whatever was
+        playing. `bus` is the SoundSystem bus it plays on. `section` starts it in that section
+        rather than the first, and f_held starts it PAUSED and already silent - held at its first
+        sample until a PAUSE event lets it go, when it fades in - for music that must not be heard
+        until the game says so, which a pause posted after Start could not promise: the mixer can
+        take a block in between. Two players may share one score: its samples are read, never
+        written, so a game's title music and level music hold the PCM once between them.
+    */
+    bool Start(SoundSystem* sound, std::shared_ptr<MusicScore> score, uint32_t seed = 1,
+               int bus = SOUND_BUS_MASTER, const std::string& section = "", bool f_held = false);
     void Stop();
     bool IsPlaying() const { return handle != SOUND_INVALID_HANDLE; }
 

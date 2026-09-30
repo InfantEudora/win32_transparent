@@ -1,23 +1,39 @@
 # music
 
 The home of the adaptive background music: ambient layers and generated notes that follow the
-game's key, tempo and suspense, rather than a fixed score. It is a sample library for now. It
-becomes an app - a test bench for the music player, the way `testfx` is for effects - once there
-is a player to test.
+game's key, tempo and suspense, rather than a fixed score. This app is the DESIGNER - the sample
+library, the score, and a bench to play and measure it - and the games play what it makes. The
+score, the engine and the player are core (`core/MusicScore.h`, `core/MusicEngine.h`,
+`core/MusicPlayer.h`, built with `USE_SOUND`); what lives here is the panels and the library.
+
+## Handing a score to a game
+
+```bash
+mingw32-make.exe publish GAME=archer SCORE=jungle
+```
+
+The game keeps its own copy, in git: the score goes to `apps/<game>/assets/music/<score>.json`,
+and every wav it names goes to `music/sounds/` beside it. Only the wavs the score names are
+copied; an export no part plays is an experiment, and stays here. The names are the same in both
+places (the bench's assets use the game's layout), so the copy is a plain copy with nothing
+renamed. Run it again after changing the score. It overwrites what the game has, and it leaves a
+wav the score has stopped naming for you to delete. How archer plays the score is described at
+`title_music` in `apps/archer/ApplicationArcher.h`.
 
 ## The bench
 
 ```bash
 export PATH="/c/msys64/mingw64/bin:$PATH"
 cd apps/music
-mingw32-make.exe samples            # once: exports the samples the score uses to assets/sound/*.wav
+mingw32-make.exe samples            # once: exports the samples the score uses to assets/music/sounds/*.wav
 mingw32-make.exe -j8
 ./build/music_nophysics.exe --minimized --mcp-port 8767 2>stderr.log &
 ```
 
 The score is [assets/music/jungle.json](assets/music/jungle.json): key, mode, tempo, and the
 beds, voices and stingers with their calm and tense values. Edit it and press Reload (or call
-`music_reload`). How each part behaves is described in `MusicScore.h` and `MusicEngine.h`.
+`music_reload`). How each part behaves is described in `core/MusicScore.h` and
+`core/MusicEngine.h`.
 
 Two sliders shape it. **Suspense** moves every part between its calm and tense values.
 **Brightness** runs from rumble and bass (0) to high and bright (1), with 0.5 the score as
@@ -104,8 +120,8 @@ and set its category, instrument, root and comment. **Accept guess** fills the f
 yet and leaves every other row as it is (`samplescan --new`); **Scan all** re-measures the
 whole library, which is the one to run after a threshold changes. Both keep what you typed.
 
-**Export** writes the selected file to `assets/sound/<name>.wav`, which a score names as
-`sound/<name>.wav`. The name starts as instrument and root (`kalimba_Fs3`), and **Trim** starts
+**Export** writes the selected file to `assets/music/sounds/<name>.wav`, which a score names as
+`music/sounds/<name>.wav`. The name starts as instrument and root (`kalimba_Fs3`), and **Trim** starts
 on unless samplescan found the file loopable, because a loop's seam is its first and last
 sample. Every export is recorded in `samples/exports.csv` (`name,file,trim`), and that list is
 what `make samples` rebuilds the wavs from. So an export made in the panel is one a fresh

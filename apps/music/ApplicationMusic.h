@@ -20,7 +20,7 @@
     tools do the same from outside, so an agent can tune it with the person listening. The
     "Library" panel and the library_* tools are the sample library behind the scores: what has
     been classified and how, what is new in unsorted/, and the means to audition and classify it,
-    and to export it to assets/sound as a wav a score can name. music_render writes an
+    and to export it to assets/music/sounds as a wav a score can name. music_render writes an
     offline render to apps/music/renders/, which tools/samplescan can then measure: that is how
     the agent half of the loop hears anything.
 
@@ -80,7 +80,7 @@ private:
     std::atomic<bool> f_audition_busy{false};
     std::string audition_error;         //the panel's last audition failure, under audition_mutex
 
-    //The panel's exports to assets/sound, on their own thread for the same reason: a minute-long
+    //The panel's exports to assets/music/sounds, on their own thread for the same reason: a minute-long
     //bed takes a few seconds to decode, and the panel must not stop drawing for it.
     std::thread export_thread;
     std::atomic<bool> f_export_busy{false};

@@ -65,6 +65,7 @@ flat in float v_radius;
 flat in float v_outline;
 flat in float v_distance_scale;
 flat in float v_sprite;
+flat in float v_soft;
 flat in vec4  v_color;
 
 layout (location = 0) out vec4 out_color;
@@ -89,7 +90,9 @@ void main(){
     d = mix(d,abs(d) - v_outline,step(0.001,v_outline));
 
     //One pixel of coverage across the edge. See the note above on why this needs no derivatives.
-    float alpha = clamp(0.5 - d,0.0,1.0);
+    //v_soft widens it - a vignette's fade is the same ramp, only hundreds of pixels wide - and is
+    //1 on every other quad, so this is the one-pixel ramp exactly.
+    float alpha = clamp(0.5 - d / v_soft,0.0,1.0);
 
     /*
         THE THEMED SPRITE, mixed in rather than branched to.

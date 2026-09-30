@@ -83,7 +83,7 @@ struct MusicEvent{
                                     //PAUSE: 1 pauses, 0 resumes
     int root_pc = -1;               //KEY: new root, or -1 to keep it
     int mode = -1;                  //KEY: new mode, or -1 to keep it
-    bool f_now = false;             //KEY, SECTION: skip the wait for the downbeat
+    bool f_now = false;             //KEY, SECTION: skip the wait for the downbeat. PAUSE: skip the fade
     std::string name;               //STINGER: which. SECTION: which, or empty for the next one
     std::shared_ptr<const MusicSample> sample;  //AUDITION: what to play, or null to stop
 };
@@ -129,7 +129,8 @@ struct MusicStatus{
 class MusicEngine{
 public:
     //The score must outlive the engine. Resets everything: clock, key, every playing sound.
-    void Init(const MusicScore* score, int out_rate, uint32_t seed);
+    //`start_section` is the section it opens in, by index; out of range is the first.
+    void Init(const MusicScore* score, int out_rate, uint32_t seed, int start_section = 0);
 
     void SetParams(const MusicParams& p){ params = p; }
     const MusicParams& GetParams() const { return params; }

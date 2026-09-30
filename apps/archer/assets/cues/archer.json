@@ -185,6 +185,17 @@
       "follow": { "value": "distance",
                   "gain": { "in": [4, 36], "out": [1, 0] },
                   "pan":  { "value": "dx", "in": [-24, 24], "out": [-0.6, 0.6] } }
+    },
+
+    "music_cave": {
+      "comment": "MUSIC, not sound: the score's cave section while she is in the cave (a `cave` scope, open while she is inside a cave biome - ApplicationArcher::SignalCues). A request: the music moves at its next bar line and crossfades its beds, on its own clock. The `music` action takes section (\"\" = back to the rotation), stinger, and shift / root / mode for a key; `now` skips the wait for the bar. See ApplicationArcher::SetupMusic.",
+      "begin": "cave",
+      "actions": [{ "kind": "music", "section": "cave" }]
+    },
+    "music_cave_out": {
+      "comment": "And back to the world's own section when she comes out - undergrowth, where the world's music starts (ARCHER_MUSIC_WORLD_SECTION); from there it takes turns with canopy as before. \"\" would be the next in the score's rotation, canopy.",
+      "end": "cave",
+      "actions": [{ "kind": "music", "section": "undergrowth" }]
     }
   }
 }

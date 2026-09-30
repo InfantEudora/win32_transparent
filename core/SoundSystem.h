@@ -304,9 +304,22 @@ public:
 
         A HELD BUS STAYS HELD for sounds started on it later: they are made ready and do not start
         until the bus is released, rather than playing until the next call noticed them.
+
+        WITH A FADE (`fade_seconds` > 0) the hold is not immediate: the bus fades out over that long
+        with its sounds still running, and is held once it is silent - so a waterfall dies away
+        over a pause instead of stopping dead, and is still mid-loop, at the same place, when it
+        comes back. A release with a fade fades back in from wherever the fade had got to, which
+        is also what a pause taken back halfway through does. The fade is miniaudio's fader on the
+        bus, separate from its gain, so a duck or a volume slider moving under a fade does not
+        fight it. Zero is the hard hold and hard release, exactly as without.
+
+        A fade out finishes in UpdateFades, which has to be called every pass while one runs;
+        without it the bus stays silent and unheld, its loops still going round.
     */
-    void  SetBusPaused(int bus, bool paused);
-    bool  IsBusPaused(int bus);              //this bus's own hold, not one above it
+    void  SetBusPaused(int bus, bool paused, float fade_seconds = 0.0f);
+    bool  IsBusPaused(int bus);              //this bus's own pause, fading or held; not one above it
+    //Holds every bus whose fade out has reached silence. Every pass; nearly free when none is fading.
+    void  UpdateFades();
 
     /*
         Every voice making noise, and what it is. `sounds_playing` said that something had
@@ -373,6 +386,8 @@ private:
         int parent = -1;
         float gain = 1.0f;
         bool f_held = false;                    //SetBusPaused's hold on this bus itself
+        bool f_paused = false;                  //asked to pause: held, or fading out towards it
+        bool f_fading = false;                  //paused and still fading out - not held yet
     };
     SoundBus buses[NUM_SOUND_BUSES];
     //The node a voice on `bus` attaches to: that bus, or the master for one that does not exist.

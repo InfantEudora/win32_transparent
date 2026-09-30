@@ -37,12 +37,12 @@ public:
         std::string file;                           //relative to samples/, forward slashes
         State state = NOT_SCANNED;
         std::map<std::string, std::string> fields;  //every catalog column, by header name
-        std::vector<std::string> exported_as;       //the sound/<name>.wav it is exported as, if any
+        std::vector<std::string> exported_as;       //the music/sounds/<name>.wav it is exported as, if any
         std::string Get(const std::string& column) const;
     };
 
     /*
-        One row of samples/exports.csv: library file `file` is exported as sound/<name>.wav, whole
+        One row of samples/exports.csv: library file `file` is exported as music/sounds/<name>.wav, whole
         or trimmed. That list is what `make samples` rebuilds the wavs from - they are generated and
         not in git - so an export made from the panel is recorded there, or a fresh checkout would
         have a score naming a wav nothing knows how to make.
@@ -84,7 +84,7 @@ public:
     bool Export(const std::string& file, const std::string& out_path, bool f_trim, std::string& error);
 
     /*
-        Exports a library file as sound/<name>.wav, where a score can name it, and records it in
+        Exports a library file as music/sounds/<name>.wav, where a score can name it, and records it in
         exports.csv. Blocking - well under a second for a sample, a few for a minute-long bed. A
         name another file is already exported as is refused unless f_replace, because every
         score naming that wav would quietly start playing something else. Re-exporting a file

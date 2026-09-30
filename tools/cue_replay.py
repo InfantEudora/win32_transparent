@@ -89,7 +89,16 @@ def main():
 
     # Harmless if the title is already gone; needed if the app has just started.
     call("archer_hold", {"action": "continue", "ticks": 5})
-    time.sleep(1.0)
+    # Continue fades the title to black before the world takes over (ApplicationArcher's
+    # ScreenFade), so wait for the title to have gone rather than for a fixed time. An archer
+    # without the `on_title` field is one from before the fade, where a second was plenty.
+    time.sleep(0.5)
+    for _ in range(40):
+        state = call("archer_state", {})
+        if not isinstance(state, dict) or not state.get("on_title", False):
+            break
+        time.sleep(0.25)
+    time.sleep(0.5)
     call("archer_sound", {"volume": 0})
     call("replay_trace", {"tick_starts": args.tick_starts, "detail": args.detail, "parts": False})
 

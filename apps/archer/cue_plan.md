@@ -194,6 +194,17 @@ open scopes, waiting cues and history intact, and each level's sounds play on a 
 parked. Coming back releases the bus and the level carries on from the same tick, with the
 waterfall mid-loop and a bow's creak mid-draw. A restart is what clears the rest.
 
+**The hold fades (2026-09-30).** Escape to the title, `sim_pause` and leaving for another level
+all fade the level's bus out over `ARCHER_SOUND_PAUSE_FADE_S` (1.5 s) with its sounds still running,
+then hold it once it is silent (`SoundSystem::SetBusPaused` with a fade, finished by
+`UpdateFades`). Coming back fades it in over `ARCHER_SOUND_RESUME_FADE_S` (0.5 s) from where it
+was held. The music does the same on its own clock, over the same times, so the two go down
+together. Measured live: across a 3 s `sim_pause` the waterfall moved 1.68 s through its loop and
+the world music 1.69 s. The fade is the bus's fader, separate from its gain, so ducks and the
+volume slider do not fight it. One exception: once `sim_step` is used in a pause, the holds are
+hard again until the pause ends, so a step still plays exactly one tick of sound at full level.
+`tools/sound_test.cpp` checks all of it offline.
+
 The cue system is per level because it runs on the level's clock. When there was one for the
 whole app, a switch put it on another Stage's `ticks`: a line started at the world's tick 50,000
 counted as still playing on the range until the range reached 50,000, and anything waiting fired a
@@ -424,7 +435,27 @@ reported before the solver runs), the animation markers, and the zones.
    drawing and editing; then the narrator group, ducking and subtitles.
 9. **The cutscene mode** - the level-entry get-up rebuilt as the first one.
 10. **Music as an action**: stingers and key requests from cues, suspense and brightness from
-    parameters and zones.
+    parameters and zones. **Done 2026-09-30**:
+    - **The score:** apps/music's jungle score, published to `assets/music/` by that app's
+      `make publish`.
+    - **Two players:** one plays the title's `menu` section, the other the world's music. Both
+      sit on a `music` bus that no level holds. Each pauses by fading out and holding its clock,
+      in real time, and resumes from the same place: on the title, under `sim_pause`
+      (`sim_step` does not advance it), and when another level is live.
+    - **The table's `music` action:** section, stinger, key (world cues only). `music_cave` and
+      `music_cave_out` hang off a new `cave` scope, which is open while she is inside a cave
+      biome.
+    - **Suspense:** follows her fear, between `ARCHER_MUSIC_SUSPENSE_CALM` and
+      `ARCHER_MUSIC_SUSPENSE_AFRAID`.
+    - **Tools:** `archer_sound` reports both players (`music`).
+    - **Replay:** the recording does not enter the cave, so its cues are unchanged. The trace
+      changed only because the `cave` edge was added to the state hash; with the edge kept out
+      of the hash it read `state same`.
+    - **The Music tab**, beside Cues: both players' section, state and level; sections, suspense
+      (with a Hold that takes it off the fear cue), brightness, key, stingers and the music's
+      volume; graphs of the world's suspense and level. The world starts in `undergrowth`
+      (`ARCHER_MUSIC_WORLD_SECTION`), and the cave hands back to it.
+    - **Still to do:** brightness from zones.
 
 ### The baseline (step 1)
 

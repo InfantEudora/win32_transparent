@@ -30,6 +30,9 @@
 #include "Sign.h"
 #include "SoundSystem.h"
 #include "CueSystem.h"
+#ifdef USE_SOUND
+#include "MusicPlayer.h"
+#endif
 #include "SpringHinge.h"
 
 /*
@@ -921,6 +924,47 @@ private:
 //One full breath of "click to continue", in TICKS - the title scene ticks like any other.
 #define TITLE_PULSE_TICKS           90
 
+/*
+    The fade from the title into the level - see ScreenFade. Seconds, for the same reason as the
+    sound's pause fades below: it is the person's time, and the world is not ticking through the
+    first half of it at all.
+
+    CLOSE matches the title music's fade out (the score's pause_fade_s, 1.5 s), so the picture and
+    the music go down together. HOLD is black in the level, the horn sounding, so the picture
+    opens on the hit rather than cutting to the level a frame before it can be heard.
+*/
+#define ARCHER_FADE_CLOSE_S         1.5f
+#define ARCHER_FADE_HOLD_S          0.35f
+#define ARCHER_FADE_OPEN_S          1.4f
+//The vignette's soft edge, as a share of the window's height: wide, so it reads as light going
+//rather than as an iris with a rim.
+#define ARCHER_FADE_SOFT            0.45f
+
+//--- Pausing the sound --------------------------------------------------------------------------
+//A pause - Escape, sim_pause, another level - fades the level's sounds and the music out over the
+//first and holds them, and a resume fades them back in over the second. Seconds: this is the
+//person's time, not the game's, which is exactly what has stopped.
+#define ARCHER_SOUND_PAUSE_FADE_S   1.5f
+#define ARCHER_SOUND_RESUME_FADE_S  0.5f
+
+//--- The music ----------------------------------------------------------------------------------
+//The score, as apps/music's `make publish` copies it here. See title_music / world_music.
+#define ARCHER_MUSIC_SCORE          "music/jungle.json"
+#define ARCHER_MUSIC_TITLE_SECTION  "menu"
+//Where the world's music starts, and where the cave hands back to (music_cave_out, in the table).
+#define ARCHER_MUSIC_WORLD_SECTION  "undergrowth"
+//The world's suspense from her fear (Stage::vitals, 0..1): the score's calm at rest, most of the
+//way to tense at the top of her fear. Not all the way - 1 is the score's worst, for a chase.
+#define ARCHER_MUSIC_SUSPENSE_CALM  0.2f
+#define ARCHER_MUSIC_SUSPENSE_AFRAID 0.8f
+//How much suspense has to move before it is posted again: fear moves every tick, and the music's
+//beds follow suspense over most of a second anyway.
+#define ARCHER_MUSIC_SUSPENSE_STEP  0.01f
+//The `cave` scope opens at this biome weight and closes below the second - a margin, so a step
+//back and forth on a cave's threshold cannot flip the music's section every bar.
+#define ARCHER_CAVE_ENTER_WEIGHT    0.6f
+#define ARCHER_CAVE_LEAVE_WEIGHT    0.4f
+
 //The camera trails the archer rather than being welded to them - see UpdateCamera.
 #define CAMERA_DISTANCE             26.0f
 //And the wheel moves it in and out. Proportional rather than a fixed step, so a notch feels the
@@ -1689,6 +1733,28 @@ private:
     //Frames left before the boxes follow the live hold again: a hold sent from here reaches the
     //game a tick later, and following it before then would flick the box back for a frame.
     int   ui_hold_quiet = 0;
+    /*
+        The Music tab, beside Cues: both players' state as it changes - section and bar, the key,
+        whether it is paused, held or fading, its level - and the controls to move it by hand: the
+        sections, suspense, brightness, the key, the stingers and the music's volume. RENDER THREAD.
+        Everything but the volume goes straight to a MusicPlayer, which is safe from any thread;
+        the volume is a bus gain, SoundSystem's, so it goes through `music_volume` for UpdateView.
+
+        SUSPENSE IS CUED - from her fear, every tick - so a slider moved by hand would be put back
+        on the next one. "Hold" takes it off the cue until it is let go, as the vitals' holds do.
+        Brightness and the sections are not cued continuously (a section only moves on the cave's
+        edges), so they are simply set.
+    */
+    void DrawMusicPanel();
+    int   music_panel_player = 1;                   //0 the title's, 1 the world's
+    std::atomic<bool>  f_music_suspense_held{false}; //UpdateMusicSuspense leaves it alone while set
+    std::atomic<float> music_volume{0.7f};          //the music bus's gain, set by UpdateView
+    //The world's suspense and level over the last twenty seconds, one sample every four frames.
+    static const int MUSIC_PLOT_LEN = 300;
+    float music_plot_suspense[MUSIC_PLOT_LEN] = {};
+    float music_plot_rms[MUSIC_PLOT_LEN] = {};
+    int   music_plot_at = 0;
+    int   music_plot_frame = 0;
     //Top right, over the game: her heart rate, pulsing with each beat, and her exertion. From the
     //snapshot. Render thread, from DrawOverlay while a level is live.
     void DrawVitalsHud();
@@ -2357,6 +2423,46 @@ private:
         playing too. Not in the cue log: it is the player's setting, not a cue's decision.
     */
     float sound_volume = 0.8f;
+    //sim_step has been used in this sim_pause: holds are hard until it ends. See UpdateView.
+    bool  f_sound_stepped = false;
+
+    /*
+        THE MUSIC: apps/music's score, copied here by its `make publish` (assets/music/jungle.json
+        and the wavs it names, under music/sounds/). The bench designs it; this plays it. Two players
+        share the one score and its samples:
+
+          title_music   the score's `menu` section, heard only on the title
+          world_music   the world level's, from `canopy` on; the cue table moves it (a `music`
+                        action - a section, a stinger, a key) and fear sets its suspense
+
+        Each PAUSES rather than stops when it is not the one to be heard: faded out over the score's
+        pause_fade_s, then held with its clock stopped, and faded back in from exactly there - so
+        Escape to the title and sim_pause both leave the world's music mid-phrase and come back to
+        it. That hold is the music's own (MusicEngine), in wall-clock time, and NOT the level bus's:
+        they are on `music_bus`, under the master and not under any level, because a level's bus is
+        held outright on the very pass a pause starts, which would cut the music dead instead of
+        fading it - and sim_step would play it a tick at a time.
+
+        Started in Init, before the physics thread exists; after that only posted to (MusicPlayer is
+        safe from any thread), from the physics thread - see UpdateMusic.
+    */
+#ifdef USE_SOUND
+    std::shared_ptr<MusicScore> music_score;
+    MusicPlayer title_music;
+    MusicPlayer world_music;
+#endif
+    int   music_bus = SOUND_BUS_MASTER;
+    bool  f_title_music_paused = false;
+    bool  f_world_music_paused = true;      //it starts held, silent until she first reaches the world
+    bool  f_world_music_begun = false;      //the horn plays on that first arrival only
+    float music_suspense_sent = -1.0f;
+    //Init. Loads the score and starts both players, the world's held.
+    void SetupMusic();
+    //Physics thread, every pass (UpdateView): pauses and resumes the players with the game.
+    void UpdateMusic();
+    //Physics thread, in the tick: the world's suspense from her fear.
+    void UpdateMusicSuspense();
+    bool  f_was_in_cave = false;            //the `cave` scope's edge. Per level, swapped
 
     //--- The rope ---------------------------------------------------------------------------------
     std::vector<Object*> rope_segments;         //top link first
@@ -2680,6 +2786,7 @@ private:
         bool f_was_nocked = false;
         bool f_was_kicking = false;
         bool f_was_airborne = false;
+        bool f_was_in_cave = false;
         bool arrow_in_flight[ARROW_MAX_LIVE] = {};
     };
     std::vector<ArcherLevel> parked_levels;     //one per scene that is not live
@@ -2826,6 +2933,31 @@ private:
     void UpdateTitle(InputController* input);
     //The title coming up and going down: its click rect and the panels. Physics thread.
     void EnterTitle();
+    //Whether the title is up, for archer_state - which answers on the MCP thread, where main_scene
+    //is not for reading. Set in EnterTitle and LeaveTitle.
+    std::atomic<bool> f_on_title{false};
+
+    /*
+        THE SCREEN FADE: continue closes a vignette over the title to black, the level takes over
+        while it is black, and it opens again once the horn has sounded. A cut from the title to
+        the level is one frame, and the music's fade and the horn around it are a second and a
+        half - so the picture seemed to arrive before the sound did.
+
+        Presentation only, and on the wall clock: nothing in the rules reads it, the world is not
+        ticking while it closes, and a replay starts wherever the level is when it takes over.
+
+        WRITTEN ON THE PHYSICS THREAD (UpdateTitle, EnterTitle), read on both - the render thread
+        draws it, the physics thread waits for it to close. So the two numbers are atomics, and
+        the amount is worked out from them wherever it is wanted rather than stored.
+    */
+    enum { FADE_NONE = 0, FADE_CLOSING, FADE_OPENING };
+    std::atomic<int>     fade_phase{FADE_NONE};
+    std::atomic<int64_t> fade_start_ns{0};      //steady_clock, when the phase began
+    void  StartFade(int phase);
+    //0 clear .. 1 black, eased. Any thread.
+    float FadeAmount() const;
+    //Over everything the overlay has drawn so far. Render thread, from DrawOverlay.
+    void  DrawScreenFade();
 
     //The zone she is in, at the top of the screen. Render thread, from DrawOverlay.
     void DrawZoneLabel();

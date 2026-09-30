@@ -29,6 +29,7 @@ layout (location = 5) in float a_outline;
 layout (location = 6) in float a_distance_scale;
 layout (location = 7) in vec4  a_color;             //RGBA8, normalised on the way in
 layout (location = 8) in float a_sprite;           //0 = distance field, 1 = themed sprite
+layout (location = 9) in float a_soft;             //the edge ramp's width, pixels: 1 but for AddVignette
 
 uniform vec2 screen_size;
 
@@ -48,6 +49,7 @@ flat out float v_radius;
 flat out float v_outline;
 flat out float v_distance_scale;
 flat out float v_sprite;
+flat out float v_soft;
 flat out vec4  v_color;
 
 void main(){
@@ -68,5 +70,6 @@ void main(){
     v_outline        = a_outline;
     v_distance_scale = a_distance_scale;
     v_sprite         = a_sprite;
+    v_soft           = a_soft;
     v_color          = a_color;
 }

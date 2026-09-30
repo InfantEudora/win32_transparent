@@ -7,7 +7,7 @@
                 "C:/msys64/usr/include/**"
 
             ],
-            "defines": ["USE_PHYSICS=1", "USE_IMGUI=1"],
+            "defines": ["USE_PHYSICS=1", "USE_IMGUI=1", "USE_SOUND=1" ],
             "cStandard": "c17",
             "cppStandard": "c++17",
             "intelliSenseMode": "windows-gcc-x64",

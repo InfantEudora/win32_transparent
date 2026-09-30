@@ -325,6 +325,90 @@ static void offline_checks() {
     ss.Stop(hc);
     p.bus = SOUND_BUS_MASTER;
     p.pan = 0.0f;
+
+    // A pause WITH A FADE: the scene fades out with its sound still running, is held once silent
+    // (UpdateFades), stays where it stopped, and fades back in from there. In 50 ms windows.
+    int scene_f = ss.AddBus("scene_f");
+    p.pan = -1.0f;
+    p.bus = scene_f;
+    soundhandle_t hf = ss.Play("sine", p);
+    b = render(ss, 4800);                               // 0.1 s at full
+    double full, r_unused;
+    rms(b, 2400, 2400, full, r_unused);
+    ss.SetBusPaused(scene_f, true, 0.4f);
+    b = render(ss, 9600);                               // 0.2 s into a 0.4 s fade
+    double early, late;
+    rms(b, 0, 2400, early, r_unused);
+    rms(b, 7200, 2400, late, r_unused);
+    snprintf(buf, sizeof(buf), "(full %.3f, first 50 ms %.3f, last 50 ms %.3f)", full, early, late);
+    check(early > late && late > 0.25 * full && late < 0.75 * full, "a fading pause dies away rather than stopping", buf);
+    ss.UpdateFades();
+    ss.ListVoices(voices);
+    bool f_held_early = false;
+    for (const SoundVoiceInfo& v : voices) if (v.handle == hf) f_held_early = v.f_held;
+    check(!f_held_early && ss.IsBusPaused(scene_f), "and is paused but not yet held while it fades");
+    render(ss, 12000);                                  // past the end of the fade
+    ss.UpdateFades();
+    float held_at = -1.0f;
+    bool f_held_now = false;
+    ss.ListVoices(voices);
+    for (const SoundVoiceInfo& v : voices) if (v.handle == hf){ held_at = v.position; f_held_now = v.f_held; }
+    b = render(ss, 9600);
+    double quiet;
+    rms(b, 0, 9600, quiet, r_unused);
+    float still_at = -1.0f;
+    ss.ListVoices(voices);
+    for (const SoundVoiceInfo& v : voices) if (v.handle == hf) still_at = v.position;
+    snprintf(buf, sizeof(buf), "(held at %.3fs, %.3fs 0.2 s later, L %.5f)", held_at, still_at, quiet);
+    check(f_held_now && quiet < 0.001 && v_near(held_at, 0.55f) && v_near(still_at, held_at),
+          "once silent it is held where the fade ended", buf);
+    ss.SetBusPaused(scene_f, false, 0.2f);
+    b = render(ss, 14400);                              // 0.3 s: a 0.2 s fade in, then full
+    double rising, back;
+    rms(b, 0, 2400, rising, r_unused);
+    rms(b, 12000, 2400, back, r_unused);
+    snprintf(buf, sizeof(buf), "(first 50 ms %.3f, 0.25 s in %.3f, full %.3f)", rising, back, full);
+    check(rising < 0.5 * full && fabs(back - full) < 0.02, "a fading release comes back up to full", buf);
+    ss.ListVoices(voices);
+    float resumed_at = -1.0f;
+    for (const SoundVoiceInfo& v : voices) if (v.handle == hf) resumed_at = v.position;
+    snprintf(buf, sizeof(buf), "(%.3fs, from %.3fs)", resumed_at, held_at);
+    check(v_near(resumed_at, held_at + 0.3f), "from where it was held", buf);
+
+    // Taken back halfway: a release during the fade turns round there, and never holds. A fresh
+    // sine, since the first is nearly at the end of its one second.
+    ss.Stop(hf);
+    hf = ss.Play("sine", p);
+    render(ss, 2400);
+    ss.SetBusPaused(scene_f, true, 0.4f);
+    render(ss, 4800);
+    ss.SetBusPaused(scene_f, false, 0.4f);
+    b = render(ss, 4800);
+    ss.UpdateFades();
+    double turned;
+    rms(b, 0, 4800, turned, r_unused);
+    ss.ListVoices(voices);
+    bool f_ever_held = false;
+    for (const SoundVoiceInfo& v : voices) if (v.handle == hf) f_ever_held = v.f_held;
+    snprintf(buf, sizeof(buf), "(L %.3f of %.3f)", turned, full);
+    check(!f_ever_held && turned > 0.5 * full && !ss.IsBusPaused(scene_f), "a pause taken back mid-fade turns round", buf);
+
+    // A hard pause during a soft one cuts it short: held at once.
+    ss.SetBusPaused(scene_f, true, 0.4f);
+    render(ss, 2400);
+    ss.SetBusPaused(scene_f, true, 0.0f);
+    ss.ListVoices(voices);
+    bool f_cut = false;
+    for (const SoundVoiceInfo& v : voices) if (v.handle == hf) f_cut = v.f_held;
+    check(f_cut, "a hard pause during a fade holds at once");
+    ss.SetBusPaused(scene_f, false, 0.0f);
+    b = render(ss, 2400);
+    rms(b, 480, 1920, turned, r_unused);
+    snprintf(buf, sizeof(buf), "(L %.3f of %.3f)", turned, full);
+    check(fabs(turned - full) < 0.02, "and a hard release is straight back at full", buf);
+    ss.Stop(hf);
+    p.bus = SOUND_BUS_MASTER;
+    p.pan = 0.0f;
     printf("\n");
 }
 

@@ -522,23 +522,83 @@ void SoundSystem::SetPaused(bool paused){
     SetBusPaused(SOUND_BUS_MASTER,paused);
 }
 
-void SoundSystem::SetBusPaused(int bus, bool paused){
+void SoundSystem::SetBusPaused(int bus, bool paused, float fade_seconds){
     if (!f_initialised || bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
         return;
     }
-    //Called every pass by a game keeping sound in simulated time, and almost always a no-op.
-    if (buses[bus].f_held == paused){
+    SoundBus& b = buses[bus];
+    const ma_uint64 fade_ms = fade_seconds > 0.0f ? (ma_uint64)(fade_seconds * 1000.0f + 0.5f) : 0;
+    //Called every pass by a game keeping sound in simulated time, and almost always a no-op. The
+    //one exception: a hard pause asked for while a soft one is still fading, which cuts it short.
+    if (b.f_paused == paused){
+        if (paused && b.f_fading && fade_ms == 0){
+            b.f_fading = false;
+            b.f_held = true;
+            ApplyHolds();
+        }
         return;
     }
-    buses[bus].f_held = paused;
-    ApplyHolds();
+    b.f_paused = paused;
+    if (paused){
+        if (fade_ms > 0){
+            //-1: from wherever the fader is now, so a resume taken back halfway turns round there.
+            ma_sound_group_set_fade_in_milliseconds(&b.group,-1.0f,0.0f,fade_ms);
+            b.f_fading = true;
+            return;
+        }
+        //A hard hold leaves the fader where it is: a hard release then comes back at that level.
+        b.f_held = true;
+        ApplyHolds();
+        return;
+    }
+    const bool f_was_held = b.f_held;
+    b.f_held = false;
+    b.f_fading = false;
+    if (f_was_held){
+        ApplyHolds();
+    }
+    //Back up, from wherever the fade out had got to - silence, if it finished and was held. A hard
+    //release is 1 to 1 rather than "from here to 1 at once": miniaudio's fader reports its START
+    //volume until a block has passed, so a zero-length fade from silence would be a block of it.
+    if (fade_ms > 0){
+        ma_sound_group_set_fade_in_milliseconds(&b.group,-1.0f,1.0f,fade_ms);
+    }else{
+        ma_sound_group_set_fade_in_milliseconds(&b.group,1.0f,1.0f,0);
+    }
+}
+
+void SoundSystem::UpdateFades(){
+    if (!f_initialised){
+        return;
+    }
+    bool f_changed = false;
+    for (int i = 0; i < NUM_SOUND_BUSES; i++){
+        SoundBus& b = buses[i];
+        if (!b.f_active || !b.f_fading){
+            continue;
+        }
+        /*
+            Silent: hold it. The fader is read, not timed - it runs on the audio thread's clock,
+            starting at its next block, and a timer here would hold the sounds a block or two early,
+            audibly, or late. Just short of zero rather than zero, since a linear fade's last steps
+            are far below hearing and the next block's may not land exactly on it.
+        */
+        if (ma_sound_group_get_current_fade_volume(&b.group) <= 0.0005f){
+            b.f_fading = false;
+            b.f_held = true;
+            f_changed = true;
+        }
+    }
+    if (f_changed){
+        ApplyHolds();
+    }
 }
 
 bool SoundSystem::IsBusPaused(int bus){
     if (bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
         return false;
     }
-    return buses[bus].f_held;
+    return buses[bus].f_paused;
 }
 
 bool SoundSystem::BusHeld(int bus){

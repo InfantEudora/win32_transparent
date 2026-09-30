@@ -30,7 +30,8 @@ MusicPlayer::~MusicPlayer(){
     ma_data_source_uninit(&source.base);
 }
 
-bool MusicPlayer::Start(SoundSystem* s, std::shared_ptr<MusicScore> new_score, uint32_t seed){
+bool MusicPlayer::Start(SoundSystem* s, std::shared_ptr<MusicScore> new_score, uint32_t seed,
+                        int bus, const std::string& section, bool f_held){
     Stop();
     sound = s;
     {
@@ -43,8 +44,16 @@ bool MusicPlayer::Start(SoundSystem* s, std::shared_ptr<MusicScore> new_score, u
     }
     rate = (int)sound->GetSampleRate();
 
-    //Not running yet, so the engine is still ours to set up without the lock's help.
-    engine.Init(score.get(), rate, seed);
+    //Not running yet, so the engine is still ours to set up without the lock's help - which is
+    //also what lets a section and a hold be in place before the first block is ever mixed.
+    engine.Init(score.get(), rate, seed, section.empty() ? 0 : score->SectionIndex(section));
+    if (f_held){
+        MusicEvent e;
+        e.type = MusicEvent::PAUSE;
+        e.value = 1;
+        e.f_now = true;
+        engine.Post(e);
+    }
     {
         std::lock_guard<std::mutex> lock(mutex);
         MusicParams p = params;
@@ -55,7 +64,7 @@ bool MusicPlayer::Start(SoundSystem* s, std::shared_ptr<MusicScore> new_score, u
         queue.clear();
         status = engine.Status();
     }
-    handle = sound->PlayStream((ma_data_source*)&source.base, 1.0f);
+    handle = sound->PlayStream((ma_data_source*)&source.base, 1.0f, bus);
     if (handle == SOUND_INVALID_HANDLE){
         debug->Err("Could not start the music stream\n");
         return false;

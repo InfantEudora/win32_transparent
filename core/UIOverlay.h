@@ -111,7 +111,7 @@ void UINineSliceRegions(vec2 min, vec2 max, const ui_nine_inset& inset,
                         vec2* out_min, vec2* out_max);
 
 /*
-    One corner of one quad. 52 bytes, since `sprite` joined it.
+    One corner of one quad. 56 bytes, since `soft` joined it.
 
     Compare ImGui's ImDrawVert at 20 (pos, uv, col) and core/type_vertex.h's `vertex` at 48
     (pos, normal, tangent, uv, matid). It is its own type rather than a reuse of `vertex`, which
@@ -150,6 +150,9 @@ struct ui_vertex{
         default is "a distance field", which is what every untextured primitive is.
     */
     float    sprite = 0.0f;
+    //How many pixels the edge's coverage ramp spans. 1 is every crisp shape here; only AddVignette
+    //widens it, into a soft fade. Defaulted for the reason `sprite` is.
+    float    soft = 1.0f;
     uint32_t color;             //RGBA8, see UIColor
 };
 
@@ -224,6 +227,21 @@ public:
         endpoint does not have to special-case the instant the two meet.
     */
     void AddLine(vec2 a, vec2 b, float thickness, uint32_t color);
+
+    /*
+        Darkens EVERYTHING OUTSIDE a rounded box - nothing at its edge, all of `color` `soft`
+        pixels beyond it - over the whole surface. A vignette, an iris, a fade to black: one quad.
+
+        `half_extent` may shrink PAST ZERO. At -soft on either axis there is no clear inside left
+        and the whole surface is `color`, so a caller closing an iris just keeps shrinking it and
+        needs no second rectangle to finish the job. `radius` is clamped as AddRect's is.
+
+        Drawn as a ring - an outline far wider than the screen, round a box grown by the same -
+        whose INNER edge is the box asked for. That is why it needs nothing from the shader but
+        the wider ramp: the outline already is "dark on one side of a contour", and a rounded
+        box shrunk by a distance is again a rounded box, exactly.
+    */
+    void AddVignette(vec2 centre, vec2 half_extent, float radius, float soft, uint32_t color);
 
     /*
         The nine regions of a nine-slice, each in a flat colour naming what it does.

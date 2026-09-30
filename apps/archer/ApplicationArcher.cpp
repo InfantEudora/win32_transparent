@@ -976,7 +976,7 @@ void ApplicationArcher::Init(void){
         LOADING_STEPS at the end, so adding a step and forgetting the total is a warning in the
         log rather than a bar that stops short or runs past the end.
     */
-    const int LOADING_STEPS = 15;
+    const int LOADING_STEPS = 16;
     int step = 0;
     LoadingStep(step++,LOADING_STEPS,"materials");
     BuildMaterials();
@@ -1045,6 +1045,8 @@ void ApplicationArcher::Init(void){
     SetupCamera();
     SetupInput();
     SetupSound();
+    LoadingStep(step++,LOADING_STEPS,"music");
+    SetupMusic();
     RegisterCommandHandlers();
     //LAST, because they share the character the lines above built - see the note on ArcherLevel.
     world_scene = main_scene;
@@ -6351,6 +6353,7 @@ void ApplicationArcher::DrawOverlay(void){
         DrawZoneLabel();
         DrawVitalsHud();
         DrawArrowHud();
+        DrawScreenFade();
         return;
     }
     const float w = (float)main_window->width;
@@ -6390,6 +6393,7 @@ void ApplicationArcher::DrawOverlay(void){
     float breath = 0.5f + 0.5f * cosf((float)(phase * 2.0 * 3.14159265358979));
     uint8_t alpha = (uint8_t)(140.0f + 115.0f * breath);
     overlay->AddText(text,vec2(cx,baseline),size,UIColor(242,232,204,alpha),UI_ALIGN_CENTER);
+    DrawScreenFade();
 }
 
 /*
@@ -6590,7 +6594,8 @@ void ApplicationArcher::LayoutTouchButtons(int w, int h){
     gets through on a minimised window the way every other scripted action does.
 
     Continue goes back to the level the title was entered from, by RequestActiveScene, which lands
-    at the top of the next pass. At startup that is the world, stepped once at the end of Init so
+    at the top of the next pass - once the screen fade has closed to black, which is where the
+    switch waits (see ScreenFade in the header). At startup that is the world, stepped once at the end of Init so
     its first frame is not empty.
 
     Escape or Back exits. By the flag rather than Window::Close, because this is not the thread
@@ -6603,6 +6608,20 @@ void ApplicationArcher::UpdateTitle(InputController* input){
     }
     bool f_continue = input->WasKeyReleased(INPUT_ARCHER_CONTINUE);
     bool f_exit = input->WasKeyReleased(INPUT_ARCHER_MENU);
+    /*
+        Closing: the switch waits for black, and nothing else is listened to until then - a second
+        click would only restart the close, and an Escape half way down it is too late to mean
+        "quit". The edges above are still read, so neither is left over for afterwards.
+    */
+    if (fade_phase == FADE_CLOSING){
+        if (FadeAmount() >= 1.0f){
+            Scene* back = title_return_scene ? title_return_scene : world_scene;
+            RequestActiveScene(back);
+            StartFade(FADE_OPENING);
+            debug->Info("Title screen dismissed, back to '%s'\n",back->name.c_str());
+        }
+        return;
+    }
     if (!input->IsInputLive()){
         return;
     }
@@ -6614,9 +6633,58 @@ void ApplicationArcher::UpdateTitle(InputController* input){
     if (!f_continue){
         return;
     }
-    Scene* back = title_return_scene ? title_return_scene : world_scene;
-    RequestActiveScene(back);
-    debug->Info("Title screen dismissed, back to '%s'\n",back->name.c_str());
+    //Down to black first; the pass that finds it there makes the switch, above.
+    StartFade(FADE_CLOSING);
+}
+
+void ApplicationArcher::StartFade(int phase){
+    fade_start_ns = (int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+    fade_phase = phase;
+}
+
+float ApplicationArcher::FadeAmount() const{
+    const int phase = fade_phase;
+    if (phase == FADE_NONE){
+        return 0.0f;
+    }
+    const int64_t now = (int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+    const float t = (float)((double)(now - fade_start_ns) * 1.0e-9);
+    auto smooth = [](float x){
+        x = std::max(0.0f,std::min(1.0f,x));
+        return x * x * (3.0f - 2.0f * x);
+    };
+    if (phase == FADE_CLOSING){
+        //Exactly 1 at the end rather than eased toward it: UpdateTitle waits for 1.
+        return (t >= ARCHER_FADE_CLOSE_S) ? 1.0f : smooth(t / ARCHER_FADE_CLOSE_S);
+    }
+    //Opening: black through the hold, then eased open. Left in this phase once open - it reads 0.
+    return 1.0f - smooth((t - ARCHER_FADE_HOLD_S) / ARCHER_FADE_OPEN_S);
+}
+
+/*
+    The fade, as a vignette closing on the middle of the window and opening from it. RENDER
+    THREAD, last in DrawOverlay, so it takes the title's text and the level's HUD down with the
+    picture - only core's recording badge is drawn after it, and that should stay in sight.
+
+    The shape is the window's own, a capsule the window's proportions: fully open it reaches past
+    the corners (1.42 is a little over the square root of two), so nothing is darkened at all,
+    and fully closed it has shrunk a whole soft edge past nothing, where UIOverlay::AddVignette
+    has no clear inside left and the window is black.
+*/
+void ApplicationArcher::DrawScreenFade(){
+    const float amount = FadeAmount();
+    if (amount <= 0.0f || !overlay || !main_window){
+        return;
+    }
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float soft = std::max(8.0f,h * ARCHER_FADE_SOFT);
+    const vec2 open(w * 0.5f * 1.42f,h * 0.5f * 1.42f);
+    const vec2 closed(-soft,-soft);
+    const vec2 half(open.x + (closed.x - open.x) * amount,open.y + (closed.y - open.y) * amount);
+    overlay->AddVignette(vec2(w * 0.5f,h * 0.5f),half,std::min(half.x,half.y),soft,UIColor(0,0,0,255));
 }
 
 /*
@@ -6636,6 +6704,9 @@ void ApplicationArcher::EnterTitle(){
     }
     f_title_saved_show_ui = f_show_ui;
     f_show_ui = false;
+    //Escape while the level was still opening: the title comes up clear, not half dark.
+    fade_phase = FADE_NONE;
+    f_on_title = true;
 }
 
 void ApplicationArcher::LeaveTitle(){
@@ -6644,6 +6715,7 @@ void ApplicationArcher::LeaveTitle(){
         input->SetTouchButtonRect(title_tap_button,InputController::TouchRect());
     }
     f_show_ui = f_title_saved_show_ui;
+    f_on_title = false;
 }
 
 void ApplicationArcher::SetupLights(){
@@ -6859,6 +6931,7 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(f_was_nocked,parked.f_was_nocked);
     std::swap(f_was_kicking,parked.f_was_kicking);
     std::swap(f_was_airborne,parked.f_was_airborne);
+    std::swap(f_was_in_cave,parked.f_was_in_cave);
     std::swap(arrow_in_flight,parked.arrow_in_flight);
 }
 
@@ -7498,7 +7571,7 @@ void ApplicationArcher::HashSimState(StateHash& h){
     h.Add(f_step_valid); h.Add(step_prev_rel);
     h.Add(step_prev_lead ? step_prev_lead->name : std::string());
     h.Begin("edges");
-    h.Add(f_was_nocked); h.Add(f_was_kicking); h.Add(f_was_airborne);
+    h.Add(f_was_nocked); h.Add(f_was_kicking); h.Add(f_was_airborne); h.Add(f_was_in_cave);
     h.Add(shake_trauma);
 
     h.Begin("cues");
@@ -7979,6 +8052,7 @@ void ApplicationArcher::NewGame(){
     f_was_nocked = false;
     f_was_kicking = false;
     f_was_airborne = false;
+    f_was_in_cave = false;
     f_step_valid = false;
     step_prev_rel = 0.0f;       //inert while f_step_valid is false, but stale is stale
     step_prev_lead = NULL;
@@ -8114,25 +8188,49 @@ void ApplicationArcher::UpdateView(void){
         held for as long as it is parked, and the world's waterfall is where she left it when she
         comes back from the range. The title's bus plays only on the title. Every hold is a no-op
         unless it changed, so this is cheap on every pass.
+
+        WITH A FADE: a pause - Escape to the title, sim_pause, leaving for another level - fades
+        the level's sounds out over ARCHER_SOUND_PAUSE_FADE_S and holds them once they are silent,
+        and coming back fades them in over ARCHER_SOUND_RESUME_FADE_S from where they were held; the
+        music does the same on its own (UpdateMusic), over the same times. Except while STEPPING:
+        once sim_step has been used in a pause, the holds are hard again until the pause ends, so a
+        step still lets out exactly one tick of sound at full level - which is the point of stepping
+        sound at all.
     */
     if (soundsystem){
+        const bool f_sim_paused = main_scene->IsPhysicsPaused();
+        if (!f_sim_paused){
+            f_sound_stepped = false;
+        }else if (main_scene->IsTickingThisPass()){
+            f_sound_stepped = true;
+        }
         //A scene whose bus could not be made plays on the master, and must not hold it: holding
         //the master is holding every scene.
         auto hold = [this](int bus, bool f_held){
             if (bus != SOUND_BUS_MASTER){
-                soundsystem->SetBusPaused(bus,f_held);
+                float fade = f_sound_stepped ? 0.0f : (f_held ? ARCHER_SOUND_PAUSE_FADE_S : ARCHER_SOUND_RESUME_FADE_S);
+                soundsystem->SetBusPaused(bus,f_held,fade);
             }
         };
         const bool f_title = (main_scene == title_scene);
-        hold(level_bus,f_title || (main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass()));
+        hold(level_bus,f_title || (f_sim_paused && !main_scene->IsTickingThisPass()));
         for (const ArcherLevel& parked : parked_levels){
             hold(parked.level_bus,true);
         }
         hold(title_bus,!f_title);
+        //A fade out holds its bus once it is silent - here, once a pass.
+        soundsystem->UpdateFades();
+        //The music is on a bus none of these hold: it pauses by fading, not by stopping dead.
+        UpdateMusic();
         //The panel's volume is the master bus, so it turns down what is already playing too. On
         //every pass, so the slider answers while paused; only when it moved.
         if (soundsystem->GetBusGain(SOUND_BUS_MASTER) != sound_volume){
             soundsystem->SetBusGain(SOUND_BUS_MASTER,sound_volume);
+        }
+        //The music's own, under the master - the Music panel's slider.
+        const float music_gain = music_volume;
+        if (music_bus != SOUND_BUS_MASTER && soundsystem->GetBusGain(music_bus) != music_gain){
+            soundsystem->SetBusGain(music_bus,music_gain);
         }
     }
 #endif
@@ -8528,6 +8626,180 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     freezes everything it was playing, which is what parking a level and putting the title up do
     to the picture - see UpdateView. The master stays the player's volume over all of them.
 */
+/*
+    The music - see title_music and world_music. Init, right after SetupSound, so the title's music
+    starts under the rest of the loading screen.
+
+    The score is loaded whole here, every sample it names (67 MB of PCM16 for the jungle), on this
+    thread: Init is the one place nothing else is running, and the loading bar is showing. A score
+    that fails to load is a warning and a silent game, never a failure to start.
+*/
+void ApplicationArcher::SetupMusic(){
+#ifdef USE_SOUND
+    if (!soundsystem || !soundsystem->f_initialised){
+        return;
+    }
+    auto score = std::make_shared<MusicScore>();
+    std::string error;
+    if (!LoadMusicScore(ARCHER_MUSIC_SCORE,*score,error)){
+        debug->Warn("Music: %s - playing without it\n",error.c_str());
+        return;
+    }
+    music_score = score;
+    int bus = soundsystem->AddBus("music");
+    music_bus = (bus >= 0) ? bus : SOUND_BUS_MASTER;
+    if (music_bus != SOUND_BUS_MASTER){
+        soundsystem->SetBusGain(music_bus,music_volume);
+    }
+
+    MusicParams params;
+    params.suspense = ARCHER_MUSIC_SUSPENSE_CALM;
+    //The same fades as the level's sounds (UpdateView), so a pause takes the waterfall and the
+    //music down together.
+    params.pause_fade_s = ARCHER_SOUND_PAUSE_FADE_S;
+    params.resume_fade_s = ARCHER_SOUND_RESUME_FADE_S;
+    title_music.SetParams(params);
+    world_music.SetParams(params);
+    //Their own seeds, so the two are not the same notes a section apart.
+    title_music.Start(soundsystem,score,1,music_bus,ARCHER_MUSIC_TITLE_SECTION,false);
+    world_music.Start(soundsystem,score,2,music_bus,ARCHER_MUSIC_WORLD_SECTION,true);
+    f_title_music_paused = false;
+    f_world_music_paused = true;
+    music_suspense_sent = ARCHER_MUSIC_SUSPENSE_CALM;
+
+    /*
+        The table's `music` action, on the WORLD's cues only - the music is the world's, and a
+        range with no music of its own logs its music rows as "no handler" rather than steering
+        music it is not playing. Any of, in one action:
+          section  a section by name, or "" for the next in the score's rotation - `now` skips
+                   the wait for the bar line
+          stinger  one of the score's stingers
+          shift    a key change, in semitones; or `root` ("E") and/or `mode` ("dorian"). `now` again
+        Requests only: the music takes a section or a key at its next bar line, on its own clock, so
+        what the cue log records ("act") is the request, which is what replays.
+    */
+    cues->SetActionHandler("music",[this](const CueAction& a){
+        const json& p = a.params;
+        auto str = [&p](const char* key, std::string& out) -> bool {
+            auto it = p.find(key);
+            if (it == p.end() || !it->is_string()){
+                return false;
+            }
+            out = it->get<std::string>();
+            return true;
+        };
+        auto it_now = p.find("now");
+        const bool f_now = it_now != p.end() && it_now->is_boolean() && it_now->get<bool>();
+        std::string name;
+        if (str("section",name)){
+            if (!name.empty() && music_score->SectionIndex(name) < 0){
+                debug->Warn("Cue '%s': the music has no section '%s'\n",a.cue.c_str(),name.c_str());
+            }else{
+                MusicEvent e;
+                e.type = MusicEvent::SECTION;
+                e.name = name;
+                e.f_now = f_now;
+                world_music.Post(e);
+            }
+        }
+        if (str("stinger",name)){
+            MusicEvent e;
+            e.type = MusicEvent::STINGER;
+            e.name = name;
+            world_music.Post(e);
+        }
+        MusicEvent key;
+        key.type = MusicEvent::KEY;
+        key.f_now = f_now;
+        if (str("root",name)){
+            key.root_pc = MusicPitchClassFromName(name);
+        }
+        auto it_shift = p.find("shift");
+        if (it_shift != p.end() && it_shift->is_number_integer()){
+            int from = (key.root_pc >= 0) ? key.root_pc : world_music.GetStatus().root_pc;
+            key.root_pc = ((from + it_shift->get<int>()) % 12 + 12) % 12;
+        }
+        if (str("mode",name)){
+            key.mode = MusicModeFromName(name);
+        }
+        if (key.root_pc >= 0 || key.mode >= 0){
+            world_music.Post(key);
+        }
+    });
+    debug->Info("Music: '%s', %zu samples, on the title's '%s' section\n",score->name.c_str(),
+                score->samples.size(),ARCHER_MUSIC_TITLE_SECTION);
+#endif
+}
+
+/*
+    Which music is heard - PHYSICS THREAD, every pass, from UpdateView. The title's plays on the
+    title; the world's plays in the world while the game runs. Anything else pauses it: Escape to
+    the title, sim_pause (stepping or not - the music is in wall-clock time and does not step), the
+    range or another level being live. A pause fades out and holds, and a resume fades back in to
+    where it was held (MusicEngine). Posted on a change only.
+*/
+void ApplicationArcher::UpdateMusic(){
+#ifdef USE_SOUND
+    if (!music_score){
+        return;
+    }
+    auto pause = [](MusicPlayer& player, bool f_paused){
+        MusicEvent e;
+        e.type = MusicEvent::PAUSE;
+        e.value = f_paused ? 1.0f : 0.0f;
+        player.Post(e);
+    };
+    const bool f_title = (main_scene == title_scene);
+    //Continue fades the title's music out with the picture, rather than when the level arrives.
+    const bool f_title_paused = !f_title || (fade_phase == FADE_CLOSING);
+    const bool f_world_paused = f_title || main_scene != world_scene || main_scene->IsPhysicsPaused();
+    if (f_title_paused != f_title_music_paused){
+        pause(title_music,f_title_paused);
+        f_title_music_paused = f_title_paused;
+    }
+    if (f_world_paused != f_world_music_paused){
+        //Her first arrival in the world is the game starting: a horn, once. Posted before the
+        //resume, so it comes in with the music as it fades up rather than over silence.
+        if (!f_world_paused && !f_world_music_begun){
+            MusicEvent horn;
+            horn.type = MusicEvent::STINGER;
+            horn.name = "horn";
+            world_music.Post(horn);
+            f_world_music_begun = true;
+        }
+        pause(world_music,f_world_paused);
+        f_world_music_paused = f_world_paused;
+    }
+#endif
+}
+
+/*
+    The world's suspense, from her fear of the drop she is near (Stage::vitals) - IN THE TICK, from
+    SignalCues, since fear only moves when the game does. Presentation: nothing reads it back.
+    Only the world's, and only posted when it has moved enough to matter.
+*/
+void ApplicationArcher::UpdateMusicSuspense(){
+#ifdef USE_SOUND
+    if (!music_score || main_scene != world_scene){
+        return;
+    }
+    //Held on the Music panel: the hand's value stands, and the cue picks up again when let go.
+    if (f_music_suspense_held){
+        music_suspense_sent = -1.0f;
+        return;
+    }
+    float fear = std::max(0.0f,std::min(1.0f,stage.vitals.fear));
+    float suspense = ARCHER_MUSIC_SUSPENSE_CALM + (ARCHER_MUSIC_SUSPENSE_AFRAID - ARCHER_MUSIC_SUSPENSE_CALM) * fear;
+    if (fabsf(suspense - music_suspense_sent) < ARCHER_MUSIC_SUSPENSE_STEP){
+        return;
+    }
+    MusicParams params = world_music.GetParams();
+    params.suspense = suspense;
+    world_music.SetParams(params);
+    music_suspense_sent = suspense;
+#endif
+}
+
 void ApplicationArcher::SetupSound(){
 #ifdef USE_SOUND
     soundsystem = new SoundSystem();
@@ -8695,6 +8967,7 @@ void ApplicationArcher::PollCueTable(){
       signal `footstep`    foot, speed, x (SignalFootsteps)
       signal `breath_in`, `breath_out`   exertion, fear (SignalBody)
       signal `heartbeat`   pound (how loud it should be, 0..1), fear, exertion, bpm (SignalBody)
+      scope `cave`         x - open while she is inside a cave biome
 */
 void ApplicationArcher::SignalCues(const StageEvents& events){
     bool f_nocked = stage.IsNocked();
@@ -8824,6 +9097,23 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
             cues->EndScope("waterfall",i);
         }
     }
+
+    /*
+        The `cave` scope: open while she is inside a cave biome - what the music's cave section
+        hangs off (assets/cues/archer.json, `music_cave`). By the biome's WEIGHT, which fades from
+        0 at a box's edge to 1 inside it, with a margin between opening and closing so a step back
+        and forth on the threshold cannot flip the section every bar.
+    */
+    float cave_weight = 0.0f;
+    bool f_cave = BiomeAt(&stage.biomes,stage.pos.x,stage.pos.y,&cave_weight) == BIOME_CAVE;
+    bool f_in_cave = f_cave && cave_weight >= (f_was_in_cave ? ARCHER_CAVE_LEAVE_WEIGHT : ARCHER_CAVE_ENTER_WEIGHT);
+    if (f_in_cave && !f_was_in_cave){
+        cues->BeginScope("cave",0,CuePayload().Set("x",stage.pos.x));
+    }else if (!f_in_cave && f_was_in_cave){
+        cues->EndScope("cave");
+    }
+    f_was_in_cave = f_in_cave;
+    UpdateMusicSuspense();
 
     //The level's strikes. The props' come from ResolveArrowsAgainstProps, which finds them.
     for (size_t i = 0; i < events.arrow_hits.size(); i++){
@@ -12207,6 +12497,10 @@ json ApplicationArcher::BuildStateJson(){
         {"archery_last_points",s.archery_last_points},
         //Kicks landed on straw men this level - one point each - and each straw man's swing.
         {"kick_score",s.kick_score},
+        //The title is up (continue has not landed yet), and the screen fade, 0 clear .. 1 black.
+        //Not the snapshot's: the title does not tick the level, so a snapshot would not show it.
+        {"on_title",f_on_title.load()},
+        {"fade",FadeAmount()},
         {"strawmen",strawmen}
     };
     return result;
@@ -12954,7 +13248,9 @@ void ApplicationArcher::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("archer_sound",
         "The master volume, and every sound playing as of the last tick: name, bus, gain, pitch, "
         "pan, how far in and how long. Pass 'volume' to set the master (0..1, the panel's slider) - "
-        "0 to replay recordings silently at someone's desk; cue_log is unaffected by it.",
+        "0 to replay recordings silently at someone's desk; cue_log is unaffected by it. `music` "
+        "is the two music players, title and world: section, their own clock (time_s, which a "
+        "pause holds still), key, suspense, and paused / held (faded out and stopped) / pause_gain.",
         json{
             {"type","object"},
             {"properties", {
@@ -12984,7 +13280,30 @@ void ApplicationArcher::RegisterMCPTools(){
                                        {"position",v.position}, {"length",v.length},
                                        {"looping",v.f_looping}, {"keep",v.f_keep}, {"held",v.f_held} });
             }
-            return json{ {"volume",s.sound_volume}, {"sounds_playing",s.sounds_playing}, {"voices",voices} };
+            json j{ {"volume",s.sound_volume}, {"sounds_playing",s.sounds_playing}, {"voices",voices} };
+#ifdef USE_SOUND
+            //The two music players, read straight from them - MusicPlayer::GetStatus is safe from
+            //any thread. `time_s` is each one's OWN clock, which a pause holds still.
+            if (music_score){
+                auto player_json = [](MusicPlayer& p){
+                    MusicStatus st = p.GetStatus();
+                    std::string section = (st.section >= 0 && st.section < (int)st.section_names.size())
+                                          ? st.section_names[st.section] : std::string();
+                    json m{ {"section",section}, {"time_s",st.time_s}, {"bar",st.bar},
+                            {"key",MusicPitchClassName(st.root_pc) + " " + MusicModeName(st.mode)},
+                            {"suspense",p.GetParams().suspense},
+                            {"paused",st.f_paused}, {"held",st.f_held}, {"pause_gain",st.pause_gain},
+                            {"rms_db",st.rms_db}, {"notes_total",st.notes_total} };
+                    if (st.pending_section != -1){
+                        m["pending_section"] = (st.pending_section >= 0 && st.pending_section < (int)st.section_names.size())
+                                               ? st.section_names[st.pending_section] : std::string("next");
+                    }
+                    return m;
+                };
+                j["music"] = json{ {"title",player_json(title_music)}, {"world",player_json(world_music)} };
+            }
+#endif
+            return j;
         });
 
     MCPServer::Get()->RegisterTool("archer_camera",
@@ -13991,6 +14310,203 @@ void ApplicationArcher::DrawVitalsPanel(){
     }
 }
 
+/*
+    See the declaration. RENDER THREAD. Reads the players with GetStatus/GetParams and moves them with
+    Post/SetParams, all of which MusicPlayer takes from any thread; it never touches SoundSystem.
+*/
+void ApplicationArcher::DrawMusicPanel(){
+    //Docked as the Cues panel is, and for the same reason - see DrawCuePanel.
+    ImGuiWindow* archer_window = ImGui::FindWindowByName("Archer");
+    ImGuiWindow* music_window = ImGui::FindWindowByName("Music");
+    bool f_misplaced = !music_window || (music_window->DockId == 0 && music_window->Size.x < 120.0f);
+    if (f_misplaced && archer_window && archer_window->DockId != 0){
+        ImGui::SetNextWindowDockID(archer_window->DockId,ImGuiCond_Always);
+    }
+    ImGui::SetNextWindowSize(ImVec2(380.0f,560.0f),ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Music")){
+        ImGui::End();
+        return;
+    }
+#ifdef USE_SOUND
+    if (!music_score){
+        ImGui::TextWrapped("No music: %s did not load, or there is no sound device. See the log.",ARCHER_MUSIC_SCORE);
+        ImGui::End();
+        return;
+    }
+    const ImVec4 amber(0.95f,0.8f,0.35f,1.0f), blue(0.5f,0.8f,1.0f,1.0f), grey(0.6f,0.6f,0.6f,1.0f);
+    ImGui::TextDisabled("%s - '%s', %zu samples",ARCHER_MUSIC_SCORE,music_score->name.c_str(),music_score->samples.size());
+    float volume = music_volume;
+    ImGui::SetNextItemWidth(-90.0f);
+    if (ImGui::SliderFloat("Volume",&volume,0.0f,1.0f,"%.2f")){
+        music_volume = volume;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The music bus, under the master volume");
+
+    //--- both players, at a glance ------------------------------------------------------------
+    MusicPlayer* players[2] = { &title_music, &world_music };
+    const char* player_names[2] = { "Title", "World" };
+    auto section_name = [](const MusicStatus& st, int s) -> std::string {
+        if (s == -2) return "next";
+        return (s >= 0 && s < (int)st.section_names.size()) ? st.section_names[s] : std::string("-");
+    };
+    auto state_line = [&](const MusicStatus& st){
+        if (st.f_held) ImGui::TextColored(grey,"held at %.1f s",st.time_s);
+        else if (st.f_paused) ImGui::TextColored(amber,"fading out %.0f%%",st.pause_gain * 100.0f);
+        else if (st.pause_gain < 1.0f) ImGui::TextColored(blue,"fading in %.0f%%",st.pause_gain * 100.0f);
+        else ImGui::Text("playing, %.1f s",st.time_s);
+    };
+    if (ImGui::BeginTable("music_players",4,ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp)){
+        ImGui::TableSetupColumn("");
+        ImGui::TableSetupColumn("section");
+        ImGui::TableSetupColumn("state");
+        ImGui::TableSetupColumn("level");
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < 2; i++){
+            MusicStatus st = players[i]->GetStatus();
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            if (ImGui::Selectable(player_names[i],music_panel_player == i,ImGuiSelectableFlags_SpanAllColumns)){
+                music_panel_player = i;
+            }
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%s",section_name(st,st.section).c_str());
+            if (st.pending_section != -1){
+                ImGui::SameLine();
+                ImGui::TextColored(blue,"-> %s",section_name(st,st.pending_section).c_str());
+            }
+            ImGui::TableSetColumnIndex(2);
+            state_line(st);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%.0f dB",st.rms_db);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text,ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Click a row to steer that player.");
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+
+    //--- the one being steered -----------------------------------------------------------------
+    MusicPlayer& player = *players[music_panel_player];
+    const MusicStatus st = player.GetStatus();
+    MusicParams params = player.GetParams();
+    ImGui::Text("%s: key %s %s   bar %d beat %d",player_names[music_panel_player],
+                MusicPitchClassName(st.root_pc).c_str(),MusicModeName(st.mode),st.bar + 1,st.beat + 1);
+    if (st.pending_root_pc >= 0 || st.pending_mode >= 0){
+        ImGui::SameLine();
+        ImGui::TextColored(blue,"-> %s %s at the bar",
+                           MusicPitchClassName(st.pending_root_pc >= 0 ? st.pending_root_pc : st.root_pc).c_str(),
+                           MusicModeName(st.pending_mode >= 0 ? st.pending_mode : st.mode));
+    }
+
+    //Sections: the one playing highlighted; a click moves at the next bar line, as a cue would.
+    if (!st.section_names.empty()){
+        const MusicSectionDef& def = music_score->sections[std::max(0,std::min(st.section,(int)music_score->sections.size() - 1))];
+        if (st.section_bars > 0) ImGui::Text("Section %s, bar %d of %d",def.name.c_str(),st.section_bar + 1,st.section_bars);
+        else ImGui::Text("Section %s, bar %d - holds until asked",def.name.c_str(),st.section_bar + 1);
+        MusicEvent se;
+        se.type = MusicEvent::SECTION;
+        for (size_t i = 0; i < st.section_names.size(); i++){
+            if (i) ImGui::SameLine();
+            const bool f_on = ((int)i == st.section);
+            if (f_on) ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0.25f,0.45f,0.25f,1.0f));
+            if (ImGui::Button(st.section_names[i].c_str())){
+                se.name = st.section_names[i];
+                player.Post(se);
+            }
+            if (f_on) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered() && !music_score->sections[i].f_rotation){
+                ImGui::SetTooltip("Asked for by name only - the rotation never moves into it");
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Next")){
+            se.name.clear();
+            player.Post(se);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every section change waits for the next bar line");
+    }
+
+    //Suspense: cued from her fear on the world's player, so held to be set by hand.
+    const bool f_world = (music_panel_player == 1);
+    bool f_held = f_music_suspense_held;
+    if (f_world){
+        if (ImGui::Checkbox("Hold",&f_held)){
+            f_music_suspense_held = f_held;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take suspense off its cue (her fear) to set it by hand");
+        ImGui::SameLine();
+    }
+    bool f_changed = false;
+    ImGui::BeginDisabled(f_world && !f_held);
+    ImGui::SetNextItemWidth(-90.0f);
+    f_changed |= ImGui::SliderFloat("Suspense",&params.suspense,0.0f,1.0f,"%.2f");
+    ImGui::EndDisabled();
+    if (f_world && !f_held){
+        ImGui::TextDisabled("  cued: fear %.2f -> %.2f .. %.2f",stage.vitals.fear,ARCHER_MUSIC_SUSPENSE_CALM,ARCHER_MUSIC_SUSPENSE_AFRAID);
+    }
+    ImGui::SetNextItemWidth(-90.0f);
+    f_changed |= ImGui::SliderFloat("Brightness",&params.brightness,0.0f,1.0f,"%.2f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 rumble and bass, 1 high and bright, 0.5 as scored");
+    ImGui::SetNextItemWidth(-90.0f);
+    f_changed |= ImGui::SliderFloat("Beds",&params.bed_gain,0.0f,2.0f,"%.2f");
+    ImGui::SetNextItemWidth(-90.0f);
+    f_changed |= ImGui::SliderFloat("Voices",&params.voice_gain,0.0f,2.0f,"%.2f");
+    if (f_changed){
+        player.SetParams(params);
+    }
+
+    //Key: a fifth either way, at the next bar - the moves a cue's `shift` makes.
+    MusicEvent ke;
+    ke.type = MusicEvent::KEY;
+    if (ImGui::Button("Up a 5th")){ ke.root_pc = (st.root_pc + 7) % 12; player.Post(ke); }
+    ImGui::SameLine();
+    if (ImGui::Button("Down a 5th")){ ke.root_pc = (st.root_pc + 5) % 12; player.Post(ke); }
+    ImGui::SameLine();
+    if (ImGui::Button("Score's key")){ ke.root_pc = music_score->root_pc; ke.mode = music_score->mode; player.Post(ke); }
+
+    //Stingers, as the table's `music` action fires them.
+    if (!music_score->stingers.empty()){
+        ImGui::Text("Stingers");
+        MusicEvent te;
+        te.type = MusicEvent::STINGER;
+        ImGui::PushID("stingers");
+        for (size_t i = 0; i < music_score->stingers.size(); i++){
+            if (i % 5) ImGui::SameLine();
+            if (ImGui::Button(music_score->stingers[i].name.c_str())){
+                te.name = music_score->stingers[i].name;
+                player.Post(te);
+            }
+        }
+        ImGui::PopID();
+    }
+
+    //--- the world's last twenty seconds --------------------------------------------------------
+    MusicStatus world = world_music.GetStatus();
+    if (++music_plot_frame >= 4){
+        music_plot_frame = 0;
+        music_plot_suspense[music_plot_at] = world_music.GetParams().suspense;
+        music_plot_rms[music_plot_at] = std::max(-60.0f,world.rms_db);
+        music_plot_at = (music_plot_at + 1) % MUSIC_PLOT_LEN;
+    }
+    ImGui::Separator();
+    ImGui::PlotLines("##suspense",music_plot_suspense,MUSIC_PLOT_LEN,music_plot_at,"world suspense",0.0f,1.0f,ImVec2(-1.0f,50.0f));
+    ImGui::PlotLines("##rms",music_plot_rms,MUSIC_PLOT_LEN,music_plot_at,"world level, dB",-60.0f,0.0f,ImVec2(-1.0f,50.0f));
+
+    //What it is playing: the newest notes, top first.
+    if (ImGui::CollapsingHeader("Notes")){
+        const MusicStatus& shown = st;
+        for (int i = (int)shown.recent.size() - 1; i >= 0 && i >= (int)shown.recent.size() - 10; i--){
+            const MusicNoteLog& n = shown.recent[i];
+            ImGui::Text("%7.2f s  %-14s %s%s",n.time_s,n.voice.c_str(),MusicNoteName(n.midi).c_str(),n.f_tension ? "  (tension)" : "");
+        }
+    }
+#else
+    ImGui::TextWrapped("This build has no sound.");
+#endif
+    ImGui::End();
+}
+
 void ApplicationArcher::DrawImGuiUI(void){
     //Before the dockspace, so the dock is laid out under the bar rather than behind it.
     RenderDebugMenuBar();
@@ -14554,6 +15070,7 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::End();
     //After the Archer window, so the first frame can find the node it docks beside.
     DrawCuePanel();
+    DrawMusicPanel();
     DrawCharacterPanel();
 }
 

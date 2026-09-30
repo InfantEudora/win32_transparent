@@ -77,6 +77,20 @@ What would make it read as a cave, roughly in order of what it costs:
 - **Cobwebs and roots** in the upper corners; roots through the roof are already possible with
   the vine arrow's root growth.
 
+## Field of vision
+
+Agreed 2026-09-30 as a step before the lighting: a vignette that narrows by place, then line of
+sight from her eye against the blocks (boxes, so the visible region is cheap), as one looks-only
+mask. Kept apart from light: light says what is lit, the mask what she can know about.
+
+- **Built: the vignette itself.** `UIOverlay::AddVignette` darkens everything outside a rounded
+  box with a soft edge, and can close past nothing to full black. Its first use is archer's
+  title fade (`ScreenFade` in ApplicationArcher.h): continue closes it to black with the title
+  music, the level takes over while it is black, and it opens after the horn.
+- **Next: the cave's.** A vision size per biome, read at her position through `BiomeAt` and
+  eased, drawn first in DrawOverlay (under the HUD) rather than last (over it) as the fade is.
+  It is on the UI side of the frame, so `screenshot include_ui:false` does not show it.
+
 ## For the lighting
 
 - The sun is nearly overhead, leaning left, so the roof shades the floor. **The cool fill light

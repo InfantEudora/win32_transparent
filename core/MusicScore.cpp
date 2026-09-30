@@ -145,11 +145,7 @@ bool LoadMusicSampleFile(const std::string& path, const std::string& name, Music
     out.name = asset;
     out.frames = data_len / (2 * out.channels);
     out.pcm.resize(out.frames * out.channels);
-    for (size_t i = 0; i < out.pcm.size(); i++){
-        int16_t s;
-        memcpy(&s, bytes.data() + data_at + i * 2, 2);
-        out.pcm[i] = s / 32768.0f;
-    }
+    memcpy(out.pcm.data(), bytes.data() + data_at, out.pcm.size() * 2);
 
     /*
         How bright it is, as a frequency: the zero-crossing rate of the first channel, halved.
@@ -160,7 +156,7 @@ bool LoadMusicSampleFile(const std::string& path, const std::string& name, Music
     size_t crossings = 0, counted = 0;
     float prev = 0;
     for (size_t f = 0; f < out.frames; f++){
-        const float v = out.pcm[f * out.channels];
+        const float v = out.pcm[f * out.channels] / 32768.0f;
         if (std::fabs(v) < 0.001f) continue;
         if ((v > 0) != (prev > 0) && counted > 0) crossings++;
         prev = v;
@@ -175,7 +171,7 @@ namespace {
 bool LoadWav(const std::string& asset, MusicSample& out, std::string& error){
     std::string path;
     if (!ResolveAssetPath(asset.c_str(), path)){
-        error = "no such sample: " + asset + " (run `make samples` in apps/music?)";
+        error = "no such sample: " + asset + " (the music bench exports them - apps/music/readme.md)";
         return false;
     }
     return LoadMusicSampleFile(path, asset, out, error);

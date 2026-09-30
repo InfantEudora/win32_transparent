@@ -430,7 +430,7 @@ bool MusicLibrary::ExportToSound(const std::string& file, const std::string& nam
         }
         for (const ExportDef& d : exports){
             if (d.name == name && d.file != file && !f_replace){
-                error = "sound/" + name + ".wav is already " + d.file + " - pick another name, or replace it";
+                error = "music/sounds/" + name + ".wav is already " + d.file + " - pick another name, or replace it";
                 return false;
             }
         }
@@ -468,7 +468,7 @@ bool MusicLibrary::ExportToSound(const std::string& file, const std::string& nam
     while (!summary.empty() && (summary.back() == '\n' || summary.back() == '\r')) summary.pop_back();
     summary = summary.substr(summary.rfind('\n') == std::string::npos ? 0 : summary.rfind('\n') + 1);
     summary.erase(0, summary.find_first_not_of(' '));
-    message = "Exported sound/" + name + ".wav: " + summary;
+    message = "Exported music/sounds/" + name + ".wav: " + summary;
     debug->Info("%s\n", message.c_str());
     return true;
 }

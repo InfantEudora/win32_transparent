@@ -48,10 +48,10 @@ void ApplicationMusic::Init(void){
     LoadAndPlay(score_file);
 
     //The library, the tool that measures it and the folder its exports go to, all found from the
-    //exe like the asset roots. assets/sound is this app's own root, so a score names an export as
-    //sound/<name>.wav.
+    //exe like the asset roots. assets is this app's own root, so a score names an export as
+    //music/sounds/<name>.wav - the same name a game's copy of the score has (make publish).
     const std::string exe = GetExecutableDirectory();
-    library.SetPaths(exe + "/../samples", exe + "/../../../tools/samplescan/build/samplescan.exe", exe + "/../assets/sound");
+    library.SetPaths(exe + "/../samples", exe + "/../../../tools/samplescan/build/samplescan.exe", exe + "/../assets/music/sounds");
     std::string error;
     if (!library.Refresh(error)) debug->Warn("Library: %s\n", error.c_str());
 
@@ -427,7 +427,7 @@ json ApplicationMusic::EntryJson(const MusicLibrary::Entry& e, bool f_full){
     j["state"] = MusicLibrary::StateName(e.state);
     if (!e.exported_as.empty()){
         json names = json::array();
-        for (const std::string& n : e.exported_as) names.push_back("sound/" + n + ".wav");
+        for (const std::string& n : e.exported_as) names.push_back("music/sounds/" + n + ".wav");
         j["exported_as"] = names;
     }
     if (f_full){
@@ -496,7 +496,7 @@ void ApplicationMusic::RenderLibraryPanel(void){
             if (ImGui::Button(label)) StartPanelExport("", "", false, false, true);
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Write every wav samples/exports.csv lists that is not in assets/sound - what make samples does");
+                ImGui::SetTooltip("Write every wav samples/exports.csv lists that is not in assets/music/sounds - what make samples does");
         }
     }
     const std::string message = library.Message();
@@ -651,12 +651,12 @@ void ApplicationMusic::RenderLibraryPanel(void){
     }
 
     //--- exporting ------------------------------------------------------------------------
-    //To assets/sound/<name>.wav, where a score names it as sound/<name>.wav - and into
+    //To assets/music/sounds/<name>.wav, where a score names it as music/sounds/<name>.wav - and into
     //exports.csv, so `make samples` makes it again on a fresh checkout.
     ImGui::Separator();
     if (!e.exported_as.empty()){
         std::string names;
-        for (const std::string& n : e.exported_as) names += (names.empty() ? "" : ", ") + ("sound/" + n + ".wav");
+        for (const std::string& n : e.exported_as) names += (names.empty() ? "" : ", ") + ("music/sounds/" + n + ".wav");
         ImGui::Text("Exported as %s", names.c_str());
     }
     else ImGui::TextDisabled("Not exported - a score cannot use it yet");
@@ -666,7 +666,7 @@ void ApplicationMusic::RenderLibraryPanel(void){
 
     ImGui::SetNextItemWidth(200);
     ImGui::InputText("##exportname", edit_export_name, sizeof edit_export_name);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The wav's name: a score plays it as sound/<name>.wav");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The wav's name: a score plays it as music/sounds/<name>.wav");
     ImGui::SameLine();
     ImGui::Checkbox("Trim", &edit_export_trim);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the silence off both ends. On for notes, hits and most beds;\n"
@@ -678,9 +678,9 @@ void ApplicationMusic::RenderLibraryPanel(void){
     if (ImGui::Button(export_label)) StartPanelExport(e.file, edit_export_name, edit_export_trim, !taken_by.empty(), false);
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Write assets/sound/%s.wav. A score already playing it hears the new one after Reload.", edit_export_name);
+        ImGui::SetTooltip("Write assets/music/sounds/%s.wav. A score already playing it hears the new one after Reload.", edit_export_name);
     if (!f_valid) ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "Letters, digits, _ and - only");
-    else if (!taken_by.empty()) ImGui::TextColored(ImVec4(1,0.8f,0.3f,1), "sound/%s.wav is %s now - Replace re-points it", edit_export_name, taken_by.c_str());
+    else if (!taken_by.empty()) ImGui::TextColored(ImVec4(1,0.8f,0.3f,1), "music/sounds/%s.wav is %s now - Replace re-points it", edit_export_name, taken_by.c_str());
     {
         std::lock_guard<std::mutex> lock(audition_mutex);
         if (!export_error.empty()) ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "%s", export_error.c_str());
@@ -964,8 +964,8 @@ void ApplicationMusic::RegisterMCPTools(void){
         });
 
     MCPServer::Get()->RegisterTool("library_export",
-        "Export one library file as assets/sound/<name>.wav, so a score can name it as "
-        "sound/<name>.wav, and record it in samples/exports.csv (which `make samples` rebuilds the "
+        "Export one library file as assets/music/sounds/<name>.wav, so a score can name it as "
+        "music/sounds/<name>.wav, and record it in samples/exports.csv (which `make samples` rebuilds the "
         "wavs from). `name` defaults to instrument_root (kalimba_Fs3); `trim` cuts the silence off "
         "both ends and defaults to on unless the file is loopable. A name another file already has "
         "is refused unless `replace` is true. `missing`: true instead writes every listed export "
@@ -994,7 +994,7 @@ void ApplicationMusic::RegisterMCPTools(void){
                                                                                     : MusicLibrary::SuggestTrim(*found);
             const bool f_replace = args.contains("replace") && args["replace"].is_boolean() && args["replace"].get<bool>();
             if (!library.ExportToSound(file, name, f_trim, f_replace, error)) return json{{"error", error}};
-            return json{{"sample", "sound/" + name + ".wav"}, {"trim", f_trim}, {"message", library.Message()}};
+            return json{{"sample", "music/sounds/" + name + ".wav"}, {"trim", f_trim}, {"message", library.Message()}};
         });
 }
 #endif

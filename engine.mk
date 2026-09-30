@@ -337,12 +337,19 @@ CORE_CFLAGS := $(CFLAGS)
 #-lole32 is WASAPI's: the backend is COM. libs/libOpenAL32.a is now unreferenced by any app,
 #and the note that used to live here about it failing to link with a mismatched toolchain
 #(`undefined reference to __emutls_v._ZSt11__once_call`) went with it.
+#
+#The adaptive music (core/Music*.cpp - the score, the engine that plays it, and the player that
+#puts it on a SoundSystem voice) goes with sound: it is authored in apps/music and played by the
+#games, and an app without sound has nothing to play it on.
 USE_SOUND ?= 0
 ifeq ($(USE_SOUND), 1)
 CFLAGS += -DUSE_SOUND -lole32
 else
 CORE_SRCS_DROP += $(ROOT)/core/SoundSystem.cpp
 CORE_SRCS_DROP += $(ROOT)/core/WaveFile.cpp
+CORE_SRCS_DROP += $(ROOT)/core/MusicScore.cpp
+CORE_SRCS_DROP += $(ROOT)/core/MusicEngine.cpp
+CORE_SRCS_DROP += $(ROOT)/core/MusicPlayer.cpp
 endif
 
 #---------------------------------------------------------------------------------------

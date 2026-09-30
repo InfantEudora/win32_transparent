@@ -1,6 +1,7 @@
 #ifndef _MUSIC_SCORE_H_
 #define _MUSIC_SCORE_H_
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -33,10 +34,15 @@
     MusicScore.cpp, which is also where the parser says what it will not accept.
 */
 
-//Interleaved float PCM, as loaded from one PCM16 wav.
+/*
+    Interleaved PCM16, exactly as in the wav it was loaded from. Kept as 16-bit rather than float
+    because a game holds a whole score's worth - the jungle's 42 samples are 67 MB this way and
+    were 134 MB as floats - and the mixer's one conversion per read (MusicEngine::Mix) gives the
+    very floats a float copy held, since 2^-15 is exact.
+*/
 struct MusicSample{
     std::string name;
-    std::vector<float> pcm;
+    std::vector<int16_t> pcm;
     int channels = 0;
     int rate = 0;
     size_t frames = 0;
