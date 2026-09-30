@@ -128,14 +128,33 @@ float FoliageOcclusion(const std::vector<StageBlock>& blocks, float x, float y,
                        const FoliageParams& params);
 
 /*
+    What a biome (Stage.h) does to the garden: multipliers on the params' densities, and a keep
+    chance per kind - drawn only where it is under 1, so the jungle's garden, all ones, is the
+    garden it always was, plant for plant. In a biome's fade the rules blend toward the jungle's.
+*/
+struct FoliageBiome{
+    float open = 1.0f;          //on density_open
+    float corner = 1.0f;        //on density_corner
+    float grass = 1.0f;         //on grass_open and grass_corner
+    float keep[FOLIAGE_KIND_COUNT] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+};
+/*
+    The rules per StageBiomeKind. The CAVE: no daylight, so no grass and no flowers; a low fern
+    here and there as ground cover, thicker at the foot of a wall, and hardly a tall one.
+*/
+FoliageBiome FoliageBiomeFor(int biome);
+
+/*
     The whole garden. `grows[i]` says whether block i may carry plants at all - the app uses it to
     keep them off the terrain bays. Whatever the mask says, only SOLID and LEDGE tops grow: not a
     one-way platform, and not a breakable wall that is about to be kicked away. EVERY live block
     shades and covers, whatever its kind, which is what puts ferns in the shadow under the
-    platform. `out` is cleared first.
+    platform. `biomes`, if given, set the rules spot by spot (FoliageBiomeFor). `out` is cleared
+    first.
 */
 void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<bool>& grows,
-                    const FoliageParams& params, std::vector<FoliagePlant>& out);
+                    const FoliageParams& params, std::vector<FoliagePlant>& out,
+                    const std::vector<StageBiome>* biomes = NULL);
 
 /*
     A TUFT - the small clump an arrow leaves where it grows something (vine_plan.md section 11):

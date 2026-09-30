@@ -7426,6 +7426,81 @@ static void TestTeeter(){
     }
 }
 
+/*
+    The branch walk (Puppet::branch_walked): Balance_Walking on a branch, its playhead pinned to the
+    distance walked. Measured values fed in by hand - a rules test has no .glb.
+*/
+static void TestBalanceWalk(){
+    printf("the branch walk\n");
+    const float speed = 0.8f;       //world units a second, about the export's
+    const float dur = 5.7f;
+    auto walker = [&](){
+        Puppet p;
+        p.model_scale = 1.0f;
+        p.clip_speed[CLIP_BALANCE_WALK] = speed;
+        p.clip_duration[CLIP_BALANCE_WALK] = dur;
+        return p;
+    };
+    ArcherAnimParams a;
+    a.f_on_ground = true;
+    a.mode = MODE_GROUND;
+    a.f_on_branch = true;
+    {
+        Puppet p = walker();
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_BALANCE_WALK,"standing on a branch is the balance walk's pose");
+        CheckNear(p.choice.pinned_time,0.0f,1e-5f,"from its first frame, the feet together");
+        Check(p.choice.rate == 0.0f,"pinned, not played");
+        a.speed = a.ground_speed = BRANCH_WALK_SPEED;
+        for (int i = 0; i < 30; i++){ p.Tick(a); }
+        CheckNear(p.choice.pinned_time,30.0f * ARCHER_DT * BRANCH_WALK_SPEED / speed,1e-3f,
+                  "walking, the playhead is the distance over the clip's own speed");
+        CheckNear(p.choice.wanted_rate,BRANCH_WALK_SPEED / speed,1e-4f,"which is this rate, reported");
+        float held = p.choice.pinned_time;
+        a.speed = a.ground_speed = 0.0f;
+        for (int i = 0; i < 30; i++){ p.Tick(a); }
+        CheckNear(p.choice.pinned_time,held,1e-5f,"stopping holds the step she is in");
+        a.speed = -BRANCH_WALK_SPEED;
+        a.ground_speed = BRANCH_WALK_SPEED;
+        for (int i = 0; i < 10; i++){ p.Tick(a); }
+        Check(p.choice.pinned_time < held,"backing up plays it backwards");
+        a.speed = a.ground_speed = BRANCH_WALK_SPEED;
+        for (int i = 0; i < (int)(dur * speed / BRANCH_WALK_SPEED * ARCHER_TPS) + 5; i++){ p.Tick(a); }
+        Check(p.choice.pinned_time >= 0.0f && p.choice.pinned_time < dur,"and wraps round the cycle");
+        a.action = ACTION_DRAW;
+        a.speed = a.ground_speed = 0.0f;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_BALANCE_WALK,"drawing on a branch keeps the balance legs; the layer draws");
+        a.action = ACTION_NONE;
+        a.f_on_branch = false;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_IDLE && p.branch_walked == 0.0f,"off the branch it is forgotten");
+        a.f_on_branch = true;
+        p.Tick(a);
+        CheckNear(p.choice.pinned_time,0.0f,1e-5f,"and the next branch starts from the feet together");
+    }
+    {
+        //Unmeasured, there is nothing to pin: the ladder, as before there was a clip.
+        Puppet p;
+        ArcherAnimParams b = a;
+        b.speed = b.ground_speed = 0.0f;
+        p.Tick(b);
+        Check(p.choice.clip == CLIP_IDLE,"without the clip's speed the branch is walked as the ground is");
+    }
+    {
+        //DescribeArcher: on the main level's practice branch (height 2.6, x 157..168), and not on
+        //the ground.
+        Stage s;
+        ArcherAnimParams got;
+        PlaceOn(s,-6.0f,0.0f);
+        DescribeArcher(s,got);
+        Check(s.f_on_ground && !got.f_on_branch,"standing at the start, she is not on a branch");
+        PlaceOn(s,162.0f,2.6f);
+        DescribeArcher(s,got);
+        Check(s.branch_on >= 0 && got.f_on_branch,"dropped onto the practice branch, she is on it");
+    }
+}
+
 static void TestVineGrowth(){
     printf("\ngrowing vines\n");
     char d[220];
@@ -7851,6 +7926,120 @@ static void TestCreepers(){
     Check(bad == 0 && climbed >= 95 && over >= 80,"a hundred seeds: they climb, most come over, none goes in",d);
 }
 
+/*
+    Bamboo (the user's asset, 2026-09-30): a clump of canes, straight up off a top, out and bending
+    up off a wall; never into the rock; leaf sprays only on the upper part and on the stalk's nodes.
+*/
+struct CaneCheck{
+    int   canes = 0;
+    float worst_straight = 1.0f;    //rise over length walked, the least of any cane
+    float worst_inside = 1e9f;      //nearest any point past the buried start comes to the rock
+    float end_up = 1.0f;            //the least upward last heading of any cane
+    float rise = 1e9f;              //the least any cane's end is above its start
+};
+static void MeasureCanes(const VineGrowth& g, const std::vector<StageBlock>& blocks, CaneCheck& c){
+    c.canes = (int)g.strands.size();
+    for (const VineStrand& st : g.strands){
+        const std::vector<vec3>& p = st.path.points;
+        if (p.size() < 3){
+            c.worst_inside = -1.0f;
+            continue;
+        }
+        for (size_t i = 2; i < p.size(); i++){
+            c.worst_inside = fminf(c.worst_inside,VineBlockDistance(blocks,p[i].x,p[i].y));
+        }
+        vec3 last = p.back() - p[p.size() - 2];
+        last.normalize();
+        c.end_up = fminf(c.end_up,last.y);
+        c.rise = fminf(c.rise,p.back().y - p[1].y);
+        c.worst_straight = fminf(c.worst_straight,(p.back().y - p[1].y) / fmaxf(st.length,1e-3f));
+    }
+}
+static void TestBamboo(){
+    printf("\nbamboo\n");
+    char d[220];
+    const VineSpecies& bs = VineSpeciesFor(VINE_SPECIES_BAMBOO);
+    VineParams params;
+    params.tile_radius = 0.057f;
+    params.tile_scale = 2.02f;
+    std::vector<StageBlock> blocks = { Box(-10,10,-2,0), Box(2,4,0,3) };
+    VineBlockField field(blocks);
+
+    //Off a top: a clump, straight up.
+    vec3 t(-5.0f,0.0f,0.0f);
+    VineGrowth gt;
+    bool f_top = GrowBamboo(bs,params,t,vec3(0.0f,1.0f,0.0f),VineGrowthSeed(t,0),field,gt);
+    CaneCheck ct;
+    MeasureCanes(gt,blocks,ct);
+    snprintf(d,sizeof(d),"%i canes, straightness %.2f, nearest %.3f, rise %.2f",ct.canes,ct.worst_straight,ct.worst_inside,ct.rise);
+    Check(f_top && ct.canes >= 3 && ct.canes <= 5,"a bamboo arrow into a top grows a clump of three to five canes",d);
+    Check(ct.worst_straight > 0.9f && ct.rise > 1.0f,"each almost straight up",d);
+    Check(ct.worst_inside > 0.0f,"none into the ground",d);
+    bool f_rooted = true, f_one = true;
+    for (const VineStrand& st : gt.strands){
+        f_rooted = f_rooted && st.path.f_rooted && st.path.points[0].y < 0.0f;
+        f_one = f_one && st.parent < 0;
+    }
+    Check(f_rooted && f_one,"each cane its own stalk, out of the ground rather than on it");
+
+    //Out of a wall: out, then up.
+    vec3 w(2.0f,1.0f,0.0f);
+    VineGrowth gw;
+    GrowBamboo(bs,params,w,vec3(-1.0f,0.0f,0.0f),VineGrowthSeed(w,0),field,gw);
+    CaneCheck cw;
+    MeasureCanes(gw,blocks,cw);
+    snprintf(d,sizeof(d),"%i canes, least end heading up %.2f, rise %.2f, nearest %.3f",cw.canes,cw.end_up,cw.rise,cw.worst_inside);
+    Check(cw.canes >= 3 && cw.end_up > 0.8f && cw.rise > 0.8f,"out of a wall they come out and bend up",d);
+    Check(cw.worst_inside > 0.0f,"and never back into it",d);
+
+    //A hundred seeds of each.
+    int bad = 0, crooked = 0;
+    for (int seed = 0; seed < 100; seed++){
+        VineGrowth a, b;
+        CaneCheck ca, cb;
+        if (!GrowBamboo(bs,params,t,vec3(0.0f,1.0f,0.0f),seed * 131 + 5,field,a) ||
+            !GrowBamboo(bs,params,w,vec3(-1.0f,0.0f,0.0f),seed * 131 + 5,field,b)){
+            bad++;
+            continue;
+        }
+        MeasureCanes(a,blocks,ca);
+        MeasureCanes(b,blocks,cb);
+        if (ca.worst_inside <= 0.0f || cb.worst_inside <= 0.0f){ bad++; }
+        if (ca.worst_straight < 0.85f || cb.end_up < 0.7f){ crooked++; }
+    }
+    snprintf(d,sizeof(d),"%i failed or went into the rock, %i crooked",bad,crooked);
+    Check(bad == 0 && crooked <= 3,"a hundred seeds, off a top and out of a wall: all grow, none goes in",d);
+
+    //The leaves: on nodes, over the upper part only, all the bamboo's own kind.
+    const float tile_len = 1.0f;
+    int leaves = 0, off_node = 0, low = 0, wrong_kind = 0;
+    for (const VineStrand& st : gt.strands){
+        Spline sp;
+        BuildVineSpline(st.path,sp);
+        std::vector<VineLeaf> out;
+        ScatterBambooLeaves(sp,st.path,params,tile_len,2,&field,out);
+        float period = tile_len * params.tile_scale * st.path.thickness;
+        int copies = (int)floorf(sp.GetLength() / period + 0.5f);
+        float node = sp.GetLength() / (float)((copies > 0 ? copies : 1) * 2);
+        for (const VineLeaf& l : out){
+            leaves++;
+            float k = l.s / node;
+            off_node += (fabsf(k - roundf(k)) > 1e-3f) ? 1 : 0;
+            low += (l.s < 0.39f * sp.GetLength()) ? 1 : 0;
+            wrong_kind += (l.kind != VINE_LEAF_BAMBOO) ? 1 : 0;
+        }
+    }
+    snprintf(d,sizeof(d),"%i leaves, %i off a node, %i on the bare lower part, %i of another kind",leaves,off_node,low,wrong_kind);
+    Check(leaves > 0 && off_node == 0 && low == 0 && wrong_kind == 0,"leaf sprays on the upper nodes only",d);
+
+    //Faster than a vine: less time per unit of length.
+    const VineSpecies& vs = VineSpeciesFor(VINE_SPECIES_VINE);
+    float bamboo_rate = (float)bs.grow_ticks / (0.5f * (bs.length_min + bs.length_max));
+    float vine_rate = (float)vs.grow_ticks / (0.5f * (vs.length_min + vs.length_max));
+    snprintf(d,sizeof(d),"%.1f ticks per unit against the vine's %.1f",bamboo_rate,vine_rate);
+    Check(bamboo_rate < vine_rate,"it grows faster than a vine",d);
+}
+
 #if ARCHER_TEST_BAY
 /*
     The cave (cave_plan.md): that it is there and closed, that she can get in and through the
@@ -8008,9 +8197,11 @@ int main(void){
     TestAimHold();
     TestEdges();
     TestTeeter();
+    TestBalanceWalk();
     TestVineGrowth();
     TestRootsAndTufts();
     TestCreepers();
+    TestBamboo();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

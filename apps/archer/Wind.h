@@ -129,6 +129,14 @@ struct WindStats{
     int   corners = 0;              //for the current wind direction
 };
 
+/*
+    What the wind is built from: the level's blocks, and every STILL-AIR biome (Stage.h) as one
+    more solid box. So the wind goes over and round the cave instead of through it, and everything
+    that steers by the field's distance - leaves, streaks, fireflies - stays out of it, as they
+    stay out of rock. The rules never see these boxes; only the wind does.
+*/
+std::vector<StageBlock> WindBlocks(const std::vector<StageBlock>& blocks, const std::vector<StageBiome>& biomes);
+
 class WindField{
 public:
     /*

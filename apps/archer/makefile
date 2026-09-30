@@ -148,3 +148,7 @@ rules:
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/water_test.exe \
 		water_test.cpp Water.cpp Backdrop.cpp Stage.cpp StageEdges.cpp
 	@./build/water_test.exe
+#And the cave's biome - its plants, its rocks, its still air, and the rest of the level untouched.
+	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/cave_test.exe \
+		cave_test.cpp Foliage.cpp Boulders.cpp Wind.cpp Stage.cpp StageEdges.cpp $(ROOT)/core/types/type_helpers.cpp
+	@./build/cave_test.exe

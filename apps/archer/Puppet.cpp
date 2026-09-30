@@ -194,9 +194,18 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         THE TEETER, falling forward over a lip: tips over 0-0.8s, windmills bent over the drop to
         4.2, throws herself back upright by 5.0 and stands settled to 6.0. On the spot, so nothing
         is extracted, and played ONCE - the recovery is the point of it (Puppet::teeter_ticks).
-        To be renamed Teeter_Forward in the export; the row follows it then.
+        Forward only: the thin branch's loss of balance is sideways and wants a clip of its own.
     */
-    { "Teeter_Forward",       false, false,  false, false, false },
+    { "Teeter_Forward",      false, false,  false, false, false },
+    /*
+        THE BRANCH WALK: feet placed on one line, arms out at shoulder height, a slow pace. It
+        travels and its stride is the rules' to walk (BRANCH_WALK_SPEED), so it is measured and its
+        horizontal comes off the bone like any gait's - but it is not on the ladder: it is the only
+        way she walks on a branch and no way she walks anywhere else. Its playhead is pinned to the
+        distance walked (Puppet::branch_walked), so its first frame - the feet together - is where
+        every crossing starts.
+    */
+    { "Balance_Walking",     true,  true,   false, true,  false },
 };
 
 bool Puppet::IsDrawPose(int clip){
@@ -231,6 +240,7 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
         on the side she faces, where it drops away. Standing only, and not on a branch - a branch
         is not a block, and its loss of balance is sideways and its own.
     */
+    out.f_on_branch = stage.f_on_ground && stage.mode == MODE_GROUND && stage.branch_on >= 0;
     out.edge_over = -1.0f;
     out.edge_drop = 0.0f;
     if (stage.f_on_ground && stage.mode == MODE_GROUND && stage.branch_on < 0){
@@ -594,6 +604,30 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         return out;
     }
 
+    /*
+        ON A BRANCH: Balance_Walking whether she walks or stands, its playhead PINNED to the distance
+        walked (branch_walked) - so the rate is 0 and wanted_rate only reports what the pin amounts
+        to. Before the standing branch below, because on a branch her legs are the balance walk's
+        even while she draws: the upper layer carries the draw over them. Unmeasured, it cannot be
+        pinned, and she walks the ladder as she used to.
+    */
+    float balance_speed = WorldClipSpeed(CLIP_BALANCE_WALK);
+    if (in.f_on_branch && balance_speed > 0.01f && clip_duration[CLIP_BALANCE_WALK] > 0.0f){
+        float stride = WorldClipStride(CLIP_BALANCE_WALK);
+        float d = fmodf(branch_walked,stride);
+        if (d < 0.0f){
+            d += stride;
+        }
+        out.clip = CLIP_BALANCE_WALK;
+        out.pinned_time = d / balance_speed;
+        //Short of the very end, like the ledge climb's pin: the wrap puts the end back at 0.
+        float last = clip_duration[CLIP_BALANCE_WALK] - 0.001f;
+        if (out.pinned_time > last){ out.pinned_time = last; }
+        out.rate = 0.0f;
+        out.wanted_rate = in.ground_speed / balance_speed;
+        return out;
+    }
+
     if (in.ground_speed < PUPPET_IDLE_SPEED){
         /*
             DRAWING WHILE STANDING STILL: the draw's own LEGS on the base.
@@ -910,6 +944,10 @@ float Puppet::FallPoseTarget(const ArcherAnimParams& in) const{
     return PUPPET_FALL_POSE_MAX * x * x * (3.0f - 2.0f * x);
 }
 
+void Puppet::UpdateBranch(const ArcherAnimParams& in){
+    branch_walked = in.f_on_branch ? branch_walked + in.speed * ARCHER_DT : 0.0f;
+}
+
 bool Puppet::AtLip(const ArcherAnimParams& in){
     return in.f_on_ground && in.mode == MODE_GROUND && in.edge_drop >= PUPPET_TEETER_DROP &&
            in.edge_over >= PUPPET_TEETER_FROM;
@@ -1018,6 +1056,7 @@ void Puppet::Tick(const ArcherAnimParams& in){
     UpdateAir(in);
     UpdateRope(in);
     UpdateTeeter(in);
+    UpdateBranch(in);
     choice = Choose(in);
     //The fall pose is eased state, so it goes on here rather than in Choose, which stays pure. Its
     //frame is the hard landing's first: the airborne opening its own lead-in starts from.
@@ -1168,7 +1207,7 @@ void Puppet::HashState(StateHash& h) const{
     h.Add(f_was_on_ground); h.Add(last_vel_y); h.Add(last_ground_speed);
     h.Add(settle_ticks); h.Add(settle_clip); h.Add(air_clip); h.Add(lead_clip);
     h.Add(f_was_flying); h.Add(air_ticks); h.Add(run_jump_time);
-    h.Add(teeter_ticks); h.Add(f_teeter_spent);
+    h.Add(teeter_ticks); h.Add(f_teeter_spent); h.Add(branch_walked);
     h.Add(fall_weight); h.Add(run_jump_rise); h.Add(stop_plant);
     h.Add(yaw_deg); h.Add(aim_weight); h.Add(upper_weight); h.Add(upper_latched);
     h.Add(leg_weight); h.Add(leg_lead_deg); h.Add(leg_gravity);
@@ -1199,6 +1238,7 @@ void Puppet::Reset(float facing){
     run_jump_time = 0.0f;
     teeter_ticks = -1;
     f_teeter_spent = false;
+    branch_walked = 0.0f;
     lead_clip = -1;
     fall_weight = 0.0f;
     yaw_deg = (facing < 0.0f) ? PUPPET_YAW_LEFT : PUPPET_YAW_RIGHT;

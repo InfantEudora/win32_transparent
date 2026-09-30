@@ -20,7 +20,41 @@ static const float FOLIAGE_EPS = 0.001f;
 //The channels a spot draws from, so no two decisions share a number.
 //The grass pass draws from channels of its own, so adding it moved none of the other plants.
 enum{ CH_ACCEPT = 0, CH_KIND, CH_Z, CH_SCALE, CH_YAW,
-      CH_GRASS_ACCEPT, CH_GRASS_Z, CH_GRASS_SCALE, CH_GRASS_YAW, CH_GRASS_KIND };
+      CH_GRASS_ACCEPT, CH_GRASS_Z, CH_GRASS_SCALE, CH_GRASS_YAW, CH_GRASS_KIND, CH_BIOME_KEEP };
+
+//--- Biomes ---------------------------------------------------------------------------------------
+
+FoliageBiome FoliageBiomeFor(int biome){
+    FoliageBiome r;
+    if (biome == BIOME_CAVE){
+        r.open = 0.15f;
+        r.corner = 0.5f;
+        r.grass = 0.0f;
+        r.keep[FOLIAGE_FERN] = 0.15f;
+        r.keep[FOLIAGE_FERN_LOW] = 1.0f;
+        r.keep[FOLIAGE_FLOWER] = 0.0f;
+    }
+    return r;
+}
+
+//The rules at a spot: its biome's, blended toward the jungle's by how far into a fade it is.
+static FoliageBiome RulesAt(const std::vector<StageBiome>* biomes, float x, float y){
+    float w = 1.0f;
+    int kind = BiomeAt(biomes,x,y,&w);
+    FoliageBiome r = FoliageBiomeFor(kind);
+    if (kind == BIOME_JUNGLE || w >= 1.0f){
+        return r;
+    }
+    const FoliageBiome j = FoliageBiomeFor(BIOME_JUNGLE);
+    auto mix = [w](float a, float b){ return a + (b - a) * w; };
+    r.open = mix(j.open,r.open);
+    r.corner = mix(j.corner,r.corner);
+    r.grass = mix(j.grass,r.grass);
+    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+        r.keep[k] = mix(j.keep[k],r.keep[k]);
+    }
+    return r;
+}
 
 //--- Occlusion ------------------------------------------------------------------------------------
 /*
@@ -171,7 +205,8 @@ static bool IsClear(const std::vector<FoliagePlant>& out, const FoliagePlant& pl
 }
 
 void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<bool>& grows,
-                    const FoliageParams& params, std::vector<FoliagePlant>& out){
+                    const FoliageParams& params, std::vector<FoliagePlant>& out,
+                    const std::vector<StageBiome>* biomes){
     out.clear();
     float step = (params.step > 0.005f) ? params.step : 0.005f;
     int tries = (params.tries_per_step > 0) ? params.tries_per_step : 1;
@@ -205,7 +240,9 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
             if (params.ao_gamma > 0.0f && shade > 0.0f){
                 shade = powf(shade,params.ao_gamma);
             }
-            float density = params.density_open + (params.density_corner - params.density_open) * shade;
+            const FoliageBiome rules = RulesAt(biomes,x,y);
+            float open = params.density_open * rules.open;
+            float density = open + (params.density_corner * rules.corner - open) * shade;
             //Plants per unit length, spread over the steps and the tries within a step.
             float p = density * step / (float)tries;
 
@@ -215,6 +252,10 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
                 }
                 FoliagePlant plant;
                 plant.kind = ChooseKind(shade,Hash01(x,y,t,CH_KIND));
+                //A kind the biome thins. Drawn only then, so a keep of 1 moves no plant.
+                if (rules.keep[plant.kind] < 1.0f && Hash01(x,y,t,CH_BIOME_KEEP) >= rules.keep[plant.kind]){
+                    continue;
+                }
                 plant.x = x;
                 plant.y = y;
                 float uz = powf(Hash01(x,y,t,CH_Z),params.z_bias);
@@ -261,7 +302,8 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
             if (params.ao_gamma > 0.0f && shade > 0.0f){
                 shade = powf(shade,params.ao_gamma);
             }
-            float density = params.grass_open + (params.grass_corner - params.grass_open) * shade;
+            float density = (params.grass_open + (params.grass_corner - params.grass_open) * shade)
+                          * RulesAt(biomes,x,y).grass;
             float p = density * step / (float)grass_tries;
             for (int t = 0; t < grass_tries; t++){
                 if (Hash01(x,y,t,CH_GRASS_ACCEPT) >= p){

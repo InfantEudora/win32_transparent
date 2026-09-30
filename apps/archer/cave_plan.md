@@ -26,6 +26,57 @@ All in `Stage::BuildMainLevel`, under `ARCHER_TEST_BAY`. The constants are `ARCH
 - `stage_test`'s `TestCave`: pieces in place, the floors meet, she walks and jumps in without a
   bonk, the far wall stops her, the zone names it, the bank stands over the roof all along.
 
+## The biome (2026-09-30)
+
+A **biome** is a box of the level with its own dressing and air rules: `StageBiome` in
+`Stage.h`, declared in `BuildMainLevel` the way zones are, but looks only. Outside every box it
+is `BIOME_JUNGLE`, the level as it was. The cave's box is its inside (x -66..-40, y 0..9). It
+fades into the jungle over the 6 units inside the mouth (`fade_right`), so the grass thins going
+in rather than stopping on a line. `BiomeAt(biomes, x, y, &weight)` is the one lookup.
+
+What each kind means is a row in each reader:
+
+| reader | the cave |
+|---|---|
+| `FoliageBiomeFor` | no grass, no flowers; low ferns as sparse ground cover (open 0.15x, corners 0.5x), hardly a tall fern (15% kept) |
+| `BoulderBiomeFor` | every corner gets its cluster; rubble strewn along the open floor, 0.6 a unit, 12% of it big, as if come down from the roof |
+| `WindBlocks` | **still air**: the box is solid to the wind, so the flow goes over the roof and into the bay behind it. Leaves, streaks and fireflies steer by the same field, so they keep out |
+
+In the jungle the multipliers are 1 and the extra draws are never made. `cave_test` checks that
+every plant and rock outside the cave is exactly what it was, as well as the cave's own rules,
+the still air (0.64 through the cave before, 0 now), and no jet over the roof.
+
+The wind arrives over the far wall already at roof height, not rising from the ground: the wind
+carries the level's end profile outward (Wind.h), so there is no open ground left of the cave
+to rise from.
+
+**Found, not changed:** two rock clusters in the bay at x -31 overlap. Clusters are never
+checked against each other; it predates the cave.
+
+## Props and ideas for the cave
+
+What would make it read as a cave, roughly in order of what it costs:
+
+- **Its own terrain materials.** The floor is the bay's grass-capped terrain. A cave floor wants
+  bare rock and damp soil, with moss only at the mouth. Meshing the cave's blocks into a terrain
+  object of their own (the bays' region split three ways) gives it its own three slots. The
+  same move fixes the hazed back wall.
+- **Stalactites under the roof, stalagmites under them.** Placement like the boulders: along an
+  underside, hashed, with a clear-headroom rule over her walking line. The roof is already there
+  to hang them from.
+- **Drips.** A drip from a stalactite tip every few seconds: a falling speck, a ring where it
+  lands in the stream, a soft plink cue with reverb. Cheap, and it sells stillness better than
+  anything.
+- **Glow.** Mushrooms or glow-moss as the cave's own lights: a foliage kind with emission, a few
+  point lights grouped like the fireflies'. A natural first subject for the lighting pass.
+- **The stream ends in a pool** under the far wall, with Bomber's Worley caustics thrown onto the
+  roof above it as moving light.
+- **Sound.** An `ambience` loop inside (low drone, water) that crossfades with the waterfall
+  through the mouth. The waterfall loop's gain curve could dip behind the roof.
+- **Bats or moths**, disturbed as she passes - the leaves' system with a flee rule.
+- **Cobwebs and roots** in the upper corners; roots through the roof are already possible with
+  the vine arrow's root growth.
+
 ## For the lighting
 
 - The sun is nearly overhead, leaning left, so the roof shades the floor. **The cool fill light

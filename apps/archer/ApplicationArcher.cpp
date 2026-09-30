@@ -2100,7 +2100,7 @@ void ApplicationArcher::UpdateWind(){
     bool f_turntable_scene = false;
     v2 stand(0.0f,0.0f);
     main_scene->AtTickBoundary([&](){
-        blocks = stage.blocks;
+        blocks = WindBlocks(stage.blocks,stage.biomes);     //the cave is still air - see Wind.h
         tick = (int64_t)main_scene->GetPhysicsTick();
         f_turntable_scene = IsCharacterScene();
         if (!stage.scenery.empty()){
@@ -2748,7 +2748,7 @@ void ApplicationArcher::ScatterFoliageObjects(){
         params.height[k] = foliage_mesh_height[k] * foliage_scale;
     }
     std::vector<FoliagePlant> plants;
-    ScatterFoliage(stage.blocks,grows,params,plants);
+    ScatterFoliage(stage.blocks,grows,params,plants,&stage.biomes);
 
     for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
         foliage_counts[k] = 0;
@@ -2856,7 +2856,7 @@ void ApplicationArcher::ScatterBoulderObjects(){
         params.height[k] = boulder_mesh_height[k] * model_scale;
     }
     std::vector<Boulder> rocks;
-    ScatterBoulders(stage.blocks,params,rocks);
+    ScatterBoulders(stage.blocks,params,rocks,&stage.biomes);
 
     for (int k = 0; k < BOULDER_KIND_COUNT; k++){
         boulder_counts[k] = 0;
@@ -3312,6 +3312,10 @@ void ApplicationArcher::BuildVines(){
 //--- Grown plants -------------------------------------------------------------------------------
 
 static const char* ROOT_TILE_NODE = "root_tile";
+static const char* BAMBOO_STALK_NODE = "bamboo_stalk";
+static const char* BAMBOO_TIP_NODE   = "bamboo_tip";
+static const char* BAMBOO_LEAF_NODE  = "bamboo_leaf";
+#define BAMBOO_NODES_PER_TILE   2       //bamboo_stalk carries a node ring at its middle and its ends
 
 /*
     The pools a grown plant is drawn with - see GrownVine. RENDER THREAD, at Init, after BuildVines
@@ -3348,11 +3352,76 @@ void ApplicationArcher::BuildGrownVines(){
     root_params.tip_scale = 0.06f;
     root_params.twist = 1.6f;
 
+    /*
+        The bamboo. The stalk and its tip are authored to stack (the tip's base ring on the stalk's
+        end ring, both 0.056 in radius) at her scale, so the tip is drawn at the stalk's own scale
+        times the cane's thickness and lines up. The cane keeps its full thickness to the front -
+        no end taper, no closing growing point - because the tip piece is the point.
+    */
+    f_bamboo_ready = false;
+    bamboo_materials.clear();
+    bamboo_tip_materials.clear();
+    bamboo_leaf_materials.clear();
+    Mesh* stalk_source = gltfloader.GetMeshFromNode(BAMBOO_STALK_NODE,&bamboo_materials,false);
+    bamboo_tip_mesh = gltfloader.GetMeshFromNode(BAMBOO_TIP_NODE,&bamboo_tip_materials,false);
+    Mesh* bamboo_leaf_mesh = gltfloader.GetMeshFromNode(BAMBOO_LEAF_NODE,&bamboo_leaf_materials,false);
+    bamboo_params = VineParams();
+    if (stalk_source){
+        bamboo_tile = stalk_source->GetVertices();
+        renderer->AddMaterials(bamboo_materials);
+        bamboo_num_materials = stalk_source->num_materials;
+        float z0 = 0.0f;
+        SplineDeformMeasure(bamboo_tile,z0,bamboo_tile_length);
+        bamboo_params.tile_scale = model_scale;
+        bamboo_params.tile_radius = VineTileRadius(bamboo_tile);
+        bamboo_params.twist = 0.15f;            //round: only enough to break the tile's repeat
+        bamboo_params.taper_length = 0.0f;
+        bamboo_params.tip_scale = 1.0f;
+        bamboo_params.grow_tip_length = 0.0f;
+        bamboo_params.grow_tip_scale = 1.0f;
+        bamboo_params.leaf_seat = 0.6f;
+        bamboo_params.leaf_scale = 1.5f;        //the spray is small beside the cane at her scale
+        bamboo_params.leaf_scale_jitter = 0.2f;
+        f_bamboo_ready = true;
+    }else{
+        debug->Warn("No '%s' in archer.glb: a bamboo arrow grows roots only\n",BAMBOO_STALK_NODE);
+    }
+    if (bamboo_tip_mesh){
+        bamboo_tip_mesh->Retain();
+        renderer->AddMaterials(bamboo_tip_materials);
+    }
+    if (bamboo_leaf_mesh){
+        bamboo_leaf_mesh->Retain();
+        //Their own copies in LEAF mode, like the vine's - see BuildVines.
+        for (Material& m : bamboo_leaf_materials){
+            m.name += std::string("@") + BAMBOO_LEAF_NODE;
+            m.glsl_material.wind_flex = vine_leaf_wind_flex;
+            m.glsl_material.wind_mode = 1;
+        }
+        renderer->AddMaterials(bamboo_leaf_materials);
+        float reach = 0.0f;
+        for (const vertex& v : bamboo_leaf_mesh->GetVertices()){
+            reach = fmaxf(reach,v.pos.z * model_scale);
+        }
+        bamboo_params.leaf_length = reach;
+    }
+    //Every leaf kind's mesh and scale in one place: the vine's as BuildVines loaded them.
+    for (int k = 0; k < VINE_LEAF_ALL_KINDS; k++){
+        if (k < VINE_LEAF_KIND_COUNT){
+            grown_leaf_meshes[k] = vine_leaf_meshes[k];
+            grown_leaf_to_world[k] = vine_leaf_to_world[k];
+        }else{
+            grown_leaf_meshes[k] = bamboo_leaf_mesh;
+            grown_leaf_to_world[k] = model_scale;
+        }
+    }
+
+    static const char* LOOK_NAMES[GROWN_LOOK_COUNT] = { "vine", "roots", "bamboo" };
     for (int i = 0; i < GROWN_SLOTS; i++){
         GrownVineDrawn& d = grown_drawn[i];
         for (int look = 0; look < GROWN_LOOK_COUNT; look++){
             char name[48];
-            snprintf(name,sizeof(name),"grown_%i.%s",i,(look == GROWN_LOOK_VINE) ? "vine" : "roots");
+            snprintf(name,sizeof(name),"grown_%i.%s",i,LOOK_NAMES[look]);
             Object* o = new Object();
             o->name = name;
             o->SetPosition(vec3(0.0f,0.0f,0.0f));     //world coordinates, like the static trunks
@@ -3366,6 +3435,10 @@ void ApplicationArcher::BuildGrownVines(){
                 }else{
                     o->TakeMaterialNames(vine_trunk_materials);
                 }
+            }else if (look == GROWN_LOOK_BAMBOO && f_bamboo_ready){
+                mesh->num_materials = bamboo_num_materials;
+                o->SetMesh(mesh);
+                o->TakeMaterialNames(bamboo_materials);
             }else{
                 mesh->num_materials = root_num_materials;
                 o->SetMesh(mesh);
@@ -3394,10 +3467,10 @@ void ApplicationArcher::BuildGrownVines(){
             vine_group->AttachChild(d.wrap);
         }
     }
-    for (int k = 0; k < VINE_LEAF_KIND_COUNT; k++){
+    for (int k = 0; k < VINE_LEAF_ALL_KINDS; k++){
         grown_leaf_pool[k].clear();
         grown_leaf_free[k].clear();
-        if (!vine_leaf_meshes[k]){
+        if (!grown_leaf_meshes[k]){
             continue;
         }
         for (int i = 0; i < GROWN_LEAF_POOL; i++){
@@ -3407,8 +3480,10 @@ void ApplicationArcher::BuildGrownVines(){
             o->name = name;
             o->SetPickability(false);
             o->SetCastsShadow(false);   //as the static vines' leaves: a speckle, not a shape
-            o->SetMesh(vine_leaf_meshes[k]);
-            if (f_vine_leaf_from_asset[k]){
+            o->SetMesh(grown_leaf_meshes[k]);
+            if (k >= VINE_LEAF_KIND_COUNT){
+                o->TakeMaterialNames(bamboo_leaf_materials);
+            }else if (f_vine_leaf_from_asset[k]){
                 o->TakeMaterialNames(vine_leaf_materials[k]);
             }else{
                 o->SetMaterialSlot(0,material_vine_leaf);
@@ -3447,6 +3522,25 @@ void ApplicationArcher::BuildGrownVines(){
             grown_tuft_free[k].push_back(i);
         }
     }
+    grown_tip_pool.clear();
+    grown_tip_free.clear();
+    if (bamboo_tip_mesh){
+        for (int i = 0; i < GROWN_TIP_POOL; i++){
+            char name[40];
+            snprintf(name,sizeof(name),"grown_tip_%i",i);
+            Object* o = new Object();
+            o->name = name;
+            o->SetPickability(false);
+            o->SetMesh(bamboo_tip_mesh);
+            o->TakeMaterialNames(bamboo_tip_materials);
+            o->SetVisibility(false);
+            vine_group->AttachChild(o);
+            grown_tip_pool.push_back(o);
+        }
+        for (int i = GROWN_TIP_POOL - 1; i >= 0; i--){
+            grown_tip_free.push_back(i);
+        }
+    }
     f_grown_vines_ready = true;
     debug->Info("Grown plants: %i + %i slots, %i leaves and %i tuft plants of each kind pooled, roots "
                 "from %s\n",GROWN_VINE_MAX,GROWN_SMALL_MAX,GROWN_LEAF_POOL,GROWN_TUFT_POOL,
@@ -3466,6 +3560,12 @@ void ApplicationArcher::ReleaseGrownVine(int slot){
         if (t.object){
             t.object->SetVisibility(false);
             grown_tuft_free[t.plant.kind].push_back(t.pool);
+        }
+    }
+    for (GrownTip& t : g.tips){
+        if (t.object){
+            t.object->SetVisibility(false);
+            grown_tip_free.push_back(t.pool);
         }
     }
     g = GrownVine();
@@ -3514,7 +3614,8 @@ int ApplicationArcher::TakeGrownSlot(bool f_vine){
 void ApplicationArcher::AddGrownStrands(GrownVine& g, const VineGrowth& growth, int look, int species,
                                         int start, const VineField& field){
     int base = (int)g.strands.size();
-    const VineParams& params = (look == GROWN_LOOK_ROOT) ? root_params : vine_params;
+    const VineParams& params = (look == GROWN_LOOK_ROOT) ? root_params :
+                               ((look == GROWN_LOOK_BAMBOO) ? bamboo_params : vine_params);
     for (size_t k = 0; k < growth.strands.size(); k++){
         VineStrand st = growth.strands[k];
         if (st.parent >= 0){
@@ -3528,13 +3629,28 @@ void ApplicationArcher::AddGrownStrands(GrownVine& g, const VineGrowth& growth, 
         Spline spline;
         BuildVineSpline(st.path,spline);
         g.lengths.push_back(spline.GetLength());
-        if (look != GROWN_LOOK_VINE){
+        g.splines.push_back(spline);
+        if (look == GROWN_LOOK_ROOT){
             continue;       //a root has no leaves
         }
         std::vector<VineLeaf> leaves;
-        ScatterVineLeaves(spline,st.path,params,&field,leaves);
+        if (look == GROWN_LOOK_BAMBOO){
+            ScatterBambooLeaves(spline,st.path,params,bamboo_tile_length,BAMBOO_NODES_PER_TILE,&field,leaves);
+            //And the cane's pointed tip, carried on its front by StepGrownVines.
+            if (!grown_tip_free.empty()){
+                GrownTip t;
+                t.pool = grown_tip_free.back();
+                grown_tip_free.pop_back();
+                t.object = grown_tip_pool[t.pool];
+                t.strand = index;
+                t.object->SetVisibility(false);
+                g.tips.push_back(t);
+            }
+        }else{
+            ScatterVineLeaves(spline,st.path,params,&field,leaves);
+        }
         for (const VineLeaf& leaf : leaves){
-            int kind = (leaf.kind >= 0 && leaf.kind < VINE_LEAF_KIND_COUNT) ? leaf.kind : VINE_LEAF_1;
+            int kind = (leaf.kind >= 0 && leaf.kind < VINE_LEAF_ALL_KINDS) ? leaf.kind : VINE_LEAF_1;
             if (grown_leaf_free[kind].empty()){
                 grown_leaves_short++;
                 continue;
@@ -3615,7 +3731,10 @@ void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
     vec3 anchor(hit.point.x,hit.point.y,hit.point.z);
     vec3 normal(hit.normal.x,hit.normal.y,hit.normal.z);
     bool f_under = normal.y < -0.5f;
+    bool f_top = normal.y > 0.5f;
     bool f_vine = (hit.kind == ARROW_VINE);
+    bool f_bamboo = (hit.kind == ARROW_BAMBOO);
+    bool f_big = (hit.kind != ARROW_NORMAL);     //which ring: anything but the normal arrow's roots and tufts
     int seed = VineGrowthSeed(anchor,hit.arrow);
 
     /*
@@ -3634,19 +3753,43 @@ void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
 #endif
     VineLevelField field(stage.blocks,surfaces);
 
-    int slot = TakeGrownSlot(f_vine);
+    int slot = TakeGrownSlot(f_big);
     GrownVine& g = grown_vines[slot];
     g.anchor = anchor;
     int short_before = grown_leaves_short + grown_tufts_short;
     const VineSpecies& roots = VineSpeciesFor(VINE_SPECIES_ROOTS);
-    if (f_under){
-        //Every plant's roots, first - out of the underside, where they can be seen.
+    /*
+        The seed went through an underside: the plant comes up on the top directly above - if that
+        top is open there and the platform is thin enough for the story to hold. Otherwise it is
+        roots only.
+    */
+    float top = block.Top();
+    bool f_through = f_under && top - block.Bottom() <= GROWN_TUFT_THROUGH && stage.SpanAt(anchor.x,top) >= 0;
+    if (f_under || (!f_big && !f_top)){
+        /*
+            Every plant's roots, first - out of the underside, where they can be seen. And all a
+            normal arrow grows in a wall: roots out of the face, drooping. A tuft of grass
+            standing out sideways from a wall looked wrong (the user, 2026-09-30).
+        */
         VineGrowth rg;
         if (GrowRoots(roots,root_params,anchor,normal,seed,field,rg)){
             AddGrownStrands(g,rg,GROWN_LOOK_ROOT,VINE_SPECIES_ROOTS,0,field);
         }
     }
-    if (f_vine && f_under){
+    if (f_bamboo){
+        //A clump: up off a top, out and up off a wall, or up off the top above an underside.
+        VineGrowth bg;
+        const VineSpecies& bamboo = VineSpeciesFor(VINE_SPECIES_BAMBOO);
+        if (f_bamboo_ready && !f_under){
+            if (GrowBamboo(bamboo,bamboo_params,anchor,normal,seed,field,bg)){
+                AddGrownStrands(g,bg,GROWN_LOOK_BAMBOO,VINE_SPECIES_BAMBOO,0,field);
+            }
+        }else if (f_bamboo_ready && f_through){
+            if (GrowBamboo(bamboo,bamboo_params,vec3(anchor.x,top,anchor.z),vec3(0.0f,1.0f,0.0f),seed,field,bg)){
+                AddGrownStrands(g,bg,GROWN_LOOK_BAMBOO,VINE_SPECIES_BAMBOO,roots.grow_ticks + 4,field);
+            }
+        }
+    }else if (f_vine && f_under){
         VineGrowth vg;
         if (GrowVine(VineSpeciesFor(VINE_SPECIES_VINE),vine_params,anchor,normal,seed,field,vg)){
             AddGrownStrands(g,vg,GROWN_LOOK_VINE,VINE_SPECIES_VINE,GROWN_ROOTS_LEAD,field);
@@ -3658,34 +3801,30 @@ void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
             AddGrownStrands(g,cg,GROWN_LOOK_VINE,VINE_SPECIES_CREEPER,0,field);
         }
     }else if (f_under){
-        /*
-            The seed went through: the roots are its underside, and the tuft comes up on the top
-            directly above - if that top is open there and the platform is thin enough for the
-            story to hold. Otherwise it is roots only.
-        */
-        float top = block.Top();
-        if (top - block.Bottom() <= GROWN_TUFT_THROUGH && stage.SpanAt(anchor.x,top) >= 0){
+        //The roots are its underside; the tuft comes up on the top above.
+        if (f_through){
             AddGrownTuft(g,vec3(anchor.x,top,anchor.z),vec3(0.0f,1.0f,0.0f),seed,roots.grow_ticks + 4);
         }
-    }else{
-        //Into a wall or a top: a small tuft where it stuck, out of the surface as drawn.
+    }else if (f_top){
+        //Into a top: a small tuft where it stuck, out of the surface as drawn.
         AddGrownTuft(g,VineMarchOut(field,anchor,normal),normal,seed,0);
     }
     if (g.strands.empty() && g.tufts.empty()){
         return;         //nothing to grow here; the slot stays empty
     }
     CommitGrownVine(slot);
-    if (f_vine){
+    if (f_big){
+        //The longest stem off the anchor, for the sound (a placeholder, shared by every plant).
         float length = 0.0f;
         for (size_t k = 0; k < g.strands.size(); k++){
-            if (g.looks[k] == GROWN_LOOK_VINE && g.strands[k].parent < 0){
-                length = g.lengths[k];
+            if (g.looks[k] != GROWN_LOOK_ROOT && g.strands[k].parent < 0){
+                length = fmaxf(length,g.lengths[k]);
             }
         }
         cues.Signal("vine_grow",CuePayload().Set("x",anchor.x).Set("length",length));
     }
     debug->Info("%s at (%.2f,%.2f): %zu strands, %zu leaves, %zu tuft plants%s\n",
-                f_vine ? "A vine grows" : (g.strands.empty() ? "A tuft grows" : "Roots grow"),
+                f_bamboo ? "Bamboo grows" : (f_vine ? "A vine grows" : (g.strands.empty() ? "A tuft grows" : "Roots grow")),
                 anchor.x,anchor.y,g.strands.size(),g.leaves.size(),
                 g.tufts.size(),(grown_leaves_short + grown_tufts_short > short_before) ? " (a pool ran short)" : "");
 }
@@ -3758,7 +3897,7 @@ void ApplicationArcher::StepGrownVines(){
                 float ang = atan2f(sa,blade.dot(l.tangent));
                 rot = quat(axis / sa,ang * (1.0f - open)) * rot;
             }
-            float s = l.leaf.scale * vine_leaf_to_world[l.leaf.kind] * fmaxf(open,0.02f);
+            float s = l.leaf.scale * grown_leaf_to_world[l.leaf.kind] * fmaxf(open,0.02f);
             l.object->SetRotation(rot);
             l.object->SetScale(vec3(s,s,s));
             l.object->SetVisibility(true);
@@ -3776,6 +3915,23 @@ void ApplicationArcher::StepGrownVines(){
             k = (k > 1.0f) ? 1.0f : k;
             float up = 1.0f - (1.0f - k) * (1.0f - k);
             float s = foliage_scale * t.plant.scale * fmaxf(up,0.02f);
+            t.object->SetScale(vec3(s,s,s));
+            t.object->SetVisibility(true);
+        }
+        /*
+            A cane's tip rides its front, along the curve there - so the shoot is what pushes up
+            out of the ground, the stalk laid down behind it. Drawn at the stalk's own scale, so
+            its base ring sits on the stalk's end ring (BuildGrownVines).
+        */
+        for (GrownTip& t : g.tips){
+            size_t k = (size_t)t.strand;
+            if (k >= n || k >= g.splines.size() || fronts[k] <= 0.0f){
+                t.object->SetVisibility(false);
+                continue;
+            }
+            float s = model_scale * g.strands[k].path.thickness;
+            t.object->SetPosition(g.splines[k].PositionAt(fronts[k]));
+            t.object->SetRotation(quat::getquat(vec3(0.0f,0.0f,1.0f),g.splines[k].TangentAt(fronts[k])));
             t.object->SetScale(vec3(s,s,s));
             t.object->SetVisibility(true);
         }
@@ -3835,6 +3991,10 @@ void ApplicationArcher::DrawGrownVines(){
                 }
                 if (d.looks[k] == GROWN_LOOK_ROOT){
                     BuildVineTrunk(d.splines[k],d.paths[k],root_tile,root_params,verts[GROWN_LOOK_ROOT],fronts[k]);
+                    continue;
+                }
+                if (d.looks[k] == GROWN_LOOK_BAMBOO){
+                    BuildVineTrunk(d.splines[k],d.paths[k],bamboo_tile,bamboo_params,verts[GROWN_LOOK_BAMBOO],fronts[k]);
                     continue;
                 }
                 BuildVineTrunk(d.splines[k],d.paths[k],vine_tile,vine_params,verts[GROWN_LOOK_VINE],fronts[k]);
@@ -5701,6 +5861,7 @@ void ApplicationArcher::BuildArrowDress(Mesh* flight){
     static const struct { float r, g, b, glow; } TINT[ARROW_KIND_COUNT] = {
         { 1.00f, 1.00f, 1.00f, 0.00f },
         { 0.55f, 1.05f, 0.42f, 0.10f },     //vine: moss
+        { 1.10f, 1.02f, 0.55f, 0.08f },     //bamboo: cane yellow
     };
     for (int k = 0; k < ARROW_KIND_COUNT; k++){
         for (int s = 0; s < slots; s++){
@@ -6325,8 +6486,9 @@ void ApplicationArcher::DrawVitalsHud(){
 #define ARROW_HUD_FLASH_TICKS   30
 static uint32_t ArrowKindColour(int kind, uint8_t alpha){
     switch (kind){
-        case ARROW_VINE: return UIColor(150,196, 80,alpha);     //TITLE_BAR_FILL's moss
-        default:         return UIColor(242,232,204,alpha);     //TITLE_TEXT's parchment
+        case ARROW_VINE:   return UIColor(150,196, 80,alpha);   //TITLE_BAR_FILL's moss
+        case ARROW_BAMBOO: return UIColor(214,198,110,alpha);   //a ripe cane's straw
+        default:           return UIColor(242,232,204,alpha);   //TITLE_TEXT's parchment
     }
 }
 void ApplicationArcher::DrawArrowHud(){
@@ -10789,12 +10951,12 @@ void ApplicationArcher::SyncArcherAnimation(){
     climb_base_posed = base_pinned;
     /*
         ON A BRANCH, HER LEAN - Stage::lean, sideways, + away from the camera - as a roll of the
-        whole model about her feet, until there is an animation to carry it. About the WORLD's X, the
-        axis she walks along, and outside the yaw for the rope tilt's reason: inside it the lean would
-        flip sides every time she turned round.
+        whole model about her feet: PUPPET_BRANCH_LEAN_SHARE of it, since Balance_Walking's arms
+        carry the rest of saying so. About the WORLD's X, the axis she walks along, and outside the
+        yaw for the rope tilt's reason: inside it the lean would flip sides every time she turned round.
     */
     if (stage.f_on_ground && stage.branch_on >= 0 && stage.lean != 0.0f){
-        rotation = quat(vec3(1,0,0),-stage.lean) * rotation;
+        rotation = quat(vec3(1,0,0),-stage.lean * PUPPET_BRANCH_LEAN_SHARE) * rotation;
     }
     archer_model->SetPosition(feet);
     archer_model->SetRotation(rotation);
@@ -11664,7 +11826,7 @@ void ApplicationArcher::PublishSnapshot(){
             if (g.looks[k] == GROWN_LOOK_ROOT){
                 gv.roots++;
             }
-            if (gv.length == 0.0f || g.looks[k] == GROWN_LOOK_VINE){
+            if (gv.length == 0.0f || g.looks[k] != GROWN_LOOK_ROOT){
                 gv.length = g.lengths[k];
                 gv.front = VineGrowthFront(VineSpeciesFor(g.species[k]),g.lengths[k],gv.ticks - g.starts[k]);
             }
@@ -12972,7 +13134,7 @@ void ApplicationArcher::RegisterMCPTools(){
             std::vector<StageBlock> blocks;
             int64_t tick = 0;
             main_scene->AtTickBoundary([&](){
-                blocks = stage.blocks;
+                blocks = WindBlocks(stage.blocks,stage.biomes);   //as UpdateWind builds it, or the keys never match
                 tick = (int64_t)main_scene->GetPhysicsTick();
             });
             std::unique_lock<std::mutex> lock(wind_mutex);

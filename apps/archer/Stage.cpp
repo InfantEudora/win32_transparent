@@ -63,6 +63,7 @@ void Stage::Reset(){
     signs.clear();
     scenery.clear();
     waters.clear();
+    biomes.clear();
     trees.clear();
     spring_plants.clear();
     branches.clear();
@@ -624,7 +625,49 @@ void Stage::BuildMainLevel(){
     blocks.push_back({ ARCHER_CAVE_X_MIN + 1.00f, (ARCHER_CAVE_ROOF_Y + 2.00f) * 0.5f,
                        1.00f, (ARCHER_CAVE_ROOF_Y + 2.00f) * 0.5f,
                        BLOCK_SOLID, true, false, -2.25f, 3.75f });                  //far wall, x -66..-64, 0 .. 11
+
+    /*
+        And its BIOME - the inside, floor to roof, far wall to mouth. Its own plants and rocks
+        (FoliageBiomeFor, BoulderBiomeFor) and STILL AIR: the wind goes over the cave, not
+        through it, which is also what keeps the leaves and streaks out.
+    */
+    StageBiome cave;
+    cave.kind = BIOME_CAVE;
+    cave.name = "Cave";
+    cave.x = (ARCHER_CAVE_X_MIN + ARCHER_TEST_BAY_X_MIN) * 0.5f;
+    cave.hw = (ARCHER_TEST_BAY_X_MIN - ARCHER_CAVE_X_MIN) * 0.5f;
+    cave.y = ARCHER_CAVE_ROOF_Y * 0.5f;
+    cave.hh = ARCHER_CAVE_ROOF_Y * 0.5f;
+    cave.f_still_air = true;
+    //The mouth's daylight: the jungle's dressing thins over the first six units in.
+    cave.fade_right = 6.0f;
+    biomes.push_back(cave);
 #endif
+}
+
+int BiomeAt(const std::vector<StageBiome>* biomes, float x, float y, float* weight){
+    if (weight){
+        *weight = 1.0f;
+    }
+    if (biomes){
+        for (const StageBiome& b : *biomes){
+            if (!b.Contains(x,y)){
+                continue;
+            }
+            if (weight){
+                float w = 1.0f;
+                if (b.fade_left > 0.0f){
+                    w = fminf(w,(x - b.Left()) / b.fade_left);
+                }
+                if (b.fade_right > 0.0f){
+                    w = fminf(w,(b.Right() - x) / b.fade_right);
+                }
+                *weight = (w < 0.0f) ? 0.0f : w;
+            }
+            return b.kind;
+        }
+    }
+    return BIOME_JUNGLE;
 }
 
 void Stage::AddScenery(const StageScenery& s){
@@ -3679,7 +3722,7 @@ static void ArrowAttitude(const v3& vel, float& out_angle, float& out_yaw){
 }
 
 const char* ArrowKindName(int kind){
-    static const char* names[ARROW_KIND_COUNT] = { "arrow", "vine" };
+    static const char* names[ARROW_KIND_COUNT] = { "arrow", "vine", "bamboo" };
     return (kind >= 0 && kind < ARROW_KIND_COUNT) ? names[kind] : "?";
 }
 

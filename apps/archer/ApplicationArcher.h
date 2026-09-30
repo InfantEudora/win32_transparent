@@ -2151,8 +2151,13 @@ private:
           vine arrow, underside   roots, then (GROWN_ROOTS_LEAD later) a hanging vine
           normal arrow, underside roots, then a tuft on the top above, if that is open and the
                                   platform no thicker than GROWN_TUFT_THROUGH
-          normal arrow, wall/top  a small tuft where it stuck
+          normal arrow, wall      roots, out of the face and drooping (a tuft on a wall looked
+                                  wrong - the user, 2026-09-30)
+          normal arrow, top       a small tuft where it stuck
           vine arrow, wall/top    a creeper: up the face, over the lip, across and down (step 8)
+          bamboo arrow, wall/top  a clump of canes, straight up off a top, out and up off a wall
+          bamboo arrow, underside roots, then the clump on the top above - the same test as the
+                                  normal arrow's tuft
 
         Split three ways by thread:
           PHYSICS THREAD   grown_vines: the walks (GrowVine / GrowRoots, at the strike, off the
@@ -2179,9 +2184,11 @@ private:
 #define GROWN_TUFT_TICKS        30      //a tuft's plant comes up over this
 #define GROWN_ROOTS_LEAD        16      //ticks the roots grow before a vine starts after them
 #define GROWN_TUFT_THROUGH      2.0f    //thicker than this, a platform grows no tuft on its top
+#define GROWN_TIP_POOL          192     //bamboo tips, one per cane: 5 canes in 32 slots and room over
     enum GrownLook{
         GROWN_LOOK_VINE = 0,            //vine_trunk (and vine_curl over it), with leaves
         GROWN_LOOK_ROOT,                //root_tile, or the placeholder octagon, dark brown
+        GROWN_LOOK_BAMBOO,              //bamboo_stalk, bamboo_tip riding its front, bamboo_leaf sprays
         GROWN_LOOK_COUNT
     };
     struct GrownLeaf{
@@ -2197,6 +2204,12 @@ private:
         TuftPlant plant;
         int       start = 0;            //ticks after the strike
     };
+    //A cane's tip, carried on its strand's front.
+    struct GrownTip{
+        Object*   object = NULL;
+        int       pool = -1;
+        int       strand = 0;
+    };
     struct GrownVine{
         bool     f_live = false;
         bool     f_done = false;        //fully grown and open: nothing left to move
@@ -2207,14 +2220,21 @@ private:
         std::vector<int>   looks;       //per strand: GrownLook
         std::vector<int>   species;     //per strand: VineSpeciesKind
         std::vector<int>   starts;      //per strand: ticks after the strike it starts growing
+        std::vector<Spline> splines;    //per strand, built: where a tip rides
         std::vector<GrownLeaf> leaves;
         std::vector<GrownTuft> tufts;
+        std::vector<GrownTip>  tips;
     };
     GrownVine grown_vines[GROWN_SLOTS];
     int       grown_next = 0;           //the vine ring's cursor, 0 .. GROWN_VINE_MAX - 1
     int       grown_small_next = 0;     //the small ring's, slots GROWN_VINE_MAX + this
-    std::vector<Object*> grown_leaf_pool[VINE_LEAF_KIND_COUNT];
-    std::vector<int>     grown_leaf_free[VINE_LEAF_KIND_COUNT];
+    //Every leaf kind a grown plant wears - the vine's two, and the bamboo's - with its mesh and scale.
+    std::vector<Object*> grown_leaf_pool[VINE_LEAF_ALL_KINDS];
+    std::vector<int>     grown_leaf_free[VINE_LEAF_ALL_KINDS];
+    Mesh*                grown_leaf_meshes[VINE_LEAF_ALL_KINDS] = {};
+    float                grown_leaf_to_world[VINE_LEAF_ALL_KINDS] = {};
+    std::vector<Object*> grown_tip_pool;
+    std::vector<int>     grown_tip_free;
     std::vector<Object*> grown_tuft_pool[FOLIAGE_KIND_COUNT];
     std::vector<int>     grown_tuft_free[FOLIAGE_KIND_COUNT];
     int       grown_leaves_short = 0;   //leaves and tuft plants not grown for want of a pooled one
@@ -2225,6 +2245,21 @@ private:
     int        root_num_materials = 1;
     bool       f_root_from_asset = false;
     VineParams root_params;
+    /*
+        The bamboo look, all four pieces from archer.glb: bamboo_stalk the tile (two internodes to a
+        copy), bamboo_tip the pointed shoot on each cane's front, bamboo_leaf a spray at a node.
+        No stand-ins - without the stalk a bamboo arrow grows nothing but roots, and says so at Init.
+        (bamboo_end, a flat cut end, is in the file but not used yet.)
+    */
+    std::vector<vertex>   bamboo_tile;
+    std::vector<Material> bamboo_materials;
+    int        bamboo_num_materials = 1;
+    float      bamboo_tile_length = 1.0f;   //the stalk tile's extent at scale 1, for the nodes
+    VineParams bamboo_params;
+    Mesh*      bamboo_tip_mesh = NULL;
+    std::vector<Material> bamboo_tip_materials;
+    std::vector<Material> bamboo_leaf_materials;
+    bool       f_bamboo_ready = false;
 
     struct GrownVineShared{
         int   generation = 0;           //+1 whenever the slot is refilled or emptied

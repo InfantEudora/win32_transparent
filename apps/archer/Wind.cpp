@@ -79,6 +79,25 @@ static void Ramp(float q, float& r, float& dr){
 
 //--- Build ---------------------------------------------------------------------------------------
 
+std::vector<StageBlock> WindBlocks(const std::vector<StageBlock>& blocks, const std::vector<StageBiome>& biomes){
+    std::vector<StageBlock> out = blocks;
+    for (const StageBiome& b : biomes){
+        if (!b.f_still_air){
+            continue;
+        }
+        StageBlock still;
+        still.kind = BLOCK_SOLID;
+        still.x = b.x;
+        still.y = b.y;
+        still.hw = b.hw;
+        still.hh = b.hh;
+        //Invisible, like a scenery tile's collider: something the wind sees and nothing draws.
+        still.f_invisible = true;
+        out.push_back(still);
+    }
+    return out;
+}
+
 //The blocks the wind sees, with the level's end walls left out; returns how many were.
 static int SelectObstacles(const std::vector<StageBlock>& blocks, std::vector<StageBlock>& obstacles){
     std::vector<StageBlock> candidates;

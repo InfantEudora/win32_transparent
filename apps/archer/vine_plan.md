@@ -430,7 +430,7 @@ below) that any plant can name as its roots, so all plants share one root look.
 | hit | normal arrow | vine | bamboo | thorny | grape |
 |---|---|---|---|---|---|
 | **underside** | roots down, then a **tuft on the top above** | roots, then a hanging vine | roots, then a cane that curves down and turns up | roots, then hanging, coiled | roots, then hanging, fruiting |
-| **wall** | a small tuft | a **creeper** along the face and over the lip | a cane out of the wall, bending up | a creeper, dense | a creeper, fruit hanging off it |
+| **wall** | roots, drooping (a tuft until 2026-09-30) | a **creeper** along the face and over the lip | a cane out of the wall, bending up | a creeper, dense | a creeper, fruit hanging off it |
 | **top** | a small tuft | a creeper along the top and over an edge, to hang | canes straight up | a low thicket | a creeper |
 
 **The tuft on the top above.** A normal arrow in an underside plants a seed *through* the
@@ -766,8 +766,48 @@ meshes. That move is cheap exactly because sections 9 and 10 keep the walker out
      - its frame stands out of the wall;
      - struck into a top, it creeps 5.1 along it, low, without resting;
      - 100 seeds: 100 climb, 100 come over, none goes in.
+
+   **8b. Roots on walls, and bamboo** *(DONE 2026-09-30, before step 9 at the user's ask.)*
+   - **A normal arrow into a wall grows roots now**, out of the face and drooping down it: a tuft
+     of grass standing sideways out of a wall looked wrong (the user). A top still grows a tuft.
+     Seen in the game: 11 root strands out of the step's right face.
+   - **The bamboo arrow**, `ARROW_BAMBOO`, key 3, a cane-yellow tint and HUD card. It grows:
+     - off a top, a clump of canes straight up;
+     - out of a wall, canes that come out and bend up, each at its own rate (`gravity` scaled
+       0.45-1.35 per cane), so they fan out rather than bending alike into one column;
+     - into an underside, roots, then the clump on the top above, by the normal arrow's tuft test.
+   - **`VINE_SPECIES_BAMBOO`:** gravity -3 (up), wander 0.25 on a 2.5 wavelength, no branches,
+     3-6 long, 0.8 thick, 75 ticks - 16.7 ticks a unit against the vine's 27.
+   - **`GrowBamboo`:** 3-5 canes spread across (0.45 on a top, 0.25 up a wall) and 0.35 into the
+     surface, the middle ones tallest (down to 0.6 of the length at the ends).
+   - **The pieces, all from archer.glb:**
+     - `bamboo_stalk` is the tile. It carries 3 node rings: its middle and its ends. It is laid
+       like every tile, whole copies stretched to fit. That is not the fixed period this section
+       first planned, but every ring still sits where the artist put it in its copy.
+     - `bamboo_tip` is a pooled Object (`GROWN_TIP_POOL` 192) riding each cane's front. The cane
+       keeps full thickness to the front: `VineParams` gained `grow_tip_length` / `grow_tip_scale`,
+       0 and 1 here, so there is no closing point under the tip.
+     - `bamboo_leaf` sprays sit at the nodes, from 40% of the length up. They alternate sides, with
+       two per node near the top, and are drawn at 1.5x. They are rolled a quarter turn about the
+       blade to face the camera; unrolled they stood edge-on and read as wisps.
+       `VINE_LEAF_BAMBOO` is a leaf kind past `VINE_LEAF_KIND_COUNT`, so the static vines never
+       deal or load it.
+     - `bamboo_end`, a flat cut end, is not used yet.
+   - **Seen in the game:**
+     - off the ground, 5 canes over her head with tips, nodes and sprays;
+     - mid-growth, the pointed shoots pushing up;
+     - out of the step's face, fanned;
+     - under the platform at (15, 6.4), roots below and canes on top.
+   - 9 checks (890):
+     - a clump of 3-5 canes, each almost straight up;
+     - none into the ground;
+     - out of a wall, the canes bend up and never go back in;
+     - 100 seeds each way all grow, none go in, and no more than 3 are crooked;
+     - leaf sprays sit on the upper nodes only;
+     - it grows faster than a vine.
+   - The archer test replay is unchanged.
 9. **Withering**, and growths on crumbling blocks.
-10. **The other species** as their assets arrive: bamboo (fixed period, the tip), thorny (the coil
+10. **The other species** as their assets arrive: bamboo (done, step 8b), thorny (the coil
     derive, thorns), grape (fruit, gravity-hung).
 11. **Mechanics**: growth into `Stage`, then the vine rope first.
 
@@ -777,8 +817,9 @@ Those belong to the animation plan when they start, not here.
 ### Decided 2026-09-29
 
 - Every plant has roots, shown only where they can be seen: out of undersides.
-- A normal arrow into an underside grows roots, then a tuft on the top above. Into a wall or a
-  top, a small tuft where it sticks.
+- A normal arrow into an underside grows roots, then a tuft on the top above. Into a top, a small
+  tuft where it sticks. Into a wall, roots (changed 2026-09-30: grass sideways out of a wall
+  looked wrong).
 - A wall grows a creeper, its kind set by the arrow.
 - The cap is 32 live growths, the oldest withering with its leaves blown off.
 - Platform edges become something the stage lists and looks up (section 15).

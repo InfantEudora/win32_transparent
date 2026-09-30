@@ -267,6 +267,7 @@ struct v3{
 enum ArrowKind{
     ARROW_NORMAL = 0,
     ARROW_VINE,
+    ARROW_BAMBOO,
     ARROW_KIND_COUNT
 };
 //A kind's name, for the HUD, the log and MCP; "?" out of range.
@@ -1126,6 +1127,50 @@ struct StageWater{
 };
 
 /*
+    A BIOME: a box of the level with its own rules for how it is dressed and how the air moves in
+    it - the cave's (cave_plan.md) are the first. Declared the way zones are, but LOOKS ONLY: the
+    rules never read one, which is why this is not a field on StageZone - a zone is the rules'
+    business (the HUD's name for where she is, what entering it starts), and a biome is what the
+    plants, the rocks and the wind make of a place.
+
+    Everywhere outside every box is BIOME_JUNGLE, the level as it always was. Where boxes overlap,
+    the first in the list wins. What each kind means is up to its readers - FoliageBiomeFor,
+    BoulderBiomeFor, WindBlocks - so a new kind is a row in each of those, not a flag here.
+*/
+enum StageBiomeKind{
+    BIOME_JUNGLE = 0,
+    BIOME_CAVE,
+    BIOME_COUNT
+};
+struct StageBiome{
+    int   kind = BIOME_JUNGLE;
+    std::string name;
+    float x = 0.0f, y = 0.0f;
+    float hw = 1.0f, hh = 1.0f;
+    //STILL AIR: the wind treats the box as solid, so it flows round the place rather than
+    //through it, and nothing it carries - leaves, streaks, fireflies - comes in (Wind.h).
+    bool  f_still_air = false;
+    /*
+        How far inside its left and right edges it blends into what is outside it, for its
+        dressing - the cave's grass thins over the first few units in from the mouth rather than
+        stopping at a line. The air does not blend: still is still.
+    */
+    float fade_left = 0.0f;
+    float fade_right = 0.0f;
+
+    float Left()   const { return x - hw; };
+    float Right()  const { return x + hw; };
+    float Bottom() const { return y - hh; };
+    float Top()    const { return y + hh; };
+    bool  Contains(float px, float py) const {
+        return (px >= Left()) && (px < Right()) && (py >= Bottom()) && (py < Top());
+    }
+};
+//The biome at a point: the first box holding it, or BIOME_JUNGLE. `biomes` may be NULL. With
+//`weight`, how much of that biome it is, 0..1 - under 1 only in a box's fade - and 1 for the jungle.
+int BiomeAt(const std::vector<StageBiome>* biomes, float x, float y, float* weight = NULL);
+
+/*
     A PROP, AS THE RULES SEE IT: a box in the way, refreshed every tick.
 
     This is how "a crate blocks you" is expressed without the rules learning what a rigid body is.
@@ -1734,6 +1779,7 @@ public:
     std::vector<StageSign>  signs;
     std::vector<StageScenery> scenery;
     std::vector<StageWater> waters;
+    std::vector<StageBiome> biomes;
     std::vector<StageTree>  trees;
     //Declared by the level and stepped every tick: their state is theirs, so a Reset rebuilds them.
     std::vector<StageSpringPlant> spring_plants;

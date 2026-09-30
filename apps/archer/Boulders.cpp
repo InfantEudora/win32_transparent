@@ -88,8 +88,40 @@ void FindBoulderCorners(const std::vector<StageBlock>& blocks, const BoulderPara
     }
 }
 
+BoulderBiome BoulderBiomeFor(int biome){
+    BoulderBiome r;
+    if (biome == BIOME_CAVE){
+        r.cluster_at_least = 1.0f;
+        r.rubble = 0.6f;
+        r.rubble_big = 0.12f;
+    }
+    return r;
+}
+
+//The rules at a spot: its biome's, scaled toward the jungle's (none) by how far into a fade it is.
+static BoulderBiome RulesAt(const std::vector<StageBiome>* biomes, float x, float y){
+    float w = 1.0f;
+    BoulderBiome r = BoulderBiomeFor(BiomeAt(biomes,x,y,&w));
+    r.cluster_at_least *= w;
+    r.rubble *= w;
+    return r;
+}
+
+//Clear of every rock already placed, in (x,z), by `slack` of the two radii.
+static bool ClearOfRocks(const std::vector<Boulder>& out, const BoulderParams& params, float x, float z,
+                         float r, float slack){
+    for (const Boulder& o : out){
+        float ro = params.radius[o.kind] * o.scale;
+        float dx = x - o.x, dz = z - o.z;
+        if (sqrtf(dx * dx + dz * dz) < (r + ro) * slack){
+            return false;
+        }
+    }
+    return true;
+}
+
 void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams& params,
-                     std::vector<Boulder>& out){
+                     std::vector<Boulder>& out, const std::vector<StageBiome>* biomes){
     out.clear();
     std::vector<BoulderCorner> corners;
     FindBoulderCorners(blocks,params,corners);
@@ -101,7 +133,9 @@ void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams&
         //level does not reshuffle every cluster.
         const uint32_t seed = (uint32_t)(int32_t)floorf(c.x * 10.0f) * 2u + (c.side > 0.0f ? 1u : 0u);
         const uint32_t level = (uint32_t)(int32_t)floorf(A.Top() * 10.0f);
-        if (HashUnit(seed,level,0u) > params.cluster_chance){
+        //A biome may want more of them; the jungle's floor of 0 changes nothing.
+        const float chance = fmaxf(params.cluster_chance,RulesAt(biomes,c.x,A.Top()).cluster_at_least);
+        if (HashUnit(seed,level,0u) > chance){
             continue;
         }
 
@@ -202,6 +236,88 @@ void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams&
             b.tilt_axis_yaw = 6.2831853f * HashUnit(seed,level,t + 5u);
             out.push_back(b);
             j++;
+        }
+    }
+
+    /*
+        RUBBLE, where a biome asks for it: small rocks strewn along the open tops, now and then a
+        big one, as if come down from the roof. After the clusters, and clear of them. A candidate
+        every half unit, seeded by WHERE it is, like a corner, so an edit elsewhere moves none of
+        it; and only where a biome's rubble is above zero is anything drawn at all - so the
+        jungle's rocks are exactly what they were.
+    */
+    if (!biomes || biomes->empty()){
+        return;
+    }
+    const float rubble_step = 0.5f;
+    for (size_t a = 0; a < blocks.size(); a++){
+        const StageBlock& A = blocks[a];
+        if (!IsSurface(A)){
+            continue;
+        }
+        const float top = A.Top();
+        const uint32_t level = (uint32_t)(int32_t)floorf(top * 10.0f);
+        for (float x = A.Left() + rubble_step * 0.5f; x < A.Right(); x += rubble_step){
+            const BoulderBiome rules = RulesAt(biomes,x,top);
+            if (rules.rubble <= 0.0f){
+                continue;
+            }
+            const uint32_t seed = (uint32_t)(int32_t)floorf(x * 10.0f) * 2u + 1000003u;
+            if (HashUnit(seed,level,40u) >= rules.rubble * rubble_step){
+                continue;
+            }
+            //Open ground: nothing standing on the top here.
+            if (InsideAny(blocks,x,top + 0.3f)){
+                continue;
+            }
+            const bool f_big = HashUnit(seed,level,41u) < rules.rubble_big;
+            int kind = BOULDER_SMALL_1;
+            float sc;
+            if (f_big){
+                kind = (HashUnit(seed,level,42u) < 0.5f) ? BOULDER_BIG_1 : BOULDER_BIG_2;
+                if (params.radius[kind] <= 0.0f){
+                    kind = BOULDER_BIG_1;
+                }
+                sc = params.big_scale_min + (params.big_scale_max - params.big_scale_min) * HashUnit(seed,level,43u) * 0.6f;
+            }else{
+                sc = params.small_scale_min + (params.small_scale_max - params.small_scale_min) * HashUnit(seed,level,43u);
+            }
+            if (params.radius[kind] <= 0.0f){
+                continue;
+            }
+            float r = params.radius[kind] * sc;
+            //Off the half-unit lattice, so a row of them does not read as one.
+            const float bx = x + rubble_step * 0.4f * (2.0f * HashUnit(seed,level,45u) - 1.0f);
+            //Behind her walking line, like every rock; a big one to the back, as a cluster's is.
+            float zlo = A.Back() + params.back_inset;
+            float zhi = params.z_front_max - r;
+            if (f_big){
+                float zb = A.Back() + (1.0f - params.back_overhang) * r;
+                if (zb + r > params.z_front_max){
+                    continue;
+                }
+                zlo = zhi = zb;
+            }
+            if (zhi < zlo || bx - r < A.Left() || bx + r > A.Right()){
+                continue;
+            }
+            float z = zlo + (zhi - zlo) * HashUnit(seed,level,44u);
+            if (!ClearOfRocks(out,params,bx,z,r,0.9f)){
+                continue;
+            }
+            Boulder b;
+            b.kind = kind;
+            b.scale = sc;
+            b.x = bx;
+            b.z = z;
+            b.ground = top;
+            b.y = top - params.sink * params.height[kind] * sc;
+            b.yaw = 6.2831853f * HashUnit(seed,level,46u);
+            if (!f_big){
+                b.tilt = (params.small_tilt_deg * 3.14159265f / 180.0f) * HashUnit(seed,level,47u);
+                b.tilt_axis_yaw = 6.2831853f * HashUnit(seed,level,48u);
+            }
+            out.push_back(b);
         }
     }
 }

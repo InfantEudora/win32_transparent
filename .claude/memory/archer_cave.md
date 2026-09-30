@@ -12,4 +12,5 @@ The cave: x -66..-40, roof 9..11, far wall, mouth lip (the old bay left wall, sa
 **How to apply:**
 - Next step is lighting it: the camera-side fill light casts no shadow and still lights the inside; the bank's hazed materials read as distance inside a cave. Both are open, in cave_plan.md.
 - Extending the bay's own floor was rejected because it re-lays the bank's column grid and moves the hand-placed vines on its crest.
+- BIOMES (2026-09-30): StageBiome boxes in Stage.h (looks only, not zones); readers FoliageBiomeFor / BoulderBiomeFor / WindBlocks; jungle rules are exact no-ops (cave_test checks plant-for-plant). Still air = the box is solid to the wind. Two bay rock clusters at x -31 overlap - pre-existing, clusters never check each other.
 - wind_test's "no jets" now measures with gusts off; gusts start at the domain's left edge, so moving that edge moved them and a one-tick sample failed.

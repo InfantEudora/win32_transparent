@@ -99,7 +99,20 @@ void FindBoulderCorners(const std::vector<StageBlock>& blocks, const BoulderPara
                         std::vector<BoulderCorner>& out);
 
 //The rocks. `out` is cleared first.
+/*
+    What a biome (Stage.h) does to the rocks. The jungle's is nothing - no draw is made for it, so
+    its rocks are the rocks they always were. The CAVE is rubble: every corner gets its cluster,
+    and small rocks lie strewn along the open floor as well, now and then a big one among them -
+    what has come down from the roof. In a biome's fade both blend toward the jungle's.
+*/
+struct BoulderBiome{
+    float cluster_at_least = 0.0f;  //a corner's cluster chance is at least this
+    float rubble = 0.0f;            //rocks per unit of open top
+    float rubble_big = 0.0f;        //the share of them that are big
+};
+BoulderBiome BoulderBiomeFor(int biome);
+
 void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams& params,
-                     std::vector<Boulder>& out);
+                     std::vector<Boulder>& out, const std::vector<StageBiome>* biomes = NULL);
 
 #endif

@@ -98,7 +98,8 @@ enum ArcherClip{
     CLIP_KNEEL_UP,          //Kneel_ToStand          one knee -> standing, fitted to KNEEL_UP_TICKS
     CLIP_LAYING_UP,         //Laying_StandingUp      the level entry, MODE_GETUP; plays whole
     CLIP_ROPE_CLIMB,        //Rope_Climbing          hand over hand; playhead pinned to the distance climbed
-    CLIP_TEETER,            //LosingBalance          stopped past a lip, falling FORWARD over it; to be Teeter_Forward
+    CLIP_TEETER,            //Teeter_Forward         stopped past a lip, falling FORWARD over it
+    CLIP_BALANCE_WALK,      //Balance_Walking        on a branch; playhead pinned to the distance walked
     CLIP_COUNT
 };
 
@@ -311,6 +312,15 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
     line, so a teeter and the fear of that edge start at the same height. PUPPET_TEETER_REACH is how
     far short of the lip DescribeArcher still reports the edge, for the panel and the tests.
 */
+/*
+    HOW MUCH OF THE BRANCH LEAN THE WHOLE BODY TILTS BY. Stage::lean is the rules' - it is what
+    she falls off at, BALANCE_FALL_DEG, and what the gauge shows - and the model used to roll by
+    all of it, which was the only thing saying "balancing" before there was a clip for it. With
+    Balance_Walking's arms out doing that, half the tilt reads as the same danger without laying
+    her over. The rules are untouched; this is only how far the drawn body goes with them.
+*/
+#define PUPPET_BRANCH_LEAN_SHARE    0.5f
+
 #define PUPPET_TEETER_FROM          0.0f
 #define PUPPET_TEETER_DROP          VITALS_DROP_FROM
 #define PUPPET_TEETER_REACH         0.5f
@@ -451,6 +461,8 @@ struct ArcherAnimParams{
     */
     float edge_over = -1.0f;
     float edge_drop = 0.0f;
+    //Standing on a branch (Stage::branch_on), feet on it rather than hanging from it.
+    bool  f_on_branch = false;
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and
@@ -720,6 +732,15 @@ public:
     bool  f_teeter_spent = false;
 
     /*
+        HOW FAR SHE HAS WALKED ALONG THE BRANCH she is on, signed along facing - forward is + - and
+        0 on the tick she steps onto it. Balance_Walking's playhead is this over the clip's own
+        speed, wrapped: her feet stay where they were put, standing still holds the step she is in,
+        and backing up plays it backwards. The rope climb's arrangement, for the same reason, with
+        a straight line in place of the climb's measured curve - the walk's pace is even.
+    */
+    float branch_walked = 0.0f;
+
+    /*
         THE LANDING'S LEAD-IN (animation_plan.md, *Meeting the ground*). While the forecast landing
         is closer than a landing clip's contact frame, that clip plays in the air, its playhead
         pinned so the contact frame falls on the contact tick. `lead_clip` is the one playing, -1
@@ -867,6 +888,8 @@ public:
     //Runs the teeter's clock. After UpdateAir, whose stop it takes over and whose landing it
     //waits for.
     void UpdateTeeter(const ArcherAnimParams& in);
+    //Walks branch_walked along, or zeroes it off a branch.
+    void UpdateBranch(const ArcherAnimParams& in);
     //Is she standing where a teeter belongs - on the ground, past a lip she faces, over a real
     //drop? Where only, not whether she is still: pure, from `in`.
     static bool AtLip(const ArcherAnimParams& in);

@@ -36,6 +36,8 @@ static SplineDeformParams TrunkDeform(const Spline& spline, const VinePath& path
                                       float grown = -1.0f){
     SplineDeformParams d;
     d.grown = grown;       //growing: only this far along - see SplineDeformParams::grown
+    d.grow_tip_length = params.grow_tip_length;
+    d.grow_tip_scale = params.grow_tip_scale;
     d.scale = params.tile_scale * path.thickness;
     d.twist = params.twist;
     //Never more than half the vine each: a short vine tapers from both ends to its middle rather
@@ -388,6 +390,31 @@ const VineSpecies& VineSpeciesFor(int kind){
         c.hug_gap = 0.0f;
         c.climb = 2.5f;
         c.grow_ticks = 180;
+        /*
+            Bamboo: straight up and fast. Gravity negative turns the heading UP, so a cane struck
+            into a top rises almost at once and one out of a wall comes out and bends up within half
+            a unit. A slow, slight wander - a cane is not dead straight, but it never snakes. No
+            branches: a clump is several canes (GrowBamboo), each one stalk. Its reveal is quicker
+            than the vine's over a comparable length, which is most of what makes it read as bamboo.
+        */
+        VineSpecies& b = table[VINE_SPECIES_BAMBOO];
+        b.name = "bamboo";
+        b.length_min = 3.0f;        //over her head: she is 1.8
+        b.length_max = 6.0f;
+        b.step = 0.08f;
+        b.point_spacing = 0.30f;
+        b.gravity = -3.0f;
+        b.wander = 0.25f;
+        b.wander_wavelength = 2.5f;
+        b.wander_depth = 0.4f;
+        b.clearance = 0.0f;
+        b.branch_min = 0;
+        b.branch_max = 0;
+        b.thickness = 0.8f;
+        b.thickness_jitter = 0.12f;
+        b.grow_ticks = 75;
+        b.leaf_delay = 0.5f;
+        b.leaf_unfold = 0.5f;
         f_built = true;
     }
     return table[(kind >= 0 && kind < VINE_SPECIES_COUNT) ? kind : VINE_SPECIES_VINE];
@@ -794,6 +821,117 @@ bool GrowRoots(const VineSpecies& sp, const VineParams& params, const vec3& anch
         f_any = true;
     }
     return f_any;
+}
+
+//And a clump of bamboo's.
+enum{ VCH_CANE_COUNT = 72, VCH_CANE_ALONG, VCH_CANE_DEPTH, VCH_CANE_LEAN, VCH_CANE_TALL,
+      VCH_NODE_TURN, VCH_NODE_SCALE, VCH_NODE_LIFT, VCH_NODE_ROLL };
+
+bool GrowBamboo(const VineSpecies& sp, const VineParams& params, const vec3& anchor, const vec3& normal,
+                int seed, const VineField& field, VineGrowth& out){
+    vec3 n = normal;
+    if (n.length() < 1e-6f){
+        return false;
+    }
+    n.normalize();
+    vec3 across = (fabsf(n.z) < 0.9f) ? n.cross(vec3(0.0f,0.0f,1.0f)) : vec3(1.0f,0.0f,0.0f);
+    across.normalize();
+    vec3 depth = n.cross(across);
+    float fs = (float)seed;
+    int count = 3 + (int)(Hash01(anchor.x,fs,VCH_CANE_COUNT,0) * 3.0f);     //3..5
+    bool f_any = false;
+    for (int i = 0; i < count; i++){
+        //Where along the surface, -1 .. 1; the middle of the clump is its tallest, as a clump
+        //grows outward from its oldest canes.
+        float u = Signed(Hash01(anchor.x,fs,VCH_CANE_ALONG,i));
+        float into = 0.35f * Signed(Hash01(anchor.x,fs,VCH_CANE_DEPTH,i));
+        //Up a wall "along" is up the face, where canes spread less before they all turn up.
+        float spread = (fabsf(n.y) > 0.5f) ? 0.45f : 0.25f;
+        vec3 at = anchor + across * (spread * u) + depth * into;
+        //Leaning a little outward from the middle, and a little either way.
+        float lean = 0.08f * Signed(Hash01(anchor.x,fs,VCH_CANE_LEAN,i)) + 0.12f * u;
+        vec3 dir = n + across * lean + depth * (0.1f * into);
+        VineSpecies cane = sp;
+        float tall = (1.0f - 0.4f * fabsf(u)) * (0.85f + 0.15f * Hash01(anchor.x,fs,VCH_CANE_TALL,i));
+        cane.length_min *= tall;
+        cane.length_max *= tall;
+        //Each turns up at its own rate: out of a wall that fans them out, some reaching well clear
+        //before they rise - one rate and they all bend alike into a single column. Off a top,
+        //where they start up already, it changes nothing.
+        cane.gravity *= 0.45f + 0.9f * Hash01(anchor.x,fs,VCH_CANE_TALL,i + 16);
+        VineGrowth one;
+        if (!GrowVine(cane,params,at,dir,seed * 11 + 17 * (i + 1),field,one)){
+            continue;
+        }
+        for (VineStrand& st : one.strands){
+            st.parent = -1;         //a cane is one stalk; the species grows no branches
+            out.strands.push_back(st);
+            break;
+        }
+        f_any = true;
+    }
+    return f_any;
+}
+
+void ScatterBambooLeaves(const Spline& spline, const VinePath& path, const VineParams& params,
+                         float tile_length, int nodes_per_tile, const VineField* field,
+                         std::vector<VineLeaf>& out){
+    float length = spline.GetLength();
+    float period = tile_length * params.tile_scale * path.thickness;
+    if (!spline.IsBuilt() || period <= 1e-3f || nodes_per_tile < 1){
+        return;
+    }
+    //The nodes where the deform lays them: the same count and stretch as DeformAlongSpline.
+    int copies = (int)floorf(length / period + 0.5f);
+    if (copies < 1){
+        copies = 1;
+    }
+    float node = length / (float)(copies * nodes_per_tile);
+    float seed = (float)path.seed;
+    float radius = params.tile_radius * params.tile_scale * path.thickness;
+    //The lower part is bare, as a cane's is; the last node is under the tip piece.
+    int first = (int)ceilf(0.4f * length / node);
+    int last = copies * nodes_per_tile - 1;
+    float side = (Hash01(0.0f,seed,VCH_NODE_TURN,0) < 0.5f) ? 0.0f : VINE_PI;
+    for (int k = (first > 1) ? first : 1; k <= last; k++){
+        float s = node * (float)k;
+        SplineFrame f = spline.FrameAt(s);
+        float young = (float)(k - first) / (float)((last > first) ? (last - first) : 1);
+        //One spray per node, alternating sides; near the top a second, the far way round.
+        int sprays = (young > 0.6f) ? 2 : 1;
+        for (int j = 0; j < sprays; j++){
+            float around = side + (float)j * VINE_PI * 0.8f +
+                           0.7f * Signed(Hash01(s,seed,VCH_NODE_TURN,j + 1));
+            float lift = 0.9f + 0.25f * Signed(Hash01(s,seed,VCH_NODE_LIFT,j));
+            /*
+                Rolled a quarter turn about the blade, so the spray's face - it fans out across its
+                own X - turns toward the camera. Unrolled, a spray leaning across the screen stands
+                edge-on to it and reads as a wisp (seen 2026-09-30).
+            */
+            float roll = 0.5f * VINE_PI + 0.4f * Signed(Hash01(s,seed,VCH_NODE_ROLL,j));
+            float scale = params.leaf_scale * (1.0f - 0.3f * young) *
+                          (1.0f + params.leaf_scale_jitter * Signed(Hash01(s,seed,VCH_NODE_SCALE,j)));
+            vec3 out_dir = f.side * cosf(around) + f.normal * sinf(around);
+            //The vine leaf's frame: blade out and on toward the tip, face a quarter further.
+            vec3 fwd = f.tangent * cosf(lift) + out_dir * sinf(lift);
+            vec3 up  = out_dir * cosf(lift) - f.tangent * sinf(lift);
+            vec3 across = up.cross(fwd);
+            up = up * cosf(roll) + across * sinf(roll);
+            across = up.cross(fwd);
+            vec3 stem = f.position + out_dir * (radius * params.leaf_seat);
+            if (field && field->Distance(stem + fwd * (params.leaf_length * scale)) < 0.0f){
+                continue;
+            }
+            VineLeaf leaf;
+            leaf.kind = VINE_LEAF_BAMBOO;
+            leaf.s = s;
+            leaf.position = stem;
+            leaf.rotation = QuatFromBasis(across,up,fwd);
+            leaf.scale = scale;
+            out.push_back(leaf);
+        }
+        side += VINE_PI;
+    }
 }
 
 //--- The level's vines ----------------------------------------------------------------------------

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-29T19:43:11.399Z
+  modified: 2026-09-30T09:14:31.201Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -126,5 +126,15 @@ arrow_2, draw 45 wait false + aim_down 10 -> step's right face (9, 1.49). Next: 
 (leaves to LeafSwarm) + growths falling with crumbling blocks. Also done 2026-09-29 on the user's ask:
 the aim only tilts while drawn and returns to neutral after BOW_AIM_RETURN_TICKS of moving; the
 user will re-record archer_test at the end of the day (its target hit was lost).
+2026-09-30 STEP 8b DONE (user asked, before step 9): normal arrow into a WALL grows roots (a
+sideways tuft looked wrong); tops keep the tuft. BAMBOO arrow (ARROW_BAMBOO, key 3):
+VINE_SPECIES_BAMBOO (gravity -3 = up) + GrowBamboo clump (3-5 canes, per-cane gravity so wall
+canes fan) + ScatterBambooLeaves (sprays at stalk nodes, rolled 90 deg to face camera);
+bamboo_stalk tile / bamboo_tip pooled Object riding the front (VineParams grow_tip_* 0/1) /
+bamboo_leaf (VINE_LEAF_BAMBOO past VINE_LEAF_KIND_COUNT); bamboo_end unused. In-app tests: ground
+= place x 14.5, left 3, arrow_3, draw 45 nowait + aim_down 30 -> lands x -8.1; underside = place
+x 10.7, draw 45 nowait + up 17 -> (15, 6.4). sim_pause takes {"paused":false} to resume. The
+lockd broker can restart and drop claims mid-session: re-check lock_list before editing again,
+and never write a held file by script (the hook only guards Edit/Write). Next is still step 9.
 
 2026-09-26: four big CAVE vines added in the terrain bay (DeclareVines, #if ARCHER_TEST_BAY), two behind her and two in front at z 2+; hanging-start vines need up=+Z; see vine_plan.md "The cave vines".

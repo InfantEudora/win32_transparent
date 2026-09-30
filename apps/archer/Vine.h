@@ -35,7 +35,11 @@
 enum VineLeafKind{
     VINE_LEAF_1 = 0,
     VINE_LEAF_2,
-    VINE_LEAF_KIND_COUNT
+    VINE_LEAF_KIND_COUNT,
+    //Past the vine's own kinds, which are all ScatterVineLeaves deals and all the static vines
+    //load: the grown plants' other leaves.
+    VINE_LEAF_BAMBOO = VINE_LEAF_KIND_COUNT,
+    VINE_LEAF_ALL_KINDS
 };
 
 //One vine: the curve its trunk follows, and what makes it this vine rather than another.
@@ -64,6 +68,10 @@ struct VineParams{
     //Both ends thin over this distance to tip_scale, so a vine does not end in a sawn-off stump.
     float taper_length   = 0.9f;
     float tip_scale      = 0.30f;
+    //While growing, the front closes to grow_tip_scale over this - SplineDeformParams'. A plant
+    //that wears a tip piece on its front (the bamboo) keeps full thickness there instead.
+    float grow_tip_length = 0.35f;
+    float grow_tip_scale  = 0.0f;
 
     //--- Leaves -----------------------------------------------------------------------------------
     float leaf_spacing        = 0.42f;  //mean distance between clusters along the trunk
@@ -164,6 +172,9 @@ enum VineSpeciesKind{
     //The vine as a creeper: what a vine arrow grows into a wall or a top - up the face, over the
     //lip, across and down (vine_plan.md step 8). The vine's look, the hug habit.
     VINE_SPECIES_CREEPER,
+    //Bamboo: a clump of canes, fast and nearly straight up - negative gravity - from wherever it
+    //is struck, bending up out of a wall. No branches; leaf sprays at the upper nodes (GrowBamboo).
+    VINE_SPECIES_BAMBOO,
     VINE_SPECIES_COUNT
 };
 
@@ -316,6 +327,22 @@ bool  GrowVine(const VineSpecies& species, const VineParams& params, const vec3&
 */
 bool  GrowRoots(const VineSpecies& species, const VineParams& params, const vec3& anchor,
                 const vec3& normal, int seed, const VineField& field, VineGrowth& out);
+/*
+    A clump of bamboo out of one strike: GrowVine with the bamboo species, three to five canes
+    spread across and into the surface, the middle ones tallest, each leaning a little off the
+    normal. Out of a wall they come out and bend up. Appended to `out`; false if none could grow.
+*/
+bool  GrowBamboo(const VineSpecies& species, const VineParams& params, const vec3& anchor,
+                 const vec3& normal, int seed, const VineField& field, VineGrowth& out);
+/*
+    A cane's leaf sprays: at its nodes - `nodes_per_tile` to each copy of a stalk tile
+    `tile_length` long at scale 1, counted and stretched as the deform lays them, so a spray sits
+    on a ring - over the upper part only, alternating sides with a hashed turn, each leaning out
+    and up off the cane. Kind VINE_LEAF_BAMBOO. Kept out of the field like the vine's leaves.
+*/
+void  ScatterBambooLeaves(const Spline& spline, const VinePath& path, const VineParams& params,
+                          float tile_length, int nodes_per_tile, const VineField* field,
+                          std::vector<VineLeaf>& out);
 //From p out along `normal` to where the field is open - p itself if it already is. At most 3 units.
 vec3  VineMarchOut(const VineField& field, const vec3& p, const vec3& normal);
 //ScatterVineLeaves, keeping the leaves out of any field rather than out of the blocks' boxes.

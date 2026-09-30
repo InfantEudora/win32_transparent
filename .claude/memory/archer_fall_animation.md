@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: dce37e32-2277-4eb4-875d-83f3141e84d9
-  modified: 2026-09-29T18:29:40.764Z
+  modified: 2026-09-30T09:36:44.639Z
 ---
 
 2026-09-29, Puppet.cpp/h:
@@ -14,6 +14,8 @@ metadata:
 - The fall-pose overlay (Puppet::fall_weight, hard landing's frame 0 slerped over every bone) is switched OFF with PUPPET_FALL_POSE_MAX 0.0: the re-exported Falling_Idle is a real 0.917 s loop and the overlay froze it. Chosen by the user's go-ahead after a side-by-side at 0 / 0.5 / 1. The dial and ArcherModel::ApplyOverlay were kept on purpose - candidate tool for teeter / catch poses.
 
 - EDGE TEETER, plan A (looks only, no rules change) BUILT 2026-09-29: CLIP_TEETER = "LosingBalance" (user will rename it Teeter_Forward - falling FORWARD over a lip; the vine plan's thin-ledge teeter is a separate SIDEWAYS clip). DescribeArcher fills edge_over/edge_drop from Stage::NearestEdge on the faced side; plays once (tip 0-0.8, windmill to 4.2, recover to 5.0, settle to 6.0) when still, centre >= PUPPET_TEETER_FROM (0.0, tune by eye) past the lip, drop >= VITALS_DROP_FROM; then Idle. Drawing/kicking spends it until she moves. Plan B (a slow walk stops at edges, a rules change) deferred until the user has felt A. Late-brake window from a sprint is only ~2 ticks of release point.
+
+- BRANCH WALK BUILT 2026-09-30: CLIP_BALANCE_WALK = Balance_Walking (5.71 s, 0.79 u/s world) on any branch, walking or standing, playhead PINNED to Puppet::branch_walked (signed along facing, 0 on stepping on) - so 2.26x at BRANCH_WALK_SPEED 1.8, standing holds the step, backing up reverses. The drawn sideways roll is PUPPET_BRANCH_LEAN_SHARE (0.5) of Stage::lean (one line in ApplicationArcher::SyncArcherAnimation); rules lean untouched. Bench: archer_place (156, 3.5), walk right.
 
 Still open: a landing while holding a direction plays no landing clip at all (settle only below PUPPET_IDLE_SPEED) - matters for "falling off completely". Also seen: falling out of the world, the forecast starts a soft Jump_FromAir lead-in ~10 ticks before the respawn (probably forecasting the reset).
 
