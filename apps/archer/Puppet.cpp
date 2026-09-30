@@ -206,6 +206,14 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         every crossing starts.
     */
     { "Balance_Walking",     true,  true,   false, true,  false },
+    /*
+        THE LANDING ROLL: a hard landing on the move. Touches down standing tall, tucks and rolls
+        over the shoulder by 0.9s, is up in a stride by 1.3s - and then stands up to a halt, which a
+        landing at a run must not do, so it is TRIMMED there and the run takes over from the stride.
+        Its travel comes off the bone because the rules carry her; measured over the trimmed part
+        it is about 1.9 world units a second, the pace Puppet::RollRate is fitted against.
+    */
+    { "Landing_Roll",        false, true,   false, true,  false, 0.0f, 39.0f / 30.0f },
 };
 
 bool Puppet::IsDrawPose(int clip){
@@ -601,6 +609,13 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
             out.wanted_rate = (stop_plant > 0.01f) ? (stop_plant / PUPPET_STOP_TIME) : 1.0f;
             out.rate = StopRate();
         }
+        if (settle_clip == CLIP_LAND_ROLL){
+            //Fitted at touchdown. wanted_rate is what covering her speed now would take; the gap
+            //to rate is how much further the rules carry her than the roll does.
+            float pace = WorldClipSpeed(CLIP_LAND_ROLL);
+            out.wanted_rate = (pace > 0.01f) ? in.ground_speed / pace : 1.0f;
+            out.rate = roll_rate;
+        }
         return out;
     }
 
@@ -851,8 +866,10 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
     }
     if (settle_ticks > 0){
         settle_ticks--;
-        //Taken back by the player. The rules never stopped her moving, so neither does this.
-        if (in.ground_speed >= PUPPET_IDLE_SPEED || !in.f_on_ground){
+        //Taken back by the player. The rules never stopped her moving, so neither does this - bar
+        //the roll, which is what moving through a landing looks like; only leaving the ground ends it.
+        bool f_moved = in.ground_speed >= PUPPET_IDLE_SPEED && settle_clip != CLIP_LAND_ROLL;
+        if (f_moved || !in.f_on_ground){
             settle_ticks = 0;
         }
     }
@@ -898,7 +915,16 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
         settle_clip = (lead_clip >= 0) ? lead_clip : LandingClipFor(impact);
         lead_clip = -1;
         settle_ticks = 0;
-        if (settle_clip >= 0 && in.ground_speed < PUPPET_IDLE_SPEED){
+        /*
+            ON THE MOVE, HARD: the roll, from its touchdown, at the rate that covers the speed she
+            landed with. Held for the trimmed clip at that rate, whatever she does with the key.
+        */
+        if (RollFor(impact,in.speed) && in.ground_speed >= PUPPET_ROLL_SPEED &&
+            clip_duration[CLIP_LAND_ROLL] > 0.0f){
+            settle_clip = CLIP_LAND_ROLL;
+            roll_rate = RollRate(in.ground_speed);
+            settle_ticks = (int)(clip_duration[CLIP_LAND_ROLL] / roll_rate * ARCHER_TPS);
+        }else if (settle_clip >= 0 && in.ground_speed < PUPPET_IDLE_SPEED){
             //The clip runs from its contact frame, so the part still to play is what is left after
             //it - counting the whole duration would hold the landing long after it had finished.
             float left = clip_duration[settle_clip] - clip_entry[settle_clip];
@@ -918,8 +944,26 @@ int Puppet::LandingClipFor(float speed){
     return -1;
 }
 
+bool Puppet::RollFor(float impact, float speed){
+    return impact >= PUPPET_ROLL_VEL && speed >= PUPPET_ROLL_SPEED;
+}
+
+float Puppet::RollRate(float ground_speed) const{
+    float pace = WorldClipSpeed(CLIP_LAND_ROLL);
+    if (pace <= 0.01f){
+        return 1.0f;
+    }
+    float rate = ground_speed / pace;
+    if (rate < 1.0f){ rate = 1.0f; }
+    return (rate > PUPPET_ACTION_RATE_MAX) ? PUPPET_ACTION_RATE_MAX : rate;
+}
+
 int Puppet::LeadInClip(const ArcherAnimParams& in) const{
     if (in.f_on_ground || air_clip == CLIP_RUN_JUMP || in.land_in_ticks <= 0){
+        return -1;
+    }
+    //A roll coming: it has its own touchdown, standing tall, so no reach for the floor before it.
+    if (RollFor(in.land_speed,in.speed) && clip_duration[CLIP_LAND_ROLL] > 0.0f){
         return -1;
     }
     int clip = LandingClipFor(in.land_speed);
@@ -1205,7 +1249,7 @@ void Puppet::HashState(StateHash& h) const{
     h.Begin("puppet");
     h.Add(f_rope_climbing); h.Add(f_climb_playhead); h.Add(climb_playhead); h.Add(climb_target);
     h.Add(f_was_on_ground); h.Add(last_vel_y); h.Add(last_ground_speed);
-    h.Add(settle_ticks); h.Add(settle_clip); h.Add(air_clip); h.Add(lead_clip);
+    h.Add(settle_ticks); h.Add(settle_clip); h.Add(roll_rate); h.Add(air_clip); h.Add(lead_clip);
     h.Add(f_was_flying); h.Add(air_ticks); h.Add(run_jump_time);
     h.Add(teeter_ticks); h.Add(f_teeter_spent); h.Add(branch_walked);
     h.Add(fall_weight); h.Add(run_jump_rise); h.Add(stop_plant);
@@ -1232,6 +1276,7 @@ void Puppet::Reset(float facing){
     last_ground_speed = 0.0f;
     settle_ticks = 0;
     settle_clip = -1;
+    roll_rate = 1.0f;
     air_clip = -1;
     f_was_flying = false;
     air_ticks = 0;

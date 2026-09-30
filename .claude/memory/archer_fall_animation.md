@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: dce37e32-2277-4eb4-875d-83f3141e84d9
-  modified: 2026-09-30T09:36:44.639Z
+  modified: 2026-09-30T10:28:07.728Z
 ---
 
 2026-09-29, Puppet.cpp/h:
@@ -17,7 +17,9 @@ metadata:
 
 - BRANCH WALK BUILT 2026-09-30: CLIP_BALANCE_WALK = Balance_Walking (5.71 s, 0.79 u/s world) on any branch, walking or standing, playhead PINNED to Puppet::branch_walked (signed along facing, 0 on stepping on) - so 2.26x at BRANCH_WALK_SPEED 1.8, standing holds the step, backing up reverses. The drawn sideways roll is PUPPET_BRANCH_LEAN_SHARE (0.5) of Stage::lean (one line in ApplicationArcher::SyncArcherAnimation); rules lean untouched. Bench: archer_place (156, 3.5), walk right.
 
-Still open: a landing while holding a direction plays no landing clip at all (settle only below PUPPET_IDLE_SPEED) - matters for "falling off completely". Also seen: falling out of the world, the forecast starts a soft Jump_FromAir lead-in ~10 ticks before the respawn (probably forecasting the reset).
+- LANDING ROLL BUILT 2026-09-30 (looks only): CLIP_LAND_ROLL = Landing_Roll trimmed at 1.3 s (it stands up to a halt after that); impact >= PUPPET_ROLL_VEL (25, the hard line) at speed >= PUPPET_ROLL_SPEED (2.9) forward along facing; rate = ground speed / 1.77 u/s clamped 1..2.5 (roll_rate latched at touchdown), not cancelled by moving, only by leaving the ground; the hard lead-in is skipped when a roll is coming. At a full run the rules still cover ~2x the roll's ground. Bench: rope scene, sprint off the lip at x 17 into the deep pit.
+
+Still open: a SOFT landing while moving still plays no clip (by design - routine jumps stay unanimated). Also seen: falling out of the world, the forecast starts a soft Jump_FromAir lead-in ~10 ticks before the respawn (probably forecasting the reset).
 
 **Why:** preparing edge-dependent animations (teeter, fall-and-catch, fall off completely) that another agent's edge lookup will feed.
 **How to apply:** the user's bench for the fall clip on its own is the rope scene (scene_set Rope), archer_place x 23 y 100; archer_camera distance 7 follow 1 frames her close. Walk-off/run-jump bench: run right off the rope-scene floor lip at x 17 into the 15-deep pit. tools/cue_replay.py --write is a script, so the lockd hook does not guard the baselines - another agent can rewrite them under your lease. See [[archer-app]], [[replay-determinism-plan]].

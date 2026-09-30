@@ -45,9 +45,14 @@ void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed){
     section = 0;
     pending_section = -1;
     section_bar = 0;
+    //A reload starts from the top, so it starts playing too: a paused score is not the new one.
+    f_paused = false;
+    pause_pos = 1;
     //Status is written by Render, so the first status after a reload would otherwise still say
     //where the OLD score had got to.
     status.time_s = 0;
+    status.f_paused = status.f_held = false;
+    status.pause_gain = 1;
     status.bar = status.beat = 0;
     status.root_pc = root_pc;
     status.mode = mode;
@@ -460,6 +465,9 @@ void MusicEngine::Render(float* out, int frames){
             if (e.f_now) ApplySection(want == -2 ? NextSection() : want);
             else pending_section = want;
         }
+        else if (e.type == MusicEvent::PAUSE){
+            f_paused = e.value > 0.5f;
+        }
         else if (e.type == MusicEvent::AUDITION){
             audition = Play();
             audition_sample = e.sample;
@@ -481,6 +489,80 @@ void MusicEngine::Render(float* out, int frames){
     }
     events.clear();
 
+    /*
+        HELD: the pause has faded all the way out, so nothing of the music runs - not the clock,
+        the beat, the beds, the notes or the tilt filter's state. Skipping it all, rather than
+        rendering and throwing it away, is what makes a resume carry on from the very sample the
+        fade ended on. Only the audition and the meter below go on.
+    */
+    const bool f_hold = f_paused && pause_pos <= 0.0f;
+    if (!f_hold) RenderMusic(out, frames);
+
+    //The audition goes in AFTER the tilt: it is the file as recorded, the thing being judged.
+    if (audition.f_on && !Mix(audition, out, frames, (int64_t)clock)) audition.f_on = false;
+
+    /*
+        Master gain, then a soft limiter above 0.8: transparent below it, and a curve into full
+        scale above it rather than a hard clip. Counted when it has real work to do (over 1.0 in),
+        so a score that keeps it busy says so instead of quietly squashing.
+    */
+    for (int i = 0; i < frames * 2; i++){
+        float y = out[i] * params.master;
+        const float a = std::fabs(y);
+        if (a > 1.0f) status.clipped++;
+        if (a > 0.8f) y = (y > 0 ? 1.0f : -1.0f) * (0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f));
+        out[i] = y;
+        meter_sq += (double)y * y;
+        meter_peak = std::max(meter_peak, std::fabs(y));
+    }
+    meter_frames += frames;
+    if (meter_frames >= rate){
+        status.rms_db = ToDb((float)std::sqrt(meter_sq / (meter_frames * 2.0)));
+        status.peak_db = ToDb(meter_peak);
+        meter_sq = 0;
+        meter_peak = 0;
+        meter_frames = 0;
+    }
+
+    if (!f_hold) clock += frames;
+    status.f_paused = f_paused;
+    status.f_held = f_paused && pause_pos <= 0.0f;
+    status.pause_gain = PauseCurve(pause_pos);
+    status.time_s = clock / (double)rate;
+    status.bar = beat_count / kBeatsPerBar;
+    status.beat = beat_count % kBeatsPerBar;
+    status.root_pc = root_pc;
+    status.mode = mode;
+    status.pending_root_pc = pending_root;
+    status.pending_mode = pending_mode;
+    status.section = section;
+    status.pending_section = pending_section;
+    status.section_bar = section_bar;
+    status.section_bars = score->sections.empty() ? 0 : score->sections[section].bars;
+    for (size_t i = 0; i < beds.size(); i++){
+        status.bed_gains[i] = beds[i].presence > 0 ? beds[i].gain * Heard(beds[i].presence) : 0.0f;
+        status.bed_transpose[i] = beds[i].transpose;
+    }
+    status.notes_sounding = 0;
+    for (const Play& p : notes) if (p.f_on && p.start_at <= (int64_t)clock) status.notes_sounding++;
+    if (audition.f_on && audition_sample){
+        if (status.auditioning != audition_sample->name) status.auditioning = audition_sample->name;
+    }
+    else if (!status.auditioning.empty()) status.auditioning.clear();
+}
+
+/*
+    The pause fade as heard: a raised cosine of its linear position, so it leaves full level and
+    arrives at silence both at zero slope. Not the sections' Heard(), which is a sine for an
+    equal-power CROSSFADE - two sounds summing - and reaches zero at full slope: fine when
+    another sound is coming up underneath, an audible drop to nothing when there is none.
+*/
+float MusicEngine::PauseCurve(float pos){
+    pos = std::max(0.0f, std::min(1.0f, pos));
+    return 0.5f - 0.5f * (float)std::cos(pos * kPi);
+}
+
+void MusicEngine::RenderMusic(float* out, int frames){
     //Cut the block at every beat, so a beat's notes are scheduled before the frames they start on
     //are mixed. A note scheduled off the beat just starts partway into a later block.
     int done = 0;
@@ -529,54 +611,22 @@ void MusicEngine::Render(float* out, int frames){
         for (int i = 0; i < frames; i++) for (int c = 0; c < 2; c++) tilt_lp[c] += a * (out[i * 2 + c] - tilt_lp[c]);
     }
 
-    //The audition goes in AFTER the tilt: it is the file as recorded, the thing being judged.
-    if (audition.f_on && !Mix(audition, out, frames, (int64_t)clock)) audition.f_on = false;
-
     /*
-        Master gain, then a soft limiter above 0.8: transparent below it, and a curve into full
-        scale above it rather than a hard clip. Counted when it has real work to do (over 1.0 in),
-        so a score that keeps it busy says so instead of quietly squashing.
+        The pause fade, per frame, so it is as smooth at a 10 ms block as at a 100 ms one. Untouched
+        at full level - not even a multiply by one - so outside a fade the output is exactly what
+        it was before pausing existed. It can end partway into a block: the rest of that block is
+        silent, and the next is held.
     */
-    for (int i = 0; i < frames * 2; i++){
-        float y = out[i] * params.master;
-        const float a = std::fabs(y);
-        if (a > 1.0f) status.clipped++;
-        if (a > 0.8f) y = (y > 0 ? 1.0f : -1.0f) * (0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f));
-        out[i] = y;
-        meter_sq += (double)y * y;
-        meter_peak = std::max(meter_peak, std::fabs(y));
+    if (f_paused || pause_pos < 1.0f){
+        const float seconds = std::max(0.01f, f_paused ? params.pause_fade_s : params.resume_fade_s);
+        const float step = (f_paused ? -1.0f : 1.0f) / (seconds * rate);
+        for (int i = 0; i < frames; i++){
+            pause_pos = std::max(0.0f, std::min(1.0f, pause_pos + step));
+            const float g = PauseCurve(pause_pos);
+            out[i * 2] *= g;
+            out[i * 2 + 1] *= g;
+        }
     }
-    meter_frames += frames;
-    if (meter_frames >= rate){
-        status.rms_db = ToDb((float)std::sqrt(meter_sq / (meter_frames * 2.0)));
-        status.peak_db = ToDb(meter_peak);
-        meter_sq = 0;
-        meter_peak = 0;
-        meter_frames = 0;
-    }
-
-    clock += frames;
-    status.time_s = clock / (double)rate;
-    status.bar = beat_count / kBeatsPerBar;
-    status.beat = beat_count % kBeatsPerBar;
-    status.root_pc = root_pc;
-    status.mode = mode;
-    status.pending_root_pc = pending_root;
-    status.pending_mode = pending_mode;
-    status.section = section;
-    status.pending_section = pending_section;
-    status.section_bar = section_bar;
-    status.section_bars = score->sections.empty() ? 0 : score->sections[section].bars;
-    for (size_t i = 0; i < beds.size(); i++){
-        status.bed_gains[i] = beds[i].presence > 0 ? beds[i].gain * Heard(beds[i].presence) : 0.0f;
-        status.bed_transpose[i] = beds[i].transpose;
-    }
-    status.notes_sounding = 0;
-    for (const Play& p : notes) if (p.f_on && p.start_at <= (int64_t)clock) status.notes_sounding++;
-    if (audition.f_on && audition_sample){
-        if (status.auditioning != audition_sample->name) status.auditioning = audition_sample->name;
-    }
-    else if (!status.auditioning.empty()) status.auditioning.clear();
 }
 
 //--- brightness ----------------------------------------------------------------------------

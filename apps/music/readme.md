@@ -63,9 +63,19 @@ the lightest, at −27.7 dB with 26% under 200 Hz; the cave is the darkest, at �
 and becomes −25.1 dB with 77% at suspense 0.8. Both centre on A (A2 and A1), too strongly for
 samplescan to name a key.
 
+**Pause** is the game's pause, tried here before any game uses it. It fades the music out over
+`pause_fade_s` (1.5 s) and then HOLDS it. Once the music is silent the engine stops rendering, so
+its clock, the beat, every bed's place in its loop and every ringing note all stop where the fade
+ended. **Resume** fades it back in over `resume_fade_s` (0.5 s) from exactly that point. This is
+not a mute: a mute lets the music run on, so it comes back somewhere else in the phrase. The
+audition plays through a pause, because it belongs to the library, not to the music. The pause is
+in real time, not game time: the game's `sim_pause` and Escape to the title will both trigger it,
+and the music does not step with `sim_step`.
+
 The "Music" panel and the MCP tools do the same things: `music_state`, `music_set`
-(suspense, brightness, bpm, gains), `music_key` (root / shift / mode, at the next bar or now),
-`music_section` (by name, or the next one), `music_stinger`, `music_reload`, and
+(suspense, brightness, bpm, gains, the two fade times), `music_pause`, `music_key` (root /
+shift / mode, at the next bar or now), `music_section` (by name, or the next one),
+`music_stinger`, `music_reload`, and
 `music_render`, which writes an offline wav to `renders/` (with an optional timeline of key
 changes, section changes, suspense moves and stingers). Measure a
 render with `tools/samplescan/build/samplescan.exe --file renders/x.wav`: its `key` line is the

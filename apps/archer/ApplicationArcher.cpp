@@ -3813,15 +3813,25 @@ void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
         return;         //nothing to grow here; the slot stays empty
     }
     CommitGrownVine(slot);
-    if (f_big){
-        //The longest stem off the anchor, for the sound (a placeholder, shared by every plant).
-        float length = 0.0f;
-        for (size_t k = 0; k < g.strands.size(); k++){
-            if (g.looks[k] != GROWN_LOOK_ROOT && g.strands[k].parent < 0){
-                length = fmaxf(length,g.lengths[k]);
-            }
+    /*
+        One sound per strike, the plant's own: by what actually grew rather than by the arrow, so a
+        bamboo arrow whose clump had nowhere to come up still sounds like the roots it left. Its
+        roots under a vine or a clump are drowned by it, and a tuft alone is silent - it has no
+        roots and is only grass. With the longest stem off the anchor, for the loudness.
+    */
+    bool f_has[GROWN_LOOK_COUNT] = {};
+    float length = 0.0f;
+    for (size_t k = 0; k < g.strands.size(); k++){
+        f_has[g.looks[k]] = true;
+        if (g.looks[k] != GROWN_LOOK_ROOT && g.strands[k].parent < 0){
+            length = fmaxf(length,g.lengths[k]);
         }
-        cues.Signal("vine_grow",CuePayload().Set("x",anchor.x).Set("length",length));
+    }
+    const char* grow_signal = f_has[GROWN_LOOK_BAMBOO] ? "bamboo_grow" :
+                              (f_has[GROWN_LOOK_VINE] ? "vine_grow" :
+                              (f_has[GROWN_LOOK_ROOT] ? "roots_grow" : NULL));
+    if (grow_signal){
+        cues->Signal(grow_signal,CuePayload().Set("x",anchor.x).Set("length",length));
     }
     debug->Info("%s at (%.2f,%.2f): %zu strands, %zu leaves, %zu tuft plants%s\n",
                 f_bamboo ? "Bamboo grows" : (f_vine ? "A vine grows" : (g.strands.empty() ? "A tuft grows" : "Roots grow")),
@@ -6034,7 +6044,7 @@ void ApplicationArcher::RegisterTargetHit(PropView& view, const vec3& point){
         }
         //Every stand hit, with its points - the table decides which deserve a word (nice_shot
         //says only the centre ring does). Inside the tick, like the hit, so it lands with it.
-        cues.Signal("stand_hit",CuePayload().Set("points",(float)points));
+        cues->Signal("stand_hit",CuePayload().Set("points",(float)points));
         debug->Info("Stand %i: %i points (%i on it, %i this level)\n",
                     view.index,points,view.score,archery_score);
     }else{
@@ -6730,6 +6740,12 @@ Scene* ApplicationArcher::BuildExtraLevel(int level, const char* name){
     SwapLevel(parked);          //the members are now the new level's, still empty
     Scene* live = main_scene;
     main_scene = scene;
+    //Its own cues on its own bus, named after the scene - see `cues`.
+    std::string bus_name = name;
+    for (char& c : bus_name){
+        c = (char)tolower((unsigned char)c);
+    }
+    cues = MakeLevelCues(bus_name.c_str(),level_bus);
 
     BuildBlocks();
     BuildProps();
@@ -6838,6 +6854,12 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(camera_target,parked.camera_target);
     std::swap(camera_ideal,parked.camera_ideal);
     std::swap(orbit_follow_offset,parked.orbit_follow_offset);
+    std::swap(cues,parked.cues);
+    std::swap(level_bus,parked.level_bus);
+    std::swap(f_was_nocked,parked.f_was_nocked);
+    std::swap(f_was_kicking,parked.f_was_kicking);
+    std::swap(f_was_airborne,parked.f_was_airborne);
+    std::swap(arrow_in_flight,parked.arrow_in_flight);
 }
 
 /*
@@ -7480,7 +7502,7 @@ void ApplicationArcher::HashSimState(StateHash& h){
     h.Add(shake_trauma);
 
     h.Begin("cues");
-    h.Add(cues.CaptureHistory().dump());
+    h.Add(cues->CaptureHistory().dump());
 }
 
 /*
@@ -7521,7 +7543,7 @@ json ApplicationArcher::CaptureRecordingState(){
         {"level_ticks",stage.ticks},
         //What the cues remember past a tick - each one's last pick and firing, each group's last
         //line - so a replay avoids the same repeats and honours the same gaps the original did.
-        {"cue_history",cues.CaptureHistory()},
+        {"cue_history",cues->CaptureHistory()},
         //Her body, and the clocks her breath and heartbeat run on: a recording that starts winded
         //replays winded, breathing where the original did.
         {"vitals",json::array({stage.vitals.exertion,stage.vitals.fear,stage.vitals.heart_rate})},
@@ -7583,7 +7605,7 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
     //A file from before the cues has none, and replays as a fresh session would - the same for
     //every replay of it, which is all a comparison needs.
     auto history = state.find("cue_history");
-    cues.RestoreHistory(history != state.end() ? *history : json());
+    cues->RestoreHistory(history != state.end() ? *history : json());
     //A file from before the vitals starts her rested, as a restart does.
     auto vitals = state.find("vitals");
     if (vitals != state.end() && vitals->is_array() && vitals->size() == 3){
@@ -7864,10 +7886,10 @@ void ApplicationArcher::RegisterCommandHandlers(){
 
     main_scene->RegisterCommandHandler(ARCHER_CMD_CUE_AUDITION,
         [this](const SimCommand& cmd) -> objectid_t {
-            std::vector<std::string> names = cues.CueNames();
+            std::vector<std::string> names = cues->CueNames();
             int i = (int)cmd.value[0];
             if (i >= 0 && i < (int)names.size()){
-                cues.Audition(names[i]);
+                cues->Audition(names[i]);
             }
             return OBJECTID_INVALID;
         });
@@ -7953,7 +7975,7 @@ void ApplicationArcher::NewGame(){
         scopes were opened on start again from nothing, since the Stage they were read off is new.
         History is kept: a restart is not a new session.
     */
-    cues.Reset();
+    cues->Reset();
     f_was_nocked = false;
     f_was_kicking = false;
     f_was_airborne = false;
@@ -8087,10 +8109,26 @@ void ApplicationArcher::UpdateView(void){
 
         And held for the whole time the title is up: a level left by Escape is frozen behind it, so
         its sounds are too, and a bow's creak picks up where it stopped on the way back.
+
+        PER SCENE, on each scene's bus (SetupSound): a parked level is frozen, so its sounds are
+        held for as long as it is parked, and the world's waterfall is where she left it when she
+        comes back from the range. The title's bus plays only on the title. Every hold is a no-op
+        unless it changed, so this is cheap on every pass.
     */
     if (soundsystem){
-        soundsystem->SetPaused((main_scene == title_scene) ||
-                               (main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass()));
+        //A scene whose bus could not be made plays on the master, and must not hold it: holding
+        //the master is holding every scene.
+        auto hold = [this](int bus, bool f_held){
+            if (bus != SOUND_BUS_MASTER){
+                soundsystem->SetBusPaused(bus,f_held);
+            }
+        };
+        const bool f_title = (main_scene == title_scene);
+        hold(level_bus,f_title || (main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass()));
+        for (const ArcherLevel& parked : parked_levels){
+            hold(parked.level_bus,true);
+        }
+        hold(title_bus,!f_title);
         //The panel's volume is the master bus, so it turns down what is already playing too. On
         //every pass, so the slider answers while paused; only when it moved.
         if (soundsystem->GetBusGain(SOUND_BUS_MASTER) != sound_volume){
@@ -8318,7 +8356,7 @@ void ApplicationArcher::RunSimulationTick(void){
         the rules will catch first is no landing, and gets no thud.
     */
     if (landing_forecast.f_lands && !landing_forecast.f_caught && landing_forecast.ticks > 0){
-        cues.Signal("landing_ahead",CuePayload().Set("in",(float)landing_forecast.ticks)
+        cues->Signal("landing_ahead",CuePayload().Set("in",(float)landing_forecast.ticks)
                                                 .Set("speed",landing_forecast.speed)
                                                 .Set("x",landing_forecast.pos.x));
     }
@@ -8354,10 +8392,10 @@ void ApplicationArcher::RunSimulationTick(void){
         and in which order, does not depend on which part of the game found it first. The clock is
         the LEVEL's, which a replay restores, so a replay decides exactly what the original did.
     */
-    cues.SetListener(stage.pos.x);
+    cues->SetListener(stage.pos.x);
     //The shake decays BEFORE the cues fire, so a shake added this tick starts at its full strength.
     shake_trauma = fmaxf(0.0f,shake_trauma - 1.0f / fmaxf(camera_tuning.shake_ticks,1.0f));
-    cues.Tick(stage.ticks);
+    cues->Tick(stage.ticks);
     UpdateHitPopups();
     DriveArcherBody();
     SyncArcherView();
@@ -8484,48 +8522,22 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     table's sounds are registered and played through a CueSoundOutput; with USE_SOUND=0 or with
     no device, the cues get no output at all, and still decide and log exactly the same - which is
     what lets a replay be checked on a machine that makes no noise.
+
+    A BUS PER SCENE, straight under the master: the title's here, and each level's with its cues
+    (MakeLevelCues - this makes the world's, BuildExtraLevel the rest). Holding a scene's bus
+    freezes everything it was playing, which is what parking a level and putting the title up do
+    to the picture - see UpdateView. The master stays the player's volume over all of them.
 */
 void ApplicationArcher::SetupSound(){
 #ifdef USE_SOUND
     soundsystem = new SoundSystem();
     soundsystem->Initialise();
-    //Only a working device gets an output. A table checked against a device that has nothing
-    //registered would refuse every sound in it, and the cues would not even decide.
     if (soundsystem->f_initialised){
-        cue_output = new CueSoundOutput(soundsystem);
+        int bus = soundsystem->AddBus("title");
+        title_bus = (bus >= 0) ? bus : SOUND_BUS_MASTER;
     }
 #endif
-    cues.Init(ARCHER_TPS,cue_output);
-    /*
-        The table's non-sound actions. Each is scaled by the cue's gain, which is the table's
-        gain_by curves - so how hard a landing shakes is written beside how loud it sounds.
-          shake   amount (trauma added, 0..1), axes [across, up]
-          rumble  low, high (the heavy and light motor, 0..1)
-        Physics thread, inside cues.Tick, like everything else a cue does.
-    */
-    //Read by type, never with json::value: in this build a wrong type there is an abort, and a
-    //typo in a table being tuned must not be able to take the game down.
-    auto num = [](const json& o, const char* key, float fallback) -> float {
-        auto it = o.find(key);
-        return (it != o.end() && it->is_number()) ? it->get<float>() : fallback;
-    };
-    cues.SetActionHandler("shake",[this,num](const CueAction& a){
-        float ax = 0.5f, ay = 1.0f;
-        auto axes = a.params.find("axes");
-        if (axes != a.params.end() && axes->is_array() && axes->size() == 2 &&
-            (*axes)[0].is_number() && (*axes)[1].is_number()){
-            ax = (*axes)[0].get<float>();
-            ay = (*axes)[1].get<float>();
-        }
-        AddShake(num(a.params,"amount",0.3f) * a.gain,ax,ay);
-    });
-    cues.SetActionHandler("rumble",[this,num](const CueAction& a){
-        Rumble(num(a.params,"low",0.0f) * a.gain,num(a.params,"high",0.0f) * a.gain);
-    });
-    std::string error;
-    if (!cues.LoadTable(ARCHER_CUE_TABLE,error)){
-        debug->Err("Cue table: %s - the game will be silent until it loads\n",error.c_str());
-    }
+    cues = MakeLevelCues("world",level_bus);
     //For the poll. A packed build has no file to watch, and needs none.
     if (ResolveAssetPath(ARCHER_CUE_TABLE,cue_table_path)){
         //_stat64 by name: MinGW's `stat` is an inline alias for a symbol this static link lacks.
@@ -8537,10 +8549,63 @@ void ApplicationArcher::SetupSound(){
     cue_table_polled = std::chrono::steady_clock::now();
     //The swoosh builds to the impact; how far in it peaks is how far ahead the flight has to be
     //forecast. The cue does the timing itself - this is only the horizon, and it is the table's
-    //measurement, so nothing here asks the sound system anything.
-    arrow_swoosh_peak = cues.PeakOf("arrow_swoosh");
+    //measurement, so nothing here asks the sound system anything. Every level loads the one
+    //table, so the world's answer is every level's.
+    arrow_swoosh_peak = cues->PeakOf("arrow_swoosh");
     debug->Info("arrow_swoosh peaks %.3fs in - flights are forecast %.1f ticks ahead\n",
                 arrow_swoosh_peak,arrow_swoosh_peak * ARCHER_TPS);
+}
+
+CueSystem* ApplicationArcher::MakeLevelCues(const char* bus_name, int& bus){
+    level_cues.push_back(std::unique_ptr<CueSystem>(new CueSystem()));
+    CueSystem* made = level_cues.back().get();
+    CueOutput* output = NULL;
+    bus = SOUND_BUS_MASTER;
+#ifdef USE_SOUND
+    //Only a working device gets an output. A table checked against a device that has nothing
+    //registered would refuse every sound in it, and the cues would not even decide.
+    if (soundsystem && soundsystem->f_initialised){
+        int b = soundsystem->AddBus(bus_name);
+        bus = (b >= 0) ? b : SOUND_BUS_MASTER;
+        level_cue_outputs.push_back(std::unique_ptr<CueOutput>(new CueSoundOutput(soundsystem,bus)));
+        output = level_cue_outputs.back().get();
+    }
+#else
+    (void)bus_name;
+#endif
+    made->Init(ARCHER_TPS,output);
+    /*
+        The table's non-sound actions. Each is scaled by the cue's gain, which is the table's
+        gain_by curves - so how hard a landing shakes is written beside how loud it sounds.
+          shake   amount (trauma added, 0..1), axes [across, up]
+          rumble  low, high (the heavy and light motor, 0..1)
+        Physics thread, inside cues->Tick, like everything else a cue does.
+    */
+    //Read by type, never with json::value: in this build a wrong type there is an abort, and a
+    //typo in a table being tuned must not be able to take the game down.
+    auto num = [](const json& o, const char* key, float fallback) -> float {
+        auto it = o.find(key);
+        return (it != o.end() && it->is_number()) ? it->get<float>() : fallback;
+    };
+    //These act on the view, which is the live level's - and only the live level's cues ever tick.
+    made->SetActionHandler("shake",[this,num](const CueAction& a){
+        float ax = 0.5f, ay = 1.0f;
+        auto axes = a.params.find("axes");
+        if (axes != a.params.end() && axes->is_array() && axes->size() == 2 &&
+            (*axes)[0].is_number() && (*axes)[1].is_number()){
+            ax = (*axes)[0].get<float>();
+            ay = (*axes)[1].get<float>();
+        }
+        AddShake(num(a.params,"amount",0.3f) * a.gain,ax,ay);
+    });
+    made->SetActionHandler("rumble",[this,num](const CueAction& a){
+        Rumble(num(a.params,"low",0.0f) * a.gain,num(a.params,"high",0.0f) * a.gain);
+    });
+    std::string error;
+    if (!made->LoadTable(ARCHER_CUE_TABLE,error)){
+        debug->Err("Cue table (%s): %s - the level will be silent until it loads\n",bus_name,error.c_str());
+    }
+    return made;
 }
 
 void ApplicationArcher::PollCueTable(){
@@ -8551,10 +8616,16 @@ void ApplicationArcher::PollCueTable(){
         std::lock_guard<std::mutex> lock(cue_panel_mutex);
         edited.swap(cue_panel_apply);
     }
+    //EVERY level's cues, parked or not: they all play the one table, and a level visited after an
+    //edit must not still sound the way it did before it.
     if (!edited.empty()){
         std::string error;
-        if (cues.LoadTableText(edited,error,std::string(ARCHER_CUE_TABLE) + " (panel)")){
-            arrow_swoosh_peak = cues.PeakOf("arrow_swoosh");
+        bool f_loaded = true;
+        for (auto& level : level_cues){
+            f_loaded = level->LoadTableText(edited,error,std::string(ARCHER_CUE_TABLE) + " (panel)") && f_loaded;
+        }
+        if (f_loaded){
+            arrow_swoosh_peak = cues->PeakOf("arrow_swoosh");
         }else{
             debug->Err("Cue panel edit NOT loaded, keeping the last good table: %s\n",error.c_str());
         }
@@ -8573,9 +8644,13 @@ void ApplicationArcher::PollCueTable(){
     }
     cue_table_mtime = (int64_t)st.st_mtime;
     std::string error;
-    if (cues.Reload(error)){
-        arrow_swoosh_peak = cues.PeakOf("arrow_swoosh");    //a re-cut swoosh re-measures itself
-        debug->Info("Cue table reloaded: %s\n",cues.File().c_str());
+    bool f_loaded = true;
+    for (auto& level : level_cues){
+        f_loaded = level->Reload(error) && f_loaded;
+    }
+    if (f_loaded){
+        arrow_swoosh_peak = cues->PeakOf("arrow_swoosh");    //a re-cut swoosh re-measures itself
+        debug->Info("Cue table reloaded: %s\n",cues->File().c_str());
     }else{
         debug->Err("Cue table NOT reloaded, keeping the last good one: %s\n",error.c_str());
     }
@@ -8624,15 +8699,15 @@ void ApplicationArcher::PollCueTable(){
 void ApplicationArcher::SignalCues(const StageEvents& events){
     bool f_nocked = stage.IsNocked();
     if (!f_nocked && f_was_nocked){
-        cues.EndScope("nocked");
+        cues->EndScope("nocked");
     }
     if (f_nocked && !f_was_nocked){
-        cues.BeginScope("nocked");
+        cues->BeginScope("nocked");
     }
     f_was_nocked = f_nocked;
 
     if (events.f_shot){
-        cues.Signal("shot",CuePayload().Set("power",events.shot_power));
+        cues->Signal("shot",CuePayload().Set("power",events.shot_power));
     }
 
     /*
@@ -8643,19 +8718,19 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
     */
     bool f_kicking = stage.kick_ticks > 0;
     if (!f_kicking && f_was_kicking){
-        cues.EndScope("kick");
+        cues->EndScope("kick");
     }
     if (events.f_kick_started){
         const KickSpec& kick = stage.Kick();
         int strike_shift = ((kick.active_from + kick.active_to) - (KICK_ACTIVE_FROM + KICK_ACTIVE_TO)) / 2;
-        cues.BeginScope("kick",0,CuePayload().Set("strike_shift",(float)strike_shift));
+        cues->BeginScope("kick",0,CuePayload().Set("strike_shift",(float)strike_shift));
     }
     f_was_kicking = f_kicking;
     //`dir` which way the boot went (+1 right), for a shake along it; `x` where it landed.
     if (events.f_kick_connected){
         float dir = events.kicks.empty() ? stage.facing : events.kicks[0].dir;
         float x = events.kicks.empty() ? stage.pos.x : events.kicks[0].x;
-        cues.Signal("kick_connected",CuePayload().Set("dir",dir).Set("x",x));
+        cues->Signal("kick_connected",CuePayload().Set("dir",dir).Set("x",x));
     }
 
     /*
@@ -8665,10 +8740,10 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
     */
     bool f_airborne = (stage.mode == MODE_AIR);
     if (!f_airborne && f_was_airborne){
-        cues.EndScope("airborne");
+        cues->EndScope("airborne");
     }
     if (f_airborne && !f_was_airborne){
-        cues.BeginScope("airborne");
+        cues->BeginScope("airborne");
     }
     f_was_airborne = f_airborne;
 
@@ -8676,34 +8751,34 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
     //jump lands at about 18.7, a drop of 5.5 units at 25 (see PUPPET_HARD_LAND_VEL), stepping
     //off a kerb well under 5.
     if (events.f_jumped){
-        cues.Signal("jumped",CuePayload().Set("x",stage.pos.x));
+        cues->Signal("jumped",CuePayload().Set("x",stage.pos.x));
     }
     if (events.f_landed){
-        cues.Signal("landed",CuePayload().Set("speed",events.land_speed).Set("x",stage.pos.x));
+        cues->Signal("landed",CuePayload().Set("speed",events.land_speed).Set("x",stage.pos.x));
     }
     //A wall coming apart: once a tick however many bricks went, with how many and where the first was.
     if (!events.broken_blocks.empty()){
         int b = events.broken_blocks[0];
         float x = (b >= 0 && b < (int)stage.blocks.size()) ? stage.blocks[b].x : stage.pos.x;
-        cues.Signal("block_broken",CuePayload().Set("count",(float)events.broken_blocks.size()).Set("x",x));
+        cues->Signal("block_broken",CuePayload().Set("count",(float)events.broken_blocks.size()).Set("x",x));
     }
     //The crumbling stones, one signal per stone: its warning, then its fall. No cue rows yet - the
     //rattle and the crumble are bridge_crumble_plan.md step 7.
     for (int b : events.crumbles_started){
         if (b >= 0 && b < (int)stage.blocks.size()){
-            cues.Signal("crumble_started",CuePayload().Set("x",stage.blocks[b].x));
+            cues->Signal("crumble_started",CuePayload().Set("x",stage.blocks[b].x));
         }
     }
     for (int b : events.crumbled_blocks){
         if (b >= 0 && b < (int)stage.blocks.size()){
-            cues.Signal("crumble_fell",CuePayload().Set("x",stage.blocks[b].x));
+            cues->Signal("crumble_fell",CuePayload().Set("x",stage.blocks[b].x));
         }
     }
     //A group - the chase - starting and running out: the rumble held between the two. `x` is its
     //first slab, where the front sets off from.
     for (int g : events.crumble_groups_started){
         if (g >= 0 && g < (int)stage.crumble_groups.size() && !stage.crumble_groups[g].blocks.empty()){
-            cues.Signal("crumble_group_started",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks[0]].x));
+            cues->Signal("crumble_group_started",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks[0]].x));
         }
     }
     /*
@@ -8712,17 +8787,17 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
         section 4 has the sounds they are for; no rows yet.
     */
     for (const StageEvents::BridgeLanding& l : events.bridge_landings){
-        cues.Signal("bridge_landed",CuePayload().Set("speed",l.speed).Set("strain",l.strain).Set("x",l.x)
+        cues->Signal("bridge_landed",CuePayload().Set("speed",l.speed).Set("strain",l.strain).Set("x",l.x)
                                                 .Set("bridge",(float)l.bridge));
     }
     for (const StageEvents::BridgeWarning& w : events.bridge_warnings){
         const char* name = (w.level == BRIDGE_LEVEL_SNAPPED) ? "bridge_snapped" :
                            (w.level == BRIDGE_LEVEL_CRACKING) ? "bridge_cracking" : "bridge_strained";
-        cues.Signal(name,CuePayload().Set("x",w.at.x).Set("y",w.at.y).Set("bridge",(float)w.bridge));
+        cues->Signal(name,CuePayload().Set("x",w.at.x).Set("y",w.at.y).Set("bridge",(float)w.bridge));
     }
     for (int g : events.crumble_groups_done){
         if (g >= 0 && g < (int)stage.crumble_groups.size() && !stage.crumble_groups[g].blocks.empty()){
-            cues.Signal("crumble_group_done",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks.back()].x));
+            cues->Signal("crumble_group_done",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks.back()].x));
         }
     }
 
@@ -8734,26 +8809,21 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
 
         Opened and closed on her distance with a margin between the two, so she cannot stand on
         the edge and restart a 29-second loop every other tick. Both have to be beyond where the
-        table's curve reaches silence (36), or the loop starts or stops audibly. And instances past
-        this level's count are closed: a level switch does not reset the cues, and the world's
-        waterfall kept playing on the range.
+        table's curve reaches silence (36), or the loop starts or stops audibly. A level's scopes
+        are its own cues' (see `cues`), so the world's waterfall freezes when she leaves for the
+        range rather than playing on there, and is where it was when she comes back.
     */
     const float waterfall_open = 40.0f, waterfall_close = 44.0f;
-    const int n_waters = (int)stage.waters.size();
-    for (int i = 0; i < std::max(n_waters,waterfall_scopes); i++){
-        bool f_open = cues.IsScopeOpen("waterfall",i);
-        bool f_near = false;
-        if (i < n_waters){
-            float d = fabsf(stage.pos.x - stage.waters[i].x);
-            f_near = d < (f_open ? waterfall_close : waterfall_open);
-        }
+    for (int i = 0; i < (int)stage.waters.size(); i++){
+        bool f_open = cues->IsScopeOpen("waterfall",i);
+        float d = fabsf(stage.pos.x - stage.waters[i].x);
+        bool f_near = d < (f_open ? waterfall_close : waterfall_open);
         if (f_near && !f_open){
-            cues.BeginScope("waterfall",i,CuePayload().Set("x",stage.waters[i].x));
+            cues->BeginScope("waterfall",i,CuePayload().Set("x",stage.waters[i].x));
         }else if (!f_near && f_open){
-            cues.EndScope("waterfall",i);
+            cues->EndScope("waterfall",i);
         }
     }
-    waterfall_scopes = std::max(waterfall_scopes,n_waters);
 
     //The level's strikes. The props' come from ResolveArrowsAgainstProps, which finds them.
     for (size_t i = 0; i < events.arrow_hits.size(); i++){
@@ -8762,7 +8832,7 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
 }
 
 void ApplicationArcher::SignalArrowHit(float x, float speed){
-    cues.Signal("arrow_hit",CuePayload().Set("x",x).Set("speed",speed));
+    cues->Signal("arrow_hit",CuePayload().Set("x",x).Set("speed",speed));
 }
 
 /*
@@ -8818,7 +8888,7 @@ int ApplicationArcher::SignalFootsteps(){
             for (int foot = 0; foot < 2; foot++){
                 float to_plant = wrap(plants[foot] - step_prev_rel);
                 if (to_plant > 0.0f && to_plant <= moved){
-                    cues.Signal("footstep",CuePayload().Set("foot",(float)foot)
+                    cues->Signal("footstep",CuePayload().Set("foot",(float)foot)
                                                        .Set("speed",fabsf(stage.vel.x))
                                                        .Set("x",stage.pos.x));
                     steps++;
@@ -8888,7 +8958,7 @@ void ApplicationArcher::SignalBody(const StageEvents& events, int steps){
         heart_beat_age = 0;
         float spent = (v.exertion - BODY_POUND_EXERTION) / (1.0f - BODY_POUND_EXERTION);
         float pound = fminf(fmaxf(fmaxf(v.fear,spent),0.0f),1.0f);
-        cues.Signal("heartbeat",CuePayload().Set("pound",pound).Set("fear",v.fear)
+        cues->Signal("heartbeat",CuePayload().Set("pound",pound).Set("fear",v.fear)
                                             .Set("exertion",v.exertion).Set("bpm",v.heart_rate));
     }
 
@@ -8909,7 +8979,7 @@ void ApplicationArcher::SignalBody(const StageEvents& events, int steps){
     }
     CuePayload breath = CuePayload().Set("exertion",v.exertion).Set("fear",v.fear);
     if (breath_out_ticks > 0 && --breath_out_ticks == 0){
-        cues.Signal("breath_out",breath);
+        cues->Signal("breath_out",breath);
         chest_toward(0.0f,BREATH_EXHALE_SHARE * period);
     }
     bool f_running = stage.mode == MODE_GROUND && stage.f_on_ground &&
@@ -8919,7 +8989,7 @@ void ApplicationArcher::SignalBody(const StageEvents& events, int steps){
     if (f_due){
         breath_phase = 0.0f;
         breath_out_ticks = std::max(BREATH_OUT_TICKS,(int)(BREATH_IN_SHARE * period * ARCHER_TPS));
-        cues.Signal("breath_in",breath);
+        cues->Signal("breath_in",breath);
         chest_toward(1.0f,breath_out_ticks * ARCHER_DT);
     }
 
@@ -8985,13 +9055,13 @@ void ApplicationArcher::ForecastArrowImpacts(){
         bool f_flying = a.f_live && !a.f_stuck;
         if (!f_flying){
             if (arrow_in_flight[i]){
-                cues.EndScope("arrow",i);
+                cues->EndScope("arrow",i);
                 arrow_in_flight[i] = false;
             }
             continue;
         }
         if (!arrow_in_flight[i]){
-            cues.BeginScope("arrow",i);
+            cues->BeginScope("arrow",i);
             arrow_in_flight[i] = true;
         }
         //No swoosh loaded, nothing to forecast for. The flight is still a scope.
@@ -9027,7 +9097,7 @@ void ApplicationArcher::ForecastArrowImpacts(){
             continue;
         }
         float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
-        cues.Signal("arrow_impact",CuePayload().Set("in",(float)ticks).Set("x",x).Set("speed",speed),i);
+        cues->Signal("arrow_impact",CuePayload().Set("in",(float)ticks).Set("x",x).Set("speed",speed),i);
     }
 }
 
@@ -12530,7 +12600,9 @@ void ApplicationArcher::RegisterMCPTools(){
     /*
         The game's reactions as the cues decided them - see CueLog and cue_plan.md. This is how a
         replay is compared with another: clear, replay, read, and diff the lines. They are
-        CueLog's own lock's, not the simulation's, so this reads them directly.
+        CueLog's own lock's, not the simulation's, so this reads them directly. The LIVE level's
+        log: each level has its own (see `cues`), and every one lives as long as the app, so a
+        read that races a level switch reads the level just left rather than freed memory.
     */
     MCPServer::Get()->RegisterTool("cue_log",
         "What the game's reactions did, one line per decision: the LEVEL tick (which a replay "
@@ -12548,10 +12620,10 @@ void ApplicationArcher::RegisterMCPTools(){
         },
         [this](const json& args) -> json {
             int last = (int)clamp(args.value("last",0.0f),0.0f,(float)CueLog::CAPACITY);
-            std::vector<std::string> lines = cues.log.Lines((size_t)last);
-            uint64_t total = cues.log.Total();
+            std::vector<std::string> lines = cues->log.Lines((size_t)last);
+            uint64_t total = cues->log.Total();
             if (args.value("clear",false)){
-                cues.log.Clear();
+                cues->log.Clear();
             }
             return json{ {"total",total}, {"lines",lines} };
         });
@@ -12573,7 +12645,7 @@ void ApplicationArcher::RegisterMCPTools(){
                 return json{ {"error","no scene"} };
             }
             std::vector<std::string> names;
-            main_scene->AtTickBoundary([&](){ names = cues.CueNames(); });
+            main_scene->AtTickBoundary([&](){ names = cues->CueNames(); });
             if (!args.contains("cue") || !args["cue"].is_string()){
                 return json{ {"cues",names} };
             }
@@ -12587,7 +12659,7 @@ void ApplicationArcher::RegisterMCPTools(){
             cmd.value[0] = (float)(it - names.begin());
             main_scene->SubmitCommand(cmd);
             WaitTicks(2);
-            return json{ {"played",cue}, {"log",cues.log.Lines(4)} };
+            return json{ {"played",cue}, {"log",cues->log.Lines(4)} };
         });
 
     MCPServer::Get()->RegisterTool("archer_vitals",
@@ -13765,7 +13837,7 @@ void ApplicationArcher::DrawCuePanel(){
         ImGui::End();
         return;
     }
-    std::vector<std::string> live = cues.CueNames();
+    std::vector<std::string> live = cues->CueNames();
     std::string edit_cue;
     const char* edit_field = NULL;
     std::string edit_number;
@@ -14069,8 +14141,8 @@ void ApplicationArcher::DrawImGuiUI(void){
         slider per cue and saves back to the file, and a hand edit of the file reloads within a
         second, paused or not.
     */
-    ImGui::TextDisabled("cues: %s (%d)",cues.File().empty() ? "not loaded" : cues.File().c_str(),
-                        (int)cues.CueNames().size());
+    ImGui::TextDisabled("cues: %s (%d)",cues->File().empty() ? "not loaded" : cues->File().c_str(),
+                        (int)cues->CueNames().size());
     ImGui::SetItemTooltip("Every sound's timing, chance and gain is in this file - on sliders in "
                           "the Cues panel. Save it and it reloads within a second; a table that "
                           "fails to parse is logged and the last good one kept. cue_log over MCP "

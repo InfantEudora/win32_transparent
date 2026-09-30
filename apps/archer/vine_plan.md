@@ -806,6 +806,15 @@ meshes. That move is cheap exactly because sections 9 and 10 keep the walker out
      - leaf sprays sit on the upper nodes only;
      - it grows faster than a vine.
    - The archer test replay is unchanged.
+   - **Sounds (2026-09-30), the user's own:** `vine_growing`, `bamboo_growing`, `roots_growing`, as
+     the cues `vine_grow`, `bamboo_grow` and `roots_grow`. That replaces the rock-crumble
+     placeholder.
+     - One sound per strike, chosen by what actually grew: bamboo, then vine, then roots.
+     - A plant's own roots are covered by its sound; a tuft alone is silent.
+     - `roots_grow` is at gain 0.3, since every normal arrow into a wall or an underside plays it.
+     - The test recording's three shots now each play `roots_grow`. The baselines were rewritten:
+       only the `cues` part of the state moved, from tick 607 on.
+   - **The cap:** `bamboo_end` is the cut cap. When it's used is to be decided later (the user).
 9. **Withering**, and growths on crumbling blocks.
 10. **The other species** as their assets arrive: bamboo (done, step 8b), thorny (the coil
     derive, thorns), grape (fruit, gravity-hung).

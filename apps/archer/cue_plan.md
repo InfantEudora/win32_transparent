@@ -186,11 +186,22 @@ The level is the outermost scope, so a restart ends every scope at once - that i
 restart silences everything". And since waiting is counted in TICKS, a paused game holds its
 waiting cues exactly where they are and `sim_step` releases them one tick at a time.
 
-**There is a Stage per level.** The app keeps one per scene, and leaving the range and coming back
-finds it exactly as it was left. So a scene switch is not a restart: it DROPS every waiting cue of
-the level being left, lets what is playing ring or stop by its rule, and keeps that Stage's
-once-per-run flags and counters where they were. A restart is what clears those. Under the title
-nothing ticks, so nothing fires; title music is not on this path.
+**There is a Stage per level, and a cue system per level beside it.** The app keeps one of each
+per scene, and leaving the range and coming back finds it exactly as it was left. So a scene switch
+is not a restart: the level being left is FROZEN, sound included. Its cues stop ticking, with their
+open scopes, waiting cues and history intact, and each level's sounds play on a bus of its own
+(`world`, `range`, `rope`, `character`, all under the master), which is held while the level is
+parked. Coming back releases the bus and the level carries on from the same tick, with the
+waterfall mid-loop and a bow's creak mid-draw. A restart is what clears the rest.
+
+The cue system is per level because it runs on the level's clock. When there was one for the
+whole app, a switch put it on another Stage's `ticks`: a line started at the world's tick 50,000
+counted as still playing on the range until the range reached 50,000, and anything waiting fired a
+level's age early or late (fixed 2026-09-30). The table's buses are made per level as
+`<level>/<name>`, and the table's "master" is the level's bus.
+
+Under the title nothing ticks, so nothing fires. The title has a bus of its own too (`title`), held
+everywhere but on the title, which is where the title music will go.
 
 ---
 

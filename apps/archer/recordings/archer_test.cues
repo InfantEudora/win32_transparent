@@ -31,17 +31,20 @@
      592  arrow_leave    play  arrow_leave    gain 1.000
      593  arrow_swoosh   play  arrow_swoosh   gain 0.982 pan +0.46 from 0.010
      598  breath_in      play  breathe_in_2   gain 0.337
+     608  roots_grow     play  roots_grow     gain 0.296 pan +0.46
      608  arrow_hit      play  arrow_hit      gain 0.952 pan +0.46
      658  breath_out     play  breathe_out_1  gain 0.314
      693  bow_tension    play  bow_tension    gain 0.700
      727  bow_tension    stop  bow_tension
      727  arrow_leave    play  arrow_leave    gain 1.000
      736  arrow_swoosh   play  arrow_swoosh   gain 0.746 pan +0.60 from 0.010
+     751  roots_grow     play  roots_grow     gain 0.228 pan +0.60
      751  arrow_hit      play  arrow_hit      gain 0.731 pan +0.60
      920  bow_tension    play  bow_tension    gain 0.700
      960  bow_tension    stop  bow_tension
      960  arrow_leave    play  arrow_leave    gain 1.000
     1027  arrow_swoosh   play  arrow_swoosh   gain 0.142 pan +0.60 from 0.010
+    1042  roots_grow     play  roots_grow     gain 0.045 pan +0.60
     1042  arrow_hit      play  arrow_hit      gain 0.146 pan +0.60
     1137  footstep       play  footstep_4     gain 1.000
     1143  jump_takeoff   play  jump_takeoff   gain 0.400

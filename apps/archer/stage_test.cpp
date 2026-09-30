@@ -7430,6 +7430,95 @@ static void TestTeeter(){
     The branch walk (Puppet::branch_walked): Balance_Walking on a branch, its playhead pinned to the
     distance walked. Measured values fed in by hand - a rules test has no .glb.
 */
+/*
+    The landing roll (CLIP_LAND_ROLL): a hard landing on the move, rolled out of into the run. The
+    measured values - the trimmed clip's length and pace - are fed in by hand.
+*/
+static void TestLandingRoll(){
+    printf("the landing roll\n");
+    const float pace = 1.9f;
+    const float dur = 1.3f;
+    auto roller = [&](){
+        Puppet p;
+        p.model_scale = 1.0f;
+        p.clip_speed[CLIP_LAND_ROLL] = pace;
+        p.clip_duration[CLIP_LAND_ROLL] = dur;
+        p.clip_duration[CLIP_LAND_HARD] = 1.1f;
+        p.clip_entry[CLIP_LAND_HARD] = 0.3f;
+        return p;
+    };
+    //One tick falling at `impact`, then touchdown at `speed` along facing.
+    auto land = [](Puppet& p, float impact, float speed){
+        ArcherAnimParams a;
+        a.f_on_ground = false;
+        a.mode = MODE_AIR;
+        a.vel_y = -impact;
+        a.speed = speed;
+        a.ground_speed = fabsf(speed);
+        p.Tick(a);
+        a.f_on_ground = true;
+        a.mode = MODE_GROUND;
+        a.vel_y = 0.0f;
+        p.Tick(a);
+        return a;
+    };
+    {
+        Puppet p = roller();
+        ArcherAnimParams a = land(p,PUPPET_ROLL_VEL + 5.0f,ARCHER_RUN_SPEED);
+        Check(p.choice.clip == CLIP_LAND_ROLL,"a hard landing at a run rolls");
+        Check(p.choice.start_time == 0.0f,"from its touchdown");
+        CheckNear(p.choice.rate,PUPPET_ACTION_RATE_MAX,1e-5f,"as fast as a one-shot may go - a run is faster than the roll");
+        CheckNear(p.choice.wanted_rate,ARCHER_RUN_SPEED / pace,1e-4f,"with what covering the run would take, reported");
+        int ticks = (int)(dur / PUPPET_ACTION_RATE_MAX * ARCHER_TPS);
+        for (int i = 0; i < ticks - 3; i++){ p.Tick(a); }
+        Check(p.choice.clip == CLIP_LAND_ROLL,"moving does not cancel it - moving is what it is for");
+        for (int i = 0; i < 5; i++){ p.Tick(a); }
+        Check(p.choice.clip != CLIP_LAND_ROLL,"and once it has played out, the run takes over");
+    }
+    {
+        Puppet p = roller();
+        ArcherAnimParams a = land(p,PUPPET_ROLL_VEL + 5.0f,4.0f);
+        Check(p.choice.clip == CLIP_LAND_ROLL,"at a jog it rolls too");
+        CheckNear(p.choice.rate,4.0f / pace,1e-4f,"fitted to the jog");
+        a.ground_speed = a.speed = 0.0f;
+        for (int i = 0; i < 5; i++){ p.Tick(a); }
+        Check(p.choice.clip == CLIP_LAND_ROLL,"and letting go of the key mid-roll finishes the roll");
+        CheckNear(p.choice.rate,4.0f / pace,1e-4f,"at the pace it started at");
+        a.f_on_ground = false;
+        a.mode = MODE_AIR;
+        a.vel_y = ARCHER_JUMP_SPEED;
+        p.Tick(a);
+        Check(p.choice.clip != CLIP_LAND_ROLL,"leaving the ground ends it");
+    }
+    {
+        Puppet p = roller();
+        land(p,PUPPET_ROLL_VEL - 5.0f,ARCHER_RUN_SPEED);
+        Check(p.choice.clip != CLIP_LAND_ROLL,"a routine landing at a run does not roll");
+        Puppet q = roller();
+        land(q,PUPPET_ROLL_VEL + 5.0f,0.0f);
+        Check(q.choice.clip == CLIP_LAND_HARD,"a hard landing standing still is the hard landing, as before");
+        Puppet r = roller();
+        land(r,PUPPET_ROLL_VEL + 5.0f,-ARCHER_RUN_SPEED);
+        Check(r.choice.clip != CLIP_LAND_ROLL,"nor does backing into one - the roll only goes forward");
+    }
+    {
+        //In the air: a roll coming skips the hard landing's reach for the floor.
+        Puppet p = roller();
+        ArcherAnimParams a;
+        a.f_on_ground = false;
+        a.mode = MODE_AIR;
+        a.vel_y = -30.0f;
+        a.speed = a.ground_speed = ARCHER_RUN_SPEED;
+        a.land_speed = PUPPET_ROLL_VEL + 5.0f;
+        a.land_in_ticks = 5;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_FALL,"a roll coming keeps the fall to the ground - the roll has its own touchdown");
+        a.speed = a.ground_speed = 0.0f;
+        p.Tick(a);
+        Check(p.choice.clip == CLIP_LAND_HARD,"falling straight down, the hard landing's lead-in still plays");
+    }
+}
+
 static void TestBalanceWalk(){
     printf("the branch walk\n");
     const float speed = 0.8f;       //world units a second, about the export's
@@ -8198,6 +8287,7 @@ int main(void){
     TestEdges();
     TestTeeter();
     TestBalanceWalk();
+    TestLandingRoll();
     TestVineGrowth();
     TestRootsAndTufts();
     TestCreepers();

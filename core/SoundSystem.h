@@ -82,10 +82,15 @@
     resampler while playing, and 16 had to hold music, an ambience loop, narration kept against
     stealing, and every one-shot at once. A game that runs out of 32 wants a per-sound cap
     (the cue layer's max_instances), not more voices.
+
+    BUSES were 8, which a single scene's table fitted. A game with a bus per SCENE (the archer's:
+    title, world, range, rope, character) has every table's buses once per scene under it - five
+    per level today, a sixth once music arrives - so 8 would not hold even two levels. A bus that
+    exists costs a node in the mixing graph and nothing per voice.
 */
 #define  NUM_SOUND_BUFFERS 256  //distinct sound FILES that can be resident
 #define  NUM_SOUND_VOICES  32   //sounds that can be audible AT ONCE. The scarce one.
-#define  NUM_SOUND_BUSES   8    //mix groups, the master included - see AddBus
+#define  NUM_SOUND_BUSES   48   //mix groups, the master included - see AddBus
 
 /*
     How long a gain change takes to arrive, on a voice or a bus.
@@ -247,6 +252,8 @@ public:
         A held voice still COUNTS AS PLAYING (FinishedPlaying, GetNumPlaying, and the reclaiming
         of one-shots), since it has not finished: it has stopped, and it will go on. That is the
         difference from Pause, which is its owner's decision. Cheap enough to call every pass.
+
+        This is SetBusPaused on the master, so it holds everything.
     */
     void SetPaused(bool paused);
 
@@ -282,8 +289,24 @@ public:
     */
     int   AddBus(const char* name, int parent = SOUND_BUS_MASTER);
     int   FindBus(const char* name);         //-1 if there is none by that name
+    const char* GetBusName(int bus);         //"" for a bus that does not exist
     void  SetBusGain(int bus, float gain);
     float GetBusGain(int bus);               //what it was set to, not where the smoothing is
+
+    /*
+        SetPaused for ONE BRANCH of the buses: holds every voice on `bus` and on every bus below
+        it, the same kind of hold, and lets them carry on from where they were when released.
+
+        For a game with a bus per scene. A scene that is not on screen is frozen rather than
+        reset - the archer's levels park, and the title is a pause - so its sounds are too, while
+        the scene that IS on screen plays. A hold anywhere above a voice holds it, so releasing a
+        scene's bus does not release a voice the master is still holding.
+
+        A HELD BUS STAYS HELD for sounds started on it later: they are made ready and do not start
+        until the bus is released, rather than playing until the next call noticed them.
+    */
+    void  SetBusPaused(int bus, bool paused);
+    bool  IsBusPaused(int bus);              //this bus's own hold, not one above it
 
     /*
         Every voice making noise, and what it is. `sounds_playing` said that something had
@@ -349,10 +372,17 @@ private:
         std::string name;
         int parent = -1;
         float gain = 1.0f;
+        bool f_held = false;                    //SetBusPaused's hold on this bus itself
     };
     SoundBus buses[NUM_SOUND_BUSES];
     //The node a voice on `bus` attaches to: that bus, or the master for one that does not exist.
     ma_node* BusNode(int& bus);
+    //Whether a voice on `bus` is held: by that bus's own hold or by any above it.
+    bool BusHeld(int bus);
+    //Holds and releases every voice to match its bus, after a hold has changed.
+    void ApplyHolds();
+    //Starts a voice that is ready, or leaves it held if its bus is. False if miniaudio refused.
+    bool StartVoice(SoundVoice* voice);
     //Initialise's second half, with or without a device: the master bus and the limits line.
     bool FinishInitialise();
     //The frames a gain change is smoothed over, at the engine's rate.

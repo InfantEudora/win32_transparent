@@ -49,6 +49,16 @@
     section that is not playing costs nothing. A section moves on by itself after its `bars`, or
     when a SECTION event asks - by name, or the next one if the name is empty.
 
+    A PAUSE fades the music out over pause_fade_s and then HOLDS it: once it is silent the engine
+    stops rendering altogether, so its clock, the beat, every bed's place in its loop and every
+    note's place in its ring stop exactly where the fade ended. A resume carries on from there,
+    fading back in over resume_fade_s - after the fade, the music is sample for sample what it
+    would have been had the pause never happened, only later. It is the game's pause, not a mute:
+    muting would let the music run on, and come back somewhere else in the phrase. Events posted
+    while held are taken in but heard only after the resume - a stinger sounds as it comes back,
+    a key change still waits for a bar line - except the audition, which is the library's and not
+    the music's, and plays through.
+
     Time here is output FRAMES, never seconds or ticks - it is presentation, not simulation, and
     it runs on the audio device's clock. It draws from its own random stream, never the
     engine's shared Application::rrand: a draw from another thread would shift the simulation's
@@ -62,12 +72,15 @@ struct MusicParams{
     float bed_gain = 1.0f;          //scales every bed
     float voice_gain = 1.0f;        //scales every voice
     float brightness = 0.5f;        //0 dark - rumble, bass .. 1 bright - high, shimmering. 0.5 = as scored
+    float pause_fade_s = 1.5f;      //a PAUSE fades the music out over this long, then holds it
+    float resume_fade_s = 0.5f;     //and a resume brings it back over this - quicker, since the player is waiting
 };
 
 struct MusicEvent{
-    enum Type{ KEY, STINGER, SUSPENSE, BRIGHTNESS, AUDITION, SECTION };
+    enum Type{ KEY, STINGER, SUSPENSE, BRIGHTNESS, AUDITION, SECTION, PAUSE };
     Type type = KEY;
-    float value = 0;                //SUSPENSE, BRIGHTNESS: the new value - for scripting a render's arc
+    float value = 0;                //SUSPENSE, BRIGHTNESS: the new value - for scripting a render's arc.
+                                    //PAUSE: 1 pauses, 0 resumes
     int root_pc = -1;               //KEY: new root, or -1 to keep it
     int mode = -1;                  //KEY: new mode, or -1 to keep it
     bool f_now = false;             //KEY, SECTION: skip the wait for the downbeat
@@ -103,6 +116,9 @@ struct MusicStatus{
     int section_bar = 0;                            //whole bars it has played so far
     int section_bars = 0;                           //how many it plays before moving on, 0 = until asked
     std::string auditioning;                        //the sample being auditioned, or empty
+    bool f_paused = false;                          //asked to pause; still fading out until f_held
+    bool f_held = false;                            //silent, and the clock stopped where the fade ended
+    float pause_gain = 1;                           //what the pause fade is multiplying the music by
     int notes_sounding = 0;
     int notes_total = 0;
     std::vector<MusicNoteLog> recent;               //newest last, at most 24
@@ -196,6 +212,13 @@ private:
     int ChooseNote(Voice& v, bool& f_tension);
     void StartNote(const MusicSample* s, int root_midi, int midi, float gain, float pan, int64_t start,
                    int64_t release_after, float release_s);
+
+    //--- pause ----------------------------------------------------------------------------
+    bool f_paused = false;
+    float pause_pos = 1;            //0 silent .. 1 full, linear in time; heard through PauseCurve
+    static float PauseCurve(float pos);
+    //Everything of one block that a hold stops: beats, beds, notes, the tilt, the pause fade.
+    void RenderMusic(float* out, int frames);
 
     //--- output meter ---------------------------------------------------------------------
     double meter_sq = 0;

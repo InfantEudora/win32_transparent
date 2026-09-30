@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-30T09:14:31.201Z
+  modified: 2026-09-30T10:12:00.055Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -136,5 +136,8 @@ bamboo_leaf (VINE_LEAF_BAMBOO past VINE_LEAF_KIND_COUNT); bamboo_end unused. In-
 x 10.7, draw 45 nowait + up 17 -> (15, 6.4). sim_pause takes {"paused":false} to resume. The
 lockd broker can restart and drop claims mid-session: re-check lock_list before editing again,
 and never write a held file by script (the hook only guards Edit/Write). Next is still step 9.
+Growth SOUNDS wired 2026-09-30 (user's wavs): vine_grow / bamboo_grow / roots_grow cues, one per
+strike by what grew; roots_grow gain 0.3. archer_test baselines rewritten (only `cues` part moved).
+cue_replay prints "STATE DIFFERENT" in CAPS - grep -i before trusting a --write.
 
 2026-09-26: four big CAVE vines added in the terrain bay (DeclareVines, #if ARCHER_TEST_BAY), two behind her and two in front at z 2+; hanging-start vines need up=+Z; see vine_plan.md "The cave vines".

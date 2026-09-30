@@ -16,11 +16,22 @@
 
     A NULL SoundSystem is allowed too, for a sound app whose device failed: every call answers as
     though the sound did not exist, which is the same thing CueSystem does with no output.
+
+    A SCENE'S OUTPUT: given a `layer` bus, everything this output plays goes under it. A game with
+    a cue table per scene gives each its own output over its own layer, and then one hold or one
+    gain on the layer is that whole scene's sound - see SoundSystem::SetBusPaused.
+      - the table's "master" is the layer, for a bus's parent and for a cue that names no bus;
+      - the table's buses are made as "<layer>/<name>", because SoundSystem's names are global
+        and AddBus hands back an existing bus by name: two scenes' "effects" would otherwise be
+        one bus, and a duck in one scene would turn down the other.
+    Without a layer (the master), it is exactly the one-table output it always was.
 */
 class CueSoundOutput : public CueOutput{
 public:
-    explicit CueSoundOutput(SoundSystem* s = NULL) : sound(s) {}
+    explicit CueSoundOutput(SoundSystem* s = NULL, int layer_bus = SOUND_BUS_MASTER)
+        : sound(s), layer(layer_bus) {}
     SoundSystem* sound;
+    int layer;
 
     void RegisterSound(const char* name, const char* file) override {
         if (sound) sound->AppendFile(file,name);
@@ -37,7 +48,8 @@ public:
         p.gain = play.gain;
         p.pitch = play.pitch;
         p.pan = play.pan;
-        p.bus = play.bus;
+        //CueSystem's bus 0 is "no bus of its own", which for a scene's output is the scene.
+        p.bus = (play.bus == SOUND_BUS_MASTER) ? layer : play.bus;
         p.f_looping = play.f_looping;
         p.start_seconds = play.from;
         return sound->Play(name,p);
@@ -56,15 +68,22 @@ public:
     }
     int AddBus(const char* name, const char* parent) override {
         if (!sound) return -1;
-        int parent_id = SOUND_BUS_MASTER;
+        int parent_id = layer;
         if (parent && parent[0] && strcmp(parent,"master") != 0){
-            parent_id = sound->FindBus(parent);
+            parent_id = sound->FindBus(Scoped(parent).c_str());
             if (parent_id < 0) return -1;
         }
-        return sound->AddBus(name,parent_id);
+        return sound->AddBus(Scoped(name).c_str(),parent_id);
     }
     void SetBusGain(int bus, float gain) override {
         if (sound) sound->SetBusGain(bus,gain);
+    }
+
+private:
+    //A table's bus name as the SoundSystem knows it: under the layer's name, unless there is none.
+    std::string Scoped(const char* name){
+        if (layer == SOUND_BUS_MASTER) return name;
+        return std::string(sound->GetBusName(layer)) + "/" + name;
     }
 };
 

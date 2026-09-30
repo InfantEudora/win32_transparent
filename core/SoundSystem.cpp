@@ -225,6 +225,12 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
     //Already loaded under some other name? Then this name is another way to say the same buffer.
     for (size_t i = 0;i < buffers.size();i++){
         if (buffers[i].filename.compare(filename) == 0){
+            //The SAME name for the same file is nothing new, and quiet: a game with a cue table
+            //per scene registers every sound once per scene, and would log each one each time.
+            auto known = map_handles.find(handle_name);
+            if (known != map_handles.end() && known->second == (int)i){
+                return;
+            }
             map_handles[handle_name] = (int)i;
             debug->Info("Sound '%s' shares the already loaded %s\n",handle_name,filename);
             return;
@@ -446,10 +452,8 @@ soundhandle_t SoundSystem::Play(const char* handle_name, const SoundParams& para
         ma_sound_seek_to_pcm_frame(&voice->sound,frame);
     }
 
-    result = ma_sound_start(&voice->sound);
-    if (result != MA_SUCCESS){
-        debug->Err("ma_sound_start failed for '%s' (%s)\n",
-                   handle_name,ma_result_description(result));
+    if (!StartVoice(voice)){
+        debug->Err("ma_sound_start failed for '%s'\n",handle_name);
         ReleaseVoice(voice);
         return SOUND_INVALID_HANDLE;
     }
@@ -490,9 +494,8 @@ soundhandle_t SoundSystem::PlayStream(ma_data_source* source, float gain, int bu
     voice->gain = gain;
     ma_sound_set_volume(&voice->sound,gain);
 
-    result = ma_sound_start(&voice->sound);
-    if (result != MA_SUCCESS){
-        debug->Err("ma_sound_start failed for a stream (%s)\n",ma_result_description(result));
+    if (!StartVoice(voice)){
+        debug->Err("ma_sound_start failed for a stream\n");
         ReleaseVoice(voice);
         return SOUND_INVALID_HANDLE;
     }
@@ -516,23 +519,70 @@ void SoundSystem::Stop(soundhandle_t handle){
 }
 
 void SoundSystem::SetPaused(bool paused){
-    if (!f_initialised){
+    SetBusPaused(SOUND_BUS_MASTER,paused);
+}
+
+void SoundSystem::SetBusPaused(int bus, bool paused){
+    if (!f_initialised || bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
         return;
     }
+    //Called every pass by a game keeping sound in simulated time, and almost always a no-op.
+    if (buses[bus].f_held == paused){
+        return;
+    }
+    buses[bus].f_held = paused;
+    ApplyHolds();
+}
+
+bool SoundSystem::IsBusPaused(int bus){
+    if (bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
+        return false;
+    }
+    return buses[bus].f_held;
+}
+
+bool SoundSystem::BusHeld(int bus){
+    //Parents are always lower slots than their children (AddBus), so this walk ends.
+    while (bus >= 0 && bus < NUM_SOUND_BUSES && buses[bus].f_active){
+        if (buses[bus].f_held){
+            return true;
+        }
+        bus = buses[bus].parent;
+    }
+    return false;
+}
+
+void SoundSystem::ApplyHolds(){
     for (int i = 0; i < NUM_SOUND_VOICES; i++){
         SoundVoice* v = &voices[i];
         if (!v->f_active){
             continue;
         }
-        if (paused && !v->f_held && ma_sound_is_playing(&v->sound) == MA_TRUE){
+        bool f_hold = BusHeld(v->bus);
+        //Only a voice that is PLAYING is held: one its owner paused stays that owner's to resume.
+        if (f_hold && !v->f_held && ma_sound_is_playing(&v->sound) == MA_TRUE){
             //ma_sound_stop keeps the cursor, which is what makes this a hold rather than an end.
             ma_sound_stop(&v->sound);
             v->f_held = true;
-        }else if (!paused && v->f_held){
+        }else if (!f_hold && v->f_held){
             ma_sound_start(&v->sound);
             v->f_held = false;
         }
     }
+}
+
+/*
+    The last step of Play and PlayStream. A voice whose bus is held is marked held and NOT started,
+    so it waits at its first sample - or at start_seconds - for the bus to be released, exactly as
+    if it had been playing when the hold came. Starting it and stopping it again at once would not
+    do: the mixer thread can take a block in between.
+*/
+bool SoundSystem::StartVoice(SoundVoice* voice){
+    if (BusHeld(voice->bus)){
+        voice->f_held = true;
+        return true;
+    }
+    return ma_sound_start(&voice->sound) == MA_SUCCESS;
 }
 
 void SoundSystem::Pause(soundhandle_t handle){
@@ -622,6 +672,13 @@ int SoundSystem::FindBus(const char* name){
         }
     }
     return -1;
+}
+
+const char* SoundSystem::GetBusName(int bus){
+    if (bus < 0 || bus >= NUM_SOUND_BUSES || !buses[bus].f_active){
+        return "";
+    }
+    return buses[bus].name.c_str();
 }
 
 int SoundSystem::AddBus(const char* name, int parent){

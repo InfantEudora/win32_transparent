@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <unordered_map>
 #include <mutex>
 #include <vector>
@@ -1029,10 +1030,10 @@ struct ArcherCameraTuning{
         half-height, so it looks the same size at any zoom. It lasts `shake_ticks` from full to
         nothing, and wobbles `shake_hz` times a second.
     */
-    float shake_scale = 1.0f;
+    float shake_scale = 1.5f;
     float shake_max = 0.04f;
-    float shake_ticks = 24.0f;
-    float shake_hz = 14.0f;
+    float shake_ticks = 32.0f;
+    float shake_hz = 20.0f;
 };
 
 /*
@@ -1629,11 +1630,17 @@ private:
     */
     void ForecastArrowImpacts();
     float arrow_swoosh_peak = -1.0f;            //seconds into arrow_swoosh.wav it is loudest; -1 unloaded
-    bool  arrow_in_flight[ARROW_MAX_LIVE] = {}; //the slot's `arrow` scope is open
+    bool  arrow_in_flight[ARROW_MAX_LIVE] = {}; //the slot's `arrow` scope is open. Per level, swapped
     std::vector<v3> arrow_path;                 //scratch for the forecast's path
-    //The sound device, the cue table, and the output between them. Survivable throughout: a
-    //missing file leaves its sound silent, a bad table leaves the cues it had (none at start).
+    //The sound device, the title's bus, and the world's cues. Survivable throughout: a missing
+    //file leaves its sound silent, a bad table leaves the cues it had (none at start).
     void SetupSound();
+    /*
+        One level's cue system, on a bus of its own called `bus_name` - which is how a level's
+        sounds freeze with it when it is parked. Its table loaded, its action handlers set. Owned by
+        level_cues; `bus` is set to the level's bus, or SOUND_BUS_MASTER with no sound. Init only.
+    */
+    CueSystem* MakeLevelCues(const char* bus_name, int& bus);
     /*
         The cue table follows its file: UpdateView looks at the file's modification time once a
         second, on every pass whether or not the game is paused, and reloads it when it changed.
@@ -2314,19 +2321,36 @@ private:
     SoundSystem* soundsystem = NULL;
     /*
         The cue layer: how the game answers what happens in it. Decides and logs in every build;
-        plays through `cue_output`, which is a CueSoundOutput over `soundsystem` in a sound build
-        and NULL otherwise. Physics thread only - SignalCues, the tick, NewGame, the recording
-        state and UpdateView's poll all run there.
+        plays through a CueSoundOutput over `soundsystem` in a sound build and through nothing
+        otherwise. Physics thread only - SignalCues, the tick, NewGame, the recording state and
+        UpdateView's poll all run there.
+
+        ONE PER LEVEL, swapped with the rest of the level - see ArcherLevel. A cue system runs on
+        its level's clock (Stage::ticks), counts its sounds' lengths in it, and holds that level's
+        open scopes, so it has to go where the Stage goes. When it was one for the whole app, a
+        switch put it on another level's clock: a line started at the world's tick 50,000 counted
+        as playing on the range until the range reached 50,000, and anything waiting fired a
+        whole level's age early or late.
+
+        A POINTER, because a CueSystem cannot be swapped by value (its log holds a mutex). They are
+        owned by level_cues and live as long as the app, so a pointer read off-thread - cue_log's -
+        is never left dangling, only possibly the level just left.
     */
-    CueSystem cues;
-    CueOutput* cue_output = NULL;
+    CueSystem* cues = NULL;
+    std::vector<std::unique_ptr<CueSystem>> level_cues;
+    std::vector<std::unique_ptr<CueOutput>> level_cue_outputs;
+    /*
+        The live level's bus: every sound its cues play is under it, and parking the level holds
+        it (UpdateView). SOUND_BUS_MASTER with no sound. Per level, swapped.
+    */
+    int  level_bus = SOUND_BUS_MASTER;
+    //The title's bus. Nothing plays on it yet; it is the title music's, and is held off the title.
+    int  title_bus = SOUND_BUS_MASTER;
     //Last tick's Stage::IsNocked and whether a kick was running, for the edges the `nocked` and
-    //`kick` scopes open and close on.
+    //`kick` scopes open and close on. Per level, swapped: they are edges of that level's Stage.
     bool f_was_nocked = false;
     bool f_was_kicking = false;
     bool f_was_airborne = false;        //the `airborne` scope's edge
-    //How many `waterfall` scope instances any level has had, so a level with fewer closes the rest.
-    int  waterfall_scopes = 0;
     /*
         Master gain for the lot, 0..1, on the panel. The master bus's gain, set every pass in
         UpdateView - so, unlike before the cues, moving the slider turns down what is ALREADY
@@ -2650,6 +2674,13 @@ private:
         vec3 camera_target = vec3(0.0f,3.0f,0.0f);
         vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);
         vec3 orbit_follow_offset = vec3(0.0f,0.0f,0.0f);
+        //Its sound - see `cues`.
+        CueSystem* cues = NULL;
+        int  level_bus = SOUND_BUS_MASTER;
+        bool f_was_nocked = false;
+        bool f_was_kicking = false;
+        bool f_was_airborne = false;
+        bool arrow_in_flight[ARROW_MAX_LIVE] = {};
     };
     std::vector<ArcherLevel> parked_levels;     //one per scene that is not live
     //The scenes by what they are, so the tools and the swap can tell them apart without comparing

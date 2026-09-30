@@ -110,6 +110,11 @@ static double peak(const std::vector<float>& b, size_t from, size_t n) {
     return p;
 }
 
+// A voice's position against where it should be, to a hundredth of a second.
+static bool v_near(float seconds, float expected) {
+    return fabsf(seconds - expected) < 0.01f;
+}
+
 static void offline_checks() {
     printf("offline\n");
     char buf[160];
@@ -258,6 +263,68 @@ static void offline_checks() {
     ss.Stop(h);
     ss.ListVoices(voices);
     check(voices.empty(), "and nothing once it is stopped");
+    p.bus = SOUND_BUS_MASTER;
+    p.pan = 0.0f;
+    p.f_looping = false;
+
+    // A hold per scene: two scene buses, each with a child, like the archer's world and range.
+    // Holding one scene freezes what is under it and leaves the other playing.
+    int scene_a = ss.AddBus("scene_a");
+    int scene_b = ss.AddBus("scene_b");
+    int a_fx = ss.AddBus("scene_a/fx", scene_a);
+    p.pan = -1.0f;              // scene A on the left
+    p.bus = a_fx;
+    soundhandle_t ha = ss.Play("sine", p);
+    p.pan = 1.0f;               // scene B on the right
+    p.bus = scene_b;
+    soundhandle_t hb = ss.Play("sine", p);
+    render(ss, 4800);           // 0.1 s into both
+    ss.SetBusPaused(scene_a, true);
+    b = render(ss, 4800);
+    rms(b, 960, 3840, l, r);
+    snprintf(buf, sizeof(buf), "(L %.5f R %.3f)", l, r);
+    check(l < 0.001 && r > 0.2, "holding one scene's bus silences its child and not the other scene", buf);
+    check(!ss.FinishedPlaying(ha), "a held voice still counts as playing");
+    ss.ListVoices(voices);
+    float at = -1.0f;
+    for (const SoundVoiceInfo& v : voices) if (v.handle == ha) at = v.position;
+    snprintf(buf, sizeof(buf), "(%.3fs)", at);
+    check(v_near(at, 0.1f), "and has not moved while held", buf);
+
+    // Started on a held bus: made ready, not heard until the bus is released.
+    p.pan = -1.0f;
+    p.bus = a_fx;
+    soundhandle_t hc = ss.Play("sine", p);
+    b = render(ss, 4800);
+    rms(b, 960, 3840, l, r);
+    snprintf(buf, sizeof(buf), "(L %.5f)", l);
+    check(hc != SOUND_INVALID_HANDLE && l < 0.001, "a sound started on a held bus waits", buf);
+
+    // The master's hold and a scene's are separate: releasing the scene under a held master
+    // releases nothing, and releasing the master then lets the scene play.
+    ss.SetPaused(true);
+    ss.SetBusPaused(scene_a, false);
+    b = render(ss, 4800);
+    rms(b, 960, 3840, l, r);
+    snprintf(buf, sizeof(buf), "(L %.5f R %.5f)", l, r);
+    check(l < 0.001 && r < 0.001, "a held master holds a released scene too", buf);
+    ss.SetPaused(false);
+    render(ss, 4800);
+    ss.ListVoices(voices);
+    at = -1.0f;
+    float at_c = -1.0f;
+    for (const SoundVoiceInfo& v : voices){
+        if (v.handle == ha) at = v.position;
+        if (v.handle == hc) at_c = v.position;
+    }
+    snprintf(buf, sizeof(buf), "(held one at %.3fs, waiting one at %.3fs)", at, at_c);
+    check(v_near(at, 0.2f) && v_near(at_c, 0.1f),
+          "released, each carries on from where it was", buf);
+    ss.Stop(ha);
+    ss.Stop(hb);
+    ss.Stop(hc);
+    p.bus = SOUND_BUS_MASTER;
+    p.pan = 0.0f;
     printf("\n");
 }
 

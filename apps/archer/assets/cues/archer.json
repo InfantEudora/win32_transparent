@@ -29,7 +29,9 @@
     "breathe_out_3": "sound/breathe_out_normal_3.wav",
     "heartbeat_1":  "sound/heartbeat_1.wav",
     "heartbeat_2":  "sound/heartbeat_2.wav",
-    "vine_grow":    "sound/rock_crumble_2.wav",
+    "vine_grow":    "sound/vine_growing.wav",
+    "bamboo_grow":  "sound/bamboo_growing.wav",
+    "roots_grow":   "sound/roots_growing.wav",
     "waterfall":    "sound/waterfall.wav"
   },
 
@@ -155,10 +157,25 @@
     },
 
     "vine_grow": {
-      "comment": "A vine arrow's vine starting to grow out of an underside (vine_plan.md step 5). A PLACEHOLDER: the rock crumble, low and slowed, as earth giving way where it breaks out - a rustle and a creak of its own is what it wants. By distance and panned, like the arrow's hit; a longer vine a little louder.",
-      "signal": "vine_grow", "sounds": ["vine_grow"], "bus": "effects", "pitch": 0.75,
+      "comment": "A vine arrow's plant starting to grow - a hanging vine from an underside or a creeper up a wall (vine_plan.md steps 5 and 8). The user's own sound, 3.3 s against the vine's 2.5 s of growth, so it tails off as the leaves open. By distance and panned, like the arrow's hit; a longer vine a little louder.",
+      "signal": "vine_grow", "sounds": ["vine_grow"], "bus": "effects",
       "gain_by": [ { "value": "length", "in": [3, 8], "out": [0.3, 0.45] },
                    { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+
+    "bamboo_grow": {
+      "comment": "A bamboo arrow's clump shooting up (vine_plan.md step 8b). 3.5 s against 1.25 s of growth: the canes are up fast and the sound carries on past them. As the vine's otherwise; taller canes a little louder.",
+      "signal": "bamboo_grow", "sounds": ["bamboo_grow"], "bus": "effects",
+      "gain_by": [ { "value": "length", "in": [2, 6], "out": [0.3, 0.45] },
+                   { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+
+    "roots_grow": {
+      "comment": "Roots alone, out of an underside or a wall: every normal arrow into one, so this is heard more than any other growth and kept quieter. The roots under a vine or a bamboo clump are covered by that plant's own sound and never signal this. A tuft alone is silent.",
+      "signal": "roots_grow", "sounds": ["roots_grow"], "bus": "effects", "gain": 0.3,
+      "gain_by": [ { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
       "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
     },
 

@@ -100,6 +100,7 @@ enum ArcherClip{
     CLIP_ROPE_CLIMB,        //Rope_Climbing          hand over hand; playhead pinned to the distance climbed
     CLIP_TEETER,            //Teeter_Forward         stopped past a lip, falling FORWARD over it
     CLIP_BALANCE_WALK,      //Balance_Walking        on a branch; playhead pinned to the distance walked
+    CLIP_LAND_ROLL,         //Landing_Roll           a hard landing on the move, rolled out of
     CLIP_COUNT
 };
 
@@ -253,6 +254,16 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 */
 #define PUPPET_LAND_VEL             5.0f
 #define PUPPET_HARD_LAND_VEL        25.0f
+
+/*
+    THE LANDING ROLL: a landing as hard as the dramatic one, taken on the move - at least a jog
+    (the running jump's own line), and forward along facing, since the roll only goes one way.
+    Looks only: the rules keep her at the speed she landed with, and the roll is played fast to
+    cover it, up to PUPPET_ACTION_RATE_MAX. At a full run that is still about half the ground the
+    rules cover, which a roll carries better than a plant would.
+*/
+#define PUPPET_ROLL_VEL             PUPPET_HARD_LAND_VEL
+#define PUPPET_ROLL_SPEED           PUPPET_RUN_JUMP_SPEED
 
 /*
     HOW LONG THE GAME'S RISE LASTS, derived rather than typed: a jump leaves the ground at
@@ -684,6 +695,9 @@ public:
     float last_ground_speed = 0.0f;
     int   settle_ticks = 0;
     int   settle_clip = -1;
+    //The rate the landing roll plays at, set at touchdown from the speed she landed with - so a
+    //roll she lets go of the key in keeps the pace it started at, and ends when it was going to.
+    float roll_rate = 1.0f;
 
     /*
         WHICH AIR SET THIS FLIGHT IS USING, latched on the tick she leaves the ground.
@@ -916,6 +930,10 @@ public:
 
     //The landing a touchdown at `speed` gets: CLIP_LAND_HARD, CLIP_LAND_SOFT, or -1 for none.
     static int LandingClipFor(float speed);
+    //Is a touchdown this hard, at this signed speed along facing, a landing roll? Pure.
+    static bool RollFor(float impact, float speed);
+    //The roll's rate for a ground speed: fitted to the clip's measured pace, 1..PUPPET_ACTION_RATE_MAX.
+    float RollRate(float ground_speed) const;
     //The landing whose lead-in should be playing now, from the forecast in `in`; -1 for none.
     int   LeadInClip(const ArcherAnimParams& in) const;
     //Where fall_weight is heading this tick. Pure.

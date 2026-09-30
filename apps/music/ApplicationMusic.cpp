@@ -133,7 +133,10 @@ json ApplicationMusic::StateJson(){
         j["section"] = sec;
     }
     j["params"] = {{"suspense", p.suspense}, {"brightness", p.brightness}, {"bpm", p.bpm}, {"master", p.master},
-                   {"bed_gain", p.bed_gain}, {"voice_gain", p.voice_gain}};
+                   {"bed_gain", p.bed_gain}, {"voice_gain", p.voice_gain},
+                   {"pause_fade_s", p.pause_fade_s}, {"resume_fade_s", p.resume_fade_s}};
+    //"held" is the part worth checking: the fade has finished and the music's clock has stopped.
+    j["pause"] = {{"paused", st.f_paused}, {"held", st.f_held}, {"gain", st.pause_gain}};
     json beds = json::array();
     for (size_t i = 0; i < st.bed_names.size(); i++){
         beds.push_back({{"name", st.bed_names[i]}, {"gain", st.bed_gains[i]}, {"transpose", st.bed_transpose[i]},
@@ -216,6 +219,8 @@ json ApplicationMusic::RenderJson(const std::string& file, double seconds, const
     j["seed"] = seed;
     j["rendered_in_s"] = took;
     j["final_key"] = KeyName(st.root_pc, st.mode);
+    //The MUSIC's clock at the end, which falls behind `seconds` by however long a pause held it.
+    j["final_time_s"] = st.time_s;
     j["notes_total"] = st.notes_total;
     j["clipped"] = st.clipped;
     j["last_second"] = {{"peak_db", st.peak_db}, {"rms_db", st.rms_db}};
@@ -258,6 +263,17 @@ void ApplicationMusic::RenderMusicPanel(void){
     }
     ImGui::Text("Bar %d beat %d   %.1f s", st.bar + 1, st.beat + 1, st.time_s);
 
+    //--- pause ----------------------------------------------------------------------------
+    //The game's pause, tried here first: a fade out, a hold that stops the music's clock, and a
+    //fade back in to where it stopped. See MusicEngine.h.
+    MusicEvent pe;
+    pe.type = MusicEvent::PAUSE;
+    if (ImGui::Button(st.f_paused ? "Resume" : "Pause", ImVec2(80, 0))){ pe.value = st.f_paused ? 0.0f : 1.0f; player.Post(pe); }
+    ImGui::SameLine();
+    if (st.f_held) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Paused - held at %.1f s", st.time_s);
+    else if (st.f_paused) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Fading out... %.0f%%", st.pause_gain * 100.0f);
+    else if (st.pause_gain < 1.0f) ImGui::TextColored(ImVec4(0.5f,0.8f,1,1), "Fading in... %.0f%%", st.pause_gain * 100.0f);
+
     //--- sections -------------------------------------------------------------------------
     if (!st.section_names.empty()){
         if (st.section_bars > 0) ImGui::Text("Section: %s, bar %d of %d", SectionName(st, st.section).c_str(), st.section_bar + 1, st.section_bars);
@@ -290,6 +306,10 @@ void ApplicationMusic::RenderMusicPanel(void){
     f_changed |= ImGui::SliderFloat("Master", &p.master, 0.0f, 1.5f, "%.2f");
     f_changed |= ImGui::SliderFloat("Beds", &p.bed_gain, 0.0f, 2.0f, "%.2f");
     f_changed |= ImGui::SliderFloat("Voices", &p.voice_gain, 0.0f, 2.0f, "%.2f");
+    f_changed |= ImGui::SliderFloat("Pause fade (s)", &p.pause_fade_s, 0.1f, 5.0f, "%.1f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long Pause takes to fade the music out before holding it");
+    f_changed |= ImGui::SliderFloat("Resume fade (s)", &p.resume_fade_s, 0.1f, 5.0f, "%.1f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long Resume takes to bring it back, from where it stopped");
     ImGui::PopItemWidth();
     if (f_changed) player.SetParams(p);
 
@@ -686,20 +706,40 @@ void ApplicationMusic::RegisterMCPTools(void){
         "bed's gain and every voice's density between the score's calm and tense values, and adds "
         "tension notes), brightness (0 rumble and bass .. 1 high and bright, 0.5 as scored - weighs "
         "parts by their height, moves voices to the bottom or top of their register, and tilts the "
-        "mix), bpm, master, bed_gain, voice_gain. Takes effect within one audio block. Returns the state.",
+        "mix), bpm, master, bed_gain, voice_gain, and pause_fade_s / resume_fade_s (how long "
+        "music_pause takes each way). Takes effect within one audio block. Returns the state.",
         json{{"type","object"},{"properties",{
             {"suspense",{{"type","number"}}}, {"brightness",{{"type","number"}}},
             {"bpm",{{"type","number"}}}, {"master",{{"type","number"}}},
-            {"bed_gain",{{"type","number"}}}, {"voice_gain",{{"type","number"}}}}}},
+            {"bed_gain",{{"type","number"}}}, {"voice_gain",{{"type","number"}}},
+            {"pause_fade_s",{{"type","number"}}}, {"resume_fade_s",{{"type","number"}}}}}},
         [this, pl](const json& args) -> json {
             MusicParams p = pl->GetParams();
             auto num = [&](const char* k, float& v){ if (args.contains(k) && args[k].is_number()) v = args[k].get<float>(); };
             num("suspense", p.suspense); num("bpm", p.bpm); num("master", p.master);
             num("bed_gain", p.bed_gain); num("voice_gain", p.voice_gain); num("brightness", p.brightness);
+            num("pause_fade_s", p.pause_fade_s); num("resume_fade_s", p.resume_fade_s);
             p.suspense = std::max(0.0f, std::min(1.0f, p.suspense));
             p.brightness = std::max(0.0f, std::min(1.0f, p.brightness));
             p.bpm = std::max(20.0f, std::min(240.0f, p.bpm));
+            p.pause_fade_s = std::max(0.01f, std::min(10.0f, p.pause_fade_s));
+            p.resume_fade_s = std::max(0.01f, std::min(10.0f, p.resume_fade_s));
             pl->SetParams(p);
+            return StateJson();
+        });
+
+    MCPServer::Get()->RegisterTool("music_pause",
+        "Pause or resume the music, the way the game's pause will: `paused` true fades it out over "
+        "pause_fade_s and then HOLDS it - its clock, beat, loops and ringing notes all stop where "
+        "the fade ended - and false fades it back in over resume_fade_s from exactly there. Returns "
+        "the state; its `pause` says paused, held (faded out and stopped) and the fade's gain.",
+        json{{"type","object"},{"properties",{{"paused",{{"type","boolean"}}}}},{"required",json::array({"paused"})}},
+        [this, pl](const json& args) -> json {
+            if (!args.contains("paused") || !args["paused"].is_boolean()) return json{{"error", "paused must be true or false"}};
+            MusicEvent e;
+            e.type = MusicEvent::PAUSE;
+            e.value = args["paused"].get<bool>() ? 1.0f : 0.0f;
+            pl->Post(e);
             return StateJson();
         });
 
@@ -771,18 +811,22 @@ void ApplicationMusic::RegisterMCPTools(void){
         "bpm, master, bed_gain, voice_gain overrides them for the render. `seed` makes it repeatable "
         "(default 1). `timeline` is a list of events at times: {at_s, root|shift|mode, now} for a key "
         "change, {at_s, suspense} or {at_s, brightness} to move one, {at_s, stinger} for a stinger, "
-        "{at_s, section, now} for a section change (\"\" = the next one).",
+        "{at_s, section, now} for a section change (\"\" = the next one), {at_s, pause: true|false} "
+        "to pause or resume (pause_fade_s / resume_fade_s override the fades). The result's "
+        "final_time_s is the music's own clock, which a pause holds back.",
         json{{"type","object"},{"properties",{
             {"seconds",{{"type","number"}}}, {"file",{{"type","string"}}}, {"seed",{{"type","integer"}}},
             {"suspense",{{"type","number"}}}, {"brightness",{{"type","number"}}},
             {"bpm",{{"type","number"}}}, {"master",{{"type","number"}}},
             {"bed_gain",{{"type","number"}}}, {"voice_gain",{{"type","number"}}},
+            {"pause_fade_s",{{"type","number"}}}, {"resume_fade_s",{{"type","number"}}},
             {"timeline",{{"type","array"},{"items",{{"type","object"}}}}}}}},
         [this, pl](const json& args) -> json {
             MusicParams p = pl->GetParams();
             auto num = [&](const json& from, const char* k, float& v){ if (from.contains(k) && from[k].is_number()) v = from[k].get<float>(); };
             num(args, "suspense", p.suspense); num(args, "bpm", p.bpm); num(args, "master", p.master);
             num(args, "bed_gain", p.bed_gain); num(args, "voice_gain", p.voice_gain); num(args, "brightness", p.brightness);
+            num(args, "pause_fade_s", p.pause_fade_s); num(args, "resume_fade_s", p.resume_fade_s);
             const double seconds = std::max(1.0, std::min(600.0, args.value("seconds", 30.0)));
             const uint32_t seed = (uint32_t)std::max(1, args.value("seed", 1));
 
@@ -804,6 +848,10 @@ void ApplicationMusic::RegisterMCPTools(void){
                     else if (t.contains("brightness") && t["brightness"].is_number()){
                         te.event.type = MusicEvent::BRIGHTNESS;
                         te.event.value = t["brightness"].get<float>();
+                    }
+                    else if (t.contains("pause") && t["pause"].is_boolean()){
+                        te.event.type = MusicEvent::PAUSE;
+                        te.event.value = t["pause"].get<bool>() ? 1.0f : 0.0f;
                     }
                     else if (t.contains("section") && t["section"].is_string()){
                         te.event.type = MusicEvent::SECTION;
