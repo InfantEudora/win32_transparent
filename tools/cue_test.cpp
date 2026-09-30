@@ -1,5 +1,5 @@
 /*
-    Headless checks for core/CueSystem - step 2 of apps/archer/cue_plan.md.
+    Headless checks for core/CueSystem - step 2 of apps/archer/docs/cue_plan.md.
 
     Two kinds. Most run against a FAKE output that records what it was asked to do, so the
     table's logic - triggers, scopes, delays, draws, groups, history - is checked by reading the

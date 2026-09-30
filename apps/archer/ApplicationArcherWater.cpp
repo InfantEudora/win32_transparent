@@ -1,6 +1,6 @@
 /*
     The waterfall's objects - the GL half of Water.h. See the WATERFALL block in
-    ApplicationArcher.h for how they are arranged, and water_plan.md for why.
+    ApplicationArcher.h for how they are arranged, and docs/water_plan.md for why.
 */
 #include "ApplicationArcher.h"
 

@@ -7,7 +7,7 @@
 #include <vector>
 
 /*
-    Wind streaks - wind_plan.md step 5. Subtle but visible: a few dozen thin pale ribbons, each
+    Wind streaks - docs/wind_plan.md step 5. Subtle but visible: a few dozen thin pale ribbons, each
     the recent path of a speck of air, drawn over the scene and fading in and out. They follow the
     field exactly (a tracer has no inertia), so over open ground they run straight and in the lee
     of a step they curl, which is the one place the eye is told there is an eddy.

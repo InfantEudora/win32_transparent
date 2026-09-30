@@ -12,7 +12,7 @@
     Terrain.cpp turns this into triangles (core/MarchingCubes), and that half needs the engine. This
     half is pure maths on the blocks, so anything else that wants to know where the DRAWN surface
     is - rather than the collider under it - can ask: a vine growing against the rock, a prop set
-    down on the grass. Engine-free, so `make rules` links it (vine_plan.md section 9, step 6).
+    down on the grass. Engine-free, so `make rules` links it (docs/vine_plan.md section 9, step 6).
     Moved here unchanged from Terrain.cpp; see Terrain.h for the shape it describes.
 */
 

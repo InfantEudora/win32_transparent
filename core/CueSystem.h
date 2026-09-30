@@ -12,7 +12,7 @@
 
 /*
     How a game answers what happens in it: the cue layer. The design, and the reasons for it, are
-    in apps/archer/cue_plan.md; this is the engine half, and it knows nothing about any game.
+    in apps/archer/docs/cue_plan.md; this is the engine half, and it knows nothing about any game.
 
     THREE LAYERS. The game reports EVENTS - a signal with a payload, or a scope beginning or
     ending. A CUE is a row in a table saying how the game answers one: when, how often, how loud,

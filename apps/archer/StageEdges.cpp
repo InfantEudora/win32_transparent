@@ -6,7 +6,7 @@
 
 /*
     The floors, their edges and the feet of their walls - see StageEdge in Stage.h and
-    vine_plan.md section 15. Stage's own methods, in a file of their own because they are a
+    docs/vine_plan.md section 15. Stage's own methods, in a file of their own because they are a
     geometry pass over the blocks rather than rules, and like Stage.cpp nothing here includes an
     engine header, so `make rules` tests it with the rest.
 

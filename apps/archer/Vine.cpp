@@ -5,7 +5,7 @@
 #include "Stage.h"
 
 /*
-    The vines. See Vine.h for the pieces and vine_plan.md for where this is going.
+    The vines. See Vine.h for the pieces and docs/vine_plan.md for where this is going.
 
     Like Foliage.cpp, nothing in here includes an engine header beyond core's maths - `make rules`
     links it into stage_test.exe with Spline.cpp, SplineDeform.cpp and the type helpers, and it has

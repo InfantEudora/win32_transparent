@@ -1,6 +1,6 @@
 #include "texture_units.glsl"
 /*
-    The archer's water - apps/archer/water_plan.md. Flat shades that move, and nothing else: no
+    The archer's water - apps/archer/docs/water_plan.md. Flat shades that move, and nothing else: no
     reflection, no refraction, no transparency. Its colour is worked out here and then LIT like any
     other surface (lighting.glsl), so the fall in the bay's shade is shaded and the fireflies light
     it - the bay is dim green, and unlit water there glowed like a sign.

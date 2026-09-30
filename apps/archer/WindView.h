@@ -10,7 +10,7 @@
 
 /*
     The wind's debug view: one line mesh drawn over the level, rebuilt every frame it is shown, from
-    whatever part of the field the camera can see. See wind_plan.md section 3.
+    whatever part of the field the camera can see. See docs/wind_plan.md section 3.
 
       ARROWS       on a grid, coloured by speed against the mean wind - dark blue still, green
                    at the mean wind, through yellow to red at two and a half times it

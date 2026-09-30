@@ -1,14 +1,14 @@
 """
 Replays input recordings in a running app and compares what its cues did against a baseline.
 
-The cue layer's proof (apps/archer/cue_plan.md): moving hand-wired sounds onto cues is only a
+The cue layer's proof (apps/archer/docs/cue_plan.md): moving hand-wired sounds onto cues is only a
 refactor if the same recording replayed before and after prints the same cue_log lines. So:
 
     # once, on the code as it is - writes recordings/<name>.cues beside each recording
-    python tools/cue_replay.py --write archer_20260925_143356 archer_20260925_145919
+    python tools/cue_replay.py --write archer_test
 
     # after the change - replays each one and diffs against its .cues; exit 1 on any difference
-    python tools/cue_replay.py archer_20260925_143356 archer_20260925_145919
+    python tools/cue_replay.py archer_test
 
 With no recordings named, every recording that already has a .cues file is checked.
 
@@ -116,6 +116,23 @@ def main():
                 between.append((row["t"], row["changed_between"]))
         return lines, between
 
+    def parts_of(words):
+        # The `name=hash` words of a trace line, as {name: hash}. A NAME MAY HOLD SPACES - with
+        # --detail every object is a part, named after the object, and "Title Screen" is two words
+        # on the line - so a word with no `=` is the start of the next word's name, not a part.
+        out = {}
+        pending = []
+        for w in words:
+            if "=" in w:
+                k, v = w.split("=", 1)
+                out[" ".join(pending + [k])] = v
+                pending = []
+            else:
+                pending.append(w)
+        if pending:
+            out[" ".join(pending)] = ""
+        return out
+
     def first_difference(baseline, run):
         # The first tick whose line differs, and which parts - the line's `name=hash` words.
         for i in range(max(len(baseline), len(run))):
@@ -126,8 +143,8 @@ def main():
             if a is None or b is None:
                 return "%s ends at line %d" % ("the baseline" if a is None else "this run", i + 1)
             wa, wb = a.split(), b.split()
-            pa = dict(w.split("=", 1) for w in wa[2:])
-            pb = dict(w.split("=", 1) for w in wb[2:])
+            pa = parts_of(wa[2:])
+            pb = parts_of(wb[2:])
             parts = sorted(k for k in set(pa) | set(pb) if pa.get(k) != pb.get(k))
             return "from tick %s, in %s" % (wa[0], ", ".join(parts) if parts else "the total")
         return None

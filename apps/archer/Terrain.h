@@ -12,7 +12,7 @@
     The archer's level, as terrain rather than as boxes.
 
     This is the half of the job that knows what a StageBlock is; core/MarchingCubes.h is the half
-    that knows how to turn a field into triangles and nothing else. See apps/archer/terrain_plan.md
+    that knows how to turn a field into triangles and nothing else. See apps/archer/docs/terrain_plan.md
     for the whole argument - what follows is only what a reader of the code needs.
 
     --- THE BLOCKOUT IS STILL THE COLLISION ------------------------------------------------------

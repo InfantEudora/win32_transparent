@@ -1,6 +1,6 @@
 ---
 name: bridge-crumble-plan
-description: "AGREED 2026-09-27 - archer rope bridge (sways, overload snap with audible warnings, zone-triggered snap) and crumbling rocks (gone for good, detour routes); apps/archer/bridge_crumble_plan.md"
+description: "AGREED 2026-09-27 - archer rope bridge (sways, overload snap with audible warnings, zone-triggered snap) and crumbling rocks (gone for good, detour routes); apps/archer/docs/bridge_crumble_plan.md"
 metadata:
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-09-29T10:01:39.503Z
 ---
 
-Plan at apps/archer/bridge_crumble_plan.md, written 2026-09-27. Steps 1-3 BUILT 2026-09-27 (zones +
+Plan at apps/archer/docs/bridge_crumble_plan.md, written 2026-09-27. Steps 1-3 BUILT 2026-09-27 (zones +
 RouteCheck, stepping stones, the chase via a trigger zone + StageCrumbleGroup); step 4 (the bridge
 as a surface, a spring-mass chain) BUILT 2026-09-28, placed UP OVER THE START at the user's call
 (not past the branches); step 5 (strain/warnings/snap) BUILT 2026-09-29 as a SECOND bridge on

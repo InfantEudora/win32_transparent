@@ -36,15 +36,15 @@ PROJECT := archer
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationArcher.cpp
 APP_SRCS += Stage.cpp
-#The floors' edges, spans and wall feet (vine_plan.md section 15) - Stage's own methods, a file of their own.
+#The floors' edges, spans and wall feet (docs/vine_plan.md section 15) - Stage's own methods, a file of their own.
 APP_SRCS += StageEdges.cpp
 APP_SRCS += Puppet.cpp
 #The blockout, as terrain. The mesher itself is core/MarchingCubes.cpp and is picked up by the
-#core wildcard; this is the half that knows what a StageBlock is. See terrain_plan.md.
+#core wildcard; this is the half that knows what a StageBlock is. See docs/terrain_plan.md.
 APP_SRCS += Terrain.cpp
 #Its field on its own, engine-free - what the mesher samples, and what a vine grows against.
 APP_SRCS += TerrainField.cpp
-#Equipping the bow and the arrow to the hand bones, and bending the bow. See bow_plan.md.
+#Equipping the bow and the arrow to the hand bones, and bending the bow. See docs/bow_plan.md.
 APP_SRCS += Bow.cpp
 #Where the ferns and flowers grow on the blockout. Engine-free, so `rules` tests it too.
 APP_SRCS += Foliage.cpp
@@ -53,14 +53,14 @@ APP_SRCS += Backdrop.cpp
 #Where the rocks lie - see Boulders.h.
 APP_SRCS += Boulders.cpp
 #The vines: a trunk bent along a core/Spline, leaves along it. Engine-free apart from core's maths
-#and the two spline files, which `rules` compiles in beside it. See vine_plan.md.
+#and the two spline files, which `rules` compiles in beside it. See docs/vine_plan.md.
 APP_SRCS += Vine.cpp
 #The rope as one skinned mesh over its physics links. Engine-free, so `rules` tests it too.
 APP_SRCS += RopeMesh.cpp
 #Text on props - a signpost's boards - placed by empties authored on the model. See Sign.h.
 APP_SRCS += Sign.cpp
 #The wind over the level, derived from the blockout - engine-free, so `rules` tests it too - and
-#its debug view. See wind_plan.md.
+#its debug view. See docs/wind_plan.md.
 APP_SRCS += Wind.cpp
 APP_SRCS += WindView.cpp
 #Leaves blown through it - engine-free too, with its own test.

@@ -34,12 +34,19 @@ the command above.
 
 ## `settings.json` (tracked)
 
-One `PreToolUse` hook, matching `Edit|Write|MultiEdit|NotebookEdit`, which runs
-`tools/lockd/claude_lock_hook.py` before any write. That claims the target path
-from the lock broker for the current session and blocks the edit if another agent
-holds it. See `docs/lock_broker.md` §6 for what it does and why, and the top of
-the hook script for how it behaves when the broker is down (it lets the edit
-through).
+One `PreToolUse` hook, matching `*`, which runs `tools/lockd/claude_lock_hook.py`
+before every tool call. On a write it claims the target path from the lock broker
+for the current session and blocks the edit if another agent holds it; on anything
+else it sends a heartbeat that keeps the session's explicit claims alive, and
+refuses the call once if the session has lost one. See `docs/lock_broker.md` §6 for
+what it does and why, and the top of the hook script for how it behaves when the
+broker is down (it lets the call through).
+
+It matched only the writing tools until 2026-09-30. Matching everything is what
+lets a lease outlive a long build, but it also means a hook that exits 2 blocks
+**every** tool, `Bash` included - so the command starts with
+`[ ! -f "<script>" ] || ...`, which turns a missing script into "allow" rather than
+into Python's exit 2 for "can't open file".
 
 Tracked rather than in `settings.local.json` on purpose: every agent working in
 this checkout needs the same rule, and one that opted out would be exactly the one
@@ -62,8 +69,9 @@ until you `cd` back, and nothing about the message says so. Measured 2026-09-14:
 `$CLAUDE_PROJECT_DIR` does expand correctly here, with the hook both allowing and
 blocking from a non-root cwd.
 
-If a bad command ever does wedge writes this way, recovery is via the `Bash` tool —
-this matcher does not cover it.
+If a bad command ever does wedge tools this way, there is no longer a tool the
+matcher leaves out to recover through: fix `settings.json` by hand, or start the
+session with hooks disabled.
 
 Measured when it was installed on 2026-09-14: the hook took effect **immediately**,
 in the session that wrote this file, without reloading the window — the four edits

@@ -11,7 +11,7 @@
 #include "TerrainField.h"
 
 /*
-    The vines - a trunk bent along a curve, with leaves along it. See apps/archer/vine_plan.md;
+    The vines - a trunk bent along a curve, with leaves along it. See apps/archer/docs/vine_plan.md;
     this is steps 1-2 of it, the static decorative kind.
 
     Pure geometry: a path in, vertices and leaf placements out. No engine type beyond core's maths
@@ -155,7 +155,7 @@ void  DeclareVines(int level, std::vector<VinePath>& out);
 
 /*
     --- GROWN VINES ------------------------------------------------------------------------------
-    vine_plan.md sections 9-11. A grown vine's shape is WALKED once, when the arrow strikes, and
+    docs/vine_plan.md sections 9-11. A grown vine's shape is WALKED once, when the arrow strikes, and
     growth only reveals it (SplineDeformParams::grown). The walk is a function of the hit, the
     species, a seed and the blocks - nothing else - so the same shot always grows the same vine,
     and a later step can move it into the rules unchanged.
@@ -167,10 +167,10 @@ void  DeclareVines(int level, std::vector<VinePath>& out);
 enum VineSpeciesKind{
     VINE_SPECIES_VINE = 0,
     //Every plant's roots, and all a normal arrow grows under a platform: short, dark and quick,
-    //wandering hard, a fork or two near the tip, no leaves (vine_plan.md section 11).
+    //wandering hard, a fork or two near the tip, no leaves (docs/vine_plan.md section 11).
     VINE_SPECIES_ROOTS,
     //The vine as a creeper: what a vine arrow grows into a wall or a top - up the face, over the
-    //lip, across and down (vine_plan.md step 8). The vine's look, the hug habit.
+    //lip, across and down (docs/vine_plan.md step 8). The vine's look, the hug habit.
     VINE_SPECIES_CREEPER,
     //Bamboo: a clump of canes, fast and nearly straight up - negative gravity - from wherever it
     //is struck, bending up out of a wall. No branches; leaf sprays at the upper nodes (GrowBamboo).
@@ -202,7 +202,7 @@ struct VineSpecies{
     //Once it has come to rest on a floor, how much further it creeps along it before it stops.
     float rest_length = 0.8f;
     /*
-        THE HUG, for a creeper (vine_plan.md step 8); 0 is a hanging plant. Within hug_reach of a
+        THE HUG, for a creeper (docs/vine_plan.md step 8); 0 is a hanging plant. Within hug_reach of a
         surface (beyond its keep) the heading is drawn toward lying hug_gap off it at `hug` per
         unit, and the bias runs ALONG the surface rather than through it: up at `climb` until it
         has come over onto a top, then `gravity`, so it crosses the top and drapes down the far
@@ -227,7 +227,7 @@ struct VineSpecies{
     float thickness_jitter = 0.15f;
     float branch_thickness = 0.6f;  //a branch's, relative to the main strand's
 
-    //--- The growth: how it is revealed (vine_plan.md section 9) ---
+    //--- The growth: how it is revealed (docs/vine_plan.md section 9) ---
     //Ticks from the strike to full length. The front eases out - fast from the arrow, slowing to
     //a stop - because a constant rate reads as a progress bar.
     int   grow_ticks = 150;
@@ -274,7 +274,7 @@ int   VineGrowthSeed(const vec3& point, int arrow);
                        right wherever the box IS the look (the blockout, the ledges, the platforms).
       VineLevelField   the level as drawn: every box, except the blocks a terrain surface has
                        melted, which are that surface instead - the rounded lips, the drips, the
-                       bellies under floating stones (TerrainField.h). vine_plan.md step 6.
+                       bellies under floating stones (TerrainField.h). docs/vine_plan.md step 6.
 */
 class VineField{
 public:

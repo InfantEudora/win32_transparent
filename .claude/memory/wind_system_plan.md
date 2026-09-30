@@ -1,6 +1,6 @@
 ---
 name: wind-system-plan
-description: "archer wind: 2D stream-function field built from the blocks (Wind.{h,cpp}) + debug view (WindView, archer_wind MCP) BUILT 2026-09-26; foliage + vine-leaf sway and drifting leaves (Leaves.cpp, 150% padded, by density) + streaks + fireflies with a 3-light group BUILT; only clouds (step 7) left; leaves/grass lead the look, she is NOT pushed; plan in apps/archer/wind_plan.md"
+description: "archer wind: 2D stream-function field built from the blocks (Wind.{h,cpp}) + debug view (WindView, archer_wind MCP) BUILT 2026-09-26; foliage + vine-leaf sway and drifting leaves (Leaves.cpp, 150% padded, by density) + streaks + fireflies with a 3-light group BUILT; only clouds (step 7) left; leaves/grass lead the look, she is NOT pushed; plan in apps/archer/docs/wind_plan.md"
 metadata:
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-09-26T13:40:16.169Z
 ---
 
-Agreed with the user 2026-09-26 (apps/archer/wind_plan.md): one 2D wind field in the play plane,
+Agreed with the user 2026-09-26 (apps/archer/docs/wind_plan.md): one 2D wind field in the play plane,
 built from Stage::blocks like the terrain; leaves and grass carry the look, streaks subtle but
 visible; wind does NOT push her (maybe a balance input later, not now); one leaf model, varied in
 tint/size, caught in eddies; fireflies emissive + a few real point lights as one group.

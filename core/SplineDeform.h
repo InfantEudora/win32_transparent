@@ -77,7 +77,7 @@ struct SplineDeformParams{
     float tile_length = 0.0f;
     /*
         GROWTH: only the sweep up to `grown` (a distance along the curve, like start and end) is
-        laid down. < 0, or at or past the range's end, is all of it. See apps/archer/vine_plan.md
+        laid down. < 0, or at or past the range's end, is all of it. See apps/archer/docs/vine_plan.md
         section 9.
 
         Not a moving `end`, which would re-stretch every copy to fit and change the count as it

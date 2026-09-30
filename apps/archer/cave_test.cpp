@@ -1,5 +1,5 @@
 /*
-    Checks for the cave's biome (cave_plan.md): its own plants and rocks, still air, and that the
+    Checks for the cave's biome (docs/cave_plan.md): its own plants and rocks, still air, and that the
     rest of the level is dressed exactly as it was. Engine-free; built and run by `make rules`
     after water_test, as its own exe.
 */
@@ -107,6 +107,29 @@ static void TestFoliage(const Stage& s){
     Check(fade_grass > 0 && fade_grass < fade_grass_before,"the grass thins in from the mouth rather than stopping on a line",d);
 }
 
+//In the cave's box - a hanging piece by the air just under the underside it hangs from, which the
+//box's top edge does not hold.
+static bool InCave(const StageBiome& cave, const Boulder& r){
+    return InBox(cave,r.x,(BoulderMountOf(r.kind) == BOULDER_UNDER) ? r.ground - 0.01f : r.ground);
+}
+
+//Two pieces inside one another, by the rule for their mount; pieces on different mounts never are.
+static bool Overlap(const Boulder& r, const Boulder& o, const BoulderParams& params, float slack){
+    const int m = BoulderMountOf(r.kind);
+    if (m != BoulderMountOf(o.kind)){
+        return false;
+    }
+    if (m == BOULDER_ON_WALL){
+        return BoulderWallOverlap(r,o,params,slack);
+    }
+    if (fabsf(r.ground - o.ground) > 0.3f){
+        return false;
+    }
+    float ri = params.radius[r.kind] * r.scale, rj = params.radius[o.kind] * o.scale;
+    float dx = r.x - o.x, dz = r.z - o.z;
+    return sqrtf(dx * dx + dz * dz) < (ri + rj) * slack;
+}
+
 static void TestRocks(const Stage& s){
     printf("the rocks\n");
     char d[200];
@@ -119,8 +142,8 @@ static void TestRocks(const Stage& s){
     ScatterBoulders(s.blocks,params,plain);
     ScatterBoulders(s.blocks,params,dressed,&s.biomes);
     std::vector<Boulder> a, b;
-    for (const Boulder& r : plain){ if (!InBox(*cave,r.x,r.ground)) a.push_back(r); }
-    for (const Boulder& r : dressed){ if (!InBox(*cave,r.x,r.ground)) b.push_back(r); }
+    for (const Boulder& r : plain){ if (!InCave(*cave,r)) a.push_back(r); }
+    for (const Boulder& r : dressed){ if (!InCave(*cave,r)) b.push_back(r); }
     bool f_same = a.size() == b.size();
     for (size_t i = 0; f_same && i < a.size(); i++){
         f_same = a[i].kind == b[i].kind && a[i].x == b[i].x && a[i].z == b[i].z && a[i].scale == b[i].scale;
@@ -131,19 +154,18 @@ static void TestRocks(const Stage& s){
     int inside = 0, big = 0, in_front = 0, overlaps = 0;
     for (size_t i = 0; i < dressed.size(); i++){
         const Boulder& r = dressed[i];
-        float ri = params.radius[r.kind] * r.scale;
-        if (r.z + ri > params.z_front_max + 0.001f) in_front++;
+        if (BoulderFrontZ(r,params) > params.z_front_max + 0.001f) in_front++;
         for (size_t j = i + 1; j < dressed.size(); j++){
             const Boulder& o = dressed[j];
             //Only pairs with a cave rock in them. Two clusters are never checked against each
             //other, and two in the bay at x -31 do overlap - with or without the biome.
-            if (!InBox(*cave,r.x,r.ground) && !InBox(*cave,o.x,o.ground)) continue;
-            float rj = params.radius[o.kind] * o.scale;
-            float dx = r.x - o.x, dz = r.z - o.z;
-            //The clusters' own small rocks may sit a little into their big one's footprint (0.8).
-            if (sqrtf(dx * dx + dz * dz) < (ri + rj) * 0.75f) overlaps++;
+            if (!InCave(*cave,r) && !InCave(*cave,o)) continue;
+            //The clusters' own small rocks may sit a little into their big one's footprint (0.8),
+            //and a mushroom or a bone nestles closer to anything (Boulders.cpp, CAVE_NESTLE 0.65).
+            const bool f_nestles = r.kind > BOULDER_SMALL_1 || o.kind > BOULDER_SMALL_1;
+            if (Overlap(r,o,params,f_nestles ? 0.6f : 0.75f)) overlaps++;
         }
-        if (InBox(*cave,r.x,r.ground)){
+        if (InCave(*cave,r) && r.kind <= BOULDER_SMALL_1){
             inside++;
             big += IsBigBoulder(r.kind) ? 1 : 0;
         }
@@ -152,7 +174,110 @@ static void TestRocks(const Stage& s){
     printf("  %s\n",d);
     Check(inside >= 6 && big >= 1,"the cave floor is strewn with rubble, a big rock or two among it",d);
     snprintf(d,sizeof(d),"%i in front of her line, %i overlapping",in_front,overlaps);
-    Check(in_front == 0 && overlaps == 0,"every rock behind her walking line, none inside another",d);
+    Check(in_front == 0 && overlaps == 0,"every rock and cave piece behind her walking line, none inside another",d);
+}
+
+/*
+    THE CAVE'S OWN (Boulders.h, THE CAVE'S FLOOR, ROOF AND WALLS): stalactites, stalagmites, bones,
+    mushrooms, bracket fungus and the two set pieces - each on what it belongs on, and none of it
+    anywhere but inside the cave. The roof's top is outside the box and stays bare for whatever
+    stands on it.
+*/
+static void TestCavePieces(const Stage& s){
+    printf("the cave's own\n");
+    char d[300];
+    const StageBiome* cave = Cave(s);
+    if (!cave){
+        return;
+    }
+    BoulderParams params;
+    std::vector<Boulder> dressed, again;
+    ScatterBoulders(s.blocks,params,dressed,&s.biomes);
+    ScatterBoulders(s.blocks,params,again,&s.biomes);
+
+    int count[BOULDER_KIND_COUNT] = {};
+    int outside = 0, bad_hang = 0, bad_wall = 0, bad_top = 0, in_stream = 0, far_third = 0, mouth_third = 0;
+    //Thirds rather than halves: one big patch just by the middle can tip a half either way.
+    const float third = (cave->Right() - cave->Left()) / 3.0f;
+    const float stream_front = -1.5f + 0.3f;        //the floor's back + 0.3 (Water.cpp)
+    for (const Boulder& r : dressed){
+        if (r.kind <= BOULDER_SMALL_1){
+            continue;       //the rocks are TestRocks'
+        }
+        count[r.kind]++;
+        if (!InCave(*cave,r)){
+            outside++;
+            continue;
+        }
+        //Only the kinds `deep` thickens: roots thin the other way, flats are even, set pieces are one.
+        if (r.kind != BOULDER_ROOT && r.kind != BOULDER_FLAT && r.kind != BOULDER_SNAKE && r.kind != BOULDER_SKULL_STICK){
+            far_third += (r.x < cave->Left() + third) ? 1 : 0;
+            mouth_third += (r.x > cave->Right() - third) ? 1 : 0;
+        }
+        const float rr = params.radius[r.kind] * r.scale;
+        const int m = BoulderMountOf(r.kind);
+        if (m == BOULDER_UNDER){
+            //From an underside that is there, over x, its root up in the rock.
+            bool f_on = false;
+            for (const StageBlock& U : s.blocks){
+                f_on = f_on || (U.f_alive && fabsf(U.Bottom() - r.ground) < 0.001f && r.x > U.Left() && r.x < U.Right());
+            }
+            if (!f_on || r.y <= r.ground) bad_hang++;
+        }else if (m == BOULDER_ON_WALL){
+            //On a face, turned out of it, and not in the ground.
+            bool f_on = false;
+            for (const StageBlock& W : s.blocks){
+                if (!W.f_alive || r.ground < W.Bottom() || r.ground > W.Top()) continue;
+                if (fabsf(r.x - W.Right()) < 0.05f && cosf(r.yaw - 1.5708f) > 0.8f) f_on = true;
+                if (fabsf(r.x - W.Left()) < 0.05f && cosf(r.yaw + 1.5708f) > 0.8f) f_on = true;
+            }
+            if (!f_on || r.ground < 0.3f) bad_wall++;
+        }else{
+            //On the cave's floor - never the roof's top - and out of the water unless it is stone.
+            if (fabsf(r.ground) > 0.001f) bad_top++;
+            const bool f_stone = r.kind == BOULDER_FLAT || r.kind == BOULDER_STALAGMITE || r.kind == BOULDER_SNAKE;
+            if (!f_stone && r.z - rr < stream_front) in_stream++;
+        }
+    }
+    snprintf(d,sizeof(d),"%i stalactites, %i roots, %i stalagmites, %i flat stones; bones %i/%i/%i; "
+             "mushrooms %i/%i/%i; brackets %i/%i; snake %i, skull on a stick %i",
+             count[BOULDER_STALACTITE],count[BOULDER_ROOT],count[BOULDER_STALAGMITE],count[BOULDER_FLAT],
+             count[BOULDER_BONE],count[BOULDER_RIBCAGE],count[BOULDER_SKULL],count[BOULDER_MUSHROOM_1],
+             count[BOULDER_MUSHROOM_2],count[BOULDER_CANTHARELL],count[BOULDER_BRACKET_1],count[BOULDER_BRACKET_2],
+             count[BOULDER_SNAKE],count[BOULDER_SKULL_STICK]);
+    printf("  %s\n",d);
+    Check(outside == 0,"none of the cave's pieces is anywhere but in the cave");
+    Check(count[BOULDER_STALACTITE] >= 6 && count[BOULDER_STALAGMITE] >= 3 && count[BOULDER_ROOT] >= 1,
+          "stalactites from the roof, stalagmites on the floor, a root or two",d);
+    Check(count[BOULDER_BONE] + count[BOULDER_RIBCAGE] + count[BOULDER_SKULL] >= 4 &&
+          count[BOULDER_MUSHROOM_1] + count[BOULDER_MUSHROOM_2] + count[BOULDER_CANTHARELL] >= 10 &&
+          count[BOULDER_BRACKET_1] + count[BOULDER_BRACKET_2] >= 2,"bones, mushrooms in clusters, and bracket fungus",d);
+    Check(count[BOULDER_SNAKE] == 1 && count[BOULDER_SKULL_STICK] == 1,"one of each set piece",d);
+    snprintf(d,sizeof(d),"%i hanging badly, %i off a wall, %i off the floor, %i in the stream",bad_hang,bad_wall,bad_top,in_stream);
+    Check(bad_hang == 0 && bad_wall == 0 && bad_top == 0,"each on what it belongs on: an underside, a wall's face, the floor",d);
+    Check(in_stream == 0,"and no bone or mushroom standing in the stream",d);
+    snprintf(d,sizeof(d),"%i in the far third, %i in the third by the mouth",far_third,mouth_third);
+    Check(far_third > mouth_third * 3 / 2,"thicker toward the back",d);
+
+    bool f_same = again.size() == dressed.size();
+    for (size_t i = 0; f_same && i < dressed.size(); i++){
+        f_same = again[i].kind == dressed[i].kind && again[i].x == dressed[i].x && again[i].y == dressed[i].y &&
+                 again[i].z == dressed[i].z && again[i].yaw == dressed[i].yaw && again[i].scale == dressed[i].scale;
+    }
+    Check(f_same,"the same cave every time");
+    //A kind whose mesh did not load is never placed - and takes nothing else with it.
+    BoulderParams none = params;
+    none.radius[BOULDER_SNAKE] = 0.0f;
+    none.radius[BOULDER_MUSHROOM_2] = 0.0f;
+    std::vector<Boulder> without;
+    ScatterBoulders(s.blocks,none,without,&s.biomes);
+    int stray = 0, stalactites = 0;
+    for (const Boulder& r : without){
+        stray += (r.kind == BOULDER_SNAKE || r.kind == BOULDER_MUSHROOM_2) ? 1 : 0;
+        stalactites += (r.kind == BOULDER_STALACTITE) ? 1 : 0;
+    }
+    snprintf(d,sizeof(d),"%i placed anyway; %i stalactites against %i",stray,stalactites,count[BOULDER_STALACTITE]);
+    Check(stray == 0 && stalactites == count[BOULDER_STALACTITE],"a piece that did not load is never placed",d);
 }
 
 /*
@@ -204,6 +329,7 @@ int main(){
     TestBiome(s);
     TestFoliage(s);
     TestRocks(s);
+    TestCavePieces(s);
     TestWind(s);
     printf("%d checks, %d failed\n",checks,failures);
     return failures ? 1 : 0;

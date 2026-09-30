@@ -8,7 +8,7 @@
     A 3D curve through a list of points, with a frame along it that does not flip.
 
     Built for sweeping things along - a vine's trunk, a rope, leaves at intervals - and for moving
-    things along a path in time. See apps/archer/vine_plan.md §2 for why it is shaped like this.
+    things along a path in time. See apps/archer/docs/vine_plan.md §2 for why it is shaped like this.
 
     --- WHAT IT IS ------------------------------------------------------------------------------
       * CUBIC HERMITE SEGMENTS, one per pair of neighbouring points, with the tangents picked by

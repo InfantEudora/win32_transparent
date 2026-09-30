@@ -157,7 +157,7 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
                     const std::vector<StageBiome>* biomes = NULL);
 
 /*
-    A TUFT - the small clump an arrow leaves where it grows something (vine_plan.md section 11):
+    A TUFT - the small clump an arrow leaves where it grows something (docs/vine_plan.md section 11):
     on the top above an underside it struck, or where it stuck in a wall or a top. A few of the
     garden's own plants, mostly grass, now and then a low fern or a flower, spread on a disc
     around `at` in the plane square to `up` - so on a wall it grows out sideways. Each staggered

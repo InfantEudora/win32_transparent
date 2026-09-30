@@ -30,7 +30,7 @@
     --- WHAT THIS DELIBERATELY DOES NOT DO -------------------------------------------------------
     It does not blend, sample or pose anything. It answers "play THIS, at THIS rate, facing THIS
     way" and the app carries it out through Object::TransitionToAnimation. When the signed-speed
-    blend space lands (step 1 in animation_plan.md) the answer grows a second clip and a weight;
+    blend space lands (step 1 in docs/animation_plan.md) the answer grows a second clip and a weight;
     the seam stays here.
 */
 
@@ -61,7 +61,7 @@ enum ArcherClip{
         Jump_ToAir ends on exactly the pose Falling_Idle holds, so the handover at the apex is
         between two near-identical poses and costs nothing. That composability is the reason to
         prefer these over Jumping_InPlace, which is the same jump baked into one 1.93s clip and
-        can only be used by slicing it - see animation_plan.md. Jumping_InPlace stays previewable
+        can only be used by slicing it - see docs/animation_plan.md. Jumping_InPlace stays previewable
         because comparing the two is the point of having both.
     */
     CLIP_JUMP_RISE,         //Jump_ToAir             standing -> the airborne pose
@@ -101,6 +101,7 @@ enum ArcherClip{
     CLIP_TEETER,            //Teeter_Forward         stopped past a lip, falling FORWARD over it
     CLIP_BALANCE_WALK,      //Balance_Walking        on a branch; playhead pinned to the distance walked
     CLIP_LAND_ROLL,         //Landing_Roll           a hard landing on the move, rolled out of
+    CLIP_LAND_CARRY,        //Landing_Hard           a hard landing carried forward, key let go
     CLIP_COUNT
 };
 
@@ -226,7 +227,7 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
     And the same limit for a ONE-SHOT action clip, which is fitted to a WINDOW rather than to a
     stride. Looser than PUPPET_RATE_MAX because there is no gait to break, far tighter than
     "whatever it takes" because a kick at five times speed is a blur rather than a kick. Both the
-    kick and the climb hit this today - see the retiming table in animation_plan.md.
+    kick and the climb hit this today - see the retiming table in docs/animation_plan.md.
 */
 #define PUPPET_ACTION_RATE_MAX      2.50f
 
@@ -261,9 +262,21 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
     Looks only: the rules keep her at the speed she landed with, and the roll is played fast to
     cover it, up to PUPPET_ACTION_RATE_MAX. At a full run that is still about half the ground the
     rules cover, which a roll carries better than a plant would.
+
+    AND STILL PUSHING FORWARD, at least PUPPET_ROLL_PUSH of the stick. Speed alone is not enough,
+    because a flight keeps it after the key is let go: a running jump off a platform with the key
+    released on the way down touches down at 5.3 (recordings/archer_20260930_142710), past the
+    jog - and then the ground stops her dead in three ticks, 0.07 units, while the roll tumbled
+    on the spot for 31 more. Only a push keeps her going for the roll to carry.
+
+    LET GO, the same landing is the CARRY instead (Landing_Hard): crouched at contact, pitched
+    forward over her feet by the speed she came in with and caught - the stop the rules make,
+    played as one. Anything in between - a push too weak to roll, or backwards - is neither, and
+    her feet do what the push says.
 */
 #define PUPPET_ROLL_VEL             PUPPET_HARD_LAND_VEL
 #define PUPPET_ROLL_SPEED           PUPPET_RUN_JUMP_SPEED
+#define PUPPET_ROLL_PUSH            0.5f
 
 /*
     HOW LONG THE GAME'S RISE LASTS, derived rather than typed: a jump leaves the ground at
@@ -369,7 +382,7 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 
     She is always side-on, so the model only ever faces +X or -X and a "turn" is a 180 degree yaw.
     Slewing it over a few ticks rather than snapping is the cheapest turnaround there is (option 1
-    in animation_plan.md section 7) and at speed it reads fine. Five ticks is 83ms - fast enough
+    in docs/animation_plan.md section 7) and at speed it reads fine. Five ticks is 83ms - fast enough
     not to fight the controls, slow enough to be visible.
 */
 #define PUPPET_TURN_TICKS           5
@@ -383,7 +396,7 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 /*
     How long the AIM takes to take hold of her body, and to let go of it, in ticks.
 
-    The aim override (animation_plan.md, Step 3) bends her spine and shoulders to point the bow
+    The aim override (docs/animation_plan.md, Step 3) bends her spine and shoulders to point the bow
     along aim_deg - but only while she is in the draw pose, since bending a running torso that is
     not holding a bow up is wrong. This is the ease between the two, so starting or ending a draw
     does not snap her chest through the whole aim angle in one frame. Six ticks is 0.1s: well
@@ -440,6 +453,14 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 struct ArcherAnimParams{
     float speed = 0.0f;             //signed along FACING: + running forwards, - backing up
     float ground_speed = 0.0f;      //|vel.x|, which is what the stride has to match
+    /*
+        The move input along FACING, -1..1: what the player is asking for this tick, where `speed`
+        is what the rules have so far given. The two part company in the air and at touchdown - a
+        flight carries a run's speed after the key is let go, and the ground takes it away in three
+        ticks - so a landing that has to know whether she will KEEP moving asks this. Input, not
+        the rules' state, so the app fills it (as it does the forecast below).
+    */
+    float push = 0.0f;
     float vel_y = 0.0f;             //+ rising, - falling
     float facing = 1.0f;            //+1 right, -1 left; never 0
     bool  f_on_ground = true;
@@ -531,7 +552,7 @@ struct PuppetChoice{
     bool  f_placeholder = false;
 
     /*
-        THE UPPER-BODY LAYER (animation_plan.md, Step 2): a clip for the spine and up, over
+        THE UPPER-BODY LAYER (docs/animation_plan.md, Step 2): a clip for the spine and up, over
         whatever `clip` does with the legs. -1 for none. `upper_phase` is where in it to sample,
         0..1 of its length, PINNED to the rules' draw progress - or negative for a loop that runs
         on its own clock (the hold at full draw). Its weight is Puppet::upper_weight.
@@ -755,7 +776,7 @@ public:
     float branch_walked = 0.0f;
 
     /*
-        THE LANDING'S LEAD-IN (animation_plan.md, *Meeting the ground*). While the forecast landing
+        THE LANDING'S LEAD-IN (docs/animation_plan.md, *Meeting the ground*). While the forecast landing
         is closer than a landing clip's contact frame, that clip plays in the air, its playhead
         pinned so the contact frame falls on the contact tick. `lead_clip` is the one playing, -1
         for none; at contact it IS the landing, so the choice made in the air is not re-made from
@@ -930,8 +951,12 @@ public:
 
     //The landing a touchdown at `speed` gets: CLIP_LAND_HARD, CLIP_LAND_SOFT, or -1 for none.
     static int LandingClipFor(float speed);
-    //Is a touchdown this hard, at this signed speed along facing, a landing roll? Pure.
-    static bool RollFor(float impact, float speed);
+    //Is a touchdown this hard, at this signed speed and push along facing, a landing roll? Or,
+    //with the key let go, the carry? Pure; neither asks whether the clip was exported.
+    static bool RollFor(float impact, float speed, float push);
+    static bool CarryFor(float impact, float speed, float push);
+    //The landing a touchdown gets, the roll and the carry included, among the clips there are.
+    int   LandingFor(float impact, float speed, float push) const;
     //The roll's rate for a ground speed: fitted to the clip's measured pace, 1..PUPPET_ACTION_RATE_MAX.
     float RollRate(float ground_speed) const;
     //The landing whose lead-in should be playing now, from the forecast in `in`; -1 for none.
@@ -961,7 +986,7 @@ public:
     static void ChooseUpper(const ArcherAnimParams& in, PuppetChoice& out);
 
     //Is an arrow on the string, judged from the draw's progress the way Stage::IsNocked judges it
-    //from draw_ticks? The aim takes hold only from here (animation_plan.md, Step 2, the live
+    //from draw_ticks? The aim takes hold only from here (docs/animation_plan.md, Step 2, the live
     //neutral).
     static bool IsNocked(const ArcherAnimParams& in);
 };

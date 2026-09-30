@@ -9,7 +9,7 @@
 /*
     The bow and the nocked arrow: getting them into the archer's hands and keeping them there.
 
-    See apps/archer/bow_plan.md for the whole argument - §4 "The target" for the prop convention
+    See apps/archer/docs/bow_plan.md for the whole argument - §4 "The target" for the prop convention
     this file now follows. What follows is what a reader of the code needs.
 
     --- THE PROP CONVENTION ---------------------------------------------------------------------
@@ -37,7 +37,7 @@
     --- THE ARROW RIDES THE BOW, AT THE NOCK ----------------------------------------------------
     The nocked arrow is a CHILD OF THE BOW, not of the drawing hand. Where an arrow points is
     decided by the bow - nock on the string, shaft past the grip - and a rigid grip in a hand
-    cannot express that: it pointed back over her shoulder at full draw (bow_plan.md §9).
+    cannot express that: it pointed back over her shoulder at full draw (docs/bow_plan.md §9).
 
     Both props face the same way, so INSIDE THE BOW THE ARROW'S ROTATION IS IDENTITY. Its position
     is the string's nock point, which moves as the bow is drawn - and that is MEASURED from the
@@ -51,7 +51,7 @@
         facing her forward, and the arrow will be nocked crooked.
       - nock_gap: how far the drawing hand is from the nock at full draw. The hand is not what
         holds the arrow any more, so nothing corrects this - it is how well the draw pose and the
-        bow agree, and it is the number the aim work (animation_plan.md, Step 3) keeps honest.
+        bow agree, and it is the number the aim work (docs/animation_plan.md, Step 3) keeps honest.
 */
 
 //The nodes in the .glb, and the bones they belong in.
@@ -171,7 +171,7 @@ public:
         clip follows the draw, with nothing to re-measure when a clip changes.
 
         ONLY ONCE THE HAND IS ON THE STRING. Standing_DrawArrow spends its first 0.6s of 1.067
-        reaching back to the quiver and carrying the arrow over (bow_plan.md §8 item 7), and a
+        reaching back to the quiver and carrying the arrow over (docs/bow_plan.md §8 item 7), and a
         projection taken then is meaningless - at frame 0 it reads 1.17, a full draw, with her hand
         behind her back. So the hand has to come within BOW_HAND_ON_STRING of the pull line first;
         from then until the draw ends it is LATCHED on, which is also the moment the arrow is on the

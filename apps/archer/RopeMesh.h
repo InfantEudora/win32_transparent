@@ -8,7 +8,7 @@
 #include "type_vertex.h"
 
 /*
-    The rope, as one skinned mesh over the chain of rigid links rp3d swings - vine_plan.md step 4.
+    The rope, as one skinned mesh over the chain of rigid links rp3d swings - docs/vine_plan.md step 4.
 
     The chain in ApplicationArcher::BuildRope is untouched: N links hanging from an anchor, jointed
     end to end. This builds what is DRAWN over it - the twisted middle deformed along the rope and

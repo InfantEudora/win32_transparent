@@ -119,7 +119,7 @@ and probably has the same hole.
 is the general form that reaches `down`/`action`/`knife` without a tool per key. To catch the high
 ledge: place at (43.1, 0.9) then `archer_jump` with run right.
 
-**The animation, from 2026-09-21.** Plan and measurements in `apps/archer/animation_plan.md`; read
+**The animation, from 2026-09-21.** Plan and measurements in `apps/archer/docs/animation_plan.md`; read
 it before touching any of this. `apps/archer/Puppet.{h,cpp}` is the SECOND rules module and makes
 the same promise `Stage` does - no engine type, built and tested by `make rules`. It owns what
 `Stage` deliberately does not: which clip plays, at what rate, and which way the model faces.
@@ -460,7 +460,7 @@ which silently makes an "input is ignored" check pass.
 now a list (parked_levels + BuildExtraLevel). Rope climbing PROPOSED in animation_plan.md (Up/Down climb on the
 rope, grip distance + joint re-created with local anchors each tick); waiting on the user for a rope-climb clip.
 
-STRAW MAN BUILT 2026-09-26 (apps/archer/strawman_plan.md): PROP_STRAWMAN in the range at x 3, scores KICKS (1 each,
+STRAW MAN BUILT 2026-09-26 (apps/archer/docs/strawman_plan.md): PROP_STRAWMAN in the range at x 3, scores KICKS (1 each,
 kick_score), arrows only stick + swing it. Passable: StageObstacle::f_blocks=false (kick sweep still sees it) AND
 its mask drops ARCHER_CAT_ARCHER (every other prop's mask has it - that is how walking shoves crates). One
 core/physics/SpringHinge at the foot about Z, tuned by hz + damping ratio; k includes gravity (props' gravity is

@@ -1,6 +1,6 @@
 ---
 name: plant-mechanics-plan
-description: "AGREED 2026-09-26 archer plan for gameplay plants (tree with arm platforms, bounce pad then bending leaf, thin branch with balance, arrow pegs/rope arrows/arrow cuts/wind); plan in apps/archer/plant_mechanics_plan.md"
+description: "AGREED 2026-09-26 archer plan for gameplay plants (tree with arm platforms, bounce pad then bending leaf, thin branch with balance, arrow pegs/rope arrows/arrow cuts/wind); plan in apps/archer/docs/plant_mechanics_plan.md"
 metadata:
   node_type: memory
   type: project
@@ -9,7 +9,7 @@ metadata:
 ---
 
 Archer's next mechanics, agreed with the user 2026-09-26 and written down in
-`apps/archer/plant_mechanics_plan.md`: a tree climbed by its arms (blockout first, at the right of
+`apps/archer/docs/plant_mechanics_plan.md`: a tree climbed by its arms (blockout first, at the right of
 the main level, which may be extended), a bounce pad then a bending leaf that slides her off and
 flings her on a timed jump, a thin branch with a balance mechanic, and smaller ideas (stuck arrows
 as pegs, rope arrows, cutting with arrows, wind).

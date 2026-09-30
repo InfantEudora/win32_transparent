@@ -2189,7 +2189,7 @@ static void TestPuppet(){
     Check(f_monotonic,"turning one way the whole time, with no wobble at the ends");
 
     /*
-        THE UPPER LAYER AND THE AIM (animation_plan.md, Step 2).
+        THE UPPER LAYER AND THE AIM (docs/animation_plan.md, Step 2).
 
         The draw is an upper-body layer in every stance, its clip pinned to the rules' progress and
         handing on to the held loop at full draw. The aim takes hold only from the NOCK - the live
@@ -3249,7 +3249,7 @@ static void TestVines(){
 
 //--- Kneeling -------------------------------------------------------------------------------------
 /*
-    C kneels and C stands (animation_plan.md, Step 2): a stance with timed transitions, a shorter
+    C kneels and C stands (docs/animation_plan.md, Step 2): a stance with timed transitions, a shorter
     body, no run, jump, kick or turn - and a bow that still draws, lower. Written against the
     KNEEL_* constants, so re-timing the clips does not turn this red.
 */
@@ -3809,14 +3809,16 @@ static float Hop(Stage& s, float dir, int delay, float* land_x = NULL){
 }
 
 /*
-    THE TREE (plant_mechanics_plan.md 1): its arms are one-way platforms, and it is CLIMBABLE -
+    THE TREE (docs/plant_mechanics_plan.md 1): its arms are one-way platforms, and it is CLIMBABLE -
     proved hop by hop with plain inputs, so moving an arm or a slab says at once if the climb broke.
 */
 static void TestTree(){
     printf("\nthe tree\n");
     char d[200];
     Stage s;
-    Check(s.trees.size() == 1,"the main level has a tree");
+    //The blockout tree at x 80 is the first; the bigtree on the cave roof is TestRoofTree's.
+    Check(!s.trees.empty() && !s.trees[0].f_bigtree && s.trees[0].top_width == 0.0f,
+          "the main level's first tree is the blockout one");
     if (s.trees.empty()){
         return;
     }
@@ -3966,7 +3968,7 @@ static Flight BestJump(const Stage& landed, float dir, int window, int* out_dela
 }
 
 /*
-    THE BOUNCE PAD AND THE LEAF (plant_mechanics_plan.md 2). Each claim the level makes about them
+    THE BOUNCE PAD AND THE LEAF (docs/plant_mechanics_plan.md 2). Each claim the level makes about them
     is played here with plain inputs: the pad sinks and throws a hop, a TIMED jump off it reaches the
     shelf and a mistimed one does not; the leaf holds her near its stem, bends and slides her off
     when she walks out, throws her to the canopy when bounced on in time, and lets her walk back.
@@ -4358,7 +4360,7 @@ static int WalkBranch(Stage& s, float move, bool f_balance, int max_ticks, float
 }
 
 /*
-    THE BRANCH AND BALANCE (plant_mechanics_plan.md 3): she stands on it and leans; left alone she
+    THE BRANCH AND BALANCE (docs/plant_mechanics_plan.md 3): she stands on it and leans; left alone she
     goes over, walking she goes over sooner, pushing too long tips her the other way - and a player
     reacting as late as a person does can still cross both branches.
 */
@@ -4492,7 +4494,7 @@ static void TestBranch(){
 }
 
 /*
-    THE CATCH (plant_mechanics_plan.md 3, step 2): going over hangs her from the branch. From the
+    THE CATCH (docs/plant_mechanics_plan.md 3, step 2): going over hangs her from the branch. From the
     hang Jump climbs her back up onto it - balancing again, from upright - and Down lets go. A branch
     is caught in the air like a ledge, and a drop through one with Down is not caught on the way.
 */
@@ -5740,7 +5742,7 @@ static void TestBayClimb(){
 #endif
 
 /*
-    THE ZONES (bridge_crumble_plan.md section 1, cue_plan.md section 8). What matters: every level
+    THE ZONES (docs/bridge_crumble_plan.md section 1, docs/cue_plan.md section 8). What matters: every level
     is covered with no gaps and no overlaps, so she is always in exactly one and the HUD always
     names it; every zone's arrival spot is ground she lands on inside that zone; and crossing from
     one to the next reports one left and one entered, once each.
@@ -5852,7 +5854,7 @@ static std::vector<int> CrumbleStones(const Stage& s){
 }
 
 /*
-    THE CRUMBLING STONES (bridge_crumble_plan.md section 2). A stone holds her, shakes for
+    THE CRUMBLING STONES (docs/bridge_crumble_plan.md section 2). A stone holds her, shakes for
     CRUMBLE_SHAKE_TICKS, and goes, with its two events once each; stepping off early does not save
     it; one nobody touches stays whole; a gone one stays gone until a restart, which brings it back;
     and an arrow stuck in one falls when it goes.
@@ -5972,7 +5974,7 @@ static bool RunChase(Stage s, int hesitate, float axis){
 }
 
 /*
-    THE CHASE (bridge_crumble_plan.md section 2): a floor of crumble slabs that a trigger starts
+    THE CHASE (docs/bridge_crumble_plan.md section 2): a floor of crumble slabs that a trigger starts
     going one after another. The slabs ignore her standing on them; the trigger starts the group
     once per run; each slab starts on its tick - by distance, so the hole does not change the pace
     - and goes CRUMBLE_SHAKE_TICKS later; the group reports its start and its end once each; a
@@ -6112,7 +6114,7 @@ static float BridgeSpeed(const StageBridge& br){
 }
 
 /*
-    THE ROPE BRIDGE as a surface (bridge_crumble_plan.md section 3): it hangs still from its two
+    THE ROPE BRIDGE as a surface (docs/bridge_crumble_plan.md section 3): it hangs still from its two
     anchors at rest, sagging within range; she stands on it, her feet on its planks, and it sags
     further under her, the dip where she is; a landing drives it down past that and it settles
     again; Down drops her through; she walks across it from slab to slab without leaving her feet;
@@ -6264,7 +6266,7 @@ static BridgeHop HopOnBridge(Stage& s, bool f_stomp){
 }
 
 /*
-    THE SNAPPING BRIDGE (bridge_crumble_plan.md section 3, "Strain, warnings and the snap"): the
+    THE SNAPPING BRIDGE (docs/bridge_crumble_plan.md section 3, "Strain, warnings and the snap"): the
     second bridge, slab three to slab four. A gentle crossing leaves it sound. Hops in its middle
     strain it - each landing more than the last, the warnings in order and once each - until it
     snaps on the landing the tuning says; a stomp strains it more than a plain hop, so fewer snap it.
@@ -6399,7 +6401,7 @@ static void TestSnapBridge(){
 }
 
 /*
-    ROUTE CHECKS (bridge_crumble_plan.md section 6): each designed way through the level, played
+    ROUTE CHECKS (docs/bridge_crumble_plan.md section 6): each designed way through the level, played
     against the rules by RouteCheck. Passable, with every timed leg leaving a player at least
     ROUTE_MIN_WINDOW ticks to be early or late in - and the solved keys, replayed from the start,
     arrive where the solve said. That last one is what makes a route writable as a recording.
@@ -6673,7 +6675,7 @@ static void TestRoutes(){
 }
 
 /*
-    The vitals - vitals_plan.md. On a layout of their own rather than a level's, so every height is
+    The vitals - docs/vitals_plan.md. On a layout of their own rather than a level's, so every height is
     the test's: a floor with its top at 0 ending at a pit 15 deep, a step down of 2 at its far end,
     a low ledge standing on that step and a pillar of the same height standing in the pit.
 */
@@ -6873,7 +6875,7 @@ static void TestVitals(){
 }
 
 /*
-    The arrow kinds - vine_plan.md section 8. The rules only CARRY a kind, so that is what is
+    The arrow kinds - docs/vine_plan.md section 8. The rules only CARRY a kind, so that is what is
     checked: the pick and the step set it, a kind that does not exist is ignored, Loose puts it on
     the arrow, the hit hands it back, a restart leaves it, and the state hash sees both copies of
     it - a kind a replay could lose without the trace noticing would defeat the point of making it
@@ -7072,7 +7074,7 @@ static void TestAimHold(){
 }
 
 /*
-    The floors' edges - vine_plan.md section 15, StageEdges.cpp. Each rule against a layout built
+    The floors' edges - docs/vine_plan.md section 15, StageEdges.cpp. Each rule against a layout built
     for it, then the main level's own landmarks, then the refresh: a block that changes changes the
     edges on the next tick, and a rebuild equals a fresh build of the same blocks.
 */
@@ -7236,7 +7238,7 @@ static void TestEdges(){
 }
 
 /*
-    The growth walker - vine_plan.md section 10, Vine.cpp's GrowVine. What the growth depends on:
+    The growth walker - docs/vine_plan.md section 10, Vine.cpp's GrowVine. What the growth depends on:
     it never enters a block, an underside vine hangs, a vine that reaches a floor lies on it and
     stops, the same shot grows the same vine, and every strand builds into a trunk. Against the
     main level's own undersides and a ceiling built to be landed under, then two hundred seeds.
@@ -7447,14 +7449,16 @@ static void TestLandingRoll(){
         p.clip_entry[CLIP_LAND_HARD] = 0.3f;
         return p;
     };
-    //One tick falling at `impact`, then touchdown at `speed` along facing.
-    auto land = [](Puppet& p, float impact, float speed){
+    //One tick falling at `impact`, then touchdown at `speed` along facing - pushing forward
+    //unless told otherwise, since that is what landing at a run means.
+    auto land = [](Puppet& p, float impact, float speed, float push = 1.0f){
         ArcherAnimParams a;
         a.f_on_ground = false;
         a.mode = MODE_AIR;
         a.vel_y = -impact;
         a.speed = speed;
         a.ground_speed = fabsf(speed);
+        a.push = push;
         p.Tick(a);
         a.f_on_ground = true;
         a.mode = MODE_GROUND;
@@ -7481,6 +7485,7 @@ static void TestLandingRoll(){
         Check(p.choice.clip == CLIP_LAND_ROLL,"at a jog it rolls too");
         CheckNear(p.choice.rate,4.0f / pace,1e-4f,"fitted to the jog");
         a.ground_speed = a.speed = 0.0f;
+        a.push = 0.0f;
         for (int i = 0; i < 5; i++){ p.Tick(a); }
         Check(p.choice.clip == CLIP_LAND_ROLL,"and letting go of the key mid-roll finishes the roll");
         CheckNear(p.choice.rate,4.0f / pace,1e-4f,"at the pace it started at");
@@ -7509,6 +7514,7 @@ static void TestLandingRoll(){
         a.mode = MODE_AIR;
         a.vel_y = -30.0f;
         a.speed = a.ground_speed = ARCHER_RUN_SPEED;
+        a.push = 1.0f;
         a.land_speed = PUPPET_ROLL_VEL + 5.0f;
         a.land_in_ticks = 5;
         p.Tick(a);
@@ -7516,6 +7522,61 @@ static void TestLandingRoll(){
         a.speed = a.ground_speed = 0.0f;
         p.Tick(a);
         Check(p.choice.clip == CLIP_LAND_HARD,"falling straight down, the hard landing's lead-in still plays");
+    }
+    /*
+        THE CARRY (CLIP_LAND_CARRY): the same landing with the key let go. The case it was made
+        for is recordings/archer_20260930_142710: a running jump off a platform, released on the
+        way down, touching down at 5.27 with an impact of 30.6 - and the ground stopping her in
+        three ticks: 5.27 -> 3.27 -> 1.27 -> 0.
+    */
+    const float carry_dur = 1.7f;
+    auto carrier = [&](){
+        Puppet p = roller();
+        p.clip_duration[CLIP_LAND_CARRY] = carry_dur;
+        return p;
+    };
+    {
+        Puppet p = carrier();
+        ArcherAnimParams a = land(p,30.6f,5.27f,0.0f);
+        Check(p.choice.clip == CLIP_LAND_CARRY,"a hard landing carried forward with the key let go is the carry");
+        Check(p.choice.start_time == 0.0f && p.choice.rate == 1.0f,"from its first frame, at its own pace");
+        const float stop[] = { 3.27f, 1.27f, 0.0f };
+        for (float v : stop){
+            a.speed = a.ground_speed = v;
+            p.Tick(a);
+        }
+        Check(p.choice.clip == CLIP_LAND_CARRY,"the speed it lands with is what it absorbs - sliding to a stop does not end it");
+        int ticks = (int)(carry_dur * ARCHER_TPS);
+        for (int i = 0; i < ticks - 6; i++){ p.Tick(a); }
+        Check(p.choice.clip == CLIP_LAND_CARRY,"held for the whole clip");
+        for (int i = 0; i < 6; i++){ p.Tick(a); }
+        Check(p.choice.clip != CLIP_LAND_CARRY,"and let go of once it has played");
+    }
+    {
+        Puppet p = carrier();
+        ArcherAnimParams a = land(p,30.6f,5.27f,0.0f);
+        a.push = 1.0f;
+        a.speed = a.ground_speed = 5.27f;
+        p.Tick(a);
+        Check(p.choice.clip != CLIP_LAND_CARRY,"pushing again takes it back, as with any settle");
+    }
+    {
+        Puppet p = carrier();
+        land(p,30.6f,5.27f,1.0f);
+        Check(p.choice.clip == CLIP_LAND_ROLL,"the same landing still pushing forward rolls");
+        Puppet q = carrier();
+        land(q,30.6f,5.27f,0.3f);
+        Check(q.choice.clip != CLIP_LAND_ROLL && q.choice.clip != CLIP_LAND_CARRY,
+              "a push too weak to roll is neither - her feet do what it says");
+        Puppet r = roller();
+        land(r,30.6f,5.27f,0.0f);
+        Check(r.choice.clip != CLIP_LAND_ROLL,"with no carry exported, letting go still never rolls");
+        Puppet s = carrier();
+        land(s,PUPPET_ROLL_VEL - 5.0f,5.27f,0.0f);
+        Check(s.choice.clip != CLIP_LAND_CARRY,"and a routine landing let go of is no carry");
+        Puppet t = carrier();
+        land(t,30.6f,PUPPET_ROLL_SPEED - 1.0f,0.0f);
+        Check(t.choice.clip != CLIP_LAND_CARRY,"nor is one too slow to pitch her over");
     }
 }
 
@@ -7753,7 +7814,7 @@ static void TestVineGrowth(){
           "and waits until the growing tip's taper has passed, so it sits on the finished trunk");
 
     /*
-        Against the DRAWN surface - vine_plan.md step 6. A stone floating over a floor: the terrain
+        Against the DRAWN surface - docs/vine_plan.md step 6. A stone floating over a floor: the terrain
         draws a belly under it, so the box's underside, where an arrow sticks, is inside the rock
         you see. With no surfaces the level field is exactly the boxes; with the stone's surface,
         the vine starts on the belly, not inside it, and nothing it walks or grows a leaf into is
@@ -7828,7 +7889,7 @@ static void TestVineGrowth(){
 }
 
 /*
-    Roots and tufts - vine_plan.md step 7. The roots are a species of the same walker, so what is
+    Roots and tufts - docs/vine_plan.md step 7. The roots are a species of the same walker, so what is
     checked is what makes them roots: a few of them from one strike, short, thin, quick, forked,
     down and clear of the rock; and a tuft is a few small plants on the surface it was asked for.
 */
@@ -7913,7 +7974,7 @@ static void TestRootsAndTufts(){
 }
 
 /*
-    Creepers - vine_plan.md step 8, the walker's hug. A wall 3 tall standing on a floor: a creeper
+    Creepers - docs/vine_plan.md step 8, the walker's hug. A wall 3 tall standing on a floor: a creeper
     struck into its face climbs it, comes over the lip onto the top, keeps against the surface the
     whole way and never goes into it; one struck into a top creeps along it. A hundred seeds hold.
 */
@@ -8131,7 +8192,7 @@ static void TestBamboo(){
 
 #if ARCHER_TEST_BAY
 /*
-    The cave (cave_plan.md): that it is there and closed, that she can get in and through the
+    The cave (docs/cave_plan.md): that it is there and closed, that she can get in and through the
     mouth without a bonk and cannot get out past the far wall, that its zone names it, and that the
     bank behind closes it - the check a screenshot only makes from one angle.
 */
@@ -8229,6 +8290,169 @@ static void TestCave(){
     Check(r.Back() < wall_front && w.Back() < wall_front && m.Back() < wall_front,
           "and the roof, the far wall and the lip reach back into it");
 }
+
+/*
+    THE TREE ON THE CAVE ROOF, with the mushroom pad under its first arm (see ON THE ROOF in
+    BuildMainLevel). Its arms and cut top are one-way platforms of the declared sizes; the first arm
+    is out of reach of a plain jump off the roof and of an untimed one off the cap, so the TIMED
+    bounce is what opens it; and the whole way - island, roof, pad, three arms, the top - is solved
+    and replayed with plain keys, each timed hop leaving ROUTE_MIN_WINDOW ticks or more.
+*/
+static void TestRoofTree(){
+    printf("\nthe tree on the cave roof\n");
+    char d[200];
+    const Stage level;
+    int ti = -1;
+    for (size_t i = 0; i < level.trees.size(); i++){
+        ti = level.trees[i].f_bigtree ? (int)i : ti;
+    }
+    int pad = -1;
+    for (size_t i = 0; i < level.spring_plants.size(); i++){
+        pad = level.spring_plants[i].f_mushroom ? (int)i : pad;
+    }
+    Check(ti >= 0 && pad >= 0,"the roof has its bigtree and its mushroom");
+    if (ti < 0 || pad < 0){
+        return;
+    }
+    const StageTree& t = level.trees[ti];
+    const StageSpringPlant& p = level.spring_plants[pad];
+    const float roof = ARCHER_CAVE_ROOF_Y + 2.0f;
+
+    //--- Shape: an arm per declaration from the trunk's face, and the cut top across the trunk ---
+    std::vector<int> arm_blocks;
+    int top_block = -1;
+    bool f_shape = true;
+    for (size_t i = 0; i < level.blocks.size(); i++){
+        const StageBlock& b = level.blocks[i];
+        if (b.tree != ti){
+            continue;
+        }
+        f_shape = f_shape && b.kind == BLOCK_PLATFORM && b.Front() >= STAGE_BLOCK_MIN_COVER &&
+                  b.Back() <= -STAGE_BLOCK_MIN_COVER;
+        if (arm_blocks.size() < t.arms.size()){
+            const StageTreeArm& a = t.arms[arm_blocks.size()];
+            f_shape = f_shape && fabsf(b.Top() - a.top) < 1e-4f &&
+                      fabsf((a.side > 0.0f ? b.Left() : b.Right()) - (t.x + a.side * t.radius)) < 1e-4f &&
+                      fabsf(b.hw * 2.0f - a.length) < 1e-4f;
+            arm_blocks.push_back((int)i);
+        }else{
+            f_shape = f_shape && top_block < 0 && fabsf(b.Top() - (t.base + t.height)) < 1e-4f &&
+                      fabsf(b.x - t.x) < 1e-4f && fabsf(b.hw * 2.0f - t.top_width) < 1e-4f;
+            top_block = (int)i;
+        }
+    }
+    Check(f_shape && arm_blocks.size() == t.arms.size() && top_block >= 0,
+          "every arm is a one-way platform from the trunk's face, and the cut top one across it");
+    Check(fabsf(t.base - roof) < 1e-4f && t.x - t.radius > ARCHER_CAVE_X_MIN + 2.0f && t.x + t.radius < ARCHER_TEST_BAY_X_MIN,
+          "it stands on the roof, clear of the far wall and the mouth");
+    Check(fabsf(p.base - roof) < 1e-4f && fabsf(p.root.y - p.base - MUSHROOM_BIG_CAP_TOP) < 1e-4f,
+          "and the mushroom beside it, its cap at the model's height over the roof");
+    if (arm_blocks.size() != t.arms.size() || top_block < 0){
+        return;
+    }
+    const StageBlock first = level.blocks[arm_blocks[0]];
+    const StageBlock top = level.blocks[top_block];
+
+    //--- The first arm is the pad's to open ---
+    float feet = roof + ApexRise();
+    float hands = feet + ARCHER_HALF_H * 2.0f;
+    snprintf(d,sizeof(d),"first arm %.2f, from the roof feet %.2f and hands %.2f",first.Top(),feet,hands);
+    Check(first.Top() > hands,"the first arm is out of reach from the roof, even of a grab",d);
+    Check(p.root.x - p.length * 0.5f < first.Right() && p.root.x + p.length * 0.5f > first.Right(),
+          "the cap stands under the first arm's tip",d);
+
+    //On the cap: a jump pressed as she lands, and the best one timed to the rebound.
+    Stage on = level;
+    DropOnto(on,p.root.x,p.root.y + 1.5f);
+    Check(on.spring_on == pad,"dropped on the cap, she stands on the mushroom");
+    Flight first_press;
+    int delay = -1;
+    Flight best = BestJump(on,0.0f,30,&delay,&first_press);
+    snprintf(d,sizeof(d),"a jump waiting as she lands peaks at %.2f, one timed %i ticks in at %.2f; the arm is at %.2f",
+             first_press.apex,delay,best.apex,first.Top());
+    Check(first_press.apex < first.Top() - 0.3f,"a jump pressed as she lands falls short of the arm",d);
+    Check(best.apex > first.Top() + 0.5f && fabsf(best.land - first.Top()) < 0.01f,
+          "one timed to the cap's rebound goes up through the arm and lands on it",d);
+
+    //--- The whole way up ---
+    auto on_block = [](const StageBlock b){
+        return [=](const Stage& s){
+            return s.f_on_ground && fabsf(s.pos.y - ARCHER_HALF_H - b.Top()) < 0.02f &&
+                   s.pos.x + ARCHER_HALF_W > b.Left() && s.pos.x - ARCHER_HALF_W < b.Right();
+        };
+    };
+    Stage start = level;
+    DropOnto(start,-28.5f,12.25f);          //on the island's hill, the bay climb's end
+    Run(start,30,ArcherInput());
+    std::vector<RouteLeg> legs;
+    {
+        //Off the hill, along the island and a running jump left onto the roof.
+        RouteLeg l;
+        l.name = "roof";
+        l.goal = [roof](const Stage& s){
+            return s.f_on_ground && fabsf(s.pos.y - ARCHER_HALF_H - roof) < 0.02f && s.pos.x < ARCHER_TEST_BAY_X_MIN;
+        };
+        l.walk = -1;
+        l.dir = -1;
+        l.wait_min = 20;
+        l.wait_max = 90;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "pad";
+        l.goal = [pad](const Stage& s){ return s.f_on_ground && s.spring_on == pad; };
+        l.walk = -1;
+        l.dir = -1;
+        l.wait_max = 150;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "first arm";
+        l.goal = on_block(first);
+        l.dir = -1;
+        l.wait_max = 40;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    for (size_t k = 1; k < arm_blocks.size(); k++){
+        RouteLeg l;
+        l.name = "arm " + std::to_string(k + 1);
+        l.goal = on_block(level.blocks[arm_blocks[k]]);
+        l.dir = (t.arms[k].side > 0.0f) ? 1 : -1;
+        l.wait_max = 30;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "top";
+        l.goal = on_block(top);
+        l.dir = (t.arms.back().side > 0.0f) ? -1 : 1;
+        l.wait_max = 30;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    CheckRoute("from the island up the tree to its cut top",start,legs,on_block(top));
+
+    //Down through an arm, let go, and she lands on the one below - held on, she would go through that too.
+    Stage drop = level;
+    DropOnto(drop,level.blocks[arm_blocks[2]].x,level.blocks[arm_blocks[2]].Top());
+    ArcherInput down;
+    down.f_down_held = true;
+    Run(drop,6,down);
+    Settle(drop);
+    snprintf(d,sizeof(d),"ended at y %.2f",drop.pos.y - ARCHER_HALF_H);
+    Check(fabsf(drop.pos.y - ARCHER_HALF_H - first.Top()) < 0.01f,"and Down drops back through the third arm onto the first",d);
+}
 #endif
 
 int main(void){
@@ -8273,6 +8497,7 @@ int main(void){
     TestBayClimb();
     TestBackdrop();
     TestCave();
+    TestRoofTree();
 #endif
     TestBoulders();
     TestZones();

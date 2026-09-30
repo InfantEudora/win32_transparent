@@ -172,10 +172,15 @@ every session that is not driving an app.
 
 | tool | arguments | notes |
 |---|---|---|
-| `lock_claim` | `owner`, `paths`, `reason`, `ttl_seconds` | all-or-nothing; returns `conflicts` on refusal |
+| `lock_claim` | `owner`, `paths`, `reason`, `ttl_seconds`, `auto` | all-or-nothing; returns `conflicts` on refusal; `auto` is the hook's |
 | `lock_release` | `owner`, `paths` (optional) | no `paths` releases everything that owner holds |
-| `lock_list` | - | every lease, with owner, reason, age, time left |
+| `lock_list` | - | every lease, with owner, reason, age, time left, and `auto` on the hook's |
 | `lock_refresh` | `owner`, `ttl_seconds` | rarely needed; any call carrying `owner` already refreshes |
+| `lock_heartbeat` | `owner` | renews explicit leases only; the hook sends it before every tool call |
+
+Every reply to a call carrying `owner` may also hold **`lost`**: leases that owner had and no
+longer has, because they expired or were broken, each with how, how long ago, and who holds
+the key now. It is said once and then forgotten. See section 7.
 | `lock_wait` | `owner`, `paths`, `timeout_seconds` | 1..30s, default 20 |
 | `lock_break` | `paths` and/or `owner` | force-release; needs one of the two, so it cannot clear the table by accident |
 
@@ -219,10 +224,10 @@ is the one doing a two-line patch fix - which is the clash this exists to preven
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "matcher": "*",
         "hooks": [
           { "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/tools/lockd/claude_lock_hook.py\"",
+            "command": "[ ! -f \"$CLAUDE_PROJECT_DIR/tools/lockd/claude_lock_hook.py\" ] || python \"$CLAUDE_PROJECT_DIR/tools/lockd/claude_lock_hook.py\"",
             "timeout": 5 }
         ]
       }
@@ -230,6 +235,12 @@ is the one doing a two-line patch fix - which is the clash this exists to preven
   }
 }
 ```
+
+**It runs before every tool call**, not just writes, since 2026-09-30 - see "The heartbeat"
+below. That makes a hook exiting 2 block *everything*, `Bash` included, which is why the
+command checks the script exists first: Python exits 2 on "can't open file", and without the
+guard a renamed or checked-out-away script would wedge every tool in every session. Each call
+costs about 100 ms, nearly all of it Python starting.
 
 **`$CLAUDE_PROJECT_DIR`, never a relative path.** Hook cwd is the session's and tracks whatever
 `cd` the `Bash` tool last did, so a relative command breaks the moment an agent cd's somewhere
@@ -254,11 +265,39 @@ edit a file.
 
 The hook never releases - TTL ends its leases, because there is no PostToolUse moment that
 means "finished with this file". It therefore claims for **300s** rather than lockd's own 900s
-default. An agent still working refreshes on its next write anyway, so the shorter lease costs
-an active agent nothing and only shortens how long an *abandoned* one blocks somebody else.
-Four ordinary edits in a row, measured on the day it was installed, left that session holding
-four files - `CLAUDE.md` among them - for the full fifteen minutes. An agent wanting to hand a
-file back sooner calls `lock_release` itself.
+default, and marks the claim `auto`. An agent still editing renews it on its next write anyway,
+so the shorter lease costs an active agent nothing and only shortens how long a file stays held
+after the last write to it. Four ordinary edits in a row, measured on the day it was installed,
+left that session holding four files - `CLAUDE.md` among them - for the full fifteen minutes.
+An agent wanting to hand a file back sooner calls `lock_release` itself.
+
+### The heartbeat
+
+On any other tool call the hook sends `lock_heartbeat`, which renews the session's
+**explicit** claims - `#build`, `#port:*`, files it asked for by name. Before this, a lease was
+renewed only by lock traffic, and a build, a replay or a long read makes none: two agents on
+2026-09-30 each lost a lease that way mid-task, had it taken, and carried on as if they still
+held it. Now an explicit claim lasts as long as its agent is working, plus its TTL after it goes
+quiet, so the TTL only has to outlast the longest single command (a foreground `Bash` call is
+capped at 600s; the default is 900s).
+
+It does **not** renew `auto` leases. Those mean "I just wrote this file", and renewing them on
+every `Read` would have a session sit on every file it ever touched until it went idle.
+
+The price is that an explicit claim is now held until it is released or the agent stops. An
+agent that claims `#build`, finishes, and forgets `lock_release` keeps it for the rest of its
+session instead of for fifteen minutes. `lock_list` shows it with a growing age, and `release`
+at the console takes it back.
+
+### The lost-lease notice
+
+If a reply carries `lost`, the hook **refuses that tool call, once**, with a message naming
+each lease, whether it expired or was broken, and who holds it now. The broker forgets the loss
+once it has said so, so the retry goes through. Blunt on purpose: losing a lease is survivable,
+carrying on as if it were still held is the failure, and a note the agent could skim past is
+how that stays silent. Only explicit leases are reported - an `auto` lease running out is how
+every one of them ends. The lockd tools themselves are passed straight through; their replies
+carry `lost` on their own.
 
 ## 7. Why it is built the way it is
 
@@ -268,6 +307,19 @@ it by hand, at the worst possible moment. Every lease carries a TTL (default 900
 30..3600) and is reaped on access and on a 5s timer. An owner still working says so by calling
 anything at all: **every call carrying an owner refreshes that owner's whole set**, including a
 *refused* claim - an agent waiting on someone else is still alive.
+
+**Each lease is renewed by its own length.** Until 2026-09-30 a refresh moved every lease to
+the TTL of the call doing the refreshing, so claiming `#build` for 3600s and then editing one
+file - the hook claims for 300s - quietly cut `#build` to five minutes. That is half of how
+agents lost leases mid-build; the other half was nothing renewing them during the build (the
+heartbeat, section 6). An `auto` claim likewise never downgrades an explicit one on the same
+file.
+
+**A lease that ends without being released is reported to its owner.** Expired or broken, it
+leaves a record that the owner's next call hands back as `lost` (section 4), kept for an hour
+and then dropped - by then there is nobody left to tell. Leases are there so a dead agent does
+not wedge a file; the failure they used to leave open was a *live* agent losing one and not
+knowing.
 
 **All-or-nothing claims.** A partial claim leaves an agent holding some of what it needs and
 waiting for the rest, which is how two agents that cannot see each other deadlock: A holds
@@ -328,3 +380,15 @@ start against a bound port and exiting non-zero; `--no-console` serving backgrou
 log redirected; and the console started with stdin already closed (`</dev/null`), which stood
 down and went on serving - still listening, still answering `--list`, and measurably 0s of CPU
 rather than spinning on EOF.
+
+Lease renewal and the lost-lease notice were exercised on 2026-09-30 against a broker on a
+side port, 19 checks: an `auto` claim leaving a 3600s `#build` at 3600s (the old code cut it to
+300s); an `auto` re-claim not downgrading an explicit lease; a heartbeat keeping an explicit
+30s lease alive past 30s while the same owner's `auto` lease expired unreported; an expired
+lease claimed by another owner, then reported to the first as `expired`, `now_held_by` the
+second, exactly once; a broken lease reported as `broken`; the hook refusing the next `Bash`
+call after a loss and letting the retry through, holding a write once the same way, still
+refusing a write to a held file, passing lockd's own tools straight through, staying silent
+against the old broker (which does not know `lock_heartbeat`), and failing open with no broker.
+The settings command's missing-script guard was checked to exit 0 where the bare `python` form
+exits 2.

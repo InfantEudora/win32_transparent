@@ -171,7 +171,7 @@
 //T: put her at the mouse cursor, for testing - the key form of archer_place. See TeleportToCursor.
 #define INPUT_ARCHER_TELEPORT       INPUT_LAST+19
 /*
-    The kind of arrow (vine_plan.md section 8): 1 .. 5 pick one outright, the d-pad steps round
+    The kind of arrow (docs/vine_plan.md section 8): 1 .. 5 pick one outright, the d-pad steps round
     them on a pad. Five keys for the kinds planned, though fewer exist - a key for a kind not built
     yet does nothing (Stage::SelectArrow). RECORDED, unlike the view toggles: the kind is rules
     state, and a replay that lost the pick would loose the wrong arrow.
@@ -315,7 +315,7 @@
 /*
     WHERE ON HER THE ROPE HOLDS - the body's end of the joint, above her centre in her own frame.
 
-    THE MOUNT, and a decision still open (vine_plan.md step 5): the top of her box today. The drawn
+    THE MOUNT, and a decision still open (docs/vine_plan.md step 5): the top of her box today. The drawn
     hands of Hanging_Rope sit about 0.19 above it; the climb's gripping hand is what this is being
     judged against. One number, so moving the mount is changing it.
 */
@@ -418,7 +418,7 @@ static const int   STAND_POINTS[STAND_RING_COUNT] = { 10,    8,     6,     4,   
 /*
     --- THE STRAW MAN -------------------------------------------------------------------------------
     A kicking dummy on a spring hinge at its foot (core/physics/SpringHinge; apps/archer/
-    strawman_plan.md). Scores the KICK, one point each; an arrow only sticks in it and sets it
+    docs/strawman_plan.md). Scores the KICK, one point each; an arrow only sticks in it and sets it
     swinging. Passable: the rules offer it as a non-blocking obstacle, and its body leaves the
     archer's kinematic body out of its mask, so she walks through it in both.
 
@@ -572,7 +572,7 @@ enum ArcherAnimSource{
     owns where she is and a clip must never be allowed to walk her off a ledge.
 */
 /*
-    --- THE AIM OVERRIDE (animation_plan.md, Step 3) ---------------------------------------------
+    --- THE AIM OVERRIDE (docs/animation_plan.md, Step 3) ---------------------------------------------
     After the clips have posed her, the spine and shoulders are turned about HER SIDE AXIS - level,
     square to the way she faces (forward x up) - so the bow points along aim_deg. Side-on that axis
     is the world's Z, the play plane's normal; on the character scene's turntable it turns with
@@ -602,7 +602,7 @@ enum ArcherAnimSource{
 #define ARCHER_AIM_BONES            6
 
 /*
-    --- THE UPPER-BODY LAYER (animation_plan.md, Step 2) -----------------------------------------
+    --- THE UPPER-BODY LAYER (docs/animation_plan.md, Step 2) -----------------------------------------
     A second clip over the base, on every bone under mixamorig:Spine, graded so the torso keeps
     some of the base's lean while the arms, shoulders and head are the layer's: Spine and Spine1
     take part of it, everything from Spine2 up takes all of it. A PROTOTYPE living here until it
@@ -613,7 +613,7 @@ enum ArcherAnimSource{
 #define ARCHER_UPPER_SPINE1_SHARE   0.6f    //mixamorig:Spine1; everything above is 1.0
 
 /*
-    --- THE LOOSE LEGS (animation_plan.md, "Loose legs") -----------------------------------------
+    --- THE LOOSE LEGS (docs/animation_plan.md, "Loose legs") -----------------------------------------
     Each leg a core/DynamicChain - hip, knee, ankle, toe - stepped every tick in world space and
     swung in the play plane, so her legs trail, float and overshoot with the swing instead of
     being welded to her pose. Its weight and the pump's lead are the Puppet's (leg_weight,
@@ -930,8 +930,9 @@ private:
     first half of it at all.
 
     CLOSE matches the title music's fade out (the score's pause_fade_s, 1.5 s), so the picture and
-    the music go down together. HOLD is black in the level, the horn sounding, so the picture
-    opens on the hit rather than cutting to the level a frame before it can be heard.
+    the music go down together. HOLD is black in the level, a breath before the picture opens.
+    (It was sized to wait for the horn when that sounded on the level's arrival; the horn now
+    sounds on the click itself - PlayStartHorn - and is still ringing when the picture opens.)
 */
 #define ARCHER_FADE_CLOSE_S         1.5f
 #define ARCHER_FADE_HOLD_S          0.35f
@@ -989,6 +990,9 @@ private:
 */
 #define SUN_SHADOW_EXTENT           22.0f
 #define SUN_OFFSET                  vec3(-9.0f,20.0f,10.0f)   //from the view's target, see SetupLights
+//The fill's, the same way: low, from the camera's side and the right. It used to sit fixed at
+//(18,8,26) looking at (0,3,0) - this is that direction, now carried along with the view.
+#define FILL_OFFSET                 vec3(18.0f,5.0f,26.0f)
 /*
     Which camera is driving. SIDE is the game's own - trailing on the world, fixed on the range,
     always square-on to the play plane. ORBIT is the middle-mouse orbit from apps/isoanimation
@@ -1100,11 +1104,17 @@ struct ArcherSnapshot{
     int   level = STAGE_LEVEL_MAIN;
     //The zone she is in (Stage::CurrentZone), by name - empty in none. What the HUD shows.
     std::string zone;
+    //The biome she is in and its weight there (BiomeAt), and where she is on screen from its
+    //middle, in view heights, +y up - what the vision vignette is sized and centred by. 0, 0 but
+    //for the side camera, the only view it is worked out for.
+    int   biome = BIOME_JUNGLE;
+    float biome_weight = 1.0f;
+    float screen_dx = 0.0f, screen_dy = 0.0f;
     //Every AREA of the live level, by name, and each one's index in Stage::zones - what
     //archer_zone lists and resolves a name against before sending ARCHER_CMD_ZONE. No triggers.
     std::vector<std::string> zone_names;
     std::vector<int> zone_ids;
-    //Stage's floors, edges and wall feet (vine_plan.md section 15), for archer_edges and the
+    //Stage's floors, edges and wall feet (docs/vine_plan.md section 15), for archer_edges and the
     //debug view - both off other threads than the tick that rebuilds them.
     std::vector<StageSpan>   spans;
     std::vector<StageEdge>   edges;
@@ -1214,7 +1224,7 @@ struct ArcherSnapshot{
     };
     std::vector<ArrowView> arrows;
 
-    //The grown plants (vine_plan.md steps 5 and 7): where each grew from, how far along it is.
+    //The grown plants (docs/vine_plan.md steps 5 and 7): where each grew from, how far along it is.
     struct GrownView{
         int   slot = -1;
         float x = 0.0f;
@@ -1422,6 +1432,8 @@ public:
     //Her next landing as of this tick, and what forecasting it cost - see Stage::PredictLanding.
     StageLanding landing_forecast;
     float landing_forecast_us = 0.0f;
+    //This tick's ArcherInput::move_axis, for ArcherAnimParams::push. Set every tick before it is read.
+    float move_intent = 0.0f;
 
     vec3 camera_target = vec3(0.0f,3.0f,0.0f);
     ArcherCameraTuning camera_tuning;
@@ -1432,7 +1444,7 @@ private:
     void BuildBlocks();
     /*
         The marching-cubes terrain for the test bay, one Object per bay - see
-        apps/archer/terrain_plan.md and apps/archer/Terrain.h.
+        apps/archer/docs/terrain_plan.md and apps/archer/Terrain.h.
 
         Runs AFTER BuildBlocks, because it hides the block objects it has replaced rather than
         stopping them from being built. Hiding rather than skipping keeps block_objects indexed in
@@ -1479,7 +1491,7 @@ private:
     void BuildArcherModel();
     /*
         Puts the bow in her left hand and the nocked arrow in her right - see apps/archer/Bow.h and
-        apps/archer/bow_plan.md.
+        apps/archer/docs/bow_plan.md.
 
         AFTER BuildArcherModel, because it needs the skeleton posed at a clip to work out the grip,
         and both the bones and the clips come from there. Survivable if it fails: the game plays,
@@ -1500,7 +1512,7 @@ private:
     */
     void BuildFoliage();
     /*
-        The wind (wind_plan.md). RENDER THREAD, every frame, from PreRender: copies the blocks and
+        The wind (docs/wind_plan.md). RENDER THREAD, every frame, from PreRender: copies the blocks and
         the tick at a tick boundary, asks the worker for a new field if the blocks changed (a hash
         check; the build itself is ~230 ms on the main level, off every frame-critical thread),
         adopts one that has finished, bakes the part the camera sees into the grid the renderer
@@ -1509,7 +1521,7 @@ private:
     void UpdateWind();
     void ScatterFoliageObjects();
     /*
-        The decorative vines - see apps/archer/Vine.h and vine_plan.md. Built ONCE, render thread
+        The decorative vines - see apps/archer/Vine.h and docs/vine_plan.md. Built ONCE, render thread
         (each trunk is a generated Mesh, and SetMeshData uploads), and never touched again: they
         are static, and nothing in a running game moves them. Takes `vine_trunk`, `vine_leaf_1`
         and `vine_leaf_2` out of archer.glb where they exist and falls back per piece to the
@@ -1538,6 +1550,36 @@ private:
     float scenery_top_y[SCENERY_VARIANT_COUNT] = {};
     float scenery_top_w[SCENERY_VARIANT_COUNT] = {};
     bool f_scenery_loaded = false;
+    /*
+        THE BIGTREE AND THE MUSHROOM - a StageTree with f_bigtree and a pad with f_mushroom, drawn
+        with archer.glb's pieces. BuildPlantModels loads and measures them once (RENDER THREAD,
+        Init, after BuildArcherModel for model_scale) and places the level's; from then on
+        BuildBlocks places them with the rest of the plants, hiding the boxes that stood in for them.
+        Boxes are still built, so a missing piece leaves the blockout standing rather than nothing.
+    */
+    enum PlantModel{
+        PLANT_BIGTREE_BOTTOM = 0, PLANT_BIGTREE_SEGMENT, PLANT_BIGTREE_TOP,
+        PLANT_BIGTREE_ARM_RIGHT, PLANT_BIGTREE_ARM_LEFT,
+        PLANT_BIGTREE_DECOR_RIGHT, PLANT_BIGTREE_DECOR_LEFT,
+        PLANT_MUSHROOM_BIG,
+        PLANT_MODEL_COUNT
+    };
+    void BuildPlantModels();
+    void BuildBigtree(size_t tree);         //its pieces, into plant_objects
+    Object* BuildMushroom(size_t plant);    //its model, into plant_objects; SyncSpringPlants squashes it
+    Mesh* plant_meshes[PLANT_MODEL_COUNT] = {};
+    std::vector<Material> plant_materials[PLANT_MODEL_COUNT];
+    //Measured at scale 1: each piece's lowest and highest y, and the walkable top's height and
+    //x extent where it has one (the arms, the cut top, the cap).
+    float plant_lo_y[PLANT_MODEL_COUNT] = {};
+    float plant_hi_y[PLANT_MODEL_COUNT] = {};
+    float plant_walk_y[PLANT_MODEL_COUNT] = {};
+    float plant_walk_x0[PLANT_MODEL_COUNT] = {};
+    float plant_walk_x1[PLANT_MODEL_COUNT] = {};
+    float bigtree_radius = 0.0f;            //bigtree_segment's, at scale 1
+    std::vector<int> mushroom_material_ids; //its own slots, put back after the timing cue's tint
+    bool f_plant_models_loaded = false;     //tried, whatever came of it
+    bool f_plant_models_ready = false;      //every piece there, and the first level's placed
     //Reads each clip's own root track for how far it travels and how long it lasts, and hands the
     //answers to the Puppet. See the note on the definition - this is the number that decides
     //whether the feet slide, and it is measured rather than declared.
@@ -1607,7 +1649,7 @@ private:
     /*
         THE GAME'S HALF OF THE CUE LAYER: what happened this tick, told to `cues` as signals and
         scopes - see the definition for the list. What each one SOUNDS like is not here, it is
-        assets/cues/archer.json (cue_plan.md). Straight after the rules, like the old hand-wired
+        assets/cues/archer.json (docs/cue_plan.md). Straight after the rules, like the old hand-wired
         sounds; the cues themselves fire at the end of the tick (RunSimulationTick), once
         everything that can signal has run.
     */
@@ -1624,7 +1666,7 @@ private:
     Animation* step_prev_lead = NULL;
     /*
         Her breathing and her heartbeat: the clocks that turn Stage::vitals into `breath_in`,
-        `breath_out` and `heartbeat` signals - see the definition and vitals_plan.md. The view's,
+        `breath_out` and `heartbeat` signals - see the definition and docs/vitals_plan.md. The view's,
         not the rules', because only sound reads them; in the recording state all the same, so a
         replay breathes where the original did. `steps` is this tick's footsteps. Her blinks run
         here too, on a clock of their own that reads none of it - see BLINK_MIN_SECONDS.
@@ -1699,7 +1741,7 @@ private:
     std::chrono::steady_clock::time_point cue_table_polled;
 
     /*
-        THE CUE PANEL - cue_plan.md step 5. Every cue's delay, jitter, chance and gain on a slider,
+        THE CUE PANEL - docs/cue_plan.md step 5. Every cue's delay, jitter, chance and gain on a slider,
         a button to hear it (ARCHER_CMD_CUE_AUDITION), and Save, which writes the numbers back
         into the file. It edits the file's TEXT, not a re-serialised table: the file is laid out
         and commented by hand, so a change rewrites one number (or adds one field to its row) and
@@ -1764,7 +1806,7 @@ private:
     //render thread's own, for the flash a change gets.
     void DrawArrowHud();
     /*
-        The floors' edges drawn over the level (vine_plan.md section 15): each floor a thin white
+        The floors' edges drawn over the level (docs/vine_plan.md section 15): each floor a thin white
         line along its top; each edge a drop line down its face - red past VITALS_DROP_FROM (a drop
         she fears), amber past half a unit, grey for a step - with a stub out over the drop and a
         blue bar on a grabbable lip; each wall's foot a green L up its face. Laid on the
@@ -1852,7 +1894,7 @@ private:
         has opened, the rope's loaded length against its rest length, and the worst gap now and over
         the last ROPE_PEAK_TICKS. Knobs: the scene's solver iterations, the links' mass (applied by
         rebuilding the level), and cutting a joint on command. Over MCP as `rope_test`, and in the
-        panel's Rope section. Built to find the stretch in animation_plan.md "Climbing the rope".
+        panel's Rope section. Built to find the stretch in docs/animation_plan.md "Climbing the rope".
     */
     void MeasureRopeStretch();
     bool CutRopeJoint(int joint);
@@ -2089,7 +2131,29 @@ private:
     //The sun, kept because UpdateCamera drags it along with the view every tick - the level is 84
     //units wide and one shadow ortho cannot cover that, so the light follows the camera.
     DirectionalLight* sun_light = NULL;
-    DirectionalLight* fill_light = NULL;        //held only so the range scene can share it
+    DirectionalLight* fill_light = NULL;        //shared with the range scene, and follows the view too
+    /*
+        HOW EACH OF THE TWO FOLLOWS THE VIEW. Both, since the fill can cast the shadow too: the
+        renderer draws ONE shadow map, from the first visible directional light, and shadows every
+        directional light through it - so with the sun hidden the fill's own shadow takes over, and
+        a fill left at the origin had that shadow only near the start of the level.
+
+        `offset` is from the view's target to the light, so it is the light's direction and how
+        far back it stands; the Lights panel edits it as two angles. Following off, the light stays
+        wherever it was left, for the inspector to move by hand. Written by the panel under the
+        lock, read by PlaceCamera.
+    */
+    struct LightFollow{
+        bool f_follow = true;
+        vec3 offset;
+    };
+    LightFollow sun_follow{true,SUN_OFFSET};
+    LightFollow fill_follow{true,FILL_OFFSET};
+    //Places one light on the view: at target + offset looking at the target, the shadow ortho fitted
+    //to the view and snapped to its texels. Physics thread, from PlaceCamera.
+    void FollowView(DirectionalLight* light, const LightFollow& follow, float view_distance);
+    //The Lights section of the Archer panel. Render thread, under the lock.
+    void DrawLightsPanel();
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
     //Four bars per zone, children of blockout_group; NewGame destroys them and BuildBlocks remakes
     //them, as it does the blocks. Shown only in the blockout view (F2) - see BuildZoneOutlines.
@@ -2172,11 +2236,23 @@ private:
     std::vector<Material> boulder_materials[BOULDER_KIND_COUNT];
     float boulder_mesh_radius[BOULDER_KIND_COUNT] = {};
     float boulder_mesh_height[BOULDER_KIND_COUNT] = {};
+    float boulder_mesh_base[BOULDER_KIND_COUNT] = {};      //lowest point below the origin, BoulderParams::base
+    float boulder_mesh_z_min[BOULDER_KIND_COUNT] = {};     //extent through the slab at yaw 0 - the snake's
+    float boulder_mesh_z_max[BOULDER_KIND_COUNT] = {};
+    /*
+        A node rotated or scaled in Blender and never applied - mushroom_small_2 and skullonstick
+        in the 2026-09-30 export. GetMeshFromNode hands out the vertices as authored and drops the
+        node's transform, so without these the mushroom lies on its side at half size. Measured
+        with it and drawn with it, and each one named in the log so the export can be fixed.
+    */
+    quat  boulder_node_rot[BOULDER_KIND_COUNT];
+    float boulder_node_scale[BOULDER_KIND_COUNT] = {};
+    bool  f_boulder_node_xform[BOULDER_KIND_COUNT] = {};
     Object* boulder_group = NULL;
     std::vector<Object*> boulder_objects;
     BoulderParams boulder_params;
     int   boulder_counts[BOULDER_KIND_COUNT] = {};
-    //Loads rock_big / rock_small and makes the group. Render thread, Init.
+    //Loads the rocks and the cave's pieces and makes the group. Render thread, Init.
     void BuildBoulders();
     //Re-places the pool from the blocks as they are. No GL - see ScatterFoliageObjects.
     void ScatterBoulderObjects();
@@ -2216,7 +2292,7 @@ private:
     float vine_leaf_to_world[VINE_LEAF_KIND_COUNT] = {};
 
     /*
-        GROWN PLANTS - vine_plan.md sections 9-11. What an arrow grows where it strikes, visual only,
+        GROWN PLANTS - docs/vine_plan.md sections 9-11. What an arrow grows where it strikes, visual only,
         so none of it is rules state and none of it is in the replay's hash (vine_group is
         visual-only). A PLANT is a set of strands - each with its own look (a vine or a root), its
         own species and the tick after the strike it starts on - and a few tufts:
@@ -2454,8 +2530,21 @@ private:
     int   music_bus = SOUND_BUS_MASTER;
     bool  f_title_music_paused = false;
     bool  f_world_music_paused = true;      //it starts held, silent until she first reaches the world
-    bool  f_world_music_begun = false;      //the horn plays on that first arrival only
+    bool  f_world_music_begun = false;      //the horn has sounded - it plays once, at the start
     float music_suspense_sent = -1.0f;
+    /*
+        THE START HORN: the score's `horn` stinger, but played as a plain sound on music_bus rather
+        than through a player. It sounds on the click that dismisses the title, where both players
+        are unusable - the title's is about to fade out over the horn's first second and a half,
+        and the world's is held, and a held player takes a stinger in but only sounds it on the
+        resume, which is after the fade. Nothing holds music_bus, so the horn rings out through the
+        fade and the switch. Its gain is the stinger's times the music's master, as it would have
+        been heard from the player. Empty if the score has no horn.
+    */
+    std::string horn_sound;
+    float horn_gain = 0.0f;
+    //Physics thread: the horn, if it has not sounded yet. False if there is none to play.
+    bool  PlayStartHorn();
     //Init. Loads the score and starts both players, the world's held.
     void SetupMusic();
     //Physics thread, every pass (UpdateView): pauses and resumes the players with the game.
@@ -2529,7 +2618,7 @@ private:
     float      vine_leaf_wind_flex = 0.1f;
 
     /*
-        LEAVES ON THE WIND (wind_plan.md step 4). The swarm is simulated on the PHYSICS thread,
+        LEAVES ON THE WIND (docs/wind_plan.md step 4). The swarm is simulated on the PHYSICS thread,
         once a tick from RunSimulationTick - so a paused game holds every leaf where it is - under
         wind_mutex, since the render thread rebuilds the field. The pool is built once at Init
         (WIND_LEAF_POOL of them, all one mesh, so the renderer draws them as one instanced call);
@@ -2552,7 +2641,7 @@ private:
     json LeafSummary();
 
     /*
-        WIND STREAKS (wind_plan.md step 5). Unlike the leaves these are simulated on the RENDER
+        WIND STREAKS (docs/wind_plan.md step 5). Unlike the leaves these are simulated on the RENDER
         thread, in UpdateWind, catching up on however many ticks passed since the last frame - they
         are pure decoration, they rebuild a mesh every frame anyway (GL, render thread), and they
         need no physics-thread state. Still tick-driven, so a paused game freezes them. Drawn
@@ -2575,7 +2664,7 @@ private:
     void SetStreakUniforms();
 
     /*
-        FIREFLIES (wind_plan.md step 6). Homes come from the foliage scatter (ScatterFoliageObjects
+        FIREFLIES (docs/wind_plan.md step 6). Homes come from the foliage scatter (ScatterFoliageObjects
         hands them over under wind_mutex), so they live on the main level where the plants are and
         most where the plants grew in shade. Simulated and drawn like the streaks - render thread,
         in UpdateWind, catching up the ticks - through shaders/firefly.* (a hot core and a drawn
@@ -2607,7 +2696,7 @@ private:
     json FireflySummary();
 
     /*
-        THE WATERFALL (water_plan.md; Water.h does all the placing). Every StageWater of the main
+        THE WATERFALL (docs/water_plan.md; Water.h does all the placing). Every StageWater of the main
         level in these few objects: the pool's rocks (terrain, on the bank's materials), the sheets
         and the flat water (two lit custom shaders from shaders/archer_water.glsl), and a pool of
         foam balls - one shared sphere, drawn by the ordinary lit shader.
@@ -2710,7 +2799,7 @@ private:
     /*
         What each kind of arrow is dressed in, as material INDICES per slot, and the kind each
         pooled arrow wears now. A vine arrow is the same mesh in greened copies of its materials,
-        so it can be told apart in flight until it has a model of its own (vine_plan.md section 8).
+        so it can be told apart in flight until it has a model of its own (docs/vine_plan.md section 8).
         Indices rather than names so SyncArrowViews can swap them on the physics thread, the way
         the spring cue's ramp is swapped. The pool is shared by every scene, so what an arrow
         wears is the OBJECT's, not the level's, and is not parked with it. f_arrow_dress is false
@@ -2939,9 +3028,9 @@ private:
 
     /*
         THE SCREEN FADE: continue closes a vignette over the title to black, the level takes over
-        while it is black, and it opens again once the horn has sounded. A cut from the title to
-        the level is one frame, and the music's fade and the horn around it are a second and a
-        half - so the picture seemed to arrive before the sound did.
+        while it is black, and it opens again after a short hold. A cut from the title to the
+        level is one frame, and the music's fade is a second and a half - so the picture seemed
+        to arrive before the sound did. The start horn sounds on the click, under the close.
 
         Presentation only, and on the wall clock: nothing in the rules reads it, the world is not
         ticking while it closes, and a replay starts wherever the level is when it takes over.
@@ -2958,6 +3047,26 @@ private:
     float FadeAmount() const;
     //Over everything the overlay has drawn so far. Render thread, from DrawOverlay.
     void  DrawScreenFade();
+
+    /*
+        HER FIELD OF VISION, by biome (docs/cave_plan.md): the same vignette as the fade, centred on her
+        and narrowed by where she is - wide open in the jungle, closed in around her in a cave. Its
+        size is the share of fully open, its darkness how black it goes at its rim, and soft how
+        far past its edge (in window heights) it takes to get there - narrower than the fade's, or
+        a vignette this far closed reaches its darkest off screen. Blended from the jungle's by the
+        biome's weight, so it closes in over the fade inside the mouth.
+
+        Drawn FIRST in the overlay, under the HUD: the fade covers the HUD, this is part of the
+        picture. Looks only. The panel writes these under the lock; the render thread reads them.
+    */
+    struct BiomeVision{
+        float open = 1.0f;
+        float darkness = 0.0f;
+        float soft = 0.25f;
+    };
+    BiomeVision biome_vision[BIOME_COUNT] = { {1.0f,0.0f,0.25f}, {0.5f,0.9f,0.25f} };    //jungle, cave
+    bool  f_vision = true;
+    void  DrawVision();
 
     //The zone she is in, at the top of the screen. Render thread, from DrawOverlay.
     void DrawZoneLabel();

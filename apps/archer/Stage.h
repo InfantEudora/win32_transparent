@@ -210,7 +210,7 @@ struct v3{
     through from point blank.
 
     MEASURED from the model rather than guessed, and typed in here because this header names no
-    engine type (bow_plan.md §5). The anchor is the nocked arrow's origin at full draw, relative
+    engine type (docs/bow_plan.md §5). The anchor is the nocked arrow's origin at full draw, relative
     to her centre, averaged over aim -80..+80 with the aim override on - it moves about 0.2 across
     that range, since she turns about her chest rather than about the nock. The length is the
     arrow mesh, nock to point, at the rig's scale: 0.519 x 2.020. ApplicationArcher checks the
@@ -222,7 +222,7 @@ struct v3{
 
 /*
     THE AIM SWAYS once an arrow is on the string: a smooth drift added to aim_deg, up to this many
-    degrees either way, narrowing as she kneels (animation_plan.md, Step 2). DETERMINISTIC - a sum
+    degrees either way, narrowing as she kneels (docs/animation_plan.md, Step 2). DETERMINISTIC - a sum
     of incommensurate sines of the ticks since the nock, no RNG - so PredictArc includes it, the
     dots drift with it, and the arrow still goes exactly where they point: the skill is timing the
     release, not rolling dice. Replays and `make rules` stay exact for the same reason. It eases
@@ -258,7 +258,7 @@ struct v3{
 #define ARROW_HALF_LEN              0.40f       //visual only; the sweep is a point
 
 /*
-    WHICH ARROW she takes from the quiver - apps/archer/vine_plan.md section 8. RULES STATE, not the
+    WHICH ARROW she takes from the quiver - apps/archer/docs/vine_plan.md section 8. RULES STATE, not the
     view's: what an arrow does when it lands is gameplay the moment any kind has a mechanic, and a
     replay has to reproduce which one was loosed. For now the rules only CARRY the kind - from the
     selection onto the arrow in Loose, and out on its hit - and nothing here treats the kinds
@@ -364,7 +364,7 @@ enum StageBlockKind{
     BLOCK_PLATFORM,
     BLOCK_BREAKABLE,
     /*
-        A rock that gives way under her - bridge_crumble_plan.md section 2. Solid like any block
+        A rock that gives way under her - docs/bridge_crumble_plan.md section 2. Solid like any block
         until she stands on it; then it SHAKES for CRUMBLE_SHAKE_TICKS, still holding her, and is
         gone - whether or not she is still on it. Gone until the level restarts. See StageBlock::
         crumble_ticks and Stage::TickCrumbles.
@@ -396,7 +396,7 @@ enum StageBlockKind{
 #define STAGE_BLOCK_MIN_COVER       0.60f
 
 /*
-    A TREE she climbs by its arms - apps/archer/plant_mechanics_plan.md, section 1.
+    A TREE she climbs by its arms - apps/archer/docs/plant_mechanics_plan.md, section 1.
 
     Declared HERE, in the rules, because the arms are gameplay: BuildTrees turns each into a
     one-way BLOCK_PLATFORM after the level is built, so the rules test can prove a tree climbable
@@ -412,8 +412,15 @@ struct StageTreeArm{
 struct StageTree{
     float x = 0.0f;             //the trunk's centre
     float base = 0.0f;          //where it stands
-    float height = 10.0f;
+    float height = 10.0f;       //to the cut top
     float radius = 0.45f;
+    /*
+        The cut top as somewhere to stand, this wide - a one-way platform across the trunk at
+        base + height, reached from the arm below like an arm is. 0 is a top she cannot stand on.
+    */
+    float top_width = 0.0f;
+    //Looks only: drawn with archer.glb's bigtree_* pieces rather than as a blockout box.
+    bool  f_bigtree = false;
     std::vector<StageTreeArm> arms;
 };
 //An arm is as thin as the level's other one-way platform - see the note on it in BuildMainLevel.
@@ -427,9 +434,23 @@ struct StageTree{
 #define STAGE_TREE_HALF_DEPTH       0.45f
 #define STAGE_TREE_ARM_Z            -0.55f
 #define STAGE_TREE_ARM_HALF_DEPTH   1.20f
+/*
+    THE BIGTREE's numbers, measured off archer.glb's pieces at her scale (model_scale 1.82) so the
+    arms she stands on are as long as the drawn ones: the trunk's radius off bigtree_segment, each
+    arm's walkable top from the trunk's face to its tip off bigtree_arm_1 (it grows right) and
+    bigtree_arm_2 (left), the cut top's width off bigtree_top. The app measures the same pieces at
+    load and warns if a re-export has moved them - these are what the rules and the test play.
+*/
+#define BIGTREE_RADIUS              0.51f
+#define BIGTREE_ARM_RIGHT_LENGTH    1.54f
+#define BIGTREE_ARM_LEFT_LENGTH     1.60f
+#define BIGTREE_TOP_WIDTH           0.97f
+//And mushroom_big's, for a bounce pad drawn with it: the cap's walkable top over its base, and its width.
+#define MUSHROOM_BIG_CAP_TOP        1.15f
+#define MUSHROOM_BIG_CAP_WIDTH      2.19f
 
 /*
-    A SPRING PLANT she stands on and is thrown by - plant_mechanics_plan.md, section 2: the bounce
+    A SPRING PLANT she stands on and is thrown by - docs/plant_mechanics_plan.md, section 2: the bounce
     pad (a mushroom cap) and the leaf.
 
     ONE SPRING, TWO SHAPES. Each has a single coordinate `q` and a spring pulling it back to rest:
@@ -467,6 +488,7 @@ struct StageSpringPlant{
     float hz = 3.0f;            //the swing with nobody on it
     float damping = 0.2f;       //and how fast it dies away, as a ratio
     float travel = 1.0f;        //how far it can go either side of rest: PAD units, LEAF degrees
+    bool  f_mushroom = false;   //PAD, looks only: drawn as archer.glb's mushroom_big, not a box
 
     //--- State, stepped by Stage::TickSpringPlants ---
     float q = 0.0f;             //PAD: the cap's height above rest, sunk is negative. LEAF: its angle, radians
@@ -527,7 +549,7 @@ struct StageSpringPlant{
 #define SPRING_SWING_GAIN           0.25f   //of what it threw her with (launch_lift), added to her rise
 
 /*
-    A THIN BRANCH she walks along and has to keep her balance on - plant_mechanics_plan.md,
+    A THIN BRANCH she walks along and has to keep her balance on - docs/plant_mechanics_plan.md,
     section 3. A straight one-way line from one end to the other: landed on from above, dropped
     through with Down, like a platform with no thickness. Rigid for now; sagging under her is later.
 
@@ -543,7 +565,7 @@ struct StageBranch{
 };
 
 /*
-    A RAMP: a sloped floor that does not move - plant_mechanics_plan.md, "Sliding". A leaf held
+    A RAMP: a sloped floor that does not move - docs/plant_mechanics_plan.md, "Sliding". A leaf held
     still, which is exactly what it is for: the slide is tuned here, at fixed angles, rather than on
     a leaf whose angle changes under her while she slides.
 
@@ -562,7 +584,7 @@ struct StageRamp{
 };
 
 /*
-    A ROPE BRIDGE - bridge_crumble_plan.md section 3. Planks hung between two pinned anchors, a
+    A ROPE BRIDGE - docs/bridge_crumble_plan.md section 3. Planks hung between two pinned anchors, a
     chain of POINTS stepped in the rules every tick: each point a small mass under gravity, each
     plank a spring that pulls when stretched past its length and never pushes - a rope, not a rod.
     Semi-implicit Euler in BRIDGE_SUBSTEPS fixed substeps, so it is deterministic and stable at the
@@ -609,7 +631,7 @@ struct StageRamp{
 #define BRIDGE_STAND_DEG            50.0f
 
 /*
-    --- STRAIN (bridge_crumble_plan.md section 3, "Strain, warnings and the snap") ---------------
+    --- STRAIN (docs/bridge_crumble_plan.md section 3, "Strain, warnings and the snap") ---------------
     A breakable bridge keeps a STRAIN per plank, 0 sound .. 1 snapped, and it never heals within a
     run. Only LANDINGS add to it - walking, running and standing add nothing, however it bounces:
     what hurts a bridge is her coming down on it. By how hard, against the bridge's own speed under
@@ -793,7 +815,7 @@ struct StageBlock{
 };
 
 /*
-    THE FLOORS' EDGES - vine_plan.md section 15. What the fear of heights, a teeter and a catch at
+    THE FLOORS' EDGES - docs/vine_plan.md section 15. What the fear of heights, a teeter and a catch at
     a lip, a creeper turning over one and a tuft on top of a platform all ask about: where a floor
     ends, and what is past the end.
 
@@ -841,8 +863,8 @@ struct StageCorner{
 };
 
 /*
-    A ZONE: a named stretch of the level that knows when she is in it - cue_plan.md section 8, and
-    bridge_crumble_plan.md section 1, which is where it was first built.
+    A ZONE: a named stretch of the level that knows when she is in it - docs/cue_plan.md section 8, and
+    docs/bridge_crumble_plan.md section 1, which is where it was first built.
 
     THE CUE PLAN'S SHAPE, deliberately, so there is one zone type rather than two: a rectangle like
     a StageBlock (centre and half extents), a name and an id, reporting `entered` and `left` off her
@@ -864,7 +886,7 @@ enum StageZoneEffectKind{
     ZONE_START_CRUMBLE_GROUP = 0,   //target: an index into Stage::crumble_groups
 };
 /*
-    What entering a zone DOES - bridge_crumble_plan.md section 1: a Stage effect, `delay` ticks
+    What entering a zone DOES - docs/bridge_crumble_plan.md section 1: a Stage effect, `delay` ticks
     after the tick she entered. Once per run: the zone's effects fire on its first entry and never
     again until a restart rebuilds it. A short list on the zone, not a scripting language.
 */
@@ -896,7 +918,7 @@ struct StageZone{
 
 /*
     A CRUMBLE GROUP: crumble blocks that go ONE AFTER ANOTHER once something starts them, rather
-    than each under her feet - the chase of bridge_crumble_plan.md section 2, a floor that falls
+    than each under her feet - the chase of docs/bridge_crumble_plan.md section 2, a floor that falls
     away behind her. Started by a zone's effect; from then block k begins its CRUMBLE_SHAKE_TICKS
     shake `starts[k]` ticks in. The starts go by DISTANCE along the floor, not by count, so the
     front runs at one speed across a gap left in it.
@@ -921,7 +943,7 @@ struct StageCrumbleGroup{
 /*
     The terrain test bay - a stretch of level LEFT of the start that exists only to compare
     marching-cubes terrain settings against each other and against the plain blockout. See
-    apps/archer/terrain_plan.md; this switch is how the whole thing comes back out in one edit.
+    apps/archer/docs/terrain_plan.md; this switch is how the whole thing comes back out in one edit.
 
     ONLY BLOCK_SOLID GOES IN THE BAY, and that is not a style preference. stage_test.cpp's reach
     assertion skips SOLID and BREAKABLE, so solid test geometry is invisible to it - but its
@@ -943,7 +965,7 @@ struct StageCrumbleGroup{
 #define ARCHER_TEST_BAY_X_MAX       (-12.0f)
 #define ARCHER_TEST_BAY_SPLIT_Y     6.0f
 /*
-    THE CAVE (apps/archer/cave_plan.md), left of the bay through a mouth where the bay's left-hand
+    THE CAVE (apps/archer/docs/cave_plan.md), left of the bay through a mouth where the bay's left-hand
     wall used to be: a floor of its own, a roof, a far wall, and the bank behind closing its back
     (Backdrop.h - a block reaching back into the bank raises it to over its top). Enclosed on every
     side but the camera's, for lighting without the sun.
@@ -971,7 +993,7 @@ enum StagePropKind{
     PROP_BRICKWALL,         //cols x rows of bricks that break apart when kicked through
     PROP_ROPE_ANCHOR,       //the fixed top of a rope; the chain hangs from here
     /*
-        A kicking dummy on a spring - apps/archer/strawman_plan.md. She walks THROUGH it and the
+        A kicking dummy on a spring - apps/archer/docs/strawman_plan.md. She walks THROUGH it and the
         boot still finds it, so the app offers it as a non-blocking obstacle (StageObstacle::
         f_blocks). Not a TargetVariant: a target that tips past TARGET_KNOCKED_DEG is taken out of
         play, and this one tips that far on every good kick and comes back. y is its centre, as for
@@ -984,7 +1006,7 @@ enum StagePropKind{
     The levels a Stage can build.
 
     MAIN is the traversal level the whole prototype grew up in. RANGE is the test range from
-    bow_plan.md section 7: one flat floor between two walls and a few targets either side of the
+    docs/bow_plan.md section 7: one flat floor between two walls and a few targets either side of the
     start, and nothing else - no ledges, no rope, no gaps. It exists so the bow can be worked on
     with a still camera and nothing to fall off, and so a screenshot of it means the same thing
     from one run to the next.
@@ -1104,7 +1126,7 @@ struct StageScenery{
 };
 
 /*
-    A waterfall, and where its water goes - apps/archer/water_plan.md. LOOKS ONLY: nothing here
+    A waterfall, and where its water goes - apps/archer/docs/water_plan.md. LOOKS ONLY: nothing here
     collides, and the rules never read it. It lives in the Stage for the reason the props do, so
     the whole layout of a level is in one file.
 
@@ -1128,7 +1150,7 @@ struct StageWater{
 
 /*
     A BIOME: a box of the level with its own rules for how it is dressed and how the air moves in
-    it - the cave's (cave_plan.md) are the first. Declared the way zones are, but LOOKS ONLY: the
+    it - the cave's (docs/cave_plan.md) are the first. Declared the way zones are, but LOOKS ONLY: the
     rules never read one, which is why this is not a field on StageZone - a zone is the rules'
     business (the HUD's name for where she is, what entering it starts), and a biome is what the
     plants, the rocks and the wind make of a place.
@@ -1340,7 +1362,7 @@ struct StageObstacle{
     covers the strike ApplicationArcher::MeasureKickClip finds, and the app warns with the numbers
     to type when a re-export moves either. The box and the impact are fitted to where and how fast
     that boot lands - the measurements are beside the table in Stage.cpp. KICK_FRONT's row IS the
-    defines above, so the rules test and the retiming history in animation_plan.md keep meaning
+    defines above, so the rules test and the retiming history in docs/animation_plan.md keep meaning
     what they say.
 */
 enum KickKind{
@@ -1367,7 +1389,7 @@ extern const KickSpec KICK_SPECS[KICK_KIND_COUNT];
 
 /*
     --- KNEELING ---------------------------------------------------------------------------------
-    C kneels, C again stands - a stance she gets into and out of, not a hold (animation_plan.md,
+    C kneels, C again stands - a stance she gets into and out of, not a hold (docs/animation_plan.md,
     Step 2). Kneeling she cannot run, jump, kick or take a rope, and she keeps her facing; she CAN
     draw, aim and loose. Only from the ground, and never mid-kick.
 
@@ -1639,7 +1661,7 @@ struct StageEvents{
 
 /*
     --- VITALS -----------------------------------------------------------------------------------
-    Her body as two slowly moving LEVELS - apps/archer/vitals_plan.md. EXERTION, 0 rested .. 1
+    Her body as two slowly moving LEVELS - apps/archer/docs/vitals_plan.md. EXERTION, 0 rested .. 1
     spent, from what she is doing; FEAR, 0 calm .. 1 terrified, from how far she could fall; and
     the HEART RATE, which trails both.
 

@@ -10,7 +10,7 @@
 /*
     ROUTE CHECKS: proving a way through the level is passable, by playing it against the rules.
 
-    bridge_crumble_plan.md section 6. It started as the solver that found the pad-to-canopy
+    docs/bridge_crumble_plan.md section 6. It started as the solver that found the pad-to-canopy
     recording (2026-09-27), and it is here so that every crossing the level is designed around -
     the spring plants, and later the stepping stones, the chase, each bridge and each detour - is
     held to it by `make rules`. Retune a spring or move a block, and the test says at once whether

@@ -10,7 +10,7 @@
 #include <vector>
 
 /*
-    The waterfall - apps/archer/water_plan.md. Everything about it that is not GL: where its
+    The waterfall - apps/archer/docs/water_plan.md. Everything about it that is not GL: where its
     pieces go, the rocks of the pool it lands in, the surfaces the shader draws, and the foam.
     Engine-free like Backdrop and Leaves, so `make rules` checks it (water_test.cpp).
 

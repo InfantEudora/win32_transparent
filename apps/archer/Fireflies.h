@@ -7,7 +7,7 @@
 #include <vector>
 
 /*
-    Fireflies - wind_plan.md step 6. A few dozen glowing specks that live where the plants are
+    Fireflies - docs/wind_plan.md step 6. A few dozen glowing specks that live where the plants are
     thickest, drift in slow loops, flash in the rhythm real ones do, and light the ground around
     them through a small group of point lights.
 

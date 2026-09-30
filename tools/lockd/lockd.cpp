@@ -134,6 +134,41 @@ static std::string ReadReason(const json &args) {
     return reason.is_string() ? reason.get<std::string>() : std::string();
 }
 
+static bool ReadAuto(const json &args) {
+    const json &f_auto = args.contains("auto") ? args["auto"] : json();
+    return f_auto.is_boolean() && f_auto.get<bool>();
+}
+
+// Every reply to a call carrying an owner says what that owner has lost since it last heard,
+// so the news arrives with whatever the agent happened to ask next - lock traffic included,
+// not only the hook's heartbeat. Absent when there is nothing, so the common reply is unchanged.
+static void AttachLost(json *reply, const std::string &owner) {
+    std::vector<std::string> holders;
+    std::vector<LostLease> lost = g_table->TakeLost(owner, &holders);
+    if (lost.empty()) {
+        return;
+    }
+    int64_t now = LockTable::NowMs();
+    json out = json::array();
+    for (size_t i = 0; i < lost.size(); i++) {
+        json entry = {
+            { "path", lost[i].key },
+            { "how", lost[i].how },
+            { "ago_s", (now - lost[i].lost_ms) / 1000 },
+            { "now_held_by", holders[i].empty() ? json() : json(holders[i]) }
+        };
+        if (!lost[i].reason.empty()) {
+            entry["reason"] = lost[i].reason;
+        }
+        out.push_back(entry);
+    }
+    (*reply)["lost"] = out;
+    (*reply)["lost_note"] = "You no longer hold these. Stop relying on them: re-claim before "
+                            "building, running or editing on their strength, and re-read any "
+                            "file first - someone else may have changed it in between.";
+    debug->Warn("TOLD %s it lost %d lease(s)\n", owner.c_str(), (int)lost.size());
+}
+
 static json ConflictsToJson(const std::vector<Conflict> &conflicts) {
     json out = json::array();
     for (const Conflict &c : conflicts) {
@@ -169,6 +204,9 @@ static json LeasesToJson(const std::vector<Lease> &leases) {
         if (!lease.reason.empty()) {
             entry["reason"] = lease.reason;
         }
+        if (lease.f_auto) {
+            entry["auto"] = true;
+        }
         out.push_back(entry);
     }
     return out;
@@ -197,35 +235,42 @@ static json ToolClaim(const json &args) {
 
     std::vector<std::string> granted;
     std::vector<Conflict> conflicts;
-    bool ok = g_table->Claim(owner, keys, ReadReason(args), ReadTTL(args), &granted, &conflicts);
+    bool ok = g_table->Claim(owner, keys, ReadReason(args), ReadTTL(args), ReadAuto(args),
+                             &granted, &conflicts);
 
     if (!ok) {
         debug->Info("DENIED %s wanted %d path(s), %d conflict(s)\n", owner.c_str(),
                     (int)keys.size(), (int)conflicts.size());
-        return json{
+        json reply = {
             { "granted", false },
             { "conflicts", ConflictsToJson(conflicts) },
             { "hint", "Nothing was claimed - a claim is all-or-nothing. Work on something "
                       "else and retry, or use lock_wait for a short bounded wait." }
         };
+        AttachLost(&reply, owner);
+        return reply;
     }
 
+    // The first granted key's lease, rather than the first lease this owner holds: leases
+    // have lengths of their own now, and an older one says nothing about this claim.
     std::vector<Lease> mine = g_table->List();
     int64_t expires_in = 0;
     for (const Lease &lease : mine) {
-        if (lease.owner == owner) {
+        if (lease.owner == owner && lease.key == granted[0]) {
             expires_in = (lease.expires_ms - LockTable::NowMs()) / 1000;
             break;
         }
     }
     debug->Info("GRANTED %s <- %d path(s)\n", owner.c_str(), (int)granted.size());
-    return json{
+    json reply = {
         { "granted", true },
         { "paths", granted },
         { "expires_in_s", expires_in },
         { "note", "Re-read these files now. A lock reserves the right to edit, it does not "
                   "make a read you did earlier current." }
     };
+    AttachLost(&reply, owner);
+    return reply;
 }
 
 static json ToolRelease(const json &args) {
@@ -242,7 +287,9 @@ static json ToolRelease(const json &args) {
     std::vector<std::string> released = g_table->Release(owner, keys, all);
     debug->Info("RELEASED %s -> %d path(s)%s\n", owner.c_str(), (int)released.size(),
                 all ? " (all)" : "");
-    return json{ { "released", released }, { "count", (int)released.size() } };
+    json reply = { { "released", released }, { "count", (int)released.size() } };
+    AttachLost(&reply, owner);
+    return reply;
 }
 
 static json ToolList(const json & /*args*/) {
@@ -256,12 +303,21 @@ static json ToolRefresh(const json &args) {
     if (!ReadOwner(args, &owner, &error)) {
         return error;
     }
-    int ttl = ReadTTL(args);
-    int count = g_table->Refresh(owner, ttl);
-    return json{
-        { "refreshed", count },
-        { "expires_in_s", ttl > 0 ? ttl : LockTable::TTL_DEFAULT_S }
-    };
+    int count = g_table->Refresh(owner, ReadTTL(args));
+    json reply = { { "refreshed", count } };
+    AttachLost(&reply, owner);
+    return reply;
+}
+
+static json ToolHeartbeat(const json &args) {
+    std::string owner;
+    json error;
+    if (!ReadOwner(args, &owner, &error)) {
+        return error;
+    }
+    json reply = { { "held", g_table->Heartbeat(owner) } };
+    AttachLost(&reply, owner);
+    return reply;
 }
 
 static json ToolBreak(const json &args) {
@@ -311,13 +367,15 @@ static json ToolWait(const json &args) {
     for (;;) {
         std::vector<std::string> granted;
         conflicts.clear();
-        if (g_table->Claim(owner, keys, reason, ttl, &granted, &conflicts)) {
+        if (g_table->Claim(owner, keys, reason, ttl, false, &granted, &conflicts)) {
             debug->Info("GRANTED (after wait) %s <- %d path(s)\n", owner.c_str(), (int)granted.size());
-            return json{
+            json reply = {
                 { "granted", true },
                 { "paths", granted },
                 { "note", "Re-read these files now - they may have changed while you waited." }
             };
+            AttachLost(&reply, owner);
+            return reply;
         }
         if (LockTable::NowMs() >= deadline) {
             break;
@@ -325,12 +383,14 @@ static json ToolWait(const json &args) {
         Sleep(250);
     }
     debug->Info("TIMED OUT %s after %ds\n", owner.c_str(), timeout_s);
-    return json{
+    json reply = {
         { "granted", false },
         { "waited_s", timeout_s },
         { "conflicts", ConflictsToJson(conflicts) },
         { "hint", "Still held. Do something else and come back - do not spin on this." }
     };
+    AttachLost(&reply, owner);
+    return reply;
 }
 
 static void RegisterTools() {
@@ -353,9 +413,12 @@ static void RegisterTools() {
     };
     json ttl_schema = {
         { "type", "integer" },
-        { "description", "Lease length in seconds (default 900, clamped to 30..3600). Every "
-                         "call you make refreshes all of your leases, so the default is "
-                         "generous enough for ordinary work." }
+        { "description", "Lease length in seconds (default 900, clamped to 30..3600). Each "
+                         "lease keeps its own length and every renewal restores it. In "
+                         "Claude Code the PreToolUse hook renews your claims before every "
+                         "tool call, so a claim lasts as long as you are working plus this "
+                         "long after you go quiet - it only has to outlast your longest "
+                         "single command." }
     };
 
     MCPServer::Get()->RegisterTool(
@@ -376,7 +439,10 @@ static void RegisterTools() {
                 { "reason", { { "type", "string" },
                               { "description", "One line on what you are doing, shown to "
                                                "whoever is refused because of you." } } },
-                { "ttl_seconds", ttl_schema }
+                { "ttl_seconds", ttl_schema },
+                { "auto", { { "type", "boolean" },
+                            { "description", "Set by the PreToolUse hook for its implicit "
+                                             "claim on a write. Leave it out." } } }
             } },
             { "required", json::array({ "owner", "paths" }) }
         },
@@ -405,15 +471,28 @@ static void RegisterTools() {
 
     MCPServer::Get()->RegisterTool(
         "lock_refresh",
-        "Extend every lease you hold. Rarely needed explicitly - any call carrying your "
-        "owner id already refreshes them - but useful during a long edit with no other "
-        "lock traffic.",
+        "Extend every lease you hold; with ttl_seconds, also make that their new length. "
+        "Rarely needed explicitly - any call carrying your owner id already refreshes them, "
+        "and the hook heartbeats before every tool call.",
         json{
             { "type", "object" },
             { "properties", { { "owner", owner_schema }, { "ttl_seconds", ttl_schema } } },
             { "required", json::array({ "owner" }) }
         },
         ToolRefresh);
+
+    MCPServer::Get()->RegisterTool(
+        "lock_heartbeat",
+        "Say you are still working: renews your explicit claims (not the hook's auto claims "
+        "on files you wrote) and reports any lease you lost since you last heard, in 'lost'. "
+        "The PreToolUse hook sends this before every tool call; there is no need to call it "
+        "yourself.",
+        json{
+            { "type", "object" },
+            { "properties", { { "owner", owner_schema } } },
+            { "required", json::array({ "owner" }) }
+        },
+        ToolHeartbeat);
 
     MCPServer::Get()->RegisterTool(
         "lock_wait",

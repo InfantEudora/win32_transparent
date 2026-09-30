@@ -7,7 +7,7 @@
 #include <vector>
 
 /*
-    Leaves carried by the wind - wind_plan.md step 4. A fixed swarm kept in the camera's view,
+    Leaves carried by the wind - docs/wind_plan.md step 4. A fixed swarm kept in the camera's view,
     blown through the WindField, landing on tops and lifting off them again in a gust.
 
     Engine-free, like Wind: the app turns each Leaf into an Object (a pose from `axis`/`angle`,

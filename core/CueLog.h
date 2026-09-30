@@ -11,7 +11,7 @@
 /*
     What the game's reactions did, one line per decision, in the order they were made.
 
-    The cue layer's log (apps/archer/cue_plan.md), and it exists BEFORE the cue layer on purpose:
+    The cue layer's log (apps/archer/docs/cue_plan.md), and it exists BEFORE the cue layer on purpose:
     moving a game's hand-wired sounds onto cues is only a refactor if nothing heard changes, and
     the way to show that is to print these same lines from the old code, replay a recording, and
     diff them against the new code's lines for the same replay. So the format is the contract -

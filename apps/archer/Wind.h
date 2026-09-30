@@ -8,7 +8,7 @@
 
 /*
     The wind over the level - a 2D velocity field in the play plane, built from the blockout so it
-    always matches it. See wind_plan.md for the reasoning; this is what a reader of the code needs.
+    always matches it. See docs/wind_plan.md for the reasoning; this is what a reader of the code needs.
 
     Engine-free for the reasons Foliage and Stage are: `make rules` can test it, and when the
     balance mechanic wants wind as an input the field can move into Stage as it is.

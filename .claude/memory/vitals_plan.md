@@ -1,6 +1,6 @@
 ---
 name: vitals-plan
-description: "Archer vitals (exertion + fear -> breathing + heartbeat) AGREED and BUILT 2026-09-27, apps/archer/vitals_plan.md; sound only until the user decides how they change play"
+description: "Archer vitals (exertion + fear -> breathing + heartbeat) AGREED and BUILT 2026-09-27, apps/archer/docs/vitals_plan.md; sound only until the user decides how they change play"
 metadata:
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-09-28T18:19:48.503Z
 ---
 
-2026-09-27: agreed and built the same day. Plan and "Built" section: apps/archer/vitals_plan.md.
+2026-09-27: agreed and built the same day. Plan and "Built" section: apps/archer/docs/vitals_plan.md.
 
 What is where:
 - Stage::vitals (StageVitals, VITALS_* defines), stepped by Stage::TickVitals last in Stage::Tick; Stage::DropBelow is the column scan; TestVitals in stage_test.cpp.
@@ -21,6 +21,6 @@ Added the same day: top-right HUD card (DrawVitalsHud: pulsing heart dot + bpm, 
 
 2026-09-28: blinks added as a third SignalBody clock (face Blink key 1). User's rule: blink interval random and correlated to NOTHING (no vitals), so it signals no cue and draws from CueHash01 on the level tick; clocks in body_clocks (5 entries now, 3 still load).
 
-2026-09-28: breathing SEEN - `chest` leaf bone scaled from the breath clock (user chose option A: out-breath at 0.35 of the cycle, min 28 ticks, so the chest's inhale lengthens at rest). Chest scale is applied one tick late (engine poses before the tick) - step 2+ ticks before judging a change. Cue baselines rewritten the same evening at the user's request ("the best yet"), verified from a fresh app.
+2026-09-28: breathing SEEN - `chest` leaf bone scaled from the breath clock (user chose option A: out-breath at 0.35 of the cycle, min 28 ticks, so the chest's inhale lengthens at rest). Chest scale is applied one tick late (engine poses before the tick) - step 2+ ticks before judging a change.
 
 **How to apply:** tune by the defines and the table; verify with `make rules` and tools/cue_replay.py, plus scripted probes on the test ground (archer_zone "test") and a drop via archer_place. See [[cue-plan]], [[adaptive-music-plan]].

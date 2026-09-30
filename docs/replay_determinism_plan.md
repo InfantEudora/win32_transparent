@@ -324,10 +324,7 @@ differs between two runs of one exe is a new leak, and `--detail` names it.
 
 Every change to the game changes every recording's baselines, and re-recording seven by hand is
 too slow to do after each feature. So, the user's call: ONE recording is kept as the test -
-`apps/archer/recordings/archer_test.rec` (was `archer_20260925_140425`, the broadest: running,
-jumps, kicks, three shots, footsteps, breathing, heartbeat; not covered are a kick connecting, the
-landing grunt and the wall shake). The other six moved to `recordings/archive/` without their
-baselines. Every agent that changes the game runs `python tools/cue_replay.py` after, reads the
-diff, and rewrites with `--write archer_test` when the change is intended - the procedure is in
-CLAUDE.md under *Archer's test recording*. Its first rewrite was the same evening, for the 23:35
-export: the new clips moved a footstep a tick and the breaths with it.
+`apps/archer/recordings/archer_test.rec`. The other six moved to `recordings/archive/` without
+their baselines. Every agent that changes the game runs `python tools/cue_replay.py` after, reads
+the diff, and rewrites with `--write archer_test` when the change is intended - the procedure is in
+CLAUDE.md under *Archer's test recording*.

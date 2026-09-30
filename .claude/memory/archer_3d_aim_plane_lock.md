@@ -20,9 +20,8 @@ rides the turntable (StuckArrow::f_turntable). The aim override now turns about 
 User decisions: stuck arrows ride the tile; arrows that miss just fly off; side amplitude = the
 up one; no left/right steering in the character scene (the turntable is enough).
 
-**Why it matters:** locked levels were verified bit-identical by replaying archer_test with the new
-hash fields left out: her/world/physics/cues same on every tick. A remaining `objects` diff came
-from TurnInWorld with angle 0 - it still renormalises the bone quaternion and moves the last bit.
+**Why it matters:** locked levels must replay bit-identically. TurnInWorld with angle 0 still
+renormalises the bone quaternion and moves the last bit, which shows up as an `objects` diff.
 
 **How to apply:** skip a zero turn (`if (swing != 0.0f)`) whenever a replay must stay exact; and to
 prove a change is "looks only", compare every trace part over the whole run, not just the first

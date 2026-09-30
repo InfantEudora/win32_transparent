@@ -1002,6 +1002,8 @@ void ApplicationArcher::Init(void){
     LoadingStep(step++,LOADING_STEPS,"the archer");
     BuildArcher();
     BuildArcherModel();
+    //After it, for model_scale - BuildBlocks above stood the bigtree and the mushroom as boxes.
+    BuildPlantModels();
     //AFTER the model, for model_scale: an archery stand is drawn at the character's scale, and at
     //the 1.0 it has before BuildArcherModel measures her it came out a doll's-house stand.
     LoadingStep(step++,LOADING_STEPS,"props and bow");
@@ -1504,8 +1506,13 @@ void ApplicationArcher::BuildBlocks(){
         const StageTree& t = stage.trees[i];
         char name[48];
         snprintf(name,sizeof(name),"tree_%i_trunk",(int)i);
-        plant_box(name,vec3(t.x,t.base + t.height * 0.5f,STAGE_TREE_Z),
-                  vec3(t.radius * 2.0f,t.height,STAGE_TREE_HALF_DEPTH * 2.0f),material_trunk);
+        Object* trunk = plant_box(name,vec3(t.x,t.base + t.height * 0.5f,STAGE_TREE_Z),
+                                  vec3(t.radius * 2.0f,t.height,STAGE_TREE_HALF_DEPTH * 2.0f),material_trunk);
+        //A bigtree once its pieces are loaded - see BuildPlantModels, which does this for the first level.
+        if (t.f_bigtree && f_plant_models_ready){
+            trunk->SetVisibility(false);
+            BuildBigtree(i);
+        }
     }
     /*
         The SPRING PLANTS - Stage::spring_plants - as boxes until they have meshes: a pad is a cap
@@ -1520,11 +1527,16 @@ void ApplicationArcher::BuildBlocks(){
         if (p.kind == SPRING_PAD){
             float stalk = p.root.y - p.base;
             snprintf(name,sizeof(name),"spring_%i_stalk",(int)i);
-            plant_box(name,vec3(p.root.x,p.base + stalk * 0.5f,STAGE_TREE_Z * 0.5f),
-                      vec3(0.45f,stalk,0.45f),material_trunk);
+            Object* stalk_box = plant_box(name,vec3(p.root.x,p.base + stalk * 0.5f,STAGE_TREE_Z * 0.5f),
+                                          vec3(0.45f,stalk,0.45f),material_trunk);
             snprintf(name,sizeof(name),"spring_%i_cap",(int)i);
             moving = plant_box(name,vec3(p.root.x,p.root.y - 0.2f,0.0f),vec3(p.length,0.4f,1.6f),
                                material_spring_pad);
+            if (p.f_mushroom && f_plant_models_ready){
+                stalk_box->SetVisibility(false);
+                moving->SetVisibility(false);
+                moving = BuildMushroom(i);
+            }
         }else{
             snprintf(name,sizeof(name),"spring_%i_leaf",(int)i);
             moving = plant_box(name,vec3(p.root.x,p.root.y,0.0f),vec3(p.length,0.12f,1.4f),material_leaf);
@@ -1681,6 +1693,20 @@ void ApplicationArcher::SyncSpringPlants(){
             int step = (int)(spring_cue * (float)(SPRING_CUE_STEPS - 1) + 0.5f);
             material = material_spring_cue[step < 0 ? 0 : (step >= SPRING_CUE_STEPS ? SPRING_CUE_STEPS - 1 : step)];
         }
+        /*
+            The mushroom SQUASHES rather than sinks: its foot stays on the roof and it is scaled in y
+            so its cap's top is where the rules put it. The timing cue tints the whole of it, and
+            its own materials come back once the cue is over.
+        */
+        if (p.kind == SPRING_PAD && p.f_mushroom && f_plant_models_ready){
+            float rest = plant_walk_y[PLANT_MUSHROOM_BIG] * model_scale;
+            float squash = (rest > 0.01f) ? (p.SurfaceY(p.root.x) - p.base) / rest : 1.0f;
+            o->SetScale(vec3(model_scale,model_scale * squash,model_scale));
+            for (size_t k = 0; k < mushroom_material_ids.size(); k++){
+                o->SetMaterialSlot((int)k,((int)i == spring_cue_plant) ? material : mushroom_material_ids[k]);
+            }
+            continue;
+        }
         o->SetMaterialSlot(0,material);
         if (p.kind == SPRING_PAD){
             o->SetPosition(vec3(p.root.x,p.SurfaceY(p.root.x) - size.y * 0.5f,0.0f));
@@ -1803,7 +1829,7 @@ void ApplicationArcher::RemeshTerrainBay(int bay){
     //The bank behind it first - it follows the same blocks, so the two regenerate together.
     RemeshBackdrop(bay);
     //Every bay on the defaults. The four-way comparison those were chosen from is in the history
-    //and in terrain_plan.md; Terrain.h's TerrainParams is where to argue with them.
+    //and in docs/terrain_plan.md; Terrain.h's TerrainParams is where to argue with them.
     TerrainParams params;
     TerrainStats stats;
     std::vector<vertex> verts;
@@ -2809,11 +2835,17 @@ void ApplicationArcher::ScatterFoliageObjects(){
 
 //--- Rocks ---------------------------------------------------------------------------------------
 
-//The archer.glb node for each BoulderKind, in that enum's order.
-static const char* BOULDER_NODES[BOULDER_KIND_COUNT] = { "rock_big_1","rock_big_2", "rock_small_1" };
+//The archer.glb node for each BoulderKind, in that enum's order. "stalagtite" is the export's spelling.
+static const char* BOULDER_NODES[BOULDER_KIND_COUNT] = {
+    "rock_big_1", "rock_big_2", "rock_small_1",
+    "rock_flat", "stalagmite", "stalagtite", "root_big", "bone", "bone_ribcage", "skull", "skullonstick",
+    "snake_skeleton_big", "mushroom_small_1", "mushroom_small_2", "mushroom_cantharell", "mushroom_tree_1",
+    "mushroom_tree_2" };
 
 void ApplicationArcher::BuildBoulders(){
     for (int k = 0; k < BOULDER_KIND_COUNT; k++){
+        boulder_node_rot[k] = quat().identity();
+        boulder_node_scale[k] = 1.0f;
         Mesh* mesh = gltfloader.GetMeshFromNode(BOULDER_NODES[k],&boulder_materials[k],false);
         if (!mesh){
             debug->Err("No mesh on node '%s' in %s - no rocks of that kind\n",BOULDER_NODES[k],ARCHER_MODEL_ASSET);
@@ -2823,25 +2855,110 @@ void ApplicationArcher::BuildBoulders(){
         mesh->Retain();
         boulder_meshes[k] = mesh;
         renderer->AddMaterials(boulder_materials[k]);
-        //The widest the footprint gets under any yaw, and the height - both from the origin, where
-        //it stands. What Boulders.cpp keeps rocks apart and behind her walking line by.
+        //The node's own rotation and scale, which the loader drops - see f_boulder_node_xform.
+        quat nr = gltfloader.GetNodeRotation(BOULDER_NODES[k]);
+        vec3 ns = gltfloader.GetNodeScale(BOULDER_NODES[k]);
+        const bool f_rotated = fabsf(nr.x) > 1e-4f || fabsf(nr.y) > 1e-4f || fabsf(nr.z) > 1e-4f;
+        const bool f_scaled = fabsf(ns.x - 1.0f) > 1e-4f || fabsf(ns.y - 1.0f) > 1e-4f || fabsf(ns.z - 1.0f) > 1e-4f;
+        if (f_rotated || f_scaled){
+            f_boulder_node_xform[k] = true;
+            boulder_node_rot[k] = nr;
+            boulder_node_scale[k] = fmaxf(ns.x,fmaxf(ns.y,ns.z));
+            debug->Warn("'%s' has an unapplied node transform (rotation %.3f,%.3f,%.3f,%.3f scale %.3f,%.3f,%.3f) - "
+                        "drawn with it; apply it in Blender and this goes away\n",BOULDER_NODES[k],nr.x,nr.y,nr.z,nr.w,
+                        ns.x,ns.y,ns.z);
+        }
+        /*
+            The widest the footprint gets under any yaw, the height, and how far below the origin
+            the mesh reaches - all from the origin, which is where it stands (or, for a stalactite,
+            hangs). What Boulders.cpp keeps pieces apart, off the stream and behind her walking
+            line by.
+        */
         float radius = 0.0f;
-        float height = 0.0f;
+        float y_min = 0.0f, y_max = 0.0f, z_min = 0.0f, z_max = 0.0f;
         const std::vector<vertex>& verts = mesh->GetVertices();
         for (size_t i = 0; i < verts.size(); i++){
-            float r = sqrtf(verts[i].pos.x * verts[i].pos.x + verts[i].pos.z * verts[i].pos.z);
+            vec3 p = verts[i].pos;
+            if (f_boulder_node_xform[k]){
+                p = boulder_node_rot[k] * vec3(p.x * ns.x,p.y * ns.y,p.z * ns.z);
+            }
+            float r = sqrtf(p.x * p.x + p.z * p.z);
             if (r > radius){ radius = r; }
-            if (verts[i].pos.y > height){ height = verts[i].pos.y; }
+            y_min = fminf(y_min,p.y);
+            y_max = fmaxf(y_max,p.y);
+            z_min = fminf(z_min,p.z);
+            z_max = fmaxf(z_max,p.z);
         }
+        const bool f_hangs = BoulderMountOf(k) == BOULDER_UNDER;
         boulder_mesh_radius[k] = radius;
-        boulder_mesh_height[k] = height;
-        debug->Info("Rock '%s': radius %.3f, height %.3f at scale 1\n",BOULDER_NODES[k],radius,height);
+        boulder_mesh_height[k] = f_hangs ? -y_min : y_max - y_min;
+        boulder_mesh_base[k] = f_hangs ? 0.0f : -y_min;
+        boulder_mesh_z_min[k] = z_min;
+        boulder_mesh_z_max[k] = z_max;
+        debug->Info("Rock '%s': radius %.3f, height %.3f, base %.3f at scale 1\n",BOULDER_NODES[k],radius,
+                    boulder_mesh_height[k],boulder_mesh_base[k]);
     }
     boulder_group = new Object();
     boulder_group->name = "boulders";
     boulder_group->SetVisualOnly(true);
     main_scene->AddObject(boulder_group);
     ScatterBoulderObjects();
+}
+
+/*
+    A hanging piece's root, moved from its collider's underside to the ROCK's. The terrain gives a
+    roof a belly and drips below its box (Terrain.h, THE SHAPE, THROUGH THE SLAB), most of a unit
+    down under the cave's, and a stalactite rooted at the box hung inside it with only its tip
+    showing. Walked down from just under the box until it is out of the rock - or up into it,
+    where the rock is thinner than the box - against the surface as drawn: each bay's, built the
+    way StartGrowth builds it. Left where it was if neither finds it within reach.
+*/
+static void HangFromTerrain(const std::vector<StageBlock>& blocks, const BoulderParams& params,
+                            std::vector<Boulder>& rocks){
+#if ARCHER_TEST_BAY
+    bool f_any = false;
+    for (const Boulder& b : rocks){
+        f_any = f_any || BoulderMountOf(b.kind) == BOULDER_UNDER;
+    }
+    if (!f_any){
+        return;
+    }
+    TerrainSurface bays[ARCHER_TEST_BAY_COUNT];
+    for (int bay = 0; bay < ARCHER_TEST_BAY_COUNT; bay++){
+        bays[bay].Build(blocks,TerrainBayRegion(bay),TerrainParams());
+    }
+    auto rock = [&bays](float x, float y, float z){
+        float d = 1e30f;
+        for (int bay = 0; bay < ARCHER_TEST_BAY_COUNT; bay++){
+            if (!bays[bay].IsEmpty()){
+                d = fminf(d,bays[bay].Distance(vec3(x,y,z)));
+            }
+        }
+        return d;
+    };
+    const float step = 0.04f;
+    for (Boulder& b : rocks){
+        if (BoulderMountOf(b.kind) != BOULDER_UNDER){
+            continue;
+        }
+        float y = b.ground - 0.01f;
+        if (rock(b.x,y,b.z) < 0.0f){
+            for (int i = 0; i < 60 && rock(b.x,y,b.z) < 0.0f; i++){
+                y -= step;
+            }
+        }else{
+            int i = 0;
+            while (i < 25 && rock(b.x,y + step,b.z) >= 0.0f){
+                y += step;
+                i++;
+            }
+            if (i == 25){
+                continue;
+            }
+        }
+        b.y = y + params.hang_sink;
+    }
+#endif
 }
 
 /*
@@ -2856,9 +2973,15 @@ void ApplicationArcher::ScatterBoulderObjects(){
     for (int k = 0; k < BOULDER_KIND_COUNT; k++){
         params.radius[k] = boulder_mesh_radius[k] * model_scale;
         params.height[k] = boulder_mesh_height[k] * model_scale;
+        params.base[k] = boulder_mesh_base[k] * model_scale;
+    }
+    if (boulder_meshes[BOULDER_SNAKE]){
+        params.snake_z_back = boulder_mesh_z_min[BOULDER_SNAKE] * model_scale;
+        params.snake_z_front = boulder_mesh_z_max[BOULDER_SNAKE] * model_scale;
     }
     std::vector<Boulder> rocks;
     ScatterBoulders(stage.blocks,params,rocks,&stage.biomes);
+    HangFromTerrain(stage.blocks,params,rocks);
 
     for (int k = 0; k < BOULDER_KIND_COUNT; k++){
         boulder_counts[k] = 0;
@@ -2883,7 +3006,7 @@ void ApplicationArcher::ScatterBoulderObjects(){
         o->SetMesh(mesh);
         o->TakeMaterialNames(boulder_materials[b.kind]);
         //Big ones are big enough to be worth a shadow; the small ones are the foliage's case.
-        o->SetCastsShadow(IsBigBoulder(b.kind));
+        o->SetCastsShadow(BoulderCastsShadow(b.kind));
         o->SetPosition(vec3(b.x,b.y,b.z));
         //Tipped about a horizontal axis, after the yaw - a small rock lying the way it landed.
         quat yaw(vec3(0.0f,1.0f,0.0f),b.yaw);
@@ -2891,8 +3014,13 @@ void ApplicationArcher::ScatterBoulderObjects(){
         if (b.tilt != 0.0f){
             tilt = quat(vec3(cosf(b.tilt_axis_yaw),0.0f,sinf(b.tilt_axis_yaw)),b.tilt);
         }
-        o->SetRotation(tilt * yaw);
         float s = model_scale * b.scale;
+        if (f_boulder_node_xform[b.kind]){
+            o->SetRotation(tilt * yaw * boulder_node_rot[b.kind]);
+            s *= boulder_node_scale[b.kind];
+        }else{
+            o->SetRotation(tilt * yaw);
+        }
         o->SetScale(vec3(s,s,s));
         o->SetVisibility(true);
         boulder_counts[b.kind]++;
@@ -2900,9 +3028,18 @@ void ApplicationArcher::ScatterBoulderObjects(){
     for (size_t i = used; i < boulder_objects.size(); i++){
         boulder_objects[i]->SetVisibility(false);
     }
-    debug->Info("Rocks: %i big (%i + %i), %i small\n",
+    int cave = 0;
+    for (int k = BOULDER_SMALL_1 + 1; k < BOULDER_KIND_COUNT; k++){
+        cave += boulder_counts[k];
+    }
+    debug->Info("Rocks: %i big (%i + %i), %i small; the cave's own %i (%i stalactites, %i roots, %i stalagmites, "
+                "%i bones, %i mushrooms, %i brackets)\n",
                 boulder_counts[BOULDER_BIG_1] + boulder_counts[BOULDER_BIG_2],
-                boulder_counts[BOULDER_BIG_1],boulder_counts[BOULDER_BIG_2],boulder_counts[BOULDER_SMALL_1]);
+                boulder_counts[BOULDER_BIG_1],boulder_counts[BOULDER_BIG_2],boulder_counts[BOULDER_SMALL_1],cave,
+                boulder_counts[BOULDER_STALACTITE],boulder_counts[BOULDER_ROOT],boulder_counts[BOULDER_STALAGMITE],
+                boulder_counts[BOULDER_BONE] + boulder_counts[BOULDER_RIBCAGE] + boulder_counts[BOULDER_SKULL],
+                boulder_counts[BOULDER_MUSHROOM_1] + boulder_counts[BOULDER_MUSHROOM_2] + boulder_counts[BOULDER_CANTHARELL],
+                boulder_counts[BOULDER_BRACKET_1] + boulder_counts[BOULDER_BRACKET_2]);
 }
 
 //--- Signs --------------------------------------------------------------------------------------
@@ -3080,6 +3217,213 @@ void ApplicationArcher::BuildScenery(){
             }
         }
     }
+}
+
+//--- The bigtree and the mushroom ---------------------------------------------------------------
+
+//The archer.glb node for each PlantModel, in that enum's order - BuildPlantModels asserts the count.
+static const char* PLANT_NODES[] = {
+    "bigtree_bottom", "bigtree_segment", "bigtree_top", "bigtree_arm_1", "bigtree_arm_2",
+    "bigtree_arm_decorative_1", "bigtree_arm_decorative_2", "mushroom_big"
+};
+
+/*
+    See the declaration. The pieces are authored to stack at scale 1 - the bottom's top ring at
+    0.75, then segments 1.0 apart, then the cut top - with each arm's origin on the trunk's axis.
+    What the RULES were given (Stage.h's BIGTREE_* and MUSHROOM_BIG_*) is checked against what is
+    measured here at her scale, and a difference is a warning, not a correction: the arms she
+    stands on are the rules', and they must be changed there.
+*/
+void ApplicationArcher::BuildPlantModels(){
+    static_assert(sizeof(PLANT_NODES) / sizeof(PLANT_NODES[0]) == PLANT_MODEL_COUNT,"a node per PlantModel");
+    if (!f_plant_models_loaded){
+        f_plant_models_loaded = true;
+        bool f_all = true;
+        for (int m = 0; m < PLANT_MODEL_COUNT; m++){
+            Mesh* mesh = gltfloader.GetMeshFromNode(PLANT_NODES[m],&plant_materials[m],false);
+            if (!mesh){
+                debug->Err("No '%s' in %s - the bigtree and the mushroom stay blockout boxes\n",
+                           PLANT_NODES[m],ARCHER_MODEL_ASSET);
+                f_all = false;
+                continue;
+            }
+            mesh->Retain();
+            plant_meshes[m] = mesh;
+            renderer->AddMaterials(plant_materials[m]);
+            //GetMeshFromNode ignores the node's transform, so a scale left unapplied in Blender is lost.
+            vec3 ns = gltfloader.GetNodeScale(PLANT_NODES[m]);
+            if (fabsf(ns.x - 1.0f) > 1e-3f || fabsf(ns.y - 1.0f) > 1e-3f || fabsf(ns.z - 1.0f) > 1e-3f){
+                debug->Warn("'%s' has an unapplied scale (%.3f, %.3f, %.3f) - apply it in Blender\n",
+                            PLANT_NODES[m],ns.x,ns.y,ns.z);
+            }
+            const std::vector<vertex>& v = mesh->GetVertices();
+            plant_lo_y[m] = 1e30f;
+            plant_hi_y[m] = -1e30f;
+            for (const vertex& p : v){
+                plant_lo_y[m] = fminf(plant_lo_y[m],p.pos.y);
+                plant_hi_y[m] = fmaxf(plant_hi_y[m],p.pos.y);
+            }
+            float cx = 0.0f, cy = 0.0f, cw = 0.0f;
+            if (MeasureWalkableTop(mesh,cx,cy,cw)){
+                plant_walk_y[m] = cy;
+                plant_walk_x0[m] = cx - 0.5f * cw;
+                plant_walk_x1[m] = cx + 0.5f * cw;
+            }
+            if (m == PLANT_BIGTREE_SEGMENT){
+                float x0 = 1e30f, x1 = -1e30f;
+                for (const vertex& p : v){
+                    x0 = fminf(x0,p.pos.x);
+                    x1 = fmaxf(x1,p.pos.x);
+                }
+                bigtree_radius = 0.5f * (x1 - x0);
+            }
+        }
+        if (plant_meshes[PLANT_MUSHROOM_BIG]){
+            for (const Material& m : plant_materials[PLANT_MUSHROOM_BIG]){
+                mushroom_material_ids.push_back(renderer->FindMaterialIndex(m.name));
+            }
+        }
+        if (f_all){
+            const float s = model_scale;
+            struct { const char* what; float declared, measured; } checks[] = {
+                { "BIGTREE_RADIUS",           BIGTREE_RADIUS,           bigtree_radius * s },
+                { "BIGTREE_ARM_RIGHT_LENGTH", BIGTREE_ARM_RIGHT_LENGTH, plant_walk_x1[PLANT_BIGTREE_ARM_RIGHT] * s - BIGTREE_RADIUS },
+                { "BIGTREE_ARM_LEFT_LENGTH",  BIGTREE_ARM_LEFT_LENGTH,  -plant_walk_x0[PLANT_BIGTREE_ARM_LEFT] * s - BIGTREE_RADIUS },
+                { "BIGTREE_TOP_WIDTH",        BIGTREE_TOP_WIDTH,        (plant_walk_x1[PLANT_BIGTREE_TOP] - plant_walk_x0[PLANT_BIGTREE_TOP]) * s },
+                { "MUSHROOM_BIG_CAP_TOP",     MUSHROOM_BIG_CAP_TOP,     plant_walk_y[PLANT_MUSHROOM_BIG] * s },
+                { "MUSHROOM_BIG_CAP_WIDTH",   MUSHROOM_BIG_CAP_WIDTH,   (plant_walk_x1[PLANT_MUSHROOM_BIG] - plant_walk_x0[PLANT_MUSHROOM_BIG]) * s },
+            };
+            for (const auto& c : checks){
+                if (fabsf(c.declared - c.measured) > 0.05f){
+                    debug->Warn("%s is %.3f in Stage.h but the model measures %.3f at her scale - update Stage.h\n",
+                                c.what,c.declared,c.measured);
+                }
+            }
+            debug->Info("Bigtree: radius %.3f, arms %.3f / %.3f from the trunk, top %.3f wide; mushroom cap %.3f up, %.3f wide\n",
+                        checks[0].measured,checks[1].measured,checks[2].measured,checks[3].measured,
+                        checks[4].measured,checks[5].measured);
+        }
+        f_plant_models_ready = f_all;
+    }
+    if (!f_plant_models_ready){
+        return;
+    }
+    //The first level's, which BuildBlocks stood boxes in for while the scale was not known yet.
+    auto hide = [&](const char* name){
+        for (Object* o : plant_objects){
+            if (o && o->name == name){
+                o->SetVisibility(false);
+            }
+        }
+    };
+    char name[48];
+    for (size_t i = 0; i < stage.trees.size(); i++){
+        if (stage.trees[i].f_bigtree){
+            snprintf(name,sizeof(name),"tree_%i_trunk",(int)i);
+            hide(name);
+            BuildBigtree(i);
+        }
+    }
+    for (size_t i = 0; i < stage.spring_plants.size() && i < spring_plant_objects.size(); i++){
+        const StageSpringPlant& p = stage.spring_plants[i];
+        if (p.kind == SPRING_PAD && p.f_mushroom){
+            snprintf(name,sizeof(name),"spring_%i_stalk",(int)i);
+            hide(name);
+            snprintf(name,sizeof(name),"spring_%i_cap",(int)i);
+            hide(name);
+            spring_plant_objects[i] = BuildMushroom(i);
+        }
+    }
+    SyncSpringPlants();
+    //And the arms' blocks behind the model's arms - BuildTerrain applied this before they existed.
+    ApplyBlockoutVisibility();
+}
+
+/*
+    One bigtree from Stage::trees: the bottom on its base, whole segments stacked to fill the trunk
+    (stretched in y to fit exactly, which is fitting, not correcting - the count is what the height
+    asks for), the top with its cut face at base + height, an arm per StageTreeArm with its
+    walkable top on the arm's, and the two decorative arms each in the tallest stretch of trunk its
+    side has free. Behind her at STAGE_TREE_Z like the blockout trunk; every piece is looks only.
+*/
+void ApplicationArcher::BuildBigtree(size_t ti){
+    const StageTree& t = stage.trees[ti];
+    const float s = model_scale;
+    int count = 0;
+    auto piece = [&](int m, vec3 at, float stretch_y){
+        char name[48];
+        snprintf(name,sizeof(name),"tree_%i_%s_%i",(int)ti,PLANT_NODES[m] + 8,count++);  //past "bigtree_"
+        Object* o = new Object();
+        o->name = name;
+        o->SetVisualOnly(true);
+        o->SetMesh(plant_meshes[m]);
+        std::vector<Material> materials = plant_materials[m];
+        o->TakeMaterialNames(materials);
+        o->SetPosition(at);
+        o->SetScale(vec3(s,s * stretch_y,s));
+        blockout_group->AttachChild(o);
+        plant_objects.push_back(o);
+    };
+    const float z = STAGE_TREE_Z;
+    piece(PLANT_BIGTREE_BOTTOM,vec3(t.x,t.base,z),1.0f);
+    //The top's origin, so its cut face lands on the declared height; the segments fill up to it.
+    const float top_at = t.base + t.height - plant_walk_y[PLANT_BIGTREE_TOP] * s;
+    const float seg_h = plant_hi_y[PLANT_BIGTREE_SEGMENT] - plant_lo_y[PLANT_BIGTREE_SEGMENT];
+    const float span = (top_at - t.base) / s - plant_hi_y[PLANT_BIGTREE_BOTTOM];
+    int segments = (int)lroundf(span / seg_h);
+    segments = segments < 1 ? 1 : segments;
+    const float stretch = span / (segments * seg_h);
+    if (fabsf(stretch - 1.0f) > 0.2f){
+        debug->Warn("Bigtree %i: its height fits %i segments only stretched %.2fx - change its height\n",
+                    (int)ti,segments,stretch);
+    }
+    for (int k = 0; k < segments; k++){
+        float y = t.base + (plant_hi_y[PLANT_BIGTREE_BOTTOM] + k * seg_h * stretch - plant_lo_y[PLANT_BIGTREE_SEGMENT] * stretch) * s;
+        piece(PLANT_BIGTREE_SEGMENT,vec3(t.x,y,z),stretch);
+    }
+    piece(PLANT_BIGTREE_TOP,vec3(t.x,top_at,z),1.0f);
+    for (const StageTreeArm& a : t.arms){
+        int m = (a.side > 0.0f) ? PLANT_BIGTREE_ARM_RIGHT : PLANT_BIGTREE_ARM_LEFT;
+        piece(m,vec3(t.x,a.top - plant_walk_y[m] * s,z),1.0f);
+    }
+    //Each decorative arm in the middle of the tallest free stretch on its side: base, arms, top.
+    for (int side = 1; side >= -1; side -= 2){
+        std::vector<float> ys = { t.base, t.base + t.height };
+        for (const StageTreeArm& a : t.arms){
+            if (a.side * side > 0.0f){
+                ys.push_back(a.top);
+            }
+        }
+        std::sort(ys.begin(),ys.end());
+        float best_gap = 0.0f, at = t.base;
+        for (size_t k = 0; k + 1 < ys.size(); k++){
+            if (ys[k + 1] - ys[k] > best_gap){
+                best_gap = ys[k + 1] - ys[k];
+                at = 0.5f * (ys[k] + ys[k + 1]);
+            }
+        }
+        piece((side > 0) ? PLANT_BIGTREE_DECOR_RIGHT : PLANT_BIGTREE_DECOR_LEFT,vec3(t.x,at,z),1.0f);
+    }
+}
+
+//A mushroom pad: the model on the pad's base with its cap's walkable centre under root.x.
+Object* ApplicationArcher::BuildMushroom(size_t pi){
+    const StageSpringPlant& p = stage.spring_plants[pi];
+    const float s = model_scale;
+    char name[48];
+    snprintf(name,sizeof(name),"spring_%i_mushroom",(int)pi);
+    Object* o = new Object();
+    o->name = name;
+    o->SetVisualOnly(true);
+    o->SetMesh(plant_meshes[PLANT_MUSHROOM_BIG]);
+    std::vector<Material> materials = plant_materials[PLANT_MUSHROOM_BIG];
+    o->TakeMaterialNames(materials);
+    float cx = 0.5f * (plant_walk_x0[PLANT_MUSHROOM_BIG] + plant_walk_x1[PLANT_MUSHROOM_BIG]);
+    o->SetPosition(vec3(p.root.x - cx * s,p.base,0.0f));
+    o->SetScale(vec3(s,s,s));
+    blockout_group->AttachChild(o);
+    plant_objects.push_back(o);
+    return o;
 }
 
 //--- Vines --------------------------------------------------------------------------------------
@@ -4058,7 +4402,7 @@ void ApplicationArcher::DrawGrownVines(){
 */
 /*
     Each zone as an outline - four thin bars round its rectangle, a little in front of the blocks so
-    none of them hides an edge. The blockout view's, per cue_plan.md section 8: it is how a zone is
+    none of them hides an edge. The blockout view's, per docs/cue_plan.md section 8: it is how a zone is
     placed and checked by eye. Collide with nothing; drawn only while the blockout is (F2).
 
     Children of blockout_group, made by BuildBlocks - so NewGame destroys them beside the blocks,
@@ -4105,6 +4449,13 @@ void ApplicationArcher::ApplyBlockoutVisibility(){
     //A scenery collider is hidden the way a melted box is, bay or no bay: its model is its look.
     for (size_t i = 0;i < stage.blocks.size() && i < block_objects.size();i++){
         if (stage.blocks[i].f_invisible && block_objects[i]){
+            block_objects[i]->SetVisibility(f_show_blockout);
+        }
+    }
+    //So is a bigtree's arm and cut top, once its pieces are there to be looked at instead.
+    for (size_t i = 0;f_plant_models_ready && i < stage.blocks.size() && i < block_objects.size();i++){
+        int tree = stage.blocks[i].tree;
+        if (tree >= 0 && tree < (int)stage.trees.size() && stage.trees[tree].f_bigtree && block_objects[i]){
             block_objects[i]->SetVisibility(f_show_blockout);
         }
     }
@@ -4828,7 +5179,7 @@ void ApplicationArcher::BuildArcherModel(){
 
         POSITION extraction is left off on every one of them. That is a decision, not an oversight:
         locomotion here is driven by the rules and the animation is slaved to it, which is what a
-        platformer wants (see the caution at the end of animation_plan.md section 7). The root
+        platformer wants (see the caution at the end of docs/animation_plan.md section 7). The root
         TRACK is still resolved, because MeasureClips reads it to find out how fast each clip
         thinks it is moving.
 
@@ -4972,7 +5323,7 @@ void ApplicationArcher::BuildArcherModel(){
 
     That is CLIP_DRAW (Standing_DrawArrow): the bow's grip is chosen so it stands upright, facing
     her forward, at the clip's LAST frame - full draw, the pose the bow is looked at in. Until the
-    rig has a socket bone for the bow (bow_plan.md §8, items 8-9) this one clip decides how the bow
+    rig has a socket bone for the bow (docs/bow_plan.md §8, items 8-9) this one clip decides how the bow
     sits in her hand in every other clip too.
 */
 void ApplicationArcher::BuildBow(){
@@ -5180,6 +5531,12 @@ void ApplicationArcher::MeasureAirClips(){
         return;     //MeasureClipPhases has already said so; no need to say it twice
     }
     Bone* hips = archer_model->FindBone(ARCHER_MODEL_ROOT_BONE);
+    /*
+        NOT the carry (Landing_Hard), which is authored from contact and would be measured wrong:
+        its feet are planted from the first frame, but the toe keeps rolling flatter as she pitches
+        forward over it, so "first within a hair of the lowest" lands at 0.367s - the bottom of the
+        absorb, which entering there would skip. Its entry stays 0.
+    */
     const int LANDINGS[] = { CLIP_LAND_SOFT, CLIP_LAND_HARD };
     for (int i = 0; i < (int)(sizeof(LANDINGS) / sizeof(LANDINGS[0])); i++){
         int index = LANDINGS[i];
@@ -6350,6 +6707,7 @@ void ApplicationArcher::DrawOverlay(void){
         return;
     }
     if (!f_loading && !(title_scene && (main_scene == title_scene))){
+        DrawVision();
         DrawZoneLabel();
         DrawVitalsHud();
         DrawArrowHud();
@@ -6398,7 +6756,7 @@ void ApplicationArcher::DrawOverlay(void){
 
 /*
     The zone she is in, as a small label at the top of the screen - the first thing a zone is used
-    for (bridge_crumble_plan.md, step 1). RENDER THREAD, from DrawOverlay while a level is live.
+    for (docs/bridge_crumble_plan.md, step 1). RENDER THREAD, from DrawOverlay while a level is live.
 
     From the snapshot, like everything else the render thread shows of the rules. Top centre,
     below where ImGui's menu bar sits, so neither covers the other with the panels up; the same
@@ -6431,7 +6789,7 @@ void ApplicationArcher::DrawZoneLabel(){
 }
 
 /*
-    Her heart rate and her exertion, in a small card at the top right - vitals_plan.md. The dot
+    Her heart rate and her exertion, in a small card at the top right - docs/vitals_plan.md. The dot
     swells and brightens on each beat and fades until the next, so the rate can be read without
     the number; the bar is her exertion, going from the moss to amber as she tires. RENDER
     THREAD, from DrawOverlay while a level is live, off the snapshot like the zone label; the
@@ -6490,7 +6848,7 @@ void ApplicationArcher::DrawVitalsHud(){
 }
 
 /*
-    The kind of arrow she will loose, in a card at the bottom right - vine_plan.md section 8. The
+    The kind of arrow she will loose, in a card at the bottom right - docs/vine_plan.md section 8. The
     kind's name large, with a swatch in its colour, and under it every kind with its key, the
     chosen one lit. A change flashes the card's rim for half a second, so a pick made without
     looking down still gets seen. RENDER THREAD, from DrawOverlay while a level is live, off the
@@ -6633,6 +6991,9 @@ void ApplicationArcher::UpdateTitle(InputController* input){
     if (!f_continue){
         return;
     }
+    //The horn on the click itself, so the start is heard the moment it is asked for; the picture
+    //and the title's music go down under it. Once only - a later Escape and continue is a resume.
+    PlayStartHorn();
     //Down to black first; the pass that finds it there makes the switch, above.
     StartFade(FADE_CLOSING);
 }
@@ -6673,6 +7034,49 @@ float ApplicationArcher::FadeAmount() const{
     and fully closed it has shrunk a whole soft edge past nothing, where UIOverlay::AddVignette
     has no clear inside left and the window is black.
 */
+void ApplicationArcher::DrawVision(){
+    if (!f_vision || !overlay || !main_window){
+        return;
+    }
+    int biome;
+    float weight, dx, dy;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        biome = snapshot.biome;
+        weight = snapshot.biome_weight;
+        dx = snapshot.screen_dx;
+        dy = snapshot.screen_dy;
+    }
+    if (biome < 0 || biome >= BIOME_COUNT){
+        return;
+    }
+    //From the jungle's toward this biome's, by how far into it she is.
+    const BiomeVision& from = biome_vision[BIOME_JUNGLE];
+    const BiomeVision& to = biome_vision[biome];
+    const float open = from.open + (to.open - from.open) * weight;
+    const float darkness = from.darkness + (to.darkness - from.darkness) * weight;
+    const float soft_share = from.soft + (to.soft - from.soft) * weight;
+    if (darkness <= 0.002f){
+        return;
+    }
+    /*
+        On the SCENE's rectangle, not the window's: with the panels docked the 3D view is a
+        sub-rectangle of the window (Renderer::viewport_*, y from the bottom), and a vignette
+        centred on the window would sit off to one side of her. The fade needs none of this - it
+        blacks out the lot.
+    */
+    const float w = renderer ? (float)renderer->GetViewportWidth() : (float)main_window->width;
+    const float h = renderer ? (float)renderer->GetViewportHeight() : (float)main_window->height;
+    const float left = renderer ? (float)renderer->viewport_x : 0.0f;
+    const float top = renderer ? (float)(renderer->height - renderer->viewport_y) - h : 0.0f;
+    const float soft = std::max(8.0f,h * soft_share);
+    //The fade's shape (DrawScreenFade), at `open` of its fully open size.
+    const vec2 half(w * 0.5f * 1.42f * open,h * 0.5f * 1.42f * open);
+    const vec2 centre(left + w * 0.5f + dx * h,top + h * 0.5f - dy * h);
+    const uint8_t alpha = (uint8_t)(std::min(1.0f,darkness) * 255.0f + 0.5f);
+    overlay->AddVignette(centre,half,std::min(half.x,half.y),soft,UIColor(0,0,0,alpha));
+}
+
 void ApplicationArcher::DrawScreenFade(){
     const float amount = FadeAmount();
     if (amount <= 0.0f || !overlay || !main_window){
@@ -6742,14 +7146,15 @@ void ApplicationArcher::SetupLights(){
         DirectionalLight* fill = new DirectionalLight();
         fill->name = "Fill";
         fill->SetVisualOnly(true);
-        fill->SetPosition(vec3(18.0f,8.0f,26.0f));
-        fill->SetLookAt(vec3(0.0f,3.0f,0.0f));
+        //Moved with the view like the sun (FollowView): it casts the shadow whenever the sun is hidden.
+        fill->SetPosition(FILL_OFFSET);
+        fill->SetLookAt(vec3(0.0f,0.0f,0.0f));
         fill->color = vec3(0.48f,0.62f,1.0f);
         fill->brightness = 1.2f;
         fill->f_casts_shadow = false;
         fill->viewport.zoom = 30.0f;
         main_scene->AddObject(fill);
-        fill_light = fill;              //kept so the range scene can share it
+        fill_light = fill;              //kept so the range scene can share it, and PlaceCamera moves it
     }
 }
 
@@ -6780,7 +7185,7 @@ void ApplicationArcher::SetupCamera(){
 //--- The other scenes ---------------------------------------------------------------------------
 
 /*
-    A test level as a scene of its own - the range (bow_plan.md section 7) and the rope test - see
+    A test level as a scene of its own - the range (docs/bow_plan.md section 7) and the rope test - see
     the note on ArcherLevel.
 
     BUILT BY RUNNING THE SAME BUILDERS AGAIN with the level swapped in, rather than by a second set
@@ -8446,6 +8851,9 @@ void ApplicationArcher::RunSimulationTick(void){
         landing_forecast_us = (float)std::chrono::duration<double,std::micro>(
                                   std::chrono::steady_clock::now() - t0).count();
     }
+    //And the push itself, for the same reason: whether a hard landing rolls on or stops is the
+    //player's to say, and the rules' state only has the speed a flight has carried.
+    move_intent = intent.move_axis;
     /*
         And the same forecast for the cues, every tick of a flight: `landing_ahead`, with `in` the
         ticks until touchdown, the speed it will land at and where. A landing sound that builds to
@@ -8613,7 +9021,7 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     The sound device, the cue table and the output between them.
 
     WHAT THE GAME SOUNDS LIKE IS NOT IN THIS FILE. It is assets/cues/archer.json, which says for
-    each event what plays, how loud, when and what stops it (cue_plan.md; the format is in
+    each event what plays, how loud, when and what stops it (docs/cue_plan.md; the format is in
     core/CueSystem.h). This file only reports what happened - SignalCues and friends.
 
     The cues DECIDE in every build and every situation, and log what they decided: with sound, the
@@ -8666,6 +9074,14 @@ void ApplicationArcher::SetupMusic(){
     f_title_music_paused = false;
     f_world_music_paused = true;
     music_suspense_sent = ARCHER_MUSIC_SUSPENSE_CALM;
+    //The start horn, from the score's own stinger so the score still says which file and how loud.
+    for (const MusicStingerDef& d : score->stingers){
+        if (d.name == "horn"){
+            horn_sound = "music_horn";
+            horn_gain = d.gain * params.master;
+            soundsystem->AppendFile(d.sample.c_str(),horn_sound.c_str());
+        }
+    }
 
     /*
         The table's `music` action, on the WORLD's cues only - the music is the world's, and a
@@ -8758,18 +9174,35 @@ void ApplicationArcher::UpdateMusic(){
         f_title_music_paused = f_title_paused;
     }
     if (f_world_paused != f_world_music_paused){
-        //Her first arrival in the world is the game starting: a horn, once. Posted before the
-        //resume, so it comes in with the music as it fades up rather than over silence.
+        /*
+            The horn has normally sounded already, on the title's continue (UpdateTitle). This is
+            for a world reached some other way - the Scene panel switching straight off the title -
+            which still gets its start, as the music fades up.
+        */
         if (!f_world_paused && !f_world_music_begun){
-            MusicEvent horn;
-            horn.type = MusicEvent::STINGER;
-            horn.name = "horn";
-            world_music.Post(horn);
-            f_world_music_begun = true;
+            PlayStartHorn();
         }
         pause(world_music,f_world_paused);
         f_world_music_paused = f_world_paused;
     }
+#endif
+}
+
+bool ApplicationArcher::PlayStartHorn(){
+#ifdef USE_SOUND
+    if (f_world_music_begun || horn_sound.empty() || !soundsystem){
+        return false;
+    }
+    SoundParams p;
+    p.gain = horn_gain;
+    p.bus = music_bus;
+    p.flags = SOUND_KEEP;           //five seconds long, and the start of the game: not one to lose
+    f_world_music_begun = true;
+    debug->Info("Start horn, on '%s' tick %llu\n",main_scene->name.c_str(),
+                (unsigned long long)main_scene->GetPhysicsTick());
+    return soundsystem->Play(horn_sound.c_str(),p) != SOUND_INVALID_HANDLE;
+#else
+    return false;
 #endif
 }
 
@@ -9036,7 +9469,7 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
         cues->Signal("block_broken",CuePayload().Set("count",(float)events.broken_blocks.size()).Set("x",x));
     }
     //The crumbling stones, one signal per stone: its warning, then its fall. No cue rows yet - the
-    //rattle and the crumble are bridge_crumble_plan.md step 7.
+    //rattle and the crumble are docs/bridge_crumble_plan.md step 7.
     for (int b : events.crumbles_started){
         if (b >= 0 && b < (int)stage.blocks.size()){
             cues->Signal("crumble_started",CuePayload().Set("x",stage.blocks[b].x));
@@ -9056,7 +9489,7 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
     }
     /*
         The bridges: every landing on one, by how hard (the knock and the heavier creak), and a
-        breakable one's warnings, once each - the groan, the crack, the snap. bridge_crumble_plan.md
+        breakable one's warnings, once each - the groan, the crack, the snap. docs/bridge_crumble_plan.md
         section 4 has the sounds they are for; no rows yet.
     */
     for (const StageEvents::BridgeLanding& l : events.bridge_landings){
@@ -9075,7 +9508,7 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
     }
 
     /*
-        The waterfalls' loops (water_plan.md): a `waterfall` scope per StageWater, open while she is
+        The waterfalls' loops (docs/water_plan.md): a `waterfall` scope per StageWater, open while she is
         within earshot, carrying the fall's x. The table's follow does the rest - loudness by how
         far she is from that x, pan by which side of it - re-read every tick as she moves, so the
         loop is steered from here without a parameter.
@@ -9193,7 +9626,7 @@ int ApplicationArcher::SignalFootsteps(){
 }
 
 /*
-    Her breathing and her heartbeat, off Stage::vitals - vitals_plan.md. The RATES are the rules';
+    Her breathing and her heartbeat, off Stage::vitals - docs/vitals_plan.md. The RATES are the rules';
     these two clocks only turn them into signals, one per half-breath and one per beat, never a
     loop, so the rate can change between any two. How loud each is, and whether it is heard at
     all, is the table's: at rest both are signalled and the table keeps them silent.
@@ -10902,14 +11335,14 @@ void ApplicationArcher::SyncArcherView(){
       - It is (standing, or previewing the draw clip): THE STRING FOLLOWS HER HAND - Bow::TrackHand,
         measured off the posed skeleton every tick. Nothing bends and no arrow is on the string
         until her hand gets there, which in Standing_DrawArrow is 0.6s of 1.067 in: she reaches back
-        to the quiver first and carries the arrow over (bow_plan.md §8 item 7).
+        to the quiver first and carries the arrow over (docs/bow_plan.md §8 item 7).
       - It is not (a draw at a run, until the mask layer puts the draw on her upper body): the old
         rule - the bend from draw_ticks and the arrow on the string for the whole draw. Her hand is
         nowhere near the string in a run cycle, so tracking it would show nothing at all until the
         arrow flew, and some feedback beats none.
 
     The rules' POWER is unchanged either way: it is draw_ticks, as Stage::Loose reads it. Making the
-    visible draw and the power agree is the gameplay decision still open (bow_plan.md §8 item 7).
+    visible draw and the power agree is the gameplay decision still open (docs/bow_plan.md §8 item 7).
 
     Physics thread, like every other Sync* beside it, and after the animation pass that posed her
     this tick, so the hand TrackHand reads is the hand on screen. Safe for the usual reason:
@@ -11007,19 +11440,22 @@ void ApplicationArcher::SyncArcherAnimation(){
         ArcherAnimParams params;
         if (anim_source == ANIM_FROM_PANEL){
             params = panel_params;
+            //The panel's speed stands for someone holding the key at it.
+            params.push = (params.ground_speed >= PUPPET_IDLE_SPEED) ? 1.0f : 0.0f;
         }else{
             DescribeArcher(stage,params);
             //The forecast needs this tick's input, which the rules' state does not hold - so it
             //is the app's to hand over, from RunSimulationTick's Stage::PredictLanding.
             params.land_in_ticks = landing_forecast.f_lands ? landing_forecast.ticks : -1;
             params.land_speed = landing_forecast.speed;
+            params.push = move_intent * stage.facing;
         }
         puppet.Tick(params);
 
         /*
             The aim, handed to the model's post-pose override (ArcherModel::ApplyAnimation). The
             TARGET only: the model reads where the posed bow already points (the live neutral,
-            animation_plan.md Step 2) and turns her by the difference. From the SAME params as
+            docs/animation_plan.md Step 2) and turns her by the difference. From the SAME params as
             the clip choice, so the panel's aim slider bends her exactly as the game's aim does.
         */
         archer_model->aim_target_deg = params.aim_deg;
@@ -11840,45 +12276,78 @@ void ApplicationArcher::PlaceCamera(){
 
     //Drag the sun along with the view. The level is 84 units wide and the shadow ortho is 22, so a
     //sun fixed at the origin would leave everything past the first screen unshadowed - and the
-    //fault would look like broken shadows rather than like a light pointed somewhere else.
-    //Held as a pointer rather than looked up by name: this runs every tick, and Scene::FindObject
+    //fault would look like broken shadows rather than like a light pointed somewhere else. The
+    //fill too: it casts the shadow whenever the sun is hidden (see LightFollow).
+    //Held as pointers rather than looked up by name: this runs every tick, and Scene::FindObject
     //is a walk of the whole tree comparing strings.
-    if (sun_light){
-        //Fit the ortho to how much of the level is on screen - see SUN_SHADOW_EXTENT. The side
-        //camera's distance is camera_distance; the orbit keeps its own, as the length to the pivot.
+    {
+        //The side camera's distance is camera_distance; the orbit keeps its own, as the length to
+        //the pivot.
         float distance = view_distance;
         if (camera && camera_mode == ARCHER_CAM_ORBIT){
             distance = (camera->GetPosition() - camera_target).length();
         }
-        sun_light->viewport.zoom = SUN_SHADOW_EXTENT * distance / CAMERA_DISTANCE;
-        //Up close on the turntable that would shrink to under a unit, and the tile's own shadow and
-        //hers on it would be cut off at the edge of the map. Three covers the tile turned any way.
-        if (IsCharacterScene()){
-            sun_light->viewport.zoom = fmaxf(sun_light->viewport.zoom,3.0f);
+        if (sun_follow.f_follow){
+            FollowView(sun_light,sun_follow,distance);
         }
-
-        vec3 target(camera_target.x,camera_target.y,0.0f);
-        sun_light->SetPosition(target + SUN_OFFSET);
-        sun_light->SetLookAt(target);
-
-        /*
-            Snap the light to its own texel grid. It follows an eased camera, so it moves by a
-            fraction of a texel nearly every tick, and every edge in the map is re-rasterised a
-            little differently each time: the shadow's stair steps crawl along its edges while she
-            runs, which is far more visible than the steps themselves. Moving the eye only within
-            the light's image plane, and only by whole texels, keeps every texel boundary nailed to
-            the same place in the world. The direction never changes, so neither does the grid's
-            orientation, and a zoom notch is a single re-snap rather than a continuous shimmer.
-        */
-        float texel = (2.0f * sun_light->viewport.zoom) / sun_light->viewport.width;
-        vec3 left = sun_light->GetLeft();
-        vec3 up = sun_light->GetUp();
-        vec3 eye = sun_light->GetPosition();
-        float l = eye.dot(left);
-        float u = eye.dot(up);
-        eye += left * (roundf(l / texel) * texel - l) + up * (roundf(u / texel) * texel - u);
-        sun_light->SetPosition(eye);
+        if (fill_follow.f_follow){
+            FollowView(fill_light,fill_follow,distance);
+        }
     }
+}
+
+/*
+    A follow's offset as the way the light shines from, and back - what the Lights panel and
+    archer_lights both speak. Degrees. Azimuth 0 is from the camera's side, +90 from the right,
+    180 from behind the level; elevation 90 is overhead, held just short of it, where the look-at's
+    up vector would be degenerate. The distance back is left alone.
+*/
+static void LightAngles(const vec3& offset, float& azimuth, float& elevation){
+    float dist = std::max(0.0001f,offset.length());
+    azimuth = atan2f(offset.x,offset.z) * 180.0f / 3.14159265f;
+    elevation = asinf(std::max(-1.0f,std::min(1.0f,offset.y / dist))) * 180.0f / 3.14159265f;
+}
+
+static vec3 LightOffset(const vec3& offset, float azimuth, float elevation){
+    float dist = std::max(0.0001f,offset.length());
+    float a = azimuth * 3.14159265f / 180.0f;
+    float e = std::max(-89.5f,std::min(89.5f,elevation)) * 3.14159265f / 180.0f;
+    return vec3(cosf(e) * sinf(a),sinf(e),cosf(e) * cosf(a)) * dist;
+}
+
+void ApplicationArcher::FollowView(DirectionalLight* light, const LightFollow& follow, float distance){
+    if (!light){
+        return;
+    }
+    //Fit the ortho to how much of the level is on screen - see SUN_SHADOW_EXTENT.
+    light->viewport.zoom = SUN_SHADOW_EXTENT * distance / CAMERA_DISTANCE;
+    //Up close on the turntable that would shrink to under a unit, and the tile's own shadow and
+    //hers on it would be cut off at the edge of the map. Three covers the tile turned any way.
+    if (IsCharacterScene()){
+        light->viewport.zoom = fmaxf(light->viewport.zoom,3.0f);
+    }
+
+    vec3 target(camera_target.x,camera_target.y,0.0f);
+    light->SetPosition(target + follow.offset);
+    light->SetLookAt(target);
+
+    /*
+        Snap the light to its own texel grid. It follows an eased camera, so it moves by a
+        fraction of a texel nearly every tick, and every edge in the map is re-rasterised a
+        little differently each time: the shadow's stair steps crawl along its edges while she
+        runs, which is far more visible than the steps themselves. Moving the eye only within
+        the light's image plane, and only by whole texels, keeps every texel boundary nailed to
+        the same place in the world. The direction never changes, so neither does the grid's
+        orientation, and a zoom notch is a single re-snap rather than a continuous shimmer.
+    */
+    float texel = (2.0f * light->viewport.zoom) / light->viewport.width;
+    vec3 left = light->GetLeft();
+    vec3 up = light->GetUp();
+    vec3 eye = light->GetPosition();
+    float l = eye.dot(left);
+    float u = eye.dot(up);
+    eye += left * (roundf(l / texel) * texel - l) + up * (roundf(u / texel) * texel - u);
+    light->SetPosition(eye);
 }
 
 /*
@@ -11957,6 +12426,18 @@ void ApplicationArcher::PublishSnapshot(){
     {
         int z = stage.CurrentZone();
         s.zone = (z >= 0) ? stage.zones[z].name : std::string();
+        s.biome = BiomeAt(&stage.biomes,stage.pos.x,stage.pos.y,&s.biome_weight);
+        /*
+            Where she is on screen, for the vision vignette: the side camera looks square-on at
+            camera_target from camera_distance, so the play plane there is 2 d tan(fov/2) high.
+            Near enough under the camera's slight pitch, and without the shake, which moves the
+            picture and the vignette should not chase.
+        */
+        if (camera_mode == ARCHER_CAM_SIDE && !IsCharacterScene()){
+            const float view_h = 2.0f * camera_distance * tanf(CAMERA_FOV * 0.5f * 3.14159265f / 180.0f);
+            s.screen_dx = (stage.pos.x - camera_target.x) / view_h;
+            s.screen_dy = (stage.pos.y - camera_target.y) / view_h;
+        }
         for (const StageZone& zone : stage.zones){
             if (zone.f_area){
                 s.zone_names.push_back(zone.name);
@@ -12486,7 +12967,7 @@ json ApplicationArcher::BuildStateJson(){
         //The camera shake: trauma 0..1 (it decays over camera_tuning.shake_ticks) and how far it
         //has the view moved this tick, in world units. What shakes is the cue table's.
         {"shake",{ {"trauma",s.shake_trauma}, {"dx",s.shake_dx}, {"dy",s.shake_dy} }},
-        //Her body - Stage::vitals, vitals_plan.md: exertion and fear 0..1 and what each is easing
+        //Her body - Stage::vitals, docs/vitals_plan.md: exertion and fear 0..1 and what each is easing
         //toward this tick, and the heart rate in beats a minute. What they sound like is the cues'.
         {"vitals",{ {"exertion",s.vitals.exertion}, {"exertion_target",s.vitals.exertion_target},
                     {"fear",s.vitals.fear}, {"fear_target",s.vitals.fear_target},
@@ -12892,7 +13373,7 @@ void ApplicationArcher::RegisterMCPTools(){
         });
 
     /*
-        The game's reactions as the cues decided them - see CueLog and cue_plan.md. This is how a
+        The game's reactions as the cues decided them - see CueLog and docs/cue_plan.md. This is how a
         replay is compared with another: clear, replay, read, and diff the lines. They are
         CueLog's own lock's, not the simulation's, so this reads them directly. The LIVE level's
         log: each level has its own (see `cues`), and every one lives as long as the app, so a
@@ -12957,7 +13438,7 @@ void ApplicationArcher::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("archer_vitals",
-        "Her body - vitals_plan.md: exertion and fear 0..1, what each is easing toward, and the "
+        "Her body - docs/vitals_plan.md: exertion and fear 0..1, what each is easing toward, and the "
         "heart rate. Pass 'exertion' or 'fear' to HOLD it there (the panel's hold boxes), so the "
         "breathing and the heartbeat can be heard at one level; below 0 lets it go. A hold outlasts "
         "a restart until it is let go.",
@@ -13373,6 +13854,97 @@ void ApplicationArcher::RegisterMCPTools(){
         The panel's debug views, for a caller with no mouse. Plain flags written the way the panel
         writes them - they only choose what is drawn, so there is nothing to hand to the tick.
     */
+    MCPServer::Get()->RegisterTool("archer_lights",
+        "The sun and the cool fill - what the Archer panel's Lights section does. Per light (`sun`, "
+        "`fill`), only the fields given change: `on` (visible), `follow` (carried along with the "
+        "view; off leaves it where it is), `azimuth` and `elevation` in degrees (0 = from the "
+        "camera's side, +90 from the right, 180 from behind; elevation 90 overhead) and "
+        "`brightness`. The renderer draws ONE shadow map, from the first visible directional light "
+        "(the sun, then the fill), and shadows every directional light through it - so turning the "
+        "sun off hands the shadow to the fill. Returns both, and which casts the shadow.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"sun",  {{"type","object"},{"description","on, follow, azimuth, elevation, brightness"}}},
+                {"fill", {{"type","object"},{"description","the same"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            struct Row{ const char* name; DirectionalLight* light; LightFollow* follow; };
+            Row rows[2] = { {"sun",sun_light,&sun_follow}, {"fill",fill_light,&fill_follow} };
+            json result = json::object();
+            for (Row& row : rows){
+                if (!row.light){
+                    continue;
+                }
+                if (args.contains(row.name) && args[row.name].is_object()){
+                    const json& a = args[row.name];
+                    if (a.contains("on") && a["on"].is_boolean()){
+                        row.light->SetVisibility(a["on"].get<bool>());
+                    }
+                    if (a.contains("follow") && a["follow"].is_boolean()){
+                        row.follow->f_follow = a["follow"].get<bool>();
+                    }
+                    if (a.contains("azimuth") || a.contains("elevation")){
+                        float azimuth, elevation;
+                        LightAngles(row.follow->offset,azimuth,elevation);
+                        azimuth = a.value("azimuth",azimuth);
+                        elevation = a.value("elevation",elevation);
+                        row.follow->offset = LightOffset(row.follow->offset,azimuth,elevation);
+                    }
+                    if (a.contains("brightness") && a["brightness"].is_number()){
+                        row.light->brightness = a["brightness"].get<float>();
+                    }
+                }
+                float azimuth, elevation;
+                LightAngles(row.follow->offset,azimuth,elevation);
+                vec3 p = row.light->GetPosition();
+                result[row.name] = json{ {"on",row.light->IsVisible()},{"follow",row.follow->f_follow},
+                                         {"azimuth",azimuth},{"elevation",elevation},
+                                         {"brightness",row.light->brightness},
+                                         {"position",{p.x,p.y,p.z}},{"shadow_extent",row.light->viewport.zoom} };
+            }
+            result["shadow_from"] = (sun_light && sun_light->IsVisible()) ? "sun" :
+                                    (fill_light && fill_light->IsVisible()) ? "fill" : "none";
+            return result;
+        });
+
+    MCPServer::Get()->RegisterTool("archer_vision",
+        "Her field of vision: a vignette centred on her, narrowed by the biome she is in (only the "
+        "cave narrows it so far), under the HUD. `on` turns it off and on; `cave` takes `open` "
+        "(share of the window left clear, 0.1..1), `darkness` (0..1 at its rim) and `soft` (how far "
+        "past the edge that is reached, in window heights). Only the fields given change. Returns "
+        "the settings and the biome she is in with its weight there.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"on",   {{"type","boolean"}}},
+                {"cave", {{"type","object"},{"description","open, darkness, soft"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (args.contains("on") && args["on"].is_boolean()){
+                f_vision = args["on"].get<bool>();
+            }
+            BiomeVision& cave = biome_vision[BIOME_CAVE];
+            if (args.contains("cave") && args["cave"].is_object()){
+                const json& a = args["cave"];
+                cave.open = std::max(0.1f,std::min(1.0f,a.value("open",cave.open)));
+                cave.darkness = std::max(0.0f,std::min(1.0f,a.value("darkness",cave.darkness)));
+                cave.soft = std::max(0.02f,std::min(1.0f,a.value("soft",cave.soft)));
+            }
+            int biome;
+            float weight;
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                biome = snapshot.biome;
+                weight = snapshot.biome_weight;
+            }
+            return json{ {"on",f_vision},
+                         {"cave",{ {"open",cave.open},{"darkness",cave.darkness},{"soft",cave.soft} }},
+                         {"biome",(biome == BIOME_CAVE) ? "cave" : "jungle"},{"weight",weight} };
+        });
+
     MCPServer::Get()->RegisterTool("archer_debug_view",
         "Turn the debug views on or off; only the fields given change. `collider`: draw her physics "
         "box (green). `rope_links`: draw the rope's rp3d links, which are hidden under the skinned "
@@ -13384,7 +13956,7 @@ void ApplicationArcher::RegisterMCPTools(){
         "field over what the camera sees - arrows coloured by speed (blue still, green the mean "
         "wind, red 2.5x it), grey streamlines from the upwind edge, pink streamlines and circles "
         "for the eddies, orange crosses on the shedding corners; tune it with archer_wind. `edges`: "
-        "the floors' edges on the world level (vine_plan.md section 15) - a white line along each "
+        "the floors' edges on the world level (docs/vine_plan.md section 15) - a white line along each "
         "floor, a drop line down each edge (red a drop she fears, amber past half a unit, grey a "
         "step) with a stub over the drop and a blue bar on a grabbable lip, a green L at each wall's "
         "foot; the numbers are archer_edges. Returns all five.",
@@ -13423,10 +13995,10 @@ void ApplicationArcher::RegisterMCPTools(){
                          {"edges",f_show_edges} };
         });
 
-    //The floors' edges (vine_plan.md section 15), out of the snapshot: the list the debug view draws.
+    //The floors' edges (docs/vine_plan.md section 15), out of the snapshot: the list the debug view draws.
     MCPServer::Get()->RegisterTool("archer_edges",
         "The live level's floors, their edges and the feet of their walls, derived from the blocks "
-        "(vine_plan.md section 15). A SPAN is a floor: x0..x1 at height y, the blocks at each end. "
+        "(docs/vine_plan.md section 15). A SPAN is a floor: x0..x1 at height y, the blocks at each end. "
         "An EDGE is an end where the floor drops away: side +1 means the drop is to the right; "
         "`drop` down to the next floor (100 = none), `wall` the bare face under the lip, "
         "`grabbable` for a ledge's lip. A CORNER is an end where a wall rises instead: side +1 is a "
@@ -13476,7 +14048,7 @@ void ApplicationArcher::RegisterMCPTools(){
         });
 
     /*
-        The wind field (wind_plan.md): its tuning, and a sample at a point. Builds the field if
+        The wind field (docs/wind_plan.md): its tuning, and a sample at a point. Builds the field if
         nothing has yet - the debug view is not the only way in.
     */
     MCPServer::Get()->RegisterTool("archer_wind",
@@ -14507,6 +15079,59 @@ void ApplicationArcher::DrawMusicPanel(){
     ImGui::End();
 }
 
+/*
+    The sun and the fill: on or off, following the view or left where they are, and the way each
+    one shines from - as two angles on the follow's offset (LightAngles), since a slider on an
+    x/y/z offset says nothing about where the light comes FROM. archer_lights is the same over MCP.
+
+    Following off, the angles do nothing and the inspector moves the light instead. RENDER
+    THREAD, under the lock, which PlaceCamera also reads these under.
+*/
+void ApplicationArcher::DrawLightsPanel(){
+    if (!ImGui::CollapsingHeader("Lights")){
+        return;
+    }
+    const char* owner = (sun_light && sun_light->IsVisible()) ? "the sun" :
+                        (fill_light && fill_light->IsVisible()) ? "the fill" : "nothing";
+    ImGui::Text("shadow map from %s",owner);
+    ImGui::SetItemTooltip("The renderer draws ONE shadow map, from the first visible directional light (the sun,\n"
+                          "then the fill), and shadows every directional light through it. Hide the sun and\n"
+                          "the fill's own shadow takes over.");
+    struct Row{ const char* name; DirectionalLight* light; LightFollow* follow; };
+    Row rows[2] = { {"sun",sun_light,&sun_follow}, {"fill",fill_light,&fill_follow} };
+    for (Row& row : rows){
+        if (!row.light){
+            continue;
+        }
+        ImGui::PushID(row.name);
+        ImGui::SeparatorText(row.name);
+        bool f_visible = row.light->IsVisible();
+        if (ImGui::Checkbox("on",&f_visible)){
+            row.light->SetVisibility(f_visible);
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("follow the view",&row.follow->f_follow);
+        ImGui::SetItemTooltip("Carried along with the camera's target, pointing the way set below. Off, the light\n"
+                              "stays where it is and the inspector moves it.");
+        float azimuth, elevation;
+        LightAngles(row.follow->offset,azimuth,elevation);
+        ImGui::BeginDisabled(!row.follow->f_follow);
+        bool f_moved = ImGui::SliderFloat("azimuth",&azimuth,-180.0f,180.0f,"%.0f deg");
+        ImGui::SetItemTooltip("0 from the camera's side, +90 from the right, -90 from the left, 180 from behind");
+        f_moved |= ImGui::SliderFloat("elevation",&elevation,-10.0f,90.0f,"%.0f deg");
+        ImGui::EndDisabled();
+        if (f_moved){
+            row.follow->offset = LightOffset(row.follow->offset,azimuth,elevation);
+        }
+        ImGui::SliderFloat("brightness",&row.light->brightness,0.0f,12.0f,"%.2f");
+        ImGui::PopID();
+    }
+    if (ImGui::Button("reset directions")){
+        sun_follow = LightFollow{true,SUN_OFFSET};
+        fill_follow = LightFollow{true,FILL_OFFSET};
+    }
+}
+
 void ApplicationArcher::DrawImGuiUI(void){
     //Before the dockspace, so the dock is laid out under the bar rather than behind it.
     RenderDebugMenuBar();
@@ -14559,7 +15184,7 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::ProgressBar((float)stage.draw_ticks / (float)BOW_DRAW_TICKS,ImVec2(-1,0),"draw");
     //The string as drawn on screen, beside the rules' draw above: with the draw pose on screen it
     //follows her hand, so the two bars disagree until her hand reaches the string. That gap IS the
-    //open timing question in bow_plan.md §8 item 7.
+    //open timing question in docs/bow_plan.md §8 item 7.
     ImGui::ProgressBar(bow_draw_shown,ImVec2(-1,0),f_arrow_nocked ? "string (arrow on)" : "string");
     ImGui::Text("arrows    %i live, %i shot, %i in walls",
                 stage.NumLiveArrows(),stage.arrows_shot,stage.arrows_hit_blocks);
@@ -14605,6 +15230,22 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::SetItemTooltip("Start each level lying down and getting up, controls locked for 3.5 s. "
                           "Takes effect at the next restart.");
 
+    DrawLightsPanel();
+    //Her field of vision, per biome - see BiomeVision. The jungle's is fully open, so only the
+    //biomes that narrow it get sliders.
+    if (ImGui::CollapsingHeader("Vision")){
+        ImGui::Checkbox("vision vignette",&f_vision);
+        static const char* biome_names[BIOME_COUNT] = { "jungle", "cave" };
+        for (int k = BIOME_JUNGLE + 1; k < BIOME_COUNT; k++){
+            ImGui::PushID(k);
+            ImGui::SeparatorText(biome_names[k]);
+            ImGui::SliderFloat("open",&biome_vision[k].open,0.1f,1.0f,"%.2f of the window");
+            ImGui::SliderFloat("darkness",&biome_vision[k].darkness,0.0f,1.0f,"%.2f at the rim");
+            ImGui::SliderFloat("soft",&biome_vision[k].soft,0.02f,0.6f,"%.2f of the height");
+            ImGui::PopID();
+        }
+    }
+
     /*
         THE ZONES, as buttons: one per area of the live level, each putting her at its arrival
         spot - the way to get to a mechanism to test it without playing the level up to it. Read
@@ -14618,7 +15259,7 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::Checkbox("zone label",&f_show_zone_label);
         ImGui::SameLine();
         ImGui::Checkbox("floor edges",&f_show_edges);
-        ImGui::SetItemTooltip("The floors, their edges and wall feet (vine_plan.md 15): red a drop she "
+        ImGui::SetItemTooltip("The floors, their edges and wall feet (docs/vine_plan.md 15): red a drop she "
                               "fears, amber past half a unit, grey a step, blue a grabbable lip, green a "
                               "wall's foot. %i edges, %i feet.",(int)stage.edges.size(),(int)stage.corners.size());
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
@@ -14779,7 +15420,7 @@ void ApplicationArcher::DrawImGuiUI(void){
         }
     }
 
-    //The wind (wind_plan.md). Everything but the show flag is under wind_mutex, for the MCP tool.
+    //The wind (docs/wind_plan.md). Everything but the show flag is under wind_mutex, for the MCP tool.
     if (ImGui::CollapsingHeader("Wind")){
         bool f_show = f_show_wind;
         if (ImGui::Checkbox("show the wind field",&f_show)){

@@ -10,7 +10,7 @@
 /*
     Marching cubes: a sampled scalar field in, a triangle soup out.
 
-    Written for apps/archer's terrain (see apps/archer/terrain_plan.md), but there is nothing
+    Written for apps/archer's terrain (see apps/archer/docs/terrain_plan.md), but there is nothing
     about this file that knows what terrain is - it takes numbers in a box and returns the surface
     where they cross zero. apps/archer/Terrain.cpp is the half that knows about StageBlocks.
 

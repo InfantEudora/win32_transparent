@@ -1,94 +1,104 @@
-       1  waterfall      play  waterfall      gain 0.275 pan -0.50
-     137  bow_tension    play  bow_tension    gain 0.700
-     205  bow_tension    stop  bow_tension
-     205  arrow_leave    play  arrow_leave    gain 1.000
-     205  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.17 from 0.193
-     209  arrow_hit      play  arrow_hit      gain 1.000 pan +0.17
-     249  bow_tension    play  bow_tension    gain 0.700
-     287  bow_tension    stop  bow_tension
-     287  arrow_leave    play  arrow_leave    gain 1.000
-     287  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.17 from 0.193
-     291  arrow_hit      play  arrow_hit      gain 1.000 pan +0.17
-     315  footstep       play  footstep_3     gain 1.000
-     324  jump_takeoff   play  jump_takeoff   gain 0.400
-     324  jump_voice     skip                  (chance)
-     347  jump_landing   play  jump_landing   gain 0.239 from 0.013
-     361  jump_landing   play  jump_landing   gain 0.198 from 0.013
-     369  jump_takeoff   play  jump_takeoff   gain 0.400
-     369  jump_voice     skip                  (chance)
-     383  jump_landing   play  jump_landing   gain 0.177 from 0.013
-     399  footstep       play  footstep_2     gain 0.750
-     399  breath_in      play  breathe_in_2   gain 0.332
-     402  jump_takeoff   play  jump_takeoff   gain 0.400
-     404  breath_in      stop  breathe_in_2
-     404  jump_voice     play  jump_huh_1     gain 0.700
-     432  breath_in      play  breathe_in_1   gain 0.386
-     434  jump_landing   play  jump_landing   gain 0.277 from 0.013
-     459  jump_landing   play  jump_landing   gain 0.259 from 0.013
-     489  breath_out     play  breathe_out_2  gain 0.388
-     527  bow_tension    play  bow_tension    gain 0.700
-     592  bow_tension    stop  bow_tension
-     592  arrow_leave    play  arrow_leave    gain 1.000
-     593  arrow_swoosh   play  arrow_swoosh   gain 0.982 pan +0.46 from 0.010
-     598  breath_in      play  breathe_in_2   gain 0.337
-     608  roots_grow     play  roots_grow     gain 0.296 pan +0.46
-     608  arrow_hit      play  arrow_hit      gain 0.952 pan +0.46
-     658  breath_out     play  breathe_out_1  gain 0.314
-     693  bow_tension    play  bow_tension    gain 0.700
-     727  bow_tension    stop  bow_tension
-     727  arrow_leave    play  arrow_leave    gain 1.000
-     736  arrow_swoosh   play  arrow_swoosh   gain 0.746 pan +0.60 from 0.010
-     751  roots_grow     play  roots_grow     gain 0.228 pan +0.60
-     751  arrow_hit      play  arrow_hit      gain 0.731 pan +0.60
-     920  bow_tension    play  bow_tension    gain 0.700
-     960  bow_tension    stop  bow_tension
-     960  arrow_leave    play  arrow_leave    gain 1.000
-    1027  arrow_swoosh   play  arrow_swoosh   gain 0.142 pan +0.60 from 0.010
-    1042  roots_grow     play  roots_grow     gain 0.045 pan +0.60
-    1042  arrow_hit      play  arrow_hit      gain 0.146 pan +0.60
-    1137  footstep       play  footstep_4     gain 1.000
-    1143  jump_takeoff   play  jump_takeoff   gain 0.400
-    1143  jump_voice     skip                  (chance)
-    1156  heartbeat      play  heartbeat_1    gain 0.556
-    1169  waterfall      stop  waterfall
-    1173  jump_landing   play  jump_landing   gain 0.300 from 0.013
-    1173  breath_in      play  breathe_in_1   gain 0.319
-    1188  jump_takeoff   play  jump_takeoff   gain 0.400
-    1191  breath_in      stop  breathe_in_1
-    1191  jump_voice     play  jump_ha_1      gain 0.700
-    1199  heartbeat      play  heartbeat_2    gain 0.765
-    1209  jump_landing   play  jump_landing   gain 0.142 from 0.013
-    1221  breath_in      play  breathe_in_2   gain 0.385
-    1235  heartbeat      play  heartbeat_1    gain 0.686
-    1248  jump_takeoff   play  jump_takeoff   gain 0.400
-    1248  jump_voice     skip                  (chance)
-    1265  jump_landing   play  jump_landing   gain 0.272 from 0.013
-    1270  heartbeat      play  heartbeat_2    gain 0.618
-    1279  breath_in      play  breathe_in_1   gain 0.436
-    1303  heartbeat      play  heartbeat_1    gain 0.560
-    1333  breath_out     play  breathe_out_3  gain 0.410
-    1336  heartbeat      play  heartbeat_2    gain 0.508
-    1350  kick_shout     skip                  (chance)
-    1360  kick_swing     play  kick_swing     gain 0.800
-    1368  heartbeat      play  heartbeat_1    gain 0.463
-    1381  breath_in      play  breathe_in_2   gain 0.470
-    1401  heartbeat      play  heartbeat_2    gain 0.421
-    1434  heartbeat      play  heartbeat_1    gain 0.384
-    1434  breath_out     play  breathe_out_2  gain 0.436
-    1467  heartbeat      play  heartbeat_2    gain 0.351
-    1470  jump_takeoff   play  jump_takeoff   gain 0.400
-    1471  jump_voice     play  jump_huh_1     gain 0.700
-    1500  heartbeat      play  heartbeat_1    gain 0.413
-    1500  breath_in      play  breathe_in_1   gain 0.482
-    1533  heartbeat      play  heartbeat_2    gain 0.878
-    1552  breath_out     play  breathe_out_3  gain 0.482
-    1564  heartbeat      play  heartbeat_1    gain 0.972
-    1584  waterfall      play  waterfall      gain 0.275 pan -0.50
-    1589  jump_landing   play  jump_landing   gain 0.222 from 0.013
-    1593  heartbeat      play  heartbeat_2    gain 0.958
-    1621  heartbeat      play  heartbeat_1    gain 0.879
-    1648  heartbeat      play  heartbeat_2    gain 0.808
-    1652  breath_in      play  breathe_in_2   gain 0.444
-    1676  heartbeat      play  heartbeat_1    gain 0.742
-    1703  heartbeat      play  heartbeat_2    gain 0.683
-    1706  breath_out     play  breathe_out_1  gain 0.411
+      68  waterfall      play  waterfall      gain 0.275 pan -0.50
+     124  footstep       play  footstep_2     gain 1.000
+     135  footstep       play  footstep_1     gain 1.000
+     167  kick_shout     skip                  (chance)
+     177  kick_swing     play  kick_swing     gain 0.800
+     186  kick_land      play  kick_land      gain 0.800
+     186  kick_shake     act   shake          gain 1.000
+     186  kick_shake     act   rumble         gain 1.000
+     198  breath_in      play  breathe_in_1   gain 0.308
+     266  bow_tension    play  bow_tension    gain 0.700
+     323  bow_tension    stop  bow_tension
+     323  arrow_leave    play  arrow_leave    gain 1.000
+     323  arrow_swoosh   play  arrow_swoosh   gain 0.994 pan +0.01 from 0.160
+     329  bamboo_grow    play  bamboo_grow    gain 0.379 pan +0.01
+     329  arrow_hit      play  arrow_hit      gain 0.960 pan +0.01
+     362  footstep       play  footstep_3     gain 1.000
+     370  jump_takeoff   play  jump_takeoff   gain 0.400
+     370  jump_voice     skip                  (chance)
+     397  jump_landing   play  jump_landing   gain 0.227 from 0.013
+     401  breath_in      play  breathe_in_2   gain 0.375
+     411  footstep       play  footstep_4     gain 1.000
+     458  breath_out     play  breathe_out_2  gain 0.409
+     468  bow_tension    play  bow_tension    gain 0.700
+     564  breath_in      play  breathe_in_1   gain 0.355
+     614  bow_tension    stop  bow_tension
+     614  arrow_leave    play  arrow_leave    gain 1.000
+     614  arrow_swoosh   play  arrow_swoosh   gain 0.998 pan +0.45 from 0.027
+     623  breath_out     play  breathe_out_1  gain 0.330
+     628  arrow_hit      play  arrow_hit      gain 0.998 pan +0.45
+     747  bow_tension    play  bow_tension    gain 0.700
+     916  bow_tension    stop  bow_tension
+     916  arrow_leave    play  arrow_leave    gain 1.000
+     916  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.45 from 0.027
+     930  arrow_hit      play  arrow_hit      gain 1.000 pan +0.45
+    1065  jump_takeoff   play  jump_takeoff   gain 0.400
+    1065  jump_voice     skip                  (chance)
+    1088  jump_landing   play  jump_landing   gain 0.166 from 0.013
+    1113  jump_takeoff   play  jump_takeoff   gain 0.400
+    1113  jump_voice     skip                  (chance)
+    1136  jump_landing   play  jump_landing   gain 0.166 from 0.013
+    1150  footstep       play  footstep_2     gain 1.000
+    1150  breath_in      play  breathe_in_2   gain 0.352
+    1160  waterfall      stop  waterfall
+    1161  footstep       play  footstep_1     gain 1.000
+    1171  footstep       play  footstep_2     gain 1.000
+    1175  heartbeat      play  heartbeat_2    gain 0.330
+    1180  footstep       play  footstep_4     gain 1.000
+    1183  jump_takeoff   play  jump_takeoff   gain 0.400
+    1183  jump_voice     skip                  (chance)
+    1214  breath_in      play  breathe_in_1   gain 0.520
+    1216  jump_landing   play  jump_landing   gain 0.289 from 0.013
+    1217  heartbeat      play  heartbeat_1    gain 0.362
+    1245  jump_landing   play  jump_landing   gain 0.190 from 0.013
+    1255  heartbeat      play  heartbeat_2    gain 0.392
+    1264  breath_out     play  breathe_out_3  gain 0.509
+    1281  jump_takeoff   play  jump_takeoff   gain 0.400
+    1281  jump_voice     skip                  (chance)
+    1292  heartbeat      play  heartbeat_1    gain 0.483
+    1312  breath_in      play  breathe_in_2   gain 0.552
+    1318  jump_landing   play  jump_landing   gain 0.324 from 0.013
+    1327  heartbeat      play  heartbeat_2    gain 0.609
+    1334  jump_takeoff   play  jump_takeoff   gain 0.400
+    1334  jump_voice     skip                  (chance)
+    1360  heartbeat      play  heartbeat_1    gain 0.873
+    1364  breath_in      play  breathe_in_1   gain 0.598
+    1390  heartbeat      play  heartbeat_2    gain 0.960
+    1391  jump_landing   play  jump_landing   gain 0.400 from 0.013
+    1398  land_grunt     play  jump_hardlanding_grunt gain 0.700
+    1398  land_shake     act   shake          gain 0.735
+    1398  land_shake     act   rumble         gain 0.735
+    1400  jump_landing   play  jump_landing   gain 0.400 from 0.013
+    1407  land_grunt     skip  jump_hardlanding_grunt  (group busy)
+    1407  land_shake     act   shake          gain 0.859
+    1407  land_shake     act   rumble         gain 0.859
+    1410  jump_takeoff   play  jump_takeoff   gain 0.400
+    1410  jump_voice     skip                  (chance)
+    1418  heartbeat      play  heartbeat_1    gain 0.970
+    1440  breath_in      play  breathe_in_2   gain 0.648
+    1445  jump_landing   play  jump_landing   gain 0.314 from 0.013
+    1445  heartbeat      play  heartbeat_2    gain 0.903
+    1471  heartbeat      play  heartbeat_1    gain 0.834
+    1485  breath_out     play  breathe_out_1  gain 0.613
+    1497  heartbeat      play  heartbeat_2    gain 0.770
+    1516  jump_landing   play  jump_landing   gain 0.296 from 0.013
+    1523  heartbeat      play  heartbeat_1    gain 0.711
+    1550  heartbeat      play  heartbeat_2    gain 0.655
+    1576  heartbeat      play  heartbeat_1    gain 0.606
+    1576  breath_in      play  breathe_in_1   gain 0.554
+    1602  heartbeat      play  heartbeat_2    gain 0.561
+    1609  bow_tension    play  bow_tension    gain 0.700
+    1625  breath_out     play  breathe_out_2  gain 0.514
+    1629  heartbeat      play  heartbeat_1    gain 0.518
+    1656  heartbeat      play  heartbeat_2    gain 0.479
+    1662  bow_tension    stop  bow_tension
+    1662  arrow_leave    play  arrow_leave    gain 1.000
+    1662  arrow_hit      play  arrow_hit      gain 0.999 pan -0.03
+    1684  heartbeat      play  heartbeat_1    gain 0.442
+    1711  heartbeat      play  heartbeat_2    gain 0.409
+    1725  breath_in      play  breathe_in_2   gain 0.443
+    1739  heartbeat      play  heartbeat_1    gain 0.378
+    1768  heartbeat      play  heartbeat_2    gain 0.349
+    1779  breath_out     play  breathe_out_3  gain 0.411
+    1797  heartbeat      play  heartbeat_1    gain 0.323
+    1827  heartbeat      play  heartbeat_2    gain 0.298

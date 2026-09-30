@@ -209,7 +209,7 @@ void Stage::BuildMainLevel(){
     blocks.push_back({ 46.00f,  2.10f,  2.00f, 2.10f, BLOCK_LEDGE,  true });    //top at 4.2
 
     /*
-        THE ROPE BRIDGE (bridge_crumble_plan.md section 3), up over the first gap: the step, then
+        THE ROPE BRIDGE (docs/bridge_crumble_plan.md section 3), up over the first gap: the step, then
         two floating slabs, then the bridge across to a third above the one-way platform.
 
           step      1.8   x  5 .. 9, the start's
@@ -246,7 +246,7 @@ void Stage::BuildMainLevel(){
     blocks.push_back({ 57.00f,  1.25f,  0.50f, 1.25f, BLOCK_BREAKABLE, true });
 
     /*
-        THE TREE, blocked out (plant_mechanics_plan.md, section 1): the way UP between two slabs
+        THE TREE, blocked out (docs/plant_mechanics_plan.md, section 1): the way UP between two slabs
         that the ground cannot reach - 5.5 and 10.2 against feet that reach 3.20 and hands 5.00.
 
         Three arms, right-left-right, 2.5 apart: each a hop of 2.5 against a 3.2 apex, and the
@@ -269,7 +269,7 @@ void Stage::BuildMainLevel(){
     }
 
     /*
-        THE SPRING PLANTS, blocked out (plant_mechanics_plan.md, section 2), past the tree's high
+        THE SPRING PLANTS, blocked out (docs/plant_mechanics_plan.md, section 2), past the tree's high
         slab: a way up that only TIMING opens, twice.
 
         The pad at x 105, its cap 1.2 up: a plain jump off it reaches 4.4 and the shelf's top is
@@ -315,7 +315,7 @@ void Stage::BuildMainLevel(){
     blocks.push_back({ 129.00f, 12.50f, 4.00f, 0.50f, BLOCK_SOLID,  true });   //canopy, x 125..133, top 13.0
 
     /*
-        THE BRANCHES, blocked out (plant_mechanics_plan.md, section 3): a balance walk, twice.
+        THE BRANCHES, blocked out (docs/plant_mechanics_plan.md, section 3): a balance walk, twice.
 
         The high one runs from the canopy's right end down to a perch, 12 long and 0.6 down: the
         one to cross. The low one is for practice, 2.6 up between two stumps, so going over costs
@@ -336,12 +336,12 @@ void Stage::BuildMainLevel(){
 
     /*
         THE TEST GROUND, x 176..264: flat and empty, past where the level used to end. It is where
-        bridge_crumble_plan.md's pieces are blocked out - the bridges, the stepping stones, the
+        docs/bridge_crumble_plan.md's pieces are blocked out - the bridges, the stepping stones, the
         chase - each added here as it is built, so nothing else in the level has to move for them.
     */
 
     /*
-        THE STEPPING STONES (bridge_crumble_plan.md section 2): a pit 18 wide and 4 deep, x 196..214,
+        THE STEPPING STONES (docs/bridge_crumble_plan.md section 2): a pit 18 wide and 4 deep, x 196..214,
         with four crumble stones across it level with the ground. Each hop is short - 2.4 to 2.9 of
         gap against a running jump's 6.5 - so the stones ask for rhythm, not reach: a stone holds for
         CRUMBLE_SHAKE_TICKS after she lands, so she has to keep going.
@@ -359,7 +359,7 @@ void Stage::BuildMainLevel(){
     blocks.push_back({ 211.00f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone four,  x 210.4..211.6
 
     /*
-        THE CHASE (bridge_crumble_plan.md section 2): a floor of crumble slabs over a second pit,
+        THE CHASE (docs/bridge_crumble_plan.md section 2): a floor of crumble slabs over a second pit,
         x 220..252, that falls away BEHIND her. Stepping onto its first slab enters a trigger that
         starts the group, and from there a slab goes every CHASE_TICKS_PER_UNIT ticks per unit of
         floor - a front at 7.5 a second behind her 9, so a clean run gains on it and a hesitation
@@ -488,7 +488,7 @@ void Stage::BuildMainLevel(){
         See the SOLID-only and append-at-the-end rules in the ARCHER_TEST_BAY note in Stage.h.
     */
     /*
-        The cave's MOUTH: a lip hanging from the roof over the way in (cave_plan.md). This was the
+        The cave's MOUTH: a lip hanging from the roof over the way in (docs/cave_plan.md). This was the
         bay's left-hand wall, the level's end on this side, before the cave went in beyond it;
         still the same block, so no index after it moves. Its underside at 6.0 is clear of her
         head at the top of a full jump (5.0), so she runs and jumps through without a bonk. Deep,
@@ -561,7 +561,7 @@ void Stage::BuildMainLevel(){
     blocks.push_back({ -23.00f, 16.10f, 1.20f, 0.30f, BLOCK_SOLID, true, false, -0.40f, 1.10f }); //over it, bottom 15.8
 
     /*
-        The waterfall (water_plan.md), behind the middle of the ground: over the back wall BEHIND
+        The waterfall (docs/water_plan.md), behind the middle of the ground: over the back wall BEHIND
         the island, into a pool on a shelf 2.6 up, over the shelf's front and away LEFT along the
         gap behind the ground, to the bay's left end - where the cave will be. Between the floater
         under the island (x -31 .. -29) and stone one (-20.5), so neither stands in front of it.
@@ -603,7 +603,7 @@ void Stage::BuildMainLevel(){
 
 #if ARCHER_TEST_BAY
     /*
-        --- The cave, x -66 .. -40 (cave_plan.md) --------------------------------------------------
+        --- The cave, x -66 .. -40 (docs/cave_plan.md) --------------------------------------------------
         Last, after slab four, by the rule above: nothing before them moves.
 
         A FLOOR OF ITS OWN rather than the bay's carried on, and that is to keep the bay as it is:
@@ -642,6 +642,48 @@ void Stage::BuildMainLevel(){
     //The mouth's daylight: the jungle's dressing thins over the first six units in.
     cave.fade_right = 6.0f;
     biomes.push_back(cave);
+
+    /*
+        ON THE ROOF: a tree and a mushroom, the first drawn with the art (docs/plant_mechanics_plan.md,
+        sections 1 and 2) - the one at x 80 stays the blockout. Up from the island by a running
+        jump left onto the roof, then a way up the timing opens and the arms carry on: the tree's
+        first arm, 16.5, is past a plain jump off the roof (feet 14.2, hands 16.0) and off the cap
+        (12.15) too, so only a bounce timed to the cap's rebound reaches it. The pad stands under
+        that arm's tip, so the bounce goes straight up through it. Then the arms as at x 80, 2.5
+        apart right-left-right, and a 2.0 hop from the third onto the cut top at 23.5 - the
+        highest place in the bay, looking out over it.
+
+        No blocks: the arms and the top are the tree's (BuildTrees appends them after every level
+        block, behind the tree at x 80's), and a pad is a spring, so no index the dressing is
+        seeded by moves. stage_test (TestRoofTree) plays the whole way up.
+    */
+    {
+        const float roof_top = ARCHER_CAVE_ROOF_Y + 2.0f;
+        StageTree tree;
+        tree.x = -54.00f;
+        tree.base = roof_top;
+        tree.height = 12.50f;
+        tree.radius = BIGTREE_RADIUS;
+        tree.top_width = BIGTREE_TOP_WIDTH;
+        tree.f_bigtree = true;
+        tree.arms.push_back({ 16.50f,  1.0f, BIGTREE_ARM_RIGHT_LENGTH });
+        tree.arms.push_back({ 19.00f, -1.0f, BIGTREE_ARM_LEFT_LENGTH });
+        tree.arms.push_back({ 21.50f,  1.0f, BIGTREE_ARM_RIGHT_LENGTH });
+        trees.push_back(tree);
+
+        //The same feel as the pad at x 105, which stage_test tuned: only the cap is the mushroom's.
+        StageSpringPlant pad;
+        pad.kind = SPRING_PAD;
+        pad.root = v2(tree.x + 1.90f,roof_top + MUSHROOM_BIG_CAP_TOP);
+        pad.base = roof_top;
+        pad.length = MUSHROOM_BIG_CAP_WIDTH;
+        pad.give = 0.12f;
+        pad.hz = 5.00f;
+        pad.damping = 0.20f;
+        pad.travel = 1.00f;         //down to 0.15 above the roof - a shorter stalk than x 105's
+        pad.f_mushroom = true;
+        spring_plants.push_back(pad);
+    }
 #endif
 }
 
@@ -709,6 +751,20 @@ void Stage::BuildTrees(){
             b.x = t.x + a.side * (t.radius + b.hw);
             b.hh = STAGE_TREE_ARM_HALF_H;
             b.y = a.top - b.hh;
+            b.kind = BLOCK_PLATFORM;
+            b.z = STAGE_TREE_ARM_Z;
+            b.depth = STAGE_TREE_ARM_HALF_DEPTH;
+            blocks.push_back(b);
+        }
+        //Its cut top, if she can stand there: one-way like the arms, so the hop onto it from the
+        //arm below comes up through it rather than bumping her head on it.
+        if (t.top_width > 0.0f){
+            StageBlock b;
+            b.tree = (int)ti;
+            b.hw = t.top_width * 0.5f;
+            b.x = t.x;
+            b.hh = STAGE_TREE_ARM_HALF_H;
+            b.y = t.base + t.height - b.hh;
             b.kind = BLOCK_PLATFORM;
             b.z = STAGE_TREE_ARM_Z;
             b.depth = STAGE_TREE_ARM_HALF_DEPTH;
@@ -1676,7 +1732,7 @@ void Stage::BuildCharacterLevel(){
 }
 
 /*
-    THE SLIDE GALLERY - plant_mechanics_plan.md, "Sliding". Left of the shallow pit, on its floor
+    THE SLIDE GALLERY - docs/plant_mechanics_plan.md, "Sliding". Left of the shallow pit, on its floor
     (y -3), where the rope level's left wall used to stand. Everything here is fixed, so a slide
     that feels wrong is the slide's fault and not a spring's.
 
@@ -1833,7 +1889,7 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
     const ArcherInput& in = (mode == MODE_GETUP) ? no_input : in_raw;
 
     //The floors' edges, if last tick broke a wall or crumbled a stone - the cheap check, see
-    //RefreshEdges. Nothing here reads them yet; the vines and the fear will (vine_plan.md 15).
+    //RefreshEdges. Nothing here reads them yet; the vines and the fear will (docs/vine_plan.md 15).
     if (blocks.size() != edges_blocks || CountAliveBlocks() != edges_alive){
         RebuildEdges();
     }
@@ -1916,7 +1972,7 @@ bool Stage::StandingOn(const StageBlock& b) const{
 }
 
 /*
-    bridge_crumble_plan.md section 2. Whole until she stands on it; then shaking - still holding
+    docs/bridge_crumble_plan.md section 2. Whole until she stands on it; then shaking - still holding
     her - for CRUMBLE_SHAKE_TICKS; then gone. ONCE STARTED IT GOES: stepping off does not stop it,
     which is what makes a row of them a run rather than a walk.
 

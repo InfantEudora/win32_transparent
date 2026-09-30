@@ -19,7 +19,18 @@
     the first agent that dies wedges a file until someone clears it by hand, which is
     exactly the moment nobody wants to be debugging the deconfliction tool. An owner that
     is still working says so by calling anything at all; every call that carries an owner
-    refreshes that owner's whole set.
+    refreshes that owner's whole set, EACH LEASE BY ITS OWN LENGTH.
+
+    That last part is a fix, and the bug it fixes is worth remembering. A refresh used to
+    move every lease to the TTL of whichever call did the refreshing, so an agent that
+    claimed #build for an hour and then edited one file - the hook claims for 300s - had
+    quietly cut its #build to five minutes. The next long build lost it, somebody else took
+    it, and the first agent went on building with no idea. Seen twice on 2026-09-30.
+
+    A lease that goes anyway - expired, or broken by hand - leaves a LostLease behind, which
+    the owner is handed on its next call (TakeLost). Losing a lease is survivable; losing
+    one and carrying on as if it were still held is the failure, and it is silent unless
+    somebody says so. See docs/lock_broker.md section 7.
 
     Every method takes m_lock itself, so callers never hold it - which matters because
     lock_wait polls Claim in a loop and must not sleep inside the mutex.
@@ -31,6 +42,18 @@ struct Lease {
     std::string reason;
     int64_t granted_ms = 0; // steady clock, not wall clock: only differences are ever used
     int64_t expires_ms = 0;
+    int ttl_s = 0;          // this lease's own length, which every renewal restores
+    bool f_auto = false;    // taken implicitly by the PreToolUse hook on a write, not asked for
+};
+
+// A lease that ended without its owner releasing it. Kept until the owner next calls, or
+// until LOST_KEEP_S passes - by then the owner is gone and there is nobody left to tell.
+struct LostLease {
+    std::string key;
+    std::string owner;
+    std::string reason;
+    std::string how;        // "expired" or "broken"
+    int64_t lost_ms = 0;
 };
 
 // One reason a claim was refused. `requested` is what the caller asked for and `held` is
@@ -80,9 +103,13 @@ public:
         so a re-claim after a refresh is not an error.
 
         ttl_seconds is clamped to [TTL_MIN_S, TTL_MAX_S]; pass 0 for TTL_DEFAULT_S.
+
+        f_auto marks the hook's implicit claim on a write. It never downgrades a lease the
+        owner asked for explicitly: editing a file you claimed for an hour must not turn
+        that claim into a five-minute auto one.
     */
     bool Claim(const std::string &owner, const std::vector<std::string> &keys,
-               const std::string &reason, int ttl_seconds,
+               const std::string &reason, int ttl_seconds, bool f_auto,
                std::vector<std::string> *granted_out, std::vector<Conflict> *conflicts_out);
 
     // Releases the named keys held by this owner, or every key it holds when `all` is set.
@@ -91,8 +118,23 @@ public:
     std::vector<std::string> Release(const std::string &owner,
                                      const std::vector<std::string> &keys, bool all);
 
-    // Extends every lease this owner holds. Returns how many.
+    // Extends every lease this owner holds. A ttl_seconds > 0 becomes the new length of
+    // each explicit lease; 0 renews each by its own. Returns how many.
     int Refresh(const std::string &owner, int ttl_seconds);
+
+    /*
+        "This owner is still working." Sent by the hook before every tool call, so that an
+        explicit claim lives as long as its agent is active rather than as long as its agent
+        happens to keep making lock calls - builds and replays make none. Renews explicit
+        leases only: an auto lease is "I just wrote this file", and renewing those on every
+        Read would have a session sit on each file it ever touched until it went quiet.
+        Returns how many explicit leases the owner holds.
+    */
+    int Heartbeat(const std::string &owner);
+
+    // Hands over, and forgets, every lease this owner lost since it last asked, with the
+    // current holder of each key filled into holders_out (empty string where free).
+    std::vector<LostLease> TakeLost(const std::string &owner, std::vector<std::string> *holders_out);
 
     std::vector<Lease> List();
 
@@ -108,13 +150,15 @@ public:
     static const int TTL_DEFAULT_S = 900;
     static const int TTL_MIN_S = 30;
     static const int TTL_MAX_S = 3600;
+    static const int LOST_KEEP_S = 3600;
 
     static int64_t NowMs();
 
 private:
     // Unlocked internals - every caller below already holds m_lock.
     int ReapExpiredLocked(std::vector<Lease> *reaped_out);
-    void TouchLocked(const std::string &owner, int ttl_seconds);
+    void TouchLocked(const std::string &owner, bool f_include_auto);
+    void RecordLostLocked(const Lease &lease, const char *how, int64_t now);
 
     // Does a claim on `a` collide with a lease on `b`? Equal keys collide, and a directory
     // claim collides with everything beneath it in either direction.
@@ -124,6 +168,7 @@ private:
 
     std::mutex m_lock;
     std::vector<Lease> m_leases;
+    std::vector<LostLease> m_lost;
     std::string m_root; // normalised, lowercased, trailing '/', or empty
 };
 

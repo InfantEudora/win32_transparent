@@ -1,6 +1,6 @@
 ---
 name: vine-rope-system
-description: "Vines and the swinging rope share one base - core/Spline (centripetal CR + arc length + rotation-minimising frames) and core/SplineDeform (tile an authored mesh along it); steps 1-2 (static decorative vines) BUILT 2026-09-24, plan in apps/archer/vine_plan.md"
+description: "Vines and the swinging rope share one base - core/Spline (centripetal CR + arc length + rotation-minimising frames) and core/SplineDeform (tile an authored mesh along it); steps 1-2 (static decorative vines) BUILT 2026-09-24, plan in apps/archer/docs/vine_plan.md"
 metadata:
   node_type: memory
   type: project
@@ -12,7 +12,7 @@ Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with
 on it (Deform a tile along it, Derive new curves like a helix wrap, Scatter instances). Vines are
 placed EXPLICITLY for now (generated along terrain features later); most decorative ones static,
 a few may sway; baking all static vines into one mesh is the later cost optimisation.
-Plan and ideas (grip-at-a-point, rope arrow, cutting, drapes) in `apps/archer/vine_plan.md`.
+Plan and ideas (grip-at-a-point, rope arrow, cutting, drapes) in `apps/archer/docs/vine_plan.md`.
 
 BUILT (steps 1-2): `core/Spline`, `core/SplineDeform` (tile along glTF +Z, matching end rings,
 length measured, copies stretched to fit), `apps/archer/Vine.{h,cpp}` (engine-free, in `make
@@ -98,7 +98,7 @@ with a real drop, but only the one she just left, inside the coyote window. Noth
 is approved (order in section 14).
 STEP 1 (arrow kinds) DONE 2026-09-29, details in vine_plan.md step 1: Stage::arrow_kind survives
 Reset (recording state carries it), keys 1-5 + d-pad, DrawArrowHud bottom right, BuildArrowDress
-tints by material index. archer_test.trace rewritten (only her/world parted, cues same).
+tints by material index.
 STEP 2 (SplineDeformParams::grown reveal, cone tip) DONE 2026-09-29, 11 spline_test checks.
 STEP 3 (StageEdge list, apps/archer/StageEdges.cpp) DONE 2026-09-29: rebuilt by Reset,
 KeepBlockLayout and a per-tick live-block COUNT (not the full fingerprint - PredictLanding ticks a
@@ -124,8 +124,7 @@ hug_reach/hug_gap/climb in WalkStrand; "over the lip" only when normal up AND he
 VINE_SPECIES_CREEPER for a vine arrow into a wall/top. In-app test: place x 12.5, hold left 3,
 arrow_2, draw 45 wait false + aim_down 10 -> step's right face (9, 1.49). Next: step 9 withering
 (leaves to LeafSwarm) + growths falling with crumbling blocks. Also done 2026-09-29 on the user's ask:
-the aim only tilts while drawn and returns to neutral after BOW_AIM_RETURN_TICKS of moving; the
-user will re-record archer_test at the end of the day (its target hit was lost).
+the aim only tilts while drawn and returns to neutral after BOW_AIM_RETURN_TICKS of moving.
 2026-09-30 STEP 8b DONE (user asked, before step 9): normal arrow into a WALL grows roots (a
 sideways tuft looked wrong); tops keep the tuft. BAMBOO arrow (ARROW_BAMBOO, key 3):
 VINE_SPECIES_BAMBOO (gravity -3 = up) + GrowBamboo clump (3-5 canes, per-cane gravity so wall
@@ -137,7 +136,7 @@ x 10.7, draw 45 nowait + up 17 -> (15, 6.4). sim_pause takes {"paused":false} to
 lockd broker can restart and drop claims mid-session: re-check lock_list before editing again,
 and never write a held file by script (the hook only guards Edit/Write). Next is still step 9.
 Growth SOUNDS wired 2026-09-30 (user's wavs): vine_grow / bamboo_grow / roots_grow cues, one per
-strike by what grew; roots_grow gain 0.3. archer_test baselines rewritten (only `cues` part moved).
+strike by what grew; roots_grow gain 0.3.
 cue_replay prints "STATE DIFFERENT" in CAPS - grep -i before trusting a --write.
 
 2026-09-26: four big CAVE vines added in the terrain bay (DeclareVines, #if ARCHER_TEST_BAY), two behind her and two in front at z 2+; hanging-start vines need up=+Z; see vine_plan.md "The cave vines".

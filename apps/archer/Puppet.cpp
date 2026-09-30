@@ -214,6 +214,15 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         it is about 1.9 world units a second, the pace Puppet::RollRate is fitted against.
     */
     { "Landing_Roll",        false, true,   false, true,  false, 0.0f, 39.0f / 30.0f },
+    /*
+        THE CARRY: the same hard landing with the key let go (PUPPET_ROLL_PUSH). Starts ON the
+        floor, already crouched - hips at 0.29 rig units on its first frame, against 0.41 for
+        FallingIdle_ToLanding's contact - so there is nothing to enter late and no lead-in, and it
+        is kept out of the toe measurement, which misreads it (ApplicationArcher::MeasureAirClips). Pitches
+        0.18 forward over her feet by 0.6s and back, standing by 1.45s. Nothing extracted: that
+        pitch is the body taking up the speed, not travel, and the rules stop her in three ticks.
+    */
+    { "Landing_Hard",        false, false,  false, false, false },
 };
 
 bool Puppet::IsDrawPose(int clip){
@@ -509,7 +518,7 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         Rising plays Jumping_Up from its measured launch, fitted to the game's rise. Falling loops
         Falling_Idle, which is a held float pose and has nothing to fit. There is no apex clip and
         no landing clip yet, so the fall simply holds until the ground arrives - see the air-set
-        table in animation_plan.md for what that costs and what is still missing.
+        table in docs/animation_plan.md for what that costs and what is still missing.
 
         THE RISE IS FITTED, THE FALL IS NOT, and that asymmetry is real rather than an omission:
         a rise always takes v/g seconds and a fall takes as long as the drop is tall.
@@ -647,7 +656,7 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         /*
             DRAWING WHILE STANDING STILL: the draw's own LEGS on the base.
 
-            Since the upper-body layer (animation_plan.md, Step 2) the draw is carried by the
+            Since the upper-body layer (docs/animation_plan.md, Step 2) the draw is carried by the
             layer in every stance, and this branch only decides what her LEGS do while she stands
             and draws: the draw clip's own, so the standing draw looks exactly as authored - hips
             squaring up included - with the layer sampling the same clip over it. Once she moves,
@@ -868,7 +877,12 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
         settle_ticks--;
         //Taken back by the player. The rules never stopped her moving, so neither does this - bar
         //the roll, which is what moving through a landing looks like; only leaving the ground ends it.
+        //And the carry, which lands still moving by definition: the speed it starts with is what
+        //it absorbs, so only a push - the player asking to move again - takes it back.
         bool f_moved = in.ground_speed >= PUPPET_IDLE_SPEED && settle_clip != CLIP_LAND_ROLL;
+        if (settle_clip == CLIP_LAND_CARRY){
+            f_moved = in.ground_speed >= PUPPET_IDLE_SPEED && in.push != 0.0f;
+        }
         if (f_moved || !in.f_on_ground){
             settle_ticks = 0;
         }
@@ -912,18 +926,23 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
         float impact = -last_vel_y;
         //Already chosen in the air if a lead-in played: that clip is at its contact frame now, and
         //choosing again from a speed read a tick apart could swap it on the tick she touches down.
-        settle_clip = (lead_clip >= 0) ? lead_clip : LandingClipFor(impact);
+        //The roll alone overrides it, as it always has - it has its own touchdown, standing tall.
+        int landing = LandingFor(impact,in.speed,in.push);
+        settle_clip = (lead_clip >= 0 && landing != CLIP_LAND_ROLL) ? lead_clip : landing;
         lead_clip = -1;
         settle_ticks = 0;
         /*
             ON THE MOVE, HARD: the roll, from its touchdown, at the rate that covers the speed she
             landed with. Held for the trimmed clip at that rate, whatever she does with the key.
         */
-        if (RollFor(impact,in.speed) && in.ground_speed >= PUPPET_ROLL_SPEED &&
-            clip_duration[CLIP_LAND_ROLL] > 0.0f){
-            settle_clip = CLIP_LAND_ROLL;
+        if (settle_clip == CLIP_LAND_ROLL){
             roll_rate = RollRate(in.ground_speed);
             settle_ticks = (int)(clip_duration[CLIP_LAND_ROLL] / roll_rate * ARCHER_TPS);
+        }else if (settle_clip == CLIP_LAND_CARRY){
+            //Landing at speed is the carry's whole premise, so the speed test below would never
+            //let it start. Held for the clip from its contact frame, the same count as below.
+            float left = clip_duration[CLIP_LAND_CARRY] - clip_entry[CLIP_LAND_CARRY];
+            settle_ticks = (int)(left * ARCHER_TPS);
         }else if (settle_clip >= 0 && in.ground_speed < PUPPET_IDLE_SPEED){
             //The clip runs from its contact frame, so the part still to play is what is left after
             //it - counting the whole duration would hold the landing long after it had finished.
@@ -944,8 +963,18 @@ int Puppet::LandingClipFor(float speed){
     return -1;
 }
 
-bool Puppet::RollFor(float impact, float speed){
-    return impact >= PUPPET_ROLL_VEL && speed >= PUPPET_ROLL_SPEED;
+bool Puppet::RollFor(float impact, float speed, float push){
+    return impact >= PUPPET_ROLL_VEL && speed >= PUPPET_ROLL_SPEED && push >= PUPPET_ROLL_PUSH;
+}
+
+bool Puppet::CarryFor(float impact, float speed, float push){
+    return impact >= PUPPET_ROLL_VEL && speed >= PUPPET_ROLL_SPEED && push == 0.0f;
+}
+
+int Puppet::LandingFor(float impact, float speed, float push) const{
+    if (RollFor(impact,speed,push) && clip_duration[CLIP_LAND_ROLL] > 0.0f){ return CLIP_LAND_ROLL; }
+    if (CarryFor(impact,speed,push) && clip_duration[CLIP_LAND_CARRY] > 0.0f){ return CLIP_LAND_CARRY; }
+    return LandingClipFor(impact);
 }
 
 float Puppet::RollRate(float ground_speed) const{
@@ -963,10 +992,11 @@ int Puppet::LeadInClip(const ArcherAnimParams& in) const{
         return -1;
     }
     //A roll coming: it has its own touchdown, standing tall, so no reach for the floor before it.
-    if (RollFor(in.land_speed,in.speed) && clip_duration[CLIP_LAND_ROLL] > 0.0f){
+    //The carry starts on the floor, so its measured entry is 0 and the test below says the same.
+    int clip = LandingFor(in.land_speed,in.speed,in.push);
+    if (clip == CLIP_LAND_ROLL){
         return -1;
     }
-    int clip = LandingClipFor(in.land_speed);
     if (clip < 0 || clip_entry[clip] <= 0.0f){
         return -1;      //no landing at all, or one entered at its first frame - nothing to lead in
     }
@@ -1111,7 +1141,7 @@ void Puppet::Tick(const ArcherAnimParams& in){
     }
 
     /*
-        The turnaround, as a yaw slew (animation_plan.md section 7, option 1).
+        The turnaround, as a yaw slew (docs/animation_plan.md section 7, option 1).
 
         She only ever faces +X or -X, so the two targets are 180 degrees apart and there is no
         shortest-arc question to get wrong - but there IS a choice of which way round, and going
@@ -1185,7 +1215,7 @@ void Puppet::Tick(const ArcherAnimParams& in){
 
     /*
         The aim's hold on her body, eased - see aim_weight. From the NOCK, not from the start of the
-        draw: the aim neutral is measured live off the posed bow (animation_plan.md, Step 2), which
+        draw: the aim neutral is measured live off the posed bow (docs/animation_plan.md, Step 2), which
         is only meaningful once the bow is up with an arrow on it. Before that she brings the bow
         up with the animation's own motion.
     */

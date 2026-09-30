@@ -211,8 +211,8 @@ back, so compare replay against replay rather than against the original.
 **Archer's test recording: check it after every change to the game.** Archer replays are
 bit-exact - every tick the same state, in any app, in any order, debug or release
 (`docs/replay_determinism_plan.md`). `apps/archer/recordings/archer_test.rec` is the one kept as
-the test (28 s: running, jumps, kicks, three shots, breathing, heartbeat), with its baselines
-beside it: `archer_test.cues` (the sounds) and `archer_test.trace` (a state hash per tick). After
+the test (29 s: runs, a kick, four shots - one kneeling - a ledge jump, and both bridges with the
+second snapping), with its baselines beside it: `archer_test.cues` (the sounds) and `archer_test.trace` (a state hash per tick). After
 a change, with archer running on port 8768 (claim `#port:8768`):
 
 ```bash
@@ -227,6 +227,12 @@ moves it. Read the diff: if it is what your change should do, rewrite the baseli
 `python tools/cue_replay.py --write archer_test` and check once more; if it is not, you have
 found a side effect. `--detail` gives every object and physics part its own hash to name what
 parted. Older recordings are in `recordings/archive/`, without baselines.
+
+**It deliberately does not cover every feature** - no rope, slides, spring pads, cave, climbing,
+or arrow kinds other than bamboo. It is run after every small change, so it has to stay short
+enough to be worth running; a recording that exercised everything would be too long for that.
+A pass says nothing about a feature it never touches - for those, check by hand or with a
+recording of their own.
 
 **Pause before you measure.** A tool handler holds no lock, so reading a free-running simulation
 races the physics thread. `sim_pause` freezes the simulation while leaving the render loop running
@@ -264,7 +270,12 @@ the session started, or the session predates the registration; restart the sessi
 - Refused? Do other work and come back. Do not edit anyway. The reply names who holds it and why.
 - **Re-read the files after a claim is granted.** The lease reserves the right to edit; it does
   not make a read taken before the lease current.
-- `lock_release` when done.
+- `lock_release` when done. The hook renews your explicit claims before every tool call, so an
+  unreleased `#build` is now held for the rest of your session, not just fifteen minutes.
+- **A tool call refused with `lockd: you have LOST leases` means exactly that.** A claim expired
+  or was broken, and the message says who holds it now. Stop relying on it: re-claim before you
+  build, run or edit on its strength. If a build or app of yours is still running on it, that
+  build or app is now racing whoever took it. The notice is shown once; retrying goes through.
 
 **This is enforced, not just advised.** A `PreToolUse` hook (`.claude/settings.json`) claims the
 target of every `Edit`/`Write` for your session and refuses the write if another agent holds it,
