@@ -1801,6 +1801,8 @@ private:
     //snapshot. Render thread, from DrawOverlay while a level is live.
     void DrawVitalsHud();
     bool f_show_vitals_hud = true;
+    //Under it, with it: the frame rate shown and the rate uncapped by vsync. Render thread.
+    void DrawFrameRateHud(float right, float top, float card_size);
     //Bottom right: the kind of arrow she will loose, and the keys for the others. From the
     //snapshot; render thread. The last kind drawn and the stage tick it changed on are the
     //render thread's own, for the flash a change gets.

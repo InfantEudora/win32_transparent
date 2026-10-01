@@ -63,6 +63,7 @@ Application::Application(){
     tmr_render_loop = new PerfTimer("Render Loop Time");
     tmr_prerender = new PerfTimer("PreRender Time");
     tmr_scene_draw = new PerfTimer("Scene Draw Time");
+    tmr_frame_work = new PerfTimer("Frame Work Time");
 };
 
 int2 Application::GetDisplaySettings(){
@@ -502,6 +503,8 @@ void Application::FrameThreadFunction(Application* app){
     while (app->main_window->f_should_quit == false){
         app->tmr_render_loop->Stop();
         app->tmr_render_loop->Restart();
+        //Stopped in DrawFrame just before the swap - see GetUncappedFramesPerSecond.
+        app->tmr_frame_work->Restart();
         int vsync = app->requested_vsync.exchange(-1);
         if (vsync >= 0){
             app->renderer->SetVSync(vsync != 0);
@@ -511,6 +514,7 @@ void Application::FrameThreadFunction(Application* app){
             app->renderer->Resize(app->main_window->width,app->main_window->height);
         }
         app->DrawFrame();
+        app->CountPresentedFrame();
 
         bool f_minimised = app->main_window->IsMinimized();
         if (f_minimised){
@@ -665,8 +669,66 @@ void Application::DrawFrame(){
         renderer->EndGPUFrame();
     }
 
+    //The frame's work ends here: what follows is the swap, and under vsync the wait for the display.
+    tmr_frame_work->Stop();
+
     //Copy to screen and finish
     main_window->SwapWindowBuffers();
+}
+
+void Application::CountPresentedFrame(){
+    fps_frames++;
+    const double now = (double)std::chrono::duration_cast<std::chrono::microseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch()).count() * 1.0e-6;
+    const int last = (fps_samples - 1 + FPS_SAMPLES) % FPS_SAMPLES;
+    if (fps_samples > 0 && now - fps_sample_s[last] < 0.25){
+        return;
+    }
+    //The oldest sample still held is the one this overwrites: FPS_SAMPLES quarters, a second, ago
+    //once the ring is full, and the very first sample until then.
+    const int slot = fps_samples % FPS_SAMPLES;
+    const int oldest = (fps_samples >= FPS_SAMPLES) ? slot : 0;
+    if (fps_samples > 0){
+        const double dt = now - fps_sample_s[oldest];
+        if (dt > 0.0){
+            fps_presented = (float)((double)(fps_frames - fps_sample_frames[oldest]) / dt);
+        }
+    }
+    fps_sample_frames[slot] = fps_frames;
+    fps_sample_s[slot] = now;
+    fps_samples++;
+}
+
+double Application::GetFrameWorkUs() const{
+    return tmr_frame_work ? tmr_frame_work->avg : 0.0;
+}
+
+double Application::GetFrameGPUUs() const{
+    if (!renderer){
+        return 0.0;
+    }
+    double total = 0.0;
+    for (int i = 0; i < Renderer::GPU_PASS_COUNT; i++){
+        const Renderer::GPUPassTimer* pass = renderer->GetGPUPassTimer(i);
+        if (pass && pass->timer){
+            total += pass->timer->avg;
+        }
+    }
+    return total;
+}
+
+float Application::GetUncappedFramesPerSecond() const{
+    //Not from an old number: a stale pass would put what it used to cost into the GPU half.
+    if (renderer){
+        for (int i = 0; i < Renderer::GPU_PASS_COUNT; i++){
+            const Renderer::GPUPassTimer* pass = renderer->GetGPUPassTimer(i);
+            if (pass && pass->f_stale){
+                return 0.0f;
+            }
+        }
+    }
+    const double busiest = std::max(GetFrameWorkUs(),GetFrameGPUUs());
+    return (busiest > 0.0) ? (float)(1.0e6 / busiest) : 0.0f;
 }
 
 /*

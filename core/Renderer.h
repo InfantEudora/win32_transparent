@@ -168,7 +168,59 @@ class Renderer{
     //passes and the occluder field. Objects with f_casts_shadow false are left out of the instance
     //list for those, and only those, so clearing that flag removes an object's shadow without
     //removing the object. See Object::f_casts_shadow.
-    void RenderUniqueMeshes(int normal_or_skinned, int custom_shader_index = -1, bool f_occluder_pass = false);
+    //`f_camera_cull`: leave out the objects ComputeViewCull found outside the camera's frustum, when
+    //f_frustum_cull is on. Only the passes drawn FROM the camera may pass it - see f_frustum_cull.
+    void RenderUniqueMeshes(int normal_or_skinned, int custom_shader_index = -1, bool f_occluder_pass = false,
+                            bool f_camera_cull = false);
+
+    /*
+        FRUSTUM CULLING - a MEASURING PROTOTYPE (2026-09-30), off by default; see
+        docs/frustum_culling_investigation.md for what it measured and the design it is not.
+
+        ComputeViewCull tests each normal mesh's local AABB (Mesh::HasBounds) as a sphere, carried
+        through the object's world matrix, against the six planes of camera->mat_cam, padded for
+        vertex-shader wind. With f_frustum_cull on, the colour pass and the G-buffer pass leave the
+        outside ones out of their instance lists. The SHADOW pass never does: its volume is the
+        light's, and a caster off-screen still throws a shadow onto it. Skinned, line and
+        custom-shader meshes are always drawn.
+
+        It runs only while culling is on or someone has asked for the counts (RequestCullStats, a
+        couple of seconds' worth of frames) - it costs 0.2-0.3 ms for archer's ~4,400 objects.
+    */
+    std::atomic<bool> f_frustum_cull{false};
+    struct CullStats{
+        int   objects = 0;              //normal-mesh objects this frame
+        int   inside = 0;               //...of them in the frustum (or without bounds)
+        int   meshes = 0;               //unique normal meshes - one draw call each per pass
+        int   meshes_inside = 0;        //...with at least one instance inside
+        long long vertices = 0;         //every instance's vertices, the vertex shader's work
+        long long vertices_inside = 0;
+        float us = 0.0f;                //what ComputeViewCull itself cost, this frame
+        bool  f_valid = false;          //false until a frame has computed them
+    };
+    //Any thread: the last frame's counts, copied under their lock.
+    CullStats GetCullStats() const;
+    //Any thread: compute the counts for the next `frames` frames even with culling off.
+    void RequestCullStats(int frames){ cull_stats_frames = frames; }
+    void ComputeViewCull(Camera* camera);
+
+    /*
+        RENDER SWITCHES (2026-09-30, docs/frustum_culling_investigation.md) - requests from any
+        thread, applied by the render thread at the start of its next frame, like the render scale.
+
+          RequestAASamples(n)     the MSAA sample count: 4 by default (Init says why), 16, or 1
+                                  for off. The MSAA buffers are rebuilt, as the panel's slider does.
+          RequestOpaqueBlend(on)  blending while the colour pass draws the NORMAL meshes. OFF by
+                                  default: no opaque asset uses alpha, so it only made every
+                                  opaque fragment a read-modify-write. It measured free either way
+                                  and changed no pixel, so it is a switch for an app that does
+                                  put alpha on an ordinary mesh. Lines, skinned, custom-shader,
+                                  overlay and ImGui passes blend as they always did - SetOpenGLState
+                                  leaves GL_BLEND on and only this one draw turns it off.
+    */
+    void RequestAASamples(int samples){ requested_aa_samples = samples; }
+    void RequestOpaqueBlend(bool on){ requested_opaque_blend = on ? 1 : 0; }
+    bool GetOpaqueBlend() const { return f_opaque_blend; }
 
     /*
         Registers a shader for the custom-material pass and returns its INDEX, which is the tag
@@ -713,21 +765,39 @@ class Renderer{
     };
 
     /*
-        Two query objects per pass, used alternately.
+        A RING of GPU_QUERY_RING query objects per pass, issued in order and read back OLDEST
+        FIRST, and only once GL_QUERY_RESULT_AVAILABLE says a result is there - reading one that
+        is not would stall the CPU until the GPU caught up, and destroy the thing being measured.
 
-        Reading a query's result stalls until the GPU has actually finished it, so reading the
-        one just written would sync the CPU to the GPU every frame and destroy the thing being
-        measured. Writing into the slot from TWO frames ago instead means its result has had a
-        whole frame to become available, and the read never waits. Checking availability in
-        BeginGPUPass - right before clobbering the slot - rather than in EndGPUPass also means
-        the rare not-ready-yet case needs no "try again next frame" bookkeeping: the pass simply
-        contributes no sample that frame.
+        HOW DEEP matters, and two was not enough. How long a result takes to come in is how far
+        behind the CPU the GPU is running, and a GPU-bound frame runs behind by the driver's frames
+        in flight - three or more, not one. The ring used to be two slots, reused alternately:
+        coming round to a slot whose query was still in flight, it SKIPPED the sample and started
+        the query over, so a late pass (the colour pass, the resolve, skinning) found its slot
+        unfinished every single time, got no samples at all, and its average froze at whatever it
+        had last read - archer's colour pass read exactly 11838 us for minutes, and a 20 ms frame
+        at the bridges was reported as 7.9 ms of colour (docs/frustum_culling_investigation.md,
+        "The timers go stale").
+
+        Now EndGPUFrame collects, for every pass, each result that has come in, oldest first -
+        results come in the order they were issued - and BeginGPUPass only issues. Only when every
+        slot is still in flight does a pass go untimed for a frame, and it still never waits.
+
+        STALE: a pass that has RUN for GPU_STALE_FRAMES frames without one fresh result is marked
+        f_stale, and its average is not to be believed. renderer_timings says so per pass, the
+        Engine panel marks it, and Application::GetUncappedFramesPerSecond will not build an
+        estimate on it. With the ring this deep it means the GPU is more than six frames behind.
     */
+    static const int GPU_QUERY_RING = 6;
+    static const int GPU_STALE_FRAMES = 30;
     struct GPUPassTimer{
-        GLuint queries[2] = {0,0};
-        int write_index = 0;
-        bool f_has_run[2] = {false,false};
+        GLuint queries[GPU_QUERY_RING] = {};
+        int  oldest = 0;                    //the slot of the oldest query still in flight
+        int  in_flight = 0;                 //ended and not yet read back
+        bool f_query_open = false;          //this pass's query was begun (a full ring skips one)
         bool f_begun_this_frame = false;
+        int  frames_without_sample = 0;     //frames it ran in with no fresh result coming in
+        bool f_stale = false;
         PerfTimer* timer = NULL;        //Microseconds, to match every other timer in the panel
         /*
             The same scope on the CPU's wall clock: how long issuing the pass took, INCLUDING any
@@ -808,6 +878,17 @@ class Renderer{
     std::vector<std::vector<objectid_t>*>unique_mesh_batches;   // An array of arrays containing the object id's per unique mesh, these form batches
 
     std::vector<Object*>renderable_objects;                     // All objects we will render this frame
+    //The frustum-cull prototype's per-frame state - see f_frustum_cull.
+    CullStats cull_stats;
+    mutable std::mutex cull_stats_mutex;
+    std::atomic<int> cull_stats_frames{0};
+    std::vector<uint8_t> outside_view;                          // per renderable_objects entry
+    bool f_cull_this_frame = false;                             // outside_view is this frame's
+    //The render experiments' requests (-1 none) and what is in force.
+    std::atomic<int> requested_aa_samples{-1};
+    std::atomic<int> requested_opaque_blend{-1};
+    bool f_opaque_blend = false;
+    void ApplyExperimentRequests();
     std::vector<Light*>visible_lights;                          // All lights we will use this frame
 
     std::vector<instancedata_t>instancedata;                    // Object data per unique mesh instance

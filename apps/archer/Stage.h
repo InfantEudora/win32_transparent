@@ -695,6 +695,97 @@ struct StageBridge{
 };
 
 /*
+    A SPIDER WEB in a wooden frame - docs/web_plan.md. The rope bridge's chain in two dimensions:
+    NODES (points with a little mass, under gravity) and THREADS between them (springs that pull
+    when stretched past their length and never push), stepped in WEB_SUBSTEPS fixed substeps. In
+    the level plane: it is what she meets walking along x, face on to the camera.
+
+    THE SHAPE, from the declaration as BuildTrees builds arms from a tree: `spokes` from the hub to
+    the frame's opening, ANCHORS where they meet it (they never move), and one thread SPIRALLING
+    out between the spokes for `rings` turns - its nodes where it crosses a spoke, the spoke's own
+    segments between them. Each thread's length is a little short of where it was hung
+    (WEB_PRETENSION), so the web is taut and only sags a little under its own weight; it is
+    settled at build time, like a bridge, so every run starts alike.
+
+    ARROWS (Stage::ThreadArrowThroughWebs): the threads an arrow's segment crosses SNAP, each one
+    taking WEB_SLOW_PER_THREAD of its speed; an arrow left slower than WEB_CATCH_SPEED is CAUGHT,
+    stuck where it stopped and riding the node it stopped at. A snap kicks its two ends along the
+    arrow, so the hole shudders, and its neighbours feel it through the springs.
+
+    THE WALL: the opening is stacked with invisible SOLID blocks, WEB_WALL_SLICE tall (StageBlock::
+    web) - a wall to her, nothing to an arrow. A band of her height clear of HELD threads (Held, in
+    Stage.cpp: still part of the net that spans the frame, not a strand left hanging) and within a
+    jump of the floor opens: its slices go, and any below it stay as a step up into the hole. So a
+    hole low down is walked through, one higher up is jumped into, one too small or too high does
+    nothing. Each slice, once gone, stays gone.
+
+    `x .. h` and the counts are the level's; the rest is built (Stage::AddWeb) and stepped.
+    Collides with nothing in rp3d. The app draws the threads as lines and the frame as boxes.
+*/
+#define WEB_SUBSTEPS            12
+#define WEB_NODE_MASS           0.02f   //in her masses: a web is light, and barely sags
+#define WEB_ARROW_MASS          0.05f   //what a caught arrow hangs on its node - enough to see it droop
+#define WEB_STIFFNESS           300.0f  //a thread's stiffness is this over its length, like silk of one gauge
+#define WEB_THREAD_DAMPING      0.6f    //along each thread, on how fast it is stretching
+#define WEB_AIR_DAMPING         3.0f    //on every node, per second: what lets a shiver die away
+#define WEB_PRETENSION          0.97f   //a thread's length, of where it was hung - taut, not slack
+#define WEB_SETTLE_TICKS        300     //stepped at build, so it starts still
+#define WEB_SLOW_PER_THREAD     0.12f   //of an arrow's speed, per thread it snaps
+#define WEB_CATCH_SPEED         8.0f    //an arrow slower than this after a snap is caught
+#define WEB_SNAP_KICK           2.5f    //the speed a snap gives its two ends, along the arrow
+#define WEB_WALL_SLICE          0.3f    //the wall's slices: her pass band rounds up to these
+#define WEB_PASS_MARGIN         0.1f    //a hole she passes through is this much taller than she is
+/*
+    Threads this low across the bottom of a hole do not stop her: she steps over them. Without it the
+    floor band could never open, since no shot from her bow reaches the last few hand-widths of a
+    web anchored to the ground - the spokes there end at the floor itself.
+*/
+#define WEB_STEP_OVER           0.35f
+#define WEB_MAX_SPOKES          32
+#define WEB_MAX_RINGS           16
+
+struct StageWebThread{
+    int   a = -1;               //nodes
+    int   b = -1;
+    float rest = 0.0f;          //the length it pulls back to
+    bool  f_cut = false;        //snapped: neither spring nor wall
+    bool  f_spoke = false;      //a spoke's segment rather than the spiral's - for the app's colour
+};
+
+//A caught arrow riding the web: Stage::arrows[arrow] is kept at node + offset.
+struct StageWebCatch{
+    int   arrow = -1;
+    int   node = -1;
+    v2    offset;
+    v2    placed;               //where it was put last: an arrow anywhere else is no longer this one
+};
+
+struct StageWeb{
+    //--- The level's ---
+    float x = 0.0f, y = 0.0f;   //the opening's bottom-left corner, in the level plane
+    float w = 3.6f, h = 3.6f;   //and its size
+    int   spokes = 12;
+    int   rings = 6;
+    float hub_x = 0.0f;         //the hub, relative to the opening's centre - often a little off it
+    float hub_y = 0.0f;
+
+    //--- Built, and state, stepped by Stage::TickWebs ---
+    std::vector<v2> p;          //nodes; anchors among them
+    std::vector<v2> v;
+    std::vector<uint8_t> anchor;    //per node: fixed to the frame
+    std::vector<StageWebThread> threads;
+    std::vector<StageWebCatch> caught;
+    int   first_slice = -1;     //its wall's first block in Stage::blocks; slices run up from the bottom
+    int   slices = 0;
+    bool  f_breached = false;   //WebBreached has been reported
+
+    float Right() const { return x + w; }
+    float Top()   const { return y + h; }
+    int   CutCount() const;
+    float Mass(int i) const;    //node i's, a caught arrow's weight included
+};
+
+/*
     THE SLIDE GALLERY, in the rope level - Stage::BuildSlideGallery. Named here so the rules test
     and the level agree on where each hill is without either typing a coordinate.
 */
@@ -804,6 +895,9 @@ struct StageBlock{
     //BLOCK_CRUMBLE: the StageCrumbleGroup that starts it (an index into Stage::crumble_groups), or
     //-1 for a stone that starts under her feet. A group's blocks ignore her standing on them.
     int   crumble_group = -1;
+    //The web whose WALL this is, one slice of it (an index into Stage::webs), or -1. A wall slice
+    //stops her and nothing else: arrows fly through it to meet the threads. See StageWeb.
+    int   web = -1;
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
@@ -1657,6 +1751,37 @@ struct StageEvents{
         v2    at;
     };
     std::vector<BridgeWarning> bridge_warnings;
+
+    //--- Webs (StageWeb) ------------------------------------------------------------------------
+    //Each thread an arrow snapped this tick, where it crossed it - WebThreadCut in docs/web_plan.md.
+    struct WebThreadCut{
+        int   web = -1;
+        int   thread = -1;
+        int   arrow = -1;
+        v2    at;
+    };
+    std::vector<WebThreadCut> web_cuts;
+    //Each arrow that went into a web this tick: how many threads it snapped, and whether it stayed.
+    struct WebHit{
+        int   web = -1;
+        int   arrow = -1;
+        int   threads = 0;
+        bool  f_caught = false;
+        v2    at;                   //where it met the first thread
+    };
+    std::vector<WebHit> web_hits;
+    //A web's wall opening a hole she fits through - the first of them is WebBreached. `y0 .. y1`
+    //is the band that opened; the wall's slices in it are gone (f_alive clear, `slices_opened`).
+    struct WebBreach{
+        int   web = -1;
+        float y0 = 0.0f;
+        float y1 = 0.0f;
+        bool  f_first = false;      //the web's first hole: WebBreached
+    };
+    std::vector<WebBreach> web_breaches;
+    //Wall slices gone this tick, by block index: the app takes their colliders out, as for a
+    //kicked wall, with nothing to burst - the threads were the wall.
+    std::vector<int> web_slices_opened;
 };
 
 /*
@@ -1808,6 +1933,7 @@ public:
     std::vector<StageBranch> branches;
     std::vector<StageRamp>  ramps;
     std::vector<StageBridge> bridges;
+    std::vector<StageWeb> webs;
     std::vector<StageZone>  zones;
     std::vector<StageCrumbleGroup> crumble_groups;
 
@@ -2120,6 +2246,30 @@ private:
     //Before she moves, like the spring plants, so she lands on where it is now.
     void TickBridges();
     void StepBridge(StageBridge& br, float dt);
+public:
+    /*
+        A web in the opening x .. x+w, y .. y+h (see StageWeb): its nodes and threads, settled, and
+        its wall - slices appended to `blocks` now, so call it where the level's blocks are declared
+        and after any that must keep their index. Its beam and posts are the level's to declare.
+        Public so the rules test can hang one where it wants.
+    */
+    void AddWeb(float x, float y, float w, float h, int spokes, int rings, float hub_x, float hub_y);
+private:
+    void StepWeb(StageWeb& web, float dt);
+    //Steps every web and carries its caught arrows. Before she moves, like the bridges.
+    void TickWebs();
+    //An arrow's segment this tick, from -> to, against every web: snaps, slows and catches. True
+    //if it was caught, in which case it is already stuck where it stopped.
+    bool ArrowThroughWebs(int arrow, const v3& from, const v3& to, StageEvents& events);
+    //Opens each web's wall where a band she fits through has come clear. After the arrows.
+    void TickWebWalls(StageEvents& events);
+public:
+    //Threads still holding across the frame: not cut, and not part of a strand left hanging by
+    //one end - see the definition. Per thread. Public for the rules test and the app's colours.
+    void WebHeldThreads(const StageWeb& web, std::vector<uint8_t>& held) const;
+    //Whether the band y0 .. y1 is crossed by no held thread, across the whole opening.
+    bool WebBandClear(const StageWeb& web, const std::vector<uint8_t>& held, float y0, float y1) const;
+private:
     //A trigger - a zone that is not an area - by its edges, with one effect. Returns its index.
     int  AddTrigger(const char* name, float left, float right, float bottom, float top, const StageZoneEffect& effect);
     //A crumble group of the blocks from `first` to the end of `blocks`, in that order, starting

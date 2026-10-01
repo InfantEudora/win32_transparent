@@ -100,6 +100,16 @@ public:
     bool IsLineMesh();
 
     vec3 GetExtents();
+    /*
+        The vertices' local AABB, where it sits and not only how big - a model's origin is wherever
+        it was authored (a tree at its foot, an arm on its trunk's axis), so the extents alone put a
+        bounding volume in the wrong place. Set by SetMeshData, the one way a normal mesh gets its
+        vertices, so it follows every rebuild; false for skinned and line meshes, which do not
+        compute one - a renderer that culls has to treat those as always in view.
+    */
+    bool HasBounds() const { return f_has_bounds; }
+    vec3 GetBoundsMin() const { return bounds_min; }
+    vec3 GetBoundsMax() const { return bounds_max; }
 
     /*
         Shared ownership, by hand-rolled count. Every holder - an Object drawing it, an Asset in the
@@ -154,6 +164,9 @@ private:
     static meshid_t mesh_ids;   //Total amount of different meshes.
     meshid_t id = MESHID_INVALID;
     vec3    extents; //The size an AABB should be to encompass the mesh
+    vec3    bounds_min;
+    vec3    bounds_max;
+    bool    f_has_bounds = false;
     int     num_references = 0; //See Retain/Release.
 };
 

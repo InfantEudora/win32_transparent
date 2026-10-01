@@ -15,7 +15,7 @@
         g++ -std=c++17 -O2 -fno-exceptions -DJSON_NOEXCEPTION -DUSE_SOUND -D_WIN32 \
             -Icore -Icore/physics -Icore/skeleton -I3rdparty -I3rdparty/imgui \
             -I3rdparty/stb_image -I3rdparty/miniz -I3rdparty/reactphysics3d -Iapps/archer \
-            tools/cue_test.cpp core/CueSystem.cpp core/SoundSystem.cpp core/WaveFile.cpp \
+            tools/cue_test.cpp core/CueSystem.cpp core/SoundSystem.cpp core/WaveFile.cpp core/AudioDecode.cpp \
             core/File.cpp core/Debug.cpp core/Debug_win32.cpp core/BinaryAsset.cpp \
             BinaryAssetMemoryEmpty.cpp -Llibs -lthirdparty -lole32 -luser32 \
             -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -o cue_test.exe

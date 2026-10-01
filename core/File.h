@@ -117,9 +117,9 @@ bool ResolveAssetDirectory(const char* name, std::string& out);
     The buffer is one byte longer than `size` and that byte is zero, so it is safe to treat as a C
     string (GLSL source does).
 
-    Returns NULL only if the file could not be read at all - and note that LoadFile treats that as
-    FATAL and exits, so callers that want to handle a missing file gracefully want
-    ReadFileToString instead.
+    Returns NULL if the file could not be found or read, after logging the name and every place it
+    looked. It does not exit (see File.cpp for why), so a caller that checks for NULL can carry on
+    without the asset.
 
     History, because the contract has flipped: before 2026-09-12 a cache hit returned the cache's
     own new[] pointer while the first load returned a fresh calloc, and three callers free()d what
@@ -160,9 +160,13 @@ FileRelease ReleaseFile(const char* filename);
 /*
     Reads a file straight from disk into a string THE CALLER OWNS, with no caching on either side.
 
-    For the two cases LoadFile deliberately does not serve: a file expected to CHANGE between
-    reads (the cache has no way to be told that what it holds is stale), and a file that is
-    allowed to be MISSING - this returns false where LoadFile calls Fatal and exits the process.
+    For a file expected to CHANGE between reads, which LoadFile's cache would keep answering with
+    the first load's bytes. A missing file is a quiet `false`, where LoadFile logs an error.
+
+    DISK ONLY, and that is the trap: an asset baked into the executable is invisible here, so an
+    asset read with this alone is simply missing from a `make ship` build. A reloadable asset wants
+    this first and LoadFile second - CueSystem::LoadTable and MusicScore's ReadAsset both do that.
+    The ship exe played no music for that reason until 2026-09-30.
 
     Prefer LoadFile for anything that is really an asset. This one re-reads and re-allocates every
     single call, which is the point of it.

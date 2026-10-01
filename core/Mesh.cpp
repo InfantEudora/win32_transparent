@@ -217,6 +217,9 @@ void Mesh::SetMeshData(vertex* verts, int vertex_count){
         }
     }
     extents = fmax - fmin;
+    bounds_min = fmin;
+    bounds_max = fmax;
+    f_has_bounds = vertex_count > 0;
 
     GenerateUniqueID();
     InitVBOVAO();

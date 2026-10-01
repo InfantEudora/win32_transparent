@@ -1,5 +1,6 @@
 #include "SoundSystem.h"
 #include "WaveFile.h"
+#include "AudioDecode.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("SoundSystem", DEBUG_INFO);
@@ -246,46 +247,67 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
         return;
     }
 
-    WaveFile wav;
-    if (!wav.LoadWaveFile(filename)){
-        debug->Err("Could not load sound file %s for '%s'\n",filename,handle_name);
-        return;
-    }
-
-    /*
-        16-bit only, and now it says so.
-
-        The OpenAL version picked AL_FORMAT_MONO16 or AL_FORMAT_STEREO16 purely off the channel
-        count and never looked at the bit depth, so an 8-bit or 24-bit wav was handed over as
-        though it were 16-bit and came out as noise. Nothing in the repo is anything but 16-bit,
-        which is why that was never noticed; the check costs one comparison.
-    */
-    const int bits = wav.header ? wav.header->bits_per_sample : 0;
-    if (bits != 16){
-        debug->Err("Sound '%s' (%s) is %i-bit; only 16-bit PCM is supported\n",
-                   handle_name,filename,bits);
-        return;
-    }
-
-    const long data_length = wav.GetDataLength();
-    const int channels = wav.GetNumChannels();
-    const long sample_rate = wav.GetSampleRate();
-    if (!wav.wav_data || data_length <= 0 || channels <= 0 || sample_rate <= 0){
-        debug->Err("Sound '%s' (%s) has no usable audio data\n",handle_name,filename);
-        return;
-    }
-
     SoundBuffer sb;
-    /*
-        COPIED, not borrowed. WaveFile frees its buffer in its destructor and this one goes out of
-        scope at the end of this function, while ma_audio_buffer_ref stores the pointer it is
-        given and reads through it for as long as a voice is playing. Borrowing here would be a
-        use-after-free on the mixer thread, which is about the worst shape a bug can have.
-    */
-    sb.pcm.assign(wav.wav_data, wav.wav_data + data_length);
-    sb.channels = (ma_uint32)channels;
-    sb.sample_rate = (ma_uint32)sample_rate;
-    sb.frame_count = (ma_uint64)(data_length / (channels * 2));   //2 bytes per sample, 16-bit
+
+    //An Ogg Vorbis is decoded to PCM16 here and is then no different from a wav - see
+    //core/AudioDecode.h. Sniffed, not judged by the extension. LoadFile caches, so the wav path
+    //below asking for the same file again reads nothing twice.
+    size_t file_size = 0;
+    const uint8_t* file_data = LoadFile(filename,&file_size);
+    if (IsOggStream(file_data,file_size)){
+        std::vector<int16_t> pcm;
+        int channels = 0, sample_rate = 0;
+        std::string error;
+        if (!DecodeOggVorbis(file_data,file_size,pcm,channels,sample_rate,error)){
+            debug->Err("Sound '%s' (%s): %s\n",handle_name,filename,error.c_str());
+            return;
+        }
+        sb.pcm.assign((const uint8_t*)pcm.data(),(const uint8_t*)(pcm.data() + pcm.size()));
+        sb.channels = (ma_uint32)channels;
+        sb.sample_rate = (ma_uint32)sample_rate;
+        sb.frame_count = (ma_uint64)(pcm.size() / channels);
+    }
+    else{
+        WaveFile wav;
+        if (!wav.LoadWaveFile(filename)){
+            debug->Err("Could not load sound file %s for '%s'\n",filename,handle_name);
+            return;
+        }
+
+        /*
+            16-bit only, and now it says so.
+
+            The OpenAL version picked AL_FORMAT_MONO16 or AL_FORMAT_STEREO16 purely off the channel
+            count and never looked at the bit depth, so an 8-bit or 24-bit wav was handed over as
+            though it were 16-bit and came out as noise. Nothing in the repo is anything but 16-bit,
+            which is why that was never noticed; the check costs one comparison.
+        */
+        const int bits = wav.header ? wav.header->bits_per_sample : 0;
+        if (bits != 16){
+            debug->Err("Sound '%s' (%s) is %i-bit; only 16-bit PCM is supported\n",
+                       handle_name,filename,bits);
+            return;
+        }
+
+        const long data_length = wav.GetDataLength();
+        const int channels = wav.GetNumChannels();
+        const long sample_rate = wav.GetSampleRate();
+        if (!wav.wav_data || data_length <= 0 || channels <= 0 || sample_rate <= 0){
+            debug->Err("Sound '%s' (%s) has no usable audio data\n",handle_name,filename);
+            return;
+        }
+
+        /*
+            COPIED, not borrowed. WaveFile frees its buffer in its destructor and this one goes out of
+            scope at the end of this function, while ma_audio_buffer_ref stores the pointer it is
+            given and reads through it for as long as a voice is playing. Borrowing here would be a
+            use-after-free on the mixer thread, which is about the worst shape a bug can have.
+        */
+        sb.pcm.assign(wav.wav_data, wav.wav_data + data_length);
+        sb.channels = (ma_uint32)channels;
+        sb.sample_rate = (ma_uint32)sample_rate;
+        sb.frame_count = (ma_uint64)(data_length / (channels * 2));   //2 bytes per sample, 16-bit
+    }
     sb.filename = filename;
 
     map_handles[handle_name] = (int)buffers.size();
@@ -298,7 +320,7 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
         total += buffers[i].pcm.size();
     }
     debug->Info("Loaded sound '%s' (%s): %u Hz, %u channels, %llu frames, %zu KB (%zu KB in %zu sounds)\n",
-                handle_name,filename,(ma_uint32)sample_rate,(ma_uint32)channels,
+                handle_name,filename,buffers.back().sample_rate,buffers.back().channels,
                 (unsigned long long)buffers.back().frame_count,buffers.back().pcm.size() / 1024,
                 total / 1024,buffers.size());
 }

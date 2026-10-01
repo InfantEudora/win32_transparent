@@ -1126,12 +1126,31 @@ float Puppet::ClimbTimeAt(float climbed, float& lift) const{
     return climb_times[hi - 1] + (climb_times[hi] - climb_times[hi - 1]) * k;
 }
 
+//On the locomotion ladder? A step between two rungs is handed to the model whole, with no crossfade.
+static bool InLadder(int clip){
+    for (int i = 0; i < PUPPET_LOCOMOTION_COUNT; i++){
+        if (PUPPET_LOCOMOTION[i] == clip){
+            return true;
+        }
+    }
+    return false;
+}
+
 void Puppet::Tick(const ArcherAnimParams& in){
     UpdateAir(in);
     UpdateRope(in);
     UpdateTeeter(in);
     UpdateBranch(in);
     choice = Choose(in);
+
+    //The base's crossfade, for the upper layer to wait out - see base_fade_ticks.
+    if (base_prev_clip >= 0 && choice.clip != base_prev_clip && !(InLadder(choice.clip) && InLadder(base_prev_clip))){
+        base_fade_ticks = PUPPET_BASE_FADE_TICKS;
+        base_fade_from = base_prev_clip;
+    }else if (base_fade_ticks > 0){
+        base_fade_ticks--;
+    }
+    base_prev_clip = choice.clip;
     //The fall pose is eased state, so it goes on here rather than in Choose, which stays pure. Its
     //frame is the hard landing's first: the airborne opening its own lead-in starts from.
     if (fall_weight > 0.0f){
@@ -1175,7 +1194,12 @@ void Puppet::Tick(const ArcherAnimParams& in){
         upper_weight += upper_step;
         if (upper_weight > 1.0f){ upper_weight = 1.0f; }
     }else{
-        upper_weight -= upper_step;
+        //Held while the base is still fading away from a pose this layer covered - see base_fade_ticks.
+        bool f_own_pose = (base_fade_from == upper_latched) ||
+                          (IsDrawPose(base_fade_from) && IsDrawPose(upper_latched));
+        if (base_fade_ticks <= 0 || f_own_pose){
+            upper_weight -= upper_step;
+        }
         if (upper_weight <= 0.0f){
             upper_weight = 0.0f;
             upper_latched = -1;
@@ -1287,6 +1311,7 @@ void Puppet::HashState(StateHash& h) const{
     h.Add(leg_weight); h.Add(leg_lead_deg); h.Add(leg_gravity);
     h.Add(upper_mix); h.Add(upper_xfade_serial); h.Add(upper_from);
     h.Add(upper_prev_clip); h.Add(upper_prev_phase);
+    h.Add(base_fade_ticks); h.Add(base_fade_from); h.Add(base_prev_clip);
     const PuppetChoice& c = choice;
     h.Add(c.clip); h.Add(c.blend_clip); h.Add(c.blend); h.Add(c.blend_phase_offset);
     h.Add(c.rate); h.Add(c.wanted_rate); h.Add(c.start_time); h.Add(c.f_placeholder);
@@ -1328,5 +1353,8 @@ void Puppet::Reset(float facing){
     upper_from = -1;
     upper_prev_clip = -1;
     upper_prev_phase = -1.0f;
+    base_fade_ticks = 0;
+    base_fade_from = -1;
+    base_prev_clip = -1;
     choice = PuppetChoice();
 }

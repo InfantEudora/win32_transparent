@@ -87,8 +87,12 @@ endif
 #---------------------------------------------------------------------------------------
 BUILD_SETTINGS := CONFIG USE_SOUND USE_PHYSICS USE_MCP USE_NET USE_IMGUI BAKE_ASSETS
 
+#An app's OWN knobs, for a target of its own rather than the build - apps/music's `make publish
+#GAME=archer SCORE=jungle` is the one. The app names them in APP_SETTINGS before including this
+#file, so the check above still catches a typo in anything else. Before this existed, that
+#command was refused here, and only the bare `make publish` - on its defaults - ever ran.
 CMDLINE_SETTINGS := $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $v)),$v))
-UNKNOWN_SETTINGS := $(filter-out $(BUILD_SETTINGS),$(CMDLINE_SETTINGS))
+UNKNOWN_SETTINGS := $(filter-out $(BUILD_SETTINGS) $(APP_SETTINGS),$(CMDLINE_SETTINGS))
 
 ifneq ($(UNKNOWN_SETTINGS),)
 $(error not a build setting: $(UNKNOWN_SETTINGS) - this build accepts $(BUILD_SETTINGS), and would otherwise have used the default for whichever of those you meant)
@@ -347,6 +351,8 @@ CFLAGS += -DUSE_SOUND -lole32
 else
 CORE_SRCS_DROP += $(ROOT)/core/SoundSystem.cpp
 CORE_SRCS_DROP += $(ROOT)/core/WaveFile.cpp
+#stb_vorbis, for the Ogg samples the loaders above decode (core/AudioDecode.h).
+CORE_SRCS_DROP += $(ROOT)/core/AudioDecode.cpp
 CORE_SRCS_DROP += $(ROOT)/core/MusicScore.cpp
 CORE_SRCS_DROP += $(ROOT)/core/MusicEngine.cpp
 CORE_SRCS_DROP += $(ROOT)/core/MusicPlayer.cpp

@@ -932,7 +932,7 @@ void ApplicationArcher::Init(void){
         drawn DURING Init - see EnsureOverlay. Everything from here to the end of Init is timed and
         drawn step by step through LoadingStep.
     */
-    main_window->Resize(1440,900);      //16:9; a side-scroller wants width far more than height
+    main_window->Resize(1920,1080);      //16:9; a side-scroller wants width far more than height
     CreateTitleScene();
     EnsureOverlay();
     f_loading = true;
@@ -5269,9 +5269,10 @@ void ApplicationArcher::BuildArcherModel(){
         for a fast platformer - at ARCHER_RUN_SPEED she covers 2.25 units during one, which is
         most of a jump. 0.15s is 9 ticks, still long enough to hide a pose change. This is the
         blunt instrument that step 1 and step 4 replace: per-transition times where a transition
-        still exists, and no transition at all for locomotion.
+        still exists, and no transition at all for locomotion. The Puppet's own constant, because
+        its upper layer waits out exactly this fade - see Puppet::base_fade_ticks.
     */
-    archer_model->animation_transition_time_max = 0.15f;
+    archer_model->animation_transition_time_max = (float)PUPPET_BASE_FADE_TICKS * ARCHER_DT;
 
     /*
         EXCEPT INTO THE RUN-TO-STOP, WHICH HAS TO BE FASTER THAN ITS OWN FIRST BEAT.
@@ -6845,6 +6846,35 @@ void ApplicationArcher::DrawVitalsHud(){
         overlay->AddRect(bar_min,vec2(bar_left + (bar_right - bar_left) * e,bar_max.y),bar_h * 0.5f,
                          (e > 0.6f) ? VITALS_HUD_TIRED : TITLE_BAR_FILL);
     }
+    DrawFrameRateHud(right,line2 + pad + size * 0.3f,size);
+}
+
+/*
+    The frame rate, in a slip under the vitals card and right-aligned to it: the rate being shown,
+    and dimmer beside it the rate the frame's own work would allow without vsync - both core's
+    (Application::GetFramesPerSecond, GetUncappedFramesPerSecond, which say what each is made of).
+    Smaller than the card's text, so it reads as a note rather than as part of her. RENDER THREAD.
+*/
+void ApplicationArcher::DrawFrameRateHud(float right, float top, float card_size){
+    const float size = card_size * 0.72f;
+    const float pad = card_size * 0.45f;
+    char shown[32], uncapped[32];
+    snprintf(shown,sizeof(shown),"%.0f fps",GetFramesPerSecond());
+    //0 is core saying it has no estimate it would stand behind - not yet, or a stale GPU timer.
+    const float unc = GetUncappedFramesPerSecond();
+    if (unc > 0.0f){
+        snprintf(uncapped,sizeof(uncapped),"%.0f uncapped",unc);
+    }else{
+        snprintf(uncapped,sizeof(uncapped),"-- uncapped");
+    }
+    const float gap = size * 0.8f;
+    const float shown_w = overlay->MeasureText(shown,size).x;
+    const float inner_w = shown_w + gap + overlay->MeasureText(uncapped,size).x;
+    const float left = right - inner_w - 2.0f * pad;
+    const float baseline = top + pad * 0.6f + size * 0.85f;
+    overlay->AddRect(vec2(left,top),vec2(right,baseline + pad * 0.8f),size * 0.5f,TITLE_BAND);
+    overlay->AddText(shown,vec2(left + pad,baseline),size,TITLE_TEXT);
+    overlay->AddText(uncapped,vec2(left + pad + shown_w + gap,baseline),size,TITLE_TEXT_DIM);
 }
 
 /*

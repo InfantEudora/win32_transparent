@@ -10,52 +10,52 @@
     "section_order": "cycle",
 
     "beds": [
-        {"name": "eery drone",   "sample": "music/sounds/eery_E4.wav",          "gain_calm": 0.08, "gain_tense": 0.35, "root": "E4", "degree": 7},
-        {"name": "low strings",  "sample": "music/sounds/suspense_strings.wav", "gain_calm": 0.00, "gain_tense": 0.45, "root": "E1", "degree": 7}
+        {"name": "eery drone",   "sample": "music/sounds/eery_E4.ogg",          "gain_calm": 0.08, "gain_tense": 0.35, "root": "E4", "degree": 7},
+        {"name": "low strings",  "sample": "music/sounds/suspense_strings.ogg", "gain_calm": 0.00, "gain_tense": 0.45, "root": "E1", "degree": 7}
     ],
 
     "sections": [
         {
             "name": "canopy",
             "beds": [
-                {"name": "jungle",       "sample": "music/sounds/jungle.wav",           "gain_calm": 0.55, "gain_tense": 0.15, "root": "C#4", "degree": 3},
-                {"name": "wind",         "sample": "music/sounds/desert_wind.wav",      "gain_calm": 0.25, "gain_tense": 0.50},
-                {"name": "flute loop",   "sample": "music/sounds/flute_rain_loop.wav",  "gain_calm": 0.25, "gain_tense": 0.00, "root": "A3", "degree": 0},
-                {"name": "violin drone", "sample": "music/sounds/violin_B3.wav",        "gain_calm": 0.10, "gain_tense": 0.22, "root": "B3", "degree": 0}
+                {"name": "jungle",       "sample": "music/sounds/jungle.ogg",           "gain_calm": 0.55, "gain_tense": 0.15, "root": "C#4", "degree": 3},
+                {"name": "wind",         "sample": "music/sounds/desert_wind.ogg",      "gain_calm": 0.25, "gain_tense": 0.50},
+                {"name": "flute loop",   "sample": "music/sounds/flute_rain_loop.ogg",  "gain_calm": 0.25, "gain_tense": 0.00, "root": "A3", "degree": 0},
+                {"name": "violin drone", "sample": "music/sounds/violin_B3.ogg",        "gain_calm": 0.10, "gain_tense": 0.22, "root": "B3", "degree": 0}
             ],
             "voices": [
-                {"name": "kalimba",      "sample": "music/sounds/kalimba_G3.wav",   "root": "G3",  "low": "D3",  "high": "G4",
+                {"name": "kalimba",      "sample": "music/sounds/kalimba_G3.ogg",   "root": "G3",  "low": "D3",  "high": "G4",
                  "density_calm": 0.35, "density_tense": 0.15, "gain": 0.45, "spread": 0.4},
-                {"name": "kalimba low",  "sample": "music/sounds/kalimba_Fs3.wav",  "root": "F#3", "low": "A2",  "high": "E3",
+                {"name": "kalimba low",  "sample": "music/sounds/kalimba_Fs3.ogg",  "root": "F#3", "low": "A2",  "high": "E3",
                  "density_calm": 0.12, "density_tense": 0.08, "gain": 0.40, "spread": 0.2, "offbeat": 0.1},
-                {"name": "pan flute",    "sample": "music/sounds/panflute_Gs3.wav", "root": "G#3", "low": "E3",  "high": "E4",
+                {"name": "pan flute",    "sample": "music/sounds/panflute_Gs3.ogg", "root": "G#3", "low": "E3",  "high": "E4",
                  "density_calm": 0.08, "density_tense": 0.12, "gain": 0.35, "length_beats": 3, "release_s": 0.8, "offbeat": 0.0},
-                {"name": "high flute",   "sample": "music/sounds/flute_Fs5.wav",    "root": "F#5", "low": "C#5", "high": "A5",
+                {"name": "high flute",   "sample": "music/sounds/flute_Fs5.ogg",    "root": "F#5", "low": "C#5", "high": "A5",
                  "density_calm": 0.03, "density_tense": 0.08, "gain": 0.25, "length_beats": 6, "release_s": 1.5, "offbeat": 0.0}
             ]
         },
         {
             "name": "undergrowth",
             "beds": [
-                {"name": "low wind",      "sample": "music/sounds/low_bass_wind.wav",   "gain_calm": 0.16, "gain_tense": 0.18},
-                {"name": "cemetery wind", "sample": "music/sounds/cemetery_wind.wav",   "gain_calm": 0.12, "gain_tense": 0.25, "fade_s": 4},
-                {"name": "drums",         "sample": "music/sounds/atmos_drums.wav",     "gain_calm": 0.08, "gain_tense": 0.15, "root": "A#1", "degree": 0},
-                {"name": "whistles",      "sample": "music/sounds/creepy_whistles.wav", "gain_calm": 0.00, "gain_tense": 0.60, "root": "A4", "degree": 0}
+                {"name": "low wind",      "sample": "music/sounds/low_bass_wind.ogg",   "gain_calm": 0.16, "gain_tense": 0.18},
+                {"name": "cemetery wind", "sample": "music/sounds/cemetery_wind.ogg",   "gain_calm": 0.12, "gain_tense": 0.25, "fade_s": 4},
+                {"name": "drums",         "sample": "music/sounds/atmos_drums.ogg",     "gain_calm": 0.08, "gain_tense": 0.15, "root": "A#1", "degree": 0},
+                {"name": "whistles",      "sample": "music/sounds/creepy_whistles.ogg", "gain_calm": 0.00, "gain_tense": 0.60, "root": "A4", "degree": 0}
             ],
             "voices": [
-                {"name": "hang low",     "sample": "music/sounds/hang_F3.wav",         "root": "F3", "low": "C3", "high": "C4",
+                {"name": "hang low",     "sample": "music/sounds/hang_F3.ogg",         "root": "F3", "low": "C3", "high": "C4",
                  "density_calm": 0.25, "density_tense": 0.12, "gain": 0.90, "spread": 0.3},
-                {"name": "hang high",    "sample": "music/sounds/hang_G4.wav",         "root": "G4", "low": "D4", "high": "A4",
+                {"name": "hang high",    "sample": "music/sounds/hang_G4.ogg",         "root": "G4", "low": "D4", "high": "A4",
                  "density_calm": 0.12, "density_tense": 0.08, "gain": 0.50, "spread": 0.5, "offbeat": 0.3},
-                {"name": "bass",         "sample": "music/sounds/bass_C2.wav",         "root": "C2", "low": "A1", "high": "E2",
+                {"name": "bass",         "sample": "music/sounds/bass_C2.ogg",         "root": "C2", "low": "A1", "high": "E2",
                  "density_calm": 0.10, "density_tense": 0.18, "gain": 0.30, "spread": 0.0, "offbeat": 0.0, "length_beats": 3, "release_s": 0.8},
-                {"name": "zanka",        "sample": "music/sounds/zanka_D3.wav",        "root": "D3", "low": "A2", "high": "A3",
+                {"name": "zanka",        "sample": "music/sounds/zanka_D3.ogg",        "root": "D3", "low": "A2", "high": "A3",
                  "density_calm": 0.06, "density_tense": 0.10, "gain": 0.30, "length_beats": 2, "release_s": 0.5},
-                {"name": "metallophone", "sample": "music/sounds/metallophone_E6.wav", "root": "E6", "low": "A5", "high": "E6",
+                {"name": "metallophone", "sample": "music/sounds/metallophone_E6.ogg", "root": "E6", "low": "A5", "high": "E6",
                  "density_calm": 0.04, "density_tense": 0.02, "gain": 0.35, "spread": 0.6},
-                {"name": "bamboo flute", "sample": "music/sounds/bamboo_flute_C5.wav", "root": "C5", "low": "A4", "high": "E5",
+                {"name": "bamboo flute", "sample": "music/sounds/bamboo_flute_C5.ogg", "root": "C5", "low": "A4", "high": "E5",
                  "density_calm": 0.03, "density_tense": 0.03, "gain": 0.35, "spread": 0.5, "offbeat": 0.5},
-                {"name": "low string",   "sample": "music/sounds/string_B1.wav",       "root": "B1", "low": "A1", "high": "E2",
+                {"name": "low string",   "sample": "music/sounds/string_B1.ogg",       "root": "B1", "low": "A1", "high": "E2",
                  "density_calm": 0.00, "density_tense": 0.10, "gain": 0.45, "spread": 0.1, "offbeat": 0.0}
             ]
         },
@@ -63,19 +63,19 @@
             "name": "menu",
             "rotation": false,
             "beds": [
-                {"name": "night pad",    "sample": "music/sounds/night_pad_B2.wav",  "gain_calm": 0.16, "gain_tense": 0.10, "root": "B2", "degree": 0, "fade_s": 5},
-                {"name": "frogs",        "sample": "music/sounds/frog_croaks.wav",   "gain_calm": 0.45, "gain_tense": 0.20},
-                {"name": "crickets",     "sample": "music/sounds/crickets.wav",      "gain_calm": 0.90, "gain_tense": 0.40},
-                {"name": "tribal drums", "sample": "music/sounds/tribal_drums.wav",  "gain_calm": 0.30, "gain_tense": 0.45, "fade_s": 1}
+                {"name": "night pad",    "sample": "music/sounds/night_pad_B2.ogg",  "gain_calm": 0.16, "gain_tense": 0.10, "root": "B2", "degree": 0, "fade_s": 5},
+                {"name": "frogs",        "sample": "music/sounds/frog_croaks.ogg",   "gain_calm": 0.45, "gain_tense": 0.20},
+                {"name": "crickets",     "sample": "music/sounds/crickets.ogg",      "gain_calm": 0.90, "gain_tense": 0.40},
+                {"name": "tribal drums", "sample": "music/sounds/tribal_drums.ogg",  "gain_calm": 0.30, "gain_tense": 0.45, "fade_s": 1}
             ],
             "voices": [
-                {"name": "flute",        "sample": "music/sounds/flute_Ds4.wav",  "root": "D#4", "low": "A3", "high": "C5",
+                {"name": "flute",        "sample": "music/sounds/flute_Ds4.ogg",  "root": "D#4", "low": "A3", "high": "C5",
                  "density_calm": 0.10, "density_tense": 0.06, "gain": 0.70, "length_beats": 4, "release_s": 1.5, "offbeat": 0.0, "spread": 0.2},
-                {"name": "hang",         "sample": "music/sounds/hang2_F3.wav",   "root": "F3",  "low": "C3", "high": "C4",
+                {"name": "hang",         "sample": "music/sounds/hang2_F3.ogg",   "root": "F3",  "low": "C3", "high": "C4",
                  "density_calm": 0.20, "density_tense": 0.12, "gain": 0.25, "spread": 0.4},
-                {"name": "kalimba",      "sample": "music/sounds/kalimba_G3.wav", "root": "G3",  "low": "E3", "high": "G4",
+                {"name": "kalimba",      "sample": "music/sounds/kalimba_G3.ogg", "root": "G3",  "low": "E3", "high": "G4",
                  "density_calm": 0.10, "density_tense": 0.05, "gain": 0.40, "spread": 0.5, "offbeat": 0.5},
-                {"name": "guitar",       "sample": "music/sounds/guitar_A2.wav",  "root": "A2",  "low": "E2", "high": "A2",
+                {"name": "guitar",       "sample": "music/sounds/guitar_A2.ogg",  "root": "A2",  "low": "E2", "high": "A2",
                  "density_calm": 0.06, "density_tense": 0.04, "gain": 0.80, "spread": 0.1, "offbeat": 0.0, "length_beats": 4, "release_s": 1.0}
             ]
         },
@@ -83,31 +83,31 @@
             "name": "cave",
             "rotation": false,
             "beds": [
-                {"name": "bass drone",   "sample": "music/sounds/synth_bass_A1.wav",   "gain_calm": 0.10, "gain_tense": 0.14, "root": "A1", "degree": 0, "fade_s": 3},
-                {"name": "rumble",       "sample": "music/sounds/rumble_G2.wav",       "gain_calm": 0.15, "gain_tense": 0.30, "root": "G2", "degree": 7, "fade_s": 4},
-                {"name": "spirit cello", "sample": "music/sounds/spirit_cello_D4.wav", "gain_calm": 0.00, "gain_tense": 0.35, "root": "D4", "degree": 5, "fade_s": 4},
-                {"name": "scary",        "sample": "music/sounds/scary_texture.wav",   "gain_calm": 0.00, "gain_tense": 0.50}
+                {"name": "bass drone",   "sample": "music/sounds/synth_bass_A1.ogg",   "gain_calm": 0.10, "gain_tense": 0.14, "root": "A1", "degree": 0, "fade_s": 3},
+                {"name": "rumble",       "sample": "music/sounds/rumble_G2.ogg",       "gain_calm": 0.15, "gain_tense": 0.30, "root": "G2", "degree": 7, "fade_s": 4},
+                {"name": "spirit cello", "sample": "music/sounds/spirit_cello_D4.ogg", "gain_calm": 0.00, "gain_tense": 0.35, "root": "D4", "degree": 5, "fade_s": 4},
+                {"name": "scary",        "sample": "music/sounds/scary_texture.ogg",   "gain_calm": 0.00, "gain_tense": 0.50}
             ],
             "voices": [
-                {"name": "drip",         "sample": "music/sounds/metallophone_E6.wav", "root": "E6", "low": "A5", "high": "E6",
+                {"name": "drip",         "sample": "music/sounds/metallophone_E6.ogg", "root": "E6", "low": "A5", "high": "E6",
                  "density_calm": 0.06, "density_tense": 0.03, "gain": 0.25, "spread": 0.8, "offbeat": 0.5},
-                {"name": "drip low",     "sample": "music/sounds/hang_G4.wav",         "root": "G4", "low": "D4", "high": "A4",
+                {"name": "drip low",     "sample": "music/sounds/hang_G4.ogg",         "root": "G4", "low": "D4", "high": "A4",
                  "density_calm": 0.08, "density_tense": 0.05, "gain": 0.35, "spread": 0.8, "offbeat": 0.5},
-                {"name": "cello",        "sample": "music/sounds/cello_C2.wav",        "root": "C2", "low": "A1", "high": "E2",
+                {"name": "cello",        "sample": "music/sounds/cello_C2.ogg",        "root": "C2", "low": "A1", "high": "E2",
                  "density_calm": 0.06, "density_tense": 0.12, "gain": 0.45, "spread": 0.0, "offbeat": 0.0, "length_beats": 6, "release_s": 2.0}
             ]
         }
     ],
 
     "stingers": [
-        {"name": "scare 1",   "sample": "music/sounds/scare_1.wav",        "gain": 0.7},
-        {"name": "scare 2",   "sample": "music/sounds/scare_2.wav",        "gain": 0.7},
-        {"name": "harp fall", "sample": "music/sounds/harp_fall.wav",      "gain": 0.6},
-        {"name": "low hit",   "sample": "music/sounds/low_hit.wav",        "gain": 0.6},
-        {"name": "swell",     "sample": "music/sounds/reverse_cymbal.wav", "gain": 0.5},
-        {"name": "horn",      "sample": "music/sounds/war_horn_D2.wav",    "gain": 0.5},
-        {"name": "parrot",    "sample": "music/sounds/parrot.wav",         "gain": 0.6},
-        {"name": "gust",      "sample": "music/sounds/wind_gust.wav",      "gain": 0.4},
-        {"name": "sweep",     "sample": "music/sounds/sweep.wav",          "gain": 0.7}
+        {"name": "scare 1",   "sample": "music/sounds/scare_1.ogg",        "gain": 0.7},
+        {"name": "scare 2",   "sample": "music/sounds/scare_2.ogg",        "gain": 0.7},
+        {"name": "harp fall", "sample": "music/sounds/harp_fall.ogg",      "gain": 0.6},
+        {"name": "low hit",   "sample": "music/sounds/low_hit.ogg",        "gain": 0.6},
+        {"name": "swell",     "sample": "music/sounds/reverse_cymbal.ogg", "gain": 0.5},
+        {"name": "horn",      "sample": "music/sounds/war_horn_D2.ogg",    "gain": 0.5},
+        {"name": "parrot",    "sample": "music/sounds/parrot.ogg",         "gain": 0.6},
+        {"name": "gust",      "sample": "music/sounds/wind_gust.ogg",      "gain": 0.4},
+        {"name": "sweep",     "sample": "music/sounds/sweep.ogg",          "gain": 0.7}
     ]
 }

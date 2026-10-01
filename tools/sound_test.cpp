@@ -14,7 +14,7 @@
     Build (needs no core objects - it compiles the handful of sources it uses):
 
         export PATH="/c/msys64/mingw64/bin:$PATH"
-        g++ -std=c++17 -O2 -fno-exceptions -DUSE_SOUND -D_WIN32             -Icore -Icore/physics -Icore/skeleton -I3rdparty -I3rdparty/imgui             -I3rdparty/stb_image -I3rdparty/miniz -I3rdparty/reactphysics3d             tools/sound_test.cpp core/SoundSystem.cpp core/WaveFile.cpp core/File.cpp             core/Debug.cpp core/Debug_win32.cpp core/BinaryAsset.cpp BinaryAssetMemoryEmpty.cpp             -Llibs -lthirdparty -lole32 -luser32             -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++             -o sound_test.exe
+        g++ -std=c++17 -O2 -fno-exceptions -DUSE_SOUND -D_WIN32             -Icore -Icore/physics -Icore/skeleton -I3rdparty -I3rdparty/imgui             -I3rdparty/stb_image -I3rdparty/miniz -I3rdparty/reactphysics3d             tools/sound_test.cpp core/SoundSystem.cpp core/WaveFile.cpp core/AudioDecode.cpp core/File.cpp             core/Debug.cpp core/Debug_win32.cpp core/BinaryAsset.cpp BinaryAssetMemoryEmpty.cpp             -Llibs -lthirdparty -lole32 -luser32             -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++             -o sound_test.exe
 
     Run it with the asset root as its one argument, from the repo root:
 

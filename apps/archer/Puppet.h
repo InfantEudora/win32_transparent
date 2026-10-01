@@ -406,6 +406,13 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 //And how long the upper-body layer takes to come on and go off. The same 0.1s: the draw's first
 //frames are the arm swinging back to the quiver, which reads fine arriving over six ticks.
 #define PUPPET_UPPER_BLEND_TICKS    6
+/*
+    The base clips' default crossfade - BuildArcherModel sets the model's transition time from this,
+    so the two cannot drift. Named here because the upper layer has to know it: a layer fading out
+    must not uncover the base while the base is still fading away from a pose the layer was hiding
+    (see base_fade_ticks).
+*/
+#define PUPPET_BASE_FADE_TICKS      9
 //The loose legs (Puppet::leg_weight) come on and go off over a quarter second: slower than the
 //arms, because the climb clip hands its feet over to the swing rather than snapping between them.
 #define PUPPET_LEG_BLEND_TICKS      15
@@ -855,6 +862,23 @@ public:
     //so letting go does not snap the arms to whatever the legs are doing.
     float upper_weight = 0.0f;
     int   upper_latched = -1;
+
+    /*
+        THE BASE'S CROSSFADE, as the layer sees it: ticks left of the crossfade from `base_fade_from`
+        that the last change of base clip started, counted from Choose's own changes (a step along
+        the locomotion ladder is carried over whole, and starts none).
+
+        WHY THE LAYER CARES. Fading out, the layer reveals the base - and while the base is still
+        mid-fade from a clip the layer was COVERING, that is the covered pose. Getting up from a
+        kneel was the case found: the kneel clips hold a rifle under the layer, and a layer fading
+        in 6 ticks over a base fading in 9 showed the rifle hold for a moment. So the fade-out
+        waits until the base has settled - for any layer over any base, whatever the base's hands
+        were doing. Not when the base is leaving the layer's own pose (standing, the draw is the
+        base too), which hides nothing and would only make a release linger.
+    */
+    int   base_fade_ticks = 0;
+    int   base_fade_from = -1;
+    int   base_prev_clip = -1;
 
     /*
         THE LOOSE LEGS, 0..1, eased over PUPPET_LEG_BLEND_TICKS: how much of the legs' dynamic chain

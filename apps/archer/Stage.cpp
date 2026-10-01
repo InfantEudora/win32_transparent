@@ -69,6 +69,7 @@ void Stage::Reset(){
     branches.clear();
     ramps.clear();
     bridges.clear();
+    webs.clear();
     zones.clear();
     crumble_groups.clear();
     pending_effects.clear();
@@ -1118,6 +1119,511 @@ void Stage::TickBridges(){
     }
 }
 
+//--- Webs (StageWeb, docs/web_plan.md) -------------------------------------------------------------
+
+int StageWeb::CutCount() const{
+    int n = 0;
+    for (const StageWebThread& t : threads){
+        n += t.f_cut ? 1 : 0;
+    }
+    return n;
+}
+
+float StageWeb::Mass(int i) const{
+    float m = WEB_NODE_MASS;
+    for (const StageWebCatch& c : caught){
+        if (c.node == i){
+            m += WEB_ARROW_MASS;
+        }
+    }
+    return m;
+}
+
+/*
+    The shape - see StageWeb. Node 0 is the hub; then the spiral's nodes, turn by turn, spoke by
+    spoke; then the anchors, one per spoke. The spokes are laid half a step off the axes, so none is
+    flat: an arrow loosed level crosses every spoke it passes rather than running along one.
+
+    The spiral climbs a whole spacing per turn, so each of its nodes sits a little further out than
+    the last: at (turn + 1 + spoke / spokes) / (rings + 1) of the way along its spoke, which keeps
+    the outer turn clear of the frame and the inner one clear of the hub.
+*/
+void Stage::AddWeb(float x, float y, float w, float h, int spokes, int rings, float hub_x, float hub_y){
+    StageWeb web;
+    web.x = x;
+    web.y = y;
+    web.w = w;
+    web.h = h;
+    web.spokes = (spokes < 3) ? 3 : ((spokes > WEB_MAX_SPOKES) ? WEB_MAX_SPOKES : spokes);
+    web.rings = (rings < 1) ? 1 : ((rings > WEB_MAX_RINGS) ? WEB_MAX_RINGS : rings);
+    web.hub_x = hub_x;
+    web.hub_y = hub_y;
+    const int S = web.spokes;
+    const int R = web.rings;
+    const v2 hub(x + w * 0.5f + hub_x,y + h * 0.5f + hub_y);
+
+    //Where each spoke meets the opening's edge: the nearest of the four sides along its ray.
+    std::vector<v2> ends(S);
+    for (int i = 0; i < S; i++){
+        float a = 2.0f * 3.14159265f * ((float)i + 0.5f) / (float)S;
+        float dx = cosf(a), dy = sinf(a);
+        float t = 1e9f;
+        if (dx >  1e-6f) t = fminf(t,(x + w - hub.x) / dx);
+        if (dx < -1e-6f) t = fminf(t,(x - hub.x) / dx);
+        if (dy >  1e-6f) t = fminf(t,(y + h - hub.y) / dy);
+        if (dy < -1e-6f) t = fminf(t,(y - hub.y) / dy);
+        ends[i] = v2(hub.x + dx * t,hub.y + dy * t);
+    }
+    auto spiral = [S](int turn, int spoke){ return 1 + turn * S + spoke; };
+    const int first_anchor = 1 + R * S;
+
+    web.p.push_back(hub);
+    web.anchor.push_back(0);
+    for (int k = 0; k < R; k++){
+        for (int i = 0; i < S; i++){
+            float f = ((float)k + 1.0f + (float)i / (float)S) / (float)(R + 1);
+            web.p.push_back(v2(hub.x + (ends[i].x - hub.x) * f,hub.y + (ends[i].y - hub.y) * f));
+            web.anchor.push_back(0);
+        }
+    }
+    for (int i = 0; i < S; i++){
+        web.p.push_back(ends[i]);
+        web.anchor.push_back(1);
+    }
+    web.v.assign(web.p.size(),v2(0.0f,0.0f));
+
+    auto thread = [&web](int a, int b, bool f_spoke){
+        StageWebThread t;
+        t.a = a;
+        t.b = b;
+        float dx = web.p[b].x - web.p[a].x;
+        float dy = web.p[b].y - web.p[a].y;
+        t.rest = sqrtf(dx * dx + dy * dy) * WEB_PRETENSION;
+        t.f_spoke = f_spoke;
+        web.threads.push_back(t);
+    };
+    //The spokes, hub to frame, through every turn of the spiral.
+    for (int i = 0; i < S; i++){
+        int from = 0;
+        for (int k = 0; k < R; k++){
+            thread(from,spiral(k,i),true);
+            from = spiral(k,i);
+        }
+        thread(from,first_anchor + i,true);
+    }
+    //The spiral, one thread from the inside out: round each turn and on to the next.
+    for (int k = 0; k < R; k++){
+        for (int i = 0; i < S; i++){
+            int next = (i + 1 < S) ? spiral(k,i + 1) : ((k + 1 < R) ? spiral(k + 1,0) : -1);
+            if (next >= 0){
+                thread(spiral(k,i),next,false);
+            }
+        }
+    }
+
+    for (int t = 0; t < WEB_SETTLE_TICKS; t++){
+        StepWeb(web,ARCHER_DT);
+    }
+
+    /*
+        The wall: the opening, stacked from the bottom in slices of about WEB_WALL_SLICE - SOLID to
+        her, passed by arrows (SegmentHitsBlock skips a block with `web` set), drawn by nobody but
+        the blockout view. Appended here, which is why AddWeb wants calling after the blocks that
+        must keep their indices.
+    */
+    web.slices = (int)floorf(h / WEB_WALL_SLICE + 0.5f);
+    if (web.slices < 1){
+        web.slices = 1;
+    }
+    const float slice_h = h / (float)web.slices;
+    web.first_slice = (int)blocks.size();
+    for (int s = 0; s < web.slices; s++){
+        StageBlock b = { x + w * 0.5f, y + ((float)s + 0.5f) * slice_h, w * 0.5f, slice_h * 0.5f, BLOCK_SOLID, true };
+        b.f_invisible = true;
+        b.web = (int)webs.size();
+        blocks.push_back(b);
+    }
+    webs.push_back(web);
+}
+
+/*
+    One tick of one web, in WEB_SUBSTEPS - the bridge's step over a net instead of a chain: gravity
+    on every node by its mass (a caught arrow's on its node), each whole thread pulling its ends
+    together when stretched - its stiffness WEB_STIFFNESS over its length, so a short thread is as
+    stiff as a long one is per unit stretched, like silk of one gauge - and air on every node.
+*/
+void Stage::StepWeb(StageWeb& web, float dt){
+    const int n = (int)web.p.size();
+    if (n < 2){
+        return;
+    }
+    const float h = dt / (float)WEB_SUBSTEPS;
+    std::vector<v2> force(n);
+    std::vector<float> mass(n);
+    for (int j = 0; j < n; j++){
+        mass[j] = web.Mass(j);
+    }
+    for (int s = 0; s < WEB_SUBSTEPS; s++){
+        for (int j = 0; j < n; j++){
+            force[j] = v2(0.0f,-ARCHER_GRAVITY * mass[j]);
+        }
+        for (const StageWebThread& t : web.threads){
+            if (t.f_cut){
+                continue;
+            }
+            float dx = web.p[t.b].x - web.p[t.a].x;
+            float dy = web.p[t.b].y - web.p[t.a].y;
+            float len = sqrtf(dx * dx + dy * dy);
+            if (len <= t.rest || len < 1e-6f){
+                continue;           //slack: silk does not push
+            }
+            float ux = dx / len, uy = dy / len;
+            float rate = (web.v[t.b].x - web.v[t.a].x) * ux + (web.v[t.b].y - web.v[t.a].y) * uy;
+            float pull = (WEB_STIFFNESS / t.rest) * (len - t.rest) + WEB_THREAD_DAMPING * rate;
+            if (pull <= 0.0f){
+                continue;
+            }
+            force[t.a].x += ux * pull;
+            force[t.a].y += uy * pull;
+            force[t.b].x -= ux * pull;
+            force[t.b].y -= uy * pull;
+        }
+        const float air = 1.0f - WEB_AIR_DAMPING * h;
+        for (int j = 0; j < n; j++){
+            if (web.anchor[j]){
+                continue;
+            }
+            web.v[j].x = (web.v[j].x + force[j].x / mass[j] * h) * air;
+            web.v[j].y = (web.v[j].y + force[j].y / mass[j] * h) * air;
+            web.p[j].x += web.v[j].x * h;
+            web.p[j].y += web.v[j].y * h;
+        }
+    }
+}
+
+void Stage::TickWebs(){
+    for (StageWeb& web : webs){
+        StepWeb(web,ARCHER_DT);
+        /*
+            Its caught arrows ride their nodes. One that has gone - aged out, or its slot taken by a
+            new arrow, which moves it from where this left it - lets go of the web: a stuck arrow
+            never moves by itself, so "not where I put it" is exactly "not mine any more".
+        */
+        for (size_t c = 0; c < web.caught.size();){
+            StageWebCatch& k = web.caught[c];
+            bool f_mine = k.arrow >= 0 && k.arrow < ARROW_MAX_LIVE && arrows[k.arrow].f_live &&
+                          arrows[k.arrow].f_stuck && arrows[k.arrow].pos.x == k.placed.x &&
+                          arrows[k.arrow].pos.y == k.placed.y;
+            if (!f_mine || k.node < 0 || k.node >= (int)web.p.size()){
+                web.caught.erase(web.caught.begin() + c);
+                continue;
+            }
+            Arrow& a = arrows[k.arrow];
+            a.prev_pos = a.pos;
+            a.pos = v3(web.p[k.node].x + k.offset.x,web.p[k.node].y + k.offset.y,a.pos.z);
+            k.placed = v2(a.pos.x,a.pos.y);
+            c++;
+        }
+    }
+}
+
+/*
+    Where segment p0 -> p1 crosses q0 -> q1, as the fraction along the first, or -1 for no crossing.
+    In the plane: a web's threads are at z 0 and so, on a locked plane, is every arrow.
+*/
+static float CrossSegments(const v2& p0, const v2& p1, const v2& q0, const v2& q1){
+    const float rx = p1.x - p0.x, ry = p1.y - p0.y;
+    const float sx = q1.x - q0.x, sy = q1.y - q0.y;
+    const float den = rx * sy - ry * sx;
+    if (den > -1e-9f && den < 1e-9f){
+        return -1.0f;               //parallel: grazing along a thread is not crossing it
+    }
+    const float qpx = q0.x - p0.x, qpy = q0.y - p0.y;
+    const float t = (qpx * sy - qpy * sx) / den;
+    const float u = (qpx * ry - qpy * rx) / den;
+    if (t < 0.0f || t > 1.0f || u < 0.0f || u > 1.0f){
+        return -1.0f;
+    }
+    return t;
+}
+
+/*
+    See ARROWS in StageWeb. Every whole thread the segment crosses, nearest first: each snaps, kicks
+    its two ends along the flight, and takes its share of the arrow's speed - and the one that leaves
+    it too slow to go on holds it. Caught, the arrow is stuck where it met that thread, riding the
+    nearer of its two nodes that moves (an anchor holds it still).
+*/
+bool Stage::ArrowThroughWebs(int index, const v3& from, const v3& to, StageEvents& events){
+    if (index < 0 || index >= ARROW_MAX_LIVE){
+        return false;
+    }
+    Arrow& a = arrows[index];
+    const v2 f2(from.x,from.y), t2(to.x,to.y);
+    for (size_t wi = 0; wi < webs.size(); wi++){
+        StageWeb& web = webs[wi];
+        //Nowhere near the opening, padded for the net's swing: not this web.
+        const float pad = 0.5f;
+        if (fmaxf(f2.x,t2.x) < web.x - pad || fminf(f2.x,t2.x) > web.Right() + pad ||
+            fmaxf(f2.y,t2.y) < web.y - pad || fminf(f2.y,t2.y) > web.Top() + pad){
+            continue;
+        }
+        struct Cross{ float t; int thread; };
+        std::vector<Cross> crosses;
+        for (size_t ti = 0; ti < web.threads.size(); ti++){
+            const StageWebThread& th = web.threads[ti];
+            if (th.f_cut){
+                continue;
+            }
+            float t = CrossSegments(f2,t2,web.p[th.a],web.p[th.b]);
+            if (t < 0.0f){
+                continue;
+            }
+            //In order along the flight; equal t by thread index, so the order never depends on luck.
+            Cross c = { t, (int)ti };
+            size_t at = crosses.size();
+            crosses.push_back(c);
+            while (at > 0 && (crosses[at - 1].t > c.t || (crosses[at - 1].t == c.t && crosses[at - 1].thread > c.thread))){
+                crosses[at] = crosses[at - 1];
+                at--;
+            }
+            crosses[at] = c;
+        }
+        if (crosses.empty()){
+            continue;
+        }
+        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
+        const float flat = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
+        const v2 dir = (flat > 1e-6f) ? v2(a.vel.x / flat,a.vel.y / flat) : v2(0.0f,0.0f);
+        StageEvents::WebHit hit;
+        hit.web = (int)wi;
+        hit.arrow = index;
+        hit.at = v2(f2.x + (t2.x - f2.x) * crosses[0].t,f2.y + (t2.y - f2.y) * crosses[0].t);
+        for (const Cross& c : crosses){
+            StageWebThread& th = web.threads[c.thread];
+            th.f_cut = true;
+            const v2 at(f2.x + (t2.x - f2.x) * c.t,f2.y + (t2.y - f2.y) * c.t);
+            StageEvents::WebThreadCut cut;
+            cut.web = (int)wi;
+            cut.thread = c.thread;
+            cut.arrow = index;
+            cut.at = at;
+            events.web_cuts.push_back(cut);
+            hit.threads++;
+            for (int end : { th.a, th.b }){
+                if (!web.anchor[end]){
+                    web.v[end].x += dir.x * WEB_SNAP_KICK;
+                    web.v[end].y += dir.y * WEB_SNAP_KICK;
+                }
+            }
+            speed *= 1.0f - WEB_SLOW_PER_THREAD;
+            a.vel = a.vel * (1.0f - WEB_SLOW_PER_THREAD);
+            if (speed < WEB_CATCH_SPEED){
+                a.pos = v3(at.x,at.y,from.z + (to.z - from.z) * c.t);
+                a.vel = v3(0.0f,0.0f,0.0f);
+                a.f_stuck = true;
+                a.age_ticks = 0;
+                //The nearer end that moves, so it rides the net; on a thread between two anchors, either.
+                auto d2 = [&](int n){
+                    float dx = web.p[n].x - at.x, dy = web.p[n].y - at.y;
+                    return dx * dx + dy * dy;
+                };
+                int node = (d2(th.a) <= d2(th.b)) ? th.a : th.b;
+                int other = (node == th.a) ? th.b : th.a;
+                if (web.anchor[node] && !web.anchor[other]){
+                    node = other;
+                }
+                StageWebCatch k;
+                k.arrow = index;
+                k.node = node;
+                k.offset = v2(at.x - web.p[node].x,at.y - web.p[node].y);
+                k.placed = at;
+                web.caught.push_back(k);
+                hit.f_caught = true;
+                events.web_hits.push_back(hit);
+                return true;
+            }
+        }
+        events.web_hits.push_back(hit);
+    }
+    return false;
+}
+
+/*
+    What still holds across the frame. A cut thread does not, nor does one in a strand left HANGING:
+    a piece of the net joined to the frame through a single thread, which a body pushes aside, or
+    one joined to it not at all, which falls. In graph terms, with every anchor counted as one node
+    (the frame): a thread holds when it is in the frame's 2-edge-connected part - it lies on a loop
+    through the frame, so cutting any one thread does not let it hang. Found by Tarjan's bridges
+    from the frame, then a walk out from it that crosses no bridge.
+*/
+struct WebGraph{
+    const StageWeb* web = NULL;
+    std::vector<std::vector<int>> adj;  //per vertex: thread indices
+    std::vector<int> tin, low;
+    std::vector<uint8_t> is_bridge;
+    int timer = 0;
+    int frame = 0;                      //the vertex every anchor is folded into
+    int Vertex(int node) const { return web->anchor[node] ? frame : node; }
+    int Other(int thread, int v) const {
+        const StageWebThread& t = web->threads[thread];
+        int a = Vertex(t.a), b = Vertex(t.b);
+        return (a == v) ? b : a;
+    }
+    void Walk(int v, int parent_thread){
+        tin[v] = low[v] = ++timer;
+        for (int t : adj[v]){
+            if (t == parent_thread){
+                continue;
+            }
+            int u = Other(t,v);
+            if (tin[u]){
+                low[v] = (tin[u] < low[v]) ? tin[u] : low[v];
+            }else{
+                Walk(u,t);
+                low[v] = (low[u] < low[v]) ? low[u] : low[v];
+                if (low[u] > tin[v]){
+                    is_bridge[t] = 1;
+                }
+            }
+        }
+    }
+};
+
+void Stage::WebHeldThreads(const StageWeb& web, std::vector<uint8_t>& held) const{
+    const int n = (int)web.p.size();
+    held.assign(web.threads.size(),0);
+    WebGraph g;
+    g.web = &web;
+    g.frame = n;
+    g.adj.assign(n + 1,std::vector<int>());
+    for (size_t ti = 0; ti < web.threads.size(); ti++){
+        const StageWebThread& t = web.threads[ti];
+        if (t.f_cut){
+            continue;
+        }
+        int a = g.Vertex(t.a), b = g.Vertex(t.b);
+        if (a == b){
+            continue;
+        }
+        g.adj[a].push_back((int)ti);
+        g.adj[b].push_back((int)ti);
+    }
+    g.tin.assign(n + 1,0);
+    g.low.assign(n + 1,0);
+    g.is_bridge.assign(web.threads.size(),0);
+    g.Walk(g.frame,-1);
+    std::vector<uint8_t> reached(n + 1,0);
+    std::vector<int> stack(1,g.frame);
+    reached[g.frame] = 1;
+    while (!stack.empty()){
+        int v = stack.back();
+        stack.pop_back();
+        for (int t : g.adj[v]){
+            if (g.is_bridge[t]){
+                continue;
+            }
+            held[t] = 1;
+            int u = g.Other(t,v);
+            if (!reached[u]){
+                reached[u] = 1;
+                stack.push_back(u);
+            }
+        }
+    }
+}
+
+//Liang-Barsky against the band across the whole opening: does any held thread cross it?
+bool Stage::WebBandClear(const StageWeb& web, const std::vector<uint8_t>& held, float y0, float y1) const{
+    for (size_t ti = 0; ti < web.threads.size(); ti++){
+        if (ti >= held.size() || !held[ti]){
+            continue;
+        }
+        const StageWebThread& t = web.threads[ti];
+        const v2 a = web.p[t.a], b = web.p[t.b];
+        const float dx = b.x - a.x, dy = b.y - a.y;
+        float t0 = 0.0f, t1 = 1.0f;
+        const float pp[4] = { -dx, dx, -dy, dy };
+        const float qq[4] = { a.x - web.x, web.Right() - a.x, a.y - y0, y1 - a.y };
+        bool f_out = false;
+        for (int i = 0; i < 4 && !f_out; i++){
+            if (pp[i] > -1e-9f && pp[i] < 1e-9f){
+                f_out = qq[i] < 0.0f;
+                continue;
+            }
+            float r = qq[i] / pp[i];
+            if (pp[i] < 0.0f){
+                t0 = (r > t0) ? r : t0;
+            }else{
+                t1 = (r < t1) ? r : t1;
+            }
+            f_out = t0 > t1;
+        }
+        if (!f_out){
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+    See THE WALL in StageWeb. Every band of her height plus WEB_PASS_MARGIN, on the slices, from the
+    floor up to a jump's reach: one with no held thread across it opens, slices and all. Checked every
+    tick rather than only on a cut, because a cut strand still swinging clear can open a band a few
+    ticks after the arrow that freed it.
+*/
+void Stage::TickWebWalls(StageEvents& events){
+    const float reach = (ARCHER_JUMP_SPEED * ARCHER_JUMP_SPEED) / (2.0f * ARCHER_GRAVITY);
+    std::vector<uint8_t> held;
+    for (size_t wi = 0; wi < webs.size(); wi++){
+        StageWeb& web = webs[wi];
+        if (web.first_slice < 0 || web.slices < 1 || web.first_slice + web.slices > (int)blocks.size()){
+            continue;
+        }
+        const float slice_h = web.h / (float)web.slices;
+        const int need = (int)ceilf((2.0f * ARCHER_HALF_H + WEB_PASS_MARGIN) / slice_h - 1e-4f);
+        if (need > web.slices){
+            continue;               //an opening she does not fit through is never a way through
+        }
+        bool f_held_found = false;
+        for (int s = 0; s + need <= web.slices; s++){
+            const float y0 = web.y + (float)s * slice_h;
+            if (y0 - web.y > reach){
+                break;              //she cannot get her feet up there: a hole too high
+            }
+            bool f_open = true;
+            for (int k = s; k < s + need && f_open; k++){
+                f_open = !blocks[web.first_slice + k].f_alive;
+            }
+            if (f_open){
+                continue;
+            }
+            if (!f_held_found){
+                WebHeldThreads(web,held);
+                f_held_found = true;
+            }
+            const float y1 = y0 + (float)need * slice_h;
+            //Above what she steps over (WEB_STEP_OVER): the band her body actually has to get through.
+            if (!WebBandClear(web,held,y0 + WEB_STEP_OVER,y1)){
+                continue;
+            }
+            for (int k = s; k < s + need; k++){
+                StageBlock& b = blocks[web.first_slice + k];
+                if (b.f_alive){
+                    b.f_alive = false;
+                    events.web_slices_opened.push_back(web.first_slice + k);
+                }
+            }
+            StageEvents::WebBreach br;
+            br.web = (int)wi;
+            br.y0 = y0;
+            br.y1 = y1;
+            br.f_first = !web.f_breached;
+            web.f_breached = true;
+            events.web_breaches.push_back(br);
+        }
+    }
+}
+
 /*
     See STRAIN in Stage.h. `speed` is the landing's, against the plank under her and with the
     stomp in. Every landing is reported, breakable or not - the knock and the creak are the same on
@@ -1713,6 +2219,28 @@ void Stage::BuildRopeLevel(){
     //The rope and both pits right of the floor's lip; the gallery adds its own, left of it.
     AddZone("Rope", -17.0f, 31.0f, -20.0f, 48.0f, v2(-6.00f,0.30f));
     BuildSlideGallery();
+
+    /*
+        THE WEB, blocked out - docs/web_plan.md section 5 - right of the rope, with the floor going on
+        past it to the deep pit: 6 units of open ground behind it to walk out onto. Last, after every
+        block the level and the gallery declare, so none of theirs moves in the list.
+
+        Twice her height square (2 x ARCHER_HALF_H x 2 = 3.6), the hub a little up and right of the
+        middle, as a spider builds it. The BEAM over it is a block, 0.5 deep and wide enough to cover
+        both posts: her apex is 3.2, so she cannot get onto it or over it, and the web is the only way
+        on. The POSTS are drawn and not built - the web hangs between them in her plane, and two solid
+        posts there would be a wall she could never pass, cut threads or not.
+
+        Shot at from three places: the start (-6), 13 units off; the floor right in front of it; and
+        a one-way PLATFORM at 2.4, which she walks under and jumps up onto, to shoot through its
+        middle or down through its bottom. A sign names it.
+    */
+    const float web_w = 4.0f * ARCHER_HALF_H, web_h = 4.0f * ARCHER_HALF_H;
+    const float web_x = 7.0f;
+    blocks.push_back({ web_x + web_w * 0.5f, web_h + 0.25f, web_w * 0.5f + 0.3f, 0.25f, BLOCK_SOLID, true });   //the beam
+    blocks.push_back({ 3.00f, 2.25f, 1.00f, 0.15f, BLOCK_PLATFORM, true });    //the shooting step, top 2.4
+    signs.push_back({ SIGN_POST, 5.20f, 0.00f, -1.00f, 0.0f, { "WEB" } });
+    AddWeb(web_x,0.0f,web_w,web_h,12,6,0.15f,0.25f);
 }
 
 /*
@@ -1927,6 +2455,7 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
     //where they are now, from where they were, which is what CollideSpringPlants compares.
     TickSpringPlants();
     TickBridges();
+    TickWebs();
 
     //Before the archer moves, so the boot sweeps from where they were standing when it went out.
     //At a full run those differ by 0.15 of a unit - the difference between connecting with the
@@ -1939,6 +2468,8 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
         Loose(events);
     }
     TickArrows(events);
+    //After the arrows, so a hole they cut is open on the tick it was cut.
+    TickWebWalls(events);
 
     prev_aim_axis = in.aim_axis;
     if (SpringBoostActive()){
@@ -3884,6 +4415,12 @@ void Stage::TickArrows(StageEvents& events){
         v3 normal;
         int block = FlyArrow(a,from,next,point,normal);
         a.prev_pos = from;
+        //The webs, up to whatever block the flight meets this tick: a thread before the wall is met
+        //first. Caught, it is stuck in the web already. Not in the forecast (PredictArrowImpact),
+        //which is for the swoosh and the block it ends in.
+        if (!webs.empty() && ArrowThroughWebs(i,from,(block >= 0) ? point : next,events)){
+            continue;
+        }
         if (block >= 0){
             float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
             //Backed off along the face so the shaft is embedded rather than coplanar with the
@@ -4015,6 +4552,10 @@ int Stage::SegmentHitsBlock(const v3& a, const v3& b, v3& out_point, v3& out_nor
         //above to a body but transparent to an arrow is a small inconsistency and the right one:
         //the alternative is arrows collecting on the underside of every platform in the level.
         if (blk.kind == BLOCK_PLATFORM){
+            continue;
+        }
+        //Nor through a web's wall: it is her wall, and the arrow is for the threads in it.
+        if (blk.web >= 0){
             continue;
         }
 
@@ -4218,6 +4759,14 @@ void Stage::HashState(StateHash& h) const{
         for (float s : br.strain){ h.Add(s); }
         for (uint8_t b : br.broken){ h.Add(b); }
         h.Add(br.level);
+    }
+    //Only where a level has one, so a level without adds nothing and its hash is what it was.
+    for (const StageWeb& web : webs){
+        for (const v2& q : web.p){ add2(q); }
+        for (const v2& q : web.v){ add2(q); }
+        for (const StageWebThread& t : web.threads){ h.Add(t.f_cut); }
+        for (const StageWebCatch& c : web.caught){ h.Add(c.arrow); h.Add(c.node); add2(c.offset); add2(c.placed); }
+        h.Add(web.f_breached);
     }
     for (const StageCrumbleGroup& g : crumble_groups){
         h.Add(g.ticks); h.Add(g.f_done);

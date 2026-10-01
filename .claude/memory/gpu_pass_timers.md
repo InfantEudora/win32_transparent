@@ -2,7 +2,10 @@
 name: gpu-pass-timers
 description: "Renderer has per-pass GL_TIME_ELAPSED timers (Engine -> Performance); scopes must never nest, and the first measurement showed the pick glReadPixels is ~89% of Renderer Time"
 metadata:
+  node_type: memory
   type: project
+  originSessionId: b04427ef-0a9b-41e0-9b95-5e3552bac6f5
+  modified: 2026-09-30T21:30:27.352Z
 ---
 
 `Renderer::BeginGPUPass(GPU_PASS_*)` / `EndGPUPass` wrap each pass of `DrawFrame`, plus the
@@ -41,5 +44,15 @@ zero, so toggling one off decays its average to zero rather than freezing it; th
 rows.
 
 Also readable over MCP as `renderer_timings`, which is how to A/B without the panel.
+
+**THEY FROZE WHEN THE GPU WAS THE BOTTLENECK - FIXED 2026-09-30.** The ring was two queries per
+pass, and a sample was skipped when the reused one was not ready, so once the GPU ran more than 2
+frames behind the LATE passes stopped updating (archer's Color read exactly 11838 us for minutes;
+7924 us for a 20 ms frame at the bridges). Now `Renderer::GPU_QUERY_RING` = 6, results are
+collected oldest-first in `EndGPUFrame` and never waited for, and a pass that ran
+`GPU_STALE_FRAMES` (30) frames without a fresh result is `f_stale`: renderer_timings `stale` per
+pass and `gpu_total_stale`, "(stale)" in the panel, `uncapped_fps` 0. Checked against a temporary
+build whose reads waited: within ~5%. Numbers taken GPU-bound BEFORE this fix are suspect. Check
+`nvidia-smi` first anyway: the user sometimes runs an image generator on the same GPU.
 
 Related: [[async-picking-readback]], [[per-app-build-layout]], [[raymarch-volume-stage-plan]], [[android-port-merge]].

@@ -16,7 +16,7 @@
      362  footstep       play  footstep_3     gain 1.000
      370  jump_takeoff   play  jump_takeoff   gain 0.400
      370  jump_voice     skip                  (chance)
-     397  jump_landing   play  jump_landing   gain 0.227 from 0.013
+     398  jump_landing   play  jump_landing   gain 0.227 from 0.010
      401  breath_in      play  breathe_in_2   gain 0.375
      411  footstep       play  footstep_4     gain 1.000
      458  breath_out     play  breathe_out_2  gain 0.409
@@ -34,10 +34,10 @@
      930  arrow_hit      play  arrow_hit      gain 1.000 pan +0.45
     1065  jump_takeoff   play  jump_takeoff   gain 0.400
     1065  jump_voice     skip                  (chance)
-    1088  jump_landing   play  jump_landing   gain 0.166 from 0.013
+    1089  jump_landing   play  jump_landing   gain 0.166 from 0.010
     1113  jump_takeoff   play  jump_takeoff   gain 0.400
     1113  jump_voice     skip                  (chance)
-    1136  jump_landing   play  jump_landing   gain 0.166 from 0.013
+    1137  jump_landing   play  jump_landing   gain 0.166 from 0.010
     1150  footstep       play  footstep_2     gain 1.000
     1150  breath_in      play  breathe_in_2   gain 0.352
     1160  waterfall      stop  waterfall
@@ -48,27 +48,27 @@
     1183  jump_takeoff   play  jump_takeoff   gain 0.400
     1183  jump_voice     skip                  (chance)
     1214  breath_in      play  breathe_in_1   gain 0.520
-    1216  jump_landing   play  jump_landing   gain 0.289 from 0.013
+    1217  jump_landing   play  jump_landing   gain 0.289 from 0.010
     1217  heartbeat      play  heartbeat_1    gain 0.362
-    1245  jump_landing   play  jump_landing   gain 0.190 from 0.013
+    1246  jump_landing   play  jump_landing   gain 0.190 from 0.010
     1255  heartbeat      play  heartbeat_2    gain 0.392
     1264  breath_out     play  breathe_out_3  gain 0.509
     1281  jump_takeoff   play  jump_takeoff   gain 0.400
     1281  jump_voice     skip                  (chance)
     1292  heartbeat      play  heartbeat_1    gain 0.483
     1312  breath_in      play  breathe_in_2   gain 0.552
-    1318  jump_landing   play  jump_landing   gain 0.324 from 0.013
+    1319  jump_landing   play  jump_landing   gain 0.324 from 0.010
     1327  heartbeat      play  heartbeat_2    gain 0.609
     1334  jump_takeoff   play  jump_takeoff   gain 0.400
     1334  jump_voice     skip                  (chance)
     1360  heartbeat      play  heartbeat_1    gain 0.873
     1364  breath_in      play  breathe_in_1   gain 0.598
     1390  heartbeat      play  heartbeat_2    gain 0.960
-    1391  jump_landing   play  jump_landing   gain 0.400 from 0.013
+    1392  jump_landing   play  jump_landing   gain 0.400 from 0.010
     1398  land_grunt     play  jump_hardlanding_grunt gain 0.700
     1398  land_shake     act   shake          gain 0.735
     1398  land_shake     act   rumble         gain 0.735
-    1400  jump_landing   play  jump_landing   gain 0.400 from 0.013
+    1401  jump_landing   play  jump_landing   gain 0.400 from 0.010
     1407  land_grunt     skip  jump_hardlanding_grunt  (group busy)
     1407  land_shake     act   shake          gain 0.859
     1407  land_shake     act   rumble         gain 0.859
@@ -76,12 +76,12 @@
     1410  jump_voice     skip                  (chance)
     1418  heartbeat      play  heartbeat_1    gain 0.970
     1440  breath_in      play  breathe_in_2   gain 0.648
-    1445  jump_landing   play  jump_landing   gain 0.314 from 0.013
     1445  heartbeat      play  heartbeat_2    gain 0.903
+    1446  jump_landing   play  jump_landing   gain 0.314 from 0.010
     1471  heartbeat      play  heartbeat_1    gain 0.834
     1485  breath_out     play  breathe_out_1  gain 0.613
     1497  heartbeat      play  heartbeat_2    gain 0.770
-    1516  jump_landing   play  jump_landing   gain 0.296 from 0.013
+    1517  jump_landing   play  jump_landing   gain 0.296 from 0.010
     1523  heartbeat      play  heartbeat_1    gain 0.711
     1550  heartbeat      play  heartbeat_2    gain 0.655
     1576  heartbeat      play  heartbeat_1    gain 0.606

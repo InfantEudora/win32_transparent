@@ -33,7 +33,7 @@
 - [Ship orbit camera is the canonical one](ship_orbit_camera_canonical.md) — copy the orbit from ApplicationShip/Tank, never testfx: raw mouse deltas, drained outside the button gate, focus+UI gated
 - [Engine forward is -Z](engine_forward_is_minus_z.md) — use object_get's world_forward to settle orientation; bracket screenshots with camera_get or the user's mouse silently reframes them
 - [Measuring GPU cost](measuring_gpu_cost.md) — vsync toggles fine since 2026-09-27 (renderer_timings vsync + per-pass cpu_avg_us); in-shader counting is still the tool for SUB-pass questions
-- [GPU pass timers](gpu_pass_timers.md) — per-pass GL_TIME_ELAPSED in Engine->Performance; scopes must never nest; also exposed over MCP as renderer_timings
+- [GPU pass timers](gpu_pass_timers.md) — per-pass GL_TIME_ELAPSED in Engine->Performance; scopes must never nest; renderer_timings over MCP; 6-deep ring + `stale` flag since 2026-09-30 (the 2-deep ring froze GPU-bound)
 - [Async picking readback](async_picking_readback.md) — pick glReadPixels now 85us not 5557us; needs a FENCE before mapping and EXACT-format reads, either wrong is slower than blocking
 - [Animation state machine lives in Object](animation_state_machine_in_object.md) — lifted out of PlayerCharacter 2026-09-15: blending now works on any Object; SetRootBone is no longer a silent trap; mid-blend retarget now RETARGETS (2026-09-22) and TransitionToAnimation returns bool
 - [Skinned rig bone indexing](skinned_rig_bone_indexing.md) — a bone's index is its position in skin.joints, not visit order; GetSkeleton loads every root and Renderer lays matrices out by that index (multi-root rigs used to load one bone and tear the mesh)
@@ -73,3 +73,6 @@
 - [Archer cave](archer_cave.md) — BUILT 2026-09-29 left of the bay for lighting experiments: own floor, deep roof/walls raise the bank to close it; fill light still leaks in, hazed back wall; BIOMES 2026-09-30 (StageBiome: cave plants/rubble/still air); vignette + title fade + cave vision built; one shadow map for all directional lights
 - [Coordinator + worker windows](coordinator_worker_windows.md) — user-preferred 2026-09-30: coordinator briefs blank windows via ListAgents/SendMessage instead of subagents; visible, separate lockd owners; lockd task board is the possible next step
 - [Archer model scale](archer_model_scale.md) — model_scale is ~1.82, not 2.02 as an old comment implies; measure before sizing rules numbers off glb pieces
+- [Prop atlas plan](prop_atlas_plan.md) — 11 Tripo 4096^2 prop textures -> one atlas; step 1 analysis tools/blender_uv_atlas.py BUILT 2026-09-30 (flat/smooth/detailed islands); swatch + pack + bake next
+- [Ogg Vorbis settings](ogg_vorbis_settings.md) — archer music samples ship as .ogg since 2026-09-30 (q-1, 32 kHz cap, make publish encodes, core/AudioDecode decodes at load); archer SFX converted too
+- [ReadFileToString is disk-only](readfiletostring_disk_only.md) — alone it silently misses baked assets in the ship exe (music was lost that way); read disk first, then LoadFile; test ship from an empty folder

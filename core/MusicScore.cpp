@@ -2,6 +2,7 @@
 
 #include "File.h"
 #include "Debug.h"
+#include "AudioDecode.h"
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;
 
@@ -103,49 +104,81 @@ int MusicScore::SectionIndex(const std::string& n) const{
 
 //--- loading -------------------------------------------------------------------------------
 
+namespace {
+
+/*
+    FRESH FROM DISK FIRST, the packed copy second - CueSystem::LoadTable's rule, for its two
+    reasons. A score and its samples are re-read on every reload while they are tuned, which
+    LoadFile's cache would answer with the first load's bytes forever. But a shipped build has no
+    loose files at all: the score and every sample are baked into the executable, and only
+    LoadFile can find them there. Without the second half the ship exe played no music at all
+    ("no such score: music/jungle.json", found 2026-09-30).
+*/
+bool ReadAsset(const std::string& asset, std::string& out){
+    if (ReadFileToString(asset.c_str(), out)) return true;
+    size_t size = 0;
+    const uint8_t* bytes = LoadFile(asset.c_str(), &size);     //logs the name if it is not there either
+    if (!bytes) return false;
+    out.assign((const char*)bytes, size);
+    return true;
+}
+
 /*
     A PCM16 wav, by walking its chunks - not WaveFile, for two reasons. WaveFile goes through
-    LoadFile, which exits the process on a missing file and caches for the life of the process,
-    and a score is something that is edited and reloaded while the app runs: a typo in a sample
-    name must be an error on screen, and a re-exported sample must be re-read. And WaveFile
-    assumes the data starts at byte 44, which is true of what samplescan writes and not of every
-    wav an editor saves (a LIST chunk in front of the data is common).
-*/
-bool LoadMusicSampleFile(const std::string& path, const std::string& name, MusicSample& out, std::string& error){
-    const std::string& asset = name;
-    std::string bytes;
-    if (!ReadFileToString(path.c_str(), bytes) || bytes.size() < 12 ||
-        bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0){
-        error = asset + " is not a wav";
-        return false;
-    }
-    auto u16 = [&](size_t at){ uint16_t v; memcpy(&v, bytes.data() + at, 2); return v; };
-    auto u32 = [&](size_t at){ uint32_t v; memcpy(&v, bytes.data() + at, 4); return v; };
+    LoadFile, which caches for the life of the process, and a score is something that is edited
+    and reloaded while the app runs: a re-exported sample must be re-read. And WaveFile assumes
+    the data starts at byte 44, which is true of what samplescan writes and not of every wav an
+    editor saves (a LIST chunk in front of the data is common).
 
-    int format = 0, bits = 0;
-    size_t data_at = 0, data_len = 0;
-    for (size_t at = 12; at + 8 <= bytes.size();){
-        const uint32_t len = u32(at + 4);
-        if (bytes.compare(at, 4, "fmt ") == 0 && len >= 16){
-            format = u16(at + 8);
-            out.channels = u16(at + 10);
-            out.rate = (int)u32(at + 12);
-            bits = u16(at + 22);
+    OR AN OGG VORBIS, decoded whole - what a game's copy holds once `make publish` has encoded
+    it. Told apart by its first bytes, not its name: see core/AudioDecode.h.
+*/
+bool ParseMusicSample(const std::string& bytes, const std::string& asset, MusicSample& out, std::string& error){
+    if (IsOggStream(bytes.data(), bytes.size())){
+        std::string why;
+        if (!DecodeOggVorbis(bytes.data(), bytes.size(), out.pcm, out.channels, out.rate, why)){
+            error = asset + ": " + why;
+            return false;
         }
-        else if (bytes.compare(at, 4, "data") == 0){
-            data_at = at + 8;
-            data_len = std::min<size_t>(len, bytes.size() - data_at);
+        if (out.channels > 2){
+            error = asset + ": only mono or stereo is read here";
+            return false;
         }
-        at += 8 + len + (len & 1);      //chunks are word-aligned
+        out.frames = out.pcm.size() / out.channels;
     }
-    if (format != 1 || bits != 16 || out.channels < 1 || out.channels > 2 || out.rate <= 0 || data_at == 0){
-        error = asset + ": only 16-bit PCM mono or stereo is read here - export it with samplescan";
-        return false;
+    else{
+        if (bytes.size() < 12 || bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0){
+            error = asset + " is neither a wav nor an Ogg Vorbis";
+            return false;
+        }
+        auto u16 = [&](size_t at){ uint16_t v; memcpy(&v, bytes.data() + at, 2); return v; };
+        auto u32 = [&](size_t at){ uint32_t v; memcpy(&v, bytes.data() + at, 4); return v; };
+
+        int format = 0, bits = 0;
+        size_t data_at = 0, data_len = 0;
+        for (size_t at = 12; at + 8 <= bytes.size();){
+            const uint32_t len = u32(at + 4);
+            if (bytes.compare(at, 4, "fmt ") == 0 && len >= 16){
+                format = u16(at + 8);
+                out.channels = u16(at + 10);
+                out.rate = (int)u32(at + 12);
+                bits = u16(at + 22);
+            }
+            else if (bytes.compare(at, 4, "data") == 0){
+                data_at = at + 8;
+                data_len = std::min<size_t>(len, bytes.size() - data_at);
+            }
+            at += 8 + len + (len & 1);      //chunks are word-aligned
+        }
+        if (format != 1 || bits != 16 || out.channels < 1 || out.channels > 2 || out.rate <= 0 || data_at == 0){
+            error = asset + ": only 16-bit PCM mono or stereo is read here - export it with samplescan";
+            return false;
+        }
+        out.frames = data_len / (2 * out.channels);
+        out.pcm.resize(out.frames * out.channels);
+        memcpy(out.pcm.data(), bytes.data() + data_at, out.pcm.size() * 2);
     }
     out.name = asset;
-    out.frames = data_len / (2 * out.channels);
-    out.pcm.resize(out.frames * out.channels);
-    memcpy(out.pcm.data(), bytes.data() + data_at, out.pcm.size() * 2);
 
     /*
         How bright it is, as a frequency: the zero-crossing rate of the first channel, halved.
@@ -166,15 +199,27 @@ bool LoadMusicSampleFile(const std::string& path, const std::string& name, Music
     return true;
 }
 
+} //namespace
+
+//A file the caller has found itself - the music bench's library, which is not an asset.
+bool LoadMusicSampleFile(const std::string& path, const std::string& name, MusicSample& out, std::string& error){
+    std::string bytes;
+    if (!ReadFileToString(path.c_str(), bytes)){
+        error = name + " could not be read";
+        return false;
+    }
+    return ParseMusicSample(bytes, name, out, error);
+}
+
 namespace {
 
 bool LoadWav(const std::string& asset, MusicSample& out, std::string& error){
-    std::string path;
-    if (!ResolveAssetPath(asset.c_str(), path)){
+    std::string bytes;
+    if (!ReadAsset(asset, bytes)){
         error = "no such sample: " + asset + " (the music bench exports them - apps/music/readme.md)";
         return false;
     }
-    return LoadMusicSampleFile(path, asset, out, error);
+    return ParseMusicSample(bytes, asset, out, error);
 }
 
 /*
@@ -202,8 +247,8 @@ bool Note(const json& j, const char* key, int fallback, int& out, const std::str
 } //namespace
 
 bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error){
-    std::string path, text;
-    if (!ResolveAssetPath(asset_name, path) || !ReadFileToString(path.c_str(), text)){
+    std::string text;
+    if (!ReadAsset(asset_name, text)){
         error = std::string("no such score: ") + asset_name;
         return false;
     }

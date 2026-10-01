@@ -1188,7 +1188,13 @@ void Application::RenderEngineWindow(){
                     ImGui::TextDisabled("    -");
                     continue;
                 }
-                ImGui::Text("%s",Renderer::GetGPUPassName(i));
+                //Stale - no fresh result for Renderer::GPU_STALE_FRAMES frames - is marked, so an
+                //old average is never read as a live one.
+                if (pass->f_stale){
+                    ImGui::Text("%s (stale)",Renderer::GetGPUPassName(i));
+                }else{
+                    ImGui::Text("%s",Renderer::GetGPUPassName(i));
+                }
                 ImGui::TableNextColumn();
                 ImGui::Text("%7.3f",pass->timer->avg/1000.0);
                 ImGui::TableNextColumn();

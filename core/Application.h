@@ -412,9 +412,47 @@ public:
     //scene_draw minus Renderer::tmr_frame is how long the frame waited for the physics tick.
     PerfTimer* tmr_prerender = NULL;
     PerfTimer* tmr_scene_draw = NULL;
+    //The loop from the top of a frame to just before its swap: everything the frame DOES, and none
+    //of the swap's wait for the display. The CPU half of GetUncappedFramesPerSecond.
+    PerfTimer* tmr_frame_work = NULL;
     //0 or 1 from renderer_timings, -1 for none: swap intervals are per GL context, so the render
     //thread applies it at the top of its loop rather than the MCP thread calling SetVSync.
     std::atomic<int> requested_vsync{-1};
+
+    /*
+        THE FRAME RATE, for an app's HUD or a tool. Any thread; written by the render loop.
+
+        GetFramesPerSecond is what the person sees: frames PRESENTED per second, counted over the
+        last second and re-counted four times a second - steady enough to read, quick enough to
+        follow a change. Vsync on, it sits at the display's rate; minimised, at the 60 the loop
+        paces itself to.
+
+        GetUncappedFramesPerSecond is what the frame's own work would allow with nothing waiting
+        for the display:  1e6 / max(CPU us, GPU us)  per frame, where
+          - CPU is tmr_frame_work: the render thread from the top of the frame to the swap. The
+            swap's wait is left out, which is exactly the part vsync adds.
+          - GPU is the sum of the renderer's GL_TIME_ELAPSED pass timers (Renderer::BeginGPUPass).
+            GL work outside every timed pass is not in it, so where the GPU is the limit this is
+            an upper bound, not a promise.
+        The CPU and the GPU work in parallel, a frame apart, so the slower of the two sets the
+        pace - not their sum. Both are 60-frame rolling averages, like every PerfTimer. 0 until the
+        first frames are in, and 0 while any GPU pass is stale (Renderer::GPUPassTimer) - an old
+        average in the GPU half would make it a number about some earlier frame.
+    */
+    float GetFramesPerSecond() const { return fps_presented.load(); }
+    float GetUncappedFramesPerSecond() const;
+    //Its two halves, per frame in microseconds, for a tool that wants to say which one binds.
+    double GetFrameWorkUs() const;
+    double GetFrameGPUUs() const;
+    std::atomic<float> fps_presented{0.0f};
+    //Render thread, once per presented frame: counts it and, every quarter second, recounts the
+    //rate since the oldest of the samples below - four, a quarter apart, so the last second.
+    void CountPresentedFrame();
+    static const int FPS_SAMPLES = 4;
+    int64_t  fps_frames = 0;
+    int64_t  fps_sample_frames[FPS_SAMPLES] = {};
+    double   fps_sample_s[FPS_SAMPLES] = {};
+    int      fps_samples = 0;
 
     RRandom* rrand = NULL;
 

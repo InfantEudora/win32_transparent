@@ -68,7 +68,14 @@ bool Renderer::Init(const char* vert_filename, const char* frag_filename, int _p
     glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE,2, &z);
     debug->Info("GL_MAX_COMPUTE_WORK_GROUP_SIZE = x=%i y=%i z=%i\n",x,y,z);
 
-    if (!SetNumAASamples(16)){
+    /*
+        4x MSAA, not 16. Measured on archer 2026-09-30: 16x -> 4x took the GPU frame from 11.7-19.7
+        ms to 7.0-9.9, roughly half of it and almost all the colour pass's per-pixel cost, and the
+        difference at game view is barely visible (slightly harder grass and crate edges). Off saves
+        under 1 ms more and shows plain stair-steps. Still selectable: the Renderer panel's slider,
+        or renderer_experiment msaa_samples. See docs/frustum_culling_investigation.md.
+    */
+    if (!SetNumAASamples(4)){
         return false;
     }
 
@@ -300,7 +307,8 @@ void Renderer::FillBactches(){
 }
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
-void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, bool f_occluder_pass){
+void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, bool f_occluder_pass, bool f_camera_cull){
+    f_camera_cull = f_camera_cull && f_cull_this_frame && (outside_view.size() == renderable_objects.size());
     debug->Trace("Rendering Meshes rendering_mode = %i\n",rendering_mode);
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
@@ -351,6 +359,10 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
             //per mesh and draw every instance in one call, so the only way to leave one object
             //out is to leave it out of the instance list being built.
             if (f_occluder_pass && !object->CastsShadow()){
+                continue;
+            }
+            //Outside the camera's frustum - the prototype, see f_frustum_cull.
+            if (f_camera_cull && outside_view[object_index]){
                 continue;
             }
             debug->Trace("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
@@ -492,6 +504,117 @@ void Renderer::PrepareObjects(const std::vector<Object*>& objects){
     FillBactches();
 }
 
+/*
+    See f_frustum_cull. The planes are Gribb and Hartmann's, taken from mat_cam in the engine's own
+    convention - a point goes to clip space as x*m[0] + y*m[1] + z*m[2] + m[3], each m[i] a vec4 -
+    so row r of the maths is (m[0].r, m[1].r, m[2].r, m[3].r) and each plane is the w row plus or
+    minus another. A sphere is outside when it is wholly behind any one of them.
+*/
+Renderer::CullStats Renderer::GetCullStats() const{
+    std::lock_guard<std::mutex> lock(cull_stats_mutex);
+    return cull_stats;
+}
+
+void Renderer::ComputeViewCull(Camera* camera){
+    //Only while culling is on or the counts were asked for - it is not free. See f_frustum_cull.
+    const bool f_cull = f_frustum_cull;
+    const int stats_frames = cull_stats_frames;
+    f_cull_this_frame = false;
+    if ((!f_cull && stats_frames <= 0) || !camera){
+        return;
+    }
+    if (stats_frames > 0){
+        cull_stats_frames = stats_frames - 1;
+    }
+    auto t0 = std::chrono::steady_clock::now();
+    CullStats stats;
+    outside_view.assign(renderable_objects.size(),0);
+    const fmat4& c = camera->mat_cam;
+    float planes[6][4];
+    for (int p = 0; p < 6; p++){
+        int axis = p / 2;
+        float sign = (p & 1) ? -1.0f : 1.0f;
+        for (int k = 0; k < 4; k++){
+            const vec4& col = c.vertex[k];
+            float row_axis = (axis == 0) ? col.x : ((axis == 1) ? col.y : col.z);
+            planes[p][k] = col.w + sign * row_axis;
+        }
+        float len = sqrtf(planes[p][0] * planes[p][0] + planes[p][1] * planes[p][1] + planes[p][2] * planes[p][2]);
+        if (len > 0.0f){
+            for (int k = 0; k < 4; k++){
+                planes[p][k] /= len;
+            }
+        }
+    }
+    std::vector<uint8_t> mesh_seen(unique_meshes.size(),0);
+    for (size_t i = 0; i < renderable_objects.size(); i++){
+        Object* object = renderable_objects[i];
+        Mesh* mesh = object->GetMesh();
+        if (!mesh || !mesh->IsNormalMesh() || mesh->mesh_mode == MESH_MODE_SHADER){
+            continue;
+        }
+        stats.objects++;
+        stats.vertices += mesh->num_vertices;
+        bool f_inside = true;
+        if (mesh->HasBounds() && mesh->num_morph_targets == 0){
+            const fmat4& m = object->GetWorldTransformScaleMatrix();
+            vec3 lo = mesh->GetBoundsMin();
+            vec3 hi = mesh->GetBoundsMax();
+            vec3 lc = (lo + hi) * 0.5f;
+            vec3 half = (hi - lo) * 0.5f;
+            float wc[3];
+            float scale = 0.0f;
+            for (int a = 0; a < 3; a++){
+                auto comp = [&](const vec4& v){ return (a == 0) ? v.x : ((a == 1) ? v.y : v.z); };
+                wc[a] = lc.x * comp(m.vertex[0]) + lc.y * comp(m.vertex[1]) + lc.z * comp(m.vertex[2]) + comp(m.vertex[3]);
+                const vec4& axis = m.vertex[a];
+                scale = fmaxf(scale,sqrtf(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z));
+            }
+            //Padded for what the vertex shader moves - wind on foliage and leaves - by a tenth and a quarter unit.
+            float r = sqrtf(half.x * half.x + half.y * half.y + half.z * half.z) * scale * 1.1f + 0.25f;
+            for (int p = 0; p < 6 && f_inside; p++){
+                float d = planes[p][0] * wc[0] + planes[p][1] * wc[1] + planes[p][2] * wc[2] + planes[p][3];
+                f_inside = (d >= -r);
+            }
+        }
+        if (!f_inside){
+            outside_view[i] = 1;
+            continue;
+        }
+        stats.inside++;
+        stats.vertices_inside += mesh->num_vertices;
+        int bi = object->GetMeshBatchIndex();
+        if (bi >= 0 && bi < (int)mesh_seen.size()){
+            mesh_seen[bi] = 1;
+        }
+    }
+    for (size_t k = 0; k < unique_meshes.size(); k++){
+        if (unique_meshes[k] && unique_meshes[k]->IsNormalMesh() && unique_meshes[k]->mesh_mode != MESH_MODE_SHADER){
+            stats.meshes++;
+            stats.meshes_inside += mesh_seen[k] ? 1 : 0;
+        }
+    }
+    stats.us = std::chrono::duration<float,std::micro>(std::chrono::steady_clock::now() - t0).count();
+    stats.f_valid = true;
+    {
+        std::lock_guard<std::mutex> lock(cull_stats_mutex);
+        cull_stats = stats;
+    }
+    //The passes may use outside_view only if it was built this frame, with culling on.
+    f_cull_this_frame = f_cull;
+}
+
+void Renderer::ApplyExperimentRequests(){
+    int samples = requested_aa_samples.exchange(-1);
+    if (samples > 0 && samples != aa_samples){
+        SetNumAASamples(samples);
+    }
+    int blend = requested_opaque_blend.exchange(-1);
+    if (blend >= 0){
+        f_opaque_blend = (blend != 0);
+    }
+}
+
 void Renderer::DeferredPass(Camera* camera){
     if (pipeline != PIPELINE_DEFERRED){
         debug->Fatal("Called Deffered pass. Pipeline must be PIPELINE_DEFERRED\n");
@@ -552,7 +675,8 @@ void Renderer::DeferredPass(Camera* camera){
 
     //UploadMaterials();
     //UploadLights();
-    RenderUniqueMeshes(MESH_MODE_NORMAL);
+    //From the camera, like the colour pass, so it may leave out what that pass leaves out.
+    RenderUniqueMeshes(MESH_MODE_NORMAL,-1,false,true);
 
     /*
         MESH_MODE_SHADER meshes are not drawn here BY DEFAULT. They all used to be, with
@@ -1377,7 +1501,7 @@ bool Renderer::InitGPUPassTimers(){
     }
     for (int i=0;i<GPU_PASS_COUNT;i++){
         GPUPassTimer& t = gpu_pass_timers[i];
-        glGenQueries(2,t.queries);
+        glGenQueries(GPU_QUERY_RING,t.queries);
         //Registers with PerfTimer's static list and gets the same rolling window as tmr_frame.
         //Never Restart/Stop-ed: AddSample is the only thing that ever writes to it.
         t.timer = new PerfTimer(gpu_pass_names[i]);
@@ -1392,11 +1516,13 @@ void Renderer::DestroyGPUPassTimers(){
     }
     for (int i=0;i<GPU_PASS_COUNT;i++){
         GPUPassTimer& t = gpu_pass_timers[i];
-        glDeleteQueries(2,t.queries);
-        t.queries[0] = 0;
-        t.queries[1] = 0;
-        t.f_has_run[0] = false;
-        t.f_has_run[1] = false;
+        glDeleteQueries(GPU_QUERY_RING,t.queries);
+        for (int q = 0; q < GPU_QUERY_RING; q++){
+            t.queries[q] = 0;
+        }
+        t.oldest = 0;
+        t.in_flight = 0;
+        t.f_query_open = false;
     }
     f_gpu_timers_supported = false;
 }
@@ -1423,23 +1549,17 @@ void Renderer::BeginGPUPass(int pass){
         return;
     }
     GPUPassTimer& t = gpu_pass_timers[pass];
-    int idx = t.write_index;
-    //Collect the result sitting in the slot about to be reused - it is two frames old, so this
-    //does not wait. If it somehow is not ready, skip the sample rather than stall.
-    if (t.f_has_run[idx]){
-        GLuint available = 0;
-        glGetQueryObjectuiv(t.queries[idx],GL_QUERY_RESULT_AVAILABLE,&available);
-        if (available){
-            GLuint64 ns = 0;
-            glGetQueryObjectui64v(t.queries[idx],GL_QUERY_RESULT,&ns);
-            if (t.timer){
-                t.timer->AddSample((double)ns / 1000.0);    //ns -> us, the unit every timer uses
-            }
-        }
-    }
-    glBeginQuery(GL_TIME_ELAPSED,t.queries[idx]);
+    //Open whether or not a query starts, so the nesting check above keeps working either way.
     active_gpu_pass = pass;
     t.f_begun_this_frame = true;
+    //Every slot still in flight: this frame goes untimed rather than clobbering one - see
+    //GPUPassTimer. EndGPUFrame notices the missing results and, if it goes on, calls it stale.
+    if (t.in_flight >= GPU_QUERY_RING){
+        t.f_query_open = false;
+        return;
+    }
+    glBeginQuery(GL_TIME_ELAPSED,t.queries[(t.oldest + t.in_flight) % GPU_QUERY_RING]);
+    t.f_query_open = true;
 }
 
 void Renderer::EndGPUPass(int pass){
@@ -1447,10 +1567,12 @@ void Renderer::EndGPUPass(int pass){
         return;
     }
     if (f_gpu_timers_supported && (active_gpu_pass == pass)){
-        glEndQuery(GL_TIME_ELAPSED);
         GPUPassTimer& t = gpu_pass_timers[pass];
-        t.f_has_run[t.write_index] = true;
-        t.write_index = 1 - t.write_index;
+        if (t.f_query_open){
+            glEndQuery(GL_TIME_ELAPSED);
+            t.in_flight++;
+            t.f_query_open = false;
+        }
         active_gpu_pass = -1;
     }
     if (glPopDebugGroup){
@@ -1472,6 +1594,24 @@ void Renderer::EndGPUFrame(){
     }
     for (int i=0;i<GPU_PASS_COUNT;i++){
         GPUPassTimer& t = gpu_pass_timers[i];
+        //Every result that has come in, oldest first - they come in the order they were issued,
+        //so the first one not there yet means none after it are either. Never waits.
+        bool f_sampled = false;
+        while (t.in_flight > 0){
+            GLuint available = 0;
+            glGetQueryObjectuiv(t.queries[t.oldest],GL_QUERY_RESULT_AVAILABLE,&available);
+            if (!available){
+                break;
+            }
+            GLuint64 ns = 0;
+            glGetQueryObjectui64v(t.queries[t.oldest],GL_QUERY_RESULT,&ns);
+            if (t.timer){
+                t.timer->AddSample((double)ns / 1000.0);    //ns -> us, the unit every timer uses
+            }
+            f_sampled = true;
+            t.oldest = (t.oldest + 1) % GPU_QUERY_RING;
+            t.in_flight--;
+        }
         //A pass that did not run this frame cost this frame nothing, and saying so is what makes
         //toggling one off visibly decay to zero instead of freezing at its last value.
         if (!t.f_begun_this_frame && t.timer){
@@ -1480,6 +1620,13 @@ void Renderer::EndGPUFrame(){
         if (!t.f_begun_this_frame && t.cpu_timer){
             t.cpu_timer->AddSample(0.0);
         }
+        //Stale only counts frames it RAN in: one switched off is at zero, and that is the truth.
+        if (!t.f_begun_this_frame || f_sampled){
+            t.frames_without_sample = 0;
+        }else{
+            t.frames_without_sample++;
+        }
+        t.f_stale = t.frames_without_sample >= GPU_STALE_FRAMES;
         t.f_begun_this_frame = false;
     }
 }
@@ -1711,6 +1858,7 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     //Before anything is drawn into the buffers it may reallocate.
     ApplyRenderScale();
     ApplySSAORequest();
+    ApplyExperimentRequests();
 
     PrepareObjects(objects);
 
@@ -1724,6 +1872,8 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     camera->viewport.px_offset_x = (float)viewport_x;
     camera->viewport.px_offset_y = (float)(height - (viewport_y + GetViewportHeight()));
     camera->CalculateLookatMatrix();
+    //Returns at once unless culling is on or the counts were asked for - see f_frustum_cull.
+    ComputeViewCull(camera);
 
     BeginGPUPass(GPU_PASS_SHADOW);
     ClearDepthPasses();
@@ -1826,7 +1976,14 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     UploadLights();
 
     UploadLighting(shader);
-    RenderUniqueMeshes(MESH_MODE_NORMAL);
+    //The opaque meshes without blending, if asked - see RequestOpaqueBlend. Back on for the rest.
+    if (!f_opaque_blend){
+        glDisable(GL_BLEND);
+    }
+    RenderUniqueMeshes(MESH_MODE_NORMAL,-1,false,true);
+    if (!f_opaque_blend){
+        glEnable(GL_BLEND);
+    }
     //Lines through their own program - see line.vert. f_materialindex_is_color, which used to
     //make default.frag paint them white, is no longer part of this pass.
     line_shader->Use();

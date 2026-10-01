@@ -1160,11 +1160,20 @@ void Application::RegisterCoreMCPTools(){
         "includes waiting for physics_mutex - minus `renderer_us` it is that wait) and the rest. "
         "`physics_us` is the tick's work, done holding physics_mutex, `physics_loop_us` its period. "
         "Each value is a rolling average over the last 60 frames, with the peak alongside. "
+        "`fps` is frames presented per second over the last second; `uncapped_fps` the estimate of "
+        "what the frame's work would allow without vsync, 1e6 / max(`frame_work_us`, `gpu_total_us`), "
+        "0 while any pass is `stale` (ran for 30 frames with no fresh GPU result, so its average is old). "
         "Optional `vsync` (boolean) sets the swap interval, applied by the render thread on its next "
         "frame - so wait a second before reading timings that depend on it. A MINIMISED window is "
-        "paced to 60 fps whatever vsync says.",
+        "paced to 60 fps whatever vsync says. Optional `frustum_cull` (boolean) turns the renderer's "
+        "frustum-culling PROTOTYPE on or off (default off). Optional `cull_stats` (boolean) asks for "
+        "the view counts for the next few seconds even with culling off; `cull` reports the last "
+        "frame that computed them - objects and unique meshes in the colour pass and how many are "
+        "inside the view (`valid` false if none has yet). See renderer_experiment for the rest.",
         json{ {"type","object"}, {"properties", {
-            {"vsync", {{"type","boolean"}}}
+            {"vsync", {{"type","boolean"}}},
+            {"frustum_cull", {{"type","boolean"}}},
+            {"cull_stats", {{"type","boolean"}}}
         }} },
         [this](const json &args) -> json {
             if (!renderer){
@@ -1173,8 +1182,23 @@ void Application::RegisterCoreMCPTools(){
             if (args.contains("vsync") && args["vsync"].is_boolean()){
                 requested_vsync = args["vsync"].get<bool>() ? 1 : 0;
             }
+            if (args.contains("frustum_cull") && args["frustum_cull"].is_boolean()){
+                renderer->f_frustum_cull = args["frustum_cull"].get<bool>();
+            }
+            if (args.contains("cull_stats") && args["cull_stats"].is_boolean() && args["cull_stats"].get<bool>()){
+                renderer->RequestCullStats(180);
+            }
+            const Renderer::CullStats cs = renderer->GetCullStats();
+            json cull = {
+                {"enabled", renderer->f_frustum_cull.load()}, {"valid", cs.f_valid},
+                {"objects", cs.objects}, {"inside", cs.inside},
+                {"meshes", cs.meshes}, {"meshes_inside", cs.meshes_inside},
+                {"vertices", cs.vertices}, {"vertices_inside", cs.vertices_inside},
+                {"test_us", cs.us}
+            };
             json passes = json::array();
             double total_us = 0;
+            bool f_any_stale = false;
             for (int i=0;i<Renderer::GPU_PASS_COUNT;i++){
                 const Renderer::GPUPassTimer* pass = renderer->GetGPUPassTimer(i);
                 if (!pass || !pass->timer){
@@ -1187,7 +1211,10 @@ void Application::RegisterCoreMCPTools(){
                     {"max_us", pass->timer->max},
                     //The same scope on the CPU clock - issuing it, and any wait the driver made
                     {"cpu_avg_us", pass->cpu_timer ? pass->cpu_timer->avg : 0.0},
+                    //Ran for Renderer::GPU_STALE_FRAMES frames with no fresh result: avg_us is old
+                    {"stale", pass->f_stale},
                 });
+                f_any_stale = f_any_stale || pass->f_stale;
             }
             json cpu = json::object();
             if (renderer->tmr_frame){
@@ -1209,14 +1236,45 @@ void Application::RegisterCoreMCPTools(){
             add("scene_draw_us",tmr_scene_draw);
             add("physics_us",tmr_physics);
             add("physics_loop_us",tmr_physics_loop);
+            add("frame_work_us",tmr_frame_work);
             return json{
                 {"vsync", renderer->GetVSync()},
                 {"minimized", main_window && main_window->IsMinimized()},
+                //See Application::GetUncappedFramesPerSecond for what the estimate is made of.
+                {"fps", GetFramesPerSecond()},
+                {"uncapped_fps", GetUncappedFramesPerSecond()},
                 {"gpu_timers_supported", renderer->GPUTimersSupported()},
                 {"gpu_passes", passes},
                 {"gpu_total_us", total_us},
+                //A stale pass is in the total at its old average - see the per-pass `stale`.
+                {"gpu_total_stale", f_any_stale},
                 {"cpu", cpu},
+                {"cull", cull},
             };
+        });
+
+    //The render switches of 2026-09-30 - see Renderer::RequestAASamples / RequestOpaqueBlend.
+    MCPServer::Get()->RegisterTool("renderer_experiment",
+        "Render-cost switches, applied by the render thread at the start of its next frame. "
+        "`msaa_samples`: the MSAA sample count - 4 is the default, 16, or 1 for off (the buffers "
+        "are rebuilt). `opaque_blend` (boolean): blending while the colour pass draws the opaque "
+        "meshes - off by default, since no opaque asset uses alpha; the translucent passes blend "
+        "either way. Both optional; returns what is in force.",
+        json{ {"type","object"}, {"properties", {
+            {"msaa_samples", {{"type","integer"}}},
+            {"opaque_blend", {{"type","boolean"}}}
+        }} },
+        [this](const json &args) -> json {
+            if (!renderer){
+                return json{ {"error","no renderer"} };
+            }
+            if (args.contains("msaa_samples") && args["msaa_samples"].is_number_integer()){
+                renderer->RequestAASamples(args["msaa_samples"].get<int>());
+            }
+            if (args.contains("opaque_blend") && args["opaque_blend"].is_boolean()){
+                renderer->RequestOpaqueBlend(args["opaque_blend"].get<bool>());
+            }
+            return json{ {"msaa_samples", renderer->aa_samples}, {"opaque_blend", renderer->GetOpaqueBlend()} };
         });
 
     //The Renderer panel's "Render scale" and "Upscale filter", for an agent - see

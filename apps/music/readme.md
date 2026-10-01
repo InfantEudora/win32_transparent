@@ -14,11 +14,21 @@ mingw32-make.exe publish GAME=archer SCORE=jungle
 
 The game keeps its own copy, in git: the score goes to `apps/<game>/assets/music/<score>.json`,
 and every wav it names goes to `music/sounds/` beside it. Only the wavs the score names are
-copied; an export no part plays is an experiment, and stays here. The names are the same in both
-places (the bench's assets use the game's layout), so the copy is a plain copy with nothing
-renamed. Run it again after changing the score. It overwrites what the game has, and it leaves a
-wav the score has stopped naming for you to delete. How archer plays the score is described at
-`title_music` in `apps/archer/ApplicationArcher.h`.
+copied; an export no part plays is an experiment, and stays here. Run it again after changing the
+score. It overwrites what the game has, and it leaves a sample the score has stopped naming for
+you to delete. How archer plays the score is described at `title_music` in
+`apps/archer/ApplicationArcher.h`.
+
+**The game's copy is Ogg Vorbis.** Each wav is encoded to `<name>.ogg`, and the game's score is
+rewritten to name the `.ogg` files. A `.wav` of the same name already in the game is deleted,
+because the `.ogg` replaces it. The wavs here stay the source; this bench still plays and exports
+wav. The settings are `-q -1` at 32 kHz, resampling only files above that rate, with mono and
+stereo kept as they are. Those were chosen by listening on 2026-09-30, and the reasons are in the
+`publish` block of the makefile. For archer this took 66 MB of wav to 2.0 MB, and 57.8 MB to
+1.9 MB in the baked ship exe. The encoder is foobar2000's `oggenc2.exe`, from
+`C:\Program Files\foobar2000\encoders\`. `OGGENC=<path>` points it at another copy, and `OGG=0`
+copies plain wavs instead. The game decodes the `.ogg` files to PCM at load (`core/AudioDecode.h`),
+which takes about 0.5 s for all 42.
 
 ## The bench
 
