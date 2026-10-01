@@ -223,8 +223,20 @@ void Application::RenderDebugMenuBar(){
                     ImGui::SetNextItemWidth(200.0f);
                     ImGui::InputTextWithHint("##asset_filter","filter",filter,sizeof(filter));
                     ImGuiTextFilter matcher(filter);
+                    /*
+                        The loaded GLTF's spare parts - meshes the app never asked for - get a list
+                        of their own below, and stay out of this one even once placed, so the two
+                        lists are always "in the game" and "not in the game".
+                    */
+                    std::vector<std::string> unused = gltfloader.GetUnusedMeshNodeNames();
+                    auto f_is_unused = [&unused](const std::string& name){
+                        for (const std::string& u:unused){
+                            if (u == name){ return true; }
+                        }
+                        return false;
+                    };
                     for (Asset* asset:assetmanager->assets){
-                        if (!matcher.PassFilter(asset->name.c_str())){
+                        if (!matcher.PassFilter(asset->name.c_str()) || f_is_unused(asset->name)){
                             continue;
                         }
                         if (ImGui::MenuItem(asset->name.c_str())){
@@ -236,6 +248,31 @@ void Application::RenderDebugMenuBar(){
                             //The app says where - see PlaceMenuSpawn.
                             PlaceMenuSpawn(cmd);
                             SubmitUICommand(cmd);
+                        }
+                    }
+                    if (!unused.empty()){
+                        ImGui::Separator();
+                        std::string label = "Unused in " + gltfloader.GetFileName() + " (" + std::to_string(unused.size()) + ")";
+                        if (ImGui::BeginMenu(label.c_str())){
+                            for (const std::string& name:unused){
+                                if (!matcher.PassFilter(name.c_str())){
+                                    continue;
+                                }
+                                if (ImGui::MenuItem(name.c_str())){
+                                    //Loaded on first use, not at startup, and uncounted so it stays
+                                    //on this list. Here and not in the command for the same reason
+                                    //as the skeleton menu below: building a mesh is render-thread
+                                    //work, and the import is authoring, not simulation.
+                                    if (ImportGLTFNodeAsAsset(name,false)){
+                                        SimCommand cmd;
+                                        cmd.type = SIM_CMD_OBJECT_SPAWN_ASSET;
+                                        cmd.asset = AssetIDFromName(name.c_str());
+                                        PlaceMenuSpawn(cmd);
+                                        SubmitUICommand(cmd);
+                                    }
+                                }
+                            }
+                            ImGui::EndMenu();
                         }
                     }
                 }

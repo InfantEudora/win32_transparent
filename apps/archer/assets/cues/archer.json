@@ -32,11 +32,15 @@
     "vine_grow":    "sound/vine_growing.ogg",
     "bamboo_grow":  "sound/bamboo_growing.ogg",
     "roots_grow":   "sound/roots_growing.ogg",
-    "waterfall":    "sound/waterfall.ogg"
+    "waterfall":    "sound/waterfall.ogg",
+    "web_hit":      "sound/web_hit.ogg",
+    "web_snap":     "sound/web_snap.ogg",
+    "web_breach":   "sound/web_breach.ogg"
   },
 
   "groups": {
-    "her": { "comment": "Her voice, breathing included: one sound at a time. PRIORITY decides who gives way (vitals_plan.md section 6): 2 a grunt of pain, 1 a shout or a line, 0 a breath. A higher one cuts a lower one (busy interrupt); an equal or lower one arriving while she speaks is skipped - so a breath never plays over a huh, and a kick in the air right after a jump's huh stays quiet. gap is ticks of silence after a line, if she ever comments too much." }
+    "her": { "comment": "Her voice, breathing included: one sound at a time. PRIORITY decides who gives way (vitals_plan.md section 6): 2 a grunt of pain, 1 a shout or a line, 0 a breath. A higher one cuts a lower one (busy interrupt); an equal or lower one arriving while she speaks is skipped - so a breath never plays over a huh, and a kick in the air right after a jump's huh stays quiet. gap is ticks of silence after a line, if she ever comments too much." },
+    "web": { "comment": "A web tearing open, heard once: her burst and her coming out the far side are one moment a few ticks apart, so whichever comes second is skipped while the first plays and for a second after it (gap).", "gap": 60 }
   },
 
   "buses": {
@@ -175,6 +179,33 @@
     "roots_grow": {
       "comment": "Roots alone, out of an underside or a wall: every normal arrow into one, so this is heard more than any other growth and kept quieter. The roots under a vine or a bamboo clump are covered by that plant's own sound and never signal this. A tuft alone is silent.",
       "signal": "roots_grow", "sounds": ["roots_grow"], "bus": "effects", "gain": 0.3,
+      "gain_by": [ { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+
+    "web_hit": {
+      "comment": "An arrow tearing through a web (web_plan.md): the thrum, once per arrow, louder the faster it met the web - a tap leaves at about 24, a full draw at 46. The file is about 4 dB under arrow_hit's, so a web reads softer than a crate. Through a hole already there it tears nothing and is silent. By distance and panned, like arrow_hit.",
+      "signal": "web_hit", "sounds": "web_hit", "bus": "effects",
+      "gain_by": [ { "value": "speed", "in": [23, 46], "out": [0.6, 1.0] },
+                   { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+    "web_snap": {
+      "comment": "Threads snapping - an arrow's, one stretched too far, a burst. ONE signal a tick per web, carrying how many went (6 or 7 for a full draw off the hub, 16 through it, 1 for strain), so a big tear is one louder snap rather than sixteen stacked. A lone strain snap sits about at a footstep's level. gap 3 keeps strain snaps on successive ticks from rattling.",
+      "signal": "web_snap", "sounds": "web_snap", "bus": "effects", "gap": 3,
+      "gain_by": [ { "value": "count", "in": [1, 12], "out": [0.45, 1.0] },
+                   { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+    "web_burst": {
+      "comment": "She tears the last threads across her path herself - the web giving way. With web_through in the `web` group, so the burst and her coming out the other side are one tear.",
+      "signal": "web_burst", "sounds": "web_breach", "bus": "effects", "group": "web",
+      "gain_by": [ { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+    "web_through": {
+      "comment": "Out the far side of a web for the first time - through a hole the arrows opened, with no burst to be heard. Walking back through it later is not a moment. After a burst this is skipped (the `web` group).",
+      "signal": "web_through", "when": [ ["first", "==", 1] ], "sounds": "web_breach", "bus": "effects", "group": "web",
       "gain_by": [ { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
       "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
     },

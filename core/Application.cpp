@@ -2006,40 +2006,42 @@ void Application::GetAssetsFromGLTF(const std::vector<std::string>& names){
         debug->Err("No assetmanager to load assets into.\n");
     }
 
-    //Materials loaded belonging to a single node
-    std::vector<Material>loaded_materials;
-
     for (const std::string& nodename:names){
         debug->Info("GetAssetsFromGLTF: Node %s\n",nodename.c_str());
-        loaded_materials.clear();
+        ImportGLTFNodeAsAsset(nodename,true);
+    }
+}
 
-        bool already_loaded = false;
-
-        for (Asset* asset:assetmanager->assets){
-            if (asset->name.compare(nodename) == 0){
+//The one node GetAssetsFromGLTF loads, and what the menu's unused list loads uncounted. Render thread.
+bool Application::ImportGLTFNodeAsAsset(const std::string& nodename, bool f_count_as_use){
+    if (!assetmanager){
+        return false;
+    }
+    for (Asset* asset:assetmanager->assets){
+        if (asset->name.compare(nodename) == 0){
+            //The menu places a spare part again from the asset it made the first time - not a fault.
+            if (f_count_as_use){
                 debug->Err(" -> Already loaded\n");
-                already_loaded = true;
-                break;
             }
-        }
-
-        if (already_loaded){
-            continue;
-        }
-
-        Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
-        if (gltfmesh){
-            Object* gltf_object = new Object();
-            gltf_object->name = nodename.c_str();
-            gltf_object->SetMesh(gltfmesh);
-            gltf_object->TakeMaterialNames(loaded_materials);
-            assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
-            //Just add all...
-            renderer->AddMaterials(loaded_materials);
-        } else {
-            debug->Err("GetAssetsFromGLTF: Could not find node %s in currently loaded GLTF file\n",nodename.c_str());
+            return true;
         }
     }
+    //Materials loaded belonging to a single node
+    std::vector<Material>loaded_materials;
+    Mesh* gltfmesh = f_count_as_use ? gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials)
+                                    : gltfloader.GetMeshFromNodeUncounted(nodename.c_str(),&loaded_materials);
+    if (!gltfmesh){
+        debug->Err("GetAssetsFromGLTF: Could not find node %s in currently loaded GLTF file\n",nodename.c_str());
+        return false;
+    }
+    Object* gltf_object = new Object();
+    gltf_object->name = nodename.c_str();
+    gltf_object->SetMesh(gltfmesh);
+    gltf_object->TakeMaterialNames(loaded_materials);
+    assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
+    //Just add all...
+    renderer->AddMaterials(loaded_materials);
+    return true;
 }
 
 //Get's the currently loaded GLTF file, and imports everyting that wasn't imported.

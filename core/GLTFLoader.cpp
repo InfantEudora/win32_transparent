@@ -127,6 +127,9 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         }
         node_names.push_back(model.nodes[node_index].name);
     }
+    //A new file starts with nothing asked for.
+    node_asked_for.assign(model.nodes.size(),0);
+    file_name = input_filename;
 
     debug->Trace("Model has %i skins\n",model.skins.size());
 
@@ -317,13 +320,35 @@ void GLTFLoader::ListNodes(){
 }
 
 //Returns a pointer to node if found, or NULL
+//Every by-name accessor comes through here, which is what makes it the place to count use.
 tinygltf::Node*  GLTFLoader::FindNode(std::string node_name){
     for (int node_index=0;node_index<model.nodes.size();node_index++){
         if (node_name.compare(model.nodes[node_index].name) == 0){
+            if (f_count_requests && node_index < (int)node_asked_for.size()){
+                node_asked_for[node_index] = 1;
+            }
             return &model.nodes[node_index];
         }
     }
     return NULL;
+}
+
+std::vector<std::string> GLTFLoader::GetUnusedMeshNodeNames(){
+    std::vector<std::string> names;
+    for (int node_index=0;node_index<(int)model.nodes.size();node_index++){
+        if (model.nodes[node_index].mesh >= 0 &&
+            node_index < (int)node_asked_for.size() && !node_asked_for[node_index]){
+            names.push_back(model.nodes[node_index].name);
+        }
+    }
+    return names;
+}
+
+Mesh* GLTFLoader::GetMeshFromNodeUncounted(const char* node_name, std::vector<Material>* optional_mat_list_out){
+    f_count_requests = false;
+    Mesh* mesh = GetMeshFromNode(node_name,optional_mat_list_out,false);
+    f_count_requests = true;
+    return mesh;
 }
 
 //Returns a pointer to node if found, or NULL

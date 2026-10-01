@@ -63,6 +63,19 @@ public:
     std::vector<std::string>    GetAnimationNames();
     std::vector<std::string>    GetSkinnedMeshNames();
 
+    /*
+        WHAT THE APP DOES NOT USE. Every lookup of a node by name - its mesh, its transform, its
+        children - marks that node as asked for, so after an app has loaded what it wants, the
+        mesh nodes nobody asked for are the file's spare parts: authored and exported, but not in
+        the game. Kept automatically, so a prop added to the export shows up here without anyone
+        listing it, and drops off the moment the game loads it. In the file's order.
+    */
+    std::vector<std::string>    GetUnusedMeshNodeNames();
+    //GetMeshFromNode for the editor: loads the mesh WITHOUT marking the node as asked for, so
+    //placing a spare part by hand does not take it off the list above.
+    Mesh*                       GetMeshFromNodeUncounted(const char* node_name, std::vector<Material>* optional_mat_list_out = NULL);
+    const std::string&          GetFileName(){ return file_name; }
+
     //Loaded node names from file
     std::vector<std::string>node_names;
 private:
@@ -102,6 +115,12 @@ private:
 
     Material*                   LookupLoadedMaterial(const std::string& material_name); // Returns the material or NULL
 
+
+    //Per node, whether FindNode has been asked for it - see GetUnusedMeshNodeNames. Bytes rather
+    //than vector<bool>, which packs them and makes neighbouring writes share a word.
+    std::vector<uint8_t>    node_asked_for;
+    bool                    f_count_requests = true;    //off only inside GetMeshFromNodeUncounted
+    std::string             file_name;
 
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;

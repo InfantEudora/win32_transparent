@@ -8483,44 +8483,45 @@ static void TestRoofTree(){
 #endif
 
 /*
-    THE WEB - docs/web_plan.md, StageWeb. In the rope level, where its blockout stands. The promises
-    of the plan's section 3: an arrow cuts exactly the threads it crosses, slowed by each, and is held
-    once too slow; an intact web stops her; a hole at walk height lets her walk through, one higher
-    up lets her jump through, and one too small or too high does nothing; all of it the same on a
+    THE WEB - docs/web_plan.md ("Step 3b, as built"), StageWeb. In its own scene. The promises: it is
+    built where the prop's frame is and turned the way she meets it; an arrow tears out exactly the
+    threads round where it passes, slowed by each and held once too slow; an intact web holds her
+    and lets her go softly, with holes along her line it still does, and once she presses against
+    only a few threads she bursts through; a jump into it is held the same; all of it the same on a
     second run. And that the main level, which has none, is untouched by any of it.
 */
-//Whether segment p0 -> p1 crosses q0 -> q1 anywhere (ends included) - the test's own, not Stage's.
-static bool WebSegmentsCross(v2 p0, v2 p1, v2 q0, v2 q1){
-    auto side = [](v2 a, v2 b, v2 c){ return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); };
-    float d1 = side(q0,q1,p0), d2 = side(q0,q1,p1), d3 = side(p0,p1,q0), d4 = side(p0,p1,q1);
-    return ((d1 > 0.0f) != (d2 > 0.0f)) && ((d3 > 0.0f) != (d4 > 0.0f));
+//Distance from q to thread t of the web as it is now, in the web's frame - the test's own, not Stage's.
+static float WebDistance(const StageWeb& web, const StageWebThread& t, const v3& q){
+    const v3 a = web.p[t.a], d = web.p[t.b] - a;
+    const float l2 = d.x * d.x + d.y * d.y + d.z * d.z;
+    float k = (l2 > 1e-9f) ? ((q.x - a.x) * d.x + (q.y - a.y) * d.y + (q.z - a.z) * d.z) / l2 : 0.0f;
+    k = fmaxf(0.0f,fminf(1.0f,k));
+    const v3 e = a + d * k - q;
+    return sqrtf(e.x * e.x + e.y * e.y + e.z * e.z);
 }
 
-//Cuts every thread with any part between heights y0 and y1 - a hole made by hand, for the wall rules.
-static void WebCutBand(StageWeb& web, float y0, float y1){
+//A hole made by hand on the crossing line at height v: what an arrow there would tear out.
+static void WebHole(StageWeb& web, float v, float r){
     for (StageWebThread& t : web.threads){
-        float lo = fminf(web.p[t.a].y,web.p[t.b].y), hi = fmaxf(web.p[t.a].y,web.p[t.b].y);
-        if (hi >= y0 && lo <= y1){
+        if (!t.f_cut && WebDistance(web,t,v3(0.0f,v,0.0f)) < r){
             t.f_cut = true;
         }
     }
 }
 
 /*
-    A shot from where she stands: drawn `draw` ticks at `aim`, loosed, and watched tick by tick. After
-    every tick the arrow's segment that tick (prev_pos -> pos, which ends at the catch point if it was
-    caught) must cross no thread still whole - everything it met, it cut - and every cut reported must
-    lie on its thread, where the thread then was.
+    A shot from where she stands: drawn `draw` ticks at `aim`, loosed, and watched tick by tick. On
+    the tick it meets the web, every thread within WEB_HOLE_RADIUS of where it crossed - measured on
+    the web as the arrow met it, which is the web after that tick, since webs step before arrows -
+    must be cut, and nothing else.
 */
 struct WebShot{
     int  arrow = -1;
     int  cuts = 0;
     bool f_caught = false;
-    int  missed = 0;            //whole threads its segment crossed: must stay 0
-    int  off_thread = 0;        //cuts reported away from their thread: must stay 0
-    float speed_in = 0.0f;      //its speed the tick before it met the web, and the tick after
+    int  wrong = 0;             //threads cut outside the hole, or left whole inside it: must stay 0
+    float speed_in = 0.0f;      //its speed the tick before it met the web, and the tick it did
     float speed_out = 0.0f;
-    int  breaches = 0;
 };
 static WebShot WebFire(Stage& s, float aim, int draw){
     WebShot out;
@@ -8533,7 +8534,12 @@ static WebShot WebFire(Stage& s, float aim, int draw){
     s.aim_deg = aim;
     ArcherInput loose;
     loose.f_draw_released = true;
-    for (int tick = 0; tick < 150; tick++){
+    std::vector<uint8_t> was_cut;
+    for (int tick = 0; tick < 120; tick++){
+        was_cut.clear();
+        for (const StageWebThread& t : s.webs[0].threads){
+            was_cut.push_back(t.f_cut ? 1 : 0);
+        }
         StageEvents e;
         s.Tick(tick == 0 ? loose : idle,e);
         if (tick == 0){
@@ -8548,43 +8554,82 @@ static WebShot WebFire(Stage& s, float aim, int draw){
         }
         const Arrow& a = s.arrows[out.arrow];
         const StageWeb& web = s.webs[0];
-        for (const StageEvents::WebThreadCut& c : e.web_cuts){
-            out.cuts++;
-            const StageWebThread& t = web.threads[c.thread];
-            v2 pa = web.p[t.a], pb = web.p[t.b];
-            float len = sqrtf((pb.x - pa.x) * (pb.x - pa.x) + (pb.y - pa.y) * (pb.y - pa.y));
-            float da = sqrtf((c.at.x - pa.x) * (c.at.x - pa.x) + (c.at.y - pa.y) * (c.at.y - pa.y));
-            float db = sqrtf((c.at.x - pb.x) * (c.at.x - pb.x) + (c.at.y - pb.y) * (c.at.y - pb.y));
-            out.off_thread += (fabsf(da + db - len) > 1e-3f) ? 1 : 0;
-        }
+        const float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
+        bool f_hit = false;
         for (const StageEvents::WebHit& h : e.web_hits){
+            if (h.arrow != out.arrow){
+                continue;
+            }
+            f_hit = true;
             out.f_caught = out.f_caught || h.f_caught;
-        }
-        out.breaches += (int)e.web_breaches.size();
-        if (a.f_live && (!e.web_cuts.empty() || !a.f_stuck)){
-            v2 p0(a.prev_pos.x,a.prev_pos.y), p1(a.pos.x,a.pos.y);
-            for (const StageWebThread& t : web.threads){
-                if (!t.f_cut && WebSegmentsCross(p0,p1,web.p[t.a],web.p[t.b])){
-                    out.missed++;
+            out.cuts += h.threads;
+            const v3 q(h.at.z * web.Sin(),h.at.y,h.at.z * web.Cos());
+            for (size_t ti = 0; ti < web.threads.size(); ti++){
+                if (was_cut[ti]){
+                    continue;
                 }
+                const bool f_inside = WebDistance(web,web.threads[ti],q) < WEB_HOLE_RADIUS;
+                out.wrong += (f_inside != web.threads[ti].f_cut) ? 1 : 0;
             }
         }
-        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
-        if (e.web_cuts.empty() && out.cuts == 0){
-            out.speed_in = speed;
-        }else if (!e.web_cuts.empty()){
+        if (f_hit){
             out.speed_out = speed;
+            break;
         }
-        if (!a.f_live || (a.f_stuck && e.web_cuts.empty())){
+        out.speed_in = speed;
+        if (!a.f_live || a.f_stuck){
             break;
         }
     }
     return out;
 }
 
+/*
+    Her run into the web, watched: how deep she got, the hardest it sent her back, whether she came
+    out the far side, the bursts and the threads that snapped from strain alone.
+*/
+struct WebRun{
+    float deepest = -1e9f;      //of her x past the crossing line
+    float min_vx = 1e9f;
+    float spread = 0.0f;        //of her x over the last second: settled when small
+    bool  f_through = false;
+    int   bursts = 0;
+    int   strained = 0;
+    int   pressed = 0;          //web_pressed events
+};
+static WebRun WebRunInto(Stage& s, bool f_jump, int ticks){
+    WebRun o;
+    ArcherInput run;
+    run.move_axis = 1.0f;
+    run.f_jump_down = f_jump;
+    float lo = 1e9f, hi = -1e9f;
+    for (int t = 0; t < ticks; t++){
+        ArcherInput in = run;
+        in.f_jump_pressed = f_jump && t == 8;
+        StageEvents e;
+        s.Tick(in,e);
+        o.deepest = fmaxf(o.deepest,s.pos.x - s.webs[0].cx);
+        o.min_vx = fminf(o.min_vx,s.vel.x);
+        o.bursts += (int)e.web_burst.size();
+        o.pressed += (int)e.web_pressed.size();
+        for (const StageEvents::WebThreadCut& c : e.web_cuts){
+            o.strained += (c.arrow < 0 && !c.f_burst) ? 1 : 0;
+        }
+        for (const StageEvents::WebBreach& b : e.web_breaches){
+            o.f_through = o.f_through || b.f_first;
+        }
+        if (t >= ticks - 60){
+            lo = fminf(lo,s.pos.x);
+            hi = fmaxf(hi,s.pos.x);
+        }
+    }
+    o.spread = hi - lo;
+    return o;
+}
+
 static void TestWeb(){
     printf("\nthe web\n");
-    char d[200];
+    char d[240];
     {
         Stage main_level;
         Check(main_level.webs.empty(),"the main level has no web, so nothing of it is in its state");
@@ -8606,92 +8651,172 @@ static void TestWeb(){
             continue;
         }
         anchors++;
-        const v2 q = web.p[i];
-        bool f_edge = fabsf(q.x - web.x) < 1e-3f || fabsf(q.x - web.Right()) < 1e-3f ||
+        const v3 q = web.p[i];
+        bool f_edge = fabsf(q.x - web.Left()) < 1e-3f || fabsf(q.x - web.Right()) < 1e-3f ||
                       fabsf(q.y - web.y) < 1e-3f || fabsf(q.y - web.Top()) < 1e-3f;
-        off_frame += f_edge ? 0 : 1;
+        off_frame += (f_edge && fabsf(q.z) < 1e-6f) ? 0 : 1;
     }
-    Check(anchors == S && off_frame == 0,"every anchor is on the frame's opening");
-    CheckNear(web.w,4.0f * ARCHER_HALF_H,1e-4f,"twice her height across");
-    CheckNear(web.h,4.0f * ARCHER_HALF_H,1e-4f,"and twice her height up");
+    Check(anchors == S && off_frame == 0,"every anchor is on the frame's opening, in its plane");
+    CheckNear(web.w,3.1f,1e-4f,"as wide as the prop's opening");
+    CheckNear(web.h,3.5f,1e-4f,"and as tall");
+    //Facing: walking right she reaches the low-x post first, and it stands behind her plane.
+    {
+        const v3 l = web.World(v3(web.Left(),web.y,0.0f)), r = web.World(v3(web.Right(),web.y,0.0f));
+        const v3 m = web.World(v3(0.0f,web.y,0.0f));
+        snprintf(d,sizeof(d),"left post at (%.2f, %.2f), right at (%.2f, %.2f)",l.x,l.z,r.x,r.z);
+        Check(l.x < web.cx && l.z < 0.0f && r.x > web.cx && r.z > 0.0f,"turned with its first post behind her plane and the second in front",d);
+        Check(fabsf(m.x - web.cx) < 1e-5f && fabsf(m.z) < 1e-5f,"and crossing her plane at cx");
+    }
 
     //Settled: still, taut, a little down under its own weight.
     float fastest = 0.0f;
-    for (const v2& v : web.v){
-        fastest = fmaxf(fastest,sqrtf(v.x * v.x + v.y * v.y));
+    for (const v3& v : web.v){
+        fastest = fmaxf(fastest,sqrtf(v.x * v.x + v.y * v.y + v.z * v.z));
     }
-    const float hub_y = web.y + web.h * 0.5f + web.hub_y;
-    snprintf(d,sizeof(d),"fastest node %.4f, hub %.3f below where it was hung",fastest,hub_y - web.p[0].y);
-    Check(fastest < 0.01f && web.p[0].y < hub_y && hub_y - web.p[0].y < 0.2f,"it starts settled: still, and sagging a little",d);
+    const float hub_v = web.y + web.h * 0.5f + web.hub_v;
+    snprintf(d,sizeof(d),"fastest node %.4f, hub %.3f below where it was hung",fastest,hub_v - web.p[0].y);
+    Check(fastest < 0.01f && web.p[0].y < hub_v && hub_v - web.p[0].y < 0.2f,"it starts settled: still, and sagging a little",d);
     //Taut, near enough: the spiral's pull draws the innermost turn toward the hub, which can let a
     //hub segment go a few percent loose - a web does that too - but nothing hangs.
     int slack = 0;
     for (const StageWebThread& t : web.threads){
-        float dx = web.p[t.b].x - web.p[t.a].x, dy = web.p[t.b].y - web.p[t.a].y;
-        slack += (sqrtf(dx * dx + dy * dy) < t.rest * 0.95f) ? 1 : 0;
+        const v3 e = web.p[t.b] - web.p[t.a];
+        slack += (sqrtf(e.x * e.x + e.y * e.y + e.z * e.z) < t.rest * 0.95f) ? 1 : 0;
     }
     snprintf(d,sizeof(d),"%i more than 5%% slack",slack);
     Check(slack == 0,"and every thread is taut",d);
 
-    //An intact web is a wall.
+    Stage before = s;
+    PlaceOn(before,web.cx - 3.0f,0.0f);
+
+    //An intact web holds her: in, pressed against it, never thrown back harder than the cap.
     {
-        Stage t = s;
-        PlaceOn(t,4.0f,0.0f);
-        ArcherInput run;
-        run.move_axis = 1.0f;
-        Run(t,240,run);
-        snprintf(d,sizeof(d),"stopped at x %.3f",t.pos.x);
-        Check(fabsf(t.pos.x + ARCHER_HALF_W - web.x) < 0.01f,"an intact web stops her at its face",d);
-        ArcherInput jump = run;
-        jump.f_jump_pressed = true;
-        jump.f_jump_down = true;
-        run.f_jump_down = true;
-        Run(t,1,jump);
-        Run(t,120,run);
-        snprintf(d,sizeof(d),"ended at x %.3f",t.pos.x);
-        Check(t.pos.x < web.x,"and she cannot jump over it - the beam is over her reach",d);
+        Stage t = before;
+        std::vector<int> path;
+        t.WebPathThreads(t.webs[0],0.0f,2.0f * ARCHER_HALF_H,path);
+        WebRun o = WebRunInto(t,false,300);
+        snprintf(d,sizeof(d),"%zu threads across her path; deepest %+.2f, hardest back %.2f u/s, last-second spread %.4f",
+                 path.size(),o.deepest,o.min_vx,o.spread);
+        Check(!o.f_through && o.deepest < 0.0f && o.pressed == 1,"an intact web holds her, running into it",d);
+        Check(o.min_vx >= -WEB_PUSHBACK_MAX - 1e-3f && o.min_vx < 0.0f,"pushed back, but no harder than WEB_PUSHBACK_MAX",d);
+        Check(o.spread < 0.01f,"and settles her there, pressed in",d);
+        snprintf(d,sizeof(d),"%i strained, %i bursts, %i cut",o.strained,o.bursts,t.webs[0].CutCount());
+        Check(o.strained == 0 && o.bursts == 0 && t.webs[0].CutCount() == 0,"pressing it for five seconds snaps nothing",d);
+        //Let go, and it hands her back - softly, and then lets her be.
+        ArcherInput idle;
+        float min_vx = 0.0f;
+        for (int i = 0; i < 120; i++){
+            StageEvents e;
+            t.Tick(idle,e);
+            min_vx = fminf(min_vx,t.vel.x);
+        }
+        snprintf(d,sizeof(d),"hardest back %.2f u/s; %d threads still on her at x %.2f",min_vx,t.webs[0].contacts,t.pos.x);
+        Check(min_vx >= -WEB_PUSHBACK_MAX - 1e-3f && t.webs[0].contacts == 0 && t.pos.x < web.cx,
+              "let go, it eases her back out and lets her be",d);
+    }
+    //A jump into it is held the same.
+    {
+        Stage t = before;
+        WebRun o = WebRunInto(t,true,300);
+        snprintf(d,sizeof(d),"deepest %+.2f, hardest back %.2f u/s",o.deepest,o.min_vx);
+        Check(!o.f_through && o.min_vx >= -WEB_PUSHBACK_MAX - 1e-3f && o.bursts == 0,"and so is a jump into it, in the air",d);
     }
 
-    //A full draw through the middle: cuts what it crosses, slows by each, and here is held.
+    //Holes along her line: two still hold her, a third leaves few enough threads to burst.
+    {
+        const float hs[] = { 1.0f, 0.4f, 1.6f };
+        int held = 0;
+        for (int n = 1; n <= 3; n++){
+            Stage t = before;
+            for (int i = 0; i < n; i++){
+                WebHole(t.webs[0],hs[i],WEB_HOLE_RADIUS);
+            }
+            std::vector<int> path;
+            t.WebPathThreads(t.webs[0],0.0f,2.0f * ARCHER_HALF_H,path);
+            const int across = (int)path.size();
+            WebRun o = WebRunInto(t,false,300);
+            snprintf(d,sizeof(d),"%d holes, %d cut, %d held threads across her path: deepest %+.2f, %d bursts, %d strained",
+                     n,t.webs[0].CutCount(),across,o.deepest,o.bursts,o.strained);
+            if (n < 3){
+                held += (!o.f_through && across > WEB_BURST_THREADS && o.bursts == 0 && o.spread < 0.01f) ? 1 : 0;
+                if (n == 2){
+                    Check(held == 2,"one or two arrow holes along her line still hold her",d);
+                }
+            }else{
+                Check(across <= WEB_BURST_THREADS && across > 0,"a third leaves WEB_BURST_THREADS or fewer across her path",d);
+                Check(o.f_through && o.bursts == 1 && o.deepest > web.Right(),"and she bursts through them",d);
+                int burst_cuts = 0;
+                bool f_others = false;
+                //The burst tore the threads across her path and nothing else.
+                Stage u = before;
+                for (int i = 0; i < n; i++){
+                    WebHole(u.webs[0],hs[i],WEB_HOLE_RADIUS);
+                }
+                std::vector<uint8_t> on_path(u.webs[0].threads.size(),0);
+                for (int ti : path){
+                    on_path[ti] = 1;
+                }
+                ArcherInput run;
+                run.move_axis = 1.0f;
+                for (int i = 0; i < 300; i++){
+                    StageEvents e;
+                    u.Tick(run,e);
+                    for (const StageEvents::WebThreadCut& c : e.web_cuts){
+                        if (c.f_burst){
+                            burst_cuts++;
+                            f_others = f_others || !on_path[c.thread];
+                        }
+                    }
+                }
+                snprintf(d,sizeof(d),"%d torn by the burst, of %d across",burst_cuts,across);
+                Check(burst_cuts == across && !f_others,"the burst tears exactly the threads across her path",d);
+            }
+        }
+    }
+
+    //A full draw: tears out what is round where it passes, slowed by each thread.
     {
         Stage t = s;
-        PlaceOn(t,5.0f,0.0f);
-        WebShot shot = WebFire(t,8.0f,BOW_DRAW_TICKS + 2);
-        snprintf(d,sizeof(d),"%i cut, %i whole threads crossed, %i cuts off their thread",shot.cuts,shot.missed,shot.off_thread);
-        Check(shot.cuts > 0 && shot.missed == 0 && shot.off_thread == 0,"an arrow cuts exactly the threads it crosses",d);
+        PlaceOn(t,web.cx - 3.8f,0.0f);
+        WebShot shot = WebFire(t,0.0f,BOW_DRAW_TICKS + 2);
+        snprintf(d,sizeof(d),"%i cut, %i wrong; %.1f -> %.1f u/s, caught %d",shot.cuts,shot.wrong,shot.speed_in,shot.speed_out,(int)shot.f_caught);
+        Check(shot.cuts > 0 && shot.wrong == 0,"an arrow tears out exactly the threads within WEB_HOLE_RADIUS of where it passes",d);
         Check(t.webs[0].CutCount() == shot.cuts,"and nothing else");
-        snprintf(d,sizeof(d),"%i threads, caught %d",shot.cuts,(int)shot.f_caught);
-        bool f_dense = shot.f_caught == (ARROW_SPEED_MAX * powf(1.0f - WEB_SLOW_PER_THREAD,(float)shot.cuts) < WEB_CATCH_SPEED);
-        Check(f_dense,"held exactly when its threads have slowed it under WEB_CATCH_SPEED",d);
-        if (shot.f_caught && shot.arrow >= 0){
+        const float want = shot.speed_in * powf(1.0f - WEB_SLOW_PER_THREAD,(float)shot.cuts);
+        Check(!shot.f_caught && shot.speed_out < want * 1.05f && shot.speed_out > want * 0.9f,
+              "a full draw flies on, slowed by WEB_SLOW_PER_THREAD for each",d);
+        //And the snap shook it: nodes moving that were still.
+        float moving = 0.0f;
+        for (const v3& v : t.webs[0].v){
+            moving = fmaxf(moving,sqrtf(v.x * v.x + v.y * v.y + v.z * v.z));
+        }
+        snprintf(d,sizeof(d),"fastest node %.3f u/s, a kick is %.1f",moving,WEB_SNAP_KICK);
+        Check(moving > 0.05f && moving < WEB_SNAP_KICK * 1.2f,"a snap jolts the net, each end once however many of its threads went",d);
+    }
+    //A weak tap is held, and rides the net.
+    {
+        Stage t = s;
+        PlaceOn(t,web.cx - 3.8f,0.0f);
+        WebShot shot = WebFire(t,0.0f,BOW_NOCK_TICKS + 1);
+        const float want = shot.speed_in * powf(1.0f - WEB_SLOW_PER_THREAD,(float)shot.cuts);
+        snprintf(d,sizeof(d),"%i cut, %.1f u/s in, %.1f left",shot.cuts,shot.speed_in,want);
+        Check(shot.f_caught && shot.wrong == 0 && want < WEB_CATCH_SPEED,"a weak shot is caught once its threads slow it under WEB_CATCH_SPEED",d);
+        if (shot.f_caught && shot.arrow >= 0 && !t.webs[0].caught.empty()){
             const Arrow& a = t.arrows[shot.arrow];
-            Check(a.f_stuck && t.webs[0].caught.size() == 1,"a caught arrow is stuck in the web");
-            //The web is still swinging from the hit: ride it a while and check it stays on its node.
+            Check(a.f_stuck,"stuck in the web");
             ArcherInput idle;
             Run(t,20,idle);
             const StageWebCatch& k = t.webs[0].caught[0];
-            v2 at(t.webs[0].p[k.node].x + k.offset.x,t.webs[0].p[k.node].y + k.offset.y);
-            snprintf(d,sizeof(d),"%.4f from its node + offset",sqrtf((a.pos.x - at.x) * (a.pos.x - at.x) + (a.pos.y - at.y) * (a.pos.y - at.y)));
-            Check(fabsf(a.pos.x - at.x) < 1e-5f && fabsf(a.pos.y - at.y) < 1e-5f,"and rides the net as it moves",d);
+            bool f_tied = false;
+            for (const StageWebThread& th : t.webs[0].threads){
+                f_tied = f_tied || (!th.f_cut && (th.a == k.node || th.b == k.node));
+            }
+            Check(!t.webs[0].anchor[k.node] && f_tied,"on a node that moves, still tied to the net");
+            const v3 at = t.webs[0].World(t.webs[0].p[k.node]) + k.offset;
+            const v3 e = a.pos - at;
+            snprintf(d,sizeof(d),"%.6f from its node + offset",sqrtf(e.x * e.x + e.y * e.y + e.z * e.z));
+            Check(fabsf(e.x) < 1e-5f && fabsf(e.y) < 1e-5f && fabsf(e.z) < 1e-5f,"and rides the net as it moves",d);
         }
-    }
-    //Low through the edge: fewer threads, so it flies on, slower.
-    {
-        Stage t = s;
-        PlaceOn(t,5.0f,0.0f);
-        WebShot shot = WebFire(t,-3.0f,BOW_DRAW_TICKS + 2);
-        snprintf(d,sizeof(d),"%i cut, %.1f -> %.1f u/s, caught %d",shot.cuts,shot.speed_in,shot.speed_out,(int)shot.f_caught);
-        Check(shot.cuts > 0 && !shot.f_caught && shot.missed == 0,"a shot through the open edge flies on",d);
-        Check(shot.speed_out < shot.speed_in * powf(1.0f - WEB_SLOW_PER_THREAD,(float)shot.cuts) * 1.05f &&
-              shot.speed_out > shot.speed_in * powf(1.0f - WEB_SLOW_PER_THREAD,(float)shot.cuts) * 0.9f,
-              "slowed by WEB_SLOW_PER_THREAD for each thread",d);
-        //And the snap shook it: nodes moving that were still.
-        float moving = 0.0f;
-        for (const v2& v : t.webs[0].v){
-            moving = fmaxf(moving,sqrtf(v.x * v.x + v.y * v.y));
-        }
-        snprintf(d,sizeof(d),"fastest node %.3f u/s, a few ticks on",moving);
-        Check(moving > 0.05f,"a snap jolts the net",d);
     }
     //Cut free, the middle falls to the ground and stays there - it does not fall through the world.
     {
@@ -8707,159 +8832,63 @@ static void TestWeb(){
         float lowest = 1e9f, fastest_now = 0.0f;
         for (size_t i = 0; i < free.p.size(); i++){
             lowest = fminf(lowest,free.p[i].y);
-            fastest_now = fmaxf(fastest_now,sqrtf(free.v[i].x * free.v[i].x + free.v[i].y * free.v[i].y));
+            fastest_now = fmaxf(fastest_now,sqrtf(free.v[i].x * free.v[i].x + free.v[i].y * free.v[i].y + free.v[i].z * free.v[i].z));
         }
         snprintf(d,sizeof(d),"lowest node at y %.3f, the floor at %.2f; fastest %.3f u/s",lowest,free.y,fastest_now);
         Check(lowest >= free.y - 1e-4f && free.p[0].y < free.y + 0.5f && fastest_now < 0.5f,
               "cut free, the web falls to the ground and lies there",d);
     }
-    //A weak tap is held after a few threads.
+    //Shot through in four to six full draws, and then she gets through it.
     {
         Stage t = s;
-        PlaceOn(t,5.0f,0.0f);
-        WebShot shot = WebFire(t,0.0f,BOW_NOCK_TICKS + 1);
-        snprintf(d,sizeof(d),"%i cut",shot.cuts);
-        Check(shot.f_caught && shot.missed == 0,"a weak shot is caught",d);
-    }
-
-    //THE WALL. A hole too small - only the bottom half of her height cut - does nothing.
-    {
-        Stage t = s;
-        WebCutBand(t.webs[0],0.0f,ARCHER_HALF_H);
-        ArcherInput idle;
-        Run(t,2,idle);
-        int open = 0;
-        for (int k = 0; k < t.webs[0].slices; k++){
-            open += t.blocks[t.webs[0].first_slice + k].f_alive ? 0 : 1;
-        }
-        Check(open == 0 && !t.webs[0].f_breached,"a hole too small to fit her does not open the wall");
-        PlaceOn(t,4.0f,0.0f);
-        ArcherInput run;
-        run.move_axis = 1.0f;
-        Run(t,240,run);
-        Check(t.pos.x < web.x,"and she still cannot pass");
-    }
-    //At walk height: she walks through.
-    {
-        Stage t = s;
-        WebCutBand(t.webs[0],WEB_STEP_OVER,2.0f * ARCHER_HALF_H + WEB_PASS_MARGIN + 0.3f);
-        ArcherInput idle;
-        StageEvents e;
-        t.Tick(idle,e);
-        bool f_first = false;
-        float y0 = -1.0f;
-        for (const StageEvents::WebBreach& b : e.web_breaches){
-            if (b.f_first){ f_first = true; y0 = b.y0; }
-        }
-        snprintf(d,sizeof(d),"first breach at y %.2f, %zu slices opened",y0,e.web_slices_opened.size());
-        Check(f_first && fabsf(y0 - web.y) < 1e-4f && !e.web_slices_opened.empty(),"a hole at walk height breaches it, once",d);
-        PlaceOn(t,4.0f,0.0f);
-        ArcherInput run;
-        run.move_axis = 1.0f;
-        Run(t,120,run);
-        snprintf(d,sizeof(d),"reached x %.2f",t.pos.x);
-        Check(t.pos.x > web.Right() + ARCHER_HALF_W,"and she walks through it",d);
-    }
-    //Higher up, within a jump: the slices under the hole stay, a step up into it.
-    {
-        Stage t = s;
-        const float step = 1.5f;
-        WebCutBand(t.webs[0],step + WEB_STEP_OVER,web.Top());
-        ArcherInput idle;
-        StageEvents e;
-        t.Tick(idle,e);
-        float y0 = -1.0f;
-        for (const StageEvents::WebBreach& b : e.web_breaches){
-            y0 = (y0 < 0.0f) ? b.y0 : fminf(y0,b.y0);
-        }
-        int below = 0;
-        for (int k = 0; k < t.webs[0].slices; k++){
-            const StageBlock& b = t.blocks[t.webs[0].first_slice + k];
-            below += (b.f_alive && b.Top() <= y0 + 1e-4f) ? 1 : 0;
-        }
-        snprintf(d,sizeof(d),"hole from y %.2f, %i slices left under it",y0,below);
-        Check(y0 > 0.0f && fabsf(y0 - step) < 1e-3f && below > 0,"a hole higher up opens above a step of whole web",d);
-        PlaceOn(t,4.0f,0.0f);
-        ArcherInput run;
-        run.move_axis = 1.0f;
-        Run(t,60,run);
-        Check(t.pos.x < web.x,"which still stops her walking");
-        ArcherInput jump = run;
-        jump.f_jump_pressed = true;
-        jump.f_jump_down = true;
-        run.f_jump_down = true;
-        Run(t,1,jump);
-        Run(t,120,run);
-        snprintf(d,sizeof(d),"reached x %.2f",t.pos.x);
-        Check(t.pos.x > web.Right() + ARCHER_HALF_W,"and she jumps through it",d);
-    }
-    //Too high: a web taller than a jump, cut only above her reach.
-    {
-        Stage t;
-        t.SetLevel(STAGE_LEVEL_WEB);
-        t.AddWeb(12.0f,0.0f,3.0f,7.0f,12,6,0.0f,0.0f);
-        StageWeb& tall = t.webs[1];
-        const float reach = ApexRise();
-        WebCutBand(tall,reach + 0.4f,tall.Top());
-        ArcherInput idle;
-        StageEvents e;
-        t.Tick(idle,e);
-        int open = 0;
-        for (int k = 0; k < tall.slices; k++){
-            open += t.blocks[tall.first_slice + k].f_alive ? 0 : 1;
-        }
-        snprintf(d,sizeof(d),"cut above y %.2f, %i slices open",reach + 0.4f,open);
-        Check(open == 0 && !tall.f_breached,"a hole above her reach opens nothing",d);
-    }
-    //Arrows do it too - a run of full draws from the floor, low to high, then she walks through.
-    {
-        Stage t = s;
-        PlaceOn(t,3.5f,0.0f);
-        const float aims[] = { 8.0f, 2.0f, -4.0f, -10.0f, 5.0f, -1.0f, -7.0f, 11.0f, -13.0f, 14.0f, -16.0f, 17.0f, -19.0f, 20.0f };
-        int shots = 0, breaches = 0, missed = 0;
+        PlaceOn(t,web.cx - 3.8f,0.0f);
+        const float aims[] = { 0.0f, -8.0f, 8.0f, -14.0f, 14.0f, -4.0f, 4.0f, 18.0f, -18.0f };
+        int shots = 0, wrong = 0;
+        bool f_through = false;
         for (float aim : aims){
             WebShot shot = WebFire(t,aim,BOW_DRAW_TICKS + 2);
             shots++;
-            breaches += shot.breaches;
-            missed += shot.missed;
-            if (breaches > 0){
+            wrong += shot.wrong;
+            Stage probe = t;
+            if (WebRunInto(probe,false,200).f_through){
+                f_through = true;
                 break;
             }
         }
-        snprintf(d,sizeof(d),"%i shots, %i threads cut of %zu, %i whole threads crossed",shots,t.webs[0].CutCount(),
-                 t.webs[0].threads.size(),missed);
-        Check(breaches > 0 && missed == 0,"shooting it to pieces breaches it",d);
+        snprintf(d,sizeof(d),"%i shots, %i threads cut of %zu, %i wrong",shots,t.webs[0].CutCount(),t.webs[0].threads.size(),wrong);
+        Check(f_through && shots >= 4 && shots <= 6 && wrong == 0,"four to six full draws along her line let her through",d);
         printf("  %s\n",d);
-        //Through whichever hole the shots made: a walk, and a jump in case it opened up off the floor.
-        ArcherInput run;
-        run.move_axis = 1.0f;
-        run.f_jump_down = true;
-        Run(t,60,run);
-        ArcherInput jump = run;
-        jump.f_jump_pressed = true;
-        Run(t,1,jump);
-        Run(t,120,run);
-        snprintf(d,sizeof(d),"reached x %.2f",t.pos.x);
-        Check(t.pos.x > web.Right() + ARCHER_HALF_W,"and then she gets through it",d);
+        //Every arrow those shots left in it is still in the opening, on the rim of its hole - not
+        //carried off on a piece the hole cut loose.
+        ArcherInput idle;
+        Run(t,60,idle);
+        const StageWeb& shot_web = t.webs[0];
+        int strays = 0;
+        for (const StageWebCatch& k : shot_web.caught){
+            const v3 at = t.arrows[k.arrow].pos;
+            const float u = (at.x - shot_web.cx) * shot_web.Cos() + at.z * shot_web.Sin();
+            strays += (fabsf(u) > 0.5f * shot_web.w || at.y < shot_web.y || at.y > shot_web.Top()) ? 1 : 0;
+        }
+        snprintf(d,sizeof(d),"%zu caught, %d out of the opening",shot_web.caught.size(),strays);
+        Check(!shot_web.caught.empty() && strays == 0,"and the arrows caught on the way hang in the web",d);
     }
-    //The same twice: built the same, cut the same, swinging the same.
+    //The same twice: built the same, cut the same, swinging the same, and pressed the same.
     {
         Stage a, b;
         a.SetLevel(STAGE_LEVEL_WEB);
         b.SetLevel(STAGE_LEVEL_WEB);
-        PlaceOn(a,5.0f,0.0f);
-        PlaceOn(b,5.0f,0.0f);
+        PlaceOn(a,web.cx - 3.8f,0.0f);
+        PlaceOn(b,web.cx - 3.8f,0.0f);
         WebFire(a,8.0f,BOW_DRAW_TICKS + 2);
         WebFire(b,8.0f,BOW_DRAW_TICKS + 2);
-        ArcherInput idle;
-        Run(a,30,idle);
-        Run(b,30,idle);
+        WebRunInto(a,false,120);
+        WebRunInto(b,false,120);
         Check(HashOf(a) == HashOf(b),"and all of it is the same on a second run");
         Stage c;
         c.SetLevel(STAGE_LEVEL_WEB);
-        PlaceOn(c,5.0f,0.0f);
+        PlaceOn(c,web.cx - 3.8f,0.0f);
         WebFire(c,-3.0f,BOW_DRAW_TICKS + 2);
-        Run(c,30,idle);
+        WebRunInto(c,false,120);
         Check(HashOf(c) != HashOf(a),"a different shot leaves a different web, which the state hash sees");
     }
 }

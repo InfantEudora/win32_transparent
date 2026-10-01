@@ -991,9 +991,6 @@ void ApplicationArcher::Init(void){
     BuildCrateMesh();
     BuildStandMesh();
     BuildStrawManMesh();
-    #ifdef USE_IMGUI
-    RegisterPlaceableProps();
-    #endif
     LoadingStep(step++,LOADING_STEPS,"the level");
     BuildBlocks();
     //After BuildBlocks, which it hides the melted half of - see the note on the declaration.
@@ -1072,6 +1069,23 @@ void ApplicationArcher::Init(void){
     */
     LoadingStep(step++,LOADING_STEPS,"wind");
     UpdateWind();
+    /*
+        After everything that loads from archer.glb, because what the game has asked for by then is
+        what decides which props are placeable and which are spare - see RegisterPlaceableProps.
+        The spare parts are logged every start, so a new export says at once what it brought that
+        the game does not use yet.
+    */
+    #ifdef USE_IMGUI
+    RegisterPlaceableProps();
+    #endif
+    {
+        std::vector<std::string> unused = gltfloader.GetUnusedMeshNodeNames();
+        std::string list;
+        for (const std::string& name:unused){
+            list += (list.empty() ? "" : ", ") + name;
+        }
+        debug->Info("%s: %i meshes the game does not use: %s\n",ARCHER_MODEL_ASSET,(int)unused.size(),list.c_str());
+    }
 #ifdef USE_MCP
     RegisterMCPTools();
 #endif
@@ -1602,20 +1616,30 @@ void ApplicationArcher::BuildBlocks(){
         }
     }
     /*
-        A WEB's two posts - Stage::webs - either side of its opening, in timber. Boxes only: the rules
-        build no block for them, since in her plane they would be a wall the web could never stop
-        being (see BuildWebLevel). The beam over them is the level's block, drawn as any block is;
-        the threads are the line view's (UpdateWebView).
+        A WEB's frame - Stage::webs - two posts either side of its opening and a beam over it, in
+        timber, turned to the web's angle (StageWeb::World), so one post stands in front of her plane
+        and one behind. Boxes only, as the rules build no block for any of it: she never meets the
+        frame, only the threads, which are the line view's (UpdateWebView). The prop (the "spider"
+        node in archer.glb) replaces these one day; its opening is what StageWeb's w and h are.
     */
     for (size_t i = 0; i < stage.webs.size(); i++){
         const StageWeb& web = stage.webs[i];
         const float post = 0.3f;
+        //Box x is the web's u: World turns +u to (cos, 0, sin), which is a turn of -angle about Y.
+        const quat turn(vec3(0.0f,1.0f,0.0f),-atan2f(web.Sin(),web.Cos()));
         for (int side = 0; side < 2; side++){
             char name[48];
             snprintf(name,sizeof(name),"web_%i_post_%i",(int)i,side);
-            float px = side ? web.Right() + post * 0.5f : web.x - post * 0.5f;
-            plant_box(name,vec3(px,web.y + web.h * 0.5f,0.0f),vec3(post,web.h,0.6f),material_bridge);
+            float pu = side ? web.Right() + post * 0.5f : web.Left() - post * 0.5f;
+            v3 at = web.World(v3(pu,web.y + web.h * 0.5f,0.0f));
+            Object* o = plant_box(name,vec3(at.x,at.y,at.z),vec3(post,web.h + post,post),material_bridge);
+            o->SetRotation(turn);
         }
+        char name[48];
+        snprintf(name,sizeof(name),"web_%i_beam",(int)i);
+        v3 at = web.World(v3(0.0f,web.Top() + post * 0.5f,0.0f));
+        Object* o = plant_box(name,vec3(at.x,at.y,at.z),vec3(web.w + 2.0f * post,post,post),material_bridge);
+        o->SetRotation(turn);
     }
     /*
         THE BALANCE GAUGE, while she is on a branch: a dark upright bar beside her head and a marker
@@ -2361,7 +2385,6 @@ void ApplicationArcher::BuildWebView(){
     main_scene->AddObject(web_view_object);
 }
 
-#define WEB_VIEW_Z          (-0.05f)    //just behind her, so she walks in front of the threads
 #define WEB_VIEW_DOT        0.035f      //half a node's cross
 //RENDER THREAD, from PreRender. See web_view_object.
 void ApplicationArcher::UpdateWebView(){
@@ -2390,7 +2413,8 @@ void ApplicationArcher::UpdateWebView(){
     };
     const uint32_t SPOKE = 0xFFEDEDE6u, SPIRAL = 0xFFC4C4BAu, HANGING = 0xFF6E6E68u;
     const uint32_t NODE = 0xFFF4F4EEu, ANCHOR = 0xFFE0A040u;
-    const float z = WEB_VIEW_Z;
+    //In the web's own frame, turned into the world: its plane crosses hers, so she is in it.
+    auto world = [](const StageWeb& web, const v3& q){ v3 p = web.World(q); return vec3(p.x,p.y,p.z); };
     for (size_t w = 0; w < webs.size(); w++){
         const StageWeb& web = webs[w];
         for (size_t t = 0; t < web.threads.size(); t++){
@@ -2400,14 +2424,14 @@ void ApplicationArcher::UpdateWebView(){
             }
             bool f_held = w < held.size() && t < held[w].size() && held[w][t];
             uint32_t c = !f_held ? HANGING : (th.f_spoke ? SPOKE : SPIRAL);
-            line(vec3(web.p[th.a].x,web.p[th.a].y,z),vec3(web.p[th.b].x,web.p[th.b].y,z),c);
+            line(world(web,web.p[th.a]),world(web,web.p[th.b]),c);
         }
         for (size_t n = 0; n < web.p.size(); n++){
             const float r = web.anchor[n] ? WEB_VIEW_DOT * 1.6f : WEB_VIEW_DOT;
             const uint32_t c = web.anchor[n] ? ANCHOR : NODE;
-            const vec3 q(web.p[n].x,web.p[n].y,z);
-            line(q - vec3(r,0.0f,0.0f),q + vec3(r,0.0f,0.0f),c);
-            line(q - vec3(0.0f,r,0.0f),q + vec3(0.0f,r,0.0f),c);
+            const v3 q = web.p[n];
+            line(world(web,q - v3(r,0.0f,0.0f)),world(web,q + v3(r,0.0f,0.0f)),c);
+            line(world(web,q - v3(0.0f,r,0.0f)),world(web,q + v3(0.0f,r,0.0f)),c);
         }
     }
     web_view_mesh->SetLineMeshData(verts.data(),(int)verts.size());
@@ -9515,6 +9539,12 @@ void ApplicationArcher::PollCueTable(){
                            after it), x, bridge - every landing on a bridge
       signal `bridge_strained`, `bridge_cracking`, `bridge_snapped`   x, y, bridge - a breakable
                            bridge's warnings, once each per run, at the plank that took it there
+      signal `web_hit`     x, speed (as it met the web), threads (it tore), caught - per arrow
+                           that tears a web; through a hole already there, nothing
+      signal `web_snap`    count, x - a web's threads snapping, once a tick per web however many
+                           went (an arrow's, strain, a burst), so sixteen at the hub are one snap
+      signal `web_burst`   x - she tore the last few threads across her path herself
+      signal `web_through` x, first (1 the first time) - out the far side of a web, clear of it
       signal `arrow_hit`   x, speed - level hits here, prop hits from ResolveArrowsAgainstProps
       signal `stand_hit`   points (RegisterTargetHit)
       scope `arrow`        one per flight, instance = the arrow's slot (ForecastArrowImpacts)
@@ -9626,6 +9656,36 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
     for (int g : events.crumble_groups_done){
         if (g >= 0 && g < (int)stage.crumble_groups.size() && !stage.crumble_groups[g].blocks.empty()){
             cues->Signal("crumble_group_done",CuePayload().Set("x",stage.blocks[stage.crumble_groups[g].blocks.back()].x));
+        }
+    }
+
+    //The webs (docs/web_plan.md). The snaps are counted per web and told once: a full draw through
+    //the hub tears sixteen threads in one tick, and the table scales one snap by how many.
+    for (const StageEvents::WebHit& h : events.web_hits){
+        cues->Signal("web_hit",CuePayload().Set("x",h.at.x).Set("speed",h.speed).Set("threads",(float)h.threads)
+                                           .Set("caught",h.f_caught ? 1.0f : 0.0f));
+    }
+    for (size_t w = 0; w < stage.webs.size(); w++){
+        int count = 0;
+        float x = stage.webs[w].cx;
+        for (const StageEvents::WebThreadCut& c : events.web_cuts){
+            if (c.web == (int)w){
+                x = (count == 0) ? c.at.x : x;
+                count++;
+            }
+        }
+        if (count > 0){
+            cues->Signal("web_snap",CuePayload().Set("count",(float)count).Set("x",x));
+        }
+    }
+    for (int w : events.web_burst){
+        if (w >= 0 && w < (int)stage.webs.size()){
+            cues->Signal("web_burst",CuePayload().Set("x",stage.webs[w].cx));
+        }
+    }
+    for (const StageEvents::WebBreach& b : events.web_breaches){
+        if (b.web >= 0 && b.web < (int)stage.webs.size()){
+            cues->Signal("web_through",CuePayload().Set("x",stage.webs[b.web].cx).Set("first",b.f_first ? 1.0f : 0.0f));
         }
     }
 
@@ -10325,17 +10385,6 @@ void ApplicationArcher::ShakeCrumbles(const StageEvents& events){
 }
 
 void ApplicationArcher::BreakBlocks(const StageEvents& events){
-    //A web's wall slice: collider off, nothing to burst - the threads were the wall, and they are drawn.
-    for (int index : events.web_slices_opened){
-        if (index < 0 || index >= (int)block_objects.size() || !block_objects[index]){
-            continue;
-        }
-        Physics* p = block_objects[index]->GetPhysics();
-        if (p){
-            p->SetActive(false);
-        }
-        block_objects[index]->SetVisibility(false);
-    }
     /*
         A crumbled stone the same way as a kicked wall - collider off, box hidden, rubble - with the
         rubble DROPPED rather than thrown: nothing hit it, it gave way. In its own stone colour.
@@ -12958,7 +13007,8 @@ json ApplicationArcher::BuildStateJson(){
             return list;
         }()},
         //Each web (docs/web_plan.md): its threads, how many are cut and still held, the arrows it
-        //holds, whether it has been breached and how many of its wall's slices are open, and the hub.
+        //holds, whether she has been through, the threads on her and their push along x, the side
+        //she was last clear of it on, and the hub in the world.
         {"webs",[&](){
             json list = json::array();
             for (size_t i = 0; i < s.webs.size(); i++){
@@ -12967,10 +13017,12 @@ json ApplicationArcher::BuildStateJson(){
                 if (i < s.web_held.size()){
                     for (uint8_t h : s.web_held[i]){ held += h ? 1 : 0; }
                 }
+                const v3 hub = w.p.empty() ? v3(0.0f,0.0f,0.0f) : w.World(w.p[0]);
                 list.push_back(json{{"threads",(int)w.threads.size()},{"cut",w.CutCount()},{"held",held},
                                     {"caught",(int)w.caught.size()},{"breached",w.f_breached},
-                                    {"hub",json{{"x",w.p.empty() ? 0.0f : w.p[0].x},{"y",w.p.empty() ? 0.0f : w.p[0].y}}},
-                                    {"x",w.x},{"y",w.y},{"w",w.w},{"h",w.h}});
+                                    {"contacts",w.contacts},{"push",w.push},{"side",w.side},
+                                    {"hub",json{{"x",hub.x},{"y",hub.y},{"z",hub.z}}},
+                                    {"cx",w.cx},{"y",w.y},{"w",w.w},{"h",w.h},{"angle_deg",w.angle_deg}});
             }
             return list;
         }()},
@@ -14625,6 +14677,11 @@ void ApplicationArcher::RegisterMCPTools(){
     The props in archer.glb worth placing by hand. Not the rope and vine pieces (tiles, meaningless
     alone), not the character, and not her bow and arrows (sockets). Registered under their node
     names, which is what the menu lists and what PlaceMenuSpawn recognises.
+
+    Only those the game itself uses are loaded at startup. One it does not - the barrel, today - is
+    a spare part: the core menu lists those apart, straight from the loader, and loads one only
+    when it is placed. So this list never has to follow the export; it may name a prop the game
+    has not picked up yet, and that prop simply joins the placeable ones the day it is.
 */
 static const char* ARCHER_PLACEABLE_NODES[] = {
     "rock_big_1", "rock_big_2", "rock_small_1", "pine_tree", "tree_stump", "logs", "barrel", "wooden_crate",
@@ -14633,11 +14690,16 @@ static const char* ARCHER_PLACEABLE_NODES[] = {
 };
 
 void ApplicationArcher::RegisterPlaceableProps(){
+    //Read before importing, which counts as use itself.
+    std::vector<std::string> unused = gltfloader.GetUnusedMeshNodeNames();
     std::vector<std::string> names;
     for (const char* name:ARCHER_PLACEABLE_NODES){
-        names.push_back(name);
+        if (std::find(unused.begin(),unused.end(),name) == unused.end()){
+            names.push_back(name);
+        }
     }
-    //Render thread, archer.glb already loaded - Init. It Fatal()s anywhere else.
+    //Render thread, archer.glb already loaded, and AFTER everything else that loads from it - Init.
+    //It Fatal()s anywhere else.
     GetAssetsFromGLTF(names);
 }
 
@@ -14646,8 +14708,11 @@ void ApplicationArcher::PlaceMenuSpawn(SimCommand& cmd){
     //Inspector moves it from there.
     cmd.flags |= SIM_CMD_FLAG_POSITION;
     cmd.position = vec3(stage.pos.x,stage.pos.y - ARCHER_HALF_H,0.0f);
-    for (const char* name:ARCHER_PLACEABLE_NODES){
-        if (AssetIDFromName(name) == cmd.asset){
+    //Anything out of archer.glb, the spare parts included, at the scale the file is drawn at.
+    std::vector<std::string> from_file = gltfloader.GetUnusedMeshNodeNames();
+    from_file.insert(from_file.end(),std::begin(ARCHER_PLACEABLE_NODES),std::end(ARCHER_PLACEABLE_NODES));
+    for (const std::string& name:from_file){
+        if (AssetIDFromName(name.c_str()) == cmd.asset){
             cmd.flags |= SIM_CMD_FLAG_SCALE;
             cmd.scale = vec3(model_scale,model_scale,model_scale);
             break;

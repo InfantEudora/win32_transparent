@@ -398,6 +398,7 @@ table in code stays right for clip facts, which the code measures; cue timings a
 | scoring | `nice_shot` for a 10; lines for a near miss and a poor score |
 | crates | a scrape while she pushes one, a thump when one falls or topples |
 | walls | a crumble for the brick and the cracked wall (`broken_blocks`), with a shake; small debris knocks, with a gap and a max instances |
+| webs | **done 2026-10-01** (web_plan.md, "Sounds, as built"): `web_hit` per arrow that tears one, by its speed; `web_snap` once a tick per web, scaled by how many threads went; `web_breach` on the burst or her first time through, one of the two (the `web` group) |
 | ambience | `archery_range` looping on the range; wind and birds on the main level |
 | narration | per zone, with its subtitle text |
 

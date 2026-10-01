@@ -30,6 +30,19 @@ stereo kept as they are. Those were chosen by listening on 2026-09-30, and the r
 copies plain wavs instead. The game decodes the `.ogg` files to PCM at load (`core/AudioDecode.h`),
 which takes about 0.5 s for all 42.
 
+**A game's sound effects** (`apps/archer/assets/sound/`) take the same settings, but no target
+encodes them: a new one arrives as a wav and is converted by hand. Add `--resample 32000` only
+for a file above 32 kHz; the rate is the 4 bytes at offset 24 of a plain wav
+(`od -An -tu4 -j24 -N4 file.wav`). For example:
+
+```bash
+"/c/Program Files/foobar2000/encoders/oggenc2.exe" -Q -q -1 -o web_hit.ogg web_hit.wav
+```
+
+Then name the `.ogg` in the game's cue table (`assets/cues/archer.json`), check that it loads (the
+log says `Loaded sound '<name>' (sound/<name>.ogg)`), and delete the wav, which is how archer's
+other effects were handled on 2026-09-30.
+
 ## The bench
 
 ```bash

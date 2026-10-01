@@ -693,6 +693,10 @@ public:
     void GetAssetsFromGLTF(Args... names){
         GetAssetsFromGLTF(std::vector<std::string>{ std::string(names)... });
     }
+    //One node of the loaded GLTF as an asset, unless one by that name exists. f_count_as_use false
+    //leaves it on GLTFLoader::GetUnusedMeshNodeNames - the menu's way of placing a spare part.
+    //Render thread. False if the node has no mesh.
+    bool ImportGLTFNodeAsAsset(const std::string& nodename, bool f_count_as_use);
     void BuildSceneFromJSON();
 
 protected:
