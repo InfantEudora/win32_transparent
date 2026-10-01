@@ -565,24 +565,7 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         case WM_SYSKEYDOWN:{
             if (wParam == VK_RETURN && (lParam & 0x60000000) == 0x20000000){
                 // Implements the classic ALT+ENTER fullscreen toggle
-                if (wnd->f_fullscreen){
-                    wnd->f_istogglingfullscreen = true;
-                    SetWindowLongPtr(hWnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
-                    wnd->f_istogglingfullscreen = false;
-                    SetWindowLongPtr(hWnd, GWL_EXSTYLE, 0);
-                    SetWindowPos(hWnd, HWND_TOP, 0, 0, wnd->width_windowed, wnd->height_windowed, SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
-                    wnd->f_fullscreen = false;
-                    ShowWindow(hWnd, SW_SHOWNORMAL);
-                }else{
-                    wnd->f_istogglingfullscreen = true;
-                    SetWindowLongPtr(hWnd, GWL_EXSTYLE, WS_EX_TOPMOST);
-                    SetWindowLongPtr(hWnd, GWL_STYLE, WS_POPUP);
-                    SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-
-                    wnd->f_istogglingfullscreen = false;
-                    wnd->f_fullscreen = true;
-                    ShowWindow(hWnd, SW_SHOWMAXIMIZED);
-                }
+                wnd->SetFullscreen(!wnd->f_fullscreen);
             }
         }
         break;
@@ -643,6 +626,32 @@ bool Window::IsMinimized(){
 }
 
 //Resize by doing a WinAPI Call. Using some hard coded shite
+//The Alt+Enter toggle's body, moved here unchanged so a setting can ask for it too. From any
+//thread: each call is a message the window's own thread handles, as Resize's are.
+void Window::SetFullscreen(bool f_on){
+    if (!hWnd || f_on == f_fullscreen){
+        return;
+    }
+    if (!f_on){
+        f_istogglingfullscreen = true;
+        SetWindowLongPtr(hWnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+        f_istogglingfullscreen = false;
+        SetWindowLongPtr(hWnd, GWL_EXSTYLE, 0);
+        SetWindowPos(hWnd, HWND_TOP, 0, 0, width_windowed, height_windowed, SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        f_fullscreen = false;
+        ShowWindow(hWnd, SW_SHOWNORMAL);
+    }else{
+        f_istogglingfullscreen = true;
+        SetWindowLongPtr(hWnd, GWL_EXSTYLE, WS_EX_TOPMOST);
+        SetWindowLongPtr(hWnd, GWL_STYLE, WS_POPUP);
+        SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
+        f_istogglingfullscreen = false;
+        f_fullscreen = true;
+        ShowWindow(hWnd, SW_SHOWMAXIMIZED);
+    }
+}
+
 void Window::Resize(int _width, int _height){
     /*
         A MINIMISED window gets no WM_SIZE for this, so without the branch below the renderer

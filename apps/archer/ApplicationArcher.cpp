@@ -887,6 +887,25 @@ ApplicationArcher::ApplicationArcher():Application(){
     //The title bar, and what input recordings are named and stamped with - a recording refuses to
     //replay in an app with a different name.
     app_name = "Archer";
+    /*
+        The player's settings, HERE - before Start() makes the window - so "start full screen" is
+        known in time (docs/menu_plan.md). Beside the exe, by absolute path and from disk only:
+        never a baked asset. A first run has no file and gets the defaults; the first change in the
+        Settings screen writes it.
+    */
+    settings.DeclareBool("fullscreen",false);
+    settings.DeclareInt("msaa",4,1,16);
+    settings.DeclareFloat("volume_master",0.8f,0.0f,1.0f);
+    settings.DeclareFloat("volume_music",0.7f,0.0f,1.0f);
+    settings.DeclareFloat("volume_effects",1.0f,0.0f,1.0f);
+    std::string report;
+    bool f_settings = settings.Load(GetExecutableDirectory() + "/settings.json",&report);
+    if (!report.empty()){
+        debug->Warn("Settings %s:\n%s",settings.Path().c_str(),report.c_str());
+    }
+    debug->Info("Settings %s %s\n",f_settings ? "loaded from" : "defaulted - no file at",settings.Path().c_str());
+    f_start_fullscreen = settings.GetBool("fullscreen");
+    SetupMenus();
     debug->Info("ApplicationArcher constructed\n");
 }
 
@@ -1033,6 +1052,7 @@ void ApplicationArcher::Init(void){
     //After it, for the glyphs. The main level has none yet; this is where they would come from.
     BuildSigns();
     BuildScenery();
+    BuildApples();
     LoadingStep(step++,LOADING_STEPS,"lights and sound");
     //Only the line object here; the field itself is built by the "wind" step below.
     wind_view.Init(main_scene);
@@ -3329,6 +3349,236 @@ void ApplicationArcher::BuildScenery(){
             }
         }
     }
+}
+
+//--- The apples (docs/apple_plan.md) -------------------------------------------------------------
+
+#define APPLE_NODE          "apple"
+#define APPLE_TREE_NODE     "tree_1"
+#define APPLE_STALK_WIDTH   0.025f      //the stalk drawn from the apple's top to its twig
+
+//See the declaration. Survivable piece by piece: no apple model, no apples; no tree, bare apples.
+void ApplicationArcher::BuildApples(){
+    if (!f_apple_models_loaded){
+        f_apple_models_loaded = true;
+        std::vector<Material> materials;
+        apple_mesh = gltfloader.GetMeshFromNode(APPLE_NODE,&materials,false);
+        if (apple_mesh){
+            apple_mesh->Retain();
+            renderer->AddMaterials(materials);
+            material_apple = materials.empty() ? -1 : renderer->FindMaterialIndex(materials[0].name);
+            if (material_apple < 0){
+                material_apple = material_ground;   //an export with no material: a flat apple, not a crash
+            }
+            //Its lit copy: the same, glowing a warm gold - bright enough to find in shade.
+            if (material_apple >= 0){
+                Material m = renderer->materials[material_apple];
+                m.name += "@apple_lit";
+                m.glsl_material.emissive = vec4(1.0f,0.80f,0.35f,0.45f);
+                renderer->AddMaterial(m);
+                material_apple_glow = renderer->FindMaterialIndex(m.name);
+            }
+            //The rules' radius is typed (Stage builds headless); say so if the model has moved off it.
+            float half = 0.0f;
+            for (const vertex& v : apple_mesh->GetVertices()){
+                half = fmaxf(half,fmaxf(fabsf(v.pos.x),fabsf(v.pos.z)));
+            }
+            debug->Info("Apple: %.3f across its body at her scale, APPLE_RADIUS %.3f\n",half * model_scale,APPLE_RADIUS);
+            if (fabsf(half * model_scale - APPLE_RADIUS) > 0.03f){
+                debug->Warn("'%s' is %.3f in radius at her scale but APPLE_RADIUS is %.3f - update it in Stage.h\n",
+                            APPLE_NODE,half * model_scale,APPLE_RADIUS);
+            }
+        }else{
+            debug->Warn("No '%s' in %s - no apples\n",APPLE_NODE,ARCHER_MODEL_ASSET);
+        }
+        apple_tree_mesh = gltfloader.GetMeshFromNode(APPLE_TREE_NODE,&apple_tree_materials,false);
+        if (apple_tree_mesh){
+            apple_tree_mesh->Retain();
+            renderer->AddMaterials(apple_tree_materials);
+        }else{
+            debug->Warn("No '%s' in %s - the apples hang from nothing\n",APPLE_TREE_NODE,ARCHER_MODEL_ASSET);
+        }
+    }
+    apple_views.clear();
+    apple_tree_objects.clear();
+    apple_lit = -1;
+    if (apple_tree_mesh){
+        for (size_t i = 0; i < stage.apple_trees.size(); i++){
+            const StageAppleTree& t = stage.apple_trees[i];
+            char name[32];
+            snprintf(name,sizeof(name),"apple_tree_%i",(int)i);
+            Object* o = new Object();
+            o->name = name;
+            o->SetVisualOnly(true);
+            o->SetMesh(apple_tree_mesh);
+            std::vector<Material> materials = apple_tree_materials;
+            o->TakeMaterialNames(materials);
+            o->SetPosition(vec3(t.x,t.y,t.z));
+            o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),t.yaw_deg * 3.14159265358979f / 180.0f));
+            o->SetScale(vec3(model_scale,model_scale,model_scale) * t.scale);
+            main_scene->AddObject(o);
+            apple_tree_objects.push_back(o);
+        }
+    }
+    for (size_t i = 0; i < stage.apples.size(); i++){
+        const StageApple& ap = stage.apples[i];
+        AppleView v;
+        if (apple_mesh){
+            char name[32];
+            snprintf(name,sizeof(name),"apple_%i",(int)i);
+            v.hanging = new Object();
+            v.hanging->name = name;
+            v.hanging->SetVisualOnly(true);
+            v.hanging->SetMesh(apple_mesh);
+            v.hanging->SetMaterialSlot(0,material_apple);
+            v.hanging->SetPosition(vec3(ap.hang.x,ap.hang.y,ap.hang.z));
+            v.hanging->SetScale(vec3(model_scale,model_scale,model_scale));
+            main_scene->AddObject(v.hanging);
+            snprintf(name,sizeof(name),"apple_%i_stalk",(int)i);
+            v.stalk = new Object();
+            v.stalk->name = name;
+            v.stalk->SetVisualOnly(true);
+            v.stalk->SetMesh(unit_mesh);
+            v.stalk->SetMaterialSlot(0,material_trunk);
+            const float top = ap.hang.y + ap.radius;
+            v.stalk->SetPosition(vec3(ap.hang.x,(top + ap.Twig()) * 0.5f,ap.hang.z));
+            v.stalk->SetScale(vec3(APPLE_STALK_WIDTH,ap.Twig() - top,APPLE_STALK_WIDTH));
+            main_scene->AddObject(v.stalk);
+        }
+        apple_views.push_back(v);
+    }
+    if (!stage.apples.empty()){
+        debug->Info("Apples: %i on %i trees\n",(int)stage.apples.size(),(int)stage.apple_trees.size());
+    }
+}
+
+void ApplicationArcher::ResetApples(){
+    for (AppleView& v : apple_views){
+        if (v.loose){
+            v.loose->Destroy();
+            v.loose = NULL;
+        }
+        if (v.hanging){
+            v.hanging->SetVisibility(true);
+            v.hanging->SetMaterialSlot(0,material_apple);
+        }
+        if (v.stalk){
+            v.stalk->SetVisibility(true);
+        }
+    }
+    apple_lit = -1;
+}
+
+void ApplicationArcher::RefreshApples(){
+    for (size_t i = 0; i < apple_views.size() && i < stage.apples.size(); i++){
+        if (apple_views[i].loose && stage.apples[i].state == APPLE_LOOSE){
+            vec3 p = apple_views[i].loose->GetWorldPosition();
+            stage.SetLooseApple((int)i,v3(p.x,p.y,p.z));
+        }
+    }
+}
+
+void ApplicationArcher::HandleApples(const StageEvents& events){
+    //Freed: its look on the stem goes, and a body takes over where it hung, with what the shot gave it.
+    auto free_apple = [&](const StageEvents::AppleShot& shot, bool f_hit){
+        if (shot.apple < 0 || shot.apple >= (int)apple_views.size()){
+            return;
+        }
+        AppleView& v = apple_views[shot.apple];
+        const StageApple& ap = stage.apples[shot.apple];
+        if (v.hanging){ v.hanging->SetVisibility(false); }
+        if (v.stalk){ v.stalk->SetVisibility(false); }
+        if (!v.loose && apple_mesh){
+            char name[32];
+            snprintf(name,sizeof(name),"apple_%i_loose",shot.apple);
+            Object* o = new Object();
+            o->name = name;
+            o->SetMesh(apple_mesh);
+            o->SetMaterialSlot(0,material_apple);
+            o->SetPosition(vec3(ap.hang.x,ap.hang.y,ap.hang.z));
+            o->SetScale(vec3(model_scale,model_scale,model_scale));
+            main_scene->AddObject(o);
+            Physics* p = o->AddPhysics(main_scene->physics_world);
+            if (p){
+                //Debris's category: it lands on the level and the props, and never on her - see the masks.
+                p->SetCollisionCategoryBits(ARCHER_CAT_DEBRIS);
+                p->SetCollideWithMaskBits(ARCHER_MASK_DEBRIS);
+                p->AddSphereCollider(ap.radius,vec3(),quat().identity(),1.0f);
+                p->SetBounciness(apple_bounce);
+                p->SetFrictionCoefficient(apple_friction);
+                p->SetStatic(false);
+                p->SetGravityEnabled(true);     //see the gravity note in MakePlanarBody
+                p->SetMass(apple_mass);
+                //At its own depth, rolling about Z: the locks MakePlanarBody gives the props.
+                p->SetLinearLockAxis(vec3(1.0f,1.0f,0.0f));
+                p->SetAngularLockAxis(vec3(0.0f,0.0f,1.0f));
+                p->SetAngularDamping(apple_angular_damping);
+                p->SetVelocity(vec3(shot.vel.x,shot.vel.y,0.0f));
+            }
+            v.loose = o;
+        }
+        if (f_hit && v.loose){
+            StickArrowToProp(shot.arrow,v.loose,v2(shot.at.x,shot.at.y));
+        }
+        //The arrow's thunk going in, until the apples have sounds of their own (apple_plan.md section 4).
+        if (f_hit){
+            float speed = sqrtf(shot.vel.x * shot.vel.x + shot.vel.y * shot.vel.y + shot.vel.z * shot.vel.z);
+            SignalArrowHit(shot.at.x,speed / APPLE_HIT_TRANSFER);
+        }
+        debug->Info("Apple %i %s at (%.2f,%.2f,%.2f), off at (%.2f,%.2f)\n",shot.apple,f_hit ? "hit" : "cut",
+                    shot.at.x,shot.at.y,shot.at.z,shot.vel.x,shot.vel.y);
+    };
+    for (const StageEvents::AppleShot& shot : events.apples_cut){
+        free_apple(shot,false);
+    }
+    for (const StageEvents::AppleShot& shot : events.apples_hit){
+        free_apple(shot,true);
+    }
+    //Picked: gone from wherever it was, with any arrow in it - the arrow goes with the apple.
+    bool f_destroyed = false;
+    for (int index : events.apples_picked){
+        if (index < 0 || index >= (int)apple_views.size()){
+            continue;
+        }
+        AppleView& v = apple_views[index];
+        if (v.hanging){ v.hanging->SetVisibility(false); }
+        if (v.stalk){ v.stalk->SetVisibility(false); }
+        if (v.loose){
+            for (int a = 0; a < ARROW_MAX_LIVE; a++){
+                if (arrow_stuck[a].prop == v.loose){
+                    stage.KillArrow(a);
+                }
+            }
+            ReleaseStuckArrows(v.loose);
+            v.loose->Destroy();
+            v.loose = NULL;
+            f_destroyed = true;
+        }
+        if (index == apple_lit){
+            apple_lit = -1;
+        }
+        debug->Info("Apple %i picked: %i this run\n",index,stage.apples_picked);
+    }
+    if (f_destroyed){
+        //Object::Destroy only marks - see UpdateDebris, which this is safe here for the same reason.
+        main_scene->DeleteDestroyedObjects();
+    }
+
+    //The one a press would take now, lit; the last one put back.
+    int lit = stage.CanStartPick() ? stage.FindPickableApple() : -1;
+    auto look = [this](int i, int material){
+        if (i < 0 || i >= (int)apple_views.size() || material < 0){
+            return;
+        }
+        if (apple_views[i].hanging){ apple_views[i].hanging->SetMaterialSlot(0,material); }
+        if (apple_views[i].loose){ apple_views[i].loose->SetMaterialSlot(0,material); }
+    };
+    if (lit != apple_lit){
+        look(apple_lit,material_apple);
+    }
+    //Every tick, not on the change: the apple can have changed Objects (freed) while it stayed lit.
+    look(lit,material_apple_glow);
+    apple_lit = lit;
 }
 
 //--- The bigtree and the mushroom ---------------------------------------------------------------
@@ -6824,6 +7074,7 @@ void ApplicationArcher::DrawOverlay(void){
         DrawZoneLabel();
         DrawVitalsHud();
         DrawArrowHud();
+        DrawAppleHud();
         DrawScreenFade();
         return;
     }
@@ -6855,16 +7106,59 @@ void ApplicationArcher::DrawOverlay(void){
         return;
     }
 
-    const char* text = "CLICK TO CONTINUE";
-    vec2 extent = overlay->MeasureText(text,size);
-    overlay->AddRect(vec2(cx - extent.x * 0.5f - pad,baseline - size * 1.1f),
-                     vec2(cx + extent.x * 0.5f + pad,baseline + size * 0.6f),
-                     size * 0.4f,TITLE_BAND);
-    double phase = (double)(title_scene->GetPhysicsTick() % TITLE_PULSE_TICKS) / (double)TITLE_PULSE_TICKS;
-    float breath = 0.5f + 0.5f * cosf((float)(phase * 2.0 * 3.14159265358979));
-    uint8_t alpha = (uint8_t)(140.0f + 115.0f * breath);
-    overlay->AddText(text,vec2(cx,baseline),size,UIColor(242,232,204,alpha),UI_ALIGN_CENTER);
+    //Loaded: the menu where "click to continue" was (docs/menu_plan.md).
+    DrawMenus(w,h);
     DrawScreenFade();
+}
+
+/*
+    The title menu, or the screen behind it. RENDER THREAD, from DrawOverlay. The menus' state is
+    theirs (each under its own lock); which screen is up is menu_screen. The look is the title's
+    own: parchment on a dark band, the moss for what is lit.
+*/
+void ApplicationArcher::DrawMenus(float w, float h){
+    UIMenuStyle style;
+    style.panel = UIColor(8,14,10,165);
+    style.panel_focus = UIColor(32,42,28,225);
+    style.panel_pressed = UIColor(20,26,16,240);
+    style.outline_focus = TITLE_BAR_FILL;
+    style.text = TITLE_TEXT;
+    style.text_dim = TITLE_TEXT_DIM;
+    style.track = TITLE_BAR_BACK;
+    style.fill = TITLE_BAR_FILL;
+    const float size = clamp(h * 0.042f,16.0f,72.0f);
+    const float cx = w * 0.5f;
+    const int screen = menu_screen;
+    if (screen == MENU_SCREEN_TITLE){
+        UIMenuDraw(overlay,title_menu,w,h,style);
+        return;
+    }
+    //Behind either screen, a band dark enough to read over any part of the art.
+    const char* heading = (screen == MENU_SCREEN_CONTROLS) ? "CONTROLS" : "SETTINGS";
+    if (screen == MENU_SCREEN_SETTINGS){
+        const UIMenuRect first = settings_menu.ItemRect(0,w,h);
+        const UIMenuRect last = settings_menu.ItemRect(settings_menu.Count() - 1,w,h);
+        const float m = size * 0.8f;
+        overlay->AddRect(vec2(first.x0 - m,first.y0 - size * 2.6f),vec2(first.x1 + m,last.y1 + size * 2.2f),size * 0.5f,TITLE_BAND);
+        overlay->AddText(heading,vec2(cx,first.y0 - size * 0.9f),size,TITLE_TEXT,UI_ALIGN_CENTER);
+        UIMenuDraw(overlay,settings_menu,w,h,style);
+        overlay->AddText("Full screen takes effect the next time the game starts",vec2(cx,last.y1 + size * 1.3f),
+                         size * 0.5f,TITLE_TEXT_DIM,UI_ALIGN_CENTER);
+        return;
+    }
+    //Controls: the table from the input map, live, and Back under it.
+    InputController* input = main_window ? main_window->inputcontroller : NULL;
+    UIControlsStyle cs;
+    cs.text = TITLE_TEXT;
+    cs.text_dim = TITLE_TEXT_DIM;
+    cs.cap = TITLE_BAR_BACK;
+    cs.cap_lit = TITLE_BAR_FILL;
+    cs.bar = TITLE_BAR_FILL;
+    cs.band = UIColor(8,14,10,200);
+    const float tw = std::min(w * 0.94f,h * 1.62f);
+    overlay->AddText(heading,vec2(cx,h * 0.06f),size,TITLE_TEXT,UI_ALIGN_CENTER);
+    controls_view.Draw(overlay,input,cx - tw * 0.5f,h * 0.085f,cx + tw * 0.5f,h * 0.845f,cs);
+    UIMenuDraw(overlay,controls_menu,w,h,style);
 }
 
 /*
@@ -7067,6 +7361,58 @@ void ApplicationArcher::DrawArrowHud(){
     }
 }
 
+#define APPLE_HUD_RED       UIColor(206, 58, 44,255)
+//See the declaration. Nothing at all on a level without apples.
+void ApplicationArcher::DrawAppleHud(){
+    int picked = 0, total = 0;
+    bool f_in_reach = false;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        picked = snapshot.apples_picked;
+        total = snapshot.apples_total;
+        f_in_reach = snapshot.f_apple_in_reach;
+    }
+    if (total == 0){
+        return;
+    }
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float size = clamp(h * 0.022f,12.0f,28.0f);
+    const float pad = size * 0.6f;
+    const float bottom = h - 26.0f;
+    const float baseline = bottom - pad;
+    const float top = baseline - size * 0.85f - pad;
+    const float radius = size * 0.5f;
+
+    //The count, bottom left: a red dot for the apple, and the number.
+    char count[16];
+    snprintf(count,sizeof(count),"%i",picked);
+    const float dot = size * 0.62f;
+    const float left = 26.0f;
+    const float right = left + pad + dot + size * 0.45f + overlay->MeasureText(count,size).x + pad;
+    overlay->AddRect(vec2(left,top),vec2(right,bottom),radius,TITLE_BAND);
+    vec2 dot_min(left + pad,baseline - size * 0.66f);
+    overlay->AddRect(dot_min,vec2(dot_min.x + dot,dot_min.y + dot),dot * 0.5f,APPLE_HUD_RED);
+    overlay->AddText(count,vec2(dot_min.x + dot + size * 0.45f,baseline),size,TITLE_TEXT);
+
+    //The prompt, bottom middle, while a press would pick one: the key, then the verb.
+    if (f_in_reach){
+        const char* key = "E";
+        const char* verb = "pick";
+        const float key_w = overlay->MeasureText(key,size).x + size * 0.7f;
+        const float verb_w = overlay->MeasureText(verb,size).x;
+        const float inner = key_w + size * 0.5f + verb_w;
+        const float cx = w * 0.5f;
+        const float l = cx - inner * 0.5f - pad, r = cx + inner * 0.5f + pad;
+        overlay->AddRect(vec2(l,top),vec2(r,bottom),radius,TITLE_BAND);
+        vec2 key_min(l + pad,top + pad * 0.55f);
+        overlay->AddRectOutline(key_min,vec2(key_min.x + key_w,bottom - pad * 0.55f),size * 0.25f,
+                                std::max(1.5f,size * 0.08f),TITLE_TEXT);
+        overlay->AddText(key,vec2(key_min.x + key_w * 0.5f,baseline),size,TITLE_TEXT,UI_ALIGN_CENTER);
+        overlay->AddText(verb,vec2(key_min.x + key_w + size * 0.5f,baseline),size,TITLE_TEXT);
+    }
+}
+
 /*
     The title's click covers the whole window while the title is up and nothing otherwise. RENDER
     THREAD, from core whenever the window changes size - which includes the first frame after
@@ -7106,8 +7452,48 @@ void ApplicationArcher::UpdateTitle(InputController* input){
     if (!input){
         return;
     }
+    //Confirm on the RELEASE, as continue always was, so the horn plays on the same tick it did.
     bool f_continue = input->WasKeyReleased(INPUT_ARCHER_CONTINUE);
     bool f_exit = input->WasKeyReleased(INPUT_ARCHER_MENU);
+    //The menus' navigation, on the press - see the end of SetupInput.
+    bool f_back = input->WasKeyReleased(INPUT_ARCHER_MENU_BACK);
+    bool f_up = input->WasKeyPressed(INPUT_ARCHER_MENU_UP);
+    bool f_down = input->WasKeyPressed(INPUT_ARCHER_MENU_DOWN);
+    bool f_left = input->WasKeyPressed(INPUT_ARCHER_MENU_LEFT);
+    bool f_right = input->WasKeyPressed(INPUT_ARCHER_MENU_RIGHT);
+    bool f_click_down = input->WasKeyPressed(INPUT_ARCHER_MENU_POINTER);
+    bool f_click_up = input->WasKeyReleased(INPUT_ARCHER_MENU_POINTER);
+    //The left stick as a fifth set of arrows: one step per push past half way, and back nearer
+    //the middle before the next, so a stick held over steps once rather than every pass.
+    {
+        const float sx = input->GetAxis(INPUT_ARCHER_MOVE), sy = input->GetAxis(INPUT_ARCHER_MENU_STICK_Y);
+        int dir = 0;
+        if (std::max(fabsf(sx),fabsf(sy)) > 0.6f){
+            dir = (fabsf(sy) >= fabsf(sx)) ? ((sy > 0.0f) ? 1 : 2) : ((sx < 0.0f) ? 3 : 4);
+        }else if (std::max(fabsf(sx),fabsf(sy)) > 0.35f){
+            dir = menu_stick_dir;       //between the two thresholds: whatever it was
+        }
+        if (dir != menu_stick_dir && dir != 0){
+            f_up = f_up || dir == 1;
+            f_down = f_down || dir == 2;
+            f_left = f_left || dir == 3;
+            f_right = f_right || dir == 4;
+        }
+        menu_stick_dir = dir;
+    }
+    //A click from archer_menu: pressed and released in this one pass, at the point it gave.
+    bool f_injected = false, f_injected_click = false;
+    float injected_x = 0.0f, injected_y = 0.0f;
+    {
+        std::lock_guard<std::mutex> lock(menu_pointer_mutex);
+        if (f_menu_pointer_pending){
+            f_injected = true;
+            f_injected_click = f_menu_pointer_click;
+            injected_x = menu_pointer_x;
+            injected_y = menu_pointer_y;
+            f_menu_pointer_pending = false;
+        }
+    }
     /*
         Closing: the switch waits for black, and nothing else is listened to until then - a second
         click would only restart the close, and an Escape half way down it is too late to mean
@@ -7122,22 +7508,182 @@ void ApplicationArcher::UpdateTitle(InputController* input){
         }
         return;
     }
-    if (!input->IsInputLive()){
+    if (!input->IsInputLive() && !f_injected){
         return;
     }
-    if (f_exit){
-        debug->Info("Exit from the title screen\n");
-        Window::RequestQuitAll();
+
+    UIMenuInput in;
+    in.screen_w = main_window ? (float)main_window->width : 0.0f;
+    in.screen_h = main_window ? (float)main_window->height : 0.0f;
+    in.up = f_up;
+    in.down = f_down;
+    in.left = f_left;
+    in.right = f_right;
+    in.confirm = f_continue;
+    if (f_injected){
+        in.f_pointer = true;
+        in.pointer_x = injected_x;
+        in.pointer_y = injected_y;
+        in.pointer_pressed = in.pointer_released = f_injected_click;
+    }else if (input->HasFocus()){
+        //The cursor only with focus: a pointer resting over another program is not ours to read.
+        int2 p = input->GetRelativeMousePosition();
+        in.f_pointer = true;
+        in.pointer_x = (float)p.x;
+        in.pointer_y = (float)p.y;
+        in.pointer_pressed = f_click_down;
+        in.pointer_released = f_click_up;
+        in.pointer_down = input->IsKeyDown(INPUT_ARCHER_MENU_POINTER);
+    }
+
+    const int screen = menu_screen;
+    if (screen == MENU_SCREEN_TITLE){
+        //Escape on the title still leaves the game, as it always has; B alone does not, so a pad
+        //cannot quit by mashing back.
+        if (f_exit){
+            debug->Info("Exit from the title screen\n");
+            Window::RequestQuitAll();
+            return;
+        }
+        UIMenuResult r = title_menu.Update(in);
+        if (r.event != UI_MENU_ACTIVATED){
+            return;
+        }
+        switch (r.id){
+            case MENU_START:
+                //The horn on the click itself, so the start is heard the moment it is asked for;
+                //the picture and the title's music go down under it. Once only - a later Escape
+                //and continue is a resume.
+                PlayStartHorn();
+                //Down to black first; the pass that finds it there makes the switch, above.
+                StartFade(FADE_CLOSING);
+                if (!f_game_started){
+                    f_game_started = true;
+                    title_menu.SetLabel(0,"Continue");
+                }
+            break;
+            case MENU_CONTROLS:
+                controls_menu.SetFocus(0);
+                menu_screen = MENU_SCREEN_CONTROLS;
+            break;
+            case MENU_SETTINGS:
+                SyncSettingsMenu();
+                settings_menu.SetFocus(0);
+                menu_screen = MENU_SCREEN_SETTINGS;
+            break;
+            case MENU_QUIT:
+                debug->Info("Quit from the title menu\n");
+                Window::RequestQuitAll();
+            break;
+        }
         return;
     }
-    if (!f_continue){
+
+    //A screen behind the title: Escape, Back or B, or its own Back button, return to the title
+    //menu with the focus on the button that led here.
+    in.back = f_exit || f_back;
+    UIMenu& menu = (screen == MENU_SCREEN_CONTROLS) ? controls_menu : settings_menu;
+    UIMenuResult r = menu.Update(in);
+    if (r.event == UI_MENU_BACK || (r.event == UI_MENU_ACTIVATED && (r.id == MENU_SETTINGS_BACK || r.id == MENU_CONTROLS_BACK))){
+        title_menu.SetFocus((screen == MENU_SCREEN_CONTROLS) ? 1 : 2);
+        menu_screen = MENU_SCREEN_TITLE;
         return;
     }
-    //The horn on the click itself, so the start is heard the moment it is asked for; the picture
-    //and the title's music go down under it. Once only - a later Escape and continue is a resume.
-    PlayStartHorn();
-    //Down to black first; the pass that finds it there makes the switch, above.
-    StartFade(FADE_CLOSING);
+    if (r.event != UI_MENU_CHANGED){
+        return;
+    }
+    //A setting changed: into the store, and saved at once - a few hundred bytes - so closing the
+    //window by any route keeps it. ApplySettings picks it up on the next pass.
+    const UIMenuItem it = menu.Item(r.item);
+    switch (r.id){
+        case MENU_MSAA:             settings.SetInt("msaa",(it.choice == 0) ? 1 : ((it.choice == 1) ? 4 : 16)); break;
+        case MENU_VOLUME_MASTER:    settings.SetFloat("volume_master",it.value); break;
+        case MENU_VOLUME_MUSIC:     settings.SetFloat("volume_music",it.value); break;
+        case MENU_VOLUME_EFFECTS:   settings.SetFloat("volume_effects",it.value); break;
+        case MENU_FULLSCREEN:       settings.SetBool("fullscreen",it.f_on); break;
+    }
+    if (!settings.Save()){
+        debug->Err("Could not save the settings to %s\n",settings.Path().c_str());
+    }
+}
+
+/*
+    The title menu and the two screens behind it (docs/menu_plan.md). Items only - no GL, so the
+    constructor can make them. Sizes are fractions of the window's height (UIMenuLayout).
+*/
+void ApplicationArcher::SetupMenus(){
+    title_menu.layout.top = 0.56f;
+    title_menu.layout.width = 0.40f;
+    title_menu.layout.item_h = 0.060f;
+    title_menu.AddButton("Start",MENU_START);
+    title_menu.AddButton("Controls",MENU_CONTROLS);
+    title_menu.AddButton("Settings",MENU_SETTINGS);
+    title_menu.AddButton("Quit",MENU_QUIT);
+
+    settings_menu.layout.top = 0.31f;
+    settings_menu.layout.width = 0.84f;
+    settings_menu.layout.item_h = 0.060f;
+    settings_item_msaa = settings_menu.AddChoice("Anti-aliasing",{ "Off", "4x", "16x" },1,MENU_MSAA);
+    settings_item_master = settings_menu.AddSlider("Master volume",0.8f,0.0f,1.0f,0.05f,MENU_VOLUME_MASTER);
+    settings_item_music = settings_menu.AddSlider("Music",0.7f,0.0f,1.0f,0.05f,MENU_VOLUME_MUSIC);
+    settings_item_effects = settings_menu.AddSlider("Sound effects",1.0f,0.0f,1.0f,0.05f,MENU_VOLUME_EFFECTS);
+    settings_item_fullscreen = settings_menu.AddToggle("Start full screen",false,MENU_FULLSCREEN);
+    settings_menu.AddButton("Back",MENU_SETTINGS_BACK);
+
+    controls_menu.layout.top = 0.865f;
+    controls_menu.layout.width = 0.30f;
+    controls_menu.layout.item_h = 0.060f;
+    controls_menu.AddButton("Back",MENU_CONTROLS_BACK);
+
+    //The rows of the Controls screen. Labels only: what is bound to each comes from the keymap.
+    controls_view.AddRow("Run",{ INPUT_ARCHER_LEFT, INPUT_ARCHER_RIGHT, INPUT_ARCHER_MOVE });
+    controls_view.AddRow("Jump / climb",{ INPUT_ARCHER_JUMP });
+    controls_view.AddRow("Draw, release to shoot",{ INPUT_ARCHER_DRAW });
+    controls_view.AddRow("Aim",{ INPUT_ARCHER_AIM_UP, INPUT_ARCHER_AIM_DOWN, INPUT_ARCHER_AIM });
+    controls_view.AddRow("Arrow kind",{ INPUT_ARCHER_ARROW_1, INPUT_ARCHER_ARROW_1 + 1, INPUT_ARCHER_ARROW_1 + 2,
+                                        INPUT_ARCHER_ARROW_1 + 3, INPUT_ARCHER_ARROW_1 + 4,
+                                        INPUT_ARCHER_ARROW_PREV, INPUT_ARCHER_ARROW_NEXT });
+    controls_view.AddRow("Kick",{ INPUT_ARCHER_KICK });
+    controls_view.AddRow("Kneel / stand",{ INPUT_ARCHER_KNEEL });
+    controls_view.AddRow("Drop down / let go",{ INPUT_ARCHER_DOWN });
+    controls_view.AddRow("Take the rope",{ INPUT_ARCHER_ACTION });
+    controls_view.AddRow("Restart",{ INPUT_ARCHER_RESTART });
+    controls_view.AddRow("Title / menu back",{ INPUT_ARCHER_MENU, INPUT_ARCHER_MENU_BACK });
+    //Two rows, not one: four d-pad names and a stick do not fit one gamepad cell. The stick's X is
+    //MOVE, which UpdateTitle reads for left/right too.
+    controls_view.AddRow("Menu: up / down",{ INPUT_ARCHER_MENU_UP, INPUT_ARCHER_MENU_DOWN, INPUT_ARCHER_MENU_STICK_Y });
+    controls_view.AddRow("Menu: change",{ INPUT_ARCHER_MENU_LEFT, INPUT_ARCHER_MENU_RIGHT, INPUT_ARCHER_MOVE });
+    controls_view.AddRow("Menu: choose",{ INPUT_ARCHER_CONTINUE, INPUT_ARCHER_MENU_POINTER });
+}
+
+//The Settings screen's items from the store - when it opens, so it always shows what is saved.
+void ApplicationArcher::SyncSettingsMenu(){
+    const int msaa = settings.GetInt("msaa");
+    settings_menu.SetChoice(settings_item_msaa,(msaa <= 1) ? 0 : ((msaa <= 8) ? 1 : 2));
+    settings_menu.SetValue(settings_item_master,settings.GetFloat("volume_master"));
+    settings_menu.SetValue(settings_item_music,settings.GetFloat("volume_music"));
+    settings_menu.SetValue(settings_item_effects,settings.GetFloat("volume_effects"));
+    settings_menu.SetOn(settings_item_fullscreen,settings.GetBool("fullscreen"));
+}
+
+/*
+    The settings into the fields the game already reads - only on a CHANGE (Settings::Revision),
+    so the panels' sliders and archer_sound, which write the same fields, are not overruled every
+    pass. PHYSICS THREAD, from UpdateView. All of it view-side: buses and the renderer, never the
+    rules, so a recording replays the same at any setting.
+*/
+void ApplicationArcher::ApplySettings(){
+    const uint32_t rev = settings.Revision();
+    if (rev == settings_applied){
+        return;
+    }
+    settings_applied = rev;
+    sound_volume = settings.GetFloat("volume_master");
+    music_volume = settings.GetFloat("volume_music");
+    effects_volume = settings.GetFloat("volume_effects");
+    if (renderer){
+        renderer->RequestAASamples(settings.GetInt("msaa"));
+    }
 }
 
 void ApplicationArcher::StartFade(int phase){
@@ -7252,6 +7798,9 @@ void ApplicationArcher::EnterTitle(){
     f_show_ui = false;
     //Escape while the level was still opening: the title comes up clear, not half dark.
     fade_phase = FADE_NONE;
+    //The title menu, on its first button - Start, or Continue once a level is under way.
+    menu_screen = MENU_SCREEN_TITLE;
+    title_menu.SetFocus(0);
     f_on_title = true;
 }
 
@@ -7370,6 +7919,7 @@ Scene* ApplicationArcher::BuildExtraLevel(int level, const char* name){
     BuildProps();
     BuildSigns();
     BuildScenery();
+    BuildApples();
     //Render thread, like the main level's - see the declaration.
     BuildRopeSkin();
     BuildArcher();
@@ -7484,6 +8034,9 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(f_was_airborne,parked.f_was_airborne);
     std::swap(f_was_in_cave,parked.f_was_in_cave);
     std::swap(arrow_in_flight,parked.arrow_in_flight);
+    std::swap(apple_views,parked.apple_views);
+    std::swap(apple_tree_objects,parked.apple_tree_objects);
+    std::swap(apple_lit,parked.apple_lit);
 }
 
 /*
@@ -8039,7 +8592,9 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap(VK_SPACE,INPUT_ARCHER_CONTINUE);
     input->AddKeyMap(GAMEPAD_KEY_A,INPUT_ARCHER_CONTINUE);
     input->AddKeyMap(GAMEPAD_KEY_START,INPUT_ARCHER_CONTINUE);
-    title_tap_button = input->AddTouchButton(InputController::TouchRect(),INPUT_ARCHER_CONTINUE,"continue");
+    //The click is the MENU's pointer now (docs/menu_plan.md): which button it lands on is the menu's
+    //to find, from where the cursor is - see UpdateTitle.
+    title_tap_button = input->AddTouchButton(InputController::TouchRect(),INPUT_ARCHER_MENU_POINTER,"click");
     f_draw_touch_buttons = false;
     //Not recorded: a recording starts in the world, where this action means nothing.
     input->SetRecorded(INPUT_ARCHER_CONTINUE,false);
@@ -8072,6 +8627,37 @@ void ApplicationArcher::SetupInput(){
     }
     input->NameAction(INPUT_ARCHER_ARROW_NEXT,"arrow_next");
     input->NameAction(INPUT_ARCHER_ARROW_PREV,"arrow_prev");
+
+    /*
+        THE MENUS' OWN (docs/menu_plan.md): up/down/left/right on the arrows, WASD, the d-pad and the
+        left stick; confirm is CONTINUE above and back is MENU, or B on a pad. All of them share keys
+        with the game - a key drives every action bound to it - which costs nothing, because only
+        the title reads these and no level ticks under it. None recorded: a menu is not the game.
+    */
+    const uint32_t nav_keys[4][4] = {
+        { VK_UP,    'W', (uint32_t)GAMEPAD_KEY_DPAD_UP,    INPUT_ARCHER_MENU_UP },
+        { VK_DOWN,  'S', (uint32_t)GAMEPAD_KEY_DPAD_DOWN,  INPUT_ARCHER_MENU_DOWN },
+        { VK_LEFT,  'A', (uint32_t)GAMEPAD_KEY_DPAD_LEFT,  INPUT_ARCHER_MENU_LEFT },
+        { VK_RIGHT, 'D', (uint32_t)GAMEPAD_KEY_DPAD_RIGHT, INPUT_ARCHER_MENU_RIGHT },
+    };
+    for (const auto& k : nav_keys){
+        for (int i = 0; i < 3; i++){
+            input->AddKeyMap(k[i],k[3]);
+        }
+        input->SetRecorded(k[3],false);
+    }
+    input->AddGamePadMap(1,INPUT_ARCHER_MENU_STICK_Y,8000);    //the left stick's Y; its X is MOVE
+    input->AddKeyMap(GAMEPAD_KEY_B,INPUT_ARCHER_MENU_BACK);
+    input->SetRecorded(INPUT_ARCHER_MENU_STICK_Y,false);
+    input->SetRecorded(INPUT_ARCHER_MENU_BACK,false);
+    input->SetRecorded(INPUT_ARCHER_MENU_POINTER,false);
+    input->NameAction(INPUT_ARCHER_MENU_UP,"menu_up");
+    input->NameAction(INPUT_ARCHER_MENU_DOWN,"menu_down");
+    input->NameAction(INPUT_ARCHER_MENU_LEFT,"menu_left");
+    input->NameAction(INPUT_ARCHER_MENU_RIGHT,"menu_right");
+    input->NameAction(INPUT_ARCHER_MENU_STICK_Y,"menu_stick_y");
+    input->NameAction(INPUT_ARCHER_MENU_BACK,"menu_back");
+    input->NameAction(INPUT_ARCHER_MENU_POINTER,"menu_click");
 }
 
 /*
@@ -8694,6 +9280,8 @@ void ApplicationArcher::NewGame(){
     debris.clear();
     //The rope's joints have to go before its bodies do, and both before BuildProps makes new ones.
     DestroyRope();
+    //The loose apples' bodies, and every apple hung back up - after ReleaseStuckArrows above.
+    ResetApples();
     main_scene->DeleteDestroyedObjects();
     BuildBlocks();
     //The blocks are new objects and start visible; put the melted ones back under the terrain.
@@ -8724,6 +9312,8 @@ void ApplicationArcher::UpdateView(void){
     if (!main_scene){
         return;
     }
+    //The player's settings, on a change only - see ApplySettings.
+    ApplySettings();
 #ifdef USE_SOUND
     /*
         Sound keeps SIMULATED time: held on a paused pass that does not tick, let go on one that
@@ -8782,6 +9372,23 @@ void ApplicationArcher::UpdateView(void){
         const float music_gain = music_volume;
         if (music_bus != SOUND_BUS_MASTER && soundsystem->GetBusGain(music_bus) != music_gain){
             soundsystem->SetBusGain(music_bus,music_gain);
+        }
+        /*
+            Sound effects: every scene's LAYER bus, which carries all of that scene's sound but the
+            music (its effects, voice, ambience and body buses - CueSoundOutput). Not the effects
+            buses themselves: CueSystem sets those from its table and its ducking, and would undo
+            it. The holds above use the fader, not the gain, so the two do not meet.
+        */
+        const float effects_gain = effects_volume;
+        auto effects = [this,effects_gain](int bus){
+            if (bus != SOUND_BUS_MASTER && soundsystem->GetBusGain(bus) != effects_gain){
+                soundsystem->SetBusGain(bus,effects_gain);
+            }
+        };
+        effects(level_bus);
+        effects(title_bus);
+        for (const ArcherLevel& parked : parked_levels){
+            effects(parked.level_bus);
         }
     }
 #endif
@@ -8939,6 +9546,7 @@ void ApplicationArcher::RunSimulationTick(void){
     //resolved against the one and offered the other.
     RefreshObstacles();
     RefreshRopePoints();
+    RefreshApples();
     //The drawn rope follows the same link positions the rules were just handed.
     UpdateRopeSkin();
     CheckRopeSkinCuts();
@@ -8970,6 +9578,7 @@ void ApplicationArcher::RunSimulationTick(void){
     vitals_history_head = (vitals_history_head + 1) % VITALS_HISTORY;
 
     HandleEvents(events);
+    HandleApples(events);
     SignalCues(events);
     //The rope handoff, in both directions. Immediately after the tick that decided it, so the
     //joint exists (or is gone) before anything else this tick reads the body.
@@ -12817,6 +13426,11 @@ void ApplicationArcher::PublishSnapshot(){
         s.strawmen.push_back(v);
     }
     s.kick_score = kick_score;
+    s.apples_picked = stage.apples_picked;
+    s.apples_total = (int)stage.apples.size();
+    s.f_apple_in_reach = apple_lit >= 0;
+    s.apple_list = stage.apples;
+    s.pick_ticks = stage.pick_ticks;
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         const Arrow& a = stage.arrows[i];
@@ -13186,6 +13800,17 @@ json ApplicationArcher::BuildStateJson(){
         {"archery_last_points",s.archery_last_points},
         //Kicks landed on straw men this level - one point each - and each straw man's swing.
         {"kick_score",s.kick_score},
+        //Apples picked this run, of how many the level hangs, and whether one is in reach now.
+        {"apples",[&s](){
+            static const char* STATES[] = { "hanging", "loose", "picked" };
+            json list = json::array();
+            for (const StageApple& ap : s.apple_list){
+                list.push_back(json{ {"state",STATES[(ap.state >= 0 && ap.state <= APPLE_PICKED) ? ap.state : 0]},
+                                     {"at",json::array({ap.at.x,ap.at.y,ap.at.z})} });
+            }
+            return json{ {"picked",s.apples_picked}, {"total",s.apples_total}, {"in_reach",s.f_apple_in_reach},
+                         {"pick_ticks",s.pick_ticks}, {"each",list} };
+        }()},
         //The title is up (continue has not landed yet), and the screen fade, 0 clear .. 1 black.
         //Not the snapshot's: the title does not tick the level, so a snapshot would not show it.
         {"on_title",f_on_title.load()},
@@ -13410,11 +14035,14 @@ void ApplicationArcher::RegisterMCPTools(){
         "kick (Kick_Front_3); archer_state's archer.kick says which one is running. 'continue' "
         "dismisses the title screen the app starts on - nothing else in the level moves until it has - "
         "and goes back to the level it was entered from. 'menu' (Escape) goes to the title from a "
-        "level, pausing it; ON THE TITLE, 'menu' EXITS THE APP.",
+        "level, pausing it; ON THE TITLE, 'menu' EXITS THE APP. On the title MENU (docs/menu_plan.md) "
+        "'continue' is confirm - it presses the focused button, which is Start/Continue whenever the "
+        "title comes up - and menu_up / menu_down / menu_left / menu_right move and change values, "
+        "menu_back (B) and 'menu' leave a Controls or Settings screen. archer_menu reads the menus and clicks.",
         json{
             {"type","object"},
             {"properties", {
-                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, arrow_1 .. arrow_5, arrow_next, arrow_prev, continue or menu"}}},
+                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, arrow_1 .. arrow_5, arrow_next, arrow_prev, continue, menu, menu_up, menu_down, menu_left, menu_right or menu_back"}}},
                 {"ticks", {{"type","number"},{"description","simulation ticks to hold it, default 20, capped at 600"}}},
                 {"wait", {{"type","boolean"},{"description","block until the hold has finished, default true; false returns at once so another hold can be layered on top"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
@@ -13452,6 +14080,11 @@ void ApplicationArcher::RegisterMCPTools(){
             }
             else if (name == "arrow_next"){ action = INPUT_ARCHER_ARROW_NEXT; }
             else if (name == "arrow_prev"){ action = INPUT_ARCHER_ARROW_PREV; }
+            //The title menu's navigation, by the names SetupInput gives them (docs/menu_plan.md).
+            else if (name == "menu_up" || name == "menu_down" || name == "menu_left" || name == "menu_right" ||
+                     name == "menu_back"){
+                action = input->FindActionByName(name.c_str());
+            }
             else{
                 return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, kneel, action, knife, up, aim_down, arrow_1 .. arrow_5, arrow_next, arrow_prev, continue or menu"} };
             }
@@ -13463,6 +14096,105 @@ void ApplicationArcher::RegisterMCPTools(){
                 WaitTicks(ticks + 2);
             }
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("archer_menu",
+        "The title menu and its Controls and Settings screens (docs/menu_plan.md): which screen is up, "
+        "the focused item, every item with its value and its rect in window pixels, whether a game "
+        "has been started (the first button then reads Continue), and the settings as stored and "
+        "applied - the file's path and text, MSAA asked for and in use, the master/music/effects "
+        "levels and their buses' gains. With `item` (an index on the current screen) or `x`,`y`, it "
+        "MOVES THE MENU'S POINTER there for one pass - a hover, which focuses an item - and with "
+        "click true also presses and releases it there: the mouse path, without the desk's real "
+        "mouse. Keys and the pad are archer_hold's (continue, menu_up, menu_down, ...).",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"item", {{"type","number"},{"description","index of an item on the current screen: point at its centre"}}},
+                {"x", {{"type","number"},{"description","window x in pixels, top-left origin"}}},
+                {"y", {{"type","number"},{"description","window y in pixels"}}},
+                {"click", {{"type","boolean"},{"description","press and release there, default false (a hover)"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            const int screen = menu_screen;
+            UIMenu& menu = (screen == MENU_SCREEN_CONTROLS) ? controls_menu :
+                           ((screen == MENU_SCREEN_SETTINGS) ? settings_menu : title_menu);
+            const float w = main_window ? (float)main_window->width : 0.0f;
+            const float h = main_window ? (float)main_window->height : 0.0f;
+            bool f_point = false;
+            float px = 0.0f, py = 0.0f;
+            if (args.contains("item") && args["item"].is_number()){
+                int i = args["item"].get<int>();
+                if (i < 0 || i >= menu.Count()){
+                    return json{ {"error","no item " + std::to_string(i) + " on this screen"} };
+                }
+                UIMenuRect r = menu.ItemRect(i,w,h);
+                px = (r.x0 + r.x1) * 0.5f;
+                py = (r.y0 + r.y1) * 0.5f;
+                f_point = true;
+            }else if (args.contains("x") && args.contains("y") && args["x"].is_number() && args["y"].is_number()){
+                px = args["x"].get<float>();
+                py = args["y"].get<float>();
+                f_point = true;
+            }
+            if (f_point){
+                {
+                    std::lock_guard<std::mutex> lock(menu_pointer_mutex);
+                    f_menu_pointer_pending = true;
+                    menu_pointer_x = px;
+                    menu_pointer_y = py;
+                    f_menu_pointer_click = args.value("click",false);
+                }
+                WaitTicks(3);
+            }
+            const int now = menu_screen;
+            UIMenu& shown = (now == MENU_SCREEN_CONTROLS) ? controls_menu :
+                            ((now == MENU_SCREEN_SETTINGS) ? settings_menu : title_menu);
+            static const char* kinds[] = { "button", "choice", "slider", "toggle" };
+            json items = json::array();
+            std::vector<UIMenuItem> list = shown.Items();
+            for (int i = 0; i < (int)list.size(); i++){
+                const UIMenuItem& it = list[i];
+                UIMenuRect r = shown.ItemRect(i,w,h);
+                json j{{"label",it.label},{"kind",kinds[it.kind]},{"enabled",it.f_enabled},
+                       {"rect",json::array({r.x0,r.y0,r.x1,r.y1})}};
+                if (it.kind == UI_MENU_CHOICE){ j["value"] = it.choices.empty() ? "" : it.choices[it.choice]; }
+                if (it.kind == UI_MENU_SLIDER){ j["value"] = it.value; }
+                if (it.kind == UI_MENU_TOGGLE){ j["value"] = it.f_on; }
+                items.push_back(j);
+            }
+            json gains = json::object();
+#ifdef USE_SOUND
+            if (soundsystem){
+                gains["master"] = soundsystem->GetBusGain(SOUND_BUS_MASTER);
+                gains["music"] = (music_bus != SOUND_BUS_MASTER) ? soundsystem->GetBusGain(music_bus) : -1.0f;
+                gains["level_layer"] = (level_bus != SOUND_BUS_MASTER) ? soundsystem->GetBusGain(level_bus) : -1.0f;
+                gains["title_layer"] = (title_bus != SOUND_BUS_MASTER) ? soundsystem->GetBusGain(title_bus) : -1.0f;
+            }
+#endif
+            json out{
+                {"screen",(now == MENU_SCREEN_CONTROLS) ? "controls" : ((now == MENU_SCREEN_SETTINGS) ? "settings" : "title")},
+                {"on_title",f_on_title.load()},
+                {"focus",shown.Focus()},
+                {"items",items},
+                {"game_started",f_game_started.load()},
+                {"settings",json{
+                    {"path",settings.Path()},
+                    {"text",settings.ToText()},
+                    {"msaa",settings.GetInt("msaa")},
+                    {"msaa_in_use",renderer ? renderer->aa_samples : 0},
+                    {"volume_master",settings.GetFloat("volume_master")},
+                    {"volume_music",settings.GetFloat("volume_music")},
+                    {"volume_effects",settings.GetFloat("volume_effects")},
+                    {"fullscreen",settings.GetBool("fullscreen")},
+                    {"window_fullscreen",main_window ? main_window->f_fullscreen : false}}},
+                {"applied",json{{"sound_volume",sound_volume},{"music_volume",music_volume.load()},
+                                {"effects_volume",effects_volume.load()},{"bus_gains",gains}}},
+                {"window",json::array({w,h})}
+            };
+            return MaybeAttachScreenshot(out,args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("archer_place",

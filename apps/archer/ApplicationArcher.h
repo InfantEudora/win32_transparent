@@ -34,6 +34,9 @@
 #include "MusicPlayer.h"
 #endif
 #include "SpringHinge.h"
+#include "Settings.h"
+#include "UIMenu.h"
+#include "UIControls.h"
 
 /*
     A side-view platformer about an archer, in 3D assets.
@@ -180,6 +183,18 @@
 #define INPUT_ARCHER_ARROW_KEYS     5
 #define INPUT_ARCHER_ARROW_NEXT     INPUT_LAST+25
 #define INPUT_ARCHER_ARROW_PREV     INPUT_LAST+26
+/*
+    The title menu's navigation (docs/menu_plan.md) - see the end of SetupInput for the keys.
+    Confirm is CONTINUE and back is MENU, which already existed; these are the rest. Numbered after
+    everything else, so no action a recording names changes its number.
+*/
+#define INPUT_ARCHER_MENU_UP        INPUT_LAST+27
+#define INPUT_ARCHER_MENU_DOWN      INPUT_LAST+28
+#define INPUT_ARCHER_MENU_LEFT      INPUT_LAST+29
+#define INPUT_ARCHER_MENU_RIGHT     INPUT_LAST+30
+#define INPUT_ARCHER_MENU_STICK_Y   INPUT_LAST+31     //the left stick's Y, read as up/down with a threshold
+#define INPUT_ARCHER_MENU_BACK      INPUT_LAST+32     //B on a pad; Escape and Back are MENU
+#define INPUT_ARCHER_MENU_POINTER   INPUT_LAST+33     //a click on the window - the full-window touch rect
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Both are intent arriving from OUTSIDE
 //the simulation - a key, an MCP call, later a replay - which is what the command queue is for:
@@ -1214,6 +1229,12 @@ struct ArcherSnapshot{
     };
     std::vector<StrawView> strawmen;
     int   kick_score = 0;
+    //The apples: how many she has picked this run, and whether a press would pick one now.
+    int   apples_picked = 0;
+    int   apples_total = 0;
+    bool  f_apple_in_reach = false;
+    std::vector<StageApple> apple_list;     //each one's state and where it is, for archer_state
+    int   pick_ticks = 0;
 
     //Live arrows, so a miss can be diagnosed rather than guessed at.
     struct ArrowView{
@@ -1555,6 +1576,49 @@ private:
     float scenery_top_w[SCENERY_VARIANT_COUNT] = {};
     bool f_scenery_loaded = false;
     /*
+        --- THE APPLES (Stage::apples, docs/apple_plan.md) ------------------------------------------
+        Hanging, an apple is LOOKS: archer.glb's `apple` and a thin stalk up to its twig, visual-only,
+        so an orchard nobody touches adds nothing to a replay's state. Freed, it becomes a BODY of its
+        own - a sphere, locked to its depth and turning about Z so it rolls - and the rules are told
+        where it is before each tick (SetLooseApple), which is what lets her pick one off the ground.
+        Its trees (Stage::apple_trees, `tree_1`) are visual-only too, built once per level with the
+        apples by BuildApples (RENDER THREAD, Init and BuildExtraLevel; the models load on the first
+        call). A restart takes the bodies away and hangs every apple back up (ResetApples, physics
+        thread). Per level, in ArcherLevel.
+    */
+    struct AppleView{
+        Object* hanging = NULL;
+        Object* stalk = NULL;
+        Object* loose = NULL;       //its body once freed; NULL before, and again once picked
+    };
+    std::vector<AppleView> apple_views;         //in step with Stage::apples
+    std::vector<Object*> apple_tree_objects;
+    void BuildApples();
+    void ResetApples();
+    //Before the tick: where each loose apple's body is, for the rules.
+    void RefreshApples();
+    //After it: the freed ones get their bodies (an arrow in a hit one rides it), the picked go, and
+    //the one a press would take now is lit. Physics thread.
+    void HandleApples(const StageEvents& events);
+    Mesh* apple_mesh = NULL;
+    Mesh* apple_tree_mesh = NULL;
+    std::vector<Material> apple_tree_materials;
+    int   material_apple = -1;      //the apple's own, by index - slots are swapped on the physics thread
+    int   material_apple_glow = -1; //the same, lit: the one a press would pick
+    int   material_apple_stalk = -1;
+    bool  f_apple_models_loaded = false;
+    int   apple_lit = -1;           //the apple glowing now, or -1
+    /*
+        A loose apple's body. A sphere of APPLE_RADIUS; a little bounce, grippy enough to roll rather
+        than slide, and angular damping so a roll runs down to a stop instead of going on for good -
+        rp3d has no rolling resistance, and at 0.35 a cut apple was still rolling at 0.7 u/s three
+        seconds after it landed, on its way across the bay. Tuned on the bay's floor, 2026-10-01.
+    */
+    float apple_mass = 0.20f;
+    float apple_bounce = 0.30f;
+    float apple_friction = 0.80f;
+    float apple_angular_damping = 2.50f;
+    /*
         THE BIGTREE AND THE MUSHROOM - a StageTree with f_bigtree and a pad with f_mushroom, drawn
         with archer.glb's pieces. BuildPlantModels loads and measures them once (RENDER THREAD,
         Init, after BuildArcherModel for model_scale) and places the level's; from then on
@@ -1811,6 +1875,9 @@ private:
     //snapshot; render thread. The last kind drawn and the stage tick it changed on are the
     //render thread's own, for the flash a change gets.
     void DrawArrowHud();
+    //Bottom left: the apples she has picked - a placeholder until it is decided what one is worth
+    //(docs/apple_plan.md) - and, at the bottom middle while one is in reach, the key that picks it.
+    void DrawAppleHud();
     /*
         The floors' edges drawn over the level (docs/vine_plan.md section 15): each floor a thin white
         line along its top; each edge a drop line down its face - red past VITALS_DROP_FROM (a drop
@@ -2894,6 +2961,9 @@ private:
         bool f_was_airborne = false;
         bool f_was_in_cave = false;
         bool arrow_in_flight[ARROW_MAX_LIVE] = {};
+        std::vector<AppleView> apple_views;
+        std::vector<Object*> apple_tree_objects;
+        int  apple_lit = -1;
     };
     std::vector<ArcherLevel> parked_levels;     //one per scene that is not live
     //The scenes by what they are, so the tools and the swap can tell them apart without comparing
@@ -3036,13 +3106,61 @@ private:
     void CreateTitleScene();
     //Scales the quad to cover a w x h window. Render thread.
     void FitTitleQuad(int w, int h);
-    //Physics thread, from UpdateView while the title is live: continue, or exit.
+    //Physics thread, from UpdateView while the title is live: the title menu and its two screens -
+    //Start/Continue (the horn and the fade, as continue always was), Controls, Settings, Quit.
     void UpdateTitle(InputController* input);
     //The title coming up and going down: its click rect and the panels. Physics thread.
     void EnterTitle();
     //Whether the title is up, for archer_state - which answers on the MCP thread, where main_scene
     //is not for reading. Set in EnterTitle and LeaveTitle.
     std::atomic<bool> f_on_title{false};
+
+    /*
+        THE TITLE MENU (docs/menu_plan.md): Start / Continue, Controls, Settings, Quit, and the two
+        screens behind them. The menus are core/UIMenu - updated in UpdateTitle on the physics
+        thread, drawn in DrawOverlay on the render thread, each under its own lock - and which one
+        is up is `menu_screen`, an atomic for the same two threads.
+    */
+    enum{ MENU_SCREEN_TITLE, MENU_SCREEN_CONTROLS, MENU_SCREEN_SETTINGS };
+    enum{ MENU_START = 1, MENU_CONTROLS, MENU_SETTINGS, MENU_QUIT,
+          MENU_MSAA, MENU_VOLUME_MASTER, MENU_VOLUME_MUSIC, MENU_VOLUME_EFFECTS, MENU_FULLSCREEN, MENU_SETTINGS_BACK,
+          MENU_CONTROLS_BACK };
+    std::atomic<int> menu_screen{MENU_SCREEN_TITLE};
+    UIMenu     title_menu;
+    UIMenu     settings_menu;
+    UIMenu     controls_menu;       //its Back button; the table above it is controls_view
+    UIControls controls_view;
+    int        settings_item_msaa = -1, settings_item_master = -1, settings_item_music = -1;
+    int        settings_item_effects = -1, settings_item_fullscreen = -1;
+    //Set by the first Start: from then on the title's first button says Continue. A level always
+    //exists under the title (the world is built in Init), so "started" is the only difference.
+    std::atomic<bool> f_game_started{false};
+    //The left stick's Y as up/down: one step per push past the threshold, not one per pass.
+    int        menu_stick_dir = 0;
+    /*
+        A click from archer_menu (MCP), for the next pass of UpdateTitle: how the mouse path is
+        checked without taking the desk's real mouse. Under its own lock; MCP thread to physics.
+    */
+    std::mutex menu_pointer_mutex;
+    bool       f_menu_pointer_pending = false;
+    float      menu_pointer_x = 0.0f, menu_pointer_y = 0.0f;
+    bool       f_menu_pointer_click = false;
+    void SetupMenus();
+    void SyncSettingsMenu();                //the Settings screen's items from `settings`
+    void DrawMenus(float w, float h);       //render thread, from DrawOverlay's title branch
+
+    /*
+        THE PLAYER'S SETTINGS (core/Settings), in settings.json beside the exe. Loaded in the
+        constructor, before the window exists, so "start full screen" can be honoured
+        (Application::f_start_fullscreen). ApplySettings copies them into the fields the panels
+        and archer_sound also write - sound_volume, music_volume, effects_volume, the renderer's
+        MSAA - only when they CHANGE (Settings::Revision), so neither overrules the other.
+    */
+    Settings settings;
+    uint32_t settings_applied = 0xFFFFFFFFu;
+    //Every scene's layer bus - all of a level's sound but the music - set in UpdateView.
+    std::atomic<float> effects_volume{1.0f};
+    void ApplySettings();
 
     /*
         THE SCREEN FADE: continue closes a vignette over the title to black, the level takes over

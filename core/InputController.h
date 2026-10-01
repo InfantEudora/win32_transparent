@@ -853,6 +853,10 @@ class InputController{
     int lmotor = 0;
     int rmotor = 0;
     int dev_index = -1;     //XInput user index in use, -1 when no controller is connected
+    //The pad's buttons as of the last poll - an XInput wButtons word, GAMEPAD_KEY_* minus
+    //GAMEPAD_SYSKEY_BASE per bit - bound to an action or not. For a "which button is that" view
+    //(core/UIControls), not for gameplay, which reads actions. 0 unfocused or with no pad.
+    uint16_t GetGamepadButtons() const { return gamepad_buttons; }
 
     //Mouse position is also stored in keymap, and seperately
     std::vector<KeyMap>keymap;

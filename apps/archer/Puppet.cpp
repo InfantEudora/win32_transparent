@@ -287,6 +287,10 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
         out.action = ACTION_KICK;
         out.kick_kind = stage.kick_kind;
         out.action_phase = (float)stage.kick_ticks / (float)stage.Kick().ticks;
+    }else if (stage.pick_ticks > 0){
+        out.action = ACTION_PICK;
+        out.f_pick_low = stage.f_pick_low;
+        out.action_phase = (float)stage.pick_ticks / (float)stage.PickTicks();
     }else if (stage.mode == MODE_CLIMB){
         out.action = ACTION_CLIMB;
         //climb_ticks counts DOWN, so the phase is its complement.
@@ -405,6 +409,26 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
             out.wanted_rate = clip_duration[out.clip] / window;
             out.rate = out.wanted_rate;
             if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
+        }
+        return out;
+    }
+
+    /*
+        THE PICK, on a stand-in - see PUPPET_PICK_CLIP_HIGH. Fitted to the rules' window like the
+        kick: the whole draw for a reach up, Stand_ToKneel only as far as its settle for one at her
+        feet, since its long held tail is never played (the kneel's own arrangement).
+    */
+    if (in.action == ACTION_PICK){
+        out.clip = in.f_pick_low ? PUPPET_PICK_CLIP_LOW : PUPPET_PICK_CLIP_HIGH;
+        out.f_placeholder = true;
+        float span = clip_duration[out.clip];
+        if (in.f_pick_low && clip_settle[out.clip] > 0.01f){
+            span = clip_settle[out.clip];
+        }
+        float window = (float)(in.f_pick_low ? APPLE_PICK_TICKS_LOW : APPLE_PICK_TICKS_HIGH) * ARCHER_DT;
+        if (span > 0.01f && window > 0.0f){
+            out.wanted_rate = span / window;
+            out.rate = (out.wanted_rate > PUPPET_ACTION_RATE_MAX) ? PUPPET_ACTION_RATE_MAX : out.wanted_rate;
         }
         return out;
     }

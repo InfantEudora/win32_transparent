@@ -446,6 +446,11 @@ void Application::FrameThreadFunction(Application* app){
 
     app->Init();
 
+    //After Init, so the app's own Resize there cannot undo it - see f_start_fullscreen.
+    if (app->f_start_fullscreen && !app->f_start_minimized){
+        app->main_window->SetFullscreen(true);
+    }
+
     /*
         The 2D overlay, HERE rather than in Application::Init, because Init is virtual and an app
         may replace it wholesale rather than calling the base - ApplicationTetris does exactly

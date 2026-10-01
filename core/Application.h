@@ -491,6 +491,13 @@ public:
     //doing anything that would bring the window forward (Window::Resize does not; it is a
     //MoveWindow, which leaves a minimised window minimised).
     bool f_start_minimized = false;
+    /*
+        Set by the app BEFORE Start() - in its constructor, from its settings (core/Settings.h) -
+        to come up borderless full screen. Applied once the app's Init has returned, so a Resize
+        the app does in Init cannot undo it. --minimized wins: a window opened for an agent to
+        drive must not cover the desk.
+    */
+    bool f_start_fullscreen = false;
 
     //The port the MCP server's HTTP transport binds: 8765, unless started with --mcp-port N.
     //Read by Start() from the command line, so every app takes the flag with no code of its own -

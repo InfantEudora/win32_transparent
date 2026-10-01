@@ -150,6 +150,12 @@ public:
 
     void Show(int nShowCmd);
     void Resize(int width, int height);
+    /*
+        Borderless full screen (a topmost popup, maximised) or back to the window it was. What
+        Alt+Enter toggles, and what Application applies at start when an app asks for it
+        (f_start_fullscreen). Asking for the state it is already in does nothing.
+    */
+    void SetFullscreen(bool f_on);
     //Iconic - on the taskbar rather than on screen. The render loop paces itself by it: a
     //minimised window gets no vsync, so SwapBuffers stops holding the loop back.
     bool IsMinimized();

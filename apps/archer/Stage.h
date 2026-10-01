@@ -831,6 +831,85 @@ struct StageWebBody{
 };
 
 /*
+    --- APPLES -----------------------------------------------------------------------------------
+    docs/apple_plan.md. An apple hangs on its stem until an arrow frees it: through the STEM it is
+    cut, and drops intact; through the APPLE it is hit, and goes off with the arrow in it. Either
+    way it is LOOSE from then on, and rp3d's - falling, bouncing and rolling are what a solver is
+    for. One she can reach, hanging or lying, she can PICK with the action button.
+
+    THE SHOT IS 3D GEOMETRY. An apple is a sphere at (x, y, z) and its stem a vertical capsule above
+    it, and an arrow's sweep is tested against both as they are - not against their outline in her
+    plane. So an arrow at z 0 hits an apple only where it really passes through it: what the camera
+    shows is what counted. Which apples are a SHOT follows from where the level hangs them, not
+    from a flag: one within APPLE_STEM_HIT_R of her plane can be cut or hit, one within its radius
+    only hit, and one deeper than that never - it is for picking (within APPLE_PICK_REACH_Z) or for
+    looks. The level hangs its shootable ones within APPLE_ON_LINE_Z, so stem and body both
+    straddle the walk line and an arrow through either is plainly through it on screen.
+
+    PICKING is the kick's arrangement: the rules own the window and the tick the hand closes, the
+    clip is played to fit it (Puppet), and the clip is a stand-in until a pick is exported - see
+    PUPPET_PICK_CLIP. High or low by where the apple is: one at her feet is a low pick.
+*/
+#define APPLE_RADIUS                0.19f   //archer.glb's apple, 0.104 across its body x model_scale 1.82
+#define APPLE_STEM_LEN              0.30f   //apple top to the twig; the model's own stem is the first 0.10
+#define APPLE_STEM_HIT_R            0.06f   //the stem's capsule: generous, so it can be hit at bow range
+//The share of the arrow's velocity a freed apple leaves with: a cut nudges it so it lands rolling
+//rather than dropping dead, a hit carries it off.
+#define APPLE_CUT_PUSH              0.04f
+#define APPLE_HIT_TRANSFER          0.20f
+#define APPLE_ON_LINE_Z             0.04f   //how far off her plane a shootable apple may hang
+//Her reach, from her centre line at her feet: across, in depth, and up to the apple's centre.
+#define APPLE_PICK_REACH_X          0.75f
+#define APPLE_PICK_REACH_Z          0.65f
+#define APPLE_PICK_REACH_UP         2.25f
+#define APPLE_PICK_LOW_Y            0.80f   //an apple's centre below this above her feet is a low pick
+/*
+    The pick windows and the tick the hand closes, by height. FITTED TO THE STAND-IN CLIPS (see
+    PUPPET_PICK_CLIP), measured 2026-10-01: Standing_DrawArrow is 1.07s and her right hand is at its
+    highest, 1.57 above her feet, 25 ticks in - 39% of the way, so tick 19 of a 48-tick window (the
+    clip at 1.33x). Stand_ToKneel to its settle is 40 ticks at 1x, and its hands are lowest at the
+    end (0.69 up - it holds a rifle, so it never reaches the ground). A real pick clip sets these the
+    KICK_TICKS way.
+*/
+#define APPLE_PICK_TICKS_HIGH       48
+#define APPLE_PICK_CLOSE_HIGH       19
+#define APPLE_PICK_TICKS_LOW        40
+#define APPLE_PICK_CLOSE_LOW        36
+//How far the apple may have rolled from where the press found it and still be taken at the close.
+#define APPLE_PICK_SLACK            0.30f
+
+enum AppleState{
+    APPLE_HANGING = 0,
+    APPLE_LOOSE,            //handed to the app: rp3d moves it, and writes back where (StageApple::at)
+    APPLE_PICKED
+};
+
+struct StageApple{
+    v3    hang;                     //its centre while it hangs
+    float stem = APPLE_STEM_LEN;
+    float radius = APPLE_RADIUS;
+    int   tree = -1;                //the StageAppleTree it is drawn growing from, or -1; looks only
+    int   state = APPLE_HANGING;
+    //Where it is: `hang` while hanging; while loose, where the app last said the body is, before
+    //each tick (Stage::SetLooseApple) - what a pick off the ground is measured against.
+    v3    at;
+    float Twig() const { return hang.y + radius + stem; }
+};
+
+/*
+    An apple tree - archer.glb's tree_1, stood at (x, y, z) on the ground at y. LOOKS ONLY, like a
+    sign: nothing collides with it and the rules never read it. Here so a level's apples and the
+    trees they grow on are laid out in one place.
+*/
+struct StageAppleTree{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float yaw_deg = 0.0f;
+    float scale = 1.0f;             //on top of model_scale
+};
+
+/*
     THE SLIDE GALLERY, in the rope level - Stage::BuildSlideGallery. Named here so the rules test
     and the level agree on where each hill is without either typing a coordinate.
 */
@@ -1831,6 +1910,20 @@ struct StageEvents{
     //A web she has just started pushing against, and one she has just burst (a few threads at once).
     std::vector<int> web_pressed;
     std::vector<int> web_burst;
+
+    //--- Apples (StageApple) --------------------------------------------------------------------
+    //An apple freed this tick: `arrow` the one that did it, `at` where it met the stem or the
+    //apple, and `vel` what the apple leaves with. A cut arrow flies on; a hit one is stuck at `at`.
+    struct AppleShot{
+        int   apple = -1;
+        int   arrow = -1;
+        v3    at;
+        v3    vel;
+    };
+    std::vector<AppleShot> apples_cut;
+    std::vector<AppleShot> apples_hit;
+    int   pick_started = -1;        //the apple a pick has just reached for, or -1
+    std::vector<int> apples_picked; //and taken, at the hand's close
 };
 
 /*
@@ -1983,6 +2076,8 @@ public:
     std::vector<StageRamp>  ramps;
     std::vector<StageBridge> bridges;
     std::vector<StageWeb> webs;
+    std::vector<StageApple> apples;
+    std::vector<StageAppleTree> apple_trees;
     std::vector<StageZone>  zones;
     std::vector<StageCrumbleGroup> crumble_groups;
 
@@ -2096,6 +2191,24 @@ public:
     int   kick_cooldown = 0;
     int   kick_kind = KICK_FRONT;   //KickKind of the kick running, or of the last one
     const KickSpec& Kick() const { return KICK_SPECS[kick_kind]; }
+
+    //--- Picking an apple - see APPLES ----------------------------------------------------------
+    //Counted up from 1 like the kick, 0 not picking. The window is PickTicks(), the close PickClose().
+    int   pick_ticks = 0;
+    int   pick_apple = -1;          //the apple reached for, while picking
+    bool  f_pick_low = false;       //a low pick - at her feet - rather than a reach up
+    int   apples_picked = 0;        //this run's; a restart empties her hands
+    int   PickTicks() const { return f_pick_low ? APPLE_PICK_TICKS_LOW : APPLE_PICK_TICKS_HIGH; }
+    int   PickClose() const { return f_pick_low ? APPLE_PICK_CLOSE_LOW : APPLE_PICK_CLOSE_HIGH; }
+    /*
+        The apple she would reach for if action were pressed now - the nearest in reach, hanging or
+        lying - or -1. Not whether she CAN start a pick (the rope comes first, and she has to be
+        standing on the ground): CanStartPick says that. Const, for the app's highlight and prompt.
+    */
+    int   FindPickableApple(bool* out_low = NULL) const;
+    bool  CanStartPick() const;
+    //A loose apple's body is now at `at` - the app, before each tick, like the obstacles.
+    void  SetLooseApple(int apple, const v3& at);
 
     //--- Kneeling -------------------------------------------------------------------------------
     int   kneel_phase = KNEEL_LOWERING; //meaningful only while MODE_KNEEL
@@ -2282,6 +2395,8 @@ private:
     void BuildWebLevel();
     //Left of the rope level's shallow pit: ramps at fixed angles - see SLIDE_GALLERY_DEG.
     void BuildSlideGallery();
+    //The main level's apple trees, in the terrain bay - docs/apple_plan.md, "As built".
+    void BuildOrchard();
     //Adds `s` to `scenery`, and its invisible collider to `blocks` if it has one. See StageScenery.
     void AddScenery(const StageScenery& s);
     //Declares a zone by its edges rather than its centre, which is how a level is read, and
@@ -2402,6 +2517,15 @@ private:
     //Advances the kick timer and, on the ticks it is live, sweeps its box against the breakable
     //blocks and the obstacles. Everything it finds goes into `events`.
     void  TickKick(const ArcherInput& in, StageEvents& events);
+
+    //--- Apples -----------------------------------------------------------------------------------
+    //The pick under way: the clock, the close, and the end. Before she moves, like the kick.
+    void  TickPick(StageEvents& events);
+    //An arrow's segment this tick against the hanging apples: the first stem or apple along it.
+    //True if it went INTO an apple, and is stuck there; a cut stem lets it fly on.
+    bool  ArrowThroughApples(int arrow, const v3& from, const v3& to, StageEvents& events);
+    //The apple pick's hash, only once an apple has been touched - see HashState.
+    bool  ApplesTouched() const;
 
     //--- Kneeling -------------------------------------------------------------------------------
     //The whole of MODE_KNEEL: the phase clock, standing up, and a planted body that still falls

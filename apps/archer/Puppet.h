@@ -475,6 +475,7 @@ struct ArcherAnimParams{
     int   action = 0;               //ArcherAction
     float action_phase = 0.0f;      //0..1 through whatever `action` is, for one-shot clips
     int   kick_kind = 0;            //KickKind, while action is ACTION_KICK
+    bool  f_pick_low = false;       //while ACTION_PICK: at her feet rather than overhead
     float aim_deg = 0.0f;
     float aim_side_deg = 0.0f;      //Stage::AimSwaySideDeg - the cone's sideways half, + to her left
     float draw_power = 0.0f;        //0..1
@@ -511,8 +512,19 @@ enum ArcherAction{
     ACTION_DRAW,                    //bow being drawn or held at full
     ACTION_KICK,
     ACTION_CLIMB,                   //pulling up over a ledge
-    ACTION_HANG                     //hanging off one
+    ACTION_HANG,                    //hanging off one
+    ACTION_PICK                     //reaching for an apple - Stage::pick_ticks
 };
+
+/*
+    THE PICK'S CLIPS - STAND-INS. There is no pick in the export yet (docs/apple_plan.md section 3), so
+    a reach up plays Standing_DrawArrow - her hand going up over her shoulder - and one at her feet
+    Stand_ToKneel, as far as its settle; both are fitted to the rules' window and come back marked
+    placeholder, so the panel lists the pick as wanted. A real clip is a row in ARCHER_CLIPS and
+    these two lines, and APPLE_PICK_* set to it the KICK_TICKS way.
+*/
+#define PUPPET_PICK_CLIP_HIGH       CLIP_DRAW
+#define PUPPET_PICK_CLIP_LOW        CLIP_KNEEL_DOWN
 
 //Reads the rules into the seam. Pure; the rules are not touched.
 void DescribeArcher(const Stage& stage, ArcherAnimParams& out);

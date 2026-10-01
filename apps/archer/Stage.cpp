@@ -70,11 +70,22 @@ void Stage::Reset(){
     ramps.clear();
     bridges.clear();
     webs.clear();
+    apples.clear();
+    apple_trees.clear();
     zones.clear();
     crumble_groups.clear();
     pending_effects.clear();
     BuildLevel();
     BuildTrees();
+    //Every apple back on its stem.
+    for (StageApple& a : apples){
+        a.state = APPLE_HANGING;
+        a.at = a.hang;
+    }
+    pick_ticks = 0;
+    pick_apple = -1;
+    f_pick_low = false;
+    apples_picked = 0;
     //In none of them yet: the first tick finds the one she lands in and reports it entered.
     zone_inside.assign(zones.size(),0);
     for (StageSpringPlant& p : spring_plants){
@@ -685,7 +696,59 @@ void Stage::BuildMainLevel(){
         pad.f_mushroom = true;
         spring_plants.push_back(pad);
     }
+    BuildOrchard();
 #endif
+}
+
+/*
+    THE APPLE TREES, in the terrain bay between the waterfall and the hill - docs/apple_plan.md, "As
+    built". No blocks, so nothing the dressing is seeded by moves; archer_test never comes this far
+    left (her x stays in -6 .. 28), so it does not meet them.
+
+    THE TREES STRADDLE HER LINE so she walks under and through them: the big one's trunk behind it
+    with its canopy reaching out over her, the small one's in front, so for a step she passes behind
+    it. Their apples hang where they belong to the shot, the pick or the look (see APPLES):
+
+      on the line, z within APPLE_ON_LINE_Z   shootable: stem and apple both cross her plane
+      off it, low enough                      picked, not shot - at her shoulder, or overhead
+      deep in the canopy, or high             looks only; the rules find nothing to do with them
+
+    HUNG FROM THE CANOPY'S UNDERSIDE: each twig 0.12 inside the lowest leaves above its (x, z), read off
+    tree_1 placed as the app places it (position, yaw, model_scale x scale) - so a stalk always goes
+    up into leaves, and never into the air beside them, which by eye it did for four in thirteen.
+    And NOTHING SHE WALKS THROUGH: an apple on her line hangs clear of her head (its bottom above
+    2 * ARCHER_HALF_H), and one lower than that hangs off the line, beside her (stage_test checks
+    both). The small tree's canopy is too low for an apple on the line to clear her, so it is the
+    picking tree.
+*/
+void Stage::BuildOrchard(){
+    apple_trees.push_back({ -22.00f, 0.00f, -0.90f,  20.0f, 1.50f });   //0: the big one, behind her line
+    apple_trees.push_back({ -16.90f, 0.00f,  1.20f, 160.0f, 1.10f });   //1: by the hill, in front of it
+    apple_trees.push_back({ -30.50f, 0.00f, -1.40f, -35.0f, 1.25f });   //2: past the waterfall, behind
+    auto hang = [this](float x, float y, float z, int tree){
+        StageApple a;
+        a.hang = v3(x,y,z);
+        a.at = a.hang;
+        a.tree = tree;
+        apples.push_back(a);
+    };
+    //The big tree: three to shoot, one overhead to pick, two for looks.
+    hang(-21.03f, 2.37f,  0.00f, 0);
+    hang(-23.83f, 2.45f,  0.02f, 0);
+    hang(-24.20f, 2.83f,  0.00f, 0);    //high, at the canopy's edge
+    hang(-23.03f, 2.12f, -0.45f, 0);
+    hang(-20.70f, 3.83f, -1.00f, 0);
+    hang(-22.23f, 3.26f,  1.00f, 0);
+    //The small one, in front of her: two to pick, at her chest in front and her shoulder behind, two for looks.
+    hang(-16.54f, 1.40f,  0.45f, 1);
+    hang(-16.94f, 1.81f, -0.45f, 1);
+    hang(-17.74f, 2.71f,  0.60f, 1);
+    hang(-18.14f, 1.64f,  1.00f, 1);
+    //Past the waterfall: two to shoot, one at her shoulder to pick, one for looks.
+    hang(-30.12f, 2.30f,  0.00f, 2);
+    hang(-31.72f, 2.13f,  0.00f, 2);
+    hang(-31.32f, 1.79f, -0.45f, 2);
+    hang(-29.32f, 1.90f, -1.00f, 2);
 }
 
 int BiomeAt(const std::vector<StageBiome>* biomes, float x, float y, float* weight){
@@ -2612,6 +2675,8 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
     //At a full run those differ by 0.15 of a unit - the difference between connecting with the
     //near brick of a wall and connecting with nothing.
     TickKick(in,events);
+    //The pick's clock, likewise before she moves: the tick the hand closes is counted from the press.
+    TickPick(events);
 
     TickArcher(in,events);
 
@@ -2993,7 +3058,8 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
 
     //Both hands are on the rock: no draw can START while hanging or climbing, and EnterHang cancels
     //one already under way.
-    bool f_hands_full = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE);
+    //Nor while picking an apple: that hand is reaching for it.
+    bool f_hands_full = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE || pick_ticks > 0);
 
     if (in.f_draw_down && !f_hands_full){
         if (bow_mode == BOW_IDLE){
@@ -3064,8 +3130,8 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         the kick's gate - and not mid-kick, whose plant and boot box belong to standing.
     */
     //Not on a spring plant: the kneel plants her on ground that stays put.
-    if (in.f_kneel_pressed && mode == MODE_GROUND && f_on_ground && kick_ticks == 0 && spring_on < 0 &&
-        branch_on < 0 && ramp_on < 0 && bridge_on < 0){
+    if (in.f_kneel_pressed && mode == MODE_GROUND && f_on_ground && kick_ticks == 0 && pick_ticks == 0 &&
+        spring_on < 0 && branch_on < 0 && ramp_on < 0 && bridge_on < 0){
         mode = MODE_KNEEL;
         kneel_phase = KNEEL_LOWERING;
         kneel_ticks = 0;
@@ -3114,7 +3180,8 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         stays because this line is what the plant MEANS, and a reader should not have to go and
         find the gate to know that a kick in the air does not root her.
     */
-    bool f_planted = (kick_ticks > 0) && f_on_ground;
+    //A pick plants her the same way: she stops, reaches, takes it.
+    bool f_planted = (kick_ticks > 0 || pick_ticks > 0) && f_on_ground;
     if (f_planted){
         vel.x = MoveToward(vel.x,0.0f,KICK_ROOT_FRICTION * ARCHER_DT);
     }else if (in.move_axis > 0.01f || in.move_axis < -0.01f){
@@ -3330,6 +3397,26 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
             bow_mode = BOW_IDLE;
             draw_ticks = 0;
             return;
+        }
+    }
+    /*
+        An apple, when there is no rope to take - the press's second meaning, chosen by what is in
+        reach. She turns to it, and the bow is put by: the reaching hand is the string hand.
+    */
+    if (in.f_action_pressed && CanStartPick()){
+        bool f_low = false;
+        int apple = FindPickableApple(&f_low);
+        if (apple >= 0){
+            pick_ticks = 1;
+            pick_apple = apple;
+            f_pick_low = f_low;
+            float dx = apples[apple].at.x - pos.x;
+            if (fabsf(dx) > 0.05f){
+                facing = (dx > 0.0f) ? 1.0f : -1.0f;
+            }
+            bow_mode = BOW_IDLE;
+            draw_ticks = 0;
+            events.pick_started = apple;
         }
     }
 
@@ -3850,7 +3937,7 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
         branch she is keeping her balance on: one foot in the air there is a fall.
     */
     bool f_busy = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE || mode == MODE_KNEEL ||
-                   !f_on_ground || branch_on >= 0);
+                   !f_on_ground || branch_on >= 0 || pick_ticks > 0);
 
     if (kick_ticks == 0){
         if (in.f_kick_pressed && kick_cooldown == 0 && !f_busy){
@@ -3939,6 +4026,218 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
     if (events.f_kick_connected){
         kick_ticks = spec.active_to + 1;
     }
+}
+
+//--- Apples (docs/apple_plan.md) ------------------------------------------------------------------
+
+static float Dot3(const v3& a, const v3& b){ return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+//Where along a -> b (0..1) the segment first enters the sphere, or -1. A start inside is 0.
+static float SegmentEntersSphere(const v3& a, const v3& b, const v3& c, float r){
+    const v3 d = b - a;
+    const v3 m = a - c;
+    const float qc = Dot3(m,m) - r * r;
+    if (qc <= 0.0f){
+        return 0.0f;
+    }
+    const float qa = Dot3(d,d);
+    const float qb = Dot3(m,d);
+    const float disc = qb * qb - qa * qc;
+    if (qa < 1e-12f || disc < 0.0f){
+        return -1.0f;
+    }
+    const float t = (-qb - sqrtf(disc)) / qa;
+    return (t >= 0.0f && t <= 1.0f) ? t : -1.0f;
+}
+
+/*
+    Where along a -> b the segment first comes within r of the vertical line at (cx, cz), while
+    between y0 and y1 - the stem - or -1. The stem stands straight up, so this is a circle in x-z
+    and a band in y: the first share of the segment that is inside both.
+*/
+static float SegmentEntersStem(const v3& a, const v3& b, float cx, float cz, float y0, float y1, float r){
+    const float dx = b.x - a.x, dz = b.z - a.z, dy = b.y - a.y;
+    const float mx = a.x - cx, mz = a.z - cz;
+    //The share inside the circle, [t0, t1].
+    float t0 = 0.0f, t1 = 1.0f;
+    const float qa = dx * dx + dz * dz;
+    const float qc = mx * mx + mz * mz - r * r;
+    if (qa < 1e-12f){
+        if (qc > 0.0f){
+            return -1.0f;
+        }
+    }else{
+        const float qb = mx * dx + mz * dz;
+        const float disc = qb * qb - qa * qc;
+        if (disc < 0.0f){
+            return -1.0f;
+        }
+        const float s = sqrtf(disc);
+        t0 = fmaxf(t0,(-qb - s) / qa);
+        t1 = fminf(t1,(-qb + s) / qa);
+    }
+    //And inside the band.
+    if (fabsf(dy) < 1e-12f){
+        if (a.y < y0 || a.y > y1){
+            return -1.0f;
+        }
+    }else{
+        float u0 = (y0 - a.y) / dy, u1 = (y1 - a.y) / dy;
+        if (u0 > u1){ const float s = u0; u0 = u1; u1 = s; }
+        t0 = fmaxf(t0,u0);
+        t1 = fminf(t1,u1);
+    }
+    return (t0 <= t1) ? t0 : -1.0f;
+}
+
+/*
+    See APPLES in Stage.h. The FIRST thing along the segment wins, stem or apple, of whichever hanging
+    apple - so an arrow past a stem into the apple below it can only be a cut if it met the stem
+    first, which it does when it comes down on it from above. One apple per arrow per tick: a cut
+    arrow flies on, and next tick's sweep starts past this one.
+*/
+bool Stage::ArrowThroughApples(int arrow, const v3& from, const v3& to, StageEvents& events){
+    int   best = -1;
+    bool  f_stem = false;
+    float best_t = 2.0f;
+    for (size_t i = 0; i < apples.size(); i++){
+        const StageApple& ap = apples[i];
+        if (ap.state != APPLE_HANGING){
+            continue;
+        }
+        float t = SegmentEntersSphere(from,to,ap.hang,ap.radius);
+        if (t >= 0.0f && t < best_t){
+            best_t = t;
+            best = (int)i;
+            f_stem = false;
+        }
+        t = SegmentEntersStem(from,to,ap.hang.x,ap.hang.z,ap.hang.y + ap.radius,ap.Twig(),APPLE_STEM_HIT_R);
+        if (t >= 0.0f && t < best_t){
+            best_t = t;
+            best = (int)i;
+            f_stem = true;
+        }
+    }
+    if (best < 0){
+        return false;
+    }
+    Arrow& a = arrows[arrow];
+    StageApple& ap = apples[best];
+    StageEvents::AppleShot shot;
+    shot.apple = best;
+    shot.arrow = arrow;
+    shot.at = from + (to - from) * best_t;
+    ap.state = APPLE_LOOSE;
+    if (f_stem){
+        shot.vel = a.vel * APPLE_CUT_PUSH;
+        events.apples_cut.push_back(shot);
+        return false;
+    }
+    shot.vel = a.vel * APPLE_HIT_TRANSFER;
+    events.apples_hit.push_back(shot);
+    //Into it, where it met the skin - the app pins it to the apple's body from here (StickArrowToProp).
+    a.pos = shot.at;
+    a.vel = v3(0.0f,0.0f,0.0f);
+    a.f_stuck = true;
+    a.age_ticks = 0;
+    return true;
+}
+
+bool Stage::CanStartPick() const{
+    return mode == MODE_GROUND && f_on_ground && kick_ticks == 0 && pick_ticks == 0 &&
+           spring_on < 0 && branch_on < 0;
+}
+
+/*
+    Her reach as a box about her centre line at her feet - APPLE_PICK_REACH_X across, _Z in depth,
+    up to _UP - and the nearest apple centre inside it, by straight distance from her shoulder (or,
+    for a low one, from her feet). Hanging or loose: a cut apple lying where it rolled is as much
+    hers as one on the tree.
+*/
+int Stage::FindPickableApple(bool* out_low) const{
+    const float feet = pos.y - ARCHER_HALF_H;
+    int   best = -1;
+    float best_d2 = 0.0f;
+    bool  f_best_low = false;
+    for (size_t i = 0; i < apples.size(); i++){
+        const StageApple& ap = apples[i];
+        if (ap.state == APPLE_PICKED){
+            continue;
+        }
+        const v3& c = ap.at;
+        const float up = c.y - feet;
+        if (fabsf(c.x - pos.x) > APPLE_PICK_REACH_X || fabsf(c.z) > APPLE_PICK_REACH_Z ||
+            up < -ap.radius || up > APPLE_PICK_REACH_UP){
+            continue;
+        }
+        const bool f_low = up < APPLE_PICK_LOW_Y;
+        const float from_y = f_low ? feet : (pos.y + ARCHER_HALF_H * 0.6f);
+        const float dx = c.x - pos.x, dy = c.y - from_y;
+        const float d2 = dx * dx + dy * dy + c.z * c.z;
+        if (best < 0 || d2 < best_d2){
+            best = (int)i;
+            best_d2 = d2;
+            f_best_low = f_low;
+        }
+    }
+    if (out_low){
+        *out_low = f_best_low;
+    }
+    return best;
+}
+
+void Stage::SetLooseApple(int apple, const v3& at){
+    if (apple >= 0 && apple < (int)apples.size() && apples[apple].state == APPLE_LOOSE){
+        apples[apple].at = at;
+    }
+}
+
+/*
+    The window from the press. Off the ground ends it - a jump, a floor giving way - with the apple
+    left where it is. At the close, the apple is hers if it is still there to take: picked by
+    someone's arrow in the meantime, or rolled more than APPLE_PICK_SLACK out of her reach, and the
+    hand closes on nothing.
+*/
+void Stage::TickPick(StageEvents& events){
+    if (pick_ticks == 0){
+        return;
+    }
+    if (!f_on_ground){
+        pick_ticks = 0;
+        pick_apple = -1;
+        return;
+    }
+    pick_ticks++;
+    if (pick_ticks == PickClose() && pick_apple >= 0 && pick_apple < (int)apples.size()){
+        StageApple& ap = apples[pick_apple];
+        const float feet = pos.y - ARCHER_HALF_H;
+        const float up = ap.at.y - feet;
+        bool f_there = ap.state != APPLE_PICKED &&
+                       fabsf(ap.at.x - pos.x) <= APPLE_PICK_REACH_X + APPLE_PICK_SLACK &&
+                       fabsf(ap.at.z) <= APPLE_PICK_REACH_Z + APPLE_PICK_SLACK &&
+                       up >= -ap.radius - APPLE_PICK_SLACK && up <= APPLE_PICK_REACH_UP + APPLE_PICK_SLACK;
+        if (f_there){
+            ap.state = APPLE_PICKED;
+            apples_picked++;
+            events.apples_picked.push_back(pick_apple);
+        }
+    }
+    if (pick_ticks > PickTicks()){
+        pick_ticks = 0;
+        pick_apple = -1;
+    }
+}
+
+bool Stage::ApplesTouched() const{
+    if (pick_ticks != 0 || pick_apple >= 0 || apples_picked != 0){
+        return true;
+    }
+    for (const StageApple& ap : apples){
+        if (ap.state != APPLE_HANGING){
+            return true;
+        }
+    }
+    return false;
 }
 
 //--- Kneeling -----------------------------------------------------------------------------------
@@ -4573,6 +4872,10 @@ void Stage::TickArrows(StageEvents& events){
         if (!webs.empty() && ArrowThroughWebs(i,from,(block >= 0) ? point : next,events)){
             continue;
         }
+        //The apples, the same way. Into one, it is stuck there; through a stem, it flies on.
+        if (!apples.empty() && ArrowThroughApples(i,from,(block >= 0) ? point : next,events)){
+            continue;
+        }
         if (block >= 0){
             float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y + a.vel.z * a.vel.z);
             //Backed off along the face so the shaft is embedded rather than coplanar with the
@@ -4915,6 +5218,19 @@ void Stage::HashState(StateHash& h) const{
         for (const StageWebThread& t : web.threads){ h.Add(t.f_cut); }
         for (const StageWebCatch& c : web.caught){ h.Add(c.arrow); h.Add(c.node); add3(c.offset); add3(c.placed); }
         h.Add(web.side); h.Add(web.f_breached); h.Add(web.contacts); h.Add(web.push);
+    }
+    /*
+        The apples and the pick, ONLY ONCE ONE HAS BEEN TOUCHED - an arrow through one, a pick
+        reached for. Untouched, every apple is on its stem and nothing is in her hands, which is
+        exactly what the layout already says, so a run that never goes near them hashes as it did
+        before there were any: archer_test, which never leaves x -6 .. 28, still proves that adding
+        them moved nothing else. Touched, all of it, every tick from then on.
+    */
+    if (ApplesTouched()){
+        h.Add(pick_ticks); h.Add(pick_apple); h.Add(f_pick_low); h.Add(apples_picked);
+        for (const StageApple& ap : apples){
+            h.Add(ap.state); add3(ap.at);
+        }
     }
     for (const StageCrumbleGroup& g : crumble_groups){
         h.Add(g.ticks); h.Add(g.f_done);

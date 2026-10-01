@@ -8893,6 +8893,262 @@ static void TestWeb(){
     }
 }
 
+/*
+    The apples - docs/apple_plan.md section 5. An arrow is put in flight by hand (slot 0, already past
+    its first step, so its sweep starts where it is) a unit short of the apple at full speed, so
+    gravity has dropped it under a hundredth by the time it gets there - well inside every margin
+    below.
+*/
+struct AppleShotResult{
+    int  cut = 0, hit = 0;
+    bool f_flying = false, f_stuck = false;
+    v3   stuck_at;
+};
+static AppleShotResult ShootPast(Stage& s, const v3& from, const v3& vel, int ticks = 6){
+    Arrow& a = s.arrows[0];
+    a = Arrow();
+    a.pos = a.prev_pos = from;
+    a.vel = vel;
+    a.f_live = true;
+    a.age_ticks = 1;
+    AppleShotResult r;
+    ArcherInput idle;
+    for (int i = 0; i < ticks; i++){
+        StageEvents e;
+        s.Tick(idle,e);
+        r.cut += (int)e.apples_cut.size();
+        r.hit += (int)e.apples_hit.size();
+    }
+    r.f_flying = s.arrows[0].f_live && !s.arrows[0].f_stuck;
+    r.f_stuck = s.arrows[0].f_live && s.arrows[0].f_stuck;
+    r.stuck_at = s.arrows[0].pos;
+    return r;
+}
+
+static void TestApples(){
+    printf("\napples\n");
+    char d[240];
+
+    //--- The orchard as laid out ---
+    {
+        Stage m;
+        int on_line = 0, pick_only = 0, looks = 0, between = 0;
+        for (const StageApple& ap : m.apples){
+            const float z = fabsf(ap.hang.z);
+            const float up = ap.hang.y;     //the bay's floor is at 0
+            if (z <= APPLE_ON_LINE_Z){
+                on_line++;
+            }else if (z < ap.radius + APPLE_STEM_HIT_R){
+                between++;
+            }else if (z <= APPLE_PICK_REACH_Z && up <= APPLE_PICK_REACH_UP){
+                pick_only++;
+            }else{
+                looks++;
+            }
+        }
+        snprintf(d,sizeof(d),"%zu apples on %zu trees: %i on the line, %i to pick, %i for looks, %i half on it",
+                 m.apples.size(),m.apple_trees.size(),on_line,pick_only,looks,between);
+        Check(!m.apples.empty() && on_line >= 3 && pick_only >= 2 && looks >= 2,"the main level hangs apples to shoot, to pick and to look at",d);
+        Check(between == 0,"and none half on her line - an arrow either can go through it or plainly cannot",d);
+        bool f_trees = true, f_clear = true;
+        for (const StageApple& ap : m.apples){
+            f_trees = f_trees && ap.tree >= 0 && ap.tree < (int)m.apple_trees.size();
+            //archer_test stays in x -6 .. 28, and an arrow it looses flies right.
+            f_clear = f_clear && ap.hang.x < -12.0f && ap.hang.x > ARCHER_TEST_BAY_X_MIN;
+        }
+        Check(f_trees,"every apple belongs to a tree");
+        //Nothing she walks through: on her line, above her head; lower, off to the side of her.
+        int in_her_way = 0;
+        for (const StageApple& ap : m.apples){
+            bool f_low = ap.hang.y - ap.radius < 2.0f * ARCHER_HALF_H + 0.05f;
+            in_her_way += (f_low && fabsf(ap.hang.z) < 0.40f) ? 1 : 0;
+        }
+        snprintf(d,sizeof(d),"%i she would walk through",in_her_way);
+        Check(in_her_way == 0,"an apple on her line hangs clear of her head; a lower one hangs beside her",d);
+        Check(f_clear,"all of them in the terrain bay, where archer_test never goes");
+
+        //Untouched, they are not in the hash at all: a run that never meets them hashes as before.
+        Stage bare = m;
+        bare.apples.clear();
+        bare.apple_trees.clear();
+        Check(HashOf(m) == HashOf(bare),"untouched apples leave the state hash as it was without them");
+        Stage cut = m;
+        cut.apples[0].state = APPLE_LOOSE;
+        Check(HashOf(cut) != HashOf(m),"a freed one is in it");
+
+        //Restart puts every apple back.
+        cut.apples[1].state = APPLE_PICKED;
+        cut.apples[0].at = v3(1.0f,2.0f,3.0f);
+        cut.apples_picked = 2;
+        cut.Reset();
+        bool f_back = cut.apples_picked == 0 && cut.pick_ticks == 0;
+        for (const StageApple& ap : cut.apples){
+            f_back = f_back && ap.state == APPLE_HANGING && ap.at.x == ap.hang.x && ap.at.y == ap.hang.y && ap.at.z == ap.hang.z;
+        }
+        Check(f_back,"a restart puts every apple back on its stem and empties her hands");
+    }
+
+    //--- The shot, on the range: one apple at (2, 3, z), shot at from a unit left of it ---
+    Stage range;
+    range.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(range);
+    auto with_apple = [&range](float z){
+        Stage s = range;
+        StageApple ap;
+        ap.hang = ap.at = v3(2.0f,3.0f,z);
+        s.apples.push_back(ap);
+        return s;
+    };
+    const float r = APPLE_RADIUS;
+    const v3 fast(ARROW_SPEED_MAX,0.0f,0.0f);
+    {
+        Stage s = with_apple(0.0f);
+        AppleShotResult o = ShootPast(s,v3(1.0f,3.0f + r + APPLE_STEM_LEN * 0.5f,0.0f),fast);
+        snprintf(d,sizeof(d),"%i cut, %i hit, flying %d",o.cut,o.hit,(int)o.f_flying);
+        Check(o.cut == 1 && o.hit == 0 && o.f_flying && s.apples[0].state == APPLE_LOOSE,
+              "an arrow through the stem cuts it, and flies on",d);
+    }
+    {
+        Stage s = with_apple(0.0f);
+        AppleShotResult o = ShootPast(s,v3(1.0f,3.0f,0.0f),fast);
+        const v3 e = o.stuck_at - v3(2.0f,3.0f,0.0f);
+        const float skin = sqrtf(e.x * e.x + e.y * e.y + e.z * e.z);
+        snprintf(d,sizeof(d),"%i cut, %i hit, stuck %d, %.3f from the centre",o.cut,o.hit,(int)o.f_stuck,skin);
+        Check(o.hit == 1 && o.cut == 0 && o.f_stuck && fabsf(skin - r) < 0.01f && s.apples[0].state == APPLE_LOOSE,
+              "an arrow through the apple hits it, and is stuck in its skin",d);
+    }
+    {
+        //Above the twig, below the apple, and level with it a hand's breadth in front of it.
+        Stage a = with_apple(0.0f), b = with_apple(0.0f), c = with_apple(r + APPLE_STEM_HIT_R + 0.01f);
+        AppleShotResult over = ShootPast(a,v3(1.0f,3.0f + r + APPLE_STEM_LEN + APPLE_STEM_HIT_R + 0.03f,0.0f),fast);
+        AppleShotResult under = ShootPast(b,v3(1.0f,3.0f - r - 0.03f,0.0f),fast);
+        AppleShotResult past = ShootPast(c,v3(1.0f,3.0f,0.0f),fast);
+        snprintf(d,sizeof(d),"over %i/%i, under %i/%i, in front %i/%i",over.cut,over.hit,under.cut,under.hit,past.cut,past.hit);
+        Check(over.cut + over.hit + under.cut + under.hit + past.cut + past.hit == 0 &&
+              over.f_flying && under.f_flying && past.f_flying,"an arrow just clear of both touches neither",d);
+    }
+    {
+        //The boundary: the apple's top. Just under it the apple, just over it the stem.
+        Stage a = with_apple(0.0f), b = with_apple(0.0f);
+        AppleShotResult below = ShootPast(a,v3(1.0f,3.0f + r - 0.02f,0.0f),fast);
+        AppleShotResult above = ShootPast(b,v3(1.0f,3.0f + r + 0.02f,0.0f),fast);
+        snprintf(d,sizeof(d),"0.02 under the top: %i hit; 0.02 over: %i cut",below.hit,above.cut);
+        Check(below.hit == 1 && below.cut == 0 && above.cut == 1 && above.hit == 0,
+              "the stem starts where the apple's top is",d);
+    }
+    {
+        //3D: an apple hanging 0.12 in front of the line is cut by it in a smaller circle - an arrow
+        //that would hit it on the line misses it here, because it passes behind it.
+        const float z = 0.12f;
+        const float cut_r = sqrtf(r * r - z * z);
+        Stage a = with_apple(z), b = with_apple(z);
+        AppleShotResult in = ShootPast(a,v3(1.0f,3.0f + cut_r - 0.02f,0.0f),fast);
+        AppleShotResult out = ShootPast(b,v3(1.0f,3.0f + cut_r + 0.02f,0.0f),fast);
+        snprintf(d,sizeof(d),"its cut through the plane is %.3f across, not %.3f: inside %i hit, outside %i hit %i cut",
+                 cut_r,r,in.hit,out.hit,out.cut);
+        Check(in.hit == 1 && out.hit == 0 && out.cut == 0,"off her plane, an apple is hit only where the arrow really goes through it",d);
+    }
+    {
+        //A lob, coming down on the stem from above, cuts it before it reaches the apple.
+        Stage s = with_apple(0.0f);
+        AppleShotResult o = ShootPast(s,v3(2.0f,3.0f + r + APPLE_STEM_LEN + 0.3f,0.0f),v3(0.0f,-ARROW_SPEED_MIN,0.0f));
+        snprintf(d,sizeof(d),"%i cut, %i hit",o.cut,o.hit);
+        Check(o.cut == 1 && o.hit == 0,"an arrow dropping onto the stem cuts it rather than hitting the apple",d);
+    }
+
+    //--- Picking, on the range ---
+    const float feet = range.pos.y - ARCHER_HALF_H;
+    auto press = [](Stage& s, StageEvents& e){
+        ArcherInput in;
+        in.f_action_pressed = true;
+        s.Tick(in,e);
+    };
+    {
+        Stage s = with_apple(0.0f);
+        s.apples[0].hang = s.apples[0].at = v3(s.pos.x + 0.40f,feet + 1.70f,0.30f);
+        StageEvents e;
+        press(s,e);
+        int at = -1;
+        ArcherInput idle;
+        for (int i = 1; i < 80 && at < 0; i++){
+            StageEvents k;
+            s.Tick(idle,k);
+            if (!k.apples_picked.empty()){
+                at = i;
+            }
+        }
+        snprintf(d,sizeof(d),"started on %i, taken %i ticks after the press (the close is %i), %i in her hands",
+                 e.pick_started,at,APPLE_PICK_CLOSE_HIGH,s.apples_picked);
+        Check(e.pick_started == 0 && !s.f_pick_low && at == APPLE_PICK_CLOSE_HIGH - 1 &&
+              s.apples[0].state == APPLE_PICKED && s.apples_picked == 1,
+              "a hanging apple in reach is picked at the window's close tick, not at the press",d);
+        Run(s,APPLE_PICK_TICKS_HIGH,idle);
+        Check(s.pick_ticks == 0,"and the window ends");
+    }
+    {
+        Stage s = with_apple(0.0f);
+        s.apples[0].hang = s.apples[0].at = v3(s.pos.x + APPLE_PICK_REACH_X + 0.10f,feet + 1.70f,0.0f);
+        StageEvents e;
+        press(s,e);
+        Check(e.pick_started < 0 && s.pick_ticks == 0,"one out of reach is not");
+        Stage t = with_apple(0.0f);
+        t.apples[0].hang = t.apples[0].at = v3(t.pos.x + 0.30f,feet + APPLE_PICK_REACH_UP + 0.10f,0.0f);
+        StageEvents f;
+        press(t,f);
+        Check(f.pick_started < 0,"nor one above her reach");
+    }
+    {
+        //A cut apple lying at her feet, behind her: she turns, and it is a low pick.
+        Stage s = with_apple(0.0f);
+        s.facing = 1.0f;
+        s.apples[0].state = APPLE_LOOSE;
+        s.SetLooseApple(0,v3(s.pos.x - 0.50f,feet + APPLE_RADIUS,0.20f));
+        StageEvents e;
+        press(s,e);
+        ArcherInput idle;
+        int picked = 0;
+        for (int i = 0; i < APPLE_PICK_TICKS_LOW; i++){
+            StageEvents k;
+            s.Tick(idle,k);
+            picked += (int)k.apples_picked.size();
+        }
+        snprintf(d,sizeof(d),"low %d, facing %+.0f, picked %i",(int)s.f_pick_low,s.facing,picked);
+        Check(e.pick_started == 0 && s.f_pick_low && s.facing < 0.0f && picked == 1,
+              "one lying at her feet is a low pick, and she turns to it",d);
+    }
+    {
+        //The rope first: a link in reach takes the press, the apple beside it waits.
+        Stage s = with_apple(0.0f);
+        s.apples[0].hang = s.apples[0].at = v3(s.pos.x + 0.30f,feet + 1.70f,0.0f);
+        s.AddRopePoint(s.pos.x + 0.20f,s.pos.y + ARCHER_HALF_H * 0.6f,7,1.0f);
+        StageEvents e;
+        press(s,e);
+        Check(e.f_grabbed_rope && s.mode == MODE_ROPE && e.pick_started < 0 && s.pick_ticks == 0,
+              "the rope still wins the press over an apple");
+    }
+    {
+        //A jump mid-reach ends it with the apple left on the tree; and she stands still while picking.
+        Stage s = with_apple(0.0f);
+        s.apples[0].hang = s.apples[0].at = v3(s.pos.x + 0.40f,feet + 1.70f,0.0f);
+        const float x0 = s.pos.x;
+        StageEvents e;
+        press(s,e);
+        ArcherInput run;
+        run.move_axis = 1.0f;
+        Run(s,5,run);
+        snprintf(d,sizeof(d),"moved %.3f holding right",s.pos.x - x0);
+        Check(fabsf(s.pos.x - x0) < 0.01f,"a pick plants her: holding a direction does not walk her off it",d);
+        ArcherInput jump;
+        jump.f_jump_pressed = jump.f_jump_down = true;
+        StageEvents j;
+        s.Tick(jump,j);
+        ArcherInput idle;
+        Run(s,APPLE_PICK_CLOSE_HIGH,idle);
+        Check(s.pick_ticks == 0 && s.apples[0].state == APPLE_HANGING && s.apples_picked == 0,
+              "a jump mid-reach ends the pick, and the apple stays on the tree");
+    }
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -8956,6 +9212,7 @@ int main(void){
     TestCreepers();
     TestBamboo();
     TestWeb();
+    TestApples();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;
