@@ -728,7 +728,7 @@ struct StageBridge{
 #define WEB_STIFFNESS           300.0f  //a thread's stiffness is this over its length, like silk of one gauge
 #define WEB_THREAD_DAMPING      0.6f    //along each thread, on how fast it is stretching
 #define WEB_AIR_DAMPING         3.0f    //on every node, per second: what lets a shiver die away
-#define WEB_PRETENSION          0.97f   //a thread's length, of where it was hung - taut, not slack
+#define WEB_PRETENSION          0.95f   //a thread's length, of where it was hung - taut, not slack
 #define WEB_SETTLE_TICKS        300     //stepped at build, so it starts still
 #define WEB_SLOW_PER_THREAD     0.12f   //of an arrow's speed, per thread it snaps
 #define WEB_CATCH_SPEED         8.0f    //an arrow slower than this after a snap is caught
@@ -741,6 +741,12 @@ struct StageBridge{
     web anchored to the ground - the spokes there end at the floor itself.
 */
 #define WEB_STEP_OVER           0.35f
+/*
+    The opening's bottom is the ground: a strand cut free falls to it and lies there, sliding to a stop
+    at this much of its speed per second, rather than falling for ever. A web hung over a drop would
+    want the floor under it instead - none is, yet.
+*/
+#define WEB_FLOOR_FRICTION      8.0f
 #define WEB_MAX_SPOKES          32
 #define WEB_MAX_RINGS           16
 
@@ -1112,12 +1118,18 @@ enum StagePropKind{
     fixed camera and a turntable - the place to look at her animations, skinning and textures up
     close. The app locks her feet there (GatherInput), so the only thing the rules do is hold her
     on the tile and run whatever she does on the spot: a draw, a kick, a kneel, a jump.
+
+    WEB is the spider web's blockout (docs/web_plan.md section 5): a floor, two walls, the web in its
+    frame and somewhere to shoot it from - an area of its own, as asked, to judge how it looks and
+    breaks before one goes anywhere in the level. Not in the rope level, whose whole floor is a
+    run-up its pit tests sprint along.
 */
 enum StageLevel{
     STAGE_LEVEL_MAIN = 0,
     STAGE_LEVEL_RANGE,
     STAGE_LEVEL_ROPE,
     STAGE_LEVEL_CHARACTER,
+    STAGE_LEVEL_WEB,
     STAGE_LEVEL_COUNT
 };
 
@@ -2230,6 +2242,7 @@ private:
     void BuildRangeLevel();
     void BuildRopeLevel();
     void BuildCharacterLevel();
+    void BuildWebLevel();
     //Left of the rope level's shallow pit: ramps at fixed angles - see SLIDE_GALLERY_DEG.
     void BuildSlideGallery();
     //Adds `s` to `scenery`, and its invisible collider to `blocks` if it has one. See StageScenery.

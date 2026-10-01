@@ -976,7 +976,7 @@ void ApplicationArcher::Init(void){
         LOADING_STEPS at the end, so adding a step and forgetting the total is a warning in the
         log rather than a bar that stops short or runs past the end.
     */
-    const int LOADING_STEPS = 16;
+    const int LOADING_STEPS = 17;
     int step = 0;
     LoadingStep(step++,LOADING_STEPS,"materials");
     BuildMaterials();
@@ -1040,6 +1040,7 @@ void ApplicationArcher::Init(void){
     //Only the line object here; the field itself is built by the "wind" step below.
     wind_view.Init(main_scene);
     BuildEdgeView();
+    BuildWebView();
     BuildWindStreaks();
     BuildFireflies();
     BuildBackground();
@@ -1052,7 +1053,7 @@ void ApplicationArcher::Init(void){
     RegisterCommandHandlers();
     //LAST, because they share the character the lines above built - see the note on ArcherLevel.
     world_scene = main_scene;
-    parked_levels.reserve(3);           //BuildExtraLevel holds a reference into it while it builds
+    parked_levels.reserve(4);           //BuildExtraLevel holds a reference into it while it builds
     LoadingStep(step++,LOADING_STEPS,"the range");
     range_scene = BuildExtraLevel(STAGE_LEVEL_RANGE,"Range");
     LoadingStep(step++,LOADING_STEPS,"the rope course");
@@ -1060,6 +1061,8 @@ void ApplicationArcher::Init(void){
     LoadingStep(step++,LOADING_STEPS,"the character scene");
     character_scene = BuildExtraLevel(STAGE_LEVEL_CHARACTER,"Character");
     BuildCharacterScene();
+    LoadingStep(step++,LOADING_STEPS,"the web");
+    web_scene = BuildExtraLevel(STAGE_LEVEL_WEB,"Web");
     /*
         The wind field's first request. The solve runs on the background worker, so this only
         sends it off: it goes on through the rest of loading and the title, and is adopted by the
@@ -1599,6 +1602,22 @@ void ApplicationArcher::BuildBlocks(){
         }
     }
     /*
+        A WEB's two posts - Stage::webs - either side of its opening, in timber. Boxes only: the rules
+        build no block for them, since in her plane they would be a wall the web could never stop
+        being (see BuildWebLevel). The beam over them is the level's block, drawn as any block is;
+        the threads are the line view's (UpdateWebView).
+    */
+    for (size_t i = 0; i < stage.webs.size(); i++){
+        const StageWeb& web = stage.webs[i];
+        const float post = 0.3f;
+        for (int side = 0; side < 2; side++){
+            char name[48];
+            snprintf(name,sizeof(name),"web_%i_post_%i",(int)i,side);
+            float px = side ? web.Right() + post * 0.5f : web.x - post * 0.5f;
+            plant_box(name,vec3(px,web.y + web.h * 0.5f,0.0f),vec3(post,web.h,0.6f),material_bridge);
+        }
+    }
+    /*
         THE BALANCE GAUGE, while she is on a branch: a dark upright bar beside her head and a marker
         on it at her lean - up the bar is leaning away from the camera, the way Up pushes her. The
         bar's ends are BALANCE_FALL_DEG, and the marker goes green to red as she nears one. It
@@ -2107,6 +2126,7 @@ void ApplicationArcher::PreRender(void){
     UpdateWind();
     UpdateWater();
     UpdateEdgeView();
+    UpdateWebView();
     DrawGrownVines();
 }
 
@@ -2324,6 +2344,74 @@ void ApplicationArcher::UpdateEdgeView(){
     }
     edge_view_mesh->SetLineMeshData(verts.data(),(int)verts.size());
     edge_view_object->SetVisibility(true);
+}
+
+//--- The web, blocked out -----------------------------------------------------------------------
+
+//RENDER THREAD, at Init: the (hidden, empty) line object, shared into every scene later.
+void ApplicationArcher::BuildWebView(){
+    web_view_object = new Object();
+    web_view_object->name = "web_debug";
+    web_view_object->SetVisualOnly(true);
+    web_view_mesh = new Mesh();
+    web_view_object->SetMesh(web_view_mesh);
+    web_view_object->SetPickability(false);
+    web_view_object->SetCastsShadow(false);
+    web_view_object->SetVisibility(false);
+    main_scene->AddObject(web_view_object);
+}
+
+#define WEB_VIEW_Z          (-0.05f)    //just behind her, so she walks in front of the threads
+#define WEB_VIEW_DOT        0.035f      //half a node's cross
+//RENDER THREAD, from PreRender. See web_view_object.
+void ApplicationArcher::UpdateWebView(){
+    if (!web_view_object || !web_view_mesh){
+        return;
+    }
+    std::vector<StageWeb> webs;
+    std::vector<std::vector<uint8_t>> held;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        webs = snapshot.webs;
+        held = snapshot.web_held;
+    }
+    if (webs.empty()){
+        web_view_object->SetVisibility(false);
+        return;
+    }
+    std::vector<line_vertex> verts;
+    auto line = [&verts](const vec3& a, const vec3& b, uint32_t color){
+        line_vertex v;
+        v.color = color;
+        v.pos = a;
+        verts.push_back(v);
+        v.pos = b;
+        verts.push_back(v);
+    };
+    const uint32_t SPOKE = 0xFFEDEDE6u, SPIRAL = 0xFFC4C4BAu, HANGING = 0xFF6E6E68u;
+    const uint32_t NODE = 0xFFF4F4EEu, ANCHOR = 0xFFE0A040u;
+    const float z = WEB_VIEW_Z;
+    for (size_t w = 0; w < webs.size(); w++){
+        const StageWeb& web = webs[w];
+        for (size_t t = 0; t < web.threads.size(); t++){
+            const StageWebThread& th = web.threads[t];
+            if (th.f_cut){
+                continue;
+            }
+            bool f_held = w < held.size() && t < held[w].size() && held[w][t];
+            uint32_t c = !f_held ? HANGING : (th.f_spoke ? SPOKE : SPIRAL);
+            line(vec3(web.p[th.a].x,web.p[th.a].y,z),vec3(web.p[th.b].x,web.p[th.b].y,z),c);
+        }
+        for (size_t n = 0; n < web.p.size(); n++){
+            const float r = web.anchor[n] ? WEB_VIEW_DOT * 1.6f : WEB_VIEW_DOT;
+            const uint32_t c = web.anchor[n] ? ANCHOR : NODE;
+            const vec3 q(web.p[n].x,web.p[n].y,z);
+            line(q - vec3(r,0.0f,0.0f),q + vec3(r,0.0f,0.0f),c);
+            line(q - vec3(0.0f,r,0.0f),q + vec3(0.0f,r,0.0f),c);
+        }
+    }
+    web_view_mesh->SetLineMeshData(verts.data(),(int)verts.size());
+    web_view_object->SetVisibility(true);
 }
 
 //--- Foliage ------------------------------------------------------------------------------------
@@ -7315,6 +7403,10 @@ void ApplicationArcher::ShareCharacterWith(Scene* scene){
     if (background_object){
         scene->AddObject(background_object);
     }
+    //Shared, like the arrows: it draws whichever web the live level has, and hides in one without.
+    if (web_view_object){
+        scene->AddObject(web_view_object);
+    }
     if (sun_light){
         scene->AddObject(sun_light);
     }
@@ -10233,6 +10325,17 @@ void ApplicationArcher::ShakeCrumbles(const StageEvents& events){
 }
 
 void ApplicationArcher::BreakBlocks(const StageEvents& events){
+    //A web's wall slice: collider off, nothing to burst - the threads were the wall, and they are drawn.
+    for (int index : events.web_slices_opened){
+        if (index < 0 || index >= (int)block_objects.size() || !block_objects[index]){
+            continue;
+        }
+        Physics* p = block_objects[index]->GetPhysics();
+        if (p){
+            p->SetActive(false);
+        }
+        block_objects[index]->SetVisibility(false);
+    }
     /*
         A crumbled stone the same way as a kicked wall - collider off, box hidden, rubble - with the
         rubble DROPPED rather than thrown: nothing hit it, it gave way. In its own stone colour.
@@ -12453,6 +12556,12 @@ void ApplicationArcher::PublishSnapshot(){
     s.edges = stage.edges;
     s.corners = stage.corners;
     s.edges_generation = stage.edges_generation;
+    //A few hundred numbers, and only in the web scene: copied whole, held threads worked out here.
+    s.webs = stage.webs;
+    s.web_held.resize(stage.webs.size());
+    for (size_t i = 0; i < stage.webs.size(); i++){
+        stage.WebHeldThreads(stage.webs[i],s.web_held[i]);
+    }
     {
         int z = stage.CurrentZone();
         s.zone = (z >= 0) ? stage.zones[z].name : std::string();
@@ -12848,12 +12957,29 @@ json ApplicationArcher::BuildStateJson(){
             }
             return list;
         }()},
+        //Each web (docs/web_plan.md): its threads, how many are cut and still held, the arrows it
+        //holds, whether it has been breached and how many of its wall's slices are open, and the hub.
+        {"webs",[&](){
+            json list = json::array();
+            for (size_t i = 0; i < s.webs.size(); i++){
+                const StageWeb& w = s.webs[i];
+                int held = 0;
+                if (i < s.web_held.size()){
+                    for (uint8_t h : s.web_held[i]){ held += h ? 1 : 0; }
+                }
+                list.push_back(json{{"threads",(int)w.threads.size()},{"cut",w.CutCount()},{"held",held},
+                                    {"caught",(int)w.caught.size()},{"breached",w.f_breached},
+                                    {"hub",json{{"x",w.p.empty() ? 0.0f : w.p[0].x},{"y",w.p.empty() ? 0.0f : w.p[0].y}}},
+                                    {"x",w.x},{"y",w.y},{"w",w.w},{"h",w.h}});
+            }
+            return list;
+        }()},
         //Balance on a branch: which (-1 none), her lean (+ away from the camera) and its rate in
         //degrees, and how near falling, 0..1 - what the gauge beside her shows.
         {"balance",json{{"branch",s.branch_on},{"lean_deg",s.lean_deg},{"lean_rate_deg",s.lean_rate_deg},
                         {"danger",s.balance_danger},{"hanging_from",s.hang_branch}}},
         {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" :
-                 (s.level == STAGE_LEVEL_CHARACTER) ? "character" : "main"},
+                 (s.level == STAGE_LEVEL_CHARACTER) ? "character" : (s.level == STAGE_LEVEL_WEB) ? "web" : "main"},
         //The zone she is in - see archer_zone for the list and for going to one.
         {"zone",s.zone},
         {"archer",json{

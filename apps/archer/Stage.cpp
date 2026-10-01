@@ -733,6 +733,7 @@ void Stage::BuildLevel(){
         case STAGE_LEVEL_RANGE: BuildRangeLevel(); break;
         case STAGE_LEVEL_ROPE:  BuildRopeLevel();  break;
         case STAGE_LEVEL_CHARACTER: BuildCharacterLevel(); break;
+        case STAGE_LEVEL_WEB:   BuildWebLevel();   break;
         default:               BuildMainLevel();  break;
     }
 }
@@ -1297,6 +1298,14 @@ void Stage::StepWeb(StageWeb& web, float dt){
             web.v[j].y = (web.v[j].y + force[j].y / mass[j] * h) * air;
             web.p[j].x += web.v[j].x * h;
             web.p[j].y += web.v[j].y * h;
+            //On the ground under the frame - see WEB_FLOOR_FRICTION.
+            if (web.p[j].y < web.y){
+                web.p[j].y = web.y;
+                if (web.v[j].y < 0.0f){
+                    web.v[j].y = 0.0f;
+                }
+                web.v[j].x *= fmaxf(0.0f,1.0f - WEB_FLOOR_FRICTION * h);
+            }
         }
     }
 }
@@ -2149,6 +2158,9 @@ v2 Stage::StartPosition() const{
     if (level == STAGE_LEVEL_CHARACTER){
         return v2(0.0f,ARCHER_HALF_H + 0.05f);     //on the tile; a drop of 0.05 is not a landing
     }
+    if (level == STAGE_LEVEL_WEB){
+        return v2(-2.0f,2.0f);      //nine units short of the web: the middle of the three places to shoot from
+    }
     return v2(-6.0f,2.0f);
 }
 
@@ -2219,27 +2231,34 @@ void Stage::BuildRopeLevel(){
     //The rope and both pits right of the floor's lip; the gallery adds its own, left of it.
     AddZone("Rope", -17.0f, 31.0f, -20.0f, 48.0f, v2(-6.00f,0.30f));
     BuildSlideGallery();
+}
 
-    /*
-        THE WEB, blocked out - docs/web_plan.md section 5 - right of the rope, with the floor going on
-        past it to the deep pit: 6 units of open ground behind it to walk out onto. Last, after every
-        block the level and the gallery declare, so none of theirs moves in the list.
+/*
+    THE WEB SCENE - docs/web_plan.md section 5. A floor with a wall at each end, the range's height so
+    an arrow that misses everything stays in, and the web standing across it with 8 units of open
+    floor behind it to walk out onto.
 
-        Twice her height square (2 x ARCHER_HALF_H x 2 = 3.6), the hub a little up and right of the
-        middle, as a spider builds it. The BEAM over it is a block, 0.5 deep and wide enough to cover
-        both posts: her apex is 3.2, so she cannot get onto it or over it, and the web is the only way
-        on. The POSTS are drawn and not built - the web hangs between them in her plane, and two solid
-        posts there would be a wall she could never pass, cut threads or not.
+    Twice her height square (2 x ARCHER_HALF_H x 2 = 3.6), the hub a little up and right of the
+    middle, as a spider builds it. The BEAM over it is a block, wide enough to cover both posts: her
+    apex is 3.2, so she cannot get onto it or over it, and the web is the only way on. The POSTS are
+    drawn and not built - the web hangs between them in her plane, and two solid posts there would be
+    a wall she could never pass, cut threads or not.
 
-        Shot at from three places: the start (-6), 13 units off; the floor right in front of it; and
-        a one-way PLATFORM at 2.4, which she walks under and jumps up onto, to shoot through its
-        middle or down through its bottom. A sign names it.
-    */
+    Shot at from three distances - the far wall's end (-12, 19 units off), the start (-2, 9) and the
+    floor right in front of it - and from a one-way PLATFORM at 2.4, which she walks under and jumps up
+    onto, to shoot level through the middle or down through the bottom. A sign names it. The web is
+    added last, after every block, as AddWeb asks.
+*/
+void Stage::BuildWebLevel(){
+    blocks.push_back({   3.00f, -2.00f, 17.00f,  2.00f, BLOCK_SOLID, true });  //the floor, x -14 .. 20, top 0
+    blocks.push_back({ -14.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //left wall, top at 48
+    blocks.push_back({  20.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //right wall
     const float web_w = 4.0f * ARCHER_HALF_H, web_h = 4.0f * ARCHER_HALF_H;
     const float web_x = 7.0f;
     blocks.push_back({ web_x + web_w * 0.5f, web_h + 0.25f, web_w * 0.5f + 0.3f, 0.25f, BLOCK_SOLID, true });   //the beam
     blocks.push_back({ 3.00f, 2.25f, 1.00f, 0.15f, BLOCK_PLATFORM, true });    //the shooting step, top 2.4
     signs.push_back({ SIGN_POST, 5.20f, 0.00f, -1.00f, 0.0f, { "WEB" } });
+    AddZone("Web", -14.0f, 20.0f, -4.0f, 48.0f, v2(-2.00f,0.30f));
     AddWeb(web_x,0.0f,web_w,web_h,12,6,0.15f,0.25f);
 }
 

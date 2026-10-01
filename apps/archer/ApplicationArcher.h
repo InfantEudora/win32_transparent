@@ -1120,6 +1120,10 @@ struct ArcherSnapshot{
     std::vector<StageEdge>   edges;
     std::vector<StageCorner> corners;
     int   edges_generation = 0;
+    //The live level's webs (Stage::webs) and which of each one's threads still hold across its frame
+    //(Stage::WebHeldThreads), for the blockout's line view on the render thread. Empty but in the web scene.
+    std::vector<StageWeb> webs;
+    std::vector<std::vector<uint8_t>> web_held;
     float x = 0.0f;
     float y = 0.0f;
     float vx = 0.0f;
@@ -1822,6 +1826,17 @@ private:
     Mesh*    edge_view_mesh = NULL;
     int      edge_view_generation = -1;
     int      edge_view_level = -1;
+    /*
+        THE WEB, blocked out (docs/web_plan.md section 4): every thread still whole as a line - spokes
+        pale, the spiral a shade darker, a strand left hanging dim - and every node a small cross,
+        the anchors amber. One object shared by every scene, like her arrows, drawn off the
+        snapshot and hidden wherever the live level has no web. Rebuilt every frame it shows: the
+        net moves every tick. The frame's posts are boxes in BuildBlocks; its beam is a block.
+    */
+    void BuildWebView();
+    void UpdateWebView();
+    Object*  web_view_object = NULL;
+    Mesh*    web_view_mesh = NULL;
     bool f_show_arrow_hud = true;
     int      arrow_hud_kind = -1;
     uint64_t arrow_hud_changed_tick = 0;
@@ -2886,6 +2901,7 @@ private:
     Scene* world_scene = NULL;
     Scene* range_scene = NULL;
     Scene* rope_scene = NULL;
+    Scene* web_scene = NULL;            //Stage's STAGE_LEVEL_WEB: the spider web's blockout
 
     /*
         --- THE CHARACTER SCENE ---------------------------------------------------------------------
