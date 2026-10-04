@@ -575,25 +575,59 @@ quat Object::WorldRotationToLocal(const quat& world_rotation_in){
 }
 
 //Calculate the single transformation matrix for rendering
-void Object::UpdateTransformMatrix(){
+fmat4 Object::ComposeTransformScale(const vec3& position, const quat& rotation, const vec3& scale){
     //We do in order:
     //scale, rotate, translate
-    float size = 1.0;
-
-    local_transform_scale_matrix.identity();
-    local_transform_scale_matrix.vertex[0].x *= size * state.scale.x;
-    local_transform_scale_matrix.vertex[1].y *= size * state.scale.y;
-    local_transform_scale_matrix.vertex[2].z *= size * state.scale.z;
-
-    fmat4 rotation_matrix;
+    fmat4 m;
+    m.identity();
+    m.vertex[0].x *= scale.x;
+    m.vertex[1].y *= scale.y;
+    m.vertex[2].z *= scale.z;
     //Compute the rotation matrix from the rotation quaternion
-    rotation_matrix = state.rotation.tofmat4();
+    m = m * rotation.tofmat4();
+    m.set_position(position);
+    return m;
+}
 
-    local_transform_scale_matrix = local_transform_scale_matrix * rotation_matrix;
-
-    local_transform_scale_matrix.set_position(state.position);
-
+void Object::UpdateTransformMatrix(){
+    local_transform_scale_matrix = ComposeTransformScale(state.position,state.rotation,state.scale);
     state.f_was_transformed = false;
+}
+
+void Object::SetInstances(std::vector<fmat4>&& transforms){
+    f_instance_set = true;
+    instances = std::move(transforms);
+    if (!mesh || !mesh->HasBounds() || instances.empty()){
+        instance_bounds_min = vec3();
+        instance_bounds_max = vec3();
+        return;
+    }
+    //The mesh's box through every transform: its eight corners each, so a rotated or scaled
+    //instance is covered exactly rather than guessed at.
+    vec3 lo = mesh->GetBoundsMin();
+    vec3 hi = mesh->GetBoundsMax();
+    vec3 out_lo(1e30f,1e30f,1e30f);
+    vec3 out_hi(-1e30f,-1e30f,-1e30f);
+    for (const fmat4& m : instances){
+        for (int c = 0; c < 8; c++){
+            vec3 p((c & 1) ? hi.x : lo.x,(c & 2) ? hi.y : lo.y,(c & 4) ? hi.z : lo.z);
+            //Row vectors, as everywhere in this engine: p' = x*row0 + y*row1 + z*row2 + row3.
+            vec3 w = m.vertex[0].xyz() * p.x + m.vertex[1].xyz() * p.y + m.vertex[2].xyz() * p.z + m.vertex[3].xyz();
+            out_lo.x = fminf(out_lo.x,w.x); out_lo.y = fminf(out_lo.y,w.y); out_lo.z = fminf(out_lo.z,w.z);
+            out_hi.x = fmaxf(out_hi.x,w.x); out_hi.y = fmaxf(out_hi.y,w.y); out_hi.z = fmaxf(out_hi.z,w.z);
+        }
+    }
+    instance_bounds_min = out_lo;
+    instance_bounds_max = out_hi;
+}
+
+bool Object::GetInstanceBounds(vec3& lo, vec3& hi) const{
+    if (!f_instance_set || instances.empty() || !mesh || !mesh->HasBounds()){
+        return false;
+    }
+    lo = instance_bounds_min;
+    hi = instance_bounds_max;
+    return true;
 }
 
 fmat4& Object::GetLocalTransformScaleMatrix(){

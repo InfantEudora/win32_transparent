@@ -9,8 +9,10 @@ the middle of its base (local bounds centred on x/y, ground at z = 0), that ever
 of a row-0 palette cell, and that every normal is its face's normal (flat shading survived).
 
 --render opens art_source/chasm/chasm_props.blend and writes art_source/chasm/previews/:
-lineup.png (Workbench, every asset from the game's 55 degree camera) and forest_*.png (Eevee, the
-props scattered on palette grass under a north-west sun, to hold up against alittleagedemo.jpg).
+lineup.png and lineup_cover.png (Workbench, every asset from the game's 55 degree camera),
+forest_*.png (Eevee, the props scattered on palette grass under a north-west sun, to hold up against
+alittleagedemo.jpg; forest_maxzoom.png is the same view at the game's furthest zoom), and
+biomes.png (a patch per palette row, the props' UVs moved to that row as the game will).
 """
 
 import math
@@ -30,7 +32,9 @@ PREVIEWS = os.path.join(REPO, "art_source", "chasm", "previews")
 
 PALETTE_COLS = 32
 PALETTE_ROWS = 16
-TRI_BUDGET = {"tree_pine": 100, "tree_oak": 120}
+TRI_BUDGET = {"tree_pine": 100, "tree_oak": 120, "tree_palm": 120, "tree_willow": 120,
+              "grass": 12, "fern": 24, "shrub": 24}
+COVER = ("grass", "flowers", "fern", "shrub", "mushrooms", "twig")
 SUN_TRAVEL = Vector((1.0, -1.0, -2.0)).normalized()     #from the north-west, as blender_chasm_props.py
 
 
@@ -121,15 +125,15 @@ def render(path, engine, res):
     print("wrote %s" % path)
 
 
-def grass_ground(material, size_x, size_y, cell=1.5, seed=7):
+def grass_ground(material, size_x, size_y, cell=1.5, seed=7, row=0, centre=(0.0, 0.0)):
     """A faceted ground: a triangulated grid, each triangle one of the four grass shades - how
-    Chasm's own terrain is coloured."""
+    Chasm's own terrain is coloured. `row` is the biome."""
     rng = random.Random(seed)
     bm = bmesh.new()
     uv = bm.loops.layers.uv.new("UVMap")
     nx, ny = int(size_x / cell), int(size_y / cell)
-    grid = [[bm.verts.new((x * cell - size_x / 2, y * cell - size_y / 2, 0.0)) for x in range(nx + 1)]
-            for y in range(ny + 1)]
+    grid = [[bm.verts.new((centre[0] + x * cell - size_x / 2, centre[1] + y * cell - size_y / 2, 0.0))
+             for x in range(nx + 1)] for y in range(ny + 1)]
     for y in range(ny):
         for x in range(nx):
             a, b, c, d = grid[y][x], grid[y][x + 1], grid[y + 1][x + 1], grid[y + 1][x]
@@ -137,7 +141,7 @@ def grass_ground(material, size_x, size_y, cell=1.5, seed=7):
                 f = bm.faces.new(tri)
                 col = rng.randrange(4)
                 for loop in f.loops:
-                    loop[uv].uv = ((col + 0.5) / PALETTE_COLS, 1.0 - 0.5 / PALETTE_ROWS)
+                    loop[uv].uv = ((col + 0.5) / PALETTE_COLS, 1.0 - (row + 0.5) / PALETTE_ROWS)
     mesh = bpy.data.meshes.new("preview_ground")
     bm.to_mesh(mesh)
     bm.free()
@@ -148,6 +152,8 @@ def grass_ground(material, size_x, size_y, cell=1.5, seed=7):
 
 def place(src, location, rng, scale_range=(0.85, 1.15)):
     obj = src.copy()                     #shares the mesh, like the game's instancing
+    if location[1] >= BIOME_Y - 30:      #the biome strip draws copies moved to their row
+        obj.data = in_row(src.data, int(round((location[0] - BIOME_X0) / BIOME_STEP)))
     obj.location = location
     obj.hide_render = False              #the lineup's originals are hidden, and copy() copies that
     obj.rotation_euler = (0, 0, rng.uniform(0, 2 * math.pi))
@@ -159,10 +165,11 @@ def place(src, location, rng, scale_range=(0.85, 1.15)):
 def forest(props, rng):
     """A clearing in a pine forest, as in the reference: a dense block of conifers with a ragged
     edge, broadleaf trees and bushes along it, rocks in the open."""
-    pines = [o for n, o in props.items() if n.startswith("tree_pine")]
+    pines = [o for n, o in props.items() if n.startswith("tree_pine") and "snow" not in n]
     oaks = [o for n, o in props.items() if n.startswith("tree_oak")]
     rocks = [o for n, o in props.items() if n.startswith(("rock", "stump", "log"))]
     bushes = [o for n, o in props.items() if n.startswith("bush")]
+    cover(props, rng, (-38, 38), (-26, 26), 4200)
     spacing = 1.35
     for iy in range(-16, 17):
         for ix in range(-24, 25):
@@ -186,6 +193,58 @@ def forest(props, rng):
         place(rng.choice(rocks), (rng.uniform(-12, 1), rng.uniform(-6, 3), 0), rng)
 
 
+#How common each kind of ground cover is, relative to the others.
+COVER_WEIGHTS = {"grass_a": 6, "grass_b": 5, "grass_c": 6, "flowers_a": 1.5, "flowers_b": 1.5,
+                 "fern_a": 2, "shrub_a": 1, "mushrooms_a": 0.4, "twig_a": 0.6}
+
+
+def cover(props, rng, xs, ys, count, kinds=None):
+    names = [n for n in COVER_WEIGHTS if n in props and (kinds is None or n.startswith(kinds))]
+    weights = [COVER_WEIGHTS[n] for n in names]
+    for _ in range(count):
+        n = rng.choices(names, weights)[0]
+        place(props[n], (rng.uniform(*xs), rng.uniform(*ys), 0), rng, (0.8, 1.3))
+
+
+#The biome strip sits far north of the forest: one patch per palette row, side by side.
+BIOME_Y = 400.0
+BIOME_X0 = -36.0
+BIOME_STEP = 24.0
+_row_meshes = {}
+
+
+def in_row(mesh, row):
+    """A copy of `mesh` with every UV moved down to palette row `row` - what the game does to a
+    whole biome's props."""
+    if row == 0:
+        return mesh
+    key = (mesh.name, row)
+    if key not in _row_meshes:
+        copy = mesh.copy()
+        for loop_uv in copy.uv_layers[0].data:
+            loop_uv.uv.y -= row / PALETTE_ROWS
+        _row_meshes[key] = copy
+    return _row_meshes[key]
+
+
+def biomes(props, material, rng):
+    """Temperate, desert, frozen, swamp: each patch on its own row of grass, with the trees made
+    for it - so the snow pine is seen as snow, not as a two-tone pine."""
+    plan = [
+        ([n for n in props if n.startswith(("tree_pine_a", "tree_pine_b", "tree_pine_c", "tree_oak"))], 22),
+        (["tree_palm_a", "rock_a", "rock_b", "shrub_a"], 12),
+        (["tree_pine_snow_a", "tree_pine_snow_a", "rock_b", "rock_c"], 22),
+        (["tree_willow_a", "tree_willow_a", "bush_a", "fern_a", "log_a"], 12),
+    ]
+    for row, (names, count) in enumerate(plan):
+        cx = BIOME_X0 + row * BIOME_STEP
+        grass_ground(material, BIOME_STEP, 22, seed=row, row=row, centre=(cx, BIOME_Y))
+        for _ in range(count):
+            n = rng.choice(names)
+            place(props[n], (cx + rng.uniform(-10, 10), BIOME_Y + rng.uniform(-9, 9), 0), rng)
+        cover(props, rng, (cx - 11.5, cx + 11.5), (BIOME_Y - 10.5, BIOME_Y + 10.5), 500)
+
+
 def preview():
     bpy.ops.wm.open_mainfile(filepath=BLEND)
     scene = bpy.context.scene
@@ -203,9 +262,12 @@ def preview():
     scene.world.color = (0.70, 0.80, 0.86)
     scene.display.light_direction = (-0.45, 0.45, 0.77)
     scene.render.film_transparent = False
-    look_from(cam, Vector((7.5, -7.5, 1.0)), 55, 0, 30)
+    look_from(cam, Vector((10.0, -10.0, 1.0)), 55, 0, 38)
     cam.data.lens = 45
     render(os.path.join(PREVIEWS, "lineup.png"), "BLENDER_WORKBENCH", (1600, 1100))
+    #The ground cover, close enough to see.
+    look_from(cam, Vector((10.0, -20.0, 0.1)), 55, 0, 28)
+    render(os.path.join(PREVIEWS, "lineup_cover.png"), "BLENDER_WORKBENCH", (1600, 600))
 
     #Forest: hide the lineup, build a clearing out of shared-mesh copies, and light it like the
     #game - one sun from the north-west, a sky ambient, no tone mapping.
@@ -213,6 +275,7 @@ def preview():
         o.hide_render = True
     grass_ground(material, 80, 56)
     forest(props, random.Random(3))
+    biomes(props, material, random.Random(5))
     sun = bpy.data.objects["sun_nw"]
     sun.rotation_euler = SUN_TRAVEL.to_track_quat("-Z", "Y").to_euler()
     sun.data.energy = 3.2
@@ -229,6 +292,11 @@ def preview():
     cam.data.lens = 35
     look_from(cam, Vector((-2, 0, 0)), 55, 0, 46)
     render(os.path.join(PREVIEWS, "forest_wide.png"), engine, (1600, 900))
+    #The same view at the game's furthest zoom, about 15 px per house (2 units): that frame is 47
+    #units across, so 350 px. This is the one that says whether a prop is detail or noise.
+    render(os.path.join(PREVIEWS, "forest_maxzoom.png"), engine, (352, 198))
+    look_from(cam, Vector((BIOME_X0 + 1.5 * BIOME_STEP, BIOME_Y, 0)), 55, 0, 92)
+    render(os.path.join(PREVIEWS, "biomes.png"), engine, (1600, 700))
     cam.data.lens = 50
     look_from(cam, Vector((-14, -3, 1.0)), 55, 0, 22)     #the clearing's west edge: every kind of prop
     render(os.path.join(PREVIEWS, "forest_close.png"), engine, (1600, 900))

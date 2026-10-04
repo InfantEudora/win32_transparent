@@ -194,9 +194,25 @@ was generated (`README.md`, "Checks live in the app"). There is no separate engi
 | 5 | Painting zones: placeholder geometry per corner pattern, storeys, fields on coarse cells | painting by hand and over MCP; a zone view; chunk rebuild time |
 | 6 | Save and restore, per-tick state hash, replay from a save | the same recording replayed from the same save gives the same trace |
 
-**After step 6:** procedural buildings in place of placeholders, roads and a walker (A* over plots),
-forests, biomes and their palette rows, the full chasm map. Each gets its own plan when its turn
-comes.
+**After step 6** (agreed 2026-10-04, in this order):
+
+| Step | What |
+|---|---|
+| 7 (BUILT 2026-10-04) | Forests and scattered props: the modelled trees, rocks and ground cover (`chasm_props.glb`) placed from the seed, drawn instanced; cleared where a zone is painted |
+| 8 (BUILT 2026-10-04) | Procedural buildings and crops in place of the placeholders, and **boundaries that form by themselves** (below) |
+| 9 | The chasm's own look: a misty floor, waterfalls where rivers meet the rim |
+
+Then roads and a walker (A* over plots), biomes and their palette rows, the full chasm map.
+
+**Boundaries form by themselves** (step 8; reference: art_source/chasm/townscapergarden.jpg and
+titlescreenlittleage.png). Nothing is placed by hand: a wall, fence, hedge or palisade runs along
+every boundary segment whose two sides differ, and a post stands wherever the line turns or meets
+another. A plot's outline is already a chain of short segments (section 2: through cell centres and
+edge midpoints), each with one plot on either side; a field's is its coarse cell's edges. What
+stands on a segment follows from the pair it separates - house garden against open land a low wall
+or hedge, a town's outer edge a palisade, field against field or open land a fence, house against
+house nothing - and it follows the irregular grid exactly, which is what makes it look grown rather
+than built. It is derived like the rest of the view, so painting or erasing redraws it.
 
 ---
 
@@ -209,7 +225,7 @@ comes.
 | 3 Terrain levels and cliffs | BUILT 2026-10-04 - grid side and terrain side, see below |
 | 4 Palette and lighting | BUILT 2026-10-04 - see below |
 | 5 Painting zones | BUILT 2026-10-04 - see below |
-| 6 Save, restore, replay | planned |
+| 6 Save, restore, replay | BUILT 2026-10-04 - see below |
 
 ### Step 1, as built
 
@@ -454,3 +470,106 @@ holds the generated-world bundle on its own, so the rules do not depend on the a
 
 **Open:** buildings and fields are placeholders until the procedural ones; the hover's red/green
 was checked through the same rule functions over MCP, not with a real mouse.
+
+### Step 6, as built
+
+**Core: commands in recordings.** An input recording held input only, and Chasm's player changes
+the game through commands made from the mouse by way of the camera - view state a replay does not
+reproduce, so replayed clicks would land on other plots. So a command flagged `SIM_CMD_FLAG_RECORD`
+is the player's intent: `Scene::command_observer` hands it to `Application`, which writes it into
+the recording at the tick it ran before (`RecordedCommand`, a readable `cmd` line in the `.rec`, only
+the fields that differ from a default command); on replay `Application::ApplyReplayCommands` runs
+it at that tick - after the tick's replayed input, with the same position arithmetic as
+`InputController::AdvanceReplay` - and `Scene::command_filter` drops live flagged commands, so the
+person watching cannot change the run. The flag is off by default and must stay off on commands the
+simulation makes itself (bomber's restart), which the replayed input makes again. No other app sets
+it, so none changes.
+
+**Chasm:**
+- `ChasmSave.h` / `.cpp`: a save is the grid settings (feature lines included) and the zones as
+  lists, plus the world hash to notice a save that now generates a different map. Files in
+  `saves/`; the panel's Save section and `chasm_save` / `chasm_load`.
+- Loading regenerates only if the settings differ, then paints the zones back through the rules
+  (`Zones::Restore`), so a stale save can never produce an invalid state.
+- `CaptureRecordingState` is a save, `RestoreRecordingState` loads one: a replay starts from a save.
+- `HashSimState`: two parts, `world` (the grid hash) and `zones` (storeys and fields). Not the
+  base per-object hash - every object here is view, and the sun follows the camera.
+- Zone commands from the mouse and from `chasm_paint` carry the flag.
+
+**Checked:** `tools/chasm_replay_test.py` - a village painted, a recording made from it (22
+commands over 83 ticks: houses, storeys, a remove, an erase, fields), junk painted on top, then two
+replays: both end in exactly the original's state, with identical traces. PASS in debug and in
+release. Separately, a paint sent in the middle of a replay did not run, and that replay ended
+identical to a clean one.
+
+**Open:** commands applied while PAUSED land between ticks and are recorded against the next tick -
+the same tick they precede, so a paused session replays correctly, but a single-stepped one should
+be tried by hand. Saves are not versioned beyond `chasm_save: 1`.
+
+### Step 7, as built
+
+`Forest.h` / `Forest.cpp` place the props; `ApplicationChasm` draws them.
+
+- **Generated from the seed, per plot, by hash** (not a random stream), so the same seed always
+  grows the same forest regardless of order. Large smooth noise patches are forests: cores of dense
+  conifers (up to two per plot, scattered across it), a thinning edge band of oaks, pines and
+  bushes, the odd tree, bush and rock in the open; the chasm floor sparser, the shard top near bare.
+  Only on plots flat all round. Ground cover - grass, flowers, ferns, a shrub, mushrooms, twigs - up
+  to two pieces a plot, ferns and twigs under trees, grass and flowers in the open; it casts no
+  shadow. Seed 1: **148,497 props**, generated in 50 ms (release).
+- **Trees at 0.7 of their modelled size**: at the game's zoom the reference's trees stand about a
+  house tall (the props window measured ours at twice that). With one tree a plot near its vertex,
+  the scaled-down forest showed the GRID as rows of trees and thinned out; two per plot spread
+  across it made the shapeless clumps the reference has.
+- **Painting clears them** (view only): a prop is hidden on a plot with a house or in a field's
+  cell - the plot it STANDS IN, which for a scattered prop is often a neighbour of the one it was
+  placed from. Rebuilt per chunk as the zones move. Felling as gameplay is later.
+- **Core, two changes**, both measured on this forest (debug, 35,000 props before ground cover):
+  - `Renderer::RebuildUniqueMeshList` was a linear search of the distinct meshes per object, every
+    frame - objects x meshes. Now a map: **renderer CPU 40 -> 19.5 ms**, identical output.
+  - **Instance sets** (`Object::SetInstances`): one object drawn once per transform it holds, added
+    to the mesh's one instanced draw with no per-instance object to walk, cull or batch; culled as
+    one box; not pickable; shadows as the object's flag says. Chasm keeps one set per terrain
+    chunk per kind. **Renderer CPU 19.5 -> 4.0 ms, physics pass 2.1 -> 0.1 ms, 19 -> 60 fps.**
+    `Object::ComposeTransformScale` is the one matrix function both an object and an instance use.
+- **Now (release, all 148,497 props, game zoom):** 60 fps, renderer CPU 6.8 ms, GPU 8.8 ms
+  (shadow 3.0, G-buffer 2.0, colour 3.7). The shadow pass is the biggest single cost - it never
+  culls, by design; light-frustum culling of instance sets would be the next saving if needed.
+
+**Open:** the biome trees (snow pine, palm, willow) are in the GLB but not placed until biomes
+exist; a tree canopy from a neighbouring plot can overhang a painted house.
+
+### Step 8, as built
+
+Four parts, each its own file, all called per fine cell by `ZoneMesh.cpp`: ground, crops, houses,
+boundaries. `MeshBuild.h` holds the pieces they share (triangles wound to a wanted normal, palette
+UVs, a place hash).
+
+- **Ground zones** (`Zones.h`): a plot can be a GARDEN (green) or TOWN ground (trodden earth) -
+  what the boundaries enclose, as in both references the walls go round GROUND, not round houses.
+  Same rules as a house (flat all round, no field touching); a house may stand on ground and hides
+  it. New ops `ground_paint` (kind in `value[1]`) / `ground_erase`; tools 4 and 5; saves carry a
+  `grounds` list (older saves load without it); the state hash covers it.
+- **Boundaries form by themselves** (`BoundaryMesh.cpp`). Per plot-boundary segment (an edge's
+  midpoint to its cell's centre, one plot either side): where exactly one side is inside (house or
+  ground) and that side is not a house, a garden gets a low stone wall with a hedge riding on it and
+  stone posts, town ground a palisade of pointed stakes. A field's outline (its children's edges 0
+  and 3) gets a post-and-rail fence wherever the cell across is not a field. Posts at segment ends,
+  so lines meet at a post; a post on a shared midpoint is built by one of the two cells. Nothing is
+  placed by hand - painting or erasing either side redraws it.
+- **Houses** (`BuildingMesh.cpp`): per quarter, the roof's four points sit at the eave or are
+  raised to the ridge - always over the plot's vertex, at an edge midpoint where the corner across
+  is as tall, at the cell centre where all four are. Each point depends only on the corners it lies
+  between, so neighbours agree: a lone house gets a hipped roof, a row of equal houses one long
+  roof, a taller neighbour a wall with windows above the lower roof. Windows on every storey, a
+  door on some ground-floor walls, a chimney on some houses, red tile or wood shingle by plot.
+- **Crops** (`CropMesh.cpp`, by the grid window): rows laid out once in the coarse cell's own
+  square and mapped into each child, so they run straight across a field and follow its bent
+  outline. Six ridges on a dark earth base; crop (wheat, two greens) and row direction by cell, so
+  fields read as a patchwork. 68 triangles a field. A bare margin at the edge leaves the fence room.
+- **Measured:** a test village (22 houses up to four storeys, 47 garden/town plots, 27 fields) with
+  0 refusals; all checks pass; saved and loaded back exactly; the replay test passes; 60 fps with
+  the village and forest in view (GPU: shadow 3.1, G-buffer 1.1, colour 3.0 ms).
+
+**Open:** no gates in the walls or palisade yet; chimneys on a hip can sit near the eave; house
+colours vary only in the roof.

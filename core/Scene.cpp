@@ -123,6 +123,22 @@ objectid_t Scene::GetCommandResult(uint32_t sequence){
     return (result.sequence == sequence) ? result.object : OBJECTID_INVALID;
 }
 
+objectid_t Scene::ExecuteCommand(const SimCommand& cmd){
+    std::function<objectid_t(const SimCommand&)> handler;
+    {
+        std::lock_guard<std::mutex> lock(commands_mutex);
+        auto it = command_handlers.find(cmd.type);
+        if (it != command_handlers.end()){
+            handler = it->second; //copied out, then called unlocked
+        }
+    }
+    if (!handler){
+        debug->Err("No handler registered for SimCommand type %u\n",cmd.type);
+        return OBJECTID_INVALID;
+    }
+    return handler(cmd);
+}
+
 void Scene::DrainCommands(){
     //Swap the whole queue out under the lock and run the handlers unlocked. A handler runs
     //arbitrary app code which may itself submit commands (and will take the same mutex), so
@@ -145,19 +161,15 @@ void Scene::DrainCommands(){
             debug->Err("Dropping SimCommand type %u: version %u, expected %u\n",
                        queued.cmd.type,queued.cmd.version,SIM_COMMAND_VERSION);
         }else{
-            std::function<objectid_t(const SimCommand&)> handler;
-            {
-                std::lock_guard<std::mutex> lock(commands_mutex);
-                auto it = command_handlers.find(queued.cmd.type);
-                if (it != command_handlers.end()){
-                    handler = it->second; //copied out, then called unlocked
-                }
-            }
             objectid_t result = OBJECTID_INVALID;
-            if (handler){
-                result = handler(queued.cmd);
-            }else{
-                debug->Err("No handler registered for SimCommand type %u\n",queued.cmd.type);
+            //A player's command passes the filter first (dropped during a replay) and is told to
+            //the observer after (written into a recording) - see SIM_CMD_FLAG_RECORD.
+            bool f_recordable = (queued.cmd.flags & SIM_CMD_FLAG_RECORD) != 0;
+            if (!f_recordable || !command_filter || command_filter(queued.cmd)){
+                result = ExecuteCommand(queued.cmd);
+                if (f_recordable && command_observer){
+                    command_observer(queued.cmd);
+                }
             }
             std::lock_guard<std::mutex> lock(commands_mutex);
             CommandResult& slot = command_results[queued.sequence % COMMAND_RESULT_RING];

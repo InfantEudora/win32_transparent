@@ -234,21 +234,27 @@ void Renderer::CullLights(const std::vector<Object*>& objects){
 
 void Renderer::RebuildUniqueMeshList(){
     unique_meshes.clear();
+    /*
+        Mesh id -> its place in unique_meshes, so each object finds its batch in one lookup. This was
+        a linear search of unique_meshes per object: objects x distinct meshes every frame, which a
+        map of 35,000 trees over ~300 terrain and zone chunk meshes made the largest single cost of
+        the frame (chasm, 2026-10-04). Indices are handed out in first-seen order exactly as before.
+    */
+    unique_mesh_index.clear();
 
     debug->Trace("Rebuilding unique list. unique_mesh_batches.size() = %i unique_mesh.size()=%i\n",unique_mesh_batches.size(),unique_meshes.size());
     for (Object* object:renderable_objects){
         if (object->GetMesh()){
             bool new_mesh = true;
-            for (Mesh* mesh:unique_meshes){
-                if (mesh->GetID() == object->GetMeshID()){
-                    //We already have this same mesh.
-                    object->SetMeshBatchIndex(mesh->batch_index); //Copy the index from the already batched mesh.
-                    new_mesh = false;
-                    break;
-                }
+            auto found = unique_mesh_index.find(object->GetMeshID());
+            if (found != unique_mesh_index.end()){
+                //We already have this same mesh.
+                object->SetMeshBatchIndex(unique_meshes[found->second]->batch_index); //Copy the index from the already batched mesh.
+                new_mesh = false;
             }
             //Add this new mesh to our unique list.
             if (new_mesh){
+                unique_mesh_index[object->GetMeshID()] = (int)unique_meshes.size();
                 object->SetMeshBatchIndex(unique_meshes.size()); //Store the index in this array
                 Mesh* mesh = object->GetMesh();
                 if (mesh){
@@ -366,6 +372,40 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
                 continue;
             }
             debug->Trace("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
+
+            /*
+                An instance set (Object::SetInstances): one entry per transform, built from one
+                template, with no per-instance object to walk. The object's own world matrix places
+                the whole set - row vectors, so an instance's world is instance * object - and is
+                skipped when it is the identity, which a set laid out in world space usually is.
+            */
+            if (object->IsInstanceSet()){
+                if (rendering_mode == MESH_MODE_SKINNED){
+                    continue;   //not supported - see SetInstances
+                }
+                instancedata_t base = {};
+                const int* set_slots = object->GetMaterialSlots();
+                for (int s = 0; s < NUM_MATERIAL_SLOTS; s++){
+                    base.material_slot[s] = set_slots[s];
+                }
+                base.objectindex = OBJECTID_INVALID;
+                base.num_vertices = mesh->num_vertices;
+                base.num_morph_targets = mesh->num_morph_targets;
+                for (int s = 0; s < NUM_MORPH_FACTOR_SLOTS; s++){
+                    base.morph_factors[s] = object->morph_factors[s];
+                }
+                const fmat4& world = object->GetWorldTransformScaleMatrix();
+                fmat4 identity;
+                identity.identity();
+                bool f_identity = (memcmp(&world,&identity,sizeof(fmat4)) == 0);
+                const std::vector<fmat4>& set = object->GetInstances();
+                size_t first = instancedata.size();
+                instancedata.resize(first + set.size(),base);
+                for (size_t n = 0; n < set.size(); n++){
+                    instancedata[first + n].mat_transformscale = f_identity ? set[n] : set[n] * world;
+                }
+                continue;
+            }
 
             instancedata_t data;
             data.mat_transformscale = object->GetWorldTransformScaleMatrix();
@@ -554,12 +594,21 @@ void Renderer::ComputeViewCull(Camera* camera){
             continue;
         }
         stats.objects++;
-        stats.vertices += mesh->num_vertices;
-        bool f_inside = true;
-        if (mesh->HasBounds() && mesh->num_morph_targets == 0){
+        //An instance set is many copies of its mesh, culled as one box round all of them.
+        uint64_t copies = object->IsInstanceSet() ? object->GetInstances().size() : 1;
+        stats.vertices += mesh->num_vertices * copies;
+        bool f_inside = (copies > 0);
+        vec3 lo, hi;
+        bool f_bounds = false;
+        if (object->IsInstanceSet()){
+            f_bounds = object->GetInstanceBounds(lo,hi);
+        }else if (mesh->HasBounds() && mesh->num_morph_targets == 0){
+            lo = mesh->GetBoundsMin();
+            hi = mesh->GetBoundsMax();
+            f_bounds = true;
+        }
+        if (f_inside && f_bounds){
             const fmat4& m = object->GetWorldTransformScaleMatrix();
-            vec3 lo = mesh->GetBoundsMin();
-            vec3 hi = mesh->GetBoundsMax();
             vec3 lc = (lo + hi) * 0.5f;
             vec3 half = (hi - lo) * 0.5f;
             float wc[3];
@@ -582,7 +631,7 @@ void Renderer::ComputeViewCull(Camera* camera){
             continue;
         }
         stats.inside++;
-        stats.vertices_inside += mesh->num_vertices;
+        stats.vertices_inside += mesh->num_vertices * copies;
         int bi = object->GetMeshBatchIndex();
         if (bi >= 0 && bi < (int)mesh_seen.size()){
             mesh_seen[bi] = 1;

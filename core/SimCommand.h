@@ -135,6 +135,19 @@ enum SimPrimitiveKind : uint32_t{
 #define SIM_CMD_FLAG_ANGULAR_VELOCITY 0x0400
 #define SIM_CMD_FLAG_FRICTION         0x0800 //value[0]
 #define SIM_CMD_FLAG_BOUNCINESS       0x1000 //value[1]
+/*
+    A PLAYER'S INTENT: written into an input recording at the tick it was applied, and applied
+    again from the recording at that tick on replay - while live commands carrying it are DROPPED,
+    so the person watching a replay cannot change the run being replayed.
+
+    For a command made by the view out of something a recording cannot reproduce: what was under
+    the mouse depends on the camera, which is view state and is not replayed, so the recorded
+    clicks alone would land on other places. Off by default, and it must stay off on a command the
+    SIMULATION submits for itself (bomber's restart, made by its tick from input) - that command is
+    made again on replay by the replayed input, and recording it too would apply it twice.
+    See Application::ApplyReplayCommands and Scene::command_observer.
+*/
+#define SIM_CMD_FLAG_RECORD           0x8000
 
 struct SimCommand{
     //FIRST, deliberately: a reader must be able to validate this before it trusts any other

@@ -172,6 +172,28 @@ class Object{
     void UpdateTransformMatrix();
     fmat4& GetLocalTransformScaleMatrix();
     fmat4& GetWorldTransformScaleMatrix();
+    //The matrix an object at this position, rotation and scale has - what UpdateTransformMatrix
+    //builds, as one function both use, so an instance transform (below) is exactly an object's.
+    static fmat4 ComposeTransformScale(const vec3& position, const quat& rotation, const vec3& scale);
+
+    /*
+        INSTANCE SETS: this one object drawn many times, once per transform in the set - a forest is
+        a set of trees, not ten thousand objects. Each transform is relative to the object, so the
+        object still places the whole set. The Renderer adds every instance to the mesh's one
+        instanced draw without walking, culling or batching each separately, which is what makes
+        tens of thousands affordable; the set is culled as one box.
+
+        Once SetInstances has been called the object IS a set: an empty one draws nothing (not the
+        mesh once). Normal meshes only - not skinned. Instances are not pickable; they shadow as the
+        object's own CastsShadow says. Set the mesh first: the box is the mesh's bounds through
+        every transform. Render thread, or with physics_mutex held - the Renderer reads the set
+        while drawing.
+    */
+    void SetInstances(std::vector<fmat4>&& transforms);
+    bool IsInstanceSet() const { return f_instance_set; }
+    const std::vector<fmat4>& GetInstances() const { return instances; }
+    //The set's box in object space. False if the set is empty or the mesh has no bounds.
+    bool GetInstanceBounds(vec3& lo, vec3& hi) const;
 
     //Modify postition
     void SetPosition(const vec3& newpos,bool f_write_physics=true); //If the position change needs to be written to the physics engine
@@ -532,6 +554,12 @@ class Object{
 protected:
     //Hierarchy
     Object* parent = NULL;              //Object we are a child of.
+
+    //The instance set - see SetInstances. The box is in object space.
+    bool f_instance_set = false;
+    std::vector<fmat4> instances;
+    vec3 instance_bounds_min;
+    vec3 instance_bounds_max;
 
     //Materials. PRIVATE TO THE PAIR OF SETTERS ABOVE - including for subclasses, which is why
     //these are down here rather than in the protected block a subclass can reach. The invariant

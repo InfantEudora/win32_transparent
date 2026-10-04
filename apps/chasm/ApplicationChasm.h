@@ -14,6 +14,7 @@
 #include "ChasmWorld.h"
 #include "Zones.h"
 #include "ZoneMesh.h"
+#include "ChasmSave.h"
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -42,8 +43,8 @@
 */
 
 
-//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1/2/3 pick
-//(and pick again to drop) the house, field and erase tools.
+//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1-5 pick
+//(and pick again to drop) the house, field, erase, garden and town tools.
 #define INPUT_CHASM_ROTATE_LEFT     INPUT_LAST+1
 #define INPUT_CHASM_ROTATE_RIGHT    INPUT_LAST+2
 #define INPUT_CHASM_FRAME           INPUT_LAST+3
@@ -51,16 +52,21 @@
 #define INPUT_CHASM_TOOL_HOUSE      INPUT_LAST+5
 #define INPUT_CHASM_TOOL_FIELD      INPUT_LAST+6
 #define INPUT_CHASM_TOOL_ERASE      INPUT_LAST+7
+#define INPUT_CHASM_TOOL_GARDEN     INPUT_LAST+8
+#define INPUT_CHASM_TOOL_TOWN       INPUT_LAST+9
 
 //The app's simulation commands, past core's.
-#define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp
+#define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
+                                                        //value[1]: ground kind for ZONE_OP_GROUND_PAINT
 
 //What a left click does.
 enum ChasmTool{
     CHASM_TOOL_SELECT = 0,
     CHASM_TOOL_HOUSE,
     CHASM_TOOL_FIELD,
-    CHASM_TOOL_ERASE
+    CHASM_TOOL_ERASE,
+    CHASM_TOOL_GARDEN,
+    CHASM_TOOL_TOWN
 };
 
 class ApplicationChasm : public Application{
@@ -70,6 +76,19 @@ public:
     void Init(void) override;
     void UpdateView(void) override;
     void RunSimulationTick(void) override;
+
+    /*
+        --- Saves and replays (step 6) -----------------------------------------------------------
+        A recording's start state IS a save (ChasmSave.h), so a replay starts from one. The state
+        hash is what the simulation decides with and nothing else: the world it runs on, and the
+        zones - not the camera, not the sun that follows it.
+    */
+    json CaptureRecordingState() override;
+    void RestoreRecordingState(const json& state) override;
+    void HashSimState(StateHash& hash) override;
+    ChasmSave MakeSave();
+    //PHYSICS THREAD or with physics_mutex held. Regenerates the map if the save's settings differ.
+    bool LoadSave(const ChasmSave& save, std::string& error);
     void PreRender(void) override;
 #ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
@@ -139,12 +158,35 @@ private:
     void EnsureZonesWorld();                    //physics thread: a new map empties the zones
     void PublishZones();                        //physics thread
     std::shared_ptr<const ZoneState> GetZones();
-    void SubmitZone(int op, int index);         //any thread; queued for the next tick
+    void SubmitZone(int op, int index, int kind = 0);   //any thread; queued for the next tick
     void RegisterCommandHandlers();
 
     std::atomic<int> paint_tool{CHASM_TOOL_SELECT};
     int paint_last_index = -1;                  //physics thread: what a drag last painted
     void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked);
+
+    char save_name[64] = "village";     //the panel's name field
+    std::string save_status;            //render thread: what the last save/load said
+
+    /*
+        --- The forest (step 7) ---------------------------------------------------------------------
+        One INSTANCE SET (Object::SetInstances) per terrain chunk per kind: a chunk's pines are one
+        object holding every pine's transform, so 35,000 props are about 2,000 objects and the
+        Renderer never walks them one by one. (One Object per prop cost 40 ms a frame - see
+        grid_plan.md step 7.) A set holds only the props not hidden by a zone - a house on the
+        plot, a field over the cell - and a chunk's sets are rebuilt when its zones move. The sets
+        are made once and reused when the map is regenerated. Render thread.
+    */
+    bool f_props_loaded[PROP_KIND_COUNT] = {};
+    std::vector<Object*> prop_sets;                 //chunk * PROP_KIND_COUNT + kind
+    void RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, int chunk);
+    std::shared_ptr<const ChasmWorld> forest_built_world;
+    std::vector<uint32_t> forest_zone_version;      //per chunk: the zones' version it was hidden for
+    std::atomic<bool> f_view_forest{true};
+    bool f_forest_shown = true;
+    void LoadProps();
+    void UploadForest();
+    bool PropHidden(const PropInstance& p, const ZoneState* z);
 
     std::vector<Object*> zone_chunks;
     std::vector<uint32_t> zone_chunk_built;     //render thread: chunk_version each was built at

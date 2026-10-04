@@ -842,6 +842,9 @@ void Application::PhysicsThreadFunction(Application* app){
                 //item 84; the long version is on InputController::ApplyTickInput.
                 app->TraceTickStart();
                 app->UpdateTickInput();
+                //A replay's recorded commands for this tick - after its input, before the tick
+                //reads either. See SIM_CMD_FLAG_RECORD.
+                app->ApplyReplayCommands();
                 app->UpdateAnimations();
                 app->RunSimulationTick();
                 app->UpdatePhysics();
@@ -1119,6 +1122,7 @@ void Application::RegisterCoreCommandHandlers(Scene* scene){
     if (!scene){
         return;
     }
+    InstallCommandHooks(scene);
 
     //Teleport. Only the fields the flags mark as present are written - a command that just wants
     //to rotate something must not also stamp a zeroed position over it.
@@ -1700,10 +1704,67 @@ static std::string LocalTimeText(bool f_for_filename){
     return buf;
 }
 
+//--- Recorded commands (SIM_CMD_FLAG_RECORD) - see the header ---------------------------------------
+
+void Application::InstallCommandHooks(Scene* scene){
+    //A live player's command during a replay is dropped: the replay is the player now.
+    scene->command_filter = [scene](const SimCommand& cmd) -> bool {
+        (void)cmd;
+        return !(scene->inputcontroller && scene->inputcontroller->IsReplaying());
+    };
+    //Kept, with the tick it ran before, while a recording is going. GetPhysicsTick is still the
+    //tick about to run - commands drain at the top of a pass, before it.
+    scene->command_observer = [this,scene](const SimCommand& cmd){
+        if (scene != main_scene || !scene->inputcontroller || !scene->inputcontroller->IsRecording()){
+            return;
+        }
+        RecordedCommand rc;
+        rc.tick = (uint32_t)(scene->GetPhysicsTick() - recording_start_tick);
+        rc.cmd = cmd;
+        recording_commands.push_back(rc);
+    };
+}
+
+/*
+    PHYSICS THREAD, on every tick, after UpdateTickInput: the replay's commands due at this tick.
+    Same position arithmetic as InputController::AdvanceReplay - the first tick that runs is
+    `begin` - so a command lands on the same tick as the input that was recorded with it. Everything
+    before `begin` goes on the first tick (as a trimmed recording's events do); nothing at or after
+    `end` runs, since the recording did not include those ticks.
+*/
+void Application::ApplyReplayCommands(){
+    if (!f_replay_commands){
+        return;
+    }
+    uint64_t tick = main_scene->GetPhysicsTick();
+    if (f_replay_commands_armed){
+        f_replay_commands_armed = false;
+        replay_command_first_tick = tick;
+    }
+    uint32_t position = replay_command_begin + (uint32_t)(tick - replay_command_first_tick);
+    while (replay_command_next < replay_commands.size() && replay_commands[replay_command_next].tick <= position){
+        const RecordedCommand& rc = replay_commands[replay_command_next++];
+        if (rc.tick < replay_command_end){
+            main_scene->ExecuteCommand(rc.cmd);
+        }
+    }
+    if (position + 1 >= replay_command_end){
+        f_replay_commands = false;
+    }
+}
+
 void Application::FinishRecording(uint64_t sim_tick){
     InputController* input = main_scene->inputcontroller;
     InputRecording rec;
     input->EndRecording(sim_tick,rec.events,rec.end);
+    //The commands that ran inside the recording - one drained on the stopping pass precedes a tick
+    //the recording does not have.
+    for (const RecordedCommand& rc: recording_commands){
+        if (rc.tick < rec.end){
+            rec.commands.push_back(rc);
+        }
+    }
+    recording_commands.clear();
     rec.app = app_name;
     rec.scene = recording_scene;
     rec.tick_rate = physics_tps;
@@ -1827,6 +1888,7 @@ void Application::ServiceInputRecording(){
 
     if (f_replay_stop){
         input->StopReplay();
+        f_replay_commands = false;
     }
     if (f_stop && input->IsRecording()){
         FinishRecording(tick);
@@ -1838,6 +1900,8 @@ void Application::ServiceInputRecording(){
         recording_scene = main_scene->name;
         recording_started_at = LocalTimeText(false);
         recording_file_stamp = LocalTimeText(true);
+        recording_commands.clear();
+        recording_start_tick = tick;
         input->BeginRecording(tick);
     }
 
@@ -1873,6 +1937,12 @@ void Application::ServiceInputRecording(){
             RestoreRecordingState(replay.state);
         }
         input->StartReplay(replay.events,replay.begin,replay.end);
+        replay_commands = replay.commands;
+        replay_command_next = 0;
+        replay_command_begin = replay.begin;
+        replay_command_end = replay.end;
+        f_replay_commands_armed = true;
+        f_replay_commands = !replay_commands.empty();
         //A new trace: the last replay's stays readable until this one starts.
         {
             std::lock_guard<std::mutex> lock(trace_mutex);

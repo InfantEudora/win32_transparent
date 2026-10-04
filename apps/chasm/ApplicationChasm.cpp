@@ -77,6 +77,7 @@ void ApplicationChasm::Init(void){
     main_scene->camera->SetupPerspective(renderer->width,renderer->height,40.0f,0.5f,4000.0f);
 
     BuildScene();
+    LoadProps();
     RegenerateGrid(next_settings);
     //Init is the render thread before the physics thread exists, so the camera may be set here.
     FrameMap();
@@ -183,6 +184,8 @@ void ApplicationChasm::SetupInput(){
     input->AddKeyMap('1',INPUT_CHASM_TOOL_HOUSE);
     input->AddKeyMap('2',INPUT_CHASM_TOOL_FIELD);
     input->AddKeyMap('3',INPUT_CHASM_TOOL_ERASE);
+    input->AddKeyMap('4',INPUT_CHASM_TOOL_GARDEN);
+    input->AddKeyMap('5',INPUT_CHASM_TOOL_TOWN);
 #endif
 }
 
@@ -203,6 +206,10 @@ void ApplicationChasm::RegenerateGrid(const GridSettings& s){
     std::shared_ptr<TerrainMeshData> mesh = std::make_shared<TerrainMeshData>();
     BuildTerrainMesh(*g,*t,*mesh);
     w->mesh = mesh;
+    std::shared_ptr<ForestData> forest = std::make_shared<ForestData>();
+    BuildForest(*g,*w->picker,*t,*mesh,*forest);
+    w->forest = forest;
+    debug->Info("Forest: %i props in %.1f ms\n",(int)forest->props.size(),forest->build_ms);
     debug->Info("Grid: seed %u, %i coarse and %i fine quads, %i leftover triangles of %i, %.1f ms "
                 "(+%.1f ms picker, %.1f ms levels, %.1f ms mesh: %i triangles, %i in walls, %i chunks)\n",
                 s.seed,(int)g->coarse.quads.size(),(int)g->fine.quads.size(),
@@ -365,14 +372,18 @@ void ApplicationChasm::PublishZones(){
     pick_version++;
 }
 
-void ApplicationChasm::SubmitZone(int op, int index){
+void ApplicationChasm::SubmitZone(int op, int index, int kind){
     if (index < 0){
         return;
     }
     SimCommand cmd;
     cmd.type = CHASM_CMD_ZONE;
+    //The player's intent, decided by the view from the camera - which a replay does not reproduce,
+    //so the command itself is what gets recorded (SIM_CMD_FLAG_RECORD).
+    cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = (uint32_t)index;
     cmd.value[0] = (float)op;
+    cmd.value[1] = (float)kind;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -385,7 +396,7 @@ void ApplicationChasm::RegisterCommandHandlers(){
     main_scene->RegisterCommandHandler(CHASM_CMD_ZONE,
         [this](const SimCommand& cmd) -> objectid_t {
             EnsureZonesWorld();
-            bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype);
+            bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype,(int)cmd.value[1]);
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 zone_last_refusal = zones.last_refusal;
@@ -400,6 +411,99 @@ void ApplicationChasm::RegisterCommandHandlers(){
 
 void ApplicationChasm::RunSimulationTick(void){
     EnsureZonesWorld();
+}
+
+//--- Saves and replays (step 6) ---------------------------------------------------------------------
+
+//From the published copies, so any thread may make one.
+ChasmSave ApplicationChasm::MakeSave(){
+    ChasmSave s;
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!w){
+        return s;
+    }
+    s.settings = w->grid->settings;
+    char hash[32];
+    snprintf(hash,sizeof(hash),"%016llx",(unsigned long long)w->grid->Hash());
+    s.world_hash = hash;
+    if (z && z->world == w){
+        for (size_t v = 0; v < z->storeys.size(); v++){
+            if (z->storeys[v]){
+                s.houses.push_back(std::make_pair((int)v,(int)z->storeys[v]));
+            }
+        }
+        for (size_t c = 0; c < z->field.size(); c++){
+            if (z->field[c]){
+                s.fields.push_back((int)c);
+            }
+        }
+        for (size_t v = 0; v < z->ground.size(); v++){
+            if (z->ground[v]){
+                s.grounds.push_back(std::make_pair((int)v,(int)z->ground[v]));
+            }
+        }
+    }
+    return s;
+}
+
+/*
+    PHYSICS THREAD, or with physics_mutex held (the panel, a tool through AtTickBoundary) - it
+    replaces simulation state. The map is generated again only if the save was made on another one;
+    a save of this map just repaints, in a few milliseconds.
+*/
+bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w || !(w->grid->settings == save.settings)){
+        RegenerateGrid(save.settings);
+        next_settings = save.settings;
+        w = GetWorld();
+    }
+    char hash[32];
+    snprintf(hash,sizeof(hash),"%016llx",(unsigned long long)w->grid->Hash());
+    if (!save.world_hash.empty() && save.world_hash != hash){
+        //Not fatal: the generator has changed since the save, and the paint goes back on through
+        //the rules, so nothing invalid can come of it - but it may not land where it was.
+        debug->Warn("Save was made on world %s, these settings now give %s - the plots may differ\n",
+                    save.world_hash.c_str(),hash);
+    }
+    int refused = zones.Restore(w,save.houses,save.fields,save.grounds);
+    PublishZones();
+    if (refused){
+        error = std::to_string(refused) + " houses or fields refused by the rules";
+        debug->Warn("LoadSave: %s\n",error.c_str());
+    }
+    return refused == 0;
+}
+
+json ApplicationChasm::CaptureRecordingState(){
+    return ChasmSaveToJson(MakeSave());
+}
+
+void ApplicationChasm::RestoreRecordingState(const json& state){
+    ChasmSave save;
+    std::string error;
+    if (!ChasmSaveFromJson(state,save,error)){
+        debug->Err("Replay start state: %s - replaying from the current state\n",error.c_str());
+        return;
+    }
+    LoadSave(save,error);
+}
+
+/*
+    The state a tick ends in, as the replay trace sees it (Application::HashSimState): the world the
+    simulation runs on and what is painted on it. The base class's per-object hash is deliberately
+    not called - every object here is view, and the sun moves with the camera.
+*/
+void ApplicationChasm::HashSimState(StateHash& h){
+    std::shared_ptr<const ChasmWorld> w = zones.GetWorld();
+    h.Begin("world");
+    h.Add(w ? w->grid->Hash() : (uint64_t)0);
+    const ZoneState& z = zones.State();
+    h.Begin("zones");
+    h.Bytes(z.storeys.data(),z.storeys.size());
+    h.Bytes(z.field.data(),z.field.size());
+    h.Bytes(z.ground.data(),z.ground.size());
 }
 
 /*
@@ -428,7 +532,11 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
     paint_last_index = index;
 
     int op = ZONE_OP_NONE;
-    if (tool == CHASM_TOOL_HOUSE){
+    int ground = ZONE_GROUND_NONE;
+    if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_TOWN){
+        ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_TOWN;
+        op = f_shift ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT;
+    }else if (tool == CHASM_TOOL_HOUSE){
         if (f_shift){
             op = f_clicked ? ZONE_OP_HOUSE_REMOVE : ZONE_OP_HOUSE_ERASE;
         }else{
@@ -440,13 +548,15 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         std::shared_ptr<const ZoneState> z = GetZones();
         if (z && !z->storeys.empty() && z->storeys[hover.plot]){
             op = ZONE_OP_HOUSE_ERASE;
+        }else if (z && !z->ground.empty() && z->ground[hover.plot]){
+            op = ZONE_OP_GROUND_ERASE;
         }else if (z && !z->field.empty() && z->field[hover.coarse_quad]){
             op = ZONE_OP_FIELD_ERASE;
             index = hover.coarse_quad;
         }
     }
     if (op != ZONE_OP_NONE){
-        SubmitZone(op,index);
+        SubmitZone(op,index,ground);
     }
 }
 
@@ -504,6 +614,131 @@ void ApplicationChasm::UploadZones(){
             zone_chunks[i]->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
             zone_chunks[i]->SetVisibility(true);
         }
+    }
+}
+
+//--- The forest (step 7) ---------------------------------------------------------------------------
+
+//RENDER THREAD, at Init: the modelled props, one asset per node of chasm_props.glb.
+void ApplicationChasm::LoadProps(){
+    gltfloader.LoadGLTFFile("meshes/chasm_props.glb");
+    std::vector<std::string> names(prop_asset_names,prop_asset_names + PROP_KIND_COUNT);
+    GetAssetsFromGLTF(names);
+    int loaded = 0;
+    for (int k = 0; k < PROP_KIND_COUNT; k++){
+        //Asked of the mesh, which makes no copy - an Object from GetObjectFromAsset is a new one.
+        f_props_loaded[k] = (assetmanager->GetMeshFromAsset(prop_asset_names[k]) != NULL);
+        if (f_props_loaded[k]){
+            loaded++;
+        }else{
+            debug->Warn("Prop '%s' not in chasm_props.glb - it will not be placed\n",prop_asset_names[k]);
+        }
+    }
+    debug->Info("Props: %i of %i kinds loaded\n",loaded,PROP_KIND_COUNT);
+}
+
+//A prop gives way to what is painted: a house on its plot, a field over its cell.
+bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z){
+    if (!z){
+        return false;
+    }
+    if (!z->storeys.empty() && z->storeys[p.plot]){
+        return true;
+    }
+    if (!z->ground.empty() && z->ground[p.plot]){
+        return true;
+    }
+    return p.coarse >= 0 && !z->field.empty() && z->field[p.coarse];
+}
+
+//RENDER THREAD. One chunk's sets, each kind's visible props as transforms.
+void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, int chunk){
+    const ForestData& f = *w.forest;
+    std::vector<fmat4> sets[PROP_KIND_COUNT];
+    for (int i : f.chunk_props[chunk]){
+        const PropInstance& p = f.props[i];
+        if (PropHidden(p,z)){
+            continue;
+        }
+        sets[p.kind].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
+                                                             vec3(p.scale,p.scale,p.scale)));
+    }
+    bool f_show = f_view_forest;
+    for (int k = 0; k < PROP_KIND_COUNT; k++){
+        Object* o = prop_sets[(size_t)chunk * PROP_KIND_COUNT + k];
+        if (!o){
+            continue;
+        }
+        bool f_any = !sets[k].empty();
+        o->SetInstances(std::move(sets[k]));
+        o->SetVisibility(f_show && f_any);
+    }
+}
+
+/*
+    RENDER THREAD. A new map fills every chunk's sets (making more only if it has more chunks than
+    any map before it); after that only the chunks whose zones moved are rebuilt, and the view
+    toggle shows or hides them all.
+*/
+void ApplicationChasm::UploadForest(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w || !w->forest){
+        return;
+    }
+    const ForestData& f = *w->forest;
+    std::shared_ptr<const ZoneState> zs = GetZones();
+    const ZoneState* z = (zs && zs->world == w) ? zs.get() : NULL;
+    bool f_show = f_view_forest;
+    size_t chunks = f.chunk_props.size();
+
+    if (w != forest_built_world){
+        forest_built_world = w;
+        size_t need = chunks * PROP_KIND_COUNT;
+        if (prop_sets.size() < need){
+            //New objects join the scene the physics thread walks - under its lock.
+            main_scene->AtTickBoundary([&](){
+                while (prop_sets.size() < need){
+                    int k = (int)(prop_sets.size() % PROP_KIND_COUNT);
+                    Object* o = f_props_loaded[k] ? assetmanager->GetObjectFromAsset(prop_asset_names[k]) : NULL;
+                    if (o){
+                        o->name = std::string(prop_asset_names[k]) + " set";
+                        //The GLB names a material it carries no image for; the palette is ours.
+                        o->SetMaterialSlot(0,palette_material);
+                        o->SetPickability(false);
+                        o->SetVisualOnly(true);
+                        o->SetCastsShadow(PropCastsShadow(k));
+                        o->SetInstances(std::vector<fmat4>());
+                        o->SetVisibility(false);
+                        main_scene->AddObject(o);
+                    }
+                    prop_sets.push_back(o);
+                }
+            });
+        }
+        for (size_t i = need; i < prop_sets.size(); i++){
+            if (prop_sets[i]){
+                prop_sets[i]->SetInstances(std::vector<fmat4>());
+                prop_sets[i]->SetVisibility(false);
+            }
+        }
+        forest_zone_version.assign(chunks,0);
+        for (size_t c = 0; c < chunks; c++){
+            RebuildPropChunk(*w,z,(int)c);
+            forest_zone_version[c] = z ? z->chunk_version[c] : 0;
+        }
+        f_forest_shown = f_show;
+        return;
+    }
+
+    bool f_toggle = (f_show != f_forest_shown);
+    f_forest_shown = f_show;
+    for (size_t c = 0; c < chunks; c++){
+        uint32_t version = z ? z->chunk_version[c] : 0;
+        if (!f_toggle && forest_zone_version[c] == version){
+            continue;
+        }
+        forest_zone_version[c] = version;
+        RebuildPropChunk(*w,z,(int)c);
     }
 }
 
@@ -608,6 +843,9 @@ void ApplicationChasm::UpdatePickView(){
         }else if (tool == CHASM_TOOL_FIELD){
             bool f_ok = (!z.field.empty() && z.field[hover.coarse_quad]) || ZoneCanField(*w,z,hover.coarse_quad,NULL);
             coarse_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
+        }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_TOWN){
+            bool f_ok = ZoneCanGround(*w,z,hover.plot,NULL);
+            plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }
         p->CoarseOutline(hover.coarse_quad,segs);
         emit(coarse_colour);
@@ -837,9 +1075,11 @@ void ApplicationChasm::UpdateView(void){
     FollowSun();
     //The tool keys toggle: the active tool's key again puts it down.
     if (input->IsInputLive()){
-        const int keys[3] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE};
-        const int tools[3] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE};
-        for (int i = 0; i < 3; i++){
+        const int keys[5] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+                             INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_TOWN};
+        const int tools[5] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                              CHASM_TOOL_GARDEN,CHASM_TOOL_TOWN};
+        for (int i = 0; i < 5; i++){
             if (input->WasKeyPressed(keys[i])){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
                 pick_version++;
@@ -870,6 +1110,7 @@ void ApplicationChasm::UpdateView(void){
 void ApplicationChasm::PreRender(void){
     UploadTerrain();
     UploadZones();
+    UploadForest();
     UpdatePickView();
 #ifdef DEBUG
     UpdateGridView();
@@ -1260,6 +1501,8 @@ void ApplicationChasm::RenderChasmPanel(){
         ImGui::SameLine();
         b = f_view_terrain;     if (ImGui::Checkbox("terrain",&b)){ f_view_terrain = b; }
         ImGui::SameLine();
+        b = f_view_forest;      if (ImGui::Checkbox("forest",&b)){ f_view_forest = b; }
+        ImGui::SameLine();
         b = f_view_flat;        if (ImGui::Checkbox("flat",&b)){ f_view_flat = b; changed = true; }
         if (changed){
             view_version++;
@@ -1318,6 +1561,9 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Field (2)##tool",tool == CHASM_TOOL_FIELD)) tool = CHASM_TOOL_FIELD;
         ImGui::SameLine();
         if (ImGui::RadioButton("Erase (3)##tool",tool == CHASM_TOOL_ERASE)) tool = CHASM_TOOL_ERASE;
+        if (ImGui::RadioButton("Garden (4)##tool",tool == CHASM_TOOL_GARDEN)) tool = CHASM_TOOL_GARDEN;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Town (5)##tool",tool == CHASM_TOOL_TOWN)) tool = CHASM_TOOL_TOWN;
         if (tool != paint_tool){
             paint_tool = tool;
             pick_version++;
@@ -1329,6 +1575,7 @@ void ApplicationChasm::RenderChasmPanel(){
             ZoneStats st = ComputeZoneStats(*zw,*z);
             ImGui::Text("%i houses, %i storeys, %.0f units of floor",st.houses,st.storeys,st.house_floor_area);
             ImGui::Text("%i fields, %.0f units of field",st.fields,st.field_area);
+            ImGui::Text("%i garden and %i town plots, %.0f units of ground",st.gardens,st.towns,st.ground_area);
         }
         std::string refusal;
         {
@@ -1338,6 +1585,37 @@ void ApplicationChasm::RenderChasmPanel(){
         if (!refusal.empty()){
             ImGui::TextColored(ImVec4(1.0f,0.45f,0.35f,1.0f),"last refused: %s",refusal.c_str());
         }
+    }
+
+    if (ImGui::CollapsingHeader("Save")){
+        ImGui::InputText("name##save",save_name,sizeof(save_name));
+        ImGui::SameLine();
+        if (ImGui::Button("Save##save")){
+            std::string error;
+            save_status = ChasmSaveWrite(save_name,ChasmSaveToJson(MakeSave()),error)
+                          ? "saved " + ChasmSavePath(save_name) : error;
+        }
+        //The panel holds physics_mutex, so loading - which replaces simulation state - is safe here.
+        for (const std::string& name : ChasmSaveList()){
+            ImGui::PushID(name.c_str());
+            if (ImGui::SmallButton("load")){
+                json j;
+                ChasmSave save;
+                std::string error;
+                if (!ChasmSaveRead(name,j,error) || !ChasmSaveFromJson(j,save,error)){
+                    save_status = error;
+                }else{
+                    save_status = LoadSave(save,error) ? "loaded " + name : error;
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(name.c_str());
+            ImGui::PopID();
+        }
+        if (!save_status.empty()){
+            ImGui::TextDisabled("%s",save_status.c_str());
+        }
+        ImGui::TextDisabled("F9 records (from this state), F10 replays the last recording");
     }
 
     if (ImGui::CollapsingHeader("Pick",ImGuiTreeNodeFlags_DefaultOpen)){
@@ -1452,6 +1730,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"issues",{{"type","boolean"}}},
                 {"pins",{{"type","boolean"},{"description","the pinned lines and a tick on every vertex pinned to them"}}},
                 {"terrain",{{"type","boolean"},{"description","the terrain mesh (all builds)"}}},
+                {"forest",{{"type","boolean"},{"description","the trees, rocks and bushes (all builds)"}}},
                 {"flat",{{"type","boolean"},{"description","draw the grid layers at y = 0 instead of on the terrain - the true cell shapes near cliffs; pair with terrain:false"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
@@ -1479,6 +1758,9 @@ void ApplicationChasm::RegisterMCPTools(){
 #endif
             if (args.contains("terrain")){
                 f_view_terrain = args["terrain"].get<bool>();
+            }
+            if (args.contains("forest")){
+                f_view_forest = args["forest"].get<bool>();
             }
             json result;
             main_scene->AtTickBoundary([&](){
@@ -1577,7 +1859,9 @@ void ApplicationChasm::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties",{
-                {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase"}}}},
+                {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
+                                                  "ground_paint","ground_erase"}}}},
+                {"ground",{{"type","string"},{"enum",{"garden","town"}},{"description","for ground_paint"}}},
                 {"x",{{"type","number"}}},
                 {"z",{{"type","number"}}},
                 {"plot",{{"type","integer"}}},
@@ -1617,8 +1901,11 @@ void ApplicationChasm::RegisterMCPTools(){
             }
             SimCommand cmd;
             cmd.type = CHASM_CMD_ZONE;
+            cmd.flags = SIM_CMD_FLAG_RECORD;     //a tool painting is a player too - see SubmitZone
             cmd.subtype = (uint32_t)index;
             cmd.value[0] = (float)op;
+            std::string ground_name = args.value("ground",std::string("garden"));
+            cmd.value[1] = (float)((ground_name == "town") ? ZONE_GROUND_TOWN : ZONE_GROUND_GARDEN);
             uint32_t before = zone_commands_done.load();
             //SubmitCommandAndWait, not SubmitZone: the tool reports what the command DID, so it has
             //to have run - see Application::SubmitCommandAndWait.
@@ -1637,11 +1924,71 @@ void ApplicationChasm::RegisterMCPTools(){
                                         {"fields",st.fields},{"field_area",st.field_area}};
                 if (!f_field){
                     result["storeys_here"] = z->storeys[index];
+                    result["ground_here"] = ZoneGroundName(z->ground[index]);
                 }else{
                     result["field_here"] = (bool)z->field[index];
                 }
             }
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
+        });
+
+    MCPServer::Get()->RegisterTool("chasm_save",
+        "Save the map: its generation settings (seed, size, feature lines) and everything painted on "
+        "it, to saves/<name>.json beside the app. Nothing generated is stored - loading generates "
+        "the map again. The same JSON is what an input recording starts from (its `state` line), so "
+        "input_record captures a save and input_replay starts from it. Returns the path and totals.",
+        json{
+            {"type","object"},
+            {"properties",{{"name",{{"type","string"}}}}},
+            {"required",{"name"}}
+        },
+        [this](const json& args) -> json {
+            std::string name = args.value("name",std::string());
+            ChasmSave s = MakeSave();
+            std::string error;
+            if (!ChasmSaveWrite(name,ChasmSaveToJson(s),error)){
+                return json{{"error",error}};
+            }
+            return json{{"path",ChasmSavePath(name)},{"houses",s.houses.size()},{"fields",s.fields.size()},
+                        {"world_hash",s.world_hash},{"saves",ChasmSaveList()}};
+        });
+
+    MCPServer::Get()->RegisterTool("chasm_load",
+        "Load saves/<name>.json: generate its map again if the current one has other settings, then "
+        "paint its zones back through the rules (so nothing invalid can come of a stale save). "
+        "Returns what was loaded, and a warning if the settings now generate a different map than "
+        "the one saved. With no name, lists the saves.",
+        json{
+            {"type","object"},
+            {"properties",{{"name",{{"type","string"}}}}}
+        },
+        [this](const json& args) -> json {
+            std::string name = args.value("name",std::string());
+            if (name.empty()){
+                return json{{"saves",ChasmSaveList()}};
+            }
+            json j;
+            ChasmSave save;
+            std::string error;
+            if (!ChasmSaveRead(name,j,error) || !ChasmSaveFromJson(j,save,error)){
+                return json{{"error",error}};
+            }
+            bool f_ok = false;
+            main_scene->AtTickBoundary([&](){
+                f_ok = LoadSave(save,error);
+            });
+            std::shared_ptr<const ChasmWorld> w = GetWorld();
+            char hash[32];
+            snprintf(hash,sizeof(hash),"%016llx",(unsigned long long)w->grid->Hash());
+            json result{{"loaded",name},{"ok",f_ok},{"houses",save.houses.size()},{"fields",save.fields.size()},
+                        {"world_hash",hash}};
+            if (!error.empty()){
+                result["error"] = error;
+            }
+            if (!save.world_hash.empty() && save.world_hash != hash){
+                result["warning"] = "saved on world " + save.world_hash + ", the settings now give " + hash;
+            }
+            return result;
         });
 
     MCPServer::Get()->RegisterTool("chasm_tool",
@@ -1650,13 +1997,13 @@ void ApplicationChasm::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties",{
-                {"tool",{{"type","string"},{"enum",{"select","house","field","erase"}}}}
+                {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","town"}}}}
             }}
         },
         [this](const json& args) -> json {
-            const char* names[4] = {"select","house","field","erase"};
+            const char* names[6] = {"select","house","field","erase","garden","town"};
             std::string t = args.value("tool",std::string());
-            for (int i = 0; i < 4; i++){
+            for (int i = 0; i < 6; i++){
                 if (t == names[i]){
                     paint_tool = i;
                     pick_version++;

@@ -13,6 +13,7 @@ class Renderer;
 #include "PerfTimer.h"
 #include <atomic>
 #include <mutex>
+#include <unordered_map>
 #include <condition_variable>
 #include <cstdint>
 
@@ -892,6 +893,7 @@ class Renderer{
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;                           // An array of unique meshes
+    std::unordered_map<meshid_t,int> unique_mesh_index;         // mesh id -> place in unique_meshes, see RebuildUniqueMeshList
     std::vector<std::vector<objectid_t>*>unique_mesh_batches;   // An array of arrays containing the object id's per unique mesh, these form batches
 
     std::vector<Object*>renderable_objects;                     // All objects we will render this frame

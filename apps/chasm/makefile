@@ -25,6 +25,11 @@ APP_SRCS += Terrain.cpp
 APP_SRCS += TerrainMesh.cpp
 APP_SRCS += Zones.cpp
 APP_SRCS += ZoneMesh.cpp
+APP_SRCS += ChasmSave.cpp
+APP_SRCS += Forest.cpp
+APP_SRCS += CropMesh.cpp
+APP_SRCS += BuildingMesh.cpp
+APP_SRCS += BoundaryMesh.cpp
 
 #NO PHYSICS: the grid, the terrain and the colony are this app's own rules, and nothing here
 #creates a PhysicsWorld. See the USE_PHYSICS block in engine.mk.

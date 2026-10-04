@@ -140,6 +140,109 @@ static std::string ActionText(uint32_t mapped, const InputController* names){
 
 //--- Save ---------------------------------------------------------------------------------------
 
+//--- Commands as text -----------------------------------------------------------------------------
+
+static void AppendFloats(std::string& out, const char* key, const float* v, int n){
+    char buf[64];
+    out += " ";
+    out += key;
+    out += "=";
+    for (int i = 0; i < n; i++){
+        snprintf(buf,sizeof(buf),"%s%.9g",i ? "," : "",v[i]);
+        out += buf;
+    }
+}
+
+//The fields that differ from a default SimCommand, as key=value - see RecordedCommand.
+static std::string FormatCommand(const SimCommand& c){
+    const SimCommand d;
+    char buf[64];
+    std::string s;
+    snprintf(buf,sizeof(buf),"type=%u",(unsigned)c.type);
+    s += buf;
+    if (c.subtype != d.subtype){ snprintf(buf,sizeof(buf)," subtype=%u",c.subtype); s += buf; }
+    if (c.flags != d.flags){ snprintf(buf,sizeof(buf)," flags=0x%x",c.flags); s += buf; }
+    if (c.target != d.target){ snprintf(buf,sizeof(buf)," target=%u",(unsigned)c.target); s += buf; }
+    if (c.asset != d.asset){ snprintf(buf,sizeof(buf)," asset=%u",(unsigned)c.asset); s += buf; }
+    if (c.bool_values != d.bool_values){ snprintf(buf,sizeof(buf)," bools=0x%x",c.bool_values); s += buf; }
+    if (c.collision_category_bits != d.collision_category_bits){
+        snprintf(buf,sizeof(buf)," category=0x%x",c.collision_category_bits); s += buf;
+    }
+    if (c.collide_with_bits != d.collide_with_bits){
+        snprintf(buf,sizeof(buf)," collide=0x%x",c.collide_with_bits); s += buf;
+    }
+    auto vec_differs = [](const vec3& a, const vec3& b){ return a.x != b.x || a.y != b.y || a.z != b.z; };
+    if (vec_differs(c.position,d.position)){ float v[3] = {c.position.x,c.position.y,c.position.z}; AppendFloats(s,"position",v,3); }
+    if (c.rotation.x != d.rotation.x || c.rotation.y != d.rotation.y || c.rotation.z != d.rotation.z || c.rotation.w != d.rotation.w){
+        float v[4] = {c.rotation.x,c.rotation.y,c.rotation.z,c.rotation.w};
+        AppendFloats(s,"rotation",v,4);
+    }
+    if (vec_differs(c.scale,d.scale)){ float v[3] = {c.scale.x,c.scale.y,c.scale.z}; AppendFloats(s,"scale",v,3); }
+    if (vec_differs(c.velocity,d.velocity)){ float v[3] = {c.velocity.x,c.velocity.y,c.velocity.z}; AppendFloats(s,"velocity",v,3); }
+    if (vec_differs(c.angular_velocity,d.angular_velocity)){
+        float v[3] = {c.angular_velocity.x,c.angular_velocity.y,c.angular_velocity.z};
+        AppendFloats(s,"angular_velocity",v,3);
+    }
+    if (c.value[0] != 0.0f || c.value[1] != 0.0f || c.value[2] != 0.0f || c.value[3] != 0.0f){
+        AppendFloats(s,"value",c.value,4);
+    }
+    return s;
+}
+
+static int ParseFloats(const std::string& text, float* out, int n){
+    int got = 0;
+    const char* p = text.c_str();
+    while (got < n && *p){
+        char* end = NULL;
+        out[got++] = strtof(p,&end);
+        if (end == p){
+            return got - 1;
+        }
+        p = (*end == ',') ? end + 1 : end;
+    }
+    return got;
+}
+
+//The key=value tokens of a cmd line back into a SimCommand. False, with `error`, on an unknown key.
+static bool ParseCommand(std::istringstream& ss, SimCommand& c, std::string& error){
+    std::string token;
+    bool f_type = false;
+    while (ss >> token){
+        size_t eq = token.find('=');
+        if (eq == std::string::npos){
+            error = "expected key=value, got '" + token + "'";
+            return false;
+        }
+        std::string key = token.substr(0,eq);
+        std::string val = token.substr(eq + 1);
+        unsigned long u = strtoul(val.c_str(),NULL,0);     //base 0: the 0x fields read as hex
+        float v[4] = {0,0,0,0};
+        if (key == "type"){ c.type = (uint16_t)u; f_type = true; }
+        else if (key == "subtype"){ c.subtype = (uint32_t)u; }
+        else if (key == "flags"){ c.flags = (uint32_t)u; }
+        else if (key == "target"){ c.target = (objectid_t)u; }
+        else if (key == "asset"){ c.asset = (assetid_t)u; }
+        else if (key == "bools"){ c.bool_values = (uint32_t)u; }
+        else if (key == "category"){ c.collision_category_bits = (uint32_t)u; }
+        else if (key == "collide"){ c.collide_with_bits = (uint32_t)u; }
+        else if (key == "position"){ ParseFloats(val,v,3); c.position = vec3(v[0],v[1],v[2]); }
+        else if (key == "rotation"){ v[3] = 1.0f; ParseFloats(val,v,4); c.rotation = quat(v[0],v[1],v[2],v[3]); }
+        else if (key == "scale"){ ParseFloats(val,v,3); c.scale = vec3(v[0],v[1],v[2]); }
+        else if (key == "velocity"){ ParseFloats(val,v,3); c.velocity = vec3(v[0],v[1],v[2]); }
+        else if (key == "angular_velocity"){ ParseFloats(val,v,3); c.angular_velocity = vec3(v[0],v[1],v[2]); }
+        else if (key == "value"){ ParseFloats(val,c.value,4); }
+        else{
+            error = "unknown command field '" + key + "'";
+            return false;
+        }
+    }
+    if (!f_type){
+        error = "command without a type";
+        return false;
+    }
+    return true;
+}
+
 bool InputRecording::Save(const std::string& path, const InputController* names, std::string& error) const{
     FILE* f = fopen(path.c_str(),"wb");
     if (!f){
@@ -193,6 +296,12 @@ bool InputRecording::Save(const std::string& path, const InputController* names,
             break;
         }
     }
+    if (!commands.empty()){
+        fprintf(f,"# commands: tick  cmd  fields (see RecordedCommand in core/InputRecording.h)\n");
+    }
+    for (const RecordedCommand& rc: commands){
+        fprintf(f,"%u cmd %s\n",rc.tick,FormatCommand(rc.cmd).c_str());
+    }
     bool f_ok = (ferror(f) == 0);
     fclose(f);
     if (!f_ok){
@@ -239,7 +348,19 @@ bool InputRecording::Load(const std::string& path, const InputController* names,
             }
             std::istringstream ss(t);
             std::string tick_s, word, action_s, value_s;
-            ss >> tick_s >> word >> action_s >> value_s;
+            ss >> tick_s >> word;
+            if (word == "cmd"){
+                RecordedCommand rc;
+                rc.tick = (uint32_t)strtoul(tick_s.c_str(),NULL,10);
+                std::string why;
+                if (!ParseCommand(ss,rc.cmd,why)){
+                    error = where + why;
+                    return false;
+                }
+                commands.push_back(rc);
+                continue;
+            }
+            ss >> action_s >> value_s;
             RecordedInputEvent r;
             r.tick = (uint32_t)strtoul(tick_s.c_str(),NULL,10);
             r.event.type = EventType(word);
@@ -318,9 +439,16 @@ bool InputRecording::Load(const std::string& path, const InputController* names,
     }
     std::stable_sort(events.begin(),events.end(),
         [](const RecordedInputEvent& a, const RecordedInputEvent& b){ return a.tick < b.tick; });
+    //Stable, so commands on one tick keep the order they were applied in - which matters: a
+    //storey added then removed is not the same as removed then added.
+    std::stable_sort(commands.begin(),commands.end(),
+        [](const RecordedCommand& a, const RecordedCommand& b){ return a.tick < b.tick; });
     //A file with no end - written by hand, say - plays one tick past its last event.
     if (!f_have_end){
         end = events.empty() ? 0 : events.back().tick + 1;
+        if (!commands.empty()){
+            end = std::max(end,commands.back().tick + 1);
+        }
     }
     if (begin > end){
         error = "begin (" + std::to_string(begin) + ") is after end (" + std::to_string(end) + ")";

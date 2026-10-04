@@ -247,6 +247,20 @@ public:
     //Init() alongside its MCP tools.
     void RegisterCommandHandler(uint16_t type, std::function<objectid_t(const SimCommand&)> handler);
 
+    //Runs one command's handler now, on the calling thread - which must be the physics thread, at
+    //a point a handler may run. What DrainCommands does per queued command, without the queue's
+    //sequence bookkeeping: for a replay applying a recorded command (Application::ApplyReplayCommands).
+    objectid_t ExecuteCommand(const SimCommand& cmd);
+
+    /*
+        THE RECORDING'S TWO HOOKS for commands flagged SIM_CMD_FLAG_RECORD, set by Application.
+        `command_filter` is asked before such a command runs and may drop it (a live one during a
+        replay); `command_observer` is told after one has run (to write it into a recording). Both
+        run on the physics thread, in DrainCommands. Commands without the flag never reach either.
+    */
+    std::function<bool(const SimCommand&)> command_filter;
+    std::function<void(const SimCommand&)> command_observer;
+
     //How many submitted commands have not been applied yet. For a caller that wants to poll
     //rather than compare sequences.
     int GetPendingCommands();

@@ -44,7 +44,24 @@
 #include <vector>
 #include <stdint.h>
 #include "InputController.h"
+#include "SimCommand.h"
 #include "tinygltf/json.hpp"
+
+/*
+    A COMMAND IN A RECORDING: a SimCommand flagged SIM_CMD_FLAG_RECORD - a player's intent the
+    input alone cannot reproduce (see that flag) - and the tick it was applied before, counted like
+    the events'. A line of its own among the events:
+
+        120 cmd type=1001 subtype=62423 flags=0x8000 value=1,0,0,0
+
+    Only the fields that differ from a default SimCommand are written, every float with %.9g so it
+    reads back exactly. Trimmed like the events: commands before `begin` are applied on the first
+    replayed tick, commands at or after `end` are not applied.
+*/
+struct RecordedCommand{
+    uint32_t tick = 0;
+    SimCommand cmd;
+};
 
 struct InputRecording{
     int         version = 1;
@@ -58,6 +75,7 @@ struct InputRecording{
     //Application::CaptureRecordingState. Opaque to core.
     nlohmann::json state = nlohmann::json::object();
     std::vector<RecordedInputEvent> events;
+    std::vector<RecordedCommand> commands;      //by tick
 
     //`names` supplies the action names written and read; NULL writes and accepts numbers only.
     bool Save(const std::string& path, const InputController* names, std::string& error) const;

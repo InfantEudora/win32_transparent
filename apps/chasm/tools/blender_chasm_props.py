@@ -1,11 +1,16 @@
 """Builds the FIRST art_source/chasm/chasm_props.blend - Chasm's low-poly props - and exports it.
 
-    blender.exe -b --python apps/chasm/tools/blender_chasm_props.py -- [--force]
+    blender.exe -b --python apps/chasm/tools/blender_chasm_props.py -- [--add [--replace NAMES] | --force]
 
 Writes the .blend and apps/chasm/assets/meshes/chasm_props.glb. The .blend is the source from then
 on and is edited by hand, so this refuses to overwrite it without --force - re-running it throws
 away every edit made in Blender since. To re-export after an edit, use the "Export" collection's
 exporter (Collection properties > Exporters > Export), which this sets up; no script needed.
+
+--add is for a new asset in ASSETS: it opens the existing .blend, builds only the assets that have
+no object of that name yet, saves and exports. Nothing already in the file is touched - but an asset
+renamed in Blender counts as missing and is built again under its old name. --replace NAME[,NAME]
+with --add deletes those assets first, to rebuild them after a change here; their edits are lost.
 
 Everything is generated from fixed seeds, so a forced rebuild gives the same props.
 
@@ -37,6 +42,7 @@ PALETTE = os.path.join(REPO, "apps", "chasm", "assets", "textures", "palette.png
 #Palette.h - must agree with it.
 PALETTE_COLS = 32
 PALETTE_ROWS = 16
+PAL_GRASS_0 = 0         #four close shades, 0-3
 PAL_PATH = 13           #borrowed for cut wood (stump tops, log ends): there is no free column for one
 PAL_PINE_DARK = 16
 PAL_PINE = 17
@@ -107,7 +113,8 @@ def add_hull(bm, points, drop_below=None):
     - a base resting in the ground - are deleted."""
     verts = [bm.verts.new(p) for p in points]
     res = bmesh.ops.convex_hull(bm, input=verts, use_existing_faces=False)
-    loose = [g for g in res["geom_interior"] + res["geom_unused"] if isinstance(g, bmesh.types.BMVert)]
+    #A set: a point can be listed as both interior and unused, and delete refuses a repeat.
+    loose = list({g for g in res["geom_interior"] + res["geom_unused"] if isinstance(g, bmesh.types.BMVert)})
     bmesh.ops.delete(bm, geom=loose, context="VERTS")
     faces = [g for g in res["geom"] if isinstance(g, bmesh.types.BMFace) and g.is_valid]
     bmesh.ops.recalc_face_normals(bm, faces=faces)
@@ -314,6 +321,228 @@ def bush(bm, rng, lumps, berries=0):
         colour(bm, side, PAL_ACCENT)
 
 
+# ---------------------------------------------------------------------------------------------
+# Ground cover: scattered in their thousands between the trees, so every one is a handful of
+# triangles. Spikes are three-sided and open-bottomed - visible from every side whatever the
+# renderer culls, at three triangles each, where a flat blade would vanish edge-on or from behind.
+# ---------------------------------------------------------------------------------------------
+
+COVER_SINK = 0.03       #ground cover is too small to need GROUND_SINK; this just hides the seam
+
+
+def spike(bm, rng, at, radius, height, lean_out):
+    """A grass blade or a leaf: a thin three-sided spike, leaning `lean_out` away from the origin."""
+    out = Vector((at.x, at.y, 0))
+    out = out.normalized() * lean_out if out.length > 1e-6 else Vector((0, 0, 0))
+    side, _ = add_cone(bm, Vector((at.x, at.y, -COVER_SINK)), radius, height + COVER_SINK, 3,
+                       rng.uniform(0, 6.3), rng, tip=(out.x, out.y), bottom=False)
+    return side
+
+
+def tris_of_quad(bm, a, b, c, d):
+    """A quad as two triangles: on a bent strip the quad is not planar, and one flat normal for a
+    twisted quad is wrong for both of its halves."""
+    return [bm.faces.new((a, b, c)), bm.faces.new((a, c, d))]
+
+
+def frond(bm, spine, widths, fold):
+    """A V-folded leaf along `spine`, the edges raised by `fold` times the width, so the leaf's top -
+    the side the camera sees - is the inside of the V. A width of 0 makes that point a single vert:
+    the tip, or a root that costs two triangles instead of four."""
+    up = Vector((0, 0, 1))
+    faces = []
+    rails = []
+    for i, p in enumerate(spine):
+        d = (spine[min(i + 1, len(spine) - 1)] - spine[max(i - 1, 0)]).normalized()
+        s = d.cross(up).normalized()
+        w = widths[i]
+        rails.append((bm.verts.new(p - s * w + up * fold * w), bm.verts.new(p),
+                      bm.verts.new(p + s * w + up * fold * w)) if w > 0 else (None, bm.verts.new(p), None))
+    for i in range(len(spine) - 1):
+        (l0, p0, r0), (l1, p1, r1) = rails[i], rails[i + 1]
+        if l0 is None:                  #a pointed root
+            faces += [bm.faces.new((p0, p1, l1)), bm.faces.new((p0, r1, p1))]
+        elif l1 is None:                #the tip
+            faces += [bm.faces.new((l0, p0, p1)), bm.faces.new((p0, r0, p1))]
+        else:
+            faces += tris_of_quad(bm, l0, p0, p1, l1) + tris_of_quad(bm, p0, r0, r1, p1)
+    return faces
+
+
+def grass(bm, rng, blades, colours):
+    """A tuft: `blades` spikes as (x, y, height), splayed outward."""
+    for i, (x, y, h) in enumerate(blades):
+        colour(bm, spike(bm, rng, Vector((x, y, 0)), 0.045, h, h * 0.35), colours[i % len(colours)])
+
+
+def flowers(bm, rng, leaves, blooms):
+    """Leaf spikes with squat blooms among them: the blooms are what reads, so they are wide, low and
+    face the sky. No stalks - invisible at this size, and they doubled the count."""
+    for (x, y, h) in leaves:
+        colour(bm, spike(bm, rng, Vector((x, y, 0)), 0.05, h, h * 0.3), PAL_LEAF)
+    for (x, y, z) in blooms:
+        side, _ = add_cone(bm, Vector((x, y, z)), 0.085, 0.06, 3, rng.uniform(0, 6.3), rng, bottom=False)
+        colour(bm, side, PAL_ACCENT)
+
+
+def fern(bm, rng, count, length):
+    """Fronds arching out of one root: up, then over and down."""
+    for i in range(count):
+        a = 2 * math.pi * i / count + rng.uniform(-0.3, 0.3)
+        d = Vector((math.cos(a), math.sin(a), 0))
+        L = length * rng.uniform(0.8, 1.1)
+        spine = [Vector((0, 0, -COVER_SINK)), d * L * 0.45 + Vector((0, 0, L * 0.38)), d * L + Vector((0, 0, L * 0.12))]
+        faces = frond(bm, spine, [0.0, L * 0.17, 0.0], 0.45)
+        colour_by_facing(bm, faces, PAL_LEAF, PAL_LEAF_DARK, PAL_LEAF_DARK, up=0.75)
+
+
+def mushrooms(bm, rng, caps):
+    """A few caps sitting in the grass: (x, y, height, cap radius, colour). Four-sided cones, no
+    stalks and no undersides - at the closest zoom a stalk is two pixels, and both together were
+    two thirds of the triangles."""
+    for (x, y, h, r, col) in caps:
+        side, _ = add_cone(bm, Vector((x, y, -COVER_SINK)), r, h + COVER_SINK, 4, rng.uniform(0, 6.3), rng,
+                           bottom=False)
+        colour(bm, side, col)
+
+
+def twig(bm, rng):
+    """A fallen branch with one fork: two thin three-sided sticks lying in the grass, open-ended -
+    the ends are a few pixels across at the closest zoom."""
+    def stick(a, b, r):
+        d = (b - a).normalized()
+        s = d.cross(Vector((0, 0, 1))).normalized()
+        u = s.cross(d)
+        ra = [bm.verts.new(a + (s * math.cos(k * 2.094) + u * math.sin(k * 2.094)) * r) for k in range(3)]
+        rb = [bm.verts.new(b + (s * math.cos(k * 2.094) + u * math.sin(k * 2.094)) * r * 0.7) for k in range(3)]
+        faces = []
+        for k in range(3):
+            faces.append(bm.faces.new((ra[k], ra[(k + 1) % 3], rb[(k + 1) % 3], rb[k])))
+        return faces
+    r = 0.045
+    main = stick(Vector((-0.45, 0, r * 0.5)), Vector((0.45, 0.05, r * 0.4)), r)
+    fork = stick(Vector((0.05, 0.01, r * 0.5)), Vector((0.32, 0.30, r * 0.35)), r * 0.7)
+    for f in main + fork:
+        f.normal_update()
+    colour_by_facing(bm, main + fork, PAL_BARK, PAL_BARK, PAL_BARK_DARK, up=0.3, down=-0.3)
+
+
+# ---------------------------------------------------------------------------------------------
+# Biome trees. Still UV'd into row 0: the game moves a biome's forest to its own row, and the row
+# is what turns these into desert, snow or swamp colours.
+# ---------------------------------------------------------------------------------------------
+
+def banded_cone(bm, centre, radius, height, sides, rot, rng, split, jag):
+    """A pine tier in two bands: a skirt below `split` (a fraction of the height) and a cap above it,
+    the line between them zig-zagging by `jag` so the snow line drips. The cap is what shows
+    between tiers, so it is the part that takes the snow."""
+    base = ring(bm, centre, radius, sides, rot, rng, 0.08)
+    mid = []
+    for i, v in enumerate(base):
+        t = split + (jag if i % 2 else -jag) * rng.uniform(0.6, 1.0)
+        p = centre.lerp(v.co, 1.0 - t)
+        mid.append(bm.verts.new((p.x, p.y, centre.z + height * t)))
+    apex = bm.verts.new(centre + Vector((0, 0, height)))
+    skirt = []
+    for i in range(sides):
+        j = (i + 1) % sides
+        skirt += tris_of_quad(bm, base[i], base[j], mid[j], mid[i])
+    cap = [bm.faces.new((mid[i], mid[(i + 1) % sides], apex)) for i in range(sides)]
+    bottom = [bm.faces.new(list(reversed(base)))]
+    return skirt, cap, bottom
+
+
+def snow_conifer(bm, rng, height, tiers, width, sides, trunk_show, lean_xy):
+    """The frozen biome's pine: the stacked cones of conifer(), each tier's upper band in PINE_LIGHT -
+    which the frozen row makes snow - over a PINE_DARK skirt. In row 0 it is a two-tone pine."""
+    top_scale, overlap = 1.10, 0.55
+    tier_h = (height - trunk_show) / ((tiers - 1) * overlap + top_scale)
+    trunk_r = 0.09 + 0.025 * width
+    side, _ = add_prism(bm, Vector((0, 0, -GROUND_SINK)), trunk_r, trunk_show + GROUND_SINK + tier_h * 0.3,
+                        5, rng.uniform(0, 6.3), rng, top_radius=trunk_r * 0.8)
+    colour(bm, side, PAL_BARK_DARK)
+    z = trunk_show
+    for i in range(tiers):
+        last = i == tiers - 1
+        r = width * 0.5 * (1.0 - 0.38 * i / max(1, tiers - 1)) * rng.uniform(0.93, 1.07)
+        h = tier_h * (top_scale if last else 1.0)
+        #The next tier starts at `overlap`, so the visible band of this one is below that; the snow
+        #line sits about halfway up it, a little higher on the top tier.
+        skirt, cap, bottom = banded_cone(bm, Vector((0, 0, z)), r, h, sides, rng.uniform(0, 6.3), rng,
+                                         0.40 if last else 0.28, 0.07)
+        colour(bm, skirt, PAL_PINE_DARK)
+        colour(bm, cap, PAL_PINE_LIGHT)
+        colour(bm, bottom, PAL_PINE_DARK)
+        z += tier_h * overlap
+    lean(bm, height, lean_xy[0], lean_xy[1])
+
+
+def palm(bm, rng, height, bend, fronds):
+    """A desert palm: a curving trunk of stacked tapering segments, each sunk into the one below so
+    the trunk shows its rings, and a crown of arching V-folded fronds."""
+    segs = 4
+    def centre(t):
+        return Vector((bend * t * t, 0, t * height))
+    for i in range(segs):
+        t0, t1 = i / segs, (i + 1) / segs
+        r = 0.16 - 0.035 * t0
+        lo = centre(t0) - Vector((0, 0, GROUND_SINK if i == 0 else 0.06))
+        side, _ = add_prism(bm, lo, r * 0.78, (centre(t1) - lo).z, 4, 0.3 + i * 0.4, rng, top_radius=r)
+        dx = centre(t1).x - lo.x        #slide the segment's top ring along the curve, so the trunk bends
+        for v in {v for f in side for v in f.verts}:
+            if v.co.z > lo.z + 0.01:
+                v.co.x += dx
+        colour(bm, side, PAL_BARK)
+    crown = centre(1.0)
+    for i in range(fronds):
+        a = 2 * math.pi * i / fronds + rng.uniform(-0.25, 0.25)
+        d = Vector((math.cos(a), math.sin(a), 0))
+        L = rng.uniform(1.5, 1.9)
+        droop = rng.uniform(0.35, 0.6)
+        spine = [crown + Vector((0, 0, 0.05)),
+                 crown + d * L * 0.40 + Vector((0, 0, 0.28)),
+                 crown + d * L * 0.75 + Vector((0, 0, 0.12)),
+                 crown + d * L + Vector((0, 0, -droop))]
+        faces = frond(bm, spine, [0.06, 0.30, 0.22, 0.0], 0.35)
+        colour_by_facing(bm, faces, PAL_LEAF_LIGHT, PAL_LEAF, PAL_LEAF_DARK, up=0.8, down=-0.2)
+
+
+def willow(bm, rng, height, crown_r, strands):
+    """A swamp willow: a low dome on a leaning trunk, ringed by a hanging curtain whose bottom edge
+    alternates long and short strands."""
+    dome_base = height - crown_r * 0.55
+    side, _ = add_prism(bm, Vector((0, 0, -GROUND_SINK)), 0.2, dome_base + GROUND_SINK, 5,
+                        rng.uniform(0, 6.3), rng, top_radius=0.13)
+    colour(bm, side, PAL_BARK_DARK)
+    pts = ellipsoid_points(rng, Vector((0, 0, dome_base)), crown_r * 0.95, crown_r * 0.95, crown_r * 0.42,
+                           16, 0.10, z_floor=dome_base - crown_r * 0.12)
+    dome = add_hull(bm, pts)
+    colour_by_facing(bm, dome, PAL_LEAF_LIGHT, PAL_LEAF, PAL_LEAF_DARK)
+
+    rot = rng.uniform(0, 6.3)
+    top_z = dome_base + crown_r * 0.05
+    tops = [bm.verts.new((crown_r * 0.9 * math.cos(rot + 2 * math.pi * i / strands),
+                          crown_r * 0.9 * math.sin(rot + 2 * math.pi * i / strands), top_z))
+            for i in range(strands)]
+    bottoms = []
+    for k in range(strands * 2):
+        a = rot + math.pi * k / strands
+        long = k % 2 == 1
+        #Long enough to hang well below the dome and splayed past its rim, or from above the willow
+        #is just another round tree.
+        drop = (crown_r * rng.uniform(1.45, 1.7)) if long else (crown_r * rng.uniform(0.8, 1.0))
+        rr = crown_r * (1.18 if long else 1.08)
+        #Kept clear of the ground, which also keeps the strands out of the origin's base sample.
+        bottoms.append(bm.verts.new((rr * math.cos(a), rr * math.sin(a), max(0.4, top_z - drop))))
+    for i in range(strands):
+        t0, t1 = tops[i], tops[(i + 1) % strands]
+        b0, b1, b2 = bottoms[2 * i], bottoms[2 * i + 1], bottoms[(2 * i + 2) % (2 * strands)]
+        colour(bm, [bm.faces.new((t0, b0, b1))], PAL_LEAF)
+        colour(bm, [bm.faces.new((t0, b1, t1))], PAL_LEAF_LIGHT)
+        colour(bm, [bm.faces.new((t1, b1, b2))], PAL_LEAF_DARK)
+    lean(bm, height, 0.35, -0.15, power=1.2)
+
+
 #name, seed, builder, slot (column, row) in the authoring layout
 ASSETS = [
     ("tree_pine_a", 11, lambda bm, r: conifer(bm, r, 4.0, 3, 1.90, 7, 0.40, (0.05, 0.0)), (0, 0)),
@@ -341,6 +570,29 @@ ASSETS = [
     ("bush_a", 51, lambda bm, r: bush(bm, r, [(0.0, 0.0, 0.55, 0.55), (0.45, 0.25, 0.40, 0.42),
                                               (-0.35, 0.30, 0.38, 0.38)]), (2, 3)),
     ("bush_b", 52, lambda bm, r: bush(bm, r, [(0.0, 0.0, 0.60, 0.65)], berries=5), (3, 3)),
+    #Round 2: ground cover, then a tree per later biome.
+    ("grass_a", 61, lambda bm, r: grass(bm, r, [(0.0, 0.0, 0.34), (0.10, 0.06, 0.26), (-0.08, 0.08, 0.22)],
+                                        [PAL_LEAF_LIGHT, PAL_LEAF, PAL_LEAF_LIGHT]), (0, 4)),
+    ("grass_b", 62, lambda bm, r: grass(bm, r, [(0.0, 0.0, 0.42), (0.12, -0.05, 0.30), (-0.10, -0.08, 0.28),
+                                                (0.02, 0.13, 0.24)],
+                                        [PAL_LEAF, PAL_LEAF_LIGHT, PAL_LEAF_LIGHT, PAL_LEAF]), (0.5, 4)),
+    ("grass_c", 63, lambda bm, r: grass(bm, r, [(0.0, 0.0, 0.20), (0.09, 0.04, 0.16)],
+                                        [PAL_GRASS_0 + 2, PAL_LEAF_LIGHT]), (1.0, 4)),
+    ("flowers_a", 64, lambda bm, r: flowers(bm, r, [(0.0, 0.0, 0.22), (0.12, 0.05, 0.18)],
+                                            [(0.05, -0.08, 0.16), (-0.10, 0.06, 0.13), (0.14, 0.12, 0.12)]),
+     (1.5, 4)),
+    ("flowers_b", 65, lambda bm, r: flowers(bm, r, [(0.0, 0.0, 0.16)],
+                                            [(0.08, 0.02, 0.10), (-0.06, 0.07, 0.08), (-0.03, -0.09, 0.09),
+                                             (0.17, -0.10, 0.06)]), (2.0, 4)),
+    ("fern_a", 66, lambda bm, r: fern(bm, r, 5, 0.55), (2.5, 4)),
+    ("shrub_a", 67, lambda bm, r: bush(bm, r, [(0.0, 0.0, 0.30, 0.26)]), (3.0, 4)),
+    ("mushrooms_a", 68, lambda bm, r: mushrooms(bm, r, [(0.0, 0.0, 0.14, 0.09, PAL_ACCENT),
+                                                        (0.13, 0.06, 0.09, 0.06, PAL_BARK),
+                                                        (0.04, 0.14, 0.07, 0.05, PAL_BARK)]), (3.5, 4)),
+    ("twig_a", 69, twig, (4.0, 4)),
+    ("tree_pine_snow_a", 71, lambda bm, r: snow_conifer(bm, r, 4.2, 3, 1.85, 7, 0.40, (0.06, -0.04)), (4, 0)),
+    ("tree_palm_a", 72, lambda bm, r: palm(bm, r, 4.4, 0.9, 6), (3, 1)),
+    ("tree_willow_a", 73, lambda bm, r: willow(bm, r, 3.6, 1.45, 10), (4, 1)),
 ]
 
 SPACING = 5.0
@@ -454,11 +706,49 @@ def stage(collection_name):
 SUN_TRAVEL = Vector((1.0, -1.0, -2.0)).normalized()
 
 
+def save_and_export(export):
+    #palette.png is stored as a path relative to the .blend, unpacked, so an edit to the PNG shows up
+    #here too. Written by hand: relative_remap would write it with Windows backslashes.
+    os.makedirs(os.path.dirname(BLEND), exist_ok=True)
+    bpy.data.images[0].filepath = "//" + os.path.relpath(PALETTE, os.path.dirname(BLEND)).replace("\\", "/")
+    bpy.context.preferences.filepaths.save_version = 0      #no chasm_props.blend1 beside it
+    bpy.ops.wm.save_as_mainfile(filepath=BLEND, relative_remap=False)
+    print("\nimage path in the .blend: %s" % bpy.data.images[0].filepath)
+
+    os.makedirs(os.path.dirname(GLB), exist_ok=True)
+    with bpy.context.temp_override(collection=export):
+        bpy.ops.collection.export_all()
+    print("wrote %s (%d bytes)" % (GLB, os.path.getsize(GLB)))
+
+
+def add_missing(replace):
+    """Opens the existing .blend and builds only the assets it has no object for, leaving every
+    object already there - and any edit made to it - exactly as it is."""
+    bpy.ops.wm.open_mainfile(filepath=BLEND)
+    for name in replace:
+        if name in bpy.data.objects:
+            bpy.data.objects.remove(bpy.data.objects[name])
+            bpy.data.meshes.remove(bpy.data.meshes[name])
+    export = bpy.data.collections["Export"]
+    material = bpy.data.materials["palette"]
+    have = {o.name for o in bpy.data.objects}
+    print("\n%-16s %5s" % ("added", "tris"))
+    for name, seed, builder, slot in ASSETS:
+        if name not in have:
+            obj, tris = build_object(name, seed, builder, slot, material, export)
+            print("%-16s %5d" % (name, tris))
+    save_and_export(export)
+
+
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if os.path.exists(BLEND) and "--add" in argv:
+        replace = argv[argv.index("--replace") + 1].split(",") if "--replace" in argv else []
+        add_missing(replace)
+        return
     if os.path.exists(BLEND) and "--force" not in argv:
-        print("\n%s exists and is edited by hand. Re-export it from Blender, or pass --force to "
-              "rebuild it from scratch (losing those edits)." % BLEND)
+        print("\n%s exists and is edited by hand. Re-export it from Blender, pass --add to build only "
+              "the assets it lacks, or --force to rebuild it from scratch (losing those edits)." % BLEND)
         sys.exit(1)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -476,19 +766,7 @@ def main():
 
     stage("Stage")
     setup_export(export)
-
-    #palette.png is stored as a path relative to the .blend, unpacked, so an edit to the PNG shows up
-    #here too. Written by hand: relative_remap would write it with Windows backslashes.
-    os.makedirs(os.path.dirname(BLEND), exist_ok=True)
-    bpy.data.images[0].filepath = "//" + os.path.relpath(PALETTE, os.path.dirname(BLEND)).replace("\\", "/")
-    bpy.context.preferences.filepaths.save_version = 0      #no chasm_props.blend1 beside it
-    bpy.ops.wm.save_as_mainfile(filepath=BLEND, relative_remap=False)
-    print("\nimage path in the .blend: %s" % bpy.data.images[0].filepath)
-
-    os.makedirs(os.path.dirname(GLB), exist_ok=True)
-    with bpy.context.temp_override(collection=export):
-        bpy.ops.collection.export_all()
-    print("wrote %s (%d bytes)" % (GLB, os.path.getsize(GLB)))
+    save_and_export(export)
 
 
 main()

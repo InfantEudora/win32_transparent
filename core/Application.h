@@ -772,6 +772,28 @@ protected:
     //Physics thread, around each tick: the start check (if on) and the end hash, while replaying.
     void TraceTickStart();
     void TraceTickEnd();
+
+    /*
+        --- Recorded commands - SIM_CMD_FLAG_RECORD (SimCommand.h) ------------------------------
+        RECORDING: Scene::command_observer hands every such command to us as it runs, and while a
+        recording is going it is kept with the tick it ran before, relative to the recording's
+        start - the same count the input events use. FinishRecording writes them with the events.
+        REPLAY: Scene::command_filter drops live ones, and ApplyReplayCommands runs the recorded
+        ones on the tick they belong to - after the tick's replayed input, before the simulation
+        reads either - working out the position the same way InputController::AdvanceReplay does.
+        All physics thread.
+    */
+    void InstallCommandHooks(Scene* scene);
+    void ApplyReplayCommands();
+    std::vector<RecordedCommand> recording_commands;
+    uint64_t recording_start_tick = 0;
+    std::vector<RecordedCommand> replay_commands;
+    size_t replay_command_next = 0;
+    uint32_t replay_command_begin = 0;
+    uint32_t replay_command_end = 0;
+    uint64_t replay_command_first_tick = 0;
+    bool f_replay_commands_armed = false;
+    bool f_replay_commands = false;
     std::mutex trace_mutex;                 //guards replay_trace against GetReplayTrace
     std::vector<TraceTick> replay_trace;
     bool f_tracing = false;                 //physics thread: this tick is a replay's

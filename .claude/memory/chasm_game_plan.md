@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-04T19:29:06.577Z
+  modified: 2026-10-04T20:22:18.729Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -41,12 +41,26 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   ONLY by CHASM_CMD_ZONE commands; ZoneMesh.* placeholders; step 6 must RECORD COMMANDS (view
   turns mouse into commands). Third window f6 is modelling props in art_source/chasm/chasm_props.blend
   -> assets/meshes/chasm_props.glb (palette.png stays the single source; palette is 32x16 now).
+  STEP 6 BUILT same day: core SIM_CMD_FLAG_RECORD (commands recorded into .rec as `cmd` lines,
+  replayed at their tick, live ones dropped during replay); ChasmSave.* saves = recording state;
+  run `python apps/chasm/tools/chasm_replay_test.py` after rule changes (PASS debug+release).
+  ALL 6 PLANNED STEPS DONE 2026-10-04. Steps 7-9 agreed: 7 forests (BUILT: Forest.*, 148k props via
+  core INSTANCE SETS Object::SetInstances + RebuildUniqueMeshList map fix), 8 procedural buildings +
+  boundaries that form themselves (walls/fences/palisades on plot-boundary segments whose sides
+  differ - refs townscapergarden.jpg, titlescreenlittleage.png) BUILT: ground zones garden/town,
+  BoundaryMesh walls/palisade/fences, BuildingMesh hip roofs+windows, CropMesh (by worker 78);
+  9 chasm look (mist, waterfalls) next.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.
   PROPS BUILT + ACCEPTED same day: 15 assets (4 pines 38-58 tris, 3 oaks 58-118, rocks, stump, log,
   bushes) in chasm_props.blend "Export"; re-export = the collection's exporter (one click), NOT
   apps/chasm/tools/blender_chasm_props.py (that only builds a FRESH .blend, needs --force, wipes
   edits). blender_chasm_props_check.py --verify (reimports GLB: origin, row-0 UVs, flat normals) /
   --render (previews/). Stump/log cut faces borrow PAL_PATH: no free palette column.
+  ROUND 2 same day: ground cover (grass/flowers/fern/shrub/mushrooms/twig, 6-23 tris) + biome
+  trees (snow pine, palm, willow). New assets go in with `--add` (builds only missing names,
+  touches nothing else; `--replace NAME` rebuilds one). Snow = PINE_LIGHT: the frozen row makes
+  that cell white. Trees are ~2x A Little Age's tree/house ratio at the briefed sizes, so the game
+  draws them at 0.7 scale, two per plot - keep modelling at the briefed sizes, scale is game-side.
 - RRandom IS seedable now (Generate(seed)); world gen should use its own instance.
 
 **Why:** the user wants the building mechanic tested before any gameplay goes on top.
