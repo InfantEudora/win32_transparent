@@ -29,9 +29,10 @@ static Debugger* debug = new Debugger("ApplicationChasm",DEBUG_ALL);
 #define CHASM_CAM_KEY_PAN       0.9f        //camera distances per second, arrows/WASD
 #define CHASM_CAM_DRAG_PAN      0.0012f     //camera distances per mouse count, right-drag
 #define CHASM_CAM_WHEEL_STEP    0.88f       //distance multiplier per wheel notch
-#define CHASM_GROUND_Y          -0.05f      //just under the lines, so they never fight its depth
 #define CHASM_GRID_VIEW_Y       0.02f
 #define PICK_VIEW_Y             0.05f       //over the grid view's lines
+#define SUN_DISTANCE            400.0f      //how far out the sun's shadow camera sits from the view
+#define SUN_EXTENT_PER_DISTANCE 0.9f        //shadow half-extent per unit of camera distance
 
 ApplicationChasm::ApplicationChasm():Application(){
     app_name = "Chasm";
@@ -67,11 +68,6 @@ void ApplicationChasm::Init(void){
 
     BuildScene();
     RegenerateGrid(next_settings);
-    {
-        std::shared_ptr<const Grid> g = GetGrid();
-        FitGround(*g);
-        ground_fitted_to = g;
-    }
     //Init is the render thread before the physics thread exists, so the camera may be set here.
     FrameMap();
 
@@ -82,14 +78,26 @@ void ApplicationChasm::Init(void){
 }
 
 void ApplicationChasm::BuildScene(){
-    //A key light and a cool fill, the repo's usual pair - see BuildLighting in apps/bomber for why
-    //one light alone reads as night. No shadows yet: there is nothing standing to cast one.
-    DirectionalLight* sun = new DirectionalLight();
+    /*
+        A key light and a cool fill, the repo's usual pair - see BuildLighting in apps/bomber for why
+        one light alone reads as night.
+
+        The sun casts the shadows, and follows the view (FollowSun): one shadow map over the whole
+        768-unit map would be a few texels per house. Its depth range has to reach from the sun,
+        SUN_DISTANCE out, past the chasm floor and the skirt - DirectionalLight's own default far
+        plane is 100, which would cut the shadow off at the plateau.
+    */
+    //From the south-west and fairly low, so the chasm's walls throw shadow across its floor.
+    vec3 sun_dir(-0.45f,0.80f,0.40f);
+    sun_dir.normalize();
+    sun_offset = sun_dir * SUN_DISTANCE;
+
+    sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
-    sun->SetPosition(vec3(-300,500,200));
     sun->color = vec3(1.0f,0.96f,0.90f);
     sun->brightness = 5.0f;
-    sun->f_casts_shadow = false;
+    sun->SetupOrthographic(4096,4096,60.0f,1.0f,SUN_DISTANCE * 2.0f);
+    sun->SetPosition(sun_offset);
     sun->SetLookAt(vec3());
     main_scene->AddObject(sun);
 
@@ -102,23 +110,22 @@ void ApplicationChasm::BuildScene(){
     fill->SetLookAt(vec3());
     main_scene->AddObject(fill);
 
-    //The ground under the lines: a unit quad laid flat and scaled to the map by FitGround.
-    Material mat = {};
-    mat.name = "chasm_ground";
-    mat.glsl_material.color = vec4(0.20f,0.26f,0.19f,1.0f);
-    mat.glsl_material.metallic = 0.0f;
-    mat.glsl_material.roughness = 0.95f;
-    renderer->AddMaterial(mat);
-
-    ground = new Object();
-    ground->name = "Ground";
-    ground->SetMesh(MakeQuad(1.0f,1.0f));
-    ground->SetMaterialSlot(0,renderer->FindMaterialIndex("chasm_ground"));
-    //MakeQuad faces +Z; -90 degrees about X lays it down facing up. See core/Primitives.h.
-    ground->SetRotation(quat(vec3(1,0,0),-1.5707963f));
-    ground->SetPickability(false);
-    ground->SetVisualOnly(true);
-    main_scene->AddObject(ground);
+    //The terrain's materials, one per TerrainMesh slot. Stand-ins until the palette (step 4).
+    struct{ const char* name; vec4 color; } terrain_mats[TERRAIN_NUM_SLOTS] = {
+        {"chasm_ground",vec4(0.34f,0.50f,0.24f,1.0f)},
+        {"chasm_floor", vec4(0.17f,0.19f,0.16f,1.0f)},
+        {"chasm_rock_a",vec4(0.55f,0.42f,0.30f,1.0f)},
+        {"chasm_rock_b",vec4(0.32f,0.25f,0.21f,1.0f)},
+    };
+    for (int i = 0; i < TERRAIN_NUM_SLOTS; i++){
+        Material mat = {};
+        mat.name = terrain_mats[i].name;
+        mat.glsl_material.color = terrain_mats[i].color;
+        mat.glsl_material.metallic = 0.0f;
+        mat.glsl_material.roughness = 0.95f;
+        renderer->AddMaterial(mat);
+        terrain_material[i] = renderer->FindMaterialIndex(mat.name);
+    }
 
     pick_view = new Object();
     pick_view->name = "Pick View";
@@ -159,19 +166,28 @@ void ApplicationChasm::SetupInput(){
 //--- The grid -----------------------------------------------------------------------------------
 
 void ApplicationChasm::RegenerateGrid(const GridSettings& s){
+    std::shared_ptr<ChasmWorld> w = std::make_shared<ChasmWorld>();
     std::shared_ptr<Grid> g = std::make_shared<Grid>();
     g->Generate(s);
+    w->grid = g;
     auto t0 = std::chrono::steady_clock::now();
-    std::shared_ptr<GridPicker> p = std::make_shared<GridPicker>(g);
+    w->picker = std::make_shared<GridPicker>(g);
     float pick_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+    w->features = TerrainFeatureLines(*g);
+    std::shared_ptr<Terrain> t = std::make_shared<Terrain>();
+    t->Build(*g,w->features);
+    w->terrain = t;
+    std::shared_ptr<TerrainMeshData> mesh = std::make_shared<TerrainMeshData>();
+    BuildTerrainMesh(*g,*t,*mesh);
+    w->mesh = mesh;
     debug->Info("Grid: seed %u, %i coarse and %i fine quads, %i leftover triangles of %i, %.1f ms "
-                "(+%.1f ms picker)\n",
+                "(+%.1f ms picker, %.1f ms levels, %.1f ms mesh: %i triangles, %i in walls, %i chunks)\n",
                 s.seed,(int)g->coarse.quads.size(),(int)g->fine.quads.size(),
-                g->num_leftover_triangles,g->num_lattice_triangles,g->generate_ms,pick_ms);
+                g->num_leftover_triangles,g->num_lattice_triangles,g->generate_ms,pick_ms,
+                t->build_ms,mesh->build_ms,mesh->num_triangles,mesh->num_wall_triangles,(int)mesh->chunks.size());
     {
         std::lock_guard<std::mutex> lock(grid_mutex);
-        grid = g;
-        picker = p;
+        world = w;
 #ifdef DEBUG
         //A report is about one grid; the next one has not been checked.
         check_report.reset();
@@ -186,14 +202,19 @@ void ApplicationChasm::RegenerateGrid(const GridSettings& s){
     pick_version++;
 }
 
-std::shared_ptr<const Grid> ApplicationChasm::GetGrid(){
+std::shared_ptr<const ChasmWorld> ApplicationChasm::GetWorld(){
     std::lock_guard<std::mutex> lock(grid_mutex);
-    return grid;
+    return world;
+}
+
+std::shared_ptr<const Grid> ApplicationChasm::GetGrid(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    return w ? w->grid : NULL;
 }
 
 std::shared_ptr<const GridPicker> ApplicationChasm::GetPicker(){
-    std::lock_guard<std::mutex> lock(grid_mutex);
-    return picker;
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    return w ? w->picker : NULL;
 }
 
 //--- Picking -------------------------------------------------------------------------------------
@@ -216,22 +237,40 @@ void ApplicationChasm::SetSelectedPick(const GridPick& p){
     }
 }
 
-//Physics thread or at a tick boundary: it reads the camera.
-bool ApplicationChasm::GroundUnderPixel(int2 px, vec2& out){
+/*
+    Physics thread or at a tick boundary: it reads the camera.
+
+    The terrain is a few flat levels, so the ray is tried against each level's plane from the top
+    down, and the first plane whose point lands on a plot OF THAT LEVEL is what the ray hits. A
+    point on the plateau's plane over the chasm lands on a floor plot and is passed over; the ray
+    goes on down to the floor. Walls are never hit - nothing is built on a wall.
+*/
+GridPick ApplicationChasm::PickUnderPixel(int2 px){
+    GridPick none;
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w){
+        return none;
+    }
     ray r = main_scene->camera->GetPixelRay(px);
     //Looking up or level never meets the ground in front of the camera.
     if (r.direction.y >= -1e-4f){
-        return false;
+        return none;
     }
-    plane ground_plane;
-    ground_plane.pos = vec3(0.0f,0.0f,0.0f);
-    ground_plane.normal = vec3(0.0f,1.0f,0.0f);
-    vec3 at;
-    if (!r.intersects_plane(ground_plane,at)){
-        return false;
+    for (int l = 0; l < TERRAIN_NUM_LEVELS; l++){
+        plane level_plane;
+        level_plane.pos = vec3(0.0f,terrain_levels[l].height,0.0f);
+        level_plane.normal = vec3(0.0f,1.0f,0.0f);
+        vec3 at;
+        if (!r.intersects_plane(level_plane,at)){
+            continue;
+        }
+        GridPick pick = w->picker->Pick(vec2(at.x,at.z));
+        if (pick.f_hit && w->terrain->level[pick.plot] == l){
+            return pick;
+        }
+        none.at = vec2(at.x,at.z);
     }
-    out = vec2(at.x,at.z);
-    return true;
+    return none;
 }
 
 /*
@@ -253,9 +292,8 @@ void ApplicationChasm::UpdatePick(){
     if (f_over_scene){
         int2 px = input->GetRelativeMousePosition();
         f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
-        vec2 at;
-        if (f_over_scene && GroundUnderPixel(px,at)){
-            hover = p->Pick(at);
+        if (f_over_scene){
+            hover = PickUnderPixel(px);
         }
     }
     std::lock_guard<std::mutex> lock(pick_mutex);
@@ -282,11 +320,14 @@ json ApplicationChasm::PickJson(const GridPicker& p, const GridPick& pick){
         corners[k] = g.fine.pos[g.fine.quads[pick.fine_quad].v[k]];
     }
     const vec2& v = g.fine.pos[pick.plot];
+    //The level, if the picker is the current world's - a pick is only ever about that one.
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    const char* level = (w && w->picker.get() == &p) ? terrain_levels[w->terrain->level[pick.plot]].name : "?";
     return json{
         {"hit",true},
         {"x",pick.at.x},
         {"z",pick.at.y},
-        {"plot",{{"vertex",pick.plot},{"x",v.x},{"z",v.y},{"sides",p.PlotQuadCount(pick.plot)},
+        {"plot",{{"vertex",pick.plot},{"x",v.x},{"z",v.y},{"level",level},{"sides",p.PlotQuadCount(pick.plot)},
                  {"area",p.PlotArea(pick.plot)},{"on_outline",(bool)g.fine.f_boundary[pick.plot]},
                  {"coarse_corner",pick.plot < (int)g.coarse.pos.size()}}},
         {"fine_cell",{{"quad",pick.fine_quad},{"corner",pick.corner},{"area",p.FineArea(pick.fine_quad)},
@@ -306,30 +347,34 @@ json ApplicationChasm::PickJson(const GridPicker& p, const GridPick& pick){
     dozen lines, rebuilt only when either pick changes.
 */
 void ApplicationChasm::UpdatePickView(){
-    std::shared_ptr<const GridPicker> p = GetPicker();
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
     int version = pick_version.load();
-    if (!p || (p == pick_view_built_for && version == pick_view_built_version)){
+    if (!w || (w == pick_view_built_for && version == pick_view_built_version)){
         return;
     }
-    pick_view_built_for = p;
+    pick_view_built_for = w;
     pick_view_built_version = version;
     GridPick hover = GetHoverPick();
     GridPick selected = GetSelectedPick();
-    const Grid& g = p->GetGrid();
+    const GridPicker* p = w->picker.get();
+    const Grid& g = *w->grid;
 
     std::vector<line_vertex> verts;
     std::vector<vec2> segs;
-    auto emit = [&verts,&segs](uint32_t color){
+    //Everything at the height of the plot it is about: a pick on the floor is drawn on the floor.
+    float y = 0.0f;
+    auto emit = [&verts,&segs,&y](uint32_t color){
         line_vertex v;
         v.color = color;
         for (const vec2& s : segs){
-            v.pos = vec3(s.x,0.0f,s.y);
+            v.pos = vec3(s.x,y,s.y);
             verts.push_back(v);
         }
         segs.clear();
     };
 
     if (selected.f_hit){
+        y = w->terrain->Height(selected.plot);
         p->PlotOutline(selected.plot,segs);
         //The outline again, shrunk toward the vertex a step at a time: a 1-pixel line cannot be
         //thick, but nested copies of it read as fill.
@@ -346,6 +391,7 @@ void ApplicationChasm::UpdatePickView(){
         emit(PICK_SELECTED_PLOT);
     }
     if (hover.f_hit){
+        y = w->terrain->Height(hover.plot);
         p->CoarseOutline(hover.coarse_quad,segs);
         emit(PICK_HOVER_COARSE);
         const GridQuad& q = g.fine.quads[hover.fine_quad];
@@ -390,13 +436,48 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
     };
 }
 
-//RENDER THREAD. The quad is unit-sized, so the map's extent is all scale.
-void ApplicationChasm::FitGround(const Grid& g){
-    vec2 c = (g.bounds_min + g.bounds_max) * 0.5f;
-    vec2 size = g.bounds_max - g.bounds_min;
-    ground->SetPosition(vec3(c.x,CHASM_GROUND_Y,c.y));
-    //Before the rotation the quad's height runs along y, which the rotation lays along z.
-    ground->SetScale(vec3(size.x,size.y,1.0f));
+/*
+    RENDER THREAD. Hands the current world's terrain chunks to the GPU, once per world - and shows
+    or hides them when the view toggle changes.
+
+    Under the tick-boundary lock, because it adds Objects to the scene and the physics thread walks
+    that list (scene_addobject_during_tick in the memory notes). The meshes are uploaded inside it
+    as well, which is GL - fine, since this IS the render thread; the lock only keeps the physics
+    thread out for the few milliseconds it takes.
+*/
+void ApplicationChasm::UploadTerrain(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    bool f_show = f_view_terrain;
+    if (!w || (w->mesh == terrain_uploaded && f_show == f_terrain_shown)){
+        return;
+    }
+    const TerrainMeshData& m = *w->mesh;
+    bool f_new_mesh = (w->mesh != terrain_uploaded);
+    main_scene->AtTickBoundary([&](){
+        while (terrain_chunks.size() < m.chunks.size()){
+            Object* chunk = new Object();
+            chunk->name = "Terrain " + std::to_string(terrain_chunks.size());
+            chunk->SetMesh(new Mesh());
+            for (int s = 0; s < TERRAIN_NUM_SLOTS; s++){
+                chunk->SetMaterialSlot(s,terrain_material[s]);
+            }
+            chunk->SetPickability(false);
+            chunk->SetVisualOnly(true);
+            chunk->SetVisibility(false);
+            main_scene->AddObject(chunk);
+            terrain_chunks.push_back(chunk);
+        }
+        for (size_t i = 0; i < terrain_chunks.size(); i++){
+            bool f_has = i < m.chunks.size() && !m.chunks[i].verts.empty();
+            if (f_has && f_new_mesh){
+                std::vector<vertex>& verts = const_cast<std::vector<vertex>&>(m.chunks[i].verts);
+                terrain_chunks[i]->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
+            }
+            terrain_chunks[i]->SetVisibility(f_has && f_show);
+        }
+    });
+    terrain_uploaded = w->mesh;
+    f_terrain_shown = f_show;
 }
 
 //--- The camera ----------------------------------------------------------------------------------
@@ -511,9 +592,34 @@ void ApplicationChasm::UpdateCamera(){
     ApplyCamera();
 }
 
+/*
+    PHYSICS THREAD, after the camera: the sun's shadow map over what is in view. archer's
+    FollowView, the same two parts: the ortho is sized to the camera's distance, and the light moves
+    only by whole texels of its own map - a sun that slides by fractions of a texel re-rasterises
+    every shadow edge a little differently each pass, and the edges crawl while the view pans.
+*/
+void ApplicationChasm::FollowSun(){
+    if (!sun){
+        return;
+    }
+    sun->viewport.zoom = std::max(20.0f,cam_distance * SUN_EXTENT_PER_DISTANCE);
+    vec3 target(camera_target.x,0.0f,camera_target.z);
+    sun->SetPosition(target + sun_offset);
+    sun->SetLookAt(target);
+    float texel = (2.0f * sun->viewport.zoom) / sun->viewport.width;
+    vec3 left = sun->GetLeft();
+    vec3 up = sun->GetUp();
+    vec3 eye = sun->GetPosition();
+    float l = eye.dot(left);
+    float u = eye.dot(up);
+    eye += left * (roundf(l / texel) * texel - l) + up * (roundf(u / texel) * texel - u);
+    sun->SetPosition(eye);
+}
+
 void ApplicationChasm::UpdateView(void){
     InputController* input = main_scene->inputcontroller;
     UpdateCamera();
+    FollowSun();
     //After the camera, so the ray goes through the view this pass will draw.
     UpdatePick();
     if (input->WasKeyPressed(INPUT_CHASM_FRAME) && input->IsInputLive()){
@@ -536,11 +642,7 @@ void ApplicationChasm::UpdateView(void){
 
 //RENDER THREAD, before the scene draws: the only place GL may be touched for the meshes below.
 void ApplicationChasm::PreRender(void){
-    std::shared_ptr<const Grid> g = GetGrid();
-    if (g && g != ground_fitted_to){
-        FitGround(*g);
-        ground_fitted_to = g;
-    }
+    UploadTerrain();
     UpdatePickView();
 #ifdef DEBUG
     UpdateGridView();
@@ -582,22 +684,39 @@ uint64_t EdgeKey(int a, int b){
 #define VIEW_ISSUE_FAIL     0xFFFF2020u
 #define VIEW_ISSUE_LOOK     0xFFFFE040u
 #define VIEW_ISSUE_SELECTED 0xFFFFFFFFu
+#define VIEW_PIN_OUTLINE    0xFFB0B0B0u     //the map's four edges and the vertices sliding on them
+#define VIEW_PIN_RIM        0xFFFF60D0u
+#define VIEW_PIN_SHARD      0xFF60F0F0u
+#define VIEW_PIN_FIXED      0xFFFF2020u
 
 /*
-    RENDER THREAD. Rebuilds the line mesh when the grid, the report or a layer changed, and never
-    otherwise. Everything is drawn in the grid's own units, flat at y = 0 (the object sits a hair
-    above the ground).
+    RENDER THREAD. Rebuilds the line mesh when the world, the report or a layer changed, and never
+    otherwise. Lines lie on the terrain: each vertex at its level's height, and an edge between two
+    levels drops at its midpoint - where the cliff is cut - so the grid reads as draped over the
+    terrain rather than floating through its walls.
 */
 void ApplicationChasm::UpdateGridView(){
-    std::shared_ptr<const Grid> g = GetGrid();
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
     std::shared_ptr<const GridCheckReport> report = GetCheckReport();
     int version = view_version.load();
-    if (!g || (g == grid_view_built_for && version == grid_view_built_version)){
+    if (!w || (w == grid_view_built_for && version == grid_view_built_version)){
         return;
     }
-    grid_view_built_for = g;
+    grid_view_built_for = w;
     grid_view_built_version = version;
     auto t0 = std::chrono::steady_clock::now();
+    const Grid* g = w->grid.get();
+    const Terrain& terrain = *w->terrain;
+    /*
+        FLAT draws every layer at y = 0, as the grid is, rather than on the terrain. On the terrain a
+        cell that straddles a cliff is drawn from the plateau down to the floor, and from above it
+        reads as a long spoke - which hides its real shape, the thing the squareness layer is for.
+        Hide the terrain to see the floor's cells under the plateau.
+    */
+    const bool f_flat = f_view_flat;
+    auto H = [&terrain,f_flat](int v){
+        return f_flat ? 0.0f : terrain.Height(v);
+    };
 
     std::vector<line_vertex> verts;
     auto line = [&verts](const vec2& a, const vec2& b, uint32_t color, float ya = 0.0f, float yb = 0.0f){
@@ -607,6 +726,20 @@ void ApplicationChasm::UpdateGridView(){
         verts.push_back(v);
         v.pos = vec3(b.x,yb,b.y);
         verts.push_back(v);
+    };
+    //A grid edge, on the terrain.
+    auto edge = [&](int a, int b, uint32_t color){
+        float ha = H(a);
+        float hb = H(b);
+        const vec2& pa = g->fine.pos[a];
+        const vec2& pb = g->fine.pos[b];
+        if (ha == hb){
+            line(pa,pb,color,ha,ha);
+        }else{
+            vec2 mid = (pa + pb) * 0.5f;
+            line(pa,mid,color,ha,ha);
+            line(mid,pb,color,hb,hb);
+        }
     };
     const float unit = g->settings.triangle_side;
 
@@ -625,9 +758,46 @@ void ApplicationChasm::UpdateGridView(){
         for (const auto& e : g->fine.edges){
             bool f_coarse = f_view_coarse && coarse_edges.count(EdgeKey(e.first,e.second));
             if (f_coarse){
-                line(g->fine.pos[e.first],g->fine.pos[e.second],VIEW_COARSE);
+                edge(e.first,e.second,VIEW_COARSE);
             }else if (f_view_fine){
-                line(g->fine.pos[e.first],g->fine.pos[e.second],VIEW_FINE);
+                edge(e.first,e.second,VIEW_FINE);
+            }
+        }
+    }
+
+    if (f_view_pins){
+        //Every line the grid pins to, a touch above its ground, and a tick up from every vertex
+        //pinned to it - so a gap between a line and its chain shows as ticks off the line.
+        const int base = g->feature_line_base;
+        auto line_colour = [base](int l){
+            return (l < base) ? VIEW_PIN_OUTLINE : (l == base) ? VIEW_PIN_RIM : VIEW_PIN_SHARD;
+        };
+        //The rim's line is on the plateau and a shard's on its top - each on its high side.
+        auto line_height = [base,f_flat](int l){
+            if (f_flat || l <= base){
+                return terrain_levels[TERRAIN_PLATEAU].height;
+            }
+            return terrain_levels[TERRAIN_SHARD].height;
+        };
+        //The smoothed lines the chains lie on (TerrainFeatureLines), not the settings' corners.
+        for (size_t f = 0; f < w->features.size(); f++){
+            int l = base + (int)f;
+            const std::vector<vec2>& pts = w->features[f].points;
+            for (size_t i = 0; i + 1 < pts.size(); i++){
+                line(pts[i],pts[i + 1],line_colour(l),line_height(l) + 0.3f,line_height(l) + 0.3f);
+            }
+        }
+        for (size_t v = 0; v < g->fine.pos.size(); v++){
+            int pin = g->fine.pin[v];
+            if (pin == GRID_PIN_FREE){
+                continue;
+            }
+            float h = H((int)v);
+            const vec2& p = g->fine.pos[v];
+            if (pin == GRID_PIN_FIXED){
+                line(p,p,VIEW_PIN_FIXED,h,h + unit * 1.5f);
+            }else{
+                line(p,p,line_colour(pin),h,h + unit * 0.4f);
             }
         }
     }
@@ -643,10 +813,11 @@ void ApplicationChasm::UpdateGridView(){
             }
             uint32_t c = (v == 3) ? VIEW_VALENCE_3 : (v == 5) ? VIEW_VALENCE_5 : (v == 6) ? VIEW_VALENCE_6 : VIEW_VALENCE_ODD;
             const vec2& p = g->fine.pos[i];
-            line(p - vec2(r,0),p + vec2(r,0),c);
-            line(p - vec2(0,r),p + vec2(0,r),c);
-            line(p - vec2(r,r) * 0.7f,p + vec2(r,r) * 0.7f,c);
-            line(p - vec2(r,-r) * 0.7f,p + vec2(r,-r) * 0.7f,c);
+            float h = H((int)i);
+            line(p - vec2(r,0),p + vec2(r,0),c,h,h);
+            line(p - vec2(0,r),p + vec2(0,r),c,h,h);
+            line(p - vec2(r,r) * 0.7f,p + vec2(r,r) * 0.7f,c,h,h);
+            line(p - vec2(r,-r) * 0.7f,p + vec2(r,-r) * 0.7f,c,h,h);
         }
     }
 
@@ -668,27 +839,31 @@ void ApplicationChasm::UpdateGridView(){
                 in[k] = c + (p[k] - c) * 0.75f;
             }
             for (int k = 0; k < 4; k++){
-                line(in[k],in[(k + 1) % 4],col);
+                line(in[k],in[(k + 1) % 4],col,H(q.v[k]),H(q.v[(k + 1) % 4]));
             }
         }
     }
 
     //The last check's issues, if it was run on THIS grid: a ring on the spot and a tall post, so a
     //failure is findable from a camera pulled back over the whole map.
-    if (f_view_issues && report && report->hash == g->Hash()){
+    if (f_view_issues && report && report->hash == w->grid->Hash()){
         int sel = selected_issue.load();
         for (int i = 0; i < (int)report->issues.size(); i++){
             const GridIssue& issue = report->issues[i];
             bool f_sel = (i == sel);
             uint32_t c = f_sel ? VIEW_ISSUE_SELECTED : (issue.f_failure ? VIEW_ISSUE_FAIL : VIEW_ISSUE_LOOK);
             float r = unit * (f_sel ? 0.6f : 0.35f);
+            //At the ground under it: the issue names a vertex or a quad, and either way the nearest
+            //plot says which level the spot is on.
+            GridPick under = w->picker->Pick(issue.where);
+            float h = under.f_hit ? H(under.plot) : 0.0f;
             const int SEGMENTS = 12;
             for (int s = 0; s < SEGMENTS; s++){
                 float a0 = 6.2831853f * s / SEGMENTS;
                 float a1 = 6.2831853f * (s + 1) / SEGMENTS;
-                line(issue.where + vec2(cosf(a0),sinf(a0)) * r,issue.where + vec2(cosf(a1),sinf(a1)) * r,c);
+                line(issue.where + vec2(cosf(a0),sinf(a0)) * r,issue.where + vec2(cosf(a1),sinf(a1)) * r,c,h,h);
             }
-            line(issue.where,issue.where,c,0.0f,unit * (issue.f_failure ? 6.0f : 2.5f));
+            line(issue.where,issue.where,c,h,h + unit * (issue.f_failure ? 6.0f : 2.5f));
         }
     }
 
@@ -706,18 +881,19 @@ void ApplicationChasm::UpdateGridView(){
 
 //Any thread but the render thread's frame: costs about one more generation.
 std::shared_ptr<const GridCheckReport> ApplicationChasm::RunChecks(){
-    std::shared_ptr<const Grid> g = GetGrid();
-    if (!g){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w){
         return NULL;
     }
-    std::shared_ptr<GridCheckReport> r = std::make_shared<GridCheckReport>(RunGridChecks(*g));
+    std::shared_ptr<GridCheckReport> r = std::make_shared<GridCheckReport>(RunGridChecks(*w->grid));
+    RunTerrainChecks(*w->grid,*w->terrain,w->features,*r);
     debug->Info("Grid check: %s in %.1f ms\n",r->f_pass ? "PASS" : "FAIL",r->check_ms);
     for (const GridCheckResult& c : r->results){
         debug->Info("  %-14s %s  %s\n",c.name.c_str(),c.f_skipped ? "skip" : (c.f_pass ? "pass" : "FAIL"),c.detail.c_str());
     }
     std::lock_guard<std::mutex> lock(grid_mutex);
-    //Only if the grid is still the one checked - a regeneration meanwhile makes the report stale.
-    if (grid == g){
+    //Only if the world is still the one checked - a regeneration meanwhile makes the report stale.
+    if (world == w){
         check_report = r;
         selected_issue = -1;
         view_version++;
@@ -849,6 +1025,11 @@ void ApplicationChasm::RenderChasmPanel(){
         b = f_view_squareness;  if (ImGui::Checkbox("squareness",&b)){ f_view_squareness = b; changed = true; }
         ImGui::SameLine();
         b = f_view_issues;      if (ImGui::Checkbox("check issues",&b)){ f_view_issues = b; changed = true; }
+        b = f_view_pins;        if (ImGui::Checkbox("pins",&b)){ f_view_pins = b; changed = true; }
+        ImGui::SameLine();
+        b = f_view_terrain;     if (ImGui::Checkbox("terrain",&b)){ f_view_terrain = b; }
+        ImGui::SameLine();
+        b = f_view_flat;        if (ImGui::Checkbox("flat",&b)){ f_view_flat = b; changed = true; }
         if (changed){
             view_version++;
         }
@@ -897,7 +1078,8 @@ void ApplicationChasm::RenderChasmPanel(){
 #endif
 
     if (ImGui::CollapsingHeader("Pick",ImGuiTreeNodeFlags_DefaultOpen)){
-        std::shared_ptr<const GridPicker> p = GetPicker();
+        std::shared_ptr<const ChasmWorld> pw = GetWorld();
+        const GridPicker* p = pw ? pw->picker.get() : NULL;
         auto show = [&](const char* label, const GridPick& pick){
             if (!p || !pick.f_hit){
                 ImGui::TextDisabled("%s: nothing",label);
@@ -908,7 +1090,8 @@ void ApplicationChasm::RenderChasmPanel(){
             for (int k = 0; k < 4; k++){
                 corners[k] = pg.fine.pos[pg.fine.quads[pick.fine_quad].v[k]];
             }
-            ImGui::Text("%s: plot %i, %i sides, %.1f units%s",label,pick.plot,p->PlotQuadCount(pick.plot),
+            ImGui::Text("%s: plot %i on the %s, %i sides, %.1f units%s",label,pick.plot,
+                        terrain_levels[pw->terrain->level[pick.plot]].name,p->PlotQuadCount(pick.plot),
                         p->PlotArea(pick.plot),pg.fine.f_boundary[pick.plot] ? " (outline)" : "");
             ImGui::Text("    fine cell %i, %.1f units, square %.2f",pick.fine_quad,p->FineArea(pick.fine_quad),
                         GridQuadSquareness(corners));
@@ -1004,6 +1187,9 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"valence",{{"type","boolean"}}},
                 {"squareness",{{"type","boolean"}}},
                 {"issues",{{"type","boolean"}}},
+                {"pins",{{"type","boolean"},{"description","the pinned lines and a tick on every vertex pinned to them"}}},
+                {"terrain",{{"type","boolean"},{"description","the terrain mesh (all builds)"}}},
+                {"flat",{{"type","boolean"},{"description","draw the grid layers at y = 0 instead of on the terrain - the true cell shapes near cliffs; pair with terrain:false"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
@@ -1022,10 +1208,15 @@ void ApplicationChasm::RegisterMCPTools(){
             layer("valence",f_view_valence);
             layer("squareness",f_view_squareness);
             layer("issues",f_view_issues);
+            layer("pins",f_view_pins);
+            layer("flat",f_view_flat);
             if (changed){
                 view_version++;
             }
 #endif
+            if (args.contains("terrain")){
+                f_view_terrain = args["terrain"].get<bool>();
+            }
             json result;
             main_scene->AtTickBoundary([&](){
                 if (args.value("frame_map",false)){
@@ -1049,7 +1240,8 @@ void ApplicationChasm::RegisterMCPTools(){
 #ifdef DEBUG
             result["layers"] = json{{"fine",f_view_fine.load()},{"coarse",f_view_coarse.load()},
                                     {"valence",f_view_valence.load()},{"squareness",f_view_squareness.load()},
-                                    {"issues",f_view_issues.load()}};
+                                    {"issues",f_view_issues.load()},{"pins",f_view_pins.load()},
+                                    {"flat",f_view_flat.load()},{"terrain",f_view_terrain.load()}};
 #endif
             //The screenshot is of a frame drawn after this returns, and PreRender rebuilds the
             //lines at the top of that frame - so new layers are already in the picture.
@@ -1082,26 +1274,24 @@ void ApplicationChasm::RegisterMCPTools(){
             }
             json result;
             bool f_point = false;
-            vec2 at;
+            GridPick pick;
             if (args.contains("px") && args.contains("py")){
                 int2 px;
                 px.x = args["px"].get<int>();
                 px.y = args["py"].get<int>();
-                bool f_ground = false;
                 //The camera is the physics thread's; read it between ticks.
                 main_scene->AtTickBoundary([&](){
-                    f_ground = GroundUnderPixel(px,at);
+                    pick = PickUnderPixel(px);
                 });
-                if (!f_ground){
-                    result["error"] = "that pixel's ray does not meet the ground";
+                if (!pick.f_hit){
+                    result["error"] = "that pixel's ray meets no level of the map";
                 }
-                f_point = f_ground;
+                f_point = true;
             }else if (args.contains("x") && args.contains("z")){
-                at = vec2(args["x"].get<float>(),args["z"].get<float>());
+                pick = p->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
                 f_point = true;
             }
             if (f_point){
-                GridPick pick = p->Pick(at);
                 result["pick"] = PickJson(*p,pick);
                 if (args.value("select",false)){
                     SetSelectedPick(pick);

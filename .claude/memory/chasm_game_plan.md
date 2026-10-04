@@ -31,6 +31,9 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   (Grid::lines + GridLevel::pin sliding vertices - reuse for the step 3 rim). Two agents share
   build/chasm_nophysics.exe: build, then COPY to build/chasm_<id>.exe and run the copy, or the
   running exe blocks the other's link.
+  STEP 3 BUILT same day: worker pinned rim+shard lines (Grid::lines[feature_line_base+i], smoothed);
+  Terrain.* levels + TerrainMesh.* (marching-squares cells, strata walls, skirt, 144 chunks), sun
+  shadows following the view. Objects have only 4 material slots - palette (step 4) replaces them.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.
 - RRandom IS seedable now (Generate(seed)); world gen should use its own instance.
 

@@ -9,6 +9,8 @@
 #include "Application.h"
 #include "Grid.h"
 #include "GridPick.h"
+#include "Terrain.h"
+#include "TerrainMesh.h"
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -16,13 +18,16 @@
 
     STEP 1: the grid generator, a top-down camera, and the grid drawn as lines with its debug
     views and checks. STEP 2: picking - the plot, fine cell and coarse cell under the cursor,
-    highlighted, and a click to select (GridPick.h).
+    highlighted, and a click to select (GridPick.h). STEP 3: terrain levels from the chasm's
+    feature lines, and the terrain drawn - ground, cliff walls, skirt (Terrain.h, TerrainMesh.h).
 
     --- THREADS -----------------------------------------------------------------------------------
-    The grid is IMMUTABLE once built and held by shared_ptr. Regenerating builds a new one on
-    whichever thread asked (the panel, an MCP handler) and swaps the pointer under grid_mutex; a
-    reader takes a copy of the pointer under the same mutex and then reads freely. So nothing ever
-    waits on a generation except whoever asked for it, and no reader can see half a grid.
+    Everything generated is one ChasmWorld - grid, picker, terrain, the mesh data - IMMUTABLE once
+    built and held by shared_ptr. Regenerating builds a new one on whichever thread asked (the
+    panel, an MCP handler) and swaps the pointer under grid_mutex; a reader takes a copy of the
+    pointer under the same mutex and then reads freely. So nothing ever waits on a generation
+    except whoever asked for it, no reader can see half a world, and no reader can pair one grid
+    with another grid's terrain.
 
     The camera state (camera_target and cam_*) belongs to the physics thread's UpdateView, which
     runs with physics_mutex held. The panel writes it directly (it holds that mutex too); an MCP
@@ -30,8 +35,16 @@
 
     --- DEBUG ONLY ---------------------------------------------------------------------------------
     The grid's line view, its layers and the checks exist only in a debug build (docs/README.md,
-    "Checks live in the app"). A release build generates the same grid and draws only the ground.
+    "Checks live in the app"). A release build generates the same world and draws the terrain.
 */
+
+struct ChasmWorld{
+    std::shared_ptr<const Grid> grid;
+    std::shared_ptr<const GridPicker> picker;
+    std::shared_ptr<const Terrain> terrain;
+    std::vector<GridLine> features;     //world coordinates: the rim, then shards
+    std::shared_ptr<const TerrainMeshData> mesh;
+};
 
 //App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed.
 #define INPUT_CHASM_ROTATE_LEFT     INPUT_LAST+1
@@ -54,6 +67,7 @@ public:
     //Any thread but the render thread's own frame. Builds a new grid and its picker, and makes
     //both current together.
     void RegenerateGrid(const GridSettings& s);
+    std::shared_ptr<const ChasmWorld> GetWorld();
     std::shared_ptr<const Grid> GetGrid();
     std::shared_ptr<const GridPicker> GetPicker();
 
@@ -67,8 +81,9 @@ public:
     GridPick GetHoverPick();
     GridPick GetSelectedPick();
     void SetSelectedPick(const GridPick& p);
-    //The ground point under a window pixel, through the camera. False if the ray misses it.
-    bool GroundUnderPixel(int2 px, vec2& out);
+    //What is under a window pixel, through the camera, on whichever level the ray meets first.
+    //A miss (sky, or off the map) comes back with f_hit false.
+    GridPick PickUnderPixel(int2 px);
 
     //--- The camera: an orbit around a point on the ground ----------------------------------------
     vec3 camera_target;
@@ -80,9 +95,16 @@ public:
 
 private:
     std::mutex grid_mutex;
-    std::shared_ptr<const Grid> grid;
-    std::shared_ptr<const GridPicker> picker;   //always built for `grid`, swapped with it
+    std::shared_ptr<const ChasmWorld> world;
     GridSettings next_settings;     //what the panel edits; the physics thread never reads it
+
+    //--- The terrain's chunks: one Object each, built on first need and reused after ----------------
+    std::vector<Object*> terrain_chunks;
+    std::shared_ptr<const TerrainMeshData> terrain_uploaded;    //render thread
+    bool f_terrain_shown = true;                                //render thread
+    std::atomic<bool> f_view_terrain{true};
+    int terrain_material[TERRAIN_NUM_SLOTS] = {};
+    void UploadTerrain();
 
     std::mutex pick_mutex;
     GridPick hover_pick;
@@ -95,17 +117,19 @@ private:
     //the game's cursor, not a debug view.
     Object* pick_view = NULL;
     Mesh* pick_view_mesh = NULL;
-    std::shared_ptr<const GridPicker> pick_view_built_for;  //render thread
+    std::shared_ptr<const ChasmWorld> pick_view_built_for;  //render thread
     int pick_view_built_version = -1;
     void UpdatePickView();
 
-    Object* ground = NULL;
     void BuildScene();
     void SetupInput();
     void UpdateCamera();
     void ApplyCamera();
-    void FitGround(const Grid& g);
-    std::shared_ptr<const Grid> ground_fitted_to;   //render thread
+
+    DirectionalLight* sun = NULL;
+    //Where the sun stands relative to what it lights, set in BuildScene.
+    vec3 sun_offset;
+    void FollowSun();
 
     vec3 cam_last_written;          //see UpdateCamera: how a camera_set from a tool is noticed
     std::chrono::steady_clock::time_point cam_last_update;
@@ -123,12 +147,14 @@ private:
     std::atomic<bool> f_view_valence{true};
     std::atomic<bool> f_view_squareness{false};
     std::atomic<bool> f_view_issues{true};
+    std::atomic<bool> f_view_pins{true};
+    std::atomic<bool> f_view_flat{false};   //every layer at y = 0 instead of on the terrain
     std::atomic<int> view_version{0};
     std::atomic<int> selected_issue{-1};
 
     Object* grid_view = NULL;
     Mesh* grid_view_mesh = NULL;
-    std::shared_ptr<const Grid> grid_view_built_for;    //render thread
+    std::shared_ptr<const ChasmWorld> grid_view_built_for;  //render thread
     int grid_view_built_version = -1;
     float grid_view_ms = 0.0f;
     int grid_view_vertices = 0;

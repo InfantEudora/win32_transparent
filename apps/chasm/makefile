@@ -21,6 +21,8 @@ APP_SRCS += main.cpp
 APP_SRCS += ApplicationChasm.cpp
 APP_SRCS += Grid.cpp
 APP_SRCS += GridPick.cpp
+APP_SRCS += Terrain.cpp
+APP_SRCS += TerrainMesh.cpp
 
 #NO PHYSICS: the grid, the terrain and the colony are this app's own rules, and nothing here
 #creates a PhysicsWorld. See the USE_PHYSICS block in engine.mk.

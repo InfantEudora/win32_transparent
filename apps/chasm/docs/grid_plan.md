@@ -75,11 +75,12 @@ stretch.
 
 The chasm rim, shard outlines, rivers and the coast are drawn as polylines, by hand for now.
 
-**Before coarse relaxation**, each feature is snapped to a chain of grid edges: its points snap to
-the nearest vertices, and the chain between them is the shortest path along edges. **During
-relaxation** those vertices slide along the polyline instead of moving freely, so the chain spaces
-itself out evenly and the quads around it relax square against a smooth curve. They stay pinned
-through fine relaxation.
+**On the triangle lattice, before the merge**, each feature is turned into a chain of lattice
+edges: a cheapest path that follows the line, chosen where every vertex is alike and while the
+merge along it can still be chosen (see "Step 3, grid side, as built"). **During relaxation** the
+chain's vertices slide along the line instead of moving freely, so the chain spaces itself out
+evenly and the quads around it relax square against a smooth curve. They stay pinned through fine
+relaxation.
 
 **Where the edge actually shows.** Terrain levels belong to vertices (section 4), so a level change
 runs through the middle of the cells between a high corner and a low one - half a cell outside the
@@ -90,15 +91,28 @@ in those cells its top edge goes; it is generated geometry, not a module.
 its vertices slide along, with the corners fixed (built 2026-10-04, see the end of this file). So
 the mechanism exists - `Grid::lines` and `GridLevel::pin` - and the rim adds lines to it.
 
-**Two lessons from the outline for the rim:**
+**What pinning taught, from the outline and then the rim and shard:**
 
-- **Sliding does not fix topology.** On a straight-ish stretch a chain vertex wants two quads on
-  each side; a vertex fanned by three is a 60-degree wedge that no relaxation can square. The
-  outline needed its outer ring of triangles paired deliberately before the random merge. The
-  rim's chain will need the same care - either choosing chain vertices that already have the right
-  fan, or merging along the chain on purpose.
-- **Projecting onto a line searches every segment.** Fine for four two-point lines; a long rim
-  polyline wants a per-vertex segment hint.
+- **Sliding does not fix topology.** A chain vertex wants as many quads on each side as that
+  side's angle has right angles - two a side on a straight stretch, one inside and three outside
+  a sharp tip. Too many is a 60-degree wedge, too few a quad bent toward flat, and no relaxation
+  squares either. So the merge along a chain is chosen, not random: the outline pairs its outer
+  ring, a feature pairs its triangles along the chain by dynamic programming.
+- **Only the lattice vertices need that care.** A lattice chain edge becomes two coarse chain edges
+  meeting at its midpoint, which has two quads a side whatever the merge does, and the same again
+  at the fine level. This is why chains are chosen on the lattice.
+- **A chain must hug its line, or the cells beside it pay.** Moving the chain onto the line
+  squashes the cells on one side. A chain that saves turns by cutting across curves enclosed 17%
+  too little of the shard, and the ring outside it was squashed to 0.6 of square. Straying has to
+  cost far more than turning, and the move onto the line is spread smoothly into the lattice
+  around it.
+- **A sharp tip needs a 120-degree turn.** The rim's tip is narrower than two lattice sides; a
+  chain allowed only 60-degree turns cut across it and folded the cells it left outside.
+- **The lattice limits how small a feature can be.** A chain is up to half a side (4 units) off
+  its line. A shard four sides across comes out a hexagon before it is pulled round, and the cells
+  just outside it stay sheared (see the as-built notes).
+- **Projecting onto a line keeps a segment hint per vertex** - searching every segment is fine for
+  four two-point lines, not for a rim of four hundred.
 
 ---
 
@@ -192,7 +206,7 @@ comes.
 |---|---|
 | 1 App, grid generator, grid view | BUILT 2026-10-04 - see below |
 | 2 Picking | BUILT 2026-10-04 - see below |
-| 3 Terrain levels and cliffs | planned |
+| 3 Terrain levels and cliffs | BUILT 2026-10-04 - grid side and terrain side, see below |
 | 4 Palette and lighting | planned |
 | 5 Painting zones | planned |
 | 6 Save, restore, replay | planned |
@@ -263,3 +277,97 @@ cut by the quad's centre and the two edge midpoints at that corner.
 
 **Plots differ a lot in size**: a six-sided plot measured 13.2 units against about 4 for a
 four-sided one. Counting plots would be unfair; capacity has to come from area (section 5).
+
+### Step 3, grid side, as built
+
+`GridSettings::features` holds the feature polylines in normalised map coordinates (u across, v
+from the -z edge to the +z edge); the defaults, `ChasmDefaultFeatures()`, are the rim (open, both
+ends on the v = 1 edge) and one shard (closed). Each is smoothed (centripetal Catmull-Rom,
+resampled every quarter side), mapped onto the map's rectangle and appended to `Grid::lines` from
+`Grid::feature_line_base` - the line the terrain reads, so grid and terrain agree on it.
+
+**How a feature is pinned** (`Grid.cpp`, `PinFeature` and what it calls), on the triangle lattice
+after the outer ring is paired and before the random merge:
+
+1. **The chain.** Points every four sides along the line are snapped to lattice vertices, and the
+   chain between each two is a Dijkstra path over (vertex, direction, turn state): a step costs
+   its length plus 12 x (distance from the line / side)^2, a 60-degree turn 0.25, a 120-degree
+   turn 0.5 and only where the line itself bends more than 60 degrees within a side, and a turn
+   the same way as the last 0.5 more. A step may not land beside another chain vertex, so two
+   chains or two parts of one never share a triangle. An open end on the map's edge takes the
+   nearest outline vertex, moved exactly onto the end and fixed.
+2. **The merge along it.** Each side of the chain is a strip of triangles; which neighbouring
+   pairs merge decides how many quads each chain vertex gets on that side. Dynamic programming
+   picks the pairs that come closest to each vertex's ideal - the line's angle on that side over 90
+   degrees, from the turn between the midpoints of its two chain edges. The random merge then may
+   not cross any edge at a chain vertex.
+3. **Onto the line.** Chain vertices are moved onto the line, and that move is spread into the
+   lattice around them by 40 passes of neighbour averaging, so the cells beside a chain move with it.
+4. **Down the levels.** Chain edges are named edge by edge, so subdivision pins exactly their
+   midpoints. A fine edge is on a feature's chain when both its ends are pinned to that line (or
+   are its fixed end). Relaxation keeps a segment hint per pinned vertex.
+
+**Measured, seed 1, debug** (seeds 2 and 3 in brackets):
+
+| | quads | mean | worst |
+|---|---|---|---|
+| Rim: fine quads touching its chain (453 vertices) | 906 | 0.877 (0.880, 0.876) | 0.477 (0.471, 0.487) |
+| Shard: the same (60 vertices) | 122 | 0.811 (0.796, 0.794) | 0.498 (0.557, 0.526) |
+| Interior: quads with no pinned corner | | 0.910 | 0.583 |
+| Whole map | 99,808 | 0.910 | 0.477 |
+
+Topology along the chains is all but exact: of about 110 rim lattice vertices a side, one has a
+quad more than its ideal; the shard's 15 have none on one side and two on the other. No quad
+folds. Generation 280 ms in debug and 162 ms in release (was 257 and 142). Seeds 1-3 are
+re-pinned, the same in both builds. `chasm_check` gained a **features** check (each chain one
+piece, unbranched, ends where it should, on its line; ends on the map's edge fixed) and reports
+squareness per chain and for the interior.
+
+**Open: small closed features.** The ring of cells just outside the shard is sheared - they meet
+the chain at a slant, median height 0.72 of their width against 0.95 everywhere else along a chain.
+The cells outside follow a grid turned about 45 degrees to the chain there, and the first row has
+to bridge the two. The shard is four lattice sides across, so its chain is a rough hexagon up to
+half a side off the line, and the lattice cannot do better. Doubling the relaxation passes and
+fixing one chain vertex (no rigid rotation) both left it unchanged. The likely fix is choosing a
+small feature's chain on the coarse grid, a quarter the size, rather than the lattice; it was not
+needed for this step. The rim, about 90 units across, does not show it; how small a feature can be
+before it does has not been measured.
+
+### Step 3, terrain side, as built
+
+`Terrain.h` / `Terrain.cpp` give every fine vertex a level; `TerrainMesh.h` / `TerrainMesh.cpp`
+turn the levels into triangles; `ApplicationChasm` holds grid, picker, terrain and mesh data as one
+immutable `ChasmWorld`, swapped whole on regeneration, so nothing can pair one grid with another's
+terrain.
+
+- **Levels:** plateau 0, shard -24, floor -70. The chasm is the smoothed rim line closed a little
+  *past* the south edge (closed along the edge, the vertices on it sat exactly on the polygon and
+  half of them came out plateau - a cliff across the chasm's mouth). A vertex pinned to the rim is
+  plateau, one pinned to a shard is shard, a fixed vertex is plateau; the rest by inside test.
+  Seed 1: plateau 91,569, shard 331, floor 8,541 vertices.
+- **Mesh:** per fine cell, marching squares on high corners against low, cut at edge midpoints -
+  one high polygon (saddles join their high corners), one ground polygon per run of low corners, and
+  a wall down each cut. Walls are cut into 6-unit strata, each row offset by smooth value noise of
+  world position, so neighbouring cells' walls meet exactly and each stratum reads as one ledge (an
+  independent offset per vertex looked like crumpled foil). A skirt drops the map's outline to -90
+  so the map reads as a block. 144 chunks of 48 units, culled by bounds. Seed 1: 215,034
+  triangles, 11,856 in walls, 116 ms in debug.
+- **Four material slots** (ground, floor, two rocks) - an Object has `NUM_MATERIAL_SLOTS` 4. Stand-ins
+  until the palette (step 4).
+- **Shadows:** the sun casts them, from the south-west and fairly low so the walls shadow the floor.
+  It follows the view as archer's does: the ortho scales with camera distance and the light moves
+  in whole texels, so edges do not crawl while panning. Its far plane is set to reach the floor -
+  `DirectionalLight`'s default 100 would stop short.
+- **Picking on levels:** the ray is tried against each level's plane from the top down; the first
+  whose point lands on a plot of that level wins. Pick results and the panel name the level.
+- **Views:** grid layers lie on the terrain (an edge between levels drops at its midpoint, where the
+  cliff is cut). New layers: *pins* (the smoothed feature lines, a tick on every pinned vertex,
+  outline / rim / shard in grey / magenta / cyan, fixed vertices as tall red ticks), *terrain* (the
+  mesh on or off, all builds), *flat* (every layer at y = 0, for judging cell shapes near cliffs -
+  on the terrain a cliff cell reads as a long spoke from above).
+- **Checks added:** `levels` (every level the features call for is present), `steps` (no cell spans
+  three levels), `pin levels` (every feature-pinned vertex is on its high side; 511 on seed 1).
+
+**Open:** level assignment tests every vertex against the whole smoothed rim (about 400 points) -
+43 ms in debug, up from 3 ms against the hand-drawn corners. A bounding-box test first, or the
+pinned chain itself, would bring it back down. Not urgent at one generation per map.

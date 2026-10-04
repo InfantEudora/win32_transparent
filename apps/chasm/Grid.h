@@ -32,6 +32,25 @@
     seed is (README.md, "The world is a seed plus edits").
 */
 
+/*
+    A LINE THAT VERTICES SLIDE ALONG while the grid relaxes - grid_plan.md section 3. A vertex
+    pinned to one stays on it but moves along it freely, so the vertices space themselves out and
+    the quads beside them square up against it. The map's four straight edges are lines, and so is
+    every feature pinned into the grid: the chasm rim, the shards.
+
+    An open polyline. A closed one repeats its first point at the end.
+*/
+struct GridLine{
+    std::vector<vec2> points;
+};
+
+#define GRID_PIN_FREE   -1      //relaxes freely
+#define GRID_PIN_FIXED  -2      //never moves: where lines meet, like the map's corners
+
+//The chasm map's features, in GridSettings::features' normalised coordinates: the rim (open,
+//both ends on the v = 1 edge) and one shard (closed).
+std::vector<GridLine> ChasmDefaultFeatures();
+
 struct GridSettings{
     uint32_t seed = 1;
     //How many FINE cells to aim for. The lattice is sized from it, so the count that comes out is
@@ -45,6 +64,13 @@ struct GridSettings{
     int relax_passes_fine = 40;
     //How far toward its best-fit square a vertex moves per pass, 0..1.
     float relax_strength = 0.5f;
+    /*
+        Lines pinned into the grid, as drawn: corners of a polyline, smoothed when generated. In
+        NORMALISED map coordinates - u = 0..1 left to right (x), v = 0..1 from the -z edge to the
+        +z edge - so they keep their place when the map's size changes. An open feature whose end
+        lies on the map's edge is fixed there.
+    */
+    std::vector<GridLine> features = ChasmDefaultFeatures();
 
     bool operator==(const GridSettings& o) const;
 };
@@ -53,21 +79,6 @@ struct GridQuad{
     int v[4] = {-1,-1,-1,-1};   //corners, positively wound in (x, z)
     int parent = -1;            //fine: the coarse quad it was split from. coarse: -1
 };
-
-/*
-    A LINE THAT VERTICES SLIDE ALONG while the grid relaxes - grid_plan.md section 3. A vertex
-    pinned to one stays on it but moves along it freely, so the vertices space themselves out and
-    the quads beside them square up against it. Today these are the map's four straight edges;
-    step 3 adds the chasm rim and the other features the same way.
-
-    An open polyline. A closed one repeats its first point at the end.
-*/
-struct GridLine{
-    std::vector<vec2> points;
-};
-
-#define GRID_PIN_FREE   -1      //relaxes freely
-#define GRID_PIN_FIXED  -2      //never moves: where lines meet, like the map's corners
 
 struct GridLevel{
     std::vector<vec2> pos;                      //x = world x, y = world z
@@ -88,12 +99,18 @@ public:
     GridSettings settings;
     GridLevel coarse;
     GridLevel fine;
-    //What GridLevel::pin indexes, shared by both levels. Lines 0-3 are the map's left, right,
-    //bottom and top edges.
+    /*
+        What GridLevel::pin indexes, shared by both levels, in world coordinates. Lines 0-3 are the
+        map's -x, +x, -z and +z edges; feature i of the settings is line feature_line_base + i,
+        smoothed. A feature's chain is the edges whose two ends are both on its line - pinned to
+        it, or the fixed vertex at an end of it that lies on the map's edge.
+    */
     std::vector<GridLine> lines;
+    int feature_line_base = 4;
 
     int num_lattice_triangles = 0;
     int num_leftover_triangles = 0;     //triangles the merge found no partner for
+    int num_unfinished_features = 0;    //features whose chain could not be completed (the check says where)
     vec2 bounds_min, bounds_max;
     float generate_ms = 0.0f;
 
@@ -118,7 +135,7 @@ void GridSquareFit(const vec2 p[4], vec2 target[4]);
     camera can be sent to it.
 */
 struct GridIssue{
-    std::string kind;       //"valence", "folded", "edge", "outline", "squareness"
+    std::string kind;       //"valence", "folded", "edge", "outline", "feature", "squareness", "feature_squareness"
     int index = -1;         //the fine vertex or quad it is about
     vec2 where;
     bool f_failure = true;  //false: worth looking at, not wrong (the worst-squareness quads)
@@ -131,6 +148,15 @@ struct GridCheckResult{
     std::string detail;
 };
 
+//How square the fine quads touching one feature's chain are.
+struct GridChainFigures{
+    int line = -1;              //Grid::lines index
+    int vertices = 0;           //fine vertices on the chain
+    int quads = 0;
+    float squareness_mean = 0.0f;
+    float squareness_min = 0.0f;
+};
+
 struct GridCheckReport{
     bool f_pass = true;
     std::vector<GridCheckResult> results;
@@ -138,6 +164,10 @@ struct GridCheckReport{
     uint64_t hash = 0;
     float squareness_mean = 0.0f;
     float squareness_min = 0.0f;
+    //The quads with no pinned corner - what the grid does when nothing is holding it.
+    float squareness_interior_mean = 0.0f;
+    float squareness_interior_min = 0.0f;
+    std::vector<GridChainFigures> chains;
     int valence_hist[8] = {};   //interior fine vertices by valence, 7 = seven or more
     float check_ms = 0.0f;
 };
