@@ -23,12 +23,14 @@ APP_SRCS += Grid.cpp
 APP_SRCS += GridPick.cpp
 APP_SRCS += Terrain.cpp
 APP_SRCS += TerrainMesh.cpp
+APP_SRCS += Zones.cpp
+APP_SRCS += ZoneMesh.cpp
 
 #NO PHYSICS: the grid, the terrain and the colony are this app's own rules, and nothing here
 #creates a PhysicsWorld. See the USE_PHYSICS block in engine.mk.
 USE_PHYSICS := 0
 
-#Only the shared tree so far - this app has no assets of its own until the palette (step 4).
-ASSET_ROOTS := $(ROOT)/shared_assets
+#The same two roots main.cpp declares, in the same order: this app's own (the palette) first.
+ASSET_ROOTS := assets $(ROOT)/shared_assets
 
 include $(ROOT)/engine.mk

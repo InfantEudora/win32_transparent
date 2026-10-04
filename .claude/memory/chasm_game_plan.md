@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-04T14:13:34.698Z
+  modified: 2026-10-04T19:29:06.577Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -34,7 +34,19 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   STEP 3 BUILT same day: worker pinned rim+shard lines (Grid::lines[feature_line_base+i], smoothed);
   Terrain.* levels + TerrainMesh.* (marching-squares cells, strata walls, skirt, 144 chunks), sun
   shadows following the view. Objects have only 4 material slots - palette (step 4) replaces them.
+  STEP 4 BUILT same day: assets/textures/palette.png (PNG is the source; Palette.h layout), core
+  Renderer::ambient_sky/ambient_ground (hemisphere) + background_color added, lighting tuned by
+  MEASURING pixels vs art_source/chasm/alittleagedemo.jpg; frustum culling on for chasm.
+  STEP 5 BUILT same day: Zones.* rules (house per plot w/ storeys, field per coarse cell) changed
+  ONLY by CHASM_CMD_ZONE commands; ZoneMesh.* placeholders; step 6 must RECORD COMMANDS (view
+  turns mouse into commands). Third window f6 is modelling props in art_source/chasm/chasm_props.blend
+  -> assets/meshes/chasm_props.glb (palette.png stays the single source; palette is 32x16 now).
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.
+  PROPS BUILT + ACCEPTED same day: 15 assets (4 pines 38-58 tris, 3 oaks 58-118, rocks, stump, log,
+  bushes) in chasm_props.blend "Export"; re-export = the collection's exporter (one click), NOT
+  apps/chasm/tools/blender_chasm_props.py (that only builds a FRESH .blend, needs --force, wipes
+  edits). blender_chasm_props_check.py --verify (reimports GLB: origin, row-0 UVs, flat normals) /
+  --render (previews/). Stump/log cut faces borrow PAL_PATH: no free palette column.
 - RRandom IS seedable now (Generate(seed)); world gen should use its own instance.
 
 **Why:** the user wants the building mechanic tested before any gameplay goes on top.

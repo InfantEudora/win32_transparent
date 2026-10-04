@@ -26,21 +26,17 @@
 */
 
 /*
-    Mesh material slots - TerrainMesh writes these as vertex matid; the app binds a material to
-    each. FOUR, because an Object has NUM_MATERIAL_SLOTS = 4. A stand-in until the palette texture
-    (step 4), where every colour becomes a UV into one material and this list goes away.
+    COLOUR IS A UV INTO THE PALETTE (Palette.h): every vertex has matid 0 and picks its cell, so the
+    whole terrain draws with the one palette material.
 */
-#define TERRAIN_SLOT_GROUND     0       //plateau and shard tops
-#define TERRAIN_SLOT_FLOOR      1
-#define TERRAIN_SLOT_ROCK_A     2
-#define TERRAIN_SLOT_ROCK_B     3       //and the skirt
-#define TERRAIN_NUM_SLOTS       4
 
 #define TERRAIN_CHUNK_SIZE      48.0f       //world units on a side
 #define TERRAIN_SKIRT_BOTTOM    -90.0f      //below the floor, so the block has a base
 
 struct TerrainChunk{
     std::vector<vertex> verts;
+    std::vector<int> quads;     //the fine quads whose ground is in this chunk - what else lays out
+                                //per chunk (the zones, ZoneMesh.h) uses the same split
 };
 
 struct TerrainMeshData{
@@ -53,5 +49,11 @@ struct TerrainMeshData{
 };
 
 void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out);
+
+//The ground's height at `p` on a level - the level plus the relief the terrain mesh gives it, so
+//anything laid on the ground (fields, foundations) lands exactly on what is drawn.
+float TerrainGroundHeight(const vec2& p, float level_height);
+//The chunk a fine quad belongs to, by its centre - the same rule BuildTerrainMesh uses.
+int TerrainChunkOfQuad(const Grid& g, const TerrainMeshData& m, int quad);
 
 #endif

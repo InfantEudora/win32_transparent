@@ -4,10 +4,26 @@
 #include <chrono>
 #include <cmath>
 #include <unordered_map>
+#include "Palette.h"
 
 #define WALL_BAND_HEIGHT    6.0f    //a rock stratum; also the wall's vertical resolution
 #define WALL_ROUGHNESS      1.4f    //how far a stratum may stand out or sit back, world units
 #define WALL_NOISE_SCALE    7.0f    //world units over which one stratum's offset changes
+
+/*
+    The ground's gentle relief, looks only (grid_plan.md section 4: buildable land is flat within a
+    level). A few tenths of a unit, so a triangle's face tilts enough to catch the sun differently
+    from its neighbour - the faceted low-poly ground of the reference - while a house still stands
+    on what reads as flat. Every ground vertex gets it through Ground(), walls' top and bottom rows
+    included, so ground and wall still meet exactly.
+*/
+#define GROUND_BUMP         0.25f
+#define GROUND_BUMP_SCALE   14.0f
+
+//Palette column "this cell's grass shade" - Cell resolves it from the coarse cell the fine one
+//belongs to, so the shades lie in field-sized patches rather than speckling every triangle (which
+//read as noise at the game's zoom).
+#define COLUMN_GRASS        -1
 
 namespace {
 
@@ -49,15 +65,18 @@ vec2 Jitter(const vec2& p, int band){
     return vec2(ValueNoise(x,z,band * 2),ValueNoise(x + 31.7f,z + 17.3f,band * 2 + 1)) * WALL_ROUGHNESS;
 }
 
-//Strata: a band's rock, by band index, so a stratum runs at one height along the whole wall.
-int RockSlot(int band){
-    static const int pattern[5] = {TERRAIN_SLOT_ROCK_A,TERRAIN_SLOT_ROCK_B,TERRAIN_SLOT_ROCK_A,
-                                   TERRAIN_SLOT_ROCK_A,TERRAIN_SLOT_ROCK_B};
-    return pattern[band % 5];
+//A ground point at `level_height`, with the relief added. Position alone decides it - see Jitter.
+float Ground(const vec2& p, float level_height){
+    float x = p.x / GROUND_BUMP_SCALE;
+    float z = p.y / GROUND_BUMP_SCALE;
+    float n = ValueNoise(x,z,1001) * 0.8f + ValueNoise(x * 2.7f,z * 2.7f,1002) * 0.2f;
+    return level_height + n * GROUND_BUMP;
 }
 
-int LevelSlot(int level){
-    return (level == TERRAIN_FLOOR) ? TERRAIN_SLOT_FLOOR : TERRAIN_SLOT_GROUND;
+//Strata: a band's rock, by band index, so a stratum runs at one height along the whole wall.
+int RockColumn(int band){
+    static const int pattern[7] = {0,1,2,1,3,0,2};
+    return PAL_ROCK_0 + pattern[band % 7];
 }
 
 class Builder{
@@ -78,7 +97,7 @@ public:
 
     //Wound so its face normal agrees with `want`: the renderer culls back faces, and which way
     //round a generated triangle comes out is otherwise an accident of the cell's corner order.
-    void Tri(vec3 a, vec3 b, vec3 c, const vec3& want, int slot){
+    void Tri(vec3 a, vec3 b, vec3 c, const vec3& want, int column){
         vec3 n = (b - a).cross(c - a);
         if (n.dot(want) < 0.0f){
             std::swap(b,c);
@@ -88,6 +107,9 @@ public:
             return;
         }
         n.normalize();
+        if (column == COLUMN_GRASS){
+            column = grass_column;
+        }
         vec3 tangent = b - a;
         if (tangent.length() > 1e-9f){
             tangent.normalize();
@@ -95,28 +117,36 @@ public:
         vertex v = {};
         v.normal = n;
         v.tangent = tangent;
-        v.uv = vec2(0.0f,0.0f);
-        v.matid = slot;
+        v.uv = PaletteUV(column,row);
+        v.matid = 0;
         v.pos = a; chunk->verts.push_back(v);
         v.pos = b; chunk->verts.push_back(v);
         v.pos = c; chunk->verts.push_back(v);
         data.num_triangles++;
     }
 
-    void Fan(const std::vector<vec3>& p, const vec3& want, int slot){
+    void Fan(const std::vector<vec3>& p, const vec3& want, int column){
         for (size_t i = 1; i + 1 < p.size(); i++){
-            Tri(p[0],p[i],p[i + 1],want,slot);
+            Tri(p[0],p[i],p[i + 1],want,column);
         }
+    }
+
+    vec3 GroundPoint(const vec2& p, float level_height){
+        return vec3(p.x,Ground(p,level_height),p.y);
     }
 
     /*
         A wall from `top` down to `bottom_a`/`bottom_b` along a->b, facing `out`, cut into bands.
-        The first and last rows stay exactly on the cut, so the wall meets the ground above and
-        below it; the rows between stray by Jitter.
+        The first and last rows stay exactly on the cut and on the ground's relief, so the wall
+        meets the ground above and below it; the rows between stray by Jitter.
     */
     void Wall(const vec2& a, const vec2& b, float top, float bottom_a, float bottom_b, const vec3& out){
         float drop = top - std::min(bottom_a,bottom_b);
         int bands = std::max(1,(int)std::ceil(drop / WALL_BAND_HEIGHT - 0.01f));
+        float top_a = Ground(a,top);
+        float top_b = Ground(b,top);
+        float bot_a = Ground(a,bottom_a);
+        float bot_b = Ground(b,bottom_b);
         for (int j = 0; j < bands; j++){
             float t0 = (float)j / bands;
             float t1 = (float)(j + 1) / bands;
@@ -124,14 +154,14 @@ public:
             vec2 b0 = b + ((j > 0) ? Jitter(b,j) : vec2(0.0f,0.0f));
             vec2 a1 = a + ((j + 1 < bands) ? Jitter(a,j + 1) : vec2(0.0f,0.0f));
             vec2 b1 = b + ((j + 1 < bands) ? Jitter(b,j + 1) : vec2(0.0f,0.0f));
-            vec3 A0(a0.x,top + (bottom_a - top) * t0,a0.y);
-            vec3 B0(b0.x,top + (bottom_b - top) * t0,b0.y);
-            vec3 A1(a1.x,top + (bottom_a - top) * t1,a1.y);
-            vec3 B1(b1.x,top + (bottom_b - top) * t1,b1.y);
-            int slot = RockSlot(j);
+            vec3 A0(a0.x,top_a + (bot_a - top_a) * t0,a0.y);
+            vec3 B0(b0.x,top_b + (bot_b - top_b) * t0,b0.y);
+            vec3 A1(a1.x,top_a + (bot_a - top_a) * t1,a1.y);
+            vec3 B1(b1.x,top_b + (bot_b - top_b) * t1,b1.y);
+            int column = RockColumn(j);
             int before = data.num_triangles;
-            Tri(A0,B0,B1,out,slot);
-            Tri(A0,B1,A1,out,slot);
+            Tri(A0,B0,B1,out,column);
+            Tri(A0,B1,A1,out,column);
             data.num_wall_triangles += data.num_triangles - before;
         }
     }
@@ -151,7 +181,9 @@ public:
             centre += p[k];
         }
         SetChunkAt(centre * 0.25f);
+        chunk->quads.push_back(q);
         const vec3 up(0.0f,1.0f,0.0f);
+        grass_column = PAL_GRASS_0 + (int)(Hash3(quad.parent,0,77) % PAL_GRASS_COUNT);
 
         bool high[4];
         int num_high = 0;
@@ -166,9 +198,9 @@ public:
         if (num_high == 4){
             std::vector<vec3> poly;
             for (int k = 0; k < 4; k++){
-                poly.push_back(vec3(p[k].x,h[k],p[k].y));
+                poly.push_back(GroundPoint(p[k],h[k]));
             }
-            Fan(poly,up,LevelSlot(lv[0]));
+            Fan(poly,up,(lv[0] == TERRAIN_FLOOR) ? PAL_FLOOR : COLUMN_GRASS);
             return;
         }
 
@@ -179,16 +211,17 @@ public:
         }
 
         //The high part: every high corner and every cut, in order - one polygon even in the saddle.
+        //Drawn as the lip: the edge of the ground along a cliff top, a shade off the grass.
         std::vector<vec3> poly;
         for (int k = 0; k < 4; k++){
             if (high[k]){
-                poly.push_back(vec3(p[k].x,hmax,p[k].y));
+                poly.push_back(GroundPoint(p[k],hmax));
             }
             if (high[k] != high[(k + 1) % 4]){
-                poly.push_back(vec3(m[k].x,hmax,m[k].y));
+                poly.push_back(GroundPoint(m[k],hmax));
             }
         }
-        Fan(poly,up,LevelSlot(high_level));
+        Fan(poly,up,(high_level == TERRAIN_FLOOR) ? PAL_FLOOR : PAL_LIP);
 
         //Each run of low corners: its ground, and the wall down to it from the cut.
         for (int k = 0; k < 4; k++){
@@ -201,17 +234,19 @@ public:
             int j = first;
             vec2 low_centre(0.0f,0.0f);
             int count = 0;
-            low.push_back(vec3(m[k].x,h[first],m[k].y));
+            low.push_back(GroundPoint(m[k],h[first]));
             while (!high[j]){
-                low.push_back(vec3(p[j].x,h[j],p[j].y));
+                low.push_back(GroundPoint(p[j],h[j]));
                 low_centre += p[j];
                 count++;
                 j = (j + 1) % 4;
             }
             int last = (j + 3) % 4;
             //Leaves through edge last -> j.
-            low.push_back(vec3(m[last].x,h[last],m[last].y));
-            Fan(low,up,LevelSlot(lv[first]));
+            low.push_back(GroundPoint(m[last],h[last]));
+            //The ground at a wall's foot, a shade darker: the shade the wall itself would cast,
+            //standing in for occlusion the renderer does not compute at this scale.
+            Fan(low,up,(lv[first] == TERRAIN_FLOOR) ? PAL_FLOOR_DARK : COLUMN_GRASS);
 
             vec2 a = m[k];
             vec2 b = m[last];
@@ -261,21 +296,24 @@ public:
                 float ha = t.Height(ia);
                 float hb = t.Height(ib);
                 if (ha == hb){
-                    SkirtPanel(a,b,ha,out);
+                    SkirtPanel(a,b,ha,ha,out);
                 }else{
-                    SkirtPanel(a,mid,ha,out);
-                    SkirtPanel(mid,b,hb,out);
+                    SkirtPanel(a,mid,ha,ha,out);
+                    SkirtPanel(mid,b,hb,hb,out);
                 }
             }
         }
     }
 
-    void SkirtPanel(const vec2& a, const vec2& b, float top, const vec3& out){
-        vec3 A0(a.x,top,a.y), B0(b.x,top,b.y);
+    void SkirtPanel(const vec2& a, const vec2& b, float level_a, float level_b, const vec3& out){
+        vec3 A0 = GroundPoint(a,level_a), B0 = GroundPoint(b,level_b);
         vec3 A1(a.x,TERRAIN_SKIRT_BOTTOM,a.y), B1(b.x,TERRAIN_SKIRT_BOTTOM,b.y);
-        Tri(A0,B0,B1,out,TERRAIN_SLOT_ROCK_B);
-        Tri(A0,B1,A1,out,TERRAIN_SLOT_ROCK_B);
+        Tri(A0,B0,B1,out,PAL_EARTH);
+        Tri(A0,B1,A1,out,PAL_EARTH);
     }
+
+    int row = PAL_TEMPERATE;    //the biome; one for the whole map until biomes exist
+    int grass_column = PAL_GRASS_0;     //the current cell's, see COLUMN_GRASS
 
 private:
     const Grid& grid;
@@ -284,6 +322,17 @@ private:
     TerrainChunk* chunk = NULL;
 };
 
+}
+
+float TerrainGroundHeight(const vec2& p, float level_height){
+    return Ground(p,level_height);
+}
+
+int TerrainChunkOfQuad(const Grid& g, const TerrainMeshData& m, int quad){
+    vec2 c = g.FineQuadCentre(quad);
+    int cx = std::max(0,std::min(m.chunks_x - 1,(int)((c.x - g.bounds_min.x) / TERRAIN_CHUNK_SIZE)));
+    int cz = std::max(0,std::min(m.chunks_z - 1,(int)((c.y - g.bounds_min.y) / TERRAIN_CHUNK_SIZE)));
+    return cz * m.chunks_x + cx;
 }
 
 void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out){

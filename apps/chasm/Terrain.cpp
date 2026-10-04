@@ -17,19 +17,89 @@ const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS] = {
 
 namespace {
 
-bool InPolygon(const vec2& pt, const std::vector<vec2>& p){
-    bool f_in = false;
-    size_t n = p.size();
-    for (size_t i = 0, j = n - 1; i < n; j = i++){
-        if ((p[i].y > pt.y) != (p[j].y > pt.y)){
-            float x = p[j].x + (pt.y - p[j].y) * (p[i].x - p[j].x) / (p[i].y - p[j].y);
-            if (pt.x < x){
-                f_in = !f_in;
+/*
+    The even-odd point-in-polygon test, for a hundred thousand points against a polygon of hundreds
+    of edges - which, testing every edge, took 43 ms. Only an edge that straddles the point's z can
+    be crossed, so the edges are bucketed into bands of z and a point tests just its own band's.
+    Each edge's test is the plain one, unchanged, and the answer is the parity of the crossings,
+    which does not depend on the order they are counted in - so it answers exactly what testing
+    every edge would (checked vertex by vertex against that on seeds 1-3 when it was written).
+
+    A band holds every edge whose z range touches it. Mapping z to a band subtracts and divides,
+    both of which keep order, so an edge that straddles a point's z is always in that point's band.
+*/
+class CrossingTable{
+public:
+    explicit CrossingTable(const std::vector<vec2>& polygon) : p(polygon){
+        size_t n = p.size();
+        if (n < 3){
+            return;
+        }
+        z_min = z_max = p[0].y;
+        for (const vec2& q : p){
+            z_min = std::min(z_min,q.y);
+            z_max = std::max(z_max,q.y);
+        }
+        int bands = std::max(1,(int)n / 2);
+        band_size = (z_max - z_min) / (float)bands;
+        if (band_size <= 0.0f){
+            return;
+        }
+        first.assign(bands + 1,0);
+        auto band_of = [&](float z){ return std::max(0,std::min(bands - 1,(int)((z - z_min) / band_size))); };
+        //Counted, then filled, so the edges sit in one array in band order.
+        for (int pass = 0; pass < 2; pass++){
+            std::vector<int> at;
+            if (pass == 1){
+                for (int b = 0; b < bands; b++){
+                    first[b + 1] += first[b];
+                }
+                edges.resize(first[bands]);
+                at.assign(first.begin(),first.end() - 1);
+            }
+            for (size_t i = 0, j = n - 1; i < n; j = i++){
+                int b0 = band_of(std::min(p[i].y,p[j].y));
+                int b1 = band_of(std::max(p[i].y,p[j].y));
+                for (int b = b0; b <= b1; b++){
+                    if (pass == 0){
+                        first[b + 1]++;
+                    }else{
+                        edges[at[b]++] = (int)i;
+                    }
+                }
             }
         }
     }
-    return f_in;
-}
+
+    bool Inside(const vec2& pt) const{
+        if (first.empty() || pt.y < z_min || pt.y > z_max){
+            return false;   //no edge straddles it
+        }
+        int bands = (int)first.size() - 1;
+        int b = std::max(0,std::min(bands - 1,(int)((pt.y - z_min) / band_size)));
+        bool f_in = false;
+        size_t n = p.size();
+        for (int e = first[b]; e < first[b + 1]; e++){
+            size_t i = (size_t)edges[e];
+            size_t j = i == 0 ? n - 1 : i - 1;
+            if ((p[i].y > pt.y) != (p[j].y > pt.y)){
+                float x = p[j].x + (pt.y - p[j].y) * (p[i].x - p[j].x) / (p[i].y - p[j].y);
+                if (pt.x < x){
+                    f_in = !f_in;
+                }
+            }
+        }
+        return f_in;
+    }
+
+private:
+    const std::vector<vec2>& p;
+    float z_min = 0.0f;
+    float z_max = 0.0f;
+    float band_size = 0.0f;
+    std::vector<int> first;     //band b's edges are edges[first[b] .. first[b + 1])
+    std::vector<int> edges;     //each by the index of its second end; its first is the point before
+};
 
 }
 
@@ -67,6 +137,12 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
         chasm.push_back(vec2(last.x,last.y + past * dir_last));
         chasm.push_back(vec2(first.x,first.y + past * dir_first));
     }
+    CrossingTable chasm_table(chasm);
+    std::vector<CrossingTable> shard_tables;
+    shard_tables.reserve(features.size());
+    for (size_t f = 1; f < features.size(); f++){
+        shard_tables.emplace_back(features[f].points);
+    }
     for (size_t v = 0; v < n; v++){
         const vec2& p = g.fine.pos[v];
         int pin = g.fine.pin[v] - g.feature_line_base;
@@ -79,10 +155,10 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
             l = TERRAIN_PLATEAU;
         }else if (pin >= 1){
             l = TERRAIN_SHARD;
-        }else if (!chasm.empty() && InPolygon(p,chasm)){
+        }else if (!chasm.empty() && chasm_table.Inside(p)){
             l = TERRAIN_FLOOR;
-            for (size_t f = 1; f < features.size(); f++){
-                if (InPolygon(p,features[f].points)){
+            for (const CrossingTable& shard : shard_tables){
+                if (shard.Inside(p)){
                     l = TERRAIN_SHARD;
                     break;
                 }

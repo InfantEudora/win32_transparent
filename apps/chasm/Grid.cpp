@@ -757,19 +757,18 @@ bool ChainSegment(const Lattice& L, ChainSearch& search, const GridLine& line, c
 }
 
 /*
-    What a chain vertex costs with `quads` coarse quads on one side of it, when the line's angle
-    on that side wants `ideal` - a right angle each (ChainIdealQuads). One too many is a 60 degree
-    wedge, which costs; one too few is a quad bent toward flat, which no relaxation recovers.
+    What a chain vertex costs with `quads` coarse quads on one side of it, when that side wants
+    `ideal` (ChainIdealQuads). One too many is a 60 degree wedge. One quad where the angle wants two
+    or more is a quad bent toward flat, which no relaxation recovers. Two where a long bend wanted
+    three only leaves that bend's corner unsquared - it costs, but like a wedge, not like a flat quad.
 */
 float FanCost(int quads, int ideal){
     int over = quads - ideal;
-    switch (over){
-        case 0: return 0.0f;
-        case 1: return 1.0f;
-        case 2: return 3.0f;
-        case -1: return 40.0f;
+    if (over >= 0){
+        static const float cost[4] = {0.0f,1.0f,3.0f,6.0f};
+        return cost[std::min(over,3)];
     }
-    return over > 0 ? 6.0f : 80.0f;
+    return quads <= 1 ? 40.0f * (float)(-over) : (float)(-over);
 }
 
 /*
@@ -961,10 +960,17 @@ void PairAlongChain(Lattice& L, const std::vector<int>& chain, bool f_closed, co
 }
 
 /*
-    How many quads each chain vertex wants on each side: the line's angle on that side over 90
-    degrees, rounded. The angle is the line's turn between the midpoints of the vertex's two chain
-    edges, so a bend is shared out between the vertices along it instead of being counted by each.
-    Straight on is two a side; a sharp tip is one inside and three outside.
+    How many quads each chain vertex wants on each side. Two on a straight stretch. At a sharp bend -
+    more than 45 degrees between the midpoints of the vertex's two chain edges - one inside and three
+    or four outside, the line's angle on each side over 90 degrees.
+
+    And on the outside of a long bend, one more for every 90 degrees it turns in all, even where no
+    single vertex turns much. The cells along a chain turn with it; a closed line turns them a
+    whole circle, and with two quads a side everywhere the grid outside has to twist round to meet
+    them, which shears the ring of cells beside the chain. An extra quad on the outside is a corner
+    of the turn - four of them square a shard off as a square's corners would. `ref` is the
+    direction the cells were last squared to; it turns exactly 90 degrees per extra quad, and a
+    wiggle that comes back never reaches 45 degrees from it, so only a real bend adds any.
 */
 void ChainIdealQuads(const Lattice& L, const std::vector<int>& chain, bool f_closed, const GridLine& line,
                      const std::vector<float>& s, std::vector<int> ideal[2]){
@@ -988,9 +994,11 @@ void ChainIdealQuads(const Lattice& L, const std::vector<int>& chain, bool f_clo
         return 0.5f * (a + b);
     };
     const float cos45 = 0.70710678f;
-    for (int k = 0; k < n; k++){
-        if (!f_closed && (k == 0 || k == n - 1)){
-            continue;
+    int first = f_closed ? 0 : 1;
+    vec2 ref = LineTangent(line,s,between(at[(first + n - 1) % n],at[first]));
+    for (int k = first; k < n; k++){
+        if (!f_closed && k == n - 1){
+            break;
         }
         float from = between(at[(k + n - 1) % n],at[k]);
         float to = between(at[k],at[(k + 1) % n]);
@@ -1010,6 +1018,26 @@ void ChainIdealQuads(const Lattice& L, const std::vector<int>& chain, bool f_clo
             }else{
                 quads_cw = 1;
                 quads_ccw = f_very ? 4 : 3;
+            }
+        }
+        //The sharp bend's extra quads square the cells off by 90 degrees each.
+        for (int e = 2; e < quads_cw; e++){
+            ref = Rot90(ref);
+        }
+        for (int e = 2; e < quads_ccw; e++){
+            ref = RotM90(ref);
+        }
+        //The long bend's: the outside of a turn of more than 45 degrees since the cells were last
+        //squared off.
+        if (ref.dot(b) < cos45){
+            if (ref.x * b.y - ref.y * b.x > 0.0f){
+                if (quads_cw < 4){
+                    quads_cw++;
+                    ref = Rot90(ref);
+                }
+            }else if (quads_ccw < 4){
+                quads_ccw++;
+                ref = RotM90(ref);
             }
         }
         ideal[0][k] = quads_ccw;
@@ -1558,12 +1586,12 @@ struct PinnedGridHash{
     uint32_t seed;
     uint64_t hash;
 };
-//Pinned 2026-10-04 with the chasm features (rim and shard) pinned in, the same in the debug and
-//release builds.
+//Pinned 2026-10-04 with the chasm features pinned in and long bends given their outside corners,
+//the same in the debug and release builds.
 static const PinnedGridHash pinned_grid_hashes[] = {
-    {1,0x81dc6515b6741bb1ull},
-    {2,0x66f956be7e0d0b41ull},
-    {3,0xe6624dba3547e761ull},
+    {1,0xab97cdd4446dedf8ull},
+    {2,0x7e4560b6573a5a9bull},
+    {3,0xb81886e5477f98e9ull},
 };
 
 #define GRID_ISSUES_MAX         200     //enough to see a pattern, few enough to draw and list

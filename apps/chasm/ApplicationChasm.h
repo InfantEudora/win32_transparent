@@ -11,6 +11,9 @@
 #include "GridPick.h"
 #include "Terrain.h"
 #include "TerrainMesh.h"
+#include "ChasmWorld.h"
+#include "Zones.h"
+#include "ZoneMesh.h"
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -38,19 +41,27 @@
     "Checks live in the app"). A release build generates the same world and draws the terrain.
 */
 
-struct ChasmWorld{
-    std::shared_ptr<const Grid> grid;
-    std::shared_ptr<const GridPicker> picker;
-    std::shared_ptr<const Terrain> terrain;
-    std::vector<GridLine> features;     //world coordinates: the rim, then shards
-    std::shared_ptr<const TerrainMeshData> mesh;
-};
 
-//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed.
+//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1/2/3 pick
+//(and pick again to drop) the house, field and erase tools.
 #define INPUT_CHASM_ROTATE_LEFT     INPUT_LAST+1
 #define INPUT_CHASM_ROTATE_RIGHT    INPUT_LAST+2
 #define INPUT_CHASM_FRAME           INPUT_LAST+3
 #define INPUT_CHASM_NEXT_SEED       INPUT_LAST+4
+#define INPUT_CHASM_TOOL_HOUSE      INPUT_LAST+5
+#define INPUT_CHASM_TOOL_FIELD      INPUT_LAST+6
+#define INPUT_CHASM_TOOL_ERASE      INPUT_LAST+7
+
+//The app's simulation commands, past core's.
+#define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp
+
+//What a left click does.
+enum ChasmTool{
+    CHASM_TOOL_SELECT = 0,
+    CHASM_TOOL_HOUSE,
+    CHASM_TOOL_FIELD,
+    CHASM_TOOL_ERASE
+};
 
 class ApplicationChasm : public Application{
 public:
@@ -58,6 +69,7 @@ public:
 
     void Init(void) override;
     void UpdateView(void) override;
+    void RunSimulationTick(void) override;
     void PreRender(void) override;
 #ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
@@ -103,7 +115,7 @@ private:
     std::shared_ptr<const TerrainMeshData> terrain_uploaded;    //render thread
     bool f_terrain_shown = true;                                //render thread
     std::atomic<bool> f_view_terrain{true};
-    int terrain_material[TERRAIN_NUM_SLOTS] = {};
+    int palette_material = -1;      //the one material everything is drawn with (Palette.h)
     void UploadTerrain();
 
     std::mutex pick_mutex;
@@ -112,6 +124,32 @@ private:
     std::atomic<int> pick_version{0};
     void UpdatePick();
     json PickJson(const GridPicker& p, const GridPick& pick);
+
+    /*
+        --- Zones (step 5) --------------------------------------------------------------------------
+        `zones` is SIMULATION state, the physics thread's alone: changed only by CHASM_CMD_ZONE
+        commands as a tick drains them. After each change a copy is published (zone_snapshot, under
+        grid_mutex) for everyone else - the view, the panel, the tools - which is the world's
+        pattern again: readers get an immutable copy, never the live state.
+    */
+    Zones zones;
+    std::shared_ptr<const ZoneState> zone_snapshot;
+    std::string zone_last_refusal;              //under grid_mutex
+    std::atomic<uint32_t> zone_commands_done{0};
+    void EnsureZonesWorld();                    //physics thread: a new map empties the zones
+    void PublishZones();                        //physics thread
+    std::shared_ptr<const ZoneState> GetZones();
+    void SubmitZone(int op, int index);         //any thread; queued for the next tick
+    void RegisterCommandHandlers();
+
+    std::atomic<int> paint_tool{CHASM_TOOL_SELECT};
+    int paint_last_index = -1;                  //physics thread: what a drag last painted
+    void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked);
+
+    std::vector<Object*> zone_chunks;
+    std::vector<uint32_t> zone_chunk_built;     //render thread: chunk_version each was built at
+    std::shared_ptr<const ChasmWorld> zone_built_world;
+    void UploadZones();
 
     //The cursor's highlight, rebuilt only when a pick or the grid changes. All builds - this is
     //the game's cursor, not a debug view.

@@ -22,12 +22,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug->Info("nShowCmd = %i\n",nShowCmd);
 
     /*
-        Only the shared root for now: everything chasm draws is generated, and it has no assets of
-        its own until the palette texture (step 4). Its own root goes FIRST when it does, as in
-        every other app, so it can override a shared file. Not declared in a baked build - see the
-        same block in apps/bomber/main.cpp.
+        This app's own root first - the palette lives there - then the shared one for the engine's
+        shaders, as in every other app, so a file here overrides a shared one. Not declared in a
+        baked build - see the same block in apps/bomber/main.cpp.
     */
 #ifndef ASSETS_BAKED
+    AddAssetSearchRootFromExe("../assets");                 //apps/chasm/assets
     AddAssetSearchRootFromExe("../../../shared_assets");
 #endif
 

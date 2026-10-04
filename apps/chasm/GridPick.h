@@ -43,6 +43,8 @@ public:
     float PlotArea(int v) const;
     //How many fine quads share vertex v - the plot's number of sides.
     int PlotQuadCount(int v) const { return vert_start[v + 1] - vert_start[v]; }
+    //The i-th of them, as quad * 4 + the corner of that quad which is v. i < PlotQuadCount(v).
+    int PlotQuadCorner(int v, int i) const { return vert_quads[vert_start[v] + i]; }
 
     //A coarse quad's outline as fine segments, bends and all (Grid.h: its shape is its children).
     void CoarseOutline(int c, std::vector<vec2>& segments) const;

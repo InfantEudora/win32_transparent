@@ -1320,6 +1320,11 @@ void Application::RenderEngineWindow(){
         //In shadow-map texels. The GPU cost steps up at each whole number - 1, 9, 25, 49 gathers
         //a fragment - so watch the colour pass in Performance while dragging it.
         ImGui::SliderFloat("Sun shadow softness",&renderer->shadow_pcf_radius,0.0f,3.0f);
+        //HDR so the ambient can be dragged past 1 per channel; linear colour, times the albedo.
+        ImGui::ColorEdit3("Ambient sky",&renderer->ambient_sky.x,ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+        ImGui::ColorEdit3("Ambient ground",&renderer->ambient_ground.x,ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+        //Alpha 0 is "no background" - transparent, as every app had before this existed.
+        ImGui::ColorEdit4("Background",&renderer->background_color.x,ImGuiColorEditFlags_Float);
 
         //Only an app that called EnableFieldShadows has anything to show here, which is one of
         //them - the controls would otherwise be four dead widgets in every other app's panel.

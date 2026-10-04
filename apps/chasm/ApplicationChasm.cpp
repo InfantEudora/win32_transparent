@@ -13,6 +13,8 @@
 #include "Debug.h"
 #include "Primitives.h"
 #include "Light.h"
+#include "Texture.h"
+#include "Palette.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -29,8 +31,8 @@ static Debugger* debug = new Debugger("ApplicationChasm",DEBUG_ALL);
 #define CHASM_CAM_KEY_PAN       0.9f        //camera distances per second, arrows/WASD
 #define CHASM_CAM_DRAG_PAN      0.0012f     //camera distances per mouse count, right-drag
 #define CHASM_CAM_WHEEL_STEP    0.88f       //distance multiplier per wheel notch
-#define CHASM_GRID_VIEW_Y       0.02f
-#define PICK_VIEW_Y             0.05f       //over the grid view's lines
+#define CHASM_GRID_VIEW_Y       0.40f       //over the ground's relief (TerrainMesh.cpp, GROUND_BUMP)
+#define PICK_VIEW_Y             0.45f       //over the grid view's lines
 #define SUN_DISTANCE            400.0f      //how far out the sun's shadow camera sits from the view
 #define SUN_EXTENT_PER_DISTANCE 0.9f        //shadow half-extent per unit of camera distance
 
@@ -49,8 +51,16 @@ void ApplicationChasm::Init(void){
     if (!renderer->Init(shader_vert_name,shader_frag_name,PIPELINE_DEFERRED)){
         debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
-    //No skybox until the look is decided (step 4). A flat clear reads the grid lines best.
+    //No skybox: the background is a flat haze colour (Renderer::background_color, set from the
+    //palette in BuildScene), which is what the reference's soft look wants behind the map.
     renderer->f_render_skybox = false;
+    /*
+        Frustum culling on (Renderer.h calls it a measuring prototype, off by default). It suits this
+        app: the terrain is 144 large chunks with bounds, and at the game's zoom about a third are in
+        view. Measured 2026-10-04 at that zoom: G-buffer 1.11 -> 0.49 ms, colour 1.88 -> 1.29 ms,
+        46 of 144 chunks drawn. The shadow pass is never culled, by design.
+    */
+    renderer->f_frustum_cull = true;
     default_shader = new Shader(shader_vert_name,shader_lit_frag_name);
 
     main_window->Resize(1440,810);
@@ -72,6 +82,9 @@ void ApplicationChasm::Init(void){
     FrameMap();
 
     SetupInput();
+    RegisterCommandHandlers();
+    //Init is the render thread before the physics thread exists, so the zones may be set up here.
+    EnsureZonesWorld();
 #ifdef USE_MCP
     RegisterMCPTools();
 #endif
@@ -79,53 +92,60 @@ void ApplicationChasm::Init(void){
 
 void ApplicationChasm::BuildScene(){
     /*
-        A key light and a cool fill, the repo's usual pair - see BuildLighting in apps/bomber for why
-        one light alone reads as night.
+        THE LIGHT: one sun and the sky (step 4, matched against the A Little Age screenshot).
 
-        The sun casts the shadows, and follows the view (FollowSun): one shadow map over the whole
-        768-unit map would be a few texels per house. Its depth range has to reach from the sun,
-        SUN_DISTANCE out, past the chasm floor and the skirt - DirectionalLight's own default far
-        plane is 100, which would cut the shadow off at the plateau.
+        The sun stands high in the north-west, so shadows fall short and down-right on screen, as in
+        the reference. It casts the shadows and follows the view (FollowSun): one shadow map over
+        the whole 768-unit map would be a few texels per house. Its depth range has to reach from
+        the sun, SUN_DISTANCE out, past the chasm floor and the skirt - DirectionalLight's own
+        default far plane is 100, which would cut the shadow off at the plateau.
+
+        The sky is the renderer's ambient hemisphere, not a second light: a cool, bright sky above a
+        dim warm ground is what keeps a shadow blue and readable rather than black, and lights a
+        wall facing away from the sun by the sky it does face.
     */
-    //From the south-west and fairly low, so the chasm's walls throw shadow across its floor.
-    vec3 sun_dir(-0.45f,0.80f,0.40f);
+    vec3 sun_dir(-0.50f,0.85f,-0.35f);
     sun_dir.normalize();
     sun_offset = sun_dir * SUN_DISTANCE;
 
     sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
-    sun->color = vec3(1.0f,0.96f,0.90f);
-    sun->brightness = 5.0f;
+    sun->color = vec3(1.0f,0.95f,0.86f);
+    //Soft light, as the reference: lit ground about 1.05x its palette colour and shade about 0.7x,
+    //so most of it is the sky's and the sun only adds the rest. Measured against
+    //art_source/chasm/alittleagedemo.jpg, not judged by eye.
+    sun->brightness = 1.7f;
     sun->SetupOrthographic(4096,4096,60.0f,1.0f,SUN_DISTANCE * 2.0f);
     sun->SetPosition(sun_offset);
     sun->SetLookAt(vec3());
     main_scene->AddObject(sun);
 
-    DirectionalLight* fill = new DirectionalLight();
-    fill->name = "Directional Light (Fill)";
-    fill->SetPosition(vec3(300,350,-300));
-    fill->color = vec3(0.72f,0.80f,1.00f);
-    fill->brightness = 1.8f;
-    fill->f_casts_shadow = false;
-    fill->SetLookAt(vec3());
-    main_scene->AddObject(fill);
+    renderer->ambient_sky = vec3(0.64f,0.69f,0.80f);
+    //The ground's bounce, warm and fairly bright: a wall facing sideways takes half of this, and at
+    //0.30 white plaster read as grey. Flat ground faces the sky and does not see it.
+    renderer->ambient_ground = vec3(0.46f,0.42f,0.34f);
 
-    //The terrain's materials, one per TerrainMesh slot. Stand-ins until the palette (step 4).
-    struct{ const char* name; vec4 color; } terrain_mats[TERRAIN_NUM_SLOTS] = {
-        {"chasm_ground",vec4(0.34f,0.50f,0.24f,1.0f)},
-        {"chasm_floor", vec4(0.17f,0.19f,0.16f,1.0f)},
-        {"chasm_rock_a",vec4(0.55f,0.42f,0.30f,1.0f)},
-        {"chasm_rock_b",vec4(0.32f,0.25f,0.21f,1.0f)},
-    };
-    for (int i = 0; i < TERRAIN_NUM_SLOTS; i++){
-        Material mat = {};
-        mat.name = terrain_mats[i].name;
-        mat.glsl_material.color = terrain_mats[i].color;
-        mat.glsl_material.metallic = 0.0f;
-        mat.glsl_material.roughness = 0.95f;
-        renderer->AddMaterial(mat);
-        terrain_material[i] = renderer->FindMaterialIndex(mat.name);
+    //Everything is drawn with the palette (Palette.h): white, so the texture IS the colour, and
+    //fully rough, so no surface throws a specular sheen the reference does not have.
+    Texture* palette = renderer->LoadTexture("textures/palette.png");
+    Material mat = {};
+    mat.name = "chasm_palette";
+    mat.glsl_material.color = vec4(1.0f,1.0f,1.0f,1.0f);
+    mat.glsl_material.metallic = 0.0f;
+    mat.glsl_material.roughness = 1.0f;
+    if (palette && !palette->IsEmpty()){
+        mat.glsl_material.diffuse_texture = 0;
+        mat.glsl_material.handle_diffuse = palette->texture_handle;
+        mat.diff_texture = palette;
+        //The background is the palette's haze cell, so it moves with the palette when it is edited.
+        vec2 uv = PaletteUV(PAL_HAZE,PAL_TEMPERATE);
+        vec3 haze = palette->GetValueAt(uv.x,uv.y) / 255.0f;
+        renderer->background_color = vec4(haze.x,haze.y,haze.z,1.0f);
+    }else{
+        debug->Err("No palette (textures/palette.png) - the terrain draws white\n");
     }
+    renderer->AddMaterial(mat);
+    palette_material = renderer->FindMaterialIndex(mat.name);
 
     pick_view = new Object();
     pick_view->name = "Pick View";
@@ -160,6 +180,9 @@ void ApplicationChasm::SetupInput(){
     input->AddKeyMap('E',INPUT_CHASM_ROTATE_RIGHT);
     input->AddKeyMap('F',INPUT_CHASM_FRAME);
     input->AddKeyMap('N',INPUT_CHASM_NEXT_SEED);
+    input->AddKeyMap('1',INPUT_CHASM_TOOL_HOUSE);
+    input->AddKeyMap('2',INPUT_CHASM_TOOL_FIELD);
+    input->AddKeyMap('3',INPUT_CHASM_TOOL_ERASE);
 #endif
 }
 
@@ -296,6 +319,11 @@ void ApplicationChasm::UpdatePick(){
             hover = PickUnderPixel(px);
         }
     }
+    //A paint tool takes the left button; selecting is what the button does with no tool.
+    bool f_painting = (paint_tool != CHASM_TOOL_SELECT);
+    if (f_painting){
+        UpdatePaint(hover,f_over_scene,f_clicked);
+    }
     std::lock_guard<std::mutex> lock(pick_mutex);
     if (hover != hover_pick){
         hover_pick = hover;
@@ -303,10 +331,179 @@ void ApplicationChasm::UpdatePick(){
     }else{
         hover_pick.at = hover.at;   //same plot, new point - not worth a rebuild
     }
-    if (f_clicked && f_over_scene && selected_pick != hover){
+    if (!f_painting && f_clicked && f_over_scene && selected_pick != hover){
         //A click on nothing - off the map - clears the selection, which is also the way to clear it.
         selected_pick = hover;
         pick_version++;
+    }
+}
+
+//--- Zones (step 5) ------------------------------------------------------------------------------
+
+std::shared_ptr<const ZoneState> ApplicationChasm::GetZones(){
+    std::lock_guard<std::mutex> lock(grid_mutex);
+    return zone_snapshot;
+}
+
+//PHYSICS THREAD. Zones belong to one map; when the map has been regenerated they start empty.
+void ApplicationChasm::EnsureZonesWorld(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (zones.GetWorld() != w){
+        zones.Reset(w);
+        PublishZones();
+    }
+}
+
+//PHYSICS THREAD, after every change: a copy for everyone else (see `zones` in the header).
+void ApplicationChasm::PublishZones(){
+    std::shared_ptr<const ZoneState> copy = std::make_shared<ZoneState>(zones.State());
+    {
+        std::lock_guard<std::mutex> lock(grid_mutex);
+        zone_snapshot = copy;
+    }
+    //The hover's red-or-not depends on the zones, so the cursor is redrawn with them.
+    pick_version++;
+}
+
+void ApplicationChasm::SubmitZone(int op, int index){
+    if (index < 0){
+        return;
+    }
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_ZONE;
+    cmd.subtype = (uint32_t)index;
+    cmd.value[0] = (float)op;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::RegisterCommandHandlers(){
+    /*
+        The ONLY way the zones change. The op and the index travel in the command, so a recorded
+        run repaints exactly the same plots on replay (step 6) - which is why the mouse is never
+        read here: what was under the cursor is decided when the command is made, by the view.
+    */
+    main_scene->RegisterCommandHandler(CHASM_CMD_ZONE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            EnsureZonesWorld();
+            bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype);
+            {
+                std::lock_guard<std::mutex> lock(grid_mutex);
+                zone_last_refusal = zones.last_refusal;
+            }
+            if (f_changed){
+                PublishZones();
+            }
+            zone_commands_done++;
+            return OBJECTID_INVALID;
+        });
+}
+
+void ApplicationChasm::RunSimulationTick(void){
+    EnsureZonesWorld();
+}
+
+/*
+    PHYSICS THREAD, from UpdatePick, with a paint tool in hand: the mouse made into zone commands.
+
+    A press paints what is under it - and on a house adds a storey; with shift it takes one off
+    instead. Held and dragged, it paints each NEW plot or cell the cursor reaches, once: a drag
+    never stacks storeys, so sweeping across a street lays one floor and clicking raises it.
+    Erase takes the house off a plot if there is one, otherwise the field off its cell.
+*/
+void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked){
+    InputController* input = main_scene->inputcontroller;
+    bool f_held = input->IsKeyDown(INPUT_CLICK_LEFT);
+    if (!f_held){
+        paint_last_index = -1;
+    }
+    if (!f_over_scene || !hover.f_hit || !(f_clicked || f_held)){
+        return;
+    }
+    bool f_shift = input->IsKeyDown(INPUT_SHIFT);
+    int tool = paint_tool;
+    int index = (tool == CHASM_TOOL_FIELD) ? hover.coarse_quad : hover.plot;
+    if (!f_clicked && index == paint_last_index){
+        return;     //still on what the drag already painted
+    }
+    paint_last_index = index;
+
+    int op = ZONE_OP_NONE;
+    if (tool == CHASM_TOOL_HOUSE){
+        if (f_shift){
+            op = f_clicked ? ZONE_OP_HOUSE_REMOVE : ZONE_OP_HOUSE_ERASE;
+        }else{
+            op = f_clicked ? ZONE_OP_HOUSE_ADD : ZONE_OP_HOUSE_PAINT;
+        }
+    }else if (tool == CHASM_TOOL_FIELD){
+        op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_FIELD_PAINT;
+    }else if (tool == CHASM_TOOL_ERASE){
+        std::shared_ptr<const ZoneState> z = GetZones();
+        if (z && !z->storeys.empty() && z->storeys[hover.plot]){
+            op = ZONE_OP_HOUSE_ERASE;
+        }else if (z && !z->field.empty() && z->field[hover.coarse_quad]){
+            op = ZONE_OP_FIELD_ERASE;
+            index = hover.coarse_quad;
+        }
+    }
+    if (op != ZONE_OP_NONE){
+        SubmitZone(op,index);
+    }
+}
+
+/*
+    RENDER THREAD. Rebuilds the zone mesh of every chunk whose zones moved since it was last built -
+    a click rebuilds one or two chunks, not the map. A new map hides them all until something is
+    painted on it.
+*/
+void ApplicationChasm::UploadZones(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!w){
+        return;
+    }
+    size_t n = w->mesh->chunks.size();
+    if (zone_chunks.size() < n){
+        main_scene->AtTickBoundary([&](){
+            while (zone_chunks.size() < n){
+                Object* chunk = new Object();
+                chunk->name = "Zones " + std::to_string(zone_chunks.size());
+                chunk->SetMesh(new Mesh());
+                chunk->SetMaterialSlot(0,palette_material);
+                chunk->SetPickability(false);
+                chunk->SetVisualOnly(true);
+                chunk->SetVisibility(false);
+                main_scene->AddObject(chunk);
+                zone_chunks.push_back(chunk);
+            }
+        });
+    }
+    bool f_new_world = (w != zone_built_world);
+    if (f_new_world){
+        zone_built_world = w;
+        zone_chunk_built.assign(zone_chunks.size(),0xFFFFFFFFu);
+        for (Object* o : zone_chunks){
+            o->SetVisibility(false);
+        }
+    }
+    if (!z || z->world != w){
+        return;
+    }
+    std::vector<vertex> verts;
+    for (size_t i = 0; i < n; i++){
+        uint32_t v = z->chunk_version[i];
+        //Built at a version (not "changed" flags), so nothing is lost if two changes land between
+        //frames. A chunk never painted sits at 0 and needs no mesh.
+        if (zone_chunk_built[i] == v || (v == 0 && zone_chunk_built[i] == 0xFFFFFFFFu)){
+            continue;
+        }
+        zone_chunk_built[i] = v;
+        BuildZoneChunk(*w,*z,(int)i,verts);
+        if (verts.empty()){
+            zone_chunks[i]->SetVisibility(false);
+        }else{
+            zone_chunks[i]->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
+            zone_chunks[i]->SetVisibility(true);
+        }
     }
 }
 
@@ -340,6 +537,8 @@ json ApplicationChasm::PickJson(const GridPicker& p, const GridPick& pick){
 #define PICK_HOVER_CELL         0xFFFFFFFFu
 #define PICK_HOVER_COARSE       0xFF80C8FFu
 #define PICK_SELECTED_PLOT      0xFFFF50E0u
+#define PICK_PAINT_OK           0xFF60FF60u
+#define PICK_PAINT_REFUSED      0xFFFF3030u
 
 /*
     RENDER THREAD. The hover as three outlines - plot, fine cell, coarse cell - and the selected
@@ -392,8 +591,26 @@ void ApplicationChasm::UpdatePickView(){
     }
     if (hover.f_hit){
         y = w->terrain->Height(hover.plot);
+        /*
+            With a paint tool, what it would paint is drawn green, or red where the rules refuse it
+            (Zones.h) - so a refusal is seen before the click, not after. An existing house or field
+            counts as fine: clicking it is a storey more, or nothing.
+        */
+        int tool = paint_tool;
+        std::shared_ptr<const ZoneState> zs = GetZones();
+        ZoneState empty;
+        const ZoneState& z = (zs && zs->world == w) ? *zs : empty;
+        uint32_t coarse_colour = PICK_HOVER_COARSE;
+        uint32_t plot_colour = PICK_HOVER_PLOT;
+        if (tool == CHASM_TOOL_HOUSE){
+            bool f_ok = (!z.storeys.empty() && z.storeys[hover.plot]) || ZoneCanHouse(*w,z,hover.plot,NULL);
+            plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
+        }else if (tool == CHASM_TOOL_FIELD){
+            bool f_ok = (!z.field.empty() && z.field[hover.coarse_quad]) || ZoneCanField(*w,z,hover.coarse_quad,NULL);
+            coarse_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
+        }
         p->CoarseOutline(hover.coarse_quad,segs);
-        emit(PICK_HOVER_COARSE);
+        emit(coarse_colour);
         const GridQuad& q = g.fine.quads[hover.fine_quad];
         for (int k = 0; k < 4; k++){
             segs.push_back(g.fine.pos[q.v[k]]);
@@ -401,7 +618,7 @@ void ApplicationChasm::UpdatePickView(){
         }
         emit(PICK_HOVER_CELL);
         p->PlotOutline(hover.plot,segs);
-        emit(PICK_HOVER_PLOT);
+        emit(plot_colour);
     }
 
     if (verts.empty()){
@@ -458,9 +675,7 @@ void ApplicationChasm::UploadTerrain(){
             Object* chunk = new Object();
             chunk->name = "Terrain " + std::to_string(terrain_chunks.size());
             chunk->SetMesh(new Mesh());
-            for (int s = 0; s < TERRAIN_NUM_SLOTS; s++){
-                chunk->SetMaterialSlot(s,terrain_material[s]);
-            }
+            chunk->SetMaterialSlot(0,palette_material);
             chunk->SetPickability(false);
             chunk->SetVisualOnly(true);
             chunk->SetVisibility(false);
@@ -620,6 +835,17 @@ void ApplicationChasm::UpdateView(void){
     InputController* input = main_scene->inputcontroller;
     UpdateCamera();
     FollowSun();
+    //The tool keys toggle: the active tool's key again puts it down.
+    if (input->IsInputLive()){
+        const int keys[3] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE};
+        const int tools[3] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE};
+        for (int i = 0; i < 3; i++){
+            if (input->WasKeyPressed(keys[i])){
+                paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
+                pick_version++;
+            }
+        }
+    }
     //After the camera, so the ray goes through the view this pass will draw.
     UpdatePick();
     if (input->WasKeyPressed(INPUT_CHASM_FRAME) && input->IsInputLive()){
@@ -643,6 +869,7 @@ void ApplicationChasm::UpdateView(void){
 //RENDER THREAD, before the scene draws: the only place GL may be touched for the meshes below.
 void ApplicationChasm::PreRender(void){
     UploadTerrain();
+    UploadZones();
     UpdatePickView();
 #ifdef DEBUG
     UpdateGridView();
@@ -887,6 +1114,10 @@ std::shared_ptr<const GridCheckReport> ApplicationChasm::RunChecks(){
     }
     std::shared_ptr<GridCheckReport> r = std::make_shared<GridCheckReport>(RunGridChecks(*w->grid));
     RunTerrainChecks(*w->grid,*w->terrain,w->features,*r);
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (z){
+        RunZoneChecks(*w,*z,*r);
+    }
     debug->Info("Grid check: %s in %.1f ms\n",r->f_pass ? "PASS" : "FAIL",r->check_ms);
     for (const GridCheckResult& c : r->results){
         debug->Info("  %-14s %s  %s\n",c.name.c_str(),c.f_skipped ? "skip" : (c.f_pass ? "pass" : "FAIL"),c.detail.c_str());
@@ -1076,6 +1307,38 @@ void ApplicationChasm::RenderChasmPanel(){
 #else
     ImGui::TextDisabled("The grid view and the checks are in debug builds only.");
 #endif
+
+    if (ImGui::CollapsingHeader("Paint",ImGuiTreeNodeFlags_DefaultOpen)){
+        int tool = paint_tool;
+        //"##tool" suffixes: "Field" and friends are plain words other widgets may use too.
+        if (ImGui::RadioButton("Select##tool",tool == CHASM_TOOL_SELECT)) tool = CHASM_TOOL_SELECT;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("House (1)##tool",tool == CHASM_TOOL_HOUSE)) tool = CHASM_TOOL_HOUSE;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Field (2)##tool",tool == CHASM_TOOL_FIELD)) tool = CHASM_TOOL_FIELD;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Erase (3)##tool",tool == CHASM_TOOL_ERASE)) tool = CHASM_TOOL_ERASE;
+        if (tool != paint_tool){
+            paint_tool = tool;
+            pick_version++;
+        }
+        ImGui::TextDisabled("click paints, drag paints more; on a house a click adds a storey, shift takes one off");
+        std::shared_ptr<const ChasmWorld> zw = GetWorld();
+        std::shared_ptr<const ZoneState> z = GetZones();
+        if (zw && z && z->world == zw){
+            ZoneStats st = ComputeZoneStats(*zw,*z);
+            ImGui::Text("%i houses, %i storeys, %.0f units of floor",st.houses,st.storeys,st.house_floor_area);
+            ImGui::Text("%i fields, %.0f units of field",st.fields,st.field_area);
+        }
+        std::string refusal;
+        {
+            std::lock_guard<std::mutex> lock(grid_mutex);
+            refusal = zone_last_refusal;
+        }
+        if (!refusal.empty()){
+            ImGui::TextColored(ImVec4(1.0f,0.45f,0.35f,1.0f),"last refused: %s",refusal.c_str());
+        }
+    }
 
     if (ImGui::CollapsingHeader("Pick",ImGuiTreeNodeFlags_DefaultOpen)){
         std::shared_ptr<const ChasmWorld> pw = GetWorld();
@@ -1300,6 +1563,106 @@ void ApplicationChasm::RegisterMCPTools(){
             result["hover"] = PickJson(*p,GetHoverPick());
             result["selected"] = PickJson(*p,GetSelectedPick());
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
+        });
+
+    MCPServer::Get()->RegisterTool("chasm_paint",
+        "Paint a zone, exactly as the mouse does: the command goes through the simulation's queue "
+        "and is applied on the next tick. op: house_add (a house, or a storey more), house_paint (a "
+        "house only if there is none - what a drag does), house_remove (a storey less), "
+        "house_erase, field_paint, field_erase. Name the place as world x/z, or directly as plot "
+        "(a fine vertex, for house ops) or cell (a coarse quad, for field ops). Returns whether it "
+        "changed anything, the refusal if not (the rules: a house needs flat ground all round its "
+        "plot and no field; a field needs a flat coarse cell and no house; at most 4 storeys), and "
+        "the zone totals. Needs the simulation running (not paused) to be applied.",
+        json{
+            {"type","object"},
+            {"properties",{
+                {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase"}}}},
+                {"x",{{"type","number"}}},
+                {"z",{{"type","number"}}},
+                {"plot",{{"type","integer"}}},
+                {"cell",{{"type","integer"}}},
+                {"include_screenshot",{{"type","boolean"}}},
+                {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
+            }},
+            {"required",{"op"}}
+        },
+        [this](const json& args) -> json {
+            std::shared_ptr<const ChasmWorld> w = GetWorld();
+            if (!w){
+                return json{{"error","no world"}};
+            }
+            std::string name = args.value("op",std::string());
+            int op = ZONE_OP_NONE;
+            for (int i = 1; i < ZONE_OP_COUNT; i++){
+                if (name == ZoneOpName(i)){
+                    op = i;
+                }
+            }
+            if (op == ZONE_OP_NONE){
+                return json{{"error","unknown op " + name}};
+            }
+            bool f_field = (op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE);
+            int index = -1;
+            if (args.contains("x") && args.contains("z")){
+                GridPick pick = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
+                if (pick.f_hit){
+                    index = f_field ? pick.coarse_quad : pick.plot;
+                }
+            }else if (args.contains(f_field ? "cell" : "plot")){
+                index = args[f_field ? "cell" : "plot"].get<int>();
+            }
+            if (index < 0){
+                return json{{"error","no plot or cell there"}};
+            }
+            SimCommand cmd;
+            cmd.type = CHASM_CMD_ZONE;
+            cmd.subtype = (uint32_t)index;
+            cmd.value[0] = (float)op;
+            uint32_t before = zone_commands_done.load();
+            //SubmitCommandAndWait, not SubmitZone: the tool reports what the command DID, so it has
+            //to have run - see Application::SubmitCommandAndWait.
+            SubmitCommandAndWait(cmd);
+            bool f_ran = zone_commands_done.load() != before;
+            std::shared_ptr<const ZoneState> z = GetZones();
+            std::string refusal;
+            {
+                std::lock_guard<std::mutex> lock(grid_mutex);
+                refusal = zone_last_refusal;
+            }
+            json result{{"op",name},{f_field ? "cell" : "plot",index},{"ran",f_ran},{"refusal",refusal}};
+            if (z && z->world == w){
+                ZoneStats st = ComputeZoneStats(*w,*z);
+                result["totals"] = json{{"houses",st.houses},{"storeys",st.storeys},{"floor_area",st.house_floor_area},
+                                        {"fields",st.fields},{"field_area",st.field_area}};
+                if (!f_field){
+                    result["storeys_here"] = z->storeys[index];
+                }else{
+                    result["field_here"] = (bool)z->field[index];
+                }
+            }
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
+        });
+
+    MCPServer::Get()->RegisterTool("chasm_tool",
+        "Pick the mouse's tool, as keys 1/2/3 do: select, house, field, erase. With a paint tool the "
+        "hover outline goes green where a click would paint and red where the rules refuse.",
+        json{
+            {"type","object"},
+            {"properties",{
+                {"tool",{{"type","string"},{"enum",{"select","house","field","erase"}}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            const char* names[4] = {"select","house","field","erase"};
+            std::string t = args.value("tool",std::string());
+            for (int i = 0; i < 4; i++){
+                if (t == names[i]){
+                    paint_tool = i;
+                    pick_version++;
+                }
+            }
+            return json{{"tool",names[paint_tool.load()]}};
         });
 
 #ifdef DEBUG

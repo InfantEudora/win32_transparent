@@ -105,6 +105,12 @@ uniform float cone_softness = 0.15;
 //The sun's shadow filter radius, in shadow-map TEXELS - see CalcShadow. From
 //Renderer::shadow_pcf_radius; the default here is only what an app that never sets it gets.
 uniform float shadow_pcf_radius = 1.0;
+//The ambient light, as a hemisphere: what a surface facing straight up receives from the sky, and
+//one facing straight down from the ground, blended by the normal between. From
+//Renderer::ambient_sky / ambient_ground. Both default to the 0.1 that used to be written into
+//LightSurface, so a shader nobody sets these on draws exactly as it always did.
+uniform vec3 ambient_sky = vec3(0.1);
+uniform vec3 ambient_ground = vec3(0.1);
 //The sun's matrix, the one the vertex stage already projects vshadow with. Declared here as
 //well, with the same location and initialiser (both have to match for the program to link), so
 //CalcShadow can project a point of its own choosing rather than only the interpolated vertex one.
@@ -672,8 +678,10 @@ vec3 LightSurface(vec3 albedo){
         total_light += light;
     }
 
-    //Add some ambient
-    total_light += 0.1f * albedo;
+    //The ambient hemisphere: shadowed surfaces facing the sky take its colour, which is what keeps
+    //an outdoor shadow blue and readable rather than black. See ambient_sky above.
+    float sky_facing = normalize(vnormal).y * 0.5 + 0.5;
+    total_light += mix(ambient_ground,ambient_sky,sky_facing) * albedo;
 
     // Environment reflections from cubemap
     if (f_environment_reflections > 0){

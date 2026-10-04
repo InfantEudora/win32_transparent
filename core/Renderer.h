@@ -652,6 +652,23 @@ class Renderer{
     //see CalcShadow in default.frag. 0 is one bilinear tap (already no stair steps), 1 a 3x3 grid,
     //and the cost goes with the square: (2*ceil(r)+1)^2 gathers per lit fragment, capped at r = 3.
     float shadow_pcf_radius = 1.0f;
+    /*
+        The ambient light as a hemisphere - lighting.glsl's ambient_sky / ambient_ground: what a
+        surface facing up gets from the sky, and one facing down from the ground, blended by the
+        normal. In linear colour, multiplied by the albedo. Both default to the flat 0.1 that used
+        to be hardcoded in LightSurface, so an app that never sets them draws as it always did. An
+        outdoor scene wants a sky noticeably bluer and brighter than its ground: that is what
+        makes a shadow read as shade rather than as a hole.
+    */
+    vec3 ambient_sky = vec3(0.1f,0.1f,0.1f);
+    vec3 ambient_ground = vec3(0.1f,0.1f,0.1f);
+    /*
+        What the scene viewport shows where nothing is drawn, when there is no skybox. Alpha 0, the
+        default, leaves it transparent black - what every app had, and what lets a window's
+        transparency and ImGui show through. With alpha above 0 the scene viewport (only - see
+        DrawFrame) is filled with this colour before anything is drawn.
+    */
+    vec4 background_color = vec4(0.0f,0.0f,0.0f,0.0f);
     int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering

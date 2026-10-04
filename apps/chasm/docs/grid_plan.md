@@ -207,8 +207,8 @@ comes.
 | 1 App, grid generator, grid view | BUILT 2026-10-04 - see below |
 | 2 Picking | BUILT 2026-10-04 - see below |
 | 3 Terrain levels and cliffs | BUILT 2026-10-04 - grid side and terrain side, see below |
-| 4 Palette and lighting | planned |
-| 5 Painting zones | planned |
+| 4 Palette and lighting | BUILT 2026-10-04 - see below |
+| 5 Painting zones | BUILT 2026-10-04 - see below |
 | 6 Save, restore, replay | planned |
 
 ### Step 1, as built
@@ -299,39 +299,51 @@ after the outer ring is paired and before the random merge:
 2. **The merge along it.** Each side of the chain is a strip of triangles; which neighbouring
    pairs merge decides how many quads each chain vertex gets on that side. Dynamic programming
    picks the pairs that come closest to each vertex's ideal - the line's angle on that side over 90
-   degrees, from the turn between the midpoints of its two chain edges. The random merge then may
-   not cross any edge at a chain vertex.
+   degrees, from the turn between the midpoints of its two chain edges - plus, on the outside of a
+   long bend, one more quad for every 90 degrees the line turns in all (a closed line gets four,
+   like a square's corners). The random merge then may not cross any edge at a chain vertex.
 3. **Onto the line.** Chain vertices are moved onto the line, and that move is spread into the
    lattice around them by 40 passes of neighbour averaging, so the cells beside a chain move with it.
 4. **Down the levels.** Chain edges are named edge by edge, so subdivision pins exactly their
    midpoints. A fine edge is on a feature's chain when both its ends are pinned to that line (or
    are its fixed end). Relaxation keeps a segment hint per pinned vertex.
 
-**Measured, seed 1, debug** (seeds 2 and 3 in brackets):
+**Measured, seed 1, debug** (seeds 2 and 3 in brackets), with the long-bend corners:
 
 | | quads | mean | worst |
 |---|---|---|---|
-| Rim: fine quads touching its chain (453 vertices) | 906 | 0.877 (0.880, 0.876) | 0.477 (0.471, 0.487) |
-| Shard: the same (60 vertices) | 122 | 0.811 (0.796, 0.794) | 0.498 (0.557, 0.526) |
-| Interior: quads with no pinned corner | | 0.910 | 0.583 |
-| Whole map | 99,808 | 0.910 | 0.477 |
+| Rim: fine quads touching its chain (453 vertices) | 908 | 0.878 (0.885, 0.881) | 0.580 (0.550, 0.512) |
+| Shard: the same (60 vertices) | 123 | 0.804 (0.815, 0.807) | 0.499 (0.557, 0.529) |
+| Interior: quads with no pinned corner | | 0.911 | 0.625 |
+| Whole map | 99,768 | 0.911 | 0.499 |
 
-Topology along the chains is all but exact: of about 110 rim lattice vertices a side, one has a
-quad more than its ideal; the shard's 15 have none on one side and two on the other. No quad
-folds. Generation 280 ms in debug and 162 ms in release (was 257 and 142). Seeds 1-3 are
-re-pinned, the same in both builds. `chasm_check` gained a **features** check (each chain one
-piece, unbranched, ends where it should, on its line; ends on the map's edge fixed) and reports
-squareness per chain and for the interior.
+Before the corners (first build): rim 0.877 (0.880, 0.876), worst 0.477 (0.471, 0.487); shard
+0.811 (0.796, 0.794), worst 0.498 (0.557, 0.526); interior worst 0.583.
 
-**Open: small closed features.** The ring of cells just outside the shard is sheared - they meet
-the chain at a slant, median height 0.72 of their width against 0.95 everywhere else along a chain.
-The cells outside follow a grid turned about 45 degrees to the chain there, and the first row has
-to bridge the two. The shard is four lattice sides across, so its chain is a rough hexagon up to
-half a side off the line, and the lattice cannot do better. Doubling the relaxation passes and
-fixing one chain vertex (no rigid rotation) both left it unchanged. The likely fix is choosing a
-small feature's chain on the coarse grid, a quarter the size, rather than the lattice; it was not
-needed for this step. The rim, about 90 units across, does not show it; how small a feature can be
-before it does has not been measured.
+Topology along the chains is exact: every chain vertex gets the quads it was asked for but one on
+the rim (a quad more on one side). The shard's four corners each get their three outside. No quad
+folds. Generation about 280 ms in debug and 154 ms in release (was 257 and 142 with no
+features). Seeds 1-3 are re-pinned, the same in both builds. `chasm_check` has a **features** check
+(each chain one piece, unbranched, ends where it should, on its line; ends on the map's edge fixed)
+and reports squareness per chain and for the interior.
+
+**Small closed features: partly fixed.** The ring of cells just outside the shard was sheared - its
+cells met the chain at a slant, median 0.72 of square against 0.95 elsewhere along a chain. Two
+causes, found one after the other:
+
+- *A closed line turns its cells a whole circle*, and with two quads a side everywhere the grid
+  outside had to twist round to meet them. The long-bend corners fixed that: the shard's west side,
+  where it showed most, is square now. That change is the one kept.
+- *The grid outside runs its own way*, set by the random merge, and where the chain crosses it at
+  about 45 degrees - the shard's south-east end on seed 1 - the first row of cells is still a row
+  of parallelograms. Its worst quads (about 0.5) are there.
+
+Tried and dropped: doubling the relaxation passes and fixing one chain vertex (both changed
+nothing); and steering the random merge within two lattice steps of a chain toward pairs whose
+quads line up with it. That made the rim worse (mean 0.878 to 0.843) and the shard no better. Chosen
+one triangle at a time, the neighbouring choices fight, and the ones that lose take a misaligned
+partner. Still untried: choosing a small feature's chain on the coarse grid, a quarter the size,
+which would let it follow the line far more closely than a lattice hexagon.
 
 ### Step 3, terrain side, as built
 
@@ -344,7 +356,8 @@ terrain.
   *past* the south edge (closed along the edge, the vertices on it sat exactly on the polygon and
   half of them came out plateau - a cliff across the chasm's mouth). A vertex pinned to the rim is
   plateau, one pinned to a shard is shard, a fixed vertex is plateau; the rest by inside test.
-  Seed 1: plateau 91,569, shard 331, floor 8,541 vertices.
+  Seed 1: plateau 91,545, shard 331, floor 8,525 vertices (91,569 / 331 / 8,541 before the grid
+  side's long-bend corners changed the grid).
 - **Mesh:** per fine cell, marching squares on high corners against low, cut at edge midpoints -
   one high polygon (saddles join their high corners), one ground polygon per run of low corners, and
   a wall down each cut. Walls are cut into 6-unit strata, each row offset by smooth value noise of
@@ -368,6 +381,76 @@ terrain.
 - **Checks added:** `levels` (every level the features call for is present), `steps` (no cell spans
   three levels), `pin levels` (every feature-pinned vertex is on its high side; 511 on seed 1).
 
-**Open:** level assignment tests every vertex against the whole smoothed rim (about 400 points) -
-43 ms in debug, up from 3 ms against the hand-drawn corners. A bounding-box test first, or the
-pinned chain itself, would bring it back down. Not urgent at one generation per map.
+**Done: level assignment is fast again.** It tested every vertex against the whole smoothed rim,
+about 400 points - 43 ms in debug, up from 3 against the hand-drawn corners. Now each polygon's
+edges are bucketed into bands of z, and a vertex tests only the edges in its own band
+(`CrossingTable` in `Terrain.cpp`): **2.5 ms in debug**. Each edge's test is unchanged and the
+answer is a parity, so the result is identical by construction - and was checked vertex by vertex
+against the old test on seeds 1-3 before the old test was removed: zero differences, the same level
+counts.
+
+### Step 4, as built
+
+The palette and the light are described in `README.md` ("No textures: one palette", "Lighting:
+one sun and the sky"); this is what changed to get there.
+
+- **Core, two additions** (the user's call: a missing engine feature goes into core, not into an
+  app-side workaround). Both default to exactly what every app had, so no other app changes:
+  - `Renderer::ambient_sky` / `ambient_ground` - the ambient term in `lighting.glsl` is a
+    hemisphere blended by the normal, instead of a hardcoded `0.1 * albedo` (both default 0.1).
+  - `Renderer::background_color` - with alpha above 0 the scene viewport is cleared to it; the
+    rest of the frame stays transparent for ImGui. Default alpha 0, i.e. as before.
+  - Both are in the Engine panel's Renderer section (Ambient sky / Ambient ground / Background).
+- **Terrain mesh:** every vertex is a palette UV with matid 0, one material for the whole terrain
+  (the four stand-in materials are gone). The ground of every level gets a gentle relief
+  (`GROUND_BUMP` 0.25 units over 14), applied through one function to ground and to walls' top and
+  bottom rows, so they still meet; the tilted facets are most of the low-poly look. Grass takes one
+  of four near-identical shades per COARSE cell - per triangle read as noise, and a wider spread
+  of shades drew the grid on the ground as a patchwork. The plateau's edge along a cliff top is a
+  lighter lip; the floor at a wall's foot a shade darker.
+- **Measured, not judged:** lit open grass (162,196,130) against the reference's (160,188,125).
+- **Frustum culling on** for this app (`Renderer::f_frustum_cull`, a prototype off by default).
+  At game zoom: 46 of 144 chunks drawn, G-buffer 1.11 -> 0.49 ms, colour 1.88 -> 1.29 ms.
+- **SSAO left off:** the renderer has it, and at radius 1.5 / bias 0.3 it costs 0.74 ms, but open
+  ground and smooth walls give it almost nothing to darken. Revisit when houses and trees stand.
+- The grid and pick lines sit 0.40 / 0.45 above the ground now, over the relief.
+
+**Open:** the chasm floor is a flat placeholder grey-green; the concept wants it misty and dark.
+That is its own pass (mist, waterfalls - section 4), not a palette tweak.
+
+### Step 5, as built
+
+`Zones.h` / `Zones.cpp` are the rules; `ZoneMesh.h` / `ZoneMesh.cpp` draw them; `ChasmWorld.h` now
+holds the generated-world bundle on its own, so the rules do not depend on the app.
+
+- **Simulation state, changed only by commands.** Per fine plot a storey count (0 = no house), per
+  coarse cell a field flag. The one way they change is a `CHASM_CMD_ZONE` command - the plot or cell
+  in `subtype`, the `ZoneOp` in `value[0]` - applied as a tick drains its queue. The mouse is read
+  by the VIEW, which turns what is under it into a command; so the command is the player's intent,
+  not their mouse, and **step 6 must record commands, not just input** - a replay with a different
+  camera would otherwise click different plots.
+- **The rules**, checked when a command arrives so the state is always valid: a house needs every
+  corner of every fine cell round its plot on its level (nothing half over a cliff); a field needs
+  its coarse cell's nine vertices on one level; houses and fields do not overlap; at most 4 storeys.
+  Measured across the west rim: every plateau plot takes a house until the last, which is refused
+  "too close to a cliff", as is the floor plot below it; a field across the rim is refused "not flat".
+- **Published like the world.** After each change the physics thread publishes an immutable copy
+  (`ZoneState`) for the view, the panel and the tools. It names its world; regenerating the map
+  starts the zones empty. Each terrain chunk has a version, so a click rebuilds one or two chunks.
+- **Placeholders:** a house is its plot's quarters extruded per storey, walls only where the
+  neighbouring quarter is lower, flat roofs - irregular plot-shaped blocks that step up storey by
+  storey. A field is its coarse cell on the ground's relief in the field colour.
+- **Painting:** keys 1 / 2 / 3 (or the panel) pick house / field / erase; the same key again puts it
+  down. Click paints, drag paints each new plot once (a drag never stacks storeys), click on a
+  house adds a storey, shift takes one off. With a tool in hand the hover outline is green where a
+  click would paint and red where the rules refuse - checked against the same functions the
+  commands use.
+- **Capacity is area:** the panel and `chasm_paint` report houses, storeys, floor area (plot area x
+  storeys), fields and field area.
+- **Tools:** `chasm_paint` (op + x/z or plot/cell, through `SubmitCommandAndWait`, returns what it
+  did or why not), `chasm_tool`. **Check:** `zones` re-asks every house and field the rules.
+- `Renderer::ambient_ground` raised to 0.46/0.42/0.34: a wall takes half the ground's bounce, and at
+  0.30 white plaster read grey. Flat ground faces the sky and does not see it.
+
+**Open:** buildings and fields are placeholders until the procedural ones; the hover's red/green
+was checked through the same rule functions over MCP, not with a real mouse.

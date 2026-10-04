@@ -1233,6 +1233,8 @@ void Renderer::UploadLighting(Shader* s){
     s->Setint("f_environment_reflections",f_use_reflections);
     s->Setfloat("cone_softness",cone_softness);
     s->Setfloat("shadow_pcf_radius",shadow_pcf_radius);
+    s->Setvec3("ambient_sky",ambient_sky);
+    s->Setvec3("ambient_ground",ambient_ground);
     s->Setint("f_materialindex_is_color",0);
     for (Light* l : visible_lights){
         DirectionalLight* sun = dynamic_cast<DirectionalLight*>(l);
@@ -1961,6 +1963,18 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     //optionally offset) sub-rectangle set via viewport_x/viewport_width/viewport_height;
     //see Renderer.h's comment on those fields.
     SetSceneViewport();
+
+    //The background, inside the scene viewport only: a clear ignores glViewport, so it is limited
+    //by a scissor to the same rectangle - outside it the frame stays transparent for ImGui, as the
+    //clear above leaves it. Skipped at alpha 0, the default, which changes nothing for any app.
+    if (background_color.w > 0.0f){
+        int vx, vy, vw, vh;
+        GetSceneViewport(vx,vy,vw,vh);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(vx,vy,vw,vh);
+        glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&background_color);
+        glDisable(GL_SCISSOR_TEST);
+    }
 
     { //We draw skybox before other stuff
         BeginGPUPass(GPU_PASS_SKYBOX);
