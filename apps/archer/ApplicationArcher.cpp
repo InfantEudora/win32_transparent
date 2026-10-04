@@ -985,7 +985,8 @@ void ApplicationArcher::Init(void){
     unit_mesh   = MakeBox(vec3(1,1,1));
     arrow_mesh  = MakeBox(vec3(ARROW_HALF_LEN * 2.0f,ARROW_DEPTH,ARROW_DEPTH));
     dot_mesh    = MakeSphere(0.075f,10,6);
-    if (!unit_mesh || !arrow_mesh || !dot_mesh){
+    snake_sphere_mesh = MakeSphere(1.0f,12,8);
+    if (!unit_mesh || !arrow_mesh || !dot_mesh || !snake_sphere_mesh){
         debug->Fatal("Failed to build the primitive meshes\n");
     }
     //Registered as assets, which is what keeps the app's own pointers valid: the asset holds a
@@ -995,6 +996,7 @@ void ApplicationArcher::Init(void){
     assetmanager->AddNewAsset("ar_unit_box",unit_mesh);
     assetmanager->AddNewAsset("ar_arrow_mesh",arrow_mesh);
     assetmanager->AddNewAsset("ar_aim_dot",dot_mesh);
+    assetmanager->AddNewAsset("ar_snake_sphere",snake_sphere_mesh);
 
     main_scene = CreateNewScene("Archer");
     main_scene->physics_world = new PhysicsWorld();
@@ -1215,6 +1217,10 @@ void ApplicationArcher::BuildMaterials(){
         //A tree's trunk: bark brown, and dim - it is behind her and collides with nothing, so it
         //must read as backdrop next to the arms (one-way blue) that are the rule.
         { "ar_trunk",       vec4(0.36f,0.25f,0.16f,1.0f), 0.03f, &material_trunk },
+        //A snake, blocked out: a sickly olive body against the bark, its head a warning yellow so
+        //which way it is going reads from the game camera before anything else does.
+        { "ar_snake",       vec4(0.42f,0.56f,0.18f,1.0f), 0.15f, &material_snake },
+        { "ar_snake_head",  vec4(0.86f,0.74f,0.16f,1.0f), 0.25f, &material_snake_head },
         //The spring plants: a toadstool-red cap and a leaf green, loud on purpose - each moves
         //under her, and reading "this one is springy" before landing on it is the whole design.
         //Not red: red is the timing cue's "now" (material_spring_cue), and the cap at rest must not
@@ -1479,6 +1485,14 @@ Object* ApplicationArcher::MakePlanarBody(Mesh* mesh, const char* name, const ve
     return object;
 }
 
+//The blocked-out snake (SyncSnakes): spheres this many radii apart, so the chain reads as one body.
+#define SNAKE_VIEW_SPACING          1.30f
+#define SNAKE_VIEW_HEAD             1.25f   //the head's sphere, on the body's radius
+#define SNAKE_VIEW_TAIL             0.35f   //and the tail's, tapering to it over the last half
+#define SNAKE_WAVE_AMP              0.06f   //the slither: sideways, at most this
+#define SNAKE_WAVE_LENGTH           0.90f   //one sway down the body
+#define SNAKE_WAVE_NECK             0.35f   //from the head the sway grows over this, so the head is steady
+
 void ApplicationArcher::BuildBlocks(){
     block_objects.clear();
     /*
@@ -1575,6 +1589,57 @@ void ApplicationArcher::BuildBlocks(){
         }
     }
     /*
+        The SNAKE BRANCHES - Stage::snake_branches, docs/creature_plan.md 4: a thin bark box along
+        each straight piece, looks only. Each runs a radius past both its ends, so the bends close.
+    */
+    for (size_t i = 0; i < stage.snake_branches.size(); i++){
+        const StageSnakeBranch& br = stage.snake_branches[i];
+        for (size_t k = 0; k + 1 < br.points.size(); k++){
+            vec3 a(br.points[k].x,br.points[k].y,br.points[k].z);
+            vec3 b(br.points[k + 1].x,br.points[k + 1].y,br.points[k + 1].z);
+            vec3 fwd = b - a;
+            float len = fwd.length();
+            if (len < 1e-4f){
+                continue;
+            }
+            fwd = fwd * (1.0f / len);
+            vec3 side = vec3(0.0f,1.0f,0.0f).cross(fwd);
+            side.normalize();
+            vec3 up = fwd.cross(side);
+            char name[48];
+            snprintf(name,sizeof(name),"snake_branch_%i_%i",(int)i,(int)k);
+            Object* o = plant_box(name,(a + b) * 0.5f,vec3(br.radius * 2.0f,br.radius * 2.0f,len + br.radius * 2.0f),
+                                  material_trunk);
+            o->SetRotation(QuatFromBasis(side,up,fwd));
+        }
+    }
+    /*
+        The SNAKES - Stage::snakes, blocked out: a chain of spheres a little closer than touching, the
+        head first in its own colour. SyncSnakes lays them along the path every tick; here they are
+        only made. Visual only - the rules own every snake, so the state hash already has them.
+    */
+    snake_spheres.clear();
+    for (size_t i = 0; i < stage.snakes.size(); i++){
+        const StageSnake& sn = stage.snakes[i];
+        const int n = (int)ceilf(sn.Length() / (sn.Radius() * SNAKE_VIEW_SPACING)) + 1;
+        std::vector<Object*> chain;
+        for (int k = 0; k < n; k++){
+            Object* o = new Object();
+            o->SetMesh(snake_sphere_mesh);
+            char name[48];
+            snprintf(name,sizeof(name),"snake_%i_%i",(int)i,k);
+            o->name = name;
+            o->SetVisualOnly(true);
+            o->SetPickability(false);
+            o->SetMaterialSlot(0,(k == 0) ? material_snake_head : material_snake);
+            blockout_group->AttachChild(o);
+            plant_objects.push_back(o);
+            chain.push_back(o);
+        }
+        snake_spheres.push_back(chain);
+    }
+    SyncSnakes();
+    /*
         The SPRING PLANTS - Stage::spring_plants - as boxes until they have meshes: a pad is a cap
         on a stalk, a leaf a thin slab out of its stem. Only the cap and the leaf move, and they are
         placed by SyncSpringPlants every tick from the spring; the sizes here are theirs for good.
@@ -1626,8 +1691,10 @@ void ApplicationArcher::BuildBlocks(){
     /*
         THE RAMPS - Stage::ramps - the branch's slab again, but ground: a block's full depth and
         thick enough to read as a slope rather than a plank. The wedge under it is left open; the
-        rules seal it with the blocks at its ends, and a blockout does not need it filled.
+        rules seal it with the blocks at its ends, and a blockout does not need it filled. Where a
+        terrain bay melts the ramp, the terrain fills it and ApplyBlockoutVisibility hides this.
     */
+    ramp_objects.clear();
     for (size_t i = 0; i < stage.ramps.size(); i++){
         const StageRamp& r = stage.ramps[i];
         char name[48];
@@ -1642,6 +1709,7 @@ void ApplicationArcher::BuildBlocks(){
         Object* o = plant_box(name,mid + down * (thick * 0.5f),vec3(len,thick,STAGE_BLOCK_HALF_DEPTH * 2.0f),
                               material_ramp);
         o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),angle));
+        ramp_objects.push_back(o);
     }
     /*
         THE ROPE BRIDGES - Stage::bridges - as a plank between each pair of the chain's points,
@@ -1762,6 +1830,42 @@ void ApplicationArcher::SyncBalanceGauge(){
 }
 
 /*
+    Every snake's spheres along its path, from the rules' numbers: the head at `s`, the rest back
+    the way it came, each lying on the path's contact line plus its own radius along the up. The
+    SLITHER is the view's: a sideways sway square to the path and the up, travelling down the body
+    as the snake covers ground - so a resting snake is still - and growing over the neck so the head
+    holds its line. The rules test the centre line; the sway never has to replay. Every tick, and on
+    a level switch or a restore.
+*/
+void ApplicationArcher::SyncSnakes(){
+    for (size_t i = 0; i < stage.snakes.size() && i < snake_spheres.size(); i++){
+        const StageSnake& sn = stage.snakes[i];
+        const std::vector<Object*>& chain = snake_spheres[i];
+        if (sn.path < 0 || sn.path >= (int)stage.snake_paths.size() || chain.size() < 2){
+            continue;
+        }
+        const StageSnakePath& path = stage.snake_paths[sn.path];
+        const float len = sn.Length(), r = sn.Radius();
+        for (size_t k = 0; k < chain.size(); k++){
+            const float back = len * (float)k / (float)(chain.size() - 1);
+            v3 p, t, u;
+            path.At(sn.s - (float)sn.dir * back,p,t,u);
+            vec3 pos(p.x,p.y,p.z), up(u.x,u.y,u.z), along(t.x,t.y,t.z);
+            vec3 side = up.cross(along);
+            side.normalize();
+            //Thinner toward the tail over its last half, the head a little wider than the neck.
+            float f = back / len;
+            float rk = r * ((k == 0) ? SNAKE_VIEW_HEAD : 1.0f - (1.0f - SNAKE_VIEW_TAIL) * fmaxf(0.0f,f * 2.0f - 1.0f));
+            //By the distance this section has covered, so the S stays put and the body slides through it.
+            float sway = SNAKE_WAVE_AMP * fminf(1.0f,back / SNAKE_WAVE_NECK) *
+                         sinf(6.28318531f * (sn.travelled - back) / SNAKE_WAVE_LENGTH);
+            chain[k]->SetPosition(pos + up * rk + side * sway);
+            chain[k]->SetScale(vec3(rk,rk,rk));
+        }
+    }
+}
+
+/*
     The cap sits with its top where the rules put it; the leaf turns about its stem to the rules'
     angle, its top face through the stem so the line she stands on is the leaf's surface. Every
     tick, and on a level switch - these move, unlike every other box in the blockout.
@@ -1816,8 +1920,9 @@ void ApplicationArcher::SyncSpringPlants(){
 //mesher and by ApplyBlockoutVisibility, so what is hidden is exactly what was melted.
 static TerrainRegion TerrainBayRegion(int bay){
     TerrainRegion r;
-    //From the cave's far end: its floor and walls melt with the ground, its roof with the island.
-    r.x_min = ARCHER_CAVE_X_MIN;
+    //From the slopes' left wall, past the cave: its floor and walls melt with the ground, its roof
+    //with the island - and the slopes' ramps with whichever their middles are in.
+    r.x_min = ARCHER_SLOPES_X_MIN;
     r.x_max = ARCHER_TEST_BAY_X_MAX;
     r.y_min = (bay == 0) ? -1e30f : ARCHER_TEST_BAY_SPLIT_Y;
     r.y_max = (bay == 0) ? ARCHER_TEST_BAY_SPLIT_Y : 1e30f;
@@ -1828,6 +1933,16 @@ static TerrainRegion TerrainBayRegion(int bay){
 static bool IsInTerrainBay(const StageBlock& b){
     for (int i = 0;i < ARCHER_TEST_BAY_COUNT;i++){
         if (TerrainBayRegion(i).Contains(b)){
+            return true;
+        }
+    }
+    return false;
+}
+
+//Or this ramp (docs/terrain_plan.md section 12).
+static bool IsInTerrainBay(const StageRamp& r){
+    for (int i = 0;i < ARCHER_TEST_BAY_COUNT;i++){
+        if (TerrainBayRegion(i).Contains(r)){
             return true;
         }
     }
@@ -1919,7 +2034,7 @@ void ApplicationArcher::RemeshTerrainBay(int bay){
     TerrainParams params;
     TerrainStats stats;
     std::vector<vertex> verts;
-    if (!BuildTerrainVerts(stage.blocks,TerrainBayRegion(bay),params,verts,&stats) || verts.empty()){
+    if (!BuildTerrainVerts(stage.blocks,stage.ramps,TerrainBayRegion(bay),params,verts,&stats) || verts.empty()){
         object->SetVisibility(false);
         debug->Info("Terrain bay %i has no solid blocks in it - hidden\n",bay);
         return;
@@ -1948,6 +2063,15 @@ void ApplicationArcher::RemeshTerrainBay(int bay){
     if (stats.worst_dip > 0.02f){
         debug->Err("Terrain bay %i DIPS %.4f below a top face - the archer will float there. "
                    "See the top-pinning note in Terrain.h.\n",bay,stats.worst_dip);
+    }
+    //And along its ramps' lines, which is where she slides (docs/terrain_plan.md section 12).
+    if (stats.num_ramp_probes > 0){
+        debug->Info("Terrain bay %i ramps: dip %.4f rise %.4f over %i probes\n",
+                    bay,stats.ramp_worst_dip,stats.ramp_worst_rise,stats.num_ramp_probes);
+        if (stats.ramp_worst_dip > 0.02f){
+            debug->Err("Terrain bay %i DIPS %.4f below a ramp's line - she will slide in the air there.\n",
+                       bay,stats.ramp_worst_dip);
+        }
     }
 #else
     (void)bay;
@@ -2426,6 +2550,7 @@ void ApplicationArcher::UpdateEdgeView(){
 #define PATH_VIEW_VINE          0xFF50E060u
 #define PATH_VIEW_SURFACE       0xFFFF9030u
 #define PATH_VIEW_SPIDER        0xFFFFFFFFu
+#define PATH_VIEW_SNAKE         0xFFE040C0u     //magenta: the rules' snake paths, not the spiders'
 
 /*
     See CREATURES ON PATHS in the header. RENDER THREAD, from Init: the mesh is loaded here, once.
@@ -2477,7 +2602,7 @@ void ApplicationArcher::BuildCreatures(){
     //The level as drawn, as a grown vine sees it - see StartGrowth.
     TerrainSurface bays[ARCHER_TEST_BAY_COUNT];
     for (int bay = 0; bay < ARCHER_TEST_BAY_COUNT; bay++){
-        bays[bay].Build(stage.blocks,TerrainBayRegion(bay),TerrainParams());
+        bays[bay].Build(stage.blocks,TerrainBayRegion(bay),TerrainParams(),&stage.ramps);
         surfaces.push_back(&bays[bay]);
     }
 #endif
@@ -2617,6 +2742,40 @@ void ApplicationArcher::BuildCreatures(){
                 vec3 q = p.spline.PositionAt(s), a = across(p.spline.TangentAt(s));
                 line(q - a * 0.18f,q + a * 0.18f,c);
             }
+        }
+    }
+    /*
+        And the SNAKE PATHS - the rules' own (Stage::snake_paths, docs/creature_plan.md 4), drawn
+        the same way: the line, an arrow every unit toward its end on the ground, a bar at each end,
+        and a tick across where it leaves the branch for the trunk. Their ups as short whiskers, so
+        which way a snake's back will face can be judged before a snake exists.
+    */
+    for (const StageSnakePath& p : stage.snake_paths){
+        const uint32_t c = PATH_VIEW_SNAKE;
+        auto at = [&p](float s, vec3& q, vec3& t, vec3& u){
+            v3 a, b, e;
+            p.At(s,a,b,e);
+            q = vec3(a.x,a.y,a.z); t = vec3(b.x,b.y,b.z); u = vec3(e.x,e.y,e.z);
+        };
+        const float len = p.Length();
+        vec3 q, t, u, prev;
+        at(0.0f,prev,t,u);
+        for (float s = 0.1f; s < len + 0.05f; s += 0.1f){
+            at(fminf(s,len),q,t,u);
+            line(prev,q,c);
+            prev = q;
+        }
+        for (float s = 0.5f; s < len; s += 1.0f){
+            at(s,q,t,u);
+            vec3 a = u.cross(t);
+            line(q,q - t * 0.22f + a * 0.12f,c);
+            line(q,q - t * 0.22f - a * 0.12f,c);
+            line(q,q + u * 0.15f,c);
+        }
+        for (float s : { 0.0f, len, p.dist[p.trunk_from] }){
+            at(s,q,t,u);
+            vec3 a = u.cross(t);
+            line(q - a * 0.18f,q + a * 0.18f,c);
         }
     }
     {
@@ -3288,6 +3447,10 @@ void ApplicationArcher::ScatterFoliageObjects(){
     }
     std::vector<FoliagePlant> plants;
     ScatterFoliage(stage.blocks,grows,params,plants,&stage.biomes);
+    //Not inside a ramp's wedge - see ScatterBoulderObjects.
+    plants.erase(std::remove_if(plants.begin(),plants.end(),[this](const FoliagePlant& p){
+                     return InsideRampWedge(stage.ramps,p.x,p.y,ARCHER_WEDGE_MARGIN);
+                 }),plants.end());
 
     for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
         foliage_counts[k] = 0;
@@ -3424,8 +3587,8 @@ void ApplicationArcher::BuildBoulders(){
     where the rock is thinner than the box - against the surface as drawn: each bay's, built the
     way StartGrowth builds it. Left where it was if neither finds it within reach.
 */
-static void HangFromTerrain(const std::vector<StageBlock>& blocks, const BoulderParams& params,
-                            std::vector<Boulder>& rocks){
+static void HangFromTerrain(const std::vector<StageBlock>& blocks, const std::vector<StageRamp>& ramps,
+                            const BoulderParams& params, std::vector<Boulder>& rocks){
 #if ARCHER_TEST_BAY
     bool f_any = false;
     for (const Boulder& b : rocks){
@@ -3436,7 +3599,7 @@ static void HangFromTerrain(const std::vector<StageBlock>& blocks, const Boulder
     }
     TerrainSurface bays[ARCHER_TEST_BAY_COUNT];
     for (int bay = 0; bay < ARCHER_TEST_BAY_COUNT; bay++){
-        bays[bay].Build(blocks,TerrainBayRegion(bay),TerrainParams());
+        bays[bay].Build(blocks,TerrainBayRegion(bay),TerrainParams(),&ramps);
     }
     auto rock = [&bays](float x, float y, float z){
         float d = 1e30f;
@@ -3492,7 +3655,15 @@ void ApplicationArcher::ScatterBoulderObjects(){
     }
     std::vector<Boulder> rocks;
     ScatterBoulders(stage.blocks,params,rocks,&stage.biomes);
-    HangFromTerrain(stage.blocks,params,rocks);
+    HangFromTerrain(stage.blocks,stage.ramps,params,rocks);
+    /*
+        Nothing inside a ramp's wedge: the terrain draws it solid, and a floor's top - where the
+        scatter stood these - runs on under it (docs/terrain_plan.md section 12). Each piece is
+        hashed on its own spot, so dropping some moves none of the rest.
+    */
+    rocks.erase(std::remove_if(rocks.begin(),rocks.end(),[this](const Boulder& b){
+                    return InsideRampWedge(stage.ramps,b.x,b.ground,ARCHER_WEDGE_MARGIN);
+                }),rocks.end());
 
     for (int k = 0; k < BOULDER_KIND_COUNT; k++){
         boulder_counts[k] = 0;
@@ -4834,7 +5005,7 @@ void ApplicationArcher::StartGrowth(const StageEvents::ArrowHit& hit){
 #if ARCHER_TEST_BAY
     TerrainSurface bays[ARCHER_TEST_BAY_COUNT];
     for (int bay = 0; bay < ARCHER_TEST_BAY_COUNT; bay++){
-        bays[bay].Build(stage.blocks,TerrainBayRegion(bay),TerrainParams());
+        bays[bay].Build(stage.blocks,TerrainBayRegion(bay),TerrainParams(),&stage.ramps);
         surfaces.push_back(&bays[bay]);
     }
 #endif
@@ -5216,6 +5387,11 @@ void ApplicationArcher::ApplyBlockoutVisibility(){
             melted_blocks.push_back((int)i);
         }
         block_objects[i]->SetVisibility(!f_melted || f_show_blockout);
+    }
+    for (size_t i = 0;i < stage.ramps.size() && i < ramp_objects.size();i++){
+        if (ramp_objects[i]){
+            ramp_objects[i]->SetVisibility(!IsInTerrainBay(stage.ramps[i]) || f_show_blockout);
+        }
     }
 #endif
 }
@@ -8571,7 +8747,9 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(zone_outline_objects,parked.zone_outline_objects);
     std::swap(plant_objects,parked.plant_objects);
     std::swap(spring_plant_objects,parked.spring_plant_objects);
+    std::swap(snake_spheres,parked.snake_spheres);
     std::swap(bridge_plank_objects,parked.bridge_plank_objects);
+    std::swap(ramp_objects,parked.ramp_objects);
     std::swap(balance_bar,parked.balance_bar);
     std::swap(balance_marker,parked.balance_marker);
     std::swap(blockout_group,parked.blockout_group);
@@ -8682,6 +8860,7 @@ void ApplicationArcher::RefreshViewAfterSwitch(){
     SyncArrowViews();
     spring_cue_plant = -1;      //the cue was the other level's; the next tick works this one's out
     SyncSpringPlants();
+    SyncSnakes();
     SyncAimArc();
     ClearHitPopups();
     UpdateCamera();
@@ -9358,6 +9537,16 @@ json ApplicationArcher::CaptureRecordingState(){
             }
             return list;
         }()},
+        //And every snake, all of its state: a recording that starts with a snake mid-run on its
+        //branch has to replay that run, turn where it turned and pause where it paused.
+        {"snakes",[&](){
+            json list = json::array();
+            for (const StageSnake& sn : stage.snakes){
+                list.push_back(json::array({sn.s,sn.dir,sn.v,sn.run_speed,sn.travelled,sn.ticks,sn.state,
+                                            (int)sn.f_moving,(int)sn.f_turn,sn.rng,sn.hp}));
+            }
+            return list;
+        }()},
         //Likewise the bridge she stands on and every bridge's points: x, y, vx, vy each, in order.
         //And each one's strain - per plank, the strain and whether it has snapped - and its level:
         //a recording that starts on a cracking bridge has to snap where the original did.
@@ -9504,6 +9693,29 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
             p.qd = state["spring_plants"][i][1].get<float>();
         }
         SyncSpringPlants();
+    }
+    //Every snake as it was - see CaptureRecordingState. A file from before the snakes has none,
+    //and the restart has put them where the level starts them.
+    if (state.contains("snakes") && state["snakes"].size() == stage.snakes.size()){
+        for (size_t i = 0; i < stage.snakes.size(); i++){
+            StageSnake& sn = stage.snakes[i];
+            const json& j = state["snakes"][i];
+            if (j.size() != 11){
+                continue;
+            }
+            sn.s = j[0].get<float>();
+            sn.dir = j[1].get<int>();
+            sn.v = j[2].get<float>();
+            sn.run_speed = j[3].get<float>();
+            sn.travelled = j[4].get<float>();
+            sn.ticks = j[5].get<int>();
+            sn.state = j[6].get<int>();
+            sn.f_moving = j[7].get<int>() != 0;
+            sn.f_turn = j[8].get<int>() != 0;
+            sn.rng = j[9].get<uint32_t>();
+            sn.hp = j[10].get<int>();
+        }
+        SyncSnakes();
     }
     //Last, once her facing is known: the animation starts as a fresh one would.
     ResetAnimationForReplay();
@@ -9830,6 +10042,7 @@ void ApplicationArcher::NewGame(){
     plant_objects.clear();
     spring_plant_objects.clear();
     bridge_plank_objects.clear();
+    ramp_objects.clear();
     balance_bar = NULL;
     balance_marker = NULL;
     /*
@@ -10265,6 +10478,7 @@ void ApplicationArcher::RunSimulationTick(void){
     UpdateRopeAttachMarkers();
     SyncArrowViews();
     SyncSpringPlants();
+    SyncSnakes();
     SyncBalanceGauge();
     SyncAimArc();
     UpdateTargets();

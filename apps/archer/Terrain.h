@@ -82,6 +82,11 @@ struct TerrainStats{
     float  worst_dip = 0.0f;        //surface below a top face; must stay at zero
     float  worst_rise = 0.0f;       //surface above one; cosmetic
     int    num_probes = 0;          //exposed top-face points actually measured
+    //The same two along the ramps' lines (docs/terrain_plan.md section 12): a dip is her sliding
+    //in the air, a rise her feet in the grass - at a ramp's foot, where the union fills the corner.
+    float  ramp_worst_dip = 0.0f;
+    float  ramp_worst_rise = 0.0f;
+    int    num_ramp_probes = 0;
 };
 
 
@@ -95,5 +100,10 @@ struct TerrainStats{
 bool BuildTerrainVerts(const std::vector<StageBlock>& blocks, const TerrainRegion& region,
                        const TerrainParams& params, std::vector<vertex>& out,
                        TerrainStats* stats = NULL);
+//And with the level's ramps: those `region` contains melt in as wedges (docs/terrain_plan.md
+//section 12). The one above is this with none.
+bool BuildTerrainVerts(const std::vector<StageBlock>& blocks, const std::vector<StageRamp>& ramps,
+                       const TerrainRegion& region, const TerrainParams& params,
+                       std::vector<vertex>& out, TerrainStats* stats = NULL);
 
 #endif

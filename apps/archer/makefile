@@ -155,6 +155,10 @@ rules:
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/cave_test.exe \
 		cave_test.cpp Foliage.cpp Boulders.cpp Wind.cpp Stage.cpp StageEdges.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/cave_test.exe
+#And the terrain's ramps - the slope drawn on the rules' line, its ends, its grass (docs/terrain_plan.md section 12).
+	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/terrain_test.exe \
+		terrain_test.cpp TerrainField.cpp
+	@./build/terrain_test.exe
 #The title menu's core halves - the settings store and the menu's logic - with no window (docs/menu_plan.md).
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/3rdparty -o build/menu_test.exe \
 		$(ROOT)/tools/menu_test.cpp $(ROOT)/core/Settings.cpp $(ROOT)/core/UIMenu.cpp

@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdio.h>
+#include <algorithm>
 
 #include "Stage.h"
 #include "StateHash.h"
@@ -65,6 +66,9 @@ void Stage::Reset(){
     waters.clear();
     biomes.clear();
     trees.clear();
+    snake_branches.clear();
+    snake_paths.clear();
+    snakes.clear();
     spring_plants.clear();
     branches.clear();
     ramps.clear();
@@ -77,6 +81,7 @@ void Stage::Reset(){
     pending_effects.clear();
     BuildLevel();
     BuildTrees();
+    BuildSnakePaths();
     //Every apple back on its stem.
     for (StageApple& a : apples){
         a.state = APPLE_HANGING;
@@ -266,6 +271,12 @@ void Stage::BuildMainLevel(){
         next arm 2.3-ish across. The second arm's tip is 1.55 from the low slab, half a unit
         below its top; the third's is 1.55 from the high slab and 2.7 below it. stage_test climbs
         it hop by hop, so moving any of this says at once whether it is still climbable.
+
+        ABOVE THE HIGH SLAB it goes on up to THE CROWN, the snakes' level (docs/creature_plan.md
+        section 4): three more arms at the same spacing - the fourth's tip 1.55 from the high slab
+        like the third's, so the hop off the slab onto it is the hop onto the slab reversed - and the
+        cut top at 20.2, nine wide, a floor across the trunk reached from the sixth. All of it the
+        tree's, appended after the level's blocks by BuildTrees, so no declared block's index moves.
     */
     blocks.push_back({ 73.00f,  5.00f,  3.00f, 0.50f, BLOCK_SOLID,  true });    //low slab, x 70..76, top 5.5
     blocks.push_back({ 90.50f,  9.70f,  6.50f, 0.50f, BLOCK_SOLID,  true });    //high slab, x 84..97, top 10.2
@@ -273,12 +284,45 @@ void Stage::BuildMainLevel(){
         StageTree tree;
         tree.x = 80.00f;
         tree.base = 0.00f;
-        tree.height = 11.00f;
+        tree.height = 20.20f;       //to the crown
         tree.radius = 0.45f;
-        tree.arms.push_back({ 2.50f,  1.0f, 2.00f });
-        tree.arms.push_back({ 5.00f, -1.0f, 2.00f });
-        tree.arms.push_back({ 7.50f,  1.0f, 2.00f });
+        tree.top_width = 9.00f;     //the crown, x 75.5 .. 84.5
+        tree.arms.push_back({  2.50f,  1.0f, 2.00f });
+        tree.arms.push_back({  5.00f, -1.0f, 2.00f });
+        tree.arms.push_back({  7.50f,  1.0f, 2.00f });
+        tree.arms.push_back({ 12.70f,  1.0f, 2.00f });     //from the high slab
+        tree.arms.push_back({ 15.20f, -1.0f, 2.00f });
+        tree.arms.push_back({ 17.70f,  1.0f, 2.00f });     //and from here onto the crown
         trees.push_back(tree);
+    }
+    /*
+        ITS SNAKE BRANCHES, blocked out: from the trunk (x 80, at STAGE_TREE_Z) out into the air,
+        colliding with nothing. Three cross her line, each over somewhere she stands, and that
+        crossing is the only place a snake can drop on her or be shot: over the high slab at x 87.8
+        (6.7 above it - the main drop), over the low slab at x 73.4 (8.9 above), and over the crown
+        at x 82, clear of her head standing there (22.0). Two more are perches behind her, seen and
+        out of reach. stage_test checks every crossing clears her head on what is under it.
+    */
+    {
+        const float tz = STAGE_TREE_Z;
+        snake_branches.push_back({ { v3(80.0f,19.0f,tz), v3(86.0f,17.4f,-0.2f), v3(93.0f,15.5f, 0.6f) } });  //over the high slab
+        snake_branches.push_back({ { v3(80.0f,16.5f,tz), v3(75.0f,14.9f,-0.3f), v3(69.0f,13.0f, 0.8f) } });  //over the low slab
+        snake_branches.push_back({ { v3(80.0f,21.5f,tz), v3(82.0f,22.8f, 0.0f), v3(88.0f,22.0f, 2.2f) } });  //over the crown
+        snake_branches.push_back({ { v3(80.0f,21.0f,tz), v3(85.0f,22.0f,-2.2f), v3(90.0f,22.5f,-3.0f) } });  //behind, right
+        snake_branches.push_back({ { v3(80.0f,18.5f,tz), v3(75.5f,19.6f,-2.0f), v3(71.0f,20.0f,-2.6f) } });  //behind, left
+        for (StageSnakeBranch& br : snake_branches){
+            br.tree = (int)trees.size() - 1;
+        }
+        /*
+            ITS SNAKES, one to a branch, every size: the big one on the crown's branch, a 2 over the
+            high slab's drop, a 1 over the low slab and one on the right-hand perch behind her. Their
+            heads start out along the branch and their pauses are seeded apart, so they do not set
+            off together. (`branch`, `hp_max`, `start_s`, `start_dir`, `trunk_reach`, `seed`.)
+        */
+        snakes.push_back({ 0, 2, 4.0f, -1, 2.0f, 11u });    //over the high slab
+        snakes.push_back({ 1, 1, 3.0f,  1, 2.0f, 23u });    //over the low slab
+        snakes.push_back({ 2, 3, 3.5f, -1, 2.0f, 37u });    //over the crown
+        snakes.push_back({ 3, 1, 2.0f, -1, 2.0f, 41u });    //behind, right
     }
 
     /*
@@ -422,7 +466,8 @@ void Stage::BuildMainLevel(){
     const float zb = -6.0f, zt = 30.0f;
 #if ARCHER_TEST_BAY
     //From two units past the far wall, so a teleport or a stray step at the wall is still in it.
-    AddZone("Cave",             ARCHER_CAVE_X_MIN - 2.0f, ARCHER_TEST_BAY_X_MIN, zb, zt, v2(-44.00f,0.30f));
+    //From the far wall: past it now is the slopes, whose zone is added after the cave's blocks.
+    AddZone("Cave",             ARCHER_CAVE_X_MIN, ARCHER_TEST_BAY_X_MIN, zb, zt, v2(-44.00f,0.30f));
 #endif
     AddZone("Terrain bay",      ARCHER_TEST_BAY_X_MIN, ARCHER_TEST_BAY_X_MAX, zb, zt, v2(-24.00f,0.30f));
     AddZone("Start",            ARCHER_TEST_BAY_X_MAX,  14.0f, zb, zt, v2( -6.00f,0.30f));
@@ -640,6 +685,38 @@ void Stage::BuildMainLevel(){
                        BLOCK_SOLID, true, false, -2.25f, 3.75f });                  //far wall, x -66..-64, 0 .. 11
 
     /*
+        --- The slopes, x -107 .. -66 (docs/terrain_plan.md section 12) ---------------------------------
+        Last again, after the cave, by the same rule. The test bed for ramps melted into the terrain:
+        off the roof's left end a 40 degree pitch (her hip slide) onto a shelf, then 22 degrees (the
+        surf) all the way down to a floor of its own, long enough to skid out on. Back by jumping -
+        hops up the run, then a running jump from the shelf onto the roof over the pitch; stage_test
+        (TestSlopes) plays both ways.
+
+        Sealed as the gallery's ramps are, low end on a top and high end at a face. THE SHELF RUNS ON
+        UNDER THE PITCH to the far wall: with only its open three units, the space under the pitch
+        would be closed by nothing but the wedge above it, and the terrain would show it as an arch.
+    */
+    {
+        const float roof_top = ARCHER_CAVE_ROOF_Y + 2.0f;
+        const float pitch_r = ARCHER_CAVE_X_MIN;        //the far wall's face, up to the roof's top
+        const float pitch_l = pitch_r - (roof_top - SLOPES_SHELF_Y) / tanf(SLOPES_PITCH_DEG * STAGE_DEG2RAD);
+        const float shelf_l = pitch_l - 3.0f;
+        const float foot = shelf_l - SLOPES_SHELF_Y / tanf(SLOPES_RUN_DEG * STAGE_DEG2RAD);
+        const float floor_l = ARCHER_SLOPES_X_MIN + 1.0f;
+        blocks.push_back({ (floor_l + ARCHER_CAVE_X_MIN) * 0.5f, -2.00f, (ARCHER_CAVE_X_MIN - floor_l) * 0.5f, 2.00f,
+                           BLOCK_SOLID, true });                                    //its floor, top 0
+        blocks.push_back({ (shelf_l + pitch_r) * 0.5f, SLOPES_SHELF_Y * 0.5f, (pitch_r - shelf_l) * 0.5f,
+                           SLOPES_SHELF_Y * 0.5f, BLOCK_SOLID, true });             //the shelf
+        //Its middle under the bays' split (5.5 < 6), so it melts with its floor rather than the island.
+        blocks.push_back({ ARCHER_SLOPES_X_MIN + 0.50f, 5.50f, 0.50f, 9.50f, BLOCK_SOLID, true });  //left wall, -4 .. 15
+        ramps.push_back({ v2(pitch_l,SLOPES_SHELF_Y), v2(pitch_r,roof_top) });     //the pitch
+        ramps.push_back({ v2(foot,0.0f), v2(shelf_l,SLOPES_SHELF_Y) });            //the long run
+        //After every other area, so no zone's index moves. Arrives on the floor at the wall, facing
+        //the run's foot.
+        AddZone("Slopes", ARCHER_SLOPES_X_MIN, ARCHER_CAVE_X_MIN, -6.0f, 30.0f, v2(-104.00f,0.30f));
+    }
+
+    /*
         And its BIOME - the inside, floor to roof, far wall to mouth. Its own plants and rocks
         (FoliageBiomeFor, BoulderBiomeFor) and STILL AIR: the wind goes over the cave, not
         through it, which is also what keeps the leaves and streaks out.
@@ -837,6 +914,204 @@ void Stage::BuildTrees(){
             blocks.push_back(b);
         }
     }
+}
+
+static float SnakeLen(const v3& a){ return sqrtf(a.x * a.x + a.y * a.y + a.z * a.z); }
+static v3    SnakeUnit(const v3& a){ float l = SnakeLen(a); return (l > 1e-6f) ? a * (1.0f / l) : v3(0.0f,1.0f,0.0f); }
+//Up, squared to a direction along a branch: as near straight up as lies across it.
+static v3 SnakeUpAcross(const v3& t){
+    float k = t.y;      //the world up's part along t
+    return SnakeUnit(v3(-t.x * k,1.0f - t.y * k,-t.z * k));
+}
+
+/*
+    One path per snake branch - see StageSnakePath. The branch part runs from the tip in, RADIUS
+    above the centre line along the up across it, to where the centre line meets the trunk's (rounded
+    out) surface; the trunk part starts there, at the branch's own angle round the trunk, and winds
+    down to the tree's base, one turn per SNAKE_TRUNK_TURN_RISE, a point every SNAKE_PATH_STEP.
+*/
+void Stage::BuildSnakePaths(){
+    for (size_t bi = 0; bi < snake_branches.size(); bi++){
+        const StageSnakeBranch& br = snake_branches[bi];
+        if (br.tree < 0 || br.tree >= (int)trees.size() || br.points.size() < 2){
+            continue;
+        }
+        const StageTree& t = trees[br.tree];
+        const float rh = t.radius * SNAKE_TRUNK_ROUND_OUT;
+        StageSnakePath path;
+        path.branch = (int)bi;
+        //Where the centre line leaves the trunk: along its first piece, rh out from the axis.
+        const v3 axis = br.points[0];
+        const v3 first = br.points[1] - axis;
+        const float out = sqrtf(first.x * first.x + first.z * first.z);
+        const v3 leave = axis + first * ((out > rh) ? rh / out : 0.0f);
+        /*
+            The branch, tip first, up to but NOT including where it leaves the trunk: that point is
+            the helix's first, at the height of the branch's top there, so the path runs on from the
+            branch into the turn. A point on the branch's top above it as well would leave a step
+            straight down by the radius between the two - a piece the up lies along, not across.
+            Each point's up is square to the pieces either side, averaged.
+        */
+        std::vector<v3> centre(br.points.rbegin(),br.points.rend() - 1);
+        centre.push_back(leave);
+        for (size_t i = 0; i + 1 < centre.size(); i++){
+            v3 in  = (i > 0) ? SnakeUnit(centre[i] - centre[i - 1]) : SnakeUnit(centre[1] - centre[0]);
+            v3 on  = SnakeUnit(centre[i + 1] - centre[i]);
+            v3 up = SnakeUpAcross(SnakeUnit(in + on));
+            path.points.push_back(centre[i] + up * br.radius);
+            path.ups.push_back(up);
+        }
+        //Round and down the trunk, from the branch's own angle and its top's height.
+        path.trunk_from = (int)path.points.size();
+        const float a0 = atan2f(leave.z - axis.z,leave.x - axis.x);
+        const float top = leave.y + br.radius;
+        const float drop = top - t.base;
+        const float turns = drop / SNAKE_TRUNK_TURN_RISE;
+        const float around = 6.28318531f * rh * turns;
+        const int n = std::max(1,(int)ceilf(sqrtf(around * around + drop * drop) / SNAKE_PATH_STEP));
+        for (int i = 0; i <= n; i++){
+            float f = (float)i / (float)n;
+            float a = a0 + 6.28318531f * turns * f;
+            v3 o(cosf(a),0.0f,sinf(a));
+            path.points.push_back(v3(axis.x + o.x * rh,top - drop * f,axis.z + o.z * rh));
+            path.ups.push_back(o);
+        }
+        path.dist.push_back(0.0f);
+        for (size_t i = 1; i < path.points.size(); i++){
+            path.dist.push_back(path.dist.back() + SnakeLen(path.points[i] - path.points[i - 1]));
+        }
+        snake_paths.push_back(path);
+    }
+    //Each snake onto its branch's path, at rest, its body on the path behind its head.
+    for (size_t i = 0; i < snakes.size(); i++){
+        StageSnake& sn = snakes[i];
+        sn.path = -1;
+        for (size_t p = 0; p < snake_paths.size(); p++){
+            if (snake_paths[p].branch == sn.branch){
+                sn.path = (int)p;
+            }
+        }
+        sn.hp_max = std::max(1,std::min(3,sn.hp_max));
+        sn.hp = sn.hp_max;
+        sn.state = SNAKE_PATROL;
+        sn.dir = (sn.start_dir < 0) ? -1 : 1;
+        sn.v = 0.0f;
+        sn.run_speed = 0.0f;
+        sn.travelled = 0.0f;
+        sn.f_moving = false;
+        sn.f_turn = false;
+        //Never zero, or the xorshift sticks there.
+        sn.rng = (sn.seed * 2654435761u) ^ 0x9E3779B9u;
+        sn.rng = sn.rng ? sn.rng : 1u;
+        if (sn.path < 0){
+            continue;
+        }
+        const float end = SnakePatrolEnd(sn), len = sn.Length();
+        sn.s = (sn.dir < 0) ? std::max(0.0f,std::min(sn.start_s,end - len))
+                            : std::max(len,std::min(sn.start_s,end));
+        sn.ticks = SNAKE_PAUSE_TICKS_MIN + (int)((sn.rng >> 8) % (uint32_t)(SNAKE_PAUSE_TICKS_MAX - SNAKE_PAUSE_TICKS_MIN + 1));
+    }
+}
+
+//Length and girth by hit points: a 3 is visibly the big one.
+static const float SNAKE_LENGTH[3] = { 1.20f, 1.80f, 2.60f };
+static const float SNAKE_RADIUS[3] = { 0.07f, 0.09f, 0.11f };
+float StageSnake::Length() const { return SNAKE_LENGTH[std::max(1,std::min(3,hp_max)) - 1]; }
+float StageSnake::Radius() const { return SNAKE_RADIUS[std::max(1,std::min(3,hp_max)) - 1]; }
+
+float Stage::SnakePatrolEnd(const StageSnake& sn) const{
+    if (sn.path < 0 || sn.path >= (int)snake_paths.size()){
+        return 0.0f;
+    }
+    const StageSnakePath& p = snake_paths[sn.path];
+    return std::min(p.Length(),p.dist[p.trunk_from] + sn.trunk_reach);
+}
+
+static uint32_t SnakeNext(uint32_t& r){
+    r ^= r << 13;
+    r ^= r >> 17;
+    r ^= r << 5;
+    return r;
+}
+static float SnakeUnit01(uint32_t& r){ return (float)(SnakeNext(r) >> 8) * (1.0f / 16777216.0f); }
+static int   SnakeTicks(uint32_t& r, int lo, int hi){ return lo + (int)(SnakeNext(r) % (uint32_t)(hi - lo + 1)); }
+
+/*
+    Every snake, one tick of PATROL: see StageSnake. The speed eases to the run's and back to rest
+    at SNAKE_ACCEL, so it glides. Reaching the tip or its patrol's end stops it dead, and the pause
+    that follows ends in a turn; a pause anywhere else ends in one SNAKE_TURN_CHANCE of the time.
+*/
+void Stage::TickSnakes(){
+    for (StageSnake& sn : snakes){
+        if (sn.path < 0 || sn.state != SNAKE_PATROL){
+            continue;
+        }
+        const float end = SnakePatrolEnd(sn);
+        if (sn.f_moving){
+            sn.v = std::min(sn.run_speed,sn.v + SNAKE_ACCEL * ARCHER_DT);
+        }else{
+            sn.v = std::max(0.0f,sn.v - SNAKE_ACCEL * ARCHER_DT);
+        }
+        const float step = sn.v * ARCHER_DT;
+        bool f_end = false;
+        if (step > 0.0f){
+            float ns = sn.s + (float)sn.dir * step;
+            if (sn.dir < 0 && ns <= 0.0f){
+                ns = 0.0f;
+                f_end = true;
+            }else if (sn.dir > 0 && ns >= end){
+                ns = end;
+                f_end = true;
+            }
+            sn.travelled += fabsf(ns - sn.s);
+            sn.s = ns;
+        }
+        if (f_end){
+            sn.v = 0.0f;
+            sn.f_moving = false;
+            sn.f_turn = true;
+            sn.ticks = SnakeTicks(sn.rng,SNAKE_PAUSE_TICKS_MIN,SNAKE_PAUSE_TICKS_MAX);
+            continue;
+        }
+        if (--sn.ticks > 0){
+            continue;
+        }
+        if (sn.f_moving){
+            sn.f_moving = false;
+            sn.f_turn = SnakeUnit01(sn.rng) < SNAKE_TURN_CHANCE;
+            sn.ticks = SnakeTicks(sn.rng,SNAKE_PAUSE_TICKS_MIN,SNAKE_PAUSE_TICKS_MAX);
+            continue;
+        }
+        //A pause over: turn if it was to, then off again.
+        if (sn.f_turn){
+            sn.s = sn.Tail();
+            sn.dir = -sn.dir;
+            sn.f_turn = false;
+        }
+        sn.f_moving = true;
+        sn.run_speed = SNAKE_SPEED_MIN + (SNAKE_SPEED_MAX - SNAKE_SPEED_MIN) * SnakeUnit01(sn.rng);
+        sn.ticks = SnakeTicks(sn.rng,SNAKE_RUN_TICKS_MIN,SNAKE_RUN_TICKS_MAX);
+    }
+}
+
+void StageSnakePath::At(float s, v3& pos, v3& tangent, v3& up) const{
+    if (points.size() < 2){
+        pos = points.empty() ? v3() : points[0];
+        tangent = v3(1.0f,0.0f,0.0f);
+        up = v3(0.0f,1.0f,0.0f);
+        return;
+    }
+    s = std::max(0.0f,std::min(s,Length()));
+    //The piece s is on: the last point at or before it, never the final one.
+    size_t i = (size_t)(std::upper_bound(dist.begin(),dist.end(),s) - dist.begin());
+    i = std::min(std::max(i,(size_t)1),points.size() - 1) - 1;
+    const float span = dist[i + 1] - dist[i];
+    const float f = (span > 1e-6f) ? (s - dist[i]) / span : 0.0f;
+    pos = points[i] + (points[i + 1] - points[i]) * f;
+    tangent = SnakeUnit(points[i + 1] - points[i]);
+    v3 u = ups[i] + (ups[i + 1] - ups[i]) * f;
+    float k = u.x * tangent.x + u.y * tangent.y + u.z * tangent.z;
+    up = SnakeUnit(u - tangent * k);
 }
 
 //--- Spring plants ------------------------------------------------------------------------------
@@ -2094,6 +2369,19 @@ void Stage::CollideSurfaces(const v2& from, bool f_down_held, bool f_on_block, b
     run code works in. A leaf slips past SPRING_LEAF_SLIP_DEG; a ramp past its own slip_deg, which
     is the leaf's unless the level says otherwise - the ramps are where that rule is tuned.
 */
+bool InsideRampWedge(const std::vector<StageRamp>& ramps, float x, float y, float margin){
+    for (const StageRamp& r : ramps){
+        if (x < r.a.x - margin || x > r.b.x + margin){
+            continue;
+        }
+        float cx = (x < r.a.x) ? r.a.x : ((x > r.b.x) ? r.b.x : x);
+        if (y < r.SurfaceY(cx) + margin){
+            return true;
+        }
+    }
+    return false;
+}
+
 float Stage::SlideAccel() const{
     if (!f_on_ground){
         return 0.0f;
@@ -2671,6 +2959,7 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
     TickSpringPlants();
     TickBridges();
     TickWebs(events);
+    TickSnakes();
 
     //Before the archer moves, so the boot sweeps from where they were standing when it went out.
     //At a full run those differ by 0.15 of a unit - the difference between connecting with the
@@ -5275,5 +5564,11 @@ void Stage::HashState(StateHash& h) const{
     }
     for (const PendingEffect& e : pending_effects){
         h.Add(e.effect.kind); h.Add(e.effect.target); h.Add(e.effect.delay); h.Add(e.at);
+    }
+    //The creatures: a part of their own, so a trace names them when they part.
+    h.Begin("snakes");
+    for (const StageSnake& sn : snakes){
+        h.Add(sn.hp); h.Add(sn.state); h.Add(sn.f_moving); h.Add(sn.f_turn); h.Add(sn.ticks);
+        h.Add(sn.s); h.Add(sn.dir); h.Add(sn.v); h.Add(sn.run_speed); h.Add(sn.travelled); h.Add(sn.rng);
     }
 }

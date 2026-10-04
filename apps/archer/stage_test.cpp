@@ -3845,16 +3845,24 @@ static void TestTree(){
     char d[200];
     Stage s;
     //The blockout tree at x 80 is the first; the bigtree on the cave roof is TestRoofTree's.
-    Check(!s.trees.empty() && !s.trees[0].f_bigtree && s.trees[0].top_width == 0.0f,
-          "the main level's first tree is the blockout one");
+    Check(!s.trees.empty() && !s.trees[0].f_bigtree && s.trees[0].top_width > 0.0f,
+          "the main level's first tree is the blockout one, with a crown to stand on");
     if (s.trees.empty()){
         return;
     }
     const StageTree& t = s.trees[0];
-    int arms = 0;
-    bool f_shape = true;
+    int arms = 0, crowns = 0;
+    bool f_shape = true, f_crown = true;
     for (const StageBlock& b : s.blocks){
         if (b.tree != 0){ continue; }
+        //BuildTrees appends the arms in order, then the cut top.
+        if (arms == (int)t.arms.size()){
+            f_crown = f_crown && b.kind == BLOCK_PLATFORM && fabsf(b.Top() - (t.base + t.height)) < 1e-4f &&
+                      fabsf(b.x - t.x) < 1e-4f && fabsf(b.hw * 2.0f - t.top_width) < 1e-4f &&
+                      b.Front() >= STAGE_BLOCK_MIN_COVER && b.Back() <= -STAGE_BLOCK_MIN_COVER;
+            crowns++;
+            continue;
+        }
         const StageTreeArm& a = t.arms[arms];
         f_shape = f_shape && b.kind == BLOCK_PLATFORM && fabsf(b.Top() - a.top) < 1e-4f &&
                   fabsf((a.side > 0.0f ? b.Left() : b.Right()) - (t.x + a.side * t.radius)) < 1e-4f &&
@@ -3864,6 +3872,7 @@ static void TestTree(){
     }
     Check(arms == (int)t.arms.size() && f_shape,
           "every arm is a one-way platform from the trunk's face out to its tip, covering the play plane");
+    Check(crowns == 1 && f_crown,"the crown is one one-way platform across the trunk's cut top, covering the play plane");
 
     //Neither slab can be reached from the ground: the tree is the way up.
     float hands = ApexRise() + ARCHER_HALF_H * 2.0f;
@@ -3895,6 +3904,23 @@ static void TestTree(){
     snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
     CheckNear(top,10.2f,0.01f,"and from the third, up onto the high slab",d);
 
+    //On up to the crown: off the high slab back onto the fourth arm, then the zig-zag again.
+    top = Hop(s,-1.0f,0,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,t.arms[3].top,0.01f,"from the high slab, a hop back onto the fourth arm",d);
+    top = Hop(s,-1.0f,6,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,t.arms[4].top,0.01f,"across and up to the fifth",d);
+    top = Hop(s,1.0f,6,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,t.arms[5].top,0.01f,"back across to the sixth",d);
+    top = Hop(s,0.0f,0,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,t.base + t.height,0.01f,"and straight up through the crown onto it",d);
+    //The crown is not a shortcut: the high slab cannot reach it without the arms.
+    Check(t.base + t.height - 10.2f > ApexRise() + ARCHER_HALF_H * 2.0f,
+          "the crown is out of reach from the high slab, even of a grab");
+
     //Down through an arm with Down held, as on any one-way platform.
     Stage drop;
     drop.pos = v2(arm_mid[0],ARCHER_HALF_H + 0.001f);
@@ -3906,6 +3932,157 @@ static void TestTree(){
     Settle(drop);
     snprintf(d,sizeof(d),"ended at y %.2f",drop.pos.y - ARCHER_HALF_H);
     Check(fabsf(drop.pos.y - ARCHER_HALF_H) < 0.01f,"and Down drops back through an arm to the ground",d);
+}
+
+/*
+    THE SNAKE BRANCHES (docs/creature_plan.md 4): looks and snake paths only, so what is worth
+    proving is where they are - each from the trunk, none through a block, and every place one crosses
+    her line over somewhere she stands, clear of her head there, so she never walks through one.
+*/
+static void TestSnakeBranches(){
+    printf("\nthe snake branches\n");
+    char d[200];
+    Stage s;
+    if (s.trees.empty()){
+        Check(false,"there is a tree for the snake branches");
+        return;
+    }
+    const StageTree& t = s.trees[0];
+    bool f_trunk = !s.snake_branches.empty();
+    bool f_clear = true;
+    int crossings = 0, perches = 0;
+    bool f_over_ground = true, f_head = true;
+    d[0] = 0;
+    for (const StageSnakeBranch& br : s.snake_branches){
+        f_trunk = f_trunk && br.points.size() >= 2 && fabsf(br.points[0].x - t.x) < 1e-4f &&
+                  fabsf(br.points[0].z - STAGE_TREE_Z) < 1e-4f;
+        for (const v3& p : br.points){
+            for (const StageBlock& b : s.blocks){
+                if (p.x > b.Left() && p.x < b.Right() && p.y > b.y - b.hh && p.y < b.Top() &&
+                    p.z < b.Front() && p.z > b.Back()){
+                    f_clear = false;
+                }
+            }
+        }
+        int crossed = 0;
+        for (size_t i = 0; i + 1 < br.points.size(); i++){
+            const v3& a = br.points[i];
+            const v3& b = br.points[i + 1];
+            if ((a.z < 0.0f) == (b.z < 0.0f) && a.z != 0.0f && b.z != 0.0f){
+                continue;
+            }
+            //Where it crosses z 0, and the highest top under that point she could stand on.
+            float k = (fabsf(b.z - a.z) > 1e-6f) ? (0.0f - a.z) / (b.z - a.z) : 0.0f;
+            if (b.z == 0.0f && i + 2 < br.points.size()){
+                continue;   //a point exactly on the line: counted once, on the segment it starts
+            }
+            float x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k;
+            float under = -1000.0f;
+            for (const StageBlock& bl : s.blocks){
+                if (bl.f_alive && x > bl.Left() && x < bl.Right() && bl.Top() < y && bl.Top() > under){
+                    under = bl.Top();
+                }
+            }
+            crossed++;
+            f_over_ground = f_over_ground && under > -1000.0f;
+            float gap = y - br.radius - (under + ARCHER_HALF_H * 2.0f);
+            if (gap <= 0.0f){
+                f_head = false;
+                snprintf(d,sizeof(d),"the one at x %.2f y %.2f is %.2f into her head on %.2f",x,y,-gap,under);
+            }
+        }
+        crossings += crossed;
+        perches += (crossed == 0) ? 1 : 0;
+    }
+    Check(f_trunk,"every snake branch starts at the tree's trunk");
+    Check(f_clear,"no snake branch runs through a block - they collide with nothing, and none is buried");
+    Check(crossings == 3 && perches == 2,"three branches cross her line and two stay behind it as perches");
+    Check(f_over_ground,"every crossing is over somewhere she stands");
+    Check(f_head,"and clears her head standing there, so she never walks through a branch",d);
+}
+
+static float Len3(const v3& a){ return sqrtf(a.x * a.x + a.y * a.y + a.z * a.z); }
+static float Dot3(const v3& a, const v3& b){ return a.x * b.x + a.y * b.y + a.z * b.z; }
+//Distance from p to the polyline `pts`.
+static float ToPolyline(const std::vector<v3>& pts, const v3& p){
+    float best = 1e9f;
+    for (size_t i = 0; i + 1 < pts.size(); i++){
+        v3 ab = pts[i + 1] - pts[i];
+        float t = std::max(0.0f,std::min(1.0f,Dot3(p - pts[i],ab) / Dot3(ab,ab)));
+        best = std::min(best,Len3(p - (pts[i] + ab * t)));
+    }
+    return best;
+}
+
+/*
+    THE SNAKE PATHS (docs/creature_plan.md 4): one per branch, from its tip along its top to the
+    trunk and round and down the trunk to the ground - what step 3's snakes will walk, so its shape
+    and its lookup are what is proved: on the branch's top, round the trunk at its radius, joined up,
+    and At() giving back the points with an up square to the way on.
+*/
+static void TestSnakePaths(){
+    printf("\nthe snake paths\n");
+    char d[200];
+    Stage s;
+    Check(s.snake_paths.size() == s.snake_branches.size() && !s.snake_paths.empty(),"one snake path per branch");
+    bool f_ends = true, f_branch = true, f_trunk = true, f_joined = true, f_at = true, f_down = true;
+    int crossings = 0;
+    d[0] = 0;
+    for (const StageSnakePath& p : s.snake_paths){
+        if (p.branch < 0 || p.branch >= (int)s.snake_branches.size() || p.points.size() < 3 ||
+            p.trunk_from <= 0 || p.trunk_from >= (int)p.points.size()){
+            f_ends = false;
+            continue;
+        }
+        const StageSnakeBranch& br = s.snake_branches[p.branch];
+        const StageTree& t = s.trees[br.tree];
+        const float rh = t.radius * SNAKE_TRUNK_ROUND_OUT;
+        //From the tip, to the ground at the trunk.
+        const v3& last = p.points.back();
+        f_ends = f_ends && Len3(p.points[0] - br.points.back()) < br.radius * 1.01f &&
+                 fabsf(last.y - t.base) < 1e-4f &&
+                 fabsf(sqrtf((last.x - t.x) * (last.x - t.x) + (last.z - STAGE_TREE_Z) * (last.z - STAGE_TREE_Z)) - rh) < 1e-3f;
+        for (int i = 0; i < (int)p.points.size(); i++){
+            const v3& q = p.points[i];
+            if (i < p.trunk_from){
+                //On the branch's top: its radius off the centre line.
+                float off = ToPolyline(br.points,q);
+                if (fabsf(off - br.radius) > 2e-3f){
+                    f_branch = false;
+                    snprintf(d,sizeof(d),"point %i is %.3f off the centre line, not %.3f",i,off,br.radius);
+                }
+                if (i > 0 && (p.points[i - 1].z < 0.0f) != (q.z < 0.0f)){
+                    crossings++;
+                }
+            }else{
+                float r = sqrtf((q.x - t.x) * (q.x - t.x) + (q.z - STAGE_TREE_Z) * (q.z - STAGE_TREE_Z));
+                f_trunk = f_trunk && fabsf(r - rh) < 1e-3f;
+                f_down = f_down && (i == p.trunk_from || q.y < p.points[i - 1].y);
+                f_joined = f_joined && (i == p.trunk_from || Len3(q - p.points[i - 1]) < SNAKE_PATH_STEP * 1.01f);
+            }
+            //The turn starts on the branch's top where it leaves the trunk, so the two parts meet.
+            if (i == p.trunk_from){
+                f_joined = f_joined && ToPolyline(br.points,q) <= br.radius * 1.01f;
+            }
+            //At() hands back every point, with an up square to the way on.
+            v3 pos, tan, up;
+            p.At(p.dist[i],pos,tan,up);
+            f_at = f_at && Len3(pos - q) < 1e-4f && fabsf(Len3(tan) - 1.0f) < 1e-4f &&
+                   fabsf(Len3(up) - 1.0f) < 1e-4f && fabsf(Dot3(tan,up)) < 1e-4f;
+        }
+        //Clamped at both ends.
+        v3 pos, tan, up;
+        p.At(-1.0f,pos,tan,up);
+        f_at = f_at && Len3(pos - p.points[0]) < 1e-5f;
+        p.At(p.Length() + 1.0f,pos,tan,up);
+        f_at = f_at && Len3(pos - p.points.back()) < 1e-5f;
+    }
+    Check(f_ends,"each runs from its branch's tip to the ground at the trunk");
+    Check(f_branch,"along the branch it lies on the top, the branch's radius off its centre line",d);
+    Check(f_trunk && f_down,"round the trunk it keeps the rounded-out radius and only goes down");
+    Check(f_joined,"and it is joined up: into the trunk and round it, no step longer than the spacing");
+    Check(f_at,"At gives back every point, clamped at the ends, with a unit way on and an up square to it");
+    Check(crossings == 3,"three of them cross her line, where their branches do");
 }
 
 //--- Spring plants ------------------------------------------------------------------------------
@@ -6915,6 +7092,87 @@ static uint64_t HashOf(const Stage& s){
     return h.Total();
 }
 
+/*
+    THE SNAKES' PATROL (docs/creature_plan.md 4, step 3): rules state, so what is proved is that they
+    stay on their paths and inside their patrols, move no faster than they may, both run and pause
+    and turn at both ends, do the same thing twice from the same start, come back with a Reset, and
+    are in the state hash - a snake a replay could get wrong without the trace noticing is no use.
+*/
+static void TestSnakes(){
+    printf("\nthe snakes\n");
+    char d[200];
+    Stage a;
+    bool f_decl = a.snakes.size() == 4;
+    for (const StageSnake& sn : a.snakes){
+        f_decl = f_decl && sn.path >= 0 && sn.hp == sn.hp_max && sn.hp_max >= 1 && sn.hp_max <= 3;
+    }
+    Check(f_decl,"four snakes, each on its branch's path, at full health");
+    StageSnake one, two, three;
+    one.hp_max = 1; two.hp_max = 2; three.hp_max = 3;
+    Check(one.Length() < two.Length() && two.Length() < three.Length() && one.Radius() < three.Radius(),
+          "the tougher a snake, the longer and thicker");
+    Stage b = a;
+    const Stage fresh = a;
+    ArcherInput idle;
+    const int n = (int)a.snakes.size();
+    std::vector<int> runs(n,0), pauses(n,0), tip_turns(n,0), end_turns(n,0), mid_turns(n,0);
+    bool f_on = true, f_speed = true, f_same = true;
+    d[0] = 0;
+    const float max_step = SNAKE_SPEED_MAX * ARCHER_DT + 1e-4f;
+    for (int t = 0; t < 4000; t++){
+        std::vector<StageSnake> before = a.snakes;
+        StageEvents e;
+        a.Tick(idle,e);
+        StageEvents e2;
+        b.Tick(idle,e2);
+        for (int i = 0; i < n; i++){
+            const StageSnake& sn = a.snakes[i];
+            const StageSnake& was = before[i];
+            const float end = a.SnakePatrolEnd(sn);
+            float lo = std::min(sn.s,sn.Tail()), hi = std::max(sn.s,sn.Tail());
+            if (lo < -1e-4f || hi > end + 1e-4f || fabsf(hi - lo - sn.Length()) > 1e-3f){
+                f_on = false;
+                snprintf(d,sizeof(d),"snake %i at tick %i lies %.3f .. %.3f, its patrol 0 .. %.3f",i,t,lo,hi,end);
+            }
+            //The body's stretch moves at most a step either end - a turn swaps the head, not the body.
+            float wlo = std::min(was.s,was.Tail()), whi = std::max(was.s,was.Tail());
+            f_speed = f_speed && fabsf(lo - wlo) <= max_step && fabsf(hi - whi) <= max_step;
+            if (sn.f_moving && !was.f_moving){ runs[i]++; }
+            if (!sn.f_moving && was.f_moving){ pauses[i]++; }
+            if (sn.dir != was.dir){
+                if (fabsf(lo) < 1e-4f){ tip_turns[i]++; }
+                else if (fabsf(hi - end) < 1e-4f){ end_turns[i]++; }
+                else { mid_turns[i]++; }
+            }
+            f_same = f_same && sn.s == b.snakes[i].s && sn.dir == b.snakes[i].dir && sn.rng == b.snakes[i].rng;
+        }
+    }
+    Check(f_on,"every snake's body stays on its path and inside its patrol, its full length",d);
+    snprintf(d,sizeof(d),"the fastest a body may move in a tick is %.4f",max_step);
+    Check(f_speed,"and moves no faster than SNAKE_SPEED_MAX at either end, a turn included",d);
+    bool f_moves = true, f_turns = true;
+    for (int i = 0; i < n; i++){
+        f_moves = f_moves && runs[i] >= 3 && pauses[i] >= 3;
+        f_turns = f_turns && (tip_turns[i] + end_turns[i] + mid_turns[i]) >= 1;
+    }
+    int tips = 0, ends = 0, mids = 0;
+    for (int i = 0; i < n; i++){ tips += tip_turns[i]; ends += end_turns[i]; mids += mid_turns[i]; }
+    snprintf(d,sizeof(d),"over 4000 ticks: %i turns at a tip, %i at a patrol's end, %i mid-patrol",tips,ends,mids);
+    Check(f_moves,"each one both runs and pauses, more than once");
+    Check(f_turns && tips > 0 && ends > 0 && mids > 0,"and they turn, at the tip, at the patrol's end and in between",d);
+    Check(f_same && HashOf(a) == HashOf(b),"two levels started alike patrol alike, tick for tick");
+    Stage c = a;
+    c.snakes[0].s += 0.001f;
+    Check(HashOf(c) != HashOf(a),"a snake is in the state hash: moved a thousandth, the hash changes");
+    a.Reset();
+    bool f_reset = a.snakes.size() == fresh.snakes.size();
+    for (size_t i = 0; f_reset && i < a.snakes.size(); i++){
+        f_reset = a.snakes[i].s == fresh.snakes[i].s && a.snakes[i].dir == fresh.snakes[i].dir &&
+                  a.snakes[i].rng == fresh.snakes[i].rng && a.snakes[i].ticks == fresh.snakes[i].ticks;
+    }
+    Check(f_reset,"and a Reset puts every snake back where the level starts it");
+}
+
 static void TestArrowKinds(){
     printf("\narrow kinds\n");
     Stage s;
@@ -9305,6 +9563,122 @@ static void TestCreatures(){
     one: standing up it, down on a hip past PUPPET_SLIDE_DOWN_DEG with its hysteresis, the surf for
     the skid, and feet first on the hip.
 */
+/*
+    THE SLOPES - docs/terrain_plan.md section 12: the test bed past the cave's far wall, the ramps
+    the terrain melts. Down from the roof she goes on her hip down the pitch, skids over the shelf,
+    surfs the long run and skids out on the floor short of the wall; and back up by jumping - hops
+    up the run, then a running jump from the shelf onto the roof. Both ways, or it is a pit.
+*/
+static void TestSlopes(){
+    printf("\nthe slopes\n");
+    char d[240];
+    const Stage level;
+    const float roof = ARCHER_CAVE_ROOF_Y + 2.0f;
+    int pitch = -1, run = -1;
+    for (size_t i = 0; i < level.ramps.size(); i++){
+        const StageRamp& r = level.ramps[i];
+        if (fabsf(r.b.x - ARCHER_CAVE_X_MIN) < 1e-3f && fabsf(r.b.y - roof) < 1e-3f){
+            pitch = (int)i;
+        }
+        if (fabsf(r.b.y - SLOPES_SHELF_Y) < 1e-3f && fabsf(r.a.y) < 1e-3f && r.b.x < ARCHER_CAVE_X_MIN){
+            run = (int)i;
+        }
+    }
+    Check(pitch >= 0 && run >= 0,"the slopes have their pitch off the roof and their long run");
+    if (pitch < 0 || run < 0){
+        return;
+    }
+    const StageRamp p = level.ramps[pitch];
+    const StageRamp r = level.ramps[run];
+    const float p_deg = atanf(p.Slope()) * 180.0f / 3.14159265f;
+    const float r_deg = atanf(r.Slope()) * 180.0f / 3.14159265f;
+    snprintf(d,sizeof(d),"pitch %.1f deg, run %.1f deg",p_deg,r_deg);
+    Check(p_deg > PUPPET_SLIDE_DOWN_DEG && r_deg > SPRING_LEAF_SLIP_DEG && r_deg < PUPPET_SLIDE_UP_DEG,
+          "the pitch is a hip slide and the run a surf",d);
+    int zone = level.FindZone("Slopes");
+    Check(zone >= 0 && level.zones[zone].Left() <= ARCHER_SLOPES_X_MIN + 1e-3f &&
+          level.zones[zone].Right() >= ARCHER_CAVE_X_MIN - 1e-3f,"they are an area of their own, wall to far wall");
+
+    //--- Down: off the roof's left end, and let go ---
+    Stage s = level;
+    DropOnto(s,-62.0f,roof);
+    ArcherInput idle, left;
+    left.move_axis = -1.0f;
+    bool f_hip = false, f_surf = false, f_shelf_skid = false;
+    float fastest = 0.0f;
+    Puppet puppet;
+    puppet.clip_duration[CLIP_SURF] = 1.37f;
+    puppet.clip_duration[CLIP_SLIDE] = 2.03f;
+    for (int t = 0; t < 600; t++){
+        StageEvents e;
+        s.Tick((t < 40) ? left : idle,e);
+        ArcherAnimParams in;
+        DescribeArcher(s,in);
+        puppet.Tick(in);
+        f_hip = f_hip || (s.ramp_on == pitch && puppet.choice.clip == CLIP_SLIDE);
+        f_surf = f_surf || (s.ramp_on == run && puppet.choice.clip == CLIP_SURF);
+        f_shelf_skid = f_shelf_skid || (s.f_skidding && fabsf(s.pos.y - ARCHER_HALF_H - SLOPES_SHELF_Y) < 0.05f);
+        fastest = fmaxf(fastest,fabsf(s.vel.x));
+    }
+    snprintf(d,sizeof(d),"hip %d, skid on the shelf %d, surf %d, fastest %.2f, at rest x %.2f feet %.2f",
+             (int)f_hip,(int)f_shelf_skid,(int)f_surf,fastest,s.pos.x,s.pos.y - ARCHER_HALF_H);
+    Check(f_hip && f_surf,"down the pitch on her hip, down the run standing",d);
+    Check(s.f_on_ground && fabsf(s.pos.y - ARCHER_HALF_H) < 0.02f && s.pos.x < r.a.x - 3.0f &&
+          s.pos.x > ARCHER_SLOPES_X_MIN + 1.0f + ARCHER_HALF_W + 1.0f && fabsf(s.vel.x) < 1e-3f,
+          "and skids out on the floor, well past the foot and short of the wall",d);
+    Check(fastest > ARCHER_RUN_SPEED + 2.0f,"the run is long enough to go faster than she runs",d);
+
+    //--- Back: hops up the run, then the roof over the pitch ---
+    const float shelf_l = r.b.x, shelf_r = p.a.x, foot = r.a.x;
+    auto on_shelf = [=](const Stage& st){
+        return st.f_on_ground && fabsf(st.pos.y - ARCHER_HALF_H - SLOPES_SHELF_Y) < 0.05f &&
+               st.pos.x > shelf_l && st.pos.x < shelf_r;
+    };
+    std::vector<RouteLeg> legs;
+    for (int k = 0; k < 4; k++){
+        RouteLeg l;
+        l.name = "up the run " + std::to_string(k + 1);
+        float goal_x = foot + (k + 1) * (shelf_l - foot) / 4.0f;
+        if (k == 3){
+            l.goal = on_shelf;
+        }else{
+            l.goal = [=](const Stage& st){ return st.f_on_ground && st.pos.x > goal_x && st.pos.x < shelf_l; };
+        }
+        l.walk = 1;
+        l.dir = 1;
+        l.wait_max = 30;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "the roof";
+        l.goal = [=](const Stage& st){
+            return st.f_on_ground && fabsf(st.pos.y - ARCHER_HALF_H - roof) < 0.02f && st.pos.x > ARCHER_CAVE_X_MIN;
+        };
+        l.walk = 1;
+        l.dir = 1;
+        l.wait_max = 40;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    Stage start = level;
+    DropOnto(start,foot - 3.0f,0.0f);
+    RouteResult route = SolveRoute(start,legs);
+    std::string seen;
+    for (const RouteLegResult& lr : route.legs){
+        seen += lr.name + ":" + std::to_string(lr.window) + " ";
+    }
+    snprintf(d,sizeof(d),"failed at '%s'; windows %s",route.failed_leg.c_str(),seen.c_str());
+    Check(route.f_passable && route.narrowest_window >= 5,"back up by jumping, every hop with room to be early or late",d);
+    if (route.f_passable){
+        Stage played = PlayRoute(start,route.timeline);
+        Check(played.f_on_ground && fabsf(played.pos.y - ARCHER_HALF_H - roof) < 0.02f,"and a replay of it ends on the roof");
+    }
+}
+
 static void TestSlides(){
     printf("\nslides\n");
     char d[240];
@@ -9531,6 +9905,9 @@ int main(void){
     TestRopePits();
     TestSlideGallery();
     TestTree();
+    TestSnakeBranches();
+    TestSnakePaths();
+    TestSnakes();
     TestSpringPlants();
     TestSpringPump();
     TestBranch();
@@ -9567,6 +9944,7 @@ int main(void){
     TestApples();
     TestCreatures();
     TestSlides();
+    TestSlopes();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

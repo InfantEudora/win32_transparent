@@ -143,12 +143,19 @@ model: a chain of spheres along the stretch.
   can reach it.
 - **The first home is the blockout tree at x 80, made taller, with a new level on top** (the
   crown) and loose blockout branches spreading from it.
+- **A hit on a branch knocks it off.** A shot brings a snake down where she chooses: knock it off
+  before she walks under, then finish it on the ground. It gives the first arrow a use even
+  against a 3-hp snake.
+- **The heartbeat is the warning.** A snake overhead within a few units raises her fear before it
+  drops (section 6's fear input), so the breathing and heartbeat tell the player before anything
+  shows.
+- **Later, not now: the bamboo arrow pins creatures**, even shot from below, or blocks their path.
 
-### The tree, taller, with a crown level
+### The tree, taller, with a crown level: BUILT 2026-10-04
 
-Today the tree is 11 tall, with arms at 2.5 R, 5.0 L and 7.5 R. They climb to the low slab
-(x 70..76, top 5.5) and the high slab (x 84..97, top 10.2). The climb carries on above the high
-slab at the same spacing, 2.5 apart and alternating sides, the spacing stage_test already proves:
+The tree was 11 tall, with arms at 2.5 R, 5.0 L and 7.5 R. They climb to the low slab
+(x 70..76, top 5.5) and the high slab (x 84..97, top 10.2). The climb now carries on above the
+high slab at the same spacing, 2.5 apart and alternating sides, the spacing stage_test already proves:
 
 | piece | top | how she gets there |
 |---|---|---|
@@ -161,31 +168,69 @@ slab at the same spacing, 2.5 apart and alternating sides, the spacing stage_tes
   below and dropped through with Down. It is `StageTree::top_width`, which the roof tree already
   uses, so nothing new is needed in the rules.
 - **No new blocks.** `BuildTrees` appends arms after every declared block, so the level's own
-  block indices, which the dressing is seeded by, do not move. **Check:** the roof tree's arms
-  come after this tree's, so their indices do move by three. See whether anything seeds off them.
+  block indices do not move. The roof tree's arms come after this tree's, so their indices moved
+  by three. Nothing seeds off them: foliage, boulders, the edges and the drop-onto-a-block helper
+  all skip platforms and tree arms.
 - From the crown, a long drop back down: Down through it lands on the high slab (x >= 84) or on
   the arms.
+- **As built:** `StageTree` at x 80 in `BuildMainLevel`, height 20.2, `top_width` 9, six arms.
+  `stage_test` TestTree now checks the crown's shape and climbs on from the high slab, arm by arm,
+  straight up through the crown onto it. It also checks the crown cannot be reached from the high
+  slab without the arms.
 
-### The snake branches
+### The snake branches: BUILT 2026-10-04 (blockout)
 
-Declared in the rules, since the snakes' paths are gameplay: a list of 3D polylines, each
-starting at the trunk (x 80, z -1.3, `STAGE_TREE_Z`), drawn as thin bark-brown boxes from the same
-numbers and colliding with nothing. A first set:
+Declared in the rules, since the snakes' paths are gameplay: `StageSnakeBranch` (a list of `v3`
+points and a drawn radius, 0.09) in `Stage::snake_branches`, each starting at the trunk (x 80,
+z -1.3, `STAGE_TREE_Z`). The app draws each straight piece as a thin box in the trunk's bark brown
+(`snake_branch_<i>_<k>` in the blockout group), and nothing collides with them. Each bends once,
+at a middle point, so they do not read as rulers:
 
-| branch | from (at the trunk) | to | why |
-|---|---|---|---|
-| over the high slab | y 19.0, z -1.3 | x 93, y 15.5, z +0.6 | crosses her line at x 88.9, y 16.6: 6.4 above the slab she walks; the main drop |
-| over the low slab | y 16.5, z -1.3 | x 69, y 13.0, z +0.8 | crosses at x 73.2, y 14.3: 8.8 above the low slab, a drop she meets on the way up |
-| over the crown | y 21.5, z -1.3 | via x 82, y 22.8, z 0 to x 88, y 22.0, z +2.2 | crosses at x 82, above her head on the crown (feet 20.2, head 22.0) and inside its 75.5..84.5, so it drops onto the new level |
-| behind, right | y 21.0, z -1.3 | x 90, y 22.5, z -3.0 | a perch behind: seen, not reachable |
-| behind, left | y 18.5, z -1.3 | x 71, y 20.0, z -2.6 | the same, on the left |
+| branch | from (at the trunk) | via | to | crosses her line |
+|---|---|---|---|---|
+| over the high slab | y 19.0 | x 86, y 17.4, z -0.2 | x 93, y 15.5, z +0.6 | x 87.8, y 16.9: 6.7 above the slab she walks; the main drop |
+| over the low slab | y 16.5 | x 75, y 14.9, z -0.3 | x 69, y 13.0, z +0.8 | x 73.4, y 14.4: 8.9 above the low slab, a drop she meets on the way up |
+| over the crown | y 21.5 | x 82, y 22.8, z 0 | x 88, y 22.0, z +2.2 | x 82, y 22.8: above her head on the crown (22.0), inside its 75.5..84.5 |
+| behind, right | y 21.0 | x 85, y 22.0, z -2.2 | x 90, y 22.5, z -3.0 | no: a perch, seen and out of reach |
+| behind, left | y 18.5 | x 75.5, y 19.6, z -2.0 | x 71, y 20.0, z -2.6 | no: the same, on the left |
 
-Plus **the trunk itself** as one more path: a helix round it from the ground to the crown, the way
-a spider climbs a vine (`CREATURE_PATH_VINE`). It ties the branches together and gives a dropped
-snake a way back up.
+`stage_test` TestSnakeBranches checks that every branch starts at the trunk and none runs through
+a block. It checks that three cross her line and two stay behind it, and that every crossing is
+over somewhere she stands and clears her head there.
 
-The paths are `CreaturePath`s of the HAND kind, with the up +Y on top of the branch. Creatures.cpp
-and core/Spline are already in `make rules`, so the rules can own them.
+### The snake paths: BUILT 2026-10-04
+
+**One path per branch, a whole route rather than a graph:** from the branch's tip, in along its
+top to the trunk, then round and down the trunk to the ground as a helix. A snake owns its route.
+It patrols its branch, and a dropped one climbs back up from the foot of its own path, so there are
+no forks to choose at and no junctions to carry a body across. The five helices share the trunk,
+each starting at its own branch's angle round it.
+
+- **The rules' own type, `StageSnakePath`**, not `CreaturePath`: `Stage.h` keeps engine types out
+  (no `vec3`, no core `Spline`), and step 3 walks snakes along these paths in the rules. So the
+  path is plain arithmetic: points, an up beside each, and the distance to each. `At(s)` gives the
+  position, the way on and the up, straight between points and clamped at the ends.
+- **It is the contact line**, where a snake's belly lies: the branch's radius above its centre line
+  (the up square to the branch, as near straight up as lies across it), then round the trunk at
+  its surface with the up pointing out from the axis. A snake adds its own radius along the up.
+- **Round the trunk:** one turn per 2.5 of height (`SNAKE_TRUNK_TURN_RISE`), a point every 0.15
+  (`SNAKE_PATH_STEP`), at the trunk's radius times 1.42 (`SNAKE_TRUNK_ROUND_OUT`). The blockout
+  trunk is a square box, and that radius clears its corners. A round trunk mesh would take the
+  plain radius.
+- **Built by `Stage::BuildSnakePaths`**, after `BuildTrees`, on every reset. `StageSnakeBranch`
+  gained `tree`, the tree it grows from.
+- **The path view** (`archer_debug_view {paths: true}`) draws them in magenta beside the spiders'
+  yellow, green and orange: the line, an arrow every unit toward the ground, a short whisker for the
+  up, a bar at each end, and a tick where the branch gives way to the trunk.
+- `stage_test` TestSnakePaths checks one path per branch, each from its tip to the ground at the
+  trunk. It checks that on the branch the path lies the radius off the centre line, and that round
+  the trunk it keeps its radius and only goes down. It also checks the path is joined up (no step
+  longer than the spacing), that `At()` gives back every point with a unit way on and an up square
+  to it, clamped at both ends, and that three paths cross her line.
+- **Seen in the game:** the helices pass through the tree's arms and the crown floor, which reach
+  across the trunk. That is a blockout look only: a snake there is drawn inside a platform for a
+  moment. If it reads badly once a snake moves, the helices can run behind the arms (z below
+  `STAGE_TREE_ARM_Z - STAGE_TREE_ARM_HALF_DEPTH`) rather than all the way round.
 
 ### The snake in the rules
 
@@ -195,12 +240,12 @@ The size follows the hit points, so the tougher ones read as bigger: about 1.2 l
 
 | state | what it does |
 |---|---|
-| PATROL | glides along its branches in runs and pauses, smoother than a spider (no twitch); at a fork it picks a branch with its own seeded draw |
+| PATROL | glides along its branch in runs and pauses, smoother than a spider (no twitch), turning back at the tip and somewhere down the trunk |
 | WATCH | on a crossing, with her below and within a few units in x: it stops and lowers its head off the branch. The telegraph, a cue (rattle), lasting tens of ticks: the window to shoot it or get clear |
 | DROP | lets go: the whole chain falls under the game's gravity, kept in shape, and lands on whatever is under it in her plane |
 | LANDED | stunned for a moment where it hit |
 | GROUND | slithers along the surface in her plane, heading for the trunk. At a slab's end it falls to the next surface |
-| CLIMB | at the trunk's x it joins the trunk path and goes back up to its branches |
+| CLIMB | at the trunk's foot it joins its own path at the end and goes back up it to its branch |
 | DEAD | a countdown, so a death can play, then gone. It stays gone until the level restarts |
 
 **Arrows:** `FlyArrow` sweeps each arrow, so a snake adds a test against its chain of spheres, as
@@ -219,19 +264,59 @@ path from `s - length` to `s`. The slither is a sideways wave travelling down th
 looks only: the rules test against the centre line plus a margin, so the wave never has to replay.
 The path debug view shows the snake paths in their own colour.
 
+### The patrol: BUILT 2026-10-04 (step 3)
+
+**`StageSnake`** in `Stage.h`, declared in `BuildMainLevel` after the branches, one to a branch:
+
+| branch | hp | length | starts |
+|---|---|---|---|
+| over the high slab | 2 | 1.8 | 4.0 along, heading out |
+| over the low slab | 1 | 1.2 | 3.0 along, heading in |
+| over the crown | 3 | 2.6 | 3.5 along, heading out |
+| behind, right | 1 | 1.2 | 2.0 along, heading out |
+
+The left-hand perch has none. The girth follows the hit points too: radius 0.07, 0.09, 0.11.
+
+- **The head is `s` along the path, the body `Length()` behind it**, the way it came (`dir` -1 is
+  out toward the tip, +1 in and down the trunk). `Tail()` is the other end.
+- **PATROL is the only state so far** (`SnakeState`, ready for the rest), in runs and pauses. A run
+  is 60-240 ticks at 0.4-0.9 a second. A pause is 40-240 ticks. The speed eases to the run's and
+  back to rest at 1.5 a second per second, so it glides rather than darts.
+- **It patrols from the branch's tip to `trunk_reach` (2.0) down the trunk** past the branch
+  (`SnakePatrolEnd`). Reaching either end stops it dead, and the pause there ends in a turn. A pause
+  anywhere else ends in a turn a quarter of the time.
+- **A turn swaps which end is the head.** The body stays where it lay and the head becomes the
+  other end. That is the blockout's turn: in the game it reads as the yellow head jumping to the
+  tail. The model's turn can curl the head back over the body without the rules knowing.
+- **Seeded:** every draw is the snake's own xorshift, seeded by the level (`seed`), so a replay
+  patrols the same way. Each starts with a seeded pause, so they do not set off together.
+- **Rules state everywhere it has to be:** stepped in `Stage::Tick` after the webs
+  (`TickSnakes`), in the state hash as a part of its own (`snakes`, so a trace names them when they
+  part), rebuilt by a Reset, and in a recording's starting state (`CaptureRecordingState` /
+  `RestoreRecordingState`, `"snakes"`, every field).
+- **The view:** `SyncSnakes` lays a chain of spheres along the path every tick, 1.3 radii apart.
+  The head is bigger and yellow (`ar_snake_head`), the body olive (`ar_snake`), tapering over its
+  last half to a third of its girth at the tail. The slither sways square to the path and the up.
+  Its phase is each section's own distance covered, so the S stays put and the body slides through
+  it, and a resting snake is still. From the game camera the sway is mostly in depth and subtle.
+  The spheres are visual only, in `plant_objects` (a restart destroys them) and swapped with a
+  parked level.
+- `stage_test` TestSnakes checks four snakes, each on its path at full health, the tougher the
+  bigger. Over 4000 ticks it checks that every body stays on its path inside its patrol at its full
+  length, and that no end moves faster than `SNAKE_SPEED_MAX` a tick, a turn included. It checks
+  each one runs and pauses repeatedly, and that turns happen at the tip, at a patrol's end and in
+  between. It also checks that two levels started alike patrol alike tick for tick, that a snake
+  moved a thousandth changes the hash, and that a Reset puts them back.
+- **archer_test:** `her` and the sounds stay the same. Its baseline still waits on the slopes'
+  rewrite (see step 2), so it is not rewritten here. Replay against replay, with fresh baselines
+  set aside and put back, it is the same on all 1735 ticks, `snakes` included.
+
 ### Ideas, not decided
 
-- **A hit on a branch knocks it off.** A shot brings a snake down where she chooses: knock it off
-  before she walks under, then finish it on the ground. It gives the first arrow a use even
-  against a 3-hp snake.
-- **The heartbeat is the warning.** A snake overhead within a few units raises her fear before it
-  drops (section 6's fear input), so the breathing and heartbeat tell the player before anything
-  shows.
 - **It rears and lunges on the ground.** Within reach it rears (the head leaves the path), lunges
   once, then makes for the trunk. Hit while fleeing, it drops what it is doing and coils.
-- **Arrow kinds can matter later.** A bamboo arrow pins a snake to its branch for a while, so it
-  cannot drop or move. A vine arrow's vine could become a new path for snakes, so a careless vine
-  invites them closer.
+- **A vine arrow's vine** could become a new path for snakes, so a careless vine invites them
+  closer. (The bamboo's pin is decided, for later.)
 - **A snake on an arm.** One coiled on an arm she has to climb past blocks the route: shoot it from
   below, or time the hop while it faces away.
 - **A hollow in the crown.** Snakes come out of a hole in the cut top, a nest she can see but not
@@ -239,11 +324,14 @@ The path debug view shows the snake paths in their own colour.
 
 ### Order for the snake
 
-1. **The tree, taller, with the crown**, plus the snake branches drawn as blockout. stage_test
-   climbs from the high slab to the crown and checks the branches collide with nothing.
-   archer_test's state changes here (new arms are new bodies), so its baselines get rewritten.
-2. **The snake paths** off the branches and the trunk, in the path debug view.
+1. **The tree, taller, with the crown**, plus the snake branches drawn as blockout. **BUILT
+   2026-10-04.** stage_test climbs from the high slab to the crown and checks the branches.
+   archer_test's `world` and physics state changed from tick 0 (new arms are new blocks and
+   bodies) while `her` and the sounds stayed the same, so its baselines were rewritten.
+2. **The snake paths** off the branches and the trunk, in the path debug view. **BUILT 2026-10-04**:
+   one route per branch, tip to ground, `StageSnakePath` (see above).
 3. **A snake patrolling**: StageSnake in the rules, spheres in the view, in the state hash.
+   **BUILT 2026-10-04**: see "The patrol" above.
 4. **The drop**: WATCH, DROP, LANDED, and stage_test dropping one onto the high slab with her under it.
 5. **Arrows**: hit points, flinch, death. stage_test kills a 1-, 2- and 3-hp snake with that many
    arrows, and checks a snake off her line cannot be hit.
@@ -506,6 +594,6 @@ reaches those parts. It was **not re-baselined**: the export should be confirmed
 | 1 | Paths + debug view | **built** 2026-10-01: hand, vine and surface paths; `archer_debug_view {paths}` and a checkbox |
 | 2 | Small spiders (blockout) | **built** straight on the model: 38 on 13 paths in the bay and the cave, runs, pauses and twitches |
 | 3 | Small spider model | **built**: `spider` in the export, one Mesh for all, legs off distance walked; an alternating gait on `LegsSwing`/`LegsLift` since 2026-10-02 (`leg_mode` 2); cost below the timers' noise at 40 |
-| 4 | Snake | planned; blockout worked out 2026-10-04 (section 4): a taller tree at x 80 with a crown level and snake branches; no model yet |
+| 4 | Snake | blockout under way (section 4): steps 1-3 BUILT 2026-10-04: the taller tree at x 80 with its crown, the snake branches and their paths, four snakes patrolling them; the drop next; no model yet |
 | 5 | Big spider | planned; model in progress (reference render 2026-10-01) |
 | 6 | Fear, health | planned |

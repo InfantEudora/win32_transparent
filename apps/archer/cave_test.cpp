@@ -141,9 +141,15 @@ static void TestRocks(const Stage& s){
     std::vector<Boulder> plain, dressed;
     ScatterBoulders(s.blocks,params,plain);
     ScatterBoulders(s.blocks,params,dressed,&s.biomes);
+    /*
+        The rocks that are SEEN: the app drops whatever stands inside a ramp's wedge (InsideRampWedge,
+        docs/terrain_plan.md section 12). The slopes' shelf meets the far wall in a corner buried under
+        the pitch, and the cave's rules decide that corner, being at its edge - nothing there shows.
+    */
+    auto seen = [&s](const Boulder& r){ return !InsideRampWedge(s.ramps,r.x,r.ground,0.3f); };
     std::vector<Boulder> a, b;
-    for (const Boulder& r : plain){ if (!InCave(*cave,r)) a.push_back(r); }
-    for (const Boulder& r : dressed){ if (!InCave(*cave,r)) b.push_back(r); }
+    for (const Boulder& r : plain){ if (!InCave(*cave,r) && seen(r)) a.push_back(r); }
+    for (const Boulder& r : dressed){ if (!InCave(*cave,r) && seen(r)) b.push_back(r); }
     bool f_same = a.size() == b.size();
     for (size_t i = 0; f_same && i < a.size(); i++){
         f_same = a[i].kind == b[i].kind && a[i].x == b[i].x && a[i].z == b[i].z && a[i].scale == b[i].scale;
@@ -304,7 +310,13 @@ static void TestWind(const Stage& s){
     }
     snprintf(d,sizeof(d),"fastest inside: %.3f through it before, %.3f still (wind %.2f)",open_inside,still_inside,p.speed);
     printf("  %s\n",d);
-    Check(open_inside > 0.3f * p.speed,"without the biome the wind blows through the cave",d);
+    /*
+        Without the biome it used to blow straight through at over 0.3 of the wind, in at the far end
+        where the level stopped. The level goes on past the far wall now (the slopes,
+        docs/terrain_plan.md section 12), so the cave is a closed pocket even to an open field and the
+        flow inside is a slow eddy - but still more than the biome's stillness, which is the point.
+    */
+    Check(open_inside > still_inside + 0.05f * p.speed,"without the biome the air in the cave moves",d);
     Check(still_inside < 0.02f * p.speed,"with it, the air in the cave is still",d);
     Check(still.Distance(-55.0f,4.0f) < 0.0f,"and the cave is inside an obstacle, so leaves, streaks and fireflies keep out");
     WindVec over = still.MeanFlow(-55.0f,13.0f);

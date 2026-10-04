@@ -47,7 +47,7 @@ prompted this note (`web_plan.md`).
 | `plant_mechanics_plan.md` | climbable tree, spring plants, thin branch |
 | `slide_plan.md` | her pose on a slide: surfing and sliding, tilted to the slope |
 | `strawman_plan.md` | the kicking dummy |
-| `terrain_plan.md` | marching-cubes terrain from the blockout |
+| `terrain_plan.md` | marching-cubes terrain from the blockout; ramps melted in as slopes, and the slopes test bed past the cave (section 12) |
 | `vine_plan.md` | vines, growth, the rope |
 | `vitals_plan.md` | exertion, fear, breathing, heartbeat |
 | `water_plan.md` | the waterfall |

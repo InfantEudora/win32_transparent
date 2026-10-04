@@ -429,3 +429,138 @@ into the corner and to the back, 3..6 `rock_small` round its base on the open si
 z -0.15, off her walking line; a big rock may hang half its footprint past the platform's back
 edge, or the 1.3 of a default slab held every one to the same small size. Main level: 12 corners,
 8 big, 18 small. App: `ScatterBoulderObjects`, pooled under `boulders`, beside the foliage.
+
+## 12. Slopes: the ramps melt too (2026-10-04, built)
+
+The field is built from boxes, so every top it draws is flat. The rules already have slopes -
+`StageRamp`, a one-way line of ground from one end to the other, and everything the slide work
+built runs on them (`docs/slide_plan.md`) - but a ramp is still drawn as a blockout slab with
+the wedge under it left open. This section melts the ramps into the field, the way the plant plan
+noted in passing ("an oriented box in the SDF would let it melt ramps too").
+
+**The rules do not change.** A ramp stays a line in `Stage`, declared and sealed exactly as the
+slide gallery's are: its low end on a floor, its high end against a face, so the space under it
+is never reached. The terrain only draws that space filled. Replays and `archer_test` see nothing
+new beyond the layout itself.
+
+### The wedge
+
+Each ramp whose centre lies in a region becomes a fourth piece beside the blocks' three, joined to
+them by the same smooth union:
+
+- **The body** - the solid UNDER the line, extruded through the slab like a block: a trapezoid
+  whose top is the ramp, its sides vertical at the ends and its bottom buried below the low end.
+  Its exact 2D distance, extruded and rounded the same way as `SdRoundBox`: **the top edge is
+  shrunk by r along its normal and r added back**, so the slope's plane lands exactly on the
+  rules' line - the top-pinning rule, said for a tilted face. The sides are not shrunk, so the
+  rounding rolls outward past the ends, the same as a box's does past its footprint.
+- **The cap** - a slab of grass parallel to the slope, its top on the line, its thickness the
+  blocks' cap thickness plus the drip, overhanging the body at the front and back. An oriented
+  rounded box, pinned in its own normal the way `SdCap` is pinned in y.
+- **Clipped at the high end.** Both pieces are extended past the high end, so the outward rounding
+  there does not sag the last bit of slope, then cut off by the vertical plane through that end.
+  Without the cut the extension rises above the block it meets; with a flat clip instead, the
+  ramp's top would coincide with the block's and the smooth union would lift that strip by k/4.
+  The cut lands inside the block, where nothing sees it.
+- **Noise stays off it.** The attenuation (`NoiseAttenuation`) takes the ramps as well as the
+  blocks: no displacement on or just under the line within the slab's depth, full noise past it in
+  z, so the grass edge along the front wobbles like a block's.
+- **Grass is still what the cap owns**, so the slope is green and its front edge earth.
+
+Where the low end meets the floor the union fills the inside corner. It is obtuse (180 degrees
+less the slope), so the fillet's rise is smaller than at the foot of a wall, and it is a rise, not
+a dip - her feet sink a little into grass at the foot of a slide.
+
+### What else follows the drawn surface
+
+- **`TerrainSurface`** takes the ramps too, so it stays "that mesh's field, exactly": the vines and
+  anything else sampling the drawn ground follow the slope for free.
+- **The blockout slab** of a melted ramp is hidden like a melted block's box, and shown again with
+  the blockout toggle.
+- **The plants and rocks** are scattered on block tops, and a floor's top runs on under a ramp's
+  wedge. Anything that would stand inside a wedge is dropped (a helper in the rules,
+  `UnderRamp`). The scatter is hashed per spot, so dropping some moves none of the others. Plants
+  growing ON the slope are later.
+- **Not yet:** the wind still treats a ramp as open air, and arrows still pass through ramps -
+  both as before, for the gallery's slabs.
+
+### The test bed: left of the cave
+
+The level is extended past the cave's far wall, x -106 .. -66, entered from the cave roof (top 11)
+by walking off its left end:
+
+| piece | where | what it is for |
+|---|---|---|
+| the steep pitch | ramp (-69.34, 8.2) .. (-66, 11), 40 degrees | the hip slide; its high end against the far wall's face |
+| the shelf | block x -72.34 .. -66, top 8.2 - 3 wide in the open, the rest under the pitch | a convex top and a concave foot between two slopes; run on to the wall so no hollow shows under the pitch |
+| the long run | ramp (-92.64, 0) .. (-72.34, 8.2), 22 degrees | the surf, 21.9 long, toward top speed |
+| the floor | block x -106 .. -66, top 0 | the skid's run-out, 13.4 to the wall |
+| the left wall | block x -107 .. -106, -4 .. 15 | the level's end now; its middle under the bays' split, so it melts with its floor |
+
+The way back is by jumping: running hops up the long run, then a running jump from the shelf onto
+the roof over the steep pitch (2.8 up, 3.3 across). `stage_test` plays both ways. Measured first
+on a prototype (the level with these appended): down from the roof she hip-slides the pitch, skids
+over the shelf, surfs the run to 13.0 u/s and skids to rest 6.3 short of the wall; back, the route
+search finds 30-tick windows up the run and 29 for the roof jump, 9 for the first hop. All of it goes in
+LAST, after the cave, by the rule that the dressing is seeded by block index. The bays' regions
+reach left to the new wall (`ARCHER_SLOPES_X_MIN`), and the zones get a "Slopes" area, the cave's
+starting at its far wall now.
+
+Only the main level has terrain at all, so the rope level's slide gallery keeps its blockout
+slabs - checked on screen; it was expected to melt and does not.
+
+### Build order
+
+1. **The field** (`TerrainField`): the wedge's body and cap, the noise attenuation, ramps in
+   `TerrainFieldAt`, `TerrainSurface` and `BuildTerrainVerts`, and its bounds. A new engine-free
+   `terrain_test` in `make rules`: the drawn surface sits on the line along a ramp within the
+   slab's depth (no dip; rise only at the foot and within a small bound), the high end does not
+   poke above its block, and a level with no ramps measures the same as before, bit for bit.
+2. **The test bed** in `Stage` (blocks and ramps last, the zone, `ARCHER_SLOPES_X_MIN`), with
+   `stage_test` sliding down from the roof and getting back up.
+3. **The app**: the ramps passed to the mesher and to every `TerrainSurface`, melted ramps' slabs
+   hidden, plants and rocks inside a wedge dropped. `TerrainStats` gains the ramps' own dip and
+   rise, logged with the bay's.
+4. **Look at it** from the game camera, sliding down with the surf and the hip slide, the gallery
+   included; then `archer_test`, which the new layout will move (expected, re-baselined if it is
+   only that).
+
+### As built
+
+Steps 1-4 done. `make rules` passes throughout, `terrain_test` 28 checks, `stage_test`'s
+TestSlopes 9. In the game, from the roof she hip-slides the pitch, skids over the shelf, surfs the
+run to 13.0 u/s and skids to rest at x -99.67, exactly as the prototype did; the log reads dip 0 and
+rise under 3 mm along both bays' ramps.
+
+What the plan did not foresee, each found by looking:
+
+- **The blocks' grass ran on under a ramp.** A floor's top goes on beneath a wedge, and its cap
+  with it, so its lip and drips stood out of the slope's earth face as a green ledge. Every
+  block's cap now loses whatever is inside a ramp's wedge, the wedge stood out in depth by the
+  cap's reach and the noise's, and on past the high end by a cap's reach in x below the grass of
+  the block it leans on (so the shelf's lip goes right up to the wall and the roof's grass stays).
+  Inside a cut, no block's cap owns grass for the material pass either - only the ramp's own -
+  or the earth the noise pushes out of the wedge's face came out green in blobs.
+- **Across the bays' split.** The pitch's middle is above y 6 and the shelf's below, so the ground
+  bay melts the shelf and the island bay the pitch. Which ramps CUT a bay's caps is therefore wider
+  than which it draws: `TerrainRampSet` carries both, `own` by the ramp's middle and `cuts` by its
+  run alone - a region's y range is about block middles, and the shelf's top is well above the split.
+- **The shelf runs on under the pitch** to the far wall; three units of it left the space under the
+  pitch closed by nothing but the wedge, which showed as an arch.
+- **Block tops under a ramp are not measured** by `MeasureTops`: the floor beneath the run was
+  being reported as a 7.8 rise. The bay-0 figure is back to the 4.8 it read before.
+- **cave_test** compared the cave's rocks and wind against a level that ended at its far wall.
+  The rocks it compares are now the ones shown (outside every wedge); the wind check asks that
+  the biome stills the air, now that the open flow inside is an eddy rather than a draught.
+
+Left as they are:
+
+- Where the pitch (island bay) overlaps the shelf (ground bay) the two meshes meet without melting,
+  and the pitch's lower edge reads as a darker layer on the shelf's face; one stray grass triangle
+  sits by the far wall there.
+- A faint lighter band along the run's face at floor height, the floor's rounded top edge behind.
+- `archer_test` differs from tick 0 in `world`, `physics`, `bodies` and `objects` - the new blocks
+  and ramps; `her`, the animation and the sounds are the same. `objects` already differed before
+  this (the outfit export), so the baseline is left for the user to rewrite.
+- Plants do not grow ON the slopes yet, the wind still blows through ramps, and arrows still pass
+  through them - as before.

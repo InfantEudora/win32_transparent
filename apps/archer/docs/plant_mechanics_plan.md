@@ -83,6 +83,10 @@ reached from the third). Neither slab can be reached from the ground, even with 
   that measures every platform against the ground skips the arms - they are reached from the arm
   below. The same climb played in the game lands on 2.50, 5.00, 7.50 and 10.20.
 
+**Taller, 2026-10-04**, for the snakes (`creature_plan.md` section 4): three more arms above the high
+slab (12.7 R, 15.2 L, 17.7 R; the fourth reached off the high slab as the third reaches it) and a
+crown, the cut top 9 wide at 20.2, the snakes' level. TestTree climbs all of it.
+
 Next for the tree: its mesh from the stump's pieces, and the arm length measured off the model.
 
 **The bigtree on the cave roof: BUILT 2026-09-30**, the first tree drawn with the art. The one at

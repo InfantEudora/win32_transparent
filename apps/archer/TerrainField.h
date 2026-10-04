@@ -87,6 +87,11 @@ struct TerrainParams{
     //rest is earth, told apart by slope.
     float cap_eps      = 0.03f;     //a tie on the top face, where both are at zero, goes to grass
     float rock_ny      = 0.25f;     //normal.y below this is a cliff face
+
+    //--- the ramps (docs/terrain_plan.md section 12) ----------------------------------------------
+    //How far a ramp's wedge reaches below its low end, past the rounding: into the floor it is
+    //sealed on, so the union with that floor has no notch along the bottom.
+    float ramp_bury    = 0.40f;
 };
 
 
@@ -108,16 +113,44 @@ struct TerrainRegion{
         return b.kind == BLOCK_SOLID && b.f_alive && !b.f_invisible &&
                b.x >= x_min && b.x < x_max && b.y >= y_min && b.y < y_max;
     }
+    //A ramp by its middle, the same half-open way - so a ramp and the block it leans on can fall
+    //in two bays, and are then two meshes that meet rather than one that melts.
+    bool Contains(const StageRamp& r) const{
+        float x = (r.a.x + r.b.x) * 0.5f, y = (r.a.y + r.b.y) * 0.5f;
+        return x >= x_min && x < x_max && y >= y_min && y < y_max;
+    }
 };
 
 
 /*
-    The field at p, for `blocks` (the region's own) with `floating` from TerrainFindFloating.
-    Negative inside. The nearest cap's and body's own distances too, for the material pass.
+    The ramps one region's field sees (docs/terrain_plan.md section 12), in two lists because a
+    ramp and the floor under it can be in two bays:
+      own   - melted in here as wedges: their middles are in the region (TerrainRegion::Contains);
+      cuts  - every ramp whose wedge reaches into the region, its own included: the blocks' grass
+              is cut out from under all of them, or a floor in one bay runs its lip on under a
+              slope drawn in the other.
+    Pointers into the vector Gather was given.
+*/
+struct TerrainRampSet{
+    std::vector<const StageRamp*> own;
+    std::vector<const StageRamp*> cuts;
+    void Gather(const std::vector<StageRamp>& level, const TerrainRegion& region, const TerrainParams& params);
+    bool empty() const { return own.empty() && cuts.empty(); }
+};
+
+/*
+    The field at p, for `blocks` (the region's own) with `floating` from TerrainFindFloating, and
+    the region's `ramps`. Negative inside. The nearest cap's and body's own distances too, for the
+    material pass.
 */
 float TerrainFieldAt(const vec3& p, const std::vector<const StageBlock*>& blocks,
-                     const std::vector<bool>& floating, const TerrainParams& params,
-                     float* out_cap = NULL, float* out_body = NULL);
+                     const std::vector<bool>& floating, const TerrainRampSet& ramps,
+                     const TerrainParams& params, float* out_cap = NULL, float* out_body = NULL);
+
+//Where a ramp's wedge reaches down to, and its half-depth through the slab - for a caller sizing
+//a grid round it. The wedge rounds out past both by round_r, like a block.
+float TerrainRampBottom(const StageRamp& r, const TerrainParams& params);
+float TerrainRampHalfDepth();
 
 //Which of `blocks` float: nothing under them, but something anywhere in `all` below them.
 std::vector<bool> TerrainFindFloating(const std::vector<const StageBlock*>& blocks,
@@ -136,8 +169,10 @@ public:
     TerrainSurface(const TerrainSurface&) = delete;
     TerrainSurface& operator=(const TerrainSurface&) = delete;
 
-    void  Build(const std::vector<StageBlock>& all, const TerrainRegion& region, const TerrainParams& params);
-    bool  IsEmpty() const { return own.empty(); }
+    //`ramps`, if given, are the level's: the region's own melt in with the blocks, as the mesh's do.
+    void  Build(const std::vector<StageBlock>& all, const TerrainRegion& region, const TerrainParams& params,
+                const std::vector<StageRamp>* ramps = NULL);
+    bool  IsEmpty() const { return own.empty() && ramps.own.empty(); }
     //The signed distance to the drawn surface at p, and its outward normal there (numerically).
     float Distance(const vec3& p) const;
     vec3  Normal(const vec3& p) const;
@@ -147,6 +182,8 @@ private:
     std::vector<StageBlock>        own;
     std::vector<const StageBlock*> blocks;
     std::vector<bool>              floating;
+    std::vector<StageRamp>         own_ramps;     //every ramp the set points into, copied
+    TerrainRampSet                 ramps;
     TerrainParams params;
     TerrainRegion region;
 };

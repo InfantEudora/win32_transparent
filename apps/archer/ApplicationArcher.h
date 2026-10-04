@@ -1003,6 +1003,9 @@ private:
 //back and forth on a cave's threshold cannot flip the music's section every bar.
 #define ARCHER_CAVE_ENTER_WEIGHT    0.6f
 #define ARCHER_CAVE_LEAVE_WEIGHT    0.4f
+//How far round a ramp's wedge the dressing keeps clear (InsideRampWedge): the body's rounding and
+//the cap's lip, near enough, so nothing stands half in the slope at its foot or its high end.
+#define ARCHER_WEDGE_MARGIN         0.3f
 
 //The camera trails the archer rather than being welded to them - see UpdateCamera.
 #define CAMERA_DISTANCE             26.0f
@@ -2089,6 +2092,7 @@ private:
     void SyncArrowViews();
     //Each spring plant's moving box, to where its spring is this tick.
     void SyncSpringPlants();
+    void SyncSnakes();
     void SyncBridges();
     //The balance gauge beside her head, while she is on a branch.
     void SyncBalanceGauge();
@@ -2205,6 +2209,8 @@ private:
     int material_crumble = 0;       //a crumble stone, whole
     int material_crumble_warn = 0;  //and shaking, once she has stood on it
     int material_trunk = 0;
+    int material_snake = 0;
+    int material_snake_head = 0;
     int material_spring_pad = 0;
     int material_leaf = 0;
     int material_ramp = 0;          //the slide gallery's ramps - see Stage::BuildSlideGallery
@@ -2331,9 +2337,19 @@ private:
     //to Stage::spring_plants, for SyncSpringPlants to place.
     std::vector<Object*> plant_objects;
     std::vector<Object*> spring_plant_objects;
+    /*
+        Each snake's spheres, head first - Stage::snakes, blocked out (docs/creature_plan.md 4) -
+        for SyncSnakes to lay along its path every tick. Also in plant_objects, which destroys them.
+        Visual only: the rules own the snake, so the state hash has it already.
+    */
+    std::vector<std::vector<Object*>> snake_spheres;
+    Mesh* snake_sphere_mesh = NULL;     //a unit sphere, scaled to each section
     //Every bridge's planks, bridge by bridge and in order along each - Stage::bridges' planks - for
     //SyncBridges to place. Also in plant_objects, which is what destroys them.
     std::vector<Object*> bridge_plank_objects;
+    //Every ramp's slab, parallel to Stage::ramps, for ApplyBlockoutVisibility to hide where the
+    //terrain melts the ramp (docs/terrain_plan.md section 12). Also in plant_objects.
+    std::vector<Object*> ramp_objects;
     /*
         THE TIMING CUE, worked out each tick: which spring plant to tint (-1 none) and how well
         timed a jump pressed now would be, 0..1 - Stage::SpringBoostNow over this bounce's best,
@@ -3013,7 +3029,9 @@ private:
         std::vector<Object*> zone_outline_objects;
         std::vector<Object*> plant_objects;
         std::vector<Object*> spring_plant_objects;
+        std::vector<std::vector<Object*>> snake_spheres;
         std::vector<Object*> bridge_plank_objects;
+        std::vector<Object*> ramp_objects;
         Object* balance_bar = NULL;
         Object* balance_marker = NULL;
         Object* blockout_group = NULL;

@@ -62,3 +62,13 @@ user's mock set that) behind the ground bay's floor: noise ridge line, forward r
 (children of terrain_back_<bay>). Boulders.{h,cpp} = rocks at inside corners only, big pushed to the back.
 Both pure, in make rules. Traps: weak multiply-xor hash gave a plateau (use lowbias32); BuildTerrain runs
 before BuildArcherModel so anything at model_scale placed there is half size. terrain_plan.md 10-11.
+
+**2026-10-04 slopes (terrain_plan.md section 12):** StageRamps in a bay melt in as wedges
+(TerrainField: body = exact 2D trapezoid SDF, top shrunk by r along the normal so the plane IS the
+rules' line; cap = oriented rounded box; both cut at the high end's vertical plane). Rules
+unchanged. Test bed past the cave's far wall, x -107..-66 (ARCHER_SLOPES_X_MIN), entered off the
+roof; terrain_test.cpp in make rules. Traps found by looking, not by the plan: a floor's CAP runs on
+under a wedge and its lip shows as a ledge - block caps are cut by every ramp's wedge (grown in z
+past lip + noise), and inside a cut no block cap owns grass; a ramp and the block under it can be
+in DIFFERENT bays (split by middles), so TerrainRampSet has `own` (drawn) and `cuts` (by x run
+only). Only the MAIN level has terrain - the rope level's gallery stays blockout.

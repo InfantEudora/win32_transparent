@@ -423,6 +423,105 @@ struct StageTree{
     bool  f_bigtree = false;
     std::vector<StageTreeArm> arms;
 };
+/*
+    A SNAKE BRANCH - docs/creature_plan.md section 4. A polyline in the world from a tree's trunk out,
+    in front of her line, behind it, or across it: where the snakes live. Hers to look at only - it
+    collides with nothing, she cannot stand on it - so it is no block and needs no tuning against
+    her jump. Declared in the rules all the same, because a snake's path is gameplay and is built
+    from these points; the app draws it from them too.
+*/
+struct StageSnakeBranch{
+    std::vector<v3> points;     //from the trunk out; the first on the trunk's axis
+    float radius = 0.09f;       //drawn, and how far above its centre line a snake's path runs
+    int   tree = -1;            //the StageTree it grows from
+};
+
+/*
+    A SNAKE PATH - docs/creature_plan.md section 4, built from a branch by Stage::BuildSnakePaths:
+    from the branch's TIP in along its top to the trunk, then round and down the trunk to the
+    ground, a helix. One open path per branch, so a snake owns a route rather than a graph to choose
+    through: it patrols its branch, and a dropped one climbs back up from the foot of its own path.
+    The trunk is shared by every branch's path, each helix starting where its branch leaves.
+
+    The CONTACT line - on the surface, the way a snake's belly lies - with beside each point the
+    way its back faces (`ups`), out of the branch's top or out from the trunk. A snake adds its own
+    radius along the up. Straight between points, with points close enough round the trunk that the
+    helix reads as a curve: rules code walks it, so it is plain arithmetic, not core's Spline.
+*/
+struct StageSnakePath{
+    std::vector<v3>    points;
+    std::vector<v3>    ups;         //unit, square to the path
+    std::vector<float> dist;        //distance along the path to each point; dist[0] is 0
+    int   branch = -1;
+    int   trunk_from = -1;          //the first point on the trunk: before it, the branch
+    float Length() const { return dist.empty() ? 0.0f : dist.back(); }
+    //Where `s` along it is, clamped to the path: the point, the way on (unit), and the up.
+    void  At(float s, v3& pos, v3& tangent, v3& up) const;
+};
+//The blockout trunk is a square box: a helix at the radius stays outside its faces but cuts its
+//corners, so it runs out at the corners' distance. A round trunk (a mesh) would take the radius.
+#define SNAKE_TRUNK_ROUND_OUT       1.42f
+#define SNAKE_TRUNK_TURN_RISE       2.50f   //height the helix climbs per turn round the trunk
+#define SNAKE_PATH_STEP             0.15f   //the helix's point spacing, along it
+
+/*
+    A SNAKE - docs/creature_plan.md section 4. GAMEPLAY, so it lives here: declared by the level,
+    stepped every tick, in the state hash and in a recording's starting state, and the app only
+    draws it from these numbers.
+
+    Its head is `s` along its path (StageSnakePath), and its body lies on the path behind the head,
+    `Length()` back the way it came, so every part of it passes where the head went. `dir` is the
+    way the head is going: -1 out toward the tip (s falling), +1 in and down the trunk.
+
+    PATROL, for now the only thing it does: runs and pauses, a glide rather than a spider's dart,
+    between the branch's tip and `trunk_reach` down the trunk past the branch. At either end it
+    stops, and TURNS by its head swapping to the other end of its body - a blockout's turn: the body
+    stays where it lay and only which end leads changes. The model's turn can curl the head back
+    over the body; the rules do not need to know. Now and then it turns back mid-patrol as well.
+
+    Size follows the hit points, so a tougher one reads as one: see SNAKE_LENGTH / SNAKE_RADIUS.
+    Every random draw is its own xorshift, seeded by the level, so a replay patrols the same way.
+*/
+enum SnakeState{
+    SNAKE_PATROL = 0,
+    SNAKE_STATE_COUNT
+};
+struct StageSnake{
+    //--- The level's ---
+    int   branch = -1;              //its home branch, and so its path (one per branch)
+    int   hp_max = 1;               //1..3, and its size
+    float start_s = 0.0f;           //where its head starts, along the path
+    int   start_dir = -1;
+    float trunk_reach = 2.0f;       //how far past the branch, down the trunk, its patrol goes
+    uint32_t seed = 1;
+
+    //--- State, stepped by Stage::TickSnakes ---
+    int   path = -1;                //into Stage::snake_paths, resolved when the paths are built
+    int   hp = 1;
+    int   state = SNAKE_PATROL;
+    bool  f_moving = false;         //a run, as opposed to a pause
+    bool  f_turn = false;           //turn round when this pause ends
+    int   ticks = 0;                //left in this run or pause
+    float s = 0.0f;
+    int   dir = -1;
+    float v = 0.0f;                 //speed along the path now, never negative; `dir` is the way
+    float run_speed = 0.0f;         //this run's
+    float travelled = 0.0f;         //distance really covered - the view's slither runs off it
+    uint32_t rng = 1;
+
+    float Length() const;
+    float Radius() const;
+    float Tail() const { return s - (float)dir * Length(); }
+};
+#define SNAKE_SPEED_MIN             0.40f   //a run's speed, units a second
+#define SNAKE_SPEED_MAX             0.90f
+#define SNAKE_ACCEL                 1.50f   //to a run's speed and back to rest, units a second per second
+#define SNAKE_RUN_TICKS_MIN         60
+#define SNAKE_RUN_TICKS_MAX         240
+#define SNAKE_PAUSE_TICKS_MIN       40
+#define SNAKE_PAUSE_TICKS_MAX       240
+#define SNAKE_TURN_CHANCE           0.25f   //a pause mid-patrol that ends with a turn
+
 //An arm is as thin as the level's other one-way platform - see the note on it in BuildMainLevel.
 #define STAGE_TREE_ARM_HALF_H       0.15f
 /*
@@ -594,6 +693,12 @@ struct StageRamp{
     float SurfaceY(float x) const { return a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x); }
     float Slope() const { return (b.y - a.y) / (b.x - a.x); }
 };
+/*
+    Is (x, y) inside the space under any of `ramps` - over its run, below its line - grown by
+    `margin` both ways? The terrain draws that space filled (docs/terrain_plan.md section 12), and a
+    floor's top runs on under it, so this is what the dressing asks before standing anything there.
+*/
+bool InsideRampWedge(const std::vector<StageRamp>& ramps, float x, float y, float margin);
 
 /*
     A ROPE BRIDGE - docs/bridge_crumble_plan.md section 3. Planks hung between two pinned anchors, a
@@ -1204,6 +1309,15 @@ struct StageCrumbleGroup{
 */
 #define ARCHER_CAVE_X_MIN           (-66.0f)    //the cave floor's left end; the far wall stands on it
 #define ARCHER_CAVE_ROOF_Y          9.0f        //the roof's underside
+/*
+    THE SLOPES (docs/terrain_plan.md section 12), past the cave's far wall: the test bed for ramps
+    melted into the terrain, entered off the cave roof's left end. The terrain bays' regions reach
+    left to here, so its blocks and ramps melt with the rest.
+*/
+#define ARCHER_SLOPES_X_MIN         (-107.0f)   //the left wall's outer face - the level's end now
+#define SLOPES_PITCH_DEG            40.0f       //off the roof onto the shelf: past the hip-slide line
+#define SLOPES_RUN_DEG              22.0f       //the shelf to the floor: a surf, long enough for speed
+#define SLOPES_SHELF_Y              8.2f        //2.8 under the roof - a running jump back up over the pitch
 
 /*
     Something the APP builds a rigid body for, described here so that the whole level layout lives
@@ -2039,6 +2153,10 @@ public:
     int  GetLevel() const { return level; };
     //Each tree's arms as one-way platforms, appended to `blocks` after the level is built.
     void BuildTrees();
+    void BuildSnakePaths();
+    void TickSnakes();
+    //How far along its path a snake's patrol reaches: `trunk_reach` past its branch, on the path.
+    float SnakePatrolEnd(const StageSnake& sn) const;
 
     //Where the archer starts and where a fall off the world puts her back. Per level.
     v2   StartPosition() const;
@@ -2082,6 +2200,10 @@ public:
     std::vector<StageWater> waters;
     std::vector<StageBiome> biomes;
     std::vector<StageTree>  trees;
+    std::vector<StageSnakeBranch> snake_branches;
+    std::vector<StageSnakePath> snake_paths;    //built from snake_branches, one each - BuildSnakePaths
+    //Declared by the level and stepped every tick, like the spring plants: a Reset rebuilds them.
+    std::vector<StageSnake> snakes;
     //Declared by the level and stepped every tick: their state is theirs, so a Reset rebuilds them.
     std::vector<StageSpringPlant> spring_plants;
     std::vector<StageBranch> branches;
