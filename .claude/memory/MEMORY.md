@@ -76,3 +76,5 @@
 - [Prop atlas plan](prop_atlas_plan.md) — 11 Tripo 4096^2 prop textures -> one atlas; step 1 analysis tools/blender_uv_atlas.py BUILT 2026-09-30 (flat/smooth/detailed islands); swatch + pack + bake next
 - [Ogg Vorbis settings](ogg_vorbis_settings.md) — archer music samples ship as .ogg since 2026-09-30 (q-1, 32 kHz cap, make publish encodes, core/AudioDecode decodes at load); archer SFX converted too
 - [ReadFileToString is disk-only](readfiletostring_disk_only.md) — alone it silently misses baked assets in the ship exe (music was lost that way); read disk first, then LoadFile; test ship from an empty folder
+- [Spider leg shape keys](spider_leg_shape_keys.md) — LegsSwing/LegsLift tetrapod keys built 2026-10-02 by tools/blender_spider_legs.py (Mirror applied, morph 0 still Walking); game wiring done (leg_mode 2 default); Blender-scripting traps (modifier `is`, shape key pin skips modifiers)
+- [Blend edit in place OK](blend_edit_in_place_ok.md) — user keeps .blend backups; a copy is fine but not required (separate file still wise while Blender has it open)

@@ -18,6 +18,7 @@
 #include "Backdrop.h"
 #include "Boulders.h"
 #include "Vine.h"
+#include "Creatures.h"
 #include "WindView.h"
 #include "Leaves.h"
 #include "Streaks.h"
@@ -520,6 +521,12 @@ static const int   STAND_POINTS[STAND_RING_COUNT] = { 10,    8,     6,     4,   
 #define ARCHER_FACE_NODE            "archer_face"
 //The part the hair bones deform - its vertices are what the chains' tips are measured off.
 #define ARCHER_HAIR_NODE            "archer_hair"
+//What the wardrobe dresses her in (ApplyOutfit), by node. Bare legs and leggings are one or the other.
+#define ARCHER_PART_LEGS            "archer_legs"
+#define ARCHER_PART_LEGGINGS        "archer_leggings"
+#define ARCHER_PART_ARMBAND         "archer_armband"
+#define ARCHER_PART_CAPE            "archer_cape"
+#define ARCHER_PART_POUCH           "archer_sachet"
 #define ARCHER_FACE_KEY_MOUTH_OPEN  0
 #define ARCHER_FACE_KEY_BLINK       1
 /*
@@ -615,6 +622,11 @@ enum ArcherAnimSource{
 #define ARCHER_AIM_NECK_SHARE       0.35f   //on top, so her head follows most of the way
 
 #define ARCHER_AIM_BONES            6
+
+//How much of the slope's tilt is turned back out of her torso while she rides one standing - the
+//rest she leans into it with (docs/slide_plan.md) - and how fast either eases, degrees a tick.
+#define ARCHER_SLOPE_UPRIGHT        0.7f
+#define ARCHER_SLOPE_TILT_RATE      5.0f
 
 /*
     --- THE UPPER-BODY LAYER (docs/animation_plan.md, Step 2) -----------------------------------------
@@ -769,6 +781,13 @@ public:
     float aim_weight = 0.0f;        //0..1, from Puppet::aim_weight
     //Level ahead, a unit vector - Stage::Forward: (+-1,0,0) side-on, her heading on the turntable.
     vec3  aim_forward = vec3(1.0f,0.0f,0.0f);
+    /*
+        THE SLOPE'S TURN BACK (docs/slide_plan.md): on a slope the app tilts the whole model to it,
+        and standing up on one her torso is turned back by this much, about the world's Z - shared
+        over Spine, Spine1 and Spine2 - so she rides it upright rather than leaning out square to it.
+        Degrees, 0 off a slope. After the legs and before the aim, which measures what it finds.
+    */
+    float slope_turn_deg = 0.0f;
 
     /*
         THE LIVE NEUTRAL, and the check on it: the angle the bow's front climbs above level ahead,
@@ -920,7 +939,7 @@ private:
     portrait PNG, which is why the panel still has an offset slider for choosing a band of it; on
     this one the overflow is small and the slider mostly has nothing to do.)
 */
-#define BACKGROUND_ASSET            "images/background1.jpeg"
+#define BACKGROUND_ASSET            "images/background1.jpg"
 #define BACKGROUND_IMAGE_ASPECT     (4096.0f / 2336.0f)
 #define BACKGROUND_DEPTH            40.0f   //behind the play plane, in world units
 #define BACKGROUND_FOLLOW           0.85f   //0 = nailed to the world, 1 = pinned to the camera
@@ -934,8 +953,12 @@ private:
     side, one wider loses a little top and bottom, and neither gets bars. The art keeps the archer
     well in from the left edge for exactly that reason.
 */
-#define TITLE_ASSET                 "images/title_background.jpeg"
+#define TITLE_ASSET                 "images/title_background.jpg"
 #define TITLE_IMAGE_ASPECT          (4096.0f / 2336.0f)
+//Behind the Controls and Settings screens (docs/menu_plan.md) - the title's art stays on the
+//title menu itself. Fitted the same way, at its own aspect.
+#define MENU_ASSET                  "images/menu_background.jpg"
+#define MENU_IMAGE_ASPECT           (1792.0f / 1024.0f)
 //One full breath of "click to continue", in TICKS - the title scene ticks like any other.
 #define TITLE_PULSE_TICKS           90
 
@@ -1235,6 +1258,11 @@ struct ArcherSnapshot{
     bool  f_apple_in_reach = false;
     std::vector<StageApple> apple_list;     //each one's state and where it is, for archer_state
     int   pick_ticks = 0;
+    //The small spiders (docs/creature_plan.md): how many, how many drawn, and - only while the path
+    //view is on, which is the only reader - where each one is.
+    int   spiders = 0;
+    int   spiders_drawn = 0;
+    std::vector<vec3> spider_points;
 
     //Live arrows, so a miss can be diagnosed rather than guessed at.
     struct ArrowView{
@@ -1319,6 +1347,9 @@ struct ArcherSnapshot{
     };
     std::vector<BridgeView> bridges;
     float slope_deg = 0.0f;         //Stage::SlopeUnderFeetDeg
+    bool  f_skidding = false;       //Stage::f_skidding
+    float slope_tilt_drawn = 0.0f;  //the tilt the model is drawn at on a slide, degrees
+    float slope_turn_drawn = 0.0f;  //and her torso's turn back out of it
     float spring_cue = -1.0f;           //the timing cue, 0..1, or -1 while there is none
     float spring_boost = 0.0f;          //what a jump now would add, and this bounce's best
     float spring_boost_peak = 0.0f;
@@ -1618,6 +1649,59 @@ private:
     float apple_bounce = 0.30f;
     float apple_friction = 0.80f;
     float apple_angular_damping = 2.50f;
+    /*
+        --- CREATURES ON PATHS (docs/creature_plan.md, Creatures.h) ---------------------------------
+        The world level's SMALL SPIDERS: ambient, view-only. The swarm walks them on the physics
+        thread (StepCreatures, after the leaves) and every one is a visual-only Object, so nothing
+        of them is rules state or in a replay's hash. ALL OF THEM SHARE ONE Mesh - archer.glb's
+        `spider`, loaded once (GetMeshFromNode makes a new Mesh on every call) - which is what
+        keeps them to one instanced draw, each with its own morph factor for the legs.
+
+        Their paths are built once, at Init (BuildCreatures, RENDER THREAD, after the vines and the
+        terrain): round the bay's big vines, up and along the cave's and the bay's walls by the
+        creeper's walk against the level as drawn, and one by hand. They are never rebuilt - the
+        level does not move under them - so the path view's lines are made once from them too.
+    */
+    CrawlerSwarm crawlers;
+    std::vector<Object*> spider_objects;    //one per crawler, and spare ones for the bench
+    Mesh* spider_mesh = NULL;
+    std::vector<Material> spider_materials;
+    /*
+        THE SIZE. archer.glb's spider is 0.92 across its legs - 1.67 at her scale, as wide as she is
+        tall, which is the big spider's size rather than these. So a factor on model_scale. Set by
+        what still reads as a spider from the game camera, 26 away: at 0.24 (0.40 across) they were
+        dark specks on dark vines; at 0.38 (0.63 across) the legs read. Bigger than a real one.
+    */
+    float spider_scale = 0.38f;
+    float spider_foot_drop = 0.0f;  //from its origin to the soles of its feet, at its size; measured
+    /*
+        THE LEGS, driven off the distance walked (CrawlerSwarm::LegPhase), so a stopped spider's
+        feet stay planted. 2, the gait: the two keys tools/blender_spider_legs.py builds, morph
+        targets 1 and 2 - LegsSwing = sin, LegsLift = cos of the phase - an alternating tetrapod,
+        each foot lifted while it swings forward and down while it sweeps back. 0 and 1 are the old
+        `Walking` key (target 0) alone, which moves both sides alike and so cannot alternate: 0
+        swings it 0..1, 1 swings it -1..+1, where past -0.5 the legs stretch out flat and long.
+        A mesh without the two gait keys falls back to 0.
+    */
+    int   spider_leg_mode = 2;
+    float spider_leg_amount = 1.0f;
+    //The bench: N spiders in a grid filling the view, for the GPU pass timers. 0 is off.
+    int   spider_bench = 0;
+    int   spiders_drawn = 0;
+    void BuildCreatures();
+    void StepCreatures();
+    /*
+        THE PATH VIEW: one line object, like the floor edges'. Each path in its kind's colour, an
+        arrow every unit toward its end, a bar at each end of an open path and a ring at a loop's
+        start, and a cross on every spider. Built from the paths once (path_view_lines) and from
+        the snapshot's spider points each frame it is shown, every point slid along its ray to the
+        eye so the lines sit over what they describe whatever is in front. RENDER THREAD.
+    */
+    void UpdatePathView();
+    bool  f_show_paths = false;
+    Object* path_view_object = NULL;
+    Mesh*   path_view_mesh = NULL;
+    std::vector<line_vertex> path_view_lines;
     /*
         THE BIGTREE AND THE MUSHROOM - a StageTree with f_bigtree and a pad with f_mushroom, drawn
         with archer.glb's pieces. BuildPlantModels loads and measures them once (RENDER THREAD,
@@ -3094,6 +3178,7 @@ private:
     */
     Scene*  title_scene = NULL;
     Object* title_quad = NULL;
+    Object* menu_quad = NULL;               //MENU_ASSET, behind the Controls and Settings screens
     int     title_tap_button = -1;          //the full-window click, or -1 if the bind failed
     //f_show_ui as it was before the title hid the panels, put back on leaving it.
     bool    f_title_saved_show_ui = true;
@@ -3104,7 +3189,8 @@ private:
     */
     Scene*  title_return_scene = NULL;
     void CreateTitleScene();
-    //Scales the quad to cover a w x h window. Render thread.
+    //Scales the art to cover a w x h window, and shows the title's or the menus' - whichever
+    //menu_screen calls for. Render thread.
     void FitTitleQuad(int w, int h);
     //Physics thread, from UpdateView while the title is live: the title menu and its two screens -
     //Start/Continue (the horn and the fade, as continue always was), Controls, Settings, Quit.
@@ -3122,9 +3208,12 @@ private:
         is up is `menu_screen`, an atomic for the same two threads.
     */
     enum{ MENU_SCREEN_TITLE, MENU_SCREEN_CONTROLS, MENU_SCREEN_SETTINGS };
-    enum{ MENU_START = 1, MENU_CONTROLS, MENU_SETTINGS, MENU_QUIT,
+    enum{ MENU_START = 1, MENU_CHARACTER, MENU_CONTROLS, MENU_SETTINGS, MENU_QUIT,
           MENU_MSAA, MENU_VOLUME_MASTER, MENU_VOLUME_MUSIC, MENU_VOLUME_EFFECTS, MENU_FULLSCREEN, MENU_SETTINGS_BACK,
-          MENU_CONTROLS_BACK };
+          MENU_CONTROLS_BACK,
+          MENU_LEGS, MENU_ARMBAND, MENU_CAPE, MENU_POUCH, MENU_WARDROBE_BACK };
+    //The title menu's buttons by position, for putting the focus back on the one that led away.
+    enum{ TITLE_ITEM_START, TITLE_ITEM_CHARACTER, TITLE_ITEM_CONTROLS, TITLE_ITEM_SETTINGS, TITLE_ITEM_QUIT };
     std::atomic<int> menu_screen{MENU_SCREEN_TITLE};
     UIMenu     title_menu;
     UIMenu     settings_menu;
@@ -3145,6 +3234,43 @@ private:
     bool       f_menu_pointer_pending = false;
     float      menu_pointer_x = 0.0f, menu_pointer_y = 0.0f;
     bool       f_menu_pointer_click = false;
+    /*
+        Where the title's closing fade lands: the button that started it says (Start/Continue's
+        level, or the Character scene); NULL is title_return_scene, as before. PHYSICS THREAD.
+    */
+    Scene*     title_destination = NULL;
+    //The last level that is the GAME - not the title, not the Character scene - for Start/Continue
+    //after a visit to the wardrobe. Set in OnActiveSceneChanged; NULL until then means the world.
+    Scene*     play_scene = NULL;
+    //The title menu's focus when it next comes up (EnterTitle), then back to Start/Continue.
+    int        title_focus_on_enter = 0;
+
+    /*
+        THE WARDROBE: what she wears, over the Character scene - legs or leggings, the armband,
+        the cape and the pouch for now; gear later. Open while the Character scene was reached
+        through the title's Character button (f_wardrobe_requested -> f_wardrobe_open in
+        OnActiveSceneChanged), and while it is open it has the input: her own is held still in
+        GatherInput, so Space and the arrows do not also make her jump and aim. Reached through the
+        Scene panel instead, the scene is the animation bench it always was. f_wardrobe_open is
+        atomic for the render thread (DrawWardrobe) and archer_menu.
+    */
+    UIMenu     wardrobe_menu;
+    int        wardrobe_item_legs = -1, wardrobe_item_armband = -1, wardrobe_item_cape = -1, wardrobe_item_pouch = -1;
+    bool       f_wardrobe_requested = false;
+    std::atomic<bool> f_wardrobe_open{false};
+    void UpdateWardrobe(InputController* input);
+    void SyncWardrobeMenu();
+    void DrawWardrobe(float w, float h);
+    /*
+        HER OUTFIT (core/Settings), in outfit.json beside the exe - a store of its own rather than
+        keys in settings.json, because it is the player's character rather than the machine's
+        setup, and gear will grow it. ApplyOutfit puts it on her parts on a change.
+    */
+    Settings   outfit;
+    uint32_t   outfit_applied = 0xFFFFFFFFu;
+    void ApplyOutfit();
+    //One pass of the menus' input into `in` - see the definition. True when it is ours to act on.
+    bool ReadMenuInput(InputController* input, UIMenuInput& in, bool& f_exit, bool& f_back);
     void SetupMenus();
     void SyncSettingsMenu();                //the Settings screen's items from `settings`
     void DrawMenus(float w, float h);       //render thread, from DrawOverlay's title branch
@@ -3320,6 +3446,16 @@ private:
     float air_hip_ref = 0.0f;
     float air_hip_weight = 0.0f;
     float climb_lift_posed = 0.0f;
+    /*
+        ON A SLIDE, THE SLOPE (docs/slide_plan.md): the whole model tilted to it, about the world's Z
+        (+ anticlockwise on screen, so a slope rising to the right is +), about the clip's PIVOT - the
+        point between her feet standing up, the point under her hips down on one - which stays on the
+        surface. Standing up, ARCHER_SLOPE_UPRIGHT of the tilt is turned back out of her torso
+        (ArcherModel::slope_turn_deg). Both eased at ARCHER_SLOPE_TILT_RATE, since the slope under
+        her changes in a tick at every ramp's ends. View-only.
+    */
+    float slope_tilt_deg = 0.0f;
+    float slope_upright = 0.0f;
 
     //--- The backdrop -----------------------------------------------------------------------------
     Object* background_object = NULL;

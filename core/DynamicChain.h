@@ -57,9 +57,9 @@ struct DynamicChainParams{
     vec3  gravity = vec3(0.0f,-9.81f,0.0f);     //world, units per second squared
     float dt = 1.0f / 60.0f;                    //one tick
     //The fraction of the way back to the pose closed each tick, 0..1. See step 2 above.
-    float stiffness = 0.05f;
+    float stiffness = 0.10f;
     //The fraction of a particle's velocity lost each tick, 0..1.
-    float damping = 0.05f;
+    float damping = 0.125f;
     //Non-zero: the chain moves only in the plane with this normal, through its animated points.
     vec3  plane_normal = vec3(0.0f,0.0f,0.0f);
     //A root that jumps further than this in one tick has been placed rather than moved - a

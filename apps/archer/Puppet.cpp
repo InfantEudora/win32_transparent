@@ -223,6 +223,12 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         pitch is the body taking up the speed, not travel, and the rules stop her in three ticks.
     */
     { "Landing_Hard",        false, false,  false, false, false },
+    /*
+        THE SLIDES: both authored in place (the hips stray under 0.03), looping, and played at 1x -
+        the rules carry her, and neither is a gait whose feet have to keep pace with the ground.
+    */
+    { "Surfing_Idle",        true,  false,  false, false, false },
+    { "Sliding",             true,  false,  false, false, false },
 };
 
 bool Puppet::IsDrawPose(int clip){
@@ -258,6 +264,12 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
         is not a block, and its loss of balance is sideways and its own.
     */
     out.f_on_branch = stage.f_on_ground && stage.mode == MODE_GROUND && stage.branch_on >= 0;
+    //The slide, and the skid out of one - see ArcherAnimParams::f_sliding.
+    float slide = stage.SlideAccel();
+    out.f_sliding = stage.f_on_ground && stage.mode == MODE_GROUND && slide != 0.0f;
+    out.f_skidding = stage.f_skidding;
+    out.slope_deg = fabsf(stage.SlopeUnderFeetDeg());
+    out.slide_dir = (stage.vel.x > 0.05f) ? 1.0f : ((stage.vel.x < -0.05f) ? -1.0f : ((slide > 0.0f) ? 1.0f : ((slide < 0.0f) ? -1.0f : 0.0f)));
     out.edge_over = -1.0f;
     out.edge_drop = 0.0f;
     if (stage.f_on_ground && stage.mode == MODE_GROUND && stage.branch_on < 0){
@@ -607,6 +619,21 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         }
         out.clip = (in.vel_y > PUPPET_RISE_VEL) ? CLIP_JUMP_RISE : CLIP_FALL;
         return out;
+    }
+
+    /*
+        ON A SLIDE (docs/slide_plan.md): standing on it, or down on a hip past PUPPET_SLIDE_DOWN_DEG
+        (f_slide_down, set in Tick with its hysteresis), and the surf again for the skid out of one
+        onto the flat. Both in place, on their own clock - the rules carry her down the slope. Above
+        the landing's settle and the teeter, which are about the flat: a landing onto a slide goes
+        straight into the slide. The upper layer draws the bow over either.
+    */
+    if (in.f_on_ground && (in.f_sliding || in.f_skidding)){
+        int clip = (in.f_sliding && f_slide_down) ? CLIP_SLIDE : CLIP_SURF;
+        if (clip_duration[clip] > 0.0f){
+            out.clip = clip;
+            return out;
+        }
     }
 
     /*
@@ -1165,6 +1192,14 @@ void Puppet::Tick(const ArcherAnimParams& in){
     UpdateRope(in);
     UpdateTeeter(in);
     UpdateBranch(in);
+    //Standing or down on a hip, with the hysteresis - see PUPPET_SLIDE_DOWN_DEG. Before Choose, which reads it.
+    if (!in.f_sliding){
+        f_slide_down = false;
+    }else if (in.slope_deg >= PUPPET_SLIDE_DOWN_DEG){
+        f_slide_down = true;
+    }else if (in.slope_deg <= PUPPET_SLIDE_UP_DEG){
+        f_slide_down = false;
+    }
     choice = Choose(in);
 
     //The base's crossfade, for the upper layer to wait out - see base_fade_ticks.
@@ -1193,7 +1228,16 @@ void Puppet::Tick(const ArcherAnimParams& in){
 
         A plain move-toward does that on its own, because both targets sit either side of zero.
     */
-    float target = TargetYaw(in.facing);
+    /*
+        Down on a hip she slides FEET FIRST, whichever way she faces - braking uphill turns her
+        facing, not the slide. Except while she draws: the bow points the way she faces, and her
+        body has to turn with it, so that is the one way she goes down a slope seat first.
+    */
+    float face = in.facing;
+    if (choice.clip == CLIP_SLIDE && in.action != ACTION_DRAW && in.slide_dir != 0.0f){
+        face = in.slide_dir;
+    }
+    float target = TargetYaw(face);
     float step = 180.0f / (float)PUPPET_TURN_TICKS;
     if (yaw_deg < target){
         yaw_deg += step;
@@ -1336,6 +1380,10 @@ void Puppet::HashState(StateHash& h) const{
     h.Add(upper_mix); h.Add(upper_xfade_serial); h.Add(upper_from);
     h.Add(upper_prev_clip); h.Add(upper_prev_phase);
     h.Add(base_fade_ticks); h.Add(base_fade_from); h.Add(base_prev_clip);
+    //Only while it is on, so a run that never goes down on a hip hashes as it did before there was one.
+    if (f_slide_down){
+        h.Add(f_slide_down);
+    }
     const PuppetChoice& c = choice;
     h.Add(c.clip); h.Add(c.blend_clip); h.Add(c.blend); h.Add(c.blend_phase_offset);
     h.Add(c.rate); h.Add(c.wanted_rate); h.Add(c.start_time); h.Add(c.f_placeholder);
@@ -1380,5 +1428,6 @@ void Puppet::Reset(float facing){
     base_fade_ticks = 0;
     base_fade_from = -1;
     base_prev_clip = -1;
+    f_slide_down = false;
     choice = PuppetChoice();
 }

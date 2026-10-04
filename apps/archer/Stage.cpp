@@ -116,6 +116,7 @@ void Stage::Reset(){
     spring_on = -1;
     ramp_on = -1;
     bridge_on = -1;
+    f_skidding = false;
     launch_lift = 0.0f;
     stomp_ticks = 0;
     spring_left = -1;
@@ -3135,6 +3136,7 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         mode = MODE_KNEEL;
         kneel_phase = KNEEL_LOWERING;
         kneel_ticks = 0;
+        f_skidding = false;     //down on a knee is a stop
         events.f_knelt = true;
     }
     if (mode == MODE_KNEEL){
@@ -3184,6 +3186,20 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     bool f_planted = (kick_ticks > 0 || pick_ticks > 0) && f_on_ground;
     if (f_planted){
         vel.x = MoveToward(vel.x,0.0f,KICK_ROOT_FRICTION * ARCHER_DT);
+    }else if (f_skidding && f_on_ground && slide == 0.0f){
+        /*
+            THE SKID - see SKID_DECEL. Off a slide onto the flat she is still riding it: the speed
+            bleeds away slowly, or faster pushing against it, and pushing along it only hands her
+            back to the run once she is down to running pace - a skid is never sped up by the key.
+        */
+        float along = ClampF(in.move_axis,-1.0f,1.0f) * ((vel.x > 0.0f) ? 1.0f : -1.0f);
+        vel.x = MoveToward(vel.x,0.0f,((along < -0.01f) ? SKID_BRAKE : SKID_DECEL) * ARCHER_DT);
+        if (along > 0.01f && fabsf(vel.x) <= RunSpeed() * move_scale){
+            f_skidding = false;
+        }
+        if (in.move_axis > 0.01f || in.move_axis < -0.01f){
+            facing = (in.move_axis > 0.0f) ? 1.0f : -1.0f;
+        }
     }else if (in.move_axis > 0.01f || in.move_axis < -0.01f){
         float accel = f_grip ? ARCHER_RUN_ACCEL : ARCHER_AIR_ACCEL;
         /*
@@ -3360,6 +3376,21 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     }
     if (buffer_ticks > 0){
         buffer_ticks--;
+    }
+
+    /*
+        The skid's start and end, off where the move left her: a slide that has just handed her
+        onto ground she can stand on, at SKID_MIN_SPEED or more, starts one; leaving the ground, a
+        new slide, or slowing to SKID_END_SPEED ends it. A branch is not ground to skid on.
+    */
+    float slide_now = f_on_ground ? SlideAccel() : 0.0f;
+    if (!f_on_ground || slide_now != 0.0f || branch_on >= 0){
+        f_skidding = false;
+    }else if (slide != 0.0f && fabsf(vel.x) >= SKID_MIN_SPEED){
+        f_skidding = true;
+    }
+    if (f_skidding && fabsf(vel.x) < SKID_END_SPEED){
+        f_skidding = false;
     }
 
     //Her balance, on a branch. Going over hangs her from it, which ends the tick as a catch does.
@@ -5188,6 +5219,10 @@ void Stage::HashState(StateHash& h) const{
     h.Add(bow_mode); h.Add(draw_ticks); h.Add(aim_deg); h.Add(aim_roam_ticks); h.Add(draws_cancelled);
     h.Add(sway_ticks);
     h.Add(draws_started); h.Add(arrow_kind); h.Add(heading_deg);
+    //Only while skidding, so a run that never skids hashes as it did before there was a skid.
+    if (f_skidding){
+        h.Add(f_skidding);
+    }
 
     h.Begin("world");
     h.Add(ticks); h.Add(arrows_shot); h.Add(arrows_hit_blocks); h.Add(next_arrow);

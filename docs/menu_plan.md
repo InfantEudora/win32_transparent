@@ -103,8 +103,10 @@ Only which buttons there are, what they do and the look are archer's.
     fade.
   - Escape on the title still quits, as before; Back (or Escape) on a sub-screen returns to the
     title menu, focused on what led there.
-- **The look:** archer's parchment-on-dark band. The menu draws over the title art, low centre,
-  where "CLICK TO CONTINUE" was.
+- **The look:** archer's parchment-on-dark band. The title menu draws over the title art, low
+  centre, where "CLICK TO CONTINUE" was. Controls and Settings have their own picture,
+  `images/menu_background.jpg` (MENU_ASSET), a second quad in the title scene that FitTitleQuad
+  shows in place of the title art while either screen is up.
 - **MCP:** `archer_menu` reads the screen, the focus and the items, and can move the pointer and
   click, which is how the mouse path is checked without taking the desk's real mouse.
   `archer_hold` takes the navigation actions by name.
@@ -175,6 +177,40 @@ Only which buttons there are, what they do and the look are archer's.
   - A `settings.json` placed beside it is loaded.
   - Its menus were not driven: with no MCP and no focus there is nothing to drive them with.
 - `cue_replay`: `state same`, `same` - also on the build merged with the apples work.
+
+## The wardrobe (2026-10-01)
+
+The Character scene for testers - before this it could only be reached from the debug Scene
+panel.
+
+- **Getting there:** the title menu's second button, Character, fades to the Character scene with
+  the WARDROBE open.
+  - No horn: that is the game starting, and this is not.
+  - Escape, Back, B or the wardrobe's own Back return to the title, focused on Character.
+  - Start/Continue then goes to the last level that is the GAME (`play_scene`), never back to the
+    Character scene: each button names its destination (`title_destination`).
+- **What it dresses:** Legs (Bare / Leggings - one or the other, `archer_legs` / `archer_leggings`),
+  Armband, Cape and Pouch (`archer_sachet`), on and off.
+- **Persistence:** it is `outfit`, a second core/Settings store, in `outfit.json` beside the exe:
+  `{"leggings": true, "armband": true, "cape": true, "pouch": true}`.
+  - It is a store of its own because it is the player's character, not the machine's setup, and
+    gear will grow it.
+  - ApplyOutfit puts it on her parts on a change. She is one model shared by every scene, so it
+    holds in all of them.
+- **Input:** while the wardrobe is open it has the input. GatherInput holds her still, so Space and
+  the arrows do not also make her jump and aim.
+- **Debug paths unchanged:**
+  - Reached from the Scene panel, the Character scene is the animation bench it always was, with
+    no wardrobe.
+  - The Character panel's part checkboxes still override until the next outfit change.
+- **Placement:** left of her - the Character camera frames her right of centre. With the debug
+  panels up it moves in, between them and her.
+- **Checked:**
+  - Title -> Character (by click) opened it.
+  - Keys and clicks changed the parts and wrote outfit.json; Space did not make her jump.
+  - B returned to the title on Character, and Start then went to the world with the outfit on.
+  - A restart kept it.
+  - Two archer_test replays with different outfits gave identical reports.
 
 ## Not done
 

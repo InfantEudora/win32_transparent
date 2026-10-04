@@ -72,6 +72,9 @@ APP_SRCS += Fireflies.cpp
 #The waterfall: where its pieces go and its foam, engine-free (water_test), and its objects.
 APP_SRCS += Water.cpp
 APP_SRCS += ApplicationArcherWater.cpp
+#Creatures on paths - the paths and the ambient spiders, engine-free, so `rules` tests them too.
+#See docs/creature_plan.md.
+APP_SRCS += Creatures.cpp
 
 #SOUND, for the bow: the string's creak from the nock, the loose, and the arrow striking
 #something - assets/sound/*.wav, played from ApplicationArcher::UpdateSound. The jump, the
@@ -124,7 +127,7 @@ include $(ROOT)/engine.mk
 rules:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
-		stage_test.cpp Stage.cpp StageEdges.cpp TerrainField.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Water.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
+		stage_test.cpp Stage.cpp StageEdges.cpp TerrainField.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Water.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp Creatures.cpp \
 		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe
 #The wind's checks, as their own exe so they need nothing from stage_test.cpp. -O2 because the

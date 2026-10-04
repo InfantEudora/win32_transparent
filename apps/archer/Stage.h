@@ -524,6 +524,18 @@ struct StageSpringPlant{
 //A slide's top speed along the surface - faster than her run (9), so a long one is worth riding.
 #define SLIDE_MAX_SPEED             14.0f
 /*
+    THE SKID (docs/slide_plan.md): off the foot of a slide onto the flat she rides it out, rather
+    than stopping dead at the run's friction (120 u/s^2, which stopped her off the long run's 12.7
+    in a tenth of a second). The speed bleeds off at SKID_DECEL - about a second and seven units from
+    the long run - or at SKID_BRAKE pushing against it. Pushing along it hands her back to the run
+    once she is down to running pace; she cannot speed a skid up. Only off a slide at SKID_MIN_SPEED
+    or more, and over at SKID_END_SPEED. The animation plays the surf for it.
+*/
+#define SKID_DECEL                  12.0f
+#define SKID_BRAKE                  40.0f
+#define SKID_MIN_SPEED              2.0f
+#define SKID_END_SPEED              0.8f
+/*
     The most a fling can throw her at. A timed bounce is her jump plus the rise, and without a cap
     every bounce off a pad lands harder and so throws her higher than the last. 28 is about 9.3 of
     rise, three jumps' worth.
@@ -2141,6 +2153,7 @@ public:
     */
     float SlideAccel() const;
     int   ramp_on = -1;             //the ramp she is standing on, or -1 - kept with f_on_ground
+    bool  f_skidding = false;       //riding a slide out on the flat - see SKID_DECEL
     int   bridge_on = -1;           //the bridge she is standing on, or -1 - kept with f_on_ground
     //The slope under her feet in degrees, + rising to the right; 0 on flat ground or in the air.
     float SlopeUnderFeetDeg() const;

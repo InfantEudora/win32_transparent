@@ -102,6 +102,13 @@ enum ArcherClip{
     CLIP_BALANCE_WALK,      //Balance_Walking        on a branch; playhead pinned to the distance walked
     CLIP_LAND_ROLL,         //Landing_Roll           a hard landing on the move, rolled out of
     CLIP_LAND_CARRY,        //Landing_Hard           a hard landing carried forward, key let go
+    /*
+        THE SLIDES (docs/slide_plan.md): both in place and looping, played while the rules have her
+        sliding (Stage::SlideAccel) and tilted to the slope by the app. Which one is the slope's:
+        standing up to PUPPET_SLIDE_DOWN_DEG, down on a hip past it. The surf is also the skid's.
+    */
+    CLIP_SURF,              //Surfing_Idle           riding a slope standing, side-on, feet apart along it
+    CLIP_SLIDE,             //Sliding                down on one hip, propped on a hand, feet first
     CLIP_COUNT
 };
 
@@ -387,6 +394,16 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 */
 #define PUPPET_TURN_TICKS           5
 
+/*
+    THE SLIDE'S TWO POSES, by how steep it is (docs/slide_plan.md): standing up on it (Surfing_Idle),
+    or down on a hip (Sliding) past PUPPET_SLIDE_DOWN_DEG - and back up only below
+    PUPPET_SLIDE_UP_DEG, so a leaf bending under her, or a slope at exactly the line, does not flick
+    her between the two. A first guess at the line, to be judged in the slide gallery (8 14 18 25 35
+    50): the 18 and 25 hills and the long run are ridden standing, the 35 and 50 go down onto a hip.
+*/
+#define PUPPET_SLIDE_DOWN_DEG       32.0f
+#define PUPPET_SLIDE_UP_DEG         28.0f
+
 //Which way the MODEL faces at rest. Mixamo rigs are authored facing +Z, so a side-view character
 //running towards +X is that model yawed a quarter turn. Measured from the export rather than
 //assumed: in bind pose the toes sit at +Z of the ankle, and the walk clip travels +Z.
@@ -503,6 +520,15 @@ struct ArcherAnimParams{
     float edge_drop = 0.0f;
     //Standing on a branch (Stage::branch_on), feet on it rather than hanging from it.
     bool  f_on_branch = false;
+    /*
+        ON A SLIDE (docs/slide_plan.md): sliding by the rules (Stage::SlideAccel), or skidding out of
+        one on the flat (Stage::f_skidding); how steep it is, degrees however it leans
+        (Stage::SlopeUnderFeetDeg, unsigned); and the way she is sliding along x, +1 or -1, 0 still.
+    */
+    bool  f_sliding = false;
+    bool  f_skidding = false;
+    float slope_deg = 0.0f;
+    float slide_dir = 0.0f;
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and
@@ -856,6 +882,9 @@ public:
 
     //Where the model is facing right now, in degrees, slewed toward the side `facing` asks for.
     float yaw_deg = PUPPET_YAW_RIGHT;
+    //Down on a hip on this slide rather than standing - PUPPET_SLIDE_DOWN_DEG's hysteresis. Off the
+    //moment she is not sliding.
+    bool  f_slide_down = false;
 
     /*
         How much of the aim angle her body takes, 0..1, eased over PUPPET_AIM_BLEND_TICKS.

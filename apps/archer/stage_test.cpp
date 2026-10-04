@@ -30,6 +30,7 @@
 #include "RopeMesh.h"
 #include "RouteCheck.h"
 #include "StateHash.h"
+#include "Creatures.h"
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -9149,6 +9150,357 @@ static void TestApples(){
     }
 }
 
+/*
+    Creatures on paths - docs/creature_plan.md sections 1-3. The three kinds of path, and the ambient
+    crawlers' walk along them: on the path, belly to it, legs off the distance covered, pausing,
+    and the same every run.
+*/
+static void TestCreatures(){
+    printf("\ncreatures\n");
+    char d[240];
+
+    //--- A hand-declared path: a straight run up a wall, back toward the camera ---
+    {
+        CreaturePath p;
+        bool f_ok = CreaturePathFromPoints({ vec3(0.0f,0.0f,-1.0f), vec3(0.0f,1.0f,-1.0f), vec3(0.0f,2.0f,-1.0f) },
+                                           vec3(0.0f,0.0f,1.0f),false,p);
+        vec3 pos, tan, up;
+        p.At(1.0f,pos,tan,up);
+        snprintf(d,sizeof(d),"length %.3f, at 1: (%.3f, %.3f, %.3f) along (%.2f, %.2f, %.2f) up (%.2f, %.2f, %.2f)",
+                 p.Length(),pos.x,pos.y,pos.z,tan.x,tan.y,tan.z,up.x,up.y,up.z);
+        Check(f_ok && fabsf(p.Length() - 2.0f) < 0.01f && fabsf(pos.y - 1.0f) < 0.01f && tan.y > 0.99f && up.z > 0.99f,
+              "a hand-declared path runs through its points, its up as declared",d);
+        CreaturePath loop;
+        CreaturePathFromPoints({ vec3(0,0,0), vec3(2,0,0), vec3(2,2,0), vec3(0,2,0) },vec3(0,0,1),true,loop);
+        vec3 a, b, t2, u2;
+        loop.At(0.0f,a,t2,u2);
+        loop.At(loop.Length(),b,t2,u2);
+        snprintf(d,sizeof(d),"length %.3f; start (%.3f, %.3f), a full lap on (%.3f, %.3f)",loop.Length(),a.x,a.y,b.x,b.y);
+        Check(loop.Length() > 6.0f && (a - b).length() < 0.01f,"a loop closes: a full lap is back where it began",d);
+    }
+
+    //--- Round a vine: the bay's longest, held off its bark and turning as it climbs ---
+    {
+        std::vector<VinePath> vines;
+        DeclareVines(STAGE_LEVEL_MAIN,vines);
+        int best = -1;
+        float best_len = 0.0f;
+        for (size_t i = 0; i < vines.size(); i++){
+            Spline sp;
+            if (vines[i].points[0].x < -12.0f && BuildVineSpline(vines[i],sp) && sp.GetLength() > best_len){
+                best = (int)i;
+                best_len = sp.GetLength();
+            }
+        }
+        Check(best >= 0,"the bay has a vine to climb");
+        if (best >= 0){
+            VineParams vp;
+            const float clear = 0.08f, pitch = 1.5f;
+            CreaturePath p;
+            bool f_ok = CreaturePathAroundVine(vines[best],vp,clear,pitch,0.0f,1.0f,7.0f,p);
+            Spline trunk;
+            BuildVineSpline(vines[best],trunk);
+            float worst_r = 0.0f, worst_up = 1.0f;
+            for (size_t i = 0; i < p.points.size(); i++){
+                float s = trunk.ClosestDistance(p.points[i]);
+                vec3 axis = trunk.PositionAt(s);
+                vec3 off = p.points[i] - axis;
+                float want = VineRadiusAt(trunk,vines[best],vp,s) + clear;
+                worst_r = fmaxf(worst_r,fabsf(off.length() - want));
+                off.normalize();
+                worst_up = fminf(worst_up,off.dot(p.ups[i]));
+            }
+            //Half a turn on, it is round the far side.
+            vec3 first = p.ups[0];
+            vec3 half = p.ups[(size_t)lroundf(pitch * 0.5f / 0.10f)];
+            snprintf(d,sizeof(d),"%zu points; off the bark by within %.3f of its radius + %.2f; up from the axis at worst %.3f; half a turn on %.2f",
+                     p.points.size(),worst_r,clear,worst_up,first.dot(half));
+            Check(f_ok && worst_r < 0.02f && worst_up > 0.98f,"round a vine, a path holds off the bark with its up out from the trunk",d);
+            Check(first.dot(half) < -0.9f,"and turns round it as it climbs - a helix",d);
+        }
+    }
+
+    //--- Along a surface: up the bay hill's left face (x -16, top 2.4), behind her line ---
+    {
+        Stage m;
+        VineBlockField field(m.blocks);
+        const float gap = 0.06f;
+        CreaturePath p;
+        bool f_ok = CreaturePathOverSurface(field,vec3(-16.0f,0.5f,-1.0f),vec3(-1.0f,0.0f,0.0f),7,3.0f,gap,p);
+        float worst = 0.0f, worst_up = 1.0f, top = -1e9f, z_off = 0.0f;
+        for (size_t i = 0; i < p.points.size(); i++){
+            worst = fmaxf(worst,fabsf(field.Distance(p.points[i]) - gap));
+            vec3 n = field.Normal(p.points[i]);
+            if (n.length() > 1e-4f){
+                n.normalize();
+                worst_up = fminf(worst_up,n.dot(p.ups[i]));
+            }
+            top = fmaxf(top,p.points[i].y);
+            z_off = fmaxf(z_off,fabsf(p.points[i].z + 1.0f));
+        }
+        snprintf(d,sizeof(d),"%zu points, %.2f long; off the face %.3f at worst from %.2f; up against the normal %.3f; up to %.2f; depth held to %.3f",
+                 p.points.size(),p.Length(),worst,gap,worst_up,top,z_off);
+        Check(f_ok && p.Length() > 2.0f && worst < 0.04f,"along a surface, a path hugs it",d);
+        Check(worst_up > 0.9f,"its up is the surface's normal",d);
+        Check(top > 2.3f,"it climbs the face and over the lip",d);
+        //Within a tenth: the walk's steering has a little depth in it even with no wander there.
+        Check(z_off < 0.10f,"and stays at the depth it started at",d);
+    }
+
+    //--- Crawlers: on a 4-unit run, a thousand ticks ---
+    {
+        CrawlerSwarm swarm;
+        CreaturePath p;
+        CreaturePathFromPoints({ vec3(0,0,0), vec3(2,0,0), vec3(4,0,0) },vec3(0,1,0),false,p);
+        swarm.paths.push_back(p);
+        swarm.Seed(0,6,42);
+        CrawlerSwarm twin = swarm;
+        int still_ticks = 0, legs_moved_still = 0, ran = 0;
+        float fastest = 0.0f;
+        bool f_on = true;
+        std::vector<float> prev_s, prev_phase;
+        for (size_t i = 0; i < swarm.crawlers.size(); i++){
+            prev_s.push_back(swarm.crawlers[i].s);
+            prev_phase.push_back(swarm.LegPhase((int)i));
+        }
+        for (int t = 0; t < 1000; t++){
+            swarm.Step();
+            twin.Step();
+            for (size_t i = 0; i < swarm.crawlers.size(); i++){
+                const Crawler& c = swarm.crawlers[i];
+                float moved = fabsf(c.s - prev_s[i]);
+                fastest = fmaxf(fastest,moved / ARCHER_DT);
+                f_on = f_on && c.s >= 0.0f && c.s <= p.Length();
+                if (moved == 0.0f){
+                    still_ticks++;
+                    legs_moved_still += (swarm.LegPhase((int)i) != prev_phase[i]) ? 1 : 0;
+                }else{
+                    ran++;
+                }
+                prev_s[i] = c.s;
+                prev_phase[i] = swarm.LegPhase((int)i);
+            }
+        }
+        bool f_same = true;
+        for (size_t i = 0; i < swarm.crawlers.size(); i++){
+            f_same = f_same && swarm.crawlers[i].s == twin.crawlers[i].s && swarm.crawlers[i].travelled == twin.crawlers[i].travelled;
+        }
+        snprintf(d,sizeof(d),"%i ticks moving, %i still (legs moved on %i of those); fastest %.2f u/s against %.2f",
+                 ran,still_ticks,legs_moved_still,fastest,swarm.params.speed_max);
+        Check(f_on,"a crawler stays on its path, turning back at the ends",d);
+        Check(ran > 0 && still_ticks > 1000,"it runs and it stops - darts and pauses, not a glide",d);
+        Check(legs_moved_still == 0,"its legs stop when it does",d);
+        Check(fastest <= swarm.params.speed_max + 0.01f,"and no step is faster than its top speed",d);
+        Check(f_same,"two swarms seeded alike walk alike");
+        vec3 pos, fwd, up;
+        swarm.Pose(0,pos,fwd,up);
+        snprintf(d,sizeof(d),"facing (%.2f, %.2f, %.2f), back (%.2f, %.2f, %.2f)",fwd.x,fwd.y,fwd.z,up.x,up.y,up.z);
+        Check(fabsf(fabsf(fwd.x) - 1.0f) < 0.01f && fabsf(fwd.dot(up)) < 0.01f && up.y > 0.99f,
+              "it faces along its path, belly to the surface",d);
+    }
+}
+
+/*
+    The slides - docs/slide_plan.md. The skid off a slide's foot (rules), and what the Puppet plays on
+    one: standing up it, down on a hip past PUPPET_SLIDE_DOWN_DEG with its hysteresis, the surf for
+    the skid, and feet first on the hip.
+*/
+static void TestSlides(){
+    printf("\nslides\n");
+    char d[240];
+    ArcherInput idle, right, left, jump;
+    right.move_axis = 1.0f;
+    left.move_axis = -1.0f;
+    jump.f_jump_pressed = jump.f_jump_down = true;
+
+    //--- The skid: a ramp of its own on the range, 26.6 degrees down to the right onto the flat ---
+    Stage base;
+    base.SetLevel(STAGE_LEVEL_RANGE);
+    base.ramps.push_back({ v2(-14.0f,4.0f), v2(-6.0f,0.0f) });
+    base.RebuildEdges();
+    const StageRamp& r = base.ramps.back();
+    //Let go near its top: slide to the foot, and on.
+    auto slide_out = [&](const ArcherInput& after, Stage& s, float& v_foot, float& x_foot){
+        s = base;
+        PlaceOn(s,-13.5f,r.SurfaceY(-13.5f));
+        v_foot = 0.0f;
+        x_foot = 0.0f;
+        for (int t = 0; t < 600; t++){
+            StageEvents e;
+            bool f_was = s.f_skidding;
+            s.Tick((x_foot != 0.0f) ? after : idle,e);
+            if (!f_was && s.f_skidding && x_foot == 0.0f){
+                v_foot = fabsf(s.vel.x);
+                x_foot = s.pos.x;
+            }
+        }
+    };
+    {
+        Stage s;
+        float v_foot, x_foot;
+        slide_out(idle,s,v_foot,x_foot);
+        float want = v_foot * v_foot / (2.0f * SKID_DECEL);
+        snprintf(d,sizeof(d),"off the foot at %.2f u/s from x %.2f; skidded %.2f (v^2/2a %.2f) to rest at %.2f",
+                 v_foot,x_foot,s.pos.x - x_foot,want,s.pos.x);
+        Check(x_foot > r.b.x - 0.5f && v_foot > SKID_MIN_SPEED,"off a slide's foot at speed, she skids",d);
+        Check(fabsf((s.pos.x - x_foot) - want) < 0.25f * want && !s.f_skidding && fabsf(s.vel.x) < 1e-3f,
+              "and rides it out at SKID_DECEL to a stop - not dead at the run's friction",d);
+        //Pushing against it: where the skid ENDS, before the key runs her back the other way.
+        Stage b = base;
+        PlaceOn(b,-13.5f,r.SurfaceY(-13.5f));
+        float xb = 0.0f, xb_end = 0.0f;
+        for (int t = 0; t < 400 && xb_end == 0.0f; t++){
+            StageEvents e;
+            bool f_was = b.f_skidding;
+            b.Tick(f_was ? left : idle,e);
+            if (!f_was && b.f_skidding){ xb = b.pos.x; }
+            if (f_was && !b.f_skidding){ xb_end = b.pos.x; }
+        }
+        snprintf(d,sizeof(d),"pushing against it, skidded %.2f against %.2f",xb_end - xb,s.pos.x - x_foot);
+        Check(xb_end != 0.0f && xb_end - xb < 0.5f * (s.pos.x - x_foot),"pushing against it brakes it harder",d);
+        //Pushing along it: when the skid hands her back, she is at running pace, and runs on there.
+        Stage g = base;
+        PlaceOn(g,-13.5f,r.SurfaceY(-13.5f));
+        float v_end = -1.0f, v_after = -1.0f, fastest = 0.0f;
+        bool f_skid_seen = false;
+        for (int t = 0; t < 200 && v_after < 0.0f; t++){
+            StageEvents e;
+            bool f_was = g.f_skidding;
+            g.Tick(f_skid_seen ? right : idle,e);
+            f_skid_seen = f_skid_seen || g.f_skidding;
+            if (g.f_skidding){
+                fastest = fmaxf(fastest,fabsf(g.vel.x));
+            }
+            if (f_was && !g.f_skidding){
+                v_end = fabsf(g.vel.x);
+                Run(g,10,right);
+                v_after = fabsf(g.vel.x);
+            }
+        }
+        snprintf(d,sizeof(d),"handed back at %.2f u/s, %.2f ten ticks on (her run %.2f)",v_end,v_after,g.RunSpeed());
+        Check(v_end > 0.0f && v_end <= g.RunSpeed() + 0.01f && fabsf(v_after - g.RunSpeed()) < 0.1f,
+              "pushing along it, she runs on out of it at running pace - never faster",d);
+        //Jumped out of: up, keeping the skid's speed.
+        Stage j = base;
+        PlaceOn(j,-13.5f,r.SurfaceY(-13.5f));
+        float vj = 0.0f;
+        bool f_jumped = false;
+        for (int t = 0; t < 300 && !f_jumped; t++){
+            StageEvents e;
+            bool f_skid = j.f_skidding;
+            j.Tick(f_skid ? jump : idle,e);
+            if (f_skid && e.f_jumped){
+                f_jumped = true;
+                vj = fabsf(j.vel.x);
+            }
+        }
+        snprintf(d,sizeof(d),"jumped at %.2f u/s, skidding %d",vj,(int)j.f_skidding);
+        Check(f_jumped && vj > SKID_MIN_SPEED && !j.f_skidding,"a jump out of a skid keeps its speed, and ends it",d);
+    }
+
+    //--- What she plays: on each hill of the slide gallery, slid down from near its top ---
+    {
+        Stage gallery;
+        gallery.SetLevel(STAGE_LEVEL_ROPE);
+        Settle(gallery);
+        int wrong = 0;
+        char seen[160] = "";
+        for (int h = 0; h < SLIDE_GALLERY_HILLS; h++){
+            const StageRamp& down = gallery.ramps[h * 2 + 1];      //down, going left
+            const float deg = SLIDE_GALLERY_DEG[h];
+            Stage s = gallery;
+            //Far enough down that the hill's top block no longer holds her up.
+            float x = down.b.x - 0.4f * (down.b.x - down.a.x);
+            PlaceOn(s,x,down.SurfaceY(x));
+            Puppet p;
+            p.clip_duration[CLIP_SURF] = 1.37f;
+            p.clip_duration[CLIP_SLIDE] = 2.03f;
+            int clip = -1;
+            for (int t = 0; t < 30; t++){
+                StageEvents e;
+                s.Tick(idle,e);
+                ArcherAnimParams in;
+                DescribeArcher(s,in);
+                p.Tick(in);
+                if (in.f_sliding){
+                    clip = p.choice.clip;
+                }
+            }
+            int want = (deg <= SPRING_LEAF_SLIP_DEG) ? -1 : ((deg >= PUPPET_SLIDE_DOWN_DEG) ? CLIP_SLIDE : CLIP_SURF);
+            wrong += (clip != want) ? 1 : 0;
+            snprintf(seen + strlen(seen),sizeof(seen) - strlen(seen),"%s%.0f:%s",h ? " " : "",deg,
+                     (clip == CLIP_SLIDE) ? "hip" : ((clip == CLIP_SURF) ? "surf" : "-"));
+        }
+        Check(wrong == 0,"down the gallery's hills: none where she holds, standing up it to the line, on a hip past it",seen);
+    }
+
+    //--- The line's hysteresis, the skid's surf, and feet first ---
+    {
+        Puppet p;
+        p.clip_duration[CLIP_SURF] = 1.37f;
+        p.clip_duration[CLIP_SLIDE] = 2.03f;
+        ArcherAnimParams in;
+        in.f_on_ground = true;
+        in.f_sliding = true;
+        in.slide_dir = 1.0f;
+        in.facing = 1.0f;
+        in.ground_speed = 5.0f;
+        int flips = 0, last = -1;
+        //A leaf bending back and forth across the line: 29 .. 31, never past either edge.
+        for (int t = 0; t < 60; t++){
+            in.slope_deg = 30.0f + ((t % 10 < 5) ? -1.0f : 1.0f);
+            p.Tick(in);
+            flips += (last >= 0 && p.choice.clip != last) ? 1 : 0;
+            last = p.choice.clip;
+        }
+        Check(flips == 0 && last == CLIP_SURF,"a slope wavering across the line does not flick her between the two");
+        in.slope_deg = 40.0f;
+        p.Tick(in);
+        Check(p.choice.clip == CLIP_SLIDE,"past it, down on a hip");
+        in.slope_deg = 30.0f;
+        p.Tick(in);
+        Check(p.choice.clip == CLIP_SLIDE,"and she stays down until it eases off below the line's lower edge");
+        in.slope_deg = PUPPET_SLIDE_UP_DEG - 1.0f;
+        p.Tick(in);
+        Check(p.choice.clip == CLIP_SURF,"then she is back up");
+
+        //Feet first on the hip: sliding right while facing left, she still goes down feet first.
+        Puppet q;
+        q.clip_duration[CLIP_SURF] = 1.37f;
+        q.clip_duration[CLIP_SLIDE] = 2.03f;
+        in.slope_deg = 40.0f;
+        in.facing = -1.0f;
+        for (int t = 0; t < PUPPET_TURN_TICKS + 4; t++){
+            q.Tick(in);
+        }
+        Check(q.choice.clip == CLIP_SLIDE && q.yaw_deg == Puppet::TargetYaw(1.0f),
+              "down on a hip she faces the way she slides, not the way she faces");
+        in.action = ACTION_DRAW;
+        in.action_phase = 0.5f;
+        for (int t = 0; t < PUPPET_TURN_TICKS * 2 + 4; t++){
+            q.Tick(in);
+        }
+        Check(q.yaw_deg == Puppet::TargetYaw(-1.0f) && q.choice.upper_clip >= 0,
+              "drawing, she turns to face her shot, and the bow's layer is on over the slide");
+        in.action = ACTION_NONE;
+
+        //The skid is the surf, on the flat.
+        ArcherAnimParams skid;
+        skid.f_on_ground = true;
+        skid.f_skidding = true;
+        skid.ground_speed = 6.0f;
+        skid.facing = 1.0f;
+        Puppet k;
+        k.clip_duration[CLIP_SURF] = 1.37f;
+        k.Tick(skid);
+        Check(k.choice.clip == CLIP_SURF,"a skid out of a slide plays the surf");
+        ArcherAnimParams run = skid;
+        run.f_skidding = false;
+        k.Tick(run);
+        Check(k.choice.clip != CLIP_SURF && k.choice.clip != CLIP_SLIDE,"and off a slide, not skidding, she is back on her feet's own clips");
+    }
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -9213,6 +9565,8 @@ int main(void){
     TestBamboo();
     TestWeb();
     TestApples();
+    TestCreatures();
+    TestSlides();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

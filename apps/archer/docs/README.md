@@ -45,6 +45,7 @@ prompted this note (`web_plan.md`).
 | `creature_plan.md` | spiders, snakes, creature paths |
 | `cue_plan.md` | the sound/event layer and replay baselines |
 | `plant_mechanics_plan.md` | climbable tree, spring plants, thin branch |
+| `slide_plan.md` | her pose on a slide: surfing and sliding, tilted to the slope |
 | `strawman_plan.md` | the kicking dummy |
 | `terrain_plan.md` | marching-cubes terrain from the blockout |
 | `vine_plan.md` | vines, growth, the rope |

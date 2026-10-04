@@ -821,7 +821,8 @@ void ArcherModel::ApplyAnimation(float time_delta){
     bool f_aim = (aim_bones[0] && aim_weight > 0.0f);
     bool f_legs = (leg_weight > 0.0f);
     bool f_hair = (hair_chain_count > 0 && hair_weight > 0.0f);
-    if (f_overlay || f_upper || f_aim || f_legs || f_hair){
+    bool f_slope = (aim_bones[2] && slope_turn_deg != 0.0f);
+    if (f_overlay || f_upper || f_aim || f_legs || f_hair || f_slope){
         SaveBasePose();
     }
     //Base, overlay, upper layer, legs, aim: the overlay is part of the whole-body pose the rest
@@ -834,6 +835,15 @@ void ArcherModel::ApplyAnimation(float time_delta){
     }
     //Every tick, loose or not - see ApplyLegChains.
     ApplyLegChains(time_delta);
+
+    //The slope's turn back, a third on each of the spine's three - the aim's own bones, so their
+    //base pose is already saved and put back with the rest. See slope_turn_deg.
+    if (f_slope){
+        float third = slope_turn_deg * ARCHER_DEG2RAD / 3.0f;
+        for (int i = 0; i < 3; i++){
+            TurnInWorld(aim_bones[i],vec3(0.0f,0.0f,1.0f),third);
+        }
+    }
 
     //The live neutral: where the layered pose points the bow, before the aim turns her.
     aim_pose_deg = BowAimDeg();
@@ -905,6 +915,17 @@ ApplicationArcher::ApplicationArcher():Application(){
     }
     debug->Info("Settings %s %s\n",f_settings ? "loaded from" : "defaulted - no file at",settings.Path().c_str());
     f_start_fullscreen = settings.GetBool("fullscreen");
+    //Her outfit, the same way and from the same place (see `outfit`). Leggings, armband, cape and
+    //pouch on by default: how she was drawn before any of them could come off.
+    outfit.DeclareBool("leggings",true);
+    outfit.DeclareBool("armband",true);
+    outfit.DeclareBool("cape",true);
+    outfit.DeclareBool("pouch",true);
+    report.clear();
+    outfit.Load(GetExecutableDirectory() + "/outfit.json",&report);
+    if (!report.empty()){
+        debug->Warn("Outfit %s:\n%s",outfit.Path().c_str(),report.c_str());
+    }
     SetupMenus();
     debug->Info("ApplicationArcher constructed\n");
 }
@@ -951,7 +972,7 @@ void ApplicationArcher::Init(void){
         drawn DURING Init - see EnsureOverlay. Everything from here to the end of Init is timed and
         drawn step by step through LoadingStep.
     */
-    main_window->Resize(1920,1080);      //16:9; a side-scroller wants width far more than height
+    main_window->Resize(1600,900);      //16:9; a side-scroller wants width far more than height
     CreateTitleScene();
     EnsureOverlay();
     f_loading = true;
@@ -1043,6 +1064,8 @@ void ApplicationArcher::Init(void){
     BuildGrownVines();
     //After BuildProps (the chain it is laid over) and BuildArcherModel (her scale, and the loader).
     BuildRopeSkin();
+    //After the vines (their params) and the terrain (the walls the spiders walk): the world's only.
+    BuildCreatures();
     LoadingStep(step++,LOADING_STEPS,"arrows and scenery");
     BuildArrowViews();
     BuildAimArc();
@@ -2170,6 +2193,7 @@ void ApplicationArcher::PreRender(void){
     UpdateWind();
     UpdateWater();
     UpdateEdgeView();
+    UpdatePathView();
     UpdateWebView();
     DrawGrownVines();
 }
@@ -2388,6 +2412,361 @@ void ApplicationArcher::UpdateEdgeView(){
     }
     edge_view_mesh->SetLineMeshData(verts.data(),(int)verts.size());
     edge_view_object->SetVisibility(true);
+}
+
+//--- Creatures on paths (docs/creature_plan.md) -------------------------------------------------
+
+#define SPIDER_NODE             "spider"
+#define SPIDER_BENCH_MAX        48      //spare objects for the bench, past the level's own
+#define SPIDER_KEY_WALKING      0       //the spider's morph targets, in the order Blender exports them
+#define SPIDER_KEY_SWING        1
+#define SPIDER_KEY_LIFT         2
+#define PATH_VIEW_Z_FRONT       3.4f    //in front of the front vines (z 2.5) and their spiders
+#define PATH_VIEW_HAND          0xFFF0E040u
+#define PATH_VIEW_VINE          0xFF50E060u
+#define PATH_VIEW_SURFACE       0xFFFF9030u
+#define PATH_VIEW_SPIDER        0xFFFFFFFFu
+
+/*
+    See CREATURES ON PATHS in the header. RENDER THREAD, from Init: the mesh is loaded here, once.
+    Also from the archer_creatures tool at a tick boundary, to lay them out again at another size -
+    no GL then, the mesh being loaded.
+*/
+void ApplicationArcher::BuildCreatures(){
+    static float spider_half_span = 0.0f;   //the mesh's, at scale 1
+    static float spider_sole = 0.0f;        //how far below its origin its feet are, at scale 1
+    if (!spider_mesh){
+        spider_mesh = gltfloader.GetMeshFromNode(SPIDER_NODE,&spider_materials,false);
+        if (!spider_mesh){
+            debug->Warn("No '%s' in %s - no spiders\n",SPIDER_NODE,ARCHER_MODEL_ASSET);
+            return;
+        }
+        spider_mesh->Retain();
+        renderer->AddMaterials(spider_materials);
+        for (const vertex& v : spider_mesh->GetVertices()){
+            spider_half_span = fmaxf(spider_half_span,fmaxf(fabsf(v.pos.x),fabsf(v.pos.z)));
+            spider_sole = fmaxf(spider_sole,-v.pos.y);
+        }
+        if (spider_mesh->num_morph_targets < 1){
+            debug->Warn("'%s' has no shape key - the spiders' legs will not move\n",SPIDER_NODE);
+        }else if (spider_mesh->num_morph_targets < SPIDER_KEY_LIFT + 1){
+            debug->Warn("'%s' has no LegsSwing/LegsLift keys - the legs fall back to Walking alone\n",SPIDER_NODE);
+        }
+    }
+    //Again from scratch: a rebuild at another size lays every spider out again.
+    for (Object* o : spider_objects){
+        o->Destroy();
+    }
+    spider_objects.clear();
+    main_scene->DeleteDestroyedObjects();
+    crawlers = CrawlerSwarm();
+
+    const float k = model_scale * spider_scale;
+    const float span = 2.0f * spider_half_span * k;
+    spider_foot_drop = spider_sole * k;
+    //Its pace in its own sizes: a stride a little over half its span, a run one to two and a half
+    //spans a second. A path carries its CENTRE, held the drop to its feet off whatever it walks.
+    crawlers.params.stride = 0.6f * span;
+    crawlers.params.speed_min = 1.0f * span;
+    crawlers.params.speed_max = 2.5f * span;
+    crawlers.params.twitch_size = 0.08f * span;
+    const float hold = spider_foot_drop;
+
+    std::vector<const TerrainSurface*> surfaces;
+#if ARCHER_TEST_BAY
+    //The level as drawn, as a grown vine sees it - see StartGrowth.
+    TerrainSurface bays[ARCHER_TEST_BAY_COUNT];
+    for (int bay = 0; bay < ARCHER_TEST_BAY_COUNT; bay++){
+        bays[bay].Build(stage.blocks,TerrainBayRegion(bay),TerrainParams());
+        surfaces.push_back(&bays[bay]);
+    }
+#endif
+    VineLevelField field(stage.blocks,surfaces);
+    uint32_t seed = 0x51D3u;
+    auto add = [&](CreaturePath& p, int count){
+        if (!p.IsBuilt() || count <= 0){
+            return;
+        }
+        crawlers.paths.push_back(p);
+        crawlers.Seed((int)crawlers.paths.size() - 1,count,seed++);
+    };
+
+    /*
+        ROUND THE BAY'S BIG VINES - two in front of her line, two behind, so none crosses it - over
+        the part of each the side camera sees from the floor (y 0.3 .. 13), a turn every 2.5 units.
+    */
+    std::vector<VinePath> vines;
+    DeclareVines(STAGE_LEVEL_MAIN,vines);
+    for (size_t v = 0; v < vines.size(); v++){
+        Spline trunk;
+        if (vines[v].points.empty() || vines[v].points[0].x > ARCHER_TEST_BAY_X_MAX || !BuildVineSpline(vines[v],trunk)){
+            continue;
+        }
+        float s0 = -1.0f, s1 = -1.0f;
+        for (float s = 0.0f; s <= trunk.GetLength(); s += 0.1f){
+            float y = trunk.PositionAt(s).y;
+            if (y > 0.3f && y < 13.0f){
+                if (s0 < 0.0f){ s0 = s; }
+                s1 = s;
+            }
+        }
+        CreaturePath p;
+        if (s0 >= 0.0f && CreaturePathAroundVine(vines[v],vine_params,hold,2.5f,1.3f * (float)v,s0,s1,p)){
+            add(p,std::max(1,std::min(4,(int)(p.Length() / 3.0f))));
+        }
+    }
+    /*
+        UP AND ALONG WALLS, by the creeper's walk against the level as drawn: anchored on a block's
+        face and marched out onto the terrain over it. Each at a depth off her line - behind it
+        (z -1) or in front (z +0.9) - so none walks through where she stands.
+    */
+    struct Run{ vec3 at; vec3 n; float length; int count; };
+    const Run runs[] = {
+        //The cave: its far wall's face, up and onto the roof; along under the roof, behind her and
+        //in front; down the mouth's lip.
+        { vec3(ARCHER_CAVE_X_MIN + 2.0f,0.6f,-1.3f),     vec3( 1.0f, 0.0f,0.0f), 12.0f, 4 },
+        { vec3(-56.0f,ARCHER_CAVE_ROOF_Y,-1.0f),         vec3( 0.0f,-1.0f,0.0f), 10.0f, 3 },
+        { vec3(-47.0f,ARCHER_CAVE_ROOF_Y, 0.9f),         vec3( 0.0f,-1.0f,0.0f),  8.0f, 3 },
+        { vec3(ARCHER_TEST_BAY_X_MIN - 0.6f,6.4f,-1.0f), vec3(-1.0f, 0.0f,0.0f),  4.0f, 2 },
+        //The bay: both faces of the hill, under the floating stone and under the island.
+        { vec3(-16.0f,0.4f,-1.0f),                       vec3(-1.0f, 0.0f,0.0f),  5.0f, 2 },
+        { vec3(-13.0f,0.4f, 0.9f),                       vec3( 1.0f, 0.0f,0.0f),  4.0f, 2 },
+        { vec3(-19.4f,4.0f, 0.6f),                       vec3( 0.0f,-1.0f,0.0f),  4.0f, 2 },
+        { vec3(-28.0f,9.75f,-0.9f),                      vec3( 0.0f,-1.0f,0.0f),  8.0f, 3 },
+    };
+    for (size_t r = 0; r < sizeof(runs) / sizeof(runs[0]); r++){
+        CreaturePath p;
+        if (CreaturePathOverSurface(field,runs[r].at,runs[r].n,(int)(r * 7919u + 13u),runs[r].length,hold,p)){
+            add(p,runs[r].count);
+        }else{
+            debug->Warn("Spider run %i at (%.1f, %.1f) could not walk\n",(int)r,runs[r].at.x,runs[r].at.y);
+        }
+    }
+    //And one by hand: across the cave floor behind her, among the bones.
+    {
+        CreaturePath p;
+        std::vector<vec3> pts;
+        for (int i = 0; i <= 12; i++){
+            float x = -60.0f + (float)i;
+            pts.push_back(vec3(x,hold,-1.8f + 0.35f * sinf((float)i * 1.3f)));
+        }
+        if (CreaturePathFromPoints(pts,vec3(0.0f,1.0f,0.0f),false,p)){
+            add(p,3);
+        }
+    }
+
+    //One Object each, and spares for the bench: every one the SAME Mesh.
+    const int objects = (int)crawlers.crawlers.size() + SPIDER_BENCH_MAX;
+    for (int i = 0; i < objects; i++){
+        char name[32];
+        snprintf(name,sizeof(name),"spider_%i",i);
+        Object* o = new Object();
+        o->name = name;
+        o->SetVisualOnly(true);
+        o->SetPickability(false);
+        o->SetCastsShadow(false);   //a speck's shadow is not worth a second draw of it
+        o->SetMesh(spider_mesh);
+        std::vector<Material> materials = spider_materials;
+        o->TakeMaterialNames(materials);
+        o->SetScale(vec3(k,k,k));
+        o->SetVisibility(false);
+        main_scene->AddObject(o);
+        spider_objects.push_back(o);
+    }
+
+    //The path view's lines, from the paths as built - they never move.
+    std::vector<line_vertex> lines;
+    auto line = [&lines](const vec3& a, const vec3& b, uint32_t c){
+        line_vertex v;
+        v.color = c;
+        v.pos = a;
+        lines.push_back(v);
+        v.pos = b;
+        lines.push_back(v);
+    };
+    int by_kind[CREATURE_PATH_KIND_COUNT] = {};
+    for (const CreaturePath& p : crawlers.paths){
+        uint32_t c = (p.kind == CREATURE_PATH_VINE) ? PATH_VIEW_VINE : ((p.kind == CREATURE_PATH_SURFACE) ? PATH_VIEW_SURFACE : PATH_VIEW_HAND);
+        by_kind[p.kind]++;
+        const float len = p.Length();
+        vec3 prev = p.spline.PositionAt(0.0f);
+        for (float s = 0.1f; s < len + 0.05f; s += 0.1f){
+            vec3 q = p.spline.PositionAt(fminf(s,len));
+            line(prev,q,c);
+            prev = q;
+        }
+        //Across the path in the picture: square to it and to the view.
+        auto across = [](const vec3& t){
+            vec3 a = t.cross(vec3(0.0f,0.0f,1.0f));
+            if (a.length() < 0.2f){ a = vec3(1.0f,0.0f,0.0f); }
+            return a.normalize();
+        };
+        for (float s = 0.5f; s < len; s += 1.0f){
+            vec3 q = p.spline.PositionAt(s), t = p.spline.TangentAt(s), a = across(t);
+            line(q,q - t * 0.22f + a * 0.12f,c);
+            line(q,q - t * 0.22f - a * 0.12f,c);
+        }
+        if (p.f_loop){
+            vec3 q = p.spline.PositionAt(0.0f);
+            for (int i = 0; i < 8; i++){
+                float a0 = 0.785398f * (float)i, a1 = 0.785398f * (float)(i + 1);
+                line(q + vec3(cosf(a0),sinf(a0),0.0f) * 0.18f,q + vec3(cosf(a1),sinf(a1),0.0f) * 0.18f,c);
+            }
+        }else{
+            for (float s : { 0.0f, len }){
+                vec3 q = p.spline.PositionAt(s), a = across(p.spline.TangentAt(s));
+                line(q - a * 0.18f,q + a * 0.18f,c);
+            }
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        path_view_lines.swap(lines);
+    }
+    if (!path_view_object){
+        path_view_object = new Object();
+        path_view_object->name = "path_debug";
+        path_view_object->SetVisualOnly(true);
+        path_view_mesh = new Mesh();
+        path_view_object->SetMesh(path_view_mesh);
+        path_view_object->SetPickability(false);
+        path_view_object->SetCastsShadow(false);
+        path_view_object->SetVisibility(false);
+        main_scene->AddObject(path_view_object);
+    }
+    debug->Info("Spiders: %i on %i paths (%i by hand, %i round vines, %i along walls), %.2f across (x%.2f on her scale), "
+                "%i spare for the bench, all on one mesh\n",(int)crawlers.crawlers.size(),(int)crawlers.paths.size(),
+                by_kind[CREATURE_PATH_HAND],by_kind[CREATURE_PATH_VINE],by_kind[CREATURE_PATH_SURFACE],span,spider_scale,
+                SPIDER_BENCH_MAX);
+}
+
+/*
+    The spiders, one tick: the swarm walked, then each Object posed - body along the path, back out
+    of the surface, legs off the distance walked. Only the ones in the view are shown: a mesh with
+    morph targets is never frustum-culled (Renderer), so a hidden spider is the only cheap one.
+    PHYSICS THREAD, the world level only - the Objects are in its scene.
+*/
+void ApplicationArcher::StepCreatures(){
+    if (main_scene != world_scene || spider_objects.empty()){
+        return;
+    }
+    crawlers.Step();
+    const bool f_gait = spider_leg_mode == 2 && spider_mesh->num_morph_targets > SPIDER_KEY_LIFT;
+    auto legs = [this,f_gait](Object* o,float phase){
+        float a = 6.28318531f * phase;
+        if (f_gait){
+            //Lift leads swing by a quarter: a foot is up while it swings forward, down sweeping back.
+            o->morph_factors[SPIDER_KEY_WALKING] = 0.0f;
+            o->morph_factors[SPIDER_KEY_SWING] = spider_leg_amount * sinf(a);
+            o->morph_factors[SPIDER_KEY_LIFT] = spider_leg_amount * cosf(a);
+            return;
+        }
+        //Zeroed, not left alone: a switch from the gait over the tool would leave it mid-stride.
+        o->morph_factors[SPIDER_KEY_SWING] = 0.0f;
+        o->morph_factors[SPIDER_KEY_LIFT] = 0.0f;
+        o->morph_factors[SPIDER_KEY_WALKING] =
+            spider_leg_amount * ((spider_leg_mode == 1) ? sinf(a) : (0.5f - 0.5f * cosf(a)));
+    };
+    float x0 = -1e9f, y0 = -1e9f, x1 = 1e9f, y1 = 1e9f;
+    WindViewRect(main_scene->camera,0.15f,x0,y0,x1,y1);
+    int drawn = 0;
+    /*
+        THE BENCH: n of them in a grid across the middle of the view, at her depth, walking on the
+        spot - legs cycling at a run's pace - so the GPU pass timers see n spiders whatever the
+        level has on screen. Every other one hidden.
+    */
+    if (spider_bench > 0){
+        int n = std::min(spider_bench,(int)spider_objects.size());
+        int cols = std::max(1,(int)ceilf(sqrtf((float)n * 1.8f)));
+        int rows = (n + cols - 1) / cols;
+        float w = (x1 - x0) * 0.6f, h = (y1 - y0) * 0.5f;
+        float cx = 0.5f * (x0 + x1), cy = 0.5f * (y0 + y1);
+        for (size_t i = 0; i < spider_objects.size(); i++){
+            Object* o = spider_objects[i];
+            if ((int)i >= n){
+                o->SetVisibility(false);
+                continue;
+            }
+            int r = (int)i / cols, c = (int)i % cols;
+            o->SetPosition(vec3(cx - 0.5f * w + w * ((float)c + 0.5f) / (float)cols,
+                                cy - 0.5f * h + h * ((float)r + 0.5f) / (float)rows,0.0f));
+            o->SetRotation(QuatFromBasis(vec3(0.0f,0.0f,-1.0f),vec3(0.0f,1.0f,0.0f),vec3(1.0f,0.0f,0.0f)));
+            float phase = (float)(main_scene->GetPhysicsTick() % 30) / 30.0f + 0.13f * (float)i;
+            legs(o,phase - floorf(phase));
+            o->SetVisibility(true);
+            drawn++;
+        }
+        spiders_drawn = drawn;
+        return;
+    }
+    for (size_t i = 0; i < spider_objects.size(); i++){
+        Object* o = spider_objects[i];
+        if (i >= crawlers.crawlers.size()){
+            o->SetVisibility(false);
+            continue;
+        }
+        vec3 pos, fwd, up;
+        crawlers.Pose((int)i,pos,fwd,up);
+        bool f_in = pos.x >= x0 && pos.x <= x1 && pos.y >= y0 && pos.y <= y1;
+        o->SetVisibility(f_in);
+        if (!f_in){
+            continue;
+        }
+        vec3 side = up.cross(fwd);
+        side.normalize();
+        //Its model faces +Z with its back up +Y: forward onto local Z, its back onto local Y.
+        o->SetPosition(pos);
+        o->SetRotation(QuatFromBasis(side,up,fwd));
+        legs(o,crawlers.LegPhase((int)i));
+        drawn++;
+    }
+    spiders_drawn = drawn;
+}
+
+//See the declaration. RENDER THREAD, from PreRender.
+void ApplicationArcher::UpdatePathView(){
+    if (!path_view_object || !path_view_mesh){
+        return;
+    }
+    int level = -1;
+    std::vector<vec3> spiders;
+    std::vector<line_vertex> verts;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        level = snapshot.level;
+        if (f_show_paths && level == STAGE_LEVEL_MAIN){
+            spiders = snapshot.spider_points;
+            verts = path_view_lines;
+        }
+    }
+    Camera* camera = main_scene ? main_scene->camera : NULL;
+    if (!f_show_paths || level != STAGE_LEVEL_MAIN || verts.empty() || !camera ||
+        (title_scene && main_scene == title_scene)){
+        path_view_object->SetVisibility(false);
+        return;
+    }
+    vec3 eye = camera->GetPosition();
+    if (eye.z <= PATH_VIEW_Z_FRONT + 0.5f){
+        path_view_object->SetVisibility(false);     //the orbit swung round behind the level
+        return;
+    }
+    for (const vec3& p : spiders){
+        line_vertex v;
+        v.color = PATH_VIEW_SPIDER;
+        v.pos = p + vec3(-0.15f,-0.15f,0.0f); verts.push_back(v);
+        v.pos = p + vec3( 0.15f, 0.15f,0.0f); verts.push_back(v);
+        v.pos = p + vec3(-0.15f, 0.15f,0.0f); verts.push_back(v);
+        v.pos = p + vec3( 0.15f,-0.15f,0.0f); verts.push_back(v);
+    }
+    //Each point along its ray to the eye, to PATH_VIEW_Z_FRONT: the same pixel, in front of everything.
+    for (line_vertex& v : verts){
+        if (v.pos.z < PATH_VIEW_Z_FRONT){
+            float k = (eye.z - PATH_VIEW_Z_FRONT) / (eye.z - v.pos.z);
+            v.pos = eye + (v.pos - eye) * k;
+        }
+    }
+    path_view_mesh->SetLineMeshData(verts.data(),(int)verts.size());
+    path_view_object->SetVisibility(true);
 }
 
 //--- The web, blocked out -----------------------------------------------------------------------
@@ -6948,34 +7327,41 @@ void ApplicationArcher::CreateTitleScene(){
     camera->SetupOrthographic((float)renderer->GetViewportWidth(),(float)renderer->GetViewportHeight(),
                               1.0f,0.01f,10.0f);
 
-    Material m = {};
-    m.name = "ar_title";
-    m.glsl_material.color = vec4(1,1,1,1);
-    m.glsl_material.f_unlit = 1;
-    Texture* texture = renderer->LoadTexture(TITLE_ASSET);
-    if (texture){
-        m.glsl_material.diffuse_texture = 0;
-        m.glsl_material.handle_diffuse = texture->texture_handle;
-        m.diff_texture = texture;
-    }else{
-        debug->Err("Title screen: could not load %s\n",TITLE_ASSET);
-        m.glsl_material.color = vec4(0.05f,0.08f,0.06f,1.0f);
-    }
-    renderer->AddMaterial(m);
+    //One unlit quad per picture: the title's art, and the menus' behind Controls and Settings.
+    //FitTitleQuad shows one of them at a time.
+    auto make_art = [this](const char* name, const char* material, const char* asset) -> Object* {
+        Material m = {};
+        m.name = material;
+        m.glsl_material.color = vec4(1,1,1,1);
+        m.glsl_material.f_unlit = 1;
+        Texture* texture = renderer->LoadTexture(asset);
+        if (texture){
+            m.glsl_material.diffuse_texture = 0;
+            m.glsl_material.handle_diffuse = texture->texture_handle;
+            m.diff_texture = texture;
+        }else{
+            debug->Err("Title screen: could not load %s\n",asset);
+            m.glsl_material.color = vec4(0.05f,0.08f,0.06f,1.0f);
+        }
+        renderer->AddMaterial(m);
 
-    //flip_v, for the same reason as the backdrop's - see the note on MakeQuad.
-    Mesh* quad = MakeQuad(1.0f,1.0f,true);
-    if (!quad){
-        debug->Err("Title screen: could not build the quad\n");
-        return;
-    }
-    title_quad = new Object();
-    title_quad->name = "Title Art";
-    title_quad->SetMesh(quad);
-    title_quad->SetMaterialSlot(0,renderer->FindMaterialIndex(m.name));
-    title_quad->SetCastsShadow(false);
-    title_quad->SetPickability(false);
-    title_scene->AddObject(title_quad);
+        //flip_v, for the same reason as the backdrop's - see the note on MakeQuad.
+        Mesh* quad = MakeQuad(1.0f,1.0f,true);
+        if (!quad){
+            debug->Err("Title screen: could not build the quad\n");
+            return NULL;
+        }
+        Object* o = new Object();
+        o->name = name;
+        o->SetMesh(quad);
+        o->SetMaterialSlot(0,renderer->FindMaterialIndex(m.name));
+        o->SetCastsShadow(false);
+        o->SetPickability(false);
+        title_scene->AddObject(o);
+        return o;
+    };
+    title_quad = make_art("Title Art","ar_title",TITLE_ASSET);
+    menu_quad = make_art("Menu Art","ar_menu",MENU_ASSET);
     FitTitleQuad(main_window->width,main_window->height);
 }
 
@@ -6985,12 +7371,27 @@ void ApplicationArcher::CreateTitleScene(){
     until its width matches the window's instead.
 */
 void ApplicationArcher::FitTitleQuad(int w, int h){
-    if (!title_quad || (w <= 0) || (h <= 0)){
+    if ((w <= 0) || (h <= 0)){
         return;
     }
-    float window_aspect = (float)w / (float)h;
-    float height = 2.0f * std::max(1.0f,window_aspect / TITLE_IMAGE_ASPECT);
-    title_quad->SetScale(vec3(height * TITLE_IMAGE_ASPECT,height,1.0f));
+    const float window_aspect = (float)w / (float)h;
+    auto fit = [window_aspect](Object* quad, float image_aspect){
+        if (quad){
+            float height = 2.0f * std::max(1.0f,window_aspect / image_aspect);
+            quad->SetScale(vec3(height * image_aspect,height,1.0f));
+        }
+    };
+    fit(title_quad,TITLE_IMAGE_ASPECT);
+    fit(menu_quad,MENU_IMAGE_ASPECT);
+    //The menus' art behind Controls and Settings, the title's everywhere else - loading included.
+    //Read every frame here, so the picture changes on the frame the screen does.
+    const bool f_menu = !f_loading && (menu_screen != MENU_SCREEN_TITLE) && menu_quad;
+    if (title_quad){
+        title_quad->SetVisibility(!f_menu);
+    }
+    if (menu_quad){
+        menu_quad->SetVisibility(f_menu);
+    }
 }
 
 /*
@@ -7072,9 +7473,14 @@ void ApplicationArcher::DrawOverlay(void){
     if (!f_loading && !(title_scene && (main_scene == title_scene))){
         DrawVision();
         DrawZoneLabel();
-        DrawVitalsHud();
-        DrawArrowHud();
-        DrawAppleHud();
+        //Dressing her is not playing: the wardrobe in place of the game's HUD.
+        if (f_wardrobe_open && IsCharacterScene()){
+            DrawWardrobe((float)main_window->width,(float)main_window->height);
+        }else{
+            DrawVitalsHud();
+            DrawArrowHud();
+            DrawAppleHud();
+        }
         DrawScreenFade();
         return;
     }
@@ -7142,7 +7548,7 @@ void ApplicationArcher::DrawMenus(float w, float h){
         overlay->AddRect(vec2(first.x0 - m,first.y0 - size * 2.6f),vec2(first.x1 + m,last.y1 + size * 2.2f),size * 0.5f,TITLE_BAND);
         overlay->AddText(heading,vec2(cx,first.y0 - size * 0.9f),size,TITLE_TEXT,UI_ALIGN_CENTER);
         UIMenuDraw(overlay,settings_menu,w,h,style);
-        overlay->AddText("Full screen takes effect the next time the game starts",vec2(cx,last.y1 + size * 1.3f),
+        overlay->AddText("Full screen takes effect the next time the game starts. Use ALT+ENTER to cycle",vec2(cx,last.y1 + size * 1.3f),
                          size * 0.5f,TITLE_TEXT_DIM,UI_ALIGN_CENTER);
         return;
     }
@@ -7424,7 +7830,7 @@ void ApplicationArcher::LayoutTouchButtons(int w, int h){
     if (!input || (title_tap_button < 0)){
         return;
     }
-    if (title_scene && (main_scene == title_scene)){
+    if ((title_scene && (main_scene == title_scene)) || f_wardrobe_open){
         input->SetTouchButtonRect(title_tap_button,{0.0f,0.0f,(float)w,(float)h});
     }else{
         input->SetTouchButtonRect(title_tap_button,InputController::TouchRect());
@@ -7432,31 +7838,17 @@ void ApplicationArcher::LayoutTouchButtons(int w, int h){
 }
 
 /*
-    PHYSICS THREAD, from UpdateView while the title is the live scene.
-
-    Both edges are READ every pass and ACTED ON only when the input is ours - raw input reports
-    keys typed into other programs, and a space typed into an editor should not start the game
-    behind it, nor an Escape close it. IsInputLive rather than HasFocus, so archer_hold 'continue'
-    gets through on a minimised window the way every other scripted action does.
-
-    Continue goes back to the level the title was entered from, by RequestActiveScene, which lands
-    at the top of the next pass - once the screen fade has closed to black, which is where the
-    switch waits (see ScreenFade in the header). At startup that is the world, stepped once at the end of Init so
-    its first frame is not empty.
-
-    Escape or Back exits. By the flag rather than Window::Close, because this is not the thread
-    that pumps the window's messages - see RequestQuitAll. The frame loop sees it and shuts down
-    the usual way, this thread included.
+    One pass of the menus' input (docs/menu_plan.md), for whichever menu is up - the title's, its
+    screens, the wardrobe. PHYSICS THREAD, from UpdateView. Every edge is READ every pass, acted on
+    or not, so none is left over for afterwards. True when the input is ours to act on: live
+    (focus, or scripted - see IsInputLive), or a click archer_menu injected.
 */
-void ApplicationArcher::UpdateTitle(InputController* input){
-    if (!input){
-        return;
-    }
+bool ApplicationArcher::ReadMenuInput(InputController* input, UIMenuInput& in, bool& f_exit, bool& f_back){
     //Confirm on the RELEASE, as continue always was, so the horn plays on the same tick it did.
     bool f_continue = input->WasKeyReleased(INPUT_ARCHER_CONTINUE);
-    bool f_exit = input->WasKeyReleased(INPUT_ARCHER_MENU);
+    f_exit = input->WasKeyReleased(INPUT_ARCHER_MENU);
     //The menus' navigation, on the press - see the end of SetupInput.
-    bool f_back = input->WasKeyReleased(INPUT_ARCHER_MENU_BACK);
+    f_back = input->WasKeyReleased(INPUT_ARCHER_MENU_BACK);
     bool f_up = input->WasKeyPressed(INPUT_ARCHER_MENU_UP);
     bool f_down = input->WasKeyPressed(INPUT_ARCHER_MENU_DOWN);
     bool f_left = input->WasKeyPressed(INPUT_ARCHER_MENU_LEFT);
@@ -7494,25 +7886,6 @@ void ApplicationArcher::UpdateTitle(InputController* input){
             f_menu_pointer_pending = false;
         }
     }
-    /*
-        Closing: the switch waits for black, and nothing else is listened to until then - a second
-        click would only restart the close, and an Escape half way down it is too late to mean
-        "quit". The edges above are still read, so neither is left over for afterwards.
-    */
-    if (fade_phase == FADE_CLOSING){
-        if (FadeAmount() >= 1.0f){
-            Scene* back = title_return_scene ? title_return_scene : world_scene;
-            RequestActiveScene(back);
-            StartFade(FADE_OPENING);
-            debug->Info("Title screen dismissed, back to '%s'\n",back->name.c_str());
-        }
-        return;
-    }
-    if (!input->IsInputLive() && !f_injected){
-        return;
-    }
-
-    UIMenuInput in;
     in.screen_w = main_window ? (float)main_window->width : 0.0f;
     in.screen_h = main_window ? (float)main_window->height : 0.0f;
     in.up = f_up;
@@ -7536,6 +7909,53 @@ void ApplicationArcher::UpdateTitle(InputController* input){
         in.pointer_down = input->IsKeyDown(INPUT_ARCHER_MENU_POINTER);
     }
 
+    return input->IsInputLive() || f_injected;
+}
+
+/*
+    PHYSICS THREAD, from UpdateView while the title is the live scene.
+
+    Both edges are READ every pass and ACTED ON only when the input is ours - raw input reports
+    keys typed into other programs, and a space typed into an editor should not start the game
+    behind it, nor an Escape close it. IsInputLive rather than HasFocus, so archer_hold 'continue'
+    gets through on a minimised window the way every other scripted action does.
+
+    Continue goes back to the level the title was entered from, by RequestActiveScene, which lands
+    at the top of the next pass - once the screen fade has closed to black, which is where the
+    switch waits (see ScreenFade in the header). At startup that is the world, stepped once at the end of Init so
+    its first frame is not empty.
+
+    Escape or Back exits. By the flag rather than Window::Close, because this is not the thread
+    that pumps the window's messages - see RequestQuitAll. The frame loop sees it and shuts down
+    the usual way, this thread included.
+*/
+void ApplicationArcher::UpdateTitle(InputController* input){
+    if (!input){
+        return;
+    }
+    bool f_exit = false, f_back = false;
+    UIMenuInput in;
+    const bool f_live = ReadMenuInput(input,in,f_exit,f_back);
+    /*
+        Closing: the switch waits for black, and nothing else is listened to until then - a second
+        click would only restart the close, and an Escape half way down it is too late to mean
+        "quit". The edges above are still read, so neither is left over for afterwards.
+    */
+    if (fade_phase == FADE_CLOSING){
+        if (FadeAmount() >= 1.0f){
+            //Where the button that closed it said - Start/Continue's level, or the Character scene.
+            Scene* back = title_destination ? title_destination : (title_return_scene ? title_return_scene : world_scene);
+            title_destination = NULL;
+            RequestActiveScene(back);
+            StartFade(FADE_OPENING);
+            debug->Info("Title screen dismissed, back to '%s'\n",back->name.c_str());
+        }
+        return;
+    }
+    if (!f_live){
+        return;
+    }
+
     const int screen = menu_screen;
     if (screen == MENU_SCREEN_TITLE){
         //Escape on the title still leaves the game, as it always has; B alone does not, so a pad
@@ -7555,11 +7975,23 @@ void ApplicationArcher::UpdateTitle(InputController* input){
                 //the picture and the title's music go down under it. Once only - a later Escape
                 //and continue is a resume.
                 PlayStartHorn();
-                //Down to black first; the pass that finds it there makes the switch, above.
+                //Down to black first; the pass that finds it there makes the switch, above. To the
+                //level the title was entered from - unless that was the Character scene, which is
+                //not the game: then back to the last level that was.
+                title_destination = (title_return_scene && title_return_scene != character_scene) ? title_return_scene :
+                                    (play_scene ? play_scene : world_scene);
                 StartFade(FADE_CLOSING);
                 if (!f_game_started){
                     f_game_started = true;
                     title_menu.SetLabel(0,"Continue");
+                }
+            break;
+            case MENU_CHARACTER:
+                //Her wardrobe, on the turntable. No horn: that is the game starting, and this is not.
+                if (character_scene){
+                    f_wardrobe_requested = true;
+                    title_destination = character_scene;
+                    StartFade(FADE_CLOSING);
                 }
             break;
             case MENU_CONTROLS:
@@ -7585,7 +8017,7 @@ void ApplicationArcher::UpdateTitle(InputController* input){
     UIMenu& menu = (screen == MENU_SCREEN_CONTROLS) ? controls_menu : settings_menu;
     UIMenuResult r = menu.Update(in);
     if (r.event == UI_MENU_BACK || (r.event == UI_MENU_ACTIVATED && (r.id == MENU_SETTINGS_BACK || r.id == MENU_CONTROLS_BACK))){
-        title_menu.SetFocus((screen == MENU_SCREEN_CONTROLS) ? 1 : 2);
+        title_menu.SetFocus((screen == MENU_SCREEN_CONTROLS) ? TITLE_ITEM_CONTROLS : TITLE_ITEM_SETTINGS);
         menu_screen = MENU_SCREEN_TITLE;
         return;
     }
@@ -7612,10 +8044,11 @@ void ApplicationArcher::UpdateTitle(InputController* input){
     constructor can make them. Sizes are fractions of the window's height (UIMenuLayout).
 */
 void ApplicationArcher::SetupMenus(){
-    title_menu.layout.top = 0.56f;
+    title_menu.layout.top = 0.52f;
     title_menu.layout.width = 0.40f;
     title_menu.layout.item_h = 0.060f;
     title_menu.AddButton("Start",MENU_START);
+    title_menu.AddButton("Character",MENU_CHARACTER);
     title_menu.AddButton("Controls",MENU_CONTROLS);
     title_menu.AddButton("Settings",MENU_SETTINGS);
     title_menu.AddButton("Quit",MENU_QUIT);
@@ -7654,6 +8087,139 @@ void ApplicationArcher::SetupMenus(){
     controls_view.AddRow("Menu: up / down",{ INPUT_ARCHER_MENU_UP, INPUT_ARCHER_MENU_DOWN, INPUT_ARCHER_MENU_STICK_Y });
     controls_view.AddRow("Menu: change",{ INPUT_ARCHER_MENU_LEFT, INPUT_ARCHER_MENU_RIGHT, INPUT_ARCHER_MOVE });
     controls_view.AddRow("Menu: choose",{ INPUT_ARCHER_CONTINUE, INPUT_ARCHER_MENU_POINTER });
+
+    //The wardrobe over the Character scene. Its column is placed per pass in UpdateWardrobe, on the
+    //left of the 3D view, wherever the debug panels have pushed that.
+    wardrobe_menu.layout.centre_x = 0.22f;
+    wardrobe_menu.layout.top = 0.30f;
+    wardrobe_menu.layout.width = 0.50f;
+    wardrobe_menu.layout.item_h = 0.060f;
+    wardrobe_item_legs = wardrobe_menu.AddChoice("Legs",{ "Bare", "Leggings" },1,MENU_LEGS);
+    wardrobe_item_armband = wardrobe_menu.AddToggle("Armband",true,MENU_ARMBAND);
+    wardrobe_item_cape = wardrobe_menu.AddToggle("Cape",true,MENU_CAPE);
+    wardrobe_item_pouch = wardrobe_menu.AddToggle("Pouch",true,MENU_POUCH);
+    wardrobe_menu.AddButton("Back",MENU_WARDROBE_BACK);
+}
+
+/*
+    THE WARDROBE (docs/menu_plan.md, "The wardrobe"): what she wears, over the Character scene.
+    PHYSICS THREAD, from UpdateView while it is open. Escape, Back, B or its own Back button go to
+    the title, focused on Character. A change goes into `outfit` and is saved at once; ApplyOutfit
+    puts it on her on the next pass - and she is one model in every scene, so it holds everywhere.
+*/
+void ApplicationArcher::UpdateWardrobe(InputController* input){
+    if (!input){
+        return;
+    }
+    /*
+        Left of her: the Character camera frames her right of centre, leaving the left for this.
+        With the debug panels up they take the window's left edge OVER the view (the view does not
+        move for them), so the column moves in, between them and her. Here, before the hit-test, so
+        what is clicked and what DrawWardrobe draws are laid out alike; written only when it moves.
+    */
+#ifdef USE_IMGUI
+    const bool f_panels = f_show_ui;
+#else
+    const bool f_panels = false;
+#endif
+    const float cx = f_panels ? 0.40f : 0.22f;
+    if (wardrobe_menu.layout.centre_x != cx){
+        wardrobe_menu.layout.centre_x = cx;
+    }
+    bool f_exit = false, f_back = false;
+    UIMenuInput in;
+    if (!ReadMenuInput(input,in,f_exit,f_back)){
+        return;
+    }
+    in.back = f_exit || f_back;
+    UIMenuResult r = wardrobe_menu.Update(in);
+    if (r.event == UI_MENU_BACK || (r.event == UI_MENU_ACTIVATED && r.id == MENU_WARDROBE_BACK)){
+        if (title_scene){
+            title_focus_on_enter = TITLE_ITEM_CHARACTER;
+            RequestActiveScene(title_scene);
+        }
+        return;
+    }
+    if (r.event != UI_MENU_CHANGED){
+        return;
+    }
+    const UIMenuItem it = wardrobe_menu.Item(r.item);
+    switch (r.id){
+        case MENU_LEGS:     outfit.SetBool("leggings",it.choice == 1); break;
+        case MENU_ARMBAND:  outfit.SetBool("armband",it.f_on); break;
+        case MENU_CAPE:     outfit.SetBool("cape",it.f_on); break;
+        case MENU_POUCH:    outfit.SetBool("pouch",it.f_on); break;
+    }
+    if (!outfit.Save()){
+        debug->Err("Could not save her outfit to %s\n",outfit.Path().c_str());
+    }
+}
+
+//The wardrobe's items from the store - when it opens, so it shows what she is wearing.
+void ApplicationArcher::SyncWardrobeMenu(){
+    wardrobe_menu.SetChoice(wardrobe_item_legs,outfit.GetBool("leggings") ? 1 : 0);
+    wardrobe_menu.SetOn(wardrobe_item_armband,outfit.GetBool("armband"));
+    wardrobe_menu.SetOn(wardrobe_item_cape,outfit.GetBool("cape"));
+    wardrobe_menu.SetOn(wardrobe_item_pouch,outfit.GetBool("pouch"));
+}
+
+/*
+    Her outfit onto her parts, by node name - on a CHANGE only (Settings::Revision), so the
+    Character panel's part checkboxes and archer_character still work as a debugging override until
+    the next change. Bare legs and leggings are one or the other: the leggings are a whole leg, not
+    a layer over the bare one. PHYSICS THREAD, from UpdateView; once from Init too.
+*/
+void ApplicationArcher::ApplyOutfit(){
+    if (archer_parts.empty()){
+        return;
+    }
+    const uint32_t rev = outfit.Revision();
+    if (rev == outfit_applied){
+        return;
+    }
+    outfit_applied = rev;
+    const bool f_leggings = outfit.GetBool("leggings");
+    const struct{ const char* node; bool f_shown; } wear[] = {
+        { ARCHER_PART_LEGS,     !f_leggings },
+        { ARCHER_PART_LEGGINGS, f_leggings },
+        { ARCHER_PART_ARMBAND,  outfit.GetBool("armband") },
+        { ARCHER_PART_CAPE,     outfit.GetBool("cape") },
+        { ARCHER_PART_POUCH,    outfit.GetBool("pouch") },
+    };
+    for (const auto& w : wear){
+        bool f_found = false;
+        for (Object* part : archer_parts){
+            if (part->name == w.node){
+                part->SetVisibility(w.f_shown);
+                f_found = true;
+            }
+        }
+        if (!f_found){
+            //An export that renamed or merged a part: the outfit cannot reach it, and nothing else says so.
+            debug->Warn("Outfit: no part '%s' in %s\n",w.node,ARCHER_MODEL_ASSET);
+        }
+    }
+}
+
+//The wardrobe over the Character scene. RENDER THREAD, from DrawOverlay's level branch.
+void ApplicationArcher::DrawWardrobe(float w, float h){
+    UIMenuStyle style;
+    style.panel = UIColor(8,14,10,165);
+    style.panel_focus = UIColor(32,42,28,225);
+    style.panel_pressed = UIColor(20,26,16,240);
+    style.outline_focus = TITLE_BAR_FILL;
+    style.text = TITLE_TEXT;
+    style.text_dim = TITLE_TEXT_DIM;
+    style.track = TITLE_BAR_BACK;
+    style.fill = TITLE_BAR_FILL;
+    const float size = clamp(h * 0.042f,16.0f,72.0f);
+    const UIMenuRect first = wardrobe_menu.ItemRect(0,w,h);
+    const UIMenuRect last = wardrobe_menu.ItemRect(wardrobe_menu.Count() - 1,w,h);
+    const float m = size * 0.8f;
+    const float cx = (first.x0 + first.x1) * 0.5f;
+    overlay->AddRect(vec2(first.x0 - m,first.y0 - size * 2.6f),vec2(first.x1 + m,last.y1 + size * 2.2f),size * 0.5f,TITLE_BAND);
+    overlay->AddText("OUTFIT",vec2(cx,first.y0 - size * 0.9f),size,TITLE_TEXT,UI_ALIGN_CENTER);
+    UIMenuDraw(overlay,wardrobe_menu,w,h,style);
 }
 
 //The Settings screen's items from the store - when it opens, so it always shows what is saved.
@@ -7798,9 +8364,11 @@ void ApplicationArcher::EnterTitle(){
     f_show_ui = false;
     //Escape while the level was still opening: the title comes up clear, not half dark.
     fade_phase = FADE_NONE;
-    //The title menu, on its first button - Start, or Continue once a level is under way.
+    //The title menu, on its first button - Start, or Continue once a level is under way - unless
+    //what led here asked for another (the wardrobe's Back: Character).
     menu_screen = MENU_SCREEN_TITLE;
-    title_menu.SetFocus(0);
+    title_menu.SetFocus(title_focus_on_enter);
+    title_focus_on_enter = TITLE_ITEM_START;
     f_on_title = true;
 }
 
@@ -8051,6 +8619,18 @@ void ApplicationArcher::OnActiveSceneChanged(Scene* from, Scene* to){
     if (!to){
         return;
     }
+    //The wardrobe opens only on arriving at the Character scene from the title's Character button,
+    //and closes on leaving it by any route. The game is any level that is neither.
+    const bool f_open_wardrobe = (to == character_scene) && f_wardrobe_requested;
+    f_wardrobe_requested = false;
+    f_wardrobe_open = f_open_wardrobe;
+    if (to != title_scene && to != character_scene){
+        play_scene = to;
+    }
+    if (!f_open_wardrobe && from == character_scene && to != title_scene && title_tap_button >= 0 &&
+        main_window && main_window->inputcontroller){
+        main_window->inputcontroller->SetTouchButtonRect(title_tap_button,InputController::TouchRect());
+    }
     /*
         THE TITLE IS NEVER SWAPPED IN OR OUT. Going to it leaves the live members as they are - they
         are the level just left, frozen, and continue goes back to it. Leaving it is leaving THAT
@@ -8066,6 +8646,15 @@ void ApplicationArcher::OnActiveSceneChanged(Scene* from, Scene* to){
     if (from == title_scene){
         LeaveTitle();
         from = title_return_scene ? title_return_scene : world_scene;
+    }
+    //After LeaveTitle, which takes the click rect away: the wardrobe wants it back, over the window.
+    if (f_open_wardrobe){
+        SyncWardrobeMenu();
+        wardrobe_menu.SetFocus(0);
+        if (title_tap_button >= 0 && main_window && main_window->inputcontroller){
+            main_window->inputcontroller->SetTouchButtonRect(title_tap_button,
+                                                             {0.0f,0.0f,(float)main_window->width,(float)main_window->height});
+        }
     }
     for (size_t i = 0; i < parked_levels.size(); i++){
         if (parked_levels[i].scene == to){
@@ -9312,8 +9901,9 @@ void ApplicationArcher::UpdateView(void){
     if (!main_scene){
         return;
     }
-    //The player's settings, on a change only - see ApplySettings.
+    //The player's settings and her outfit, each on a change only - see ApplySettings, ApplyOutfit.
     ApplySettings();
+    ApplyOutfit();
 #ifdef USE_SOUND
     /*
         Sound keeps SIMULATED time: held on a paused pass that does not tick, let go on one that
@@ -9399,6 +9989,11 @@ void ApplicationArcher::UpdateView(void){
     if (main_scene == title_scene){
         UpdateTitle(input);
         return;
+    }
+    //The wardrobe over the Character scene - before the Escape further down, whose edge it reads
+    //and answers itself (to the title, focused on Character).
+    if (f_wardrobe_open && IsCharacterScene()){
+        UpdateWardrobe(input);
     }
     //Paused on the turntable, an angle set from the panel or over MCP still turns her.
     if (IsCharacterScene() && main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass()){
@@ -9678,6 +10273,8 @@ void ApplicationArcher::RunSimulationTick(void){
     //After the camera, so the leaves are kept in the view this tick will draw.
     StepWindLeaves();
     StepGrownVines();
+    //And the spiders, hidden by the same view.
+    StepCreatures();
     PublishSnapshot();
 }
 
@@ -9768,6 +10365,11 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     out.f_kneel_pressed = f_kneel;
     out.arrow_select    = arrow_select;
     out.arrow_step      = arrow_step;
+    //With the wardrobe open the keys are its: Space and the arrows would also make her jump and
+    //aim. The edges above are still read, so none is left over for when it closes.
+    if (f_wardrobe_open && IsCharacterScene()){
+        out = ArcherInput();
+    }
 }
 
 //--- Sound --------------------------------------------------------------------------------------
@@ -12084,7 +12686,11 @@ void ApplicationArcher::SyncArcherView(){
     /*
         And the model. Its slot 0 is whatever BuildArcherModel gave it - the export's own material,
         or the flat skin - remembered the first time here, so the tint comes off to exactly that.
+
+        ONLY WITHOUT THE SLIDE CLIPS, now: the tint stood in for a slide pose, and with Surfing_Idle
+        and Sliding in the export the pose says it (docs/slide_plan.md). The box keeps it, a debug draw.
     */
+    f_sliding = f_sliding && (puppet.clip_duration[CLIP_SURF] <= 0.0f || puppet.clip_duration[CLIP_SLIDE] <= 0.0f);
     if (archer_model){
         if (archer_model_material < 0){
             archer_model_material = archer_model->GetMaterialSlot(0);
@@ -12545,6 +13151,46 @@ void ApplicationArcher::SyncArcherAnimation(){
     if (stage.f_on_ground && stage.branch_on >= 0 && stage.lean != 0.0f){
         rotation = quat(vec3(1,0,0),-stage.lean * PUPPET_BRANCH_LEAN_SHARE) * rotation;
     }
+    /*
+        ON A SLIDE, TILTED TO THE SLOPE - see slope_tilt_deg. Outside the yaw for the rope tilt's
+        reason, so it is the same turn whichever way she faces. The pivot is read off the pose on
+        screen in the MODEL's own frame, through the transform it was posed with (this tick's has
+        not been set yet), so the tilt cannot move it: between her feet standing up, under her hips
+        down on a hip, at the level of her soles.
+    */
+    {
+        int clip = puppet.choice.clip;
+        bool f_slope = stage.f_on_ground && stage.SlideAccel() != 0.0f && anim_source == ANIM_FROM_GAME &&
+                       (clip == CLIP_SURF || clip == CLIP_SLIDE);
+        float want = f_slope ? stage.SlopeUnderFeetDeg() : 0.0f;
+        float want_upright = (f_slope && clip == CLIP_SURF) ? ARCHER_SLOPE_UPRIGHT : 0.0f;
+        auto toward = [](float v, float target, float step){
+            return (v < target) ? fminf(v + step,target) : fmaxf(v - step,target);
+        };
+        slope_tilt_deg = toward(slope_tilt_deg,want,ARCHER_SLOPE_TILT_RATE);
+        slope_upright = toward(slope_upright,want_upright,ARCHER_SLOPE_UPRIGHT * ARCHER_SLOPE_TILT_RATE / 30.0f);
+        if (slope_tilt_deg != 0.0f){
+            quat posed = archer_model->GetWorldRotation();
+            posed.inverse();
+            vec3 origin = archer_model->GetWorldPosition();
+            vec3 local(0.0f,0.0f,0.0f);
+            Bone* foot_l = archer_model->FindBone("mixamorig:Foot.L");
+            Bone* foot_r = archer_model->FindBone("mixamorig:Foot.R");
+            Bone* hips = archer_model->FindBone(ARCHER_MODEL_ROOT_BONE);
+            if (clip == CLIP_SURF && foot_l && foot_r){
+                local = posed * ((foot_l->GetWorldPosition() + foot_r->GetWorldPosition()) * 0.5f - origin);
+            }else if (hips){
+                local = posed * (hips->GetWorldPosition() - origin);
+            }
+            local.y = 0.0f;
+            quat tilt(vec3(0.0f,0.0f,1.0f),slope_tilt_deg * ARCHER_DEG2RAD);
+            vec3 before = rotation * local;
+            rotation = tilt * rotation;
+            //The pivot where it would have been, untilted: on the surface under her.
+            feet = feet + before - rotation * local;
+        }
+    }
+    archer_model->slope_turn_deg = -slope_upright * slope_tilt_deg;
     archer_model->SetPosition(feet);
     archer_model->SetRotation(rotation);
     archer_model->leg_drawn_yaw = yaw;
@@ -13334,6 +13980,9 @@ void ApplicationArcher::PublishSnapshot(){
         }
     }
     s.slope_deg = stage.SlopeUnderFeetDeg();
+    s.f_skidding = stage.f_skidding;
+    s.slope_tilt_drawn = slope_tilt_deg;
+    s.slope_turn_drawn = archer_model ? archer_model->slope_turn_deg : 0.0f;
     s.spring_cue = (spring_cue_plant >= 0) ? spring_cue : -1.0f;
     s.spring_boost = stage.SpringBoostNow();
     s.spring_boost_peak = spring_cue_peak;
@@ -13431,6 +14080,16 @@ void ApplicationArcher::PublishSnapshot(){
     s.f_apple_in_reach = apple_lit >= 0;
     s.apple_list = stage.apples;
     s.pick_ticks = stage.pick_ticks;
+    s.spiders = (int)crawlers.crawlers.size();
+    s.spiders_drawn = spiders_drawn;
+    s.spider_points.clear();
+    if (f_show_paths){
+        for (Object* o : spider_objects){
+            if (o->IsVisible()){
+                s.spider_points.push_back(o->GetPosition());
+            }
+        }
+    }
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         const Arrow& a = stage.arrows[i];
@@ -13607,7 +14266,8 @@ json ApplicationArcher::BuildStateJson(){
         }()},
         //The slide: the ramp she is on (-1 none), the slope under her feet in degrees (+ rising to
         //the right, whatever it is - leaf, branch or ramp), and the pull down it (0 when it holds her).
-        {"slide",json{{"ramp",s.ramp_on},{"slope_deg",s.slope_deg},{"accel",s.slide_accel}}},
+        {"slide",json{{"ramp",s.ramp_on},{"slope_deg",s.slope_deg},{"accel",s.slide_accel},
+                      {"skidding",s.f_skidding},{"tilt_drawn",s.slope_tilt_drawn},{"torso_turn",s.slope_turn_drawn}}},
         //The rope bridge: which she stands on (-1 none), and how low it hangs - of that one, or the
         //level's first. `sag` is below the anchors.
         {"bridge",json{{"on",s.bridge_on},{"lowest",s.bridge_lowest},{"sag",s.bridge_sag}}},
@@ -14118,9 +14778,11 @@ void ApplicationArcher::RegisterMCPTools(){
             }}
         },
         [this](const json& args) -> json {
+            //The wardrobe when it is open (over the Character scene, so not the title), else the title's.
+            const bool f_wardrobe = f_wardrobe_open;
             const int screen = menu_screen;
-            UIMenu& menu = (screen == MENU_SCREEN_CONTROLS) ? controls_menu :
-                           ((screen == MENU_SCREEN_SETTINGS) ? settings_menu : title_menu);
+            UIMenu& menu = f_wardrobe ? wardrobe_menu : ((screen == MENU_SCREEN_CONTROLS) ? controls_menu :
+                           ((screen == MENU_SCREEN_SETTINGS) ? settings_menu : title_menu));
             const float w = main_window ? (float)main_window->width : 0.0f;
             const float h = main_window ? (float)main_window->height : 0.0f;
             bool f_point = false;
@@ -14150,8 +14812,9 @@ void ApplicationArcher::RegisterMCPTools(){
                 WaitTicks(3);
             }
             const int now = menu_screen;
-            UIMenu& shown = (now == MENU_SCREEN_CONTROLS) ? controls_menu :
-                            ((now == MENU_SCREEN_SETTINGS) ? settings_menu : title_menu);
+            const bool f_wardrobe_now = f_wardrobe_open;
+            UIMenu& shown = f_wardrobe_now ? wardrobe_menu : ((now == MENU_SCREEN_CONTROLS) ? controls_menu :
+                            ((now == MENU_SCREEN_SETTINGS) ? settings_menu : title_menu));
             static const char* kinds[] = { "button", "choice", "slider", "toggle" };
             json items = json::array();
             std::vector<UIMenuItem> list = shown.Items();
@@ -14175,7 +14838,15 @@ void ApplicationArcher::RegisterMCPTools(){
             }
 #endif
             json out{
-                {"screen",(now == MENU_SCREEN_CONTROLS) ? "controls" : ((now == MENU_SCREEN_SETTINGS) ? "settings" : "title")},
+                {"screen",f_wardrobe_now ? "character" : ((now == MENU_SCREEN_CONTROLS) ? "controls" : ((now == MENU_SCREEN_SETTINGS) ? "settings" : "title"))},
+                {"outfit",json{{"path",outfit.Path()},{"text",outfit.ToText()}}},
+                {"parts",[&](){
+                    json parts = json::object();
+                    for (Object* part : archer_parts){
+                        parts[part->name] = part->IsVisible();
+                    }
+                    return parts;
+                }()},
                 {"on_title",f_on_title.load()},
                 {"focus",shown.Focus()},
                 {"items",items},
@@ -14899,7 +15570,10 @@ void ApplicationArcher::RegisterMCPTools(){
         "the floors' edges on the world level (docs/vine_plan.md section 15) - a white line along each "
         "floor, a drop line down each edge (red a drop she fears, amber past half a unit, grey a "
         "step) with a stub over the drop and a blue bar on a grabbable lip, a green L at each wall's "
-        "foot; the numbers are archer_edges. Returns all five.",
+        "foot; the numbers are archer_edges. `paths`: the creatures' paths on the world level "
+        "(docs/creature_plan.md section 2) - yellow drawn by hand, green round a vine, orange along a "
+        "wall - with an arrow every unit toward each one's end, a bar at an open end, a ring at a "
+        "loop's start, and a white cross on every spider drawn. Returns all six.",
         json{
             {"type","object"},
             {"properties", {
@@ -14907,7 +15581,8 @@ void ApplicationArcher::RegisterMCPTools(){
                 {"rope_links",  {{"type","boolean"}}},
                 {"rope_attach", {{"type","boolean"}}},
                 {"wind",        {{"type","boolean"}}},
-                {"edges",       {{"type","boolean"}}}
+                {"edges",       {{"type","boolean"}}},
+                {"paths",       {{"type","boolean"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -14930,9 +15605,71 @@ void ApplicationArcher::RegisterMCPTools(){
             if (args.contains("edges") && args["edges"].is_boolean()){
                 f_show_edges = args["edges"].get<bool>();
             }
+            if (args.contains("paths") && args["paths"].is_boolean()){
+                f_show_paths = args["paths"].get<bool>();
+            }
             return json{ {"collider",f_show_collider},{"rope_links",f_show_rope_links},
                          {"rope_attach",f_show_rope_attach},{"wind",f_show_wind.load()},
-                         {"edges",f_show_edges} };
+                         {"edges",f_show_edges},{"paths",f_show_paths} };
+        });
+
+    //The small spiders (docs/creature_plan.md): the bench, the legs and the size, for tuning by eye.
+    MCPServer::Get()->RegisterTool("archer_creatures",
+        "The world level's small spiders (docs/creature_plan.md section 3) - ambient, view-only, every one "
+        "the same mesh. With no arguments, reports them: paths by kind, spiders, how many are drawn now "
+        "(only those in the view are), their size and leg settings. `bench` n puts n spiders in a grid "
+        "across the view, walking on the spot - for the GPU pass timers - and 0 puts them back on their "
+        "paths. `leg_mode` 2 (the default) is the alternating gait - LegsSwing and LegsLift a quarter "
+        "cycle apart; 0 swings the old Walking shape key 0..1, 1 swings it -1..+1 through the rest; "
+        "`leg_amount` scales either; `stride` is the distance one leg cycle covers. `scale` (on model_scale) "
+        "lays every spider out again at that size, at the next tick boundary.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"bench",      {{"type","integer"}}},
+                {"leg_mode",   {{"type","integer"}}},
+                {"leg_amount", {{"type","number"}}},
+                {"stride",     {{"type","number"}}},
+                {"scale",      {{"type","number"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (args.contains("bench") && args["bench"].is_number()){
+                spider_bench = std::max(0,args["bench"].get<int>());
+            }
+            if (args.contains("leg_mode") && args["leg_mode"].is_number()){
+                spider_leg_mode = std::clamp(args["leg_mode"].get<int>(),0,2);
+            }
+            if (args.contains("leg_amount") && args["leg_amount"].is_number()){
+                spider_leg_amount = args["leg_amount"].get<float>();
+            }
+            if (args.contains("stride") && args["stride"].is_number()){
+                crawlers.params.stride = std::max(0.01f,args["stride"].get<float>());
+            }
+            if (args.contains("scale") && args["scale"].is_number() && main_scene){
+                float scale = std::max(0.02f,args["scale"].get<float>());
+                main_scene->AtTickBoundary([this,scale](){
+                    spider_scale = scale;
+                    BuildCreatures();
+                });
+                WaitTicks(2);
+            }
+            int by_kind[CREATURE_PATH_KIND_COUNT] = {};
+            for (const CreaturePath& p : crawlers.paths){
+                by_kind[p.kind]++;
+            }
+            int spiders = 0, drawn = 0;
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                spiders = snapshot.spiders;
+                drawn = snapshot.spiders_drawn;
+            }
+            return json{ {"paths",{ {"hand",by_kind[CREATURE_PATH_HAND]}, {"vine",by_kind[CREATURE_PATH_VINE]},
+                                    {"surface",by_kind[CREATURE_PATH_SURFACE]} }},
+                         {"spiders",spiders}, {"drawn",drawn}, {"bench",spider_bench},
+                         {"scale",spider_scale}, {"foot_drop",spider_foot_drop}, {"stride",crawlers.params.stride},
+                         {"leg_mode",spider_leg_mode}, {"leg_amount",spider_leg_amount},
+                         {"speed",json::array({crawlers.params.speed_min,crawlers.params.speed_max})} };
         });
 
     //The floors' edges (docs/vine_plan.md section 15), out of the snapshot: the list the debug view draws.
@@ -16215,6 +16952,11 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::SetItemTooltip("The floors, their edges and wall feet (docs/vine_plan.md 15): red a drop she "
                               "fears, amber past half a unit, grey a step, blue a grabbable lip, green a "
                               "wall's foot. %i edges, %i feet.",(int)stage.edges.size(),(int)stage.corners.size());
+        ImGui::SameLine();
+        ImGui::Checkbox("creature paths",&f_show_paths);
+        ImGui::SetItemTooltip("The spiders' paths on the world level (docs/creature_plan.md 2): yellow by hand, "
+                              "green round a vine, orange along a wall; arrows toward each end, a cross on "
+                              "each spider. %i paths, %i spiders.",(int)crawlers.paths.size(),(int)crawlers.crawlers.size());
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
         //The areas only: a trigger has nowhere to arrive.
         std::vector<int> areas;

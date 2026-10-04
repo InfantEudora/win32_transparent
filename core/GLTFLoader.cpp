@@ -1,5 +1,6 @@
 #include "GLTFLoader.h"
 #include "File.h"
+#include "stb_image/stb_image.h"  //stbi_info_from_memory only - the implementation is Texture's
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
@@ -61,6 +62,129 @@ static bool NoOpLoadImageData(tinygltf::Image*, const int, std::string*, std::st
     return true;
 }
 
+static void FormatBytes(char* out, size_t out_sz, double bytes){
+    if (bytes >= 1024.0 * 1024.0){
+        snprintf(out, out_sz, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }else{
+        snprintf(out, out_sz, "%.0f KB", bytes / 1024.0);
+    }
+}
+
+/*
+    One line on where a file's bytes go, printed at every load whatever this logger's level is,
+    because the question it answers - "is it the textures?" - comes up after every export.
+
+    Bookkeeping only. Every bufferView is tagged with the first thing found using it (an image,
+    a mesh attribute, a shape key, an animation, a skin) and its byteLength is added there, so
+    the parts are the file's real bytes and add up; "other" is the JSON chunk and padding.
+    Nothing is decoded: an image's size comes from its header through stbi_info_from_memory.
+
+    "on GPU" is what the images would cost uploaded the way Texture::LoadFromMemory does it -
+    4 bytes a texel (RGB8 is padded to that by most drivers) plus a third for the mip chain.
+    It is an upper bound: a texture is only uploaded when a mesh asking for its material loads.
+*/
+static void PrintModelSummary(const tinygltf::Model& model, const char* filename, size_t file_size){
+    enum { PART_NONE, PART_TEXTURE, PART_MESH, PART_MORPH, PART_ANIM, PART_SKIN, PART_COUNT };
+    std::vector<uint8_t> part(model.bufferViews.size(), PART_NONE);
+    auto tag_view = [&](int view, int p){
+        if (view >= 0 && view < (int)part.size() && part[view] == PART_NONE){
+            part[view] = (uint8_t)p;
+        }
+    };
+    //Shape keys arrive as sparse accessors (memory: gltf_sparse_accessors), whose bytes live in
+    //the sparse index and value views rather than in bufferView.
+    auto tag_accessor = [&](int index, int p){
+        if (index < 0 || index >= (int)model.accessors.size()){
+            return;
+        }
+        const tinygltf::Accessor& a = model.accessors[index];
+        tag_view(a.bufferView, p);
+        if (a.sparse.isSparse){
+            tag_view(a.sparse.indices.bufferView, p);
+            tag_view(a.sparse.values.bufferView, p);
+        }
+    };
+
+    size_t vertices = 0;
+    for (const tinygltf::Mesh& mesh : model.meshes){
+        for (const tinygltf::Primitive& prim : mesh.primitives){
+            for (const auto& attribute : prim.attributes){
+                tag_accessor(attribute.second, PART_MESH);
+                if (attribute.first == "POSITION" && attribute.second >= 0){
+                    vertices += model.accessors[attribute.second].count;
+                }
+            }
+            tag_accessor(prim.indices, PART_MESH);
+            for (const auto& target : prim.targets){
+                for (const auto& attribute : target){
+                    tag_accessor(attribute.second, PART_MORPH);
+                }
+            }
+        }
+    }
+    for (const tinygltf::Animation& anim : model.animations){
+        for (const tinygltf::AnimationSampler& sampler : anim.samplers){
+            tag_accessor(sampler.input, PART_ANIM);
+            tag_accessor(sampler.output, PART_ANIM);
+        }
+    }
+    for (const tinygltf::Skin& skin : model.skins){
+        tag_accessor(skin.inverseBindMatrices, PART_SKIN);
+    }
+
+    struct ImageCost { const std::string* name; int w, h; double gpu, file; };
+    std::vector<ImageCost> images;
+    double gpu_total = 0.0;
+    for (const tinygltf::Image& image : model.images){
+        if (image.bufferView < 0){
+            continue;
+        }
+        tag_view(image.bufferView, PART_TEXTURE);
+        const tinygltf::BufferView& view = model.bufferViews[image.bufferView];
+        const tinygltf::Buffer& buffer = model.buffers[view.buffer];
+        int w = 0, h = 0, channels = 0;
+        if (view.byteOffset + view.byteLength <= buffer.data.size()){
+            stbi_info_from_memory(&buffer.data[view.byteOffset], (int)view.byteLength, &w, &h, &channels);
+        }
+        double gpu = (double)w * h * 4.0 * 4.0 / 3.0;
+        gpu_total += gpu;
+        images.push_back({ &image.name, w, h, gpu, (double)view.byteLength });
+    }
+
+    double bytes[PART_COUNT] = {};
+    for (size_t i = 0; i < part.size(); i++){
+        bytes[part[i]] += (double)model.bufferViews[i].byteLength;
+    }
+    double accounted = bytes[PART_TEXTURE] + bytes[PART_MESH] + bytes[PART_MORPH] + bytes[PART_ANIM] + bytes[PART_SKIN];
+    double other = (double)file_size - accounted;  //JSON, padding, and any view nothing above claimed
+
+    char total_s[32], tex_s[32], gpu_s[32], mesh_s[32], morph_s[32], anim_s[32], skin_s[32], other_s[32];
+    FormatBytes(total_s, sizeof(total_s), (double)file_size);
+    FormatBytes(tex_s, sizeof(tex_s), bytes[PART_TEXTURE]);
+    FormatBytes(gpu_s, sizeof(gpu_s), gpu_total);
+    FormatBytes(mesh_s, sizeof(mesh_s), bytes[PART_MESH]);
+    FormatBytes(morph_s, sizeof(morph_s), bytes[PART_MORPH]);
+    FormatBytes(anim_s, sizeof(anim_s), bytes[PART_ANIM]);
+    FormatBytes(skin_s, sizeof(skin_s), bytes[PART_SKIN]);
+    FormatBytes(other_s, sizeof(other_s), other > 0.0 ? other : 0.0);
+
+    debug->PrintLine("%s %s | textures %s (%i images, %s on GPU) | meshes %s (%i, %.2fM verts), shape keys %s"
+                     " | animation %s (%i clips) | skins %s | other %s\n",
+                     filename, total_s, tex_s, (int)images.size(), gpu_s, mesh_s, (int)model.meshes.size(),
+                     vertices / 1e6, morph_s, anim_s, (int)model.animations.size(), skin_s, other_s);
+
+    //The few that matter, largest on the GPU first - at 4096^2 one image outweighs every mesh.
+    std::sort(images.begin(), images.end(), [](const ImageCost& a, const ImageCost& b){ return a.gpu > b.gpu; });
+    for (size_t i = 0; i < images.size() && i < 3; i++){
+        char g[32], f[32];
+        FormatBytes(g, sizeof(g), images[i].gpu);
+        FormatBytes(f, sizeof(f), images[i].file);
+        debug->PrintLine("  texture %-32s %5i x %-5i %s on GPU, %s in file\n",
+                         images[i].name->empty() ? "(unnamed)" : images[i].name->c_str(),
+                         images[i].w, images[i].h, g, f);
+    }
+}
+
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
     mode_strings[TINYGLTF_MODE_POINTS] = "TINYGLTF_MODE_POINTS";
@@ -105,6 +229,7 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         return;
     }else{
         debug->Ok("Loaded .glTF : %s\n", input_filename);
+        PrintModelSummary(model, input_filename, file_data_sz);
     }
 
     // Check file structure
