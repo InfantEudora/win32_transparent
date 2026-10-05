@@ -792,6 +792,18 @@ void PairStrip(Lattice& L, const std::vector<int>& strip, const std::vector<int>
     if (nl <= 0){
         return;
     }
+    /*
+        A triangle may be in the strip more than once, and not only at a 120 degree corner: inside
+        a small closed chain - a column a few sides across - one triangle touches chain vertices
+        that are not neighbours along it. The matching sees two places and could merge it at both,
+        and the second merge overwrote the first: one partner pointed at a triangle that pointed
+        elsewhere, and the triangle it lost fell out of the grid as a hole (seed 39). Such a
+        triangle is left for the random merge.
+    */
+    std::unordered_map<int,int> seen;
+    for (int t : strip){
+        seen[t]++;
+    }
     //Which values each link may take: bit 0 unmerged, bit 1 merged.
     std::vector<uint8_t> allowed(nl);
     for (int j = 0; j < nl; j++){
@@ -799,7 +811,7 @@ void PairStrip(Lattice& L, const std::vector<int>& strip, const std::vector<int>
         int b = strip[(j + 1) % m];
         if (L.partner[a] == b){
             allowed[j] = 2;
-        }else if (L.partner[a] != -1 || L.partner[b] != -1){
+        }else if (L.partner[a] != -1 || L.partner[b] != -1 || seen[a] > 1 || seen[b] > 1){
             allowed[j] = 1;
         }else{
             allowed[j] = 3;
@@ -873,8 +885,12 @@ void PairStrip(Lattice& L, const std::vector<int>& strip, const std::vector<int>
         if (best_choice[j]){
             int a = strip[j];
             int b = strip[(j + 1) % m];
-            L.partner[a] = b;
-            L.partner[b] = a;
+            //Never over a merge already made, by another chain's strip or this one: a partner
+            //must always point back.
+            if ((L.partner[a] == -1 || L.partner[a] == b) && (L.partner[b] == -1 || L.partner[b] == a)){
+                L.partner[a] = b;
+                L.partner[b] = a;
+            }
         }
     }
 }
@@ -1166,43 +1182,74 @@ uint64_t Fnv(uint64_t h, const void* data, size_t size){
 }
 
 bool GridSettings::operator==(const GridSettings& o) const{
-    if (features.size() != o.features.size()){
-        return false;
-    }
-    for (size_t i = 0; i < features.size(); i++){
-        const std::vector<vec2>& a = features[i].points;
-        const std::vector<vec2>& b = o.features[i].points;
-        if (a.size() != b.size()){
-            return false;
-        }
-        for (size_t k = 0; k < a.size(); k++){
-            if (!SamePoint(a[k],b[k])){
-                return false;
-            }
-        }
-    }
     return seed == o.seed && target_fine_cells == o.target_fine_cells && aspect == o.aspect &&
            triangle_side == o.triangle_side && relax_passes_coarse == o.relax_passes_coarse &&
            relax_passes_fine == o.relax_passes_fine && relax_strength == o.relax_strength;
 }
 
-std::vector<GridLine> ChasmDefaultFeatures(){
-    std::vector<GridLine> f(2);
-    //0: the chasm rim. Open: it starts and ends on the v = 1 edge, runs up one side to the tip near
-    //v = 0.1 and back down the other. The chasm is what it encloses together with that edge.
-    f[0].points = {
-        {0.440f,1.000f},{0.432f,0.920f},{0.445f,0.840f},{0.428f,0.760f},{0.436f,0.680f},{0.452f,0.600f},
-        {0.440f,0.520f},{0.448f,0.440f},{0.462f,0.360f},{0.455f,0.280f},{0.470f,0.200f},{0.485f,0.130f},
-        {0.500f,0.100f},
-        {0.515f,0.130f},{0.528f,0.200f},{0.540f,0.280f},{0.548f,0.360f},{0.538f,0.440f},{0.552f,0.520f},
-        {0.566f,0.600f},{0.555f,0.680f},{0.560f,0.760f},{0.574f,0.840f},{0.562f,0.920f},{0.568f,1.000f}
-    };
-    //1: a shard standing in the chasm. Closed: the last point repeats the first.
-    f[1].points = {
-        {0.495f,0.575f},{0.515f,0.570f},{0.527f,0.600f},{0.522f,0.640f},{0.512f,0.668f},
-        {0.494f,0.660f},{0.486f,0.625f},{0.488f,0.595f},{0.495f,0.575f}
-    };
-    return f;
+const char* const grid_feature_names[GRID_FEATURE_KINDS] = {"rim","shard","column","terrace"};
+
+GridLine GridSmoothLine(const std::vector<vec2>& corners, bool f_closed, float spacing){
+    return SmoothLine(corners,f_closed,spacing);
+}
+
+/*
+    Every point of `a` against every segment of `b`, with a box test first so lines far apart cost
+    a comparison each. Lines are resampled every quarter side, so testing a's points rather than
+    its segments misses at most an eighth of a side - well inside what the spacing leaves spare.
+    For a line against itself the arc between the two places must be at least `skip_arc`, the
+    shorter way round on a closed line.
+*/
+float GridLineGap(const GridLine& a, const GridLine& b, float skip_arc, vec2* where){
+    float best = 1e30f;
+    if (a.points.size() < 2 || b.points.size() < 2){
+        return best;
+    }
+    bool f_same = &a == &b;
+    std::vector<float> sa = LineArcLengths(a);
+    std::vector<float> sb = LineArcLengths(b);
+    bool f_closed = LineClosed(b);
+    float total = sb.back();
+    vec2 lo = b.points[0];
+    vec2 hi = b.points[0];
+    for (const vec2& p : b.points){
+        lo.x = std::min(lo.x,p.x);
+        lo.y = std::min(lo.y,p.y);
+        hi.x = std::max(hi.x,p.x);
+        hi.y = std::max(hi.y,p.y);
+    }
+    for (size_t i = 0; i < a.points.size(); i++){
+        const vec2& p = a.points[i];
+        float dx = std::max(0.0f,std::max(lo.x - p.x,p.x - hi.x));
+        float dz = std::max(0.0f,std::max(lo.y - p.y,p.y - hi.y));
+        if (dx * dx + dz * dz >= best * best){
+            continue;
+        }
+        for (size_t k = 0; k + 1 < b.points.size(); k++){
+            vec2 q0 = b.points[k];
+            vec2 d = b.points[k + 1] - q0;
+            float len2 = d.dot(d);
+            float t = len2 > 0.0f ? std::max(0.0f,std::min(1.0f,(p - q0).dot(d) / len2)) : 0.0f;
+            if (f_same){
+                float arc = std::fabs(sa[i] - (sb[k] + (sb[k + 1] - sb[k]) * t));
+                if (f_closed){
+                    arc = std::min(arc,total - arc);
+                }
+                if (arc < skip_arc){
+                    continue;
+                }
+            }
+            vec2 e = p - (q0 + d * t);
+            float dist = std::sqrt(e.dot(e));
+            if (dist < best){
+                best = dist;
+                if (where){
+                    *where = p;
+                }
+            }
+        }
+    }
+    return best;
 }
 
 void GridSquareFit(const vec2 p[4], vec2 target[4]){
@@ -1403,39 +1450,21 @@ void Grid::Generate(const GridSettings& s){
 
     /*
         THE FEATURES, pinned before the random merge so the merge along them can be chosen (see
-        Lattice). Mapped from normalised coordinates onto the outline's rectangle, smoothed, and
-        appended to the lines. An end within a hair of the map's edge is put exactly on it.
+        Lattice). The layout comes from the seed, on this rectangle, already smoothed; its lines
+        are appended as they are, so the grid pins exactly what the terrain will read.
     */
+    layout = GenerateChasmLayout(s.seed,vec2(x0,z0),vec2(x1,z1),T);
     feature_line_base = (int)lines.size();
     L.f_chain.assign(lattice.size(),0);
     L.near_chain.assign(lattice.size(),0);
     num_unfinished_features = 0;
     std::vector<vec2> unpinned = lattice;
-    for (const GridLine& f : s.features){
-        if (f.points.size() < 2){
-            lines.push_back(GridLine());
+    for (const GridFeature& f : layout.features){
+        lines.push_back(f.line);
+        if (f.line.points.size() < 2){
             continue;
         }
-        bool f_closed = LineClosed(f);
-        std::vector<vec2> world;
-        bool f_end_on_outline[2] = {false,false};
-        for (size_t k = 0; k < f.points.size(); k++){
-            vec2 p = f.points[k];
-            bool f_end = !f_closed && (k == 0 || k + 1 == f.points.size());
-            const float e = 1e-4f;
-            bool f_on_edge = p.x <= e || p.x >= 1.0f - e || p.y <= e || p.y >= 1.0f - e;
-            if (f_end && f_on_edge){
-                p.x = p.x <= e ? 0.0f : (p.x >= 1.0f - e ? 1.0f : p.x);
-                p.y = p.y <= e ? 0.0f : (p.y >= 1.0f - e ? 1.0f : p.y);
-                f_end_on_outline[k == 0 ? 0 : 1] = true;
-            }
-            world.push_back(vec2(x0 + p.x * (x1 - x0),z0 + p.y * (z1 - z0)));
-        }
-        if (f_closed){
-            world.back() = world.front();
-        }
-        lines.push_back(SmoothLine(world,f_closed,0.25f * T));
-        if (!PinFeature(L,lines.back(),(int)lines.size() - 1,f_end_on_outline)){
+        if (!PinFeature(L,lines.back(),(int)lines.size() - 1,f.f_end_on_outline)){
             num_unfinished_features++;
         }
     }
@@ -1446,7 +1475,7 @@ void Grid::Generate(const GridSettings& s){
         move of its neighbours, repeated, which is the smooth (harmonic) blend between the chains'
         moves and the outline's none. The cells near a chain then move with it.
     */
-    if (!s.features.empty()){
+    if (!layout.features.empty()){
         size_t n = lattice.size();
         std::vector<vec2> move(n,vec2(0.0f,0.0f));
         for (size_t v = 0; v < n; v++){
@@ -1564,6 +1593,12 @@ uint64_t Grid::Hash() const{
     for (const GridQuad& q : coarse.quads){
         h = Fnv(h,q.v,sizeof(q.v));
     }
+    //The rivers are not pinned into the grid, so nothing above would notice them move; they are
+    //generated with it and belong to the world all the same.
+    for (const GridRiverLine& r : layout.rivers){
+        h = Fnv(h,r.points.data(),r.points.size() * sizeof(vec2));
+        h = Fnv(h,&r.width,sizeof(r.width));
+    }
     return h;
 }
 
@@ -1586,12 +1621,12 @@ struct PinnedGridHash{
     uint32_t seed;
     uint64_t hash;
 };
-//Pinned 2026-10-04 with the chasm features pinned in and long bends given their outside corners,
+//Pinned 2026-10-05 with the chasm generated from the seed (step 10) and the rivers in the hash,
 //the same in the debug and release builds.
 static const PinnedGridHash pinned_grid_hashes[] = {
-    {1,0xab97cdd4446dedf8ull},
-    {2,0x7e4560b6573a5a9bull},
-    {3,0xb81886e5477f98e9ull},
+    {1,0xaab35fd8a65e3e1aull},
+    {2,0xc8d98f1fdd487b49ull},
+    {3,0xc6f75ca7d83dbe9dull},
 };
 
 #define GRID_ISSUES_MAX         200     //enough to see a pattern, few enough to draw and list
@@ -1938,6 +1973,78 @@ GridCheckReport RunGridChecks(const Grid& grid){
             detail = "no features";
         }
         add_result("features",f_pass,false,detail);
+    }
+
+    /*
+        --- Spacing: no two feature lines closer than GRID_FEATURE_SPACING ------------------------
+        The generator keeps this as it places each line; this is the proof, on the lines the grid
+        actually pinned. Closer than that and two chains can share a lattice triangle, or a fine
+        cell can see three levels. A line against the map's edge is not counted near its own ends
+        there, which sit on it by design.
+    */
+    {
+        const float want = GRID_FEATURE_SPACING * grid.settings.triangle_side;
+        const float skip = 2.0f * want;
+        float closest = 1e30f;
+        vec2 closest_at(0.0f,0.0f);
+        std::string closest_what = "nothing";
+        int bad = 0;
+        int base = grid.feature_line_base;
+        auto consider = [&](float gap, const vec2& at, const std::string& what){
+            if (gap < want){
+                bad++;
+                add_issue("spacing",-1,at,true);
+            }
+            if (gap < closest){
+                closest = gap;
+                closest_at = at;
+                closest_what = what;
+            }
+        };
+        for (int a = base; a < (int)grid.lines.size(); a++){
+            const GridLine& la = grid.lines[a];
+            if (la.points.size() < 2){
+                continue;
+            }
+            for (int b = a; b < (int)grid.lines.size(); b++){
+                vec2 at;
+                float gap = GridLineGap(la,grid.lines[b],skip,&at);
+                snprintf(buf,sizeof(buf),"lines %i and %i",a,b);
+                consider(gap,at,buf);
+            }
+            //The map's edge, away from an open line's ends.
+            std::vector<float> s = LineArcLengths(la);
+            bool f_closed = LineClosed(la);
+            for (int o = 0; o < base; o++){
+                for (size_t k = 0; k < la.points.size(); k++){
+                    if (!f_closed && (s[k] < skip || s.back() - s[k] < skip)){
+                        continue;
+                    }
+                    vec2 d = NearestOnLine(grid.lines[o],la.points[k]) - la.points[k];
+                    snprintf(buf,sizeof(buf),"line %i and the map's edge",a);
+                    consider(std::sqrt(d.dot(d)),la.points[k],buf);
+                }
+            }
+        }
+        snprintf(buf,sizeof(buf),"closest %.1f (%s), at least %.1f wanted; %i places closer",
+                 closest,closest_what.c_str(),want,bad);
+        add_result("spacing",bad == 0,false,buf);
+        //The closest place is marked even when it passes - worth looking at, not wrong.
+        if (bad == 0 && closest < 1e29f){
+            add_issue("spacing",-1,closest_at,false);
+        }
+    }
+
+    //--- Layout: what the seed made of the chasm - a figure, and a failure only if no rift fitted --
+    {
+        const ChasmLayout& l = grid.layout;
+        snprintf(buf,sizeof(buf),"%i rifts, %i forks; terraces %i of %i, shards %i of %i, columns %i of %i; "
+                 "rivers %i of %i; %i attempts%s (%.1f ms)",
+                 l.rifts,l.forks,l.count[GRID_FEATURE_TERRACE],l.wanted[GRID_FEATURE_TERRACE],
+                 l.count[GRID_FEATURE_SHARD],l.wanted[GRID_FEATURE_SHARD],l.count[GRID_FEATURE_COLUMN],
+                 l.wanted[GRID_FEATURE_COLUMN],(int)l.rivers.size(),l.rivers_wanted,l.attempts,
+                 l.f_rifts_ok ? "" : " - NONE KEPT ITS SPACING",l.generate_ms);
+        add_result("layout",l.f_rifts_ok && l.rifts > 0,false,buf);
     }
 
     report.check_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();

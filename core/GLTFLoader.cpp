@@ -3,6 +3,8 @@
 #include "stb_image/stb_image.h"  //stbi_info_from_memory only - the implementation is Texture's
 
 #include "Debug.h"
+
+#include <algorithm>     //std::sort in PrintModelSummary - it compiled only while a header dragged it in
 static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
 
 /*

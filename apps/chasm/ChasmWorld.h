@@ -20,7 +20,7 @@ struct ChasmWorld{
     std::shared_ptr<const Grid> grid;
     std::shared_ptr<const GridPicker> picker;
     std::shared_ptr<const Terrain> terrain;
-    std::vector<GridLine> features;     //world coordinates: the rim, then shards
+    std::vector<GridLine> features;     //world coordinates, in the layout's order (Grid::LineKind)
     std::shared_ptr<const TerrainMeshData> mesh;
     std::shared_ptr<const ForestData> forest;
     std::shared_ptr<const MistData> mist;

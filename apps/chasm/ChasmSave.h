@@ -6,12 +6,14 @@
 #include <utility>
 #include <vector>
 #include "Grid.h"
+#include "Walkers.h"
 #include "tinygltf/json.hpp"
 
 /*
     A SAVE: the seed plus edits (README.md, "The world is a seed plus edits"). The grid's settings -
-    the seed, the size, the feature lines - from which the whole world is generated again, and what
-    the player painted on it. Nothing generated is stored. The world's hash is, so a save that
+    the seed and the size - from which the whole world, chasm and rivers included, is generated again
+    - and what the player painted on it. Nothing generated is stored (the chasm's lines were, until
+    they came from the seed too; an old save's "features" key is ignored). The world's hash is, so a save that
     generates into a different map (the generator changed since) is noticed rather than painted
     onto the wrong plots.
 
@@ -27,6 +29,7 @@ struct ChasmSave{
     std::vector<std::pair<int,int>> houses;             //plot, storeys
     std::vector<int> fields;                            //coarse cells
     std::vector<std::pair<int,int>> grounds;            //plot, ZONE_GROUND_* (step 8; absent in older saves)
+    std::vector<Walker> walkers;                        //step 10, with their paths (Walkers.h); absent in older saves
 };
 
 nlohmann::json ChasmSaveToJson(const ChasmSave& s);

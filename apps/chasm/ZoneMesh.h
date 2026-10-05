@@ -12,6 +12,7 @@
 
       - ground: a garden or town plot's quarters laid on the relief, in grass or trodden earth -
         under a house nothing, the house hides it;
+      - roads, along the edges between road plots (RoadMesh.h);
       - crops, for a cell whose coarse parent is a field (CropMesh.h);
       - houses (BuildingMesh.h);
       - boundaries - walls, palisades, fences - that form from what meets what (BoundaryMesh.h).

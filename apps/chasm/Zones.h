@@ -28,6 +28,8 @@
       - Ground needs its plot flat in the same way.
       - Houses and ground keep off fields: neither on a plot touching a field's cell, no field on
         a cell with a house or ground on any of its vertices.
+      - A road and a house never share a plot (step 10): a house hides a garden, but would cut a road.
+      - A road is not painted over a garden or town: it stops at the edge, where it makes a gate.
       - At most ZONE_MAX_STOREYS storeys.
 
     A ZoneState is immutable once published (Zones::Publish), the way the world is, and carries the
@@ -40,8 +42,53 @@
 #define ZONE_GROUND_NONE    0
 #define ZONE_GROUND_GARDEN  1       //green, walled: Townscaper's gardens
 #define ZONE_GROUND_TOWN    2       //trodden earth, palisaded: A Little Age's town
-#define ZONE_GROUND_COUNT   3
+#define ZONE_GROUND_ROAD    3       //step 10: drawn along the grid's edges, walked fastest (docs/roads_plan.md)
+#define ZONE_GROUND_COUNT   4
 const char* ZoneGroundName(int ground);
+
+/*
+    What a boundary encloses: a garden or town plot with no house on it. A road is ground but not
+    enclosed - it runs up to a wall from outside, which is where a gate goes (roads_plan.md) - and a
+    house is its own boundary.
+*/
+inline bool ZoneEnclosesGround(int ground){
+    return ground == ZONE_GROUND_GARDEN || ground == ZONE_GROUND_TOWN;
+}
+
+/*
+    What stands between two plots joined by a fine edge: where exactly one of them is inside (a house,
+    or enclosed ground) and that one is not a house, a garden's wall or a town's palisade. One rule
+    for the two that need it - BoundaryMesh draws it and a walker cannot cross it - so what is seen
+    and what is walked agree.
+*/
+#define ZONE_BOUNDARY_NONE          0
+#define ZONE_BOUNDARY_GARDEN_WALL   1
+#define ZONE_BOUNDARY_PALISADE      2
+struct ZoneState;
+struct ChasmWorld;
+int ZoneBoundaryBetween(const ZoneState& z, int a, int b);
+
+/*
+    GATES (docs/roads_plan.md): where a road runs into a wall, the wall opens. Exactly: across the edge
+    a - b, one end is a road plot that is a DEAD END (one road neighbour) and the other an enclosed
+    plot behind a boundary, the one most nearly straight ahead of the road coming in - and not off to
+    the side (within about 70 degrees). One gate per dead end at most, so a road ending at a wall's
+    corner does not open both walls. A gate is drawn (BoundaryMesh) and walked through (Walkers), so
+    a walled garden is entered by its gate and only by its gate.
+*/
+bool ZoneGateBetween(const ChasmWorld& w, const ZoneState& z, int a, int b);
+//The enclosed plot road plot `road` opens a gate into, or -1.
+int ZoneGateOf(const ChasmWorld& w, const ZoneState& z, int road);
+
+/*
+    ARCHES (docs/roads_plan.md, Townscaper's): a road plot running between houses of two storeys or
+    more - two road neighbours, and every other neighbour such a house - is built over: the
+    houses' upper storeys bridge it, up to the lower of them, over a passage one storey high - where
+    such plots run at most three in a row, a hole through a row of houses rather than a covered street.
+    A matter of how a house is DRAWN only: the plot stays a road, walked like any other. 0 if `plot`
+    is no arch.
+*/
+int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot);
 
 //What a command asks for. Travels in SimCommand::value[0]; the plot or cell index in subtype.
 enum ZoneOp{
@@ -102,7 +149,9 @@ private:
 //`why` may be NULL.
 bool ZoneCanHouse(const ChasmWorld& w, const ZoneState& z, int plot, const char** why);
 bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why);
-bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why);
+//`kind` is the ground to be painted: a road has one rule more than a garden.
+bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why,
+                   int kind = ZONE_GROUND_GARDEN);
 
 //Floor area, the capacity measure (README.md: plots differ in size, so never count plots).
 struct ZoneStats{
@@ -113,7 +162,8 @@ struct ZoneStats{
     float field_area = 0.0f;
     int gardens = 0;
     int towns = 0;
-    float ground_area = 0.0f;
+    int roads = 0;
+    float ground_area = 0.0f;   //gardens and town ground
 };
 ZoneStats ComputeZoneStats(const ChasmWorld& w, const ZoneState& z);
 

@@ -73,7 +73,8 @@ stretch.
 
 ## 3. Pinning features into the grid
 
-The chasm rim, shard outlines, rivers and the coast are drawn as polylines, by hand for now.
+The chasm rim, shard outlines, rivers and the coast are polylines - drawn by hand until step 10,
+generated from the seed since (`ChasmLayout.cpp`, "Step 10" below).
 
 **On the triangle lattice, before the merge**, each feature is turned into a chain of lattice
 edges: a cheapest path that follows the line, chosen where every vertex is alike and while the
@@ -229,6 +230,7 @@ than built. It is derived like the rest of the view, so painting or erasing redr
 | 7 Forests and props | BUILT 2026-10-04 - see below |
 | 8 Buildings, crops, boundaries | BUILT 2026-10-04 - see below |
 | 9 Rivers, falls, mist | BUILT 2026-10-04 - see below |
+| 10 Generated chasm | BUILT 2026-10-05 - see below |
 
 ### Step 1, as built
 
@@ -630,3 +632,166 @@ style as archer's waterfall foam.
 lip, no rainbow); the mist is re-posed every frame for every chunk, even out of view (cheap now,
 but the first thing to cull if it grows); the shard's lower walls vanish into the mist like the
 rest, which may want a darker band above the blanket.
+
+### Step 10, generated chasm (plan, 2026-10-05)
+
+Until now the chasm was one hand-drawn rim and one shard (`ChasmDefaultFeatures`) and three
+hand-drawn rivers (`ChasmDefaultRivers`), the same for every seed. The user wants **different seeds
+to give different chasms**, and chose a free layout: a seed may bend the chasm, fork it or cut a
+second rift, and places its own shards, columns and terraces, and its own rivers. It must stay good
+to build on, and must leave room for the frozen north and the swamp and desert in the south.
+
+**The layout is generated, not stored.** `GenerateChasmLayout` (new, `ChasmLayout.cpp`) turns the
+seed and the map's rectangle into the feature lines - each with its kind - and the river lines, in
+world coordinates, already smoothed. `Grid::Generate` calls it where it used to read
+`GridSettings::features`, keeps the result as `Grid::layout`, and pins its lines exactly as before:
+nothing about pinning changes. **`GridSettings::features` goes**, and a save no longer carries
+feature lines (an old save's are ignored): a save is the seed and the paint, and **an existing save
+loads onto a different world** - its world hash says so, and its paint goes back through the rules,
+so what no longer fits is refused rather than invalid. It uses **its own `RRandom`**, seeded from
+the world seed but separate from the grid's, so the grid's merge stream does not shift with it.
+
+**How a layout is made.**
+
+1. **Spines.** A rift is a tree of spines: polylines with a half-width at every point. The main
+   rift's spine starts on the south edge (somewhere in its middle 40%) and walks north in steps of
+   about three sides, its heading turning a little each step (kept within 40 degrees of north, no
+   trigonometry - a turn is a nudge along the perpendicular, renormalised), and stops in a tip
+   between 10% and 30% of the depth from the north edge: **no rift reaches the north edge**, which
+   is the frozen end's room. Its half-width wanders on smooth noise and narrows to a round tip.
+   Then, by the seed: **forks** (0-2) leave the main spine at an angle and end in their own tips,
+   and **a second rift** (about one seed in three) comes in from the south, west or east edge and
+   ends in a tip.
+2. **A field, then contours.** The rifts are a distance field on a raster of half-cell squares
+   (2 units): distance to the nearest spine minus its half-width, branches joined by a smooth
+   minimum so the plateau between two arms is rounded rather than a knife-edge, plus a little
+   smooth noise so the walls are not drawn with a ruler. **The rim is the field's zero contour**
+   (marching squares), so a fork or two rifts is no special case - just more or longer lines. A
+   contour that reaches the map's edge is an open line ending exactly on it, as the hand-drawn rim
+   did; a rift entirely inside the map would be a closed rim. Contours are resampled every 1.5
+   sides and smoothed with the existing Catmull-Rom (`SmoothLine`, now `GridSmoothLine`).
+3. **Shards, columns and terraces**, each a closed line at shard level, each placed by the seed and
+   kept only if it keeps its distance (below):
+   - **shards** (0-4): blobs 35-70 units long, elongated along the rift;
+   - **columns** (0-5): small round ones, about 20-26 across - the smallest the lattice draws
+     round (section 3: a feature a few sides across comes out a hexagon);
+   - **terraces** (0-4): long ledges lying along a wall, the shape of the wall itself (a band of
+     the field between two depths), ends rounded, **split from the wall by a crevice** that goes
+     down to the floor.
+
+   **Why a crevice, and not a ledge joined to the wall:** a terrace joined to the wall has to end
+   somewhere, and where it ends the plateau, the terrace and the floor meet at a point - a cell
+   with three levels in it, which the terrain mesh does not cut (the reason rivers are not a
+   level). A joined ledge is possible only if it runs the wall's whole length, edge to edge. So a
+   terrace is a slumped block: a ledge just off the wall, one step down, with a narrow drop behind
+   it. If that reads wrong, a terrace joined along a whole wall (a stepped chasm) is the
+   alternative that keeps the rule.
+4. **Rivers** (2-5 by the seed). Each fall is chosen first: a point on a rim, with plateau behind
+   it, open floor ahead (no shard or terrace under it), and away from the map's edge and from other
+   falls. Then a source on the west, east or north edge (rivers come down from the mountains too),
+   and the course between them is the cheapest path over a 4-unit raster of the plateau: plain
+   ground costs more or less on smooth noise (which is what makes it meander), ground near a rim
+   cannot be crossed except at its own fall, and ground near another river cannot be crossed at
+   all, so rivers never meet or cross. The last stretch runs straight across the lip and a little
+   past it, as the hand-drawn ones did, so `Terrain` finds the fall exactly as before.
+
+**Spacing is the rule that keeps the terrain drawable.** Two feature lines - two rims, a rim and a
+shard, a line and itself across a narrow place, a line and the map's edge away from its ends -
+are never closer than **2.5 sides (20 units)**. Pinning needs about two (no two chains may share a
+lattice triangle), and a level change sits half a fine cell outside its chain, so at that spacing
+**no cell can see three levels**. The generator checks every line against this as it is placed and
+drops a shard or terrace that breaks it; if the rifts themselves break it, or leave too little
+plateau (each side of the main rift at least a fifth of the map), the whole rift attempt is drawn
+again from the same stream - deterministic, and the attempt count is reported.
+
+**Levels.** Unchanged values (plateau 0, shard -24, floor -70). A vertex is floor when a ray from
+it to the north crosses rim lines an odd number of times - which is why no rift may reach the north
+edge: north of every rift is plateau. Shard when, in the chasm, a ray crosses the closed lines an
+odd number of times. Pinned vertices stay on their line's high side, by the line's kind. This
+replaces closing the rim past the south edge, and handles any number of rims and mouths on any
+edge but the north.
+
+**Checks.** New `spacing` (every pair of feature lines, and each line with itself and the outline,
+at least 2.5 sides apart; the closest pair marked) and `layout` (what the seed made: rifts, forks,
+shards, columns, terraces, rivers, attempts). `steps` (no cell spans three levels), `rivers`
+(every river falls from plateau to floor), `pin levels` and `features` stay, generalised to any
+number of rims. Seeds 1-3 are re-pinned; the river lines join the grid hash, so a change to them is
+caught too.
+
+**Flipping through seeds.** `chasm_generate` gains `frame_map` and `include_screenshot`, and
+returns the layout summary; the panel shows the summary, and B goes back a seed as N goes forward.
+
+### Step 10, as built
+
+`ChasmLayout.cpp` is the generator (`GenerateChasmLayout`, declared in `Grid.h` with `ChasmLayout`,
+`GridFeature` and the `GRID_FEATURE_*` kinds); `Grid::Generate` calls it and keeps the result as
+`Grid::layout`, and `Grid::LineKind(l)` says what a pinned line is. `ChasmDefaultFeatures`,
+`ChasmDefaultRivers` and `GridSettings::features` are gone; saves no longer carry features
+(`ChasmSave` was changed by the roads session). The plan above held, with these differences:
+
+- **Terraces are built from the rim, not from the field.** A band of the field between two
+  depths came out with cusps wherever it lay deeper than a bend is round (turns of 170 degrees in
+  two sides), and a thin band failed its own spacing across itself - a ledge must be at least 2.5
+  sides wide, since its two sides are a feature line too. So a terrace is a stretch of a rim (60-140
+  long), offset inward by the crevice (24) and by crevice plus ledge (24-32 more), closed with half
+  circles from a table of constants. **A seed that wants terraces gets a wider main rift**
+  (half-width 52-66 against 34-56), because a ledge, a crevice and floor beyond all have to fit
+  inside one wall's half of it; before that, 3 of about 40 wanted terraces fitted.
+- **A bend rule beside the spacing rule** (`RoundEnough`): no line turns more than about 80 degrees
+  within two sides - a radius of 1.4 sides. A terrace end cut square folded the cells outside its
+  chain. Rift tips are 13-16 in radius to pass it, and columns 14-17 (the first 11-14 left a folded
+  cell beside one on seed 8 - the lattice limit section 3 describes).
+- **A fork counts only if its tip stands two spacings clear of the main rift**; one that ran back
+  along it only widened it, and was reported as a fork nobody could see.
+- **Rivers meander on purpose.** A cheapest path is straight wherever it can be, whatever noise is
+  in its cost, so after the search the river is swung up to 10 either side on noise along its
+  length, fading out at the source and before the fall; the search keeps that much further from
+  rims and other rivers. The source is one of the most direct quarter of the reachable edge cells
+  in the middle band of distance (otherwise rivers ran for half the map beside the north edge), and
+  the cost near the map's edge rises to 6x. The per-cell cost is worked out once per layout, not on
+  every step of every search: rivers went from up to 180 ms to under 55 in release.
+
+**Two bugs found on the way, both fixed and both now checked:**
+
+- **A wall across every east mouth.** The level test's ray is half-open, and a vertex on the east
+  edge sits at exactly the x a rim ending there ends at, so it never counted that rim: the whole
+  mouth came out plateau. Vertices are now tested a hair inside the map. New check **`mouths`**:
+  every outline vertex between an open rim's two ends is floor (`steps` cannot see this - it is a
+  plain two-level cliff).
+- **A hole in the grid beside a small closed feature** (seed 39). Inside a closed chain a few sides
+  across, one lattice triangle can touch chain vertices that are not neighbours, so it appears
+  twice in that side's strip, and `PairStrip` merged it at both places; the second merge
+  overwrote the first, and the triangle it took from was dropped from the grid. A triangle that
+  appears twice in a strip is now left to the random merge, and a merge never overwrites another.
+  This was latent in step 3's pinning; nothing hand-drawn was small enough to hit it.
+
+**Checks added:** `spacing` (every pair of feature lines, each line across itself and each against
+the map's edge away from its own ends: at least 20; the closest place is marked), `layout` (what the
+seed made, against what it asked for, and the attempts), `mouths`. `levels`, `rivers` and `pin
+levels` read kinds instead of assuming "rim first, then shards".
+
+**Measured, seeds 1-60, debug:** every check passes on every seed. Rifts: 45 one, 15 two; forks: 34
+none, 22 one, 4 two. Placed of wanted: terraces 77 of 125, shards 53 of 140, columns 51 of 145,
+rivers 177 of 216 (2-5 a map). Rift attempts: 35 seeds the first, the most 7. Closest pair of lines
+20.0 (by construction never under); worst fine quad 0.35, always beside a small closed feature;
+whole-map squareness 0.907-0.912, the same as the hand-drawn map. The layout takes 31-139 ms in
+debug (median 71) and 40-130 in release, of a whole generation of about 0.2-0.4 s in release.
+Seeds 1-3 re-pinned, **the same hashes in debug and release** (checked on seeds 1, 2, 3, 7, 12, 18),
+and `chasm_replay_test.py` passes in both, on the combined tree with the roads session's work.
+
+**Flipping through seeds:** `chasm_generate` takes `frame_map`, `pitch` (89 is straight down),
+`include_screenshot` and `include_ui`, and returns a `layout` summary with the grid stats - one call
+per seed, one picture. The panel shows the summary and has *Previous seed* beside *Next seed*; B
+goes back a seed as N goes forward. The pins view colours lines by kind (rims magenta, everything
+in the chasm cyan) and draws each on its own level.
+
+**Open:**
+- Shards, columns and terraces all stand at one level (-24). Columns as tall pillars would read
+  well, and the mesh would draw them - it is a fourth level, and every user of the levels (forest,
+  zones, mist, picking) has to agree on it.
+- Terraces are slumped blocks with a crevice behind them, never ledges joined to the wall: a joined
+  ledge has to end, and where it ends three levels meet in one cell. A ledge running a wall's whole
+  length, edge to edge, would keep the rule, if a stepped chasm is wanted.
+- Rivers rise on the west, east or north edge and never fork or join; none starts on the south edge,
+  which is the swamp's and desert's.
+- The rifts know nothing of biomes yet - only that the north band (10% of the depth) stays clear.

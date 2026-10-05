@@ -3,6 +3,7 @@
 #include "CropMesh.h"
 #include "BuildingMesh.h"
 #include "BoundaryMesh.h"
+#include "RoadMesh.h"
 
 #define GROUND_LIFT         0.04f   //a garden or town plot above the ground's relief
 
@@ -34,20 +35,25 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
         vec2 p[4];
         bool f_house = false;
         bool f_ground = false;
+        bool f_road = false;
         for (int k = 0; k < 4; k++){
             p[k] = g.fine.pos[quad.v[k]];
             f_house = f_house || z.storeys[quad.v[k]] > 0;
-            f_ground = f_ground || z.ground[quad.v[k]] != ZONE_GROUND_NONE;
+            f_ground = f_ground || ZoneEnclosesGround(z.ground[quad.v[k]]);
+            f_road = f_road || z.ground[quad.v[k]] == ZONE_GROUND_ROAD;
         }
         if (f_ground){
             for (int k = 0; k < 4; k++){
                 int gk = z.ground[quad.v[k]];
-                if (gk == ZONE_GROUND_NONE || z.storeys[quad.v[k]] > 0){
+                if (!ZoneEnclosesGround(gk) || z.storeys[quad.v[k]] > 0){
                     continue;
                 }
                 float level = terrain_levels[t.level[quad.v[k]]].height;
                 GroundQuarter(out,p,k,level,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
             }
+        }
+        if (f_road || f_ground){    //f_ground: the path just inside a gate
+            BuildRoadCell(w,z,q,out);
         }
         if (z.field[quad.parent]){
             BuildFieldCell(w,z,q,out);

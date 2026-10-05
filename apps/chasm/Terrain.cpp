@@ -19,53 +19,63 @@ const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS] = {
 namespace {
 
 /*
-    The even-odd point-in-polygon test, for a hundred thousand points against a polygon of hundreds
-    of edges - which, testing every edge, took 43 ms. Only an edge that straddles the point's z can
-    be crossed, so the edges are bucketed into bands of z and a point tests just its own band's.
-    Each edge's test is the plain one, unchanged, and the answer is the parity of the crossings,
-    which does not depend on the order they are counted in - so it answers exactly what testing
-    every edge would (checked vertex by vertex against that on seeds 1-3 when it was written).
+    WHICH SIDE OF A SET OF LINES A POINT IS ON, by a ray from it to the north (-z): an odd number of
+    crossings is inside. The lines need not be closed - a rim ending on the south, west or east edge
+    works as it is, because no rift reaches the north edge, so the ray always leaves the map through
+    plateau. That replaced closing the rim polygon past the south edge, which needed to know which
+    edge a rim's ends were on, and could not take two rims.
 
-    A band holds every edge whose z range touches it. Mapping z to a band subtracts and divides,
-    both of which keep order, so an edge that straddles a point's z is always in that point's band.
+    A hundred thousand points against lines of hundreds of segments: testing every segment took
+    43 ms, so the segments are bucketed into bands of x and a point tests only its own band's. Each
+    segment's test is the plain one, and the answer is a parity, which does not depend on the order
+    the crossings are counted in. A band holds every segment whose x range touches it; mapping x to
+    a band subtracts and divides, both of which keep order, so a segment that straddles a point's x
+    is always in that point's band.
 */
 class CrossingTable{
 public:
-    explicit CrossingTable(const std::vector<vec2>& polygon) : p(polygon){
-        size_t n = p.size();
-        if (n < 3){
+    void Add(const std::vector<vec2>& line){
+        for (size_t i = 0; i + 1 < line.size(); i++){
+            a.push_back(line[i]);
+            b.push_back(line[i + 1]);
+        }
+    }
+
+    void Build(){
+        size_t n = a.size();
+        if (n == 0){
             return;
         }
-        z_min = z_max = p[0].y;
-        for (const vec2& q : p){
-            z_min = std::min(z_min,q.y);
-            z_max = std::max(z_max,q.y);
+        x_min = x_max = a[0].x;
+        for (size_t i = 0; i < n; i++){
+            x_min = std::min(x_min,std::min(a[i].x,b[i].x));
+            x_max = std::max(x_max,std::max(a[i].x,b[i].x));
         }
         int bands = std::max(1,(int)n / 2);
-        band_size = (z_max - z_min) / (float)bands;
+        band_size = (x_max - x_min) / (float)bands;
         if (band_size <= 0.0f){
             return;
         }
         first.assign(bands + 1,0);
-        auto band_of = [&](float z){ return std::max(0,std::min(bands - 1,(int)((z - z_min) / band_size))); };
-        //Counted, then filled, so the edges sit in one array in band order.
+        auto band_of = [&](float x){ return std::max(0,std::min(bands - 1,(int)((x - x_min) / band_size))); };
+        //Counted, then filled, so the segments sit in one array in band order.
         for (int pass = 0; pass < 2; pass++){
             std::vector<int> at;
             if (pass == 1){
-                for (int b = 0; b < bands; b++){
-                    first[b + 1] += first[b];
+                for (int k = 0; k < bands; k++){
+                    first[k + 1] += first[k];
                 }
-                edges.resize(first[bands]);
+                segments.resize(first[bands]);
                 at.assign(first.begin(),first.end() - 1);
             }
-            for (size_t i = 0, j = n - 1; i < n; j = i++){
-                int b0 = band_of(std::min(p[i].y,p[j].y));
-                int b1 = band_of(std::max(p[i].y,p[j].y));
-                for (int b = b0; b <= b1; b++){
+            for (size_t i = 0; i < n; i++){
+                int b0 = band_of(std::min(a[i].x,b[i].x));
+                int b1 = band_of(std::max(a[i].x,b[i].x));
+                for (int k = b0; k <= b1; k++){
                     if (pass == 0){
-                        first[b + 1]++;
+                        first[k + 1]++;
                     }else{
-                        edges[at[b]++] = (int)i;
+                        segments[at[k]++] = (int)i;
                     }
                 }
             }
@@ -73,19 +83,18 @@ public:
     }
 
     bool Inside(const vec2& pt) const{
-        if (first.empty() || pt.y < z_min || pt.y > z_max){
-            return false;   //no edge straddles it
+        if (first.empty() || pt.x < x_min || pt.x > x_max){
+            return false;   //no segment straddles it
         }
         int bands = (int)first.size() - 1;
-        int b = std::max(0,std::min(bands - 1,(int)((pt.y - z_min) / band_size)));
+        int k = std::max(0,std::min(bands - 1,(int)((pt.x - x_min) / band_size)));
         bool f_in = false;
-        size_t n = p.size();
-        for (int e = first[b]; e < first[b + 1]; e++){
-            size_t i = (size_t)edges[e];
-            size_t j = i == 0 ? n - 1 : i - 1;
-            if ((p[i].y > pt.y) != (p[j].y > pt.y)){
-                float x = p[j].x + (pt.y - p[j].y) * (p[i].x - p[j].x) / (p[i].y - p[j].y);
-                if (pt.x < x){
+        for (int e = first[k]; e < first[k + 1]; e++){
+            const vec2& p = a[segments[e]];
+            const vec2& q = b[segments[e]];
+            if ((p.x > pt.x) != (q.x > pt.x)){
+                float z = p.y + (pt.x - p.x) * (q.y - p.y) / (q.x - p.x);
+                if (z < pt.y){
                     f_in = !f_in;
                 }
             }
@@ -94,23 +103,28 @@ public:
     }
 
 private:
-    const std::vector<vec2>& p;
-    float z_min = 0.0f;
-    float z_max = 0.0f;
+    std::vector<vec2> a;
+    std::vector<vec2> b;
+    float x_min = 0.0f;
+    float x_max = 0.0f;
     float band_size = 0.0f;
-    std::vector<int> first;     //band b's edges are edges[first[b] .. first[b + 1])
-    std::vector<int> edges;     //each by the index of its second end; its first is the point before
+    std::vector<int> first;     //band k's segments are segments[first[k] .. first[k + 1])
+    std::vector<int> segments;
 };
 
 }
 
-//The smoothed lines the grid pinned its chains to, not the settings' corner points - the chains
-//lie exactly on these, so the levels split exactly along them.
+//The smoothed lines the grid pinned its chains to - the chains lie exactly on these, so the levels
+//split exactly along them.
 std::vector<GridLine> TerrainFeatureLines(const Grid& g){
     if ((int)g.lines.size() <= g.feature_line_base){
         return std::vector<GridLine>();
     }
     return std::vector<GridLine>(g.lines.begin() + g.feature_line_base,g.lines.end());
+}
+
+uint8_t TerrainLevelOfKind(int kind){
+    return kind == GRID_FEATURE_RIM ? TERRAIN_PLATEAU : TERRAIN_SHARD;
 }
 
 void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
@@ -120,50 +134,38 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
     for (int i = 0; i < TERRAIN_NUM_LEVELS; i++){
         level_count[i] = 0;
     }
-    /*
-        The rim is open, both ends on the south edge. The chasm polygon closes it a little PAST that
-        edge rather than along it: a vertex on the map's south edge lies exactly on a closing line
-        drawn along the edge, where the inside test can go either way - and did, building a cliff
-        straight across the chasm's mouth. Every later feature is a shard, already closed.
-    */
-    std::vector<vec2> chasm;
-    if (!features.empty() && features[0].points.size() >= 2){
-        chasm = features[0].points;
-        float past = (g.bounds_max.y - g.bounds_min.y) * 0.05f;
-        vec2 first = chasm.front();
-        vec2 last = chasm.back();
-        //Each end pushed straight out through the edge it sits on - the south one, today.
-        float dir_last = (last.y > (g.bounds_min.y + g.bounds_max.y) * 0.5f) ? 1.0f : -1.0f;
-        float dir_first = (first.y > (g.bounds_min.y + g.bounds_max.y) * 0.5f) ? 1.0f : -1.0f;
-        chasm.push_back(vec2(last.x,last.y + past * dir_last));
-        chasm.push_back(vec2(first.x,first.y + past * dir_first));
+    //Rims bound the floor; every other feature is closed and stands in it at shard level.
+    CrossingTable rims;
+    CrossingTable shards;
+    for (size_t f = 0; f < features.size(); f++){
+        if (g.LineKind(g.feature_line_base + (int)f) == GRID_FEATURE_RIM){
+            rims.Add(features[f].points);
+        }else{
+            shards.Add(features[f].points);
+        }
     }
-    CrossingTable chasm_table(chasm);
-    std::vector<CrossingTable> shard_tables;
-    shard_tables.reserve(features.size());
-    for (size_t f = 1; f < features.size(); f++){
-        shard_tables.emplace_back(features[f].points);
-    }
+    rims.Build();
+    shards.Build();
     for (size_t v = 0; v < n; v++){
-        const vec2& p = g.fine.pos[v];
-        int pin = g.fine.pin[v] - g.feature_line_base;
+        /*
+            A hair inside the map. A vertex on the east edge sits at exactly the x a rim ending
+            there ends at, and the straddle test is half-open: with nothing beyond x_max it never
+            counts that rim's end, and the whole east mouth of a rift came out plateau - a wall
+            straight across it. (The west edge passes by the same asymmetry.)
+        */
+        vec2 p = g.fine.pos[v];
+        p.x = std::max(g.bounds_min.x + 1e-3f,std::min(g.bounds_max.x - 1e-3f,p.x));
+        int pin = g.fine.pin[v];
         uint8_t l = TERRAIN_PLATEAU;
-        //Fixed vertices are the map's corners and the rim's two ends - plateau, both, and the rim's
-        //ends sit exactly on the chasm polygon, where the inside test can go either way.
-        if (g.fine.pin[v] == GRID_PIN_FIXED){
+        //Fixed vertices are the map's corners and the rims' ends - plateau, both, and a rim's end
+        //sits exactly on its line, where the ray can go either way. A vertex on a line takes the
+        //line's high side.
+        if (pin == GRID_PIN_FIXED){
             l = TERRAIN_PLATEAU;
-        }else if (pin == 0){
-            l = TERRAIN_PLATEAU;
-        }else if (pin >= 1){
-            l = TERRAIN_SHARD;
-        }else if (!chasm.empty() && chasm_table.Inside(p)){
-            l = TERRAIN_FLOOR;
-            for (const CrossingTable& shard : shard_tables){
-                if (shard.Inside(p)){
-                    l = TERRAIN_SHARD;
-                    break;
-                }
-            }
+        }else if (pin >= g.feature_line_base){
+            l = TerrainLevelOfKind(g.LineKind(pin));
+        }else if (rims.Inside(p)){
+            l = shards.Inside(p) ? TERRAIN_SHARD : TERRAIN_FLOOR;
         }
         level[v] = l;
         level_count[l]++;
@@ -173,26 +175,6 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
 }
 
 //--- Rivers --------------------------------------------------------------------------------------
-
-/*
-    Three rivers, each from the map's edge across the plateau to the rim - two from the west, one
-    from the east - wandering a little either side of a straight course. The last point of each is
-    a little PAST the rim, inside the chasm, so the channel runs right through the lip; the line
-    crossing the rim is where the fall is.
-*/
-std::vector<TerrainRiver> ChasmDefaultRivers(){
-    std::vector<TerrainRiver> r(3);
-    r[0].points = {{0.000f,0.300f},{0.070f,0.318f},{0.140f,0.296f},{0.215f,0.338f},{0.290f,0.322f},
-                   {0.360f,0.372f},{0.420f,0.392f},{0.480f,0.400f}};
-    r[0].width = 6.5f;
-    r[1].points = {{0.000f,0.735f},{0.080f,0.712f},{0.160f,0.748f},{0.245f,0.700f},{0.320f,0.722f},
-                   {0.385f,0.690f},{0.420f,0.676f},{0.470f,0.668f}};
-    r[1].width = 5.5f;
-    r[2].points = {{1.000f,0.470f},{0.925f,0.492f},{0.850f,0.462f},{0.775f,0.510f},{0.700f,0.488f},
-                   {0.630f,0.522f},{0.575f,0.515f},{0.525f,0.520f}};
-    r[2].width = 7.0f;
-    return r;
-}
 
 namespace {
 
@@ -241,12 +223,11 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
     falls.clear();
     vec2 lo = g.bounds_min;
     vec2 size = g.bounds_max - g.bounds_min;
-    for (const TerrainRiver& def : ChasmDefaultRivers()){
-        TerrainRiver r = def;
-        for (vec2& p : r.points){
-            p = lo + vec2(p.x * size.x,p.y * size.y);
-        }
-        r.points = Smooth(r.points,3);
+    //The layout's lines, in world coordinates already (ChasmLayout.cpp chose their courses), rounded.
+    for (const GridRiverLine& def : g.layout.rivers){
+        TerrainRiver r;
+        r.points = Smooth(def.points,3);
+        r.width = def.width;
         r.length = 0.0f;
         for (size_t i = 0; i + 1 < r.points.size(); i++){
             r.length += (r.points[i + 1] - r.points[i]).length();
@@ -254,39 +235,46 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
         rivers.push_back(r);
     }
 
-    //--- Falls: each river's first crossing of the rim ---------------------------------------------
-    if (!features.empty()){
-        const std::vector<vec2>& rim = features[0].points;
-        for (int ri = 0; ri < (int)rivers.size(); ri++){
-            const TerrainRiver& r = rivers[ri];
-            float along = 0.0f;
-            bool f_found = false;
-            for (size_t i = 0; i + 1 < r.points.size() && !f_found; i++){
-                vec2 a = r.points[i];
-                vec2 b = r.points[i + 1];
+    //--- Falls: each river's first crossing of any rim -------------------------------------------
+    for (int ri = 0; ri < (int)rivers.size(); ri++){
+        const TerrainRiver& r = rivers[ri];
+        float along = 0.0f;
+        bool f_found = false;
+        for (size_t i = 0; i + 1 < r.points.size() && !f_found; i++){
+            vec2 a = r.points[i];
+            vec2 b = r.points[i + 1];
+            //The nearest crossing along this segment, whichever rim it is on.
+            float best_t = 2.0f;
+            vec2 tangent;
+            for (size_t fi = 0; fi < features.size(); fi++){
+                if (g.LineKind(g.feature_line_base + (int)fi) != GRID_FEATURE_RIM){
+                    continue;
+                }
+                const std::vector<vec2>& rim = features[fi].points;
                 for (size_t j = 0; j + 1 < rim.size(); j++){
                     float t;
-                    if (!SegmentsCross(a,b,rim[j],rim[j + 1],t)){
-                        continue;
+                    if (SegmentsCross(a,b,rim[j],rim[j + 1],t) && t < best_t){
+                        best_t = t;
+                        tangent = rim[j + 1] - rim[j];
                     }
-                    TerrainFall f;
-                    f.river = ri;
-                    f.lip = a + (b - a) * t;
-                    f.width = r.width;
-                    f.along = along + (b - a).length() * t;
-                    vec2 tangent = rim[j + 1] - rim[j];
-                    tangent.normalize();
-                    f.out = vec2(-tangent.y,tangent.x);
-                    if (f.out.dot(b - a) < 0.0f){
-                        f.out = -f.out;
-                    }
-                    f.across = vec2(-f.out.y,f.out.x);
-                    falls.push_back(f);
-                    f_found = true;
-                    break;
                 }
-                along += (b - a).length();
             }
+            if (best_t <= 1.0f){
+                TerrainFall f;
+                f.river = ri;
+                f.lip = a + (b - a) * best_t;
+                f.width = r.width;
+                f.along = along + (b - a).length() * best_t;
+                tangent.normalize();
+                f.out = vec2(-tangent.y,tangent.x);
+                if (f.out.dot(b - a) < 0.0f){
+                    f.out = -f.out;
+                }
+                f.across = vec2(-f.out.y,f.out.x);
+                falls.push_back(f);
+                f_found = true;
+            }
+            along += (b - a).length();
         }
     }
 
@@ -411,9 +399,16 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
 
     //--- Levels: every level present that the features call for -------------------------------
     {
+        bool f_rim = false;
+        bool f_closed = false;
+        for (size_t f = 0; f < features.size(); f++){
+            bool f_is_rim = g.LineKind(g.feature_line_base + (int)f) == GRID_FEATURE_RIM;
+            f_rim = f_rim || f_is_rim;
+            f_closed = f_closed || !f_is_rim;
+        }
         bool f_ok = t.level_count[TERRAIN_PLATEAU] > 0 &&
-                    (features.empty() || t.level_count[TERRAIN_FLOOR] > 0) &&
-                    (features.size() < 2 || t.level_count[TERRAIN_SHARD] > 0);
+                    (!f_rim || t.level_count[TERRAIN_FLOOR] > 0) &&
+                    (!f_closed || t.level_count[TERRAIN_SHARD] > 0);
         snprintf(buf,sizeof(buf),"plateau %i, shard %i, floor %i vertices (%.1f ms)",
                  t.level_count[TERRAIN_PLATEAU],t.level_count[TERRAIN_SHARD],t.level_count[TERRAIN_FLOOR],t.build_ms);
         add_result("levels",f_ok,buf);
@@ -454,6 +449,44 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
     }
 
     /*
+        --- Mouths: a rift that reaches the map's edge is open there -----------------------------
+        Every outline vertex between an open rim's two ends is floor. Steps cannot see a wall
+        across a mouth - it is a plain two-level cliff - and one stood across every east mouth
+        until the inside test was moved off the edge.
+    */
+    {
+        int bad = 0;
+        int mouths = 0;
+        for (size_t f = 0; f < features.size(); f++){
+            const std::vector<vec2>& pts = features[f].points;
+            if (g.LineKind(g.feature_line_base + (int)f) != GRID_FEATURE_RIM || pts.size() < 2 ||
+                (pts.front().x == pts.back().x && pts.front().y == pts.back().y)){
+                continue;
+            }
+            vec2 a = pts.front();
+            vec2 b = pts.back();
+            //Both ends on one edge: the same x on a side edge, the same z on the north or south.
+            bool f_side = a.x == b.x && (a.x == g.bounds_min.x || a.x == g.bounds_max.x);
+            bool f_end = a.y == b.y && (a.y == g.bounds_min.y || a.y == g.bounds_max.y);
+            if (!f_side && !f_end){
+                continue;
+            }
+            mouths++;
+            for (size_t v = 0; v < g.fine.pos.size(); v++){
+                const vec2& p = g.fine.pos[v];
+                bool f_on = f_side ? (p.x == a.x && p.y > std::min(a.y,b.y) && p.y < std::max(a.y,b.y))
+                                   : (p.y == a.y && p.x > std::min(a.x,b.x) && p.x < std::max(a.x,b.x));
+                if (f_on && g.fine.f_boundary[v] && t.level[v] != TERRAIN_FLOOR){
+                    bad++;
+                    add_issue("mouth",(int)v,p,true);
+                }
+            }
+        }
+        snprintf(buf,sizeof(buf),"%i mouths on the map's edge, %i outline vertices across them not floor",mouths,bad);
+        add_result("mouths",bad == 0,buf);
+    }
+
+    /*
         --- Steps: no cell spans more than two levels ------------------------------------------
         A cell's cliff is cut between its high corners and its low ones, and the mesh assumes the
         low ones share a height. A plateau corner and a floor corner and a shard corner in one cell
@@ -489,12 +522,12 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
         int pinned = 0;
         int wrong = 0;
         for (size_t v = 0; v < g.fine.pos.size(); v++){
-            int f = g.fine.pin[v] - g.feature_line_base;
-            if (f < 0){
+            int kind = g.fine.pin[v] >= 0 ? g.LineKind(g.fine.pin[v]) : -1;
+            if (kind < 0){
                 continue;
             }
             pinned++;
-            int want = (f == 0) ? TERRAIN_PLATEAU : TERRAIN_SHARD;
+            int want = TerrainLevelOfKind(kind);
             if (t.level[v] != want){
                 wrong++;
                 add_issue("pin level",(int)v,g.fine.pos[v],true);

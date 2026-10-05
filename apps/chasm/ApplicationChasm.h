@@ -15,6 +15,7 @@
 #include "Zones.h"
 #include "ZoneMesh.h"
 #include "ChasmSave.h"
+#include "Walkers.h"
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -43,8 +44,8 @@
 */
 
 
-//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1-5 pick
-//(and pick again to drop) the house, field, erase, garden and town tools.
+//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1-7 pick
+//(and pick again to drop) the house, field, erase, garden, town, road and walker tools.
 #define INPUT_CHASM_ROTATE_LEFT     INPUT_LAST+1
 #define INPUT_CHASM_ROTATE_RIGHT    INPUT_LAST+2
 #define INPUT_CHASM_FRAME           INPUT_LAST+3
@@ -54,10 +55,21 @@
 #define INPUT_CHASM_TOOL_ERASE      INPUT_LAST+7
 #define INPUT_CHASM_TOOL_GARDEN     INPUT_LAST+8
 #define INPUT_CHASM_TOOL_TOWN       INPUT_LAST+9
+#define INPUT_CHASM_TOOL_ROAD       INPUT_LAST+10
+#define INPUT_CHASM_TOOL_WALKER     INPUT_LAST+11
+#define INPUT_CHASM_PREVIOUS_SEED   INPUT_LAST+12
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
                                                         //value[1]: ground kind for ZONE_OP_GROUND_PAINT
+#define CHASM_CMD_WALKER            SIM_CMD_LAST+1      //subtype: WalkerOp; value[0]: home plot; value[1]: goal plot
+
+//What a walker command asks for (step 10). Never renumber - recordings refer to these by value.
+enum WalkerOp{
+    WALKER_OP_NONE = 0,
+    WALKER_OP_SPAWN,        //a debug walker between home and goal
+    WALKER_OP_CLEAR         //every walker gone
+};
 
 //What a left click does.
 enum ChasmTool{
@@ -66,7 +78,9 @@ enum ChasmTool{
     CHASM_TOOL_FIELD,
     CHASM_TOOL_ERASE,
     CHASM_TOOL_GARDEN,
-    CHASM_TOOL_TOWN
+    CHASM_TOOL_TOWN,
+    CHASM_TOOL_ROAD,        //step 10: ground of kind road
+    CHASM_TOOL_WALKER       //click a home, then a goal: a debug walker between them
 };
 
 class ApplicationChasm : public Application{
@@ -164,6 +178,42 @@ private:
     std::atomic<int> paint_tool{CHASM_TOOL_SELECT};
     int paint_last_index = -1;                  //physics thread: what a drag last painted
     void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked);
+
+    /*
+        --- Roads and walkers (step 10, ApplicationChasmRoads.cpp; docs/roads_plan.md) ---------------
+        A road is ground, painted through the zone commands. `walkers` is simulation state like
+        `zones`, the physics thread's alone, changed by CHASM_CMD_WALKER and by the tick, and
+        published the same way: a copy after each change, under grid_mutex. The view draws a figure
+        per walker and, in a debug build, its path.
+    */
+    Walkers walkers;
+    std::shared_ptr<const WalkerSet> walker_snapshot;
+    std::string walker_last_refusal;            //under grid_mutex
+    std::atomic<uint32_t> walker_commands_done{0};
+    int walker_tool_home = -1;                  //physics thread: the walker tool's first click
+    void PublishWalkers();                      //physics thread
+    std::shared_ptr<const WalkerSet> GetWalkers();
+    void SubmitWalker(int op, int home, int goal);
+    void RegisterWalkerCommands();
+    void TickWalkers();                         //physics thread, from RunSimulationTick
+    void HashWalkers(StateHash& h);
+    void UpdateWalkerTool(const GridPick& hover, bool f_shift);
+    Mesh* walker_mesh = NULL;
+    std::vector<Object*> walker_objects;        //render thread: one per walker, reused
+    std::atomic<bool> f_view_walkers{true};
+    void BuildWalkerScene();                    //from BuildScene
+    void UploadWalkers();                       //render thread, from PreRender
+#ifdef DEBUG
+    Object* walker_path_view = NULL;
+    Mesh* walker_path_mesh = NULL;
+    uint32_t walker_path_built = 0xFFFFFFFFu;
+#endif
+#ifdef USE_MCP
+    void RegisterWalkerTools();
+#endif
+#ifdef USE_IMGUI
+    void RenderWalkerPanel();
+#endif
 
     char save_name[64] = "village";     //the panel's name field
     std::string save_status;            //render thread: what the last save/load said

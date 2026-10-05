@@ -66,6 +66,21 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   that cell white. Trees are ~2x A Little Age's tree/house ratio at the briefed sizes, so the game
   draws them at 0.7 scale, two per plot - keep modelling at the briefed sizes, scale is game-side.
 - RRandom IS seedable now (Generate(seed)); world gen should use its own instance.
+- STEP 10 BUILT 2026-10-05 (session 0052a3e4, alongside win32-transparent-35's roads/walker/gates):
+  the chasm is GENERATED from the seed - ChasmLayout.cpp (rift spines -> distance field -> rims as
+  zero contours; forks, a second rift from S/W/E; terraces = rim stretch offset in past a crevice;
+  shards/columns = blobs; rivers = A* + meander swing to falls on rims). Grid::layout + LineKind;
+  GridSettings::features and ChasmDefault* are GONE; saves hold no features (old saves load onto a
+  different world). Rules: lines >= 2.5 sides apart (`spacing` check), bends radius >= 1.4 sides,
+  no rift reaches the north edge (levels use a northward ray parity). chasm_generate takes
+  frame_map/pitch/include_screenshot; B = previous seed. Seeds 1-3 re-pinned, same debug+release.
+- STEP 10 (2026-10-05) split across two windows: win32-transparent-80 GENERATES chasm/shards/terraces/
+  rivers from the seed (free layout, ChasmLayout.cpp, grid_plan.md "Step 10, generated chasm"); this
+  side built ROADS + a DEBUG WALKER + GATES + ARCHES (docs/roads_plan.md). Road = ZONE_GROUND_ROAD,
+  drawn as Bezier curves through edge midpoints (RoadMesh.cpp); walker = A* over plots (Walkers.*),
+  saved with its path, hashed as trace part `walkers`; gate = a dead-end road against a wall
+  (ZoneGateOf), the only way through a wall; arch = a road run of <= 3 plots between 2+ storey houses
+  (ZoneArchStoreys), bridged in BuildingMesh. User chose: roads painted on plots, debug walker first.
 
 **Why:** the user wants the building mechanic tested before any gameplay goes on top.
 - Testing: NO separate engine-free `make rules` build (user's call, unlike archer/bomber). Checks

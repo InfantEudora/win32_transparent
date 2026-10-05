@@ -10,10 +10,11 @@
 
     grid_plan.md section 4. A level is not a height field - buildable land is flat within a level -
     and a level step is not a storey: the chasm wall is many tens of them. Levels come from the
-    feature lines (section 3): the chasm is the region the rim line encloses together with the
-    map's south edge, a shard is the region inside its closed line.
+    feature lines of the seed's layout (section 3, step 10): the chasm is what its rims bound
+    together with the map's edges, and a shard, column or terrace is the region inside its closed
+    line.
 
-    A vertex ON a line belongs to the higher side - the plateau for the rim, the shard for a shard's
+    A vertex ON a line belongs to the higher side - the plateau for a rim, the shard for a closed
     outline - so the drop starts half a cell outside the pinned chain (section 3, "Where the edge
     actually shows"), which is what makes the cliff top as smooth as the chain is.
 
@@ -69,7 +70,7 @@ struct TerrainFall{
 
 class Terrain{
 public:
-    //`features` are in world coordinates, in GridSettings order: the rim first, then shards.
+    //`features` are TerrainFeatureLines(g): world coordinates, in the layout's order.
     void Build(const Grid& g, const std::vector<GridLine>& features);
 
     std::vector<uint8_t> level;     //per fine vertex
@@ -107,15 +108,14 @@ private:
 };
 
 /*
-    The features in world coordinates, from the grid when it carries them (Grid::lines past the
-    four outline lines) and otherwise the default chasm mapped onto the grid's bounds - which is
-    what an unpinned grid gets, until the grid side pins them itself (grid_plan.md step 3).
+    The features in world coordinates: Grid::lines past the four outline lines, in the layout's
+    order (Grid::LineKind says what each one is).
 */
 std::vector<GridLine> TerrainFeatureLines(const Grid& g);
 
-//The rivers, their centre lines in 0..1 map coordinates and before smoothing - fixed, like the
-//default chasm, until the map is generated from more than a seed.
-std::vector<TerrainRiver> ChasmDefaultRivers();
+//The level a feature line's own vertices stand on, its high side: plateau for a rim, shard level
+//for everything closed that stands in the chasm.
+uint8_t TerrainLevelOfKind(int kind);
 
 #ifdef DEBUG
 //The terrain's own checks, added to the grid's report (README.md, "Checks live in the app").

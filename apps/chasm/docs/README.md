@@ -99,7 +99,10 @@ archer's `.trace`. A replay is a save plus an input recording (`core/InputRecord
   alike.
 
 **Built (step 6).** A save is `saves/<name>.json`: the grid settings and what was painted, nothing
-generated (`ChasmSave.h`). An input recording's start state IS a save, so F9 records from the
+generated (`ChasmSave.h`). **Since step 10 the chasm itself is generated from the seed**, so a save
+made before 2026-10-05 - which carried the hand-drawn feature lines - loads onto a different world:
+its `features` are ignored, its world hash no longer matches, and its paint goes back through the
+rules, so whatever no longer stands on flat dry plateau is refused rather than left invalid. An input recording's start state IS a save, so F9 records from the
 current game and F10 / `input_replay` puts the game back there and replays. **The player's
 commands are in the recording, not just their input**: a click becomes a zone command by way of
 the camera, which is view and is not replayed, so `SIM_CMD_FLAG_RECORD` (core) writes the command
@@ -143,6 +146,7 @@ line number.
 | Plan | What |
 |---|---|
 | `grid_plan.md` | the irregular grid, terrain levels and cliffs, painting zones, and the build order up to a first replay |
+| `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A*, gates in walls, arches under houses |
 
 ### Props: modelled, palette-coloured
 

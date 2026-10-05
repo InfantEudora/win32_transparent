@@ -21,10 +21,16 @@
 #define FENCE_HEIGHT        0.46f
 #define FENCE_RAIL_W        0.05f
 #define FOOTING             0.12f   //how far everything starts below the ground's relief
+//Gates (step 10): where a road runs into a wall (Zones.h, ZoneGateBetween).
+#define GATE_HALF           0.62f   //the opening either side of the edge's midpoint: a road and a shoulder
+#define GATE_MAX_SHARE      0.7f    //of the wall segment the opening may take, so a stub of wall remains
+#define GATE_PILLAR_W       0.30f
+#define GATE_PILLAR_HEIGHT  0.88f
+#define GATE_POST_W         0.18f
+#define GATE_POST_HEIGHT    1.35f
+#define GATE_LINTEL         0.16f   //the palisade gate's crossbeam, its depth
 
 namespace {
-
-enum BoundaryKind{ BOUNDARY_NONE = 0, BOUNDARY_GARDEN_WALL, BOUNDARY_PALISADE };
 
 float GroundAt(const vec2& p, float level){
     return TerrainGroundHeight(p,level);
@@ -77,20 +83,6 @@ void Stake(std::vector<vertex>& out, const vec2& p, float y0, float height, int 
     }
 }
 
-//Which side of a plot boundary builds what - see BoundaryMesh.h.
-int BoundaryBetween(const ZoneState& z, int a, int b){
-    bool in_a = z.storeys[a] > 0 || z.ground[a] != ZONE_GROUND_NONE;
-    bool in_b = z.storeys[b] > 0 || z.ground[b] != ZONE_GROUND_NONE;
-    if (in_a == in_b){
-        return BOUNDARY_NONE;
-    }
-    int inside = in_a ? a : b;
-    if (z.storeys[inside] > 0){
-        return BOUNDARY_NONE;   //a house's own wall bounds it
-    }
-    return (z.ground[inside] == ZONE_GROUND_GARDEN) ? BOUNDARY_GARDEN_WALL : BOUNDARY_PALISADE;
-}
-
 //The fine quad across edge k (v_k -> v_k+1) of quad q, or -1 at the map's edge.
 int QuadAcross(const ChasmWorld& w, int q, int k){
     const Grid& g = *w.grid;
@@ -127,19 +119,41 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
 
     //--- Plot boundaries: the segment m_k -> centre, between corner k's plot and corner k+1's -----
     bool f_post_at_centre = false;
-    int centre_kind = BOUNDARY_NONE;
+    int centre_kind = ZONE_BOUNDARY_NONE;
     for (int k = 0; k < 4; k++){
-        int kind = BoundaryBetween(z,quad.v[k],quad.v[(k + 1) % 4]);
-        if (kind == BOUNDARY_NONE){
+        int kind = ZoneBoundaryBetween(z,quad.v[k],quad.v[(k + 1) % 4]);
+        if (kind == ZONE_BOUNDARY_NONE){
             continue;
         }
         vec2 mid = (p[k] + p[(k + 1) % 4]) * 0.5f;
-        float ym = GroundAt(mid,level) - FOOTING;
         float yc = GroundAt(centre,level) - FOOTING;
         //The midpoint is shared with the cell across edge k: of the two, the lower index builds the post.
         int across = QuadAcross(w,fine_quad,k);
         bool f_post_at_mid = (across < 0 || fine_quad < across);
-        if (kind == BOUNDARY_GARDEN_WALL){
+        /*
+            A gate: the wall stops short of the midpoint, where the road comes through, and each of the
+            two cells on the edge builds its own side of the opening - a pillar, or for a palisade a
+            tall post and its half of the crossbeam - so the gate is whole without either knowing of
+            the other. The midpoint's post goes: the opening is where it stood.
+        */
+        if (ZoneGateBetween(w,z,quad.v[k],quad.v[(k + 1) % 4])){
+            vec2 d = centre - mid;
+            float len = d.length();
+            vec2 dir = d / std::max(1e-6f,len);
+            vec2 jamb = mid + dir * std::min(GATE_HALF,len * GATE_MAX_SHARE);
+            float yj = GroundAt(jamb,level) - FOOTING;
+            if (kind == ZONE_BOUNDARY_GARDEN_WALL){
+                Post(out,jamb,yj,GATE_PILLAR_HEIGHT + FOOTING,GATE_PILLAR_W,PAL_STONE);
+            }else{
+                Post(out,jamb,yj,GATE_POST_HEIGHT + FOOTING,GATE_POST_W,PAL_BARK_DARK);
+                float top = yj + GATE_POST_HEIGHT + FOOTING - GATE_LINTEL;
+                Beam(out,jamb + dir * (GATE_POST_W * 0.5f),mid,top,top,GATE_LINTEL,GATE_LINTEL,PAL_BARK_DARK);
+            }
+            mid = jamb;             //the rest of the segment is wall as usual, from the jamb in
+            f_post_at_mid = false;  //the jamb is the post
+        }
+        float ym = GroundAt(mid,level) - FOOTING;
+        if (kind == ZONE_BOUNDARY_GARDEN_WALL){
             Beam(out,mid,centre,ym,yc,WALL_HEIGHT + FOOTING,WALL_THICK,PAL_STONE_LIGHT);
             Beam(out,mid,centre,ym + WALL_HEIGHT + FOOTING,yc + WALL_HEIGHT + FOOTING,HEDGE_HEIGHT,HEDGE_THICK,PAL_BUSH);
             if (f_post_at_mid){
@@ -164,7 +178,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
     }
     if (f_post_at_centre){
         float yc = GroundAt(centre,level) - FOOTING;
-        if (centre_kind == BOUNDARY_GARDEN_WALL){
+        if (centre_kind == ZONE_BOUNDARY_GARDEN_WALL){
             Post(out,centre,yc,WALL_POST_HEIGHT + FOOTING,WALL_POST_W,PAL_STONE);
         }else{
             Stake(out,centre,yc,STAKE_HEIGHT + FOOTING + 0.08f,PAL_BARK);

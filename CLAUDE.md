@@ -301,3 +301,14 @@ that explains its own reasoning fits, one that just states the mechanism does no
 
 Durations in simulation code are counted in **ticks**, never in milliseconds — see
 `Scene::GetPhysicsTick()` and the threading notes in `docs/tetris_agent_brief.md` §2.
+
+### Changes to core while working on an app
+
+Working on an app does not put `core/` off limits. **Small fixes go straight in**: a missing
+`#include`, a compile warning, an obvious bug, a small helper an app needs. Claim the file, fix it,
+and say so in your report. Don't route around a core problem in app code.
+
+**Flag bigger things instead of building them silently**: a new engine feature, a change to a shared
+interface, anything that affects other apps' behaviour or their replay baselines. Describe what core
+would need and why, so it can be decided and put in core properly. An app-side stand-in is fine in
+the meantime, if it says what it is standing in for.

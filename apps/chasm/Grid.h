@@ -47,9 +47,74 @@ struct GridLine{
 #define GRID_PIN_FREE   -1      //relaxes freely
 #define GRID_PIN_FIXED  -2      //never moves: where lines meet, like the map's corners
 
-//The chasm map's features, in GridSettings::features' normalised coordinates: the rim (open,
-//both ends on the v = 1 edge) and one shard (closed).
-std::vector<GridLine> ChasmDefaultFeatures();
+/*
+    THE CHASM'S LAYOUT, generated from the seed (grid_plan.md, "Step 10, generated chasm"): which
+    lines are pinned into the grid and what each one is, and where the rivers run. World
+    coordinates, already smoothed - the grid pins exactly these lines, and the terrain reads its
+    levels off them by kind.
+
+    A RIM is the edge of a rift: plateau on one side, floor on the other. It is open when the rift
+    reaches the map's edge (both ends exactly on it, fixed there) and closed when it does not. No
+    rift reaches the north (-z) edge - the frozen end's room - which is what lets the terrain decide
+    floor or plateau by a ray to the north. Shards, columns and terraces are closed lines standing
+    in a rift at shard level; they differ in shape only.
+*/
+#define GRID_FEATURE_RIM        0
+#define GRID_FEATURE_SHARD      1
+#define GRID_FEATURE_COLUMN     2
+#define GRID_FEATURE_TERRACE    3
+#define GRID_FEATURE_KINDS      4
+extern const char* const grid_feature_names[GRID_FEATURE_KINDS];
+
+/*
+    How close two feature lines may come, in lattice sides - two of them, a line and itself across
+    a narrow place, or a line and the map's edge away from its ends. Pinning needs about two (no
+    two chains may share a lattice triangle), and a level change sits half a fine cell outside its
+    chain, so at this spacing no fine cell can see three levels, which the terrain mesh does not cut.
+*/
+#define GRID_FEATURE_SPACING    2.5f
+
+struct GridFeature{
+    int kind = GRID_FEATURE_RIM;
+    GridLine line;
+    bool f_end_on_outline[2] = {false,false};   //an open line's ends, on the map's edge
+};
+
+struct GridRiverLine{
+    std::vector<vec2> points;   //from the source on the map's edge; the last is a little past its rim
+    float width = 6.0f;
+};
+
+struct ChasmLayout{
+    std::vector<GridFeature> features;      //rims first, then terraces, shards, columns
+    std::vector<GridRiverLine> rivers;
+    //What the seed asked for and what came of it - the generator drops what will not fit.
+    int rifts = 0;
+    int forks = 0;
+    int count[GRID_FEATURE_KINDS] = {};
+    int wanted[GRID_FEATURE_KINDS] = {};    //rims: unused
+    int rivers_wanted = 0;
+    int attempts = 0;                       //rift layouts drawn until one kept its spacing
+    bool f_rifts_ok = true;                 //false: every attempt failed, the last is used anyway
+    float generate_ms = 0.0f;
+};
+
+//The layout for a seed on the map rectangle lo..hi (x, z), lattice side `side`. Deterministic, and
+//draws from its own RRandom, never the grid's or the simulation's.
+ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, float side);
+
+/*
+    Corners made into a smooth line: centripetal Catmull-Rom, resampled every `spacing`. An open
+    line keeps its end points exactly; a closed one repeats its first point at the end.
+*/
+GridLine GridSmoothLine(const std::vector<vec2>& corners, bool f_closed, float spacing);
+
+/*
+    The closest two lines come: every point of `a` against every segment of `b`. When they are the
+    same line, pairs closer than `skip_arc` along it are not counted - a line is always close to
+    itself nearby. `where` gets the point of `a` at the closest place.
+*/
+float GridLineGap(const GridLine& a, const GridLine& b, float skip_arc, vec2* where);
 
 struct GridSettings{
     uint32_t seed = 1;
@@ -64,13 +129,7 @@ struct GridSettings{
     int relax_passes_fine = 40;
     //How far toward its best-fit square a vertex moves per pass, 0..1.
     float relax_strength = 0.5f;
-    /*
-        Lines pinned into the grid, as drawn: corners of a polyline, smoothed when generated. In
-        NORMALISED map coordinates - u = 0..1 left to right (x), v = 0..1 from the -z edge to the
-        +z edge - so they keep their place when the map's size changes. An open feature whose end
-        lies on the map's edge is fixed there.
-    */
-    std::vector<GridLine> features = ChasmDefaultFeatures();
+    //The chasm's features are not settings: they follow from the seed (ChasmLayout).
 
     bool operator==(const GridSettings& o) const;
 };
@@ -101,12 +160,18 @@ public:
     GridLevel fine;
     /*
         What GridLevel::pin indexes, shared by both levels, in world coordinates. Lines 0-3 are the
-        map's -x, +x, -z and +z edges; feature i of the settings is line feature_line_base + i,
-        smoothed. A feature's chain is the edges whose two ends are both on its line - pinned to
-        it, or the fixed vertex at an end of it that lies on the map's edge.
+        map's -x, +x, -z and +z edges; layout feature i is line feature_line_base + i. A feature's
+        chain is the edges whose two ends are both on its line - pinned to it, or the fixed vertex
+        at an end of it that lies on the map's edge.
     */
     std::vector<GridLine> lines;
     int feature_line_base = 4;
+    ChasmLayout layout;
+    //The kind of what line l is, GRID_FEATURE_*, or -1 for the outline.
+    int LineKind(int l) const{
+        int f = l - feature_line_base;
+        return (f >= 0 && f < (int)layout.features.size()) ? layout.features[f].kind : -1;
+    }
 
     int num_lattice_triangles = 0;
     int num_leftover_triangles = 0;     //triangles the merge found no partner for

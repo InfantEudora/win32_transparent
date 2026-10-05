@@ -60,11 +60,26 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     const GridQuad& quad = g.fine.quads[fine_quad];
     const vec3 up(0.0f,1.0f,0.0f);
 
+    /*
+        Each corner as a solid from storey base[k] up to storey s[k]: a house from the ground, an ARCH
+        (Zones.h, ZoneArchStoreys) from one storey up, over its passage - so the houses either side of
+        a road carry their upper floors across it, and every rule below (roof, walls, windows) treats the
+        bridge as one more house that happens to stand on air.
+    */
     vec2 p[4];
     int s[4];
+    int base[4];
     for (int k = 0; k < 4; k++){
         p[k] = g.fine.pos[quad.v[k]];
         s[k] = z.storeys[quad.v[k]];
+        base[k] = 0;
+        if (s[k] == 0){
+            int arch = ZoneArchStoreys(w,z,quad.v[k]);
+            if (arch > 0){
+                s[k] = arch;
+                base[k] = 1;
+            }
+        }
     }
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
     vec2 m[4];      //m[k] is the midpoint of edge k -> k+1
@@ -98,16 +113,39 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         MeshTri(out,P,M1,C,up,roof_column);
         MeshTri(out,P,C,M0,up,roof_column);
 
-        //--- The walls up the quarter's two outer edges, where the corner across is lower -------
+        //--- An arch's ceiling: the passage's roof, under the bridge's floor ---------------------------
+        if (base[k] > 0){
+            float y = level + base[k] * ZONE_STOREY_HEIGHT;
+            MeshQuad(out,vec3(p[k].x,y,p[k].y),vec3(m[k].x,y,m[k].y),vec3(centre.x,y,centre.y),
+                     vec3(m[prev].x,y,m[prev].y),vec3(0.0f,-1.0f,0.0f),PAL_TIMBER);
+        }
+
+        /*
+            --- The walls up the quarter's two outer edges, wherever this corner is solid and the one
+            across is not. Corner j is solid from base[j] to s[j] (nothing if s[j] is 0), so the wall
+            is at most two pieces: BELOW j's solid part - a house's side of an arch's passage - and
+            ABOVE it, where j is lower or empty. Only the upper piece meets the roof and gets a gable.
+        */
         int neighbour[2] = {next,prev};
         vec2 edge_a[2] = {m[k],centre};
         vec2 edge_b[2] = {centre,m[prev]};
         for (int e = 0; e < 2; e++){
             int j = neighbour[e];
-            if (s[j] >= s[k]){
-                continue;
+            int pieces[2][2];   //storey ranges [from, to)
+            int n_pieces = 0;
+            if (s[j] == 0){
+                pieces[n_pieces][0] = base[k];
+                pieces[n_pieces++][1] = s[k];
+            }else{
+                if (base[j] > base[k]){
+                    pieces[n_pieces][0] = base[k];
+                    pieces[n_pieces++][1] = std::min(s[k],base[j]);
+                }
+                if (s[j] < s[k]){
+                    pieces[n_pieces][0] = std::max(base[k],s[j]);
+                    pieces[n_pieces++][1] = s[k];
+                }
             }
-            float bottom = (s[j] > 0) ? level + s[j] * ZONE_STOREY_HEIGHT : level - HOUSE_FOOTING;
             vec2 a = edge_a[e];
             vec2 b = edge_b[e];
             vec2 along = b - a;
@@ -117,31 +155,41 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             }
             side = side / std::max(1e-6f,side.length());
             vec3 outward(side.x,0.0f,side.y);
-            MeshQuad(out,vec3(a.x,bottom,a.y),vec3(b.x,bottom,b.y),vec3(b.x,eave,b.y),vec3(a.x,eave,a.y),
-                     outward,PAL_WALL);
-            //The gable: where the ridge carries on along this edge's far end, the wall closes up to
-            //the roof's raised point rather than leaving a hole under it.
-            vec3 roof_a = (e == 0) ? M1 : C;
-            vec3 roof_b = (e == 0) ? C : M0;
-            if (roof_a.y > eave || roof_b.y > eave){
-                MeshQuad(out,vec3(a.x,eave,a.y),vec3(b.x,eave,b.y),roof_b,roof_a,outward,PAL_WALL);
-            }
-            //A window on every storey this wall shows; on the ground floor, sometimes a door.
-            int first_storey = (s[j] > 0) ? s[j] : 0;
-            for (int st = first_storey; st < s[k]; st++){
-                float floor_y = level + st * ZONE_STOREY_HEIGHT;
-                bool f_door = (st == 0) && (MeshHash((uint32_t)plot,(uint32_t)fine_quad,(uint32_t)e) % DOOR_CHANCE == 0);
-                if (f_door){
-                    Opening(out,a,b,outward,0.5f,DOOR_W * 0.5f,floor_y,floor_y + DOOR_H,PAL_BARK_DARK);
-                }else{
-                    float y0 = floor_y + ZONE_STOREY_HEIGHT * WINDOW_SILL;
-                    Opening(out,a,b,outward,0.5f,WINDOW_W * 0.5f,y0,y0 + WINDOW_H,PAL_TIMBER);
+            for (int pc = 0; pc < n_pieces; pc++){
+                int from = pieces[pc][0];
+                int to = pieces[pc][1];
+                if (to <= from){
+                    continue;
+                }
+                float bottom = (from > 0) ? level + from * ZONE_STOREY_HEIGHT : level - HOUSE_FOOTING;
+                float top = level + to * ZONE_STOREY_HEIGHT;
+                MeshQuad(out,vec3(a.x,bottom,a.y),vec3(b.x,bottom,b.y),vec3(b.x,top,b.y),vec3(a.x,top,a.y),
+                         outward,PAL_WALL);
+                //The gable: where the ridge carries on along this edge's far end, the wall closes up to
+                //the roof's raised point rather than leaving a hole under it.
+                vec3 roof_a = (e == 0) ? M1 : C;
+                vec3 roof_b = (e == 0) ? C : M0;
+                if (to == s[k] && (roof_a.y > eave || roof_b.y > eave)){
+                    MeshQuad(out,vec3(a.x,eave,a.y),vec3(b.x,eave,b.y),roof_b,roof_a,outward,PAL_WALL);
+                }
+                //A window on every storey this wall shows; on the ground floor, sometimes a door - and
+                //always one into an arch's passage, where a house beside a road is most likely entered.
+                for (int st = from; st < to; st++){
+                    float floor_y = level + st * ZONE_STOREY_HEIGHT;
+                    bool f_door = (st == 0) && (base[j] > 0 ||
+                                  MeshHash((uint32_t)plot,(uint32_t)fine_quad,(uint32_t)e) % DOOR_CHANCE == 0);
+                    if (f_door){
+                        Opening(out,a,b,outward,0.5f,DOOR_W * 0.5f,floor_y,floor_y + DOOR_H,PAL_BARK_DARK);
+                    }else{
+                        float y0 = floor_y + ZONE_STOREY_HEIGHT * WINDOW_SILL;
+                        Opening(out,a,b,outward,0.5f,WINDOW_W * 0.5f,y0,y0 + WINDOW_H,PAL_TIMBER);
+                    }
                 }
             }
         }
 
         //--- A chimney on some houses, built by one of the plot's quarters --------------------------
-        if ((look >> 8) % 100 < CHIMNEY_CHANCE){
+        if (base[k] == 0 && (look >> 8) % 100 < CHIMNEY_CHANCE){
             int n = picker.PlotQuadCount(plot);
             int chosen = (int)((look >> 16) % (uint32_t)n);
             if (picker.PlotQuadCorner(plot,chosen) / 4 == fine_quad){

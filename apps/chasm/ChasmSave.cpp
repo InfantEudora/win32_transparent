@@ -14,14 +14,6 @@ using json = nlohmann::json;
 
 json ChasmSaveToJson(const ChasmSave& s){
     const GridSettings& g = s.settings;
-    json features = json::array();
-    for (const GridLine& line : g.features){
-        json pts = json::array();
-        for (const vec2& p : line.points){
-            pts.push_back(json::array({p.x,p.y}));
-        }
-        features.push_back(pts);
-    }
     json houses = json::array();
     for (const auto& h : s.houses){
         houses.push_back(json::array({h.first,h.second}));
@@ -29,6 +21,16 @@ json ChasmSaveToJson(const ChasmSave& s){
     json grounds = json::array();
     for (const auto& gr : s.grounds){
         grounds.push_back(json::array({gr.first,gr.second}));
+    }
+    /*
+        A walker as it stands: where it walks between, which way, the path it is on and how far down
+        it. `along` is a float; written as JSON's double it reads back to the same bits, which the
+        replay's state hash depends on.
+    */
+    json walkers = json::array();
+    for (const Walker& k : s.walkers){
+        walkers.push_back(json{{"home",k.home},{"goal",k.goal},{"outward",k.f_outward},{"path",k.path},
+                               {"seg",k.seg},{"along",k.along},{"stuck",k.f_stuck},{"legs",k.legs}});
     }
     return json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -39,13 +41,13 @@ json ChasmSaveToJson(const ChasmSave& s){
             {"triangle_side",g.triangle_side},
             {"relax_passes_coarse",g.relax_passes_coarse},
             {"relax_passes_fine",g.relax_passes_fine},
-            {"relax_strength",g.relax_strength},
-            {"features",features}
+            {"relax_strength",g.relax_strength}
         }},
         {"world_hash",s.world_hash},
         {"houses",houses},
         {"fields",s.fields},
-        {"grounds",grounds}
+        {"grounds",grounds},
+        {"walkers",walkers}
     };
 }
 
@@ -69,18 +71,6 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     s.relax_passes_coarse = g.value("relax_passes_coarse",s.relax_passes_coarse);
     s.relax_passes_fine = g.value("relax_passes_fine",s.relax_passes_fine);
     s.relax_strength = g.value("relax_strength",s.relax_strength);
-    //Features are stored rather than assumed default, so a save of a hand-drawn map loads as that
-    //map even after the defaults change.
-    if (g.contains("features")){
-        s.features.clear();
-        for (const json& line : g["features"]){
-            GridLine gl;
-            for (const json& p : line){
-                gl.points.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
-            }
-            s.features.push_back(gl);
-        }
-    }
     out.world_hash = j.value("world_hash",std::string());
     for (const json& h : j.value("houses",json::array())){
         out.houses.push_back(std::make_pair(h[0].get<int>(),h[1].get<int>()));
@@ -90,6 +80,18 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     }
     for (const json& gr : j.value("grounds",json::array())){
         out.grounds.push_back(std::make_pair(gr[0].get<int>(),gr[1].get<int>()));
+    }
+    for (const json& wj : j.value("walkers",json::array())){
+        Walker k;
+        k.home = wj.value("home",-1);
+        k.goal = wj.value("goal",-1);
+        k.f_outward = wj.value("outward",true);
+        k.path = wj.value("path",std::vector<int>());
+        k.seg = wj.value("seg",0);
+        k.along = wj.value("along",0.0f);
+        k.f_stuck = wj.value("stuck",false);
+        k.legs = wj.value("legs",0u);
+        out.walkers.push_back(k);
     }
     return true;
 }
