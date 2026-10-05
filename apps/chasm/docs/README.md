@@ -24,10 +24,10 @@ ground at lower levels, which can be built on and reached.
 be crossed, so the two halves meet only across the chasm itself. Swamp and desert to the south.
 Most of the rest is buildable land.
 
-**Getting things up, down and across is the game's geography.** Bridges, winches, lifts and stairs
-are what connect the halves and the shards; the chasm is a logistics problem, not a backdrop. How
-far that goes is a gameplay question for later. The grid and terrain plans only have to make it
-possible.
+**Getting things up, down and across is the game's geography.** Only zeppelins cross the chasm and
+reach the **islands** in its middle; winches on the rim reach the **balconies** on its walls (both
+are terraces); bridges cross rivers, never
+the chasm. The chasm is a logistics problem, not a backdrop. See `gameplay_plan.md` (2026-10-05).
 
 ---
 
@@ -147,6 +147,7 @@ line number.
 |---|---|
 | `grid_plan.md` | the irregular grid, terrain levels and cliffs, painting zones, and the build order up to a first replay |
 | `biomes_plan.md` | biomes and terrain height: levels for the hard edges plus a relief field; the north mountain that seals the chasm off, hills and peaks, mountain pockets, the swamp and the desert, snow and the ground's colours (steps 1-5 built) |
+| `gameplay_plan.md` | the game on top of it all: steam, zeppelins, seasons, zombies from the swamp, the pyramid; suggestions, open questions, and the first prototype (nothing built) |
 | `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A*, gates in walls, arches under houses |
 
 ### Later, agreed but not yet planned

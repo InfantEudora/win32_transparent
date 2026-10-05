@@ -144,6 +144,9 @@ void ApplicationChasm::BuildScene(){
         vec2 uv = PaletteUV(PAL_HAZE,PAL_TEMPERATE);
         vec3 haze = palette->GetValueAt(uv.x,uv.y) / 255.0f;
         renderer->background_color = vec4(haze.x,haze.y,haze.z,1.0f);
+        //And the swamp's haze on its pools, so it too follows an edit of the PNG.
+        vec2 suv = PaletteUV(PAL_SWAMP_MIST,PAL_EFFECTS);
+        swamp_haze = palette->GetValueAt(suv.x,suv.y) / 255.0f;
     }else{
         debug->Err("No palette (textures/palette.png) - the terrain draws white\n");
     }

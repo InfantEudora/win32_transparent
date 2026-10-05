@@ -56,8 +56,7 @@ void ApplicationChasm::BuildWaterScene(){
 
     //The puffs: one shape per shade, lightest first, and a lighter one again for the foam.
     std::vector<vertex> verts;
-    //The swamp's wisps in a pale grey-green of their own: the foam's white made them snowballs.
-    const int shades[MIST_VARIANTS] = {PAL_MIST_LIGHT,PAL_MIST,PAL_MIST_DARK,PAL_SWAMP_MIST};
+    const int shades[MIST_VARIANTS] = {PAL_MIST_LIGHT,PAL_MIST,PAL_MIST_DARK};
     for (int i = 0; i < MIST_VARIANTS; i++){
         BuildPuffMesh((uint32_t)i + 1,shades[i],PAL_EFFECTS,verts);
         mist_meshes[i] = new Mesh();
@@ -102,6 +101,9 @@ void ApplicationChasm::SetWaterPoolUniforms(){
     water_pool_shader->Setvec3("water_mid",vec3(0.29f,0.39f,0.31f));
     water_pool_shader->Setvec3("water_deep",vec3(0.20f,0.29f,0.24f));
     water_pool_shader->Setvec3("water_foam",vec3(0.74f,0.76f,0.64f));
+    //The swamp's haze on the water, in the palette's swamp-mist cell (BuildScene reads it).
+    water_pool_shader->Setfloat("haze_amount",0.6f);
+    water_pool_shader->Setvec3("haze_colour",swamp_haze);
 }
 
 void ApplicationChasm::SetWaterFlatUniforms(){
@@ -170,9 +172,8 @@ void ApplicationChasm::UpdateMist(){
                 o->SetVisualOnly(true);
                 o->SetPickability(false);
                 //The blanket shades itself: a puff's shadow on the next is what makes it read as
-                //heaped rather than painted on. The swamp's thin wisps cast none - a shadow on the
-                //water under a haze would only look like a stain.
-                o->SetCastsShadow(variant != MIST_SWAMP_VARIANT);
+                //heaped rather than painted on.
+                o->SetCastsShadow(true);
                 o->SetInstances(std::vector<fmat4>());
                 o->SetVisibility(false);
                 main_scene->AddObject(o);

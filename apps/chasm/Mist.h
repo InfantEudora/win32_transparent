@@ -21,8 +21,9 @@
       - The FOAM churns at the foot of each fall, where it meets the mist: lighter puffs that swell,
         rise and shrink away, one after another.
 
-      - The SWAMP MIST (biomes_plan.md, after step 5): small, low, pale wisps lying over the swamp's
-        pools - a few hundred, the same puff shape squashed flat.
+    (The swamp's mist is NOT puffs. Tried: opaque puffs over water read as snowballs, then stones,
+    then slabs, however small, flat or pale. It is a haze in the pools' water shader instead -
+    chasm_water.glsl, haze_amount - which can be seen through.)
 
     Both move slowly - the mist breathes and bobs, the foam rises - and both are a function of the
     simulation's clock alone (seconds = tick * step), so nothing is stepped or kept: a paused game
@@ -35,9 +36,7 @@
 */
 
 #define CHASM_MIST_TOP      -46.0f  //where the blanket's top rolls about
-#define MIST_VARIANTS       4       //puff shapes, each in its own shade: three for the chasm (lightest
-                                    //first), and the swamp's
-#define MIST_SWAMP_VARIANT  3
+#define MIST_VARIANTS       3       //puff shapes, each in its own shade (lightest first)
 #define FOAM_PER_FALL       32
 
 struct MistPuff{

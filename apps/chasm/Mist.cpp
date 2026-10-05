@@ -15,13 +15,6 @@
 #define MIST_BOB            0.45f   //how far a puff rises and sinks in its cycle
 #define MIST_BREATH         0.06f   //and how much it swells
 //The swamp's mist: small, flat, pale wisps just over the pools.
-//Wide, very thin and overlapping, so they run together into low sheets of haze. Round and apart they
-//read as solid things: at 0.42 flat they were snowballs, at 0.26 and 0.9-1.9 across, floating stones.
-#define SWAMP_MIST_KEEP     4       //pool vertices per wisp, about
-#define SWAMP_MIST_R_MIN    2.2f
-#define SWAMP_MIST_R_MAX    3.8f
-#define SWAMP_MIST_FLAT     0.13f
-#define SWAMP_MIST_LIFT     0.02f   //its underside above the water
 
 #define FOAM_LIFE_MIN       2.4f    //seconds
 #define FOAM_LIFE_MAX       3.8f
@@ -83,35 +76,6 @@ void BuildMist(const Grid& g, const Terrain& t, const TerrainMeshData& mesh, Mis
         int cz = std::max(0,std::min(mesh.chunks_z - 1,(int)((at.y - g.bounds_min.y) / TERRAIN_CHUNK_SIZE)));
         p.bob = MIST_BOB;
         p.breath = MIST_BREATH;
-        out.chunk_puffs[(size_t)cz * mesh.chunks_x + cx].push_back((int)out.puffs.size());
-        out.puffs.push_back(p);
-    }
-    /*
-        The swamp's wisps: over about one pool vertex in SWAMP_MIST_KEEP, small and flattened, lying
-        just above the water, drifting very little - a low haze over standing water, not a blanket.
-    */
-    for (int v = 0; v < (int)g.fine.pos.size(); v++){
-        if (t.biome[v] != TERRAIN_BIOME_SWAMP || t.ground[v] >= TERRAIN_WATER_Y){
-            continue;
-        }
-        uint32_t h = MeshHash((uint32_t)v,0x5A3Fu);
-        if (h % SWAMP_MIST_KEEP != 0){
-            continue;
-        }
-        const vec2& base = g.fine.pos[v];
-        MistPuff p;
-        vec2 at = base + vec2(Unit(MeshHash(h,1)) - 0.5f,Unit(MeshHash(h,2)) - 0.5f) * 1.6f;
-        p.radius = SWAMP_MIST_R_MIN + (SWAMP_MIST_R_MAX - SWAMP_MIST_R_MIN) * Unit(MeshHash(h,3));
-        p.flat = SWAMP_MIST_FLAT;
-        //The shape's underside reaches 0.7 x its squash below its centre (BuildPuffMesh).
-        p.pos = vec3(at.x,TERRAIN_WATER_Y + SWAMP_MIST_LIFT + p.radius * MIST_SQUASH * 0.7f * p.flat,at.y);
-        p.phase = Unit(MeshHash(h,5));
-        p.period = 14.0f + 9.0f * Unit(MeshHash(h,6));
-        p.bob = 0.12f;
-        p.breath = 0.15f;
-        p.variant = MIST_SWAMP_VARIANT;
-        int cx = std::max(0,std::min(mesh.chunks_x - 1,(int)((at.x - g.bounds_min.x) / TERRAIN_CHUNK_SIZE)));
-        int cz = std::max(0,std::min(mesh.chunks_z - 1,(int)((at.y - g.bounds_min.y) / TERRAIN_CHUNK_SIZE)));
         out.chunk_puffs[(size_t)cz * mesh.chunks_x + cx].push_back((int)out.puffs.size());
         out.puffs.push_back(p);
     }

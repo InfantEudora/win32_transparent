@@ -98,6 +98,11 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   TRIANGLE (TerrainMesh GroundColour: biome via TerrainBiomeAt + dither, steep = rock, mountain scree/
   snowline 12/crags), the DESERT opposite the swamp (dunes, palms), snow pines, murky pools. All 5
   biome steps done 2026-10-05.
+  After: REEDS (other window, Forest.cpp PROP_REEDS_A/B, wet band); CORE ANIMATED INSTANCE SETS
+  (Object::SetInstanceMotion, material wind_mode>=8 = PUFF/LIFE/FALL, SSBO 8, Renderer::motion_seconds
+  = sim time) - chasm mist uses PUFF; LIFE/FALL untested, meant for fog of war, foam, rain/snow.
+  Swamp mist = HAZE in the pool shader (opaque puffs over water read as stones/slabs - don't retry).
+  Archer's replay baseline fails from tick 0 since core commit 2cc7819 (not the motion change).
   Later (user, 2026-10-05): a buildable overlay round the cursor in ALL builds, with building footprints.
 
 **Why:** the user wants the building mechanic tested before any gameplay goes on top.

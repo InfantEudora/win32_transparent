@@ -45,6 +45,14 @@ uniform vec3  water_foam  = vec3(0.90,0.95,0.98);
 uniform float flow_speed = 0.3;
 //Self-lit share of its own colour, so water in shade still reads as water.
 uniform float water_fill = 0.10;
+/*
+    HAZE lying on the water (the swamp's pools; biomes_plan.md): soft patches of a pale colour drifting
+    slowly across the surface, in two flat steps like the water's own shades. Mist on standing water
+    has to be seen through, which opaque puffs over it never were - they read as stones and slabs. 0,
+    the default, for the rivers.
+*/
+uniform float haze_amount = 0.0;
+uniform vec3  haze_colour = vec3(0.77,0.80,0.75);
 
 float hash21(vec2 p){
     return fract(sin(dot(p,vec2(127.1,311.7))) * 43758.5453);
@@ -91,6 +99,14 @@ vec3 FlatColour(){
     float n = 0.6 * vnoise(vec2(across * 2.2 + warp * 1.5,(along - t) * 0.22))
             + 0.4 * vnoise(vec2(across * 5.0 + 7.0,(along - t * 1.25) * 0.6));
     vec3 c = Shades(0.18 + 0.75 * n);
+    if (haze_amount > 0.0){
+        vec2 xz = vposition.xz;
+        float ht = water_seconds;
+        float h = 0.65 * vnoise(xz * 0.11 + vec2(ht * 0.045,ht * 0.02))
+                + 0.35 * vnoise(xz * 0.29 - vec2(ht * 0.03,-ht * 0.015));
+        float haze = 0.55 * smoothstep(0.56,0.60,h) + 0.45 * smoothstep(0.70,0.74,h);
+        c = mix(c,haze_colour,haze * haze_amount);
+    }
 
     //The shore - see the note at the top.
     vec2 screen_uv = gl_FragCoord.xy / render_target_size;

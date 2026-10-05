@@ -256,6 +256,7 @@ private:
     int water_pool_shader_index = -1;
     Object* water_pools = NULL;
     void SetWaterPoolUniforms();
+    vec3 swamp_haze = vec3(0.77f,0.80f,0.75f);     //the palette's swamp-mist cell, read in BuildScene
     Object* water_sheets = NULL;
     std::shared_ptr<const ChasmWorld> water_built_world;
     bool f_water_shown = true;

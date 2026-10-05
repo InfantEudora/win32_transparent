@@ -211,8 +211,7 @@ Files: `ChasmLayout.cpp` (`PlaceSwamp`, `ChasmSwampMask`), `Grid.h` (`ChasmLayou
 **Open:**
 - The pools are the rivers' clear blue; a swamp wants it murkier - a colour pass (step 5).
 - The swamp's edge is a cell-by-cell staircase in colour, as every biome edge is; step 5.
-- No swamp mist, no reeds: the mist system could lay a low blanket over it, and reeds would need
-  modelling.
+- No swamp mist, no reeds - both since built, below.
 
 ## Step 5: snow, the ground's colours, and the desert
 
@@ -255,3 +254,44 @@ dunes), `ChasmLayout.cpp` / `Grid.h` (`ChasmLayout::Region`, the swamp and the d
   refused, are one line in `ZoneCanField`.
 - The colour rule is not cached: if the mesh build ever matters, the biome per triangle can come from
   its cell's corners' biomes and stop asking the masks.
+
+## After step 5: reeds, swamp haze, and the mist on the GPU (2026-10-05/06)
+
+- **Reeds** (by the other window): two clumps, `reeds_a` and `reeds_b` (tall thin blades with a few
+  heads), added to `chasm_props.blend` with the script's `--add` and exported in one go with the
+  user's hand-fixed normals, which came through unchanged; `--verify` passes. Planted by a pass of
+  their own in `Forest.cpp` (`PROP_REEDS_A/B`), since they stand exactly where the forest will not:
+  in the wet band from 0.35 under the water to `SWAMP_SHORE` over it, in the swamp's pools and on
+  the rivers' banks - each clump kept only if the ground under it lies in that band. In beds on
+  steep clump noise, so the band is mostly either open water or packed reeds; thinner on a river
+  bank than in the swamp; none within 25 of a fall's lip. Wet plots can never be painted, so
+  nothing has to hide them.
+- **The chasm's mist moves on the GPU** - core's new ANIMATED INSTANCE SETS (below). Each puff is
+  drawn at its rest pose with its phase, period, bob and breath as per-instance parameters, and the
+  vertex shader bobs and breathes it from the simulation's clock, so the mist's sets are filled once
+  per world and a frame re-poses nothing (it re-posed about 2,000 puffs a frame before, 0.6 ms of
+  CPU). Measured: 8% of the mist's pixels change over 250 ticks; paused, 0% - the clock is the
+  simulation's. The foam (a few dozen balls a fall) stays on the CPU.
+- **The swamp's mist is a haze on its pools, not puffs.** Tried first as puffs and tuned three
+  times - big and pale (snowballs), small and flat (floating stones), wide and thin (slabs): opaque
+  puffs over water read as solid things whatever their size. Mist on standing water has to be seen
+  through. So the pools' water shader draws it: soft patches of the palette's new swamp-mist cell
+  (`PAL_SWAMP_MIST`, row 15 column 4, a pale grey-green) drifting slowly over the surface, in two
+  flat steps like the water's own shades (`chasm_water.glsl`, `haze_amount` 0.6; the rivers' is 0).
+  The colour is read from the palette at start, so an edit of the PNG moves it.
+
+### Core: animated instance sets
+
+For mist now, fog of war and rain or snow later (the user agreed to put it in core): an instance set
+(`Object::SetInstances`) can carry two vec4s of parameters per instance
+(`Object::SetInstanceMotion`), and a material whose `wind_mode` is an INSTANCE_MOTION mode moves each
+instance in `default.vert` from those and `Renderer::motion_seconds`. Modes (`Material.h`): PUFF (bob
+and breathe - the mist), LIFE (born, swells, rises and drifts, dies, again - foam, smoke, sparks) and
+FALL (down a column and round again, swaying - rain, snow). The parameters travel in their own SSBO
+at binding 8 beside the instance data, uploaded only for batches that have them, so no other shader
+and no existing layout changed. **Only PUFF is in use and tested**; LIFE and FALL are written and
+compile, and want a test the first time something uses them.
+
+**Archer's replay test** was run after the core change: it reports the state different from tick 0
+(sounds the same) - and does exactly the same on a build from before the change, so it is not this.
+The baseline predates the core changes of 2026-10-04 (`2cc7819`); that is worth its own look.
