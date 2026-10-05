@@ -59,8 +59,8 @@ float Noise(float x, float z, uint32_t seed){
 
 //Every corner of every cell round the plot on the plot's level - see ZoneCanHouse for the same rule.
 bool PlotIsFlat(const Grid& g, const GridPicker& p, const Terrain& t, int plot){
-    if (g.fine.f_boundary[plot]){
-        return false;
+    if (g.fine.f_boundary[plot] || t.wet[plot]){
+        return false;   //the edge, or a river's bank (Terrain.h, RIVERS - wet is wider than a plot)
     }
     int level = t.level[plot];
     for (int i = 0; i < p.PlotQuadCount(plot); i++){

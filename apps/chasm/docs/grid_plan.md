@@ -200,7 +200,7 @@ was generated (`README.md`, "Checks live in the app"). There is no separate engi
 |---|---|
 | 7 (BUILT 2026-10-04) | Forests and scattered props: the modelled trees, rocks and ground cover (`chasm_props.glb`) placed from the seed, drawn instanced; cleared where a zone is painted |
 | 8 (BUILT 2026-10-04) | Procedural buildings and crops in place of the placeholders, and **boundaries that form by themselves** (below) |
-| 9 | The chasm's own look: a misty floor, waterfalls where rivers meet the rim |
+| 9 (BUILT 2026-10-04) | The chasm's own look: a misty floor, waterfalls where rivers meet the rim |
 
 Then roads and a walker (A* over plots), biomes and their palette rows, the full chasm map.
 
@@ -226,6 +226,9 @@ than built. It is derived like the rest of the view, so painting or erasing redr
 | 4 Palette and lighting | BUILT 2026-10-04 - see below |
 | 5 Painting zones | BUILT 2026-10-04 - see below |
 | 6 Save, restore, replay | BUILT 2026-10-04 - see below |
+| 7 Forests and props | BUILT 2026-10-04 - see below |
+| 8 Buildings, crops, boundaries | BUILT 2026-10-04 - see below |
+| 9 Rivers, falls, mist | BUILT 2026-10-04 - see below |
 
 ### Step 1, as built
 
@@ -432,7 +435,8 @@ one sun and the sky"); this is what changed to get there.
 - The grid and pick lines sit 0.40 / 0.45 above the ground now, over the relief.
 
 **Open:** the chasm floor is a flat placeholder grey-green; the concept wants it misty and dark.
-That is its own pass (mist, waterfalls - section 4), not a palette tweak.
+That is its own pass (mist, waterfalls - section 4), not a palette tweak. (Done in step 9: the
+floor is now under the mist.)
 
 ### Step 5, as built
 
@@ -573,3 +577,56 @@ UVs, a place hash).
 
 **Open:** no gates in the walls or palisade yet; chimneys on a hip can sit near the eave; house
 colours vary only in the roof.
+
+### Step 9, as built
+
+Three parts: rivers in the terrain, the water drawn by its own shader, and the mist and foam as
+instanced puffs. Reference for the mist: A Little Age's fog of war, in a darker grey - the same
+style as archer's waterfall foam.
+
+- **Rivers are not a level** (`Terrain.h`, RIVERS). A river is a channel pressed into the plateau's
+  ground along a smoothed line (three hand-placed lines in `ChasmDefaultRivers`, Chaikin-smoothed,
+  mapped onto the grid's bounds like the default chasm): full depth (1.15) along the middle, half at
+  the water's edge, none a bank's width (1.5) out. The depth is read from a 1-unit raster of
+  "distance past the water's edge", bilinearly, so it is a function of position alone - the two
+  cells on an edge lower it identically, and where a river reaches the rim the wall's top row is
+  lowered with it, which makes the notch the fall pours through. Adding a level instead would have
+  put three levels in the cells at every river mouth, which the terrain mesh does not cut.
+- **The water is a flat surface the ground cuts through** (`WaterMesh.cpp`): every plateau cell a
+  channel lowers gets a polygon at y = -0.5 (at the rim only its plateau part, so the water stops at
+  the lip). The shore is wherever the two cross; the bank above it is drawn in pale stone. Where a
+  river runs off the map edge the skirt gets a face of water.
+- **Nothing is built or grown near a river**: a vertex within the bank plus 3 units is WET -
+  refused for houses, ground and fields ("too close to a river"), skipped by the forest. The margin
+  is wider than a plot, so whatever stands sees no channel under it, and `TerrainGroundHeight` can
+  go on ignoring rivers.
+- **Falls**: where a river's line crosses the rim's line. A sheet from just behind the lip, curling
+  out past the wall's strata (which stand up to 1.4 out from a cut half a cell past the line), then
+  straight down into the mist. A check (`rivers`) says every river has a fall from plateau to floor.
+- **The water shader** (`assets/shaders/chasm_water.glsl`) is archer's, adapted: flat shades that
+  move and are lit; two programs because only the falls discard (ragged edges). Rivers: streaks
+  drifting downstream, and shore foam from the G-buffer - the water is left out of the deferred
+  pass, so under each fragment the G-buffer still holds the bed, and where that is close under the
+  surface there is foam. Falls: streaks running down, light at the lip, white where it meets the
+  mist. Its clock is the simulation's.
+- **The mist** (`Mist.cpp`): a puff over about one floor vertex in four, radius 4-7.6, its top
+  rolling a few units either side of y = -46 on a slow noise; the floor and the walls' foot are under
+  it, the shard and the walls stand out of it. The puff is a once-split icosphere (80 faces),
+  flat-shaded, slightly lumpy, squashed; three shapes, each its own shade (lighter where the blanket
+  rises). One instance set per terrain chunk per shade; they cast shadows on each other, which is
+  what makes the blanket read as heaped. Every puff bobs and breathes slowly.
+- **The foam**: 32 balls per fall that swell, rise and shrink at its foot, one life after another.
+  Like the mist it keeps nothing: each ball's position is a function of the clock (tick * step)
+  alone, so a paused game holds it still and the same tick always looks the same. View only - not in
+  the state hash, never saved.
+- **Palette**: row 15 is the EFFECTS row, colours the same in every biome - mist light, mid, dark,
+  and foam (`PAL_EFFECTS`; `tools/make_palette.py --effects` paints just that row into the PNG).
+- **View toggles**: `water` and `mist` in the panel and `chasm_view`.
+- **Measured** (release, game zoom): 75 fps paced (uncapped 85-100); the mist costs about 1 ms of GPU
+  (shadow, G-buffer and colour together) and 0.6 ms of CPU re-posing 2,000-odd puffs a frame; the
+  water 0.08 ms. Checks pass; the replay test passes.
+
+**Open:** the rivers are fixed lines, not generated; the falls are single flat sheets (no spray at the
+lip, no rainbow); the mist is re-posed every frame for every chunk, even out of view (cheap now,
+but the first thing to cull if it grows); the shard's lower walls vanish into the mist like the
+rest, which may want a darker band above the blanket.

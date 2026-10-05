@@ -49,7 +49,11 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   boundaries that form themselves (walls/fences/palisades on plot-boundary segments whose sides
   differ - refs townscapergarden.jpg, titlescreenlittleage.png) BUILT: ground zones garden/town,
   BoundaryMesh walls/palisade/fences, BuildingMesh hip roofs+windows, CropMesh (by worker 78);
-  9 chasm look (mist, waterfalls) next.
+  9 chasm look BUILT: rivers as a position-only channel dip (Terrain RiverDip raster, NOT a level -
+  a level would put 3 levels in river-mouth cells), WET vertices refuse zones/forest, falls where a
+  river crosses the rim, chasm_water.glsl (archer's adapted), mist + foam = instanced faceted puffs
+  posed from the sim clock (Mist.cpp), palette row 15 = EFFECTS row. User liked step 8 as-is;
+  palisades may later become a road-like line tool to fence larger areas.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.
   PROPS BUILT + ACCEPTED same day: 15 assets (4 pines 38-58 tris, 3 oaks 58-118, rocks, stump, log,
   bushes) in chasm_props.blend "Export"; re-export = the collection's exporter (one click), NOT

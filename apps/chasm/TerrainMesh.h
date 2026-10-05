@@ -51,7 +51,8 @@ struct TerrainMeshData{
 void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out);
 
 //The ground's height at `p` on a level - the level plus the relief the terrain mesh gives it, so
-//anything laid on the ground (fields, foundations) lands exactly on what is drawn.
+//anything laid on the ground (fields, foundations) lands exactly on what is drawn. It leaves out the
+//rivers' channels: nothing stands near enough a river to be over one (Terrain.h, RIVERS).
 float TerrainGroundHeight(const vec2& p, float level_height);
 //The chunk a fine quad belongs to, by its centre - the same rule BuildTerrainMesh uses.
 int TerrainChunkOfQuad(const Grid& g, const TerrainMeshData& m, int quad);

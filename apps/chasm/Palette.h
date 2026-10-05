@@ -25,6 +25,12 @@
 #define PAL_DESERT          1
 #define PAL_FROZEN          2
 #define PAL_SWAMP           3
+//Not a biome: colours that are the same in every one - the chasm's mist and the falls' foam (Mist.h).
+#define PAL_EFFECTS         15
+#define PAL_MIST_LIGHT      0       //columns in the effects row
+#define PAL_MIST            1
+#define PAL_MIST_DARK       2
+#define PAL_FOAM            3
 
 //Columns: materials.
 #define PAL_GRASS_0         0       //four close shades, picked per triangle for the faceted look

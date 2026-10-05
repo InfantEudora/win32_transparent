@@ -188,6 +188,34 @@ private:
     void UploadForest();
     bool PropHidden(const PropInstance& p, const ZoneState* z);
 
+    /*
+        --- The chasm's own look (step 9, ApplicationChasmWater.cpp) -----------------------------------
+        The rivers and the falls: one object each, drawn by chasm_water.glsl and uploaded once per
+        world. The mist: one instance set per terrain chunk per shade, re-posed every frame from the
+        simulation's clock (Mist.h); the foam: one set for every fall, the same way. Render thread.
+    */
+    Shader* water_sheet_shader = NULL;
+    Shader* water_flat_shader = NULL;
+    int water_sheet_shader_index = -1;
+    int water_flat_shader_index = -1;
+    int water_material = -1;
+    Object* water_flat = NULL;
+    Object* water_sheets = NULL;
+    std::shared_ptr<const ChasmWorld> water_built_world;
+    bool f_water_shown = true;
+    Mesh* mist_meshes[MIST_VARIANTS] = {};
+    Mesh* foam_mesh = NULL;
+    std::vector<Object*> mist_sets;                 //chunk * MIST_VARIANTS + variant
+    Object* foam_set = NULL;
+    std::atomic<bool> f_view_water{true};
+    std::atomic<bool> f_view_mist{true};
+    void BuildWaterScene();         //from BuildScene: shaders, materials, objects, puff meshes
+    void UploadWater();
+    void UpdateMist();
+    void SetWaterSheetUniforms();
+    void SetWaterFlatUniforms();
+    double SimSeconds();
+
     std::vector<Object*> zone_chunks;
     std::vector<uint32_t> zone_chunk_built;     //render thread: chunk_version each was built at
     std::shared_ptr<const ChasmWorld> zone_built_world;

@@ -5,14 +5,14 @@ After that the PNG is the source: edit it in any paint program. This script refu
 unless given --force, so a hand-tuned palette is never lost to a re-run.
 
 The layout is fixed by apps/chasm/Palette.h: 32 x 16 cells, CELL pixels square. A ROW is a biome
-(row 0 temperate, then desert, frozen, swamp; the rest spare); a COLUMN is a material within it.
+(row 0 temperate, then desert, frozen, swamp; row 15 the effects row; the rest spare); a COLUMN is a material within it.
 The engine samples the centre of a cell with nearest filtering and no mipmaps, so a cell is
 one flat colour - paint every pixel of a cell the same.
 
 Colours are sRGB-ish values straight to the screen (the engine has no tone mapping), chosen
 against the A Little Age screenshot in art_source/chasm/ under the default lighting.
 
-    python apps/chasm/tools/make_palette.py [--force]
+    python apps/chasm/tools/make_palette.py [--force | --effects]
 """
 import os
 import sys
@@ -102,9 +102,27 @@ PROPS_DEF = [
      (76, 104, 52), (200, 190, 90), (190, 184, 160), (110, 96, 70), (96, 76, 54)],
 ]
 
+# Row 15 is not a biome: the EFFECTS row, colours that are the same in every biome. Columns 0-3
+# are the chasm's mist - light, mid, dark - and the foam at the foot of a fall (Mist.h).
+EFFECTS_ROW = 15
+EFFECTS_DEF = [(126, 128, 134), (102, 104, 112), (80, 82, 90), (226, 234, 238)]
+
+def paint_effects(img):
+    for c, colour in enumerate(EFFECTS_DEF):
+        for y in range(CELL):
+            for x in range(CELL):
+                img.putpixel((c * CELL + x, EFFECTS_ROW * CELL + y), colour + (255,))
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     out = os.path.normpath(os.path.join(here, "..", "assets", "textures", "palette.png"))
+    # --effects paints only the effects row into the existing PNG, leaving every other cell as it is.
+    if "--effects" in sys.argv:
+        img = Image.open(out).convert("RGBA")
+        paint_effects(img)
+        img.save(out)
+        print("painted the effects row into", out)
+        return 0
     if os.path.exists(out) and "--force" not in sys.argv:
         print("refusing to overwrite %s - it is the source now; pass --force to start over" % out)
         return 1
@@ -119,6 +137,7 @@ def main():
             for y in range(CELL):
                 for x in range(CELL):
                     img.putpixel((c * CELL + x, r * CELL + y), colour + (255,))
+    paint_effects(img)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     img.save(out)
     print("wrote", out)

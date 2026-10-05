@@ -56,7 +56,7 @@ against temperate is a per-vertex row choice, and winter can be a uniform that s
 Keep that in mind when laying the palette out, even before seasons exist.
 
 **Where it is (built in step 4):** `assets/textures/palette.png`, 32 x 16 cells of 8 pixels (widened from 16 columns for the props and buildings) - a row
-per biome (temperate, desert, frozen, swamp, the rest spare), a column per material. `Palette.h`
+per biome (temperate, desert, frozen, swamp; row 15 the EFFECTS row - mist and foam, the same in every biome; the rest spare), a column per material. `Palette.h`
 names the rows and columns. **The PNG is the source - edit it in any paint program**, one flat
 colour per cell; `tools/make_palette.py` only wrote the first one and refuses to overwrite it
 without `--force`. The background colour is read from the palette's haze cell, so it follows an

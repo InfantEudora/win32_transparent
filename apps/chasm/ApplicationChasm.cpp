@@ -147,6 +147,7 @@ void ApplicationChasm::BuildScene(){
     }
     renderer->AddMaterial(mat);
     palette_material = renderer->FindMaterialIndex(mat.name);
+    BuildWaterScene();
 
     pick_view = new Object();
     pick_view->name = "Pick View";
@@ -210,6 +211,15 @@ void ApplicationChasm::RegenerateGrid(const GridSettings& s){
     BuildForest(*g,*w->picker,*t,*mesh,*forest);
     w->forest = forest;
     debug->Info("Forest: %i props in %.1f ms\n",(int)forest->props.size(),forest->build_ms);
+    std::shared_ptr<MistData> mist = std::make_shared<MistData>();
+    BuildMist(*g,*t,*mesh,*mist);
+    w->mist = mist;
+    std::shared_ptr<WaterMeshData> water = std::make_shared<WaterMeshData>();
+    BuildWaterMesh(*g,*t,*water);
+    w->water = water;
+    debug->Info("Chasm: %i mist puffs (%.1f ms), %i rivers, %i falls, %i wet vertices, water %.1f ms\n",
+                (int)mist->puffs.size(),mist->build_ms,(int)t->rivers.size(),(int)t->falls.size(),
+                t->wet_count,water->build_ms);
     debug->Info("Grid: seed %u, %i coarse and %i fine quads, %i leftover triangles of %i, %.1f ms "
                 "(+%.1f ms picker, %.1f ms levels, %.1f ms mesh: %i triangles, %i in walls, %i chunks)\n",
                 s.seed,(int)g->coarse.quads.size(),(int)g->fine.quads.size(),
@@ -1111,6 +1121,8 @@ void ApplicationChasm::PreRender(void){
     UploadTerrain();
     UploadZones();
     UploadForest();
+    UploadWater();
+    UpdateMist();
     UpdatePickView();
 #ifdef DEBUG
     UpdateGridView();
@@ -1503,6 +1515,10 @@ void ApplicationChasm::RenderChasmPanel(){
         ImGui::SameLine();
         b = f_view_forest;      if (ImGui::Checkbox("forest",&b)){ f_view_forest = b; }
         ImGui::SameLine();
+        b = f_view_water;       if (ImGui::Checkbox("water",&b)){ f_view_water = b; }
+        ImGui::SameLine();
+        b = f_view_mist;        if (ImGui::Checkbox("mist",&b)){ f_view_mist = b; }
+        ImGui::SameLine();
         b = f_view_flat;        if (ImGui::Checkbox("flat",&b)){ f_view_flat = b; changed = true; }
         if (changed){
             view_version++;
@@ -1731,6 +1747,8 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"pins",{{"type","boolean"},{"description","the pinned lines and a tick on every vertex pinned to them"}}},
                 {"terrain",{{"type","boolean"},{"description","the terrain mesh (all builds)"}}},
                 {"forest",{{"type","boolean"},{"description","the trees, rocks and bushes (all builds)"}}},
+                {"water",{{"type","boolean"},{"description","the rivers and falls (all builds)"}}},
+                {"mist",{{"type","boolean"},{"description","the chasm's mist and the falls' foam (all builds)"}}},
                 {"flat",{{"type","boolean"},{"description","draw the grid layers at y = 0 instead of on the terrain - the true cell shapes near cliffs; pair with terrain:false"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
@@ -1762,6 +1780,12 @@ void ApplicationChasm::RegisterMCPTools(){
             if (args.contains("forest")){
                 f_view_forest = args["forest"].get<bool>();
             }
+            if (args.contains("water")){
+                f_view_water = args["water"].get<bool>();
+            }
+            if (args.contains("mist")){
+                f_view_mist = args["mist"].get<bool>();
+            }
             json result;
             main_scene->AtTickBoundary([&](){
                 if (args.value("frame_map",false)){
@@ -1786,7 +1810,8 @@ void ApplicationChasm::RegisterMCPTools(){
             result["layers"] = json{{"fine",f_view_fine.load()},{"coarse",f_view_coarse.load()},
                                     {"valence",f_view_valence.load()},{"squareness",f_view_squareness.load()},
                                     {"issues",f_view_issues.load()},{"pins",f_view_pins.load()},
-                                    {"flat",f_view_flat.load()},{"terrain",f_view_terrain.load()}};
+                                    {"flat",f_view_flat.load()},{"terrain",f_view_terrain.load()},
+                                    {"forest",f_view_forest.load()},{"water",f_view_water.load()},{"mist",f_view_mist.load()}};
 #endif
             //The screenshot is of a frame drawn after this returns, and PreRender rebuilds the
             //lines at the top of that frame - so new layers are already in the picture.

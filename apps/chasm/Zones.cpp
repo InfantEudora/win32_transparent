@@ -53,6 +53,9 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
             if (w.terrain->level[quad.v[k]] != level){
                 return refuse("too close to a cliff");
             }
+            if (w.terrain->wet[quad.v[k]]){
+                return refuse("too close to a river");
+            }
         }
         if (!z.field.empty() && z.field[quad.parent]){
             return refuse("a field is there");
@@ -89,6 +92,9 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
                 level = w.terrain->level[v];
             }else if (w.terrain->level[v] != level){
                 return refuse("not flat - it crosses a cliff");
+            }
+            if (w.terrain->wet[v]){
+                return refuse("too close to a river");
             }
             if (!z.storeys.empty() && z.storeys[v] > 0){
                 return refuse("a house is there");

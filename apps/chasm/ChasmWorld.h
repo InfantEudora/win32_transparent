@@ -8,6 +8,8 @@
 #include "Terrain.h"
 #include "TerrainMesh.h"
 #include "Forest.h"
+#include "Mist.h"
+#include "WaterMesh.h"
 
 /*
     Everything GENERATED for one map, as one immutable bundle: built together from the seed, swapped
@@ -21,6 +23,8 @@ struct ChasmWorld{
     std::vector<GridLine> features;     //world coordinates: the rim, then shards
     std::shared_ptr<const TerrainMeshData> mesh;
     std::shared_ptr<const ForestData> forest;
+    std::shared_ptr<const MistData> mist;
+    std::shared_ptr<const WaterMeshData> water;
 };
 
 #endif

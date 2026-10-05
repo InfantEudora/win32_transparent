@@ -19,6 +19,8 @@
 */
 #define GROUND_BUMP         0.25f
 #define GROUND_BUMP_SCALE   14.0f
+//A ground triangle a river lowers by more than this anywhere is bank, not grass (Fan).
+#define RIVER_BANK_DIP      0.45f
 
 //Palette column "this cell's grass shade" - Cell resolves it from the coarse cell the fine one
 //belongs to, so the shades lie in field-sized patches rather than speckling every triangle (which
@@ -125,14 +127,36 @@ public:
         data.num_triangles++;
     }
 
+    /*
+        A ground polygon as a fan. Grass or lip that a river's channel lowers is drawn as its bank
+        instead - only the strip above the water ever shows: pale pebbles, like the reference's shore.
+    */
     void Fan(const std::vector<vec3>& p, const vec3& want, int column){
+        bool f_dry_ground = (column == COLUMN_GRASS || column == PAL_LIP);
         for (size_t i = 1; i + 1 < p.size(); i++){
-            Tri(p[0],p[i],p[i + 1],want,column);
+            int c = column;
+            if (f_dry_ground && terrain){
+                float dip = std::max(terrain->RiverDip(vec2(p[0].x,p[0].z)),
+                            std::max(terrain->RiverDip(vec2(p[i].x,p[i].z)),terrain->RiverDip(vec2(p[i + 1].x,p[i + 1].z))));
+                if (dip > RIVER_BANK_DIP){
+                    c = PAL_STONE_LIGHT;
+                }
+            }
+            Tri(p[0],p[i],p[i + 1],want,c);
         }
     }
 
+    //The ground's height at p on a level: the relief, and on the plateau any river's channel.
+    float GroundY(const vec2& p, float level_height){
+        float y = Ground(p,level_height);
+        if (terrain && level_height == terrain_levels[TERRAIN_PLATEAU].height){
+            y -= terrain->RiverDip(p);
+        }
+        return y;
+    }
+
     vec3 GroundPoint(const vec2& p, float level_height){
-        return vec3(p.x,Ground(p,level_height),p.y);
+        return vec3(p.x,GroundY(p,level_height),p.y);
     }
 
     /*
@@ -143,10 +167,10 @@ public:
     void Wall(const vec2& a, const vec2& b, float top, float bottom_a, float bottom_b, const vec3& out){
         float drop = top - std::min(bottom_a,bottom_b);
         int bands = std::max(1,(int)std::ceil(drop / WALL_BAND_HEIGHT - 0.01f));
-        float top_a = Ground(a,top);
-        float top_b = Ground(b,top);
-        float bot_a = Ground(a,bottom_a);
-        float bot_b = Ground(b,bottom_b);
+        float top_a = GroundY(a,top);
+        float top_b = GroundY(b,top);
+        float bot_a = GroundY(a,bottom_a);
+        float bot_b = GroundY(b,bottom_b);
         for (int j = 0; j < bands; j++){
             float t0 = (float)j / bands;
             float t1 = (float)(j + 1) / bands;
@@ -310,9 +334,19 @@ public:
         vec3 A1(a.x,TERRAIN_SKIRT_BOTTOM,a.y), B1(b.x,TERRAIN_SKIRT_BOTTOM,b.y);
         Tri(A0,B0,B1,out,PAL_EARTH);
         Tri(A0,B1,A1,out,PAL_EARTH);
+        //Where a river runs off the map, its water stands above the channel's cut: a face of water
+        //from the surface down to the ground, so the river reads as cut through, not as a sheet.
+        float wa = std::max(A0.y,TERRAIN_WATER_Y);
+        float wb = std::max(B0.y,TERRAIN_WATER_Y);
+        if (level_a == terrain_levels[TERRAIN_PLATEAU].height && (wa > A0.y || wb > B0.y)){
+            vec3 AW(a.x,wa,a.y), BW(b.x,wb,b.y);
+            Tri(AW,BW,B0,out,PAL_WATER);
+            Tri(AW,B0,A0,out,PAL_WATER);
+        }
     }
 
     int row = PAL_TEMPERATE;    //the biome; one for the whole map until biomes exist
+    const Terrain* terrain = NULL;      //for the rivers' channels
     int grass_column = PAL_GRASS_0;     //the current cell's, see COLUMN_GRASS
 
 private:
@@ -339,6 +373,7 @@ void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out){
     auto t0 = std::chrono::steady_clock::now();
     out = TerrainMeshData();
     Builder b(g,out);
+    b.terrain = &t;
     for (int q = 0; q < (int)g.fine.quads.size(); q++){
         b.Cell(q,t);
     }
