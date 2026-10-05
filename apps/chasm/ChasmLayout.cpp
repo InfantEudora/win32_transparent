@@ -1429,6 +1429,36 @@ static void PlaceMountainFoot(uint32_t seed, const vec2& lo, const vec2& hi, Cha
     }
 }
 
+/*
+    The swamp (biomes_plan.md step 4), from a stream of its own like the mountain: which side of the
+    main mouth, and a disc on that side centred a little past the south edge, so the swamp hugs it.
+    Sized to stay well clear of the mountain.
+*/
+static void PlaceSwamp(uint32_t seed, const vec2& lo, const vec2& hi, ChasmLayout& out){
+    RRandom rng((int)(seed * 3266489917u ^ 0x5A3B0Fu));
+    rng.Generate(1024);
+    const float D = hi.y - lo.y;
+    out.swamp.side = rng.Roll(0.5f) ? -1 : 1;
+    out.swamp.radius = rng.GetFloat(110.0f,160.0f);
+    float mouth = out.main_mouth_x;
+    float x = (out.swamp.side < 0) ? lo.x + (mouth - lo.x) * rng.GetFloat(0.3f,0.6f)
+                                   : mouth + (hi.x - mouth) * rng.GetFloat(0.4f,0.7f);
+    out.swamp.centre = vec2(x,hi.y + out.swamp.radius * 0.15f);
+    //Never up to the mountain: at most halfway up the map.
+    out.swamp.radius = std::min(out.swamp.radius,0.5f * D);
+}
+
+float ChasmSwampMask(const ChasmLayout& layout, const vec2& p){
+    const ChasmLayout::Swamp& s = layout.swamp;
+    if (s.radius <= 0.0f){
+        return 0.0f;
+    }
+    float wobble = Noise(p,46.0f,0x5A3B1u) * 0.6f + Noise(p,17.0f,0x5A3B2u) * 0.4f;
+    float d = (p - s.centre).length() + wobble * 18.0f;
+    float t = std::max(0.0f,std::min(1.0f,(s.radius - d) / CHASM_SWAMP_EDGE));
+    return t * t * (3.0f - 2.0f * t);
+}
+
 float ChasmMountainFootAt(const ChasmLayout& layout, float x){
     const std::vector<vec2>& f = layout.mountain_foot;
     if (f.empty()){
@@ -1482,6 +1512,7 @@ ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, f
     out.features = placed;
     b.PlaceRivers(out.features);
     PlaceMountainFoot(seed,lo,hi,out);
+    PlaceSwamp(seed,lo,hi,out);
     out.generate_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
     return out;
 }

@@ -26,6 +26,14 @@
 struct WaterMeshData{
     std::vector<vertex> flat;
     std::vector<vertex> sheets;
+    /*
+        POOLS, the swamp's standing water (biomes_plan.md step 4): every plateau cell of the swamp whose
+        ground dips under TERRAIN_WATER_Y gets a whole flat cell of water there, and the hummocks cut
+        through it as a river's banks do. The same shader as the rivers, slower (its own program, for
+        its own flow speed); uv.x a gentle wave inside +-0.5, so no river-edge darkening, and uv.y the
+        world's z - the streaks just drift.
+    */
+    std::vector<vertex> pools;
     float build_ms = 0.0f;
 };
 

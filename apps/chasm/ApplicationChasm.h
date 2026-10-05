@@ -250,6 +250,12 @@ private:
     int water_flat_shader_index = -1;
     int water_material = -1;
     Object* water_flat = NULL;
+    //The swamp's pools (biomes_plan.md step 4): the rivers' shader again, as its own program so its
+    //flow can be the stillness of standing water.
+    Shader* water_pool_shader = NULL;
+    int water_pool_shader_index = -1;
+    Object* water_pools = NULL;
+    void SetWaterPoolUniforms();
     Object* water_sheets = NULL;
     std::shared_ptr<const ChasmWorld> water_built_world;
     bool f_water_shown = true;

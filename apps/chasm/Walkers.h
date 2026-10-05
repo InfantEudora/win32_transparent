@@ -39,6 +39,7 @@
 #define WALKER_SPEED_ROAD       3.2f    //world units a second, both ends of the edge road
 #define WALKER_SPEED_GROUND     1.6f    //everywhere else
 #define WALKER_SPEED_FIELD      0.9f    //both ends in a field
+#define WALKER_SPEED_SWAMP      1.0f    //both ends in the swamp, off a road
 #define WALKER_SLOPE_COST       3.0f    //speed divided by 1 + this x the grade (rise over run)
 #define WALKER_STEEPEST         0.75f   //rise over run past which an edge cannot be walked at all
 

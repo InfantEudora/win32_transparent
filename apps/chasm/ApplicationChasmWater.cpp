@@ -34,6 +34,10 @@ void ApplicationChasm::BuildWaterScene(){
     water_flat_shader->f_lit = true;
     water_flat_shader->uniform_callback = std::bind(&ApplicationChasm::SetWaterFlatUniforms,this);
     water_flat_shader_index = renderer->AddCustomShader(water_flat_shader);
+    water_pool_shader = new Shader("shaders/default.vert","shaders/chasm_water_flat.frag");
+    water_pool_shader->f_lit = true;
+    water_pool_shader->uniform_callback = std::bind(&ApplicationChasm::SetWaterPoolUniforms,this);
+    water_pool_shader_index = renderer->AddCustomShader(water_pool_shader);
 
     auto Make = [&](const char* name){
         Object* o = new Object();
@@ -47,6 +51,7 @@ void ApplicationChasm::BuildWaterScene(){
         return o;
     };
     water_flat = Make("Rivers");
+    water_pools = Make("Pools");
     water_sheets = Make("Falls");
 
     //The puffs: one shape per shade, lightest first, and a lighter one again for the foam.
@@ -87,6 +92,12 @@ void ApplicationChasm::SetWaterSheetUniforms(){
     water_sheet_shader->Setfloat("flow_speed",0.32f);
 }
 
+//Standing water: the streaks hardly drift.
+void ApplicationChasm::SetWaterPoolUniforms(){
+    water_pool_shader->Setfloat("water_seconds",(float)SimSeconds());
+    water_pool_shader->Setfloat("flow_speed",0.12f);
+}
+
 void ApplicationChasm::SetWaterFlatUniforms(){
     water_flat_shader->Setfloat("water_seconds",(float)SimSeconds());
     water_flat_shader->Setfloat("flow_speed",2.2f);
@@ -119,11 +130,13 @@ void ApplicationChasm::UploadWater(){
             mesh->custom_shader_index = shader_index;
         };
         Surface(water_flat,w->water->flat,water_flat_shader_index);
+        Surface(water_pools,w->water->pools,water_pool_shader_index);
         Surface(water_sheets,w->water->sheets,water_sheet_shader_index);
         debug->Info("Water: %zu river and %zu fall vertices, %zu falls (%.1f ms)\n",w->water->flat.size(),
                     w->water->sheets.size(),w->terrain->falls.size(),w->water->build_ms);
     }
     water_flat->SetVisibility(f_show && !w->water->flat.empty());
+    water_pools->SetVisibility(f_show && !w->water->pools.empty());
     water_sheets->SetVisibility(f_show && !w->water->sheets.empty());
     f_water_shown = f_show;
 }

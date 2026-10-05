@@ -101,6 +101,8 @@ float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
         speed = WALKER_SPEED_ROAD;
     }else if (InField(*set.world,z,a) && InField(*set.world,z,b)){
         speed = WALKER_SPEED_FIELD;
+    }else if (set.world->terrain->biome[a] == TERRAIN_BIOME_SWAMP && set.world->terrain->biome[b] == TERRAIN_BIOME_SWAMP){
+        speed = WALKER_SPEED_SWAMP;     //off a road the swamp is mud
     }
     //Slower up and down a slope, by how steep it is - never faster, so A*'s estimate (the straight
     //line at road speed) still never overestimates.

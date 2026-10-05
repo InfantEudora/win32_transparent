@@ -215,11 +215,14 @@ public:
         grass_column = PAL_GRASS_0 + (int)(Hash3(quad.parent,0,77) % PAL_GRASS_COUNT);
         //The biome's palette row, by the cell's corners: the north mountain draws from the frozen row,
         //snow for grass and grey-blue strata, until it has relief of its own (biomes_plan.md step 1).
+        //The swamp (step 4) from its own row, darker and browner.
         int mountain = 0;
+        int swamp = 0;
         for (int k = 0; k < 4; k++){
             mountain += t.Mountain(quad.v[k]) ? 1 : 0;
+            swamp += (t.biome[quad.v[k]] == TERRAIN_BIOME_SWAMP) ? 1 : 0;
         }
-        row = (mountain >= 2) ? PAL_FROZEN : PAL_TEMPERATE;
+        row = (mountain >= 2) ? PAL_FROZEN : (swamp >= 2) ? PAL_SWAMP : PAL_TEMPERATE;
 
         bool high[4];
         int num_high = 0;

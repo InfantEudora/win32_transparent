@@ -28,6 +28,7 @@
 enum PropKind{
     PROP_PINE_A = 0, PROP_PINE_B, PROP_PINE_C, PROP_PINE_D,
     PROP_OAK_A, PROP_OAK_B, PROP_OAK_C,
+    PROP_WILLOW,                //the swamp's tree (biomes_plan.md step 4)
     PROP_ROCK_A, PROP_ROCK_B, PROP_ROCK_C, PROP_ROCK_CLUSTER,
     PROP_STUMP, PROP_LOG, PROP_BUSH_A, PROP_BUSH_B,
     //Ground cover: small, numerous, and casting no shadow (PropCastsShadow).

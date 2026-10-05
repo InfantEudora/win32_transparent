@@ -178,3 +178,38 @@ POCKET, the meadow and valley pressed into the relief, the `pockets` check), `Fo
 - A few cells at a meadow's edge draw green up the rock face (a cell is coloured by its corners'
   biome, not its slope) - step 5's colouring by steepness fixes it.
 - The pocket's look is all relief; there is no pinned cliff line round it. Enough so far.
+
+## Step 4: the swamp
+
+### As built (2026-10-05)
+
+Files: `ChasmLayout.cpp` (`PlaceSwamp`, `ChasmSwampMask`), `Grid.h` (`ChasmLayout::Swamp`), `Terrain.*`
+(biome SWAMP, its relief, pools wet), `TerrainMesh.cpp` (the swamp row), `WaterMesh.*` (pools),
+`ApplicationChasm.h` + `ApplicationChasmWater.cpp` (the pools' object and program), `Forest.*`
+(`PROP_WILLOW`, the swamp's planting), `Walkers.*` (mud), `Zones.cpp` ("too close to water").
+
+- **Where**: on one side of the main mouth, the seed's choice from a stream of its own - the other
+  side's south is left for the desert. A disc of radius 110-160 centred a little past the south edge,
+  so it hugs it, its edge wobbling on two octaves of noise over a 30-unit band. Biome SWAMP where the
+  mask passes one half, on the plateau, never over the mountain.
+- **Its ground**: the hills sink away into it, to a floor 0.25 above the rivers' water (-0.5) broken by
+  hummocks of 1.2 either way (wavelengths 15 and 6). Pools lie wherever it dips under the water; a
+  vertex under the water or within 0.2 of it is WET, like a river's bank - no zone, no prop, no walker.
+  The hummocks are steep on purpose: the water shader foams wherever the bed is within 0.16 of the
+  surface, and gentle ones (the first try, 0.55) made the pools mostly foam.
+- **Pools are drawn** as whole flat cells of water wherever a swamp corner is under the surface - the
+  hummocks cut through, as a river's banks do - by the rivers' shader in a program of its own, so its
+  flow can be 0.12 (standing water) against the rivers' 2.2. uv.x is a gentle wave inside +-0.5 (a
+  constant one ruled the streaks into stripes).
+- **Colour and growth**: cells with two or more swamp corners draw from the swamp palette row; dry
+  hummocks carry willows (the modelled `tree_willow_a`, now a prop kind), bushes and long grass.
+  Walkers off a road go at 1.0 a second in the swamp, against 1.6 on open ground.
+- **Measured, seeds 1-60 (debug)**: every check passes; the swamp 2,941-7,606 vertices (3-8% of the
+  map, mean 5,100), 18-55% of it wet (mean 39%). Seeds 1-3 keep their pinned hashes, the same in
+  release. The replay test passes in debug and release.
+
+**Open:**
+- The pools are the rivers' clear blue; a swamp wants it murkier - a colour pass (step 5).
+- The swamp's edge is a cell-by-cell staircase in colour, as every biome edge is; step 5.
+- No swamp mist, no reeds: the mist system could lay a low blanket over it, and reeds would need
+  modelling.

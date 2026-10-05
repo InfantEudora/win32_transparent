@@ -182,6 +182,10 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
         if (p.y < ChasmMountainFootAt(g.layout,p.x)){
             biome[v] = TERRAIN_BIOME_MOUNTAIN;
         }
+        //The swamp, where its mask is more than half; never over the mountain.
+        if (level[v] == TERRAIN_PLATEAU && biome[v] == TERRAIN_BIOME_TEMPERATE && ChasmSwampMask(g.layout,p) > 0.5f){
+            biome[v] = TERRAIN_BIOME_SWAMP;
+        }
         //A pocket's meadow and valley are open ground, in the mountain or just out of it.
         if (level[v] == TERRAIN_PLATEAU){
             for (const ChasmLayout::Pocket& k : g.layout.pockets){
@@ -198,6 +202,18 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
     ground.assign(n,0.0f);
     for (size_t v = 0; v < n; v++){
         ground[v] = GroundHeight(g.fine.pos[v],Height((int)v));
+    }
+    //The swamp's pools: ground under the water, or barely out of it, is wet like a river's bank -
+    //nothing is built or grown there, and no walker crosses it (until there are causeways).
+    swamp_pool_count = 0;
+    for (size_t v = 0; v < n; v++){
+        if (biome[v] == TERRAIN_BIOME_SWAMP && ground[v] < TERRAIN_WATER_Y + SWAMP_SHORE){
+            if (!wet[v]){
+                wet[v] = 1;
+                wet_count++;
+            }
+            swamp_pool_count++;
+        }
     }
     build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -282,6 +298,17 @@ void Terrain::BuildRelief(const Grid& g){
             float mountain = rise * (RELIEF_MOUNTAIN_BASE + crags * RELIEF_PEAK_HEIGHT);
             float h = hills + mountain;
             /*
+                The swamp: the hills sink away into it, to a floor about the water's level, broken by
+                hummocks - so pools lie wherever the ground dips under the water, and the shore is
+                wherever the two cross, as along a river.
+            */
+            float swamp = ChasmSwampMask(g.layout,p);
+            if (swamp > 0.0f){
+                float hummock = ReliefNoise(p,SWAMP_HUMMOCK_SIZE,seed ^ 0x4116u) * 0.7f +
+                                ReliefNoise(p,SWAMP_HUMMOCK_SIZE * 0.4f,seed ^ 0x4117u) * 0.3f;
+                h = h + (SWAMP_FLOOR + hummock * SWAMP_HUMMOCK - h) * swamp;
+            }
+            /*
                 A pocket: its meadow flat at its floor, its valley ramping from that floor down to the
                 hills at its mouth - so it can be walked up - and the crags rising steeply round both
                 over RELIEF_POCKET_EDGE, which is what makes it read as a hollow in the mountain.
@@ -337,6 +364,7 @@ const char* TerrainBiomeName(int biome){
         case TERRAIN_BIOME_TEMPERATE:   return "temperate";
         case TERRAIN_BIOME_MOUNTAIN:    return "mountain";
         case TERRAIN_BIOME_POCKET:      return "pocket";
+        case TERRAIN_BIOME_SWAMP:       return "swamp";
         default:                        return "?";
     }
 }
@@ -734,8 +762,10 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
             open++;
             steep += (rise[v] > 0.7f) ? 1 : 0;
         }
-        snprintf(buf,sizeof(buf),"highest %.1f above the plateau; %.1f%% of the open plateau too steep for a house",
-                 t.relief_max,100.0f * steep / std::max(1,open));
+        int swamp = t.biome_count[TERRAIN_BIOME_SWAMP];
+        snprintf(buf,sizeof(buf),"highest %.1f above the plateau; %.1f%% of the open plateau too steep for a house; "
+                 "swamp %i vertices (%s side), %.0f%% of it pools",t.relief_max,100.0f * steep / std::max(1,open),swamp,
+                 g.layout.swamp.side < 0 ? "west" : "east",100.0f * t.swamp_pool_count / std::max(1,swamp));
         add_result("relief",true,buf);
     }
 

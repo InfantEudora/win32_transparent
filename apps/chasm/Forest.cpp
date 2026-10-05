@@ -7,6 +7,7 @@
 const char* prop_asset_names[PROP_KIND_COUNT] = {
     "tree_pine_a","tree_pine_b","tree_pine_c","tree_pine_d",
     "tree_oak_a","tree_oak_b","tree_oak_c",
+    "tree_willow_a",
     "rock_a","rock_b","rock_c","rock_cluster_a",
     "stump_a","log_a","bush_a","bush_b",
     "grass_a","grass_b","grass_c","flowers_a","flowers_b",
@@ -147,6 +148,26 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
                   1.0f + Chance(seed,v,44) * 0.5f);
             continue;
         }
+        /*
+            The swamp (step 4): on its dry hummocks willows, bushes and long grass, thinly - it is
+            open, wet country, not forest. Its pools are wet, so nothing reaches here from them.
+        */
+        if (t.biome[v] == TERRAIN_BIOME_SWAMP){
+            float roll = Chance(seed,v,50);
+            float a = Chance(seed,v,51) * 6.2831853f;
+            float r = std::sqrt(Chance(seed,v,52)) * PROP_JITTER;
+            vec2 at = base + vec2(std::cos(a),std::sin(a)) * r;
+            float yaw = Chance(seed,v,53) * 6.2831853f;
+            float size = 0.85f + Chance(seed,v,54) * 0.30f;
+            if (roll < 0.10f){
+                Place(PROP_WILLOW,at,yaw,size * TREE_SCALE);
+            }else if (roll < 0.17f){
+                Place((Chance(seed,v,55) < 0.5f) ? PROP_BUSH_A : PROP_BUSH_B,at,yaw,size);
+            }else if (roll < 0.62f){
+                Place((Chance(seed,v,55) < 0.6f) ? PROP_GRASS_C : PROP_GRASS_B,at,yaw,size * 1.2f);
+            }
+            continue;
+        }
         float n = Noise(base.x / FOREST_SCALE,base.y / FOREST_SCALE,seed) * 0.75f +
                   Noise(base.x / FOREST_DETAIL,base.y / FOREST_DETAIL,seed + 7) * 0.25f;
         //The chasm floor is a darker, sparser place; the shard top bare stone and scrub.
@@ -200,7 +221,7 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
         if (kind < 0){
             continue;
         }
-        bool f_tree = (kind <= PROP_OAK_C);
+        bool f_tree = (kind <= PROP_WILLOW);
         float a = Chance(seed,v,4) * 6.2831853f;
         float r = std::sqrt(Chance(seed,v,5)) * PROP_JITTER;
         Place(kind,base + vec2(std::cos(a),std::sin(a)) * r,Chance(seed,v,6) * 6.2831853f,

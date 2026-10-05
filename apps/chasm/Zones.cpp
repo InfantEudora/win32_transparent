@@ -218,7 +218,7 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
             lowest = std::min(lowest,w.terrain->ground[quad.v[k]]);
             highest = std::max(highest,w.terrain->ground[quad.v[k]]);
             if (w.terrain->wet[quad.v[k]]){
-                return refuse("too close to a river");
+                return refuse("too close to water");
             }
             if (w.terrain->Mountain(quad.v[k])){
                 return refuse("on the mountain");
@@ -295,7 +295,7 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
                 return refuse("not flat - it crosses a cliff");
             }
             if (w.terrain->wet[v]){
-                return refuse("too close to a river");
+                return refuse("too close to water");
             }
             if (w.terrain->Mountain(v)){
                 return refuse("on the mountain");

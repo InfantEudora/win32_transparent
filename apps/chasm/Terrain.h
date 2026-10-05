@@ -35,7 +35,8 @@
 #define TERRAIN_BIOME_TEMPERATE 0
 #define TERRAIN_BIOME_MOUNTAIN  1
 #define TERRAIN_BIOME_POCKET    2       //step 3: a meadow in the mountain and its valley - open, buildable
-#define TERRAIN_NUM_BIOMES      3
+#define TERRAIN_BIOME_SWAMP     3       //step 4: lowland in the south, pools between hummocks
+#define TERRAIN_NUM_BIOMES      4
 const char* TerrainBiomeName(int biome);
 
 struct TerrainLevel{
@@ -73,6 +74,13 @@ extern const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS];
 #define RELIEF_PEAK_WAVELENGTH  80.0f
 #define RELIEF_RIVER_FADE       24.0f   //past a river's wet margin, over which the relief comes back
 #define RELIEF_POCKET_EDGE      7.0f    //past a pocket's edge, over which the crags rise from its floor
+//The swamp (step 4): its ground about the rivers' water level, so that half of it stands just out.
+//Hummocks steep enough that a pool deepens fast from its shore: the water shader foams wherever the
+//ground is within 0.16 under the surface, and gentle ones made a pool mostly foam.
+#define SWAMP_FLOOR             -0.25f  //the mean, against TERRAIN_WATER_Y at -0.5: about 40% of the swamp wet
+#define SWAMP_HUMMOCK           1.20f   //how far hummocks rise and pools sink either side of it
+#define SWAMP_HUMMOCK_SIZE      15.0f   //hummock to hummock
+#define SWAMP_SHORE             0.20f   //ground this little above the water is still too wet to use
 
 struct TerrainRiver{
     std::vector<vec2> points;   //world, smoothed, from the source; the last runs past the rim
@@ -117,6 +125,7 @@ public:
     //Per fine vertex: GroundHeight at it, on its own level - for the slope rules, read often.
     std::vector<float> ground;
     float relief_max = 0.0f;
+    int swamp_pool_count = 0;       //swamp vertices wet by its pools
 
     std::vector<TerrainRiver> rivers;
     std::vector<TerrainFall> falls;
