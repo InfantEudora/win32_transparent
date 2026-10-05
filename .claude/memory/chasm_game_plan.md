@@ -86,7 +86,14 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   enforces: it seals the chasm from the north edge, impassable to EVERYTHING; mountain pockets are
   buildable, reachable from ONE side only, mainly for resources. Step 1 BUILT: mountain foot curve with
   a tongue past the main tip (ChasmLayout), Terrain::biome, debug check `sealed` (seeds 1-60 pass,
-  proven to fail when the tongue is cut short). Next: step 2 relief + slope rules.
+  proven to fail when the tongue is cut short). Step 2 BUILT: Terrain::Relief/GroundHeight (THE ground
+  for everything; TerrainGroundHeight is now the level bump only), hills 14 high, mountain crags to ~60,
+  flat along rivers; slope limits (house 0.7, road 1.4, field 1.3 rise), walker slope cost + 0.75 max
+  grade; houses on half-storey-rounded footings. Other window did picking/cursor/camera on relief.
+  Step 3 BUILT: pockets = meadow + one valley through a spur of the foot (ChasmLayout::Pocket), biome
+  POCKET, check `pockets` (one side only, and walkable); rivers now rise at the mountain's foot (seeds 2,3
+  re-pinned). 58/60 seeds have a pocket per side. Next: step 4 swamp lowland, step 5 snow/colours.
+  Later (user, 2026-10-05): a buildable overlay round the cursor in ALL builds, with building footprints.
 
 **Why:** the user wants the building mechanic tested before any gameplay goes on top.
 - Testing: NO separate engine-free `make rules` build (user's call, unlike archer/bomber). Checks

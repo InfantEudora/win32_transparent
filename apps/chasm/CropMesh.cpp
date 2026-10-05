@@ -100,7 +100,7 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     vec3 base[4];
     for (int i = 0; i < 4; i++){
         p[i] = g.fine.pos[quad.v[i]];
-        h[i] = TerrainGroundHeight(p[i],level) + FIELD_LIFT;
+        h[i] = w.terrain->GroundHeight(p[i],level) + FIELD_LIFT;
         base[i] = vec3(p[i].x,h[i],p[i].y);
     }
     MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_EARTH);

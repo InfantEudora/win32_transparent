@@ -86,3 +86,95 @@ Files: `ChasmLayout.cpp` (`PlaceMountainFoot`, `ChasmMountainFootAt`), `Grid.h` 
   enough for the seal, and step 3's pockets and spurs may want more.
 - Debug and release mountains were not compared vertex for vertex (the biome is not in any hash);
   the foot is plain float arithmetic on the layout's own stream, like the rest of the layout.
+
+## Step 2: relief, and slope rules
+
+**One function of position, on the plateau only** (`Terrain::Relief`, a 2-unit raster read bilinearly,
+so cells either side of an edge agree): soft HILLS in regions - some country rolls, some lies flat for
+towns - and the MOUNTAIN climbing from nothing at its foot into ridged crags. Everything fades to
+nothing toward a river's wet margin, so rivers keep their flat water and cut valleys through the
+mountain. The chasm floor and the shards stay flat. Seeded from the world's seed.
+
+**`Terrain::GroundHeight(p, level)` is the ground** for everything that stands or is drawn on it - the
+terrain mesh, gardens, roads, crops, walls, houses, props, walkers - and `Terrain::ground` holds it per
+fine vertex for the rules.
+
+- **Building**: a plot must also be gentle - the ground may rise at most so much across it: 0.7 for a
+  house, garden or town, 1.4 for a road (it climbs), 1.3 across a field's cell ("too steep").
+- **Houses** stand on their plot's ground rounded to half a storey. Rounding is what keeps a row of
+  houses on a gentle slope under one roof; where the ground has climbed a half-storey the row steps,
+  with a short wall. A deep footing hides the slope under the walls.
+- **Walkers** are slowed by slope (speed / (1 + 3 x grade)) and stopped by a grade past 0.75. The
+  mountain stays closed by its biome, not by its steepness, so the seal never depends on noise.
+- **Cliff walls** follow the relief at their top; their strata are counted from the levels' drop, as
+  before, so segments still meet - under a hill the strata stand a little thicker.
+- **The view** (picking on the relief, the cursor and grid lines on the ground): the other window.
+
+### Step 2, as built (2026-10-05)
+
+Files: `Terrain.*` (`BuildRelief`, `Relief`, `GroundHeight`, `ground`, the `relief` figure),
+`TerrainMesh.cpp` (ground and wall tops on the relief), `Zones.cpp` (slope limits), `Walkers.*`
+(slope cost and limit), `BuildingMesh.cpp` (houses on half-storey footings), and every mesh and prop
+placer moved from `TerrainGroundHeight` (now the level's bump only) to `Terrain::GroundHeight`.
+
+- **Tuned to**: hills up to 14 on a 110 wavelength, in regions 320 across; the mountain climbs over 70
+  from its foot to a floor of 10 plus crags of 42 (ridged noise, wavelengths 80 and 28); the relief
+  comes back over 24 past a river's wet margin. The first hills (7 high) did not show at all at the
+  game's zoom; 14 reads as rolling country, and rivers sit in valleys of their own.
+- **Measured, seeds 1-30 (debug)**: every check passes; the highest ground 46-64 above the plateau;
+  0.0-4.8% of the open plateau too steep for a house (mean 1.6%). A row of 82 plots painted across a
+  hillside: 59 houses, 23 refused as too steep, the rows stepping where the ground does. The replay
+  test passes in debug and release.
+- **View** (ApplicationChasm.cpp, by the other window): picking marches the camera ray against each
+  level's GroundHeight, top level first, and bisects the crossing, so a pick on a hill or the mountain
+  lands under the cursor instead of off by the parallax. Hover/selection outlines, the debug grid
+  layers, the pins and the issue markers all lie on GroundHeight (outline segments split every unit
+  so they don't cut into slopes); "flat" still draws at y = 0. The camera's orbit point eases onto the
+  plateau's relief, not the levels, so zooming in on a peak turns about the peak, and panning over the
+  chasm doesn't drop the view.
+
+**Open:**
+- Snow starts at the mountain's foot, on flat ground - snow by height is step 5.
+- Hills are the same everywhere they are allowed; a biome (step 4's swamp, a desert) will want its own.
+- The mountain is still closed by its biome, not by being steep; pockets (step 3) open parts of it.
+- Under the mountain the chasm's walls stand up to 60 taller, their strata stretched to match.
+
+## Step 3: mountain pockets
+
+### As built (2026-10-05)
+
+Files: `ChasmLayout.cpp` (`PlacePockets`, the spurs in `PlaceMountainFoot`, `ChasmPocketDistance`, rivers
+rising at the foot), `Grid.h` (`ChasmLayout::Pocket`, `pockets`, `pocket_rejects`), `Terrain.*` (biome
+POCKET, the meadow and valley pressed into the relief, the `pockets` check), `Forest.cpp`, `Grid.cpp`
+(seeds 2 and 3 re-pinned).
+
+- **What a pocket is**: a MEADOW (radius 14-22, a wobbling edge, flat at 4-9 above the plateau) inside
+  the mountain, and one VALLEY from it due south through the front of a SPUR - the foot bulging out
+  round the pocket to where the valley leaves it. The valley ramps from the meadow's floor down to the
+  hills at its mouth (a grade under 0.35); round both the crags rise steeply over 7 units, so it reads
+  as a hollow. Biome POCKET: open, buildable, temperate colours, with a show of rock clusters until
+  resources exist.
+- **Where**: one on each side of the main rift, and about one map in three a second on one side,
+  drawn from the mountain's own stream after its base and tongue (so those are unchanged). Tried in a
+  shuffled sweep across the side - at least radius + 50 from the main tip in x, clear of rims (40 past
+  the meadow), rivers (18) and each other (60) - first close under the north edge, later further
+  south with the spur reaching round, and in the last tries smaller (radius 10-14) with 0.7 of the
+  clearances: a small pocket is better than a side with none.
+- **Rivers rise at the mountain's foot** now: a river from the north edge is cut where it first leaves
+  the mountain, 10 units inside, so it springs from the mountain's face. Rivers crossing the mountain
+  had blocked pockets on most seeds (step 1's open item too). A river whose whole run is inside the
+  mountain keeps its course. Rivers are in the grid's hash, so seeds 2 and 3 were re-pinned - the same
+  in debug and release.
+- **The check, `pockets`**: each pocket's meadow must be in a region the `sealed` flood reaches from
+  exactly one side, and a second flood that also refuses a walker's too-steep edges (grade 0.75) must
+  agree - so the pocket can be WALKED into from its side. It lists why tries were refused.
+- **Measured, seeds 1-60 (debug)**: every check passes on every seed; 133 of 141 wanted pockets placed,
+  215-643 vertices each; 58 seeds have a pocket on both sides, seeds 17 and 41 on one side only (a side
+  boxed in by rims and rivers). The replay test passes in debug and release.
+
+**Open:**
+- Seeds 17 and 41 leave one side without a pocket. If fairness wants a pocket per side always, the
+  next lever is letting a valley bend round an obstacle instead of running due south.
+- A few cells at a meadow's edge draw green up the rock face (a cell is coloured by its corners'
+  biome, not its slope) - step 5's colouring by steepness fixes it.
+- The pocket's look is all relief; there is no pinned cliff line round it. Enough so far.

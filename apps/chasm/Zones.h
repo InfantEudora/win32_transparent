@@ -30,6 +30,8 @@
         a cell with a house or ground on any of its vertices.
       - A road and a house never share a plot (step 10): a house hides a garden, but would cut a road.
       - A road is not painted over a garden or town: it stops at the edge, where it makes a gate.
+      - Not too steep (biomes_plan.md step 2): the ground may rise only so much across a plot (a road's
+        limit is twice a house's) or a field's cell - ZONE_RISE_* in Zones.cpp. Not on the mountain.
       - At most ZONE_MAX_STOREYS storeys.
 
     A ZoneState is immutable once published (Zones::Publish), the way the world is, and carries the

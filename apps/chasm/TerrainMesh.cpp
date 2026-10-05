@@ -148,7 +148,7 @@ public:
 
     //The ground's height at p on a level: the relief, and on the plateau any river's channel.
     float GroundY(const vec2& p, float level_height){
-        float y = Ground(p,level_height);
+        float y = terrain ? terrain->GroundHeight(p,level_height) : Ground(p,level_height);
         if (terrain && level_height == terrain_levels[TERRAIN_PLATEAU].height){
             y -= terrain->RiverDip(p);
         }
@@ -165,12 +165,17 @@ public:
         meets the ground above and below it; the rows between stray by Jitter.
     */
     void Wall(const vec2& a, const vec2& b, float top, float bottom_a, float bottom_b, const vec3& out){
-        float drop = top - std::min(bottom_a,bottom_b);
-        int bands = std::max(1,(int)std::ceil(drop / WALL_BAND_HEIGHT - 0.01f));
         float top_a = GroundY(a,top);
         float top_b = GroundY(b,top);
         float bot_a = GroundY(a,bottom_a);
         float bot_b = GroundY(b,bottom_b);
+        /*
+            Bands by the LEVELS' drop, not the wall's real height: two segments meet at a shared point,
+            and only with the same count do their rows meet there. So under a hill or the mountain the
+            strata stand thicker, the relief shared out among them.
+        */
+        float drop = top - std::min(bottom_a,bottom_b);
+        int bands = std::max(1,(int)std::ceil(drop / WALL_BAND_HEIGHT - 0.01f));
         for (int j = 0; j < bands; j++){
             float t0 = (float)j / bands;
             float t1 = (float)(j + 1) / bands;

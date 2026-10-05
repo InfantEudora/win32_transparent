@@ -1,4 +1,5 @@
 #include "Terrain.h"
+#include "TerrainMesh.h"
 
 #include <algorithm>
 #include <chrono>
@@ -181,16 +182,161 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
         if (p.y < ChasmMountainFootAt(g.layout,p.x)){
             biome[v] = TERRAIN_BIOME_MOUNTAIN;
         }
+        //A pocket's meadow and valley are open ground, in the mountain or just out of it.
+        if (level[v] == TERRAIN_PLATEAU){
+            for (const ChasmLayout::Pocket& k : g.layout.pockets){
+                if (ChasmPocketDistance(k,p) < 0.0f){
+                    biome[v] = TERRAIN_BIOME_POCKET;
+                }
+            }
+        }
         biome_count[biome[v]]++;
     }
     BuildRivers(g,features);
+    //After the rivers: the relief fades out along them.
+    BuildRelief(g);
+    ground.assign(n,0.0f);
+    for (size_t v = 0; v < n; v++){
+        ground[v] = GroundHeight(g.fine.pos[v],Height((int)v));
+    }
     build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+//--- The relief (biomes_plan.md step 2) -----------------------------------------------------------
+
+namespace {
+
+//Smooth value noise in -1..1 on a lattice of `wavelength`, from the seed. Position alone decides it.
+float ReliefNoise(const vec2& p, float wavelength, uint32_t seed){
+    auto hash = [seed](int x, int z){
+        uint32_t h = (uint32_t)x * 0x8DA6B343u ^ (uint32_t)z * 0xD8163841u ^ seed * 0xCB1AB31Fu;
+        h ^= h >> 13;
+        h *= 0x5BD1E995u;
+        h ^= h >> 15;
+        return (float)(h & 0xFFFFu) / 32767.5f - 1.0f;
+    };
+    float fx = p.x / wavelength;
+    float fz = p.y / wavelength;
+    float ix = std::floor(fx);
+    float iz = std::floor(fz);
+    float tx = fx - ix;
+    float tz = fz - iz;
+    tx = tx * tx * (3.0f - 2.0f * tx);
+    tz = tz * tz * (3.0f - 2.0f * tz);
+    int x = (int)ix;
+    int z = (int)iz;
+    float a = hash(x,z) + (hash(x + 1,z) - hash(x,z)) * tx;
+    float b = hash(x,z + 1) + (hash(x + 1,z + 1) - hash(x,z + 1)) * tx;
+    return a + (b - a) * tz;
+}
+
+//A ridge: 1 along the noise's zero line, falling to 0 away from it - sharp crests, broad valleys.
+float Ridge(const vec2& p, float wavelength, uint32_t seed){
+    float r = 1.0f - std::fabs(ReliefNoise(p,wavelength,seed));
+    return r * r;
+}
+
+float SmoothStep(float e0, float e1, float x){
+    float t = std::max(0.0f,std::min(1.0f,(x - e0) / (e1 - e0)));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+}
+
+/*
+    THE RELIEF, made once per world on a 2-unit raster. Three parts, all of position alone:
+
+      - HILLS, soft, in regions of the plateau: two octaves of noise lifted to be all above the
+        level, times a regional mask, so some country rolls and some lies flat for towns and fields.
+      - THE MOUNTAIN: rising from the foot over RELIEF_MOUNTAIN_RISE into peaks - a base rise and two
+        octaves of ridges - so its front is foothills and its heart crags. Added to the hills from
+        nothing at the foot, so the hills run on up into it rather than meeting an edge.
+      - FLAT ALONG RIVERS: everything fades to nothing toward a river's wet margin, so the water's
+        flat surface (TERRAIN_WATER_Y) always has flat ground round it, and a river through the
+        mountain runs in a valley it has cut.
+
+    Seeded from the world's seed, through its own salts, so hills differ between maps.
+*/
+void Terrain::BuildRelief(const Grid& g){
+    const uint32_t seed = g.settings.seed;
+    relief_origin = g.bounds_min;
+    vec2 size = g.bounds_max - g.bounds_min;
+    relief_w = (int)std::ceil(size.x / relief_cell) + 2;
+    relief_h = (int)std::ceil(size.y / relief_cell) + 2;
+    relief.assign((size_t)relief_w * relief_h,0.0f);
+    relief_max = 0.0f;
+    for (int j = 0; j < relief_h; j++){
+        for (int i = 0; i < relief_w; i++){
+            vec2 p = relief_origin + vec2(i * relief_cell,j * relief_cell);
+            //Hills: 0..1 noise, a region mask, an amplitude.
+            float shape = ReliefNoise(p,RELIEF_HILL_WAVELENGTH,seed ^ 0x4111u) * 0.75f +
+                          ReliefNoise(p,RELIEF_HILL_WAVELENGTH * 0.4f,seed ^ 0x4112u) * 0.25f;
+            float mask = SmoothStep(-0.15f,0.45f,ReliefNoise(p,RELIEF_HILL_REGION,seed ^ 0x4113u));
+            float hills = (shape * 0.5f + 0.5f) * mask * RELIEF_HILL_HEIGHT;
+            //The mountain: how far in from its foot, and the peaks there.
+            float in = ChasmMountainFootAt(g.layout,p.x) - p.y;
+            float rise = SmoothStep(0.0f,RELIEF_MOUNTAIN_RISE,in);
+            float crags = Ridge(p,RELIEF_PEAK_WAVELENGTH,seed ^ 0x4114u) * 0.7f +
+                          Ridge(p,RELIEF_PEAK_WAVELENGTH * 0.35f,seed ^ 0x4115u) * 0.3f;
+            //On top of the hills, from nothing at the foot: the hills run on up into it, no seam.
+            float mountain = rise * (RELIEF_MOUNTAIN_BASE + crags * RELIEF_PEAK_HEIGHT);
+            float h = hills + mountain;
+            /*
+                A pocket: its meadow flat at its floor, its valley ramping from that floor down to the
+                hills at its mouth - so it can be walked up - and the crags rising steeply round both
+                over RELIEF_POCKET_EDGE, which is what makes it read as a hollow in the mountain.
+            */
+            for (const ChasmLayout::Pocket& k : g.layout.pockets){
+                float along = 0.0f;
+                float d = ChasmPocketDistance(k,p,&along);
+                float keep = SmoothStep(0.0f,RELIEF_POCKET_EDGE,d);
+                if (keep < 1.0f){
+                    float target = k.floor + (hills - k.floor) * along;
+                    h = target + (h - target) * keep;
+                }
+            }
+            //Flat along rivers.
+            float river = SmoothStep(TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN,
+                                     TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + RELIEF_RIVER_FADE,EdgeDistance(p));
+            h *= river;
+            relief[(size_t)j * relief_w + i] = h;
+            relief_max = std::max(relief_max,h);
+        }
+    }
+}
+
+float Terrain::Relief(const vec2& p) const{
+    if (relief.empty()){
+        return 0.0f;
+    }
+    float fx = (p.x - relief_origin.x) / relief_cell;
+    float fz = (p.y - relief_origin.y) / relief_cell;
+    fx = std::max(0.0f,std::min((float)(relief_w - 1) - 0.001f,fx));
+    fz = std::max(0.0f,std::min((float)(relief_h - 1) - 0.001f,fz));
+    int ix = (int)fx;
+    int iz = (int)fz;
+    float tx = fx - ix;
+    float tz = fz - iz;
+    const float* row0 = &relief[(size_t)iz * relief_w + ix];
+    const float* row1 = row0 + relief_w;
+    float a = row0[0] + (row0[1] - row0[0]) * tx;
+    float b = row1[0] + (row1[1] - row1[0]) * tx;
+    return a + (b - a) * tz;
+}
+
+float Terrain::GroundHeight(const vec2& p, float level_height) const{
+    float y = TerrainGroundHeight(p,level_height);
+    if (level_height == terrain_levels[TERRAIN_PLATEAU].height){
+        y += Relief(p);
+    }
+    return y;
 }
 
 const char* TerrainBiomeName(int biome){
     switch (biome){
         case TERRAIN_BIOME_TEMPERATE:   return "temperate";
         case TERRAIN_BIOME_MOUNTAIN:    return "mountain";
+        case TERRAIN_BIOME_POCKET:      return "pocket";
         default:                        return "?";
     }
 }
@@ -300,7 +446,8 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
     }
 
     //--- The edge raster: distance past the nearest water edge -------------------------------------
-    const float reach = TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + 2.0f;
+    //Out as far as the relief's fade along a river (BuildRelief), past the wet margin it was made for.
+    const float reach = TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + RELIEF_RIVER_FADE + 2.0f;
     edge_cell = 1.0f;
     edge_origin = lo;
     edge_w = (int)std::ceil(size.x / edge_cell) + 2;
@@ -564,6 +711,35 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
     }
 
     /*
+        --- Relief: a figure, not a rule - how high it goes, and how much of the open plateau it makes
+        too steep to build a house on. A vertex counts as steep where the ground rises more than a
+        house's limit (0.7, Zones.cpp) along any fine edge from it: about a plot's worth of rise.
+    */
+    {
+        int open = 0;
+        int steep = 0;
+        std::vector<float> rise(g.fine.pos.size(),0.0f);
+        for (const auto& e : g.fine.edges){
+            if (t.level[e.first] != t.level[e.second]){
+                continue;
+            }
+            float d = std::fabs(t.ground[e.first] - t.ground[e.second]);
+            rise[e.first] = std::max(rise[e.first],d);
+            rise[e.second] = std::max(rise[e.second],d);
+        }
+        for (size_t v = 0; v < g.fine.pos.size(); v++){
+            if (t.level[v] != TERRAIN_PLATEAU || t.Mountain((int)v) || t.wet[v]){
+                continue;
+            }
+            open++;
+            steep += (rise[v] > 0.7f) ? 1 : 0;
+        }
+        snprintf(buf,sizeof(buf),"highest %.1f above the plateau; %.1f%% of the open plateau too steep for a house",
+                 t.relief_max,100.0f * steep / std::max(1,open));
+        add_result("relief",true,buf);
+    }
+
+    /*
         --- Sealed: the mountain closes the chasm off, so the two sides cannot reach each other ------
         The one rule a biome enforces (biomes_plan.md). The ground is flooded as a walker would cross
         it with nothing painted - along fine edges, never down a cliff (a level change), never onto
@@ -641,6 +817,93 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
                      100.0f * t.biome_count[TERRAIN_BIOME_MOUNTAIN] / std::max<size_t>(1,n));
         }
         add_result("sealed",joined < 0 && west > 0 && east > 0,buf);
+
+        /*
+            --- Pockets: each one open, mostly buildable, and reachable from exactly one side --------
+            Through the same flood as `sealed`: the region a pocket's meadow is in must touch the south
+            edge's plateau on one side of the main mouth only - not none (shut in), not both (a way
+            round the seal).
+        */
+        const ChasmLayout& lay = g.layout;
+        /*
+            Walking in needs more than the seal's flood: a walker cannot climb past a grade of 0.75
+            (Walkers.h, WALKER_STEEPEST), so a pocket whose valley were too steep would pass `sealed`
+            and still be shut. A second flood with that limit says whether its own side gets in.
+        */
+        std::vector<int> walk(n);
+        for (size_t v = 0; v < n; v++){
+            walk[v] = (int)v;
+        }
+        std::function<int(int)> find_walk = [&](int v){
+            while (walk[v] != v){
+                walk[v] = walk[walk[v]];
+                v = walk[v];
+            }
+            return v;
+        };
+        for (const auto& e : g.fine.edges){
+            int a = e.first;
+            int b = e.second;
+            if (t.level[a] != t.level[b] || t.Mountain(a) || t.Mountain(b)){
+                continue;
+            }
+            float run = (g.fine.pos[a] - g.fine.pos[b]).length();
+            if (std::fabs(t.ground[a] - t.ground[b]) > 0.75f * run){
+                continue;
+            }
+            int ra = find_walk(a);
+            int rb = find_walk(b);
+            if (ra != rb){
+                walk[std::max(ra,rb)] = std::min(ra,rb);
+            }
+        }
+        std::vector<uint8_t> walk_sides(n,0);
+        for (size_t v = 0; v < n; v++){
+            const vec2& p = g.fine.pos[v];
+            if (g.fine.f_boundary[v] && std::fabs(p.y - south) <= 1e-3f && t.level[v] == TERRAIN_PLATEAU &&
+                !t.Mountain((int)v)){
+                walk_sides[find_walk((int)v)] |= (p.x < mouth) ? 1 : 2;
+            }
+        }
+        int bad = 0;
+        std::string detail;
+        for (size_t pi = 0; pi < lay.pockets.size(); pi++){
+            const ChasmLayout::Pocket& k = lay.pockets[pi];
+            int centre_v = -1;
+            float best = 1e30f;
+            int cells = 0;
+            for (size_t v = 0; v < n; v++){
+                if (t.biome[v] != TERRAIN_BIOME_POCKET || ChasmPocketDistance(k,g.fine.pos[v]) >= 0.0f){
+                    continue;
+                }
+                cells++;
+                float d = (g.fine.pos[v] - k.centre).length();
+                if (d < best){
+                    best = d;
+                    centre_v = (int)v;
+                }
+            }
+            int reach = (centre_v >= 0) ? sides[find(centre_v)] : 0;
+            int walked = (centre_v >= 0) ? walk_sides[find_walk(centre_v)] : 0;
+            bool f_ok = centre_v >= 0 && (reach == 1 || reach == 2) && walked == reach;
+            char one[128];
+            snprintf(one,sizeof(one),"%s%s pocket r %.0f: %i vertices, reached from %s",detail.empty() ? "" : "; ",
+                     k.side < 0 ? "west" : "east",k.radius,cells,
+                     reach == 1 ? "the west" : reach == 2 ? "the east" : reach == 3 ? "BOTH sides" : "NOWHERE");
+            if (walked != reach){
+                detail += one;
+                snprintf(one,sizeof(one)," but WALKED from %s",walked == 0 ? "nowhere - too steep" : walked == 3 ? "both" : "the other side");
+            }
+            detail += one;
+            if (!f_ok){
+                bad++;
+                add_issue("pocket",centre_v,k.centre,true);
+            }
+        }
+        snprintf(buf,sizeof(buf),"%i of %i wanted (tries refused: room %i, rim %i, river %i, apart %i, valley %i): ",
+                 (int)lay.pockets.size(),lay.pockets_wanted,lay.pocket_rejects[0],lay.pocket_rejects[1],
+                 lay.pocket_rejects[2],lay.pocket_rejects[3],lay.pocket_rejects[4]);
+        add_result("pockets",bad == 0,std::string(buf) + (detail.empty() ? "none placed" : detail));
     }
 }
 #endif

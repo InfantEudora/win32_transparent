@@ -286,10 +286,17 @@ void ApplicationChasm::SetSelectedPick(const GridPick& p){
 /*
     Physics thread or at a tick boundary: it reads the camera.
 
-    The terrain is a few flat levels, so the ray is tried against each level's plane from the top
-    down, and the first plane whose point lands on a plot OF THAT LEVEL is what the ray hits. A
-    point on the plateau's plane over the chasm lands on a floor plot and is passed over; the ray
-    goes on down to the floor. Walls are never hit - nothing is built on a wall.
+    Each level is a GROUND, not a plane: its height plus the small bump, and on the plateau the
+    relief (Terrain::GroundHeight) - hills, and peaks up to relief_max north of the mountain's foot.
+    So the ray is marched down through the band each level's ground can lie in, and where it first
+    goes under that ground the crossing is found by bisection. The levels are tried from the top
+    down, and the first crossing that lands on a plot OF THAT LEVEL is what the ray hits: one over
+    the chasm lands on a floor plot and is passed over, and the ray goes on down to the floor. That
+    is right even with hills, because going under the plateau's ground over the chasm means the ray
+    is already inside the chasm. Walls are never hit - nothing is built on a wall.
+
+    Intersecting each level's flat plane, as this did while the ground was flat, lands a pick on a
+    hill off by the parallax - a plot behind the one under the cursor.
 */
 GridPick ApplicationChasm::PickUnderPixel(int2 px){
     GridPick none;
@@ -302,16 +309,62 @@ GridPick ApplicationChasm::PickUnderPixel(int2 px){
     if (r.direction.y >= -1e-4f){
         return none;
     }
+    const Terrain& t = *w->terrain;
+    const vec3 o = r.origin;
+    const vec3 d = r.direction;
+    auto at_t = [&](float s){ return o + d * s; };
     for (int l = 0; l < TERRAIN_NUM_LEVELS; l++){
-        plane level_plane;
-        level_plane.pos = vec3(0.0f,terrain_levels[l].height,0.0f);
-        level_plane.normal = vec3(0.0f,1.0f,0.0f);
-        vec3 at;
-        if (!r.intersects_plane(level_plane,at)){
+        const float level_h = terrain_levels[l].height;
+        //The band this level's ground lies in: the relief is the plateau's alone; one unit covers
+        //the bump either way.
+        float top = level_h + ((l == TERRAIN_PLATEAU) ? t.relief_max : 0.0f) + 1.0f;
+        float bottom = level_h - 1.0f;
+        float s0 = std::max(0.0f,(top - o.y) / d.y);
+        float s1 = (bottom - o.y) / d.y;
+        if (s1 <= s0){
             continue;
         }
+        auto under = [&](float s){
+            vec3 p = at_t(s);
+            return p.y <= t.GroundHeight(vec2(p.x,p.z),level_h);
+        };
+        /*
+            Steps of a unit across the ground, or two up and down for a ray looking nearly straight
+            down - the relief changes over several units, so a step that size cannot jump a hill.
+            Capped, for a ray grazing a long way across the map.
+        */
+        float across = std::sqrt(d.x * d.x + d.z * d.z);
+        float step = std::min(1.0f / std::max(across,1e-4f),2.0f / -d.y);
+        int steps = std::min(4000,(int)std::ceil((s1 - s0) / step));
+        step = (s1 - s0) / (float)std::max(1,steps);
+        float prev = s0;
+        float hit = -1.0f;
+        if (under(s0)){
+            hit = s0;
+        }
+        for (int k = 1; k <= steps && hit < 0.0f; k++){
+            float s = s0 + step * (float)k;
+            if (under(s)){
+                float a = prev;
+                float b = s;
+                for (int i = 0; i < 20; i++){
+                    float m = (a + b) * 0.5f;
+                    if (under(m)){
+                        b = m;
+                    }else{
+                        a = m;
+                    }
+                }
+                hit = b;
+            }
+            prev = s;
+        }
+        if (hit < 0.0f){
+            continue;
+        }
+        vec3 at = at_t(hit);
         GridPick pick = w->picker->Pick(vec2(at.x,at.z));
-        if (pick.f_hit && w->terrain->level[pick.plot] == l){
+        if (pick.f_hit && t.level[pick.plot] == l){
             return pick;
         }
         none.at = vec2(at.x,at.z);
@@ -847,20 +900,35 @@ void ApplicationChasm::UpdatePickView(){
 
     std::vector<line_vertex> verts;
     std::vector<vec2> segs;
-    //Everything at the height of the plot it is about: a pick on the floor is drawn on the floor.
-    float y = 0.0f;
-    auto emit = [&verts,&segs,&y](uint32_t color){
+    /*
+        Everything on the ground of the plot it is about: a pick on the floor is drawn on the floor,
+        one on a hill on the hill (Terrain::GroundHeight; the object itself sits PICK_VIEW_Y over
+        it). A segment longer than a unit is cut into pieces each laid on the ground, so a straight
+        line between two points on a slope cannot pass under the hill between them.
+    */
+    const Terrain& terrain = *w->terrain;
+    float level_h = 0.0f;
+    auto emit = [&verts,&segs,&level_h,&terrain](uint32_t color){
         line_vertex v;
         v.color = color;
-        for (const vec2& s : segs){
-            v.pos = vec3(s.x,y,s.y);
+        auto put = [&](const vec2& p){
+            v.pos = vec3(p.x,terrain.GroundHeight(p,level_h),p.y);
             verts.push_back(v);
+        };
+        for (size_t i = 0; i + 1 < segs.size(); i += 2){
+            vec2 a = segs[i];
+            vec2 b = segs[i + 1];
+            int pieces = std::max(1,(int)std::ceil((b - a).length()));
+            for (int k = 0; k < pieces; k++){
+                put(a + (b - a) * ((float)k / pieces));
+                put(a + (b - a) * ((float)(k + 1) / pieces));
+            }
         }
         segs.clear();
     };
 
     if (selected.f_hit){
-        y = w->terrain->Height(selected.plot);
+        level_h = terrain.Height(selected.plot);
         p->PlotOutline(selected.plot,segs);
         //The outline again, shrunk toward the vertex a step at a time: a 1-pixel line cannot be
         //thick, but nested copies of it read as fill.
@@ -877,7 +945,7 @@ void ApplicationChasm::UpdatePickView(){
         emit(PICK_SELECTED_PLOT);
     }
     if (hover.f_hit){
-        y = w->terrain->Height(hover.plot);
+        level_h = terrain.Height(hover.plot);
         /*
             With a paint tool, what it would paint is drawn green, or red where the rules refuse it
             (Zones.h) - so a refusal is seen before the click, not after. An existing house or field
@@ -1103,7 +1171,16 @@ void ApplicationChasm::UpdateCamera(){
     }
     cam_pitch = std::max(CHASM_CAM_PITCH_MIN,std::min(CHASM_CAM_PITCH_MAX,cam_pitch));
     cam_distance = std::max(CHASM_CAM_DIST_MIN,std::min(dist_max,cam_distance));
-    camera_target.y = 0.0f;
+    /*
+        The orbit point rides the plateau's ground - its relief, not its levels: zoomed in on a peak
+        the camera would otherwise turn about a point deep inside the mountain, but following the
+        levels would drop it 70 units every time the view crossed the chasm. Eased, a fifth of the
+        way a pass, so panning over a ridge does not jolt the view.
+    */
+    std::shared_ptr<const ChasmWorld> world = GetWorld();
+    float ground_y = world ? world->terrain->GroundHeight(vec2(camera_target.x,camera_target.z),
+                                                          terrain_levels[TERRAIN_PLATEAU].height) : 0.0f;
+    camera_target.y += (ground_y - camera_target.y) * std::min(1.0f,12.0f * dt);
     ApplyCamera();
 }
 
@@ -1254,8 +1331,16 @@ void ApplicationChasm::UpdateGridView(){
         Hide the terrain to see the floor's cells under the plateau.
     */
     const bool f_flat = f_view_flat;
+    //On the ground (Terrain::ground per vertex, GroundHeight anywhere else), so the layers lie on
+    //hills instead of disappearing into them.
     auto H = [&terrain,f_flat](int v){
-        return f_flat ? 0.0f : terrain.Height(v);
+        if (f_flat){
+            return 0.0f;
+        }
+        return terrain.ground.empty() ? terrain.Height(v) : terrain.ground[v];
+    };
+    auto G = [&terrain,f_flat](const vec2& p, int level){
+        return f_flat ? 0.0f : terrain.GroundHeight(p,terrain_levels[level].height);
     };
 
     std::vector<line_vertex> verts;
@@ -1273,12 +1358,15 @@ void ApplicationChasm::UpdateGridView(){
         float hb = H(b);
         const vec2& pa = g->fine.pos[a];
         const vec2& pb = g->fine.pos[b];
-        if (ha == hb){
-            line(pa,pb,color,ha,ha);
+        int la = terrain.level[a];
+        int lb = terrain.level[b];
+        if (la == lb){
+            line(pa,pb,color,ha,hb);
         }else{
+            //Across a cliff: each half on its own level's ground, dropping at the midpoint.
             vec2 mid = (pa + pb) * 0.5f;
-            line(pa,mid,color,ha,ha);
-            line(mid,pb,color,hb,hb);
+            line(pa,mid,color,ha,G(mid,la));
+            line(mid,pb,color,G(mid,lb),hb);
         }
     };
     const float unit = g->settings.triangle_side;
@@ -1315,19 +1403,18 @@ void ApplicationChasm::UpdateGridView(){
             return (kind < 0) ? VIEW_PIN_OUTLINE : (kind == GRID_FEATURE_RIM) ? VIEW_PIN_RIM : VIEW_PIN_SHARD;
         };
         //A rim's line is on the plateau and a shard's on its top - each on its high side.
-        auto line_height = [g,f_flat](int l){
+        auto line_level = [g](int l){
             int kind = g->LineKind(l);
-            if (f_flat || kind < 0){
-                return terrain_levels[TERRAIN_PLATEAU].height;
-            }
-            return terrain_levels[TerrainLevelOfKind(kind)].height;
+            return kind < 0 ? TERRAIN_PLATEAU : (int)TerrainLevelOfKind(kind);
         };
-        //The smoothed lines the chains lie on (TerrainFeatureLines), not the settings' corners.
+        //The smoothed lines the chains lie on (TerrainFeatureLines), not the settings' corners -
+        //each point on its own level's ground, so a rim follows the hills along its top.
         for (size_t f = 0; f < w->features.size(); f++){
             int l = base + (int)f;
+            int level = line_level(l);
             const std::vector<vec2>& pts = w->features[f].points;
             for (size_t i = 0; i + 1 < pts.size(); i++){
-                line(pts[i],pts[i + 1],line_colour(l),line_height(l) + 0.3f,line_height(l) + 0.3f);
+                line(pts[i],pts[i + 1],line_colour(l),G(pts[i],level) + 0.3f,G(pts[i + 1],level) + 0.3f);
             }
         }
         for (size_t v = 0; v < g->fine.pos.size(); v++){
@@ -1399,7 +1486,7 @@ void ApplicationChasm::UpdateGridView(){
             //At the ground under it: the issue names a vertex or a quad, and either way the nearest
             //plot says which level the spot is on.
             GridPick under = w->picker->Pick(issue.where);
-            float h = under.f_hit ? H(under.plot) : 0.0f;
+            float h = under.f_hit ? G(issue.where,terrain.level[under.plot]) : 0.0f;
             const int SEGMENTS = 12;
             for (int s = 0; s < SEGMENTS; s++){
                 float a0 = 6.2831853f * s / SEGMENTS;
@@ -1487,7 +1574,12 @@ void ApplicationChasm::FocusIssue(int i){
     }
     selected_issue = i;
     view_version++;
-    camera_target = vec3(r->issues[i].where.x,0.0f,r->issues[i].where.y);
+    //Straight onto the ground the camera eases to anyway (UpdateCamera), so the jump does not
+    //finish with a drift.
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    const vec2& at = r->issues[i].where;
+    float y = w ? w->terrain->GroundHeight(at,terrain_levels[TERRAIN_PLATEAU].height) : 0.0f;
+    camera_target = vec3(at.x,y,at.y);
     cam_distance = std::min(cam_distance,40.0f);
     ApplyCamera();
 }

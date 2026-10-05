@@ -108,7 +108,7 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
         PropInstance p;
         p.kind = (uint8_t)kind;
         float level = terrain_levels[t.level[v]].height;
-        p.pos = vec3(at.x,TerrainGroundHeight(at,level),at.y);
+        p.pos = vec3(at.x,t.GroundHeight(at,level),at.y);
         p.yaw = yaw;
         p.scale = scale;
         GridPick under = picker.Pick(at);
@@ -137,6 +137,14 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
                 Place(Pick(Chance(seed,v,3),PROP_ROCK_A,rock_w,4),base + vec2(std::cos(a),std::sin(a)) * r,
                       Chance(seed,v,6) * 6.2831853f,0.9f + Chance(seed,v,7) * 0.6f);
             }
+            continue;
+        }
+        //A pocket (step 3) is there for what it holds: until resources exist, a show of stone.
+        if (t.biome[v] == TERRAIN_BIOME_POCKET && Chance(seed,v,40) < 0.06f){
+            float a = Chance(seed,v,41) * 6.2831853f;
+            float r = std::sqrt(Chance(seed,v,42)) * PROP_JITTER;
+            Place(PROP_ROCK_CLUSTER,base + vec2(std::cos(a),std::sin(a)) * r,Chance(seed,v,43) * 6.2831853f,
+                  1.0f + Chance(seed,v,44) * 0.5f);
             continue;
         }
         float n = Noise(base.x / FOREST_SCALE,base.y / FOREST_SCALE,seed) * 0.75f +

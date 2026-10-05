@@ -10,12 +10,12 @@
 namespace {
 
 //A garden or town plot's quarter in this cell, laid on the relief: corner, midpoint, centre, midpoint.
-void GroundQuarter(std::vector<vertex>& out, const vec2* p, int k, float level, int column){
+void GroundQuarter(std::vector<vertex>& out, const Terrain& t, const vec2* p, int k, float level, int column){
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
     vec2 q[4] = {p[k],(p[k] + p[(k + 1) % 4]) * 0.5f,centre,(p[k] + p[(k + 3) % 4]) * 0.5f};
     vec3 c[4];
     for (int i = 0; i < 4; i++){
-        c[i] = vec3(q[i].x,TerrainGroundHeight(q[i],level) + GROUND_LIFT,q[i].y);
+        c[i] = vec3(q[i].x,t.GroundHeight(q[i],level) + GROUND_LIFT,q[i].y);
     }
     MeshQuad(out,c[0],c[1],c[2],c[3],vec3(0.0f,1.0f,0.0f),column);
 }
@@ -49,7 +49,7 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
                     continue;
                 }
                 float level = terrain_levels[t.level[quad.v[k]]].height;
-                GroundQuarter(out,p,k,level,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
+                GroundQuarter(out,t,p,k,level,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
             }
         }
         if (f_road || f_ground){    //f_ground: the path just inside a gate

@@ -104,6 +104,22 @@ struct ChasmLayout{
         the tongue covers it. Drawn last, from a stream of its own, so it moves nothing else.
     */
     std::vector<vec2> mountain_foot;
+    /*
+        MOUNTAIN POCKETS (biomes_plan.md step 3): small flat meadows inside the mountain, each in a spur
+        the foot bulges out round it, entered by one valley through the spur's front - so a pocket is
+        reachable from the side of the chasm it stands on and from nowhere else. Mainly for resources.
+    */
+    struct Pocket{
+        vec2 centre;
+        float radius = 16.0f;               //the meadow's, before its edge's wobble
+        std::vector<vec2> valley;           //its centre line, from the meadow's edge out past the foot
+        float floor = 6.0f;                 //the meadow's height above the plateau
+        int side = 0;                       //-1 west of the main rift, +1 east
+    };
+    std::vector<Pocket> pockets;
+    int pockets_wanted = 0;
+    //Why tries were turned down: no room, a rim, a river, another pocket, too long a valley.
+    int pocket_rejects[5] = {};
     vec2 main_tip;                          //the main rift's spine's end
     float main_mouth_x = 0.0f;              //where the main rift leaves the south edge
     float generate_ms = 0.0f;
@@ -111,6 +127,13 @@ struct ChasmLayout{
 
 //The mountain's foot at x: the z north of which is mountain. -infinity with no foot.
 float ChasmMountainFootAt(const ChasmLayout& layout, float x);
+
+/*
+    Where p stands against pocket `k`: its distance outside the pocket (meadow or valley; negative
+    inside), and along the valley from the meadow's edge (0) to its mouth (1) - 0 in the meadow.
+*/
+#define CHASM_VALLEY_HALF_WIDTH 5.0f
+float ChasmPocketDistance(const ChasmLayout::Pocket& k, const vec2& p, float* along = nullptr);
 
 //The layout for a seed on the map rectangle lo..hi (x, z), lattice side `side`. Deterministic, and
 //draws from its own RRandom, never the grid's or the simulation's.

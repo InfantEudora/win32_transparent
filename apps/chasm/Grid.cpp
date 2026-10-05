@@ -1622,11 +1622,12 @@ struct PinnedGridHash{
     uint64_t hash;
 };
 //Pinned 2026-10-05 with the chasm generated from the seed (step 10) and the rivers in the hash,
-//the same in the debug and release builds.
+//the same in the debug and release builds. Seeds 2 and 3 re-pinned the same day when rivers came to
+//rise at the mountain's foot (biomes_plan.md step 3); seed 1 has no river from the north edge.
 static const PinnedGridHash pinned_grid_hashes[] = {
     {1,0xaab35fd8a65e3e1aull},
-    {2,0xc8d98f1fdd487b49ull},
-    {3,0xc6f75ca7d83dbe9dull},
+    {2,0x75128435ecdd0fceull},
+    {3,0x978f5aaf3bee0179ull},
 };
 
 #define GRID_ISSUES_MAX         200     //enough to see a pattern, few enough to draw and list

@@ -32,8 +32,9 @@
 
 namespace {
 
-float GroundAt(const vec2& p, float level){
-    return TerrainGroundHeight(p,level);
+//The ground a wall stands on: the world's, relief and all (Terrain::GroundHeight).
+float GroundAt(const ChasmWorld& w, const vec2& p, float level){
+    return w.terrain->GroundHeight(p,level);
 }
 
 /*
@@ -126,7 +127,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
             continue;
         }
         vec2 mid = (p[k] + p[(k + 1) % 4]) * 0.5f;
-        float yc = GroundAt(centre,level) - FOOTING;
+        float yc = GroundAt(w,centre,level) - FOOTING;
         //The midpoint is shared with the cell across edge k: of the two, the lower index builds the post.
         int across = QuadAcross(w,fine_quad,k);
         bool f_post_at_mid = (across < 0 || fine_quad < across);
@@ -141,7 +142,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
             float len = d.length();
             vec2 dir = d / std::max(1e-6f,len);
             vec2 jamb = mid + dir * std::min(GATE_HALF,len * GATE_MAX_SHARE);
-            float yj = GroundAt(jamb,level) - FOOTING;
+            float yj = GroundAt(w,jamb,level) - FOOTING;
             if (kind == ZONE_BOUNDARY_GARDEN_WALL){
                 Post(out,jamb,yj,GATE_PILLAR_HEIGHT + FOOTING,GATE_PILLAR_W,PAL_STONE);
             }else{
@@ -152,7 +153,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
             mid = jamb;             //the rest of the segment is wall as usual, from the jamb in
             f_post_at_mid = false;  //the jamb is the post
         }
-        float ym = GroundAt(mid,level) - FOOTING;
+        float ym = GroundAt(w,mid,level) - FOOTING;
         if (kind == ZONE_BOUNDARY_GARDEN_WALL){
             Beam(out,mid,centre,ym,yc,WALL_HEIGHT + FOOTING,WALL_THICK,PAL_STONE_LIGHT);
             Beam(out,mid,centre,ym + WALL_HEIGHT + FOOTING,yc + WALL_HEIGHT + FOOTING,HEDGE_HEIGHT,HEDGE_THICK,PAL_BUSH);
@@ -167,7 +168,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
                 float t = (float)i / stakes;
                 vec2 at = mid + d * t;
                 float jitter = (float)(MeshHash((uint32_t)fine_quad,(uint32_t)k,(uint32_t)i) % 100) / 100.0f;
-                Stake(out,at,GroundAt(at,level) - FOOTING,STAKE_HEIGHT + FOOTING + jitter * 0.12f,PAL_BARK);
+                Stake(out,at,GroundAt(w,at,level) - FOOTING,STAKE_HEIGHT + FOOTING + jitter * 0.12f,PAL_BARK);
             }
             if (f_post_at_mid){
                 Stake(out,mid,ym,STAKE_HEIGHT + FOOTING + 0.08f,PAL_BARK);
@@ -177,7 +178,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         centre_kind = std::max(centre_kind,kind);
     }
     if (f_post_at_centre){
-        float yc = GroundAt(centre,level) - FOOTING;
+        float yc = GroundAt(w,centre,level) - FOOTING;
         if (centre_kind == ZONE_BOUNDARY_GARDEN_WALL){
             Post(out,centre,yc,WALL_POST_HEIGHT + FOOTING,WALL_POST_W,PAL_STONE);
         }else{
@@ -202,7 +203,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         //posts go at even spacing from the coarse corner, so the two halves of a coarse edge line up.
         float len = (b - a).length();
         int posts = std::max(1,(int)std::ceil(len / FENCE_POST_SPACING));
-        float ya = GroundAt(a,level), yb = GroundAt(b,level);
+        float ya = GroundAt(w,a,level), yb = GroundAt(w,b,level);
         for (int i = 0; i <= posts; i++){
             float t = (float)i / posts;
             //The coarse corner's post is built by the child whose edge 0 starts there; the midpoint's
@@ -211,7 +212,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
                 continue;
             }
             vec2 at = a + (b - a) * t;
-            Post(out,at,GroundAt(at,level) - FOOTING,FENCE_HEIGHT + FOOTING,FENCE_POST_W,PAL_TIMBER);
+            Post(out,at,GroundAt(w,at,level) - FOOTING,FENCE_HEIGHT + FOOTING,FENCE_POST_W,PAL_TIMBER);
         }
         for (int r = 0; r < 2; r++){
             float rail_y = FENCE_HEIGHT * (r == 0 ? 0.45f : 0.85f);

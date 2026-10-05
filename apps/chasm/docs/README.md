@@ -149,6 +149,13 @@ line number.
 | `biomes_plan.md` | biomes and terrain height: levels for the hard edges plus a relief field; the north mountain that seals the chasm off (step 1 built), hills, pockets, swamp |
 | `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A*, gates in walls, arches under houses |
 
+### Later, agreed but not yet planned
+
+- **A buildable overlay, in every build.** With a tool in hand, the ground round the cursor tinted by
+  what that tool could do there - buildable, refused, reserved by the footprint being placed. Today
+  only the hovered plot goes green or red. It is not a debug view: placing building types with
+  footprints of more than one plot needs it, so it comes with them (the user's call, 2026-10-05).
+
 ### Props: modelled, palette-coloured
 
 Trees, rocks, stumps, logs and bushes are modelled - the exception "Generated, not modelled" makes

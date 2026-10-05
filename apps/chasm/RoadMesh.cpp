@@ -129,8 +129,9 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
         }
         //A road plot is flat all round (Zones.h), so the whole road here is on v's level.
         float level = terrain_levels[w.terrain->level[v]].height;
-        auto at = [level](const vec2& q){
-            return vec3(q.x,TerrainGroundHeight(q,level) + ROAD_LIFT,q.y);
+        const Terrain& terrain = *w.terrain;
+        auto at = [level,&terrain](const vec2& q){
+            return vec3(q.x,terrain.GroundHeight(q,level) + ROAD_LIFT,q.y);
         };
         int n = RoadCentreLine(w,z,v,segs);
         if (!f_road && n == 0){

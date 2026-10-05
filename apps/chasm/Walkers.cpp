@@ -69,6 +69,10 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
     if (t.Mountain(a) || t.Mountain(b)){
         return false;   //the north mountain, which nothing crosses (biomes_plan.md)
     }
+    //Too steep to walk: past a rise of WALKER_STEEPEST over the edge's run (step 2's relief).
+    if (std::fabs(t.ground[b] - t.ground[a]) > WALKER_STEEPEST * EdgeLength(a,b)){
+        return false;
+    }
     //A house is walked into only where the walk ends, and out of only where it starts.
     if (z.storeys[b] > 0 && b != to){
         return false;
@@ -92,13 +96,17 @@ static bool InField(const ChasmWorld& w, const ZoneState& z, int v){
 }
 
 float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
+    float speed = WALKER_SPEED_GROUND;
     if (z.ground[a] == ZONE_GROUND_ROAD && z.ground[b] == ZONE_GROUND_ROAD){
-        return WALKER_SPEED_ROAD;
+        speed = WALKER_SPEED_ROAD;
+    }else if (InField(*set.world,z,a) && InField(*set.world,z,b)){
+        speed = WALKER_SPEED_FIELD;
     }
-    if (InField(*set.world,z,a) && InField(*set.world,z,b)){
-        return WALKER_SPEED_FIELD;
-    }
-    return WALKER_SPEED_GROUND;
+    //Slower up and down a slope, by how steep it is - never faster, so A*'s estimate (the straight
+    //line at road speed) still never overestimates.
+    const Terrain& t = *set.world->terrain;
+    float grade = std::fabs(t.ground[b] - t.ground[a]) / std::max(1e-3f,EdgeLength(a,b));
+    return speed / (1.0f + WALKER_SLOPE_COST * grade);
 }
 
 /*

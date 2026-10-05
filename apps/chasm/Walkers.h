@@ -20,9 +20,11 @@
     --- THE GRAPH ------------------------------------------------------------------------------------
     The plots: a fine vertex joined to each vertex a fine edge joins it to. An edge is closed across a
     cliff (its ends on different levels), beside a river (either end wet), into a house that is not
-    where the walk starts or ends, and through a wall or palisade (ZoneBoundaryBetween) except at a
-    gate (ZoneGateBetween). It costs its
-    length over the speed it is walked at - fastest on a road, slowest through a field.
+    where the walk starts or ends, through a wall or palisade (ZoneBoundaryBetween) except at a
+    gate (ZoneGateBetween), onto the north mountain, and up a slope steeper than WALKER_STEEPEST. It
+    costs its
+    length over the speed it is walked at - fastest on a road, slowest through a field, and slower
+    the steeper it is.
 
     --- WHEN THE ZONES CHANGE -------------------------------------------------------------------------
     Every walker plans again from the plot it is walking toward, keeping the edge it is on - or, if
@@ -37,6 +39,8 @@
 #define WALKER_SPEED_ROAD       3.2f    //world units a second, both ends of the edge road
 #define WALKER_SPEED_GROUND     1.6f    //everywhere else
 #define WALKER_SPEED_FIELD      0.9f    //both ends in a field
+#define WALKER_SLOPE_COST       3.0f    //speed divided by 1 + this x the grade (rise over run)
+#define WALKER_STEEPEST         0.75f   //rise over run past which an edge cannot be walked at all
 
 struct Walker{
     int home = -1;              //plots

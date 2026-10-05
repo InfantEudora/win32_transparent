@@ -34,7 +34,8 @@
 */
 #define TERRAIN_BIOME_TEMPERATE 0
 #define TERRAIN_BIOME_MOUNTAIN  1
-#define TERRAIN_NUM_BIOMES      2
+#define TERRAIN_BIOME_POCKET    2       //step 3: a meadow in the mountain and its valley - open, buildable
+#define TERRAIN_NUM_BIOMES      3
 const char* TerrainBiomeName(int biome);
 
 struct TerrainLevel{
@@ -55,12 +56,23 @@ extern const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS];
     Nothing stands in or beside a river: a vertex within the bank plus a margin is WET, and a wet
     vertex is no one's to build on or grow on (Zones.cpp, Forest.cpp). The margin is wider than a
     plot, so anything that does stand somewhere sees no channel under it at all - which is why
-    TerrainGroundHeight, the ground for things that stand, can ignore rivers.
+    Terrain::GroundHeight, the ground for things that stand, can ignore rivers.
 */
 #define TERRAIN_WATER_Y         -0.5f   //the rivers' surface, against the plateau at 0
 #define TERRAIN_RIVER_DEPTH     1.15f   //how far the middle of a channel is lowered
 #define TERRAIN_RIVER_BANK      1.5f    //the channel rises over this much either side of the water's edge
 #define TERRAIN_WET_MARGIN      3.0f    //past the bank, still too close to build or grow
+
+//The relief (step 2, BuildRelief). World units.
+#define RELIEF_HILL_HEIGHT      14.0f   //the most a hill stands above the plateau
+#define RELIEF_HILL_WAVELENGTH  110.0f  //hill to hill
+#define RELIEF_HILL_REGION      320.0f  //the size of a rolling region, and of a flat one
+#define RELIEF_MOUNTAIN_RISE    70.0f   //from the foot inward, over which the mountain climbs to its full height
+#define RELIEF_MOUNTAIN_BASE    10.0f   //the mountain's floor above the plateau, past its rise
+#define RELIEF_PEAK_HEIGHT      42.0f   //the crags on top of that
+#define RELIEF_PEAK_WAVELENGTH  80.0f
+#define RELIEF_RIVER_FADE       24.0f   //past a river's wet margin, over which the relief comes back
+#define RELIEF_POCKET_EDGE      7.0f    //past a pocket's edge, over which the crags rise from its floor
 
 struct TerrainRiver{
     std::vector<vec2> points;   //world, smoothed, from the source; the last runs past the rim
@@ -88,6 +100,23 @@ public:
     std::vector<uint8_t> biome;     //per fine vertex, TERRAIN_BIOME_*
     bool Mountain(int v) const { return biome[v] == TERRAIN_BIOME_MOUNTAIN; }
     int biome_count[TERRAIN_NUM_BIOMES] = {};
+
+    /*
+        THE RELIEF (biomes_plan.md step 2): height on top of the levels, a smooth function of position
+        alone - rugged peaks rising from the mountain's foot, soft hills in regions of the plateau, and
+        nothing along a river, whose flat water needs flat ground under it. Only the PLATEAU gets it:
+        the chasm's floor and shards stay flat. Read from a raster bilinearly, so the cells on either
+        side of an edge agree.
+
+        GroundHeight is THE ground for anything that stands or is drawn on it: the level, its small
+        bump (TerrainGroundHeight) and, on the plateau, the relief. Not the river channel, which only
+        the terrain mesh cuts (and nothing stands near a river - see wet).
+    */
+    float Relief(const vec2& p) const;
+    float GroundHeight(const vec2& p, float level_height) const;
+    //Per fine vertex: GroundHeight at it, on its own level - for the slope rules, read often.
+    std::vector<float> ground;
+    float relief_max = 0.0f;
 
     std::vector<TerrainRiver> rivers;
     std::vector<TerrainFall> falls;
@@ -118,6 +147,13 @@ private:
     std::vector<float> edge;
     float EdgeDistance(const vec2& p) const;
     void BuildRivers(const Grid& g, const std::vector<GridLine>& features);
+
+    vec2 relief_origin;
+    float relief_cell = 2.0f;
+    int relief_w = 0;
+    int relief_h = 0;
+    std::vector<float> relief;
+    void BuildRelief(const Grid& g);
 };
 
 /*

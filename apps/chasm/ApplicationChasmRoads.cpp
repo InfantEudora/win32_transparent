@@ -211,7 +211,7 @@ void ApplicationChasm::UploadWalkers(){
         vec2 p = Walkers::Position(*w,k,&facing);
         int plot = k.path.empty() ? 0 : k.path[k.seg];
         float level = w->terrain->Height(plot);
-        o->SetPosition(vec3(p.x,TerrainGroundHeight(p,level),p.y),false);
+        o->SetPosition(vec3(p.x,w->terrain->GroundHeight(p,level),p.y),false);
         o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),false);
         o->SetVisibility(true);
     }
@@ -231,7 +231,7 @@ void ApplicationChasm::UploadWalkers(){
             for (int e = 0; e < 2; e++){
                 int v = k.path[j + e];
                 vec2 p = w->grid->fine.pos[v];
-                lv.pos = vec3(p.x,TerrainGroundHeight(p,w->terrain->Height(v)) + WALKER_PATH_Y,p.y);
+                lv.pos = vec3(p.x,w->terrain->GroundHeight(p,w->terrain->Height(v)) + WALKER_PATH_Y,p.y);
                 lines.push_back(lv);
             }
         }

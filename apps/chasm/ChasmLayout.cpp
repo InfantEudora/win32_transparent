@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <queue>
 #include "RRandom.h"
 
@@ -1180,18 +1181,192 @@ struct Builder{
 }
 
 /*
-    The north mountain's foot (biomes_plan.md step 1). A BASE about a tenth of the map's depth from
-    the north edge, wandering on two octaves of noise, and a TONGUE - a parabola about the main tip's x,
-    reaching MOUNTAIN_TONGUE_MARGIN past the tip - joined to it by a smooth maximum, so the foot bends
-    down round the rift's head rather than kinking. The tongue is wide enough to cover the rift's
-    whole head and the plateau either side of it: the rift is up to 66 wide near its middle and
-    narrows to its tip.
+    The north mountain's foot (biomes_plan.md steps 1 and 3). A BASE about a tenth of the map's depth
+    from the north edge, wandering on two octaves of noise; a TONGUE - a parabola about the main tip's
+    x, reaching MOUNTAIN_TONGUE_MARGIN past the tip - which covers the rift's whole head and the plateau
+    either side of it (the rift is up to 66 wide near its middle and narrows to its tip); and a SPUR
+    round every pocket, reaching a valley's length past it. All joined by a smooth maximum, so the foot
+    bends rather than kinks.
 */
 #define MOUNTAIN_BASE_DEPTH         0.11f   //of the map's depth, the foot's mean distance from the north edge
 #define MOUNTAIN_BASE_SWING         0.05f   //of the depth, how far the base wanders either way
 #define MOUNTAIN_TONGUE_MARGIN      40.0f   //how far past the main tip the tongue reaches, world units
 #define MOUNTAIN_TONGUE_HALF_WIDTH  110.0f  //at the base's depth, either side of the tip
 #define MOUNTAIN_FOOT_STEP          4.0f    //world units between the foot's points
+#define MOUNTAIN_SPRING_DEPTH       10.0f   //how far into the mountain a river cut off at its foot rises
+//Pockets (step 3).
+#define POCKET_RADIUS_MIN           14.0f
+#define POCKET_RADIUS_MAX           22.0f
+#define POCKET_VALLEY_MIN           26.0f   //from the meadow's edge to the foot: long enough to climb gently
+#define POCKET_VALLEY_MAX           36.0f
+#define POCKET_SPUR_SHOULDER        45.0f   //past the meadow's radius, either side, where the spur meets the base
+#define POCKET_CLEAR_RIM            40.0f   //past the meadow's edge, to any rim: a pocket is in the mountain, not on the chasm
+#define POCKET_CLEAR_RIVER          18.0f
+#define POCKET_CLEAR_TIP            50.0f   //past the meadow's radius, in x from the main tip: clearly on one side
+#define POCKET_VALLEY_LONGEST       70.0f   //from the meadow's edge to the foot, where the tongue pushes the foot south
+#define POCKET_APART                60.0f   //between two meadows' edges
+
+namespace {
+
+float PointsDistance(const vec2& p, const std::vector<vec2>& pts){
+    float best = 1e30f;
+    for (size_t i = 0; i + 1 < pts.size(); i++){
+        best = std::min(best,SegmentDistance(p,pts[i],pts[i + 1]));
+    }
+    if (pts.size() == 1){
+        best = (p - pts[0]).length();
+    }
+    return best;
+}
+
+uint32_t PocketSeed(const ChasmLayout::Pocket& k){
+    return HashInts((int)std::lround(k.centre.x * 16.0f),(int)std::lround(k.centre.y * 16.0f),0x90C4E7u);
+}
+
+}
+
+float ChasmPocketDistance(const ChasmLayout::Pocket& k, const vec2& p, float* along){
+    //The meadow: a circle with a wobbling edge, so it reads as ground and not as a stamp.
+    float wobble = Noise(p,9.0f,PocketSeed(k)) * 0.15f * k.radius;
+    float meadow = (p - k.centre).length() - (k.radius + wobble);
+    //The valley: a band along its centre line, and how far along it p is.
+    float valley = 1e30f;
+    float best_along = 0.0f;
+    float total = 0.0f;
+    for (size_t i = 0; i + 1 < k.valley.size(); i++){
+        total += (k.valley[i + 1] - k.valley[i]).length();
+    }
+    float walked = 0.0f;
+    for (size_t i = 0; i + 1 < k.valley.size(); i++){
+        vec2 a = k.valley[i];
+        vec2 b = k.valley[i + 1];
+        vec2 ab = b - a;
+        float len = ab.length();
+        float t = (len > 1e-6f) ? std::max(0.0f,std::min(1.0f,(p - a).dot(ab) / (len * len))) : 0.0f;
+        float d = (p - (a + ab * t)).length() - CHASM_VALLEY_HALF_WIDTH;
+        if (d < valley){
+            valley = d;
+            best_along = (total > 1e-6f) ? (walked + t * len) / total : 0.0f;
+        }
+        walked += len;
+    }
+    if (along){
+        *along = (valley < meadow) ? best_along : 0.0f;
+    }
+    return std::min(meadow,valley);
+}
+
+/*
+    The pockets: one on each side of the main rift that has room for it, and about one map in three a
+    second on one side. Each is a meadow standing in the mountain's base depth, kept clear of every rim,
+    river and other pocket and clearly to one side of the main tip - so the only way into it is its own
+    valley, south through the spur's front onto the plateau on its own side. A side with no room gets
+    none; the `pockets` check says how many were wanted and placed.
+*/
+static void PlacePockets(RRandom& rng, const vec2& lo, const vec2& hi, const std::function<float(float)>& foot,
+                         ChasmLayout& out){
+    out.pockets.clear();
+    std::vector<int> sides = {-1,1};
+    if (rng.Roll(0.35f)){
+        sides.push_back(rng.Roll(0.5f) ? -1 : 1);
+    }
+    out.pockets_wanted = (int)sides.size();
+    const vec2 tip = out.main_tip;
+    std::vector<const GridLine*> rims;
+    for (const GridFeature& f : out.features){
+        if (f.kind == GRID_FEATURE_RIM){
+            rims.push_back(&f.line);
+        }
+    }
+    uint32_t wobble_seed = (uint32_t)rng.GetInt(0,0x7FFFFFFF);
+    const int tries = 60;
+    for (int side : sides){
+        /*
+            Across the side in a shuffled sweep rather than at random: every part of the side gets
+            tried, so a side with room anywhere gets its pocket. A pocket may stand right beside the
+            tongue - the mountain closes it in all the same, and the check proves it.
+        */
+        float offset = rng.GetFloat(0.0f,1.0f);
+        for (int attempt = 0; attempt < tries; attempt++){
+            ChasmLayout::Pocket k;
+            k.side = side;
+            //The last tries settle for a smaller meadow, closer to a rim or river: a small pocket is
+            //better than a side with none.
+            bool f_last = attempt >= tries * 2 / 3;
+            k.radius = f_last ? rng.GetFloat(10.0f,POCKET_RADIUS_MIN) : rng.GetFloat(POCKET_RADIUS_MIN,POCKET_RADIUS_MAX);
+            float clear_rim = f_last ? POCKET_CLEAR_RIM * 0.7f : POCKET_CLEAR_RIM;
+            float clear_river = f_last ? POCKET_CLEAR_RIVER * 0.7f : POCKET_CLEAR_RIVER;
+            //Close under the north edge first; later tries further out, the spur reaching round them -
+            //past a river running along the foot, which otherwise shuts a whole side out.
+            float depth = rng.GetFloat(14.0f,(attempt < tries / 3) ? 34.0f : 90.0f);
+            float valley_len = rng.GetFloat(POCKET_VALLEY_MIN,POCKET_VALLEY_MAX);
+            k.floor = rng.GetFloat(4.0f,9.0f);
+            float x0, x1;
+            float keep_off = k.radius + POCKET_CLEAR_TIP;
+            if (side < 0){
+                x0 = lo.x + k.radius + 40.0f;
+                x1 = tip.x - keep_off;
+            }else{
+                x0 = tip.x + keep_off;
+                x1 = hi.x - k.radius - 40.0f;
+            }
+            if (x1 <= x0){
+                out.pocket_rejects[0]++;
+                break;      //no room on this side
+            }
+            float u = std::fmod(offset + (float)attempt * 0.618034f,1.0f);
+            k.centre = vec2(x0 + (x1 - x0) * u,lo.y + k.radius + depth);
+            //The valley: due south from the meadow's edge, wandering a little, out a few units past the
+            //foot - past the spur it gets, or the tongue's foot if that reaches further.
+            k.valley.clear();
+            float z_start = k.centre.y + k.radius * 0.6f;
+            float z_end = std::max(k.centre.y + k.radius + valley_len,foot(k.centre.x)) + 8.0f;
+            if (z_end - (k.centre.y + k.radius) > POCKET_VALLEY_LONGEST + 8.0f){
+                out.pocket_rejects[4]++;
+                continue;   //too far to climb gently
+            }
+            for (float z = z_start; ; z += 4.0f){
+                z = std::min(z,z_end);
+                float sway = Noise(vec2(k.centre.x,z),22.0f,wobble_seed) * 4.0f;
+                k.valley.push_back(vec2(k.centre.x + sway,z));
+                if (z >= z_end){
+                    break;
+                }
+            }
+            bool f_rim = true, f_river = true, f_apart = true;
+            for (const GridLine* r : rims){
+                f_rim = f_rim && PointsDistance(k.centre,r->points) > k.radius + clear_rim;
+                for (const vec2& v : k.valley){
+                    f_rim = f_rim && PointsDistance(v,r->points) > clear_rim;
+                }
+            }
+            /*
+                Rivers: kept off the meadow and off the valley while it is in the mountain. Out on the
+                plateau a valley may cross one - a river parts the land there as it does everywhere,
+                until there are bridges - and a river along the mountain's foot would otherwise shut
+                that whole side out of pockets.
+            */
+            for (const GridRiverLine& river : out.rivers){
+                f_river = f_river && PointsDistance(k.centre,river.points) > k.radius + clear_river;
+                for (const vec2& v : k.valley){
+                    if (v.y < foot(v.x)){
+                        f_river = f_river && PointsDistance(v,river.points) > clear_river;
+                    }
+                }
+            }
+            for (const ChasmLayout::Pocket& other : out.pockets){
+                f_apart = f_apart && (other.centre - k.centre).length() > other.radius + k.radius + POCKET_APART;
+            }
+            out.pocket_rejects[1] += f_rim ? 0 : 1;
+            out.pocket_rejects[2] += (f_rim && !f_river) ? 1 : 0;
+            out.pocket_rejects[3] += (f_rim && f_river && !f_apart) ? 1 : 0;
+            if (f_rim && f_river && f_apart){
+                out.pockets.push_back(k);
+                break;
+            }
+        }
+    }
+}
 
 static void PlaceMountainFoot(uint32_t seed, const vec2& lo, const vec2& hi, ChasmLayout& out){
     RRandom rng((int)(seed * 2246822519u ^ 0x40C7A1Bu));
@@ -1202,16 +1377,54 @@ static void PlaceMountainFoot(uint32_t seed, const vec2& lo, const vec2& hi, Cha
     const float D = hi.y - lo.y;
     const vec2 tip = out.main_tip;
     float tongue_z = std::min(hi.y - 0.2f * D,tip.y + MOUNTAIN_TONGUE_MARGIN);
-    out.mountain_foot.clear();
-    int n = std::max(2,(int)std::ceil((hi.x - lo.x) / MOUNTAIN_FOOT_STEP) + 1);
-    for (int i = 0; i < n; i++){
-        float x = lo.x + (hi.x - lo.x) * (float)i / (float)(n - 1);
+    //The foot without spurs - base and tongue - which a pocket's valley has to reach past.
+    auto foot_at = [&](float x){
         float swing = Noise(vec2(x,0.0f),260.0f,noise_a) * 0.75f + Noise(vec2(x,0.0f),70.0f,noise_b) * 0.25f;
         float base = lo.y + D * (MOUNTAIN_BASE_DEPTH + MOUNTAIN_BASE_SWING * swing);
         float dx = (x - tip.x) / half_width;
         float tongue = tongue_z - (tongue_z - (lo.y + D * MOUNTAIN_BASE_DEPTH)) * dx * dx;
+        return -SmoothMin(-base,-tongue,24.0f);
+    };
+    /*
+        Rivers rise at the mountain's foot, not on the north edge behind it: a river's head inside the
+        mountain is cut off at the first point it leaves it, less a few units, so it springs from the
+        mountain's face - and the mountain is left free for pockets, which a river crossing it had
+        blocked on most seeds. A river that never leaves the mountain before its fall (one falling into
+        the rift's head, under the tongue) keeps its whole course.
+    */
+    for (GridRiverLine& river : out.rivers){
+        size_t first_out = river.points.size();
+        for (size_t i = 0; i < river.points.size(); i++){
+            if (river.points[i].y > foot_at(river.points[i].x)){
+                first_out = i;
+                break;
+            }
+        }
+        if (first_out == 0 || first_out >= river.points.size() - 1){
+            continue;
+        }
+        //Back up to a point a few units inside the mountain, so the spring is in its face.
+        size_t keep = first_out;
+        while (keep > 0 && foot_at(river.points[keep - 1].x) - river.points[keep - 1].y < MOUNTAIN_SPRING_DEPTH){
+            keep--;
+        }
+        river.points.erase(river.points.begin(),river.points.begin() + (long)keep);
+    }
+    //After the base's and tongue's draws, so placing pockets left those exactly as they were.
+    PlacePockets(rng,lo,hi,foot_at,out);
+    out.mountain_foot.clear();
+    int n = std::max(2,(int)std::ceil((hi.x - lo.x) / MOUNTAIN_FOOT_STEP) + 1);
+    for (int i = 0; i < n; i++){
+        float x = lo.x + (hi.x - lo.x) * (float)i / (float)(n - 1);
         //A smooth maximum: south is +z, and the foot is whichever reaches further south.
-        float z = -SmoothMin(-base,-tongue,24.0f);
+        float z = foot_at(x);
+        //Each pocket's spur: to where its valley leaves the mountain, falling away either side.
+        for (const ChasmLayout::Pocket& k : out.pockets){
+            float spur_z = k.valley.back().y - 8.0f;
+            float sx = (x - k.centre.x) / (k.radius + POCKET_SPUR_SHOULDER);
+            float spur = spur_z - (spur_z - (lo.y + D * MOUNTAIN_BASE_DEPTH)) * sx * sx;
+            z = -SmoothMin(-z,-spur,16.0f);
+        }
         out.mountain_foot.push_back(vec2(x,z));
     }
 }

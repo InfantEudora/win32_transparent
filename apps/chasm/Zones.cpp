@@ -180,7 +180,17 @@ int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot){
     cell round the plot on the plot's level, so nothing stands half over a cliff - and no field
     touching it.
 */
-static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, const char** why){
+/*
+    SLOPE (biomes_plan.md step 2): the most the ground may rise across what is built on it, world units -
+    over a plot for a house or ground (every corner of every cell round it), over its nine vertices
+    for a field. A road takes more: it climbs. A house on a slope stands on a footing (BuildingMesh).
+*/
+#define ZONE_RISE_HOUSE     0.7f
+#define ZONE_RISE_ROAD      1.4f
+#define ZONE_RISE_FIELD     1.3f
+
+static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, const char** why,
+                            float max_rise = ZONE_RISE_HOUSE){
     auto refuse = [why](const char* reason){
         if (why){
             *why = reason;
@@ -196,6 +206,8 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
     }
     int level = w.terrain->level[plot];
     const GridPicker& p = *w.picker;
+    float lowest = w.terrain->ground[plot];
+    float highest = lowest;
     for (int i = 0; i < p.PlotQuadCount(plot); i++){
         int q = p.PlotQuadCorner(plot,i) / 4;
         const GridQuad& quad = g.fine.quads[q];
@@ -203,6 +215,8 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
             if (w.terrain->level[quad.v[k]] != level){
                 return refuse("too close to a cliff");
             }
+            lowest = std::min(lowest,w.terrain->ground[quad.v[k]]);
+            highest = std::max(highest,w.terrain->ground[quad.v[k]]);
             if (w.terrain->wet[quad.v[k]]){
                 return refuse("too close to a river");
             }
@@ -213,6 +227,9 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
         if (!z.field.empty() && z.field[quad.parent]){
             return refuse("a field is there");
         }
+    }
+    if (highest - lowest > max_rise){
+        return refuse("too steep");
     }
     return true;
 }
@@ -231,7 +248,7 @@ bool ZoneCanHouse(const ChasmWorld& w, const ZoneState& z, int plot, const char*
 }
 
 bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why, int kind){
-    if (!PlotIsBuildable(w,z,plot,why)){
+    if (!PlotIsBuildable(w,z,plot,why,(kind == ZONE_GROUND_ROAD) ? ZONE_RISE_ROAD : ZONE_RISE_HOUSE)){
         return false;
     }
     if (kind == ZONE_GROUND_ROAD && !z.storeys.empty() && z.storeys[plot] > 0){
@@ -267,6 +284,8 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
     }
     //Its nine fine vertices are the corners of its four children, fine quads 4c..4c+3.
     int level = -1;
+    float lowest = 1e30f;
+    float highest = -1e30f;
     for (int q = coarse * 4; q < coarse * 4 + 4; q++){
         for (int k = 0; k < 4; k++){
             int v = g.fine.quads[q].v[k];
@@ -287,7 +306,12 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
             if (!z.ground.empty() && z.ground[v] != ZONE_GROUND_NONE){
                 return refuse("a garden or town is there");
             }
+            lowest = std::min(lowest,w.terrain->ground[v]);
+            highest = std::max(highest,w.terrain->ground[v]);
         }
+    }
+    if (highest - lowest > ZONE_RISE_FIELD){
+        return refuse("too steep");
     }
     return true;
 }
