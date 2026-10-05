@@ -126,6 +126,19 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             continue;
         }
         const vec2& base = g.fine.pos[v];
+        /*
+            The north mountain (biomes_plan.md) grows nothing yet: a scatter of rocks on the snow, no
+            trees and no ground cover. Its own trees - the snow pine is modelled - come with its relief.
+        */
+        if (t.Mountain(v)){
+            if (Chance(seed,v,1) < 0.035f){
+                float a = Chance(seed,v,4) * 6.2831853f;
+                float r = std::sqrt(Chance(seed,v,5)) * PROP_JITTER;
+                Place(Pick(Chance(seed,v,3),PROP_ROCK_A,rock_w,4),base + vec2(std::cos(a),std::sin(a)) * r,
+                      Chance(seed,v,6) * 6.2831853f,0.9f + Chance(seed,v,7) * 0.6f);
+            }
+            continue;
+        }
         float n = Noise(base.x / FOREST_SCALE,base.y / FOREST_SCALE,seed) * 0.75f +
                   Noise(base.x / FOREST_DETAIL,base.y / FOREST_DETAIL,seed + 7) * 0.25f;
         //The chasm floor is a darker, sparser place; the shard top bare stone and scrub.

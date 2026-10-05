@@ -146,6 +146,7 @@ line number.
 | Plan | What |
 |---|---|
 | `grid_plan.md` | the irregular grid, terrain levels and cliffs, painting zones, and the build order up to a first replay |
+| `biomes_plan.md` | biomes and terrain height: levels for the hard edges plus a relief field; the north mountain that seals the chasm off (step 1 built), hills, pockets, swamp |
 | `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A*, gates in walls, arches under houses |
 
 ### Props: modelled, palette-coloured

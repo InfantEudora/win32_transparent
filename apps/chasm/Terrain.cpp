@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 
 /*
     The heights. The plateau is the ground everything is measured from; the floor is deep enough
@@ -170,8 +171,28 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
         level[v] = l;
         level_count[l]++;
     }
+    //The biomes: north of the mountain's foot (Grid::layout) is mountain, the rest temperate.
+    biome.assign(n,TERRAIN_BIOME_TEMPERATE);
+    for (int i = 0; i < TERRAIN_NUM_BIOMES; i++){
+        biome_count[i] = 0;
+    }
+    for (size_t v = 0; v < n; v++){
+        const vec2& p = g.fine.pos[v];
+        if (p.y < ChasmMountainFootAt(g.layout,p.x)){
+            biome[v] = TERRAIN_BIOME_MOUNTAIN;
+        }
+        biome_count[biome[v]]++;
+    }
     BuildRivers(g,features);
     build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+const char* TerrainBiomeName(int biome){
+    switch (biome){
+        case TERRAIN_BIOME_TEMPERATE:   return "temperate";
+        case TERRAIN_BIOME_MOUNTAIN:    return "mountain";
+        default:                        return "?";
+    }
 }
 
 //--- Rivers --------------------------------------------------------------------------------------
@@ -540,6 +561,86 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
             snprintf(buf,sizeof(buf),"%i of %i feature-pinned vertices on the wrong level",wrong,pinned);
             add_result("pin levels",wrong == 0,buf);
         }
+    }
+
+    /*
+        --- Sealed: the mountain closes the chasm off, so the two sides cannot reach each other ------
+        The one rule a biome enforces (biomes_plan.md). The ground is flooded as a walker would cross
+        it with nothing painted - along fine edges, never down a cliff (a level change), never onto
+        the mountain - but ACROSS rivers, which bridges will cross. Then no region may hold plateau on
+        the south edge on both sides of the main rift's mouth. A failure marks the region's vertex
+        nearest the main tip, which is where the seal should have been.
+    */
+    {
+        size_t n = g.fine.pos.size();
+        std::vector<int> parent(n);
+        for (size_t v = 0; v < n; v++){
+            parent[v] = (int)v;
+        }
+        std::function<int(int)> find = [&](int v){
+            while (parent[v] != v){
+                parent[v] = parent[parent[v]];
+                v = parent[v];
+            }
+            return v;
+        };
+        for (const auto& e : g.fine.edges){
+            int a = e.first;
+            int b = e.second;
+            if (t.level[a] != t.level[b] || t.Mountain(a) || t.Mountain(b)){
+                continue;
+            }
+            int ra = find(a);
+            int rb = find(b);
+            if (ra != rb){
+                parent[std::max(ra,rb)] = std::min(ra,rb);
+            }
+        }
+        //Per region: whether it touches the south edge west of the mouth, and east of it.
+        std::vector<uint8_t> sides(n,0);
+        float south = g.bounds_max.y;
+        float mouth = g.layout.main_mouth_x;
+        for (size_t v = 0; v < n; v++){
+            const vec2& p = g.fine.pos[v];
+            if (!g.fine.f_boundary[v] || std::fabs(p.y - south) > 1e-3f || t.level[v] != TERRAIN_PLATEAU ||
+                t.Mountain((int)v)){
+                continue;
+            }
+            sides[find((int)v)] |= (p.x < mouth) ? 1 : 2;
+        }
+        int joined = -1;
+        int west = 0, east = 0;
+        for (size_t v = 0; v < n; v++){
+            int r = find((int)v);
+            if (sides[r] == 3){
+                joined = r;
+            }
+            if (t.level[v] == TERRAIN_PLATEAU && !t.Mountain((int)v)){
+                west += (sides[r] == 1);
+                east += (sides[r] == 2);
+            }
+        }
+        if (joined >= 0){
+            int nearest = -1;
+            float best = 1e30f;
+            for (size_t v = 0; v < n; v++){
+                if (find((int)v) == joined){
+                    float d = (g.fine.pos[v] - g.layout.main_tip).length();
+                    if (d < best){
+                        best = d;
+                        nearest = (int)v;
+                    }
+                }
+            }
+            add_issue("sealed",nearest,g.fine.pos[nearest],true);
+            snprintf(buf,sizeof(buf),"the two sides of the chasm are joined - nearest the main tip at (%.0f, %.0f)",
+                     g.fine.pos[nearest].x,g.fine.pos[nearest].y);
+        }else{
+            snprintf(buf,sizeof(buf),"west side %i, east side %i plateau vertices reachable from the south "
+                     "edge; mountain %i vertices (%.0f%%)",west,east,t.biome_count[TERRAIN_BIOME_MOUNTAIN],
+                     100.0f * t.biome_count[TERRAIN_BIOME_MOUNTAIN] / std::max<size_t>(1,n));
+        }
+        add_result("sealed",joined < 0 && west > 0 && east > 0,buf);
     }
 }
 #endif

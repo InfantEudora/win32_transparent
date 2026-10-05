@@ -66,6 +66,9 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
     if (t.wet[a] || t.wet[b]){
         return false;   //a river - until there are bridges
     }
+    if (t.Mountain(a) || t.Mountain(b)){
+        return false;   //the north mountain, which nothing crosses (biomes_plan.md)
+    }
     //A house is walked into only where the walk ends, and out of only where it starts.
     if (z.storeys[b] > 0 && b != to){
         return false;

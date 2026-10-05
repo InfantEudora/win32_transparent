@@ -27,6 +27,16 @@
 #define TERRAIN_FLOOR       2
 #define TERRAIN_NUM_LEVELS  3
 
+/*
+    BIOMES (biomes_plan.md), per fine vertex. Step 1 has two: the north MOUNTAIN, which closes the chasm
+    off from the map's north edge and is impassable to everything and buildable by nothing, and
+    TEMPERATE, everything else. Never renumber - a biome will pick palette rows and rules by value.
+*/
+#define TERRAIN_BIOME_TEMPERATE 0
+#define TERRAIN_BIOME_MOUNTAIN  1
+#define TERRAIN_NUM_BIOMES      2
+const char* TerrainBiomeName(int biome);
+
 struct TerrainLevel{
     const char* name;
     float height;       //world y
@@ -75,6 +85,9 @@ public:
 
     std::vector<uint8_t> level;     //per fine vertex
     float Height(int v) const { return terrain_levels[level[v]].height; }
+    std::vector<uint8_t> biome;     //per fine vertex, TERRAIN_BIOME_*
+    bool Mountain(int v) const { return biome[v] == TERRAIN_BIOME_MOUNTAIN; }
+    int biome_count[TERRAIN_NUM_BIOMES] = {};
 
     std::vector<TerrainRiver> rivers;
     std::vector<TerrainFall> falls;

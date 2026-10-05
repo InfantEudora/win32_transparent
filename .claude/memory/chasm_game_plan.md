@@ -81,6 +81,12 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   saved with its path, hashed as trace part `walkers`; gate = a dead-end road against a wall
   (ZoneGateOf), the only way through a wall; arch = a road run of <= 3 plots between 2+ storey houses
   (ZoneArchStoreys), bridged in BuildingMesh. User chose: roads painted on plots, debug walker first.
+- BIOMES (docs/biomes_plan.md), user's choices 2026-10-05: option C - levels for hard edges + a smooth
+  relief field (soft hills, rugged peaks, swamp dip); the NORTH MOUNTAIN is the only rule a biome
+  enforces: it seals the chasm from the north edge, impassable to EVERYTHING; mountain pockets are
+  buildable, reachable from ONE side only, mainly for resources. Step 1 BUILT: mountain foot curve with
+  a tongue past the main tip (ChasmLayout), Terrain::biome, debug check `sealed` (seeds 1-60 pass,
+  proven to fail when the tongue is cut short). Next: step 2 relief + slope rules.
 
 **Why:** the user wants the building mechanic tested before any gameplay goes on top.
 - Testing: NO separate engine-free `make rules` build (user's call, unlike archer/bomber). Checks

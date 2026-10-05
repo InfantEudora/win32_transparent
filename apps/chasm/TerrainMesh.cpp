@@ -208,6 +208,13 @@ public:
         chunk->quads.push_back(q);
         const vec3 up(0.0f,1.0f,0.0f);
         grass_column = PAL_GRASS_0 + (int)(Hash3(quad.parent,0,77) % PAL_GRASS_COUNT);
+        //The biome's palette row, by the cell's corners: the north mountain draws from the frozen row,
+        //snow for grass and grey-blue strata, until it has relief of its own (biomes_plan.md step 1).
+        int mountain = 0;
+        for (int k = 0; k < 4; k++){
+            mountain += t.Mountain(quad.v[k]) ? 1 : 0;
+        }
+        row = (mountain >= 2) ? PAL_FROZEN : PAL_TEMPERATE;
 
         bool high[4];
         int num_high = 0;
@@ -345,7 +352,7 @@ public:
         }
     }
 
-    int row = PAL_TEMPERATE;    //the biome; one for the whole map until biomes exist
+    int row = PAL_TEMPERATE;    //the current cell's biome row - see Cell
     const Terrain* terrain = NULL;      //for the rivers' channels
     int grass_column = PAL_GRASS_0;     //the current cell's, see COLUMN_GRASS
 
@@ -377,6 +384,7 @@ void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out){
     for (int q = 0; q < (int)g.fine.quads.size(); q++){
         b.Cell(q,t);
     }
+    b.row = PAL_TEMPERATE;      //the skirt is cut earth, whatever stands above it
     b.Skirt(t);
     out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
 }

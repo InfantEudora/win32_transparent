@@ -560,6 +560,8 @@ struct Builder{
         float main_base = f_terraced ? rng.GetFloat(52.0f,66.0f) : rng.GetFloat(34.0f,56.0f);
         Widths(main,main_base,rng.GetFloat(13.0f,16.0f),Seed());
         main_tip = main.p.back();
+        out.main_tip = main_tip;
+        out.main_mouth_x = mouth_x;
         out.rifts = 1;
 
         //Forks, off the main spine's middle, at 35-60 degrees to it, each to its own tip.
@@ -1177,6 +1179,60 @@ struct Builder{
 
 }
 
+/*
+    The north mountain's foot (biomes_plan.md step 1). A BASE about a tenth of the map's depth from
+    the north edge, wandering on two octaves of noise, and a TONGUE - a parabola about the main tip's x,
+    reaching MOUNTAIN_TONGUE_MARGIN past the tip - joined to it by a smooth maximum, so the foot bends
+    down round the rift's head rather than kinking. The tongue is wide enough to cover the rift's
+    whole head and the plateau either side of it: the rift is up to 66 wide near its middle and
+    narrows to its tip.
+*/
+#define MOUNTAIN_BASE_DEPTH         0.11f   //of the map's depth, the foot's mean distance from the north edge
+#define MOUNTAIN_BASE_SWING         0.05f   //of the depth, how far the base wanders either way
+#define MOUNTAIN_TONGUE_MARGIN      40.0f   //how far past the main tip the tongue reaches, world units
+#define MOUNTAIN_TONGUE_HALF_WIDTH  110.0f  //at the base's depth, either side of the tip
+#define MOUNTAIN_FOOT_STEP          4.0f    //world units between the foot's points
+
+static void PlaceMountainFoot(uint32_t seed, const vec2& lo, const vec2& hi, ChasmLayout& out){
+    RRandom rng((int)(seed * 2246822519u ^ 0x40C7A1Bu));
+    rng.Generate(4096);
+    uint32_t noise_a = (uint32_t)rng.GetInt(0,0x7FFFFFFF);
+    uint32_t noise_b = (uint32_t)rng.GetInt(0,0x7FFFFFFF);
+    float half_width = MOUNTAIN_TONGUE_HALF_WIDTH * rng.GetFloat(0.85f,1.2f);
+    const float D = hi.y - lo.y;
+    const vec2 tip = out.main_tip;
+    float tongue_z = std::min(hi.y - 0.2f * D,tip.y + MOUNTAIN_TONGUE_MARGIN);
+    out.mountain_foot.clear();
+    int n = std::max(2,(int)std::ceil((hi.x - lo.x) / MOUNTAIN_FOOT_STEP) + 1);
+    for (int i = 0; i < n; i++){
+        float x = lo.x + (hi.x - lo.x) * (float)i / (float)(n - 1);
+        float swing = Noise(vec2(x,0.0f),260.0f,noise_a) * 0.75f + Noise(vec2(x,0.0f),70.0f,noise_b) * 0.25f;
+        float base = lo.y + D * (MOUNTAIN_BASE_DEPTH + MOUNTAIN_BASE_SWING * swing);
+        float dx = (x - tip.x) / half_width;
+        float tongue = tongue_z - (tongue_z - (lo.y + D * MOUNTAIN_BASE_DEPTH)) * dx * dx;
+        //A smooth maximum: south is +z, and the foot is whichever reaches further south.
+        float z = -SmoothMin(-base,-tongue,24.0f);
+        out.mountain_foot.push_back(vec2(x,z));
+    }
+}
+
+float ChasmMountainFootAt(const ChasmLayout& layout, float x){
+    const std::vector<vec2>& f = layout.mountain_foot;
+    if (f.empty()){
+        return -INFINITY;
+    }
+    if (x <= f.front().x){
+        return f.front().y;
+    }
+    if (x >= f.back().x){
+        return f.back().y;
+    }
+    float t = (x - f.front().x) / (f.back().x - f.front().x) * (float)(f.size() - 1);
+    size_t i = std::min(f.size() - 2,(size_t)t);
+    float u = t - (float)i;
+    return f[i].y + (f[i + 1].y - f[i].y) * u;
+}
+
 ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, float side){
     auto t0 = std::chrono::steady_clock::now();
     ChasmLayout out;
@@ -1212,6 +1268,7 @@ ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, f
     b.PlaceBlobs(GRID_FEATURE_COLUMN,want_columns,placed);
     out.features = placed;
     b.PlaceRivers(out.features);
+    PlaceMountainFoot(seed,lo,hi,out);
     out.generate_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
     return out;
 }

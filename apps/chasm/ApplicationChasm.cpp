@@ -806,11 +806,12 @@ json ApplicationChasm::PickJson(const GridPicker& p, const GridPick& pick){
     //The level, if the picker is the current world's - a pick is only ever about that one.
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     const char* level = (w && w->picker.get() == &p) ? terrain_levels[w->terrain->level[pick.plot]].name : "?";
+    const char* biome = (w && w->picker.get() == &p) ? TerrainBiomeName(w->terrain->biome[pick.plot]) : "?";
     return json{
         {"hit",true},
         {"x",pick.at.x},
         {"z",pick.at.y},
-        {"plot",{{"vertex",pick.plot},{"x",v.x},{"z",v.y},{"level",level},{"sides",p.PlotQuadCount(pick.plot)},
+        {"plot",{{"vertex",pick.plot},{"x",v.x},{"z",v.y},{"level",level},{"biome",biome},{"sides",p.PlotQuadCount(pick.plot)},
                  {"area",p.PlotArea(pick.plot)},{"on_outline",(bool)g.fine.f_boundary[pick.plot]},
                  {"coarse_corner",pick.plot < (int)g.coarse.pos.size()}}},
         {"fine_cell",{{"quad",pick.fine_quad},{"corner",pick.corner},{"area",p.FineArea(pick.fine_quad)},

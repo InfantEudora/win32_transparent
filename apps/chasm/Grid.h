@@ -96,8 +96,21 @@ struct ChasmLayout{
     int rivers_wanted = 0;
     int attempts = 0;                       //rift layouts drawn until one kept its spacing
     bool f_rifts_ok = true;                 //false: every attempt failed, the last is used anyway
+    /*
+        THE NORTH MOUNTAIN (biomes_plan.md step 1): its foot, the z the mountain comes down to at each
+        x, west to east every few units - north of it is mountain. Shallow on noise, and reaching south
+        in a tongue past the main rift's tip, which is what seals the two sides of the chasm from each
+        other: the only way round the main rift is across the line from its tip to the north edge, and
+        the tongue covers it. Drawn last, from a stream of its own, so it moves nothing else.
+    */
+    std::vector<vec2> mountain_foot;
+    vec2 main_tip;                          //the main rift's spine's end
+    float main_mouth_x = 0.0f;              //where the main rift leaves the south edge
     float generate_ms = 0.0f;
 };
+
+//The mountain's foot at x: the z north of which is mountain. -infinity with no foot.
+float ChasmMountainFootAt(const ChasmLayout& layout, float x);
 
 //The layout for a seed on the map rectangle lo..hi (x, z), lattice side `side`. Deterministic, and
 //draws from its own RRandom, never the grid's or the simulation's.
