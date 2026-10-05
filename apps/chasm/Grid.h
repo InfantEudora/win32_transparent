@@ -121,15 +121,17 @@ struct ChasmLayout{
     //Why tries were turned down: no room, a rim, a river, another pocket, too long a valley.
     int pocket_rejects[5] = {};
     /*
-        THE SWAMP (biomes_plan.md step 4): a lowland against the south edge on one side of the main
-        rift, the seed's choice - the other side's south is the desert's, later. A wobbling disc; its
-        ground sinks below the rivers' water level in pools between hummocks.
+        THE SOUTH'S TWO REGIONS (biomes_plan.md steps 4 and 5), against the south edge, one on each side
+        of the main rift - which way round is the seed's choice. Each a wobbling disc. The SWAMP's ground
+        sinks below the rivers' water level in pools between hummocks; the DESERT's rises in dunes.
     */
-    struct Swamp{
+    struct Region{
         vec2 centre;
-        float radius = 0.0f;                //0: no swamp
+        float radius = 0.0f;                //0: none
         int side = 0;                       //-1 west of the main mouth, +1 east
-    } swamp;
+    };
+    Region swamp;
+    Region desert;
     vec2 main_tip;                          //the main rift's spine's end
     float main_mouth_x = 0.0f;              //where the main rift leaves the south edge
     float generate_ms = 0.0f;
@@ -145,9 +147,11 @@ float ChasmMountainFootAt(const ChasmLayout& layout, float x);
 #define CHASM_VALLEY_HALF_WIDTH 5.0f
 float ChasmPocketDistance(const ChasmLayout::Pocket& k, const vec2& p, float* along = nullptr);
 
-//How much p is in the swamp: 1 inside, 0 outside, a band of SWAMP_EDGE between, wobbling.
-#define CHASM_SWAMP_EDGE        30.0f
+//How much p is in the swamp, or the desert: 1 inside, 0 outside, a band of CHASM_REGION_EDGE between,
+//wobbling.
+#define CHASM_REGION_EDGE       30.0f
 float ChasmSwampMask(const ChasmLayout& layout, const vec2& p);
+float ChasmDesertMask(const ChasmLayout& layout, const vec2& p);
 
 //The layout for a seed on the map rectangle lo..hi (x, z), lattice side `side`. Deterministic, and
 //draws from its own RRandom, never the grid's or the simulation's.

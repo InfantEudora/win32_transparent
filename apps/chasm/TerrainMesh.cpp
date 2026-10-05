@@ -26,6 +26,8 @@
 //belongs to, so the shades lie in field-sized patches rather than speckling every triangle (which
 //read as noise at the game's zoom).
 #define COLUMN_GRASS        -1
+#define GROUND_STEEP        0.80f   //a ground triangle's normal.y under this is bare rock: about 37 degrees
+#define MOUNTAIN_STEEP      0.55f   //the mountain holds snow steeper than that - only its crags are bare: 57 degrees
 
 namespace {
 
@@ -109,8 +111,9 @@ public:
             return;
         }
         n.normalize();
+        int tri_row = row;
         if (column == COLUMN_GRASS){
-            column = grass_column;
+            GroundColour((a + b + c) * (1.0f / 3.0f),n,column,tri_row);
         }
         vec3 tangent = b - a;
         if (tangent.length() > 1e-9f){
@@ -119,12 +122,45 @@ public:
         vertex v = {};
         v.normal = n;
         v.tangent = tangent;
-        v.uv = PaletteUV(column,row);
+        v.uv = PaletteUV(column,tri_row);
         v.matid = 0;
         v.pos = a; chunk->verts.push_back(v);
         v.pos = b; chunk->verts.push_back(v);
         v.pos = c; chunk->verts.push_back(v);
         data.num_triangles++;
+    }
+
+    /*
+        THE GROUND'S COLOUR, per triangle (biomes_plan.md step 5), from where its centre is, how high
+        and how steep:
+          - its biome's palette row, by TerrainBiomeAt with a little noise on the south regions' edges,
+            so a biome's edge is ragged at a triangle's size rather than a staircase of whole cells;
+          - steep ground (a normal under GROUND_STEEP) is bare rock in that row, banded by height like
+            the cliff walls' strata - a hillside, a pocket's crags, a peak's faces;
+          - the mountain's gentle ground is snow above the snowline (Terrain::SnowLine) and scree below
+            it - grey stone from the very foot, so where the mountain begins, and nothing can be built,
+            shows. Everything else gentle is its row's grass.
+    */
+    void GroundColour(const vec3& centre, const vec3& normal, int& column, int& tri_row){
+        vec2 p(centre.x,centre.z);
+        float dither = 0.18f * ValueNoise(p.x / 3.0f,p.y / 3.0f,1201);
+        int biome = TerrainBiomeAt(grid.layout,p,ground_level,dither);
+        bool f_steep = normal.y < ((biome == TERRAIN_BIOME_MOUNTAIN) ? MOUNTAIN_STEEP : GROUND_STEEP);
+        int rock = RockColumn((int)std::floor(centre.y / WALL_BAND_HEIGHT) & 1023);
+        switch (biome){
+            case TERRAIN_BIOME_MOUNTAIN:    tri_row = PAL_FROZEN; break;
+            case TERRAIN_BIOME_SWAMP:       tri_row = PAL_SWAMP; break;
+            case TERRAIN_BIOME_DESERT:      tri_row = PAL_DESERT; break;
+            default:                        tri_row = PAL_TEMPERATE; break;
+        }
+        if (f_steep){
+            column = rock;
+        }else if (biome == TERRAIN_BIOME_MOUNTAIN){
+            bool f_snow = terrain && centre.y > terrain->SnowLine(p);
+            column = f_snow ? grass_column : PAL_ROCK_0 + (int)(Hash3((int32_t)std::floor(p.x),(int32_t)std::floor(p.y),1202) % 2);
+        }else{
+            column = grass_column;
+        }
     }
 
     /*
@@ -222,7 +258,11 @@ public:
             mountain += t.Mountain(quad.v[k]) ? 1 : 0;
             swamp += (t.biome[quad.v[k]] == TERRAIN_BIOME_SWAMP) ? 1 : 0;
         }
-        row = (mountain >= 2) ? PAL_FROZEN : (swamp >= 2) ? PAL_SWAMP : PAL_TEMPERATE;
+        int desert = 0;
+        for (int k = 0; k < 4; k++){
+            desert += (t.biome[quad.v[k]] == TERRAIN_BIOME_DESERT) ? 1 : 0;
+        }
+        row = (mountain >= 2) ? PAL_FROZEN : (swamp >= 2) ? PAL_SWAMP : (desert >= 2) ? PAL_DESERT : PAL_TEMPERATE;
 
         bool high[4];
         int num_high = 0;
@@ -239,6 +279,7 @@ public:
             for (int k = 0; k < 4; k++){
                 poly.push_back(GroundPoint(p[k],h[k]));
             }
+            ground_level = lv[0];
             Fan(poly,up,(lv[0] == TERRAIN_FLOOR) ? PAL_FLOOR : COLUMN_GRASS);
             return;
         }
@@ -285,6 +326,7 @@ public:
             low.push_back(GroundPoint(m[last],h[last]));
             //The ground at a wall's foot, a shade darker: the shade the wall itself would cast,
             //standing in for occlusion the renderer does not compute at this scale.
+            ground_level = lv[first];
             Fan(low,up,(lv[first] == TERRAIN_FLOOR) ? PAL_FLOOR_DARK : COLUMN_GRASS);
 
             vec2 a = m[k];
@@ -360,7 +402,8 @@ public:
         }
     }
 
-    int row = PAL_TEMPERATE;    //the current cell's biome row - see Cell
+    int row = PAL_TEMPERATE;    //the current cell's biome row - see Cell; ground triangles choose their own
+    int ground_level = TERRAIN_PLATEAU;     //the level of the ground being fanned, for GroundColour
     const Terrain* terrain = NULL;      //for the rivers' channels
     int grass_column = PAL_GRASS_0;     //the current cell's, see COLUMN_GRASS
 

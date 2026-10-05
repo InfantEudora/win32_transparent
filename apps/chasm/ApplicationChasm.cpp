@@ -149,6 +149,12 @@ void ApplicationChasm::BuildScene(){
     }
     renderer->AddMaterial(mat);
     palette_material = renderer->FindMaterialIndex(mat.name);
+    //The same palette for things the GPU moves (core's animated instance sets): the mist's puffs.
+    Material puff = mat;
+    puff.name = "chasm_palette_puff";
+    puff.glsl_material.wind_mode = INSTANCE_MOTION_PUFF;
+    renderer->AddMaterial(puff);
+    puff_material = renderer->FindMaterialIndex(puff.name);
     BuildWaterScene();
     BuildWalkerScene();
 
@@ -1254,6 +1260,8 @@ void ApplicationChasm::UpdateView(void){
 
 //RENDER THREAD, before the scene draws: the only place GL may be touched for the meshes below.
 void ApplicationChasm::PreRender(void){
+    //The clock of everything the GPU animates: the simulation's, so a pause holds the mist still.
+    renderer->motion_seconds = (float)SimSeconds();
     UploadTerrain();
     UploadZones();
     UploadForest();

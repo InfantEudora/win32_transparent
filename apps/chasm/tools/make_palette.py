@@ -105,7 +105,7 @@ PROPS_DEF = [
 # Row 15 is not a biome: the EFFECTS row, colours that are the same in every biome. Columns 0-3
 # are the chasm's mist - light, mid, dark - and the foam at the foot of a fall (Mist.h).
 EFFECTS_ROW = 15
-EFFECTS_DEF = [(126, 128, 134), (102, 104, 112), (80, 82, 90), (226, 234, 238)]
+EFFECTS_DEF = [(126, 128, 134), (102, 104, 112), (80, 82, 90), (226, 234, 238), (196, 204, 190)]
 
 def paint_effects(img):
     for c, colour in enumerate(EFFECTS_DEF):

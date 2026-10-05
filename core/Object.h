@@ -195,6 +195,23 @@ class Object{
     //The set's box in object space. False if the set is empty or the mesh has no bounds.
     bool GetInstanceBounds(vec3& lo, vec3& hi) const;
 
+    /*
+        ANIMATED INSTANCES: motion the GPU works out from the clock, so a set of ten thousand puffs,
+        sparks or snowflakes moves every frame for no CPU at all - nothing is re-posed or re-uploaded
+        but this list, once. Each instance gets INSTANCE_MOTION_VEC4S vec4s of parameters (so
+        `params` is that many per transform, in the same order); what they mean is the MOTION MODE of
+        the material the set is drawn with (material_t::wind_mode, INSTANCE_MOTION_* in Material.h),
+        and the vertex shader moves each vertex from the instance's transform as its rest pose.
+        The clock is Renderer::motion_seconds.
+
+        `pad` is how far, in world units, the motion can carry any part of an instance beyond its
+        rest pose; the set's box grows by it, so culling never drops a moving instance. Call after
+        SetInstances, and again whenever the set is replaced. An empty `params` makes the set still.
+    */
+    void SetInstanceMotion(std::vector<vec4>&& params, float pad);
+    const std::vector<vec4>& GetInstanceMotion() const { return instance_motion; }
+    bool HasInstanceMotion() const { return !instance_motion.empty(); }
+
     //Modify postition
     void SetPosition(const vec3& newpos,bool f_write_physics=true); //If the position change needs to be written to the physics engine
     void MoveBy(const vec3& delta);
@@ -558,6 +575,7 @@ protected:
     //The instance set - see SetInstances. The box is in object space.
     bool f_instance_set = false;
     std::vector<fmat4> instances;
+    std::vector<vec4> instance_motion;      //INSTANCE_MOTION_VEC4S per instance, or empty
     vec3 instance_bounds_min;
     vec3 instance_bounds_max;
 

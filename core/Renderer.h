@@ -12,6 +12,7 @@ class Renderer;
 #include "InputController.h"
 #include "PerfTimer.h"
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <unordered_map>
 #include <condition_variable>
@@ -23,6 +24,8 @@ class Renderer;
 //The wind field's SSBO binding - see Renderer::SetWindField. 0-6 are taken (instance data,
 //materials, lights, readback, bones / volumes, morphs, vertex pull); default.vert declares 7.
 #define SSBO_WIND               7
+//Animated instance sets' parameters - see motion_seconds and Object::SetInstanceMotion.
+#define SSBO_MOTION             8
 
 //The wind SSBO's header, mirrored by WindBuffer in default.vert (std430: three 16-byte rows,
 //then the vec2 grid at offset 48).
@@ -398,6 +401,14 @@ class Renderer{
     */
     void SetWindField(const float* velocity_xy, int width, int height, float x0, float y0,
                       float cell_x, float cell_y, float time);
+
+    /*
+        THE CLOCK OF ANIMATED INSTANCE SETS (Object::SetInstanceMotion), in seconds. Set it every frame
+        from the simulation (tick * timestep) so a paused game holds its mist, sparks and snow still
+        and the same tick always looks the same; left negative, the renderer's own clock since Init
+        drives them. Read when a batch with motion is drawn.
+    */
+    float motion_seconds = -1.0f;
     void ClearWindField();
 
     bool InitSSBO();
@@ -483,6 +494,9 @@ class Renderer{
     //GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
     GLuint boneinstdata_ssbo = -1;  //Shader Storage Buffer for bone data
     GLuint wind_ssbo = -1;          //The wind field - see SetWindField. Always bound, header zero = off
+    GLuint motion_ssbo = -1;        //Per batch: the motion clock, then two vec4s per instance - see motion_seconds
+    std::vector<vec4> instancemotion;   //what goes into it, built beside instancedata
+    std::chrono::steady_clock::time_point motion_epoch = std::chrono::steady_clock::now();
 
     //Deferred stuff: Non-MSAA?
     GLuint deferred_fbo_id = -1; //Deferred FBO consisting of:

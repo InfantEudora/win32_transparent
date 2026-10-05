@@ -7,11 +7,12 @@
 const char* prop_asset_names[PROP_KIND_COUNT] = {
     "tree_pine_a","tree_pine_b","tree_pine_c","tree_pine_d",
     "tree_oak_a","tree_oak_b","tree_oak_c",
-    "tree_willow_a",
+    "tree_willow_a","tree_palm_a","tree_pine_snow_a",
     "rock_a","rock_b","rock_c","rock_cluster_a",
     "stump_a","log_a","bush_a","bush_b",
     "grass_a","grass_b","grass_c","flowers_a","flowers_b",
     "fern_a","shrub_a","mushrooms_a","twig_a",
+    "reeds_a","reeds_b",
 };
 
 #define FOREST_SCALE        70.0f   //world units over which forest patches come and go
@@ -25,6 +26,14 @@ const char* prop_asset_names[PROP_KIND_COUNT] = {
     tall, and ours as modelled came out about twice that (the props window measured it).
 */
 #define TREE_SCALE          0.70f
+/*
+    Reeds stand where the water meets the ground: from REED_DEPTH under the water's surface up to
+    SWAMP_SHORE over it, the band the shore's foam already marks. In clumps a few plots across,
+    from noise; away from a fall's lip, where the water is fast.
+*/
+#define REED_DEPTH          0.35f
+#define REED_CLUMP          9.0f    //world units over which reed beds come and go
+#define REED_FALL_CLEAR     25.0f
 
 namespace {
 
@@ -104,12 +113,16 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
     static const float rock_w[4] = {1.0f,1.0f,2.0f,2.0f};
 
     int v = 0;
-    //One prop at `at` on plot v's level: onto the relief, into the chunk its ground is in.
-    auto Place = [&](int kind, vec2 at, float yaw, float scale){
+    /*
+        One prop at `at` on plot v's level: onto the relief, into the chunk its ground is in. `dip`
+        lowers it further - by a river's channel, for the reeds on a bank, the one place a prop
+        stands on ground GroundHeight does not describe.
+    */
+    auto Place = [&](int kind, vec2 at, float yaw, float scale, float dip = 0.0f){
         PropInstance p;
         p.kind = (uint8_t)kind;
         float level = terrain_levels[t.level[v]].height;
-        p.pos = vec3(at.x,t.GroundHeight(at,level),at.y);
+        p.pos = vec3(at.x,t.GroundHeight(at,level) - dip,at.y);
         p.yaw = yaw;
         p.scale = scale;
         GridPick under = picker.Pick(at);
@@ -132,6 +145,29 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             trees and no ground cover. Its own trees - the snow pine is modelled - come with its relief.
         */
         if (t.Mountain(v)){
+            /*
+                Snow pines on its lower, gentler slopes - below the snow, on ground that rises less
+                than a storey across the plot - thinning toward the snowline; above it, and on crags,
+                only a scatter of rocks.
+            */
+            float lowest = t.ground[v];
+            float highest = lowest;
+            for (int i = 0; i < picker.PlotQuadCount(v); i++){
+                const GridQuad& q = g.fine.quads[picker.PlotQuadCorner(v,i) / 4];
+                for (int k = 0; k < 4; k++){
+                    lowest = std::min(lowest,t.ground[q.v[k]]);
+                    highest = std::max(highest,t.ground[q.v[k]]);
+                }
+            }
+            float below_snow = t.SnowLine(base) - t.ground[v];
+            float pines = std::max(0.0f,std::min(1.0f,below_snow / 10.0f)) * 0.22f;
+            if (highest - lowest < 1.3f && Chance(seed,v,60) < pines){
+                float a = Chance(seed,v,61) * 6.2831853f;
+                float r = std::sqrt(Chance(seed,v,62)) * PROP_JITTER;
+                Place(PROP_SNOW_PINE,base + vec2(std::cos(a),std::sin(a)) * r,Chance(seed,v,63) * 6.2831853f,
+                      (0.85f + Chance(seed,v,64) * 0.30f) * TREE_SCALE);
+                continue;
+            }
             if (Chance(seed,v,1) < 0.035f){
                 float a = Chance(seed,v,4) * 6.2831853f;
                 float r = std::sqrt(Chance(seed,v,5)) * PROP_JITTER;
@@ -152,6 +188,23 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             The swamp (step 4): on its dry hummocks willows, bushes and long grass, thinly - it is
             open, wet country, not forest. Its pools are wet, so nothing reaches here from them.
         */
+        //The desert (step 5): the odd palm, rocks and dry shrubs, far apart.
+        if (t.biome[v] == TERRAIN_BIOME_DESERT){
+            float roll = Chance(seed,v,70);
+            float a = Chance(seed,v,71) * 6.2831853f;
+            float r = std::sqrt(Chance(seed,v,72)) * PROP_JITTER;
+            vec2 at = base + vec2(std::cos(a),std::sin(a)) * r;
+            float yaw = Chance(seed,v,73) * 6.2831853f;
+            float size = 0.85f + Chance(seed,v,74) * 0.30f;
+            if (roll < 0.015f){
+                Place(PROP_PALM,at,yaw,size * TREE_SCALE);
+            }else if (roll < 0.045f){
+                Place(Pick(Chance(seed,v,75),PROP_ROCK_A,rock_w,4),at,yaw,size);
+            }else if (roll < 0.095f){
+                Place(PROP_SHRUB,at,yaw,size);
+            }
+            continue;
+        }
         if (t.biome[v] == TERRAIN_BIOME_SWAMP){
             float roll = Chance(seed,v,50);
             float a = Chance(seed,v,51) * 6.2831853f;
@@ -221,7 +274,7 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
         if (kind < 0){
             continue;
         }
-        bool f_tree = (kind <= PROP_WILLOW);
+        bool f_tree = (kind <= PROP_SNOW_PINE);
         float a = Chance(seed,v,4) * 6.2831853f;
         float r = std::sqrt(Chance(seed,v,5)) * PROP_JITTER;
         Place(kind,base + vec2(std::cos(a),std::sin(a)) * r,Chance(seed,v,6) * 6.2831853f,
@@ -237,6 +290,90 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             float r2 = PROP_JITTER + Chance(seed,v,32) * (COVER_JITTER - PROP_JITTER);
             Place(Pick(Chance(seed,v,33),PROP_PINE_A,pine_w,4),base + vec2(std::cos(a2),std::sin(a2)) * r2,
                   Chance(seed,v,34) * 6.2831853f,(0.85f + Chance(seed,v,35) * 0.30f) * TREE_SCALE);
+        }
+    }
+
+    /*
+        REEDS - a pass of their own, because they stand exactly where the pass above will not: in
+        the wet band PlotIsFlat refuses, the swamp's pools and the rivers' banks. A plot there can
+        never be painted, so nothing ever has to hide them.
+
+        Per plot up to three clumps, scattered wider than ground cover, each kept only if the
+        ground under IT - the relief, less a river's channel - lies in the band at the water's edge:
+        the plot's vertex says only that water is near, not where its edge runs. Dense where the
+        clump noise is high, so they grow in beds with open water between; thinner on a river bank
+        than in the swamp.
+    */
+    const float plateau = terrain_levels[TERRAIN_PLATEAU].height;
+    for (v = 0; v < (int)g.fine.pos.size(); v++){
+        bool f_swamp = t.biome[v] == TERRAIN_BIOME_SWAMP;
+        if (g.fine.f_boundary[v] || t.level[v] != TERRAIN_PLATEAU || t.Mountain(v) || (!f_swamp && !t.wet[v])){
+            continue;
+        }
+        const vec2& base = g.fine.pos[v];
+        bool f_by_fall = false;
+        for (const TerrainFall& f : t.falls){
+            if ((f.lip - base).length() < REED_FALL_CLEAR){
+                f_by_fall = true;
+            }
+        }
+        if (f_by_fall){
+            continue;
+        }
+        /*
+            Beds, not a sprinkle: a steep ramp on the clump noise, so most of the band is either open
+            water or packed with reeds. Spread evenly, one or two a plot, they read from the game's
+            zoom as specks on the water rather than as reed beds.
+        */
+        float clump = Noise(base.x / REED_CLUMP,base.y / REED_CLUMP,seed + 91);
+        float density = f_swamp ? (0.10f + 1.40f * clump) : (-0.05f + 1.20f * clump);
+        density = std::max(0.0f,std::min(0.95f,density));
+        int tries = f_swamp ? 5 : 3;
+        for (int c = 0; c < tries; c++){
+            int salt = 90 + c * 6;
+            if (Chance(seed,v,salt) >= density){
+                continue;
+            }
+            float a = Chance(seed,v,salt + 1) * 6.2831853f;
+            float r = std::sqrt(Chance(seed,v,salt + 2)) * COVER_JITTER * 1.3f;
+            vec2 at = base + vec2(std::cos(a),std::sin(a)) * r;
+            /*
+                On a bank, onto the water's edge. Where a channel crosses the water line the band is
+                only a unit or two wide, and a clump scattered at random mostly missed it: a few
+                Newton steps on the bank's height bring it there - just under the surface - wherever
+                it was scattered on the slope.
+            */
+            if (!f_swamp){
+                const float target = TERRAIN_WATER_Y - 0.10f;
+                auto bank = [&](const vec2& p){ return t.GroundHeight(p,plateau) - t.RiverDip(p); };
+                for (int step = 0; step < 4; step++){
+                    float y0 = bank(at);
+                    vec2 grad((bank(at + vec2(0.1f,0.0f)) - bank(at - vec2(0.1f,0.0f))) / 0.2f,
+                              (bank(at + vec2(0.0f,0.1f)) - bank(at - vec2(0.0f,0.1f))) / 0.2f);
+                    float g2 = grad.dot(grad);
+                    if (g2 < 1e-4f){
+                        break;
+                    }
+                    vec2 move = grad * ((target - y0) / g2);
+                    float len = move.length();
+                    if (len > 1.5f){
+                        move = move * (1.5f / len);
+                    }
+                    at += move;
+                }
+            }
+            //Still on the plateau - a clump scattered off a rim's lip would hang over the chasm.
+            GridPick under = picker.Pick(at);
+            if (!under.f_hit || t.level[under.plot] != TERRAIN_PLATEAU){
+                continue;
+            }
+            float dip = t.RiverDip(at);
+            float y = t.GroundHeight(at,plateau) - dip;
+            if (y < TERRAIN_WATER_Y - REED_DEPTH || y > TERRAIN_WATER_Y + SWAMP_SHORE){
+                continue;
+            }
+            int kind = (Chance(seed,v,salt + 3) < 0.55f) ? PROP_REEDS_A : PROP_REEDS_B;
+            Place(kind,at,Chance(seed,v,salt + 4) * 6.2831853f,1.05f + Chance(seed,v,salt + 5) * 0.40f,dip);
         }
     }
     out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();

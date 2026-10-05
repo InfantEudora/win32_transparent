@@ -79,6 +79,10 @@ struct material_t {
                     flutter - a leaf on a vine hangs sideways or down, and by height it would
                     hardly move at all. Its origin must be where it is attached (the stem).
         The last padding int, so again no offset moved; every GLSL mirror spells it too.
+
+        INSTANCE MOTION: from INSTANCE_MOTION_FIRST up, this is not a way of bending in the wind but
+        a way of MOVING an animated instance set (Object::SetInstanceMotion) - wind_flex is then
+        ignored. The modes, and what each instance's parameters mean, are below the struct.
     */
     int wind_mode = 0;
     uint64_t handle_diffuse = 0;    // The texture handle for OpenGL Bindless Textures
@@ -95,6 +99,30 @@ struct material_t {
     // texture handles - exactly where it was. std430: vec4 at offset 64, struct grows 64 -> 80.
     vec4 emissive = {0,0,0,1};
 };
+
+/*
+    INSTANCE MOTION MODES, material_t::wind_mode values. Each instance has two vec4s, a and b, and the
+    rest pose its transform gives; t is Renderer::motion_seconds. default.vert carries the formulas.
+
+      PUFF  a mist or cloud puff that bobs and breathes about its centre:
+            a = (phase 0..1, period s, bob height, breath share), b unused.
+            cycle = t / period + phase; it rises sin(2 pi cycle) * bob and scales by
+            1 + cos(pi cycle) * breath about its own origin.
+      LIFE  a puff that lives and dies over and over - foam, smoke, a spark: born small at its rest
+            pose, swells, rises and drifts as it shrinks away, then starts again.
+            a = (phase 0..1, life s, rise height, grow share of the life),
+            b = (drift x, drift z, wander - how far each life starts from the last, unused).
+      FALL  rain or snow: falls through a column of height h above its rest pose and starts again at
+            the top, swaying sideways as it goes.
+            a = (phase 0..1, fall speed, column height h, sway), b = (sway period s, unused x3).
+
+    Never renumber - a material saved with one means it.
+*/
+#define INSTANCE_MOTION_FIRST   8
+#define INSTANCE_MOTION_PUFF    8
+#define INSTANCE_MOTION_LIFE    9
+#define INSTANCE_MOTION_FALL    10
+#define INSTANCE_MOTION_VEC4S   2       //parameters per instance
 
 //We want to know more about the material than GLSL
 struct Material {

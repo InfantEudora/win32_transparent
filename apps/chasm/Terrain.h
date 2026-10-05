@@ -36,8 +36,18 @@
 #define TERRAIN_BIOME_MOUNTAIN  1
 #define TERRAIN_BIOME_POCKET    2       //step 3: a meadow in the mountain and its valley - open, buildable
 #define TERRAIN_BIOME_SWAMP     3       //step 4: lowland in the south, pools between hummocks
-#define TERRAIN_NUM_BIOMES      4
+#define TERRAIN_BIOME_DESERT    4       //step 5: dunes in the south, on the swamp's other side
+#define TERRAIN_NUM_BIOMES      5
 const char* TerrainBiomeName(int biome);
+
+struct ChasmLayout;
+/*
+    The biome at p on `level`, from the layout alone - the one rule, so the vertices' biomes (Terrain::
+    biome) and the drawn ground's colours (TerrainMesh) agree. `dither` is added to the south regions'
+    masks before they are tested at a half: 0 for the rules, a little noise for colour, so an edge drawn
+    triangle by triangle is ragged rather than a staircase of cells.
+*/
+int TerrainBiomeAt(const ChasmLayout& layout, const vec2& p, int level, float dither = 0.0f);
 
 struct TerrainLevel{
     const char* name;
@@ -81,6 +91,14 @@ extern const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS];
 #define SWAMP_HUMMOCK           1.20f   //how far hummocks rise and pools sink either side of it
 #define SWAMP_HUMMOCK_SIZE      15.0f   //hummock to hummock
 #define SWAMP_SHORE             0.20f   //ground this little above the water is still too wet to use
+//The desert (step 5): dunes, gentle enough to build between.
+#define DUNE_BASE               0.4f
+#define DUNE_HEIGHT             3.2f
+#define DUNE_WAVELENGTH         34.0f
+//Snow (step 5): above this, gentle mountain ground is snow; below it, scree. Wanders on noise.
+#define SNOW_LINE               12.0f
+#define SNOW_LINE_SWING         5.0f
+#define SNOW_LINE_WAVELENGTH    70.0f
 
 struct TerrainRiver{
     std::vector<vec2> points;   //world, smoothed, from the source; the last runs past the rim
@@ -126,6 +144,9 @@ public:
     std::vector<float> ground;
     float relief_max = 0.0f;
     int swamp_pool_count = 0;       //swamp vertices wet by its pools
+    //The height above which gentle mountain ground is snow (step 5).
+    float SnowLine(const vec2& p) const;
+    uint32_t relief_seed = 0;
 
     std::vector<TerrainRiver> rivers;
     std::vector<TerrainFall> falls;

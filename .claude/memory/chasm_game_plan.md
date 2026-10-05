@@ -94,8 +94,10 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   POCKET, check `pockets` (one side only, and walkable); rivers now rise at the mountain's foot (seeds 2,3
   re-pinned). 58/60 seeds have a pocket per side. Step 4 BUILT: swamp on ONE side of the main mouth (the
   other side's south is for a desert later), ChasmSwampMask, biome SWAMP, pools = wet + flat water cells
-  drawn by a slow copy of the river shader, willows (PROP_WILLOW). Next: step 5 snow by height/colours
-  (also: murky pools, staircase biome edges, green on pocket cliff feet).
+  drawn by a slow copy of the river shader, willows (PROP_WILLOW). Step 5 BUILT: ground colour per
+  TRIANGLE (TerrainMesh GroundColour: biome via TerrainBiomeAt + dither, steep = rock, mountain scree/
+  snowline 12/crags), the DESERT opposite the swamp (dunes, palms), snow pines, murky pools. All 5
+  biome steps done 2026-10-05.
   Later (user, 2026-10-05): a buildable overlay round the cursor in ALL builds, with building footprints.
 
 **Why:** the user wants the building mechanic tested before any gameplay goes on top.

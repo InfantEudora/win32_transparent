@@ -319,6 +319,14 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
         boneinstancedata.clear();
+        /*
+            Animated instances' parameters, in step with instancedata - but only once this batch has
+            met a set with motion: a batch with none (nearly all of them) builds and uploads nothing.
+            When one turns up, everything before it is padded with zeros - still - and so, at the end,
+            is everything after it that has no motion of its own.
+        */
+        instancemotion.clear();
+        bool f_motion = false;
 
         Mesh* mesh = unique_meshes.at(i);
         if (!mesh){
@@ -403,6 +411,13 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
                 instancedata.resize(first + set.size(),base);
                 for (size_t n = 0; n < set.size(); n++){
                     instancedata[first + n].mat_transformscale = f_identity ? set[n] : set[n] * world;
+                }
+                //Everything before it that had no motion is padded still, here and at the end.
+                if (object->HasInstanceMotion()){
+                    f_motion = true;
+                    instancemotion.resize(first * INSTANCE_MOTION_VEC4S,vec4(0.0f,0.0f,0.0f,0.0f));
+                    const std::vector<vec4>& m = object->GetInstanceMotion();
+                    instancemotion.insert(instancemotion.end(),m.begin(),m.end());
                 }
                 continue;
             }
@@ -497,6 +512,19 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
 
         //glInvalidateBufferData(instdata_ssbo);
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_STREAM_DRAW);
+
+        //This batch's motion: the clock, then its instances' parameters, every instance accounted for.
+        if (f_motion){
+            instancemotion.resize(instancedata.size() * INSTANCE_MOTION_VEC4S,vec4(0.0f,0.0f,0.0f,0.0f));
+            float seconds = (motion_seconds >= 0.0f) ? motion_seconds
+                : std::chrono::duration<float>(std::chrono::steady_clock::now() - motion_epoch).count();
+            vec4 clock(seconds,0.0f,0.0f,0.0f);
+            size_t bytes = sizeof(vec4) * (1 + instancemotion.size());
+            glNamedBufferData(motion_ssbo,bytes,NULL,GL_STREAM_DRAW);
+            glNamedBufferSubData(motion_ssbo,0,sizeof(vec4),&clock);
+            glNamedBufferSubData(motion_ssbo,sizeof(vec4),sizeof(vec4) * instancemotion.size(),instancemotion.data());
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER,SSBO_MOTION,motion_ssbo);
+        }
 
         if (rendering_mode == MESH_MODE_SKINNED){
 
@@ -2235,6 +2263,15 @@ bool Renderer::InitSSBO(){
     //an unbound buffer, whether or not the app ever sets a field.
     glCreateBuffers(1, (GLuint*)&wind_ssbo);
     ClearWindField();
+
+    //Instance motion, none yet: a clock and one still instance, so it too is never unbound.
+    glCreateBuffers(1, (GLuint*)&motion_ssbo);
+    {
+        vec4 zeros[1 + INSTANCE_MOTION_VEC4S] = {};
+        glNamedBufferData(motion_ssbo,sizeof(zeros),zeros,GL_STREAM_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER,SSBO_MOTION,motion_ssbo);
+    }
+    motion_epoch = std::chrono::steady_clock::now();
 
     return true;
 }

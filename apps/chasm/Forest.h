@@ -29,11 +29,15 @@ enum PropKind{
     PROP_PINE_A = 0, PROP_PINE_B, PROP_PINE_C, PROP_PINE_D,
     PROP_OAK_A, PROP_OAK_B, PROP_OAK_C,
     PROP_WILLOW,                //the swamp's tree (biomes_plan.md step 4)
+    PROP_PALM,                  //the desert's (step 5)
+    PROP_SNOW_PINE,             //the mountain's, below the snow (step 5)
     PROP_ROCK_A, PROP_ROCK_B, PROP_ROCK_C, PROP_ROCK_CLUSTER,
     PROP_STUMP, PROP_LOG, PROP_BUSH_A, PROP_BUSH_B,
     //Ground cover: small, numerous, and casting no shadow (PropCastsShadow).
     PROP_GRASS_A, PROP_GRASS_B, PROP_GRASS_C, PROP_FLOWERS_A, PROP_FLOWERS_B,
     PROP_FERN, PROP_SHRUB, PROP_MUSHROOMS, PROP_TWIG,
+    //The wet band's own cover: the swamp's shallows and the rivers' banks (biomes_plan.md, "Reeds").
+    PROP_REEDS_A, PROP_REEDS_B,
     PROP_KIND_COUNT
 };
 #define PROP_COVER_FIRST    PROP_GRASS_A

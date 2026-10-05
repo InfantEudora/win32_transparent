@@ -1430,33 +1430,47 @@ static void PlaceMountainFoot(uint32_t seed, const vec2& lo, const vec2& hi, Cha
 }
 
 /*
-    The swamp (biomes_plan.md step 4), from a stream of its own like the mountain: which side of the
-    main mouth, and a disc on that side centred a little past the south edge, so the swamp hugs it.
+    The south's regions (biomes_plan.md steps 4 and 5), from a stream of their own like the mountain:
+    the swamp on one side of the main mouth, the desert on the other, each a disc centred a little past
+    the south edge so it hugs it. Drawn swamp first, so adding the desert left the swamp as it was.
     Sized to stay well clear of the mountain.
 */
-static void PlaceSwamp(uint32_t seed, const vec2& lo, const vec2& hi, ChasmLayout& out){
-    RRandom rng((int)(seed * 3266489917u ^ 0x5A3B0Fu));
-    rng.Generate(1024);
+static void PlaceRegion(RRandom& rng, int side, float r0, float r1, const vec2& lo, const vec2& hi,
+                        float mouth, ChasmLayout::Region& out){
     const float D = hi.y - lo.y;
-    out.swamp.side = rng.Roll(0.5f) ? -1 : 1;
-    out.swamp.radius = rng.GetFloat(110.0f,160.0f);
-    float mouth = out.main_mouth_x;
-    float x = (out.swamp.side < 0) ? lo.x + (mouth - lo.x) * rng.GetFloat(0.3f,0.6f)
-                                   : mouth + (hi.x - mouth) * rng.GetFloat(0.4f,0.7f);
-    out.swamp.centre = vec2(x,hi.y + out.swamp.radius * 0.15f);
+    out.side = side;
+    out.radius = rng.GetFloat(r0,r1);
+    float x = (side < 0) ? lo.x + (mouth - lo.x) * rng.GetFloat(0.3f,0.6f)
+                         : mouth + (hi.x - mouth) * rng.GetFloat(0.4f,0.7f);
+    out.centre = vec2(x,hi.y + out.radius * 0.15f);
     //Never up to the mountain: at most halfway up the map.
-    out.swamp.radius = std::min(out.swamp.radius,0.5f * D);
+    out.radius = std::min(out.radius,0.5f * D);
 }
 
-float ChasmSwampMask(const ChasmLayout& layout, const vec2& p){
-    const ChasmLayout::Swamp& s = layout.swamp;
+static void PlaceSouth(uint32_t seed, const vec2& lo, const vec2& hi, ChasmLayout& out){
+    RRandom rng((int)(seed * 3266489917u ^ 0x5A3B0Fu));
+    rng.Generate(1024);
+    int side = rng.Roll(0.5f) ? -1 : 1;
+    PlaceRegion(rng,side,110.0f,160.0f,lo,hi,out.main_mouth_x,out.swamp);
+    PlaceRegion(rng,-side,120.0f,170.0f,lo,hi,out.main_mouth_x,out.desert);
+}
+
+static float RegionMask(const ChasmLayout::Region& s, const vec2& p, uint32_t salt){
     if (s.radius <= 0.0f){
         return 0.0f;
     }
-    float wobble = Noise(p,46.0f,0x5A3B1u) * 0.6f + Noise(p,17.0f,0x5A3B2u) * 0.4f;
+    float wobble = Noise(p,46.0f,salt) * 0.6f + Noise(p,17.0f,salt + 1) * 0.4f;
     float d = (p - s.centre).length() + wobble * 18.0f;
-    float t = std::max(0.0f,std::min(1.0f,(s.radius - d) / CHASM_SWAMP_EDGE));
+    float t = std::max(0.0f,std::min(1.0f,(s.radius - d) / CHASM_REGION_EDGE));
     return t * t * (3.0f - 2.0f * t);
+}
+
+float ChasmSwampMask(const ChasmLayout& layout, const vec2& p){
+    return RegionMask(layout.swamp,p,0x5A3B1u);
+}
+
+float ChasmDesertMask(const ChasmLayout& layout, const vec2& p){
+    return RegionMask(layout.desert,p,0xDE5E7u);
 }
 
 float ChasmMountainFootAt(const ChasmLayout& layout, float x){
@@ -1512,7 +1526,7 @@ ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, f
     out.features = placed;
     b.PlaceRivers(out.features);
     PlaceMountainFoot(seed,lo,hi,out);
-    PlaceSwamp(seed,lo,hi,out);
+    PlaceSouth(seed,lo,hi,out);
     out.generate_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
     return out;
 }

@@ -33,8 +33,8 @@ PREVIEWS = os.path.join(REPO, "art_source", "chasm", "previews")
 PALETTE_COLS = 32
 PALETTE_ROWS = 16
 TRI_BUDGET = {"tree_pine": 100, "tree_oak": 120, "tree_palm": 120, "tree_willow": 120,
-              "grass": 12, "fern": 24, "shrub": 24}
-COVER = ("grass", "flowers", "fern", "shrub", "mushrooms", "twig")
+              "grass": 12, "fern": 24, "shrub": 24, "reeds": 24}
+COVER = ("grass", "flowers", "fern", "shrub", "mushrooms", "twig", "reeds")
 SUN_TRAVEL = Vector((1.0, -1.0, -2.0)).normalized()     #from the north-west, as blender_chasm_props.py
 
 
@@ -265,8 +265,8 @@ def preview():
     look_from(cam, Vector((10.0, -10.0, 1.0)), 55, 0, 38)
     cam.data.lens = 45
     render(os.path.join(PREVIEWS, "lineup.png"), "BLENDER_WORKBENCH", (1600, 1100))
-    #The ground cover, close enough to see.
-    look_from(cam, Vector((10.0, -20.0, 0.1)), 55, 0, 28)
+    #The ground cover, close enough to see - the row runs out to the reeds at slot 5.
+    look_from(cam, Vector((12.5, -20.0, 0.1)), 55, 0, 33)
     render(os.path.join(PREVIEWS, "lineup_cover.png"), "BLENDER_WORKBENCH", (1600, 600))
 
     #Forest: hide the lineup, build a clearing out of shared-mesh copies, and light it like the

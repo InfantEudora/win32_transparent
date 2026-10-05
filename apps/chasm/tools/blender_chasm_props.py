@@ -375,6 +375,20 @@ def grass(bm, rng, blades, colours):
         colour(bm, spike(bm, rng, Vector((x, y, 0)), 0.045, h, h * 0.35), colours[i % len(colours)])
 
 
+def reeds(bm, rng, blades, heads):
+    """A clump of reeds for the swamp's shallows and the rivers' banks: tall thin blades, leaning a
+    little out of one root, and on some clumps cattails - a short brown head on a straight stem.
+    The heads are what read as reed rather than long grass at the game's zoom; the blades alone,
+    for a plain clump of rushes beside them. Blades are (x, y, height), heads (x, y, stem height)."""
+    for i, (x, y, h) in enumerate(blades):
+        colour(bm, spike(bm, rng, Vector((x, y, 0)), 0.035, h, h * 0.18), (PAL_LEAF, PAL_LEAF_DARK)[i % 2])
+    for (x, y, h) in heads:
+        colour(bm, spike(bm, rng, Vector((x, y, 0)), 0.025, h, 0.0), PAL_LEAF_DARK)
+        side, _ = add_prism(bm, Vector((x, y, h - 0.24)), 0.055, 0.17, 3, rng.uniform(0, 6.3), rng,
+                            top_radius=0.045)
+        colour(bm, side, PAL_BARK_DARK)
+
+
 def flowers(bm, rng, leaves, blooms):
     """Leaf spikes with squat blooms among them: the blooms are what reads, so they are wide, low and
     face the sky. No stalks - invisible at this size, and they doubled the count."""
@@ -590,6 +604,12 @@ ASSETS = [
                                                         (0.13, 0.06, 0.09, 0.06, PAL_BARK),
                                                         (0.04, 0.14, 0.07, 0.05, PAL_BARK)]), (3.5, 4)),
     ("twig_a", 69, twig, (4.0, 4)),
+    #Round 3: the swamp's and the river banks' reeds (biomes_plan.md, "Reeds").
+    ("reeds_a", 81, lambda bm, r: reeds(bm, r, [(0.0, 0.0, 0.95), (0.08, 0.05, 0.80), (-0.07, 0.06, 0.70),
+                                                (0.03, -0.08, 0.85)],
+                                        [(-0.02, 0.02, 1.05)]), (4.5, 4)),
+    ("reeds_b", 82, lambda bm, r: reeds(bm, r, [(0.0, 0.0, 0.75), (0.07, -0.04, 0.62), (-0.06, -0.05, 0.68),
+                                                (0.05, 0.07, 0.55), (-0.04, 0.08, 0.60)], []), (5.0, 4)),
     ("tree_pine_snow_a", 71, lambda bm, r: snow_conifer(bm, r, 4.2, 3, 1.85, 7, 0.40, (0.06, -0.04)), (4, 0)),
     ("tree_palm_a", 72, lambda bm, r: palm(bm, r, 4.4, 0.9, 6), (3, 1)),
     ("tree_willow_a", 73, lambda bm, r: willow(bm, r, 3.6, 1.45, 10), (4, 1)),

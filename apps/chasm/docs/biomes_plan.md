@@ -26,7 +26,7 @@ height and regions to it.
 | 2 | The relief field, and slope rules for building and walking |
 | 3 | Mountain pockets, reachable from one side; the crest's look |
 | 4 | The swamp lowland |
-| 5 | Snow above a height, and the biomes' colours generally |
+| 5 | Snow above a height, and the biomes' colours generally - and the desert |
 
 ## Step 1: the mountain band
 
@@ -213,3 +213,45 @@ Files: `ChasmLayout.cpp` (`PlaceSwamp`, `ChasmSwampMask`), `Grid.h` (`ChasmLayou
 - The swamp's edge is a cell-by-cell staircase in colour, as every biome edge is; step 5.
 - No swamp mist, no reeds: the mist system could lay a low blanket over it, and reeds would need
   modelling.
+
+## Step 5: snow, the ground's colours, and the desert
+
+### As built (2026-10-05)
+
+The desert was not in the original list - step 4 left the swamp's other side for it, and the user
+pointed at it - so it came here, with the colours, since it is mostly colour, relief and planting.
+
+Files: `TerrainMesh.cpp` (`GroundColour`), `Terrain.*` (`TerrainBiomeAt`, `SnowLine`, biome DESERT, its
+dunes), `ChasmLayout.cpp` / `Grid.h` (`ChasmLayout::Region`, the swamp and the desert placed together),
+`Forest.*` (`PROP_PALM`, `PROP_SNOW_PINE`), `ApplicationChasmWater.cpp` (murky pools).
+
+- **The ground's colour is chosen per triangle**, not per cell, from its centre's biome, height and
+  steepness (`GroundColour`). One rule says where each biome is (`TerrainBiomeAt`), used by the
+  vertices' biomes and the mesh alike; for colour the south regions' masks get a little noise first,
+  so a biome's edge is ragged at a triangle's size instead of a staircase of cells.
+  - **Steep ground is bare rock** in its row, banded by height like the cliffs' strata: a ground
+    triangle's normal.y under 0.80 (about 37 degrees), or under 0.55 in the mountain, which holds
+    snow on steeper faces than the plateau holds grass.
+  - **The mountain**: grey scree from the very foot - so where the mountain starts, and where nothing
+    can be built, shows - then snow above a snowline of 12 wandering 5 either way (wavelength 70),
+    and the crags bare. The first snowline (22) left it nearly all rock. A pocket's cliffs are now
+    rock, which fixes the green running up them (step 3's open item).
+- **The desert**: on the swamp's other side of the main mouth, a disc of radius 120-170 against the
+  south edge, from the same stream right after the swamp (the swamp unchanged). Dunes - ridged noise,
+  crests sharp, 0.4 to 3.6 above the plateau, wavelength 34 - gentle enough to build between. Sand
+  from the desert palette row; the odd palm, rocks and dry shrubs.
+- **The mountain's trees**: snow pines on its lower slopes, below the snow, on plots rising less than
+  1.3, thinning toward the snowline.
+- **Murky pools**: the pools' program sets the shader's water colours to a green-brown and a duller
+  foam; the rivers keep their blue.
+- **Measured**: seeds 1-60 (debug) pass every check; seeds 1-3 keep their pinned hashes in debug and
+  release (nothing here touches the grid). The replay test passes in debug and release. The terrain
+  mesh takes about 180 ms in debug and 120 ms in release - the biome is asked for every ground
+  triangle - once per world.
+
+**Open:**
+- The desert's dunes read only up close; the sand's four shades speckle more than they shade.
+- No desert rules of its own: it builds and walks like grass. Fields in sand, if they should be
+  refused, are one line in `ZoneCanField`.
+- The colour rule is not cached: if the mesh build ever matters, the biome per triangle can come from
+  its cell's corners' biomes and stop asking the masks.

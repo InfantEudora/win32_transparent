@@ -594,9 +594,23 @@ void Object::UpdateTransformMatrix(){
     state.f_was_transformed = false;
 }
 
+void Object::SetInstanceMotion(std::vector<vec4>&& params, float pad){
+    if (!params.empty() && params.size() != instances.size() * INSTANCE_MOTION_VEC4S){
+        //Out of step with the set: drawing it would read another instance's motion, or past the end.
+        params.clear();
+    }
+    instance_motion = std::move(params);
+    if (!instance_motion.empty() && pad > 0.0f){
+        instance_bounds_min = instance_bounds_min - vec3(pad,pad,pad);
+        instance_bounds_max = instance_bounds_max + vec3(pad,pad,pad);
+    }
+}
+
 void Object::SetInstances(std::vector<fmat4>&& transforms){
     f_instance_set = true;
     instances = std::move(transforms);
+    //A new set is still until its motion is given again: the old list belongs to other instances.
+    instance_motion.clear();
     if (!mesh || !mesh->HasBounds() || instances.empty()){
         instance_bounds_min = vec3();
         instance_bounds_max = vec3();

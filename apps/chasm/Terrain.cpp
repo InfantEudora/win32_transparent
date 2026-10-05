@@ -172,28 +172,13 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
         level[v] = l;
         level_count[l]++;
     }
-    //The biomes: north of the mountain's foot (Grid::layout) is mountain, the rest temperate.
+    //The biomes (TerrainBiomeAt), from the layout's mountain, pockets and south regions.
     biome.assign(n,TERRAIN_BIOME_TEMPERATE);
     for (int i = 0; i < TERRAIN_NUM_BIOMES; i++){
         biome_count[i] = 0;
     }
     for (size_t v = 0; v < n; v++){
-        const vec2& p = g.fine.pos[v];
-        if (p.y < ChasmMountainFootAt(g.layout,p.x)){
-            biome[v] = TERRAIN_BIOME_MOUNTAIN;
-        }
-        //The swamp, where its mask is more than half; never over the mountain.
-        if (level[v] == TERRAIN_PLATEAU && biome[v] == TERRAIN_BIOME_TEMPERATE && ChasmSwampMask(g.layout,p) > 0.5f){
-            biome[v] = TERRAIN_BIOME_SWAMP;
-        }
-        //A pocket's meadow and valley are open ground, in the mountain or just out of it.
-        if (level[v] == TERRAIN_PLATEAU){
-            for (const ChasmLayout::Pocket& k : g.layout.pockets){
-                if (ChasmPocketDistance(k,p) < 0.0f){
-                    biome[v] = TERRAIN_BIOME_POCKET;
-                }
-            }
-        }
+        biome[v] = (uint8_t)TerrainBiomeAt(g.layout,g.fine.pos[v],level[v]);
         biome_count[biome[v]]++;
     }
     BuildRivers(g,features);
@@ -275,6 +260,7 @@ float SmoothStep(float e0, float e1, float x){
 */
 void Terrain::BuildRelief(const Grid& g){
     const uint32_t seed = g.settings.seed;
+    relief_seed = seed;
     relief_origin = g.bounds_min;
     vec2 size = g.bounds_max - g.bounds_min;
     relief_w = (int)std::ceil(size.x / relief_cell) + 2;
@@ -307,6 +293,13 @@ void Terrain::BuildRelief(const Grid& g){
                 float hummock = ReliefNoise(p,SWAMP_HUMMOCK_SIZE,seed ^ 0x4116u) * 0.7f +
                                 ReliefNoise(p,SWAMP_HUMMOCK_SIZE * 0.4f,seed ^ 0x4117u) * 0.3f;
                 h = h + (SWAMP_FLOOR + hummock * SWAMP_HUMMOCK - h) * swamp;
+            }
+            //The desert (step 5): the hills give way to dunes - ridges, sharp at the crest.
+            float desert = ChasmDesertMask(g.layout,p);
+            if (desert > 0.0f){
+                float dune = Ridge(p,DUNE_WAVELENGTH,seed ^ 0x4118u) * 0.7f +
+                             Ridge(p,DUNE_WAVELENGTH * 0.4f,seed ^ 0x4119u) * 0.3f;
+                h = h + (DUNE_BASE + dune * DUNE_HEIGHT - h) * desert;
             }
             /*
                 A pocket: its meadow flat at its floor, its valley ramping from that floor down to the
@@ -359,12 +352,42 @@ float Terrain::GroundHeight(const vec2& p, float level_height) const{
     return y;
 }
 
+int TerrainBiomeAt(const ChasmLayout& lay, const vec2& p, int level, float dither){
+    int b = TERRAIN_BIOME_TEMPERATE;
+    if (p.y < ChasmMountainFootAt(lay,p.x)){
+        b = TERRAIN_BIOME_MOUNTAIN;
+    }
+    if (level != TERRAIN_PLATEAU){
+        return b;
+    }
+    //The south's regions where their masks pass one half; never over the mountain.
+    if (b == TERRAIN_BIOME_TEMPERATE){
+        if (ChasmSwampMask(lay,p) + dither > 0.5f){
+            b = TERRAIN_BIOME_SWAMP;
+        }else if (ChasmDesertMask(lay,p) + dither > 0.5f){
+            b = TERRAIN_BIOME_DESERT;
+        }
+    }
+    //A pocket's meadow and valley are open ground, in the mountain or just out of it.
+    for (const ChasmLayout::Pocket& k : lay.pockets){
+        if (ChasmPocketDistance(k,p) < 0.0f){
+            b = TERRAIN_BIOME_POCKET;
+        }
+    }
+    return b;
+}
+
+float Terrain::SnowLine(const vec2& p) const{
+    return SNOW_LINE + SNOW_LINE_SWING * ReliefNoise(p,SNOW_LINE_WAVELENGTH,relief_seed ^ 0x5110u);
+}
+
 const char* TerrainBiomeName(int biome){
     switch (biome){
         case TERRAIN_BIOME_TEMPERATE:   return "temperate";
         case TERRAIN_BIOME_MOUNTAIN:    return "mountain";
         case TERRAIN_BIOME_POCKET:      return "pocket";
         case TERRAIN_BIOME_SWAMP:       return "swamp";
+        case TERRAIN_BIOME_DESERT:      return "desert";
         default:                        return "?";
     }
 }

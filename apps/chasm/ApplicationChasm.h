@@ -262,6 +262,11 @@ private:
     Mesh* mist_meshes[MIST_VARIANTS] = {};
     Mesh* foam_mesh = NULL;
     std::vector<Object*> mist_sets;                 //chunk * MIST_VARIANTS + variant
+    //The palette with core's INSTANCE_MOTION_PUFF, which the mist's sets are drawn with: their puffs
+    //bob and breathe on the GPU, so a set is filled once per world (Mist.h).
+    int puff_material = -1;
+    std::shared_ptr<const ChasmWorld> mist_built_world;
+    bool f_mist_shown = true;
     Object* foam_set = NULL;
     std::atomic<bool> f_view_water{true};
     std::atomic<bool> f_view_mist{true};

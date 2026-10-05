@@ -56,7 +56,8 @@ void ApplicationChasm::BuildWaterScene(){
 
     //The puffs: one shape per shade, lightest first, and a lighter one again for the foam.
     std::vector<vertex> verts;
-    const int shades[MIST_VARIANTS] = {PAL_MIST_LIGHT,PAL_MIST,PAL_MIST_DARK};
+    //The swamp's wisps in a pale grey-green of their own: the foam's white made them snowballs.
+    const int shades[MIST_VARIANTS] = {PAL_MIST_LIGHT,PAL_MIST,PAL_MIST_DARK,PAL_SWAMP_MIST};
     for (int i = 0; i < MIST_VARIANTS; i++){
         BuildPuffMesh((uint32_t)i + 1,shades[i],PAL_EFFECTS,verts);
         mist_meshes[i] = new Mesh();
@@ -92,10 +93,15 @@ void ApplicationChasm::SetWaterSheetUniforms(){
     water_sheet_shader->Setfloat("flow_speed",0.32f);
 }
 
-//Standing water: the streaks hardly drift.
+//Standing water: the streaks hardly drift, and it is murky - a swamp's green-brown, not a river's blue
+//(biomes_plan.md step 5). The shader's own defaults are the rivers'.
 void ApplicationChasm::SetWaterPoolUniforms(){
     water_pool_shader->Setfloat("water_seconds",(float)SimSeconds());
     water_pool_shader->Setfloat("flow_speed",0.12f);
+    water_pool_shader->Setvec3("water_light",vec3(0.42f,0.52f,0.40f));
+    water_pool_shader->Setvec3("water_mid",vec3(0.29f,0.39f,0.31f));
+    water_pool_shader->Setvec3("water_deep",vec3(0.20f,0.29f,0.24f));
+    water_pool_shader->Setvec3("water_foam",vec3(0.74f,0.76f,0.64f));
 }
 
 void ApplicationChasm::SetWaterFlatUniforms(){
@@ -158,13 +164,15 @@ void ApplicationChasm::UpdateMist(){
             while (mist_sets.size() < need){
                 Object* o = new Object();
                 o->name = "Mist set " + std::to_string(mist_sets.size());
-                o->SetMesh(mist_meshes[mist_sets.size() % MIST_VARIANTS]);
-                o->SetMaterialSlot(0,palette_material);
+                int variant = (int)(mist_sets.size() % MIST_VARIANTS);
+                o->SetMesh(mist_meshes[variant]);
+                o->SetMaterialSlot(0,puff_material);
                 o->SetVisualOnly(true);
                 o->SetPickability(false);
                 //The blanket shades itself: a puff's shadow on the next is what makes it read as
-                //heaped rather than painted on.
-                o->SetCastsShadow(true);
+                //heaped rather than painted on. The swamp's thin wisps cast none - a shadow on the
+                //water under a haze would only look like a stain.
+                o->SetCastsShadow(variant != MIST_SWAMP_VARIANT);
                 o->SetInstances(std::vector<fmat4>());
                 o->SetVisibility(false);
                 main_scene->AddObject(o);
@@ -174,24 +182,35 @@ void ApplicationChasm::UpdateMist(){
     }
     bool f_show = f_view_mist;
     double seconds = SimSeconds();
-    std::vector<fmat4> sets[MIST_VARIANTS];
-    for (size_t c = 0; c < mist_sets.size() / MIST_VARIANTS; c++){
-        if (c < m.chunk_puffs.size() && f_show){
-            for (int i : m.chunk_puffs[c]){
-                const MistPuff& p = m.puffs[i];
-                sets[p.variant].push_back(MistTransform(p,seconds));
+    /*
+        The mist's sets are filled once per world (and when the view toggle flips): rest poses and
+        motion parameters, and the GPU moves every puff from there. A frame costs nothing here.
+    */
+    if (w != mist_built_world || f_show != f_mist_shown){
+        mist_built_world = w;
+        f_mist_shown = f_show;
+        std::vector<fmat4> sets[MIST_VARIANTS];
+        std::vector<vec4> motion[MIST_VARIANTS];
+        for (size_t c = 0; c < mist_sets.size() / MIST_VARIANTS; c++){
+            if (c < m.chunk_puffs.size() && f_show){
+                for (int i : m.chunk_puffs[c]){
+                    const MistPuff& p = m.puffs[i];
+                    sets[p.variant].push_back(MistRest(p));
+                    vec4 mv[2];
+                    MistMotion(p,mv);
+                    motion[p.variant].push_back(mv[0]);
+                    motion[p.variant].push_back(mv[1]);
+                }
             }
-        }
-        for (int k = 0; k < MIST_VARIANTS; k++){
-            Object* o = mist_sets[c * MIST_VARIANTS + k];
-            bool f_any = !sets[k].empty();
-            //An empty set that was empty last frame too needs nothing.
-            if (!f_any && !o->IsVisible()){
-                continue;
+            for (int k = 0; k < MIST_VARIANTS; k++){
+                Object* o = mist_sets[c * MIST_VARIANTS + k];
+                bool f_any = !sets[k].empty();
+                o->SetInstances(std::move(sets[k]));
+                o->SetInstanceMotion(std::move(motion[k]),MIST_MOTION_PAD);
+                sets[k].clear();
+                motion[k].clear();
+                o->SetVisibility(f_any);
             }
-            o->SetInstances(std::move(sets[k]));
-            sets[k].clear();
-            o->SetVisibility(f_any);
         }
     }
 

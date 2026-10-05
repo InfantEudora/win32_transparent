@@ -86,6 +86,61 @@ layout (std430, binding = 7) readonly buffer WindBuffer{
 	vec2  wind_grid[];
 };
 
+/*
+	INSTANCE MOTION - Object::SetInstanceMotion and material_t::wind_mode from INSTANCE_MOTION_FIRST
+	up (Material.h has the modes and what each instance's two vec4s mean). The motion is worked out
+	here from the clock, so an animated set costs the CPU nothing a frame. Uploaded by the Renderer
+	with each batch that uses it: the clock, then two vec4s per instance of the batch, in step with
+	instance_data. Always bound, so a shader that never reads it reads nothing unbound.
+*/
+#define INSTANCE_MOTION_FIRST	8
+#define INSTANCE_MOTION_PUFF	8
+#define INSTANCE_MOTION_LIFE	9
+#define INSTANCE_MOTION_FALL	10
+layout (std430, binding = 8) readonly buffer MotionBuffer{
+	vec4 motion_clock;		//seconds, unused x3
+	vec4 motion[];			//two per instance
+};
+
+float MotionHash(float n){
+	return fract(sin(n * 12.9898 + 78.233) * 43758.5453);
+}
+
+//`world` is the vertex in its rest pose, `origin` its instance's.
+vec3 InstanceMotion(vec3 world, vec3 origin, int mode, vec4 a, vec4 b, float t){
+	if (a.y <= 0.0){
+		return world;	//no period: still - an instance given no motion
+	}
+	if (mode == INSTANCE_MOTION_PUFF){
+		float cycle = t / a.y + a.x;
+		float bob = sin(cycle * 6.2831853) * a.z;
+		float scale = 1.0 + cos(cycle * 3.1415927) * a.w;
+		return origin + (world - origin) * scale + vec3(0.0,bob,0.0);
+	}
+	if (mode == INSTANCE_MOTION_LIFE){
+		//Which life, and how far through it; each life starts a hashed wander from the rest pose.
+		float local = t / a.y + a.x;
+		float life = floor(local);
+		float age = local - life;
+		float seed = dot(origin,vec3(0.731,1.137,0.519)) + life * 7.31;
+		vec2 wander = (vec2(MotionHash(seed),MotionHash(seed + 1.7)) - 0.5) * 2.0 * b.z;
+		float grow = max(a.w,1e-3);
+		float size = (age < grow) ? age / grow : (1.0 - age) / (1.0 - grow);
+		float rise = a.z * (1.0 - (1.0 - age) * (1.0 - age));
+		vec3 at = origin + vec3(wander.x + b.x * age,rise,wander.y + b.y * age);
+		return at + (world - origin) * size;
+	}
+	if (mode == INSTANCE_MOTION_FALL){
+		//Down through the column and round again; a sway either way.
+		float h = max(a.z,1e-3);
+		float drop = mod(t * a.y + a.x * h,h);
+		float sway = (b.x > 0.0) ? sin((t / b.x + a.x) * 6.2831853) * a.w : 0.0;
+		vec3 at = origin + vec3(sway,h - drop,sway * 0.6);
+		return at + (world - origin);
+	}
+	return world;
+}
+
 //Bilinear, and NO wind outside the grid rather than the edge smeared outward - the app sizes the
 //grid to what the camera sees, so outside it is also out of sight.
 vec2 SampleWind(vec2 p){
@@ -221,8 +276,12 @@ void main(){
 	int matindex_out = instance_data[gl_InstanceID].material_slot[int(vertex_words[uint(gl_VertexID) * 12u + 11u])];
 
 	Material m = materials[matindex_out];
-	//Before anything reads world_position, so the shadow and the G-buffer bend with the colour.
-	if ((wind_size.z != 0) && (m.wind_flex > 0.0)){
+	//Before anything reads world_position, so the shadow and the G-buffer move and bend with the
+	//colour. An instance-motion mode is not a way of bending, so it takes the place of the wind.
+	if (m.wind_mode >= INSTANCE_MOTION_FIRST){
+		world_position.xyz = InstanceMotion(world_position.xyz,instance_data[gl_InstanceID].mat_transformscale[3].xyz,
+		                                    m.wind_mode,motion[gl_InstanceID * 2],motion[gl_InstanceID * 2 + 1],motion_clock.x);
+	}else if ((wind_size.z != 0) && (m.wind_flex > 0.0)){
 		world_position.xyz = WindBend(world_position.xyz,instance_data[gl_InstanceID].mat_transformscale[3].xyz,m.wind_flex,m.wind_mode);
 	}
 	vposition = world_position.xyz;

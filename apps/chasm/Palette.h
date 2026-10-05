@@ -31,6 +31,7 @@
 #define PAL_MIST            1
 #define PAL_MIST_DARK       2
 #define PAL_FOAM            3
+#define PAL_SWAMP_MIST      4       //the swamp's low haze: a pale grey-green, quieter than foam
 
 //Columns: materials.
 #define PAL_GRASS_0         0       //four close shades, picked per triangle for the faceted look
