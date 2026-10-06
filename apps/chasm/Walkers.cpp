@@ -77,23 +77,18 @@ float Walkers::EdgeLength(int a, int b) const{
 //Whether a walk from `from` to `to` may use the edge a -> b.
 bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const{
     const Terrain& t = *set.world->terrain;
-    if (t.level[a] != t.level[b]){
+    if (!t.SameGround(a,b)){
         //A cliff - unless a winch rides it, with its landing clear (or the walk ending on it).
         if (!IsLink(a,b)){
             return false;
         }
-        int landing = (t.level[a] == TERRAIN_BALCONY) ? a : b;
+        int landing = (t.steps[a] > t.steps[b]) ? a : b;
         return z.storeys[landing] == 0 || landing == to || landing == from;
     }
-    if (t.wet[a] || t.wet[b]){
-        //A river - until there are bridges. But a water collector stands at the water's edge, so a
-        //walk that starts or ends on one may step onto its wet plot (economy_plan.md: its worker).
-        auto collector = [&](int v){
-            return (v == from || v == to) && z.KindOf(v) == ZONE_KIND_WATER;
-        };
-        if ((t.wet[a] && !collector(a)) || (t.wet[b] && !collector(b))){
-            return false;
-        }
+    //A river and its wet bank are crossed only on a bridge that stands (bridge_plan.md). A water
+    //collector stands on the dry edge of the bank, so its carrier needs no way onto the wet.
+    if ((t.wet[a] && !ZoneBridgeWalkable(z,a)) || (t.wet[b] && !ZoneBridgeWalkable(z,b))){
+        return false;
     }
     if (t.Mountain(a) || t.Mountain(b)){
         return false;   //the north mountain, which nothing crosses (biomes_plan.md)
@@ -103,10 +98,11 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
         return false;
     }
     //A house is walked into only where the walk ends, and out of only where it starts. A winch is
-    //walked through - its plot is the way on to the rope - and so is a camp, open ground between tents.
+    //walked through - its plot is the way on to the rope - and so is a camp, open ground between tents,
+    //and a bridge that stands.
     auto passage = [&](int v){
         int kind = z.KindOf(v);
-        return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_CAMP;
+        return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_CAMP || ZoneBridgeWalkable(z,v);
     };
     if (z.storeys[b] > 0 && b != to && !passage(b)){
         return false;
@@ -131,11 +127,12 @@ static bool InField(const ChasmWorld& w, const ZoneState& z, int v){
 
 float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
     //A winch's ride takes its time however far the landing is across.
-    if (set.world->terrain->level[a] != set.world->terrain->level[b]){
+    if (!set.world->terrain->SameGround(a,b)){
         return std::max(1e-3f,EdgeLength(a,b)) / WINCH_RIDE_SECONDS;
     }
     float speed = WALKER_SPEED_GROUND;
-    if (z.ground[a] == ZONE_GROUND_ROAD && z.ground[b] == ZONE_GROUND_ROAD){
+    //A road, or a bridge's deck - and from one onto the other, so a road over a bridge is all road.
+    if (ZoneRoadStands(z,a) && ZoneRoadStands(z,b)){
         speed = WALKER_SPEED_ROAD;
     }else if (InField(*set.world,z,a) && InField(*set.world,z,b)){
         speed = WALKER_SPEED_FIELD;
@@ -389,9 +386,9 @@ vec2 Walkers::Position(const ChasmWorld& w, const Walker& k, vec2* facing){
         after the first WINCH_STEP_OUT of the ride, and on the way up until the last.
     */
     const Terrain& terrain = *w.terrain;
-    if (terrain.level[k.path[k.seg]] != terrain.level[k.path[k.seg + 1]]){
+    if (!terrain.SameGround(k.path[k.seg],k.path[k.seg + 1])){
         float s = std::max(0.0f,std::min(1.0f,k.along / len));
-        bool f_down = terrain.level[k.path[k.seg]] == TERRAIN_PLATEAU;
+        bool f_down = terrain.steps[k.path[k.seg]] < terrain.steps[k.path[k.seg + 1]];
         vec2 rim = f_down ? a : b;
         vec2 rope = f_down ? b : a;
         float out = f_down ? std::min(1.0f,s / WINCH_STEP_OUT) : std::max(0.0f,(s - (1.0f - WINCH_STEP_OUT)) / WINCH_STEP_OUT);
@@ -444,12 +441,12 @@ float Walkers::Height(const ChasmWorld& w, const Walker& k, const vec2& at){
     int a = k.path[k.seg];
     if (k.seg + 1 < (int)k.path.size()){
         int b = k.path[k.seg + 1];
-        if (t.level[a] != t.level[b]){
+        if (!t.SameGround(a,b)){
             //The rope: at the rim's height while stepping out, then down to the landing's (or the
             //other way round).
             float len = std::max(1e-6f,(w.grid->fine.pos[b] - w.grid->fine.pos[a]).length());
             float s = std::max(0.0f,std::min(1.0f,k.along / len));
-            bool f_down = t.level[a] == TERRAIN_PLATEAU;
+            bool f_down = t.steps[a] < t.steps[b];
             int rim = f_down ? a : b;
             int landing = f_down ? b : a;
             float top = t.ground[rim];

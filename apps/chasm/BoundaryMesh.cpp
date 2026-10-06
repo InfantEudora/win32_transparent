@@ -10,11 +10,12 @@
 #define HEDGE_THICK         0.26f
 #define WALL_POST_W         0.24f
 #define WALL_POST_HEIGHT    0.66f
-//Palisade: pointed stakes, close together.
+//A lot's fence: pointed stakes, close together - low, about the garden wall's height (the user,
+//2026-10-06: a waist-high palisade round a woodpile was a lot).
 #define STAKE_SPACING       0.20f
-#define STAKE_W             0.12f
-#define STAKE_HEIGHT        0.95f
-#define STAKE_TIP           0.18f
+#define STAKE_W             0.11f
+#define STAKE_HEIGHT        0.52f
+#define STAKE_TIP           0.14f
 //Field fence: posts and two rails.
 #define FENCE_POST_SPACING  0.95f
 #define FENCE_POST_W        0.08f
@@ -27,8 +28,8 @@
 #define GATE_PILLAR_W       0.30f
 #define GATE_PILLAR_HEIGHT  0.88f
 #define GATE_POST_W         0.18f
-#define GATE_POST_HEIGHT    1.35f
-#define GATE_LINTEL         0.16f   //the palisade gate's crossbeam, its depth
+#define GATE_POST_HEIGHT    0.95f
+#define GATE_LINTEL         0.14f   //the lot gate's crossbeam, its depth
 
 namespace {
 
@@ -116,7 +117,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
     }
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
     //Walls only stand on flat ground (ground zones need it), so any corner gives the level.
-    float level = terrain_levels[w.terrain->level[quad.v[0]]].height;
+    float level = w.terrain->Height(quad.v[0]);
 
     //--- Plot boundaries: the segment m_k -> centre, between corner k's plot and corner k+1's -----
     bool f_post_at_centre = false;
@@ -133,7 +134,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         bool f_post_at_mid = (across < 0 || fine_quad < across);
         /*
             A gate: the wall stops short of the midpoint, where the road comes through, and each of the
-            two cells on the edge builds its own side of the opening - a pillar, or for a palisade a
+            two cells on the edge builds its own side of the opening - a pillar, or for a lot's fence a
             tall post and its half of the crossbeam - so the gate is whole without either knowing of
             the other. The midpoint's post goes: the opening is where it stood.
         */
@@ -168,10 +169,10 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
                 float t = (float)i / stakes;
                 vec2 at = mid + d * t;
                 float jitter = (float)(MeshHash((uint32_t)fine_quad,(uint32_t)k,(uint32_t)i) % 100) / 100.0f;
-                Stake(out,at,GroundAt(w,at,level) - FOOTING,STAKE_HEIGHT + FOOTING + jitter * 0.12f,PAL_BARK);
+                Stake(out,at,GroundAt(w,at,level) - FOOTING,STAKE_HEIGHT + FOOTING + jitter * 0.07f,PAL_BARK);
             }
             if (f_post_at_mid){
-                Stake(out,mid,ym,STAKE_HEIGHT + FOOTING + 0.08f,PAL_BARK);
+                Stake(out,mid,ym,STAKE_HEIGHT + FOOTING + 0.05f,PAL_BARK);
             }
         }
         f_post_at_centre = true;
@@ -182,7 +183,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         if (centre_kind == ZONE_BOUNDARY_GARDEN_WALL){
             Post(out,centre,yc,WALL_POST_HEIGHT + FOOTING,WALL_POST_W,PAL_STONE);
         }else{
-            Stake(out,centre,yc,STAKE_HEIGHT + FOOTING + 0.08f,PAL_BARK);
+            Stake(out,centre,yc,STAKE_HEIGHT + FOOTING + 0.05f,PAL_BARK);
         }
     }
 

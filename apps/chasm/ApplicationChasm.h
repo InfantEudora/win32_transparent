@@ -91,7 +91,7 @@ struct OverlayHit{
 #define INPUT_CHASM_TOOL_FIELD      INPUT_LAST+6
 #define INPUT_CHASM_TOOL_ERASE      INPUT_LAST+7
 #define INPUT_CHASM_TOOL_GARDEN     INPUT_LAST+8
-#define INPUT_CHASM_TOOL_TOWN       INPUT_LAST+9
+#define INPUT_CHASM_TOOL_LOT        INPUT_LAST+9
 #define INPUT_CHASM_TOOL_ROAD       INPUT_LAST+10
 #define INPUT_CHASM_TOOL_WALKER     INPUT_LAST+11
 #define INPUT_CHASM_PREVIOUS_SEED   INPUT_LAST+12
@@ -104,6 +104,7 @@ struct OverlayHit{
 #define INPUT_CHASM_FASTER         INPUT_LAST+19
 #define INPUT_CHASM_TOOL_CAMP      INPUT_LAST+20
 #define INPUT_CHASM_FOG            INPUT_LAST+21     //V: the clouds over unexplored ground, in debug mode
+#define INPUT_CHASM_TOOL_BRIDGE    INPUT_LAST+22     //J, for jetty: B is the previous seed
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -125,14 +126,16 @@ enum ChasmTool{
     CHASM_TOOL_FIELD,
     CHASM_TOOL_ERASE,
     CHASM_TOOL_GARDEN,
-    CHASM_TOOL_TOWN,
+    CHASM_TOOL_LOT,
     CHASM_TOOL_ROAD,        //step 10: ground of kind road
     CHASM_TOOL_WALKER,      //click a home, then a goal: a debug walker between them
     CHASM_TOOL_STORE,       //docs/buildings_plan.md: buildings of these kinds, a drag each
     CHASM_TOOL_WOODCUTTER,
     CHASM_TOOL_WATER,
     CHASM_TOOL_WINCH,       //docs/buildings_plan.md step 2: on the rim above a balcony
-    CHASM_TOOL_CAMP         //docs/people_plan.md: tents and fires
+    CHASM_TOOL_CAMP,        //docs/people_plan.md: tents and fires
+    CHASM_TOOL_BRIDGE,      //docs/bridge_plan.md: press on one bank, let go on the other
+    CHASM_TOOL_COUNT
 };
 
 class ApplicationChasm : public Application{
@@ -213,6 +216,14 @@ private:
     void UploadTerrain();
 
     std::mutex pick_mutex;
+    //A script's hover, in place of the mouse's (chasm_tool hover_x/hover_z); the point under pick_mutex.
+    std::atomic<bool> f_hover_pinned{false};
+    vec2 hover_pin;
+    //...and its buttons (chasm_tool button, right_click), so a script can drag a road: the left one
+    //-1 the mouse's, 0 up, 1 down; a right press waiting for the next pass.
+    std::atomic<int> script_left{-1};
+    bool f_script_left_was = false;             //physics thread: for the edge of a scripted press
+    std::atomic<bool> f_script_right{false};
     GridPick hover_pick;
     GridPick selected_pick;
     std::atomic<int> pick_version{0};
@@ -242,13 +253,37 @@ private:
 
     std::atomic<int> paint_tool{CHASM_TOOL_SELECT};
     int paint_last_index = -1;                  //physics thread: what a drag last painted
+    std::atomic<int> bridge_from{-1};           //the bridge tool's press: the bank it starts from, -1 none
+    std::atomic<uint32_t> zone_refusals{0};     //bumped on each refused zone command - the play overlay shows why
+    uint32_t refusal_seen = 0;                  //render thread: the last one shown, and since when
+    std::chrono::steady_clock::time_point refusal_since;
     /*
         The drag in progress (docs/buildings_plan.md: a drag is one building): a number for each press,
         carried by every zone command the drag makes. Physics thread. A load sets it to the save's, so a
         stroke after it is never mistaken for the one the save was in the middle of.
     */
     uint32_t paint_stroke = 0;
-    void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked);
+    void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
+
+    /*
+        THE LINE DRAG (docs/line_works_plan.md, ApplicationChasmRoads.cpp): the road tool draws its road
+        FREEHAND and places it on release. While the button is held, `line_chain` is the plots the cursor
+        has crossed, in order and joined along fine edges; nothing is sent until the button comes up, when
+        the chain goes out as one stroke. A right press drops it. Written by the physics thread, read by
+        the previews (the ghost, the pick view) under pick_mutex; line_version moves with every change.
+    */
+    enum LineDrag{ LINE_DRAG_NONE = 0, LINE_DRAG_DRAWING, LINE_DRAG_DROPPED };
+    int line_drag = LINE_DRAG_NONE;             //physics thread; DROPPED waits for the left button to come up
+    std::vector<int> line_chain;                //under pick_mutex
+    bool f_line_erase = false;                  //under pick_mutex: a shift-drag, taking road up
+    std::atomic<uint32_t> line_version{0};
+    void UpdateLineDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
+    void PlaceLine();
+    void DropLine();
+    //Whether a line may take `plot` - or, erasing, take its road up: the release's rule and the previews'
+    //colour. `ex` may be NULL (all explored). Any thread, on published state.
+    bool LinePlotAllowed(const ChasmWorld& w, const ZoneState& z, const Exploration* ex, bool f_erase, int plot,
+                         const char** why);
 
     /*
         --- Roads and walkers (step 10, ApplicationChasmRoads.cpp; docs/roads_plan.md) ---------------
@@ -343,6 +378,30 @@ private:
     std::shared_ptr<const ChasmWorld> cloud_lattice_world;
     void BuildCloudScene();                     //from BuildScene
     void UploadClouds();                        //render thread, from PreRender
+    /*
+        THE GHOST (ApplicationChasmGhost.cpp): in play mode, what the tool in hand would place under the
+        cursor - see-through, green where the rules allow it and red where they refuse, with an outline
+        in the same colour - in place of the debug line mesh.
+    */
+    Shader* ghost_shader = NULL;
+    int ghost_shader_index = -1;
+    Object* ghost = NULL;
+    bool f_ghost_ok = true;                     //render thread: the tint the shader is given
+    struct GhostKey{
+        const void* world = NULL;
+        uint32_t zones_version = 0;
+        int plot = -1, coarse = -1, tool = -1;
+        bool f_explored = false;
+        uint32_t line_version = 0;              //a road being drawn: its chain (0 with none)
+        bool operator==(const GhostKey& o) const{
+            return world == o.world && zones_version == o.zones_version && plot == o.plot && coarse == o.coarse
+                   && tool == o.tool && f_explored == o.f_explored && line_version == o.line_version;
+        }
+    };
+    GhostKey ghost_built;
+    void BuildGhostScene();                     //from BuildScene
+    void SetGhostUniforms();
+    void UpdateGhost();                         //render thread, from PreRender
 
     /*
         --- The economy, drawn (ApplicationChasmWorkersView.cpp, and the forest and zones below) -----
@@ -511,6 +570,7 @@ private:
     void DrawSelectionOverlay(float s);                     //render thread, from DrawOverlay: card + pins
 #ifdef USE_MCP
     void RegisterSelectTools();
+    void RegisterBridgeTools();
 #endif
 
     void BuildScene();

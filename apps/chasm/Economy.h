@@ -32,6 +32,10 @@ class Walkers;
     A store split by an erase shares its stock out by floor area: the largest piece keeps its id and
     the rest of it (Zones::SplitAfterRemoval names each new piece's parent, ZoneBuilding::split_from).
     A store pulled down loses what it held.
+    A HOUSE has room too, smaller (ECONOMY_HOUSE_ROOM), for what its family keeps at home - food and
+    firewood (ECONOMY_HOUSE_KEEPS, `keeps`) - shared out on a split like a store's. Ready for P5, where
+    people eat and burn wood (gameplay_plan.md); nothing carries goods home yet, so a house is not in
+    `accepts` and no carrier delivers to one.
 
     --- PEOPLE (docs/people_plan.md, P4) ---------------------------------------------------------------
     The colony is the SETTLERS it starts with - families of adults, each with base skills (SKILL_*,
@@ -52,8 +56,12 @@ class Walkers;
       - The WOODCUTTER takes the nearest standing tree within ECONOMY_WOODCUTTER_REACH of his hut, or a
         felled log lying there if that is nearer; walks to it, fells it (it leaves a log and a stump),
         picks the log up and carries it, as ECONOMY_WOOD_PER_TREE wood, to the nearest store that takes
-        wood - or, with none, to the pile outside his hut (ECONOMY_HUT_PILE) - and goes home. From home
-        the pile goes first: whenever a store takes wood he fetches from the pile before he fells again.
+        wood - or, with none, to his WOODPILE (ECONOMY_HUT_PILE) - and goes home. From home the pile goes
+        first: whenever a store takes wood he fetches from the pile before he fells again. The pile is on
+        a LOT beside his hut (`pile_plot`, ZoneLotBeside - the zones make a new hut need one): with no lot
+        standing there he has nowhere to put wood, and fells nothing. A lot is fenced, and the HUT IS ITS
+        DOOR: wood is put on the pile and taken off it from the hut plot beside it (`pile_door`), the way
+        he always came home to his hut - nobody walks into the yard.
       - A FIELD grows while it has a farmer, whenever it is not winter and not under snow (Calendar.h),
         for its crop's days, at its farmer's pace, and then yields by its area into its own stock; the
         farmer fetches it, a load (ECONOMY_LOAD) at a time, to a store that takes it. Then it grows again.
@@ -70,6 +78,11 @@ class Walkers;
     the lowest first, so a building rises level by level - through ZONE_OP_BUILD_RAISE, which the app
     applies on the same tick (Economy::Raises). Until a storey stands it does nothing: no room, no
     family, no worker. A site pulled down loses the wood it was brought.
+    A GARDEN or LOT painted in play is a site too, a plot at a time (ZoneState::ground_built): a little
+    wood (ECONOMY_GROUND_WOOD_PER_AREA), its builders the same idle people. Such a site has no building
+    id, so a worker's `site` names it as ECONOMY_SITE_GROUND | plot; its wood is `ground_site`, by plot,
+    and it goes up through ZONE_OP_GROUND_RAISE (Economy::GroundRaises). It is built FROM OUTSIDE: a
+    builder stands on an open plot beside it (GroundSiteApproach), so the fence never goes up round him.
     A new colony's camp holds the SUPPLIES the settlers brought (ECONOMY_START_*), so the first
     buildings can go up before there is a woodcutter.
 
@@ -79,6 +92,8 @@ class Walkers;
 */
 
 #define ECONOMY_STORE_ROOM          5.0f    //units of goods per unit of floor area: about 20 a plot-storey
+#define ECONOMY_HOUSE_ROOM          1.5f    //a house's, for its own food and firewood: about 6 a plot-storey
+#define ECONOMY_HOUSE_KEEPS         (GOODS_FOOD | GOOD_BIT(GOOD_WOOD))
 #define ECONOMY_LOAD                5       //what a farmer or a water carrier carries at once
 #define ECONOMY_WOOD_PER_TREE       4
 #define ECONOMY_HUT_PILE            24      //wood piled outside the hut when no store takes it: 6 logs
@@ -94,6 +109,11 @@ class Walkers;
 #define ECONOMY_SKILL_DISTANCE      4.0f    //what a point of skill is worth against the walk to work
 #define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area: about 8 a plot
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
+#define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence: about 2 a plot
+//A worker's `site` naming a garden or lot plot rather than a building (the plot in the low bits).
+#define ECONOMY_SITE_GROUND         0x80000000u
+inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
+inline int EconomyGroundSitePlot(uint32_t site){ return (int)(site & ~ECONOMY_SITE_GROUND); }
 //What the settlers bring (in the camp): enough wood for the first few buildings.
 #define ECONOMY_START_WOOD          40
 #define ECONOMY_START_WHEAT         20
@@ -180,10 +200,13 @@ struct EconomyState{
     uint32_t next_person = 1;
     std::vector<EconomyField> fields;                   //in id order
     std::vector<int> site;                              //by building id: wood brought to its construction
+    std::vector<int> ground_site;                       //by plot: wood brought to a garden's or lot's
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<uint8_t> accepts;
     std::vector<uint8_t> attached;                      //the goods of the workplaces a store is next to
-    std::vector<int> room;
+    std::vector<uint8_t> keeps;                         //what a building may hold: a store's goods, a house's own
+    std::vector<int> room;                              //a store's, and a house's (ECONOMY_HOUSE_ROOM)
+    std::vector<int> pile_plot;                         //a woodcutter's woodpile: a lot beside him, -1 none
     std::vector<int> capacity;                          //a house's: how many it holds
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
@@ -198,6 +221,7 @@ struct EconomySaved{
     std::vector<EconomyWorker> workers;
     std::vector<EconomyField> fields;
     std::vector<std::pair<uint32_t,int>> sites;         //sites with wood brought: building, wood
+    std::vector<std::pair<int,int>> ground_sites;       //gardens and lots with wood brought: plot, wood
     uint32_t next_person = 1;
 };
 
@@ -215,10 +239,15 @@ public:
     const EconomyState& State() const { return state; }
     //The plots whose next storey stands after this tick - the app raises them (ZONE_OP_BUILD_RAISE).
     const std::vector<int>& Raises() const { return raises; }
+    //The garden and lot plots built this tick - the app raises them (ZONE_OP_GROUND_RAISE).
+    const std::vector<int>& GroundRaises() const { return ground_raises; }
 
 private:
     EconomyState state;
     std::vector<int> raises;                    //this tick's, in the order built
+    std::vector<int> ground_raises;
+    std::vector<int> ground_sites;              //the garden and lot plots still to build, in index order (derived)
+    std::vector<int> pile_door;                 //by building id: the hut plot beside its woodpile, -1 none (derived)
     bool f_new_colony = false;                  //Reset, not Restore: the camp gets its supplies
     std::vector<uint8_t> stands;                //by building id: something of it is built (derived)
     std::vector<int> site_storeys;              //by building id: storeys planned and not standing (derived)
@@ -252,11 +281,18 @@ private:
     bool AtHome(const EconomyWorker& k) const;
     bool CanWalk(const ZoneState& z, Walkers& walkers, const vec2& from, int to);
     bool FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
-    //Construction: what a site still wants, carrying for one, and building with what it has.
+    //Construction: what a site still wants, carrying for one, and building with what it has. A site is
+    //a building id or a garden or lot plot (ECONOMY_SITE_GROUND).
     int SiteNeed(const ZoneState& z, uint32_t id) const;
+    int SiteBrought(uint32_t id) const;
+    bool SiteAlive(const ZoneState& z, uint32_t id) const;
+    //Where a building's wood is fetched from: a woodcutter's pile's door, else its plot nearest `to`.
+    int SourcePlot(uint32_t id, const vec2& to) const;
+    //Where a builder stands to build a garden or lot plot: an open plot beside it, else the plot itself.
+    int GroundSiteApproach(const ZoneState& z, int v) const;
     int SiteLeft(const ZoneState& z, uint32_t id, const EconomyWorker* except) const;
     int WoodFree(uint32_t id) const;
-    int NearestPlot(uint32_t id, const vec2& to) const;
+    int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Build(const ZoneState& z, uint32_t id);
 };
@@ -296,6 +332,9 @@ inline bool EconomyIndoors(const EconomyWorker& k){
 int EconomyStoreyWood(const ChasmWorld& w, const ZoneState& z, int plot);
 int EconomySiteWood(const ChasmWorld& w, const ZoneState& z, uint32_t id);
 int EconomySiteBrought(const EconomyState& e, uint32_t id);
+//A garden's or lot's plot: the wood it takes to build, and what has been brought to it.
+int EconomyGroundWood(const ChasmWorld& w, int plot);
+int EconomyGroundBrought(const EconomyState& e, int plot);
 //How far a field has grown toward its harvest, 0..1 - the look's cue too.
 float EconomyFieldGrowth(const EconomyState& e, const ZoneState& z, uint32_t id);
 

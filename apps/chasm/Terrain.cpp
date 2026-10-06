@@ -14,11 +14,13 @@
     mist. Every one a whole number of the walls' strata (WALL_BAND_HEIGHT, 6) below the plateau, so
     the strata of a balcony's wall line up with those of the full wall beside it.
 */
+//Names, and each kind's usual height - a plot's own is Terrain::Height.
 const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS] = {
     {"plateau",   0.0f},
     {"island",  -24.0f},
-    {"floor",   -70.0f},
+    {"floor",   -72.0f},
     {"balcony", -12.0f},
+    {"bare",      0.0f},
 };
 
 namespace {
@@ -138,61 +140,21 @@ uint8_t TerrainLevelOfKind(int kind){
 void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
     auto t0 = std::chrono::steady_clock::now();
     size_t n = g.fine.pos.size();
-    level.assign(n,TERRAIN_PLATEAU);
-    for (int i = 0; i < TERRAIN_NUM_LEVELS; i++){
-        level_count[i] = 0;
-    }
-    //Rims bound the floor; islands stand in it, closed; balconies by their outlines.
-    CrossingTable rims;
-    CrossingTable islands;
-    CrossingTable balconies;
-    for (size_t f = 0; f < features.size(); f++){
-        int kind = g.LineKind(g.feature_line_base + (int)f);
-        if (kind == GRID_FEATURE_RIM){
-            rims.Add(features[f].points);
-        }else if (kind == GRID_FEATURE_BALCONY){
-            balconies.Add(g.layout.features[f].region.points);
-        }else{
-            islands.Add(features[f].points);
-        }
-    }
-    rims.Build();
-    islands.Build();
-    balconies.Build();
-    for (size_t v = 0; v < n; v++){
-        /*
-            A hair inside the map. A vertex on the east edge sits at exactly the x a rim ending
-            there ends at, and the straddle test is half-open: with nothing beyond x_max it never
-            counts that rim's end, and the whole east mouth of a rift came out plateau - a wall
-            straight across it. (The west edge passes by the same asymmetry.)
-        */
-        vec2 p = g.fine.pos[v];
-        p.x = std::max(g.bounds_min.x + 1e-3f,std::min(g.bounds_max.x - 1e-3f,p.x));
-        int pin = g.fine.pin[v];
-        uint8_t l = TERRAIN_PLATEAU;
-        //Fixed vertices are the map's corners and the rims' ends - plateau, both, and a rim's end
-        //sits exactly on its line, where the ray can go either way. A vertex on a line takes the
-        //line's high side.
-        if (pin == GRID_PIN_FIXED){
-            l = TERRAIN_PLATEAU;
-        }else if (pin >= g.feature_line_base){
-            l = TerrainLevelOfKind(g.LineKind(pin));
-        }else if (rims.Inside(p)){
-            l = islands.Inside(p) ? TERRAIN_ISLAND : (balconies.Inside(p) ? TERRAIN_BALCONY : TERRAIN_FLOOR);
-        }
-        level[v] = l;
-        level_count[l]++;
-    }
-    //The biomes (TerrainBiomeAt), from the layout's mountain, pockets and south regions.
+    //The rivers first: their wet plots and their falls are what the heights keep clear of.
+    BuildRivers(g,features);
+    BuildHeights(g,features);
+    BuildKinds(g);
+    //The biomes (TerrainBiomeAt), from the layout's mountain, pockets and south regions. A plot at the
+    //plateau's height is plateau for them, bare or not.
     biome.assign(n,TERRAIN_BIOME_TEMPERATE);
     for (int i = 0; i < TERRAIN_NUM_BIOMES; i++){
         biome_count[i] = 0;
     }
     for (size_t v = 0; v < n; v++){
-        biome[v] = (uint8_t)TerrainBiomeAt(g.layout,g.fine.pos[v],level[v]);
+        int kind = (steps[v] == 0) ? TERRAIN_PLATEAU : level[v];
+        biome[v] = (uint8_t)TerrainBiomeAt(g.layout,g.fine.pos[v],kind);
         biome_count[biome[v]]++;
     }
-    BuildRivers(g,features);
     //After the rivers: the relief fades out along them.
     BuildRelief(g);
     ground.assign(n,0.0f);
@@ -212,6 +174,433 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
         }
     }
     build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+/*
+    THE HEIGHTS, in steps (Terrain.h). Every number below is a look, tuned against the Blender model
+    the user chose (art_source/chasm/chasm_terraces.blend, apps/chasm/tools/blender_chasm_terraces.py):
+    a plot's noise is a function of its position and the seed alone, so the heights are the same in
+    every build.
+*/
+#define HEIGHT_COLUMN_STEPS     2       //a column's top: -12, standing tall out of the chasm
+#define HEIGHT_ISLAND_STEPS     4       //a shard's or a ledge's: -24
+#define HEIGHT_BALCONY_STEPS    2       //-12
+#define HEIGHT_FRINGE_MOST      13.0f   //how far out from a wall its broken columns reach, at most
+#define HEIGHT_FRINGE_STEPS     6       //the deepest a broken column goes: -36, just out of the deck
+#define HEIGHT_FALL_CLEAR       9.0f    //no broken column this near a fall's lip: the water drops clear
+#define HEIGHT_CRACK_DEEPEST    5       //steps, where a crack leaves the rift; 1 at its tip
+
+namespace {
+
+uint32_t PlotHash(int32_t x, int32_t z, uint32_t salt){
+    uint32_t h = (uint32_t)x * 0x8DA6B343u ^ (uint32_t)z * 0xD8163841u ^ salt * 0xCB1AB31Fu;
+    h ^= h >> 13;
+    h *= 0x5BD1E995u;
+    h ^= h >> 15;
+    return h;
+}
+
+//Smooth value noise in 0..1 at `wavelength`, the corners hashed with `salt`.
+float Noise01(const vec2& p, float wavelength, uint32_t salt){
+    float fx = std::floor(p.x / wavelength);
+    float fz = std::floor(p.y / wavelength);
+    float tx = p.x / wavelength - fx;
+    float tz = p.y / wavelength - fz;
+    tx = tx * tx * (3.0f - 2.0f * tx);
+    tz = tz * tz * (3.0f - 2.0f * tz);
+    int32_t ix = (int32_t)fx;
+    int32_t iz = (int32_t)fz;
+    auto corner = [salt](int32_t cx, int32_t cz){ return (float)(PlotHash(cx,cz,salt) & 0xFFFF) / 65535.0f; };
+    float a = corner(ix,iz) + (corner(ix + 1,iz) - corner(ix,iz)) * tx;
+    float b = corner(ix,iz + 1) + (corner(ix + 1,iz + 1) - corner(ix,iz + 1)) * tx;
+    return a + (b - a) * tz;
+}
+
+float Smooth01(float e0, float e1, float x){
+    float t = std::max(0.0f,std::min(1.0f,(x - e0) / (e1 - e0)));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+}
+
+void Terrain::BuildHeights(const Grid& g, const std::vector<GridLine>& features){
+    size_t n = g.fine.pos.size();
+    const uint32_t salt = g.settings.seed * 0x9E3779B1u;
+    level.assign(n,TERRAIN_PLATEAU);
+    steps.assign(n,0);
+
+    //--- From the layout's lines: the rims bound the chasm; islands and balconies stand in it --------
+    CrossingTable rims;
+    CrossingTable islands;
+    CrossingTable columns;
+    CrossingTable balconies;
+    for (size_t f = 0; f < features.size(); f++){
+        int kind = g.LineKind(g.feature_line_base + (int)f);
+        if (kind == GRID_FEATURE_RIM){
+            rims.Add(features[f].points);
+        }else if (kind == GRID_FEATURE_BALCONY){
+            balconies.Add(g.layout.features[f].region.points);
+        }else if (kind == GRID_FEATURE_COLUMN){
+            columns.Add(features[f].points);
+        }else{
+            islands.Add(features[f].points);
+        }
+    }
+    rims.Build();
+    islands.Build();
+    columns.Build();
+    balconies.Build();
+    //What each plot stands as before the passes: 1 a balcony, 2 an island or column, 0 neither.
+    std::vector<uint8_t> stand(n,0);
+    for (size_t v = 0; v < n; v++){
+        /*
+            A hair inside the map. A vertex on the east edge sits at exactly the x a rim ending
+            there ends at, and the straddle test is half-open: with nothing beyond x_max it never
+            counts that rim's end, and the whole east mouth of a rift came out plateau - a wall
+            straight across it. (The west edge passes by the same asymmetry.)
+        */
+        vec2 p = g.fine.pos[v];
+        p.x = std::max(g.bounds_min.x + 1e-3f,std::min(g.bounds_max.x - 1e-3f,p.x));
+        if (!rims.Inside(p)){
+            continue;
+        }
+        if (islands.Inside(p)){
+            steps[v] = HEIGHT_ISLAND_STEPS;
+            stand[v] = 2;
+        }else if (columns.Inside(p)){
+            steps[v] = HEIGHT_COLUMN_STEPS;
+            stand[v] = 2;
+        }else if (balconies.Inside(p)){
+            steps[v] = HEIGHT_BALCONY_STEPS;
+            stand[v] = 1;
+        }else{
+            steps[v] = (uint8_t)FringeSteps(g,p,salt);
+        }
+    }
+
+    std::vector<std::vector<int>> nbr(n);
+    for (const std::pair<int,int>& e : g.fine.edges){
+        nbr[e.first].push_back(e.second);
+        nbr[e.second].push_back(e.first);
+    }
+    auto noise = [&](int v, float wavelength, uint32_t k){ return Noise01(g.fine.pos[v],wavelength,salt + k); };
+    auto near_fall = [&](int v, float reach){
+        for (const TerrainFall& f : falls){
+            if ((g.fine.pos[v] - f.lip).length() < reach){
+                return true;
+            }
+        }
+        return false;
+    };
+    //The mountain and a margin off its foot: crumbling there could box a plot of plateau in between
+    //the mountain, which no one crosses, and the drop - land only a zeppelin could reach.
+    auto near_mountain = [&](int v){ return g.fine.pos[v].y < ChasmMountainFootAt(g.layout,g.fine.pos[v].x) + 12.0f; };
+
+    //--- Islands and balconies: a crumbling edge, and a broken skirt round them two plots deep ------
+    {
+        std::vector<uint8_t> next = steps;
+        for (size_t v = 0; v < n; v++){
+            if (stand[v] == 0){
+                continue;
+            }
+            for (int w : nbr[v]){
+                if (steps[w] > steps[v] && noise((int)v,2.4f,60) > 0.68f){
+                    next[v] = steps[v] + 1;
+                }
+            }
+        }
+        steps.swap(next);
+        //Ring 0 grows from what stands, ring 1 from ring 0 only - from anything lower than the floor
+        //it would put a ledge along every sheer wall.
+        std::vector<uint8_t> from(n,0);
+        for (size_t v = 0; v < n; v++){
+            from[v] = stand[v] != 0;
+        }
+        for (int ring = 0; ring < 2; ring++){
+            next = steps;
+            std::vector<uint8_t> grown(n,0);
+            for (size_t v = 0; v < n; v++){
+                if (steps[v] != TERRAIN_FLOOR_STEPS || near_fall((int)v,HEIGHT_FALL_CLEAR)){
+                    continue;
+                }
+                int over = TERRAIN_FLOOR_STEPS;     //the highest neighbour it could be a skirt of
+                for (int w : nbr[v]){
+                    if (from[w]){
+                        over = std::min(over,(int)steps[w]);
+                    }
+                }
+                if (over >= TERRAIN_FLOOR_STEPS || (ring == 1 && noise((int)v,2.2f,71) < 0.55f)){
+                    continue;
+                }
+                int s = over + 1 + (noise((int)v,2.2f,70) > 0.5f ? 1 : 0);
+                if (s <= HEIGHT_FRINGE_STEPS){
+                    next[v] = (uint8_t)s;
+                    grown[v] = 1;
+                }
+            }
+            steps.swap(next);
+            from.swap(grown);
+        }
+    }
+
+    //--- The rim crumbling ----------------------------------------------------------------------
+    /*
+        Plateau plots over a real drop break a step or two down, in clumps of a few; then, more
+        rarely, the plots behind those. Only ever next to a drop - never a pit in the meadow - and
+        never over a balcony, whose winch needs the rim above it whole, nor at a fall's lip.
+    */
+    for (int ring = 0; ring < 2; ring++){
+        std::vector<uint8_t> next = steps;
+        for (size_t v = 0; v < n; v++){
+            if (steps[v] != 0 || wet[v] || g.fine.f_boundary[v] || near_mountain((int)v) || near_fall((int)v,HEIGHT_FALL_CLEAR)){
+                continue;
+            }
+            bool f_drop = false;
+            for (int w : nbr[v]){
+                f_drop = f_drop || (steps[w] >= (ring == 0 ? 2 : 1) && stand[w] != 1);
+            }
+            if (!f_drop){
+                continue;
+            }
+            float d = noise((int)v,2.8f,50 + ring);
+            if (ring == 0 && d > 0.82f){
+                next[v] = 2;
+            }else if (d > (ring == 0 ? 0.60f : 0.70f)){
+                next[v] = 1;
+            }
+        }
+        steps.swap(next);
+    }
+
+    //--- Cracks: deepest where they leave the rift, shallowing to a step at the tip ------------------
+    for (const ChasmLayout::Crack& c : g.layout.cracks){
+        float total = 0.0f;
+        vec2 lo = c.points[0];
+        vec2 hi = c.points[0];
+        for (size_t k = 0; k + 1 < c.points.size(); k++){
+            total += (c.points[k + 1] - c.points[k]).length();
+        }
+        for (const vec2& p : c.points){
+            lo = vec2(std::min(lo.x,p.x),std::min(lo.y,p.y));
+            hi = vec2(std::max(hi.x,p.x),std::max(hi.y,p.y));
+        }
+        for (size_t v = 0; v < n; v++){
+            const vec2& p = g.fine.pos[v];
+            if (steps[v] > 2 || stand[v] != 0){
+                continue;   //the chasm, already deep, or a balcony or island
+            }
+            if (p.x < lo.x - 4.0f || p.x > hi.x + 4.0f || p.y < lo.y - 4.0f || p.y > hi.y + 4.0f ||
+                wet[v] || g.fine.f_boundary[v]){
+                continue;
+            }
+            float best = 1e30f;
+            float along = 0.0f;
+            float s = 0.0f;
+            for (size_t k = 0; k + 1 < c.points.size(); k++){
+                vec2 a = c.points[k];
+                vec2 ab = c.points[k + 1] - a;
+                float len = ab.length();
+                float t = len > 0.0f ? std::max(0.0f,std::min(1.0f,(p - a).dot(ab) / (len * len))) : 0.0f;
+                float d = (p - (a + ab * t)).length();
+                if (d < best){
+                    best = d;
+                    along = s + t * len;
+                }
+                s += len;
+            }
+            float f = along / std::max(total,1.0f);
+            //Never under a plot's width, or the crack falls apart into separate pits.
+            float half = std::max(1.6f,c.half_width * (1.0f - 0.5f * f));
+            if (best < half){
+                int want = (int)std::lround((float)HEIGHT_CRACK_DEEPEST - (float)(HEIGHT_CRACK_DEEPEST - 1) * f);
+                steps[v] = (uint8_t)std::max((int)steps[v],want);
+            }
+        }
+    }
+
+    //--- Saddles and pits, until neither changes anything --------------------------------------------
+    /*
+        SADDLES: two high corners diagonal across a quad and two low ones would stand four walls on one
+        line through its centre. The higher of the low pair is raised to the lower of the high, which
+        joins the high pair - as marching squares joined them.
+
+        PITS: everything below the rim hangs together ("one chasm" in the checks). A crack's thin end
+        can catch plots that meet only corner to corner, which the grid's edges do not join - and
+        each would be a pit with walls all round. Every piece below the plateau's height but the
+        biggest - the chasm - is filled back to the plateau.
+
+        Each can make work for the other, so they take turns.
+    */
+    saddles_joined = 0;
+    pits_filled = 0;
+    for (int round = 0; round < 8; round++){
+        int raised = 0;
+        for (int pass = 0; pass < 30; pass++){
+            int this_pass = 0;
+            for (const GridQuad& q : g.fine.quads){
+                const int* c = q.v;
+                for (int k = 0; k < 2; k++){
+                    int a = c[k];
+                    int b = c[k + 2];
+                    int x = c[k + 1];
+                    int y = c[(k + 3) % 4];
+                    //Heights as tops: a smaller step is higher.
+                    int hi_low = std::max((int)steps[a],(int)steps[b]);    //the lower of the high pair
+                    int lo_high = std::min((int)steps[x],(int)steps[y]);   //the higher of the low pair
+                    if (hi_low < lo_high){
+                        int raise = (steps[x] <= steps[y]) ? x : y;
+                        steps[raise] = (uint8_t)hi_low;
+                        this_pass++;
+                    }
+                }
+            }
+            raised += this_pass;
+            if (this_pass == 0){
+                break;
+            }
+        }
+        saddles_joined += raised;
+
+        std::vector<int> piece(n,-1);
+        std::vector<int> piece_size;
+        std::vector<int> stack;
+        for (size_t v = 0; v < n; v++){
+            if (steps[v] == 0 || piece[v] >= 0){
+                continue;
+            }
+            int id = (int)piece_size.size();
+            int size = 0;
+            piece[v] = id;
+            stack.push_back((int)v);
+            while (!stack.empty()){
+                int a = stack.back();
+                stack.pop_back();
+                size++;
+                for (int b : nbr[a]){
+                    if (steps[b] > 0 && piece[b] < 0){
+                        piece[b] = id;
+                        stack.push_back(b);
+                    }
+                }
+            }
+            piece_size.push_back(size);
+        }
+        int chasm = (int)(std::max_element(piece_size.begin(),piece_size.end()) - piece_size.begin());
+        int filled = 0;
+        for (size_t v = 0; v < n; v++){
+            if (piece[v] >= 0 && piece[v] != chasm){
+                steps[v] = 0;
+                filled++;
+            }
+        }
+        pits_filled += filled;
+        if (raised == 0 && filled == 0){
+            break;
+        }
+    }
+}
+
+/*
+    How many steps down a chasm plot is that no island or balcony claims: the floor, or a broken
+    column stepping down from the wall - where the wall has them. How far out they reach wanders along
+    the rim, to nothing in places, where the wall drops sheer. Within a reach the columns step down
+    with the distance, in blocks a few plots across (noise, not a plot-by-plot hash), with gaps so
+    they stand apart.
+*/
+int Terrain::FringeSteps(const Grid& g, const vec2& p, uint32_t salt) const{
+    for (const TerrainFall& f : falls){
+        if ((p - f.lip).length() < HEIGHT_FALL_CLEAR){
+            return TERRAIN_FLOOR_STEPS;
+        }
+    }
+    float depth = std::max(0.0f,-ChasmRiftDistance(g.layout,p));
+    float reach = HEIGHT_FRINGE_MOST * Smooth01(0.40f,0.75f,Noise01(p,24.0f,salt + 1));
+    if (depth >= reach || Noise01(p,5.0f,salt + 2) > 0.76f){
+        return TERRAIN_FLOOR_STEPS;
+    }
+    float t = depth / reach;
+    float jitter = (float)(PlotHash((int32_t)std::floor(p.x * 7.0f),(int32_t)std::floor(p.y * 7.0f),salt + 4) & 0xFFFF) / 65535.0f;
+    float s = 1.0f + 3.5f * t + (Noise01(p,6.0f,salt + 3) - 0.5f) * 2.5f + (jitter - 0.5f) * 0.4f;
+    return std::max(1,std::min(HEIGHT_FRINGE_STEPS,(int)std::lround(s)));
+}
+
+/*
+    THE KINDS from the heights (Terrain.h): flat patches by flooding along grid edges at one height,
+    then floor, bare, plateau, and balcony or island by whether a winch can reach the patch - from the
+    plateau, or from a balcony already reached.
+*/
+void Terrain::BuildKinds(const Grid& g){
+    size_t n = g.fine.pos.size();
+    std::vector<std::vector<int>> nbr(n);
+    for (const std::pair<int,int>& e : g.fine.edges){
+        nbr[e.first].push_back(e.second);
+        nbr[e.second].push_back(e.first);
+    }
+    patch.assign(n,-1);
+    patch_size.clear();
+    std::vector<int> stack;
+    for (size_t v = 0; v < n; v++){
+        if (patch[v] >= 0){
+            continue;
+        }
+        int id = (int)patch_size.size();
+        int size = 0;
+        patch[v] = id;
+        stack.push_back((int)v);
+        while (!stack.empty()){
+            int a = stack.back();
+            stack.pop_back();
+            size++;
+            for (int b : nbr[a]){
+                if (patch[b] < 0 && steps[b] == steps[a]){
+                    patch[b] = id;
+                    stack.push_back(b);
+                }
+            }
+        }
+        patch_size.push_back(size);
+    }
+    std::vector<uint8_t> kind(patch_size.size(),TERRAIN_ISLAND);
+    std::vector<uint8_t> patch_steps(patch_size.size(),0);
+    for (size_t v = 0; v < n; v++){
+        patch_steps[patch[v]] = steps[v];
+    }
+    std::vector<int> queue;
+    for (size_t k = 0; k < patch_size.size(); k++){
+        if (-TERRAIN_STEP * (float)patch_steps[k] < TERRAIN_DECK_Y){
+            kind[k] = TERRAIN_FLOOR;
+        }else if (patch_size[k] < TERRAIN_MIN_PATCH){
+            kind[k] = TERRAIN_BARE;
+        }else if (patch_steps[k] == 0){
+            kind[k] = TERRAIN_PLATEAU;
+            queue.push_back((int)k);
+        }
+    }
+    //Which patches touch which: across every edge between two heights.
+    std::vector<std::vector<int>> touching(patch_size.size());
+    for (const std::pair<int,int>& e : g.fine.edges){
+        int a = patch[e.first];
+        int b = patch[e.second];
+        if (a != b){
+            touching[a].push_back(b);
+            touching[b].push_back(a);
+        }
+    }
+    for (size_t at = 0; at < queue.size(); at++){
+        for (int k : touching[queue[at]]){
+            if (kind[k] == TERRAIN_ISLAND){
+                kind[k] = TERRAIN_BALCONY;
+                queue.push_back(k);
+            }
+        }
+    }
+    for (int i = 0; i < TERRAIN_NUM_LEVELS; i++){
+        level_count[i] = 0;
+    }
+    for (size_t v = 0; v < n; v++){
+        level[v] = kind[patch[v]];
+        level_count[level[v]]++;
+    }
 }
 
 //--- The relief (biomes_plan.md step 2) -----------------------------------------------------------
@@ -745,10 +1134,55 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
                     (!f_rim || t.level_count[TERRAIN_FLOOR] > 0) &&
                     (!f_island || t.level_count[TERRAIN_ISLAND] > 0) &&
                     (!f_balcony || t.level_count[TERRAIN_BALCONY] > 0);
-        snprintf(buf,sizeof(buf),"plateau %i, balcony %i, island %i, floor %i vertices (%.1f ms)",
+        snprintf(buf,sizeof(buf),"plateau %i, balcony %i, island %i, bare %i, floor %i vertices; %i flat patches, "
+                 "%i plots raised for saddles, %i pits filled (%.1f ms)",
                  t.level_count[TERRAIN_PLATEAU],t.level_count[TERRAIN_BALCONY],t.level_count[TERRAIN_ISLAND],
-                 t.level_count[TERRAIN_FLOOR],t.build_ms);
+                 t.level_count[TERRAIN_BARE],t.level_count[TERRAIN_FLOOR],(int)t.patch_size.size(),t.saddles_joined,t.pits_filled,
+                 t.build_ms);
         add_result("levels",f_ok,buf);
+    }
+
+    /*
+        --- One chasm: everything below the rim is one piece (user, 2026-10-06) ----------------
+        Every plot under the plateau's height, joined across any edge between two of them, whatever
+        their heights: the chasm with its broken columns, its islands, its cracks and its crumbled
+        rim. A crack starts inside the rift and crumbling only happens beside a drop, so a second
+        piece is a second chasm, or a pit.
+    */
+    {
+        size_t n = g.fine.pos.size();
+        std::vector<int> parent(n);
+        for (size_t v = 0; v < n; v++){
+            parent[v] = (int)v;
+        }
+        std::function<int(int)> find = [&](int v){
+            while (parent[v] != v){
+                parent[v] = parent[parent[v]];
+                v = parent[v];
+            }
+            return v;
+        };
+        for (const auto& e : g.fine.edges){
+            if (t.steps[e.first] > 0 && t.steps[e.second] > 0){
+                int ra = find(e.first);
+                int rb = find(e.second);
+                if (ra != rb){
+                    parent[std::max(ra,rb)] = std::min(ra,rb);
+                }
+            }
+        }
+        int pieces = 0;
+        for (size_t v = 0; v < n; v++){
+            if (t.steps[v] > 0 && find((int)v) == (int)v){
+                pieces++;
+                if (pieces > 1){
+                    add_issue("one chasm",(int)v,g.fine.pos[v],true);
+                }
+            }
+        }
+        snprintf(buf,sizeof(buf),"below the rim in %i piece%s; %i crack%s",pieces,pieces == 1 ? "" : "s",
+                 (int)g.layout.cracks.size(),g.layout.cracks.size() == 1 ? "" : "s");
+        add_result("one chasm",pieces == 1,buf);
     }
 
     /*
@@ -787,9 +1221,9 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
 
     /*
         --- Mouths: a rift that reaches the map's edge is open there -----------------------------
-        Every outline vertex between an open rim's two ends is floor. Steps cannot see a wall
-        across a mouth - it is a plain two-level cliff - and one stood across every east mouth
-        until the inside test was moved off the edge.
+        Every outline vertex between an open rim's two ends is below the plateau - the floor, or a
+        broken column standing in the chasm (Terrain::BuildHeights). A wall stood across every east
+        mouth until the inside test was moved off the edge.
     */
     {
         int bad = 0;
@@ -813,91 +1247,14 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
                 const vec2& p = g.fine.pos[v];
                 bool f_on = f_side ? (p.x == a.x && p.y > std::min(a.y,b.y) && p.y < std::max(a.y,b.y))
                                    : (p.y == a.y && p.x > std::min(a.x,b.x) && p.x < std::max(a.x,b.x));
-                if (f_on && g.fine.f_boundary[v] && t.level[v] != TERRAIN_FLOOR){
+                if (f_on && g.fine.f_boundary[v] && t.steps[v] == 0){
                     bad++;
                     add_issue("mouth",(int)v,p,true);
                 }
             }
         }
-        snprintf(buf,sizeof(buf),"%i mouths on the map's edge, %i outline vertices across them not floor",mouths,bad);
+        snprintf(buf,sizeof(buf),"%i mouths on the map's edge, %i outline vertices across them on the plateau",mouths,bad);
         add_result("mouths",bad == 0,buf);
-    }
-
-    /*
-        --- Steps: three levels in a cell only where a balcony meets its rim ---------------------
-        The mesh cuts any cell in quarters (TerrainMesh.cpp), so three levels draw; but the features
-        should bring them together only at a balcony's two ends, where plateau, balcony and floor
-        meet by design. Three anywhere else means two lines came too close - an island touching a
-        rim - and four never happens.
-    */
-    {
-        std::vector<vec2> junctions;
-        for (const GridFeature& f : g.layout.features){
-            if (f.kind == GRID_FEATURE_BALCONY && !f.line.points.empty()){
-                junctions.push_back(f.line.points.front());
-                junctions.push_back(f.line.points.back());
-            }
-        }
-        const float near = 2.0f * g.settings.triangle_side;
-        int bad = 0;
-        int at_junctions = 0;
-        for (int q = 0; q < (int)g.fine.quads.size(); q++){
-            bool seen[TERRAIN_NUM_LEVELS] = {};
-            int distinct = 0;
-            for (int k = 0; k < 4; k++){
-                int l = t.level[g.fine.quads[q].v[k]];
-                if (!seen[l]){
-                    seen[l] = true;
-                    distinct++;
-                }
-            }
-            if (distinct <= 2){
-                continue;
-            }
-            vec2 c = g.FineQuadCentre(q);
-            bool f_junction = false;
-            for (const vec2& j : junctions){
-                f_junction = f_junction || (c - j).length() < near;
-            }
-            if (distinct == 3 && seen[TERRAIN_BALCONY] && f_junction){
-                at_junctions++;
-            }else{
-                bad++;
-                add_issue("steps",q,c,true);
-            }
-        }
-        snprintf(buf,sizeof(buf),"%i cells span three levels where balconies meet their rims (%i junctions), %i elsewhere",
-                 at_junctions,(int)junctions.size(),bad);
-        add_result("steps",bad == 0,buf);
-    }
-
-    /*
-        --- Pins agree: a vertex pinned to a feature stands on that feature's high side --------
-        Only meaningful once the grid pins its features; before that nothing is pinned to them and
-        this passes trivially - the detail says which.
-    */
-    {
-        int pinned = 0;
-        int wrong = 0;
-        for (size_t v = 0; v < g.fine.pos.size(); v++){
-            int kind = g.fine.pin[v] >= 0 ? g.LineKind(g.fine.pin[v]) : -1;
-            if (kind < 0){
-                continue;
-            }
-            pinned++;
-            int want = TerrainLevelOfKind(kind);
-            if (t.level[v] != want){
-                wrong++;
-                add_issue("pin level",(int)v,g.fine.pos[v],true);
-            }
-        }
-        if (pinned == 0){
-            add_result("pin levels",true,"no vertex is pinned to a feature yet - nothing to compare");
-            report.results.back().f_skipped = true;
-        }else{
-            snprintf(buf,sizeof(buf),"%i of %i feature-pinned vertices on the wrong level",wrong,pinned);
-            add_result("pin levels",wrong == 0,buf);
-        }
     }
 
     /*
@@ -1085,11 +1442,7 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
                     continue;
                 }
                 count[feature.side > 0]++;
-                int pinned = 0;
                 int ground = 0;
-                for (size_t v = 0; v < n; v++){
-                    pinned += (g.fine.pin[v] == g.feature_line_base + (int)f);
-                }
                 CrossingTable region;
                 region.Add(feature.region.points);
                 region.Build();

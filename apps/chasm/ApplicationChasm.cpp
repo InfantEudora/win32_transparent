@@ -196,6 +196,7 @@ void ApplicationChasm::BuildScene(){
     BuildWalkerScene();
     BuildGroundShader();
     BuildCloudScene();
+    BuildGhostScene();
 
     pick_view = new Object();
     pick_view->name = "Pick View";
@@ -235,7 +236,7 @@ void ApplicationChasm::SetupInput(){
     input->AddKeyMap('2',INPUT_CHASM_TOOL_FIELD);
     input->AddKeyMap('3',INPUT_CHASM_TOOL_ERASE);
     input->AddKeyMap('4',INPUT_CHASM_TOOL_GARDEN);
-    input->AddKeyMap('5',INPUT_CHASM_TOOL_TOWN);
+    input->AddKeyMap('5',INPUT_CHASM_TOOL_LOT);
     input->AddKeyMap('6',INPUT_CHASM_TOOL_ROAD);
     input->AddKeyMap('7',INPUT_CHASM_TOOL_WALKER);
     input->AddKeyMap('8',INPUT_CHASM_TOOL_STORE);
@@ -243,6 +244,7 @@ void ApplicationChasm::SetupInput(){
     input->AddKeyMap('0',INPUT_CHASM_TOOL_WATER);
     input->AddKeyMap('H',INPUT_CHASM_TOOL_WINCH);     //H for hoist: the digits are all taken
     input->AddKeyMap('C',INPUT_CHASM_TOOL_CAMP);
+    input->AddKeyMap('J',INPUT_CHASM_TOOL_BRIDGE);
     input->AddKeyMap('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     input->AddKeyMap(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -368,19 +370,13 @@ GridPick ApplicationChasm::PickUnderPixel(int2 px){
     const vec3 o = r.origin;
     const vec3 d = r.direction;
     auto at_t = [&](float s){ return o + d * s; };
-    //Top level first: the first ground the ray meets is what it sees. Levels are numbered in the
-    //order they were added (the balcony last), so sorted by height here.
-    int order[TERRAIN_NUM_LEVELS];
-    for (int l = 0; l < TERRAIN_NUM_LEVELS; l++){
-        order[l] = l;
-    }
-    std::sort(order,order + TERRAIN_NUM_LEVELS,[](int a, int b){ return terrain_levels[a].height > terrain_levels[b].height; });
-    for (int oi = 0; oi < TERRAIN_NUM_LEVELS; oi++){
-        const int l = order[oi];
-        const float level_h = terrain_levels[l].height;
-        //The band this level's ground lies in: the relief is the plateau's alone; one unit covers
+    //The highest ground first: the first ground the ray meets is what it sees. A plot's top is a
+    //whole number of steps down (Terrain.h), so the heights to try are those.
+    for (int l = 0; l <= TERRAIN_FLOOR_STEPS; l++){
+        const float level_h = -TERRAIN_STEP * (float)l;
+        //The band this height's ground lies in: the relief is the plateau's alone; one unit covers
         //the bump either way.
-        float top = level_h + ((l == TERRAIN_PLATEAU) ? t.relief_max : 0.0f) + 1.0f;
+        float top = level_h + ((l == 0) ? t.relief_max : 0.0f) + 1.0f;
         float bottom = level_h - 1.0f;
         float s0 = std::max(0.0f,(top - o.y) / d.y);
         float s1 = (bottom - o.y) / d.y;
@@ -427,7 +423,7 @@ GridPick ApplicationChasm::PickUnderPixel(int2 px){
         }
         vec3 at = at_t(hit);
         GridPick pick = w->picker->Pick(vec2(at.x,at.z));
-        if (pick.f_hit && t.level[pick.plot] == l){
+        if (pick.f_hit && t.steps[pick.plot] == l){
             return pick;
         }
         none.at = vec2(at.x,at.z);
@@ -448,6 +444,8 @@ void ApplicationChasm::UpdatePick(){
     InputController* input = main_scene->inputcontroller;
     std::shared_ptr<const GridPicker> p = GetPicker();
     bool f_clicked = input->WasKeyPressed(INPUT_CLICK_LEFT);
+    bool f_held = input->IsKeyDown(INPUT_CLICK_LEFT);
+    bool f_right = input->WasKeyPressed(INPUT_CLICK_RIGHT);
 
     GridPick hover;
     bool f_over_scene = p && main_window->f_has_focus && !UIWantsMouse();
@@ -458,14 +456,54 @@ void ApplicationChasm::UpdatePick(){
             hover = PickUnderPixel(px);
         }
     }
+    //A script's hover (chasm_tool hover_x/hover_z): the plot there, and the mouse paints nothing meanwhile.
+    if (f_hover_pinned && p){
+        vec2 pin;
+        {
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            pin = hover_pin;
+        }
+        hover = p->Pick(pin);
+        f_over_scene = false;
+        //With a scripted button it is pressed, held and let go there as the mouse's would be.
+        int button = script_left.load();
+        if (button >= 0){
+            f_over_scene = true;
+            f_held = (button == 1);
+            f_clicked = f_held && !f_script_left_was;
+            px = int2(-1,-1);       //and the real mouse is nowhere, so the overlay takes nothing
+        }
+        f_script_left_was = (button == 1);
+    }else{
+        f_script_left_was = false;
+    }
+    if (f_script_right.exchange(false)){
+        f_right = true;
+    }
+    /*
+        A road being drawn (line_works_plan.md) is dropped by a right press, or by the tool being put
+        down. Before the play overlay: the press that drops a line is not also the right click that puts
+        the tool down.
+    */
+    bool f_line_dropped = false;
+    if (line_drag != LINE_DRAG_NONE && paint_tool != CHASM_TOOL_ROAD){
+        DropLine();
+        line_drag = LINE_DRAG_NONE;
+    }else if (line_drag == LINE_DRAG_DRAWING && f_right){
+        DropLine();
+        f_line_dropped = true;
+    }
     //Play mode's own selection, and its overlay taking the mouse where it is drawn (selection_plan.md).
     if (PlayMode()){
         UpdatePlayPick(hover,px,f_over_scene,f_clicked);
+        if (f_line_dropped){
+            f_right_press = false;
+        }
     }
     //A paint tool takes the left button; selecting is what the button does with no tool.
     bool f_painting = (paint_tool != CHASM_TOOL_SELECT);
     if (f_painting){
-        UpdatePaint(hover,f_over_scene,f_clicked);
+        UpdatePaint(hover,f_over_scene,f_clicked,f_held);
     }
     std::lock_guard<std::mutex> lock(pick_mutex);
     if (hover != hover_pick){
@@ -556,11 +594,18 @@ void ApplicationChasm::RegisterCommandHandlers(){
                 has 0 there, so they paint as they always did.
             */
             std::shared_ptr<const ChasmWorld> zw = zones.GetWorld();
-            if (cmd.value[3] != 0.0f && zw && !ZoneCommandExplored(*zw,(int)cmd.value[0],(int)cmd.subtype)){
+            bool f_clouded = cmd.value[3] != 0.0f && zw && !ZoneCommandExplored(*zw,(int)cmd.value[0],(int)cmd.subtype);
+            //A bridge has two ends, and neither may be under the clouds.
+            if (cmd.value[3] != 0.0f && zw && (int)cmd.value[0] == ZONE_OP_BRIDGE &&
+                !ZoneCommandExplored(*zw,ZONE_OP_BRIDGE,(int)cmd.value[1])){
+                f_clouded = true;
+            }
+            if (f_clouded){
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
                     zone_last_refusal = "under the clouds";
                 }
+                zone_refusals++;
                 zone_commands_done++;
                 return OBJECTID_INVALID;
             }
@@ -569,6 +614,9 @@ void ApplicationChasm::RegisterCommandHandlers(){
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 zone_last_refusal = zones.last_refusal;
+            }
+            if (!f_changed && !zones.last_refusal.empty()){
+                zone_refusals++;
             }
             if (f_changed){
                 PublishZones();
@@ -610,7 +658,9 @@ ChasmSave ApplicationChasm::MakeSave(){
         s.stroke_building = z->stroke_building;
         for (size_t v = 0; v < z->ground.size(); v++){
             if (z->ground[v]){
-                s.grounds.push_back(std::make_pair((int)v,(int)z->ground[v]));
+                //A garden or lot still a site carries ZONE_GROUND_SAVED_SITE with its kind.
+                int site = (ZoneEnclosesGround(z->ground[v]) && !z->ground_built[v]) ? ZONE_GROUND_SAVED_SITE : 0;
+                s.grounds.push_back(std::make_pair((int)v,(int)z->ground[v] | site));
             }
         }
     }
@@ -702,6 +752,7 @@ void ApplicationChasm::HashSimState(StateHash& h){
     h.Bytes(z.standing.data(),z.standing.size());
     h.Bytes(z.field.data(),z.field.size() * sizeof(uint32_t));
     h.Bytes(z.ground.data(),z.ground.size());
+    h.Bytes(z.ground_built.data(),z.ground_built.size());
     //The buildings (docs/buildings_plan.md): which each plot is part of, the table, the drag in progress.
     h.Begin("buildings");
     h.Bytes(z.building.data(),z.building.size() * sizeof(uint32_t));
@@ -723,11 +774,34 @@ void ApplicationChasm::HashSimState(StateHash& h){
     A press paints what is under it - and on a house adds a storey; with shift it takes one off
     instead. Held and dragged, it paints each NEW plot or cell the cursor reaches, once: a drag
     never stacks storeys, so sweeping across a street lays one floor and clicking raises it.
-    Erase takes the house off a plot if there is one, otherwise the field off its cell.
+    Erase takes the house off a plot if there is one, otherwise the field off its cell. The road tool
+    draws a line instead and places it on release (UpdateLineDrag). `f_held` is the left button's, the
+    mouse's or a script's (UpdatePick).
 */
-void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked){
+void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held){
     InputController* input = main_scene->inputcontroller;
-    bool f_held = input->IsKeyDown(INPUT_CLICK_LEFT);
+    if (paint_tool == CHASM_TOOL_ROAD){
+        UpdateLineDrag(hover,f_over_scene,f_clicked,f_held);
+        return;
+    }
+    /*
+        THE BRIDGE TOOL (bridge_plan.md): pressed on one bank, it remembers where; let go over the other,
+        it asks for the whole bridge in one command. The view draws the chain meanwhile, green or red.
+    */
+    if (paint_tool == CHASM_TOOL_BRIDGE){
+        if (f_clicked && f_over_scene && hover.f_hit){
+            bridge_from = hover.plot;
+            pick_version++;
+        }else if (!f_held && bridge_from >= 0){
+            if (f_over_scene && hover.f_hit && hover.plot != bridge_from){
+                SubmitZone(ZONE_OP_BRIDGE,bridge_from,hover.plot,0);
+            }
+            bridge_from = -1;
+            pick_version++;
+        }
+        return;
+    }
+    bridge_from = -1;
     if (!f_held){
         paint_last_index = -1;
     }
@@ -744,13 +818,12 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
     if (f_clicked){
         paint_stroke = (paint_stroke + 1) & 0x3FFFFF;
     }
-    int last_index = paint_last_index;
     paint_last_index = index;
 
     int op = ZONE_OP_NONE;
     int ground = ZONE_GROUND_NONE;
-    if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_TOWN){
-        ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_TOWN;
+    if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT){
+        ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT;
         op = f_shift ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT;
     }else if (ToolKind(tool) != ZONE_KIND_NONE){
         if (f_shift){
@@ -761,17 +834,6 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         ground = ToolKind(tool);
     }else if (tool == CHASM_TOOL_FIELD){
         op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_FIELD_PAINT;
-    }else if (tool == CHASM_TOOL_ROAD){
-        ground = ZONE_GROUND_ROAD;
-        op = f_shift ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT;
-        //A drag that stepped diagonally across a cell paints the corner between too, or the road breaks.
-        std::shared_ptr<const ChasmWorld> w = GetWorld();
-        if (!f_shift && !f_clicked && w){
-            int bridge = RoadBridgePlot(*w,last_index,index,hover.at);
-            if (bridge >= 0){
-                SubmitZone(ZONE_OP_GROUND_PAINT,bridge,ZONE_GROUND_ROAD);
-            }
-        }
     }else if (tool == CHASM_TOOL_WALKER){
         //Clicks only - a drag would spawn a walker per plot crossed.
         if (f_clicked){
@@ -1098,13 +1160,16 @@ json ApplicationChasm::PickJson(const GridPicker& p, const GridPick& pick){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     const char* level = (w && w->picker.get() == &p) ? terrain_levels[w->terrain->level[pick.plot]].name : "?";
     const char* biome = (w && w->picker.get() == &p) ? TerrainBiomeName(w->terrain->biome[pick.plot]) : "?";
+    //The plot's ground as the walkers judge it: its height, and whether it is wet (a river or a pool).
+    float ground = (w && w->picker.get() == &p) ? w->terrain->ground[pick.plot] : 0.0f;
+    bool f_wet = (w && w->picker.get() == &p) && w->terrain->wet[pick.plot];
     return json{
         {"hit",true},
         {"x",pick.at.x},
         {"z",pick.at.y},
         {"plot",{{"vertex",pick.plot},{"x",v.x},{"z",v.y},{"level",level},{"biome",biome},{"sides",p.PlotQuadCount(pick.plot)},
                  {"area",p.PlotArea(pick.plot)},{"on_outline",(bool)g.fine.f_boundary[pick.plot]},
-                 {"coarse_corner",pick.plot < (int)g.coarse.pos.size()}}},
+                 {"coarse_corner",pick.plot < (int)g.coarse.pos.size()},{"ground",ground},{"wet",f_wet}}},
         {"fine_cell",{{"quad",pick.fine_quad},{"corner",pick.corner},{"area",p.FineArea(pick.fine_quad)},
                       {"squareness",GridQuadSquareness(corners)}}},
         {"coarse_cell",{{"quad",pick.coarse_quad},{"area",p.CoarseArea(pick.coarse_quad)}}},
@@ -1193,6 +1258,7 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_WATER:      return ZONE_KIND_WATER;
         case CHASM_TOOL_WINCH:      return ZONE_KIND_WINCH;
         case CHASM_TOOL_CAMP:       return ZONE_KIND_CAMP;
+        case CHASM_TOOL_BRIDGE:     return ZONE_KIND_BRIDGE;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -1211,17 +1277,22 @@ int ApplicationChasm::ToolKind(int tool){
 */
 void ApplicationChasm::UpdatePickView(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
+    /*
+        Play mode selects by outline (selection_plan.md) and shows a paint tool as a GHOST of what it would
+        place (UpdateGhost): the line mesh is only a bridge's chain there, while one is dragged. Checked
+        every frame, since neither the mode nor the tool moves the pick; drawn again whole once it is back.
+    */
+    if (PlayMode() && paint_tool != CHASM_TOOL_BRIDGE){
+        pick_view->SetVisibility(false);
+        pick_view_built_version = -1;
+        return;
+    }
     int version = pick_version.load();
     if (!w || (w == pick_view_built_for && version == pick_view_built_version)){
         return;
     }
     pick_view_built_for = w;
     pick_view_built_version = version;
-    //Play mode selects by outline (selection_plan.md): the line mesh is only a paint tool's footprint there.
-    if (PlayMode() && paint_tool == CHASM_TOOL_SELECT){
-        pick_view->SetVisibility(false);
-        return;
-    }
     GridPick hover = GetHoverPick();
     GridPick selected = GetSelectedPick();
     const GridPicker* p = w->picker.get();
@@ -1273,6 +1344,23 @@ void ApplicationChasm::UpdatePickView(){
         }
         emit(PICK_SELECTED_PLOT);
     }
+    //Drawing a road (line_works_plan.md): the chain so far, each plot green where the line may take it.
+    std::vector<int> chain;
+    bool f_erase = false;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        chain = line_chain;
+        f_erase = f_line_erase;
+    }
+    std::shared_ptr<const ZoneState> line_zones = GetZones();
+    if (!chain.empty() && line_zones && line_zones->world == w){
+        std::shared_ptr<const Exploration> ex = GetExploration();
+        for (int v : chain){
+            level_h = terrain.Height(v);
+            p->PlotOutline(v,segs);
+            emit(LinePlotAllowed(*w,*line_zones,ex.get(),f_erase,v,NULL) ? PICK_PAINT_OK : PICK_PAINT_REFUSED);
+        }
+    }
     if (hover.f_hit){
         level_h = terrain.Height(hover.plot);
         /*
@@ -1293,9 +1381,21 @@ void ApplicationChasm::UpdatePickView(){
         }else if (tool == CHASM_TOOL_FIELD){
             bool f_ok = (!z.field.empty() && z.field[hover.coarse_quad]) || ZoneCanField(*w,z,hover.coarse_quad,NULL);
             coarse_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
-        }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_TOWN || tool == CHASM_TOOL_ROAD){
+        }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || tool == CHASM_TOOL_ROAD){
             bool f_ok = ZoneCanGround(*w,z,hover.plot,NULL,(tool == CHASM_TOOL_ROAD) ? ZONE_GROUND_ROAD : ZONE_GROUND_GARDEN);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
+        }
+        //Dragging a bridge: its whole chain, green where it may stand, red where it may not.
+        int from = bridge_from.load();
+        if (tool == CHASM_TOOL_BRIDGE && from >= 0 && z.world == w){
+            std::vector<int> chain;
+            bool f_ok = ZoneBridgeChain(*w,z,from,hover.plot,chain,NULL);
+            for (int v : chain){
+                level_h = terrain.Height(v);
+                p->PlotOutline(v,segs);
+                emit(f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED);
+            }
+            level_h = terrain.Height(hover.plot);
         }
         p->CoarseOutline(hover.coarse_quad,segs);
         emit(coarse_colour);
@@ -1329,6 +1429,11 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
         rivers.push_back(json{{"width",r.width},{"points",pts}});
     }
     //Each balcony by its side and its two ends on the rim, so a camera can be sent to one.
+    json cracks = json::array();
+    for (const ChasmLayout::Crack& c : g.layout.cracks){
+        cracks.push_back(json{{"start",{c.points.front().x,c.points.front().y}},{"end",{c.points.back().x,c.points.back().y}},
+                              {"half_width",c.half_width}});
+    }
     json balconies = json::array();
     for (const GridFeature& f : g.layout.features){
         if (f.kind != GRID_FEATURE_BALCONY || f.line.points.empty()){
@@ -1362,7 +1467,7 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
         {"hash",hash},
         {"layout",{
             {"rifts",g.layout.rifts},
-            {"forks",g.layout.forks},
+            {"cracks",(int)g.layout.cracks.size()},
             {"balconies_east",g.layout.balconies[1]},
             {"balconies_west",g.layout.balconies[0]},
             {"ledges",g.layout.count[GRID_FEATURE_LEDGE]},
@@ -1370,6 +1475,7 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
             {"columns",g.layout.count[GRID_FEATURE_COLUMN]},
             {"rivers",g.layout.rivers.size()},
             {"balcony_list",balconies},
+            {"crack_list",cracks},
             {"river_list",rivers},
             {"attempts",g.layout.attempts},
             {"layout_ms",g.layout.generate_ms}
@@ -1693,14 +1799,15 @@ void ApplicationChasm::UpdateView(void){
     }
     //The tool keys toggle: the active tool's key again puts it down.
     if (input->IsInputLive()){
-        const int keys[12] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
-                              INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_TOWN,INPUT_CHASM_TOOL_ROAD,
+        const int keys[13] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+                              INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_WALKER,INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
-                              INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP};
-        const int tools[12] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
-                               CHASM_TOOL_GARDEN,CHASM_TOOL_TOWN,CHASM_TOOL_ROAD,CHASM_TOOL_WALKER,
+                              INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
+                              INPUT_CHASM_TOOL_BRIDGE};
+        const int tools[13] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                               CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,CHASM_TOOL_WALKER,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
-                               CHASM_TOOL_CAMP};
+                               CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
             bool f_debug_tool = tools[i] == CHASM_TOOL_WALKER;
             if (input->WasKeyPressed(keys[i]) && (f_debug_keys || !f_debug_tool)){
@@ -1753,6 +1860,7 @@ void ApplicationChasm::PreRender(void){
     UploadPiles();
     UploadClouds();
     UpdatePickView();
+    UpdateGhost();
     UploadSelection();
     UpdatePlayModeViews();
 #ifdef DEBUG
@@ -1835,8 +1943,8 @@ void ApplicationChasm::UpdateGridView(){
         }
         return terrain.ground.empty() ? terrain.Height(v) : terrain.ground[v];
     };
-    auto G = [&terrain,f_flat](const vec2& p, int level){
-        return f_flat ? 0.0f : terrain.GroundHeight(p,terrain_levels[level].height);
+    auto G = [&terrain,f_flat](const vec2& p, float height){
+        return f_flat ? 0.0f : terrain.GroundHeight(p,height);
     };
 
     std::vector<line_vertex> verts;
@@ -1854,15 +1962,13 @@ void ApplicationChasm::UpdateGridView(){
         float hb = H(b);
         const vec2& pa = g->fine.pos[a];
         const vec2& pb = g->fine.pos[b];
-        int la = terrain.level[a];
-        int lb = terrain.level[b];
-        if (la == lb){
+        if (terrain.SameGround(a,b)){
             line(pa,pb,color,ha,hb);
         }else{
-            //Across a cliff: each half on its own level's ground, dropping at the midpoint.
+            //Across a cliff: each half on its own plot's ground, dropping at the midpoint.
             vec2 mid = (pa + pb) * 0.5f;
-            line(pa,mid,color,ha,G(mid,la));
-            line(mid,pb,color,G(mid,lb),hb);
+            line(pa,mid,color,ha,G(mid,terrain.Height(a)));
+            line(mid,pb,color,G(mid,terrain.Height(b)),hb);
         }
     };
     const float unit = g->settings.triangle_side;
@@ -1907,7 +2013,7 @@ void ApplicationChasm::UpdateGridView(){
         //each point on its own level's ground, so a rim follows the hills along its top.
         for (size_t f = 0; f < w->features.size(); f++){
             int l = base + (int)f;
-            int level = line_level(l);
+            float level = terrain_levels[line_level(l)].height;
             const std::vector<vec2>& pts = w->features[f].points;
             for (size_t i = 0; i + 1 < pts.size(); i++){
                 line(pts[i],pts[i + 1],line_colour(l),G(pts[i],level) + 0.3f,G(pts[i + 1],level) + 0.3f);
@@ -1982,7 +2088,7 @@ void ApplicationChasm::UpdateGridView(){
             //At the ground under it: the issue names a vertex or a quad, and either way the nearest
             //plot says which level the spot is on.
             GridPick under = w->picker->Pick(issue.where);
-            float h = under.f_hit ? G(issue.where,terrain.level[under.plot]) : 0.0f;
+            float h = under.f_hit ? G(issue.where,terrain.Height(under.plot)) : 0.0f;
             const int SEGMENTS = 12;
             for (int s = 0; s < SEGMENTS; s++){
                 float a0 = 6.2831853f * s / SEGMENTS;
@@ -2142,9 +2248,9 @@ void ApplicationChasm::RenderChasmPanel(){
         if (g){
             //What the seed made of the chasm (Grid::layout) - the thing flipping through seeds is for.
             const ChasmLayout& l = g->layout;
-            ImGui::Text("chasm: %i rift%s, %i fork%s; balconies %i east, %i west; islands: %i shards, "
+            ImGui::Text("chasm: %i rift%s, %i crack%s; balconies %i east, %i west; islands: %i shards, "
                         "%i columns, %i ledges; %i rivers",
-                        l.rifts,l.rifts == 1 ? "" : "s",l.forks,l.forks == 1 ? "" : "s",l.balconies[1],l.balconies[0],
+                        l.rifts,l.rifts == 1 ? "" : "s",(int)l.cracks.size(),l.cracks.size() == 1 ? "" : "s",l.balconies[1],l.balconies[0],
                         l.count[GRID_FEATURE_SHARD],l.count[GRID_FEATURE_COLUMN],l.count[GRID_FEATURE_LEDGE],
                         (int)l.rivers.size());
             ImGui::Text("seed %u: %i coarse quads, %i fine quads, %i fine vertices",g->settings.seed,
@@ -2245,7 +2351,7 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Erase (3)##tool",tool == CHASM_TOOL_ERASE)) tool = CHASM_TOOL_ERASE;
         if (ImGui::RadioButton("Garden (4)##tool",tool == CHASM_TOOL_GARDEN)) tool = CHASM_TOOL_GARDEN;
         ImGui::SameLine();
-        if (ImGui::RadioButton("Town (5)##tool",tool == CHASM_TOOL_TOWN)) tool = CHASM_TOOL_TOWN;
+        if (ImGui::RadioButton("Lot (5)##tool",tool == CHASM_TOOL_LOT)) tool = CHASM_TOOL_LOT;
         ImGui::SameLine();
         if (ImGui::RadioButton("Road (6)##tool",tool == CHASM_TOOL_ROAD)) tool = CHASM_TOOL_ROAD;
         ImGui::SameLine();
@@ -2259,6 +2365,8 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Winch (H)##tool",tool == CHASM_TOOL_WINCH)) tool = CHASM_TOOL_WINCH;
         ImGui::SameLine();
         if (ImGui::RadioButton("Camp (C)##tool",tool == CHASM_TOOL_CAMP)) tool = CHASM_TOOL_CAMP;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Bridge (J)##tool",tool == CHASM_TOOL_BRIDGE)) tool = CHASM_TOOL_BRIDGE;
         if (tool != paint_tool){
             paint_tool = tool;
             pick_version++;
@@ -2274,7 +2382,7 @@ void ApplicationChasm::RenderChasmPanel(){
                         st.buildings[ZONE_KIND_WINCH]);
             ImGui::Text("%i fields on %i cells, %.0f units of field",st.buildings[ZONE_KIND_FIELD],st.field_cells,
                         st.floor_area[ZONE_KIND_FIELD]);
-            ImGui::Text("%i garden and %i town plots, %.0f units of ground; %i road plots",st.gardens,st.towns,
+            ImGui::Text("%i garden and %i lot plots, %.0f units of ground; %i road plots",st.gardens,st.lots,
                         st.ground_area,st.roads);
             RenderBuildingInfo(*zw,*z);
         }
@@ -2583,6 +2691,12 @@ void ApplicationChasm::RegisterMCPTools(){
             }
             if (f_point){
                 result["pick"] = PickJson(*p,pick);
+                //What is painted there - the plot's ground kind and whether it is built - for scripts.
+                std::shared_ptr<const ZoneState> z = GetZones();
+                if (pick.f_hit && z && pick.plot < (int)z->ground.size()){
+                    result["zone_ground"] = ZoneGroundName(z->ground[pick.plot]);
+                    result["zone_ground_built"] = (bool)z->ground_built[pick.plot];
+                }
                 if (args.value("select",false)){
                     SetSelectedPick(pick);
                 }
@@ -2614,7 +2728,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans"}},{"description","for field_crop"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
-                {"ground",{{"type","string"},{"enum",{"garden","town","road"}},{"description","for ground_paint"}}},
+                {"ground",{{"type","string"},{"enum",{"garden","lot","road"}},{"description","for ground_paint"}}},
                 {"x",{{"type","number"}}},
                 {"z",{{"type","number"}}},
                 {"plot",{{"type","integer"}}},
@@ -2772,26 +2886,67 @@ void ApplicationChasm::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("chasm_tool",
-        "Pick the mouse's tool, as keys 1-0 and H do: select, house, field, erase, garden, town, road, walker, store, woodcutter, water, winch. With a paint tool the "
-        "hover outline goes green where a click would paint and red where the rules refuse.",
+        "Pick the mouse's tool, as keys 1-0, H, C and J do: select, house, field, erase, garden, lot, road, walker, store, "
+        "woodcutter, water, winch, camp, bridge. With a paint tool the hover outline goes green where a click would "
+        "paint and red where the rules refuse - in play mode, the ghost of what it would place. hover_x/hover_z pin "
+        "the hover to that point (a script has no mouse), until a call with hover_release.",
         json{
             {"type","object"},
             {"properties",{
-                {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","town","road","walker",
-                                                    "store","woodcutter","water","winch"}}}}
+                {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road","walker",
+                                                    "store","woodcutter","water","winch","camp","bridge"}}}},
+                {"hover_x",{{"type","number"}}},
+                {"hover_z",{{"type","number"}}},
+                {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
+                {"button",{{"type","string"},{"enum",{"down","up","mouse"}},
+                           {"description","the left button at the pinned hover: down presses and holds it, up lets go, "
+                                          "mouse gives it back - with hover_x/hover_z between, a script's drag (the "
+                                          "road tool draws its line and places it on up). Allow a frame between calls."}}},
+                {"right_click",{{"type","boolean"},{"description","a right press: drops a road being drawn"}}}
             }}
         },
         [this](const json& args) -> json {
-            const char* names[12] = {"select","house","field","erase","garden","town","road","walker",
-                                     "store","woodcutter","water","winch"};
+            //In ChasmTool order - every tool, so the name returned is always one of these.
+            const char* names[CHASM_TOOL_COUNT] = {"select","house","field","erase","garden","lot","road","walker",
+                                                   "store","woodcutter","water","winch","camp","bridge"};
             std::string t = args.value("tool",std::string());
-            for (int i = 0; i < 12; i++){
+            for (int i = 0; i < CHASM_TOOL_COUNT; i++){
                 if (t == names[i]){
                     paint_tool = i;
                     pick_version++;
                 }
             }
-            return json{{"tool",names[paint_tool.load()]}};
+            if (args.contains("hover_x") && args.contains("hover_z")){
+                std::lock_guard<std::mutex> lock(pick_mutex);
+                hover_pin = vec2(args["hover_x"].get<float>(),args["hover_z"].get<float>());
+                f_hover_pinned = true;
+            }
+            std::string button = args.value("button",std::string());
+            if (button == "down"){
+                script_left = 1;
+            }else if (button == "up"){
+                script_left = 0;
+            }else if (button == "mouse"){
+                script_left = -1;
+            }
+            if (args.value("right_click",false)){
+                f_script_right = true;
+            }
+            if (args.value("hover_release",false)){
+                f_hover_pinned = false;
+                script_left = -1;
+            }
+            int tool = paint_tool.load();
+            int left = script_left.load();
+            size_t line = 0;
+            {
+                std::lock_guard<std::mutex> lock(pick_mutex);
+                line = line_chain.size();
+            }
+            return json{{"tool",(tool >= 0 && tool < CHASM_TOOL_COUNT) ? names[tool] : "?"},
+                        {"hover_pinned",f_hover_pinned.load()},
+                        {"button",(left < 0) ? "mouse" : (left ? "down" : "up")},
+                        {"line_plots",line}};
         });
 
 #ifdef DEBUG
@@ -2831,5 +2986,6 @@ void ApplicationChasm::RegisterMCPTools(){
     RegisterTimeTools();
     RegisterEconomyTools();
     RegisterSelectTools();
+    RegisterBridgeTools();
 }
 #endif

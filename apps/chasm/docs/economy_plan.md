@@ -142,3 +142,21 @@ Files: `ApplicationChasmWorkersView.cpp`, `CropMesh.*`, `ZoneMesh.*`, the forest
 - A worker who is walking when his store fills keeps going and finds another at the door; nothing reserves
   room ahead.
 - A route over a winch would be drawn cutting across the cliff; no workplace sits on a balcony yet.
+
+## As built: house storage and the woodpile's lot (2026-10-06)
+
+- **A house keeps food and firewood** for P5 (people eat, and burn wood in winter): `room` at
+  `ECONOMY_HOUSE_ROOM` (1.5) of its standing floor area - about 6 a plot-storey against a store's 20 -
+  and `keeps` = `ECONOMY_HOUSE_KEEPS` (the foods and wood). Shared out on a split like a store's stock,
+  lost when it is pulled down. Nothing fills it yet: a house is not in `accepts`, so no carrier delivers
+  there; P5 decides who brings food home. The house card shows "Food and firewood n of room".
+- **The woodpile is on a LOT** beside the hut (`ZoneLotBeside`, the lowest plot index of any of the hut's
+  plots' lot neighbours; `EconomyState::pile_plot`, derived). A NEW woodcutter is refused without a lot
+  beside it, in both modes ("a woodcutter needs a lot beside it, for his woodpile" - a placement rule
+  only, so a load and the debug checks pass the building's own id). With no lot standing - erased, or
+  still a site - he fells nothing, and his card says so.
+- **The hut is the yard's door**: a lot is fenced, so wood goes onto the pile and comes off it at the hut
+  plot beside it (`pile_door`), exactly where he always came home to - nobody walks into the yard. The
+  pile view (ApplicationChasmPiles.cpp) draws the logs on `pile_plot`, leaning toward that hut plot.
+- The lot's fence is low now: stakes 0.52 (were 0.95), the gate posts 0.95 (were 1.35) - about the
+  garden wall's height.

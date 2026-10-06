@@ -73,6 +73,10 @@ stretch.
 
 ## 3. Pinning features into the grid
 
+> **Superseded 2026-10-06** - nothing is pinned any more but the map's outline; the terrain is a
+> height per plot drawn as columns. See "Columns: one chasm, a height per plot" at the end. Kept as
+> the record of how pinning worked.
+
 The chasm rim, shard outlines, rivers and the coast are polylines - drawn by hand until step 10,
 generated from the seed since (`ChasmLayout.cpp`, "Step 10" below).
 
@@ -118,6 +122,10 @@ the mechanism exists - `Grid::lines` and `GridLevel::pin` - and the rim adds lin
 ---
 
 ## 4. Terrain levels and cliffs
+
+> **Superseded 2026-10-06** - a level is now any whole number of steps, its kind (plateau, balcony,
+> island, floor, bare) follows from its flat patch, and the cliffs are columns, not marching
+> squares. See "Columns: one chasm, a height per plot" at the end.
 
 **Each fine vertex has a terrain level**: the plateau, the rim terraces, shard tops and the chasm
 floor are a handful of values, not a height field. Buildable land is flat within a level. Gentle
@@ -923,7 +931,7 @@ height, the summary).
 **Open:**
 - A balcony is always a U along one stretch of rim; one turning round a rift's tip, or two meeting,
   are not tried. (The winch that reaches one is built: `buildings_plan.md`, step 2.)
-- **Parked map issue, seed 95 (`sides`)** - looked at in the app with the user 2026-10-06 and judged
+- ~~**Parked map issue, seed 95 (`sides`)**~~ - gone with the second rift ("Columns" below): seed 95 passes every check since 2026-10-06. Was: looked at in the app with the user 2026-10-06 and judged
   not major; left for a later pass over the map. A thin green strip of plateau, 76 vertices with
   pines on it, at the very tip of the mountain's tongue where it reaches south between two rifts
   (first vertex at (-42, -97)): rims on three sides, the impassable mountain behind, so only a
@@ -933,3 +941,78 @@ height, the summary).
   fine), or re-roll the layout. `PlaceMountainFoot` has a stream of its own and reads the main tip,
   known once the rifts are drawn, so the flood could likely use the real foot - but it also reads
   the rivers, which come later.
+
+---
+
+### Columns: one chasm, a height per plot (2026-10-06)
+
+Agreed with the user after a Blender model of the look (`art_source/chasm/chasm_terraces.blend`, built
+by `tools/blender_chasm_terraces.py` - the same rules in Python, and the reference for how it should
+look). Two asks: the rim was a boring smooth line, and the cliffs should look like
+`chasm_aigen_1.png`'s stacked blocks; and a map has ONE chasm - long thin cracks are fine, a second
+rift is not.
+
+**The idea.** A plot is a vertex, drawn as the polygon round it (section 2). Stand every plot up as a
+COLUMN at its own height and the chasm is nothing but plots at different heights: no line has to be
+pinned into the grid for the rim to show, and the rim is jagged at a plot's size, by design. That is
+the stacked-block look, and it is the data the game already had - only with more heights than four.
+
+**Heights** (`Terrain::BuildHeights`). Whole steps of `TERRAIN_STEP` (6), twelve to the floor at
+-72; the user chose twelve over the model's first twenty-four. From the layout's lines as before -
+rims bound the chasm, a shard or ledge stands at -24, a column at -12, a balcony's region at -12 -
+and then, in order: broken columns stepping down from the walls where the rift's distance field
+(`ChasmLayout::rift`, now exported) says the wall is, wandering from sheer to 13 out; a crumbling
+edge and a broken skirt two plots deep round islands and balconies; the rim crumbling a step or
+two, only ever beside a real drop, never over a balcony, at a fall's lip or near the mountain's
+foot (that boxed in a plot on seed 1); and CRACKS cut into the plateau. Then saddles are joined and
+pits filled, in turns until neither changes anything: a saddle (two high plots diagonal over two
+low) would put four walls on one line, and is raised as marching squares joined it; a pit is any
+piece below the rim not joined to the chasm - a crack's thin end catches plots that meet only
+corner to corner - and is filled back to the plateau.
+
+**One chasm** (`ChasmLayout.cpp`, `TryRifts`). No second rift. The forks' walks are kept, but as
+`ChasmLayout::cracks` - not stamped into the field, so they make no rim lines - with two to five
+short fissures off the rims. A crack starts a little inside the rift, stops where it would turn back
+toward the rim (it would box in land), near the mountain, the map's edge or another crack, and
+rivers keep clear of cracks as of rims.
+
+**Kinds** (`Terrain::BuildKinds`), from the heights alone. A flat patch is plots joined by grid edges
+at one height. Under the deck (-39): FLOOR. A patch of fewer than `TERRAIN_MIN_PATCH` (8) plots:
+BARE - rock on top, never built on (user: small ledges get one brown and are unusable). At height 0:
+PLATEAU. Below it, a patch a winch can reach - next to the plateau, or to another balcony, since one
+may winch down twice (user) - is a BALCONY; any other is an ISLAND. So every big enough ledge along
+a wall is a balcony now, at -6 as well as -12 (the user's choice over keeping only the layout's).
+`Terrain::SameGround` (equal heights) is what walkers, footprints, fields and straight walks ask;
+they used to compare levels. A winch stands on the plateau or a balcony and lands on a balcony below.
+
+**The mesh** (`TerrainMesh.cpp`). A cell whose corners share a height is two triangles as before. A
+cell with a drop is drawn in quarters - each corner's (corner, edge midpoints, centre) at its plot's
+top - with a wall on every inner half-edge between two heights: the old three-level quarter cell,
+now for every mixed cell, and marching squares are gone. Walls are cut at one global set of RINGS
+(each top, its turf, the step under the turf's overhang, the soil's foot, a chamfer over every
+stratum), so walls meeting on a vertical line share its points. The look is only where ring points
+go, along the wall's outward normal: per column and stratum, blocks a few plots wide from banded
+noise, a soft stratum here and there set back all along, a bulge at a column's face, a groove at
+its joints, and the turf overhanging. A midpoint takes its normal from the half-edges on both sides
+of its edge, so two cells compute it from the same numbers and meet without a crack. Lean: a wall
+takes only its own cell's tops' turf rings, and under the deck the rock is flat and only tops cut
+it - those rings would fall on a straight edge anyway. Seed 1: 331k triangles, 110k in walls,
+against 232k and 27k with marching squares; terrain 0.2 s, mesh 0.3 s in debug.
+
+**Rivers** are unchanged - a channel pressed into the plateau, not plot heights. Their water is
+now cut in quarters like the ground it lies on.
+
+**Checks.** Gone with the pinning: `features`, `spacing`, `pin levels`, and `steps` (three heights in
+a cell are the norm now). `mouths` accepts a broken column at the map's edge. New: `one chasm` -
+everything below the rim is one piece. The grid lost about 1,200 lines (the chain search, strip
+pairing and `PinFeature`); with pinning already off, seeds 1-3 hashed the same before and after the
+deletion, and were re-pinned for the change. Seeds 1-100 pass every check.
+
+**Replay test.** Passes in debug and release. Two fixes to the test itself: the village moved to the
+far side (DX -226) - on the home side nothing parted it from the settlers' camp any more, so the
+families took its fields and nobody was idle to carry wood; and it waits on the replay itself, since
+the tool's wait gave up while a debug replay was still running and the state was read part way.
+
+**Found on the way** (not changed): job assignment checks every workplace with a walk search, and a
+workplace no one can reach - across the chasm, or a river - makes that search cover the whole side
+on every zone change. It is what slowed the debug replay past the tool's wait.

@@ -39,8 +39,15 @@ Where the village stands: every x below is shifted by this. Seed 1's chasm now c
 and the village's old ground (x -100 to -36) is the chasm floor, where nothing may be built; at +190 it
 stands on the home (east) side's plateau, all of it temperate ground. Moved from +190 to +250 when the
 smaller balconies (2026-10-06) re-rolled every seed's rivers and one ran through the old spot.
+Moved to -220, the FAR (west) side, the same day, when the map became one chasm (no second rift on seed
+1) and the grid stopped pinning its features: on the home side nothing parted the village from the
+settlers' camp any more, so the families moved into its houses, took its fields, and nobody was idle to
+carry wood to the construction site. Across the chasm the camp's people cannot reach the village - which
+is what the river between them used to do by luck. -226 rather than a round number: the garden's lane is
+a plot or two long, and at -220 its end touched the main road as well, so it went on rather than ending
+at a gate (a probe of -244..-208 found gates at -238, -232, -226 and -214).
 """
-DX = 250.0
+DX = -226.0
 
 
 def call(name, args=None):
@@ -171,6 +178,9 @@ def main():
         paint("build_paint", -94 + i * 1.6, 15.5, kind="store", stroke=1)
         time.sleep(0.02)
     paint("build_erase", -94 + 3 * 1.6, 15.5, kind="store")
+    # a woodcutter's hut needs a lot beside it for his woodpile (Zones.h): the lot first, a row south of it
+    for i in range(3):
+        paint("ground_paint", -58 + i * 1.6, 18.2, ground="lot")
     for i in range(3):
         paint("build_paint", -58 + i * 1.6, 20.0, kind="woodcutter", stroke=2)
     for i in range(2):
@@ -199,6 +209,8 @@ def main():
             for _ in range(storeys):
                 call("chasm_paint", {"op": "build_add", "kind": "house", "x": cx + dx, "z": cz + 9.0, "stroke": 40 + i})
         for i in range(2):
+            call("chasm_paint", {"op": "ground_paint", "ground": "lot", "x": cx - 10.0 + i * 1.6, "z": cz + 7.2})
+        for i in range(2):
             call("chasm_paint", {"op": "build_paint", "kind": "woodcutter", "x": cx - 10.0 + i * 1.6, "z": cz + 9.0, "stroke": 45})
         # construction (construction_plan.md): a PLAY house of two storeys, a site the idle settlers carry
         # the camp's wood to - the first spot beside the camp that takes it
@@ -222,6 +234,13 @@ def main():
     results = []
     for n in (1, 2):
         call("input_replay", {"action": "start", "restore_state": True, "wait": True})
+        # The tool's wait gives up at 1.5x the replay's length plus 2 s, and a debug build with a lot
+        # going on per tick runs slower than that - then the state below was read part way through.
+        # So wait on the replay itself.
+        for _ in range(600):
+            if not call("input_replay", {"action": "status"}).get("replaying"):
+                break
+            time.sleep(0.1)
         trace = call("replay_trace", {"parts": True})
         results.append((zones_of("replay_test_replay%d" % n), trace))
 

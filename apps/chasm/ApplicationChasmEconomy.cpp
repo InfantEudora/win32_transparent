@@ -39,6 +39,10 @@ void ApplicationChasm::TickEconomy(){
     for (int plot : economy.Raises()){
         f_raised = zones.Apply(ZONE_OP_BUILD_RAISE,(uint32_t)plot) || f_raised;
     }
+    //Gardens and lots the builders finished: their walls go up.
+    for (int plot : economy.GroundRaises()){
+        f_raised = zones.Apply(ZONE_OP_GROUND_RAISE,(uint32_t)plot) || f_raised;
+    }
     if (f_raised){
         PublishZones();
     }
@@ -85,6 +89,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     n = (uint32_t)e.site.size();
     h.Bytes(&n,sizeof(n));
     h.Bytes(e.site.data(),e.site.size() * sizeof(int));
+    h.Bytes(e.ground_site.data(),e.ground_site.size() * sizeof(int));
 }
 
 namespace {
@@ -129,7 +134,9 @@ json WorkerJson(const EconomyWorker& k){
     if (k.store){
         j["store"] = k.store;
     }
-    if (k.site){
+    if (k.site && EconomyIsGroundSite(k.site)){
+        j["ground_site"] = EconomyGroundSitePlot(k.site);   //a garden or lot plot
+    }else if (k.site){
         j["site"] = k.site;
     }
     return j;
@@ -178,6 +185,15 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         }
         j["family"] = family;
         j["holds"] = (id < e->capacity.size()) ? e->capacity[id] : 0;
+    }
+    //A house's own store of food and firewood (P5's - nothing fills it yet).
+    if (z->buildings[id].kind == ZONE_KIND_HOUSE){
+        j["keeps"] = GoodsJson((id < e->keeps.size()) ? e->keeps[id] : 0);
+        j["room"] = (id < e->room.size()) ? e->room[id] : 0;
+    }
+    //A woodcutter's woodpile: the lot plot it is on, or -1 with no lot standing beside the hut.
+    if (z->buildings[id].kind == ZONE_KIND_WOODCUTTER){
+        j["pile_plot"] = (id < e->pile_plot.size()) ? e->pile_plot[id] : -1;
     }
     for (const EconomyWorker& k : e->workers){
         if (k.building == id){

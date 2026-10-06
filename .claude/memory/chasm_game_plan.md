@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-06T15:05:50.718Z
+  modified: 2026-10-06T20:08:35.844Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -93,6 +93,11 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   meshes of the selected/hovered building, people outlined, pins, cards (clickable store chips, close),
   clickable build bar, right-click = drop tool/deselect; chasm_select tool. Entering play mode glides
   the camera to the camp. Escape still closes the window (core default).
+  WATER + BRIDGES BUILT 2026-10-06 (docs/bridge_plan.md): wet band = water + stone bank (4.5 past the
+  edge) stays unwalkable; collector on the last DRY plot with a pipe over the stones; ZONE_KIND_BRIDGE
+  placed whole (ZONE_OP_BRIDGE, ZoneBridgeChain: dry ends, wet between, water <= 2x river width),
+  wood-built from the banks in, deck drawn straight between the dry ends; tool J; chasm_bridge.
+  User: make a NEW replay test recording on the new generator when we next do replays.
   If the user's chasm_nophysics.exe holds the link, link a copy by hand (make -n link line, -o renamed)
   instead of killing it twice.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.

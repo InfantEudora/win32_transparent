@@ -5,11 +5,11 @@
 #include "BoundaryMesh.h"
 #include "RoadMesh.h"
 
-#define GROUND_LIFT         0.04f   //a garden or town plot above the ground's relief
+#define GROUND_LIFT         0.04f   //a garden or lot plot above the ground's relief
 
 namespace {
 
-//A garden or town plot's quarter in this cell, laid on the relief: corner, midpoint, centre, midpoint.
+//A garden or lot plot's quarter in this cell, laid on the relief: corner, midpoint, centre, midpoint.
 void GroundQuarter(std::vector<vertex>& out, const Terrain& t, const vec2* p, int k, float level, int column){
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
     vec2 q[4] = {p[k],(p[k] + p[(k + 1) % 4]) * 0.5f,centre,(p[k] + p[(k + 3) % 4]) * 0.5f};
@@ -41,7 +41,7 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
             p[k] = g.fine.pos[quad.v[k]];
             f_house = f_house || z.storeys[quad.v[k]] > 0;
             f_ground = f_ground || ZoneEnclosesGround(z.ground[quad.v[k]]);
-            f_road = f_road || z.ground[quad.v[k]] == ZONE_GROUND_ROAD;
+            f_road = f_road || ZoneRoadStands(z,quad.v[k]);     //a standing bridge is drawn as a road over the water
         }
         if (f_ground){
             for (int k = 0; k < 4; k++){
@@ -49,7 +49,7 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
                 if (!ZoneEnclosesGround(gk) || z.storeys[quad.v[k]] > 0){
                     continue;
                 }
-                float level = terrain_levels[t.level[quad.v[k]]].height;
+                float level = t.Height(quad.v[k]);
                 GroundQuarter(out,t,p,k,level,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
             }
         }

@@ -6,8 +6,8 @@ Step 5 of `play_mode_plan.md`: in play mode a building is not placed but BUILT. 
 ## Decided
 
 - **Wood only.** A storey takes `ECONOMY_BUILD_WOOD_PER_AREA` (2) wood per unit of its floor area, about
-  8 for a plot - a tent half that, a winch half again more. Fields, ground and roads cost nothing and
-  are still painted at once, in either mode.
+  8 for a plot - a tent half that, a winch half again more. Fields and roads cost nothing and are still
+  painted at once, in either mode; gardens and lots cost a little since 2026-10-06 (see the end).
 - **Idle people carry and build.** Anyone without a job: from his home to the nearest wood, a load
   (`ECONOMY_LOAD`, 5) to the site, a while there building with it (`ECONOMY_BUILD_SECONDS`, 5, at his
   pace - strength), and home. There is no builder job and no builders' hut yet.
@@ -57,3 +57,25 @@ supplies), `ApplicationChasmEconomy.cpp` (applying the raises, the panel, `chasm
 - No refund for a site pulled down.
 - Jobs come first: someone given a job stops carrying when his errand is done, so a colony with as many
   workplaces as people builds nothing. Whether a builder should be a job of its own comes with P5.
+
+## Gardens and lots (2026-10-06, the user's)
+
+A garden or a LOT (the town tool, renamed: a fenced yard) painted in PLAY is a site too, a plot at a time:
+`ZoneState::ground_built[v]` 0 until built, and until then it has no wall and encloses nothing
+(`ZoneGroundStands`, which `ZoneBoundaryBetween` - the walls, the walkers, the straight walks - asks).
+It takes a little wood, `ECONOMY_GROUND_WOOD_PER_AREA` (0.5) of its area - about 2 a plot - carried by the
+same idle people. A debug paint, and a road or field in either mode, is there at once, as before.
+
+- No building id, so a worker's `site` names the plot as `ECONOMY_SITE_GROUND | plot`; the wood brought is
+  `EconomyState::ground_site`, by plot (saved as `economy.ground_sites`, hashed with the economy).
+  `SiteAlive` / `SiteNeed` / `SiteBrought` branch on the flag; `FindSiteWork` offers the ground sites after
+  the buildings, so on a tie a building comes first.
+- Built FROM OUTSIDE: a builder stands on an open plot beside it (`Economy::GroundSiteApproach`), never on
+  it - otherwise the fence goes up round him and he is shut in (seen in the first run).
+- Finished: `Economy::GroundRaises`, applied on the same tick as `ZONE_OP_GROUND_RAISE` (op 13).
+- In a save's ground list a site's kind carries `ZONE_GROUND_SAVED_SITE` (16). Old saves were let go (the
+  user), so nothing reads the town-era format.
+- The build bar's BUILDING / WOOD line counts each garden or lot plot still to build as a site.
+
+Open: roads in play as a labour-only site (trees felled first) and walls are win32-transparent-cc's
+(line_works_plan.md), on this same per-plot path.

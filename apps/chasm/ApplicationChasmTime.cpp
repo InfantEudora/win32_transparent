@@ -281,8 +281,9 @@ void ApplicationChasm::DrawBuildBar(float s){
     static const BarTool bar[] = {
         {"1","HOUSE",CHASM_TOOL_HOUSE},{"8","STORE",CHASM_TOOL_STORE},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
         {"0","WATER",CHASM_TOOL_WATER},{"2","FIELD",CHASM_TOOL_FIELD},{"6","ROAD",CHASM_TOOL_ROAD},
-        {"4","GARDEN",CHASM_TOOL_GARDEN},{"5","TOWN",CHASM_TOOL_TOWN},
-        {"C","CAMP",CHASM_TOOL_CAMP},{"H","WINCH",CHASM_TOOL_WINCH},{"3","ERASE",CHASM_TOOL_ERASE}};
+        {"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
+        {"C","CAMP",CHASM_TOOL_CAMP},{"J","BRIDGE",CHASM_TOOL_BRIDGE},{"H","WINCH",CHASM_TOOL_WINCH},
+        {"3","ERASE",CHASM_TOOL_ERASE}};
     const int count = (int)(sizeof(bar) / sizeof(bar[0]));
     const float size = 15.0f * s;
     const float key_size = 12.0f * s;
@@ -319,6 +320,34 @@ void ApplicationChasm::DrawBuildBar(float s){
                                                   OVERLAY_HIT_TOOL,bar[i].tool});
         x += widths[i] + bar_gap;
     }
+    /*
+        Why the last placement was refused, for a moment above the bar - play mode has no panel to say it
+        (under the clouds, too close to water, too wide to bridge).
+    */
+    {
+        auto now = std::chrono::steady_clock::now();
+        uint32_t refusals = zone_refusals.load();
+        if (refusals != refusal_seen){
+            refusal_seen = refusals;
+            refusal_since = now;
+        }
+        std::string why;
+        {
+            std::lock_guard<std::mutex> lock(grid_mutex);
+            why = zone_last_refusal;
+        }
+        float age = std::chrono::duration<float>(now - refusal_since).count();
+        if (refusals > 0 && age < 3.0f && !why.empty()){
+            std::string text = "CAN'T BUILD: " + why;
+            std::transform(text.begin(),text.end(),text.begin(),::toupper);
+            vec2 m = overlay->MeasureText(text.c_str(),size);
+            uint8_t alpha = (uint8_t)(255.0f * std::min(1.0f,(3.0f - age) * 2.0f));
+            vec2 r0(cx - m.x * 0.5f - side,q0.y - 76.0f * s);
+            vec2 r1(cx + m.x * 0.5f + side,q0.y - 46.0f * s);
+            overlay->AddRect(r0,r1,9.0f * s,HudFaded(HUD_PANEL,(uint8_t)(alpha * 0.7f)));
+            overlay->AddText(text.c_str(),vec2(cx,r0.y + 21.0f * s),size,HudFaded(UIColor(236,140,110),alpha),UI_ALIGN_CENTER);
+        }
+    }
     //What is being built: the sites, and the wood they have had of what they need.
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
@@ -338,6 +367,15 @@ void ApplicationChasm::DrawBuildBar(float s){
                 sites++;
                 needed += wood[id];
                 brought += std::min(wood[id],EconomySiteBrought(*e,(uint32_t)id));
+            }
+        }
+        //Gardens and lots still to build count as a site a plot (Economy.h, CONSTRUCTION).
+        for (size_t v = 0; v < z->ground.size(); v++){
+            if (ZoneEnclosesGround(z->ground[v]) && !z->ground_built[v] && z->storeys[v] == 0){
+                int need = EconomyGroundWood(*z->world,(int)v);
+                sites++;
+                needed += need;
+                brought += std::min(need,EconomyGroundBrought(*e,(int)v));
             }
         }
         if (sites > 0){

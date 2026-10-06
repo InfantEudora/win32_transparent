@@ -548,7 +548,6 @@ struct Builder{
         const float step = 3.0f * T;
         const vec2 north(0.0f,-1.0f);
         out.rifts = 0;
-        out.forks = 0;
 
         //The main rift: in from the middle of the south edge, north to a tip short of the north edge.
         Spine main;
@@ -574,10 +573,15 @@ struct Builder{
         out.main_mouth_x = mouth_x;
         out.rifts = 1;
 
-        //Forks, off the main spine's middle, at 35-60 degrees to it, each to its own tip.
+        /*
+            ONE CHASM (user, 2026-10-06): no second rift, and no forks as wide as a rift. The forks'
+            walks are kept, but as CRACKS - a few plots wide, cut into the plateau as heights
+            (Terrain.cpp) rather than stamped into the field, so they make no rim lines and no
+            second chasm. Walked here; trimmed to where they leave the rift once the field is made.
+        */
         std::vector<Spine> forks;
         float roll = rng.GetFloat(0.0f,1.0f);
-        int num_forks = roll < 0.45f ? 0 : (roll < 0.85f ? 1 : 2);
+        int num_forks = roll < 0.3f ? 0 : (roll < 0.8f ? 1 : 2);
         for (int b = 0; b < num_forks; b++){
             int n = (int)main.p.size();
             int at = std::max(1,std::min(n - 2,(int)(n * rng.GetFloat(0.3f,0.7f))));
@@ -587,87 +591,36 @@ struct Builder{
             WalkRules fr;
             fr.keep = heading;
             fr.min_dot = 0.5f;
-            fr.box_lo = vec2(lo.x + 55.0f,lo.y + 0.1f * D);
-            fr.box_hi = vec2(hi.x - 55.0f,hi.y - 55.0f);
-            fr.length = rng.GetFloat(140.0f,300.0f);
+            fr.box_lo = vec2(lo.x + 60.0f,lo.y + 0.1f * D);
+            fr.box_hi = vec2(hi.x - 60.0f,hi.y - 60.0f);
+            fr.length = main.r[at] + rng.GetFloat(60.0f,140.0f);
             Spine s;
-            s.p = Walk(rng,main.p[at],heading,fr,step);
-            float base = std::max(18.0f,main.r[at] * rng.GetFloat(0.45f,0.65f));
-            Widths(s,base,rng.GetFloat(13.0f,16.0f),Seed());
-            /*
-                Kept only if its tip stands well clear of the main rift: a fork that turned back
-                along it, or was cut short by the map's margin, only widens the main rift - and
-                would be counted as a fork nobody can see.
-            */
-            vec2 tip = s.p.back();
-            float clear = 1e30f;
-            for (size_t k = 0; k + 1 < main.p.size(); k++){
-                clear = std::min(clear,SegmentDistance(tip,main.p[k],main.p[k + 1]) - std::max(main.r[k],main.r[k + 1]));
-            }
-            if (Length(s.p) >= 60.0f && clear > 2.0f * spacing){
-                forks.push_back(s);
-                out.forks++;
-            }
+            s.p = Walk(rng,main.p[at],heading,fr,step * 0.5f);
+            forks.push_back(s);
+        }
+        //Short fissures off the rims, either side, at a steep angle to the rift.
+        int num_fissures = rng.GetInt(2,5);
+        for (int b = 0; b < num_fissures; b++){
+            int n = (int)main.p.size();
+            int at = std::max(1,std::min(n - 2,(int)(n * rng.GetFloat(0.1f,0.9f))));
+            vec2 along = Unit(main.p[at + 1] - main.p[at - 1]);
+            float side = rng.Roll(0.5f) ? 1.0f : -1.0f;
+            vec2 heading = Unit(along * rng.GetFloat(-0.6f,0.6f) + Perp(along) * side);
+            WalkRules fr;
+            fr.keep = heading;
+            fr.min_dot = 0.6f;
+            fr.box_lo = vec2(lo.x + 60.0f,lo.y + 0.1f * D);
+            fr.box_hi = vec2(hi.x - 60.0f,hi.y - 60.0f);
+            fr.length = main.r[at] + rng.GetFloat(14.0f,32.0f);
+            Spine s;
+            s.p = Walk(rng,main.p[at],heading,fr,step * 0.25f);
+            forks.push_back(s);
         }
 
-        //A second rift, about one seed in three, in from the south, west or east.
-        Spine second;
-        bool f_second = rng.Roll(0.35f);
-        if (f_second){
-            int edge = rng.GetInt(0,2);
-            WalkRules sr;
-            sr.box_lo = vec2(lo.x + 55.0f,lo.y + 0.12f * D);
-            sr.box_hi = vec2(hi.x - 55.0f,hi.y - 55.0f);
-            sr.length = rng.GetFloat(130.0f,280.0f);
-            sr.straight_steps = 2;
-            vec2 start;
-            vec2 heading;
-            if (edge == 0){
-                //The south edge, on whichever side of the main mouth has more room.
-                bool f_east = (hi.x - mouth_x) > (mouth_x - lo.x);
-                float a = f_east ? mouth_x + 200.0f : lo.x + 90.0f;
-                float b = f_east ? hi.x - 90.0f : mouth_x - 200.0f;
-                if (b <= a){
-                    f_second = false;
-                }
-                start = vec2(rng.GetFloat(a,std::max(a,b)),hi.y + 16.0f);
-                heading = north;
-                sr.box_hi.y = hi.y + 2.0f * step;
-                sr.stop_z = lo.y + D * rng.GetFloat(0.3f,0.55f);
-            }else{
-                float z = lo.y + D * rng.GetFloat(0.4f,0.8f);
-                start = vec2(edge == 1 ? lo.x - 16.0f : hi.x + 16.0f,z);
-                heading = vec2(edge == 1 ? 1.0f : -1.0f,0.0f);
-                if (edge == 1){
-                    sr.box_lo.x = lo.x - 2.0f * step;
-                }else{
-                    sr.box_hi.x = hi.x + 2.0f * step;
-                }
-            }
-            sr.keep = heading;
-            sr.min_dot = 0.55f;
-            second.p = Walk(rng,start,heading,sr,step);
-            Widths(second,rng.GetFloat(22.0f,36.0f),rng.GetFloat(13.0f,16.0f),Seed());
-            if (f_second){
-                out.rifts++;
-            }
-        }
-
-        //--- The field: the main rift and its forks joined smoothly, the second apart -----------
+        //--- The field: the main rift alone ------------------------------------------------------
         const float pad = 48.0f;
         rift.Init(lo,hi,2.0f,1e3f);
         StampSpine(rift,main,pad);
-        for (const Spine& s : forks){
-            Field branch;
-            branch.Init(lo,hi,2.0f,1e3f);
-            StampSpine(branch,s,pad);
-            for (size_t i = 0; i < rift.d.size(); i++){
-                rift.d[i] = SmoothMin(rift.d[i],branch.d[i],28.0f);
-            }
-        }
-        if (f_second){
-            StampSpine(rift,second,pad);
-        }
         uint32_t wall_seed = Seed();
         for (int j = 0; j < rift.h; j++){
             for (int i = 0; i < rift.w; i++){
@@ -676,6 +629,10 @@ struct Builder{
                     v += 4.0f * Noise(rift.Pos(i,j),45.0f,wall_seed);
                 }
             }
+        }
+        out.cracks.clear();
+        for (const Spine& s : forks){
+            AddCrack(s);
         }
 
         //--- The rims, and whether they will do ------------------------------------------------
@@ -710,6 +667,62 @@ struct Builder{
             rims.push_back(f);
         }
         return !rims.empty() && SidesWhole();
+    }
+
+    /*
+        A crack from a walk that starts on the main spine: from CRACK_INSET inside the rift (so it is
+        joined to the chasm whatever the plots make of the rim) to where it stops. Cut short where it
+        would come back toward the rim - with the rift it would box in a piece of plateau that no one
+        could walk to - and where it nears the mountain, the map's edge or another crack. Dropped if
+        too little is left.
+    */
+    float CrackDistance(const vec2& p) const{
+        float best = 1e30f;
+        for (const ChasmLayout::Crack& c : out.cracks){
+            for (size_t k = 0; k + 1 < c.points.size(); k++){
+                best = std::min(best,SegmentDistance(p,c.points[k],c.points[k + 1]));
+            }
+        }
+        return best;
+    }
+
+    #define CRACK_INSET         4.0f    //how far inside the rift a crack begins
+    #define CRACK_MIN_LENGTH    10.0f   //of plateau it cuts, or it is not worth one
+    #define CRACK_APART         30.0f   //from any other crack
+    #define CRACK_EDGE_CLEAR    40.0f   //from the map's edge and the mountain's reach
+    void AddCrack(const Spine& s){
+        ChasmLayout::Crack c;
+        size_t k = 0;
+        while (k < s.p.size() && rift.Sample(s.p[k]) < -CRACK_INSET){
+            k++;
+        }
+        float out_of_rift = 0.0f;   //the most the crack has cleared the rim by, so far
+        for (; k < s.p.size(); k++){
+            vec2 p = s.p[k];
+            float d = rift.Sample(p);
+            if (d > 0.0f && d < out_of_rift - 6.0f){
+                break;      //heading back to the rim
+            }
+            out_of_rift = std::max(out_of_rift,d);
+            if (EdgeDistance(p) < CRACK_EDGE_CLEAR || p.y < MountainReach(p.x) + CRACK_EDGE_CLEAR){
+                break;
+            }
+            bool f_near = false;
+            for (const ChasmLayout::Crack& o : out.cracks){
+                for (const vec2& q : o.points){
+                    f_near = f_near || (p - q).dot(p - q) < CRACK_APART * CRACK_APART;
+                }
+            }
+            if (f_near){
+                break;
+            }
+            c.points.push_back(p);
+        }
+        if (c.points.size() < 2 || out_of_rift < CRACK_MIN_LENGTH){
+            return;
+        }
+        c.half_width = rng.GetFloat(2.0f,3.0f);
+        out.cracks.push_back(c);
     }
 
     /*
@@ -1173,7 +1186,7 @@ struct Builder{
                 fall.lip = lip;
                 fall.out = -Unit(g);
                 fall.back = lip - fall.out * 24.0f;
-                bool f_ok = rift.Sample(fall.back) > 18.0f && SideAt(fall.back) == 1;
+                bool f_ok = rift.Sample(fall.back) > 18.0f && SideAt(fall.back) == 1 && CrackDistance(lip) > 24.0f;
                 for (float t = 6.0f; t <= 24.0f && f_ok; t += 6.0f){
                     vec2 q = lip + fall.out * t;
                     if (rift.Sample(q) > -4.0f){
@@ -1204,9 +1217,11 @@ struct Builder{
             for (int i = 0; i < cost.w; i++){
                 vec2 q = cost.Pos(i,j);
                 cost.At(i,j) = rift.Sample(q);
-                //Not near a rim; not on the far side, nor round the main tip to it through the mountain.
+                //Not near a rim or a crack; not on the far side, nor round the main tip to it through
+                //the mountain.
                 int side = SideAt(q);
-                if (cost.At(i,j) < RIVER_RIM_CLEAR + RIVER_SWING || side == -1 || (side == 0 && q.x < main_tip.x)){
+                if (cost.At(i,j) < RIVER_RIM_CLEAR + RIVER_SWING || side == -1 || (side == 0 && q.x < main_tip.x) ||
+                    CrackDistance(q) < RIVER_RIM_CLEAR + RIVER_SWING){
                     blocked[(size_t)j * cost.w + i] = 1;
                 }
             }
@@ -1712,6 +1727,26 @@ float ChasmDesertMask(const ChasmLayout& layout, const vec2& p){
     return RegionMask(layout.desert,p,0xDE5E7u);
 }
 
+float ChasmRiftDistance(const ChasmLayout& layout, const vec2& p){
+    const ChasmLayout::Raster& r = layout.rift;
+    if (r.w < 2 || r.h < 2){
+        return 1e3f;
+    }
+    //Field::Sample's arithmetic exactly, so a plot reads what the layout's own tests read.
+    float cx = (r.hi.x - r.lo.x) / (float)(r.w - 1);
+    float cz = (r.hi.y - r.lo.y) / (float)(r.h - 1);
+    float fx = std::max(0.0f,std::min((float)(r.w - 1) - 0.001f,(p.x - r.lo.x) / cx));
+    float fz = std::max(0.0f,std::min((float)(r.h - 1) - 0.001f,(p.y - r.lo.y) / cz));
+    int ix = (int)fx;
+    int iz = (int)fz;
+    float tx = fx - ix;
+    float tz = fz - iz;
+    auto at = [&r](int i, int j){ return r.d[(size_t)j * r.w + i]; };
+    float a = at(ix,iz) + (at(ix + 1,iz) - at(ix,iz)) * tx;
+    float b = at(ix,iz + 1) + (at(ix + 1,iz + 1) - at(ix,iz + 1)) * tx;
+    return a + (b - a) * tz;
+}
+
 float ChasmMountainFootAt(const ChasmLayout& layout, float x){
     const std::vector<vec2>& f = layout.mountain_foot;
     if (f.empty()){
@@ -1777,6 +1812,11 @@ ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, f
     b.PlaceBlobs(GRID_FEATURE_SHARD,want_shards,placed);
     b.PlaceBlobs(GRID_FEATURE_COLUMN,want_columns,placed);
     out.features = placed;
+    out.rift.lo = b.rift.lo;
+    out.rift.hi = b.rift.hi;
+    out.rift.w = b.rift.w;
+    out.rift.h = b.rift.h;
+    out.rift.d = b.rift.d;
     b.PlaceRivers(out.features);
     PlaceMountainFoot(seed,lo,hi,out);
     PlaceSouth(seed,lo,hi,out);

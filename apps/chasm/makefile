@@ -20,6 +20,7 @@ PROJECT := chasm
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationChasm.cpp
 APP_SRCS += ApplicationChasmSelect.cpp
+APP_SRCS += ApplicationChasmBridge.cpp
 APP_SRCS += ApplicationChasmWater.cpp
 APP_SRCS += Grid.cpp
 APP_SRCS += ChasmLayout.cpp
@@ -47,6 +48,7 @@ APP_SRCS += ApplicationChasmWorkersView.cpp
 APP_SRCS += ApplicationChasmPiles.cpp
 APP_SRCS += Exploration.cpp
 APP_SRCS += ApplicationChasmExplore.cpp
+APP_SRCS += ApplicationChasmGhost.cpp
 
 #NO PHYSICS: the grid, the terrain and the colony are this app's own rules, and nothing here
 #creates a PhysicsWorld. See the USE_PHYSICS block in engine.mk.

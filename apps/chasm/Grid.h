@@ -114,9 +114,32 @@ struct GridRiverLine{
 struct ChasmLayout{
     std::vector<GridFeature> features;      //rims first, then balconies, ledges, shards, columns
     std::vector<GridRiverLine> rivers;
+    /*
+        CRACKS: the old forks, and short fissures off the rims - long thin cuts into the plateau, a
+        few plots wide, deepest where they leave the rift and shallowing to nothing at their tips.
+        Not rims and not in the field: the terrain cuts them as plot heights (Terrain.cpp), so the
+        map keeps ONE chasm (user, 2026-10-06). Each starts a little inside the rift.
+    */
+    struct Crack{
+        std::vector<vec2> points;
+        float half_width = 2.5f;            //at its mouth; it narrows toward its tip
+    };
+    std::vector<Crack> cracks;
+    /*
+        The rift as a distance field: how far p stands outside it (negative inside), on a 2-unit
+        raster over the map - the field the rims are the zero contours of. Read with
+        ChasmRiftDistance; the terrain takes how far into the chasm a plot is from it.
+    */
+    struct Raster{
+        vec2 lo;
+        vec2 hi;
+        int w = 0;
+        int h = 0;
+        std::vector<float> d;
+    };
+    Raster rift;
     //What the seed asked for and what came of it - the generator drops what will not fit.
-    int rifts = 0;
-    int forks = 0;
+    int rifts = 0;                          //always 1 now: one chasm
     int count[GRID_FEATURE_KINDS] = {};
     int wanted[GRID_FEATURE_KINDS] = {};    //rims: unused
     int rivers_wanted = 0;
@@ -173,6 +196,9 @@ struct ChasmLayout{
 
 //The mountain's foot at x: the z north of which is mountain. -infinity with no foot.
 float ChasmMountainFootAt(const ChasmLayout& layout, float x);
+
+//How far p stands outside the rift, negative inside (ChasmLayout::rift). Bilinear, so continuous.
+float ChasmRiftDistance(const ChasmLayout& layout, const vec2& p);
 
 /*
     Where p stands against pocket `k`: its distance outside the pocket (meadow or valley; negative
@@ -271,7 +297,6 @@ public:
 
     int num_lattice_triangles = 0;
     int num_leftover_triangles = 0;     //triangles the merge found no partner for
-    int num_unfinished_features = 0;    //features whose chain could not be completed (the check says where)
     vec2 bounds_min, bounds_max;
     float generate_ms = 0.0f;
 

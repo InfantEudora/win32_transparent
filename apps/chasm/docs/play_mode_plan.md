@@ -87,3 +87,20 @@ placement carries a flag saying so), set by whoever issued it.
 - On the mountain's cliffs the stacked puffs read as columns up close (debug zoom only).
 - Play mode has no way to see the date's controls' effect beyond the overlay. Its build UI is the
   bar of tool keys (construction_plan.md); there is no way to click a tool yet.
+
+
+## The ghost (2026-10-06)
+
+In play mode the line mesh is gone (it stays for a bridge's drag, the chain green or red); a paint tool
+shows a GHOST of what it would place instead (`ApplicationChasmGhost.cpp`): see-through
+(`chasm_ghost.frag`, lit, alpha 0.45, no depth write), green where the rules allow it and red where they
+refuse, with the outline pass round it in the same colour.
+
+- A building tool: on empty ground the new building's plot, one storey; on a building, that building with
+  one storey more (the existing storeys sink into the real ones; the new one shows on top). Built with
+  `BuildHouseCell` on a cut-down ZoneState, as the selection's outline mesh is.
+- Garden, lot, road: the plot's ground as a tile; field: the coarse cell; erase: what would go, in red.
+- Play mode's own rule counts: red under the clouds.
+- Rebuilt only when the hover, tool, zones or exploration there change (`GhostKey`).
+- `chasm_tool hover_x/hover_z` pins the hover for a script (a script has no mouse); `hover_release`
+  frees it. The tool's name table now covers camp and bridge too (it read past its end for them).

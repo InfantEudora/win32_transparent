@@ -59,22 +59,38 @@ void BuildWaterMesh(const Grid& g, const Terrain& t, WaterMeshData& out){
         float dip = 0.0f;
         for (int k = 0; k < 4; k++){
             p[k] = g.fine.pos[quad.v[k]];
-            high[k] = (t.level[quad.v[k]] == TERRAIN_PLATEAU);
+            high[k] = (t.steps[quad.v[k]] == 0);
             num_high += high[k] ? 1 : 0;
             dip = std::max(dip,t.RiverDip(p[k]));
         }
         if (num_high == 0 || dip < WATER_CELL_DIP){
             continue;
         }
-        //The plateau part of the cell, cut at the edge midpoints as the terrain cuts it.
+        /*
+            The plateau part of the cell, as the terrain draws it (TerrainMesh.cpp): each plateau
+            corner's quarter - the corner, its edges' midpoints, the cell's centre - so from a plateau
+            corner to a lower one the outline runs to the midpoint and in to the centre. No cell has
+            two runs of plateau corners (Terrain's saddles), so this is one polygon.
+        */
+        vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
         std::vector<vec2> poly;
         for (int k = 0; k < 4; k++){
+            vec2 m = (p[k] + p[(k + 1) % 4]) * 0.5f;
             if (high[k]){
                 poly.push_back(p[k]);
             }
-            if (high[k] != high[(k + 1) % 4]){
-                poly.push_back((p[k] + p[(k + 1) % 4]) * 0.5f);
+            if (high[k] && !high[(k + 1) % 4]){
+                poly.push_back(m);
+                poly.push_back(centre);
+            }else if (!high[k] && high[(k + 1) % 4]){
+                if (poly.empty() || !(poly.back().x == centre.x && poly.back().y == centre.y)){
+                    poly.push_back(centre);
+                }
+                poly.push_back(m);
             }
+        }
+        if (poly.size() > 1 && poly.front().x == poly.back().x && poly.front().y == poly.back().y){
+            poly.pop_back();
         }
         std::vector<vec2> uv(poly.size());
         bool f_named = true;

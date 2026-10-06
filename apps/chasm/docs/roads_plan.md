@@ -88,6 +88,8 @@ walker's rules), `BuildingMesh.cpp` (arches), `BoundaryMesh.cpp` (gates), `Appli
 - **The drag bridges diagonals.** A drag can step from one plot to the one diagonally across a cell,
   which a road (along edges) cannot join; the tool paints the corner between as well. `chasm_road`
   (MCP) lays a road along a line the same way, and reports the gates and arches on it.
+  (2026-10-06: the road tool no longer paints as it goes - it draws a line, previewed, and places it on
+  release; see `line_works_plan.md`.)
 - **Roads stop at gardens and towns** ("a garden or town is there"): a road dragged into a walled
   garden ends against its wall, which is where its gate opens. Erase the ground to run a road
   through it.

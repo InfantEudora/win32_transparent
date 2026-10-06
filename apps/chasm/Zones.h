@@ -19,9 +19,9 @@
         PLOTS, fields on COARSE CELLS. A building is a group with an identity of its own - an entry
         in the building table, which every plot (`building[v]`) and field cell (`field[c]`) it
         covers names by id. A plot grows in storeys (`storeys[v]`), whatever stands on it.
-      - GROUND on fine PLOTS (step 8): `ground[v]`, a garden, town ground or road. A garden's and a
-        town's edge get a wall or palisade (BoundaryMesh.h), and a building may stand on either,
-        hiding it until the building is gone.
+      - GROUND on fine PLOTS (step 8): `ground[v]`, a garden, a lot or road. A garden's and a lot's
+        edge get a wall or a low fence (BoundaryMesh.h), and a building may stand on either, hiding it
+        until the building is gone. A lot is a yard: a woodcutter keeps his woodpile on one.
 
     WHICH BUILDING A PLOT JOINS is the player's: A DRAG IS ONE BUILDING. Every command of a drag
     carries the same stroke number. A stroke that starts on empty ground makes a new building, one
@@ -45,11 +45,19 @@
         a cell with a building or ground on any of its vertices.
       - A road and a building never share a plot (step 10): a building hides a garden, but would cut
         a road.
-      - A road is not painted over a garden or town: it stops at the edge, where it makes a gate.
+      - A road is not painted over a garden or lot: it stops at the edge, where it makes a gate.
+      - A new WOODCUTTER needs a lot on a plot beside it: that is where his woodpile goes (Economy).
       - Not too steep (biomes_plan.md step 2): the ground may rise only so much across a plot (a road's
         limit is twice a house's) or a field's cell - ZONE_RISE_* in Zones.cpp. Not on the mountain.
       - A house is at most ZONE_HOUSE_MAX_PLOTS plots, since it holds one family.
       - At most a kind's own number of storeys (ZoneKindMaxStoreys).
+      - A WATER COLLECTOR stands on the DRY plot at the edge of a river's wet bank (or a pool's): its own
+        vertex dry, a corner of its cells wet. Its pipe reaches over the stones to the water (BuildingMesh),
+        and its carrier walks to it like to any building.
+      - A BRIDGE (docs/bridge_plan.md) is placed whole, by ZONE_OP_BRIDGE from a dry plot on one bank to
+        one on the other: the plots between (ZoneBridgeChain) all wet, all on one ground, the water it
+        crosses at most ZONE_BRIDGE_SPAN_RIVERS times the river's usual width, clear of a fall. The one
+        building on wet plots. Once a plot of it stands, walkers cross it (ZoneBridgeWalkable).
       - A WINCH is one plot, on the rim right above a balcony: its plot on the plateau, balcony ground
         among its cells' corners and no open chasm - the one exception to "too close to a cliff". It
         lowers to its LANDING (ZoneWinchLanding), a balcony plot nothing may be built on.
@@ -60,6 +68,9 @@
     and the rules and the walkers treat them as there, but nothing stands until the economy's builders
     raise it, a storey at a time (ZONE_OP_BUILD_RAISE), as the wood for it comes in. What a building
     does - its room, who it houses, whether it is worked - goes by what stands (ZoneBuildingFigures).
+    A garden or a lot painted in play is a site the same way (`ground_built[v]` 0) until its wood is
+    brought (ZONE_OP_GROUND_RAISE); until then it has no wall and encloses nothing. Roads and fields
+    cost nothing and are there at once.
 
     A ZoneState is immutable once published (Zones::Publish), the way the world is, and carries the
     world it was painted on: a new map makes every index in it meaningless.
@@ -77,7 +88,8 @@
 #define ZONE_KIND_FIELD         5       //on coarse cells, not plots
 #define ZONE_KIND_WINCH         6       //on the rim above a balcony; walkers ride it down (Walkers.h)
 #define ZONE_KIND_CAMP          7       //tents and fires: a house's rules, a person a tent (docs/people_plan.md)
-#define ZONE_KIND_COUNT         8
+#define ZONE_KIND_BRIDGE        8       //across a river, bank to bank (docs/bridge_plan.md)
+#define ZONE_KIND_COUNT         9
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 int ZoneKindMaxStoreys(int kind);
@@ -93,23 +105,26 @@ int ZoneCropByName(const std::string& name);    //-1 if none
 //What a plot's ground is. Never renumber - saves and recordings refer to these by value.
 #define ZONE_GROUND_NONE    0
 #define ZONE_GROUND_GARDEN  1       //green, walled: Townscaper's gardens
-#define ZONE_GROUND_TOWN    2       //trodden earth, palisaded: A Little Age's town
+#define ZONE_GROUND_LOT     2       //a yard of trodden earth behind a low fence - a woodpile's
 #define ZONE_GROUND_ROAD    3       //step 10: drawn along the grid's edges, walked fastest (docs/roads_plan.md)
 #define ZONE_GROUND_COUNT   4
 const char* ZoneGroundName(int ground);
+//In a save's ground list, with the kind: a garden or lot planned and not yet built (a site).
+#define ZONE_GROUND_SAVED_SITE  16
 
 /*
-    What a boundary encloses: a garden or town plot with no house on it. A road is ground but not
+    What a boundary encloses: a garden or lot plot with no house on it. A road is ground but not
     enclosed - it runs up to a wall from outside, which is where a gate goes (roads_plan.md) - and a
-    house is its own boundary.
+    house is its own boundary. A garden or lot still a site (ZoneState::ground_built) encloses nothing
+    yet: its wall is not up - see ZoneBoundaryBetween.
 */
 inline bool ZoneEnclosesGround(int ground){
-    return ground == ZONE_GROUND_GARDEN || ground == ZONE_GROUND_TOWN;
+    return ground == ZONE_GROUND_GARDEN || ground == ZONE_GROUND_LOT;
 }
 
 /*
     What stands between two plots joined by a fine edge: where exactly one of them is inside (a house,
-    or enclosed ground) and that one is not a house, a garden's wall or a town's palisade. One rule
+    or enclosed ground) and that one is not a house, a garden's wall or a lot's fence. One rule
     for the two that need it - BoundaryMesh draws it and a walker cannot cross it - so what is seen
     and what is walked agree.
 */
@@ -161,6 +176,8 @@ enum ZoneOp{
     ZONE_OP_FIELD_CROP,     //coarse cell: its whole field to the crop in value[1] (ZONE_CROP_*)
     ZONE_OP_STORE_ALLOW,    //plot: its store takes the goods in value[1], a mask of GOOD_BIT (economy_plan.md)
     ZONE_OP_BUILD_RAISE,    //plot: one more of its planned storeys stands - the builders' (construction_plan.md)
+    ZONE_OP_BRIDGE,         //plot: a bridge from it to the plot in value[1], across the water (bridge_plan.md)
+    ZONE_OP_GROUND_RAISE,   //plot: its garden or lot site is built - the builders' (construction_plan.md)
     ZONE_OP_COUNT
 };
 const char* ZoneOpName(int op);
@@ -194,6 +211,7 @@ struct ZoneState{
     std::vector<uint8_t> storeys;               //per fine vertex: 0 with no building
     std::vector<uint8_t> standing;              //per fine vertex: of those, how many are built - the rest a site's
     std::vector<uint8_t> ground;                //per fine vertex, ZONE_GROUND_*
+    std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden or lot still a site
     std::vector<uint32_t> field;                //per coarse quad: the field it is part of, 0 none
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
@@ -241,6 +259,7 @@ public:
         its own id - so a save can only ever put the state where the rules allow. Returns how many
         plots, cells and grounds the rules refused, which for a save made on the same world is 0.
     */
+    //`grounds` is (plot, kind), the kind with ZONE_GROUND_SAVED_SITE added for one still a site.
     int Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<ZoneSavedBuilding>& buildings,
                 uint32_t next_id, const std::vector<std::pair<int,int>>& grounds,
                 uint32_t stroke, uint32_t stroke_building);
@@ -270,6 +289,14 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& z);
 //The rules as questions, for the commands and for the view's hover (red when it would be refused).
 //`why` may be NULL. A building of `kind` on `plot`; it joins `joining` (an id, or 0 for a new one).
 bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining, const char** why);
+//A lot's plot with nothing built on it, beside plot v - where a woodcutter on v may pile. -1 if none;
+//the lowest index of them, so the rule, the economy and the look all pick the same one. `f_built`:
+//only a lot that stands (the pile's), not one still a site (enough for the rule - it will stand).
+int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built);
+//Ground that encloses and is built: a wall or fence round it, walked round (ZoneBoundaryBetween).
+inline bool ZoneGroundStands(const ZoneState& z, int v){
+    return ZoneEnclosesGround(z.ground[v]) && z.ground_built[v];
+}
 bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why);
 //`kind` is the ground to be painted: a road has one rule more than a garden.
 bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why,
@@ -304,6 +331,30 @@ int ZoneCampTents(const ZoneState& z, uint32_t id);
 //Where a new colony camps: on the home side, inland of its balcony, on flat dry plateau. -1 if nowhere.
 int ZoneStartCampPlot(const ChasmWorld& w);
 
+/*
+    BRIDGES (docs/bridge_plan.md). The plots a bridge from `from` to `to` would take - a chain along fine
+    edges, each step the neighbour nearest `to` that stays near the straight line - and whether it may
+    stand there: both ends dry, everything between wet, one ground throughout, nothing built on it, the
+    water crossed (the span less the two banks' wet margins) at most ZONE_BRIDGE_SPAN_RIVERS times the
+    usual width of the river it crosses, and clear of a fall. `plots` is filled either way, for the view.
+*/
+#define ZONE_BRIDGE_SPAN_RIVERS 2.0f        //the user's: up to twice a river's usual width
+#define ZONE_BRIDGE_DECK        0.30f       //the deck over its level's ground
+bool ZoneBridgeChain(const ChasmWorld& w, const ZoneState& z, int from, int to, std::vector<int>& plots, const char** why);
+//A bridge plot that stands: walked across, wet as it is.
+inline bool ZoneBridgeWalkable(const ZoneState& z, int v){
+    return z.KindOf(v) == ZONE_KIND_BRIDGE && z.standing[v] > 0;
+}
+/*
+    A ROAD THAT STANDS, for walking and for a road's drawn shape: a road plot - or a standing bridge's,
+    which is a road over the water (bridge_plan.md), so a road runs onto it unbroken. Not for the rules
+    that mean "painted as road" (no house on one, no road twice): those test the ground itself.
+    (win32-transparent-cc's road sites will add that a planned road plot does not stand yet.)
+*/
+inline bool ZoneRoadStands(const ZoneState& z, int v){
+    return z.ground[v] == ZONE_GROUND_ROAD || ZoneBridgeWalkable(z,v);
+}
+
 //Plot v's neighbours along fine edges, each once, in a fixed order. Returns how many (at most `max`).
 int ZonePlotNeighbours(const ChasmWorld& w, int v, int* out, int max);
 
@@ -315,9 +366,9 @@ struct ZoneStats{
     int storeys = 0;
     int field_cells = 0;
     int gardens = 0;
-    int towns = 0;
+    int lots = 0;
     int roads = 0;
-    float ground_area = 0.0f;   //gardens and town ground
+    float ground_area = 0.0f;   //gardens and lots
 };
 ZoneStats ComputeZoneStats(const ChasmWorld& w, const ZoneState& z);
 

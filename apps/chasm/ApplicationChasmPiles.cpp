@@ -4,9 +4,10 @@
 
 /*
     THE WOODCUTTER'S PILE, DRAWN (docs/economy_plan.md): the wood a hut holds - what its woodcutter
-    brought home because no store would take it - stacked as logs outside the hut, one log for every
-    ECONOMY_WOOD_PER_TREE wood, on the first open plot beside it. Three logs on the ground, two on them,
-    one on top: the six a full pile (ECONOMY_HUT_PILE) holds.
+    brought home because no store would take it - stacked as logs on the LOT beside the hut, one log for
+    every ECONOMY_WOOD_PER_TREE wood, on the plot the economy piles on (EconomyState::pile_plot - so the
+    logs lie where he puts them, and none show with no lot standing). Three logs on the ground, two on
+    them, one on top: the six a full pile (ECONOMY_HUT_PILE) holds.
 
     View only, one instance set for every pile on the map, of the forest's own log; rebuilt when a
     hut's pile changes, which is a few times a minute at most.
@@ -14,31 +15,21 @@
 
 #define PILE_SCALE          0.7f    //the forest's draw scale for props (chasm_game_plan: trees at 0.7)
 #define PILE_LOG_RADIUS     0.22f   //log_a's, in its own units (tools/blender_chasm_props.py)
-#define PILE_TOWARD_HUT     0.12f   //of the way from the open plot back to the hut: clear of its wall, which is halfway
+#define PILE_TOWARD_HUT     0.12f   //of the way from the lot plot back to the hut: clear of its wall, which is halfway
 
 namespace {
 
-//The first open plot beside a hut, by index: nothing built there, dry, on the hut's level, not a road.
-//Its pile leans toward `hut`, the hut plot it is beside. -1 when the hut is walled in.
-int PileSpot(const ChasmWorld& w, const ZoneState& z, const std::vector<int>& plots, int& hut){
-    int best = -1;
-    hut = -1;
-    for (int v : plots){
-        int nb[8];
-        int n = ZonePlotNeighbours(w,v,nb,8);
-        for (int j = 0; j < n; j++){
-            int o = nb[j];
-            if (z.storeys[o] > 0 || w.terrain->wet[o] || w.terrain->level[o] != w.terrain->level[v]
-                || z.ground[o] == ZONE_GROUND_ROAD){
-                continue;
-            }
-            if (best < 0 || o < best){
-                best = o;
-                hut = v;
-            }
+//The hut plot beside the pile's lot plot - the lowest index - which the pile leans toward. -1 if none.
+int PileHut(const ChasmWorld& w, const std::vector<int>& plots, int spot){
+    int nb[8];
+    int n = ZonePlotNeighbours(w,spot,nb,8);
+    int hut = -1;
+    for (int j = 0; j < n; j++){
+        if (std::binary_search(plots.begin(),plots.end(),nb[j]) && (hut < 0 || nb[j] < hut)){
+            hut = nb[j];
         }
     }
-    return best;
+    return hut;
 }
 
 }
@@ -102,9 +93,9 @@ void ApplicationChasm::UploadPiles(){
         const float across[6] = {-2.0f * r,0.0f,2.0f * r,-r,r,0.0f};
         const float up[6] = {0.0f,0.0f,0.0f,1.73f * r,1.73f * r,3.46f * r};
         for (const auto& pile : want){
-            int hut = -1;
-            int spot = PileSpot(*w,*z,plots_of[pile.first],hut);
-            if (spot < 0){
+            int spot = (pile.first < e->pile_plot.size()) ? e->pile_plot[pile.first] : -1;
+            int hut = (spot >= 0) ? PileHut(*w,plots_of[pile.first],spot) : -1;
+            if (spot < 0 || hut < 0){
                 continue;
             }
             vec2 at = w->grid->fine.pos[spot];

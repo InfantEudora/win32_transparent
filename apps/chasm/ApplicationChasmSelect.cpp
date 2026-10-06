@@ -118,6 +118,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_FIELD:       return "Field";
         case ZONE_KIND_WINCH:       return "Winch";
         case ZONE_KIND_CAMP:        return "Camp";
+        case ZONE_KIND_BRIDGE:      return "Bridge";
         default:                    return "?";
     }
 }
@@ -297,6 +298,12 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                        EconomyIndoors(k) ? HUD_TEXT_DIM : HUD_TEXT);
             }
         }
+        //Its family's own food and firewood (ECONOMY_HOUSE_KEEPS) - empty until P5 has them fetch it.
+        int room = (id < e->room.size()) ? e->room[id] : 0;
+        if (b.kind == ZONE_KIND_HOUSE && room > 0){
+            int held = EconomyStockTotal(*e,id);
+            c.Bar(Format("Food and firewood %i of %i",held,room),(float)held / room,HUD_TEXT_DIM);
+        }
     }
     if (b.kind == ZONE_KIND_STORE && info.storeys > 0){
         int room = (id < e->room.size()) ? e->room[id] : 0;
@@ -333,9 +340,14 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         if (!f_worked && info.storeys > 0){
             c.Text("Nobody works here - it needs a free adult with a house",HUD_AMBER);
         }
+        //His woodpile is on a lot beside the hut: with none standing there, he fells nothing.
+        bool f_no_lot = b.kind == ZONE_KIND_WOODCUTTER && (id >= e->pile_plot.size() || e->pile_plot[id] < 0);
+        if (f_no_lot){
+            c.Text("No lot beside the hut: nowhere to pile wood",HUD_AMBER);
+        }
         std::string waiting = GoodsList(*e,id);
         if (!waiting.empty()){
-            c.Text(b.kind == ZONE_KIND_WOODCUTTER ? "Piled outside: " + waiting : "Waiting to be carried: " + waiting,HUD_TEXT_DIM);
+            c.Text(b.kind == ZONE_KIND_WOODCUTTER ? "On the woodpile: " + waiting : "Waiting to be carried: " + waiting,HUD_TEXT_DIM);
         }
     }
     if (b.kind == ZONE_KIND_CAMP){
@@ -399,6 +411,7 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
     only.storeys.assign(z.storeys.size(),0);
     only.standing.assign(z.standing.size(),0);
     only.ground = z.ground;
+    only.ground_built = z.ground_built;
     only.field.assign(z.field.size(),0);
     std::vector<int> quads;
     for (size_t v = 0; v < z.building.size(); v++){
@@ -432,6 +445,7 @@ float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
     switch (z.KindOf(plot)){
         case ZONE_KIND_CAMP:    return ground + SHAPE_TENT;
         case ZONE_KIND_WINCH:   return ground + SHAPE_WINCH;
+        case ZONE_KIND_BRIDGE:  return terrain_levels[w.terrain->level[plot]].height + ZONE_BRIDGE_DECK + 0.45f;
         default:{
             const float half = ZONE_STOREY_HEIGHT * 0.5f;
             float foot = (float)std::lround(ground / half) * half;

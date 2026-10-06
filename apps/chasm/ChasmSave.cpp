@@ -105,8 +105,13 @@ json ChasmSaveToJson(const ChasmSave& s){
         for (const auto& st : e.sites){
             sites.push_back(json::array({st.first,st.second}));
         }
+        //Gardens and lots being built: plot, wood brought.
+        json ground_sites = json::array();
+        for (const auto& st : e.ground_sites){
+            ground_sites.push_back(json::array({st.first,st.second}));
+        }
         economy = json{{"stocks",stocks},{"felled",props},{"people",workers},{"fields",fields},
-                       {"sites",sites},{"next_person",e.next_person}};
+                       {"sites",sites},{"ground_sites",ground_sites},{"next_person",e.next_person}};
     }
     return json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -257,6 +262,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         out.economy.next_person = e.value("next_person",1u);
         for (const json& st : e.value("sites",json::array())){
             out.economy.sites.push_back(std::make_pair(st[0].get<uint32_t>(),st[1].get<int>()));
+        }
+        for (const json& st : e.value("ground_sites",json::array())){
+            out.economy.ground_sites.push_back(std::make_pair(st[0].get<int>(),st[1].get<int>()));
         }
         for (const json& f : e.value("fields",json::array())){
             EconomyField fd;

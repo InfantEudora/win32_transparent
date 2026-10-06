@@ -6,32 +6,48 @@
 #include "Grid.h"
 
 /*
-    THE TERRAIN LEVELS: which of a handful of heights every fine vertex stands at.
+    THE TERRAIN: a HEIGHT for every fine vertex, in whole STEPS below the plateau, and the KIND of
+    ground that height makes (2026-10-06, docs/grid_plan.md "Columns").
 
-    grid_plan.md section 4. A level is not a height field - buildable land is flat within a level -
-    and a level step is not a storey: the chasm wall is many tens of them. Levels come from the
-    feature lines of the seed's layout (section 3, step 10): the chasm is what its rims bound
-    together with the map's edges; an ISLAND (shard, column, ledge) is the region inside its closed
-    line; a BALCONY is the region between its line and the stretch of rim it leaves and rejoins
-    (GridFeature::region), a step below the rim.
+    A plot is a vertex, drawn as the polygon round it (grid_plan.md section 2), and TerrainMesh.cpp
+    stands each plot up as a COLUMN of rock at its height: the chasm is nothing but plots at different
+    heights, and a rim is wherever they change - jagged at a plot's size, by design. No line is pinned
+    into the grid any more. A step is one stratum, TERRAIN_STEP; twelve of them reach the floor.
 
-    A vertex ON a line belongs to the higher side - the plateau for a rim, the island or balcony for
-    its own line - so the drop starts half a cell outside the pinned chain (section 3, "Where the
-    edge actually shows"), which is what makes the cliff top as smooth as the chain is. The fixed
-    vertices where a balcony meets its rim are the rim's, plateau.
+    The heights come from the seed's layout (section 3, step 10): the rims bound the chasm, an island's
+    closed line stands it up to island height, a balcony's region to balcony height; then the rim
+    crumbles a step or two, broken columns step down the walls where the rift's field says the wall
+    is (ChasmLayout::rift), islands and balconies get crumbling edges and broken skirts, and CRACKS
+    (ChasmLayout::cracks) are cut into the plateau.
 
-    Levels are numbered in the order they were added, not by height - never renumber, saves and
-    picks name them by value; terrain_levels has each one's height.
+    THE KINDS are what the rules ask about, and come from the heights alone. A FLAT PATCH is plots
+    joined by grid edges at one height:
+      - FLOOR: under the cloud deck (TERRAIN_DECK_Y). Never built on.
+      - BARE: a patch of fewer than TERRAIN_MIN_PATCH plots - a crumbled piece, a crack's floor, a
+        pillar. Rock on top, never built on (user, 2026-10-06).
+      - PLATEAU: a big enough patch at the plateau's height.
+      - BALCONY: a big enough patch below it that a winch can reach - next to the plateau, or next to
+        another balcony, since one may winch down twice (user, 2026-10-06).
+      - ISLAND: every other big enough patch: reached by zeppelin.
+    Two plots are the SAME GROUND when their heights are equal, whatever their kinds - a walker, a
+    plot's footprint or a field asks that, never whether their kinds match.
 
-    Derived from the grid and its features alone, so like the grid it is never saved, and it is
-    immutable once built.
+    Kinds are numbered in the order they were added, not by height - never renumber, saves and picks
+    name them by value. Derived from the grid and its layout alone, so like the grid the terrain is
+    never saved, and it is immutable once built.
 */
 
 #define TERRAIN_PLATEAU     0
 #define TERRAIN_ISLAND      1       //shards, columns, ledges: reached by zeppelin
 #define TERRAIN_FLOOR       2       //under the mist, never built on
-#define TERRAIN_BALCONY     3       //on a wall a step below the rim: reached by winch
-#define TERRAIN_NUM_LEVELS  4
+#define TERRAIN_BALCONY     3       //below the rim, reached by winch (from the rim or another balcony)
+#define TERRAIN_BARE        4       //a patch too small to use: rock, never built on
+#define TERRAIN_NUM_LEVELS  5
+
+#define TERRAIN_STEP            6.0f    //one step of height: a stratum of the walls
+#define TERRAIN_FLOOR_STEPS     12      //the chasm's floor, -72
+#define TERRAIN_DECK_Y          -39.0f  //a top below this is under the cloud deck: floor
+#define TERRAIN_MIN_PATCH       8       //plots: a flat patch smaller than this is bare
 
 /*
     BIOMES (biomes_plan.md), per fine vertex. Step 1 has two: the north MOUNTAIN, which closes the chasm
@@ -138,8 +154,14 @@ public:
     //`features` are TerrainFeatureLines(g): world coordinates, in the layout's order.
     void Build(const Grid& g, const std::vector<GridLine>& features);
 
-    std::vector<uint8_t> level;     //per fine vertex
-    float Height(int v) const { return terrain_levels[level[v]].height; }
+    std::vector<uint8_t> level;     //per fine vertex: its KIND, TERRAIN_* - see above
+    std::vector<uint8_t> steps;     //per fine vertex: how many TERRAIN_STEP its top is below the plateau
+    float Height(int v) const { return -TERRAIN_STEP * (float)steps[v]; }
+    //The same ground: one height, so a walker steps across and a footprint stands level.
+    bool SameGround(int a, int b) const { return steps[a] == steps[b]; }
+    bool Buildable(int v) const { return level[v] != TERRAIN_FLOOR && level[v] != TERRAIN_BARE; }
+    std::vector<int> patch;         //per fine vertex: its flat patch, an index into patch_size
+    std::vector<int> patch_size;    //per patch: how many plots
     std::vector<uint8_t> biome;     //per fine vertex, TERRAIN_BIOME_*
     bool Mountain(int v) const { return biome[v] == TERRAIN_BIOME_MOUNTAIN; }
     int biome_count[TERRAIN_NUM_BIOMES] = {};
@@ -176,8 +198,12 @@ public:
         `reach` of p. For laying the water out - a few thousand calls, not one per ground vertex.
     */
     bool RiverCoords(const vec2& p, float reach, int& river, float& along, float& across) const;
+    //How far p is past the nearest river's water edge (negative in the water; large far from every river).
+    float WaterEdgeDistance(const vec2& p) const { return EdgeDistance(p); }
 
     int level_count[TERRAIN_NUM_LEVELS] = {};
+    int saddles_joined = 0;         //plots raised so no quad has a high diagonal over a low one
+    int pits_filled = 0;            //plots below the rim but cut off from the chasm, filled back up
     int wet_count = 0;
     float build_ms = 0.0f;
 
@@ -194,6 +220,10 @@ private:
     std::vector<float> edge;
     float EdgeDistance(const vec2& p) const;
     void BuildRivers(const Grid& g, const std::vector<GridLine>& features);
+    //The heights in steps, then the kinds they make (Terrain.h, THE TERRAIN). After the rivers.
+    void BuildHeights(const Grid& g, const std::vector<GridLine>& features);
+    int FringeSteps(const Grid& g, const vec2& p, uint32_t salt) const;
+    void BuildKinds(const Grid& g);
 
     vec2 relief_origin;
     float relief_cell = 2.0f;

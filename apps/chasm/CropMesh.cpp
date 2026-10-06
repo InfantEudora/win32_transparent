@@ -107,7 +107,7 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
     int k = fine_quad - cell * 4;   //which child: fine quads 4c..4c+3 are coarse cell c's, in corner order
     const vec3 up(0.0f,1.0f,0.0f);
 
-    float level = terrain_levels[w.terrain->level[quad.v[0]]].height;
+    float level = w.terrain->Height(quad.v[0]);
     vec2 p[4];
     float h[4];
     vec3 base[4];

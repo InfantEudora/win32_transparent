@@ -41,6 +41,7 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_WALL,{PAL_ROOF,PAL_TIMBER},DOOR_CHANCE,DOOR_W,1,0},           //field: never a building on a plot
     {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //winch: drawn by BuildWinch instead
     {PAL_WALL,{PAL_WALL,PAL_WALL},2,DOOR_W,2,0},                          //camp: drawn by BuildCampPlot instead
+    {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //bridge: a road over the water, drawn by RoadMesh
 };
 
 /*
@@ -252,6 +253,88 @@ void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3&
     }
 }
 
+//A beam of square section from a at height ya to b at height yb: a pipe running down a slope.
+void SlopedBeam(std::vector<vertex>& out, const vec2& a, float ya, const vec2& b, float yb, float thick, int column){
+    vec2 d = b - a;
+    float l = d.length();
+    if (l < 1e-4f){
+        return;
+    }
+    vec2 side(-d.y / l * thick * 0.5f,d.x / l * thick * 0.5f);
+    float h = thick * 0.5f;
+    vec3 al(a.x + side.x,ya,a.y + side.y), ar(a.x - side.x,ya,a.y - side.y);
+    vec3 bl(b.x + side.x,yb,b.y + side.y), br(b.x - side.x,yb,b.y - side.y);
+    vec3 up(0.0f,h,0.0f);
+    vec3 n_side(side.x,0.0f,side.y);
+    MeshQuad(out,al + up,bl + up,br + up,ar + up,vec3(0,1,0),column);
+    MeshQuad(out,al - up,ar - up,br - up,bl - up,vec3(0,-1,0),column);
+    MeshQuad(out,al - up,bl - up,bl + up,al + up,n_side,column);
+    MeshQuad(out,ar - up,ar + up,br + up,br - up,n_side * -1.0f,column);
+    MeshQuad(out,al - up,al + up,ar + up,ar - up,vec3(-d.x / l,0.0f,-d.y / l),column);
+    MeshQuad(out,bl - up,br - up,br + up,bl + up,vec3(d.x / l,0.0f,d.y / l),column);
+}
+
+#define PIPE_THICK          0.16f
+#define PIPE_POST_EVERY     1.4f    //world units between the posts under it
+#define PIPE_OUT            0.6f    //how far past the water's edge it reaches
+#define PIPE_WALL           0.9f    //where it leaves the collector, from the plot's vertex
+
+/*
+    A WATER COLLECTOR's pipe (the user, 2026-10-06): from its wall out over the bank's stones and down to
+    the water, on posts, with an intake box where it dips in - which is what tells a collector from any
+    other shed by the river. Toward the water down the slope of the water's edge distance; at a swamp
+    pool, which that does not know, toward the wet ground round the plot.
+*/
+void BuildWaterPipe(const ChasmWorld& w, int plot, std::vector<vertex>& out){
+    const Terrain& t = *w.terrain;
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    vec2 p = g.fine.pos[plot];
+    float edge = t.WaterEdgeDistance(p);
+    vec2 dir(0.0f,0.0f);
+    float reach = 0.0f;
+    const float near_river = TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + 4.0f;
+    if (edge < near_river){
+        const float h = 0.5f;
+        dir = vec2(t.WaterEdgeDistance(p - vec2(h,0.0f)) - t.WaterEdgeDistance(p + vec2(h,0.0f)),
+                   t.WaterEdgeDistance(p - vec2(0.0f,h)) - t.WaterEdgeDistance(p + vec2(0.0f,h)));
+        reach = edge + PIPE_OUT;
+    }
+    if (dir.length() < 1e-4f){
+        //A pool: toward the wet corners of its cells, as far as the farthest and a little more.
+        vec2 sum(0.0f,0.0f);
+        for (int i = 0; i < picker.PlotQuadCount(plot); i++){
+            const GridQuad& q = g.fine.quads[picker.PlotQuadCorner(plot,i) / 4];
+            for (int k = 0; k < 4; k++){
+                if (t.wet[q.v[k]]){
+                    vec2 d = g.fine.pos[q.v[k]] - p;
+                    sum = sum + d;
+                    reach = std::max(reach,d.length() + 1.0f);
+                }
+            }
+        }
+        dir = sum;
+    }
+    float l = dir.length();
+    if (l < 1e-4f){
+        return;
+    }
+    dir = dir * (1.0f / l);
+    reach = std::max(PIPE_WALL + 0.5f,reach);
+    float y0 = t.ground[plot] + 0.55f;
+    float y1 = terrain_levels[t.level[plot]].height + TERRAIN_WATER_Y + 0.12f;
+    vec2 a = p + dir * PIPE_WALL;
+    vec2 b = p + dir * reach;
+    SlopedBeam(out,a,y0,b,y1,PIPE_THICK,PAL_TIMBER);
+    for (float d = PIPE_WALL + PIPE_POST_EVERY; d < reach - 0.3f; d += PIPE_POST_EVERY){
+        float f = (d - PIPE_WALL) / (reach - PIPE_WALL);
+        float y = y0 + (y1 - y0) * f;
+        Upright(out,p + dir * d,0.08f,y1 - 1.0f,y - PIPE_THICK * 0.5f,PAL_BARK_DARK);
+    }
+    //The intake, standing in the water.
+    Box(out,b,0.34f,y1 - 0.7f,y1 + 0.22f,PAL_STONE_DARK);
+}
+
 //A box standing on (x, z) from y0 to y1, `w` across, square to the world axes - a chimney.
 void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column){
     float h = w * 0.5f;
@@ -277,11 +360,62 @@ void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, i
     so a house rising storey by storey has the scaffold on top of it. A camp's tent is no building: an
     unpitched one is its poles and canvas lying on the ground.
 */
+//The deck's height: over its level's ground, the same the length of the bridge.
+float BridgeDeckY(const ChasmWorld& w, int plot){
+    return terrain_levels[w.terrain->level[plot]].height + ZONE_BRIDGE_DECK;
+}
+
+#define BRIDGE_WIDTH        1.05f   //the deck, across
+#define BRIDGE_PLANK        0.12f   //its thickness
+#define BRIDGE_RAIL_Y       0.42f   //the rail over the deck
+#define BRIDGE_PILE         0.12f
+#define BRIDGE_PILE_FOOT    1.6f    //how far below the water's surface the piles go: out of sight
+
+//A pair of piles under a bridge, across it at p, from the river bed to `top`.
+void BridgePiles(const vec2& p, const vec2& side, float top, std::vector<vertex>& out){
+    float foot = terrain_levels[TERRAIN_PLATEAU].height + TERRAIN_WATER_Y - BRIDGE_PILE_FOOT;
+    Upright(out,p + side * (BRIDGE_WIDTH * 0.42f),BRIDGE_PILE,foot,top,PAL_BARK_DARK);
+    Upright(out,p - side * (BRIDGE_WIDTH * 0.42f),BRIDGE_PILE,foot,top,PAL_BARK_DARK);
+}
+
+//The way a bridge runs at a plot: from one of its bridge neighbours to another (or the first, alone).
+vec2 BridgeRun(const ChasmWorld& w, const ZoneState& z, int plot){
+    int nb[8];
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    int ends[2] = {-1,-1};
+    int k = 0;
+    for (int i = 0; i < n && k < 2; i++){
+        if (z.building[nb[i]] == z.building[plot]){
+            ends[k++] = nb[i];
+        }
+    }
+    vec2 p = w.grid->fine.pos[plot];
+    vec2 d = (k == 2) ? w.grid->fine.pos[ends[0]] - w.grid->fine.pos[ends[1]] : (k == 1) ? w.grid->fine.pos[ends[0]] - p : vec2(1.0f,0.0f);
+    float l = d.length();
+    return (l > 1e-4f) ? d * (1.0f / l) : vec2(1.0f,0.0f);
+}
+
 void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
     const GridPicker& picker = *w.picker;
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
     vec2 p = w.grid->fine.pos[plot];
     float ground = w.terrain->ground[plot];
+    //A bridge being built: its piles already stand out of the water, waiting for the deck; on the
+    //bank, a stack of its planks.
+    if (z.KindOf(plot) == ZONE_KIND_BRIDGE){
+        vec2 run = BridgeRun(w,z,plot);
+        vec2 side(-run.y,run.x);
+        float deck = BridgeDeckY(w,plot);
+        if (w.terrain->wet[plot]){
+            BridgePiles(p,side,deck + 0.15f,out);
+        }else{
+            for (int k = 0; k < 3; k++){
+                vec2 o = side * (0.18f * (float)k - 0.18f);
+                Beam(out,p - run * 0.6f + o,p + run * 0.6f + o,ground + 0.12f * (float)(k % 2),0.1f,0.16f,PAL_TIMBER);
+            }
+        }
+        return;
+    }
     if (z.KindOf(plot) == ZONE_KIND_CAMP){
         if (!ZoneCampFire(plot)){
             float yaw = ZoneCampYaw(plot);
@@ -400,6 +534,14 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                 BuildCampPlot(w,v,out);
             }
             s[k] = 0;
+        }
+        //Nor a bridge: once it stands it is a road over the water, drawn with the roads (RoadMesh).
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_BRIDGE){
+            s[k] = 0;
+        }
+        //A water collector is a house body, and its pipe out over the bank's stones to the water.
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_WATER && picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+            BuildWaterPipe(w,v,out);
         }
         solid[k] = s[k] > 0;
         bid[k] = (base > 0) ? ARCH : z.building[v];

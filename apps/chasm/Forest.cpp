@@ -67,16 +67,15 @@ float Noise(float x, float z, uint32_t seed){
     return a + (b - a) * tz;
 }
 
-//Every corner of every cell round the plot on the plot's level - see ZoneCanHouse for the same rule.
+//Every corner of every cell round the plot on the plot's ground - see ZoneCanHouse for the same rule.
 bool PlotIsFlat(const Grid& g, const GridPicker& p, const Terrain& t, int plot){
     if (g.fine.f_boundary[plot] || t.wet[plot]){
         return false;   //the edge, or a river's bank (Terrain.h, RIVERS - wet is wider than a plot)
     }
-    int level = t.level[plot];
     for (int i = 0; i < p.PlotQuadCount(plot); i++){
         const GridQuad& q = g.fine.quads[p.PlotQuadCorner(plot,i) / 4];
         for (int k = 0; k < 4; k++){
-            if (t.level[q.v[k]] != level){
+            if (!t.SameGround(q.v[k],plot)){
                 return false;
             }
         }
@@ -121,8 +120,7 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
     auto Place = [&](int kind, vec2 at, float yaw, float scale, float dip = 0.0f){
         PropInstance p;
         p.kind = (uint8_t)kind;
-        float level = terrain_levels[t.level[v]].height;
-        p.pos = vec3(at.x,t.GroundHeight(at,level) - dip,at.y);
+        p.pos = vec3(at.x,t.GroundHeight(at,t.Height(v)) - dip,at.y);
         p.yaw = yaw;
         p.scale = scale;
         GridPick under = picker.Pick(at);
@@ -140,8 +138,9 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             continue;
         }
         //Nothing grows on the chasm floor: it is under the mist, drawn as the void (TerrainMesh.cpp),
-        //and never built on or used - props there were only ever paid for in the shadow pass.
-        if (t.level[v] == TERRAIN_FLOOR){
+        //and never built on or used - props there were only ever paid for in the shadow pass. Nor on
+        //bare rock, a ledge too small to use: it reads as rock because it is bare.
+        if (t.level[v] == TERRAIN_FLOOR || t.level[v] == TERRAIN_BARE){
             continue;
         }
         const vec2& base = g.fine.pos[v];

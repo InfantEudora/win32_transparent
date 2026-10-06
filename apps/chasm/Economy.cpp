@@ -197,7 +197,7 @@ bool EconomyStraightClear(const ChasmWorld& w, const ZoneState& z, const vec2& a
     const GridPicker& p = *w.picker;
     float len = (b - a).length();
     int steps = std::max(1,(int)std::ceil(len / ECONOMY_STRAIGHT_STEP));
-    int level = (end_plot_a >= 0) ? t.level[end_plot_a] : -1;
+    int ground = end_plot_a;        //a plot the whole way must be the same ground as
     int prev = -1;
     vec2 prev_at = a;
     for (int i = 0; i <= steps; i++){
@@ -210,17 +210,22 @@ bool EconomyStraightClear(const ChasmWorld& w, const ZoneState& z, const vec2& a
         if (v == prev){
             continue;
         }
-        if (level < 0){
-            level = t.level[v];
+        if (ground < 0){
+            ground = v;
         }
         bool f_end = (v == end_plot_a || v == end_plot_b);
-        if (t.level[v] != level){
+        if (!t.SameGround(v,ground)){
             return false;
         }
         if (!f_end){
-            if (t.wet[v] || t.Mountain(v) || (z.storeys[v] > 0 && z.KindOf(v) != ZONE_KIND_CAMP) || AllInField(w,z,v)){
+            //A camp is open ground between tents, and a standing bridge a deck over the water.
+            bool f_bridge = ZoneBridgeWalkable(z,v);
+            if ((t.wet[v] && !f_bridge) || t.Mountain(v) || (z.storeys[v] > 0 && z.KindOf(v) != ZONE_KIND_CAMP && !f_bridge)
+                || AllInField(w,z,v)){
                 return false;
             }
+        }else if (t.wet[v] && !ZoneBridgeWalkable(z,v)){
+            return false;       //an end on the wet: only a bridge's
         }
         if (prev >= 0){
             //From one plot to the next: they must be neighbours, with nothing between them, and not
@@ -275,6 +280,7 @@ void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
     FindCamp();
     MakeSettlers();
     raises.clear();
+    ground_raises.clear();
     f_new_colony = true;
 }
 
@@ -579,7 +585,7 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
     if (!f_taken){
         return false;
     }
-    int plot = home_plot[k.building];
+    int plot = SourcePlot(k.building,state.world->grid->fine.pos[home_plot[k.building]]);
     if (RouteTo(k,z,walkers,plot,state.world->grid->fine.pos[plot])){
         k.prop = -1;
         k.state = WORKER_TO_WORK;
@@ -670,7 +676,9 @@ void Economy::Derive(const ZoneState& z, bool f_share){
         std::vector<float> area(n,0.0f);
         for (size_t id = known; id < n; id++){
             uint32_t from = z.buildings[id].split_from;
-            if (from && from < known && z.buildings[id].kind == ZONE_KIND_STORE){
+            //A store's goods, and a house's own (ECONOMY_HOUSE_KEEPS) - what either holds goes with its floor.
+            int kind = z.buildings[id].kind;
+            if (from && from < known && (kind == ZONE_KIND_STORE || kind == ZONE_KIND_HOUSE)){
                 area[id] = ZoneBuildingFigures(w,z,(uint32_t)id).floor_area;
                 if (area[from] == 0.0f){
                     area[from] = ZoneBuildingFigures(w,z,from).floor_area;
@@ -710,6 +718,19 @@ void Economy::Derive(const ZoneState& z, bool f_share){
             state.site[id] = 0;
         }
     }
+    /*
+        The gardens and lots still to build, and the wood brought to each: a plot that is no longer a
+        site - erased, built over, or finished - keeps none (what was left over is spent).
+    */
+    state.ground_site.resize(z.ground.size(),0);
+    ground_sites.clear();
+    for (size_t v = 0; v < z.ground.size(); v++){
+        if (ZoneEnclosesGround(z.ground[v]) && !z.ground_built[v] && z.storeys[v] == 0){
+            ground_sites.push_back((int)v);
+        }else{
+            state.ground_site[v] = 0;
+        }
+    }
     //What stands of each building, and what is still to build (Zones.h, CONSTRUCTION).
     stands.assign(n,0);
     site_storeys.assign(n,0);
@@ -730,6 +751,7 @@ void Economy::Derive(const ZoneState& z, bool f_share){
     */
     state.accepts.assign(n,0);
     state.attached.assign(n,0);
+    state.keeps.assign(n,0);
     state.room.assign(n,0);
     for (size_t id = 1; id < n; id++){
         if (z.buildings[id].kind != ZONE_KIND_STORE || z.buildings[id].size <= 0 || !stands[id]){
@@ -756,7 +778,34 @@ void Economy::Derive(const ZoneState& z, bool f_share){
         }
         state.attached[id] = attached;
         state.accepts[id] = attached ? attached : z.buildings[id].allow;
+        state.keeps[id] = state.accepts[id];
         state.room[id] = (int)std::floor(ZoneBuildingFigures(w,z,(uint32_t)id).floor_area * ECONOMY_STORE_ROOM);
+    }
+    /*
+        A woodcutter's woodpile: on a lot that stands beside his hut - of all his plots' lots, the lowest
+        plot index (ZoneLotBeside), so the view puts the logs where he puts them.
+    */
+    state.pile_plot.assign(n,-1);
+    pile_door.assign(n,-1);
+    for (size_t id = 1; id < n; id++){
+        if (z.buildings[id].kind != ZONE_KIND_WOODCUTTER || z.buildings[id].size <= 0){
+            continue;
+        }
+        for (int v : plots_of[id]){
+            int lot = ZoneLotBeside(w,z,v,true);
+            if (lot >= 0 && (state.pile_plot[id] < 0 || lot < state.pile_plot[id])){
+                state.pile_plot[id] = lot;
+            }
+        }
+        //The yard's door: of his hut's plots beside the pile's lot, the lowest (plots_of is in index order).
+        for (int v : plots_of[id]){
+            int nb[8];
+            int k = (state.pile_plot[id] >= 0) ? ZonePlotNeighbours(w,v,nb,8) : 0;
+            if (std::find(nb,nb + k,state.pile_plot[id]) != nb + k){
+                pile_door[id] = v;
+                break;
+            }
+        }
     }
     //How many a house holds: its floor area at ECONOMY_PERSON_AREA each, one family at most this big.
     state.capacity.assign(n,0);
@@ -768,6 +817,9 @@ void Economy::Derive(const ZoneState& z, bool f_share){
         if (z.buildings[id].kind == ZONE_KIND_HOUSE && z.buildings[id].size > 0){
             float area = ZoneBuildingFigures(w,z,(uint32_t)id).floor_area;
             state.capacity[id] = std::max(1,std::min(ECONOMY_HOUSE_MOST,(int)std::floor(area / ECONOMY_PERSON_AREA)));
+            //Its family's own food and firewood (P5): smaller than a store's, by the same floor area.
+            state.keeps[id] = ECONOMY_HOUSE_KEEPS;
+            state.room[id] = (int)std::floor(area * ECONOMY_HOUSE_ROOM);
         }else if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0){
             //A camp holds a person a tent, any number of families (Zones.h, THE CAMP).
             for (int v : plots_of[id]){
@@ -1046,14 +1098,16 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     bool f_look = ((tick + k.id) % ECONOMY_LOOK_TICKS) == 0;
     std::array<int,GOOD_COUNT>& own = state.stock[k.building];     //his workplace's: stock[0] for none
     float pace = EconomySkillFactor(k.skills[EconomyJobSkill(k.job)]);
-    //He has a load: to a store that takes it, or - a woodcutter's wood - to the pile at his hut. Home if neither.
+    //A woodcutter's woodpile, on the lot beside his hut - reached from its door, the hut plot beside it; -1
+    //with no lot standing.
+    int pile = (k.job == WORKER_JOB_WOODCUTTER && k.building < pile_door.size()) ? pile_door[k.building] : -1;
+    //He has a load: to a store that takes it, or - a woodcutter's wood - to his woodpile. Holding it if neither.
     auto deliver = [&](){
         if (FindStore(k,z,walkers)){
             return;
         }
-        if (k.job == WORKER_JOB_WOODCUTTER && k.carry_good == GOOD_WOOD && own[GOOD_WOOD] + k.carry <= ECONOMY_HUT_PILE){
-            int hut = home_plot[k.building];
-            if (hut >= 0 && RouteTo(k,z,walkers,hut,state.world->grid->fine.pos[hut])){
+        if (pile >= 0 && k.carry_good == GOOD_WOOD && own[GOOD_WOOD] + k.carry <= ECONOMY_HUT_PILE){
+            if (RouteTo(k,z,walkers,pile,state.world->grid->fine.pos[pile])){
                 k.store = 0;
                 k.state = WORKER_TO_STORE;
                 return;
@@ -1079,11 +1133,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 break;
             }
             //What waits at his workplace first - the pile, the harvest, the water - when a store takes it;
-            //then, for a woodcutter, a tree, while his pile has room for one.
+            //then, for a woodcutter, a tree, while his pile has room for one - and only with a lot to pile on.
             if (FetchFromWorkplace(k,z,walkers)){
                 break;
             }
-            if (k.job == WORKER_JOB_WOODCUTTER && own[GOOD_WOOD] + ECONOMY_WOOD_PER_TREE <= ECONOMY_HUT_PILE){
+            if (pile >= 0 && own[GOOD_WOOD] + ECONOMY_WOOD_PER_TREE <= ECONOMY_HUT_PILE){
                 FindTree(k,z,walkers);
             }
             break;
@@ -1160,7 +1214,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
             uint32_t s = k.store;
             if (s == 0){
-                //At his hut: onto its pile, as far as the pile has room.
+                //At his woodpile: onto it, as far as it has room.
                 int put = std::min(k.carry,std::max(0,ECONOMY_HUT_PILE - own[k.carry_good]));
                 own[k.carry_good] += put;
                 k.carry -= put;
@@ -1205,10 +1259,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
             //A load of what is there and what the site still wants - either may have changed on the way.
             uint32_t from = k.store;
-            bool f_site = k.site && k.site < z.buildings.size() && z.buildings[k.site].size > 0;
+            bool f_site = SiteAlive(z,k.site);
             int have = (from && from < state.stock.size()) ? state.stock[from][GOOD_WOOD] : 0;
             int take = f_site ? std::min(ECONOMY_LOAD,std::min(have,SiteLeft(z,k.site,&k))) : 0;
-            int to = f_site ? NearestPlot(k.site,k.pos) : -1;
+            int to = !f_site ? -1 : EconomyIsGroundSite(k.site) ? GroundSiteApproach(z,EconomyGroundSitePlot(k.site))
+                                                                : NearestPlot(k.site,k.pos,true);
             if (take <= 0 || to < 0 || !RouteTo(k,z,walkers,to,state.world->grid->fine.pos[to])){
                 k.site = 0;
                 GoHome(k,z,walkers);
@@ -1225,8 +1280,12 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 uint32_t id = k.site;
-                if (id && id < z.buildings.size() && z.buildings[id].size > 0 && site_storeys[id] > 0){
-                    state.site[id] += k.carry;
+                if (SiteAlive(z,id) && SiteNeed(z,id) > 0){
+                    if (EconomyIsGroundSite(id)){
+                        state.ground_site[EconomyGroundSitePlot(id)] += k.carry;
+                    }else{
+                        state.site[id] += k.carry;
+                    }
                     k.carry = 0;
                     k.carry_good = -1;
                     k.state = WORKER_BUILDING;
@@ -1258,6 +1317,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     }
     const ChasmWorld& w = *state.world;
     raises.clear();
+    ground_raises.clear();
     if (z.version != state.zones_version){
         Derive(z,true);
         //A new colony's first tick: the settlers' supplies into their camp.
@@ -1338,6 +1398,7 @@ float BuildFactor(int kind){
     switch (kind){
         case ZONE_KIND_CAMP:    return 0.5f;
         case ZONE_KIND_WINCH:   return 1.5f;
+        case ZONE_KIND_BRIDGE:  return 0.75f;   //a deck and posts, no walls or roof
         default:                return 1.0f;
     }
 }
@@ -1364,7 +1425,36 @@ int EconomySiteBrought(const EconomyState& e, uint32_t id){
     return (id < e.site.size()) ? e.site[id] : 0;
 }
 
+int EconomyGroundWood(const ChasmWorld& w, int plot){
+    float wood = w.picker->PlotArea(plot) * ECONOMY_GROUND_WOOD_PER_AREA;
+    return std::max(1,(int)std::ceil(wood));
+}
+
+int EconomyGroundBrought(const EconomyState& e, int plot){
+    return (plot >= 0 && plot < (int)e.ground_site.size()) ? e.ground_site[plot] : 0;
+}
+
+//A site that is still one: a building that has not gone, or a garden or lot plot still to build.
+bool Economy::SiteAlive(const ZoneState& z, uint32_t id) const{
+    if (EconomyIsGroundSite(id)){
+        int v = EconomyGroundSitePlot(id);
+        return v >= 0 && v < (int)z.ground.size() && ZoneEnclosesGround(z.ground[v]) && !z.ground_built[v]
+               && z.storeys[v] == 0;
+    }
+    return id && id < z.buildings.size() && z.buildings[id].size > 0;
+}
+
+int Economy::SiteBrought(uint32_t id) const{
+    if (EconomyIsGroundSite(id)){
+        return EconomyGroundBrought(state,EconomyGroundSitePlot(id));
+    }
+    return (id < state.site.size()) ? state.site[id] : 0;
+}
+
 int Economy::SiteNeed(const ZoneState& z, uint32_t id) const{
+    if (EconomyIsGroundSite(id)){
+        return SiteAlive(z,id) ? EconomyGroundWood(*state.world,EconomyGroundSitePlot(id)) : 0;
+    }
     if (id >= plots_of.size()){
         return 0;
     }
@@ -1381,7 +1471,7 @@ int Economy::SiteNeed(const ZoneState& z, uint32_t id) const{
     `except` is left out, so a carrier can ask what is left for himself.
 */
 int Economy::SiteLeft(const ZoneState& z, uint32_t id, const EconomyWorker* except) const{
-    int left = SiteNeed(z,id) - ((id < state.site.size()) ? state.site[id] : 0);
+    int left = SiteNeed(z,id) - SiteBrought(id);
     for (const EconomyWorker& o : state.workers){
         if (&o == except || o.site != id){
             continue;
@@ -1406,14 +1496,47 @@ int Economy::WoodFree(uint32_t id) const{
     return wood;
 }
 
+//Where wood is taken from building `id`: a woodcutter's on his pile, the rest at its plot nearest `to`.
+int Economy::SourcePlot(uint32_t id, const vec2& to) const{
+    if (id < pile_door.size() && pile_door[id] >= 0){
+        return pile_door[id];
+    }
+    return NearestPlot(id,to);
+}
+
+/*
+    A garden or lot is built from outside: its builder stands on a plot beside it with nothing built on it
+    and no wall of its own round it, the lowest index - otherwise its fence would go up round him and shut
+    him in. The plot itself only if every neighbour is closed.
+*/
+int Economy::GroundSiteApproach(const ZoneState& z, int v) const{
+    const ChasmWorld& w = *state.world;
+    int nb[8];
+    int n = ZonePlotNeighbours(w,v,nb,8);
+    int best = -1;
+    for (int i = 0; i < n; i++){
+        int o = nb[i];
+        if (z.storeys[o] > 0 || ZoneGroundStands(z,o) || w.terrain->wet[o] || !w.terrain->SameGround(o,v)){
+            continue;
+        }
+        if (best < 0 || o < best){
+            best = o;
+        }
+    }
+    return (best >= 0) ? best : v;
+}
+
 //The plot of building `id` nearest a point, the lower index on a tie; -1 if it has none.
-int Economy::NearestPlot(uint32_t id, const vec2& to) const{
+int Economy::NearestPlot(uint32_t id, const vec2& to, bool f_dry) const{
     if (id >= plots_of.size()){
         return -1;
     }
     int plot = -1;
     float best = 1e30f;
     for (int v : plots_of[id]){
+        if (f_dry && state.world->terrain->wet[v]){
+            continue;       //a bridge's span: its wood is brought to its ends, on the banks
+        }
         float d = (state.world->grid->fine.pos[v] - to).length();
         if (d < best){
             best = d;
@@ -1447,6 +1570,13 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
             sources.push_back((uint32_t)id);
         }
     }
+    //The gardens and lots still to build, after the buildings - so on a tie a building comes first.
+    for (int v : ground_sites){
+        uint32_t site = ECONOMY_SITE_GROUND | (uint32_t)v;
+        if (SiteLeft(z,site,&k) > 0){
+            sites.push_back(site);
+        }
+    }
     if (sites.empty() || sources.empty()){
         return false;
     }
@@ -1459,10 +1589,13 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
         }
     };
     std::vector<Errand> found;
+    auto site_plot = [&](uint32_t s, const vec2& to){
+        return EconomyIsGroundSite(s) ? GroundSiteApproach(z,EconomyGroundSitePlot(s)) : NearestPlot(s,to,true);
+    };
     for (uint32_t s : sites){
         for (uint32_t f : sources){
-            int fp = NearestPlot(f,k.pos);
-            int sp = NearestPlot(s,w.grid->fine.pos[fp]);
+            int fp = SourcePlot(f,k.pos);
+            int sp = site_plot(s,w.grid->fine.pos[fp]);
             float walk = (w.grid->fine.pos[fp] - k.pos).length() + (w.grid->fine.pos[sp] - w.grid->fine.pos[fp]).length();
             found.push_back(Errand{walk,s,f,fp});
         }
@@ -1471,7 +1604,7 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
     for (size_t t = 0; t < found.size() && t < 3; t++){
         const Errand& e = found[t];
         vec2 at = w.grid->fine.pos[e.from_plot];
-        if (!CanWalk(z,walkers,at,NearestPlot(e.site,at))){
+        if (!CanWalk(z,walkers,at,site_plot(e.site,at))){
             continue;
         }
         if (RouteTo(k,z,walkers,e.from_plot,at)){
@@ -1491,17 +1624,39 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
     through the zones by the app, on this tick (Raises).
 */
 void Economy::Build(const ZoneState& z, uint32_t id){
+    //A garden's wall or a lot's fence goes up at once, when all its wood is there.
+    if (EconomyIsGroundSite(id)){
+        int v = EconomyGroundSitePlot(id);
+        if (!SiteAlive(z,id) || std::count(ground_raises.begin(),ground_raises.end(),v)){
+            return;
+        }
+        int cost = EconomyGroundWood(*state.world,v);
+        if (state.ground_site[v] >= cost){
+            state.ground_site[v] -= cost;
+            ground_raises.push_back(v);
+            state.version++;
+        }
+        return;
+    }
     if (id == 0 || id >= plots_of.size() || id >= state.site.size()){
         return;
     }
     for (;;){
         int best = -1;
         int best_level = 0;
+        float best_shore = 0.0f;
+        bool f_bridge = z.buildings[id].kind == ZONE_KIND_BRIDGE;
         for (int v : plots_of[id]){
             int level = z.standing[v] + (int)std::count(raises.begin(),raises.end(),v);
-            if (level < z.storeys[v] && (best < 0 || level < best_level)){
+            if (level >= z.storeys[v]){
+                continue;
+            }
+            //A bridge from its banks out over the water: the plot nearest dry land first.
+            float shore = f_bridge ? state.world->terrain->WaterEdgeDistance(state.world->grid->fine.pos[v]) : 0.0f;
+            if (best < 0 || level < best_level || (level == best_level && shore > best_shore)){
                 best = v;
                 best_level = level;
+                best_shore = shore;
             }
         }
         if (best < 0){
@@ -1540,6 +1695,11 @@ EconomySaved EconomySaveState(const EconomyState& state){
     for (size_t id = 1; id < state.site.size(); id++){
         if (state.site[id] > 0){
             s.sites.push_back(std::make_pair((uint32_t)id,state.site[id]));
+        }
+    }
+    for (size_t v = 0; v < state.ground_site.size(); v++){
+        if (state.ground_site[v] > 0){
+            s.ground_sites.push_back(std::make_pair((int)v,state.ground_site[v]));
         }
     }
     s.next_person = state.next_person;
@@ -1584,6 +1744,12 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     for (const auto& st : saved.sites){
         if (st.first < state.site.size()){
             state.site[st.first] = st.second;
+        }
+    }
+    state.ground_site.assign(z.ground.size(),0);
+    for (const auto& st : saved.ground_sites){
+        if (st.first >= 0 && st.first < (int)state.ground_site.size()){
+            state.ground_site[st.first] = st.second;
         }
     }
     f_new_colony = false;       //a saved colony has had its supplies

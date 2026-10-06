@@ -9,6 +9,14 @@
 #define ROAD_CURVE_STEPS    6       //segments in a two-edge vertex's curve
 #define ROAD_JOINT_SIDES    8       //a junction's or a dead end's round joint
 #define ROAD_MAX_NEIGHBOURS 8       //a fine vertex meets at most 6 edges (Grid.cpp checks 3-6)
+//A bridge's plots (bridge_plan.md): the road's own shape, as a timber deck on piles.
+#define DECK_THICK          0.12f
+#define DECK_HALF_WIDTH     0.52f
+#define DECK_RAIL_Y         0.42f   //the rail over the deck
+#define DECK_RAIL           0.06f
+#define DECK_POST_EVERY     3       //a rail post every this many points along a curve
+#define DECK_PILE           0.12f
+#define DECK_PILE_FOOT      1.6f    //below the water's surface: out of sight
 
 namespace {
 
@@ -28,11 +36,11 @@ vec2 Unit(const vec2& d){
 */
 int RoadNeighbours(const ChasmWorld& w, const ZoneState& z, int v, int* out){
     const GridPicker& p = *w.picker;
-    bool f_road = z.ground[v] == ZONE_GROUND_ROAD;
+    bool f_road = ZoneRoadStands(z,v);
     if (!f_road && !ZoneEnclosesGround(z.ground[v])){
         return 0;
     }
-    int gate = f_road ? ZoneGateOf(w,z,v) : -1;
+    int gate = (z.ground[v] == ZONE_GROUND_ROAD) ? ZoneGateOf(w,z,v) : -1;
     int n = 0;
     for (int i = 0; i < p.PlotQuadCount(v); i++){
         int qc = p.PlotQuadCorner(v,i);
@@ -40,7 +48,7 @@ int RoadNeighbours(const ChasmWorld& w, const ZoneState& z, int v, int* out){
         int k = qc % 4;
         int both[2] = {q.v[(k + 1) % 4],q.v[(k + 3) % 4]};
         for (int u : both){
-            bool f_joined = f_road ? (z.ground[u] == ZONE_GROUND_ROAD || u == gate)
+            bool f_joined = f_road ? (ZoneRoadStands(z,u) || u == gate)
                                    : (z.ground[u] == ZONE_GROUND_ROAD && ZoneGateOf(w,z,u) == v);
             if (!f_joined){
                 continue;
@@ -105,6 +113,62 @@ int RoadCentreLine(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
     return n;
 }
 
+//A box from a to b (3D, a bar of square section `thick`): a rail, a post, a pile.
+void Bar(std::vector<vertex>& out, const vec3& a, const vec3& b, float thick, int column){
+    vec3 d = b - a;
+    float l = d.length();
+    if (l < 1e-5f){
+        return;
+    }
+    d = d * (1.0f / l);
+    //Two axes across it: one level where it can be, the other square to both.
+    vec3 s = (std::fabs(d.y) > 0.9f) ? vec3(1.0f,0.0f,0.0f) : vec3(-d.z,0.0f,d.x);
+    s = s * (1.0f / std::max(1e-5f,s.length()));
+    vec3 u(d.y * s.z - d.z * s.y,d.z * s.x - d.x * s.z,d.x * s.y - d.y * s.x);
+    float h = thick * 0.5f;
+    vec3 c[4] = {(s + u) * h,(s - u) * h,(s * -1.0f - u) * h,(s * -1.0f + u) * h};
+    for (int i = 0; i < 4; i++){
+        int j = (i + 1) % 4;
+        vec3 n = c[i] + c[j];
+        MeshQuad(out,a + c[i],b + c[i],b + c[j],a + c[j],n,column);
+    }
+    MeshQuad(out,a + c[0],a + c[3],a + c[2],a + c[1],d * -1.0f,column);
+    MeshQuad(out,b + c[0],b + c[1],b + c[2],b + c[3],d,column);
+}
+
+/*
+    A deck along a centre line (bridge_plan.md): its top, its two edges down to its underside, a rail on
+    posts along each side. `centre` is the line, `ys` the deck's height at each point - the deck's own
+    height on the bridge, ramping down where it meets a road on land - `dirs` the line's direction there.
+*/
+void BuildDeck(std::vector<vertex>& out, const std::vector<vec2>& centre, const std::vector<float>& ys,
+               const std::vector<vec2>& dirs){
+    const vec3 up(0.0f,1.0f,0.0f);
+    std::vector<vec3> left(centre.size()), right(centre.size());
+    for (size_t i = 0; i < centre.size(); i++){
+        vec2 side(-dirs[i].y,dirs[i].x);
+        vec2 l = centre[i] + side * DECK_HALF_WIDTH;
+        vec2 r = centre[i] - side * DECK_HALF_WIDTH;
+        left[i] = vec3(l.x,ys[i],l.y);
+        right[i] = vec3(r.x,ys[i],r.y);
+    }
+    const vec3 down(0.0f,-DECK_THICK,0.0f);
+    const vec3 rail(0.0f,DECK_RAIL_Y,0.0f);
+    for (size_t i = 0; i + 1 < centre.size(); i++){
+        MeshQuad(out,left[i],left[i + 1],right[i + 1],right[i],up,PAL_TIMBER);
+        vec3 out_l = left[i] - right[i];
+        MeshQuad(out,left[i] + down,left[i + 1] + down,left[i + 1],left[i],out_l,PAL_TIMBER);
+        MeshQuad(out,right[i],right[i + 1],right[i + 1] + down,right[i] + down,out_l * -1.0f,PAL_TIMBER);
+        MeshQuad(out,left[i] + down,right[i] + down,right[i + 1] + down,left[i + 1] + down,up * -1.0f,PAL_TIMBER);
+        Bar(out,left[i] + rail,left[i + 1] + rail,DECK_RAIL,PAL_BARK);
+        Bar(out,right[i] + rail,right[i + 1] + rail,DECK_RAIL,PAL_BARK);
+    }
+    for (size_t i = 0; i < centre.size(); i += DECK_POST_EVERY){
+        Bar(out,left[i],left[i] + rail,DECK_RAIL * 1.2f,PAL_BARK);
+        Bar(out,right[i],right[i] + rail,DECK_RAIL * 1.2f,PAL_BARK);
+    }
+}
+
 //Who draws road vertex v: the cell that is its first plot quad.
 int RoadVertexOwner(const ChasmWorld& w, int v){
     return w.picker->PlotQuadCorner(v,0) / 4;
@@ -123,12 +187,80 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
 
     for (int k = 0; k < 4; k++){
         int v = quad.v[k];
-        bool f_road = z.ground[v] == ZONE_GROUND_ROAD;
+        bool f_road = ZoneRoadStands(z,v);
         if ((!f_road && !ZoneEnclosesGround(z.ground[v])) || RoadVertexOwner(w,v) != fine_quad){
             continue;
         }
+        /*
+            A BRIDGE's plot: the road's own centre line, as a deck at the bridge's height - ramping down
+            to the road where it meets one on land - with rails, and piles where it stands in the water.
+        */
+        if (ZoneBridgeWalkable(z,v)){
+            int nb[ROAD_MAX_NEIGHBOURS];
+            int n = RoadNeighbours(w,z,v,nb);
+            RoadCentreLine(w,z,v,segs);
+            const vec2 c = g.fine.pos[v];
+            const float deck = terrain_levels[w.terrain->level[v]].height + ZONE_BRIDGE_DECK;
+            //The height at a point on the way to neighbour u: the deck, or down to a land road's surface
+            //over the half-edge to it.
+            auto height_toward = [&](int u, float f){
+                if (ZoneBridgeWalkable(z,u)){
+                    return deck;
+                }
+                vec2 mid = (c + g.fine.pos[u]) * 0.5f;
+                float road = w.terrain->GroundHeight(mid,w.terrain->Height(v)) + ROAD_LIFT;
+                return deck + (road - deck) * f;
+            };
+            if (n == 2){
+                size_t steps = segs.size() / 2;
+                std::vector<vec2> centre, dirs;
+                std::vector<float> ys;
+                centre.push_back(segs[0]);
+                for (size_t i = 0; i < steps; i++){
+                    centre.push_back(segs[i * 2 + 1]);
+                }
+                vec2 a = centre.front(), b = centre.back();
+                for (size_t i = 0; i < centre.size(); i++){
+                    float t = (float)i / (float)(centre.size() - 1);
+                    dirs.push_back(Unit((c - a) * (1.0f - t) + (b - c) * t));
+                    //The first half leads to nb[0]'s midpoint, the second to nb[1]'s.
+                    ys.push_back(t < 0.5f ? height_toward(nb[0],1.0f - 2.0f * t) : height_toward(nb[1],2.0f * t - 1.0f));
+                }
+                BuildDeck(out,centre,ys,dirs);
+            }else{
+                //A spoke to each midpoint, and a square of deck over the joint.
+                for (size_t i = 0; i + 1 < segs.size(); i += 2){
+                    vec2 d = Unit(segs[i + 1] - segs[i]);
+                    if (d.length() < 0.5f){
+                        continue;
+                    }
+                    int u = nb[i / 2];
+                    std::vector<vec2> centre = {segs[i],segs[i + 1]};
+                    std::vector<float> ys = {deck,height_toward(u,1.0f)};
+                    std::vector<vec2> dirs = {d,d};
+                    BuildDeck(out,centre,ys,dirs);
+                }
+                vec3 p0(c.x - DECK_HALF_WIDTH,deck,c.y - DECK_HALF_WIDTH), p1(c.x + DECK_HALF_WIDTH,deck,c.y - DECK_HALF_WIDTH);
+                vec3 p2(c.x + DECK_HALF_WIDTH,deck,c.y + DECK_HALF_WIDTH), p3(c.x - DECK_HALF_WIDTH,deck,c.y + DECK_HALF_WIDTH);
+                MeshQuad(out,p0,p3,p2,p1,up,PAL_TIMBER);
+            }
+            //Piles under it in the water, across the way it runs.
+            if (w.terrain->wet[v]){
+                vec2 run = (n >= 2) ? Unit(g.fine.pos[nb[0]] - g.fine.pos[nb[n - 1]]) : vec2(1.0f,0.0f);
+                if (run.length() < 0.5f){
+                    run = vec2(1.0f,0.0f);
+                }
+                vec2 side(-run.y,run.x);
+                float foot = terrain_levels[w.terrain->level[v]].height + TERRAIN_WATER_Y - DECK_PILE_FOOT;
+                for (int sgn = -1; sgn <= 1; sgn += 2){
+                    vec2 q = c + side * ((float)sgn * DECK_HALF_WIDTH * 0.8f);
+                    Bar(out,vec3(q.x,foot,q.y),vec3(q.x,deck - DECK_THICK,q.y),DECK_PILE,PAL_BARK_DARK);
+                }
+            }
+            continue;
+        }
         //A road plot is flat all round (Zones.h), so the whole road here is on v's level.
-        float level = terrain_levels[w.terrain->level[v]].height;
+        float level = w.terrain->Height(v);
         const Terrain& terrain = *w.terrain;
         auto at = [level,&terrain](const vec2& q){
             return vec3(q.x,terrain.GroundHeight(q,level) + ROAD_LIFT,q.y);

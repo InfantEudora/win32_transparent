@@ -10,17 +10,16 @@
     THE TERRAIN AS TRIANGLES: the ground of every level, the cliff walls between them, and a skirt
     down the map's outline so the map reads as a block cut out of the world rather than a sheet.
 
-    grid_plan.md section 4. Per fine cell:
-      - all four corners on one level: two flat triangles at that height.
-      - mixed: marching squares on high corners against low ones, cut at the edge midpoints. The
-        high part is one polygon at the high height, each run of low corners its own polygon at the
-        low height, and between them a wall down the cut. In the saddle case (high, low, high, low)
-        the high corners are joined, so the plateau stays in one piece.
-      - three levels (only where a balcony meets its rim): in quarters, each corner's at its level,
-        with walls down the inner half-edges between them, meeting at the cell's centre.
-    Wall points are edge midpoints, which the neighbouring cell computes identically, and the
-    wall's roughness is a function of world position alone - so neighbouring walls meet without a
-    crack however the cells around them are cut.
+    grid_plan.md, "Columns" (2026-10-06): every plot is a COLUMN standing at its own height. Per
+    fine cell:
+      - all four corners at one height: two flat triangles at that height.
+      - mixed: in quarters, each corner's - the corner, its two edges' midpoints, the cell's centre -
+        at its plot's top, and a wall on every inner half-edge (midpoint to centre) between two
+        quarters at different heights. A plot's top is the quarters round it from every cell it is a
+        corner of. (Terrain has joined every saddle, so no four walls share a centre.)
+    Walls are cut at one global set of rings, and a ring point's place is a function of the plots
+    round it, the ring and the half-edges through it - a midpoint's from both cells on its edge - so
+    neighbouring walls meet without a crack however the cells around them are cut.
 
     VIEW ONLY: built from the terrain, uploaded on the render thread, read by nothing in a tick.
     Cut into square chunks so a frame draws only the chunks in view (Renderer culls by mesh bounds)
