@@ -1,5 +1,6 @@
 #include "ApplicationChasm.h"
 #include "UIOverlay.h"
+#include "ChasmHud.h"
 #include "Window.h"
 #ifdef USE_IMGUI
 #include "imgui.h"
@@ -131,10 +132,6 @@ uint32_t Faded(uint32_t c, uint8_t alpha){
 
 }
 
-#define HUD_PANEL       UIColor( 22, 28, 32,178)    //dark and see-through, so the map shows behind it
-#define HUD_TEXT        UIColor(238,236,226,255)
-#define HUD_TEXT_DIM    UIColor(238,236,226,150)
-#define HUD_MARK        UIColor(255,255,255,255)
 
 /*
     RENDER THREAD. A panel at the top of the screen, in every build (the game's own UI, not a debug
@@ -260,12 +257,26 @@ void ApplicationChasm::DrawOverlay(void){
     }
 
     /*
-        PLAY MODE's building (construction_plan.md): with no panels, a bar along the bottom with each
-        tool and its key, the one in hand lit; and, while anything is being built, how far along it is.
+        Play mode's own UI: the build bar, and the selection's card and pins (selection_plan.md).
+        What the mouse can press on it is gathered while drawing and handed to UpdatePick at the end.
     */
-    if (!PlayMode()){
-        return;
+    overlay_hits_drawing.clear();
+    if (PlayMode()){
+        DrawBuildBar(s);
+        DrawSelectionOverlay(s);
     }
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        overlay_hits.swap(overlay_hits_drawing);
+    }
+}
+
+/*
+    RENDER THREAD, from DrawOverlay in play mode (construction_plan.md): with no panels, a bar along the
+    bottom with each tool and its key, the one in hand lit - a click on one takes it up - and, while
+    anything is being built, how far along it is.
+*/
+void ApplicationChasm::DrawBuildBar(float s){
     struct BarTool{ const char* key; const char* name; int tool; };
     static const BarTool bar[] = {
         {"1","HOUSE",CHASM_TOOL_HOUSE},{"8","STORE",CHASM_TOOL_STORE},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
@@ -290,6 +301,7 @@ void ApplicationChasm::DrawOverlay(void){
     vec2 q0(cx - total * 0.5f,bottom - 32.0f * s);
     vec2 q1(cx + total * 0.5f,bottom);
     overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
+    overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
     int tool = paint_tool.load();
     float x = q0.x + side;
     for (int i = 0; i < count; i++){
@@ -302,9 +314,14 @@ void ApplicationChasm::DrawOverlay(void){
         overlay->AddText(bar[i].key,vec2(x,q0.y + 21.0f * s),key_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
         overlay->AddText(labels[i],vec2(x + key_w + 6.0f * s,q0.y + 22.0f * s),size,f_on ? HUD_TEXT : Faded(HUD_TEXT,170),
                          UI_ALIGN_LEFT);
+        //A click on a tool takes it up, as its key does (selection_plan.md).
+        overlay_hits_drawing.push_back(OverlayHit{vec2(x - bar_gap * 0.5f,q0.y),vec2(x + widths[i] + bar_gap * 0.5f,q1.y),
+                                                  OVERLAY_HIT_TOOL,bar[i].tool});
         x += widths[i] + bar_gap;
     }
     //What is being built: the sites, and the wood they have had of what they need.
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
     if (e && z && e->world == z->world){
         //One pass over the plots, not one a building: this is every frame.
         std::vector<int> wood(z->buildings.size(),0);

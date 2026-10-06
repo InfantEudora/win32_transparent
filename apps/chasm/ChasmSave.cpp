@@ -91,7 +91,7 @@ json ChasmSaveToJson(const ChasmSave& s){
             for (int sk = 0; sk < SKILL_COUNT; sk++){
                 skills.push_back((int)k.skills[sk]);
             }
-            workers.push_back(json{{"id",k.id},{"family",k.family},{"house",k.house},{"age",k.age},
+            workers.push_back(json{{"id",k.id},{"family",k.family},{"house",k.house},{"age",k.age},{"female",k.f_female},
                                    {"skills",skills},{"building",k.building},{"job",k.job},{"state",k.state},{"prop",k.prop},
                                    {"store",k.store},{"site",k.site},{"carry_good",k.carry_good},{"carry",k.carry},
                                    {"timer",k.timer},{"route",route},{"speed",k.speed},{"seg",k.seg},
@@ -224,6 +224,8 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.family = wk.value("family",0u);
             k.house = wk.value("house",0u);
             k.age = wk.value("age",0);
+            //A save from before people had a sex: one by the id, so a load always gives the same.
+            k.f_female = wk.contains("female") ? wk["female"].get<bool>() : (k.id % 2) == 0;
             std::vector<int> skills = wk.value("skills",std::vector<int>());
             for (int sk = 0; sk < SKILL_COUNT && sk < (int)skills.size(); sk++){
                 k.skills[sk] = (uint8_t)skills[sk];

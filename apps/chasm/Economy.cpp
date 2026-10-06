@@ -76,20 +76,22 @@ float EconomySkillFactor(int skill){
 }
 
 /*
-    Names by id, from two short lists: a first name by the person, a family name by the family - so a
-    family shares its name. Placeholders with the feel of a frontier village; nothing in the rules reads
-    them.
+    Names by id, from short lists: a first name by the person - a woman's or a man's - and a family name
+    by the family, so a family shares its name. Placeholders with the feel of a frontier village;
+    nothing in the rules reads them.
 */
 std::string EconomyPersonName(const EconomyWorker& k){
-    static const char* first[] = {"Ada","Bram","Cato","Dirk","Elin","Fenna","Gijs","Hanne","Ivo","Joris",
-                                  "Kaat","Lieve","Maas","Nora","Otto","Pim","Roos","Sem","Tess","Wout",
-                                  "Anouk","Bas","Daan","Femke","Jesse","Lotte","Mila","Noud","Sanne","Teun"};
+    static const char* women[] = {"Ada","Cato","Elin","Fenna","Hanne","Kaat","Lieve","Nora","Roos","Tess",
+                                  "Anouk","Femke","Lotte","Mila","Sanne"};
+    static const char* men[] = {"Bram","Dirk","Gijs","Ivo","Joris","Maas","Otto","Pim","Sem","Wout",
+                                "Bas","Daan","Jesse","Noud","Teun"};
     static const char* family[] = {"Aldering","Brink","Dekker","Hoeve","Kamp","Molen","Rietveld","Smit",
                                    "Ter Horst","Veen","Visser","Wolters"};
     uint32_t a = (k.id * 2654435761u) >> 7;
     uint32_t b = (k.family * 2246822519u) >> 9;
-    return std::string(first[a % (sizeof(first) / sizeof(first[0]))]) + " " +
-           family[b % (sizeof(family) / sizeof(family[0]))];
+    const char* first = k.f_female ? women[a % (sizeof(women) / sizeof(women[0]))]
+                                   : men[a % (sizeof(men) / sizeof(men[0]))];
+    return std::string(first) + " " + family[b % (sizeof(family) / sizeof(family[0]))];
 }
 
 namespace {
@@ -311,6 +313,7 @@ void Economy::MakeSettlers(){
             k.id = state.next_person++;
             k.family = (uint32_t)f + 1;
             k.age = 18 + (int)(Mix(seed,k.id * 8 + 0) % 28);
+            k.f_female = (Mix(seed,k.id * 8 + 5) & 1) != 0;
             for (int sk = 0; sk < SKILL_COUNT; sk++){
                 k.skills[sk] = (uint8_t)(1 + Mix(seed,k.id * 8 + 1 + sk) % 10);
             }

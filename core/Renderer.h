@@ -580,6 +580,33 @@ class Renderer{
     //is measured against.
     void CustomShaderSubPass(Camera* camera, int index, const vec2& target_size);
 
+    /*
+        THE SELECTION OUTLINE, Blender's: a line of the object's colour round what it covers on
+        screen, fainter where something else stands in front of it. Two steps, after the resolve:
+
+          1. The outlined objects are drawn again, position only, into outline_tex - each pixel the
+             nearest outlined object's index, whether the scene hides it there (its distance from
+             the eye against the G-buffer's), and its colour. Its own depth buffer, so the nearest
+             outlined object wins where two overlap.
+          2. A full-screen pass over the frame: a pixel within the width of a mask pixel of another
+             object (or of none) takes that object's colour, softened by how far it is.
+
+        No outlined object, no pass: nothing allocated and nothing drawn, so no app pays for it.
+        Objects come from the visible renderable list - plain meshes only, not instance sets or
+        skinned ones; outline-only objects (Object::f_outline_only) are taken out of that list
+        before any other pass sees it.
+    */
+    std::vector<Object*> outlined_objects;      // this frame's, from CullObjects
+    GLuint outline_fbo_id = -1;
+    GLuint outline_tex_id = -1;                 // RGBA32I: object + 1, hidden, packed colour
+    GLuint outline_depth_rbo_id = -1;
+    int outline_tex_width = 0;
+    int outline_tex_height = 0;
+    Shader* outline_mask_shader = NULL;         // outline_mask.vert + outline_mask.frag
+    Shader* outline_shader = NULL;              // lowres_composite.vert + outline.frag
+    bool RebuildOutlineFBO();
+    void OutlinePass(Camera* camera);
+
     //Shadow
     GLuint shadow_fbo_id = -1;  // Framebuffer for getting depth of a light sournce
     GLuint shadow_tex_id = -1;  // Texture where shadow depth info is stored
@@ -691,7 +718,12 @@ class Renderer{
         DrawFrame) is filled with this colour before anything is drawn.
     */
     vec4 background_color = vec4(0.0f,0.0f,0.0f,0.0f);
-    int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
+    //The selection outline (Object::SetOutline): its width in pixels of a frame 810 tall - scaled
+    //with the frame, so it looks the same in any window - and how strongly the parts hidden behind
+    //other geometry are drawn, 0 not at all.
+    float outline_width = 2.0f;
+    float outline_hidden_alpha = 0.35f;
+    int pipeline = PIPELINE_MSAA;    // Which pipeline to initialise
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering
     bool f_use_reflections = false;   // Enable/disable skybox reflections
@@ -796,7 +828,8 @@ class Renderer{
         GPU_PASS_SSAO_COMPOSITE,//...multiplied into the frame, ahead of the translucent pass
         GPU_PASS_CUSTOM,        //CustomShaderPass - volumes and anything else translucent
         GPU_PASS_RESOLVE,       //MSAA resolve
-        GPU_PASS_BLIT,          //Only when view_buffer selects an intermediate to look at
+        GPU_PASS_OUTLINE,       //Selection outlines - only with an outlined object, see OutlinePass
+        GPU_PASS_BLIT,         //Only when view_buffer selects an intermediate to look at
         GPU_PASS_UPSCALE,       //Only at a render scale above 1 - see SetRenderScale
         GPU_PASS_OVERLAY,       //UIOverlay - the app's own 2D HUD (Application::DrawFrame)
         GPU_PASS_IMGUI,         //The debug panels (Application::DrawFrame)

@@ -1151,6 +1151,60 @@ void Application::RegisterCoreMCPTools(){
         PerfTimers. The two are different machines and do not sum to each other; see the block
         comment on Renderer::gpu_pass_t.
     */
+    //The selection outline (Object::SetOutline, Renderer::OutlinePass), from outside - for testing
+    //it on any app's objects, and for its two renderer settings.
+    MCPServer::Get()->RegisterTool("object_outline",
+        "Outline an object on screen (Renderer::OutlinePass): `color` [r,g,b,a] 0..1, alpha 0 removes "
+        "it; `only` true draws the object into the outline and nowhere else. The object is named by "
+        "`id` or `name` as in object_get; with neither, only the renderer settings apply: `width` "
+        "(pixels of an 810-tall frame, default 2) and `hidden_alpha` (the parts behind other "
+        "geometry, default 0.35).",
+        json{ {"type","object"}, {"properties", {
+            {"id", {{"type","integer"}}},
+            {"name", {{"type","string"}}},
+            {"color", {{"type","array"}, {"items", {{"type","number"}}}}},
+            {"only", {{"type","boolean"}}},
+            {"width", {{"type","number"}}},
+            {"hidden_alpha", {{"type","number"}}}
+        }} },
+        [this](const json &args) -> json {
+            if (!renderer || !main_scene){
+                return json{ {"error","no renderer"} };
+            }
+            if (args.contains("width") && args["width"].is_number()){
+                renderer->outline_width = args["width"].get<float>();
+            }
+            if (args.contains("hidden_alpha") && args["hidden_alpha"].is_number()){
+                renderer->outline_hidden_alpha = args["hidden_alpha"].get<float>();
+            }
+            json result = { {"width",renderer->outline_width}, {"hidden_alpha",renderer->outline_hidden_alpha} };
+            if (!args.contains("id") && !args.contains("name")){
+                return result;
+            }
+            std::string error;
+            main_scene->AtTickBoundary([&]{
+                Object* object = ResolveObjectArg(main_scene,args,error);
+                if (!object){
+                    return;
+                }
+                if (args.contains("color") && args["color"].is_array() && args["color"].size() == 4){
+                    const json& c = args["color"];
+                    object->SetOutline(vec4(c[0].get<float>(),c[1].get<float>(),c[2].get<float>(),c[3].get<float>()));
+                }
+                if (args.contains("only") && args["only"].is_boolean()){
+                    object->SetOutlineOnly(args["only"].get<bool>());
+                }
+                const vec4& o = object->GetOutline();
+                result["id"] = object->GetID();
+                result["color"] = { o.x, o.y, o.z, o.w };
+                result["only"] = object->IsOutlineOnly();
+            });
+            if (!error.empty()){
+                result["error"] = error;
+            }
+            return result;
+        });
+
     MCPServer::Get()->RegisterTool("renderer_timings",
         "Per-pass GPU cost and the renderer's CPU timers, in microseconds, as the Engine panel's "
         "Performance section shows them. `gpu_passes` are GL_TIME_ELAPSED queries measuring real "

@@ -21,6 +21,40 @@
 #include "Exploration.h"
 
 /*
+    PLAY MODE'S SELECTION (docs/selection_plan.md): a building - by id, with the plot it was clicked on
+    - or a person, by id. View state only: nothing a tick reads.
+*/
+#define PLAY_PICK_NONE          0
+#define PLAY_PICK_BUILDING      1       //a building or field, by id
+#define PLAY_PICK_PERSON        2       //an EconomyWorker, by id
+struct PlayPick{
+    int kind = PLAY_PICK_NONE;
+    uint32_t id = 0;
+    int plot = -1;                      //a building's plot it was picked on (a store's chips name it)
+    bool operator==(const PlayPick& o) const { return kind == o.kind && id == o.id; }
+    bool operator!=(const PlayPick& o) const { return !(*this == o); }
+};
+
+//The people's figures in chasm_props.glb, by sex: the adults, then the children (who wait for births).
+#define PERSON_FIGURES          4
+#define PERSON_ADULT_MALE       0
+#define PERSON_ADULT_FEMALE     1
+#define PERSON_KID_MALE         2
+#define PERSON_KID_FEMALE       3
+extern const char* person_asset_names[PERSON_FIGURES];
+
+//A place on the overlay the mouse can press, drawn this frame: what pressing it does.
+#define OVERLAY_HIT_BLOCK       0       //a panel: the click is the overlay's, nothing under it is picked
+#define OVERLAY_HIT_TOOL        1       //the build bar: take up tool `value`
+#define OVERLAY_HIT_STORE_ALLOW 2       //a store's card: let it take good `value`, or not
+#define OVERLAY_HIT_CLOSE       3       //a card's close mark: clear the selection
+struct OverlayHit{
+    vec2 a, b;
+    int action = OVERLAY_HIT_BLOCK;
+    int value = 0;
+};
+
+/*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
     game and the rules every step follows, and docs/grid_plan.md for the build order.
 
@@ -315,7 +349,7 @@ private:
         Each worker a walker's figure in his job's tunic, with what he carries on him; one object per
         worker, reused, placed every frame from the published state. Render thread.
     */
-    Mesh* worker_meshes[4 * 2] = {};                //job * 2 + carrying (WORKER_JOB_*; the last, no job)
+    Mesh* worker_meshes[2 * 4] = {};                //sex * 4 + load (ApplicationChasmWorkersView.cpp)
     std::vector<Object*> worker_objects;
     std::vector<int> worker_object_mesh;            //per object: which of worker_meshes it has, -1 none
     void BuildWorkerScene();                        //from BuildScene
@@ -450,6 +484,34 @@ private:
     std::shared_ptr<const ChasmWorld> pick_view_built_for;  //render thread
     int pick_view_built_version = -1;
     void UpdatePickView();
+
+    /*
+        --- Play mode's selection (docs/selection_plan.md, ApplicationChasmSelect.cpp) --------------------
+        The hover and the selection (pick_mutex), what the overlay drew that the mouse can press (written
+        by DrawOverlay on the render thread, read by UpdatePick on the physics thread, under pick_mutex),
+        and the OUTLINE-ONLY objects of the buildings outlined: the selected one, the hovered one, and a
+        selected person's house and workplace - buildings are merged per chunk, so each is rebuilt alone.
+    */
+    PlayPick play_hover;
+    PlayPick play_selected;
+    std::atomic<uint32_t> play_pick_version{0};
+    std::vector<OverlayHit> overlay_hits;
+    std::vector<OverlayHit> overlay_hits_drawing;           //render thread, filled while drawing
+    int2 right_press_px;                                    //physics thread: where a right press began
+    bool f_right_press = false;
+    static const int SELECT_OUTLINES = 4;
+    Object* select_outline[SELECT_OUTLINES] = {};
+    uint32_t select_outline_id[SELECT_OUTLINES] = {};       //render thread: the building each holds
+    uint32_t select_outline_zones[SELECT_OUTLINES] = {};    //...built at this zones version
+    PlayPick PlayPickUnder(int2 px, const GridPick& hover);
+    void UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked);   //physics thread
+    bool OverlayHitAt(int2 px, OverlayHit* hit);
+    void UploadSelection();                                 //render thread, from PreRender
+    void DrawBuildBar(float s);                             //render thread, from DrawOverlay
+    void DrawSelectionOverlay(float s);                     //render thread, from DrawOverlay: card + pins
+#ifdef USE_MCP
+    void RegisterSelectTools();
+#endif
 
     void BuildScene();
     void SetupInput();

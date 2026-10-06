@@ -140,6 +140,13 @@ class Object{
     //Pure show, left out of the replay's state hash with everything under it - see f_visual_only.
     void SetVisualOnly(bool flag){f_visual_only = flag;};
     bool IsVisualOnly(){return f_visual_only;};
+    //A selection outline round the object on screen, in this colour - alpha 0 (the default) is none.
+    //See Renderer::OutlinePass.
+    void SetOutline(const vec4& rgba){outline_color = rgba;};
+    const vec4& GetOutline() const {return outline_color;};
+    //Drawn into the outline and nowhere else - see f_outline_only.
+    void SetOutlineOnly(bool flag){f_outline_only = flag;};
+    bool IsOutlineOnly() const {return f_outline_only;};
 
     /*
         SPRITE-ATLAS SUB-RECT, uploaded per instance as InstanceDataGPU.uv_transform (see
@@ -625,6 +632,17 @@ protected:
         stream (RRandom) either - its draws would move every draw the simulation makes after it.
     */
     bool f_visual_only = false;
+
+    //The selection outline's colour; alpha 0 is no outline. Not copied by the copy constructor:
+    //a copy of a selected thing is not itself selected.
+    vec4 outline_color = vec4(0.0f,0.0f,0.0f,0.0f);
+    /*
+        OUTLINE-ONLY: the object is drawn into the outline mask and in no other pass - no colour,
+        no G-buffer, no shadow, no picking. For a thing whose own geometry is merged into a bigger
+        mesh (chasm's buildings, one mesh per terrain chunk): a small copy of just its part, made
+        outline-only, outlines it without being drawn twice.
+    */
+    bool f_outline_only = false;
 
     //ALWAYS PRESENT, so Object's layout and every `if (physics)` test are the same in both
     //builds; without USE_PHYSICS nothing ever assigns it, so it is permanently NULL and every

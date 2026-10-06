@@ -86,3 +86,4 @@
 - [Object::SetMesh releases the old mesh](object_setmesh_releases_old.md) — pooled meshes must be Retained or get freed (VAO spam, heap corruption)
 - [Chasm cliff kit](chasm_cliff_kit.md) — blender_chasm_cliffs.py: aigen_1 rift look (jagged, matching walls, spires); user feedback rules; uneditable mesh
 - [Chasm terrace columns](chasm_terrace_columns.md) — 2026-10-06 all-quad cliffs: one column per plot on the game grid (blender_chasm_terraces.py); edit chasm_plots + run rebuild_terraces
+- [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets

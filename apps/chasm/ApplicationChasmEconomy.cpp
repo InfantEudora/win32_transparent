@@ -65,7 +65,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     h.Bytes(&n,sizeof(n));
     h.Bytes(&e.next_person,sizeof(e.next_person));
     for (const EconomyWorker& k : e.workers){
-        int32_t who[5] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,k.age,(int32_t)k.f_indoors};
+        int32_t who[6] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,k.age,(int32_t)k.f_indoors,(int32_t)k.f_female};
         h.Bytes(who,sizeof(who));
         h.Bytes(k.skills,sizeof(k.skills));
         int32_t head[10] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
@@ -116,6 +116,7 @@ json WorkerJson(const EconomyWorker& k){
         skills[SkillName(sk)] = (int)k.skills[sk];
     }
     json j{{"id",k.id},{"name",EconomyPersonName(k)},{"family",k.family},{"house",k.house},{"age",k.age},
+           {"female",k.f_female},
            {"skills",skills},{"indoors",EconomyIndoors(k)},
            {"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
            {"x",k.pos.x},{"z",k.pos.y},{"legs_to_go",std::max(0,(int)k.route.size() - 1 - k.seg)}};

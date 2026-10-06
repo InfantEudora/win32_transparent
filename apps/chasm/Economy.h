@@ -142,6 +142,7 @@ struct EconomyWorker{
     uint32_t family = 0;
     uint32_t house = 0;         //a building id, 0 at the camp
     int age = 0;                //years
+    bool f_female = false;      //picks his - or her - figure and first name; births will want it too
     uint8_t skills[SKILL_COUNT] = {};
     uint32_t building = 0;      //his workplace, 0 none
     int job = WORKER_JOB_NONE;

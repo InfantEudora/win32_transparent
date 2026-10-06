@@ -194,7 +194,6 @@ void ApplicationChasm::BuildScene(){
     puff_material = renderer->FindMaterialIndex(puff.name);
     BuildWaterScene();
     BuildWalkerScene();
-    BuildWorkerScene();
     BuildGroundShader();
     BuildCloudScene();
 
@@ -452,12 +451,16 @@ void ApplicationChasm::UpdatePick(){
 
     GridPick hover;
     bool f_over_scene = p && main_window->f_has_focus && !UIWantsMouse();
+    int2 px = input->GetRelativeMousePosition();
     if (f_over_scene){
-        int2 px = input->GetRelativeMousePosition();
         f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
         if (f_over_scene){
             hover = PickUnderPixel(px);
         }
+    }
+    //Play mode's own selection, and its overlay taking the mouse where it is drawn (selection_plan.md).
+    if (PlayMode()){
+        UpdatePlayPick(hover,px,f_over_scene,f_clicked);
     }
     //A paint tool takes the left button; selecting is what the button does with no tool.
     bool f_painting = (paint_tool != CHASM_TOOL_SELECT);
@@ -895,6 +898,7 @@ void ApplicationChasm::UploadZones(){
 void ApplicationChasm::LoadProps(){
     gltfloader.LoadGLTFFile("meshes/chasm_props.glb");
     std::vector<std::string> names(prop_asset_names,prop_asset_names + PROP_KIND_COUNT);
+    names.insert(names.end(),person_asset_names,person_asset_names + PERSON_FIGURES);
     GetAssetsFromGLTF(names);
     int loaded = 0;
     for (int k = 0; k < PROP_KIND_COUNT; k++){
@@ -910,6 +914,8 @@ void ApplicationChasm::LoadProps(){
         }
     }
     debug->Info("Props: %i of %i kinds loaded\n",loaded,PROP_KIND_COUNT);
+    //The people's figures are in the same file (ApplicationChasmWorkersView.cpp), so they are made here.
+    BuildWorkerScene();
 }
 
 //A prop gives way to what is painted: a house on its plot, a field over its cell, and a road near it
@@ -1211,6 +1217,11 @@ void ApplicationChasm::UpdatePickView(){
     }
     pick_view_built_for = w;
     pick_view_built_version = version;
+    //Play mode selects by outline (selection_plan.md): the line mesh is only a paint tool's footprint there.
+    if (PlayMode() && paint_tool == CHASM_TOOL_SELECT){
+        pick_view->SetVisibility(false);
+        return;
+    }
     GridPick hover = GetHoverPick();
     GridPick selected = GetSelectedPick();
     const GridPicker* p = w->picker.get();
@@ -1429,6 +1440,7 @@ void ApplicationChasm::UpdatePlayModeViews(){
         return;
     }
     f_view_was_play = f_play;
+    pick_version++;     //the cursor's line mesh is debug mode's: drawn again, or not, for the mode
 #ifdef DEBUG
     if (f_play){
         if (grid_view){
@@ -1741,6 +1753,7 @@ void ApplicationChasm::PreRender(void){
     UploadPiles();
     UploadClouds();
     UpdatePickView();
+    UploadSelection();
     UpdatePlayModeViews();
 #ifdef DEBUG
     if (!PlayMode()){
@@ -2817,5 +2830,6 @@ void ApplicationChasm::RegisterMCPTools(){
     RegisterWalkerTools();
     RegisterTimeTools();
     RegisterEconomyTools();
+    RegisterSelectTools();
 }
 #endif

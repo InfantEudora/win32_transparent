@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-06T13:42:25.370Z
+  modified: 2026-10-06T15:05:50.718Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -88,6 +88,11 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   (value[3]) plans storeys, debug stands them at once; economy names raised plots (Raises()), the app
   applies ZONE_OP_BUILD_RAISE on the same tick (not recorded). What a building DOES goes by standing.
   Camp starts with 40 wood/20 wheat/10 beans/20 water. Play mode now has the tool keys + a bottom bar.
+  PLAY SELECTION BUILT same day (docs/selection_plan.md): core OUTLINE pass by worker 39
+  (Object::SetOutline/SetOutlineOnly), chasm side in ApplicationChasmSelect.cpp - outline-only copy
+  meshes of the selected/hovered building, people outlined, pins, cards (clickable store chips, close),
+  clickable build bar, right-click = drop tool/deselect; chasm_select tool. Entering play mode glides
+  the camera to the camp. Escape still closes the window (core default).
   If the user's chasm_nophysics.exe holds the link, link a copy by hand (make -n link line, -o renamed)
   instead of killing it twice.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.

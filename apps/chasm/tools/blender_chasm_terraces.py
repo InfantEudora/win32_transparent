@@ -19,8 +19,13 @@ and it is the same data the game's levels already are - only more of them.
 `chasm_plots` is that data: the fine grid as a mesh, one vertex per plot, z = the top of its column. It is
 the ONLY input the terrain is built from (a fresh build generates it first, then builds from it like a
 rebuild does), so whatever is edited there - heights, or the grid itself - comes out the same way.
-Heights are snapped to 0.5 and are meant to sit on the 3-unit strata steps (plateau 0, balcony -12,
-island -24, floor -72); a river bed is -1.
+Heights are snapped to 0.5 and are meant to sit on the 6-unit strata steps - twelve from the rim to the
+floor: plateau 0, balcony -12, island -24, floor -72; a river bed is -1.
+
+TERRACES: plots joined by grid edges at one height make a flat patch. A patch of fewer than
+MIN_TERRACE_PLOTS plots is BARE - rock on top in one brown, no turf - and not buildable; the rebuild
+writes each plot's patch size and whether it is buildable onto chasm_plots (`terrace_plots`,
+`buildable`), which is the rule the game would use too.
 
 THE MESHER (build_terrain), everything a quad:
   - TOPS: every grid face is cut at its centre and edge midpoints into one corner quad per corner, and
@@ -82,9 +87,11 @@ PAL_MIST = 1
 PAL_FOAM = 3
 
 #Heights. The game's levels are plateau 0, balcony -12, island -24, floor -70 (Terrain.cpp); here they are
-#steps of one stratum, so a level is just a height that happens to be a multiple of STEP.
-STEP = 3.0              #a stratum, and what column tops are cut to
-FLOOR_N = 24            #the floor, in steps: -72
+#steps of one stratum, so a level is just a height that happens to be a multiple of STEP: twelve of them
+#from the rim to the floor (user, 2026-10-06 - steps of 3 made 24, which read as too many).
+STEP = 6.0              #a stratum, and what column tops are cut to
+FLOOR_N = 12            #the floor, in steps: -72
+MIN_TERRACE_PLOTS = 8   #a flat patch of fewer plots than this is bare rock and nobody's to build on
 RIVER_BED = -1.0
 WATER_Z = -0.4          #a river's surface: the bank's soil line, so the water meets the banks at a ring
 MIST_TOP = -38.0        #the cloud deck's top; islands at -24 stand well out of it
@@ -103,6 +110,7 @@ GROOVE = 0.14           #...and its joints with its neighbours sit back
 OFFSET_MAX = 0.45       #a stratum's own in/out
 TOP_BUMP = 0.08         #tops sag a little away from their rims, for facets; never up
 GRASS_BY_LIGHT = (2, 0, 1, 3)   #palette row 0's grass columns, darkest first
+BARE_TOP = PAL_ROCK_3   #the top of a patch too small to build on
 EPS = 0.02
 
 #The section: the chasm runs along Y (north), home (east) is +X. Game units.
@@ -331,22 +339,23 @@ def fringe_width(y, side):
 #(x from the spine, y, x radius, y radius, turn, steps down, seed). Islands (-24) are the game's shards;
 #the tall narrow ones its columns.
 ISLANDS = [
-    (2.0, 8.0, 15.0, 10.0, 0.5, 8, 1),
-    (-6.0, -80.0, 8.0, 6.0, -0.3, 6, 2),
-    (9.0, 64.0, 4.5, 3.5, 0.2, 3, 3),
-    (-13.0, -30.0, 3.2, 2.6, 0.0, 5, 4),
-    (11.0, -52.0, 2.6, 2.0, 0.0, 9, 5),
-    (-10.0, 96.0, 6.0, 4.0, 1.0, 7, 6),
+    (2.0, 8.0, 15.0, 10.0, 0.5, 4, 1),
+    (-6.0, -80.0, 8.0, 6.0, -0.3, 3, 2),
+    (9.0, 64.0, 4.5, 3.5, 0.2, 1, 3),
+    (-13.0, -30.0, 3.2, 2.6, 0.0, 2, 4),
+    (11.0, -52.0, 2.6, 2.0, 0.0, 5, 5),
+    (-10.0, 96.0, 6.0, 4.0, 1.0, 3, 6),
 ]
 #(side 0 west / 1 east, y, half its length along the wall, how far it reaches out, steps down, seed).
-#The first two are the game's balconies (-12); the rest are the small low patches between.
+#The first two are the game's balconies (-12); the rest are the low patches between - big enough to
+#stay over MIN_TERRACE_PLOTS once their edges have crumbled.
 BALCONIES = [
-    (1, -36.0, 12.0, 10.0, 4, 1),
-    (0, 50.0, 9.0, 8.0, 4, 2),
-    (1, 86.0, 5.0, 5.0, 2, 3),
-    (0, -62.0, 6.0, 5.0, 3, 4),
-    (0, -8.0, 4.0, 4.0, 2, 5),
-    (1, 14.0, 4.5, 4.0, 3, 6),
+    (1, -36.0, 12.0, 10.0, 2, 1),
+    (0, 50.0, 9.0, 8.0, 2, 2),
+    (1, 86.0, 6.0, 5.5, 1, 3),
+    (0, -62.0, 7.0, 5.5, 1, 4),
+    (0, -8.0, 5.0, 5.0, 1, 5),
+    (1, 14.0, 5.5, 5.0, 2, 6),
 ]
 #(start x on the map's east edge, start y, the y where it reaches the rim, seed). Home is east, and only
 #home has rivers (grid_plan.md).
@@ -387,7 +396,7 @@ def island_steps(x, y):
                 return n + 1                 #crumbling at its own edge
             return n
         if inner > -3.5:
-            return n + 1 + int(3.99 * vnoise(x / 2.2, y / 2.2, 70 + seed))   #its broken skirt
+            return n + 1 + int(1.99 * vnoise(x / 2.2, y / 2.2, 70 + seed))   #its broken skirt
     return None
 
 
@@ -402,7 +411,7 @@ def balcony_steps(x, y, side, inside):
         if inside < reach:
             return n
         if inside < reach + 3.0 and abs(u) < 1.15:
-            return n + 1 + int(2.99 * vnoise(x / 2.2, y / 2.2, 90 + seed))
+            return n + 1 + int(1.99 * vnoise(x / 2.2, y / 2.2, 90 + seed))
     return None
 
 
@@ -424,7 +433,7 @@ def make_pillars():
             continue
         if any(math.hypot(x - px, y - py) < 9 for px, py, _, _ in out):
             continue
-        out.append((x, y, rng.uniform(1.5, 2.9), rng.randint(2, 10)))
+        out.append((x, y, rng.uniform(1.5, 2.9), rng.randint(1, 5)))
     return out
 
 
@@ -557,13 +566,13 @@ def generate_tops(P, quads):
                     #Wide enough to always catch a plot (they are ~1.8 apart): narrower, a crack
                     #came out as a row of separate pits.
                     if d < 2.3 - 1.2 * f:
-                        n = max(n, int(round(9.0 - 8.0 * f)))
+                        n = max(n, int(round(5.0 - 4.0 * f)))
         tops.append(-n * STEP)
 
     #The rim crumbling: plateau plots that stand over a real drop break a step or two down, in clumps;
     #then, more rarely, the plots behind those. Only ever next to a drop - never a pit in the meadow.
     nbr = neighbours(len(P), quads)
-    for ring, (lo, hi, need) in enumerate(((0.60, 0.76, -6.0), (0.70, 2.0, -3.0))):
+    for ring, (lo, hi, need) in enumerate(((0.60, 0.82, -2 * STEP), (0.70, 2.0, -STEP))):
         drops = []
         for i, (x, y) in enumerate(P):
             if tops[i] != 0.0 or wet[i] or not any(tops[j] <= need for j in nbr[i]):
@@ -598,9 +607,9 @@ def chasm_steps(x, y, inside, side, lips):
         #Blocks a few plots across rather than plot-by-plot noise: the stepping is in the noise's
         #levels, so neighbours mostly agree and the edges between blocks are clean steps.
         t = inside / F
-        n = (1.5 + 7.0 * t + (vnoise(x / 6.0, y / 6.0, 11 + side) - 0.5) * 5.0
-             + (hash2(round(x * 7), round(y * 7), 12) - 0.5) * 0.8)
-        return max(1, min(int(round(n)), 12))
+        n = (1.0 + 3.5 * t + (vnoise(x / 6.0, y / 6.0, 11 + side) - 0.5) * 2.5
+             + (hash2(round(x * 7), round(y * 7), 12) - 0.5) * 0.4)
+        return max(1, min(int(round(n)), 6))
     return FLOOR_N
 
 
@@ -619,18 +628,19 @@ BLOCK_LEVELS = (-0.28, -0.08, 0.10, 0.28)
 
 def rock_offset(h, x, y, k):
     """How far plot h's stratum k stands out (+) or sits back (-) from the plot boundary. The main part
-    is position noise cut into a few levels, so a block of rock is two or three plots wide and two strata
+    is position noise cut into a few levels, so a block of rock is two or three plots wide and a stratum
     tall, flush across itself and stepped against the next - the stacked blocks of chasm_aigen_1."""
-    lvl = BLOCK_LEVELS[min(3, int(vnoise(x / 4.5, y / 4.5, 71 + k // 2) * 4.0))]
+    lvl = BLOCK_LEVELS[min(3, int(vnoise(x / 4.5, y / 4.5, 71 + k) * 4.0))]
     block = 0.07 * signed(hash2(h, k, 72))
     soft = -0.20 if hash2(k, 0, 73) < 0.30 else 0.0          #a soft stratum, eroded back all along
     return max(-OFFSET_MAX, min(OFFSET_MAX, lvl + block + soft))
 
 
 def strata_colour(k, h):
-    if k < 5:
+    depth = k * STEP
+    if depth < 15.0:
         seq = (PAL_ROCK_3, PAL_ROCK_0, PAL_ROCK_3, PAL_ROCK_1)
-    elif k < 10:
+    elif depth < 30.0:
         seq = (PAL_ROCK_1, PAL_ROCK_3, PAL_ROCK_1, PAL_ROCK_2)
     else:
         seq = (PAL_ROCK_1, PAL_ROCK_2)
@@ -647,6 +657,59 @@ def newell(pts):
         n.y += (a[2] - b[2]) * (a[0] + b[0])
         n.z += (a[0] - b[0]) * (a[1] + b[1])
     return n.normalized() if n.length > 1e-12 else n
+
+
+def find_terraces(N, edge_id, top):
+    """Every flat patch: plots joined by grid edges at one height. Per plot, the size of its patch; BARE
+    if that is under MIN_TERRACE_PLOTS (rock on top, no turf - a crumbled bit, a crack, a pillar); and
+    BUILDABLE if it is a patch big enough, above the deck, and not a river's bed. The game would hold
+    the same rule: a level is now any height, and a patch too small to use is nobody's."""
+    nbr = [[] for _ in range(N)]
+    for a, b in edge_id:
+        if top[a] == top[b]:
+            nbr[a].append(b)
+            nbr[b].append(a)
+    river = [abs(t - RIVER_BED) < EPS for t in top]
+    size = [0] * N
+    seen = [False] * N
+    usable, small = 0, 0
+    for i in range(N):
+        if seen[i]:
+            continue
+        members, stack = [], [i]
+        seen[i] = True
+        while stack:
+            j = stack.pop()
+            members.append(j)
+            for k in nbr[j]:
+                if not seen[k]:
+                    seen[k] = True
+                    stack.append(k)
+        for j in members:
+            size[j] = len(members)
+        if not river[i] and top[i] > CAP_DEEPEST:
+            if len(members) >= MIN_TERRACE_PLOTS:
+                usable += 1
+            else:
+                small += 1
+    bare = [size[i] < MIN_TERRACE_PLOTS and top[i] > CAP_DEEPEST and not river[i] for i in range(N)]
+    buildable = [not bare[i] and not river[i] and top[i] > CAP_DEEPEST for i in range(N)]
+    print("terraces: %d buildable patches (%d plots), %d bare ones under %d plots (%d plots)"
+          % (usable, sum(buildable), small, MIN_TERRACE_PLOTS, sum(bare)))
+    return size, bare, buildable
+
+
+def write_plot_attributes(me, size, buildable):
+    """On chasm_plots, for the game and for looking at in the spreadsheet: each plot's patch size and
+    whether it can be built on. Recomputed by every rebuild."""
+    for name, kind, values in (("terrace_plots", "INT", size), ("buildable", "BOOLEAN", buildable)):
+        attr = me.attributes.get(name)
+        if attr is not None and (attr.data_type != kind or attr.domain != "POINT"):
+            me.attributes.remove(attr)
+            attr = None
+        if attr is None:
+            attr = me.attributes.new(name, kind, "POINT")
+        attr.data.foreach_set("value", list(values))
 
 
 def build_terrain(plots, coll, material):
@@ -693,6 +756,9 @@ def build_terrain(plots, coll, material):
     for fi, f in enumerate(faces):
         pos[F0 + fi] = (sum(xy[c][0] for c in f) / len(f), sum(xy[c][1] for c in f) / len(f))
         adj[F0 + fi] = f
+
+    terrace, bare, buildable = find_terraces(N, edge_id, top)
+    write_plot_attributes(me, terrace, buildable)
 
     #The rings: every height any wall is cut at. Shared by all walls, so they share vertices.
     tops = sorted(set(top), reverse=True)
@@ -777,7 +843,7 @@ def build_terrain(plots, coll, material):
         ob = rock_offset(h, xy[h][0], xy[h][1], band(t - SOIL - 0.05))
         dz = t - z
         if dz < TURF + EPS:
-            return ob + LIP
+            return ob if bare[h] else ob + LIP      #bare rock has no turf to overhang
         if dz < SOIL + EPS:
             return ob
         return rock_offset(h, xy[h][0], xy[h][1], band(z))
@@ -835,6 +901,8 @@ def build_terrain(plots, coll, material):
             t = top[c]
             if abs(t - RIVER_BED) < EPS:
                 col = PAL_PATH
+            elif bare[c]:
+                col = BARE_TOP                  #too small to use: one brown for all of them
             elif t > CAP_DEEPEST:
                 #One shade per plot, in patches: per corner quad it read as a checkerboard.
                 g = 0.75 * vnoise(xy[c][0] / 9.0, xy[c][1] / 9.0, 31) + 0.35 * hash2(c, 0, 32)
@@ -845,9 +913,10 @@ def build_terrain(plots, coll, material):
             _, H, _, r = kind
             zm = 0.5 * (ring_z[r] + ring_z[r + 1])
             d = top[H] - zm
-            if d < TURF and top[H] > CAP_DEEPEST:
+            capped = top[H] > CAP_DEEPEST and not bare[H]
+            if d < TURF and capped:
                 col = PAL_LIP
-            elif d < SOIL and top[H] > CAP_DEEPEST:
+            elif d < SOIL and capped:
                 col = PAL_EARTH
             else:
                 nz = newell([verts[i] for i in idx]).z
@@ -937,7 +1006,7 @@ def build_terrain(plots, coll, material):
           "(the skirt's foot), %d fall segments, %.1f s"
           % (len(out_faces), not_quads, len(verts), R, bad, open_edges, len(falls), time.time() - t0))
     lip_points = [(pos[a][0], pos[a][1]) for a, _, _ in falls]
-    return terrain, lip_points
+    return terrain, lip_points, buildable
 
 
 def replace_object(name, verts, faces, cols, material, coll):
@@ -1160,7 +1229,9 @@ def inside_chasm(x, y):
     return min(x - rim_west(y), rim_east(y) - x)
 
 
-def props(rng, coll, material, P, quads, tops, wet, lip_points):
+def props(rng, coll, material, P, quads, plots, wet, lip_points, buildable):
+    #The heights as built: the mesher snaps and joins saddles, so read them back rather than reuse ours.
+    tops = [v.co.z for v in plots.data.vertices]
     #Neighbours, to keep trees off rims.
     nbr = [set() for _ in P]
     for q in quads:
@@ -1177,7 +1248,7 @@ def props(rng, coll, material, P, quads, tops, wet, lip_points):
     trees = stones = 0
     for i, (x, y) in enumerate(P):
         t = tops[i]
-        if wet[i] or t < -24.5 or abs(t - RIVER_BED) < EPS or any(tops[j] != t for j in nbr[i]):
+        if wet[i] or not buildable[i] or any(tops[j] != t for j in nbr[i]):
             continue
         if t == 0.0:
             forest = vnoise(x / 38.0, y / 38.0, 90)
@@ -1190,7 +1261,7 @@ def props(rng, coll, material, P, quads, tops, wet, lip_points):
                   (x + rng.uniform(-0.3, 0.3), y + rng.uniform(-0.3, 0.3), t),
                   rng.uniform(0, 6.28), 0.7 * rng.uniform(0.85, 1.2))
             trees += 1
-        elif rocks and -16.0 < t < -2.0 and rng.random() < 0.10:
+        elif rocks and -2 * STEP - 1.0 < t < -2.0 and rng.random() < 0.10:
             #Floatstone, as a hint: pale stones on the low patches and balconies.
             place(coll, "floatstone_%04d" % stones, rng.choice(rocks), (x, y, t), rng.uniform(0, 6.28),
                   rng.uniform(0.45, 0.8))
@@ -1460,13 +1531,14 @@ def main():
     plots = bpy.data.objects.new("chasm_plots", me)
     plots.display_type = "WIRE"
     plots["about"] = ("One vertex per plot, z = the top of its column (0 plateau, -12 balcony, -24 island, "
-                      "-72 floor, -1 river bed; steps of 3). Edit, then run the rebuild_terraces text block.")
+                      "-72 floor, -1 river bed; steps of 6). Edit, then run the rebuild_terraces text block. "
+                      "The rebuild writes terrace_plots and buildable per vertex.")
     plots["rivers"] = json.dumps([[(round(x, 3), round(y, 3)) for x, y in r] for r in rivers])
     colls["Plots"].objects.link(plots)
     plots.hide_render = True
 
-    terrain, lip_points = build_terrain(plots, colls["Terrain"], material)
-    props(random.Random(7), colls["Props"], material, P, quads, tops, wet, lip_points)
+    terrain, lip_points, buildable = build_terrain(plots, colls["Terrain"], material)
+    props(random.Random(7), colls["Props"], material, P, quads, plots, wet, lip_points, buildable)
     stage(colls["Stage"])
     wire_overlay(colls["Stage"], terrain, (rim_west(10.0) + 2.0, 10.0), 16.0)
     plots.hide_set(True)

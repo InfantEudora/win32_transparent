@@ -59,6 +59,15 @@ Files: `Economy.*` (the people are `EconomyState::workers`, one `EconomyWorker` 
   took the woodcutter's hut and the best farmer (Anouk, husbandry 10) the field. The replay test builds
   houses and a hut by the camp during its recording; PASS in debug and release, all ten housed.
 
+- **Figures** (2026-10-06): the user's four figures in `chasm_props.glb` - `adult_male`, `adult_female`,
+  `kid_male`, `kid_female` - drawn at 0.46 of their modelled size (a man 1.87 tall becomes the old
+  figure's 0.86, about a tent's height), as modelled: their clothes are their own, so the job tunics
+  are gone (the card says the job). A person now has a SEX (`EconomyWorker::f_female`, from the seed for
+  the settlers; saved, hashed; an older save takes it from the id), which picks the figure and a first
+  name from a woman's or a man's list. The children's figures are loaded and wait for births.
+  What he carries goes by the GOOD, not the job - a log for wood, a sack for food, a pail for water -
+  so an idle carrier taking wood to a site carries a log (it used to be a pail).
+
 **Open:**
 - No crowding yet (a house fuller than it should be costs everyone in it - agreed, comes with P5's needs).
 - No day and night - none of the games this takes after has one, and it would change too often (the

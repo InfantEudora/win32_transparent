@@ -210,6 +210,23 @@ void Renderer::CullObjects(const std::vector<Object*>& objects){
             GetAllRenderableVisableSubObjects(object,renderable_objects);
         }
     }
+    /*
+        The outlined ones, for OutlinePass. An outline-only object leaves the renderable list here,
+        before anything batches, culls or picks from it - so no other pass ever sees it. Nearly
+        always nothing to move, and then this is one read per object.
+    */
+    outlined_objects.clear();
+    size_t kept = 0;
+    for (size_t i = 0; i < renderable_objects.size(); i++){
+        Object* object = renderable_objects[i];
+        if (object->GetOutline().w > 0.0f){
+            outlined_objects.push_back(object);
+        }
+        if (!object->IsOutlineOnly()){
+            renderable_objects[kept++] = object;
+        }
+    }
+    renderable_objects.resize(kept);
 }
 
 //Updates all the materials that need to be picked from the objects that need to be rendered.
@@ -1109,6 +1126,182 @@ void Renderer::UpscaleFrame(){
     glEnable(GL_DEPTH_TEST);
 }
 
+//The outline mask at render size, made on the first outlined object - see OutlinePass.
+bool Renderer::RebuildOutlineFBO(){
+    if (!outline_mask_shader){
+        outline_mask_shader = new Shader("shaders/outline_mask.vert","shaders/outline_mask.frag");
+        outline_shader = new Shader("shaders/lowres_composite.vert","shaders/outline.frag");
+    }
+    if (!outline_mask_shader->f_compiled || !outline_shader->f_compiled){
+        return false;
+    }
+    if (lowres_vao == (GLuint)-1){
+        //The same empty VAO CompositeLowRes draws its triangle with - see that shader.
+        glCreateVertexArrays(1, &lowres_vao);
+    }
+    if ((outline_fbo_id != (GLuint)-1) && (outline_tex_width == render_width) && (outline_tex_height == render_height)){
+        return true;
+    }
+    if (outline_fbo_id == (GLuint)-1){
+        glCreateFramebuffers(1, &outline_fbo_id);
+        glCreateRenderbuffers(1, &outline_depth_rbo_id);
+    }
+    if (outline_tex_id != (GLuint)-1){
+        glDeleteTextures(1, &outline_tex_id);
+    }
+    glCreateTextures(GL_TEXTURE_2D, 1, &outline_tex_id);
+    //Integers: an object index, a flag and a packed colour, read back exactly by texelFetch.
+    //Signed, because this repo's trimmed glad has the signed clear and not the unsigned one; the
+    //format itself is core GL, only its name is missing from glad.h.
+#ifndef GL_RGBA32I
+#define GL_RGBA32I 0x8D82
+#endif
+    glTextureStorage2D(outline_tex_id, 1, GL_RGBA32I, render_width, render_height);
+    glTextureParameteri(outline_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(outline_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(outline_fbo_id, GL_COLOR_ATTACHMENT0, outline_tex_id, 0);
+    glNamedRenderbufferStorage(outline_depth_rbo_id, GL_DEPTH_COMPONENT32F, render_width, render_height);
+    glNamedFramebufferRenderbuffer(outline_fbo_id, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, outline_depth_rbo_id);
+    GLenum draw_buffer = GL_COLOR_ATTACHMENT0;
+    glNamedFramebufferDrawBuffers(outline_fbo_id, 1, &draw_buffer);
+    GLenum status = glCheckNamedFramebufferStatus(outline_fbo_id, GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE){
+        debug->Err("The outline mask is not complete (0x%04X)\n",status);
+        return false;
+    }
+    outline_tex_width = render_width;
+    outline_tex_height = render_height;
+    return true;
+}
+
+/*
+    THE SELECTION OUTLINE - see the block on outlined_objects in Renderer.h for the two steps. Runs
+    on the resolved frame, so the line is drawn over everything the scene drew, translucent passes
+    included, and is not multisampled - outline.frag softens its own edge instead.
+*/
+void Renderer::OutlinePass(Camera* camera){
+    if (!RebuildOutlineFBO()){
+        return;
+    }
+    //1. The mask: each outlined object, nearest wins, flagged where the scene hides it.
+    glBindFramebuffer(GL_FRAMEBUFFER, outline_fbo_id);
+    GLint zero[4] = {0,0,0,0};
+    float depth = 1.0f;
+    glClearNamedFramebufferiv(outline_fbo_id,GL_COLOR,0,zero);
+    glClearNamedFramebufferfv(outline_fbo_id,GL_DEPTH,0,&depth);
+    SetSceneViewport();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    //Off: a mesh made for an outline (a part cut from a merged mesh) need not be closed.
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+
+    const bool f_gbuffer = (pipeline == PIPELINE_DEFERRED);
+    outline_mask_shader->Use();
+    outline_mask_shader->Setmat4("mat_worldcam",camera->mat_cam);
+    outline_mask_shader->Setvec3("eye_position",camera->GetPosition());
+    outline_mask_shader->Setint("f_gbuffer",f_gbuffer ? 1 : 0);
+    if (f_gbuffer){
+        glBindTextureUnit(TEXUNIT_GBUFFER_DEPTH, deferred_depth_tex_id);
+        glBindTextureUnit(TEXUNIT_GBUFFER_POSITION, deferred_position_tex_id);
+    }
+    int vx, vy, vw, vh;
+    GetSceneViewport(vx,vy,vw,vh);
+    //Pixels of a frame 810 tall, so the line is the same share of the view in any window.
+    const float width_px = std::max(0.5f,outline_width * (float)vh / 810.0f);
+    /*
+        Where on screen step 2 has anything to do: the outlined objects' boxes, projected, padded by
+        the line's reach. The full-screen pass reads (2r+1)^2 mask pixels for every pixel it covers,
+        so held to a few people it costs next to nothing (0.34 ms over the whole frame at width 2,
+        1440x810). Anything without bounds, or reaching behind the eye, falls back to the viewport.
+    */
+    float sx0 = 1e30f, sy0 = 1e30f, sx1 = -1e30f, sy1 = -1e30f;
+    bool f_whole = false;
+    const fmat4& cam = camera->mat_cam;
+    for (size_t k = 0; k < outlined_objects.size(); k++){
+        Object* object = outlined_objects[k];
+        Mesh* mesh = object->GetMesh();
+        //Plain meshes only, for now: an instance set or a skinned mesh needs its own vertex stage.
+        if (!mesh || object->IsInstanceSet() || mesh->IsSkinnedMesh() || mesh->IsLineMesh()){
+            continue;
+        }
+        if (!f_whole && mesh->HasBounds() && mesh->num_morph_targets == 0){
+            const fmat4& m = object->GetWorldTransformScaleMatrix();
+            vec3 lo = mesh->GetBoundsMin();
+            vec3 hi = mesh->GetBoundsMax();
+            for (int c = 0; c < 8 && !f_whole; c++){
+                vec3 p((c & 1) ? hi.x : lo.x,(c & 2) ? hi.y : lo.y,(c & 4) ? hi.z : lo.z);
+                //Row vectors, as ComputeViewCull: x*m[0] + y*m[1] + z*m[2] + m[3], each m[i] a vec4.
+                auto apply = [](const fmat4& t, float x, float y, float z){
+                    return vec4(x * t.vertex[0].x + y * t.vertex[1].x + z * t.vertex[2].x + t.vertex[3].x,
+                                x * t.vertex[0].y + y * t.vertex[1].y + z * t.vertex[2].y + t.vertex[3].y,
+                                x * t.vertex[0].z + y * t.vertex[1].z + z * t.vertex[2].z + t.vertex[3].z,
+                                x * t.vertex[0].w + y * t.vertex[1].w + z * t.vertex[2].w + t.vertex[3].w);
+                };
+                vec4 w = apply(m,p.x,p.y,p.z);
+                vec4 clip = apply(cam,w.x,w.y,w.z);
+                if (clip.w <= 1e-3f){
+                    f_whole = true;
+                    break;
+                }
+                float px = (float)vx + (clip.x / clip.w * 0.5f + 0.5f) * (float)vw;
+                float py = (float)vy + (clip.y / clip.w * 0.5f + 0.5f) * (float)vh;
+                sx0 = std::min(sx0,px);
+                sy0 = std::min(sy0,py);
+                sx1 = std::max(sx1,px);
+                sy1 = std::max(sy1,py);
+            }
+        }else{
+            f_whole = true;
+        }
+        instancedata_t data = {};
+        data.mat_transformscale = object->GetWorldTransformScaleMatrix();
+        data.objectindex = OBJECTID_INVALID;
+        data.num_vertices = mesh->num_vertices;
+        glNamedBufferData(instdata_ssbo,sizeof(instancedata_t),&data,GL_STREAM_DRAW);
+        outline_mask_shader->Setint("outline_id",(int)k + 1);
+        outline_mask_shader->Setvec4("outline_color",object->GetOutline());
+        mesh->RenderInstances(1);
+    }
+
+    //2. The line, blended over the frame. The frame's alpha stays opaque where it was.
+    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
+    SetSceneViewport();
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    outline_shader->Use();
+    glBindTextureUnit(TEXUNIT_LOWRES_COMPOSITE, outline_tex_id);
+    outline_shader->Setfloat("width",width_px);
+    outline_shader->Setfloat("hidden_alpha",outline_hidden_alpha);
+    //Every outlined object skipped (an instance set, a skinned mesh): no box, and nothing to draw.
+    bool f_draw = f_whole || (sx1 >= sx0);
+    if (f_draw && !f_whole){
+        //Clamped in floats first: a corner far off screen projects to a number no int holds.
+        float pad = width_px + 2.0f;
+        auto clampf = [](float v, float lo, float hi){ return std::max(lo,std::min(hi,v)); };
+        int x0 = (int)floorf(clampf(sx0 - pad,(float)vx,(float)(vx + vw)));
+        int y0 = (int)floorf(clampf(sy0 - pad,(float)vy,(float)(vy + vh)));
+        int x1 = (int)ceilf(clampf(sx1 + pad,(float)vx,(float)(vx + vw)));
+        int y1 = (int)ceilf(clampf(sy1 + pad,(float)vy,(float)(vy + vh)));
+        f_draw = (x1 > x0) && (y1 > y0);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(x0,y0,std::max(0,x1 - x0),std::max(0,y1 - y0));
+    }
+    if (f_draw){
+        glBindVertexArray(lowres_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    glDisable(GL_SCISSOR_TEST);
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
+
 /*
     The custom-material pass: everything tagged MESH_MODE_SHADER, one sub-pass per registered
     shader. What a custom shader is given and what is expected of it is stated once, on
@@ -1570,6 +1763,7 @@ static const char* gpu_pass_names[Renderer::GPU_PASS_COUNT] = {
     "SSAO composite",
     "Custom shaders",
     "MSAA resolve",
+    "Outline",
     "Buffer blit",
     "Upscale",
     "UI overlay",
@@ -2167,6 +2361,13 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     BeginGPUPass(GPU_PASS_RESOLVE);
     ResolveAA();
     EndGPUPass(GPU_PASS_RESOLVE);
+
+    //Selection outlines over the resolved frame - nothing at all, not even a bind, without one.
+    if (!outlined_objects.empty()){
+        BeginGPUPass(GPU_PASS_OUTLINE);
+        OutlinePass(camera);
+        EndGPUPass(GPU_PASS_OUTLINE);
+    }
 
     //The mouse-over readback. Asynchronous since 2026-09-17 - it used to block here for most of
     //a frame; see Renderer.h's block comment on ReadPickingAsync for what it was costing and what
