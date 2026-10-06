@@ -64,7 +64,8 @@ A garden or a LOT (the town tool, renamed: a fenced yard) painted in PLAY is a s
 `ZoneState::ground_built[v]` 0 until built, and until then it has no wall and encloses nothing
 (`ZoneGroundStands`, which `ZoneBoundaryBetween` - the walls, the walkers, the straight walks - asks).
 It takes a little wood, `ECONOMY_GROUND_WOOD_PER_AREA` (0.5) of its area - about 2 a plot - carried by the
-same idle people. A debug paint, and a road or field in either mode, is there at once, as before.
+same idle people. A debug paint, and a field in either mode, is there at once, as before (a road painted
+in play has been a site too since line works step 2 - see the end).
 
 - No building id, so a worker's `site` names the plot as `ECONOMY_SITE_GROUND | plot`; the wood brought is
   `EconomyState::ground_site`, by plot (saved as `economy.ground_sites`, hashed with the economy).
@@ -77,5 +78,7 @@ same idle people. A debug paint, and a road or field in either mode, is there at
   user), so nothing reads the town-era format.
 - The build bar's BUILDING / WOOD line counts each garden or lot plot still to build as a site.
 
-Open: roads in play as a labour-only site (trees felled first) and walls are win32-transparent-cc's
-(line_works_plan.md), on this same per-plot path.
+ROADS in play are sites on this same per-plot path since 2026-10-06 (line_works_plan.md, step 2): labour
+only, no wood, so not among the ground sites the carriers serve - an idle person with no wood to carry
+fells the trees in a planned road's way and lays it, through the same `ZONE_OP_GROUND_RAISE`. Walls are
+next there (step 3), with wood through the carriers as a garden's.

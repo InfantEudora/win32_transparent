@@ -50,7 +50,6 @@ static Debugger* debug = new Debugger("ApplicationChasm",DEBUG_ALL);
 #define CHASM_PLAY_FLY          3.0f        //the glide's ease a second: most of the way in a second
 #define CHASM_GRID_VIEW_Y       0.40f       //over the ground's relief (TerrainMesh.cpp, GROUND_BUMP)
 #define PICK_VIEW_Y             0.45f       //over the grid view's lines
-#define PROP_ROAD_CLEARANCE     1.3f        //no prop's foot nearer a road's centre line: half its width and a canopy
 #define SUN_DISTANCE            400.0f      //how far out the sun's shadow camera sits from the view
 #define SUN_EXTENT_PER_DISTANCE 0.9f        //shadow half-extent per unit of camera distance
 
@@ -658,8 +657,8 @@ ChasmSave ApplicationChasm::MakeSave(){
         s.stroke_building = z->stroke_building;
         for (size_t v = 0; v < z->ground.size(); v++){
             if (z->ground[v]){
-                //A garden or lot still a site carries ZONE_GROUND_SAVED_SITE with its kind.
-                int site = (ZoneEnclosesGround(z->ground[v]) && !z->ground_built[v]) ? ZONE_GROUND_SAVED_SITE : 0;
+                //A garden, lot or road still a site carries ZONE_GROUND_SAVED_SITE with its kind.
+                int site = !z->ground_built[v] ? ZONE_GROUND_SAVED_SITE : 0;
                 s.grounds.push_back(std::make_pair((int)v,(int)z->ground[v] | site));
             }
         }
@@ -980,26 +979,41 @@ void ApplicationChasm::LoadProps(){
     BuildWorkerScene();
 }
 
-//A prop gives way to what is painted: a house on its plot, a field over its cell, and a road near it
-//(RoadNear: a tree a plot away from a road still leans over it).
-bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z){
+/*
+    A prop gives way to what is painted: a house on its plot, a garden or lot on it, a field over its cell,
+    and a LAID road near it (RoadNear: a tree a plot away from a road still leans over it). A planned road's
+    trees stand until the idle fell them (line_works_plan.md). `f_by_road`, if given, says it was the road
+    alone - a felled tree's log may still lie beside one.
+*/
+bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z, bool* f_by_road){
+    if (f_by_road){
+        *f_by_road = false;
+    }
     if (!z){
         return false;
     }
     if (!z->storeys.empty() && z->storeys[p.plot]){
         return true;
     }
-    if (!z->ground.empty() && z->ground[p.plot]){
+    if (!z->ground.empty() && ZoneEnclosesGround(z->ground[p.plot])){
         return true;
     }
     if (p.coarse >= 0 && !z->field.empty() && z->field[p.coarse]){
         return true;
     }
-    return z->grounds > 0 && RoadNear(*z->world,*z,p.plot,vec2(p.pos.x,p.pos.z),PROP_ROAD_CLEARANCE);
+    if (z->grounds > 0 && RoadNear(*z->world,*z,p.plot,vec2(p.pos.x,p.pos.z),ROAD_PROP_CLEARANCE)){
+        if (f_by_road){
+            *f_by_road = true;
+        }
+        return true;
+    }
+    return false;
 }
 
 #define FELLED_LOG_OFFSET   1.1f    //a felled tree's log lies this far from its stump, at the stump's scale
 #define FELLED_LOG_TURN     0.5f    //and this far round from the way the tree faced, radians
+#define FELLED_LOG_PULL     0.6f    //beside a road: dragged out from its stump in steps of this
+#define FELLED_LOG_CLEAR    0.7f    //until this far from the road's centre line - half its width and the log's
 
 //A prop's PROP_STATE_* in the economy, standing when there is none for it.
 static uint8_t PropStateOf(const EconomyState* e, size_t i){
@@ -1011,27 +1025,63 @@ static uint8_t PropStateOf(const EconomyState* e, size_t i){
     felled (economy_plan.md, P2) is drawn as the stump it left - and while its log still lies there,
     the log beside it, the way the tree fell. Both at the tree's own scale - well under a forest
     stump's, which reads right: a forest stump is an old giant's, these are the trunks he cuts.
+    Beside a laid road (line_works_plan.md: the trees felled to clear it) the stump is under the road's
+    verge and gives way to it, but the log is wood still lying there, so it is drawn - fallen away from
+    the road rather than across it.
 */
 void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, const EconomyState* e, int chunk){
     const ForestData& f = *w.forest;
     std::vector<fmat4> sets[PROP_KIND_COUNT];
     for (int i : f.chunk_props[chunk]){
         const PropInstance& p = f.props[i];
-        if (PropHidden(p,z)){
+        bool f_by_road = false;
+        bool f_hidden = PropHidden(p,z,&f_by_road);
+        uint8_t state = PropStateOf(e,(size_t)i);
+        if (f_hidden && !(f_by_road && state == PROP_STATE_LOG)){
             continue;
         }
-        uint8_t state = PropStateOf(e,(size_t)i);
         if (state == PROP_STATE_STANDING){
             sets[p.kind].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
                                                                  vec3(p.scale,p.scale,p.scale)));
             continue;
         }
         float s = p.scale;
-        sets[PROP_STUMP].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
-                                                                 vec3(s,s,s)));
+        if (!f_hidden){
+            sets[PROP_STUMP].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
+                                                                     vec3(s,s,s)));
+        }
         if (state == PROP_STATE_LOG){
             float yaw = p.yaw + FELLED_LOG_TURN;
             vec2 at = vec2(p.pos.x,p.pos.z) + vec2(std::sin(yaw),std::cos(yaw)) * (FELLED_LOG_OFFSET * s);
+            /*
+                Felled to clear a road: it lies off the road, not across it. The log lies the way the tree
+                fell, its near end at the stump - which beside a road is in the road's verge - so where the
+                way it fell puts it on the road it is dragged out along that line as far as it takes, the
+                least first, and of the eight ways round the stump (from the way it faced) the first that
+                puts its near end and its middle clear of the road's surface. Any log, not only a hidden
+                stump's: the economy fells a little wider than the view hides (ECONOMY_ROAD_VERGE).
+            */
+            vec2 foot(p.pos.x,p.pos.z);
+            auto clear = [&](const vec2& q){
+                GridPick under = w.picker->Pick(q);
+                return !under.f_hit || !RoadNear(w,*z,under.plot,q,FELLED_LOG_CLEAR,true);
+            };
+            if (z && z->grounds > 0 && (!clear(foot) || !clear(at))){
+                float half = FELLED_LOG_OFFSET * s;
+                bool f_placed = false;
+                for (int pull = 0; pull < 4 && !f_placed; pull++){
+                    for (int turn = 0; turn < 8 && !f_placed; turn++){
+                        float y_try = p.yaw + FELLED_LOG_TURN + (float)turn * 0.7853982f;
+                        vec2 dir(std::sin(y_try),std::cos(y_try));
+                        vec2 near_end = foot + dir * ((float)pull * FELLED_LOG_PULL);
+                        if (clear(near_end) && clear(near_end + dir * half)){
+                            yaw = y_try;
+                            at = near_end + dir * half;
+                            f_placed = true;
+                        }
+                    }
+                }
+            }
             float y = (p.plot >= 0) ? w.terrain->GroundHeight(at,w.terrain->Height(p.plot)) : p.pos.y;
             sets[PROP_LOG].push_back(Object::ComposeTransformScale(vec3(at.x,y,at.y),quat(vec3(0.0f,1.0f,0.0f),yaw),
                                                                    vec3(s,s,s)));
@@ -2661,6 +2711,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"px",{{"type","integer"},{"description","window pixel, from the left"}}},
                 {"py",{{"type","integer"},{"description","window pixel, from the top"}}},
                 {"select",{{"type","boolean"}}},
+                {"trees_within",{{"type","number"},{"description","list the trees within this distance of x/z, nearest first, standing, log or stump"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
@@ -2696,6 +2747,31 @@ void ApplicationChasm::RegisterMCPTools(){
                 if (pick.f_hit && z && pick.plot < (int)z->ground.size()){
                     result["zone_ground"] = ZoneGroundName(z->ground[pick.plot]);
                     result["zone_ground_built"] = (bool)z->ground_built[pick.plot];
+                }
+                //The trees round the point, nearest first, with what the economy has done to them.
+                float within = args.value("trees_within",0.0f);
+                std::shared_ptr<const ChasmWorld> w = GetWorld();
+                if (within > 0.0f && w && w->forest){
+                    std::shared_ptr<const EconomyState> e = GetEconomy();
+                    vec2 at(args.value("x",pick.at.x),args.value("z",pick.at.y));
+                    std::vector<std::pair<float,int>> found;
+                    const std::vector<PropInstance>& props = w->forest->props;
+                    for (size_t i = 0; i < props.size(); i++){
+                        float d = (vec2(props[i].pos.x,props[i].pos.z) - at).length();
+                        if (props[i].kind <= PROP_SNOW_PINE && d <= within){
+                            found.push_back(std::make_pair(d,(int)i));
+                        }
+                    }
+                    std::sort(found.begin(),found.end());
+                    static const char* states[] = {"standing","log","stump"};
+                    json trees = json::array();
+                    for (size_t t = 0; t < found.size() && t < 40; t++){
+                        const PropInstance& pr = props[found[t].second];
+                        int st = (e && found[t].second < (int)e->prop_state.size()) ? e->prop_state[found[t].second] : 0;
+                        trees.push_back(json{{"prop",found[t].second},{"kind",prop_asset_names[pr.kind]},{"x",pr.pos.x},
+                                             {"z",pr.pos.z},{"state",states[std::min(2,st)]}});
+                    }
+                    result["trees"] = trees;
                 }
                 if (args.value("select",false)){
                     SetSelectedPick(pick);

@@ -488,7 +488,7 @@ private:
     bool f_forest_shown = true;
     void LoadProps();
     void UploadForest();
-    bool PropHidden(const PropInstance& p, const ZoneState* z);
+    bool PropHidden(const PropInstance& p, const ZoneState* z, bool* f_by_road = NULL);
 
     /*
         --- The chasm's own look (step 9, ApplicationChasmWater.cpp) -----------------------------------
@@ -558,10 +558,17 @@ private:
     std::vector<OverlayHit> overlay_hits_drawing;           //render thread, filled while drawing
     int2 right_press_px;                                    //physics thread: where a right press began
     bool f_right_press = false;
+    /*
+        The selection's outline-only objects: 0 the selected building, 1 the hovered one, 2 every building
+        that BELONGS WITH the selection merged into one, 3 the ground that does (a woodcutter's lot) - see
+        RelatedPlaces in ApplicationChasmSelect.cpp.
+    */
     static const int SELECT_OUTLINES = 4;
     Object* select_outline[SELECT_OUTLINES] = {};
-    uint32_t select_outline_id[SELECT_OUTLINES] = {};       //render thread: the building each holds
+    uint32_t select_outline_id[SELECT_OUTLINES] = {};       //render thread: the building each holds (0, 1)
     uint32_t select_outline_zones[SELECT_OUTLINES] = {};    //...built at this zones version
+    std::vector<uint32_t> select_related_buildings;         //render thread: what slot 2 was built from
+    std::vector<int> select_related_plots;                  //...and slot 3
     PlayPick PlayPickUnder(int2 px, const GridPick& hover);
     void UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked);   //physics thread
     bool OverlayHitAt(int2 px, OverlayHit* hit);

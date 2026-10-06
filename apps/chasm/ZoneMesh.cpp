@@ -41,7 +41,8 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
             p[k] = g.fine.pos[quad.v[k]];
             f_house = f_house || z.storeys[quad.v[k]] > 0;
             f_ground = f_ground || ZoneEnclosesGround(z.ground[quad.v[k]]);
-            f_road = f_road || ZoneRoadStands(z,quad.v[k]);     //a standing bridge is drawn as a road over the water
+            //A standing bridge is drawn as a road over the water, a planned road as its stakes.
+            f_road = f_road || ZoneRoadStands(z,quad.v[k]) || ZoneRoadPlanned(z,quad.v[k]);
         }
         if (f_ground){
             for (int k = 0; k < 4; k++){
@@ -67,5 +68,24 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
         if (f_house || f_ground || z.field[quad.parent]){
             BuildBoundaryCell(w,z,q,out);
         }
+    }
+}
+
+void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out){
+    const GridPicker& p = *w.picker;
+    const Grid& g = *w.grid;
+    float level = w.terrain->Height(v);
+    auto at = [&](const vec2& x){
+        return vec3(x.x,w.terrain->GroundHeight(x,level) + lift,x.y);
+    };
+    for (int i = 0; i < p.PlotQuadCount(v); i++){
+        int qc = p.PlotQuadCorner(v,i);
+        const GridQuad& q = g.fine.quads[qc / 4];
+        int k = qc % 4;
+        vec2 a = g.fine.pos[q.v[k]];
+        vec2 centre = (g.fine.pos[q.v[0]] + g.fine.pos[q.v[1]] + g.fine.pos[q.v[2]] + g.fine.pos[q.v[3]]) * 0.25f;
+        vec2 b = (a + g.fine.pos[q.v[(k + 1) % 4]]) * 0.5f;
+        vec2 d = (a + g.fine.pos[q.v[(k + 3) % 4]]) * 0.5f;
+        MeshQuad(out,at(a),at(b),at(centre),at(d),vec3(0.0f,1.0f,0.0f),PAL_PATH);
     }
 }

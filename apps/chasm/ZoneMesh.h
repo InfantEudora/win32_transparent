@@ -25,4 +25,8 @@
 void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out,
                     const std::vector<uint8_t>* field_stage = NULL);
 
+//Plot v's own ground - the quarters of the cells round it - as a flat tile laid `lift` over the relief,
+//appended to `out`: the play mode's ghost of a ground tool, and a lot's outline when it is highlighted.
+void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out);
+
 #endif

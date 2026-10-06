@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1180787d-9718-488f-bc01-49d094c1aefa
-  modified: 2026-10-06T20:55:42.308Z
+  modified: 2026-10-06T21:36:11.795Z
 ---
 
 Chasm roads become drag (freehand) -> green/red preview -> release commits one stroke of GROUND_PAINT
@@ -15,9 +15,13 @@ lying, then lay it - LABOUR ONLY - via ZONE_OP_GROUND_RAISE. Walls = new ZONE_GR
 palisade wood per plot, impassable only once standing, a road plot in the chain is the gate. Building
 sites also fell their trees first (user said yes). Auto-routing roads: maybe later, not now.
 
-Plan + as-built: apps/chasm/docs/line_works_plan.md. Steps: 1 tool (BUILT 2026-10-06), 2 road sites,
-3 walls, 4 building sites clear. ZoneRoadStands(z,v) (Zones.h) was added by window c4 for bridge-as-road
-(ground ROAD || ZoneBridgeWalkable); step 2 adds `&& ground_built` to its road half only.
+Plan + as-built: apps/chasm/docs/line_works_plan.md. Steps: 1 tool (BUILT), 2 road sites (BUILT
+2026-10-06: ZoneRoadPlanned/ZoneRoadLaid, ZoneRoadStands = laid || standing bridge; Economy FindRoadWork/
+RoadTrees, states TO_ROAD/CLEARING/LAYING, `stint`; stakes in RoadMesh), 3 walls (next), 4 building sites
+clear. Replay test plans a road through 4 oaks by the camp before its save (OAKS in the script).
+Gotcha: `near` is a Windows macro - never a variable name in chasm code (compile errors look unrelated).
+Gotcha: if the user's game isn't running, make links build/chasm_nophysics.exe itself and the `make -n`
+link-a-copy trick finds no link line - copy the fresh exe instead of trusting an old copy.
 Scripted drags: chasm_tool hover_x/hover_z + button down/up + right_click (a frame between calls);
 chasm_pick reports zone_ground. Test scripts were in the session scratchpad (line_drag_test.py, shot.py).
 

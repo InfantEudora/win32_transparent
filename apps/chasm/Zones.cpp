@@ -147,14 +147,15 @@ namespace {
 }
 
 int ZoneGateOf(const ChasmWorld& w, const ZoneState& z, int road){
-    if (z.ground[road] != ZONE_GROUND_ROAD){
+    //A planned road opens nothing yet, nor counts as the road going on (line_works_plan.md).
+    if (!ZoneRoadLaid(z,road)){
         return -1;
     }
     int nb[8];
     int n = ZonePlotNeighbours(w,road,nb,8);
     int from = -1;
     for (int i = 0; i < n; i++){
-        if (z.ground[nb[i]] == ZONE_GROUND_ROAD){
+        if (ZoneRoadLaid(z,nb[i])){
             if (from >= 0){
                 return -1;      //two road neighbours: the road goes on, it does not end here
             }
@@ -193,8 +194,8 @@ namespace {
 //A road plot with two road neighbours and every other neighbour a building of two storeys or more: what
 //could be bridged. The storeys it would be bridged to, or 0. Its road neighbours in `roads_out`.
 int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_out){
-    if (z.ground[plot] != ZONE_GROUND_ROAD){
-        return 0;
+    if (!ZoneRoadLaid(z,plot)){
+        return 0;       //a planned road is bridged once it is laid
     }
     int nb[8];
     int n = ZonePlotNeighbours(w,plot,nb,8);
@@ -202,7 +203,7 @@ int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_
     int top = ZONE_MAX_STOREYS;
     for (int i = 0; i < n; i++){
         int u = nb[i];
-        if (z.ground[u] == ZONE_GROUND_ROAD){
+        if (ZoneRoadLaid(z,u)){
             if (roads < 2){
                 roads_out[roads] = u;
             }
@@ -617,18 +618,31 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
         return refuse("a house is at most four plots - one family");
     }
     /*
-        A new woodcutter's hut goes up beside a lot, where his woodpile will be (Economy). Only a NEW
-        one: a plot joining a woodcutter already has the lot its first plot was put beside. A lot still
-        a site is enough - it will stand. Erasing the lot later is allowed; he then has nowhere to pile
-        and stops felling, which his card says.
+        A new woodcutter's hut goes up beside a lot of its own, where his woodpile will be (Economy): a lot
+        plot no other woodcutter stands beside - two huts sharing one plot piled onto the same spot (the
+        user, 2026-10-06). Only a NEW one: a plot joining a woodcutter already has the lot its first plot
+        was put beside. A lot still a site is enough - it will stand. Erasing the lot later is allowed;
+        he then has nowhere to pile and stops felling, which his card says.
     */
-    if (kind == ZONE_KIND_WOODCUTTER && !joining && ZoneLotBeside(w,z,plot,false) < 0){
-        return refuse("a woodcutter needs a lot beside it, for his woodpile");
+    if (kind == ZONE_KIND_WOODCUTTER && !joining && ZoneLotBeside(w,z,plot,false,true) < 0){
+        return refuse("a woodcutter needs a lot of its own beside it, for his woodpile");
     }
     return true;
 }
 
-int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built){
+bool ZoneLotTaken(const ChasmWorld& w, const ZoneState& z, int lot, uint32_t except){
+    int nb[8];
+    int n = ZonePlotNeighbours(w,lot,nb,8);
+    for (int i = 0; i < n; i++){
+        uint32_t b = z.building[nb[i]];
+        if (b && b != except && z.buildings[b].kind == ZONE_KIND_WOODCUTTER){
+            return true;
+        }
+    }
+    return false;
+}
+
+int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built, bool f_free){
     if (v < 0 || v >= (int)z.ground.size()){
         return -1;
     }
@@ -638,6 +652,9 @@ int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built){
     for (int i = 0; i < n; i++){
         int o = nb[i];
         if (z.ground[o] != ZONE_GROUND_LOT || z.storeys[o] > 0 || (f_built && !z.ground_built[o])){
+            continue;
+        }
+        if (f_free && ZoneLotTaken(w,z,o,0)){
             continue;
         }
         if (best < 0 || o < best){
@@ -1339,7 +1356,13 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 return false;
             }
             if (state.ground[plot] == kind){
-                return false;   //already that - nothing to do
+                //Already that. A debug paint over a site builds it, as a debug click finishes a building's.
+                if (f_play || state.ground_built[plot]){
+                    return false;
+                }
+                state.ground_built[plot] = 1;
+                touch_road(plot);
+                break;
             }
             if (!ZoneCanGround(w,state,plot,&why,kind)){
                 last_refusal = why;
@@ -1349,8 +1372,9 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 state.grounds++;
             }
             state.ground[plot] = (uint8_t)kind;
-            //A player's garden or lot is a site until its wood is brought; a road, or a debug paint, is there.
-            state.ground_built[plot] = (f_play && ZoneEnclosesGround(kind)) ? 0 : 1;
+            //A player's garden or lot is a site until its wood is brought, a road until it is cleared and
+            //laid (line_works_plan.md); a debug paint is there.
+            state.ground_built[plot] = (f_play && (ZoneEnclosesGround(kind) || kind == ZONE_GROUND_ROAD)) ? 0 : 1;
             touch_road(plot);       //a road's ends, gates and the forest's clearance - see touch_road
             break;
         }
@@ -1366,14 +1390,14 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             break;
         }
         case ZONE_OP_GROUND_RAISE:{
-            //The builders' work on a garden or lot: its wall goes up. Only one planned.
-            if (plot < 0 || plot >= (int)state.ground.size() || !ZoneEnclosesGround(state.ground[plot])
+            //The builders' work on a garden or lot: its wall goes up. A road's: it is laid. Only one planned.
+            if (plot < 0 || plot >= (int)state.ground.size() || state.ground[plot] == ZONE_GROUND_NONE
                 || state.ground_built[plot]){
                 last_refusal = "nothing to build there";
                 return false;
             }
             state.ground_built[plot] = 1;
-            touch_road(plot);       //its wall, and a gate where a road meets it
+            touch_road(plot);       //its wall, a gate where a road meets it, the road's curve and verge
             break;
         }
         default:

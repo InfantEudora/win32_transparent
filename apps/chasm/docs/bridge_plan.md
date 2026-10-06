@@ -61,6 +61,10 @@ which lie on the walkers' line, so they stay on the deck - in timber at the deck
 rails on posts and piles in the water. Where it meets a road on land it ramps down to the road over
 the half-edge, so the road runs onto it unbroken. A bridge still being built is BuildingMesh's: piles
 out of the water, planks on the banks; a half-built one shows its standing plots from each bank.
+ROADS MAY RUN BESIDE THE WET (PlotIsBuildable's f_path): a road plot needs only its own vertex dry, not
+every corner of its cells - otherwise no road could reach a bridge's end, which is by rule the last dry
+plot, and none could follow a bank. Buildings, gardens and lots keep off the wet margin as before.
+Seed 12: a bridge with a road up to each end (`chasm_road` to the end plots), joined on both banks.
 
 **Open:**
 - A bridge cut in two by an erase loses a dry end on one piece, which is then not drawn (still walked

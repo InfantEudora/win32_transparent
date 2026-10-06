@@ -297,8 +297,8 @@ void ApplicationChasm::PlaceLine(){
             }
             continue;
         }
-        if (!f_erase && z->ground[v] == ZONE_GROUND_ROAD){
-            continue;   //road already
+        if (!f_erase && z->ground[v] == ZONE_GROUND_ROAD && (z->ground_built[v] || PlayMode())){
+            continue;   //road already - or planned, which in debug the paint lays at once
         }
         SubmitZone(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT,v,ZONE_GROUND_ROAD,paint_stroke);
     }
@@ -483,7 +483,9 @@ void ApplicationChasm::RegisterWalkerTools(){
         "Paint (or with erase:true, erase) a road along a straight line from x0,z0 to x1,z1, as a drag of "
         "the road tool would: every plot the line crosses, and the corner between two that only touch "
         "diagonally, so the road is joined. Each plot is one recorded zone command. Returns how many "
-        "were painted and the refusals by reason (a road needs flat ground, no river, no field, no house).",
+        "were painted and the refusals by reason (a road needs flat ground, no river, no field, no house). "
+        "play:true paints it as a PLAY command: a planned road the idle clear of trees and lay "
+        "(docs/line_works_plan.md), refused under the clouds.",
         json{
             {"type","object"},
             {"properties",{
@@ -492,6 +494,7 @@ void ApplicationChasm::RegisterWalkerTools(){
                 {"x1",{{"type","number"}}},
                 {"z1",{{"type","number"}}},
                 {"erase",{{"type","boolean"}}},
+                {"play",{{"type","boolean"},{"description","a planned road, built by the villagers (default false: laid at once)"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }},
@@ -505,6 +508,7 @@ void ApplicationChasm::RegisterWalkerTools(){
             vec2 a(args["x0"].get<float>(),args["z0"].get<float>());
             vec2 b(args["x1"].get<float>(),args["z1"].get<float>());
             bool f_erase = args.value("erase",false);
+            bool f_play = args.value("play",false);
             //The plots in the order a drag would reach them, bridged where the drag stepped diagonally.
             std::vector<int> plots;
             int steps = std::max(1,(int)((b - a).length() / 0.25f));
@@ -531,6 +535,7 @@ void ApplicationChasm::RegisterWalkerTools(){
                 cmd.subtype = (uint32_t)plot;
                 cmd.value[0] = (float)(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT);
                 cmd.value[1] = (float)ZONE_GROUND_ROAD;
+                cmd.value[3] = f_play ? 1.0f : 0.0f;
                 SubmitCommandAndWait(cmd);
                 std::string refusal;
                 {

@@ -1,6 +1,7 @@
 #include "ApplicationChasm.h"
 #include "ChasmHud.h"
 #include "BuildingMesh.h"
+#include "ZoneMesh.h"
 #include "MeshBuild.h"
 #include "Window.h"
 #ifdef USE_MCP
@@ -165,6 +166,63 @@ void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e,
             out.push_back(k.id);
         }
     }
+}
+
+/*
+    THE PLACES that belong with a selection, for their outlines in the related colour - what a player
+    asks "whose is this?" of (the user, 2026-10-06). One list, so a new kind of belonging is a case here:
+      - a woodcutter's hut: his woodpile's lot, and his worker's house;
+      - any other workplace (a field, a collector): its worker's house;
+      - a house: its family's workplaces - a farmer's field, a woodcutter's hut and lot;
+      - a person: his house and workplace, and a woodcutter's lot.
+    A garden belongs to nobody yet (it does nothing yet). Each listed once, the selection itself never.
+*/
+struct RelatedPlaces{
+    std::vector<uint32_t> buildings;    //sorted
+    std::vector<int> plots;             //ground plots - a lot - sorted
+};
+
+void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState& e, RelatedPlaces& out){
+    out.buildings.clear();
+    out.plots.clear();
+    auto building = [&](uint32_t id){
+        if (id && id < z.buildings.size() && z.buildings[id].size > 0 &&
+            !(p.kind == PLAY_PICK_BUILDING && p.id == id)){
+            out.buildings.push_back(id);
+        }
+    };
+    auto lot_of = [&](uint32_t id){
+        if (id < e.pile_plot.size() && e.pile_plot[id] >= 0){
+            out.plots.push_back(e.pile_plot[id]);
+        }
+    };
+    if (p.kind == PLAY_PICK_PERSON){
+        for (const EconomyWorker& k : e.workers){
+            if (k.id == p.id){
+                building(k.house);
+                building(k.building);
+                lot_of(k.building);
+            }
+        }
+    }else if (p.kind == PLAY_PICK_BUILDING && p.id < z.buildings.size()){
+        int kind = z.buildings[p.id].kind;
+        if (kind == ZONE_KIND_WOODCUTTER){
+            lot_of(p.id);
+        }
+        for (const EconomyWorker& k : e.workers){
+            if (k.building == p.id){
+                building(k.house);              //where the one who works here lives
+            }
+            if ((kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_CAMP) && k.house == p.id){
+                building(k.building);           //where its family work
+                lot_of(k.building);
+            }
+        }
+    }
+    std::sort(out.buildings.begin(),out.buildings.end());
+    out.buildings.erase(std::unique(out.buildings.begin(),out.buildings.end()),out.buildings.end());
+    std::sort(out.plots.begin(),out.plots.end());
+    out.plots.erase(std::unique(out.plots.begin(),out.plots.end()),out.plots.end());
 }
 
 /*
@@ -689,9 +747,10 @@ void ApplicationChasm::UploadSelection(){
     }
     bool f_play = PlayMode();
     bool f_ready = w && z && z->world == w;
-    //What each slot outlines: the selected building, the hovered one, a selected person's house and workplace.
+    //What each slot outlines: the selected building, the hovered one; then what belongs with the selection.
     uint32_t want[SELECT_OUTLINES] = {0,0,0,0};
     vec4 colour[SELECT_OUTLINES] = {SELECT_COLOUR,HOVER_COLOUR,RELATED_COLOUR,RELATED_COLOUR};
+    RelatedPlaces related_places;
     if (f_play && f_ready){
         if (sel.kind == PLAY_PICK_BUILDING){
             want[0] = sel.id;
@@ -699,16 +758,59 @@ void ApplicationChasm::UploadSelection(){
         if (hover.kind == PLAY_PICK_BUILDING && hover != sel){
             want[1] = hover.id;
         }
-        if (sel.kind == PLAY_PICK_PERSON && e && e->world == w){
-            const EconomyWorker* k = PersonById(*e,sel.id);
-            if (k){
-                want[2] = k->house;
-                want[3] = (k->building != k->house) ? k->building : 0;
-            }
+        if (e && e->world == w){
+            FindRelatedPlaces(sel,*z,*e,related_places);
         }
     }
     std::vector<vertex> verts;
-    for (int i = 0; i < SELECT_OUTLINES; i++){
+    /*
+        Slots 2 and 3: every related building in one mesh, and every related ground plot in another - one
+        outline round the lot, however many plots - rebuilt when the list or the zones change.
+    */
+    for (int i = 2; i < SELECT_OUTLINES; i++){
+        Object* o = select_outline[i];
+        if (!o){
+            continue;
+        }
+        bool f_ground = (i == 3);
+        bool f_any = f_ground ? !related_places.plots.empty() : !related_places.buildings.empty();
+        if (!f_any){
+            o->SetVisibility(false);
+            if (f_ground){
+                select_related_plots.clear();
+            }else{
+                select_related_buildings.clear();
+            }
+            continue;
+        }
+        bool f_same = f_ground ? related_places.plots == select_related_plots
+                               : related_places.buildings == select_related_buildings;
+        if (!f_same || z->version != select_outline_zones[i]){
+            select_outline_zones[i] = z->version;
+            verts.clear();
+            if (f_ground){
+                select_related_plots = related_places.plots;
+                for (int v : related_places.plots){
+                    BuildPlotTile(*w,v,FIELD_OUTLINE_LIFT,verts);
+                }
+            }else{
+                select_related_buildings = related_places.buildings;
+                std::vector<vertex> one;
+                for (uint32_t id : related_places.buildings){
+                    BuildSelectionMesh(*w,*z,id,one);
+                    verts.insert(verts.end(),one.begin(),one.end());
+                }
+            }
+            if (verts.empty()){
+                o->SetVisibility(false);
+                continue;
+            }
+            o->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
+        }
+        SetOutlineOf(o,colour[i]);
+        o->SetVisibility(CHASM_OUTLINE_READY != 0);
+    }
+    for (int i = 0; i < 2; i++){
         Object* o = select_outline[i];
         if (!o){
             continue;

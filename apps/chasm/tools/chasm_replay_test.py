@@ -3,7 +3,8 @@ Chasm's replay test: a recording made from a save replays to the same state, twi
 
     1. Paint a starting village with a road, a walled garden with a lane to its gate, and a walker
        on the road - this is the SAVE the recording will start from, so it starts with a walker part
-       way down its path.
+       way down its path. By the settlers' camp, a PLANNED road through four oaks (line_works_plan.md),
+       so the save catches the idle out on it, mid-errand; after the replays it must get cleared and laid.
     2. Record: paint more over MCP (houses, storeys, an erase, fields, a road branch the walker plans
        onto, a second walker, a third that lives in the garden and leaves by its gate; and buildings -
        a store made in one stroke and then split by an erase in its middle, a woodcutter, a house
@@ -48,6 +49,13 @@ a plot or two long, and at -220 its end touched the main road as well, so it wen
 at a gate (a probe of -244..-208 found gates at -238, -232, -226 and -214).
 """
 DX = -226.0
+"""
+The planned road's oaks (line_works_plan.md), from the settlers' camp - seed 1 at default settings puts
+them there: each must be felled before the road through it is laid.
+"""
+OAKS = [(4.65, 1.12), (11.05, 2.33), (18.01, 6.21), (18.05, 9.91)]
+PLANNED_ROAD = [0]          # plots planned
+PLANNED_ROAD_TREES = []
 
 
 def call(name, args=None):
@@ -150,6 +158,20 @@ def main():
             paint("ground_paint", float(gx), float(gz), ground="garden")
     call("chasm_road", {"x0": -96 + DX, "z0": 10, "x1": -60 + DX, "z1": 10})
     lane = call("chasm_road", {"x0": -67 + DX, "z0": 10, "x1": -67 + DX, "z1": 3})
+    # line works (docs/line_works_plan.md): a PLANNED road from the settlers' camp east through four oaks,
+    # for the idle to clear and lay - given time to set out, so the save catches them out on it (walking
+    # to a tree, felling it, laying a plot) and each replay has to put them back exactly there
+    camp = call("chasm_economy", {}).get("camp")
+    if camp:
+        cx, cz = camp["x"], camp["z"]
+        bends = [(4.0, 1.0), (11.0, 2.3), (18.0, 6.2), (18.0, 12.3)]
+        for (ax, az), (bx, bz) in zip(bends, bends[1:]):
+            r = call("chasm_road", {"x0": cx + ax, "z0": cz + az, "x1": cx + bx, "z1": cz + bz, "play": True})
+            PLANNED_ROAD[0] += r.get("changed_or_already", 0)
+        for ox, oz in OAKS:
+            trees = call("chasm_pick", {"x": cx + ox, "z": cz + oz, "trees_within": 0.5}).get("trees", [])
+            PLANNED_ROAD_TREES.extend(t["prop"] for t in trees)
+    time.sleep(2.0)
     call("chasm_walker", {"op": "spawn", "home_x": -95 + DX, "home_z": 4, "goal_x": -62 + DX, "goal_z": 14})
     time.sleep(0.6)     # so the save catches it part way down an edge, not standing on a plot
 
@@ -300,6 +322,28 @@ def main():
         else:
             print("the construction site at (%.1f, %.1f) stands, %d wood carried by %s; stored wood now %s" %
                   (sx, sz, seen["wood_needed"], ", ".join(sorted(carriers)), e2["stored"]["wood"]))
+    # The planned road, cleared of its oaks and laid by the idle - run on until nothing of it is left to lay.
+    call("chasm_time", {"speed": 3})
+    roads, workers_on = None, set()
+    for _ in range(90):
+        e3 = call("chasm_economy", {})
+        roads = e3.get("roads", {})
+        workers_on |= {k["name"] for k in e3["workers"] if k["state"] in ("to_road", "clearing", "laying")}
+        if roads.get("planned", 1) == 0:
+            break
+        time.sleep(1.0)
+    call("chasm_time", {"speed": 1})
+    states = []
+    if camp:
+        for ox, oz in OAKS:
+            states += [t["state"] for t in call("chasm_pick", {"x": cx + ox, "z": cz + oz, "trees_within": 0.5}).get("trees", [])]
+    if not PLANNED_ROAD[0] or roads.get("planned", 1) != 0 or len(states) != len(OAKS) or "standing" in states:
+        ok = False
+        print("the planned road was not cleared and laid: %d plots planned, roads now %s, its oaks %s" %
+              (PLANNED_ROAD[0], roads, states))
+    else:
+        print("the planned road: %d plots laid by %d of the idle, its %d oaks felled (%s)" %
+              (PLANNED_ROAD[0], len(workers_on), len(states), ", ".join(states)))
     if original[4] != 22:
         ok = False
         print("the recorded date jump did not hold: the original ends on day %s, not 22" % original[4])

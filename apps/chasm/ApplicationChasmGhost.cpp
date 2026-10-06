@@ -1,5 +1,6 @@
 #include "ApplicationChasm.h"
 #include "BuildingMesh.h"
+#include "ZoneMesh.h"
 #include "MeshBuild.h"
 #include "Palette.h"
 #include "glad.h"
@@ -29,24 +30,9 @@ static const vec3 GHOST_REFUSED(1.0f,0.35f,0.30f);
 
 namespace {
 
-//The quarters of the cells round plot v - its own ground - laid on the ground just over it.
+//The quarters of the cells round plot v - its own ground - laid on the ground just over it (ZoneMesh.h).
 void GhostPlotTile(const ChasmWorld& w, int v, std::vector<vertex>& out){
-    const GridPicker& p = *w.picker;
-    const Grid& g = *w.grid;
-    float level = w.terrain->Height(v);
-    auto at = [&](const vec2& x){
-        return vec3(x.x,w.terrain->GroundHeight(x,level) + GHOST_LIFT,x.y);
-    };
-    for (int i = 0; i < p.PlotQuadCount(v); i++){
-        int qc = p.PlotQuadCorner(v,i);
-        const GridQuad& q = g.fine.quads[qc / 4];
-        int k = qc % 4;
-        vec2 a = g.fine.pos[q.v[k]];
-        vec2 centre = (g.fine.pos[q.v[0]] + g.fine.pos[q.v[1]] + g.fine.pos[q.v[2]] + g.fine.pos[q.v[3]]) * 0.25f;
-        vec2 b = (a + g.fine.pos[q.v[(k + 1) % 4]]) * 0.5f;
-        vec2 d = (a + g.fine.pos[q.v[(k + 3) % 4]]) * 0.5f;
-        MeshQuad(out,at(a),at(b),at(centre),at(d),vec3(0.0f,1.0f,0.0f),PAL_PATH);
-    }
+    BuildPlotTile(w,v,GHOST_LIFT,out);
 }
 
 //A coarse cell - a field's - as its four fine cells, on the ground.

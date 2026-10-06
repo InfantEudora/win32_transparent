@@ -95,3 +95,21 @@ date), hooks in `ApplicationChasm.cpp` (UpdatePick, UpdatePickView, PreRender) a
 
 - Core outline pass: win32-transparent-39.
 - Chasm (selection, the building's outline mesh, hover, cards, pins): win32-transparent-c4.
+
+## What belongs together (2026-10-06, the user's)
+
+Selecting something outlines, in the related colour, the PLACES that belong with it - one list,
+`FindRelatedPlaces` in ApplicationChasmSelect.cpp, so a new kind of belonging is a case there:
+
+- a woodcutter's hut: his woodpile's lot plot (EconomyState::pile_plot - one lot plot to a woodcutter)
+  and his worker's house;
+- any other workplace - a field, a collector: its worker's house;
+- a house: its family's workplaces - a farmer's field, a woodcutter's hut and lot;
+- a person: his house and workplace, and a woodcutter's lot.
+
+The related buildings are merged into one outline-only object (slot 2) and the related ground into
+another (slot 3, flat plot tiles - BuildPlotTile in ZoneMesh.h, shared with the ghost), each rebuilt when
+the list or the zones change; so any number of related things costs two objects. Only the plot a
+woodcutter piles on is his, not the whole lot area round it, which may be another's.
+
+Not yet: gardens belong to nobody (they do nothing yet - the user); a lot plot itself cannot be selected.

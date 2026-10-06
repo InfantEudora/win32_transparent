@@ -94,7 +94,7 @@ json ChasmSaveToJson(const ChasmSave& s){
             workers.push_back(json{{"id",k.id},{"family",k.family},{"house",k.house},{"age",k.age},{"female",k.f_female},
                                    {"skills",skills},{"building",k.building},{"job",k.job},{"state",k.state},{"prop",k.prop},
                                    {"store",k.store},{"site",k.site},{"carry_good",k.carry_good},{"carry",k.carry},
-                                   {"timer",k.timer},{"route",route},{"speed",k.speed},{"seg",k.seg},
+                                   {"timer",k.timer},{"stint",k.stint},{"route",route},{"speed",k.speed},{"seg",k.seg},
                                    {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors}});
         }
         json fields = json::array();
@@ -244,6 +244,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.carry_good = wk.value("carry_good",-1);
             k.carry = wk.value("carry",0);
             k.timer = wk.value("timer",0);
+            k.stint = wk.value("stint",0);      //road work (line_works_plan.md); none before it
             for (const json& p : wk.value("route",json::array())){
                 k.route.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
             }

@@ -174,6 +174,43 @@ int RoadVertexOwner(const ChasmWorld& w, int v){
     return w.picker->PlotQuadCorner(v,0) / 4;
 }
 
+#define STAKE_HEIGHT        0.60f
+#define STAKE_THICK         0.07f
+#define STAKE_SINK          0.10f   //into the ground
+#define STAKE_TIE           0.45f   //where the cord is tied, up the stake
+#define STAKE_CORD          0.025f
+#define STAKE_RIBBON        0.16f   //a ribbon of colour at the top, so a line of stakes is seen
+
+/*
+    A planned road plot (line_works_plan.md): a stake at its vertex with a ribbon on top, and a cord from
+    it out to the midpoint of each edge the road will take - toward a road plot beside it, planned or
+    laid, or a standing bridge. Between two stakes each draws its half, meeting halfway up; toward a laid
+    road the cord comes down to the ground at the midpoint, where that road's surface begins.
+*/
+void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    const vec2 c = pos[v];
+    float y0 = w.terrain->GroundHeight(c,w.terrain->Height(v));
+    Bar(out,vec3(c.x,y0 - STAKE_SINK,c.y),vec3(c.x,y0 + STAKE_HEIGHT,c.y),STAKE_THICK,PAL_TIMBER);
+    Bar(out,vec3(c.x,y0 + STAKE_HEIGHT - STAKE_RIBBON,c.y),vec3(c.x,y0 + STAKE_HEIGHT + 0.01f,c.y),
+        STAKE_THICK * 1.6f,PAL_ACCENT);
+    vec3 tie(c.x,y0 + STAKE_TIE,c.y);
+    int nb[ROAD_MAX_NEIGHBOURS];
+    int n = ZonePlotNeighbours(w,v,nb,ROAD_MAX_NEIGHBOURS);
+    for (int i = 0; i < n; i++){
+        int u = nb[i];
+        bool f_planned = ZoneRoadPlanned(z,u);
+        if (!f_planned && !ZoneRoadStands(z,u)){
+            continue;
+        }
+        vec2 mid = (c + pos[u]) * 0.5f;
+        float ground_mid = w.terrain->GroundHeight(mid,w.terrain->Height(v));
+        float y_mid = f_planned ? (tie.y + w.terrain->GroundHeight(pos[u],w.terrain->Height(u)) + STAKE_TIE) * 0.5f
+                                : ground_mid + ROAD_LIFT;
+        Bar(out,tie,vec3(mid.x,y_mid,mid.y),STAKE_CORD,PAL_WALL);
+    }
+}
+
 }
 
 void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
@@ -187,6 +224,12 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
 
     for (int k = 0; k < 4; k++){
         int v = quad.v[k];
+        if (ZoneRoadPlanned(z,v)){
+            if (RoadVertexOwner(w,v) == fine_quad){
+                BuildRoadStake(w,z,v,out);
+            }
+            continue;
+        }
         bool f_road = ZoneRoadStands(z,v);
         if ((!f_road && !ZoneEnclosesGround(z.ground[v])) || RoadVertexOwner(w,v) != fine_quad){
             continue;
@@ -319,8 +362,8 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
     }
 }
 
-bool RoadNear(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& p, float clearance){
-    if (z.ground[plot] == ZONE_GROUND_ROAD){
+bool RoadNear(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& p, float clearance, bool f_line_only){
+    if (ZoneRoadLaid(z,plot) && !f_line_only){
         return true;
     }
     //Every road vertex whose drawing can reach plot `plot`: its own corners' neighbours, one cell out.
@@ -330,7 +373,7 @@ bool RoadNear(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& p, 
         const GridQuad& q = w.grid->fine.quads[picker.PlotQuadCorner(plot,i) / 4];
         for (int k = 0; k < 4; k++){
             int v = q.v[k];
-            if (z.ground[v] != ZONE_GROUND_ROAD){
+            if (!ZoneRoadLaid(z,v)){
                 continue;
             }
             RoadCentreLine(w,z,v,segs);

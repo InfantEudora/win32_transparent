@@ -39,7 +39,7 @@ void ApplicationChasm::TickEconomy(){
     for (int plot : economy.Raises()){
         f_raised = zones.Apply(ZONE_OP_BUILD_RAISE,(uint32_t)plot) || f_raised;
     }
-    //Gardens and lots the builders finished: their walls go up.
+    //Gardens and lots the builders finished: their walls go up. Roads laid (line_works_plan.md).
     for (int plot : economy.GroundRaises()){
         f_raised = zones.Apply(ZONE_OP_GROUND_RAISE,(uint32_t)plot) || f_raised;
     }
@@ -72,8 +72,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         int32_t who[6] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,k.age,(int32_t)k.f_indoors,(int32_t)k.f_female};
         h.Bytes(who,sizeof(who));
         h.Bytes(k.skills,sizeof(k.skills));
-        int32_t head[10] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
-                            (int32_t)k.site};
+        int32_t head[11] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
+                            (int32_t)k.site,k.stint};
         h.Bytes(head,sizeof(head));
         h.Bytes(&k.along,sizeof(k.along));
         h.Bytes(&k.pos,sizeof(k.pos));
@@ -135,7 +135,10 @@ json WorkerJson(const EconomyWorker& k){
         j["store"] = k.store;
     }
     if (k.site && EconomyIsGroundSite(k.site)){
-        j["ground_site"] = EconomyGroundSitePlot(k.site);   //a garden or lot plot
+        j["ground_site"] = EconomyGroundSitePlot(k.site);   //a garden, lot or road plot
+        if (k.stint){
+            j["stint"] = k.stint;
+        }
     }else if (k.site){
         j["site"] = k.site;
     }
@@ -426,6 +429,18 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             result["sites"] = sites;
+            //The road works (line_works_plan.md): plots still to lay, the people out on them, trees felled.
+            int planned = 0;
+            int laid = 0;
+            for (size_t v = 0; v < z->ground.size(); v++){
+                planned += ZoneRoadPlanned(*z,(int)v) ? 1 : 0;
+                laid += ZoneRoadLaid(*z,(int)v) ? 1 : 0;
+            }
+            int on_roads = 0;
+            for (const EconomyWorker& k : e->workers){
+                on_roads += (k.state == WORKER_TO_ROAD || k.state == WORKER_CLEARING || k.state == WORKER_LAYING) ? 1 : 0;
+            }
+            result["roads"] = json{{"planned",planned},{"laid",laid},{"people_on_them",on_roads}};
             int housed = 0;
             int employed = 0;
             for (const EconomyWorker& k : e->workers){

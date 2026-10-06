@@ -113,7 +113,7 @@ together.
 | Step | What | State |
 |---|---|---|
 | 1 | The tool: drag, preview, release, cancel - for roads; debug and play still lay them at once | BUILT 2026-10-06 |
-| 2 | Road sites: `ZoneRoadStands` (+ `ground_built`), the staked look, the clearing + laying errand, saves, replay test with a road through a forest edge | planned |
+| 2 | Road sites: `ZoneRoadStands` (+ `ground_built`), the staked look, the clearing + laying errand, saves, replay test with a road through a forest edge | BUILT 2026-10-06 |
 | 3 | Walls: the kind, its rules, walkers closed where it stands, the palisade mesh and gates, its wood | planned |
 | 4 | Building sites fell their trees first | planned |
 | later | A bridge's chain drawn freehand with the same stroke (dry bank, wet run, dry bank) - c4's suggestion | idea |
@@ -161,3 +161,53 @@ Files: `ApplicationChasmRoads.cpp` (`UpdateLineDrag`, `PlaceLine`, `DropLine`, `
   whole; drawing back shortened it (7 -> 6 -> 5 -> 3); a right press dropped a line and placed nothing;
   in play the ghost showed the line green with the camp's plots red, and release laid the road round the
   camp with the refusal above the bar. Replay test PASS (debug).
+
+### Step 2: roads as sites, cleared and laid by the idle (2026-10-06)
+
+Files: `Zones.*` (`ZoneRoadLaid`, `ZoneRoadPlanned`, `ZoneRoadStands` laid-only, the paint and raise ops,
+gates and arches), `Economy.*` (the errand), `RoadMesh.*` (the stakes, `ROAD_PROP_CLEARANCE`, `RoadNear`
+laid-only), `ZoneMesh.cpp`, `ApplicationChasm.cpp` (`PropHidden`, the felled logs, the save flag,
+`chasm_pick trees_within`), `ApplicationChasmEconomy.cpp` (hash, `chasm_economy` `roads`),
+`ApplicationChasmWorkersView.cpp`, `ApplicationChasmRoads.cpp` (`chasm_road play:true`), `ChasmSave.cpp`
+(`stint`), `tools/chasm_replay_test.py`.
+
+- **The zones.** A road painted with the play flag has `ground_built` 0. `ZoneRoadPlanned` is such a plot,
+  `ZoneRoadLaid` a built one, and `ZoneRoadStands` - what walking and the drawn road go by - is now laid
+  roads and standing bridges only. Gates (`ZoneGateOf`) and arches open only on laid roads. The rules
+  still test the painted ground, so a planned road holds its plot. `ZONE_OP_GROUND_RAISE` lays a road plot
+  as it builds a garden's wall; a DEBUG paint over a planned road lays it at once (as a debug click
+  finishes a building's site). A save marks it with `ZONE_GROUND_SAVED_SITE` like a garden site.
+- **The errand.** An idle person at home looks for wood to carry first (`FindSiteWork`); with none, for road
+  work (`FindRoadWork`): the planned plots nearest him that nobody else is on, and at the first he can walk
+  to, the nearest standing tree in its way nobody is after - else, with none standing, the plot to lay.
+  States `WORKER_TO_ROAD`, `WORKER_CLEARING` (`ECONOMY_FELL_SECONDS` at his pace), `WORKER_LAYING`
+  (`ECONOMY_LAY_SECONDS`, 4, at his pace); the pace of the jobless is strength, a woodcutter's skill. His
+  `site` is `ECONOMY_SITE_GROUND | plot`, as a ground site's carrier's is; a road's `SiteNeed` is 0, so the
+  wood errand never takes one. After each piece he takes the next within `ECONOMY_ROAD_REACH` (10) of him,
+  up to `ECONOMY_ROAD_STINT` (8) pieces a trip (`stint`, saved and hashed), then goes home - and goes home
+  at once if he was given a job meanwhile.
+- **Trees in the way** (`Economy::RoadTrees`): standing trees on the plot's own ground within
+  `ECONOMY_ROAD_VERGE` (the view's `ROAD_PROP_CLEARANCE`, 1.3, + 0.4 for the curve inside a corner) of its
+  WHOLE edges to the road plots beside it, planned or laid, and standing bridges - or of its vertex alone.
+  Felled, a tree is `PROP_STATE_LOG` and lies there; woodcutters already take lying logs before trees.
+  Laying checks again, so a neighbour painted meanwhile cannot leave a tree under the road.
+- **The look.** A planned plot is a stake with a red ribbon at its vertex and a cord out to each edge toward
+  a road plot (to the next stake, or down to a laid road at its edge's midpoint) - a line of them reads as
+  a road pegged out. Its trees, bushes and rocks stand until it is laid; then the view's verge hides them
+  as before (`RoadNear` laid-only). A felled tree's stump under a laid road's verge is hidden; its LOG is
+  always drawn, and if the way it fell puts it on the road it is dragged off along its line until its near
+  end and middle are clear (`RoadNear` with `f_line_only` - a whole road plot counting as near hid nothing
+  useful here). A clearing or laying worker bobs like a woodcutter at work.
+- **Tools.** `chasm_road play:true` plans a road; `chasm_economy` reports `roads` (planned, laid,
+  `people_on_them`) and a road worker's `ground_site` and `stint`; `chasm_pick trees_within` lists the trees
+  round a point with their state.
+- **Measured** (debug, seed 1, 3x): two lines of 29 plots on open ground by the camp, laid by up to ten of
+  the idle in about 16 s; a 16-plot road through four oaks - every oak felled to a log, the road laid. The
+  replay test now plans a 17-plot road through those oaks BEFORE its save, so the save catches settlers
+  mid-errand and both replays must match tick by tick; afterwards it must be laid with all four felled.
+  PASS (debug), also with window 39's one-lot-per-woodcutter fix. Release not run.
+
+**Open:**
+- Erasing a planned road loses nothing (no wood), but trees already felled for it stay felled.
+- The economy fells a little wider than the view hides, so a stump can stand just off a laid road.
+- No priorities between road work and anything else: wood carrying always comes first.

@@ -2,6 +2,7 @@
 #include "Calendar.h"
 #include "ChasmWorld.h"
 #include "Walkers.h"
+#include "RoadMesh.h"
 #include <algorithm>
 #include <cmath>
 
@@ -38,6 +39,9 @@ const char* EconomyWorkerStateName(int state){
         case WORKER_FETCHING:   return "fetching";
         case WORKER_TO_SITE:    return "to_site";
         case WORKER_BUILDING:   return "building";
+        case WORKER_TO_ROAD:    return "to_road";
+        case WORKER_CLEARING:   return "clearing";
+        case WORKER_LAYING:     return "laying";
         default:                return "?";
     }
 }
@@ -724,11 +728,16 @@ void Economy::Derive(const ZoneState& z, bool f_share){
     */
     state.ground_site.resize(z.ground.size(),0);
     ground_sites.clear();
+    road_sites.clear();
     for (size_t v = 0; v < z.ground.size(); v++){
         if (ZoneEnclosesGround(z.ground[v]) && !z.ground_built[v] && z.storeys[v] == 0){
             ground_sites.push_back((int)v);
         }else{
             state.ground_site[v] = 0;
+            //The roads still to lay (line_works_plan.md): work, not wood, so not among the sites above.
+            if (ZoneRoadPlanned(z,(int)v)){
+                road_sites.push_back((int)v);
+            }
         }
     }
     //What stands of each building, and what is still to build (Zones.h, CONSTRUCTION).
@@ -782,20 +791,34 @@ void Economy::Derive(const ZoneState& z, bool f_share){
         state.room[id] = (int)std::floor(ZoneBuildingFigures(w,z,(uint32_t)id).floor_area * ECONOMY_STORE_ROOM);
     }
     /*
-        A woodcutter's woodpile: on a lot that stands beside his hut - of all his plots' lots, the lowest
-        plot index (ZoneLotBeside), so the view puts the logs where he puts them.
+        A woodcutter's woodpile: on a lot plot that stands beside his hut, ONE TO A WOODCUTTER - given out
+        in building-id order, each taking the lowest plot beside any of his plots that nobody before him
+        has, so two huts round one lot never pile on the same spot (the zones refuse a new hut without a
+        lot of its own; this settles the rest - an older pair, a lot erased). The view draws the logs on
+        the same plot. A woodcutter left without one fells nothing, and his card says so.
     */
     state.pile_plot.assign(n,-1);
     pile_door.assign(n,-1);
+    std::vector<uint8_t> lot_used(z.ground.size(),0);
     for (size_t id = 1; id < n; id++){
         if (z.buildings[id].kind != ZONE_KIND_WOODCUTTER || z.buildings[id].size <= 0){
             continue;
         }
         for (int v : plots_of[id]){
-            int lot = ZoneLotBeside(w,z,v,true);
-            if (lot >= 0 && (state.pile_plot[id] < 0 || lot < state.pile_plot[id])){
-                state.pile_plot[id] = lot;
+            int nb[8];
+            int k = ZonePlotNeighbours(w,v,nb,8);
+            for (int j = 0; j < k; j++){
+                int o = nb[j];
+                if (z.ground[o] != ZONE_GROUND_LOT || !z.ground_built[o] || z.storeys[o] > 0 || lot_used[o]){
+                    continue;
+                }
+                if (state.pile_plot[id] < 0 || o < state.pile_plot[id]){
+                    state.pile_plot[id] = o;
+                }
             }
+        }
+        if (state.pile_plot[id] >= 0){
+            lot_used[state.pile_plot[id]] = 1;
         }
         //The yard's door: of his hut's plots beside the pile's lot, the lowest (plots_of is in index order).
         for (int v : plots_of[id]){
@@ -935,7 +958,7 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
             continue;
         }
         if (k.state != WORKER_TO_WORK && k.state != WORKER_TO_STORE && k.state != WORKER_TO_HOME
-            && k.state != WORKER_TO_FETCH && k.state != WORKER_TO_SITE){
+            && k.state != WORKER_TO_FETCH && k.state != WORKER_TO_SITE && k.state != WORKER_TO_ROAD){
             continue;
         }
         if (Arrived(k)){
@@ -944,8 +967,10 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
         vec2 goal = k.route.back();
         GridPick at = state.world->picker->Pick(goal);
         int goal_plot = at.f_hit ? at.plot : -1;
-        if (k.state == WORKER_TO_WORK && k.prop >= 0){
+        if ((k.state == WORKER_TO_WORK || k.state == WORKER_TO_ROAD) && k.prop >= 0){
             goal_plot = state.world->forest->props[k.prop].plot;
+        }else if (k.state == WORKER_TO_ROAD){
+            goal_plot = EconomyGroundSitePlot(k.site);
         }else if (k.state == WORKER_TO_STORE && k.store < plots_of.size() && !plots_of[k.store].empty()){
             //Re-chosen at arrival if it no longer takes his load; until then, the plot he was making for.
             goal_plot = at.f_hit ? at.plot : plots_of[k.store].front();
@@ -1125,8 +1150,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 break;
             }
             if (k.job == WORKER_JOB_NONE){
-                //Nothing of his own to do: he carries wood to a construction that wants it.
-                FindSiteWork(k,z,walkers);
+                //Nothing of his own to do: he carries wood to a construction that wants it - or, with no
+                //wood to carry, goes out to clear and lay a planned road (line_works_plan.md).
+                if (!FindSiteWork(k,z,walkers)){
+                    FindRoadWork(k,z,walkers,false);
+                }
                 break;
             }
             if (!k.house){
@@ -1305,6 +1333,70 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             k.site = 0;
             GoHome(k,z,walkers);
             break;
+        //--- Road works (line_works_plan.md) ---
+        case WORKER_TO_ROAD:{
+            Walk(k,dt);
+            if (!Arrived(k)){
+                break;
+            }
+            int v = EconomyGroundSitePlot(k.site);
+            if (!SiteAlive(z,k.site)){
+                NextRoadWork(k,z,walkers);      //erased, or laid by other hands, while he walked
+                break;
+            }
+            if (k.prop >= 0){
+                if (state.prop_state[k.prop] == PROP_STATE_STANDING){
+                    k.state = WORKER_CLEARING;
+                    k.timer = SecondsToTicks(ECONOMY_FELL_SECONDS / pace);
+                }else{
+                    NextRoadWork(k,z,walkers);  //a woodcutter was quicker
+                }
+                break;
+            }
+            //To lay it: only with nothing of its way still standing - a neighbour painted since may have
+            //brought a tree into it.
+            std::vector<int> trees;
+            RoadTrees(z,v,trees);
+            if (!trees.empty()){
+                NextRoadWork(k,z,walkers);
+                break;
+            }
+            k.state = WORKER_LAYING;
+            k.timer = SecondsToTicks(ECONOMY_LAY_SECONDS / pace);
+            break;
+        }
+        case WORKER_CLEARING:
+            if (--k.timer > 0){
+                break;
+            }
+            //Felled, and left where it fell: a log for a woodcutter to fetch, the road's way clear of it.
+            if (k.prop >= 0 && state.prop_state[k.prop] == PROP_STATE_STANDING){
+                state.prop_state[k.prop] = PROP_STATE_LOG;
+                state.felled_version++;
+                state.version++;
+            }
+            k.prop = -1;
+            k.stint++;
+            NextRoadWork(k,z,walkers);
+            break;
+        case WORKER_LAYING:{
+            if (--k.timer > 0){
+                break;
+            }
+            int v = EconomyGroundSitePlot(k.site);
+            std::vector<int> trees;
+            if (SiteAlive(z,k.site)){
+                RoadTrees(z,v,trees);
+            }
+            if (SiteAlive(z,k.site) && trees.empty()
+                && !std::count(ground_raises.begin(),ground_raises.end(),v)){
+                ground_raises.push_back(v);     //laid: the app raises it this tick (ZONE_OP_GROUND_RAISE)
+                state.version++;
+            }
+            k.stint++;
+            NextRoadWork(k,z,walkers);
+            break;
+        }
         default:
             k.state = WORKER_AT_HOME;
             break;
@@ -1434,11 +1526,11 @@ int EconomyGroundBrought(const EconomyState& e, int plot){
     return (plot >= 0 && plot < (int)e.ground_site.size()) ? e.ground_site[plot] : 0;
 }
 
-//A site that is still one: a building that has not gone, or a garden or lot plot still to build.
+//A site that is still one: a building that has not gone, or a garden, lot or road plot still to build.
 bool Economy::SiteAlive(const ZoneState& z, uint32_t id) const{
     if (EconomyIsGroundSite(id)){
         int v = EconomyGroundSitePlot(id);
-        return v >= 0 && v < (int)z.ground.size() && ZoneEnclosesGround(z.ground[v]) && !z.ground_built[v]
+        return v >= 0 && v < (int)z.ground.size() && z.ground[v] != ZONE_GROUND_NONE && !z.ground_built[v]
                && z.storeys[v] == 0;
     }
     return id && id < z.buildings.size() && z.buildings[id].size > 0;
@@ -1453,7 +1545,9 @@ int Economy::SiteBrought(uint32_t id) const{
 
 int Economy::SiteNeed(const ZoneState& z, uint32_t id) const{
     if (EconomyIsGroundSite(id)){
-        return SiteAlive(z,id) ? EconomyGroundWood(*state.world,EconomyGroundSitePlot(id)) : 0;
+        int v = EconomyGroundSitePlot(id);
+        //A road takes work, not wood (line_works_plan.md).
+        return (SiteAlive(z,id) && z.ground[v] != ZONE_GROUND_ROAD) ? EconomyGroundWood(*state.world,v) : 0;
     }
     if (id >= plots_of.size()){
         return 0;
@@ -1670,6 +1764,175 @@ void Economy::Build(const ZoneState& z, uint32_t id){
         raises.push_back(best);
         state.version++;
     }
+}
+
+//--- Road works (docs/line_works_plan.md) ------------------------------------------------------------
+
+namespace {
+
+//The verge a planned road's trees are felled from: the view's clearance (RoadNear hides what is nearer a
+//laid road) and a little over, for the curve the drawn road takes inside a corner of its edges.
+#define ECONOMY_ROAD_VERGE  (ROAD_PROP_CLEARANCE + 0.4f)
+
+float SegmentDistance2D(const vec2& p, const vec2& a, const vec2& b){
+    vec2 d = b - a;
+    float len2 = d.dot(d);
+    float t = (len2 > 1e-9f) ? std::max(0.0f,std::min(1.0f,(p - a).dot(d) / len2)) : 0.0f;
+    return (p - (a + d * t)).length();
+}
+
+}
+
+/*
+    The standing trees in the way of road plot v: within ECONOMY_ROAD_VERGE of its edges toward the road
+    plots beside it - planned or laid - and standing bridges, or of its vertex alone, and on its own
+    ground (not up or down a cliff). The edges WHOLE, not halves to their midpoints: the neighbour's half is
+    felled for it too, which costs nothing, and leaves no tree under a road drawn later from that side.
+    In bucket and index order, so the same trees in the same order every run.
+*/
+void Economy::RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const{
+    out.clear();
+    const ChasmWorld& w = *state.world;
+    if (!w.forest || tree_nx == 0 || v < 0 || v >= (int)z.ground.size()){
+        return;
+    }
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    const vec2 c = pos[v];
+    std::vector<vec2> ends;
+    float reach = 0.0f;
+    int nb[8];
+    int n = ZonePlotNeighbours(w,v,nb,8);
+    for (int i = 0; i < n; i++){
+        int u = nb[i];
+        if (z.ground[u] == ZONE_GROUND_ROAD || ZoneBridgeWalkable(z,u)){
+            ends.push_back(pos[u]);
+            reach = std::max(reach,(pos[u] - c).length());
+        }
+    }
+    if (ends.empty()){
+        ends.push_back(c);
+    }
+    reach += ECONOMY_ROAD_VERGE;
+    const std::vector<PropInstance>& props = w.forest->props;
+    int x0 = std::max(0,(int)((c.x - reach - tree_origin.x) / tree_cell));
+    int x1 = std::min(tree_nx - 1,(int)((c.x + reach - tree_origin.x) / tree_cell));
+    int z0 = std::max(0,(int)((c.y - reach - tree_origin.y) / tree_cell));
+    int z1 = std::min(tree_nz - 1,(int)((c.y + reach - tree_origin.y) / tree_cell));
+    for (int bz = z0; bz <= z1; bz++){
+        for (int bx = x0; bx <= x1; bx++){
+            int b = bz * tree_nx + bx;
+            for (int j = tree_start[b]; j < tree_start[b + 1]; j++){
+                int i = tree_items[j];
+                const PropInstance& pr = props[i];
+                if (state.prop_state[i] != PROP_STATE_STANDING || pr.plot < 0 || !w.terrain->SameGround(pr.plot,v)){
+                    continue;
+                }
+                vec2 p(pr.pos.x,pr.pos.z);
+                for (const vec2& e : ends){
+                    if (SegmentDistance2D(p,c,e) < ECONOMY_ROAD_VERGE){
+                        out.push_back(i);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*
+    An idle person's other errand: a planned road. Of its plots still to lay, the nearest him by the
+    straight line (the lower index on a tie) - from home, any; on a stint, only within ECONOMY_ROAD_REACH
+    of where he stands, so he works along the line rather than across the map. At it, the piece to do: the
+    nearest standing tree in its way that nobody is after; with none left standing, the plot itself to lay,
+    if nobody is laying it. The first few he can walk to; a tree he walks to the foot of, on his side.
+*/
+bool Economy::FindRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_stint){
+    if (road_sites.empty()){
+        return false;
+    }
+    const ChasmWorld& w = *state.world;
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    std::vector<int> taken_trees;
+    std::vector<int> taken_plots;
+    for (const EconomyWorker& o : state.workers){
+        if (&o == &k){
+            continue;
+        }
+        if (o.prop >= 0){
+            taken_trees.push_back(o.prop);      //a woodcutter's, or another road worker's
+        }
+        if ((o.state == WORKER_TO_ROAD && o.prop < 0) || o.state == WORKER_LAYING){
+            taken_plots.push_back(EconomyGroundSitePlot(o.site));
+        }
+    }
+    std::vector<std::pair<float,int>> found;
+    for (int v : road_sites){
+        if (std::count(ground_raises.begin(),ground_raises.end(),v)){
+            continue;       //laid this tick; the zones have not caught up yet
+        }
+        float d = (pos[v] - k.pos).length();
+        if (!f_stint || d <= ECONOMY_ROAD_REACH){
+            found.push_back(std::make_pair(d,v));
+        }
+    }
+    std::sort(found.begin(),found.end());
+    std::vector<int> trees;
+    int tried = 0;
+    for (size_t t = 0; t < found.size() && t < 12 && tried < 4; t++){
+        int v = found[t].second;
+        RoadTrees(z,v,trees);
+        int tree = -1;
+        float best = 1e30f;
+        for (int i : trees){
+            if (std::find(taken_trees.begin(),taken_trees.end(),i) != taken_trees.end()){
+                continue;
+            }
+            const PropInstance& pr = w.forest->props[i];
+            float d = (vec2(pr.pos.x,pr.pos.z) - k.pos).length();
+            if (d < best){
+                best = d;
+                tree = i;
+            }
+        }
+        int to_plot = v;
+        vec2 to = pos[v];
+        if (tree >= 0){
+            const PropInstance& pr = w.forest->props[tree];
+            vec2 at(pr.pos.x,pr.pos.z);
+            vec2 d = at - k.pos;
+            float l = d.length();
+            to = (l > 0.8f) ? at - d * (0.6f / l) : at;
+            to_plot = pr.plot;
+        }else if (!trees.empty() || std::find(taken_plots.begin(),taken_plots.end(),v) != taken_plots.end()){
+            continue;   //its trees all being felled by others, or somebody is laying it
+        }
+        tried++;
+        if (RouteTo(k,z,walkers,to_plot,to)){
+            k.site = ECONOMY_SITE_GROUND | (uint32_t)v;
+            k.prop = tree;
+            k.store = 0;
+            k.state = WORKER_TO_ROAD;
+            if (!f_stint){
+                k.stint = 0;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    A piece of road work done (or found done by others): the next along the line while his trip lasts, home
+    after - and home at once if he was given a job meanwhile, as a carrier finishes his errand and stops.
+*/
+void Economy::NextRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    k.prop = -1;
+    if (k.job == WORKER_JOB_NONE && k.stint < ECONOMY_ROAD_STINT && FindRoadWork(k,z,walkers,true)){
+        return;
+    }
+    k.site = 0;
+    k.stint = 0;
+    GoHome(k,z,walkers);
 }
 
 //--- Saves -----------------------------------------------------------------------------------------

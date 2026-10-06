@@ -86,6 +86,15 @@ class Walkers;
     A new colony's camp holds the SUPPLIES the settlers brought (ECONOMY_START_*), so the first
     buildings can go up before there is a woodcutter.
 
+    --- ROAD WORKS (docs/line_works_plan.md) ----------------------------------------------------------
+    A ROAD painted in play is a site as well (ZoneRoadPlanned), and costs no wood - only work. When an idle
+    person finds no wood to carry, he goes out to the nearest plot of a planned road nobody else is on: a
+    standing tree in its way first (RoadTrees), FELLED at his pace - strength, a woodcutter's skill - into
+    a log left lying where it fell, for a woodcutter to fetch; then, nothing of it standing, he LAYS the
+    plot (ECONOMY_LAY_SECONDS at his pace), which goes down through ZONE_OP_GROUND_RAISE like a garden's
+    wall. His `site` names the plot as a ground site does. Done with a piece, he takes the next one along
+    the line within ECONOMY_ROAD_REACH of him, up to ECONOMY_ROAD_STINT pieces a trip, and goes home.
+
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
     a world): standing, felled with its log lying, or a stump with the log taken. Saved and hashed.
@@ -110,6 +119,9 @@ class Walkers;
 #define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area: about 8 a plot
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
 #define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence: about 2 a plot
+#define ECONOMY_LAY_SECONDS         4.0f    //laying a road plot, at the worker's pace
+#define ECONOMY_ROAD_STINT          8       //pieces of road work - a tree felled, a plot laid - a trip
+#define ECONOMY_ROAD_REACH          10.0f   //how far from him the next piece of a stint may be
 //A worker's `site` naming a garden or lot plot rather than a building (the plot in the low bits).
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
@@ -151,6 +163,9 @@ const char* SkillName(int skill);
 #define WORKER_FETCHING         8       //picking it up (timer)
 #define WORKER_TO_SITE          9       //carrying it to the site
 #define WORKER_BUILDING         10      //building with it (timer)
+#define WORKER_TO_ROAD          11      //idle, walking to a planned road (`site`): to a tree in its way (`prop`), or to lay it
+#define WORKER_CLEARING         12      //felling that tree (timer); it is left lying as a log
+#define WORKER_LAYING           13      //laying the plot (timer)
 
 /*
     A PERSON, and what he is doing. Who he is: an id (from 1, never reused), a family, the house the
@@ -173,6 +188,7 @@ struct EconomyWorker{
     int carry_good = -1;
     int carry = 0;
     int timer = 0;              //ticks left of WORKING or UNLOADING
+    int stint = 0;              //road work: the pieces done on this trip (ECONOMY_ROAD_STINT)
     /*
         The route: points on the ground plane (x, world z), walked from route[seg] to route[seg + 1],
         `along` the distance down that leg, each leg at its speed (world units a second). The last
@@ -247,6 +263,7 @@ private:
     std::vector<int> raises;                    //this tick's, in the order built
     std::vector<int> ground_raises;
     std::vector<int> ground_sites;              //the garden and lot plots still to build, in index order (derived)
+    std::vector<int> road_sites;                //the road plots still to lay, in index order (derived)
     std::vector<int> pile_door;                 //by building id: the hut plot beside its woodpile, -1 none (derived)
     bool f_new_colony = false;                  //Reset, not Restore: the camp gets its supplies
     std::vector<uint8_t> stands;                //by building id: something of it is built (derived)
@@ -295,6 +312,11 @@ private:
     int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Build(const ZoneState& z, uint32_t id);
+    //Road works: the standing trees in a planned road plot's way, the next piece to do (from home, or
+    //on a stint - near where he stands), and what he does when a piece is done.
+    void RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const;
+    bool FindRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_stint);
+    void NextRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
 };
 
 //A published state as a save holds it - any thread.

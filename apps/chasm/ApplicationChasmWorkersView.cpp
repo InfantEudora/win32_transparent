@@ -178,7 +178,9 @@ void ApplicationChasm::UploadWorkers(){
         //On the ground of the plot he stands on.
         GridPick pick = w->picker->Pick(k.pos);
         float y = pick.f_hit ? w->terrain->GroundHeight(k.pos,w->terrain->Height(pick.plot)) : 0.0f;
-        if ((k.job == WORKER_JOB_WOODCUTTER && k.state == WORKER_WORKING) || k.state == WORKER_BUILDING){
+        //Felling, building, and on a road (line_works_plan.md) felling its trees or laying it.
+        if ((k.job == WORKER_JOB_WOODCUTTER && k.state == WORKER_WORKING) || k.state == WORKER_BUILDING
+            || k.state == WORKER_CLEARING || k.state == WORKER_LAYING){
             //Each worker on his own beat, so two at one tree (or one site) do not swing as one.
             float phase = seconds * WORKER_CHOP_RATE + (float)i * 0.37f;
             y += WORKER_CHOP_BOB * fabsf(sinf(phase * 3.1415927f));

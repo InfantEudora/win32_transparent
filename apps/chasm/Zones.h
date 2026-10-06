@@ -46,7 +46,8 @@
       - A road and a building never share a plot (step 10): a building hides a garden, but would cut
         a road.
       - A road is not painted over a garden or lot: it stops at the edge, where it makes a gate.
-      - A new WOODCUTTER needs a lot on a plot beside it: that is where his woodpile goes (Economy).
+      - A new WOODCUTTER needs a lot of its own on a plot beside it - one no other woodcutter stands
+        beside (ZoneLotTaken): that is where his woodpile goes (Economy), one lot plot to a woodcutter.
       - Not too steep (biomes_plan.md step 2): the ground may rise only so much across a plot (a road's
         limit is twice a house's) or a field's cell - ZONE_RISE_* in Zones.cpp. Not on the mountain.
       - A house is at most ZONE_HOUSE_MAX_PLOTS plots, since it holds one family.
@@ -69,8 +70,11 @@
     raise it, a storey at a time (ZONE_OP_BUILD_RAISE), as the wood for it comes in. What a building
     does - its room, who it houses, whether it is worked - goes by what stands (ZoneBuildingFigures).
     A garden or a lot painted in play is a site the same way (`ground_built[v]` 0) until its wood is
-    brought (ZONE_OP_GROUND_RAISE); until then it has no wall and encloses nothing. Roads and fields
-    cost nothing and are there at once.
+    brought (ZONE_OP_GROUND_RAISE); until then it has no wall and encloses nothing. A ROAD painted in
+    play is a site too (docs/line_works_plan.md), costing no wood: the idle fell the trees in its way and
+    lay it, a plot at a time, through the same op. Until it is laid it holds its plot - the rules see a
+    road there - but nothing else does: it is walked as open ground, opens no gate, makes no arch and is
+    drawn as stakes (ZoneRoadLaid). Fields cost nothing and are there at once.
 
     A ZoneState is immutable once published (Zones::Publish), the way the world is, and carries the
     world it was painted on: a new map makes every index in it meaningless.
@@ -211,7 +215,7 @@ struct ZoneState{
     std::vector<uint8_t> storeys;               //per fine vertex: 0 with no building
     std::vector<uint8_t> standing;              //per fine vertex: of those, how many are built - the rest a site's
     std::vector<uint8_t> ground;                //per fine vertex, ZONE_GROUND_*
-    std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden or lot still a site
+    std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden, lot or road still a site
     std::vector<uint32_t> field;                //per coarse quad: the field it is part of, 0 none
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
@@ -290,9 +294,11 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& z);
 //`why` may be NULL. A building of `kind` on `plot`; it joins `joining` (an id, or 0 for a new one).
 bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining, const char** why);
 //A lot's plot with nothing built on it, beside plot v - where a woodcutter on v may pile. -1 if none;
-//the lowest index of them, so the rule, the economy and the look all pick the same one. `f_built`:
-//only a lot that stands (the pile's), not one still a site (enough for the rule - it will stand).
-int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built);
+//the lowest index of them. `f_built`: only a lot that stands (the pile's), not one still a site (enough
+//for the rule - it will stand). `f_free`: only one no woodcutter stands beside (ZoneLotTaken).
+int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built, bool f_free = false);
+//Whether a woodcutter other than building `except` stands beside lot plot `lot` - so it is his yard.
+bool ZoneLotTaken(const ChasmWorld& w, const ZoneState& z, int lot, uint32_t except);
 //Ground that encloses and is built: a wall or fence round it, walked round (ZoneBoundaryBetween).
 inline bool ZoneGroundStands(const ZoneState& z, int v){
     return ZoneEnclosesGround(z.ground[v]) && z.ground_built[v];
@@ -345,14 +351,22 @@ bool ZoneBridgeChain(const ChasmWorld& w, const ZoneState& z, int from, int to, 
 inline bool ZoneBridgeWalkable(const ZoneState& z, int v){
     return z.KindOf(v) == ZONE_KIND_BRIDGE && z.standing[v] > 0;
 }
+//A road plot that is LAID - not one still a site, planned in play (line_works_plan.md). Gates and arches.
+inline bool ZoneRoadLaid(const ZoneState& z, int v){
+    return z.ground[v] == ZONE_GROUND_ROAD && z.ground_built[v];
+}
 /*
-    A ROAD THAT STANDS, for walking and for a road's drawn shape: a road plot - or a standing bridge's,
-    which is a road over the water (bridge_plan.md), so a road runs onto it unbroken. Not for the rules
-    that mean "painted as road" (no house on one, no road twice): those test the ground itself.
-    (win32-transparent-cc's road sites will add that a planned road plot does not stand yet.)
+    A ROAD THAT STANDS, for walking and for a road's drawn shape: a laid road plot - or a standing
+    bridge's, which is a road over the water (bridge_plan.md), so a road runs onto it unbroken. Not for
+    the rules that mean "painted as road" (no house on one, no road twice): those test the ground
+    itself, and see a planned road as much as a laid one.
 */
 inline bool ZoneRoadStands(const ZoneState& z, int v){
-    return z.ground[v] == ZONE_GROUND_ROAD || ZoneBridgeWalkable(z,v);
+    return ZoneRoadLaid(z,v) || ZoneBridgeWalkable(z,v);
+}
+//A road plot still to be laid: painted in play, its trees perhaps still standing.
+inline bool ZoneRoadPlanned(const ZoneState& z, int v){
+    return z.ground[v] == ZONE_GROUND_ROAD && !z.ground_built[v];
 }
 
 //Plot v's neighbours along fine edges, each once, in a fixed order. Returns how many (at most `max`).
