@@ -209,9 +209,8 @@ void ApplicationChasm::UploadWalkers(){
         const Walker& k = ws->walkers[i];
         vec2 facing(0.0f,1.0f);
         vec2 p = Walkers::Position(*w,k,&facing);
-        int plot = k.path.empty() ? 0 : k.path[k.seg];
-        float level = w->terrain->Height(plot);
-        o->SetPosition(vec3(p.x,w->terrain->GroundHeight(p,level),p.y),false);
+        //On the ground of the plot it is at - or on a winch's rope, between the levels.
+        o->SetPosition(vec3(p.x,Walkers::Height(*w,k,p),p.y),false);
         o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),false);
         o->SetVisibility(true);
     }

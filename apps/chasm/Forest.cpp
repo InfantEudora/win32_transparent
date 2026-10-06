@@ -223,11 +223,14 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
         }
         float n = Noise(base.x / FOREST_SCALE,base.y / FOREST_SCALE,seed) * 0.75f +
                   Noise(base.x / FOREST_DETAIL,base.y / FOREST_DETAIL,seed + 7) * 0.25f;
-        //The chasm floor is a darker, sparser place; the shard top bare stone and scrub.
+        //The chasm floor is a darker, sparser place; an island's top bare stone and scrub, a
+        //balcony's a little less bare - it catches what falls from the rim.
         if (t.level[v] == TERRAIN_FLOOR){
             n -= 0.12f;
-        }else if (t.level[v] == TERRAIN_SHARD){
+        }else if (t.level[v] == TERRAIN_ISLAND){
             n -= 0.30f;
+        }else if (t.level[v] == TERRAIN_BALCONY){
+            n -= 0.20f;
         }
         float roll = Chance(seed,v,1);
         int kind = -1;

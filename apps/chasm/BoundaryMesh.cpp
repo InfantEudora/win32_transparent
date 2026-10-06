@@ -194,8 +194,13 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
     const int outline_edges[2] = {0,3};
     for (int e : outline_edges){
         int across = QuadAcross(w,fine_quad,e);
-        if (across >= 0 && z.field[g.fine.quads[across].parent]){
-            continue;   //field against field: no fence
+        uint32_t other = (across >= 0) ? z.field[g.fine.quads[across].parent] : 0;
+        if (other == z.field[cell]){
+            continue;   //inside one field: no fence
+        }
+        //Between two fields, one fence - drawn from the cell with the lower index.
+        if (other && g.fine.quads[across].parent < cell){
+            continue;
         }
         vec2 a = p[e];
         vec2 b = p[(e + 1) % 4];

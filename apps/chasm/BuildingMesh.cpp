@@ -18,6 +18,109 @@
 namespace {
 
 /*
+    EACH KIND'S LOOK (docs/buildings_plan.md): its walls, its roof, how often a ground-floor wall has a
+    door and how wide, whether it has windows above the ground floor and a chimney. Plaster houses
+    under red tile or shingle; a store of timber under slate, with wide doors and few windows; the
+    woodcutter's hut of dark planks under thatch; the water collector of stone under shingle.
+*/
+struct KindLook{
+    int wall;
+    int roof[2];            //a building's roof is one of these, by its id
+    int door_chance;        //one ground-floor wall in this many has a door
+    float door_w;
+    int window_every;       //a window on one wall in this many (1: all)
+    int chimney_chance;     //percent of plots
+};
+const KindLook kind_looks[ZONE_KIND_COUNT] = {
+    {PAL_WALL,{PAL_ROOF,PAL_TIMBER},DOOR_CHANCE,DOOR_W,1,0},           //none
+    {PAL_WALL,{PAL_ROOF,PAL_TIMBER},DOOR_CHANCE,DOOR_W,1,CHIMNEY_CHANCE},  //house
+    {PAL_TIMBER,{PAL_STONE_DARK,PAL_STONE_DARK},2,DOOR_W * 1.9f,3,0},     //store
+    {PAL_BARK_DARK,{PAL_FIELD,PAL_FIELD},3,DOOR_W * 1.4f,2,25},          //woodcutter
+    {PAL_STONE_LIGHT,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},               //water collector
+    {PAL_WALL,{PAL_ROOF,PAL_TIMBER},DOOR_CHANCE,DOOR_W,1,0},           //field: never a building on a plot
+    {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //winch: drawn by BuildWinch instead
+};
+
+/*
+    A beam from a to b on the ground plane, `thick` across, from y0 up by `height`: its two long sides,
+    its top, its bottom and its two ends. Posts, a deck, a gantry, a rope.
+*/
+void Beam(std::vector<vertex>& out, const vec2& a, const vec2& b, float y0, float height, float thick, int column){
+    vec2 dir = b - a;
+    float len = dir.length();
+    if (len < 1e-5f){
+        return;
+    }
+    dir = dir / len;
+    vec2 side(-dir.y * thick * 0.5f,dir.x * thick * 0.5f);
+    float y1 = y0 + height;
+    vec3 al(a.x + side.x,y0,a.y + side.y), ar(a.x - side.x,y0,a.y - side.y);
+    vec3 bl(b.x + side.x,y0,b.y + side.y), br(b.x - side.x,y0,b.y - side.y);
+    vec3 alt(al.x,y1,al.z), art(ar.x,y1,ar.z), blt(bl.x,y1,bl.z), brt(br.x,y1,br.z);
+    vec3 n_side(side.x,0.0f,side.y);
+    MeshQuad(out,al,bl,blt,alt,n_side,column);
+    MeshQuad(out,ar,br,brt,art,n_side * -1.0f,column);
+    MeshQuad(out,alt,blt,brt,art,vec3(0,1,0),column);
+    MeshQuad(out,al,ar,br,bl,vec3(0,-1,0),column);
+    MeshQuad(out,al,ar,art,alt,vec3(-dir.x,0.0f,-dir.y),column);
+    MeshQuad(out,bl,br,brt,blt,vec3(dir.x,0.0f,dir.y),column);
+}
+
+//An upright post of `w` square at p, from y0 to y1.
+void Upright(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column){
+    Beam(out,p - vec2(w * 0.5f,0.0f),p + vec2(w * 0.5f,0.0f),y0,y1 - y0,w,column);
+}
+
+#define WINCH_GANTRY_HEIGHT 2.6f    //above the rim's ground
+#define WINCH_GANTRY_SPAN   1.3f    //between its two posts
+#define WINCH_POST          0.16f
+
+/*
+    A WINCH (docs/buildings_plan.md step 2): a deck on the rim, a gantry of two posts and a crossbeam
+    standing at the lip, a jib from the crossbeam out over the cliff to above the landing, a rope from
+    it straight down to a basket resting on the balcony, and the winding drum in a shed behind. The
+    lip is halfway from the plot's vertex to its landing's - where the terrain cuts the cliff - so the
+    gantry stands on the edge and the rope clears the wall's strata, which stand out less than that.
+*/
+void BuildWinch(const ChasmWorld& w, int plot, std::vector<vertex>& out){
+    int landing = ZoneWinchLanding(w,plot);
+    if (landing < 0){
+        return;
+    }
+    const Terrain& t = *w.terrain;
+    vec2 p = w.grid->fine.pos[plot];
+    vec2 l = w.grid->fine.pos[landing];
+    vec2 dir = l - p;
+    float reach = dir.length();
+    if (reach < 1e-4f){
+        return;
+    }
+    dir = dir / reach;
+    vec2 side(-dir.y,dir.x);
+    float y0 = t.ground[plot];
+    float yl = t.ground[landing];
+    vec2 lip = p + dir * (reach * 0.5f);
+    float top = y0 + WINCH_GANTRY_HEIGHT;
+    //The deck, from behind the vertex to the lip.
+    Beam(out,p - dir * 0.9f,lip,y0 - 0.3f,0.42f,1.5f,PAL_TIMBER);
+    //The gantry: two posts at the lip, a crossbeam over them.
+    vec2 post_a = lip + side * (WINCH_GANTRY_SPAN * 0.5f);
+    vec2 post_b = lip - side * (WINCH_GANTRY_SPAN * 0.5f);
+    Upright(out,post_a,WINCH_POST,y0 - 0.3f,top,PAL_BARK);
+    Upright(out,post_b,WINCH_POST,y0 - 0.3f,top,PAL_BARK);
+    Beam(out,post_a + side * 0.1f,post_b - side * 0.1f,top - 0.18f,0.18f,0.18f,PAL_BARK);
+    //The jib, out to above the landing, and a brace back from it to the deck.
+    Beam(out,lip - dir * 0.2f,l + dir * 0.15f,top - 0.16f,0.16f,0.16f,PAL_BARK);
+    //The rope, and the basket at its foot.
+    Upright(out,l,0.05f,yl + 0.55f,top - 0.16f,PAL_BARK_DARK);
+    Beam(out,l - dir * 0.32f,l + dir * 0.32f,yl,0.55f,0.62f,PAL_TIMBER);
+    //The drum, in a little shed behind the deck.
+    vec2 shed = p - dir * 0.45f;
+    Beam(out,shed - side * 0.55f,shed + side * 0.55f,y0 - 0.3f,1.25f,0.9f,PAL_BARK_DARK);
+    Beam(out,shed - side * 0.65f,shed + side * 0.65f,y0 + 0.95f,0.14f,1.05f,PAL_STONE_DARK);
+}
+
+/*
     A window or door: a dark rectangle a hair in front of the wall a->b (facing `out`), centred at
     `t` along it, between heights y0 and y1.
 */
@@ -73,6 +176,13 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
     vec2 p[4];
     int s[4];
+    /*
+        Which building each corner is: a roof only runs on toward a corner of the SAME building (and
+        as tall), so two buildings side by side meet in a valley and each reads as its own. An arch
+        belongs to whichever it bridges between - it matches either side.
+    */
+    const uint32_t ARCH = 0xFFFFFFFFu;
+    uint32_t bid[4];
     int lo[4];      //the solid's bottom, half-storeys
     int hi[4];      //its top: the eave
     int foot[4];    //the ground it stands on
@@ -89,7 +199,18 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                 base = 1;
             }
         }
+        /*
+            A winch is not a house body: it is drawn on its own (BuildWinch), by the first cell round
+            its plot - and its corner counts as empty here, so the buildings beside it close their walls.
+        */
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_WINCH){
+            if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+                BuildWinch(w,v,out);
+            }
+            s[k] = 0;
+        }
         solid[k] = s[k] > 0;
+        bid[k] = (base > 0) ? ARCH : z.building[v];
         foot[k] = (int)std::lround(t.ground[v] / HALF);
         lo[k] = foot[k] + 2 * base;
         hi[k] = foot[k] + 2 * s[k];
@@ -99,8 +220,10 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     for (int k = 0; k < 4; k++){
         m[k] = (p[k] + p[(k + 1) % 4]) * 0.5f;
     }
-    bool f_all_same = solid[0] && solid[1] && solid[2] && solid[3] &&
-                      hi[0] == hi[1] && hi[1] == hi[2] && hi[2] == hi[3];
+    auto same = [&](int a, int b){
+        return solid[a] && solid[b] && hi[a] == hi[b] && (bid[a] == bid[b] || bid[a] == ARCH || bid[b] == ARCH);
+    };
+    bool f_all_same = same(0,1) && same(1,2) && same(2,3) && same(3,0);
 
     for (int k = 0; k < 4; k++){
         if (!solid[k]){
@@ -111,7 +234,19 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         int next = (k + 1) % 4;
         int prev = (k + 3) % 4;
         uint32_t look = MeshHash((uint32_t)plot,0x40115Eu);
-        int roof_column = ((look % 10) < 7) ? PAL_ROOF : PAL_TIMBER;
+        //An arch takes the look of the building beside it it is bridging from: the first solid
+        //corner of this cell that is a building.
+        uint32_t owner = bid[k];
+        for (int j = 0; j < 4 && owner == ARCH; j++){
+            if (solid[j] && bid[j] != ARCH){
+                owner = bid[j];
+            }
+        }
+        int kind = (owner != ARCH && owner < z.buildings.size()) ? z.buildings[owner].kind : ZONE_KIND_HOUSE;
+        const KindLook& kl = kind_looks[kind];
+        //One roof colour for a whole building, by its id.
+        uint32_t building_look = MeshHash(owner,0xB017D1u);
+        int roof_column = ((building_look % 10) < 7) ? kl.roof[0] : kl.roof[1];
 
         //--- The roof: the quarter P, M1, C, M0, each point at the eave or raised to the ridge ---
         //Raised where the house carries on past it at the same height: always over the plot's own
@@ -119,8 +254,8 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         //all four corners are. Each point is decided by the corners it lies between and nothing
         //else, so the cells on either side of it agree.
         vec3 P(p[k].x,eave + ROOF_RISE,p[k].y);
-        vec3 M1(m[k].x,eave + ((solid[next] && hi[next] == hi[k]) ? ROOF_RISE : 0.0f),m[k].y);
-        vec3 M0(m[prev].x,eave + ((solid[prev] && hi[prev] == hi[k]) ? ROOF_RISE : 0.0f),m[prev].y);
+        vec3 M1(m[k].x,eave + (same(k,next) ? ROOF_RISE : 0.0f),m[k].y);
+        vec3 M0(m[prev].x,eave + (same(k,prev) ? ROOF_RISE : 0.0f),m[prev].y);
         vec3 C(centre.x,eave + (f_all_same ? ROOF_RISE : 0.0f),centre.y);
         MeshTri(out,P,M1,C,up,roof_column);
         MeshTri(out,P,C,M0,up,roof_column);
@@ -180,13 +315,13 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                 float bottom = (from == foot[k]) ? from * HALF - HOUSE_FOOTING : from * HALF;
                 float top = to * HALF;
                 MeshQuad(out,vec3(a.x,bottom,a.y),vec3(b.x,bottom,b.y),vec3(b.x,top,b.y),vec3(a.x,top,a.y),
-                         outward,PAL_WALL);
+                         outward,kl.wall);
                 //The gable: where the ridge carries on along this edge's far end, the wall closes up to
                 //the roof's raised point rather than leaving a hole under it.
                 vec3 roof_a = (e == 0) ? M1 : C;
                 vec3 roof_b = (e == 0) ? C : M0;
                 if (to == hi[k] && (roof_a.y > eave || roof_b.y > eave)){
-                    MeshQuad(out,vec3(a.x,eave,a.y),vec3(b.x,eave,b.y),roof_b,roof_a,outward,PAL_WALL);
+                    MeshQuad(out,vec3(a.x,eave,a.y),vec3(b.x,eave,b.y),roof_b,roof_a,outward,kl.wall);
                 }
                 /*
                     A window on every storey of this house the piece shows whole; on the ground floor,
@@ -199,20 +334,22 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                         continue;
                     }
                     float floor_y = floor_half * HALF;
-                    bool f_door = (st == 0) && (f_into_arch ||
-                                  MeshHash((uint32_t)plot,(uint32_t)fine_quad,(uint32_t)e) % DOOR_CHANCE == 0);
+                    uint32_t wall_hash = MeshHash((uint32_t)plot,(uint32_t)fine_quad,(uint32_t)e);
+                    bool f_door = (st == 0) && (f_into_arch || wall_hash % (uint32_t)kl.door_chance == 0);
                     if (f_door){
-                        Opening(out,a,b,outward,0.5f,DOOR_W * 0.5f,floor_y,floor_y + DOOR_H,PAL_BARK_DARK);
-                    }else{
+                        Opening(out,a,b,outward,0.5f,kl.door_w * 0.5f,floor_y,floor_y + DOOR_H,
+                                (kl.wall == PAL_BARK_DARK) ? PAL_STONE_DARK : PAL_BARK_DARK);
+                    }else if ((wall_hash >> 8) % (uint32_t)kl.window_every == 0){
                         float y0 = floor_y + ZONE_STOREY_HEIGHT * WINDOW_SILL;
-                        Opening(out,a,b,outward,0.5f,WINDOW_W * 0.5f,y0,y0 + WINDOW_H,PAL_TIMBER);
+                        Opening(out,a,b,outward,0.5f,WINDOW_W * 0.5f,y0,y0 + WINDOW_H,
+                                (kl.wall == PAL_TIMBER) ? PAL_BARK_DARK : PAL_TIMBER);
                     }
                 }
             }
         }
 
-        //--- A chimney on some houses, built by one of the plot's quarters --------------------------
-        if (lo[k] == foot[k] && (look >> 8) % 100 < CHIMNEY_CHANCE){
+        //--- A chimney on some plots of a kind that has them, built by one of the plot's quarters ----
+        if (lo[k] == foot[k] && (look >> 8) % 100 < (uint32_t)kl.chimney_chance){
             int n = picker.PlotQuadCount(plot);
             int chosen = (int)((look >> 16) % (uint32_t)n);
             if (picker.PlotQuadCorner(plot,chosen) / 4 == fine_quad){

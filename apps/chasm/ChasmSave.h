@@ -7,6 +7,7 @@
 #include <vector>
 #include "Grid.h"
 #include "Walkers.h"
+#include "Zones.h"
 #include "tinygltf/json.hpp"
 
 /*
@@ -21,13 +22,20 @@
     recording (Application::CaptureRecordingState), which is what makes a replay start from a save.
 */
 
-#define CHASM_SAVE_VERSION  1
+/*
+    2: buildings as things (docs/buildings_plan.md) - a list of buildings, each with its id, kind, plots
+    or cells and crop, instead of loose house plots and field cells. A version 1 save still loads: each
+    of its house plots becomes a one-plot house, each field cell a one-cell field.
+*/
+#define CHASM_SAVE_VERSION  2
 
 struct ChasmSave{
     GridSettings settings;
     std::string world_hash;                             //Grid::Hash() as hex, when saved
-    std::vector<std::pair<int,int>> houses;             //plot, storeys
-    std::vector<int> fields;                            //coarse cells
+    std::vector<ZoneSavedBuilding> buildings;           //version 2
+    uint32_t next_building = 1;                         //the next id the zones would hand out
+    uint32_t stroke = 0;                                //the drag in progress, and its building
+    uint32_t stroke_building = 0;
     std::vector<std::pair<int,int>> grounds;            //plot, ZONE_GROUND_* (step 8; absent in older saves)
     std::vector<Walker> walkers;                        //step 10, with their paths (Walkers.h); absent in older saves
 };

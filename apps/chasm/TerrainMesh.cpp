@@ -196,38 +196,108 @@ public:
     }
 
     /*
-        A wall from `top` down to `bottom_a`/`bottom_b` along a->b, facing `out`, cut into bands.
+        A wall from level height `top` down to `bottom` along a->b, facing `out`, cut into strata.
         The first and last rows stay exactly on the cut and on the ground's relief, so the wall
-        meets the ground above and below it; the rows between stray by Jitter.
+        meets the ground above and below it; the rows between stray by Jitter - except at an end
+        flagged still (`f_still_a`/`f_still_b`), a cell's centre where three walls meet (Cell), which
+        must be the same point in all of them.
+
+        The strata are cut at FIXED HEIGHTS - every WALL_BAND_HEIGHT below the plateau's level - not
+        shared out over the drop, so a balcony's wall (from -12) and the full wall beside it (from 0)
+        have rows at the same heights and the same rock in each, and meet at a balcony's end without a
+        seam. A row's jitter and rock are by that height's index, so two walls through one point agree
+        there whatever their tops. A row is placed by its share of the LEVELS' drop, not the wall's
+        real height, so under a hill or the mountain the strata stand thicker, the relief shared out
+        among them.
     */
-    void Wall(const vec2& a, const vec2& b, float top, float bottom_a, float bottom_b, const vec3& out){
+    void Wall(const vec2& a, const vec2& b, float top, float bottom, const vec3& out,
+              bool f_still_a = false, bool f_still_b = false){
         float top_a = GroundY(a,top);
         float top_b = GroundY(b,top);
-        float bot_a = GroundY(a,bottom_a);
-        float bot_b = GroundY(b,bottom_b);
-        /*
-            Bands by the LEVELS' drop, not the wall's real height: two segments meet at a shared point,
-            and only with the same count do their rows meet there. So under a hill or the mountain the
-            strata stand thicker, the relief shared out among them.
-        */
-        float drop = top - std::min(bottom_a,bottom_b);
-        int bands = std::max(1,(int)std::ceil(drop / WALL_BAND_HEIGHT - 0.01f));
-        for (int j = 0; j < bands; j++){
-            float t0 = (float)j / bands;
-            float t1 = (float)(j + 1) / bands;
-            vec2 a0 = a + ((j > 0) ? Jitter(a,j) : vec2(0.0f,0.0f));
-            vec2 b0 = b + ((j > 0) ? Jitter(b,j) : vec2(0.0f,0.0f));
-            vec2 a1 = a + ((j + 1 < bands) ? Jitter(a,j + 1) : vec2(0.0f,0.0f));
-            vec2 b1 = b + ((j + 1 < bands) ? Jitter(b,j + 1) : vec2(0.0f,0.0f));
+        float bot_a = GroundY(a,bottom);
+        float bot_b = GroundY(b,bottom);
+        float drop = top - bottom;
+        if (drop <= 0.0f){
+            return;
+        }
+        //Row heights below the plateau's level, and each one's stratum index.
+        float rows[64];
+        int index[64];
+        int n = 0;
+        rows[n] = top;
+        index[n++] = (int)std::lround(-top / WALL_BAND_HEIGHT);
+        for (int k = index[0] + 1; n < 63; k++){
+            float y = -WALL_BAND_HEIGHT * (float)k;
+            if (y <= bottom + 0.3f * WALL_BAND_HEIGHT){
+                break;      //a sliver of a stratum at the foot joins the one above it
+            }
+            rows[n] = y;
+            index[n++] = k;
+        }
+        rows[n] = bottom;
+        index[n++] = -1;
+        for (int j = 0; j + 1 < n; j++){
+            float t0 = (top - rows[j]) / drop;
+            float t1 = (top - rows[j + 1]) / drop;
+            bool f_inner0 = j > 0;
+            bool f_inner1 = j + 2 < n;
+            vec2 a0 = a + ((f_inner0 && !f_still_a) ? Jitter(a,index[j]) : vec2(0.0f,0.0f));
+            vec2 b0 = b + ((f_inner0 && !f_still_b) ? Jitter(b,index[j]) : vec2(0.0f,0.0f));
+            vec2 a1 = a + ((f_inner1 && !f_still_a) ? Jitter(a,index[j + 1]) : vec2(0.0f,0.0f));
+            vec2 b1 = b + ((f_inner1 && !f_still_b) ? Jitter(b,index[j + 1]) : vec2(0.0f,0.0f));
             vec3 A0(a0.x,top_a + (bot_a - top_a) * t0,a0.y);
             vec3 B0(b0.x,top_b + (bot_b - top_b) * t0,b0.y);
             vec3 A1(a1.x,top_a + (bot_a - top_a) * t1,a1.y);
             vec3 B1(b1.x,top_b + (bot_b - top_b) * t1,b1.y);
-            int column = RockColumn(j);
+            int column = RockColumn(index[j]);
             int before = data.num_triangles;
             Tri(A0,B0,B1,out,column);
             Tri(A0,B1,A1,out,column);
             data.num_wall_triangles += data.num_triangles - before;
+        }
+    }
+
+    /*
+        A cell with THREE levels in it - where a balcony meets its rim, and nowhere else (Terrain's
+        `steps` check). Marching squares cuts a cell once, high against low; three levels need a cut
+        for every pair. So the cell is drawn in QUARTERS instead, each corner's - its corner, its two
+        edges' midpoints and the cell's centre - at that corner's level, with a wall down every inner
+        half-edge (midpoint to centre) between two quarters of different levels. A midpoint is
+        where the cell across the edge cuts too, between the same two levels, so the neighbours meet;
+        the centre is this cell's alone, and every wall through it holds still there (Wall).
+    */
+    void QuarterCell(const vec2* p, const int* lv, const float* h){
+        const vec3 up(0.0f,1.0f,0.0f);
+        vec2 m[4];
+        vec2 c(0.0f,0.0f);
+        for (int k = 0; k < 4; k++){
+            m[k] = (p[k] + p[(k + 1) % 4]) * 0.5f;
+            c += p[k] * 0.25f;
+        }
+        float hmax = std::max(std::max(h[0],h[1]),std::max(h[2],h[3]));
+        for (int k = 0; k < 4; k++){
+            std::vector<vec3> quarter = {GroundPoint(p[k],h[k]),GroundPoint(m[k],h[k]),GroundPoint(c,h[k]),
+                                         GroundPoint(m[(k + 3) % 4],h[k])};
+            ground_level = lv[k];
+            //The top quarter is the cliff's lip, a bottom one the dark foot of a wall, as in Cell.
+            int column = (h[k] == hmax) ? PAL_LIP : ((lv[k] == TERRAIN_FLOOR) ? PAL_FLOOR_DARK : COLUMN_GRASS);
+            Fan(quarter,up,column);
+        }
+        //Between quarter k and k + 1: the half-edge from m[k] to the centre.
+        for (int k = 0; k < 4; k++){
+            int a = k;
+            int b = (k + 1) % 4;
+            if (h[a] == h[b]){
+                continue;
+            }
+            int hi_q = (h[a] > h[b]) ? a : b;
+            int lo_q = (hi_q == a) ? b : a;
+            vec2 along = c - m[k];
+            vec2 side(-along.y,along.x);
+            if (side.dot(p[lo_q] - m[k]) < 0.0f){
+                side = -side;
+            }
+            Wall(m[k],c,h[hi_q],h[lo_q],vec3(side.x,0.0f,side.y),false,true);
         }
     }
 
@@ -263,6 +333,19 @@ public:
             desert += (t.biome[quad.v[k]] == TERRAIN_BIOME_DESERT) ? 1 : 0;
         }
         row = (mountain >= 2) ? PAL_FROZEN : (swamp >= 2) ? PAL_SWAMP : (desert >= 2) ? PAL_DESERT : PAL_TEMPERATE;
+
+        int distinct = 1;
+        for (int k = 1; k < 4; k++){
+            bool f_new = true;
+            for (int j = 0; j < k; j++){
+                f_new = f_new && h[j] != h[k];
+            }
+            distinct += f_new ? 1 : 0;
+        }
+        if (distinct > 2){
+            QuarterCell(p,lv,h);
+            return;
+        }
 
         bool high[4];
         int num_high = 0;
@@ -337,7 +420,7 @@ public:
             if (side.dot(to_low) < 0.0f){
                 side = -side;
             }
-            Wall(a,b,hmax,h[first],h[last],vec3(side.x,0.0f,side.y));
+            Wall(a,b,hmax,h[first],vec3(side.x,0.0f,side.y));
         }
     }
 

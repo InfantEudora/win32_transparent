@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-04T20:22:18.729Z
+  modified: 2026-10-06T08:23:40.783Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -54,6 +54,21 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   river crosses the rim, chasm_water.glsl (archer's adapted), mist + foam = instanced faceted puffs
   posed from the sim clock (Mist.cpp), palette row 15 = EFFECTS row. User liked step 8 as-is;
   palisades may later become a road-like line tool to fence larger areas.
+  2026-10-05 (after the other machine's roads/biomes/gameplay_plan.md): GAME NAMES - terraces are
+  ISLANDS (shard/column/ledge, zeppelin; old "terrace" renamed ledge) and BALCONIES (joined to a wall
+  at -12, winch; build anything but fields). Home = EAST: rivers east only, swamp east, desert west;
+  each side ONE walkable region (generator redraws rifts; `sides` check). Balcony end = junction
+  pinned onto the rim's chain (exempt ring-2, forced spoke, unmerged wedge triangle, Untangle guard);
+  3-level cells drawn in quarters; strata at fixed heights.
+  BUILDINGS AS THINGS (docs/buildings_plan.md, agreed + step 1 BUILT 2026-10-05): a building is a
+  GROUP of plots (fields: coarse cells) with its own id in a table; A DRAG IS ONE BUILDING (stroke
+  number in the command's value[2]); sizes by economics later, hard cap only house <= 4 plots; kinds
+  house/store/woodcutter/water collector/field (crop per field); the winch comes AFTER food/water/wood.
+  Nothing builds on the chasm floor. Replay test village moved to x+190 (old spot became chasm floor).
+  WINCH BUILT 2026-10-06 (step 2): one rim plot above a balcony, landing = nearest balcony corner,
+  walker link across levels (5 s ride), tool H. Balconies being shrunk to ~1/4 by worker window 39.
+  If the user's chasm_nophysics.exe holds the link, link a copy by hand (make -n link line, -o renamed)
+  instead of killing it twice.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.
   PROPS BUILT + ACCEPTED same day: 15 assets (4 pines 38-58 tris, 3 oaks 58-118, rocks, stump, log,
   bushes) in chasm_props.blend "Export"; re-export = the collection's exporter (one click), NOT

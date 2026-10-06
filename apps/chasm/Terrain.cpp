@@ -9,13 +9,16 @@
 
 /*
     The heights. The plateau is the ground everything is measured from; the floor is deep enough
-    that the walls read as many storeys (a fine cell, about a house, is 2 units across), and a shard
-    stands about a third of the way down.
+    that the walls read as many storeys (a fine cell, about a house, is 2 units across), an island
+    stands about a third of the way down, and a balcony a winch's drop below the rim - well above the
+    mist. Every one a whole number of the walls' strata (WALL_BAND_HEIGHT, 6) below the plateau, so
+    the strata of a balcony's wall line up with those of the full wall beside it.
 */
 const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS] = {
     {"plateau",   0.0f},
-    {"shard",   -24.0f},
+    {"island",  -24.0f},
     {"floor",   -70.0f},
+    {"balcony", -12.0f},
 };
 
 namespace {
@@ -126,7 +129,10 @@ std::vector<GridLine> TerrainFeatureLines(const Grid& g){
 }
 
 uint8_t TerrainLevelOfKind(int kind){
-    return kind == GRID_FEATURE_RIM ? TERRAIN_PLATEAU : TERRAIN_SHARD;
+    if (kind == GRID_FEATURE_RIM){
+        return TERRAIN_PLATEAU;
+    }
+    return kind == GRID_FEATURE_BALCONY ? TERRAIN_BALCONY : TERRAIN_ISLAND;
 }
 
 void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
@@ -136,18 +142,23 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
     for (int i = 0; i < TERRAIN_NUM_LEVELS; i++){
         level_count[i] = 0;
     }
-    //Rims bound the floor; every other feature is closed and stands in it at shard level.
+    //Rims bound the floor; islands stand in it, closed; balconies by their outlines.
     CrossingTable rims;
-    CrossingTable shards;
+    CrossingTable islands;
+    CrossingTable balconies;
     for (size_t f = 0; f < features.size(); f++){
-        if (g.LineKind(g.feature_line_base + (int)f) == GRID_FEATURE_RIM){
+        int kind = g.LineKind(g.feature_line_base + (int)f);
+        if (kind == GRID_FEATURE_RIM){
             rims.Add(features[f].points);
+        }else if (kind == GRID_FEATURE_BALCONY){
+            balconies.Add(g.layout.features[f].region.points);
         }else{
-            shards.Add(features[f].points);
+            islands.Add(features[f].points);
         }
     }
     rims.Build();
-    shards.Build();
+    islands.Build();
+    balconies.Build();
     for (size_t v = 0; v < n; v++){
         /*
             A hair inside the map. A vertex on the east edge sits at exactly the x a rim ending
@@ -167,7 +178,7 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
         }else if (pin >= g.feature_line_base){
             l = TerrainLevelOfKind(g.LineKind(pin));
         }else if (rims.Inside(p)){
-            l = shards.Inside(p) ? TERRAIN_SHARD : TERRAIN_FLOOR;
+            l = islands.Inside(p) ? TERRAIN_ISLAND : (balconies.Inside(p) ? TERRAIN_BALCONY : TERRAIN_FLOOR);
         }
         level[v] = l;
         level_count[l]++;
@@ -619,17 +630,21 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
     //--- Levels: every level present that the features call for -------------------------------
     {
         bool f_rim = false;
-        bool f_closed = false;
+        bool f_island = false;
+        bool f_balcony = false;
         for (size_t f = 0; f < features.size(); f++){
-            bool f_is_rim = g.LineKind(g.feature_line_base + (int)f) == GRID_FEATURE_RIM;
-            f_rim = f_rim || f_is_rim;
-            f_closed = f_closed || !f_is_rim;
+            int kind = g.LineKind(g.feature_line_base + (int)f);
+            f_rim = f_rim || kind == GRID_FEATURE_RIM;
+            f_island = f_island || GridFeatureIsIsland(kind);
+            f_balcony = f_balcony || kind == GRID_FEATURE_BALCONY;
         }
         bool f_ok = t.level_count[TERRAIN_PLATEAU] > 0 &&
                     (!f_rim || t.level_count[TERRAIN_FLOOR] > 0) &&
-                    (!f_closed || t.level_count[TERRAIN_SHARD] > 0);
-        snprintf(buf,sizeof(buf),"plateau %i, shard %i, floor %i vertices (%.1f ms)",
-                 t.level_count[TERRAIN_PLATEAU],t.level_count[TERRAIN_SHARD],t.level_count[TERRAIN_FLOOR],t.build_ms);
+                    (!f_island || t.level_count[TERRAIN_ISLAND] > 0) &&
+                    (!f_balcony || t.level_count[TERRAIN_BALCONY] > 0);
+        snprintf(buf,sizeof(buf),"plateau %i, balcony %i, island %i, floor %i vertices (%.1f ms)",
+                 t.level_count[TERRAIN_PLATEAU],t.level_count[TERRAIN_BALCONY],t.level_count[TERRAIN_ISLAND],
+                 t.level_count[TERRAIN_FLOOR],t.build_ms);
         add_result("levels",f_ok,buf);
     }
 
@@ -706,13 +721,23 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
     }
 
     /*
-        --- Steps: no cell spans more than two levels ------------------------------------------
-        A cell's cliff is cut between its high corners and its low ones, and the mesh assumes the
-        low ones share a height. A plateau corner and a floor corner and a shard corner in one cell
-        means a shard touches the rim - which the features should never draw.
+        --- Steps: three levels in a cell only where a balcony meets its rim ---------------------
+        The mesh cuts any cell in quarters (TerrainMesh.cpp), so three levels draw; but the features
+        should bring them together only at a balcony's two ends, where plateau, balcony and floor
+        meet by design. Three anywhere else means two lines came too close - an island touching a
+        rim - and four never happens.
     */
     {
+        std::vector<vec2> junctions;
+        for (const GridFeature& f : g.layout.features){
+            if (f.kind == GRID_FEATURE_BALCONY && !f.line.points.empty()){
+                junctions.push_back(f.line.points.front());
+                junctions.push_back(f.line.points.back());
+            }
+        }
+        const float near = 2.0f * g.settings.triangle_side;
         int bad = 0;
+        int at_junctions = 0;
         for (int q = 0; q < (int)g.fine.quads.size(); q++){
             bool seen[TERRAIN_NUM_LEVELS] = {};
             int distinct = 0;
@@ -723,12 +748,23 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
                     distinct++;
                 }
             }
-            if (distinct > 2){
+            if (distinct <= 2){
+                continue;
+            }
+            vec2 c = g.FineQuadCentre(q);
+            bool f_junction = false;
+            for (const vec2& j : junctions){
+                f_junction = f_junction || (c - j).length() < near;
+            }
+            if (distinct == 3 && seen[TERRAIN_BALCONY] && f_junction){
+                at_junctions++;
+            }else{
                 bad++;
-                add_issue("steps",q,g.FineQuadCentre(q),true);
+                add_issue("steps",q,c,true);
             }
         }
-        snprintf(buf,sizeof(buf),"%i cells span three levels",bad);
+        snprintf(buf,sizeof(buf),"%i cells span three levels where balconies meet their rims (%i junctions), %i elsewhere",
+                 at_junctions,(int)junctions.size(),bad);
         add_result("steps",bad == 0,buf);
     }
 
@@ -870,6 +906,103 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
                      100.0f * t.biome_count[TERRAIN_BIOME_MOUNTAIN] / std::max<size_t>(1,n));
         }
         add_result("sealed",joined < 0 && west > 0 && east > 0,buf);
+
+        /*
+            --- Sides: each side of the chasm is ONE region (Grid.h, "THE SIDES") ---------------------
+            Through the same flood: every bit of open plateau must be in a region that touches the
+            south edge, and each side's must be one region - so nothing can be reached only by
+            zeppelin. The generator draws its rifts to this (Builder::SidesWhole) on a coarser raster;
+            this is the proof on the grid. A cut-off region is marked at its first vertex.
+        */
+        {
+            std::vector<int> region_size(n,0);
+            for (size_t v = 0; v < n; v++){
+                if (t.level[v] == TERRAIN_PLATEAU && !t.Mountain((int)v)){
+                    region_size[find((int)v)]++;
+                }
+            }
+            int pieces[3] = {0,0,0};    //cut off, west, east
+            int cut_vertices = 0;
+            int largest_cut = 0;
+            for (size_t r = 0; r < n; r++){
+                if (region_size[r] == 0 || find((int)r) != (int)r){
+                    continue;
+                }
+                int side = (sides[r] == 1) ? 1 : (sides[r] == 2 ? 2 : 0);
+                if (sides[r] == 3){
+                    continue;   //`sealed` reports it
+                }
+                pieces[side]++;
+                if (side == 0){
+                    cut_vertices += region_size[r];
+                    largest_cut = std::max(largest_cut,region_size[r]);
+                    add_issue("sides",(int)r,g.fine.pos[r],true);
+                }
+            }
+            //Rivers run on the home side only: each fall's plateau behind it is the east's.
+            int far_falls = 0;
+            for (const TerrainFall& f : t.falls){
+                vec2 back = f.lip - f.out * 4.0f;
+                int best = -1;
+                float bd = 1e30f;
+                for (size_t v = 0; v < n; v++){
+                    if (t.level[v] != TERRAIN_PLATEAU){
+                        continue;
+                    }
+                    float d = (g.fine.pos[v] - back).length();
+                    if (d < bd){
+                        bd = d;
+                        best = (int)v;
+                    }
+                }
+                if (best < 0 || sides[find(best)] != 2){
+                    far_falls++;
+                    add_issue("sides",f.river,f.lip,true);
+                }
+            }
+            snprintf(buf,sizeof(buf),"west %i region%s, east %i region%s; %i cut off (%i vertices, the largest %i); "
+                     "%i of %i falls not on the home side",
+                     pieces[1],pieces[1] == 1 ? "" : "s",pieces[2],pieces[2] == 1 ? "" : "s",pieces[0],
+                     cut_vertices,largest_cut,far_falls,(int)t.falls.size());
+            add_result("sides",pieces[0] == 0 && pieces[1] == 1 && pieces[2] == 1 && far_falls == 0,buf);
+        }
+
+        /*
+            --- Balconies: at least one at home, each a level of its own, none cut off from its rim --
+            A balcony is reached from the rim above it (by winch, later), so each must have ground of
+            its own and plateau of its side right above it; the home side must have one at all.
+        */
+        {
+            int count[2] = {0,0};
+            int empty = 0;
+            std::string detail;
+            for (size_t f = 0; f < g.layout.features.size(); f++){
+                const GridFeature& feature = g.layout.features[f];
+                if (feature.kind != GRID_FEATURE_BALCONY){
+                    continue;
+                }
+                count[feature.side > 0]++;
+                int pinned = 0;
+                int ground = 0;
+                for (size_t v = 0; v < n; v++){
+                    pinned += (g.fine.pin[v] == g.feature_line_base + (int)f);
+                }
+                CrossingTable region;
+                region.Add(feature.region.points);
+                region.Build();
+                for (size_t v = 0; v < n; v++){
+                    ground += (t.level[v] == TERRAIN_BALCONY && region.Inside(g.fine.pos[v]));
+                }
+                if (ground < 20){
+                    empty++;
+                    add_issue("balconies",(int)f,feature.line.points[feature.line.points.size() / 2],true);
+                }
+                snprintf(buf,sizeof(buf),"%s %i vertices; ",feature.side > 0 ? "east" : "west",ground);
+                detail += buf;
+            }
+            snprintf(buf,sizeof(buf),"east %i, west %i; %i with too little ground: ",count[1],count[0],empty);
+            add_result("balconies",count[1] > 0 && empty == 0,std::string(buf) + detail);
+        }
 
         /*
             --- Pockets: each one open, mostly buildable, and reachable from exactly one side --------

@@ -27,16 +27,9 @@
 
 namespace {
 
-struct CropKind{
-    int column;     //the ridges' palette column; the base is always earth
-    int weight;     //how often, out of the weights' sum
-};
-//Ripe wheat most, then two greens - a patchwork, as in A Little Age.
-const CropKind crop_kinds[] = {
-    {PAL_FIELD,5},
-    {PAL_LEAF_LIGHT,4},
-    {PAL_LEAF,2},
-};
+//The ridges' palette column by crop (ZONE_CROP_*); the base is always earth. Ripe wheat and two
+//greens - a patchwork, as in A Little Age, now of the player's choosing.
+const int crop_columns[ZONE_CROP_COUNT] = {PAL_FIELD,PAL_LEAF_LIGHT,PAL_LEAF};
 
 //Child k's quarter of the coarse square: its own corner 0 and the two directions its local s and t
 //run in, as coarse (u, v). Its corners are corner k, then the midpoint of edge k, the middle, and the
@@ -87,7 +80,6 @@ private:
 }
 
 void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
-    (void)z;
     const Grid& g = *w.grid;
     const GridQuad& quad = g.fine.quads[fine_quad];
     int cell = quad.parent;
@@ -105,21 +97,12 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     }
     MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_EARTH);
 
-    //The field's look, from its coarse cell alone: what grows, and which way the rows run.
+    //What grows is the field's crop, the player's choice for the whole field (docs/buildings_plan.md);
+    //which way the rows run in each cell is the cell's own.
     uint32_t hash = MeshHash((uint32_t)cell,0x0F1E1Du);
-    int weights = 0;
-    for (const CropKind& c : crop_kinds){
-        weights += c.weight;
-    }
-    int pick = (int)(hash % (uint32_t)weights);
-    int column = crop_kinds[0].column;
-    for (const CropKind& c : crop_kinds){
-        if (pick < c.weight){
-            column = c.column;
-            break;
-        }
-        pick -= c.weight;
-    }
+    uint32_t id = z.field[cell];
+    int crop = (id && id < z.buildings.size()) ? z.buildings[id].crop : ZONE_CROP_WHEAT;
+    int column = crop_columns[std::max(0,std::min(ZONE_CROP_COUNT - 1,crop))];
     bool f_along_v = ((hash >> 16) & 1) != 0;
 
     ChildMap map(p,h,k);

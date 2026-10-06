@@ -1718,7 +1718,7 @@ void Renderer::EndGPUFrame(){
     one bind and one map. 16-byte spacing rather than tight packing because the slack costs
     nothing at 48 bytes and keeps every offset comfortably past GL_PACK_ALIGNMENT.
 */
-#define PICK_OFFSET_POSITION    0       //GL_RGBA / GL_HALF_FLOAT  - 8 bytes
+#define PICK_OFFSET_POSITION    0       //GL_RGBA / GL_FLOAT       - 16 bytes, the whole slot
 #define PICK_OFFSET_NORMAL      16      //GL_RGBA / GL_HALF_FLOAT  - 8 bytes
 #define PICK_OFFSET_ID          32      //GL_RED_INTEGER / GL_INT  - 4 bytes
 #define PICK_PBO_SIZE           48
@@ -1727,15 +1727,17 @@ void Renderer::EndGPUFrame(){
     THE FORMATS ABOVE MUST MATCH THE ATTACHMENTS EXACTLY, and that is not a tidiness point - it is
     the difference between this mechanism working and being slower than what it replaced.
 
-    Position and normal are RGBA16F (RebuildDeferredFBO). Asking glReadPixels for GL_RGB/GL_FLOAT
-    from them is a channel-count AND type conversion, and there is no GPU path for it: the driver
+    Position is RGBA32F and normal RGBA16F (RebuildDeferredFBO). Asking glReadPixels for
+    GL_RGB/GL_FLOAT from the normal is a channel-count AND type conversion, and there is no GPU
+    path for it: the driver
     does the conversion on the CPU, which means it must have the pixels NOW, which means it waits
     for the GPU to finish the frame. Measured: the first such read cost 4.8 ms while the exact
     format integer read beside it cost 31 us, and reordering them did not move the cost - it
     followed the mismatched read, not the position in the sequence.
 
-    So both are read as GL_RGBA/GL_HALF_FLOAT, exactly what the texture holds, and unpacked here
-    instead. Anyone changing a deferred attachment's internal format has to change its read too.
+    So each is read as GL_RGBA in exactly the type its texture holds - float for position, half
+    for the normal, unpacked here - and never converted. Anyone changing a deferred attachment's
+    internal format has to change its read too.
 */
 static float HalfToFloat(uint16_t h){
     uint32_t sign = (uint32_t)(h >> 15) << 31;
@@ -1849,7 +1851,7 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
             float position[3] = {0,0,0};
             float normal[3] = {0,0,0};
             int32_t object_index = -1;
-            UnpackHalf3((const char*)mapped + PICK_OFFSET_POSITION,position);
+            memcpy(position,(const char*)mapped + PICK_OFFSET_POSITION,sizeof(position));
             UnpackHalf3((const char*)mapped + PICK_OFFSET_NORMAL,normal);
             memcpy(&object_index,(const char*)mapped + PICK_OFFSET_ID,sizeof(object_index));
             glUnmapNamedBuffer(picking_pbo[slot]);
@@ -1908,7 +1910,7 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
     glReadBuffer(GL_COLOR_ATTACHMENT3);
     glReadPixels(mouse_x,gl_y,1,1,GL_RED_INTEGER,GL_INT,(void*)(uintptr_t)PICK_OFFSET_ID);
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(mouse_x,gl_y,1,1,GL_RGBA,GL_HALF_FLOAT,(void*)(uintptr_t)PICK_OFFSET_POSITION);
+    glReadPixels(mouse_x,gl_y,1,1,GL_RGBA,GL_FLOAT,(void*)(uintptr_t)PICK_OFFSET_POSITION);
     glReadBuffer(GL_COLOR_ATTACHMENT1);
     glReadPixels(mouse_x,gl_y,1,1,GL_RGBA,GL_HALF_FLOAT,(void*)(uintptr_t)PICK_OFFSET_NORMAL);
     //NOT optional. A pack buffer left bound silently redirects the NEXT glReadPixels anywhere in
@@ -2533,13 +2535,20 @@ bool Renderer::RebuildDeferredFBO(){
         return false;
     }
 
-    //Color buffer for object position 32-bit... 16?
+    /*
+        World position, and RGBA32F rather than the 16F the other attachments use. A half float
+        keeps 11 bits, so a WORLD coordinate 256..512 from the origin lands on a 0.25 unit grid and
+        512..1024 on a 0.5 one. Chasm's 768 x 430 map sits in exactly that range, and SSAO - whose
+        radius is about the same size - read every pixel of a grid cell as the same point: flat
+        squares with steps between them, growing as the camera zoomed in because the grid is in
+        world units. Normals stay 16F; they never leave -1..1, where a half is fine.
+    */
     if (deferred_position_tex_id != -1){
         glDeleteTextures(1, &deferred_position_tex_id);
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_position_tex_id);
 
-    glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA16F, render_width, render_height);
+    glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA32F, render_width, render_height);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT0, deferred_position_tex_id, 0);

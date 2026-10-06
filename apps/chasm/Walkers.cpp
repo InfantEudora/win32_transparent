@@ -49,7 +49,24 @@ void Walkers::Reset(std::shared_ptr<const ChasmWorld> world){
 void Walkers::EnsureGraph(){
     if (set.world && (!graph || graph->world != set.world)){
         graph = BuildWalkGraph(set.world);
+        links_version = 0xFFFFFFFFu;
     }
+}
+
+void Walkers::EnsureLinks(const ZoneState& z){
+    if (links_version != z.version && set.world && z.world == set.world){
+        ZoneWinchLinks(*set.world,z,links);
+        links_version = z.version;
+    }
+}
+
+bool Walkers::IsLink(int a, int b) const{
+    for (const auto& l : links){
+        if ((l.first == a && l.second == b) || (l.first == b && l.second == a)){
+            return true;
+        }
+    }
+    return false;
 }
 
 float Walkers::EdgeLength(int a, int b) const{
@@ -61,7 +78,12 @@ float Walkers::EdgeLength(int a, int b) const{
 bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const{
     const Terrain& t = *set.world->terrain;
     if (t.level[a] != t.level[b]){
-        return false;   //a cliff
+        //A cliff - unless a winch rides it, with its landing clear (or the walk ending on it).
+        if (!IsLink(a,b)){
+            return false;
+        }
+        int landing = (t.level[a] == TERRAIN_BALCONY) ? a : b;
+        return z.storeys[landing] == 0 || landing == to || landing == from;
     }
     if (t.wet[a] || t.wet[b]){
         return false;   //a river - until there are bridges
@@ -73,11 +95,12 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
     if (std::fabs(t.ground[b] - t.ground[a]) > WALKER_STEEPEST * EdgeLength(a,b)){
         return false;
     }
-    //A house is walked into only where the walk ends, and out of only where it starts.
-    if (z.storeys[b] > 0 && b != to){
+    //A house is walked into only where the walk ends, and out of only where it starts. A winch is
+    //walked through: its plot is the way on to the rope.
+    if (z.storeys[b] > 0 && b != to && z.KindOf(b) != ZONE_KIND_WINCH){
         return false;
     }
-    if (z.storeys[a] > 0 && a != from){
+    if (z.storeys[a] > 0 && a != from && z.KindOf(a) != ZONE_KIND_WINCH){
         return false;
     }
     //A wall or palisade is crossed at its gate and nowhere else.
@@ -96,6 +119,10 @@ static bool InField(const ChasmWorld& w, const ZoneState& z, int v){
 }
 
 float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
+    //A winch's ride takes its time however far the landing is across.
+    if (set.world->terrain->level[a] != set.world->terrain->level[b]){
+        return std::max(1e-3f,EdgeLength(a,b)) / WINCH_RIDE_SECONDS;
+    }
     float speed = WALKER_SPEED_GROUND;
     if (z.ground[a] == ZONE_GROUND_ROAD && z.ground[b] == ZONE_GROUND_ROAD){
         speed = WALKER_SPEED_ROAD;
@@ -161,6 +188,19 @@ std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to) const{
                 open.push(Entry(c + estimate(u),u));
             }
         }
+        //And down or up a winch, in the links' fixed order.
+        for (const auto& l : links){
+            int u = (l.first == v) ? l.second : ((l.second == v) ? l.first : -1);
+            if (u < 0 || closed[u] || !EdgeOpen(z,v,u,from,to)){
+                continue;
+            }
+            float c = cost[v] + WINCH_RIDE_SECONDS;
+            if (c < cost[u]){
+                cost[u] = c;
+                came[u] = v;
+                open.push(Entry(c + estimate(u),u));
+            }
+        }
     }
     if (!closed[to]){
         return path;
@@ -188,6 +228,7 @@ bool Walkers::Spawn(const ZoneState& z, int home, int goal){
         return false;
     }
     EnsureGraph();
+    EnsureLinks(z);
     Walker k;
     k.home = home;
     k.goal = goal;
@@ -242,6 +283,7 @@ void Walkers::Tick(const ZoneState& z, float dt){
         return;
     }
     EnsureGraph();
+    EnsureLinks(z);
     bool f_changed = false;
     if (set.zones_version != z.version){
         set.zones_version = z.version;
@@ -330,6 +372,23 @@ vec2 Walkers::Position(const ChasmWorld& w, const Walker& k, vec2* facing){
     if (len < 1e-6f){
         return a;
     }
+    /*
+        On a winch's rope: out from the rim to above the landing first, then straight down - or up
+        first and then in. The rope hangs over the landing, so on the way down the walker is over it
+        after the first WINCH_STEP_OUT of the ride, and on the way up until the last.
+    */
+    const Terrain& terrain = *w.terrain;
+    if (terrain.level[k.path[k.seg]] != terrain.level[k.path[k.seg + 1]]){
+        float s = std::max(0.0f,std::min(1.0f,k.along / len));
+        bool f_down = terrain.level[k.path[k.seg]] == TERRAIN_PLATEAU;
+        vec2 rim = f_down ? a : b;
+        vec2 rope = f_down ? b : a;
+        float out = f_down ? std::min(1.0f,s / WINCH_STEP_OUT) : std::max(0.0f,(s - (1.0f - WINCH_STEP_OUT)) / WINCH_STEP_OUT);
+        if (facing){
+            *facing = (rope - rim) / std::max(1e-6f,(rope - rim).length()) * (f_down ? 1.0f : -1.0f);
+        }
+        return f_down ? rim + (rope - rim) * out : rope + (rim - rope) * out;
+    }
     //The corner to round: the plot behind in the first half of the edge, the one ahead in the second.
     vec2 p0, c, p1;
     float t;
@@ -364,4 +423,30 @@ vec2 Walkers::Position(const ChasmWorld& w, const Walker& k, vec2* facing){
         }
     }
     return p0 * (s * s) + c * (2.0f * s * t) + p1 * (t * t);
+}
+
+float Walkers::Height(const ChasmWorld& w, const Walker& k, const vec2& at){
+    const Terrain& t = *w.terrain;
+    if (k.path.empty()){
+        return 0.0f;
+    }
+    int a = k.path[k.seg];
+    if (k.seg + 1 < (int)k.path.size()){
+        int b = k.path[k.seg + 1];
+        if (t.level[a] != t.level[b]){
+            //The rope: at the rim's height while stepping out, then down to the landing's (or the
+            //other way round).
+            float len = std::max(1e-6f,(w.grid->fine.pos[b] - w.grid->fine.pos[a]).length());
+            float s = std::max(0.0f,std::min(1.0f,k.along / len));
+            bool f_down = t.level[a] == TERRAIN_PLATEAU;
+            int rim = f_down ? a : b;
+            int landing = f_down ? b : a;
+            float top = t.ground[rim];
+            float bottom = t.ground[landing];
+            float drop = f_down ? std::max(0.0f,(s - WINCH_STEP_OUT) / (1.0f - WINCH_STEP_OUT))
+                                : 1.0f - std::min(1.0f,s / (1.0f - WINCH_STEP_OUT));
+            return top + (bottom - top) * drop;
+        }
+    }
+    return t.GroundHeight(at,t.Height(a));
 }

@@ -7,12 +7,21 @@
 #include <queue>
 #include "RRandom.h"
 
+//The north mountain's foot - see PlaceMountainFoot. Up here because the sides' test reads it too.
+#define MOUNTAIN_BASE_DEPTH         0.11f   //of the map's depth, the foot's mean distance from the north edge
+#define MOUNTAIN_BASE_SWING         0.05f   //of the depth, how far the base wanders either way
+#define MOUNTAIN_TONGUE_MARGIN      40.0f   //how far past the main tip the tongue reaches, world units
+#define MOUNTAIN_TONGUE_HALF_WIDTH  110.0f  //at the base's depth, either side of the tip
+#define MOUNTAIN_FOOT_STEP          4.0f    //world units between the foot's points
+#define MOUNTAIN_SPRING_DEPTH       10.0f   //how far into the mountain a river cut off at its foot rises
+
 /*
     THE CHASM'S LAYOUT FROM THE SEED - grid_plan.md, "Step 10, generated chasm", for the method and
     the reasons. In short: rifts are spines (polylines with a half-width) walked from the map's edge;
     they become a distance field, and the rims are its zero contours, so a fork or a second rift is
-    just more contour. Shards, columns and terraces are closed contours of their own small fields,
-    and rivers are cheapest paths over the plateau to falls chosen on the rims.
+    just more contour. Islands - shards, columns, ledges - are closed lines of their own; balconies
+    are open lines leaving a rim and coming back to it; rivers are cheapest paths over the home
+    side's plateau to falls chosen on its rims.
 
     Everything is kept at least GRID_FEATURE_SPACING sides from everything else, and the rifts are
     redrawn until they are. No trigonometry anywhere: a turn is a nudge along the perpendicular,
@@ -424,7 +433,7 @@ struct Builder{
     ChasmLayout& out;
     Field rift;         //the rifts' field, once one attempt has kept its spacing
     vec2 main_tip;
-    bool f_terraced = false;    //the seed wants terraces, which need a wide rift
+    bool f_ledged = false;      //the seed wants ledges, which need a wide rift
 
     Builder(RRandom& r, const vec2& l, const vec2& h, float side, ChasmLayout& o)
         : rng(r), lo(l), hi(h), T(side), spacing(GRID_FEATURE_SPACING * side), out(o){}
@@ -477,7 +486,7 @@ struct Builder{
                 the levels inside out, since the terrain counts closed lines by parity. Nothing
                 closed may stand inside another closed line, either way round.
             */
-            if (f_closed && f.kind != GRID_FEATURE_RIM &&
+            if (f_closed && GridFeatureIsIsland(f.kind) &&
                 (PointInside(line.points[0],f.line) || PointInside(f.line.points[0],line))){
                 return false;
             }
@@ -501,7 +510,7 @@ struct Builder{
     /*
         No bend tighter than the lattice can follow: the line may turn at most about 80 degrees
         within two sides of its length, a radius of about 1.4 sides. A rift's tip is a radius of
-        1.4-1.9 sides and passes; a terrace end cut square by its ball did not, and the cells left
+        1.4-1.9 sides and passes; a ledge end cut square by its ball did not, and the cells left
         outside its chain folded.
     */
     bool RoundEnough(const GridLine& line, bool f_closed) const{
@@ -554,11 +563,11 @@ struct Builder{
         rules.straight_steps = 2;
         main.p = Walk(rng,vec2(mouth_x,hi.y + 16.0f),north,rules,step);
         /*
-            A terrace is a ledge at least a spacing wide, a crevice a spacing wide behind it and
+            A ledge is at least a spacing wide, with a drop a spacing wide behind it and
             floor beyond, all inside one wall's half of the rift - which only a wide rift has. So a
-            seed that wants terraces gets one, rather than asking for them and fitting none.
+            seed that wants ledges gets one, rather than asking for them and fitting none.
         */
-        float main_base = f_terraced ? rng.GetFloat(52.0f,66.0f) : rng.GetFloat(34.0f,56.0f);
+        float main_base = f_ledged ? rng.GetFloat(52.0f,66.0f) : rng.GetFloat(34.0f,56.0f);
         Widths(main,main_base,rng.GetFloat(13.0f,16.0f),Seed());
         main_tip = main.p.back();
         out.main_tip = main_tip;
@@ -700,24 +709,56 @@ struct Builder{
             }
             rims.push_back(f);
         }
-        return !rims.empty() && PlateauBothSides();
+        return !rims.empty() && SidesWhole();
     }
 
     /*
-        Enough plateau either side of the main rift: the plateau cut from the main tip straight to
-        the north edge, and the two largest pieces left at least a fifth of the map each. Without
-        the cut the plateau is one piece round the tip, and the test would say nothing.
+        Where the north mountain may come down to at x, at most - its base at the deepest it swings
+        to, and its tongue at its widest - so a test against it is never more open than the real
+        mountain (drawn later, from its own stream: PlaceMountainFoot). Pocket spurs are left out;
+        they stand clear of every rim.
     */
-    bool PlateauBothSides() const{
+    float MountainReach(float x) const{
+        const float D = hi.y - lo.y;
+        float base = lo.y + D * (MOUNTAIN_BASE_DEPTH + MOUNTAIN_BASE_SWING);
+        float tongue_z = std::min(hi.y - 0.2f * D,main_tip.y + MOUNTAIN_TONGUE_MARGIN);
+        float dx = (x - main_tip.x) / (MOUNTAIN_TONGUE_HALF_WIDTH * 1.2f);
+        float tongue = tongue_z - (tongue_z - (lo.y + D * MOUNTAIN_BASE_DEPTH)) * dx * dx;
+        return std::max(base,tongue) + 8.0f;
+    }
+
+    /*
+        THE SIDES, and that each is one piece (Grid.h, ChasmLayout's "THE SIDES"). The plateau out of
+        the mountain's reach is flooded over the rift's raster, a piece at a time; a piece belongs
+        to the side of the main mouth where it meets the south edge. Refused, so the rifts are drawn
+        again: a piece that never reaches the south edge (boxed in by rifts and the mountain - land
+        only a zeppelin could reach), a side in two pieces (a second rift from the south whose tip
+        runs into the mountain), or less than a fifth of the map on either side. `side_of` keeps the
+        answer per raster cell for what is placed after: -1 west, +1 east, 0 rift or mountain.
+    */
+    std::vector<int8_t> side_of;
+    int SideAt(const vec2& p) const{
+        if (side_of.empty()){
+            return 0;
+        }
+        int i = std::max(0,std::min(rift.w - 1,(int)std::lround((p.x - lo.x) / rift.cx)));
+        int j = std::max(0,std::min(rift.h - 1,(int)std::lround((p.y - lo.y) / rift.cz)));
+        return side_of[(size_t)j * rift.w + i];
+    }
+
+    bool SidesWhole(){
         int w = rift.w;
         int h = rift.h;
+        side_of.assign((size_t)w * h,0);
         std::vector<int> comp((size_t)w * h,-1);
-        int cut_i = std::max(0,std::min(w - 1,(int)std::lround((main_tip.x - lo.x) / rift.cx)));
-        int cut_j = std::max(0,std::min(h - 1,(int)std::lround((main_tip.y - lo.y) / rift.cz)));
-        auto open = [&](int i, int j){ return rift.At(i,j) >= 0.0f && !(i == cut_i && j <= cut_j); };
+        std::vector<float> reach(w);
+        for (int i = 0; i < w; i++){
+            reach[i] = MountainReach(rift.Pos(i,0).x);
+        }
+        auto open = [&](int i, int j){ return rift.At(i,j) >= 0.0f && rift.Pos(i,j).y > reach[i]; };
         std::vector<int> sizes;
+        std::vector<int> piece_side;    //-1 or +1 by where it meets the south edge, 0 never, 2 both
         std::vector<int> stack;
-        int total = 0;
         for (int j = 0; j < h; j++){
             for (int i = 0; i < w; i++){
                 if (!open(i,j) || comp[(size_t)j * w + i] >= 0){
@@ -725,6 +766,7 @@ struct Builder{
                 }
                 int id = (int)sizes.size();
                 int size = 0;
+                int side = 0;
                 stack.push_back(j * w + i);
                 comp[(size_t)j * w + i] = id;
                 while (!stack.empty()){
@@ -733,6 +775,10 @@ struct Builder{
                     size++;
                     int ci = c % w;
                     int cj = c / w;
+                    if (cj == h - 1){
+                        int here = (rift.Pos(ci,cj).x < out.main_mouth_x) ? -1 : 1;
+                        side = (side == 0 || side == here) ? here : 2;
+                    }
                     const int di[4] = {1,-1,0,0};
                     const int dj[4] = {0,0,1,-1};
                     for (int k = 0; k < 4; k++){
@@ -746,14 +792,31 @@ struct Builder{
                     }
                 }
                 sizes.push_back(size);
+                piece_side.push_back(side);
             }
         }
-        total = w * h;
-        std::sort(sizes.begin(),sizes.end());
-        return sizes.size() >= 2 && sizes[sizes.size() - 2] >= total / 5;
+        int pieces[2] = {0,0};
+        int area[2] = {0,0};
+        for (size_t k = 0; k < sizes.size(); k++){
+            int side = piece_side[k];
+            if (side != -1 && side != 1){
+                return false;   //cut off from the south edge, or joining both sides
+            }
+            pieces[side > 0]++;
+            area[side > 0] += sizes[k];
+        }
+        if (pieces[0] != 1 || pieces[1] != 1 || area[0] < w * h / 5 || area[1] < w * h / 5){
+            return false;
+        }
+        for (size_t c = 0; c < comp.size(); c++){
+            if (comp[c] >= 0){
+                side_of[c] = (int8_t)piece_side[comp[c]];
+            }
+        }
+        return true;
     }
 
-    //--- Shards, columns, terraces ---------------------------------------------------------------
+    //--- Islands: shards, columns, ledges -------------------------------------------------------
 
     //The one closed contour of a small field, or nothing if it made none or several.
     bool ClosedLine(const Field& f, GridLine& line){
@@ -818,20 +881,20 @@ struct Builder{
     }
 
     /*
-        A terrace: a stretch of a rim, offset into the rift - its near side a crevice's width in,
-        its far side a ledge's width further - and closed with a half circle at each end. Built from
-        the smoothed rim rather than from the field, because a band of the field deeper than a bend
-        is round comes out with a cusp in it; an offset that does is refused below like any other
-        line too sharp for the lattice (RoundEnough).
+        A ledge: a long island lying along a wall - a stretch of a rim, offset into the rift, its near
+        side a drop's width in, its far side a ledge's width further - and closed with a half circle
+        at each end. Built from the smoothed rim rather than from the field, because a band of the
+        field deeper than a bend is round comes out with a cusp in it; an offset that does is refused
+        below like any other line too sharp for the lattice (RoundEnough).
     */
-    void PlaceTerraces(int wanted, std::vector<GridFeature>& placed, const std::vector<GridFeature>& rims){
-        out.wanted[GRID_FEATURE_TERRACE] = wanted;
+    void PlaceLedges(int wanted, std::vector<GridFeature>& placed, const std::vector<GridFeature>& rims){
+        out.wanted[GRID_FEATURE_LEDGE] = wanted;
         //A half circle in eight steps of 22.5 degrees, as constants.
         static const float cap_cos[9] = {1.0f,0.92387953f,0.70710678f,0.38268343f,0.0f,
                                          -0.38268343f,-0.70710678f,-0.92387953f,-1.0f};
         static const float cap_sin[9] = {0.0f,0.38268343f,0.70710678f,0.92387953f,1.0f,
                                          0.92387953f,0.70710678f,0.38268343f,0.0f};
-        for (int attempt = 0; attempt < 14 * wanted && out.count[GRID_FEATURE_TERRACE] < wanted; attempt++){
+        for (int attempt = 0; attempt < 14 * wanted && out.count[GRID_FEATURE_LEDGE] < wanted; attempt++){
             const GridFeature& rim = rims[rng.GetInt(0,(int)rims.size() - 1)];
             const std::vector<vec2>& p = rim.line.points;
             int n = (int)p.size();
@@ -878,7 +941,7 @@ struct Builder{
             }
             corners.push_back(corners.front());
             GridFeature f;
-            f.kind = GRID_FEATURE_TERRACE;
+            f.kind = GRID_FEATURE_LEDGE;
             f.line = GridSmoothLine(corners,true,0.25f * T);
             //All of it in the rift, and floor on beyond its far side, not the far wall.
             bool f_in_rift = true;
@@ -891,7 +954,179 @@ struct Builder{
             vec2 beyond = outer[outer.size() / 2] + in[in.size() / 2] * spacing;
             if (f_in_rift && rift.Sample(beyond) < -2.0f && Fits(f.line,placed)){
                 placed.push_back(f);
-                out.count[GRID_FEATURE_TERRACE]++;
+                out.count[GRID_FEATURE_LEDGE]++;
+            }
+        }
+    }
+
+    //--- Balconies ------------------------------------------------------------------------------
+
+    /*
+        A balcony: a ledge joined to a wall a step below the rim (Grid.h). Its line leaves the rim
+        square at one end of a stretch of it, straight out for most of its depth, turns along it on a
+        quarter circle, runs at its depth along the stretch, and comes back the same way - so its two
+        ends are points of the rim's own line, where the grid fixes a vertex of both chains.
+
+        Square, because two lines meeting at a junction are closer than the spacing near it, and the
+        steeper they part the sooner they are clear: the check lets a balcony off against its own rim
+        within GRID_JUNCTION_REACH of its ends, and holds it to GRID_BALCONY_RIM_SPACING beyond them -
+        a balcony is shallow, "only room for a couple of things". The quarter circle is the tightest
+        turn the lattice draws (RoundEnough). Everything else - the spacing from other lines, the
+        map's edge, itself - holds as for any line, and there must be floor beyond it, not the far
+        wall.
+
+        At least one on the home side, which has nothing else to winch floatstone from before its
+        first zeppelin; the far side may have none (gameplay_plan.md, "Floatstone").
+    */
+    #define BALCONY_DEPTH_MIN       18.0f   //from the rim's line to the balcony's, world units
+    #define BALCONY_DEPTH_MAX       22.0f
+    #define BALCONY_TURN            16.0f   //the quarter circles' radius: 12 folded cells inside the turn
+    #define BALCONY_LENGTH_MIN      45.0f   //along the rim
+    #define BALCONY_LENGTH_MAX      70.0f
+
+    bool FitsBalcony(const GridLine& line, int rim_index, const std::vector<GridFeature>& placed) const{
+        if (!RoundEnough(line,false)){
+            return false;
+        }
+        if (GridLineGap(line,line,2.0f * spacing,NULL) < spacing){
+            return false;
+        }
+        float reach = GRID_JUNCTION_REACH * T;
+        float from_rim = GRID_BALCONY_RIM_SPACING * T;
+        std::vector<float> arc(line.points.size(),0.0f);
+        for (size_t k = 1; k < line.points.size(); k++){
+            vec2 d = line.points[k] - line.points[k - 1];
+            arc[k] = arc[k - 1] + std::sqrt(d.dot(d));
+        }
+        float total = arc.back();
+        for (size_t f = 0; f < placed.size(); f++){
+            if ((int)f != rim_index){
+                if (GridLineGap(line,placed[f].line,0.0f,NULL) < spacing){
+                    return false;
+                }
+                continue;
+            }
+            for (size_t k = 0; k < line.points.size(); k++){
+                if (arc[k] >= reach && total - arc[k] >= reach && PointLineDistance(line.points[k],placed[f].line) < from_rim){
+                    return false;
+                }
+            }
+        }
+        for (const vec2& q : line.points){
+            if (EdgeDistance(q) < spacing){
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void PlaceBalconies(int want_west, int want_east, std::vector<GridFeature>& placed, int num_rims){
+        out.wanted[GRID_FEATURE_BALCONY] = want_west + want_east;
+        out.count[GRID_FEATURE_BALCONY] = 0;
+        out.balconies[0] = out.balconies[1] = 0;
+        static const float turn_cos[5] = {1.0f,0.92387953f,0.70710678f,0.38268343f,0.0f};
+        static const float turn_sin[5] = {0.0f,0.38268343f,0.70710678f,0.92387953f,1.0f};
+        const int wanted[2] = {want_west,want_east};
+        for (int side_index = 1; side_index >= 0; side_index--){
+            int side = side_index ? 1 : -1;
+            for (int attempt = 0; attempt < 40 && out.balconies[side_index] < wanted[side_index]; attempt++){
+                int rim_index = rng.GetInt(0,num_rims - 1);
+                const std::vector<vec2>& p = placed[rim_index].line.points;
+                int n = (int)p.size();
+                float depth = rng.GetFloat(BALCONY_DEPTH_MIN,BALCONY_DEPTH_MAX);
+                float length = rng.GetFloat(BALCONY_LENGTH_MIN,BALCONY_LENGTH_MAX);
+                //Rim points are a quarter side apart.
+                int span = (int)(length / (0.25f * T));
+                int first = rng.GetInt(2,std::max(2,n - span - 3));
+                int last = first + span;
+                if (last + 2 >= n){
+                    continue;
+                }
+                //Into the rift: the field falls that way. On the wanted side: the plateau behind it.
+                vec2 mid = p[(first + last) / 2];
+                vec2 side_dir = Perp(Unit(p[(first + last) / 2 + 1] - p[(first + last) / 2 - 1]));
+                float sign = rift.Sample(mid + side_dir * 6.0f) < rift.Sample(mid - side_dir * 6.0f) ? 1.0f : -1.0f;
+                if (SideAt(mid - side_dir * (sign * 8.0f)) != side){
+                    continue;
+                }
+                auto frame = [&](int k, vec2& t, vec2& nrm){
+                    t = Unit(p[k + 1] - p[k - 1]);
+                    nrm = Perp(t) * sign;
+                };
+                /*
+                    Laid out in the rim's own frame - `k` rim points along, `d` out from it - so the
+                    turns land exactly on the run however the rim bends. Built flat from each end's
+                    tangent instead, a turn ended a unit or two off a curving rim's offset while the
+                    run's first corner sat on it a few units on, and on a short balcony that jog
+                    folded the cells under it (seed 2, the first sweep at these sizes).
+                */
+                auto at = [&](float k, float d) -> vec2 {
+                    int i = std::min(std::max((int)std::floor(k),1),n - 3);
+                    float u = k - (float)i;
+                    vec2 ta, na, tb, nb;
+                    frame(i,ta,na);
+                    frame(i + 1,tb,nb);
+                    return p[i] * (1.0f - u) + p[i + 1] * u + Unit(na * (1.0f - u) + nb * u) * d;
+                };
+                std::vector<vec2> corners;
+                float leg = depth - BALCONY_TURN;
+                float turn = BALCONY_TURN / (0.25f * T);   //the turn's radius in rim points
+                //Out from the rim, square to it, then the quarter circle onto the run.
+                corners.push_back(p[first]);
+                for (float d = 4.0f; d < leg; d += 4.0f){
+                    corners.push_back(at((float)first,d));
+                }
+                for (int a = 0; a <= 4; a++){
+                    corners.push_back(at(first + turn * (1.0f - turn_cos[a]),leg + BALCONY_TURN * turn_sin[a]));
+                }
+                //The run, a rim point every three - from a turn's length in to a turn's length short.
+                int skip = (int)std::ceil(turn) + 3;
+                for (int k = first + skip; k <= last - skip; k += 3){
+                    corners.push_back(at((float)k,depth));
+                }
+                for (int a = 4; a >= 0; a--){
+                    corners.push_back(at(last - turn * (1.0f - turn_cos[a]),leg + BALCONY_TURN * turn_sin[a]));
+                }
+                for (float d = leg - 4.0f; d > 0.0f; d -= 4.0f){
+                    corners.push_back(at((float)last,d));
+                }
+                corners.push_back(p[last]);
+                GridFeature f;
+                f.kind = GRID_FEATURE_BALCONY;
+                f.line = GridSmoothLine(corners,false,0.25f * T);
+                f.line.points.front() = p[first];
+                f.line.points.back() = p[last];
+                f.end_on_feature[0] = rim_index;
+                f.end_on_feature[1] = rim_index;
+                f.side = side;
+                //In the rift away from its ends, and floor beyond it - not the far wall, not another rim.
+                bool f_ok = true;
+                for (size_t k = 0; k < f.line.points.size() && f_ok; k++){
+                    vec2 q = f.line.points[k];
+                    float from_rim = PointLineDistance(q,placed[rim_index].line);
+                    if (from_rim > 10.0f && rift.Sample(q) > -4.0f){
+                        f_ok = false;
+                    }
+                }
+                for (int k = first + skip; k <= last - skip && f_ok; k += 6){
+                    vec2 t, nrm;
+                    frame(k,t,nrm);
+                    if (rift.Sample(p[k] + nrm * (depth + spacing)) > -2.0f){
+                        f_ok = false;
+                    }
+                }
+                if (!f_ok || !FitsBalcony(f.line,rim_index,placed)){
+                    continue;
+                }
+                //The balcony's outline: the line, then back along the rim to where it started.
+                f.region.points = f.line.points;
+                for (int k = last - 1; k > first; k--){
+                    f.region.points.push_back(p[k]);
+                }
+                f.region.points.push_back(p[first]);
+                placed.push_back(f);
+                out.count[GRID_FEATURE_BALCONY]++;
+                out.balconies[side_index]++;
             }
         }
     }
@@ -910,10 +1145,11 @@ struct Builder{
     };
 
     /*
-        Falls first: points on a rim with plateau behind, open floor ahead (no shard or terrace
-        under the water), away from the map's edge and from each other. Then each one's course,
-        the cheapest path over the plateau from a source on the west, east or north edge - the
-        cost wanders on noise, which is the meander; rims cannot be crossed, and neither can the
+        Falls first: points on a rim with the HOME side's plateau behind - rivers run only on the
+        east (Grid.h, "THE SIDES") - open floor ahead (no island or balcony under the water), away
+        from the map's edge and from each other. Then each one's course, the cheapest path over the
+        home side from a source on its east edge, or the north edge east of the main tip - the cost
+        wanders on noise, which is the meander; rims cannot be crossed, nor the far side, nor the
         ground beside a river already placed.
     */
     void PlaceRivers(const std::vector<GridFeature>& features){
@@ -937,7 +1173,7 @@ struct Builder{
                 fall.lip = lip;
                 fall.out = -Unit(g);
                 fall.back = lip - fall.out * 24.0f;
-                bool f_ok = rift.Sample(fall.back) > 18.0f;
+                bool f_ok = rift.Sample(fall.back) > 18.0f && SideAt(fall.back) == 1;
                 for (float t = 6.0f; t <= 24.0f && f_ok; t += 6.0f){
                     vec2 q = lip + fall.out * t;
                     if (rift.Sample(q) > -4.0f){
@@ -946,6 +1182,9 @@ struct Builder{
                     for (const GridFeature& o : features){
                         if (o.kind != GRID_FEATURE_RIM && PointLineDistance(q,o.line) < 6.0f){
                             f_ok = false;
+                        }
+                        if (o.kind == GRID_FEATURE_BALCONY && PointInside(q,o.region)){
+                            f_ok = false;   //onto a balcony
                         }
                     }
                 }
@@ -963,8 +1202,11 @@ struct Builder{
         std::vector<uint8_t> blocked(cost.d.size(),0);
         for (int j = 0; j < cost.h; j++){
             for (int i = 0; i < cost.w; i++){
-                cost.At(i,j) = rift.Sample(cost.Pos(i,j));
-                if (cost.At(i,j) < RIVER_RIM_CLEAR + RIVER_SWING){
+                vec2 q = cost.Pos(i,j);
+                cost.At(i,j) = rift.Sample(q);
+                //Not near a rim; not on the far side, nor round the main tip to it through the mountain.
+                int side = SideAt(q);
+                if (cost.At(i,j) < RIVER_RIM_CLEAR + RIVER_SWING || side == -1 || (side == 0 && q.x < main_tip.x)){
                     blocked[(size_t)j * cost.w + i] = 1;
                 }
             }
@@ -1090,7 +1332,8 @@ struct Builder{
             }
         }
         /*
-            The source: on the west, east or north edge, reached, not by another source or a corner.
+            The source: on the east edge, or the north edge east of the main tip, reached, not by
+            another source or a corner.
             Neither the nearest edge - a river should cross some country - nor the farthest, which
             is far only because the way there winds round something.
         */
@@ -1099,7 +1342,7 @@ struct Builder{
         for (int pass = 0; pass < 2; pass++){
             for (int j = 0; j < h; j++){
                 for (int i = 0; i < w; i++){
-                    bool f_edge = i == 0 || i == w - 1 || j == 0;
+                    bool f_edge = i == w - 1 || (j == 0 && cost.Pos(i,j).x > main_tip.x);
                     int c = j * w + i;
                     if (!f_edge || dist[c] >= INF){
                         continue;
@@ -1188,12 +1431,6 @@ struct Builder{
     round every pocket, reaching a valley's length past it. All joined by a smooth maximum, so the foot
     bends rather than kinks.
 */
-#define MOUNTAIN_BASE_DEPTH         0.11f   //of the map's depth, the foot's mean distance from the north edge
-#define MOUNTAIN_BASE_SWING         0.05f   //of the depth, how far the base wanders either way
-#define MOUNTAIN_TONGUE_MARGIN      40.0f   //how far past the main tip the tongue reaches, world units
-#define MOUNTAIN_TONGUE_HALF_WIDTH  110.0f  //at the base's depth, either side of the tip
-#define MOUNTAIN_FOOT_STEP          4.0f    //world units between the foot's points
-#define MOUNTAIN_SPRING_DEPTH       10.0f   //how far into the mountain a river cut off at its foot rises
 //Pockets (step 3).
 #define POCKET_RADIUS_MIN           14.0f
 #define POCKET_RADIUS_MAX           22.0f
@@ -1431,9 +1668,10 @@ static void PlaceMountainFoot(uint32_t seed, const vec2& lo, const vec2& hi, Cha
 
 /*
     The south's regions (biomes_plan.md steps 4 and 5), from a stream of their own like the mountain:
-    the swamp on one side of the main mouth, the desert on the other, each a disc centred a little past
-    the south edge so it hugs it. Drawn swamp first, so adding the desert left the swamp as it was.
-    Sized to stay well clear of the mountain.
+    the swamp on the east of the main mouth, the home side, and the desert on the west, the far side
+    (Grid.h, ChasmLayout's regions) - each a disc centred a little past the south edge so it hugs it.
+    Drawn swamp first, so adding the desert left the swamp as it was. Sized to stay well clear of the
+    mountain.
 */
 static void PlaceRegion(RRandom& rng, int side, float r0, float r1, const vec2& lo, const vec2& hi,
                         float mouth, ChasmLayout::Region& out){
@@ -1450,9 +1688,10 @@ static void PlaceRegion(RRandom& rng, int side, float r0, float r1, const vec2& 
 static void PlaceSouth(uint32_t seed, const vec2& lo, const vec2& hi, ChasmLayout& out){
     RRandom rng((int)(seed * 3266489917u ^ 0x5A3B0Fu));
     rng.Generate(1024);
-    int side = rng.Roll(0.5f) ? -1 : 1;
-    PlaceRegion(rng,side,110.0f,160.0f,lo,hi,out.main_mouth_x,out.swamp);
-    PlaceRegion(rng,-side,120.0f,170.0f,lo,hi,out.main_mouth_x,out.desert);
+    //The draw that once chose the sides, kept so the regions' sizes and places stay as they were.
+    (void)rng.Roll(0.5f);
+    PlaceRegion(rng,1,110.0f,160.0f,lo,hi,out.main_mouth_x,out.swamp);
+    PlaceRegion(rng,-1,120.0f,170.0f,lo,hi,out.main_mouth_x,out.desert);
 }
 
 static float RegionMask(const ChasmLayout::Region& s, const vec2& p, uint32_t salt){
@@ -1502,24 +1741,38 @@ ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, f
     Builder b(rng,lo,hi,side,out);
 
     //What to stand in the chasm, drawn first because the rifts are drawn to suit it.
-    int want_terraces = rng.GetInt(0,4);
+    int want_ledges = rng.GetInt(0,4);
     int want_shards = rng.GetInt(0,4);
     int want_columns = rng.GetInt(0,5);
-    b.f_terraced = want_terraces > 0;
+    int want_balconies_east = rng.GetInt(1,2);
+    int want_balconies_west = rng.GetInt(0,2);
+    b.f_ledged = want_ledges > 0;
     std::vector<GridFeature> rims;
+    std::vector<GridFeature> placed;
+    /*
+        Rifts are drawn until they keep their spacing, leave each side one piece, and take a balcony
+        on the home side - so the guarantee is in the drawing, not hoped for after it.
+    */
     const int max_attempts = 30;
     out.f_rifts_ok = false;
     for (int attempt = 1; attempt <= max_attempts; attempt++){
         out.attempts = attempt;
-        if (b.TryRifts(rims)){
+        if (!b.TryRifts(rims)){
+            continue;
+        }
+        placed = rims;
+        b.PlaceBalconies(want_balconies_west,want_balconies_east,placed,(int)rims.size());
+        if (out.balconies[1] > 0){
             out.f_rifts_ok = true;
             break;
         }
     }
-    std::vector<GridFeature> placed = rims;
+    if (!out.f_rifts_ok && placed.empty()){
+        placed = rims;
+    }
     out.count[GRID_FEATURE_RIM] = (int)rims.size();
     if (!rims.empty()){
-        b.PlaceTerraces(want_terraces,placed,rims);
+        b.PlaceLedges(want_ledges,placed,rims);
     }
     b.PlaceBlobs(GRID_FEATURE_SHARD,want_shards,placed);
     b.PlaceBlobs(GRID_FEATURE_COLUMN,want_columns,placed);

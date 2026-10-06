@@ -14,9 +14,21 @@ using json = nlohmann::json;
 
 json ChasmSaveToJson(const ChasmSave& s){
     const GridSettings& g = s.settings;
-    json houses = json::array();
-    for (const auto& h : s.houses){
-        houses.push_back(json::array({h.first,h.second}));
+    //A building by name of kind and crop, so a person can read a save, and an id that never changes.
+    json buildings = json::array();
+    for (const ZoneSavedBuilding& b : s.buildings){
+        json jb{{"id",b.id},{"kind",ZoneKindName(b.kind)}};
+        if (b.kind == ZONE_KIND_FIELD){
+            jb["cells"] = b.cells;
+            jb["crop"] = ZoneCropName(b.crop);
+        }else{
+            json plots = json::array();
+            for (const auto& pl : b.plots){
+                plots.push_back(json::array({pl.first,pl.second}));
+            }
+            jb["plots"] = plots;
+        }
+        buildings.push_back(jb);
     }
     json grounds = json::array();
     for (const auto& gr : s.grounds){
@@ -44,8 +56,9 @@ json ChasmSaveToJson(const ChasmSave& s){
             {"relax_strength",g.relax_strength}
         }},
         {"world_hash",s.world_hash},
-        {"houses",houses},
-        {"fields",s.fields},
+        {"buildings",buildings},
+        {"next_building",s.next_building},
+        {"stroke",{s.stroke,s.stroke_building}},
         {"grounds",grounds},
         {"walkers",walkers}
     };
@@ -57,8 +70,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         error = "not a chasm save";
         return false;
     }
-    if (j["chasm_save"].get<int>() != CHASM_SAVE_VERSION){
-        error = "save version " + std::to_string(j["chasm_save"].get<int>()) + ", expected " +
+    int version = j["chasm_save"].get<int>();
+    if (version < 1 || version > CHASM_SAVE_VERSION){
+        error = "save version " + std::to_string(version) + ", expected 1 to " +
                 std::to_string(CHASM_SAVE_VERSION);
         return false;
     }
@@ -72,11 +86,41 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     s.relax_passes_fine = g.value("relax_passes_fine",s.relax_passes_fine);
     s.relax_strength = g.value("relax_strength",s.relax_strength);
     out.world_hash = j.value("world_hash",std::string());
+    for (const json& jb : j.value("buildings",json::array())){
+        ZoneSavedBuilding b;
+        b.id = jb.value("id",0u);
+        b.kind = ZoneKindByName(jb.value("kind",std::string()));
+        int crop = ZoneCropByName(jb.value("crop",std::string("wheat")));
+        b.crop = (crop < 0) ? ZONE_CROP_WHEAT : crop;
+        for (const json& pl : jb.value("plots",json::array())){
+            b.plots.push_back(std::make_pair(pl[0].get<int>(),pl[1].get<int>()));
+        }
+        b.cells = jb.value("cells",std::vector<int>());
+        out.buildings.push_back(b);
+        out.next_building = std::max(out.next_building,b.id + 1);
+    }
+    out.next_building = std::max(out.next_building,j.value("next_building",1u));
+    if (j.contains("stroke") && j["stroke"].is_array() && j["stroke"].size() == 2){
+        out.stroke = j["stroke"][0].get<uint32_t>();
+        out.stroke_building = j["stroke"][1].get<uint32_t>();
+    }
+    /*
+        Version 1 had no buildings, only plots and cells: each house plot comes back a house of its own
+        and each field cell a field of its own - nothing is lost, it is only not grouped.
+    */
     for (const json& h : j.value("houses",json::array())){
-        out.houses.push_back(std::make_pair(h[0].get<int>(),h[1].get<int>()));
+        ZoneSavedBuilding b;
+        b.id = out.next_building++;
+        b.kind = ZONE_KIND_HOUSE;
+        b.plots.push_back(std::make_pair(h[0].get<int>(),h[1].get<int>()));
+        out.buildings.push_back(b);
     }
     for (const json& f : j.value("fields",json::array())){
-        out.fields.push_back(f.get<int>());
+        ZoneSavedBuilding b;
+        b.id = out.next_building++;
+        b.kind = ZONE_KIND_FIELD;
+        b.cells.push_back(f.get<int>());
+        out.buildings.push_back(b);
     }
     for (const json& gr : j.value("grounds",json::array())){
         out.grounds.push_back(std::make_pair(gr[0].get<int>(),gr[1].get<int>()));

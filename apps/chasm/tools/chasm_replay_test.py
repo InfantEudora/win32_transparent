@@ -5,11 +5,15 @@ Chasm's replay test: a recording made from a save replays to the same state, twi
        on the road - this is the SAVE the recording will start from, so it starts with a walker part
        way down its path.
     2. Record: paint more over MCP (houses, storeys, an erase, fields, a road branch the walker plans
-       onto, a second walker, a third that lives in the garden and leaves by its gate) at different
+       onto, a second walker, a third that lives in the garden and leaves by its gate; and buildings -
+       a store made in one stroke and then split by an erase in its middle, a woodcutter, a house
+       extended by a stroke that starts on it, a field's crop changed; a WINCH on the rim above the
+       home balcony and a walker who lives on the balcony and rides it up to the plateau) at different
        ticks, stop.
     3. Paint junk on top, so a replay that failed to restore the start would show it.
     4. Replay twice. Each must end in exactly the zones the original reached (compared as saves:
-       every house with its storeys, every field, every ground and road plot) and with the same
+       every building with its id, kind, plots and storeys or cells and crop, every ground and road
+       plot) and with the same
        walkers (home and goal - where they are depends on how long after the end the save is taken),
        and the two replays' per-tick traces must match - which covers the walkers tick by tick.
 
@@ -26,6 +30,13 @@ import time
 import urllib.request
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8769
+"""
+Where the village stands: every x below is shifted by this. Seed 1's chasm now comes from the seed,
+and the village's old ground (x -100 to -36) is the chasm floor, where nothing may be built; at +190 it
+stands on the home (east) side's plateau, all of it temperate ground. Moved from +190 to +250 when the
+smaller balconies (2026-10-06) re-rolled every seed's rivers and one ran through the old spot.
+"""
+DX = 250.0
 
 
 def call(name, args=None):
@@ -40,23 +51,77 @@ def call(name, args=None):
     return json.loads(r["result"]["content"][0]["text"])
 
 
-def paint(op, x, z):
-    return call("chasm_paint", {"op": op, "x": x, "z": z})
+REFUSED = {}
+
+
+def paint(op, x, z, **extra):
+    args = {"op": op, "x": x + DX, "z": z}
+    args.update(extra)
+    r = call("chasm_paint", args)
+    if r.get("refusal"):
+        REFUSED[r["refusal"]] = REFUSED.get(r["refusal"], 0) + 1
+    return r
+
+
+def find_winch():
+    """A rim plot above the home balcony a winch can stand on, and a balcony home and plateau goal a
+    walker gets between by riding it - found by trying, since the layout comes from the seed. Leaves
+    nothing behind: the probe winch is erased and the probe walkers cleared."""
+    g = call("chasm_generate", {"defaults": True})
+    bal = [b for b in g["layout"]["balcony_list"] if b["side"] == "east"][0]
+    (sx, sz), (ex, ez), (mx, mz) = bal["start"], bal["end"], bal["middle"]
+    cx, cz = (sx + ex) / 2, (sz + ez) / 2
+    dx, dz = cx - mx, cz - mz
+    n = (dx * dx + dz * dz) ** 0.5
+    dx, dz = dx / n, dz / n
+    winch = None
+    for along in [i * 0.5 for i in range(-40, 41)]:
+        for off in [i * 0.5 for i in range(-12, 13)]:
+            x, z = cx + dx * off - dz * along, cz + dz * off + dx * along
+            if not call("chasm_paint", {"op": "build_paint", "kind": "winch", "x": x, "z": z}).get("refusal"):
+                winch = (x, z)
+                break
+        if winch:
+            break
+    if not winch:
+        return None
+    wx, wz = winch
+    home = (wx + (mx - wx) * 0.45, wz + (mz - wz) * 0.45)
+    found = None
+    for far in (12.0, 18.0, 25.0):
+        for turn in (0.0, 0.7, -0.7, 1.4, -1.4):
+            # away from the balcony, swung either way, so a river behind the rim does not stop it
+            ax = dx * (1 - abs(turn) * 0.3) - dz * turn
+            az = dz * (1 - abs(turn) * 0.3) + dx * turn
+            goal = (wx + ax * far, wz + az * far)
+            call("chasm_walker", {"op": "clear"})
+            call("chasm_walker", {"op": "spawn", "home_x": home[0], "home_z": home[1], "goal_x": goal[0], "goal_z": goal[1]})
+            k = call("chasm_walker", {"op": "list"})["walkers"]
+            if k and not k[0]["stuck"]:
+                found = goal
+                break
+        if found:
+            break
+    call("chasm_paint", {"op": "build_erase", "x": wx, "z": wz})
+    call("chasm_walker", {"op": "clear"})
+    return (winch, home, found) if found else None
 
 
 def zones_of(save_name):
-    """What a save holds that a replay must reproduce: houses with storeys, fields, ground and roads,
-    which walkers there are, and the world."""
+    """What a save holds that a replay must reproduce: every building (id, kind, plots with storeys or
+    cells, crop), ground and roads, which walkers there are, and the world."""
     call("chasm_save", {"name": save_name})
     with open("apps/chasm/saves/%s.json" % save_name) as f:
         s = json.load(f)
     walkers = sorted((k["home"], k["goal"]) for k in s.get("walkers", []))
-    return (sorted(map(tuple, s["houses"])), sorted(s["fields"]), sorted(map(tuple, s.get("grounds", []))),
-            walkers, s["world_hash"])
+    buildings = sorted((b["id"], b["kind"], tuple(sorted(map(tuple, b.get("plots", [])))),
+                        tuple(sorted(b.get("cells", []))), b.get("crop", "")) for b in s["buildings"])
+    return (buildings, sorted(map(tuple, s.get("grounds", []))), walkers, s["world_hash"])
 
 
 def main():
     call("sim_pause", {"paused": False})
+    winch = find_winch()
     call("chasm_generate", {"defaults": True})
 
     # 1. the starting village
@@ -69,10 +134,10 @@ def main():
     # wall opens a gate there - the only way in for a walker
     for gx in range(-71, -63):
         for gz in range(0, 6):
-            call("chasm_paint", {"op": "ground_paint", "ground": "garden", "x": float(gx), "z": float(gz)})
-    call("chasm_road", {"x0": -96, "z0": 10, "x1": -60, "z1": 10})
-    lane = call("chasm_road", {"x0": -67, "z0": 10, "x1": -67, "z1": 3})
-    call("chasm_walker", {"op": "spawn", "home_x": -95, "home_z": 4, "goal_x": -62, "goal_z": 14})
+            paint("ground_paint", float(gx), float(gz), ground="garden")
+    call("chasm_road", {"x0": -96 + DX, "z0": 10, "x1": -60 + DX, "z1": 10})
+    lane = call("chasm_road", {"x0": -67 + DX, "z0": 10, "x1": -67 + DX, "z1": 3})
+    call("chasm_walker", {"op": "spawn", "home_x": -95 + DX, "home_z": 4, "goal_x": -62 + DX, "goal_z": 14})
     time.sleep(0.6)     # so the save catches it part way down an edge, not standing on a plot
 
     # 2. the recording
@@ -89,11 +154,29 @@ def main():
         paint("field_paint", float(fx), 40.0)
         time.sleep(0.04)
     paint("field_erase", -88.0, 32.0)
-    call("chasm_road", {"x0": -78, "z0": 10, "x1": -70, "z1": 28})
-    call("chasm_walker", {"op": "spawn", "home_x": -70, "home_z": 27, "goal_x": -94, "goal_z": 12})
-    call("chasm_walker", {"op": "spawn", "home_x": -66, "home_z": 2, "goal_x": -90, "goal_z": 10})
+    call("chasm_road", {"x0": -78 + DX, "z0": 10, "x1": -70 + DX, "z1": 28})
+    call("chasm_walker", {"op": "spawn", "home_x": -70 + DX, "home_z": 27, "goal_x": -94 + DX, "goal_z": 12})
+    call("chasm_walker", {"op": "spawn", "home_x": -66 + DX, "home_z": 2, "goal_x": -90 + DX, "goal_z": 10})
     time.sleep(0.5)
-    call("chasm_road", {"x0": -66, "z0": 10, "x1": -62, "z1": 14})
+    call("chasm_road", {"x0": -66 + DX, "z0": 10, "x1": -62 + DX, "z1": 14})
+    # buildings: a store in one stroke, split in two by an erase in its middle; a woodcutter; the first
+    # house extended by a stroke that starts on it; the second field row's crop changed
+    for i in range(7):
+        paint("build_paint", -94 + i * 1.6, 15.5, kind="store", stroke=1)
+        time.sleep(0.02)
+    paint("build_erase", -94 + 3 * 1.6, 15.5, kind="store")
+    for i in range(3):
+        paint("build_paint", -58 + i * 1.6, 20.0, kind="woodcutter", stroke=2)
+    paint("build_paint", -90.0, 20.0, kind="house", stroke=3)
+    paint("build_paint", -90.0, 22.0, kind="house", stroke=3)
+    paint("field_crop", -84.0, 40.0, crop="beans")
+    # the winch, and a walker who lives on the balcony below it and works on the plateau
+    rider = None
+    if winch:
+        (wx, wz), home, goal = winch
+        call("chasm_paint", {"op": "build_paint", "kind": "winch", "x": wx, "z": wz})
+        call("chasm_walker", {"op": "spawn", "home_x": home[0], "home_z": home[1], "goal_x": goal[0], "goal_z": goal[1]})
+        rider = call("chasm_walker", {"op": "list"})["walkers"][-1]
     time.sleep(0.3)
     status = call("input_record", {"action": "stop"})
     recording = status.get("last_recording") or status.get("last_file") or ""
@@ -102,7 +185,7 @@ def main():
     # 3. junk on top
     for i in range(10):
         paint("house_add", -60 + i * 1.9, -40.0)
-    call("chasm_walker", {"op": "spawn", "home_x": -60, "home_z": -44, "goal_x": -40, "goal_z": -44})
+    call("chasm_walker", {"op": "spawn", "home_x": -60 + DX, "home_z": -44, "goal_x": -40 + DX, "goal_z": -44})
 
     # 4. two replays
     results = []
@@ -116,22 +199,35 @@ def main():
         if zones != original:
             ok = False
             print("replay %d ends in a different state than the original:" % n)
-            print("  houses original %d, replay %d" % (len(original[0]), len(zones[0])))
-            print("  fields original %d, replay %d" % (len(original[1]), len(zones[1])))
-            print("  ground original %d, replay %d" % (len(original[2]), len(zones[2])))
-            print("  walkers original %s, replay %s" % (original[3], zones[3]))
+            print("  buildings original %d, replay %d" % (len(original[0]), len(zones[0])))
+            for a, b in zip(original[0], zones[0]):
+                if a != b:
+                    print("    first differing building: %s / %s" % (a, b))
+                    break
+            print("  ground original %d, replay %d" % (len(original[1]), len(zones[1])))
+            print("  walkers original %s, replay %s" % (original[2], zones[2]))
     t1 = results[0][1]
     t2 = results[1][1]
     if json.dumps(t1, sort_keys=True) != json.dumps(t2, sort_keys=True):
         ok = False
         print("the two replays' traces differ")
     ticks = t1.get("ticks") if isinstance(t1, dict) else None
-    print("original: %d houses, %d fields, %d ground plots, %d walkers" %
-          (len(original[0]), len(original[1]), len(original[2]), len(original[3])))
+    kinds = {}
+    for b in original[0]:
+        kinds[b[1]] = kinds.get(b[1], 0) + 1
+    print("original: buildings %s, %d ground plots, %d walkers" %
+          (", ".join("%d %s" % (n, k) for k, n in sorted(kinds.items())), len(original[1]), len(original[2])))
     print("recording %s, %s traced ticks" % (recording or "(last)", ticks or "?"))
+    print("refusals while painting (the junk and the replays included): %s" % (REFUSED or "none"))
     if not lane.get("gates"):
         ok = False
         print("the lane into the garden made no gate: %s" % lane)
+    if not winch or not rider or rider["stuck"]:
+        ok = False
+        print("no winch ride: winch %s, walker %s" % (winch, rider))
+    else:
+        print("winch at (%.1f, %.1f); the balcony walker plans %d plots, riding it" %
+              (winch[0][0], winch[0][1], rider["plots_to_go"]))
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

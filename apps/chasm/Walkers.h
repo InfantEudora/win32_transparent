@@ -26,6 +26,12 @@
     length over the speed it is walked at - fastest on a road, slowest through a field, and slower
     the steeper it is.
 
+    A WINCH (docs/buildings_plan.md step 2) adds one edge more: from its plot on the rim down to its
+    landing on the balcony below (ZoneWinchLinks) - the only edge that crosses a level, and it takes
+    WINCH_RIDE_SECONDS whatever its length. A winch's plot is a passage, walked through, not a
+    building that is only ever a walk's first or last plot. The links are worked out again whenever
+    the zones change.
+
     --- WHEN THE ZONES CHANGE -------------------------------------------------------------------------
     Every walker plans again from the plot it is walking toward, keeping the edge it is on - or, if
     that plot is now closed to it, turns back along the edge and plans from the one it came from. A
@@ -42,6 +48,8 @@
 #define WALKER_SPEED_SWAMP      1.0f    //both ends in the swamp, off a road
 #define WALKER_SLOPE_COST       3.0f    //speed divided by 1 + this x the grade (rise over run)
 #define WALKER_STEEPEST         0.75f   //rise over run past which an edge cannot be walked at all
+#define WINCH_RIDE_SECONDS      5.0f    //from the rim down to the balcony, or up
+#define WINCH_STEP_OUT          0.2f    //of a ride: stepping out to the rope (or in off it), level
 
 struct Walker{
     int home = -1;              //plots
@@ -99,11 +107,18 @@ public:
 
     //Where a walker is now, on the ground plane (x, world z), and which way it faces.
     static vec2 Position(const ChasmWorld& w, const Walker& k, vec2* facing = NULL);
+    //And how high: on the ground of the plot it is at, or on a winch's rope between the two levels.
+    static float Height(const ChasmWorld& w, const Walker& k, const vec2& at);
 
 private:
     WalkerSet set;
     std::shared_ptr<const WalkGraph> graph;
     void EnsureGraph();
+    //The winches' links (plot, landing), for the zones of version links_version.
+    std::vector<std::pair<int,int>> links;
+    uint32_t links_version = 0xFFFFFFFFu;
+    void EnsureLinks(const ZoneState& z);
+    bool IsLink(int a, int b) const;
     //A* from `from` to `to`; the plots in order, both ends included. Empty when there is no way.
     std::vector<int> FindPath(const ZoneState& z, int from, int to) const;
     void Replan(const ZoneState& z, Walker& k);

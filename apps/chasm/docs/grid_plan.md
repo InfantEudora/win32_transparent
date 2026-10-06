@@ -786,12 +786,115 @@ goes back a seed as N goes forward. The pins view colours lines by kind (rims ma
 in the chasm cyan) and draws each on its own level.
 
 **Open:**
-- Shards, columns and terraces all stand at one level (-24). Columns as tall pillars would read
-  well, and the mesh would draw them - it is a fourth level, and every user of the levels (forest,
-  zones, mist, picking) has to agree on it.
-- Terraces are slumped blocks with a crevice behind them, never ledges joined to the wall: a joined
-  ledge has to end, and where it ends three levels meet in one cell. A ledge running a wall's whole
-  length, edge to edge, would keep the rule, if a stepped chasm is wanted.
+- Shards, columns and ledges all stand at one level (-24). Columns as tall pillars would read
+  well, and the mesh would draw them - another level, which every user of the levels (forest,
+  zones, mist, picking) has to agree on, as the balcony's did.
+- ~~Terraces are slumped blocks with a crevice behind them, never ledges joined to the wall~~ - the
+  joined ledge is built now, as the balcony, below.
 - Rivers rise on the west, east or north edge and never fork or join; none starts on the south edge,
   which is the swamp's and desert's.
 - The rifts know nothing of biomes yet - only that the north band (10% of the depth) stays clear.
+
+### Balconies, whole sides, rivers at home (2026-10-05)
+
+From the gameplay (`gameplay_plan.md`, "Terraces: balconies and islands"). In the chasm stand
+TERRACES of two kinds: **islands**, free-standing, reached by zeppelin - the `shard`, `column` and
+`ledge` (step 10's terrace, renamed: it stands off its wall, so it is an island) - and **balconies**,
+joined to a wall a step below the rim, reached from the rim by winch. Three more rules came with it:
+rivers run on the home (east) side only, the swamp is at home and the desert on the far side, and
+each side must be one walkable region, so no seed leaves land only a zeppelin could reach.
+
+Files: `Grid.h` (`GRID_FEATURE_BALCONY`, `GridFeature::end_on_feature`, `region`, `side`,
+`Grid::LineEndsOn`), `ChasmLayout.cpp` (`PlaceBalconies`, `SidesWhole`, rivers and the south),
+`Grid.cpp` (pinning a line onto another, `Untangle`, the checks), `Terrain.*` (`TERRAIN_BALCONY`,
+the level test, the `steps`, `sides` and `balconies` checks), `TerrainMesh.cpp` (`QuarterCell`, the
+strata), `Zones.cpp` (no fields on a balcony), `Forest.cpp`, `ApplicationChasm.cpp` (picking by
+height, the summary).
+
+- **What a balcony is**: an OPEN line that leaves a rim square to it, runs out 18-22 (2026-10-06;
+  28-40 before), turns along the rim on a quarter circle (radius 16 - at 12 the cells inside the turn
+  folded), runs at its depth along a 45-70 stretch of rim (70-150 before), and comes back the same
+  way - "only room for a couple of things", about 30% of the old area. Both ends are points of
+  the rim's own line. With the turn at 16 the straight leg is only 2-6 long, so a balcony is mostly
+  its two turns and a short run. The whole line is laid out in the RIM's frame (distance along it,
+  distance out): built flat from each end's tangent, a turn ended a unit or two off a curving rim's
+  offset while the run's first corner sat on it a few units on, and on a short balcony that jog
+  folded two cells (seed 2). Its level is **-12**, a winch's drop and well above the mist; every level is a
+  whole number of strata (6) below the plateau, so a balcony's wall and the full wall beside it line
+  up. The level test reads its `region`: the line, then the rim back to its start.
+- **The junction**: where the rim meets the map's edge the grid already fixes a vertex both lines
+  share; a balcony's end is the same thing against a feature line. The rim is pinned first; the
+  balcony's end takes the rim chain's vertex nearest it, moved exactly there and fixed. Three things
+  were needed to get the balcony's chain away from it:
+  - the rule that keeps chains a vertex apart lets the junction's rim neighbours off - up to two
+    steps along the rim, since where the rim bends round the junction a second one sits beside
+    the way out;
+  - with that let off, the way out over the PLATEAU was as open as the way into the chasm, and on
+    seeds 12 and 48 the chain took it, came back 48 units off its line, and collapsed every cell along
+    the balcony - so the step off a junction (and onto one) must be the spoke aimed along the line;
+  - the WEDGE, the one lattice triangle between the rim's edge and the balcony's first edge, is left
+    unmerged: merged, its quad took the rim vertex beside it through a flat corner. A triangle splits
+    into three quads with a corner each.
+  An `Untangle` pass after the fine relaxation moves the corners of any quad still folded to their
+  neighbours' average (pinned ones back onto their lines), a ring further out each pass; with the
+  three fixes above it finds nothing on seeds 1-60, and is kept as the guard.
+- **Three levels in a cell**, at each end, drawn in quarters: each corner's quarter at its level, a
+  wall down every inner half-edge between two different ones, all meeting at the cell's centre, where
+  the walls' strata hold still. `steps` now allows three levels only within two sides of a junction.
+- **The strata at fixed heights**: rows every 6 below the plateau's level, each row's jitter and rock
+  by that height's index, instead of the drop shared out evenly - so walls from different tops meet.
+  A sliver of a stratum at the foot joins the one above. Every existing wall changed a little.
+- **Spacing** lets a balcony off against its own rim within `GRID_JUNCTION_REACH` (3.75 sides, 30) of
+  its ends, and beyond that holds it to `GRID_BALCONY_RIM_SPACING` (2.25 sides, 18) rather than the
+  2.5 everything else keeps - a depth under 20 needs it, and two sides is the floor (pinning: no two
+  chains in one lattice triangle). Both the generator (`FitsBalcony`) and the grid's `spacing` check
+  use it; the check's detail prints the closest balcony-to-own-rim gap. At these sizes the reach
+  covers the leg and the whole turn (2-6 + 25 of arc) and ends just on the run, so it exempts the
+  part whose distance from the rim is set by construction and still checks the run; on a 45 balcony
+  that is most of the line, which is fine for the same reason. `steps` (three levels only within two
+  sides of a junction) held unchanged. Pinned, the closest balcony comes 18.0-21.2 from its rim
+  (mean 19.2) over seeds 1-60 - right at the limit, since the generator draws down to it.
+- **One region a side**: the generator floods the plateau out of the mountain's reach (the deepest
+  its base swings to, the tongue at its widest) on the rift raster, and redraws the rifts if a piece
+  never meets the south edge, a side comes in two, or either side is under a fifth of the map. On the
+  grid the `sides` check proves it with the walkers' own flood (rivers crossable).
+- **Rivers at home**: falls only where the plateau behind is the east's; the course may not cross
+  the far side or round the main tip through the mountain; sources only on the east edge or the
+  north edge east of the main tip. No fall lands on a balcony.
+- **Balconies are guaranteed at home**: rifts are redrawn until one fits on the east (1-2 wanted, 0-2
+  on the west). Seeds 1-60: east 1 on 43 seeds and 2 on 17; west 0 on 19, 1 on 26, 2 on 15. At the
+  smaller sizes (2026-10-06) more fit: east 1 on 28 and 2 on 32; west 0 on 18, 1 on 19, 2 on 23;
+  rift attempts mean 2.1, max 8. 157 balconies over the 60 seeds: 42-68 end to end, 185-452 fine
+  vertices of ground each (mean 293; the `balconies` check wants 20).
+- **Building**: a balcony builds like the plateau - houses, gardens, towns, roads - but no field
+  ("no fields on a balcony - its food comes down from the rim"). Its forest is a little thinner than
+  the plateau's. Picking now walks the levels by height, since the balcony is numbered last.
+- **Checks added**: `sides` (one region a side, nothing cut off, every fall at home), `balconies`
+  (one at home at least, each with ground of its own); `layout` fails without a home balcony; `levels`,
+  `steps`, `features` (a junction is a member of its rim's chain), `spacing` generalised.
+- **Measured**: seeds 1-60 (debug) pass every check; rift attempts up to 8 (the balcony and sides rules
+  redraw some). Seeds 1-3 re-pinned, the same hashes in release, and seeds 7, 12 and 48 match between
+  debug and release. The replay test passes in debug and release. A village painted on seed 1's
+  balcony: 16 of 16 houses and a walled garden placed, the field refused.
+- **Measured at the smaller sizes (2026-10-06)**: seeds 1-60 (debug) pass every check; seeds 1-3
+  re-pinned and the same three hashes from release. Seeds 61-120 were swept too: one failure, seed
+  95's `sides` - a 76-vertex strip of plateau cut off between the mountain's foot and a rim, nowhere
+  near a balcony. The rift test floods with the mountain at its widest reach, so a pocket outside
+  the real foot can slip through; smaller balconies only expose it by keeping an earlier rift draw.
+  Open below. The balconies draw from the same stream as ledges, blobs and rivers after them, so
+  every seed's rivers re-rolled; on seed 1 one now crosses the replay test's village at x+190. The
+  test passes at DX 250, in debug and release, with no refusals.
+
+**Open:**
+- A balcony is always a U along one stretch of rim; one turning round a rift's tip, or two meeting,
+  are not tried. (The winch that reaches one is built: `buildings_plan.md`, step 2.)
+- **Parked map issue, seed 95 (`sides`)** - looked at in the app with the user 2026-10-06 and judged
+  not major; left for a later pass over the map. A thin green strip of plateau, 76 vertices with
+  pines on it, at the very tip of the mountain's tongue where it reaches south between two rifts
+  (first vertex at (-42, -97)): rims on three sides, the impassable mountain behind, so only a
+  zeppelin could reach it. The generator's one-region-a-side flood takes the mountain at its widest,
+  and this band is too thin for its coarse raster to see. Fixes, when it is picked up: let the foot
+  run on to the rims where what it leaves below it is that thin (preferred - the layout is otherwise
+  fine), or re-roll the layout. `PlaceMountainFoot` has a stream of its own and reads the main tip,
+  known once the rifts are drawn, so the flood could likely use the real foot - but it also reads
+  the rivers, which come later.

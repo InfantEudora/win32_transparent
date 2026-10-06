@@ -56,28 +56,54 @@ struct GridLine{
     A RIM is the edge of a rift: plateau on one side, floor on the other. It is open when the rift
     reaches the map's edge (both ends exactly on it, fixed there) and closed when it does not. No
     rift reaches the north (-z) edge - the frozen end's room - which is what lets the terrain decide
-    floor or plateau by a ray to the north. Shards, columns and terraces are closed lines standing
-    in a rift at shard level; they differ in shape only.
+    floor or plateau by a ray to the north.
+
+    In the chasm stand TERRACES, the old ground below the rim, of two kinds the player reaches
+    differently (gameplay_plan.md, "Terraces: balconies and islands"):
+
+      - ISLANDS, free-standing, reached by zeppelin: closed lines at island level. A SHARD is a blob
+        along the rift, a COLUMN a small round one, a LEDGE a long one lying along a wall with a
+        drop to the floor behind it. They differ in shape only.
+      - BALCONIES, joined to a wall a step below the rim, reached from the rim by winch: an OPEN line
+        that leaves a rim square to it, runs along it some way out into the rift, and comes back to
+        it. Both its ends lie exactly on that rim's line, and the grid fixes a vertex of the rim's
+        chain at each - the same junction a rim makes with the map's edge. Its `region` is the closed
+        outline the terrain reads the balcony level from: the line, then the rim back to its start.
 */
 #define GRID_FEATURE_RIM        0
 #define GRID_FEATURE_SHARD      1
 #define GRID_FEATURE_COLUMN     2
-#define GRID_FEATURE_TERRACE    3
-#define GRID_FEATURE_KINDS      4
+#define GRID_FEATURE_LEDGE      3
+#define GRID_FEATURE_BALCONY    4
+#define GRID_FEATURE_KINDS      5
+//An island kind: a closed line standing free in a rift.
+inline bool GridFeatureIsIsland(int kind){
+    return kind == GRID_FEATURE_SHARD || kind == GRID_FEATURE_COLUMN || kind == GRID_FEATURE_LEDGE;
+}
 extern const char* const grid_feature_names[GRID_FEATURE_KINDS];
 
 /*
     How close two feature lines may come, in lattice sides - two of them, a line and itself across
     a narrow place, or a line and the map's edge away from its ends. Pinning needs about two (no
     two chains may share a lattice triangle), and a level change sits half a fine cell outside its
-    chain, so at this spacing no fine cell can see three levels, which the terrain mesh does not cut.
+    chain, so at this spacing no fine cell sees three levels - except at a balcony's ends, where a
+    balcony meets its rim by design and the terrain mesh cuts the cells there in quarters. A balcony
+    is not held to the spacing against its own rim within GRID_JUNCTION_REACH of its ends, and
+    beyond that to GRID_BALCONY_RIM_SPACING instead: a balcony is meant to be shallow ("only room
+    for a couple of things"), and the two lines of one ledge have no third between them to keep
+    clear of. Never under two sides, or the pinning breaks.
 */
 #define GRID_FEATURE_SPACING    2.5f
+#define GRID_BALCONY_RIM_SPACING 2.25f  //lattice sides, a balcony from its own rim away from its ends
+#define GRID_JUNCTION_REACH     3.75f   //lattice sides, along a balcony from either end
 
 struct GridFeature{
     int kind = GRID_FEATURE_RIM;
     GridLine line;
     bool f_end_on_outline[2] = {false,false};   //an open line's ends, on the map's edge
+    int end_on_feature[2] = {-1,-1};            //a balcony's ends: the layout feature (its rim) they lie on
+    int side = 0;                               //a balcony's: -1 west of the main rift, +1 east
+    GridLine region;                            //a balcony's outline, closed - see above
 };
 
 struct GridRiverLine{
@@ -86,7 +112,7 @@ struct GridRiverLine{
 };
 
 struct ChasmLayout{
-    std::vector<GridFeature> features;      //rims first, then terraces, shards, columns
+    std::vector<GridFeature> features;      //rims first, then balconies, ledges, shards, columns
     std::vector<GridRiverLine> rivers;
     //What the seed asked for and what came of it - the generator drops what will not fit.
     int rifts = 0;
@@ -94,6 +120,7 @@ struct ChasmLayout{
     int count[GRID_FEATURE_KINDS] = {};
     int wanted[GRID_FEATURE_KINDS] = {};    //rims: unused
     int rivers_wanted = 0;
+    int balconies[2] = {};                  //placed on the west [0] and east [1] side
     int attempts = 0;                       //rift layouts drawn until one kept its spacing
     bool f_rifts_ok = true;                 //false: every attempt failed, the last is used anyway
     /*
@@ -122,8 +149,15 @@ struct ChasmLayout{
     int pocket_rejects[5] = {};
     /*
         THE SOUTH'S TWO REGIONS (biomes_plan.md steps 4 and 5), against the south edge, one on each side
-        of the main rift - which way round is the seed's choice. Each a wobbling disc. The SWAMP's ground
-        sinks below the rivers' water level in pools between hummocks; the DESERT's rises in dunes.
+        of the main rift: the SWAMP on the east, the home side, since its zombies are the colony's
+        threat; the DESERT on the west, the far side, where the pyramid is (gameplay_plan.md). Each a
+        wobbling disc. The swamp's ground sinks below the rivers' water level in pools between
+        hummocks; the desert's rises in dunes.
+
+        THE SIDES. East of the main rift is home: the colony starts there, and only there do rivers
+        run (the far side gets its water from snow and steam). Each side is ONE region - every bit of
+        plateau on it can be walked to from every other, rivers aside - so no seed leaves land that
+        only a zeppelin could reach; the generator redraws rifts that would (Builder::SidesWhole).
     */
     struct Region{
         vec2 centre;
@@ -225,6 +259,14 @@ public:
     int LineKind(int l) const{
         int f = l - feature_line_base;
         return (f >= 0 && f < (int)layout.features.size()) ? layout.features[f].kind : -1;
+    }
+    //The line an open line's end lies on - a balcony's rim - or -1 (none, or the map's edge).
+    int LineEndsOn(int l, int end) const{
+        int f = l - feature_line_base;
+        if (f < 0 || f >= (int)layout.features.size() || layout.features[f].end_on_feature[end] < 0){
+            return -1;
+        }
+        return feature_line_base + layout.features[f].end_on_feature[end];
     }
 
     int num_lattice_triangles = 0;

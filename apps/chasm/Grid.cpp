@@ -409,6 +409,87 @@ void Relax(GridLevel& level, const std::vector<GridLine>& lines, int passes, flo
 }
 
 /*
+    UNTANGLING what the relaxation leaves folded. Where a balcony's chain leaves its rim, the two
+    chains run a cell or two apart for a moment, and a vertex there can be left on the wrong side of
+    a chain once both are moved onto their lines - a quad folded over itself, which the square-fit
+    relaxation cannot undo, since it fits each quad as it lies. So each corner of a folded quad is
+    moved to the average of its neighbours - a pinned one then back onto its line, a fixed one not
+    at all - and that is repeated until none is folded. Each pass that still finds the fold smooths
+    a ring further out round it, since a fold against a chain is often held by the chain's own
+    vertices beside it. A vertex's move depends only on positions and on vertex order, so it is the
+    same every run.
+*/
+static bool QuadFolded(const GridLevel& level, const GridQuad& q){
+    for (int k = 0; k < 4; k++){
+        vec2 a = level.pos[q.v[(k + 1) % 4]] - level.pos[q.v[k]];
+        vec2 b = level.pos[q.v[(k + 2) % 4]] - level.pos[q.v[(k + 1) % 4]];
+        if (a.x * b.y - a.y * b.x <= 0.0f){
+            return true;
+        }
+    }
+    return false;
+}
+
+static int Untangle(GridLevel& level, const std::vector<GridLine>& lines, int passes){
+    size_t n = level.pos.size();
+    std::vector<std::vector<int>> around(n);
+    for (const std::pair<int,int>& e : level.edges){
+        around[e.first].push_back(e.second);
+        around[e.second].push_back(e.first);
+    }
+    int moved = 0;
+    std::vector<uint8_t> active(n,0);
+    for (int pass = 0; pass < passes; pass++){
+        bool f_any = false;
+        for (const GridQuad& q : level.quads){
+            if (QuadFolded(level,q)){
+                f_any = true;
+                for (int k = 0; k < 4; k++){
+                    active[q.v[k]] = 1;
+                }
+            }
+        }
+        if (!f_any){
+            break;
+        }
+        //One ring further out than last pass.
+        if (pass > 0){
+            std::vector<uint8_t> grown = active;
+            for (size_t v = 0; v < n; v++){
+                if (active[v]){
+                    for (int w : around[v]){
+                        grown[w] = 1;
+                    }
+                }
+            }
+            active.swap(grown);
+        }
+        std::vector<int> corners;
+        for (size_t v = 0; v < n; v++){
+            if (active[v]){
+                corners.push_back((int)v);
+            }
+        }
+        for (int v : corners){
+            if (level.pin[v] == GRID_PIN_FIXED || around[v].empty()){
+                continue;
+            }
+            vec2 sum(0.0f,0.0f);
+            for (int w : around[v]){
+                sum += level.pos[w];
+            }
+            vec2 at = sum / (float)around[v].size();
+            if (level.pin[v] >= 0){
+                at = NearestOnLine(lines[level.pin[v]],at);
+            }
+            level.pos[v] = at;
+            moved++;
+        }
+    }
+    return moved;
+}
+
+/*
     THE TRIANGLE LATTICE, with what the merge and the features need to know about it.
 
     Features are pinned HERE, on the lattice, before the merge - not on the coarse grid after it.
@@ -623,9 +704,17 @@ struct ChainSearch{
     turn at `from` comes back beside, and for a closing segment the closed chain's first vertex.
     `closing_dir` >= 0 means `target` is that first vertex and the chain must leave it in that
     direction, so the turn there is counted too.
+
+    And the JUNCTION a balcony's chain starts and ends at, a vertex of its rim's chain: the rim's
+    vertices near it (`exempt`, flagged per lattice vertex) are not counted against a step, or the
+    chain could never leave the rim nor come back to it - the first step off a straight chain is
+    always beside two of its vertices. With that let off, the way out over the plateau is as open as
+    the way into the chasm, so the step off a junction must be `first_step` and the step onto one
+    must come from `last_step` (each -1 for none): the spokes aimed along the balcony's line.
 */
 bool ChainSegment(const Lattice& L, ChainSearch& search, const GridLine& line, const std::vector<float>& s,
                   const GridLine& piece, const ChainEnd& from, int before, int target, int closing_dir,
+                  const std::vector<uint8_t>* exempt, int first_step, int last_step,
                   std::vector<int>& path, ChainEnd& to){
     const float INF = 1e30f;
     size_t states = L.pos.size() * 6 * CHAIN_TURN_STATES;
@@ -656,20 +745,33 @@ bool ChainSegment(const Lattice& L, ChainSearch& search, const GridLine& line, c
         if (L.MergedAcross(v,w)){
             return false;
         }
+        if (first_step >= 0 && v == from.v && w != first_step){
+            return false;
+        }
         if (w == target){
-            return true;
+            return last_step < 0 || v == last_step;
         }
         if (L.pin[w] != GRID_PIN_FREE || L.f_chain[w]){
             return false;
         }
-        int expected = L.f_chain[v] ? 1 : 0;
+        bool f_exempt_v = exempt && (*exempt)[v];
+        int expected = (L.f_chain[v] && !f_exempt_v) ? 1 : 0;
+        int near = L.near_chain[w];
+        if (exempt){
+            for (int d = 0; d < 6; d++){
+                int x = L.Step(w,d);
+                if (x >= 0 && (*exempt)[x]){
+                    near--;
+                }
+            }
+        }
         if (v == from.v && before >= 0 && L.Direction(w,before) >= 0){
             expected++;
         }
         if (closing_dir >= 0 && L.Direction(w,target) >= 0){
             expected++;
         }
-        return L.near_chain[w] == expected;
+        return near == expected;
     };
     auto step_cost = [&](int v, int w) -> float {
         vec2 mid = (L.pos[v] + L.pos[w]) * 0.5f;
@@ -1070,9 +1172,13 @@ void ChainIdealQuads(const Lattice& L, const std::vector<int>& chain, bool f_clo
     line in order even where the line doubles back close to itself, as a rim's tip does.
 
     An open line's end on the map's edge takes the outline vertex nearest it, moved exactly to it
-    and fixed. Returns false if the chain could not be finished; what was found stays pinned.
+    and fixed. A balcony's end on its rim (`end_on_line`, the rim's line, pinned before it) takes the
+    nearest vertex of the rim's chain the same way: moved exactly to the end - a point of the rim's
+    own line, so it stays on the rim - and fixed, a vertex of both chains. Returns false if the chain
+    could not be finished; what was found stays pinned.
 */
-bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_end_on_outline[2]){
+bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_end_on_outline[2],
+                const int end_on_line[2]){
     bool f_closed = LineClosed(line);
     std::vector<float> s = LineArcLengths(line);
     float total = s.back();
@@ -1095,8 +1201,81 @@ bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_e
         }
         return best;
     };
+    //The junctions' rim vertices and their neighbours on the rim's chain, and the spoke out of each
+    //junction: see ChainSegment.
+    std::vector<uint8_t> exempt;
+    int junction_spoke[2] = {-1,-1};
     auto snap_end = [&](int end) -> int {
         vec2 p = end == 0 ? line.points.front() : line.points.back();
+        if (end_on_line[end] >= 0){
+            int best = -1;
+            float best_d2 = 1e30f;
+            for (int v = 0; v < (int)L.pos.size(); v++){
+                if (L.pin[v] != end_on_line[end]){
+                    continue;
+                }
+                vec2 d = L.pos[v] - p;
+                if (d.dot(d) < best_d2){
+                    best_d2 = d.dot(d);
+                    best = v;
+                }
+            }
+            if (best >= 0){
+                L.pos[best] = p;
+                L.pin[best] = GRID_PIN_FIXED;
+                if (exempt.empty()){
+                    exempt.assign(L.pos.size(),0);
+                }
+                //The junction and the rim's vertices up to two steps from it: where the rim bends
+                //round the junction, a second one along it can sit beside the way out too.
+                exempt[best] = 1;
+                for (int d = 0; d < 6; d++){
+                    int w = L.Step(best,d);
+                    if (w < 0){
+                        continue;
+                    }
+                    for (int dd = -1; dd < 6; dd++){
+                        int x = (dd < 0) ? w : L.Step(w,dd);
+                        if (x >= 0 && L.f_chain[x] && L.pin[x] == end_on_line[end]){
+                            exempt[x] = 1;
+                        }
+                    }
+                }
+                /*
+                    The way out. The rim's chain was paired along both its sides when it was pinned,
+                    and at a vertex of a straight chain both lattice edges into one side can be the
+                    diagonals of those quads - which a chain may not run along, so the balcony could
+                    not leave the rim into the chasm at all and went round over the plateau instead.
+                    The spoke that points the way the balcony's line leaves is freed: the pair of
+                    triangles it divides is split, and the balcony's own pairing merges along it.
+                */
+                size_t n_pts = line.points.size();
+                vec2 inward = line.points[end == 0 ? std::min<size_t>(4,n_pts - 1) : n_pts - 1 - std::min<size_t>(4,n_pts - 1)] - p;
+                int spoke = -1;
+                float best_dot = -2.0f;
+                for (int d = 0; d < 6; d++){
+                    int w = L.Step(best,d);
+                    if (w < 0 || L.f_chain[w] || L.pin[w] != GRID_PIN_FREE){
+                        continue;
+                    }
+                    vec2 e = L.pos[w] - L.pos[best];
+                    float dot = e.dot(inward) / std::sqrt(std::max(1e-12f,e.dot(e) * inward.dot(inward)));
+                    if (dot > best_dot){
+                        best_dot = dot;
+                        spoke = w;
+                    }
+                }
+                junction_spoke[end] = spoke;
+                if (spoke >= 0 && L.MergedAcross(best,spoke)){
+                    int te = L.edge_tri.find(EdgeKey(best,spoke))->second;
+                    int t = te / 3;
+                    int o = L.neighbour[te];
+                    L.partner[t] = -1;
+                    L.partner[o] = -1;
+                }
+            }
+            return best;
+        }
         if (f_end_on_outline[end]){
             int v = snap(p,true);
             if (v >= 0){
@@ -1114,7 +1293,16 @@ bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_e
     if (at.v < 0){
         return false;
     }
-    L.Commit(at.v,line_index,true);
+    //The far end's junction is found now too, so the whole chain knows both rims' neighbours.
+    int far_end = -1;
+    if (!f_closed && end_on_line[1] >= 0){
+        far_end = snap_end(1);
+        if (far_end < 0){
+            return false;
+        }
+    }
+    //A junction is already counted by its neighbours, as a vertex of the rim's chain.
+    L.Commit(at.v,line_index,exempt.empty() || !exempt[at.v]);
     chain.push_back(at.v);
     float at_s = 0.0f;
     bool f_complete = true;
@@ -1133,7 +1321,7 @@ bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_e
             }
             closing_dir = L.Direction(chain[0],chain[1]);
         }else if (f_last){
-            target = snap_end(1);
+            target = (far_end >= 0) ? far_end : snap_end(1);
         }else{
             target = snap(LinePointAt(line,s,next_s),false);
         }
@@ -1142,7 +1330,10 @@ bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_e
         }
         ChainEnd next;
         int before = chain.size() >= 2 ? chain[chain.size() - 2] : -1;
-        if (!ChainSegment(L,search,line,s,LinePiece(line,s,at_s,next_s),at,before,target,closing_dir,path,next)){
+        int first_step = (chain.size() == 1) ? junction_spoke[0] : -1;
+        int last_step = (f_last && far_end >= 0) ? junction_spoke[1] : -1;
+        if (!ChainSegment(L,search,line,s,LinePiece(line,s,at_s,next_s),at,before,target,closing_dir,
+                          exempt.empty() ? NULL : &exempt,first_step,last_step,path,next)){
             if (f_last){
                 f_complete = false;
             }
@@ -1151,7 +1342,7 @@ bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_e
         for (int v : path){
             L.chain_edges[EdgeKey(chain.back(),v)] = line_index;
             if (v != chain[0]){
-                L.Commit(v,line_index,true);
+                L.Commit(v,line_index,exempt.empty() || !exempt[v]);
                 chain.push_back(v);
             }
         }
@@ -1162,6 +1353,36 @@ bool PinFeature(Lattice& L, const GridLine& line, int line_index, const bool f_e
     std::vector<int> ideal[2];
     ChainIdealQuads(L,chain,f_closed && f_complete,line,s,ideal);
     PairAlongChain(L,chain,f_closed && f_complete,ideal);
+    /*
+        The WEDGE at each junction: the one lattice triangle between the rim's edge out of the
+        junction and the balcony's first edge, where the two chains part at 60 degrees. Merged with
+        anything, its quad would take the rim vertex beside it through the whole angle there - a
+        corner bent flat, which no relaxation recovers (FanCost). Left a triangle, it splits into
+        three quads with a corner each, as a leftover from the merge does; the random merge cannot
+        take it, since every edge of it touches a chain.
+    */
+    for (int end = 0; end < 2; end++){
+        int junction = (end == 0) ? (chain.empty() ? -1 : chain.front()) : far_end;
+        int spoke = junction_spoke[end];
+        if (junction < 0 || spoke < 0 || end_on_line[end] < 0){
+            continue;
+        }
+        for (int d = 0; d < 6; d++){
+            int r = L.Step(junction,d);
+            if (r < 0 || !L.f_chain[r] || L.pin[r] != end_on_line[end] || L.Direction(spoke,r) < 0){
+                continue;
+            }
+            auto it = L.tri_at.find(Lattice::TriKey(junction,spoke,r));
+            if (it == L.tri_at.end()){
+                continue;
+            }
+            int t = it->second;
+            if (L.partner[t] >= 0){
+                L.partner[L.partner[t]] = -1;
+            }
+            L.partner[t] = -1;
+        }
+    }
     for (int v : chain){
         if (L.pin[v] == line_index){
             L.pos[v] = NearestOnLine(line,L.pos[v]);
@@ -1187,7 +1408,7 @@ bool GridSettings::operator==(const GridSettings& o) const{
            relax_passes_fine == o.relax_passes_fine && relax_strength == o.relax_strength;
 }
 
-const char* const grid_feature_names[GRID_FEATURE_KINDS] = {"rim","shard","column","terrace"};
+const char* const grid_feature_names[GRID_FEATURE_KINDS] = {"rim","shard","column","ledge","balcony"};
 
 GridLine GridSmoothLine(const std::vector<vec2>& corners, bool f_closed, float spacing){
     return SmoothLine(corners,f_closed,spacing);
@@ -1464,7 +1685,11 @@ void Grid::Generate(const GridSettings& s){
         if (f.line.points.size() < 2){
             continue;
         }
-        if (!PinFeature(L,lines.back(),(int)lines.size() - 1,f.f_end_on_outline)){
+        int end_on_line[2];
+        for (int end = 0; end < 2; end++){
+            end_on_line[end] = (f.end_on_feature[end] >= 0) ? feature_line_base + f.end_on_feature[end] : -1;
+        }
+        if (!PinFeature(L,lines.back(),(int)lines.size() - 1,f.f_end_on_outline,end_on_line)){
             num_unfinished_features++;
         }
     }
@@ -1566,6 +1791,7 @@ void Grid::Generate(const GridSettings& s){
     Subdivide(coarse.pos,coarse.pin,coarse_chain,coarse_polys,lines,fine.pos,fine.pin,fine_chain,fine.quads);
     Analyse(fine);
     Relax(fine,lines,s.relax_passes_fine,s.relax_strength);
+    Untangle(fine,lines,40);
 
     //The coarse corners moved with the fine relaxation; they are the same vertices.
     for (size_t i = 0; i < coarse.pos.size(); i++){
@@ -1623,11 +1849,12 @@ struct PinnedGridHash{
 };
 //Pinned 2026-10-05 with the chasm generated from the seed (step 10) and the rivers in the hash,
 //the same in the debug and release builds. Seeds 2 and 3 re-pinned the same day when rivers came to
-//rise at the mountain's foot (biomes_plan.md step 3); seed 1 has no river from the north edge.
+//rise at the mountain's foot (biomes_plan.md step 3); seed 1 has no river from the north edge. All
+//three re-pinned 2026-10-05 for balconies, the sides made whole and rivers on the home side only.
 static const PinnedGridHash pinned_grid_hashes[] = {
-    {1,0xaab35fd8a65e3e1aull},
-    {2,0x75128435ecdd0fceull},
-    {3,0x978f5aaf3bee0179ull},
+    {1,0x86d9266f0a4f6b5full},
+    {2,0x1ab301acefd3ee27ull},
+    {3,0x191e6b2f9851876bull},
 };
 
 #define GRID_ISSUES_MAX         200     //enough to see a pattern, few enough to draw and list
@@ -1835,11 +2062,19 @@ GridCheckReport RunGridChecks(const Grid& grid){
                 vec2 d = grid.fine.pos[v] - (end == 0 ? line.points.front() : line.points.back());
                 return d.dot(d) < 1e-6f;
             };
+            //A fixed vertex on the line is a junction, where a balcony's end meets this rim.
+            auto on_line = [&](int v) -> bool {
+                vec2 d = NearestOnLine(line,grid.fine.pos[v]) - grid.fine.pos[v];
+                return d.dot(d) < 1e-6f;
+            };
             auto member = [&](int v) -> bool {
                 if (grid.fine.pin[v] == li){
                     return true;
                 }
-                return !f_closed && grid.fine.pin[v] == GRID_PIN_FIXED && (at_end(v,0) || at_end(v,1));
+                if (grid.fine.pin[v] != GRID_PIN_FIXED){
+                    return false;
+                }
+                return (!f_closed && (at_end(v,0) || at_end(v,1))) || on_line(v);
             };
             std::vector<int> degree(nv,0);
             std::vector<int> root(nv);
@@ -1884,12 +2119,12 @@ GridCheckReport RunGridChecks(const Grid& grid){
                     add_issue("feature",(int)i,grid.fine.pos[i],true);
                 }
             }
-            //An end on the map's edge must be a fixed vertex exactly there.
+            //An end on the map's edge, or a balcony's on its rim, must be a fixed vertex exactly there.
             int loose_ends = 0;
             if (!f_closed){
                 for (int end = 0; end < 2; end++){
                     vec2 p = end == 0 ? line.points.front() : line.points.back();
-                    bool f_on_edge = false;
+                    bool f_on_edge = grid.LineEndsOn(li,end) >= 0;
                     for (int o = 0; o < grid.feature_line_base; o++){
                         vec2 d = NearestOnLine(grid.lines[o],p) - p;
                         if (d.dot(d) < 1e-6f){
@@ -1981,18 +2216,22 @@ GridCheckReport RunGridChecks(const Grid& grid){
         The generator keeps this as it places each line; this is the proof, on the lines the grid
         actually pinned. Closer than that and two chains can share a lattice triangle, or a fine
         cell can see three levels. A line against the map's edge is not counted near its own ends
-        there, which sit on it by design.
+        there, which sit on it by design - and a balcony against its own rim not within
+        GRID_JUNCTION_REACH of its ends, which meet the rim by design, and held to
+        GRID_BALCONY_RIM_SPACING beyond them.
     */
     {
         const float want = GRID_FEATURE_SPACING * grid.settings.triangle_side;
+        const float want_balcony = GRID_BALCONY_RIM_SPACING * grid.settings.triangle_side;
         const float skip = 2.0f * want;
         float closest = 1e30f;
         vec2 closest_at(0.0f,0.0f);
         std::string closest_what = "nothing";
         int bad = 0;
         int base = grid.feature_line_base;
-        auto consider = [&](float gap, const vec2& at, const std::string& what){
-            if (gap < want){
+        float closest_balcony = 1e30f;
+        auto consider = [&](float gap, const vec2& at, const std::string& what, float limit){
+            if (gap < limit){
                 bad++;
                 add_issue("spacing",-1,at,true);
             }
@@ -2009,26 +2248,60 @@ GridCheckReport RunGridChecks(const Grid& grid){
             }
             for (int b = a; b < (int)grid.lines.size(); b++){
                 vec2 at;
-                float gap = GridLineGap(la,grid.lines[b],skip,&at);
+                float gap;
+                //A balcony and the rim it ends on: the balcony's points away from its ends only.
+                int balcony = -1;
+                int rim = -1;
+                if (grid.LineEndsOn(a,0) == b || grid.LineEndsOn(a,1) == b){
+                    balcony = a;
+                    rim = b;
+                }else if (grid.LineEndsOn(b,0) == a || grid.LineEndsOn(b,1) == a){
+                    balcony = b;
+                    rim = a;
+                }
+                if (balcony >= 0){
+                    const GridLine& lb = grid.lines[balcony];
+                    std::vector<float> sb = LineArcLengths(lb);
+                    float reach = GRID_JUNCTION_REACH * grid.settings.triangle_side;
+                    gap = 1e30f;
+                    for (size_t k = 0; k < lb.points.size(); k++){
+                        if (sb[k] < reach || sb.back() - sb[k] < reach){
+                            continue;
+                        }
+                        vec2 d = NearestOnLine(grid.lines[rim],lb.points[k]) - lb.points[k];
+                        float g = std::sqrt(d.dot(d));
+                        if (g < gap){
+                            gap = g;
+                            at = lb.points[k];
+                        }
+                    }
+                }else{
+                    gap = GridLineGap(la,grid.lines[b],skip,&at);
+                }
                 snprintf(buf,sizeof(buf),"lines %i and %i",a,b);
-                consider(gap,at,buf);
+                if (balcony >= 0){
+                    closest_balcony = std::min(closest_balcony,gap);
+                }
+                consider(gap,at,buf,balcony >= 0 ? want_balcony : want);
             }
             //The map's edge, away from an open line's ends.
             std::vector<float> s = LineArcLengths(la);
             bool f_closed = LineClosed(la);
+            bool f_balcony = grid.LineEndsOn(a,0) >= 0 || grid.LineEndsOn(a,1) >= 0;
             for (int o = 0; o < base; o++){
                 for (size_t k = 0; k < la.points.size(); k++){
-                    if (!f_closed && (s[k] < skip || s.back() - s[k] < skip)){
+                    if (!f_closed && !f_balcony && (s[k] < skip || s.back() - s[k] < skip)){
                         continue;
                     }
                     vec2 d = NearestOnLine(grid.lines[o],la.points[k]) - la.points[k];
                     snprintf(buf,sizeof(buf),"line %i and the map's edge",a);
-                    consider(std::sqrt(d.dot(d)),la.points[k],buf);
+                    consider(std::sqrt(d.dot(d)),la.points[k],buf,want);
                 }
             }
         }
-        snprintf(buf,sizeof(buf),"closest %.1f (%s), at least %.1f wanted; %i places closer",
-                 closest,closest_what.c_str(),want,bad);
+        snprintf(buf,sizeof(buf),"closest %.1f (%s), at least %.1f wanted (%.1f a balcony from its rim, closest %.1f); "
+                 "%i places closer",closest,closest_what.c_str(),want,want_balcony,
+                 closest_balcony < 1e29f ? closest_balcony : 0.0f,bad);
         add_result("spacing",bad == 0,false,buf);
         //The closest place is marked even when it passes - worth looking at, not wrong.
         if (bad == 0 && closest < 1e29f){
@@ -2039,13 +2312,14 @@ GridCheckReport RunGridChecks(const Grid& grid){
     //--- Layout: what the seed made of the chasm - a figure, and a failure only if no rift fitted --
     {
         const ChasmLayout& l = grid.layout;
-        snprintf(buf,sizeof(buf),"%i rifts, %i forks; terraces %i of %i, shards %i of %i, columns %i of %i; "
-                 "rivers %i of %i; %i attempts%s (%.1f ms)",
-                 l.rifts,l.forks,l.count[GRID_FEATURE_TERRACE],l.wanted[GRID_FEATURE_TERRACE],
+        snprintf(buf,sizeof(buf),"%i rifts, %i forks; balconies %i east, %i west; ledges %i of %i, shards %i of %i, "
+                 "columns %i of %i; rivers %i of %i; %i attempts%s (%.1f ms)",
+                 l.rifts,l.forks,l.balconies[1],l.balconies[0],l.count[GRID_FEATURE_LEDGE],l.wanted[GRID_FEATURE_LEDGE],
                  l.count[GRID_FEATURE_SHARD],l.wanted[GRID_FEATURE_SHARD],l.count[GRID_FEATURE_COLUMN],
                  l.wanted[GRID_FEATURE_COLUMN],(int)l.rivers.size(),l.rivers_wanted,l.attempts,
                  l.f_rifts_ok ? "" : " - NONE KEPT ITS SPACING",l.generate_ms);
-        add_result("layout",l.f_rifts_ok && l.rifts > 0,false,buf);
+        //Home must have a balcony: it is the only floatstone before the first zeppelin.
+        add_result("layout",l.f_rifts_ok && l.rifts > 0 && l.balconies[1] > 0,false,buf);
     }
 
     report.check_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();

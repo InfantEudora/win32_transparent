@@ -35,10 +35,16 @@ game there are two kinds, with names of their own, because the player reaches th
 - **Islands** are in the **middle**: free-standing, out of reach from either side. Reached **by the
   first zeppelins**.
 
-**How this maps onto the generator** (step 10, `grid_plan.md`): its `terraces` - long ledges along a
-wall, split from it by a crevice - are the balconies. Its `shards` and `columns` are the islands.
-The code's names can stay as they are or be renamed to match; the player only ever sees balcony
-and island.
+**How this maps onto the generator** (`grid_plan.md`, "Balconies, whole sides, rivers at home"):
+a BALCONY is its own feature, a ledge joined to a wall 12 below the rim, built on like the plateau
+except for fields. The islands are the `shards`, `columns` and `ledges` - the last being step 10's
+old "terraces", which stand off the wall with a drop behind them and so are islands too. The code
+says terrace for the pair and uses the game's names for the kinds.
+
+**Agreed 2026-10-05:** at least one balcony on the home (east) side, which the generator now
+guarantees; the far side may have none. Anything can be built on a balcony except food, so whoever
+lives there has to be supplied from the rim. Islands give floatstone without end, and more room to
+collect steam at a better yield.
 
 ### Floatstone (agreed 2026-10-05)
 
@@ -57,8 +63,7 @@ So the chasm has a bootstrap: winch floatstone up from the balconies, build a fi
 it to an island, and build the zeppelins that carry people across from what the islands give. The
 balconies running out is what pushes you off the rim and into the air.
 
-A seed with no balcony on a side would have no early floatstone there, so the layout may need to
-guarantee at least one per side (the generator makes 0-4 today).
+Every seed has one or two balconies at home and none to two on the far side (built 2026-10-05).
 
 ### The threat: zombies from the swamp
 
@@ -165,9 +170,9 @@ with this in mind, not in years alone.
 - **The desert is on the far side of the chasm**, so reaching it means getting people across by
   zeppelin and **founding a second village** there. Getting from there to the desert should be
   costly, so the second village is a real foothold, not a staging post.
-- **Perhaps no river on the far (west) side**, so water there comes only from **melted snow or
-  condensed steam**. The far side then plays differently from home, not just as more of the same
-  land.
+- **No river on the far (west) side** (agreed and built 2026-10-05), so water there comes only from
+  **melted snow or condensed steam**. The far side then plays differently from home, not just as
+  more of the same land. Home is the east, with the swamp; the desert is on the far side.
 
 ---
 

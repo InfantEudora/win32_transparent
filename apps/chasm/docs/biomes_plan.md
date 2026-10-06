@@ -295,3 +295,11 @@ compile, and want a test the first time something uses them.
 **Archer's replay test** was run after the core change: it reports the state different from tick 0
 (sounds the same) - and does exactly the same on a build from before the change, so it is not this.
 The baseline predates the core changes of 2026-10-04 (`2cc7819`); that is worth its own look.
+
+## The sides fixed (2026-10-05)
+
+With the gameplay (`gameplay_plan.md`) the south's regions stopped being the seed's choice: the
+**swamp is always on the east**, the home side, since its zombies are the colony's threat, and the
+**desert always on the west**, the far side, where the pyramid is. The draw that chose the side is
+kept, so every region keeps the size and place it had. Rivers run on the east only, and each side is
+one walkable region - see `grid_plan.md`, "Balconies, whole sides, rivers at home".

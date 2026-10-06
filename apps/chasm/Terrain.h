@@ -11,21 +11,27 @@
     grid_plan.md section 4. A level is not a height field - buildable land is flat within a level -
     and a level step is not a storey: the chasm wall is many tens of them. Levels come from the
     feature lines of the seed's layout (section 3, step 10): the chasm is what its rims bound
-    together with the map's edges, and a shard, column or terrace is the region inside its closed
-    line.
+    together with the map's edges; an ISLAND (shard, column, ledge) is the region inside its closed
+    line; a BALCONY is the region between its line and the stretch of rim it leaves and rejoins
+    (GridFeature::region), a step below the rim.
 
-    A vertex ON a line belongs to the higher side - the plateau for a rim, the shard for a closed
-    outline - so the drop starts half a cell outside the pinned chain (section 3, "Where the edge
-    actually shows"), which is what makes the cliff top as smooth as the chain is.
+    A vertex ON a line belongs to the higher side - the plateau for a rim, the island or balcony for
+    its own line - so the drop starts half a cell outside the pinned chain (section 3, "Where the
+    edge actually shows"), which is what makes the cliff top as smooth as the chain is. The fixed
+    vertices where a balcony meets its rim are the rim's, plateau.
+
+    Levels are numbered in the order they were added, not by height - never renumber, saves and
+    picks name them by value; terrain_levels has each one's height.
 
     Derived from the grid and its features alone, so like the grid it is never saved, and it is
     immutable once built.
 */
 
 #define TERRAIN_PLATEAU     0
-#define TERRAIN_SHARD       1
-#define TERRAIN_FLOOR       2
-#define TERRAIN_NUM_LEVELS  3
+#define TERRAIN_ISLAND      1       //shards, columns, ledges: reached by zeppelin
+#define TERRAIN_FLOOR       2       //under the mist, never built on
+#define TERRAIN_BALCONY     3       //on a wall a step below the rim: reached by winch
+#define TERRAIN_NUM_LEVELS  4
 
 /*
     BIOMES (biomes_plan.md), per fine vertex. Step 1 has two: the north MOUNTAIN, which closes the chasm

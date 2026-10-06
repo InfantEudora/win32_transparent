@@ -16,6 +16,8 @@
         high part is one polygon at the high height, each run of low corners its own polygon at the
         low height, and between them a wall down the cut. In the saddle case (high, low, high, low)
         the high corners are joined, so the plateau stays in one piece.
+      - three levels (only where a balcony meets its rim): in quarters, each corner's at its level,
+        with walls down the inner half-edges between them, meeting at the cell's centre.
     Wall points are edge midpoints, which the neighbouring cell computes identically, and the
     wall's roughness is a function of world position alone - so neighbouring walls meet without a
     crack however the cells around them are cut.

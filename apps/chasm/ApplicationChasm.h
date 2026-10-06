@@ -58,6 +58,10 @@
 #define INPUT_CHASM_TOOL_ROAD       INPUT_LAST+10
 #define INPUT_CHASM_TOOL_WALKER     INPUT_LAST+11
 #define INPUT_CHASM_PREVIOUS_SEED   INPUT_LAST+12
+#define INPUT_CHASM_TOOL_STORE      INPUT_LAST+13
+#define INPUT_CHASM_TOOL_WOODCUTTER INPUT_LAST+14
+#define INPUT_CHASM_TOOL_WATER      INPUT_LAST+15
+#define INPUT_CHASM_TOOL_WINCH      INPUT_LAST+16
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -80,7 +84,11 @@ enum ChasmTool{
     CHASM_TOOL_GARDEN,
     CHASM_TOOL_TOWN,
     CHASM_TOOL_ROAD,        //step 10: ground of kind road
-    CHASM_TOOL_WALKER       //click a home, then a goal: a debug walker between them
+    CHASM_TOOL_WALKER,      //click a home, then a goal: a debug walker between them
+    CHASM_TOOL_STORE,       //docs/buildings_plan.md: buildings of these kinds, a drag each
+    CHASM_TOOL_WOODCUTTER,
+    CHASM_TOOL_WATER,
+    CHASM_TOOL_WINCH        //docs/buildings_plan.md step 2: on the rim above a balcony
 };
 
 class ApplicationChasm : public Application{
@@ -157,6 +165,10 @@ private:
     std::atomic<int> pick_version{0};
     void UpdatePick();
     json PickJson(const GridPicker& p, const GridPick& pick);
+    json PickBuildingJson(const GridPick& pick);
+    json BuildingJson(const ChasmWorld& w, const ZoneState& z, uint32_t id);
+    void RenderBuildingInfo(const ChasmWorld& w, const ZoneState& z);
+    static int ToolKind(int tool);
 
     /*
         --- Zones (step 5) --------------------------------------------------------------------------
@@ -172,11 +184,17 @@ private:
     void EnsureZonesWorld();                    //physics thread: a new map empties the zones
     void PublishZones();                        //physics thread
     std::shared_ptr<const ZoneState> GetZones();
-    void SubmitZone(int op, int index, int kind = 0);   //any thread; queued for the next tick
+    void SubmitZone(int op, int index, int kind = 0, uint32_t stroke = 0);   //any thread; queued for the next tick
     void RegisterCommandHandlers();
 
     std::atomic<int> paint_tool{CHASM_TOOL_SELECT};
     int paint_last_index = -1;                  //physics thread: what a drag last painted
+    /*
+        The drag in progress (docs/buildings_plan.md: a drag is one building): a number for each press,
+        carried by every zone command the drag makes. Physics thread. A load sets it to the save's, so a
+        stroke after it is never mistaken for the one the save was in the middle of.
+    */
+    uint32_t paint_stroke = 0;
     void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked);
 
     /*
