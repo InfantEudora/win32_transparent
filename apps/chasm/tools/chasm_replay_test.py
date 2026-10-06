@@ -56,6 +56,7 @@ def call(name, args=None):
 
 
 REFUSED = {}
+SITE = []       # where the recording put its construction site
 
 
 def paint(op, x, z, **extra):
@@ -199,6 +200,14 @@ def main():
                 call("chasm_paint", {"op": "build_add", "kind": "house", "x": cx + dx, "z": cz + 9.0, "stroke": 40 + i})
         for i in range(2):
             call("chasm_paint", {"op": "build_paint", "kind": "woodcutter", "x": cx - 10.0 + i * 1.6, "z": cz + 9.0, "stroke": 45})
+        # construction (construction_plan.md): a PLAY house of two storeys, a site the idle settlers carry
+        # the camp's wood to - the first spot beside the camp that takes it
+        for dx, dz in [(5.0, 9.0), (0.0, -9.0), (9.0, 0.0), (-9.0, 0.0), (5.0, -9.0)]:
+            r = call("chasm_paint", {"op": "build_add", "kind": "house", "x": cx + dx, "z": cz + dz, "stroke": 47, "play": True})
+            if not r.get("refusal"):
+                call("chasm_paint", {"op": "build_add", "kind": "house", "x": cx + dx, "z": cz + dz, "stroke": 47, "play": True})
+                SITE.append((cx + dx, cz + dz))
+                break
     time.sleep(3.0)     # long enough for the woodcutter to walk out and start on a tree
     status = call("input_record", {"action": "stop"})
     recording = status.get("last_recording") or status.get("last_file") or ""
@@ -248,6 +257,30 @@ def main():
     if e["people"]["housed"] == 0 or e["people"]["working"] == 0:
         ok = False
         print("nobody moved in or went to work by the camp")
+    # The site, carried for and built by the idle - after the replays, run on at full speed until it stands.
+    if not SITE:
+        ok = False
+        print("no construction site could be placed by the camp")
+    else:
+        sx, sz = SITE[0]
+        call("chasm_time", {"speed": 3})
+        seen, built, carriers = None, False, set()
+        for _ in range(90):
+            e2 = call("chasm_economy", {})
+            carriers |= {k["name"] for k in e2["workers"] if k.get("site")}
+            if e2["sites"]:
+                seen = e2["sites"][0]
+            elif seen:
+                built = True
+                break
+            time.sleep(1.0)
+        call("chasm_time", {"speed": 1})
+        if not built:
+            ok = False
+            print("the construction site at (%.1f, %.1f) did not get built: last seen %s" % (sx, sz, seen))
+        else:
+            print("the construction site at (%.1f, %.1f) stands, %d wood carried by %s; stored wood now %s" %
+                  (sx, sz, seen["wood_needed"], ", ".join(sorted(carriers)), e2["stored"]["wood"]))
     if original[4] != 22:
         ok = False
         print("the recorded date jump did not hold: the original ends on day %s, not 22" % original[4])

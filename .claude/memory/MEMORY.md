@@ -1,87 +1,88 @@
-- [Project overview](project_overview.md) — what win32_transparent IS: hand-rolled C++17/OpenGL engine, one wind.exe with APP= selecting 1 of 10 apps, 3-thread main/render/physics split (read this first)
-- [Threading model](threading_model.md) — ONE coarse Renderer::physics_mutex, not the queue readme designs; superseded by the SimCommand queue - UI must submit and never wait; reads from MCP now go through Scene::AtTickBoundary; TQueue.h ThreadSafeQueue exists but is unused
-- [Deterministic sim plan](deterministic_sim_plan.md) — AGREED DIRECTION: tick-driven lockstep sim, ALL mutation via tick-stamped input events, MCP+UI become "players"; same-machine replay only (cross-arch floats explicitly out of scope); 7-step plan; steps 1-6 DONE (5 input+command, 6 the UI incl. docked Scene/Inspector/Engine panels) (tick counter, constant dt, input event stream + Raw Input + gamepad merged, MCP is a player via HoldAxis, Vehicle latch API deleted); only step 7 (record/replay) open; baselines need re-recording
-- [Tank yaw differential bug](tank_yaw_differential_bug.md) — OPEN: tank won't yaw on a same-direction track differential (only opposed commands turn it); input/lateral_friction/drag/track-averaging all ruled out by measurement; plan is a minimal repro scene in rp3d's testbed
-- [MCP native tools setup](mcp_native_tools_setup.md) — now documented in-repo at docs/mcp_server.md; check there first
-- [Build toolchain location](build_toolchain_location.md) — g++/make live at /c/msys64/mingw64, not on Bash tool's PATH; use mingw32-make.exe not usr/bin/make.exe; header deps ARE tracked now (-MMD -MP)
-- [No /mcp slash command in VSCode ext](mcp_vscode_reconnect_limitation.md) — /mcp just opens a panel that doesn't list locally-added servers
-- [tank-app MCP registration pending check](tank_mcp_registration_pending_check.md) — resolved: restart fixed it, status/tank_drive/tank_steer/tank_telemetry confirmed live
-- [rp3d local fork + patches](rp3d_local_fork_hinge_motor_patch.md) — libs/libreactphysics3d-0.10.2.a carries 3 LOCAL PATCHES + 1 merged PR, committed on fork branch crane_testbed; build with CMake+Ninja from C:/code/reactphysics3d (not MSYS make); Jolt reference checkout at C:/code/JoltPhysics; never overwrite with stock
-- [Tank roll-over root cause](tank_suspension_upright_torque_todo.md) — SOLVED: lever arms were measured from body origin not centre of mass; do NOT add the upright-torque workaround
-- [rp3d vehicle constraint plan](rp3d_vehicle_constraint_plan.md) — vehicle constraint built in the rp3d fork (branch vehicle-constraint, C:/code/reactphysics3d) AND wired into the game's Tank/Buggy 2026-09-05 (core/Vehicle owns an rp3d VehicleConstraint; Wheel.cpp raycast code gone); tools/vehicle_mcp.py stdio scenario driver + before/after baselines; threading gotchas (RequestReset, pending steps); anti-roll bar still open; ShipCharacter deliberately left on its own stabilisation
-- [Animation root-motion rewrite](animation_root_motion_rewrite.md) — ObjectAnimation/PlayerCharacter rewritten around swing-twist root motion + per-clip extract_horizontal/vertical flags, AnimationGraph removed; verified against RunupClimbing; box-climb + motion-warping planned next
-- [Running app is user-driven](running_app_is_user_driven.md) — unexplained motion in MCP telemetry is usually the user at the controls, not a bug
-- [rp3d contact callback velocities](rp3d_contact_callback_velocities.md) — contacts are reported BEFORE the solver runs; read a velocity in onContact only on ContactStart, ContactStay sees the bounce
-- [Scene::AddObject during a tick](scene_addobject_during_tick.md) — AddObject from an UpdatePhysicsState override push_backs the vector Scene::UpdatePhysics is range-for-ing; stage it in RunSimulationTick instead
-- [rrand shared stream TODO](rrand_shared_stream_todo.md) — OPEN: one RRandom shared by sim + UI/MCP threads; off-tick draws shift the stream and block deterministic replay; no design chosen, ask first
-- [Raymarch volume stage plan](raymarch_volume_stage_plan.md) — clouds as a material, not a post pass: working clouds lit by sun/point/cone lights, occluding geometry inside them, and casting a 3D Beer shadow map onto the world; includes the GLSL #include mechanism, Application::PreRender, the fmat4::inverse_transform-is-rigid-only trap, the glUniform-writes-to-the-bound-program trap, the never-normalise-a-direction-in-object-space rule, and how to verify visuals in this app
-- [Tetris agent engine audit](tetris_agent_engine_audit.md) — DONE: APP=Tetris playable, report at docs/tetris_findings.md; core patched for the HasSyntheticHolds release-tick bug (defeats all scripted input) and AddMaterial; RRandom cannot be seeded at all
-- [Background app holds the pipe](background_app_stdout_pipe.md) — start test apps with >/dev/null 2>log </dev/null or a piped script hangs forever (looks like an MCP hang)
-- [Shell heredoc limit](shell_heredoc_limit.md) — quote the delimiter, and anything over ~30KB fails as a misleading ENAMETOOLONG; see CLAUDE.md
-- [Breakout agent run](breakout_agent_run.md) — second game-build audit; brief at docs/breakout_agent_brief.md written 2026-09-12, findings doc pending and should feed the backlog
-- [Asset layout plan](asset_layout_plan.md) — AGREED 2026-09-12: per-app assets/<app>/ + assets/shared/, LoadFile resolver first, DUMP_BINARYASSETS stripped entirely (separate packer instead); plan in docs/asset_layout_plan.md
-- [Shared build output coordination](shared_build_output_coordination.md) — ASK BEFORE BUILDING when another agent is active; the one-wind.exe collision is now FIXED by [per-app build layout](per_app_build_layout.md), but build/core is still shared so build one app at a time
-- [Tank viewport black half](tank_viewport_offset_black_half.md) — APP=Tank screenshots are half black BY DESIGN (viewport_x offset); judge Tank renders on the right half only
-- [Per-app build layout](per_app_build_layout.md) — DONE 2026-09-12: one exe per app under apps/<name>/; CONFIG=release added 2026-09-13 (11x smaller exe, per-config object trees), root makefile+main.cpp+data/+shaders/ deleted, core/ app-agnostic; READ THIS before any build (supersedes the APP= arrangement)
-- [Touch input plan](touch_input_plan.md) — steps 1-4 BUILT on the Android port (see [[android-port-merge]]), not yet on Windows: on-screen buttons as a third input family (AddTouchButton), not picking and not ImGui; docs/touch_input_plan.md
-- [Android port merge](android_port_merge.md) — the port at C:/code/android, its upstream candidates (backlog 68-77), and the copy-then-reapply-with-asserts merge method + --strip-trailing-cr
-- [Pinball stage 0 review + stage 1](pinball_stage0_review.md) — apps/pinball re-laid and given physics 2026-09-13; Table.h is the machine, run tools/pinball_plan.py + a paused pinball_run trace after any move; rp3d traps (twist friction, max restitution, per-tick motor torque) documented at their defines; findings in docs/pinball_findings.md
-- [testfx bench gotchas](testfx_bench_gotchas.md) — uniform values leaked across effect switches (fixed 2026-09-13 in BuildEffect); sim_step runs at tick rate; default camera is above the cube, reference view is low
-- [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass run every physics pass, RunSimulationTick/GatherInput only on ticking ones; one set of edge flags serves both (backlog 84)
-- [lockd owner must be session id](lockd_owner_must_be_session_id.md) — an explicit lock_claim under any other owner string makes the PreToolUse hook refuse your own edits
-- [Bomber app](bomber_app.md) — apps/bomber, a bomberman: blended 16x16 field from one GLB, walking character, destructible hedge/wood, buried pickups, hedge-cutting enemies, raymarched blast; Maze holds the rules and `make rules` tests them with no engine
-- [Volumetric effect gotchas](volumetric_effect_gotchas.md) — sim_step wants num_ticks not ticks; a volume needs sun_intensity; shape terms go relative to the feature, not the box
-- [Ship orbit camera is the canonical one](ship_orbit_camera_canonical.md) — copy the orbit from ApplicationShip/Tank, never testfx: raw mouse deltas, drained outside the button gate, focus+UI gated
-- [Engine forward is -Z](engine_forward_is_minus_z.md) — use object_get's world_forward to settle orientation; bracket screenshots with camera_get or the user's mouse silently reframes them
-- [Measuring GPU cost](measuring_gpu_cost.md) — vsync toggles fine since 2026-09-27 (renderer_timings vsync + per-pass cpu_avg_us); in-shader counting is still the tool for SUB-pass questions
-- [GPU pass timers](gpu_pass_timers.md) — per-pass GL_TIME_ELAPSED in Engine->Performance; scopes must never nest; renderer_timings over MCP; 6-deep ring + `stale` flag since 2026-09-30 (the 2-deep ring froze GPU-bound)
-- [Async picking readback](async_picking_readback.md) — pick glReadPixels now 85us not 5557us; needs a FENCE before mapping and EXACT-format reads, either wrong is slower than blocking
-- [Animation state machine lives in Object](animation_state_machine_in_object.md) — lifted out of PlayerCharacter 2026-09-15: blending now works on any Object; SetRootBone is no longer a silent trap; mid-blend retarget now RETARGETS (2026-09-22) and TransitionToAnimation returns bool
-- [Skinned rig bone indexing](skinned_rig_bone_indexing.md) — a bone's index is its position in skin.joints, not visit order; GetSkeleton loads every root and Renderer lays matrices out by that index (multi-root rigs used to load one bone and tear the mesh)
-- [Comment density ceiling](comment_density_ceiling.md) — the house "comment heavily" rule has an upper bound: one-liners on declarations, block comments for the type, no per-enum-value essays
-- [Release edges ignore focus](release_edge_ignores_focus.md) — a click NEXT TO the window still fires WasKeyReleased (RIDEV_INPUTSINK + key-up honoured unfocused); read the edge unconditionally, gate the action on IsInputLive()
-- [USE_PHYSICS flag](use_physics_flag.md) — the ONE flag that changes shared core objects: follows CONFIG's separate-core-tree pattern, not USE_MCP's _none twins; --gc-sections does not reclaim rp3d on its own
-- [Asset origin convention](asset_origin_convention.md) — models are spread across the Blender scene for authoring; the engine ignores those positions, armatures included (the android merge broke this and offset bomber's enemies by a tile)
-- [Texture unit map](texture_unit_map.md) — two mirrored files (core/TextureUnits.h + shaders/texture_units.glsl); Android's 5 material units is deliberate, atlas the textures rather than widen the range
-- [Archer app](archer_app.md) — apps/archer side-view platformer prototype: Stage rules/view split, archer body collides with nothing, Puppet animation seam; bow/ledge/props/kick/rope + animation step 0 done, tightrope and knife parked; straw man kicking dummy (core SpringHinge) 2026-09-26; Character turntable scene 2026-09-28
-- [AddPhysics leaves gravity off](addphysics_gravity_off.md) — dynamic bodies need SetGravityEnabled(true); no gravity means no friction, and it looks exactly like the solver exploding
-- [Renderer::skinned_shader is NULL by default](renderer_skinned_shader_null.md) — an app must assign it or every skinned mesh silently fails to draw, with no warning and no error
-- [Root yaw extraction](root_yaw_always_extracted.md) — FIXED 2026-09-22 with Animation::extract_yaw_root_motion; before that a clip's hip rotation was deleted from the pose on every non-PlayerCharacter object, and it still has to be opted into per clip or run cycles wag
-- [glTF sparse accessors](gltf_sparse_accessors.md) — core/GLTFLoader gained sparse accessor support 2026-09-22; Blender exports SHAPE KEYS that way and it used to be a Fatal at load; GLTFLoader logs at DEBUG_WARN so its Info lines never show
-- [Archer terrain plan](archer_terrain_plan.md) — BUILT 2026-09-22, reshaped 2026-09-26 (cap+lip+drips+belly, per-block depth, plants on terrain), ramps melted as slopes 2026-10-04: marching-cubes terrain whose SDF field comes FROM the StageBlock blockout; round OUTWARD or ledges sag; any field sampled for gradients must be continuous in every axis; NewGame is the physics thread so it must not remesh
-- [OK to stop running apps](ok_to_stop_running_apps.md) — user allows killing a running app exe to relink or free port 8765; say so in the reply
-- [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform shared by vines and the rope; static vines + modelled wrap (vine_curl) BUILT 2026-09-24 (steps 1-3) and the skinned rope (step 4); smooth trunk normals fixed 2026-09-29; vine GROWTH + arrow kinds planned (vine_plan.md 7-14); next is rope animation + grip-at-a-point
-- [Input recording](input_recording.md) — BUILT 2026-09-25: F9/F10 + input_record/input_replay, recordings/*.rec text, trim = edit begin/end; input is tick-exact but archer replays drift because animation state isn't restored
-- [Sign text anchors](sign_text_anchors.md) — text on props via parented Cube empties text_<n> (scale = box, depth = relief); apps/archer/Sign.h; user-approved pattern for asset markers
-- [Plant mechanics plan](plant_mechanics_plan.md) — AGREED 2026-09-26: tree with arm platforms, bounce pad then bending leaf, thin branch + balance, arrow pegs; gameplay plants are declared in Stage; apps/archer/docs/plant_mechanics_plan.md; ramps + slide gallery in the rope scene (one StageSurface test)
-- [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — --minimized app: screenshot include_ui returns no panels; restore with ShowWindow(h,4) to check UI
-- [Wind system plan](wind_system_plan.md) — archer wind: stream-function field from the blocks BUILT 2026-09-26 (Wind.cpp, make rules); debug view + archer_wind + sway, leaves, streaks, fireflies all BUILT; clouds left; leaves/grass lead, she is not pushed
-- [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change for one app, do not build/run the other apps to check them; the user updates them separately
-- [Adaptive music plan](adaptive_music_plan.md) — apps/music is the DESIGNER (bench on --mcp-port 8767); player is in core/Music* since 2026-09-30 and archer plays it (title + world players, pause = fade+hold, `music` cue action, cave scope); games keep their own copy via `make publish`
-- [Lock claim before build](lock_claim_before_build.md) — never fire a build/run in the same parallel step as its #build/#port claim; a refused claim does not stop it (slipped 2026-09-26)
-- [Cue plan](cue_plan.md) — archer event layer AGREED 2026-09-27 (apps/archer/docs/cue_plan.md); steps 0-4 DONE (SoundSystem buses/pan, CueLog + tools/cue_replay.py baselines, core/CueSystem + tools/cue_test.cpp, archer's sounds + footsteps + shake/rumble on assets/cues/archer.json); step 5 cue panel next; 2026-09-30 one CueSystem + one sound bus PER SCENE, parked scenes held
-- [Bridge and crumble plan](bridge_crumble_plan.md) — AGREED 2026-09-27, steps 1-5 BUILT (zones, stones, chase, bridge over the start, snapping 2nd bridge); new blocks go LAST (dressing seeded by block index): rope bridge (overload snap with audible creak/crack warnings, zone snap, sway looks-only) + crumbling rocks (gone, detours); rules-side; zone = cue_plan section 8's; apps/archer/docs/bridge_crumble_plan.md
-- [Vitals plan](vitals_plan.md) — archer exertion + fear -> breathing + heartbeat BUILT 2026-09-27 (apps/archer/docs/vitals_plan.md); Stage::vitals, SignalBody clocks, breaths lowest in the `her` group; sound only for now; blinks are a third clock there, deliberately uncorrelated
-- [lockd lease lapses in long runs](lockd_lease_expires_in_long_runs.md) — FIXED in code 2026-09-30 (per-lease TTL, heartbeat hook on every tool, one-shot LOST notice); live only after the broker is rebuilt+restarted; until then claim long + re-claim
-- [Archer grey slab is blockout](archer_level_grey_blockout.md) — the flat grey ground running right in archer's world is the undressed blockout half, not a bug; judge visuals on the left
-- [Background work](background_work.md) — core/BackgroundWork.h worker + LatestResult<T>, first used by archer wind 2026-09-27; async results must not reach the sim mid-run (user: a simple lock around sim-read areas)
-- [Blender export speed](blender_export_speed.md) — archer glTF export 237 s -> 58 s with disable_viewport; Mirror-before-Armature re-evaluated per sampled frame; tools/blender_export_profile.py
-- [Archer hair chains](archer_hair_chains.md) — 3D DynamicChains + wind; core gained spheres/cone/max_accel; game gravity and jolts trap hair; crown weighted to hair_back.1 (artist fix pending)
-- [Replay determinism plan](replay_determinism_plan.md) — DONE: archer replays bit-exact; ONE test recording archer_test (.cues + .trace), re-check after every game change and --write if intended (CLAUDE.md)
-- [Archer 3D aim + plane lock](archer_3d_aim_plane_lock.md) — cone sway, v3 arrows, only the character scene unlocked; locked shots bit-identical; a zero TurnInWorld still changes bits
-- [Archer fall animation](archer_fall_animation.md) — 2026-09-29 walk-off no longer plays Running_Jump, spent run jump hands over to the fall, fall-pose overlay OFF (PUPPET_FALL_POSE_MAX 0); bench = Rope scene x 23 y 100
-- [Archer water](archer_water.md) — waterfall BUILT 2026-09-29: lighting.glsl split + Shader::f_lit for lit custom shaders; one discard kills early-z for a whole program; 0.35-0.40 ms GPU in view after the split
-- [Archer cave](archer_cave.md) — BUILT 2026-09-29 left of the bay for lighting experiments: own floor, deep roof/walls raise the bank to close it; fill light still leaks in, hazed back wall; BIOMES 2026-09-30 (StageBiome: cave plants/rubble/still air); vignette + title fade + cave vision built; one shadow map for all directional lights
-- [Coordinator + worker windows](coordinator_worker_windows.md) — user-preferred 2026-09-30: coordinator briefs blank windows via ListAgents/SendMessage instead of subagents; visible, separate lockd owners; lockd task board is the possible next step
-- [Archer model scale](archer_model_scale.md) — model_scale is ~1.82, not 2.02 as an old comment implies; measure before sizing rules numbers off glb pieces
-- [Prop atlas plan](prop_atlas_plan.md) — 11 Tripo 4096^2 prop textures -> one atlas; step 1 analysis tools/blender_uv_atlas.py BUILT 2026-09-30 (flat/smooth/detailed islands); swatch + pack + bake next
-- [Ogg Vorbis settings](ogg_vorbis_settings.md) — archer music samples ship as .ogg since 2026-09-30 (q-1, 32 kHz cap, make publish encodes, core/AudioDecode decodes at load); archer SFX converted too
-- [ReadFileToString is disk-only](readfiletostring_disk_only.md) — alone it silently misses baked assets in the ship exe (music was lost that way); read disk first, then LoadFile; test ship from an empty folder
-- [Spider leg shape keys](spider_leg_shape_keys.md) — LegsSwing/LegsLift tetrapod keys built 2026-10-02 by tools/blender_spider_legs.py (Mirror applied, morph 0 still Walking); game wiring done (leg_mode 2 default); Blender-scripting traps (modifier `is`, shape key pin skips modifiers)
-- [Blend edit in place OK](blend_edit_in_place_ok.md) — user keeps .blend backups; a copy is fine but not required (separate file still wise while Blender has it open)
-- [Snake plan](snake_plan.md) — archer snakes: drop from branches, 1-3 arrows, hit knocks off, fear overhead (decided 2026-10-04); steps 1-3 BUILT (tree+crown, branches, StageSnakePath routes, StageSnake patrol); step 4 drop next
-- [Chasm game plan](chasm_game_plan.md) — apps/chasm colony sim on a Townscaper irregular grid: painted zones, one palette texture, procedural assets, replay-from-state from day one; checks in-app (debug only), no make rules; ~100k cells; steps 1-9 built (rivers, falls, mist in 9), step 10 roads/walker/gates/arches + seeded chasm, replay test tools/chasm_replay_test.py (port 8769)
-- [Core features over workarounds](core_features_over_workarounds.md) — missing general engine feature? add it to core (defaults unchanged), never an app-side fake; no need to build other apps
-- [Solid custom shader flags](solid_custom_shader_flags.md) — opaque mesh on a custom shader needs f_writes_gbuffer+f_lit+f_casts_shadow+f_solid (2026-10-06) or loses shadows/SSAO; re-tag after SetMeshData
-- [Object::SetMesh releases the old mesh](object_setmesh_releases_old.md) — swapping objects among a pool of meshes frees them unless each is Retained; GL invalid-VAO spam then heap corruption
-- [Chasm cliff kit](chasm_cliff_kit.md) — blender_chasm_cliffs.py: aigen_1 chasm as a FRESH rift (jagged, cracks inland, matching walls, spike rocks; not flowery); palette row 0 warmed; arch still weak
+- [Project overview](project_overview.md) — what win32_transparent IS: hand-rolled C++17/OpenGL engine, 3-thread main/render/physics split (read this first)
+- [Threading model](threading_model.md) — coarse physics_mutex superseded by the SimCommand queue: UI submits, never waits; MCP reads via Scene::AtTickBoundary
+- [Deterministic sim plan](deterministic_sim_plan.md) — AGREED: tick-driven lockstep, all mutation via tick-stamped input events, MCP+UI are players; same-machine replay only; steps 1-6 done
+- [Tank yaw differential bug](tank_yaw_differential_bug.md) — OPEN: tank won't yaw on a same-direction track differential; most causes ruled out; next is an rp3d testbed repro
+- [MCP native tools setup](mcp_native_tools_setup.md) — documented in-repo at docs/mcp_server.md; check there first
+- [Build toolchain location](build_toolchain_location.md) — g++/make at /c/msys64/mingw64, not on PATH; mingw32-make.exe; header deps tracked
+- [No /mcp slash command in VSCode ext](mcp_vscode_reconnect_limitation.md) — /mcp opens a panel that doesn't list locally-added servers
+- [tank-app MCP registration pending check](tank_mcp_registration_pending_check.md) — resolved: a restart fixed it
+- [rp3d local fork + patches](rp3d_local_fork_hinge_motor_patch.md) — libs/ rp3d carries 3 local patches + 1 PR (fork C:/code/reactphysics3d, CMake+Ninja); never overwrite with stock
+- [Tank roll-over root cause](tank_suspension_upright_torque_todo.md) — SOLVED: lever arms from body origin not centre of mass; no upright-torque workaround
+- [rp3d vehicle constraint plan](rp3d_vehicle_constraint_plan.md) — VehicleConstraint in the rp3d fork, wired into Tank/Buggy 2026-09-05; tools/vehicle_mcp.py baselines; anti-roll bar open
+- [Animation root-motion rewrite](animation_root_motion_rewrite.md) — swing-twist root motion + per-clip extract flags, AnimationGraph removed
+- [Running app is user-driven](running_app_is_user_driven.md) — unexplained motion in MCP telemetry is usually the user at the controls
+- [rp3d contact callback velocities](rp3d_contact_callback_velocities.md) — contacts reported BEFORE the solver; read velocity only on ContactStart
+- [Scene::AddObject during a tick](scene_addobject_during_tick.md) — AddObject from UpdatePhysicsState invalidates the range-for; stage it in RunSimulationTick
+- [rrand shared stream TODO](rrand_shared_stream_todo.md) — OPEN: one RRandom shared by sim + UI/MCP threads breaks replay; no design chosen, ask first
+- [Raymarch volume stage plan](raymarch_volume_stage_plan.md) — clouds as a material lit by all lights + 3D Beer shadow map; GLSL #include, PreRender, inverse_transform/glUniform/object-space traps
+- [Tetris agent engine audit](tetris_agent_engine_audit.md) — DONE: report docs/tetris_findings.md; core fixes for HasSyntheticHolds and AddMaterial
+- [Background app holds the pipe](background_app_stdout_pipe.md) — start test apps with >/dev/null 2>log </dev/null or a piped script hangs
+- [Shell heredoc limit](shell_heredoc_limit.md) — quote the delimiter; over ~30KB fails as a misleading ENAMETOOLONG
+- [Breakout agent run](breakout_agent_run.md) — second game-build audit; brief docs/breakout_agent_brief.md; findings should feed the backlog
+- [Asset layout plan](asset_layout_plan.md) — AGREED 2026-09-12: per-app assets + shared_assets, LoadFile resolver; docs/asset_layout_plan.md
+- [Shared build output coordination](shared_build_output_coordination.md) — ask before building when another agent is active; build/core is shared, one app at a time
+- [Tank viewport black half](tank_viewport_offset_black_half.md) — Tank screenshots are half black BY DESIGN; judge the right half
+- [Per-app build layout](per_app_build_layout.md) — one exe per app under apps/<name>/, CONFIG=release, per-config object trees; READ before any build
+- [Touch input plan](touch_input_plan.md) — on-screen buttons (AddTouchButton) built on the Android port, not yet Windows; docs/touch_input_plan.md
+- [Android port merge](android_port_merge.md) — port at C:/code/android, upstream candidates (backlog 68-77), copy-then-reapply-with-asserts method
+- [Pinball stage 0 review + stage 1](pinball_stage0_review.md) — Table.h is the machine; run tools/pinball_plan.py + a paused trace after any move; rp3d traps at their defines
+- [testfx bench gotchas](testfx_bench_gotchas.md) — uniforms leaked across effects (fixed); sim_step at tick rate; reference view is low
+- [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass every pass, GatherInput only on ticks; one set of edge flags serves both
+- [lockd owner must be session id](lockd_owner_must_be_session_id.md) — any other owner string makes the hook refuse your own edits
+- [Bomber app](bomber_app.md) — apps/bomber bomberman; Maze holds the rules and `make rules` tests them with no engine
+- [Volumetric effect gotchas](volumetric_effect_gotchas.md) — sim_step wants num_ticks; a volume needs sun_intensity; shape terms relative to the feature
+- [Ship orbit camera is the canonical one](ship_orbit_camera_canonical.md) — copy the orbit from ApplicationShip/Tank, never testfx
+- [Engine forward is -Z](engine_forward_is_minus_z.md) — settle orientation with object_get's world_forward; bracket screenshots with camera_get
+- [Measuring GPU cost](measuring_gpu_cost.md) — vsync toggle + per-pass timings; in-shader counting for sub-pass questions
+- [GPU pass timers](gpu_pass_timers.md) — per-pass GL_TIME_ELAPSED; scopes never nest; 6-deep ring + `stale` flag
+- [Async picking readback](async_picking_readback.md) — pick readback 85us: FENCE before mapping and EXACT-format reads
+- [Animation state machine lives in Object](animation_state_machine_in_object.md) — blending on any Object; mid-blend retarget RETARGETS; TransitionToAnimation returns bool
+- [Skinned rig bone indexing](skinned_rig_bone_indexing.md) — bone index = position in skin.joints; multi-root rigs load every root
+- [Comment density ceiling](comment_density_ceiling.md) — one-liners on declarations, block comments for the type, no per-enum essays
+- [Release edges ignore focus](release_edge_ignores_focus.md) — clicks beside the window fire WasKeyReleased; gate the action on IsInputLive()
+- [USE_PHYSICS flag](use_physics_flag.md) — the one flag that changes shared core objects; own core tree; --gc-sections doesn't reclaim rp3d
+- [Asset origin convention](asset_origin_convention.md) — Blender scene positions are ignored by the engine, armatures included
+- [Texture unit map](texture_unit_map.md) — core/TextureUnits.h + shaders/texture_units.glsl mirror; atlas rather than widen
+- [Archer app](archer_app.md) — side-view platformer prototype: Stage rules/view split, Puppet animation seam; what's built and parked
+- [AddPhysics leaves gravity off](addphysics_gravity_off.md) — SetGravityEnabled(true) or no friction, looks like the solver exploding
+- [Renderer::skinned_shader is NULL by default](renderer_skinned_shader_null.md) — assign it or skinned meshes silently don't draw
+- [Root yaw extraction](root_yaw_always_extracted.md) — Animation::extract_yaw_root_motion, opt in per clip or run cycles wag
+- [glTF sparse accessors](gltf_sparse_accessors.md) — GLTFLoader supports them (Blender shape keys); it logs at DEBUG_WARN
+- [Archer terrain plan](archer_terrain_plan.md) — marching cubes from the StageBlock blockout; round OUTWARD; continuous fields; never remesh in NewGame
+- [OK to stop running apps](ok_to_stop_running_apps.md) — user allows killing a running app to relink or free a port; say so
+- [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform; vines + skinned rope built; growth + rope animation next
+- [Input recording](input_recording.md) — F9/F10 + input_record/input_replay, recordings/*.rec text, trim by editing begin/end
+- [Sign text anchors](sign_text_anchors.md) — text on props via parented Cube empties text_<n>; apps/archer/Sign.h
+- [Plant mechanics plan](plant_mechanics_plan.md) — AGREED: arm platforms, bounce pad, bending leaf, branch balance, arrow pegs; apps/archer/docs
+- [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — restore with ShowWindow(h,4) to check UI
+- [Wind system plan](wind_system_plan.md) — archer stream-function wind built with sway/leaves/streaks/fireflies; clouds left
+- [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change don't build/run other apps; the user does
+- [Adaptive music plan](adaptive_music_plan.md) — apps/music is the designer (port 8767); player in core/Music*; games copy via `make publish`
+- [Lock claim before build](lock_claim_before_build.md) — never build/run in the same parallel step as its #build/#port claim
+- [Cue plan](cue_plan.md) — archer event layer: SoundSystem buses, CueLog baselines, core/CueSystem; one CueSystem + bus per scene; cue panel next
+- [Bridge and crumble plan](bridge_crumble_plan.md) — archer rope bridges (overload snap, creak warnings) + crumbling rocks built; new blocks go LAST
+- [Vitals plan](vitals_plan.md) — archer exertion + fear -> breathing + heartbeat, sound only; blinks a third uncorrelated clock
+- [lockd lease lapses in long runs](lockd_lease_expires_in_long_runs.md) — fixed in code 2026-09-30; live only after the broker is rebuilt
+- [Archer grey slab is blockout](archer_level_grey_blockout.md) — the flat grey ground right of archer's world is undressed blockout
+- [Background work](background_work.md) — core/BackgroundWork.h + LatestResult<T>; async results must not reach the sim mid-run
+- [Blender export speed](blender_export_speed.md) — archer export 237 s -> 58 s with disable_viewport; tools/blender_export_profile.py
+- [Archer hair chains](archer_hair_chains.md) — 3D DynamicChains + wind; gravity and jolts trap hair; crown weighting artist fix pending
+- [Replay determinism plan](replay_determinism_plan.md) — archer replays bit-exact; archer_test recording, re-check after every game change (CLAUDE.md)
+- [Archer 3D aim + plane lock](archer_3d_aim_plane_lock.md) — cone sway, v3 arrows; a zero TurnInWorld still changes bits
+- [Archer fall animation](archer_fall_animation.md) — walk-off hands over to the fall, fall-pose overlay off; bench Rope scene x 23 y 100
+- [Archer water](archer_water.md) — waterfall: lighting.glsl split + Shader::f_lit; one discard kills early-z for a program
+- [Archer cave](archer_cave.md) — lighting-experiment cave, StageBiome, vignette + cave vision; one shadow map for all directional lights
+- [Coordinator + worker windows](coordinator_worker_windows.md) — user prefers briefing blank windows via ListAgents/SendMessage over subagents
+- [Archer model scale](archer_model_scale.md) — model_scale ~1.82, not 2.02; measure before sizing rules off glb pieces
+- [Prop atlas plan](prop_atlas_plan.md) — 11 Tripo textures -> one atlas; analysis tool built; swatch + pack + bake next
+- [Ogg Vorbis settings](ogg_vorbis_settings.md) — archer audio ships .ogg (q-1, 32 kHz cap); core/AudioDecode at load
+- [ReadFileToString is disk-only](readfiletostring_disk_only.md) — misses baked assets in the ship exe; read disk then LoadFile
+- [Spider leg shape keys](spider_leg_shape_keys.md) — tools/blender_spider_legs.py tetrapod keys; Blender-scripting traps
+- [Blend edit in place OK](blend_edit_in_place_ok.md) — user keeps .blend backups; separate file still wise while Blender has it open
+- [Snake plan](snake_plan.md) — archer snakes drop from branches; steps 1-3 built, drop next
+- [Chasm game plan](chasm_game_plan.md) — apps/chasm colony sim on a Townscaper grid: zones, palette, replay-from-state; steps 1-10 + biomes + economy built; port 8769
+- [Core features over workarounds](core_features_over_workarounds.md) — missing general feature? add it to core (defaults unchanged), never an app-side fake
+- [Solid custom shader flags](solid_custom_shader_flags.md) — opaque custom-shader mesh needs f_writes_gbuffer+f_lit+f_casts_shadow+f_solid
+- [Object::SetMesh releases the old mesh](object_setmesh_releases_old.md) — pooled meshes must be Retained or get freed (VAO spam, heap corruption)
+- [Chasm cliff kit](chasm_cliff_kit.md) — blender_chasm_cliffs.py: aigen_1 rift look (jagged, matching walls, spires); user feedback rules; uneditable mesh
+- [Chasm terrace columns](chasm_terrace_columns.md) — 2026-10-06 all-quad cliffs: one column per plot on the game grid (blender_chasm_terraces.py); edit chasm_plots + run rebuild_terraces

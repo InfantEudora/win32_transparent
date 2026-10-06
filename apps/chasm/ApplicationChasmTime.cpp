@@ -258,6 +258,81 @@ void ApplicationChasm::DrawOverlay(void){
             x += widths[i] + gap;
         }
     }
+
+    /*
+        PLAY MODE's building (construction_plan.md): with no panels, a bar along the bottom with each
+        tool and its key, the one in hand lit; and, while anything is being built, how far along it is.
+    */
+    if (!PlayMode()){
+        return;
+    }
+    struct BarTool{ const char* key; const char* name; int tool; };
+    static const BarTool bar[] = {
+        {"1","HOUSE",CHASM_TOOL_HOUSE},{"8","STORE",CHASM_TOOL_STORE},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
+        {"0","WATER",CHASM_TOOL_WATER},{"2","FIELD",CHASM_TOOL_FIELD},{"6","ROAD",CHASM_TOOL_ROAD},
+        {"4","GARDEN",CHASM_TOOL_GARDEN},{"5","TOWN",CHASM_TOOL_TOWN},
+        {"C","CAMP",CHASM_TOOL_CAMP},{"H","WINCH",CHASM_TOOL_WINCH},{"3","ERASE",CHASM_TOOL_ERASE}};
+    const int count = (int)(sizeof(bar) / sizeof(bar[0]));
+    const float size = 15.0f * s;
+    const float key_size = 12.0f * s;
+    const float bar_gap = 18.0f * s;
+    const float side = 14.0f * s;
+    char labels[count][24];
+    float widths[count];
+    float total = side * 2.0f + bar_gap * (count - 1);
+    for (int i = 0; i < count; i++){
+        snprintf(labels[i],sizeof(labels[i]),"%s",bar[i].name);
+        widths[i] = overlay->MeasureText(labels[i],size).x + overlay->MeasureText(bar[i].key,key_size).x + 6.0f * s;
+        total += widths[i];
+    }
+    float cx = (float)main_window->width * 0.5f;
+    float bottom = (float)main_window->height - 14.0f * s;
+    vec2 q0(cx - total * 0.5f,bottom - 32.0f * s);
+    vec2 q1(cx + total * 0.5f,bottom);
+    overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
+    int tool = paint_tool.load();
+    float x = q0.x + side;
+    for (int i = 0; i < count; i++){
+        bool f_on = (tool == bar[i].tool);
+        float key_w = overlay->MeasureText(bar[i].key,key_size).x;
+        if (f_on){
+            overlay->AddRect(vec2(x - 6.0f * s,q0.y + 4.0f * s),vec2(x + widths[i] + 6.0f * s,q1.y - 4.0f * s),6.0f * s,
+                             UIColor(236,202,92,70));
+        }
+        overlay->AddText(bar[i].key,vec2(x,q0.y + 21.0f * s),key_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+        overlay->AddText(labels[i],vec2(x + key_w + 6.0f * s,q0.y + 22.0f * s),size,f_on ? HUD_TEXT : Faded(HUD_TEXT,170),
+                         UI_ALIGN_LEFT);
+        x += widths[i] + bar_gap;
+    }
+    //What is being built: the sites, and the wood they have had of what they need.
+    if (e && z && e->world == z->world){
+        //One pass over the plots, not one a building: this is every frame.
+        std::vector<int> wood(z->buildings.size(),0);
+        for (size_t v = 0; v < z->building.size(); v++){
+            if (z->storeys[v] > z->standing[v]){
+                wood[z->building[v]] += (z->storeys[v] - z->standing[v]) * EconomyStoreyWood(*z->world,*z,(int)v);
+            }
+        }
+        int sites = 0;
+        int needed = 0;
+        int brought = 0;
+        for (size_t id = 1; id < wood.size(); id++){
+            if (wood[id] > 0){
+                sites++;
+                needed += wood[id];
+                brought += std::min(wood[id],EconomySiteBrought(*e,(uint32_t)id));
+            }
+        }
+        if (sites > 0){
+            char buf2[64];
+            snprintf(buf2,sizeof(buf2),"BUILDING %i  -  WOOD %i/%i",sites,brought,needed);
+            vec2 m = overlay->MeasureText(buf2,size);
+            vec2 r0(cx - m.x * 0.5f - side,q0.y - 36.0f * s);
+            vec2 r1(cx + m.x * 0.5f + side,q0.y - 6.0f * s);
+            overlay->AddRect(r0,r1,9.0f * s,HUD_PANEL);
+            overlay->AddText(buf2,vec2(cx,r0.y + 21.0f * s),size,UIColor(206,160,110),UI_ALIGN_CENTER);
+        }
+    }
 }
 
 //--- The panel ------------------------------------------------------------------------------------

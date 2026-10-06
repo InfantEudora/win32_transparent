@@ -207,8 +207,17 @@ void ApplicationChasm::UploadClouds(){
                 spot.p = g.bounds_min + vec2((float)ix,(float)iz) * CLOUD_SPACING +
                          vec2(jx - 0.5f,jz - 0.5f) * (2.0f * CLOUD_JITTER);
                 spot.ground = std::max(plateau,t.GroundHeight(spot.p,plateau));
+                spot.low = spot.ground;
+                spot.low_at = spot.p;
                 for (const vec2& a : around){
                     spot.ground = std::max(spot.ground,t.GroundHeight(spot.p + a * (CLOUD_RADIUS_MAX * 0.7f),plateau));
+                    //Out to the next lattice point: the drop a stack has to fill before its neighbour.
+                    vec2 q = spot.p + a * CLOUD_SPACING;
+                    float low = std::max(plateau,t.GroundHeight(q,plateau));
+                    if (low < spot.low){
+                        spot.low = low;
+                        spot.low_at = q;
+                    }
                 }
                 cloud_lattice.push_back(spot);
             }
@@ -246,11 +255,28 @@ void ApplicationChasm::UploadClouds(){
             int cx = std::max(0,std::min(mesh.chunks_x - 1,(int)((p.x - g.bounds_min.x) / TERRAIN_CHUNK_SIZE)));
             int cz = std::max(0,std::min(mesh.chunks_z - 1,(int)((p.y - g.bounds_min.y) / TERRAIN_CHUNK_SIZE)));
             size_t set = ((size_t)cz * mesh.chunks_x + cx) * 2 + shade;
-            sets[set].push_back(MistRest(puff));
             vec4 mv[2];
             MistMotion(puff,mv);
+            sets[set].push_back(MistRest(puff));
             motion[set].push_back(mv[0]);
             motion[set].push_back(mv[1]);
+            /*
+                A cliff: the next lattice point down sits many units lower, and the rock face between
+                would show through. Puffs stacked down the drop, toward the low side, close it.
+            */
+            float drop = ground - spot.low;
+            int stack = ex->Explored(spot.low_at) ? 0 : (int)(drop / (CLOUD_RADIUS_MIN * 1.1f));
+            for (int k = 1; k <= stack; k++){
+                float f = (float)k / (float)(stack + 1);
+                MistPuff more = puff;
+                vec2 q = p + (spot.low_at - p) * f;
+                more.pos = vec3(q.x,y - drop * f,q.y);
+                more.phase = std::fmod(puff.phase + 0.37f * (float)k,1.0f);
+                sets[set].push_back(MistRest(more));
+                MistMotion(more,mv);
+                motion[set].push_back(mv[0]);
+                motion[set].push_back(mv[1]);
+            }
         }
     }
     for (size_t i = 0; i < cloud_sets.size(); i++){

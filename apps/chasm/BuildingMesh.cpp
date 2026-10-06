@@ -1,6 +1,7 @@
 #include "BuildingMesh.h"
 #include "MeshBuild.h"
 
+#include <algorithm>
 #include <cmath>
 
 #define HOUSE_FOOTING       1.2f    //how far a wall runs below the house, under a slope: a plot may rise 0.7 (Zones.cpp) and the house is rounded to a half-storey
@@ -265,6 +266,75 @@ void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, i
     MeshQuad(out,c[1],c[3],c[7],c[5],vec3(1,0,0),column);
 }
 
+#define SITE_POLE           0.09f
+#define SITE_PLANK          0.07f
+#define SITE_INSET          0.82f   //the poles stand this far out from the plot's vertex toward its cells' centres
+
+/*
+    A CONSTRUCTION SITE's plot (Zones.h, CONSTRUCTION): scaffolding round what is still to be built -
+    poles at the corners of the plot's share of its cells, a ring of planks at every storey still to
+    come - and, where nothing stands yet, a timber frame laid on the ground. It stands on what is built,
+    so a house rising storey by storey has the scaffold on top of it. A camp's tent is no building: an
+    unpitched one is its poles and canvas lying on the ground.
+*/
+void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
+    const GridPicker& picker = *w.picker;
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    vec2 p = w.grid->fine.pos[plot];
+    float ground = w.terrain->ground[plot];
+    if (z.KindOf(plot) == ZONE_KIND_CAMP){
+        if (!ZoneCampFire(plot)){
+            float yaw = ZoneCampYaw(plot);
+            vec2 d(std::cos(yaw),std::sin(yaw));
+            vec2 s(-d.y,d.x);
+            Beam(out,p - d * 0.6f + s * 0.12f,p + d * 0.6f + s * 0.12f,ground,0.06f,0.06f,PAL_BARK);
+            Beam(out,p - d * 0.55f - s * 0.1f,p + d * 0.5f - s * 0.1f,ground,0.06f,0.06f,PAL_BARK);
+            Beam(out,p - d * 0.3f,p + d * 0.3f,ground,0.14f,0.42f,PAL_STONE_LIGHT);     //the canvas, rolled
+        }
+        return;
+    }
+    //The corners of the plot's footprint, round it in order of angle.
+    std::vector<std::pair<float,vec2>> corners;
+    for (int i = 0; i < picker.PlotQuadCount(plot); i++){
+        int q = picker.PlotQuadCorner(plot,i) / 4;
+        vec2 c = w.grid->FineQuadCentre(q);
+        vec2 at = p + (c - p) * SITE_INSET;
+        corners.push_back(std::make_pair(std::atan2(at.y - p.y,at.x - p.x),at));
+    }
+    std::sort(corners.begin(),corners.end(),[](const std::pair<float,vec2>& a, const std::pair<float,vec2>& b){
+        return a.first < b.first;
+    });
+    int n = (int)corners.size();
+    if (n < 3){
+        return;
+    }
+    float foot = (float)std::lround(ground / HALF) * HALF;
+    int standing = z.standing[plot];
+    int planned = z.storeys[plot];
+    float base = foot + standing * ZONE_STOREY_HEIGHT;
+    float top = foot + planned * ZONE_STOREY_HEIGHT + 0.25f;
+    for (int i = 0; i < n; i++){
+        Upright(out,corners[i].second,SITE_POLE,(standing > 0) ? base - 0.05f : ground - 0.3f,top,PAL_BARK);
+    }
+    for (int i = 0; i < n; i++){
+        const vec2& a = corners[i].second;
+        const vec2& b = corners[(i + 1) % n].second;
+        //A frame on the ground where nothing stands, then a ring of planks a storey up each time.
+        if (standing == 0){
+            Beam(out,a,b,ground - 0.05f,0.16f,0.14f,PAL_TIMBER);
+        }
+        for (int s = standing + 1; s <= planned; s++){
+            float y = foot + s * ZONE_STOREY_HEIGHT - 0.2f;
+            Beam(out,a,b,y,SITE_PLANK,SITE_PLANK * 2.0f,PAL_TIMBER);
+        }
+        //A brace across every other side of the lowest storey still to build.
+        if (i % 2 == 0){
+            vec2 mid = (a + b) * 0.5f;
+            Beam(out,a + (mid - a) * 0.1f,b,base + 0.3f,SITE_PLANK,SITE_PLANK,PAL_BARK_DARK);
+        }
+    }
+}
+
 }
 
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
@@ -301,7 +371,11 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     for (int k = 0; k < 4; k++){
         int v = quad.v[k];
         p[k] = g.fine.pos[v];
-        s[k] = z.storeys[v];
+        //What stands is the body; a site's storeys still to come are its scaffold, drawn once a plot.
+        s[k] = z.standing[v];
+        if (z.storeys[v] > z.standing[v] && picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+            BuildSite(w,z,v,out);
+        }
         int base = 0;
         if (s[k] == 0){
             int arch = ZoneArchStoreys(w,z,v);

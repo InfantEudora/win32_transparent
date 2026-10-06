@@ -45,6 +45,9 @@ static Debugger* debug = new Debugger("ApplicationChasm",DEBUG_ALL);
 #define CHASM_PLAY_PITCH_MAX    1.35f       //about 77
 #define CHASM_PLAY_EDGE         10.0f       //the orbit point stays this far inside the map's edge
 #define CHASM_PLAY_EASE         6.0f
+#define CHASM_PLAY_START_DIST   34.0f       //the view entering play mode glides to: the camp and round it
+#define CHASM_PLAY_START_PITCH  0.95f
+#define CHASM_PLAY_FLY          3.0f        //the glide's ease a second: most of the way in a second
 #define CHASM_GRID_VIEW_Y       0.40f       //over the ground's relief (TerrainMesh.cpp, GROUND_BUMP)
 #define PICK_VIEW_Y             0.45f       //over the grid view's lines
 #define PROP_ROAD_CLEARANCE     1.3f        //no prop's foot nearer a road's centre line: half its width and a canopy
@@ -529,6 +532,9 @@ void ApplicationChasm::SubmitZone(int op, int index, int kind, uint32_t stroke){
     cmd.value[0] = (float)op;
     cmd.value[1] = (float)kind;
     cmd.value[2] = (float)stroke;     //exact: strokes stay far below a float's 2^24
+    //A play-mode command is a PLAY command: held to the clouds, and what it builds is a construction
+    //site (construction_plan.md). The mode is read here, by the view, and travels in the command.
+    cmd.value[3] = PlayMode() ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -555,7 +561,8 @@ void ApplicationChasm::RegisterCommandHandlers(){
                 zone_commands_done++;
                 return OBJECTID_INVALID;
             }
-            bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype,(int)cmd.value[1],(uint32_t)cmd.value[2]);
+            bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype,(int)cmd.value[1],(uint32_t)cmd.value[2],
+                                         cmd.value[3] != 0.0f);
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 zone_last_refusal = zones.last_refusal;
@@ -689,6 +696,7 @@ void ApplicationChasm::HashSimState(StateHash& h){
     const ZoneState& z = zones.State();
     h.Begin("zones");
     h.Bytes(z.storeys.data(),z.storeys.size());
+    h.Bytes(z.standing.data(),z.standing.size());
     h.Bytes(z.field.data(),z.field.size() * sizeof(uint32_t));
     h.Bytes(z.ground.data(),z.ground.size());
     //The buildings (docs/buildings_plan.md): which each plot is part of, the table, the drag in progress.
@@ -1538,7 +1546,54 @@ void ApplicationChasm::UpdateCamera(){
     }
 
     std::shared_ptr<const Grid> g = GetGrid();
-    if (PlayMode()){
+    bool f_play = PlayMode();
+    if (f_play && !f_cam_was_play){
+        f_cam_fly_pending = true;
+    }
+    f_cam_was_play = f_play;
+    if (!f_play){
+        f_cam_fly_pending = false;
+        f_cam_flying = false;
+    }
+    if (f_cam_fly_pending){
+        /*
+            Into play mode - from debug, or a release exe starting: to the camp, the colony's start,
+            unless the view already shows explored ground from within the game's zoom (then the player
+            was looking at the village, and stays). Waits for the economy to have found the camp.
+        */
+        std::shared_ptr<const EconomyState> e = GetEconomy();
+        std::shared_ptr<const ChasmWorld> cw = GetWorld();
+        std::shared_ptr<const Exploration> ex = GetExploration();
+        if (e && cw && e->world == cw && e->camp_plot >= 0){
+            f_cam_fly_pending = false;
+            bool f_seen = ex && !ex->Empty() && ex->Explored(vec2(camera_target.x,camera_target.z))
+                          && cam_distance <= CHASM_PLAY_DIST_MAX * 1.05f;
+            if (!f_seen){
+                f_cam_flying = true;
+                cam_fly_to = cw->grid->fine.pos[e->camp_plot];
+            }
+        }
+    }
+    if (f_cam_flying){
+        //The player taking the camera over ends the glide where it is.
+        bool f_moved = (camera_target - target_before).length() > 1e-5f || cam_distance != distance_before
+                       || cam_pitch != pitch_before;
+        vec2 at(camera_target.x,camera_target.z);
+        if (f_moved){
+            f_cam_flying = false;
+        }else{
+            float k = std::min(1.0f,CHASM_PLAY_FLY * dt);
+            at = at + (cam_fly_to - at) * k;
+            camera_target.x = at.x;
+            camera_target.z = at.y;
+            cam_distance += (CHASM_PLAY_START_DIST - cam_distance) * k;
+            cam_pitch += (CHASM_PLAY_START_PITCH - cam_pitch) * k;
+            if ((cam_fly_to - at).length() < 0.05f && std::fabs(cam_distance - CHASM_PLAY_START_DIST) < 0.05f){
+                f_cam_flying = false;
+            }
+        }
+    }
+    if (f_play){
         /*
             The game's camera. The player's own input stops dead at a limit - the wheel past the
             furthest zoom does nothing, rather than going out and springing back. Only a view that
@@ -1616,16 +1671,16 @@ void ApplicationChasm::UpdateView(void){
     FollowSun();
     UpdateTimeKeys();
     /*
-        The tools are debug mode's: play mode places nothing until construction exists (play_mode_plan.md
-        step 5), so it holds the select tool, and the seed and frame keys are debug's too.
+        Play mode builds (construction_plan.md): the tool keys work there too, and what they place is a
+        construction site. The debug walker is debug mode's alone, as are the seed and frame keys.
     */
     const bool f_debug_keys = !PlayMode();
-    if (!f_debug_keys && paint_tool != CHASM_TOOL_SELECT){
+    if (!f_debug_keys && (paint_tool == CHASM_TOOL_WALKER)){
         paint_tool = CHASM_TOOL_SELECT;
         pick_version++;
     }
     //The tool keys toggle: the active tool's key again puts it down.
-    if (input->IsInputLive() && f_debug_keys){
+    if (input->IsInputLive()){
         const int keys[12] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_TOWN,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_WALKER,INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
@@ -1635,7 +1690,8 @@ void ApplicationChasm::UpdateView(void){
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
                                CHASM_TOOL_CAMP};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
-            if (input->WasKeyPressed(keys[i])){
+            bool f_debug_tool = tools[i] == CHASM_TOOL_WALKER;
+            if (input->WasKeyPressed(keys[i]) && (f_debug_keys || !f_debug_tool)){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
                 pick_version++;
             }
@@ -2633,6 +2689,7 @@ void ApplicationChasm::RegisterMCPTools(){
                                         {"floor_area",st.floor_area[ZONE_KIND_HOUSE]},{"field_area",st.floor_area[ZONE_KIND_FIELD]}};
                 if (!f_field){
                     result["storeys_here"] = z->storeys[index];
+                    result["standing_here"] = z->standing[index];
                     result["ground_here"] = ZoneGroundName(z->ground[index]);
                     result["building_here"] = BuildingJson(*w,*z,z->building[index]);
                 }else{

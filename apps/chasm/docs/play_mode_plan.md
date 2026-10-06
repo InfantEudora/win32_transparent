@@ -39,14 +39,11 @@ placement carries a flag saying so), set by whoever issued it.
    chunks whose exploration changed. At the explored edge they thin and shrink away rather than stop at
    a line. Shown in play mode; in debug mode behind a View toggle, off by default, so testing sees
    everything.
-5. **Construction (to design next, with the economy).** In play mode a building is a CONSTRUCTION
-   SITE: it costs goods, carried there by the colony's carriers, and takes builders' time before it
-   stands. In debug mode a placement still places it at once, and starting a timed construction is a
-   debug tool too. Not built in this round: it leans on the people and the carriers (`people_plan.md`,
-   `economy_plan.md`), and is its own plan.
-
-Until step 5 exists, play mode places nothing - there is no way to build in it yet, and the debug
-tools are debug mode's.
+5. **Construction - BUILT 2026-10-06, `construction_plan.md`.** In play mode a building is a
+   CONSTRUCTION SITE: it takes wood (the only thing it takes, the user's call), carried there by idle
+   people, who build with each load before the storeys stand. In debug mode a placement still places it
+   at once; `chasm_paint play:true` starts a construction from the tools. Play mode has the building
+   tools (all but the debug walker) and a bar along the bottom showing them and their keys.
 
 ## As built (steps 1-4, 2026-10-06)
 
@@ -56,9 +53,10 @@ tools are debug mode's.
   (`UpdatePlayModeViews`; leaving play mode rebuilds them as their toggles say). `chasm_view play`
   switches modes over MCP - what U does at the desk.
 - **The game's camera** (`UpdateCamera`): distance 12-55, pitch 34-77 degrees, the orbit point kept
-  10 inside the map's edge - all EASED in at 6/s, so the wheel past 55 springs back and leaving a debug
-  view far out glides in. 55 matches the user's reference screenshot (pines about half the height they
-  stand at distance 24).
+  10 inside the map's edge. The player's input STOPS at a limit (the wheel past 55 does nothing - the
+  user found zooming out and springing back odd); only a view already outside, leaving a debug view
+  far out or a camera_set, eases in at 6/s. 55 matches the user's reference screenshot (pines about
+  half the height they stand at distance 24).
 - **Exploration** (`Exploration.*`, `ApplicationChasmExplore.cpp`): a 2-unit raster (seed 1: 385 x 216),
   cleared 26 round each built plot, field cell and road (once a plot - explored never goes back, so a
   repaint costs nothing) and 14 round every person out of doors every 10 ticks. Reset on a new map, so
@@ -70,19 +68,22 @@ tools are debug mode's.
   commands yet; `chasm_paint play:true` does, to test it - refused far from the camp, accepted beside it,
   and the same paint without it accepted anywhere. Every recording so far has 0 there, so replays are
   unchanged.
-- **The clouds**: puffs on a 7-unit jittered lattice over every unexplored point, radius 6-9, at
-  y 17 (or 9 over the mountain's ground), the foam's white and the frozen lip's blue-white, breathing as
-  the mist does; within 16 of explored ground they shrink to 35% and sink 6, so the edge thins. They
-  cast shadows - on each other, and on the explored edge. One set per terrain chunk per shade,
-  rebuilt whole when the exploration changes. Debug mode: View > clouds (`chasm_view clouds`), off.
-- **Cost** (debug, minimized, seed 1, the camp at play zoom): 7.9-8.0 ms GPU without clouds, 9.8-10.0
-  with - about +2 ms, mostly the shadow and colour passes; 1.66M more vertices in all (the shadow pass
-  draws every puff). Over solid cloud the screen is all puffs; worth watching.
+- **The clouds** LIE ON THE GROUND (reworked 2026-10-06: the first version floated at y 17 and the
+  user could look under it): puffs on a 4.5-unit jittered lattice over every unexplored point, radius
+  3.2-4.8, the middle 1.6-3.0 over the HIGHEST ground under the footprint and never below the
+  plateau (so the chasm is lidded at the rim), bobbing only 0.25 so the underside stays buried. Where
+  the next lattice point is a cliff's drop lower, puffs stack down the face toward it, or the
+  mountain's rock shows through. Within 8 of explored ground they shrink to 70% and sink into the
+  ground, so the bank slopes down to its edge. The foam's white and the frozen lip's blue-white; cast
+  shadows. One set per terrain chunk per shade, rebuilt whole when the exploration changes; the
+  lattice and its ground heights are worked out once a map (`cloud_lattice`). Debug mode: View > fog
+  of war, or V (`chasm_view clouds`), off by default.
+- **Cost** (debug, minimized, seed 1, near the camp at play zoom): 7.6-7.8 ms GPU without clouds,
+  9.0-9.1 with - about +1.3 ms (the high version was +2).
 - **Checked**: the replay test PASSES (with `explored` in its trace), seeds 1-10 pass, seed 1's grid
   hash unchanged, a save and load keeps the clearing.
 
 **Open:**
-- At the very edge the shrunken puffs read as separate small balls; packing them closer there, or
-  letting them overlap more, would read more like a cloud bank's edge.
-- Step 5, construction (c4).
-- Play mode has no way to see the date's controls' effect beyond the overlay, and no build UI.
+- On the mountain's cliffs the stacked puffs read as columns up close (debug zoom only).
+- Play mode has no way to see the date's controls' effect beyond the overlay. Its build UI is the
+  bar of tool keys (construction_plan.md); there is no way to click a tool yet.

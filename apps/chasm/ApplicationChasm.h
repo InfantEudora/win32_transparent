@@ -153,6 +153,15 @@ public:
     float cam_yaw = 0.0f;           //radians; 0 looks toward -z (north)
     float cam_pitch = 0.95f;        //radians above the horizon
     float cam_distance = 120.0f;
+    /*
+        Entering play mode, the view glides to the colony's start - the camp - unless it already looks
+        at explored ground from within the game's zoom (UpdateCamera). Pending until there is a camp to
+        go to; the player's own camera input calls the glide off.
+    */
+    bool f_cam_was_play = false;
+    bool f_cam_fly_pending = false;
+    bool f_cam_flying = false;
+    vec2 cam_fly_to;
     //Physics thread. Puts the camera over the whole map.
     void FrameMap();
 
@@ -291,7 +300,9 @@ private:
     //Each lattice point's place and the ground its puff sits on - per map, as the exploration changes often.
     struct CloudSpot{
         vec2 p;
-        float ground;
+        float ground;       //the highest ground under the puff's footprint
+        vec2 low_at;        //and the lowest, for a cliff the puffs stack down
+        float low;
         uint32_t hash;
     };
     std::vector<CloudSpot> cloud_lattice;
