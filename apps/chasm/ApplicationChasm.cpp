@@ -16,6 +16,7 @@
 #include "Texture.h"
 #include "Palette.h"
 #include "RoadMesh.h"
+#include "CropMesh.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -93,6 +94,11 @@ void ApplicationChasm::Init(void){
 
     SetupInput();
     RegisterCommandHandlers();
+    //The calendar counts days in ticks of this length (Calendar.h); a different tick would stretch them.
+    if (std::fabs(physics_us_per_tick - 1000000.0 / CALENDAR_TICKS_PER_SECOND) > 0.5){
+        debug->Warn("The tick is %.0f us, but the calendar counts %i ticks a second\n",physics_us_per_tick,
+                    CALENDAR_TICKS_PER_SECOND);
+    }
     //Init is the render thread before the physics thread exists, so the zones may be set up here.
     EnsureZonesWorld();
 #ifdef USE_MCP
@@ -167,6 +173,8 @@ void ApplicationChasm::BuildScene(){
     puff_material = renderer->FindMaterialIndex(puff.name);
     BuildWaterScene();
     BuildWalkerScene();
+    BuildWorkerScene();
+    BuildGroundShader();
 
     pick_view = new Object();
     pick_view->name = "Pick View";
@@ -213,6 +221,10 @@ void ApplicationChasm::SetupInput(){
     input->AddKeyMap('9',INPUT_CHASM_TOOL_WOODCUTTER);
     input->AddKeyMap('0',INPUT_CHASM_TOOL_WATER);
     input->AddKeyMap('H',INPUT_CHASM_TOOL_WINCH);     //H for hoist: the digits are all taken
+    //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
+    input->AddKeyMap(VK_SPACE,INPUT_CHASM_PAUSE);
+    input->AddKeyMap(VK_OEM_MINUS,INPUT_CHASM_SLOWER);
+    input->AddKeyMap(VK_OEM_PLUS,INPUT_CHASM_FASTER);
 #endif
 }
 
@@ -455,6 +467,12 @@ void ApplicationChasm::EnsureZonesWorld(){
     if (zones.GetWorld() != w){
         zones.Reset(w);
         PublishZones();
+        //A new map is a new colony: its first day of spring.
+        SetCalendar(0);
+    }
+    if (economy.GetWorld() != w){
+        economy.Reset(w);
+        PublishEconomy();
     }
     if (walkers.GetWorld() != w){
         walkers.Reset(w);
@@ -510,11 +528,15 @@ void ApplicationChasm::RegisterCommandHandlers(){
             return OBJECTID_INVALID;
         });
     RegisterWalkerCommands();
+    RegisterTimeCommands();
 }
 
 void ApplicationChasm::RunSimulationTick(void){
     EnsureZonesWorld();
     TickWalkers();
+    //Before the calendar moves on: this tick's work is done on this tick's date.
+    TickEconomy();
+    TickCalendar();
 }
 
 //--- Saves and replays (step 6) ---------------------------------------------------------------------
@@ -546,6 +568,11 @@ ChasmSave ApplicationChasm::MakeSave(){
     if (ws && ws->world == w){
         s.walkers = ws->walkers;
     }
+    s.calendar_tick = calendar_shown;
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    if (e && e->world == w){
+        s.economy = EconomySaveState(*e);
+    }
     return s;
 }
 
@@ -575,6 +602,10 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
     //After the zones, and told their version: the walkers' paths were planned on exactly these.
     walkers.Restore(w,save.walkers,zones.State().version);
     PublishWalkers();
+    //After the zones too: the stocks and workers name their buildings.
+    economy.Restore(w,save.economy,zones.State());
+    PublishEconomy();
+    SetCalendar(save.calendar_tick);
     if (refused){
         error = std::to_string(refused) + " plots, cells or ground refused by the rules";
         debug->Warn("LoadSave: %s\n",error.c_str());
@@ -614,10 +645,13 @@ void ApplicationChasm::HashSimState(StateHash& h){
     h.Begin("buildings");
     h.Bytes(z.building.data(),z.building.size() * sizeof(uint32_t));
     for (const ZoneBuilding& b : z.buildings){
-        h.Add((uint64_t)b.kind | ((uint64_t)b.crop << 8) | ((uint64_t)(uint32_t)b.size << 16));
+        h.Add((uint64_t)b.kind | ((uint64_t)b.crop << 8) | ((uint64_t)b.allow << 16) | ((uint64_t)(uint32_t)b.size << 24));
     }
     h.Add(((uint64_t)z.stroke << 32) | z.stroke_building);
     HashWalkers(h);
+    HashEconomy(h);
+    h.Begin("calendar");
+    h.Add(calendar_tick);
 }
 
 /*
@@ -734,20 +768,62 @@ void ApplicationChasm::UploadZones(){
     if (!z || z->world != w){
         return;
     }
+    /*
+        The fields' growth (economy_plan.md, P3) is economy state, not the zones', so it moves no
+        chunk_version: each field's stage is worked out here, and the chunks of a field whose stage
+        moved since it was drawn are rebuilt with the rest. With no economy for this world every
+        field is drawn ripe, as it always was.
+    */
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::vector<uint8_t> stage(z->buildings.size(),(uint8_t)FIELD_STAGE_RIPE);
+    if (e && e->world == w){
+        for (const EconomyField& f : e->fields){
+            if (f.building < stage.size()){
+                stage[f.building] = (uint8_t)FieldStageOf(EconomyFieldGrowth(*e,*z,f.building));
+            }
+        }
+    }
+    std::vector<uint8_t> f_restage(n,0);
+    bool f_any_restage = false;
+    if (f_new_world){
+        zone_field_stage.clear();
+    }
+    for (size_t id = 0; id < stage.size(); id++){
+        //A field first seen here is drawn by its chunk_version anyway; marking it costs nothing more.
+        if (id >= zone_field_stage.size() || zone_field_stage[id] != stage[id]){
+            f_any_restage = f_any_restage || z->buildings[id].kind == ZONE_KIND_FIELD;
+        }
+    }
+    if (f_any_restage){
+        const Grid& g = *w->grid;
+        for (size_t c = 0; c < z->field.size(); c++){
+            uint32_t id = z->field[c];
+            if (id && (id >= zone_field_stage.size() || zone_field_stage[id] != stage[id])){
+                for (int k = 0; k < 4; k++){
+                    int chunk = TerrainChunkOfQuad(g,*w->mesh,(int)c * 4 + k);
+                    if (chunk >= 0 && chunk < (int)n){
+                        f_restage[chunk] = 1;
+                    }
+                }
+            }
+        }
+    }
+    zone_field_stage = stage;
     std::vector<vertex> verts;
     for (size_t i = 0; i < n; i++){
         uint32_t v = z->chunk_version[i];
         //Built at a version (not "changed" flags), so nothing is lost if two changes land between
         //frames. A chunk never painted sits at 0 and needs no mesh.
-        if (zone_chunk_built[i] == v || (v == 0 && zone_chunk_built[i] == 0xFFFFFFFFu)){
+        if (!f_restage[i] && (zone_chunk_built[i] == v || (v == 0 && zone_chunk_built[i] == 0xFFFFFFFFu))){
             continue;
         }
         zone_chunk_built[i] = v;
-        BuildZoneChunk(*w,*z,(int)i,verts);
+        BuildZoneChunk(*w,*z,(int)i,verts,&zone_field_stage);
         if (verts.empty()){
             zone_chunks[i]->SetVisibility(false);
         }else{
             zone_chunks[i]->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
+            UseGroundShader(zone_chunks[i]->GetMesh());     //after: SetMeshData resets the mode
             zone_chunks[i]->SetVisibility(true);
         }
     }
@@ -763,8 +839,11 @@ void ApplicationChasm::LoadProps(){
     int loaded = 0;
     for (int k = 0; k < PROP_KIND_COUNT; k++){
         //Asked of the mesh, which makes no copy - an Object from GetObjectFromAsset is a new one.
-        f_props_loaded[k] = (assetmanager->GetMeshFromAsset(prop_asset_names[k]) != NULL);
+        Mesh* mesh = assetmanager->GetMeshFromAsset(prop_asset_names[k]);
+        f_props_loaded[k] = (mesh != NULL);
         if (f_props_loaded[k]){
+            //Every set of this kind shares the asset's mesh, so tagging it once puts them all on it.
+            UseGroundShader(mesh);
             loaded++;
         }else{
             debug->Warn("Prop '%s' not in chasm_props.glb - it will not be placed\n",prop_asset_names[k]);
@@ -791,8 +870,21 @@ bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z){
     return z->grounds > 0 && RoadNear(*z->world,*z,p.plot,vec2(p.pos.x,p.pos.z),PROP_ROAD_CLEARANCE);
 }
 
-//RENDER THREAD. One chunk's sets, each kind's visible props as transforms.
-void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, int chunk){
+#define FELLED_LOG_OFFSET   1.1f    //a felled tree's log lies this far from its stump, at the stump's scale
+#define FELLED_LOG_TURN     0.5f    //and this far round from the way the tree faced, radians
+
+//A prop's PROP_STATE_* in the economy, standing when there is none for it.
+static uint8_t PropStateOf(const EconomyState* e, size_t i){
+    return (e && i < e->prop_state.size()) ? e->prop_state[i] : (uint8_t)PROP_STATE_STANDING;
+}
+
+/*
+    RENDER THREAD. One chunk's sets, each kind's visible props as transforms. A tree the economy has
+    felled (economy_plan.md, P2) is drawn as the stump it left - and while its log still lies there,
+    the log beside it, the way the tree fell. Both at the tree's own scale - well under a forest
+    stump's, which reads right: a forest stump is an old giant's, these are the trunks he cuts.
+*/
+void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, const EconomyState* e, int chunk){
     const ForestData& f = *w.forest;
     std::vector<fmat4> sets[PROP_KIND_COUNT];
     for (int i : f.chunk_props[chunk]){
@@ -800,8 +892,22 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
         if (PropHidden(p,z)){
             continue;
         }
-        sets[p.kind].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
-                                                             vec3(p.scale,p.scale,p.scale)));
+        uint8_t state = PropStateOf(e,(size_t)i);
+        if (state == PROP_STATE_STANDING){
+            sets[p.kind].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
+                                                                 vec3(p.scale,p.scale,p.scale)));
+            continue;
+        }
+        float s = p.scale;
+        sets[PROP_STUMP].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
+                                                                 vec3(s,s,s)));
+        if (state == PROP_STATE_LOG){
+            float yaw = p.yaw + FELLED_LOG_TURN;
+            vec2 at = vec2(p.pos.x,p.pos.z) + vec2(std::sin(yaw),std::cos(yaw)) * (FELLED_LOG_OFFSET * s);
+            float y = (p.plot >= 0) ? w.terrain->GroundHeight(at,w.terrain->Height(p.plot)) : p.pos.y;
+            sets[PROP_LOG].push_back(Object::ComposeTransformScale(vec3(at.x,y,at.y),quat(vec3(0.0f,1.0f,0.0f),yaw),
+                                                                   vec3(s,s,s)));
+        }
     }
     bool f_show = f_view_forest;
     for (int k = 0; k < PROP_KIND_COUNT; k++){
@@ -828,6 +934,8 @@ void ApplicationChasm::UploadForest(){
     const ForestData& f = *w->forest;
     std::shared_ptr<const ZoneState> zs = GetZones();
     const ZoneState* z = (zs && zs->world == w) ? zs.get() : NULL;
+    std::shared_ptr<const EconomyState> es = GetEconomy();
+    const EconomyState* e = (es && es->world == w) ? es.get() : NULL;
     bool f_show = f_view_forest;
     size_t chunks = f.chunk_props.size();
 
@@ -862,23 +970,51 @@ void ApplicationChasm::UploadForest(){
             }
         }
         forest_zone_version.assign(chunks,0);
+        forest_prop_chunk.assign(f.props.size(),0);
         for (size_t c = 0; c < chunks; c++){
-            RebuildPropChunk(*w,z,(int)c);
+            for (int i : f.chunk_props[c]){
+                forest_prop_chunk[i] = (int)c;
+            }
+        }
+        for (size_t c = 0; c < chunks; c++){
+            RebuildPropChunk(*w,z,e,(int)c);
             forest_zone_version[c] = z ? z->chunk_version[c] : 0;
         }
+        forest_prop_state = e ? e->prop_state : std::vector<uint8_t>();
+        forest_felled_version = e ? e->felled_version : 0xFFFFFFFFu;
         f_forest_shown = f_show;
         return;
+    }
+
+    /*
+        The felled trees: when the economy's felled_version moves, the props whose state differs
+        from what the sets were built with name the chunks to rebuild - a tree felled rebuilds its
+        own chunk, not the forest. Compared prop by prop rather than trusting the version alone, so an
+        economy that comes or goes (a load, a new game) is handled the same way.
+    */
+    std::vector<uint8_t> f_felled(chunks,0);
+    uint32_t felled_version = e ? e->felled_version : 0xFFFFFFFFu;
+    if (felled_version != forest_felled_version){
+        forest_felled_version = felled_version;
+        size_t count = f.props.size();
+        for (size_t i = 0; i < count; i++){
+            uint8_t was = (i < forest_prop_state.size()) ? forest_prop_state[i] : (uint8_t)PROP_STATE_STANDING;
+            if (was != PropStateOf(e,i)){
+                f_felled[forest_prop_chunk[i]] = 1;
+            }
+        }
+        forest_prop_state = e ? e->prop_state : std::vector<uint8_t>();
     }
 
     bool f_toggle = (f_show != f_forest_shown);
     f_forest_shown = f_show;
     for (size_t c = 0; c < chunks; c++){
         uint32_t version = z ? z->chunk_version[c] : 0;
-        if (!f_toggle && forest_zone_version[c] == version){
+        if (!f_toggle && !f_felled[c] && forest_zone_version[c] == version){
             continue;
         }
         forest_zone_version[c] = version;
-        RebuildPropChunk(*w,z,(int)c);
+        RebuildPropChunk(*w,z,e,(int)c);
     }
 }
 
@@ -932,6 +1068,7 @@ json ApplicationChasm::BuildingJson(const ChasmWorld& w, const ZoneState& z, uin
     }else{
         j["storeys"] = b.storeys;
     }
+    j["economy"] = EconomyBuildingJson(id);
     return j;
 }
 
@@ -956,9 +1093,11 @@ void ApplicationChasm::RenderBuildingInfo(const ChasmWorld& w, const ZoneState& 
             ImGui::Text("under the cursor: %s %u, %i plots, %i storeys in all, %.0f units of floor",
                         ZoneKindName(b.kind),b.id,b.size,b.storeys,b.floor_area);
         }
+        RenderEconomyInfo(b.id);
     }else{
         ImGui::TextDisabled("under the cursor: no building");
     }
+    RenderSelectedStore(selected.f_hit ? selected.plot : -1);
     uint32_t field = selected.f_hit ? z.field[selected.coarse_quad] : 0;
     ZoneBuildingInfo f = ZoneBuildingFigures(w,z,field);
     if (f.id){
@@ -1200,6 +1339,7 @@ void ApplicationChasm::UploadTerrain(){
             if (f_has && f_new_mesh){
                 std::vector<vertex>& verts = const_cast<std::vector<vertex>&>(m.chunks[i].verts);
                 terrain_chunks[i]->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
+                UseGroundShader(terrain_chunks[i]->GetMesh());  //after: SetMeshData resets the mode
             }
             terrain_chunks[i]->SetVisibility(f_has && f_show);
         }
@@ -1357,6 +1497,7 @@ void ApplicationChasm::UpdateView(void){
     InputController* input = main_scene->inputcontroller;
     UpdateCamera();
     FollowSun();
+    UpdateTimeKeys();
     //The tool keys toggle: the active tool's key again puts it down.
     if (input->IsInputLive()){
         const int keys[11] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
@@ -1409,6 +1550,8 @@ void ApplicationChasm::PreRender(void){
     UploadWater();
     UpdateMist();
     UploadWalkers();
+    UploadWorkers();
+    UploadPiles();
     UpdatePickView();
 #ifdef DEBUG
     UpdateGridView();
@@ -1938,6 +2081,7 @@ void ApplicationChasm::RenderChasmPanel(){
     }
 
     RenderWalkerPanel();
+    RenderTimePanel();
 
     if (ImGui::CollapsingHeader("Save")){
         ImGui::InputText("name##save",save_name,sizeof(save_name));
@@ -2464,5 +2608,7 @@ void ApplicationChasm::RegisterMCPTools(){
         });
 #endif
     RegisterWalkerTools();
+    RegisterTimeTools();
+    RegisterEconomyTools();
 }
 #endif

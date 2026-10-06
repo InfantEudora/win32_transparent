@@ -28,6 +28,16 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
             jb["plots"] = plots;
         }
+        //What a store takes on its own, by name - written only when it is not everything.
+        if (b.kind == ZONE_KIND_STORE && b.allow != GOODS_ALL){
+            json allow = json::array();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (b.allow & GOOD_BIT(g)){
+                    allow.push_back(GoodName(g));
+                }
+            }
+            jb["allow"] = allow;
+        }
         buildings.push_back(jb);
     }
     json grounds = json::array();
@@ -43,6 +53,44 @@ json ChasmSaveToJson(const ChasmSave& s){
     for (const Walker& k : s.walkers){
         walkers.push_back(json{{"home",k.home},{"goal",k.goal},{"outward",k.f_outward},{"path",k.path},
                                {"seg",k.seg},{"along",k.along},{"stuck",k.f_stuck},{"legs",k.legs}});
+    }
+    /*
+        The economy (Economy.h): stocks by building and good name, felled props, every worker on his
+        route, every field's growth. Floats as JSON doubles, which read back to the same bits.
+    */
+    json economy = json::object();
+    {
+        const EconomySaved& e = s.economy;
+        json stocks = json::array();
+        for (const auto& st : e.stocks){
+            json goods = json::object();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (st.second[g]){
+                    goods[GoodName(g)] = st.second[g];
+                }
+            }
+            stocks.push_back(json{{"building",st.first},{"goods",goods}});
+        }
+        json props = json::array();
+        for (const auto& pr : e.props){
+            props.push_back(json::array({pr.first,pr.second}));
+        }
+        json workers = json::array();
+        for (const EconomyWorker& k : e.workers){
+            json route = json::array();
+            for (const vec2& p : k.route){
+                route.push_back(json::array({p.x,p.y}));
+            }
+            workers.push_back(json{{"building",k.building},{"job",k.job},{"state",k.state},{"prop",k.prop},
+                                   {"store",k.store},{"carry_good",k.carry_good},{"carry",k.carry},
+                                   {"timer",k.timer},{"route",route},{"speed",k.speed},{"seg",k.seg},
+                                   {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})}});
+        }
+        json fields = json::array();
+        for (const EconomyField& f : e.fields){
+            fields.push_back(json::array({f.building,f.crop,f.grown_ticks}));
+        }
+        economy = json{{"stocks",stocks},{"felled",props},{"workers",workers},{"fields",fields}};
     }
     return json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -60,7 +108,9 @@ json ChasmSaveToJson(const ChasmSave& s){
         {"next_building",s.next_building},
         {"stroke",{s.stroke,s.stroke_building}},
         {"grounds",grounds},
-        {"walkers",walkers}
+        {"walkers",walkers},
+        {"calendar",s.calendar_tick},
+        {"economy",economy}
     };
 }
 
@@ -96,6 +146,15 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             b.plots.push_back(std::make_pair(pl[0].get<int>(),pl[1].get<int>()));
         }
         b.cells = jb.value("cells",std::vector<int>());
+        if (jb.contains("allow") && jb["allow"].is_array()){
+            b.allow = 0;
+            for (const json& g : jb["allow"]){
+                int good = GoodByName(g.get<std::string>());
+                if (good >= 0){
+                    b.allow |= GOOD_BIT(good);
+                }
+            }
+        }
         out.buildings.push_back(b);
         out.next_building = std::max(out.next_building,b.id + 1);
     }
@@ -121,6 +180,54 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         b.kind = ZONE_KIND_FIELD;
         b.cells.push_back(f.get<int>());
         out.buildings.push_back(b);
+    }
+    out.calendar_tick = j.value("calendar",(uint64_t)0);
+    if (j.contains("economy") && j["economy"].is_object()){
+        const json& e = j["economy"];
+        for (const json& st : e.value("stocks",json::array())){
+            std::array<int,GOOD_COUNT> goods{};
+            for (auto it = st["goods"].begin(); it != st["goods"].end(); ++it){
+                int g = GoodByName(it.key());
+                if (g >= 0){
+                    goods[g] = it.value().get<int>();
+                }
+            }
+            out.economy.stocks.push_back(std::make_pair(st.value("building",0u),goods));
+        }
+        for (const json& pr : e.value("felled",json::array())){
+            out.economy.props.push_back(std::make_pair(pr[0].get<int>(),pr[1].get<int>()));
+        }
+        for (const json& wk : e.value("workers",json::array())){
+            EconomyWorker k;
+            k.building = wk.value("building",0u);
+            k.job = wk.value("job",0);
+            k.state = wk.value("state",0);
+            k.prop = wk.value("prop",-1);
+            k.store = wk.value("store",0u);
+            k.carry_good = wk.value("carry_good",-1);
+            k.carry = wk.value("carry",0);
+            k.timer = wk.value("timer",0);
+            for (const json& p : wk.value("route",json::array())){
+                k.route.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
+            }
+            k.speed = wk.value("speed",std::vector<float>());
+            k.seg = wk.value("seg",0);
+            k.along = wk.value("along",0.0f);
+            if (wk.contains("pos")){
+                k.pos = vec2(wk["pos"][0].get<float>(),wk["pos"][1].get<float>());
+            }
+            if (k.route.empty()){
+                k.route.push_back(k.pos);
+            }
+            out.economy.workers.push_back(k);
+        }
+        for (const json& f : e.value("fields",json::array())){
+            EconomyField fd;
+            fd.building = f[0].get<uint32_t>();
+            fd.crop = f[1].get<int>();
+            fd.grown_ticks = f[2].get<int>();
+            out.economy.fields.push_back(fd);
+        }
     }
     for (const json& gr : j.value("grounds",json::array())){
         out.grounds.push_back(std::make_pair(gr[0].get<int>(),gr[1].get<int>()));

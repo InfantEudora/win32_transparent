@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-06T08:23:40.783Z
+  modified: 2026-10-06T10:03:13.081Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -67,6 +67,16 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   Nothing builds on the chasm floor. Replay test village moved to x+190 (old spot became chasm floor).
   WINCH BUILT 2026-10-06 (step 2): one rim plot above a balcony, landing = nearest balcony corner,
   walker link across levels (5 s ride), tool H. Balconies being shrunk to ~1/4 by worker window 39.
+  2026-10-06: first goods are WOOD, FOOD, WATER (steam etc. only noted); crops are food KEEPING-KINDS
+  (wheat medium + a resource like rope, greens fast/no winter, beans high value/long keep; later fruit
+  = short, animals = medium meat + leather). P1 CALENDAR BUILT (Calendar.*, ApplicationChasmTime.cpp):
+  one tick count of state, 45 s day, 10 days/season, overlay HUD via core UIOverlay, speed 1/2/3x =
+  physics_time_factor, space/-/=, chasm_time tool, date command recorded. Winter snow front drawn by
+  a ground shader (worker 39, core Shader opt-in to cast shadows). Seed 95 sides strip = parked map issue.
+  P2+P3 BUILT same day (docs/economy_plan.md; Goods.h, Economy.*, ApplicationChasmEconomy.cpp,
+  chasm_economy tool): user rules - a store NEXT TO a workplace takes only its goods (fixed); a free
+  store takes all, settable per good; workers walk STRAIGHT where clear, grid A* otherwise; stand-in
+  worker per workplace until P4, he carries his own goods; spoilage waits for P5. View by worker 39.
   If the user's chasm_nophysics.exe holds the link, link a copy by hand (make -n link line, -o renamed)
   instead of killing it twice.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.

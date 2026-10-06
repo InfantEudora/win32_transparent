@@ -185,15 +185,17 @@ class Renderer{
         through the object's world matrix, against the six planes of camera->mat_cam, padded for
         vertex-shader wind. With f_frustum_cull on, the colour pass and the G-buffer pass leave the
         outside ones out of their instance lists. The SHADOW pass never does: its volume is the
-        light's, and a caster off-screen still throws a shadow onto it. Skinned, line and
-        custom-shader meshes are always drawn.
+        light's, and a caster off-screen still throws a shadow onto it. Custom-shader meshes are
+        tested too (since 2026-10-06) and left out of their G-buffer and colour sub-passes; a box
+        that holds a volume is still a box, so this is safe for those. Skinned and line meshes are
+        always drawn.
 
         It runs only while culling is on or someone has asked for the counts (RequestCullStats, a
         couple of seconds' worth of frames) - it costs 0.2-0.3 ms for archer's ~4,400 objects.
     */
     std::atomic<bool> f_frustum_cull{false};
     struct CullStats{
-        int   objects = 0;              //normal-mesh objects this frame
+        int   objects = 0;              //normal- and custom-shader-mesh objects this frame
         int   inside = 0;               //...of them in the frustum (or without bounds)
         int   meshes = 0;               //unique normal meshes - one draw call each per pass
         int   meshes_inside = 0;        //...with at least one instance inside
@@ -572,6 +574,11 @@ class Renderer{
     //low-res half at all this frame - which is what keeps an opted-in shader drawn, at full
     //resolution, when the scale is 1. Returns how many sub-passes it ran.
     int CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres_pass);
+    //The Shader::f_solid programs, from the colour pass among the solid geometry.
+    void SolidCustomShaderPass(Camera* camera);
+    //One custom shader's sub-pass, wherever it is drawn from. `target_size` is what gl_FragCoord
+    //is measured against.
+    void CustomShaderSubPass(Camera* camera, int index, const vec2& target_size);
 
     //Shadow
     GLuint shadow_fbo_id = -1;  // Framebuffer for getting depth of a light sournce

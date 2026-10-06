@@ -519,7 +519,8 @@ be tried by hand. Saves are not versioned beyond `chasm_save: 1`.
 - **Generated from the seed, per plot, by hash** (not a random stream), so the same seed always
   grows the same forest regardless of order. Large smooth noise patches are forests: cores of dense
   conifers (up to two per plot, scattered across it), a thinning edge band of oaks, pines and
-  bushes, the odd tree, bush and rock in the open; the chasm floor sparser, the shard top near bare.
+  bushes, the odd tree, bush and rock in the open; the shard top near bare. Nothing on the chasm
+  floor (2026-10-06, see the mist below).
   Only on plots flat all round. Ground cover - grass, flowers, ferns, a shrub, mushrooms, twigs - up
   to two pieces a plot, ferns and twigs under trees, grass and flowers in the open; it casts no
   shadow. Seed 1: **148,497 props**, generated in 50 ms (release).
@@ -617,6 +618,22 @@ style as archer's waterfall foam.
   flat-shaded, slightly lumpy, squashed; three shapes, each its own shade (lighter where the blanket
   rises). One instance set per terrain chunk per shade; they cast shadows on each other, which is
   what makes the blanket read as heaped. Every puff bobs and breathes slowly.
+- **The floor is the void** (2026-10-06): under the mist it is never seen, never built on and never
+  used, so it is drawn black (`PAL_VOID`, the effects row's column 5 - `COLUMN_VOID` in
+  `TerrainMesh.cpp`, since column 5 alone is a biome row's first rock) and grows no props. Between
+  the puffs it reads as depth rather than as ground. Seed 1: 96,327 props -> 77,263; 8.62M -> 7.16M
+  instanced vertices; at the game's zoom over the chasm, 3.41M -> 2.14M in view, G-buffer about
+  -15% and colour about -10% (shadow pass within its noise - the props there were mostly small
+  ground cover). Seeds 1-20 pass every check, the grid hashes are unchanged (only the view moved),
+  the replay test passes.
+- **Walls into the void, a deeper mist** (2026-10-06): `chasm_ground.frag` darkens everything below
+  y -18 toward black at 10 above the floor (smoothstep; `GROUND_VOID_*` in
+  `ApplicationChasmSnow.cpp`), so the walls and the island columns run down into the dark and the
+  mist stays light against them. The mist gained a SWELL under its roll (`MIST_SWELL` 9 units over
+  `MIST_SWELL_SCALE` 65, `Mist.cpp`): in its hollows the blanket sinks and thins (up to 80% of the
+  puffs left out) and the void shows through; on its crests it heaps, a smaller puff on top of some.
+  The roll's deepest dips open smaller holes anywhere. Seed 1: 3,154 puffs -> 2,821. The shades now
+  follow the blanket's height (roll and swell). Seeds 1-10 pass, the replay test passes.
 - **The foam**: 32 balls per fall that swell, rise and shrink at its foot, one life after another.
   Like the mist it keeps nothing: each ball's position is a function of the clock (tick * step)
   alone, so a paused game holds it still and the same tick always looks the same. View only - not in

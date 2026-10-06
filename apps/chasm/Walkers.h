@@ -105,6 +105,13 @@ public:
 
     const WalkerSet& State() const { return set; }
 
+    /*
+        The grid's way from plot `from` to plot `to`, for someone who is not one of these walkers - the
+        economy's workers (Economy.h): the plots in order, both ends included, and each edge's speed.
+        The same graph, rules and A* as a walker's walk. False, and both empty, when there is no way.
+    */
+    bool PlanRoute(const ZoneState& z, int from, int to, std::vector<int>& plots, std::vector<float>& speeds);
+
     //Where a walker is now, on the ground plane (x, world z), and which way it faces.
     static vec2 Position(const ChasmWorld& w, const Walker& k, vec2* facing = NULL);
     //And how high: on the ground of the plot it is at, or on a winch's rope between the two levels.

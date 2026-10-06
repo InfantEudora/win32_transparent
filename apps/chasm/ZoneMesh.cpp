@@ -22,7 +22,8 @@ void GroundQuarter(std::vector<vertex>& out, const Terrain& t, const vec2* p, in
 
 }
 
-void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out){
+void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out,
+                    const std::vector<uint8_t>* field_stage){
     out.clear();
     if (chunk < 0 || chunk >= (int)w.mesh->chunks.size()){
         return;
@@ -56,7 +57,9 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
             BuildRoadCell(w,z,q,out);
         }
         if (z.field[quad.parent]){
-            BuildFieldCell(w,z,q,out);
+            uint32_t id = z.field[quad.parent];
+            int stage = (field_stage && id < field_stage->size()) ? (*field_stage)[id] : FIELD_STAGE_RIPE;
+            BuildFieldCell(w,z,q,stage,out);
         }
         if (f_house){
             BuildHouseCell(w,z,q,out);

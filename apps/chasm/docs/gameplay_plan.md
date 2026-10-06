@@ -89,6 +89,23 @@ Every seed has one or two balconies at home and none to two on the far side (bui
 - **Several crop types, rotated every year**, or the field's yield drops. Some of the harvest has
   to be **stocked for the winter**.
 
+### Goods and food (agreed 2026-10-06)
+
+- **The first goods are wood, food and water**, always. Steam, floatstone, coal, rope, leather and
+  the rest are goods too, and noted as such, but none of them is in the first prototype.
+- **Food comes in three keeping-kinds**, and that is what a crop IS for now - the three crops in the
+  game (wheat, greens, beans) are placeholders for one of each, and what they finally are comes
+  later:
+
+  | Kind | Today's crop | Food value | Keeps | Also |
+  |---|---|---|---|---|
+  | Medium | wheat | average | medium | a resource besides food - rope, for one |
+  | Short | greens | | not over winter | grows fast |
+  | Long | beans | high | long | |
+
+- **Later gathering fits the same three**: long-keeping stores, short-keeping food like fruit, and
+  animals as the medium kind - meat that keeps medium-long, plus a resource of their own, leather.
+
 ### People (agreed 2026-10-05)
 
 A combination of mechanics from other games, made possible by the building mechanic: the grid
@@ -282,17 +299,70 @@ the zones and walkers already are. Each part adds its own state-hash part.
 
 | # | Feature | Smallest version that tests it | Builds on |
 |---|---|---|---|
-| P1 | **Calendar and seasons** | Days and a year in ticks (a year about 30 minutes at normal speed), four seasons; the snow line moves south in winter and back; fields do not grow under snow. A speed control. | `SnowLine` in `Terrain`, the ground colour |
-| P2 | **Goods and storage** | Three goods: wood, grain, steam. A storage zone (a built zone, like a house). Stocks per store, shown on the panel. | `Zones`, a new zone kind |
-| P3 | **Production** | Felling: a forestry zone fells nearby props (the forest finally shrinks). A field yields at harvest. A boiler turns wood + river water into steam. | `Forest` (felling), fields, rivers |
+| P1 (BUILT 2026-10-06) | **Calendar and seasons** | Days and a year in ticks (a year about 30 minutes at normal speed), four seasons; the snow line moves south in winter and back; fields do not grow under snow. A speed control. | `SnowLine` in `Terrain`, the ground colour |
+| P2 | **Goods and storage** | Three goods: wood, food, water (agreed 2026-10-06; food in its three keeping-kinds, see "Goods and food"). Stocks per store - the store building exists (`buildings_plan.md`) - shown on the panel. | `Zones`, the store |
+| P3 | **Production** | Felling: the woodcutter fells nearby props (the forest finally shrinks). A field yields its crop's food at harvest. The water collector fills with water. (Steam and the boiler come later.) | `Forest` (felling), fields, rivers |
 | P4 | **People and carriers** | Houses hold families. Every person has the base skills, random at the start. A worker walks from home to a workplace (an attached house means no walk); someone from the house fetches food from the town centre; a carrier takes goods to the nearest store. All by A*, so walls and roads change how long it takes. | `Walkers` |
-| P5 | **Needs and winter** | People eat grain daily and burn wood for heat in winter. A shortage makes them leave. That is the first way to lose. | P1-P4 |
+| P5 | **Needs and winter** | People eat food and drink water daily and burn wood for heat in winter. A shortage makes them leave. That is the first way to lose. | P1-P4 |
 | P6 | **Zombies** | A small wave from the swamp in summer, none while it is frozen: walkers with their own costs (walls closed, breakable). Stopped by a ballista tower and by archers: workers who give a share of their time to training. | `Walkers`, boundaries, gates |
 
 **P1-P5 is the first test**: can you get a village through its first winter, and does building it
 still feel like Townscaper while it runs? P6 comes straight after, because it is what gives walls a
 cost and a purpose, and the trade-off needs carriers (P4) to exist.
 
-**Left for after the prototype**, in rough order: births and skills passed on, crop types and
-rotation (P3 has one crop), a winch to a balcony and floatstone, the chasm collector and a first zeppelin, the shards, the second
+**Left for after the prototype**, in rough order: births and skills passed on, crop
+rotation, a winch to a balcony and floatstone, the chasm collector and a first zeppelin, the shards, the second
 village, coal and the mountain pockets, the desert and the pyramid.
+
+## P1, the calendar and winter, as built (2026-10-06)
+
+Files: `Calendar.*` (the date, the snow's front), `ApplicationChasmTime.cpp` (the tick, the date command,
+the speed, the overlay, the panel's Time section, `chasm_time`), `ChasmSave.*`, `tools/chasm_replay_test.py`.
+
+- **One number of state**: the ticks since the colony's first dawn. One more every tick; saved
+  (`"calendar"`, absent in older saves - they start in spring), hashed as the trace part `calendar`,
+  reset to 0 on a new map. The date, the season and the snow are functions of it, so nothing else is
+  stored.
+- **The pace**: 50 ticks a second; a day is 2,250 ticks (45 s), ten days a season (7.5 minutes), a year
+  30 minutes, as agreed. A colony starts on spring's first day, year 1.
+- **The speed**: 1x, 2x, 3x - more ticks a second (core's `physics_time_factor`), never longer ones, so
+  a replay is the same at any speed and the speed is neither saved nor hashed. Space pauses, `-` and `=`
+  slow down and speed up (`=` from a pause just starts it again); the panel and `chasm_time speed`
+  too. Measured in the debug build: 3x runs 283 ticks in 2 s of the 300 asked - near enough; release
+  will keep up better.
+- **Setting the date** is a recorded command (`CHASM_CMD_CALENDAR`: the day in the subtype, the tick in
+  the day in a value), since the date is simulation state - the panel's "to the next" season buttons
+  and `chasm_time set_day`. For looking at winter, not for play.
+- **The overlay**, in every build, through core's `UIOverlay`: a dark panel at the top centre with the
+  season's name in its colour, the day with a thin line filling as it passes, the year, and the speed
+  (two bars on red when paused, one chevron per multiple otherwise); under them the year as four
+  season bars, the part gone bright, with a white mark at today.
+- **Winter's snow**: a front running east-west that comes down from the north - first snow over
+  autumn's last two days, sweeping south through winter's first four to 65% of the map's depth (the
+  swamp and the desert stay bare), melted back over spring's first five; the first spring has none.
+  The front wanders 14 units north and south along its length. `CalendarSnowAt` is the rule's version.
+- **Winter, drawn** (`ApplicationChasmSnow.cpp`, `assets/shaders/chasm_ground.frag`; built by worker
+  window 39): the terrain, the zones and the forest are drawn by a ground shader that is default.frag
+  plus one branch - north of the front (with a ragged edge of noise, about 6 either side) a fragment
+  that faces up (normal.y over 0.55; needles, leaves and bushes over 0.2) takes its own column on the
+  palette's FROZEN row, which is a winter copy of every material; an up-facing roof takes the frozen
+  grass (white) rather than the frozen roof's slate. Walls, strata and trunks keep their colours.
+  With no snow on the map the branch is off and the frame is the default shader's: 0 pixels differ
+  in three views. Snow costs 4-7% of the colour pass (+0.15 ms at game zoom, debug).
+- **Core, for it** (all opt-in, nothing else changes): `Shader::f_casts_shadow` (a custom program's
+  meshes go into the sun's shadow map), `Shader::f_solid` (its sub-pass runs in the colour pass with
+  the solid meshes, before the SSAO is multiplied in - drawn later it lost its SSAO), and the
+  camera cull reaching custom-shader meshes (only with `f_frustum_cull`, which only chasm sets).
+- **Tested**: the replay test now jumps the date to autumn's third day during its recording, and checks
+  the original and both replays end on that day; PASS in debug and release.
+
+**Open:**
+- Fields do not grow yet, so "no growth under snow" waits for P3.
+- The swamp does not freeze yet (the zombies' pause in winter, P6), nor do rivers; water stays liquid
+  under the snow.
+- The mountain's grey scree band never whitens: it is steep rock, which the face-up rule leaves be.
+- 3x speed runs about 2.7x (272 of 300 ticks in 2 s, release too), so it is the loop's pacing, not the
+  work - worth a look in core's physics loop if it matters.
+- The overlay's speed box is not clickable: the overlay only draws, and a click there paints the plot
+  under it. Clicks on the game's own UI want InputController's rects (core's touch buttons) - a later
+  step, with the build menu.

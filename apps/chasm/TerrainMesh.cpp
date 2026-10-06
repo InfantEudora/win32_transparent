@@ -26,6 +26,9 @@
 //belongs to, so the shades lie in field-sized patches rather than speckling every triangle (which
 //read as noise at the game's zoom).
 #define COLUMN_GRASS        -1
+//"The chasm floor": PAL_VOID on the effects row. A sentinel rather than PAL_VOID itself, because
+//a column means nothing without its row - PAL_VOID is 5, which on a biome row is PAL_ROCK_0.
+#define COLUMN_VOID         -2
 #define GROUND_STEEP        0.80f   //a ground triangle's normal.y under this is bare rock: about 37 degrees
 #define MOUNTAIN_STEEP      0.55f   //the mountain holds snow steeper than that - only its crags are bare: 57 degrees
 
@@ -114,6 +117,9 @@ public:
         int tri_row = row;
         if (column == COLUMN_GRASS){
             GroundColour((a + b + c) * (1.0f / 3.0f),n,column,tri_row);
+        }else if (column == COLUMN_VOID){
+            column = PAL_VOID;
+            tri_row = PAL_EFFECTS;      //the same black in every biome
         }
         vec3 tangent = b - a;
         if (tangent.length() > 1e-9f){
@@ -279,8 +285,8 @@ public:
             std::vector<vec3> quarter = {GroundPoint(p[k],h[k]),GroundPoint(m[k],h[k]),GroundPoint(c,h[k]),
                                          GroundPoint(m[(k + 3) % 4],h[k])};
             ground_level = lv[k];
-            //The top quarter is the cliff's lip, a bottom one the dark foot of a wall, as in Cell.
-            int column = (h[k] == hmax) ? PAL_LIP : ((lv[k] == TERRAIN_FLOOR) ? PAL_FLOOR_DARK : COLUMN_GRASS);
+            //The top quarter is the cliff's lip, a bottom one the floor's void or grass, as in Cell.
+            int column = (h[k] == hmax) ? PAL_LIP : ((lv[k] == TERRAIN_FLOOR) ? COLUMN_VOID : COLUMN_GRASS);
             Fan(quarter,up,column);
         }
         //Between quarter k and k + 1: the half-edge from m[k] to the centre.
@@ -363,7 +369,7 @@ public:
                 poly.push_back(GroundPoint(p[k],h[k]));
             }
             ground_level = lv[0];
-            Fan(poly,up,(lv[0] == TERRAIN_FLOOR) ? PAL_FLOOR : COLUMN_GRASS);
+            Fan(poly,up,(lv[0] == TERRAIN_FLOOR) ? COLUMN_VOID : COLUMN_GRASS);
             return;
         }
 
@@ -384,7 +390,7 @@ public:
                 poly.push_back(GroundPoint(m[k],hmax));
             }
         }
-        Fan(poly,up,(high_level == TERRAIN_FLOOR) ? PAL_FLOOR : PAL_LIP);
+        Fan(poly,up,(high_level == TERRAIN_FLOOR) ? COLUMN_VOID : PAL_LIP);
 
         //Each run of low corners: its ground, and the wall down to it from the cut.
         for (int k = 0; k < 4; k++){
@@ -407,10 +413,11 @@ public:
             int last = (j + 3) % 4;
             //Leaves through edge last -> j.
             low.push_back(GroundPoint(m[last],h[last]));
-            //The ground at a wall's foot, a shade darker: the shade the wall itself would cast,
-            //standing in for occlusion the renderer does not compute at this scale.
+            //The ground at a wall's foot. On the chasm floor that is the void, like the rest of the
+            //floor: it used to be a shade darker than the floor, standing in for occlusion, back
+            //when the floor was a colour of its own.
             ground_level = lv[first];
-            Fan(low,up,(lv[first] == TERRAIN_FLOOR) ? PAL_FLOOR_DARK : COLUMN_GRASS);
+            Fan(low,up,(lv[first] == TERRAIN_FLOOR) ? COLUMN_VOID : COLUMN_GRASS);
 
             vec2 a = m[k];
             vec2 b = m[last];

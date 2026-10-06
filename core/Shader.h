@@ -137,6 +137,37 @@ public:
     */
     bool f_lit = false;
 
+    /*
+        CUSTOM-MATERIAL PASS ONLY: this program's meshes also go into the sun's shadow map, drawn
+        as occluders by the renderer's own depth program (the Object::f_casts_shadow filter still
+        applies). Off by default, because a volume or a glow must not cast a shadow.
+
+        Without it, moving an ordinary solid surface onto a custom shader loses every shadow it
+        threw: RenderSingleDepthPass draws only MESH_MODE_NORMAL meshes. As with f_writes_gbuffer,
+        a shadow is a property of the SHAPE, so the custom program is not needed to draw it -
+        which also means a vertex stage that moves vertices differently from default.vert would
+        cast the shadow of the unmoved shape.
+    */
+    bool f_casts_shadow = false;
+
+    /*
+        CUSTOM-MATERIAL PASS ONLY: draw this program with the SOLID geometry - in the colour pass,
+        straight after the MESH_MODE_NORMAL meshes and with their blend state - instead of last of
+        everything. Off by default; meant for a program that also sets f_writes_gbuffer and f_lit,
+        an ordinary opaque surface that only works out its own colour.
+
+        WHY IT MATTERS: the SSAO is multiplied into the frame (CompositeSSAO) after the solid passes
+        and before the custom pass, because what is drawn after it is meant to be translucent. A
+        solid custom surface drawn there is never darkened by its own occlusion, though the
+        G-buffer it wrote measured it - and it is drawn over the frame rather than among the
+        solid geometry, so it cannot reproduce what the default shader drew in its place. Drawn
+        here, a program whose colour equals default.frag's leaves the frame pixel for pixel as
+        the default shader did (apps/chasm's ground, measured).
+
+        f_lowres is ignored for these.
+    */
+    bool f_solid = false;
+
     Shader();
     Shader(const char* vert,const char* frag);
     ~Shader();

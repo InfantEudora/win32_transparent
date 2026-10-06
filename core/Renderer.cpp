@@ -361,6 +361,14 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
             && (mesh->custom_shader_index != custom_shader_index)){
             continue;
         }
+        //A shadow pass over custom-shader meshes draws only those whose program opted in - see
+        //Shader::f_casts_shadow.
+        if ((rendering_mode == MESH_MODE_SHADER) && f_occluder_pass){
+            Shader* custom = GetCustomShader(mesh->custom_shader_index);
+            if (!custom || !custom->f_casts_shadow){
+                continue;
+            }
+        }
 
         int batch_index = unique_meshes.at(i)->batch_index;
         if (unique_mesh_batches.at(batch_index)->size() == 0){
@@ -618,7 +626,9 @@ void Renderer::ComputeViewCull(Camera* camera){
     for (size_t i = 0; i < renderable_objects.size(); i++){
         Object* object = renderable_objects[i];
         Mesh* mesh = object->GetMesh();
-        if (!mesh || !mesh->IsNormalMesh() || mesh->mesh_mode == MESH_MODE_SHADER){
+        //Custom-shader meshes too, since 2026-10-06: an ordinary solid surface moved onto one
+        //(Shader::f_solid) must stay culled. Their vertex format is a normal mesh's.
+        if (!mesh || !(mesh->IsNormalMesh() || mesh->mesh_mode == MESH_MODE_SHADER)){
             continue;
         }
         stats.objects++;
@@ -666,7 +676,7 @@ void Renderer::ComputeViewCull(Camera* camera){
         }
     }
     for (size_t k = 0; k < unique_meshes.size(); k++){
-        if (unique_meshes[k] && unique_meshes[k]->IsNormalMesh() && unique_meshes[k]->mesh_mode != MESH_MODE_SHADER){
+        if (unique_meshes[k] && (unique_meshes[k]->IsNormalMesh() || unique_meshes[k]->mesh_mode == MESH_MODE_SHADER)){
             stats.meshes++;
             stats.meshes_inside += mesh_seen[k] ? 1 : 0;
         }
@@ -775,7 +785,7 @@ void Renderer::DeferredPass(Camera* camera){
     */
     for (int i = 0;i < (int)custom_shaders.size();i++){
         if (custom_shaders.at(i) && custom_shaders.at(i)->f_writes_gbuffer){
-            RenderUniqueMeshes(MESH_MODE_SHADER,i);
+            RenderUniqueMeshes(MESH_MODE_SHADER,i,false,true);
         }
     }
 
@@ -1139,7 +1149,7 @@ void Renderer::CustomShaderPass(Camera* camera){
     */
     int num_lowres = 0;
     for (int i = 0;i < (int)custom_shaders.size();i++){
-        if (custom_shaders.at(i) && custom_shaders.at(i)->f_lowres){
+        if (custom_shaders.at(i) && custom_shaders.at(i)->f_lowres && !custom_shaders.at(i)->f_solid){
             num_lowres++;
         }
     }
@@ -1197,7 +1207,6 @@ void Renderer::CustomShaderPass(Camera* camera){
     full resolution along with everything else.
 */
 int Renderer::CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres_pass){
-    vec3 eye = camera->GetPosition();
     //What gl_FragCoord is measured against in this half of the pass. A shader sampling the
     //G-buffer must divide by THIS and not by textureSize(gbuffer_depth,0) - the two are the same
     //number at full resolution and are not at all in the low-res half, which is exactly the trap
@@ -1207,7 +1216,8 @@ int Renderer::CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres
     int num_drawn = 0;
     for (int i = 0;i < (int)custom_shaders.size();i++){
         Shader* shader = custom_shaders.at(i);
-        if (!shader){
+        //Drawn already, with the solid geometry - see SolidCustomShaderPass.
+        if (!shader || shader->f_solid){
             continue;
         }
         //Which half this shader is in. Only one that opted in AND has a low-res half to be drawn
@@ -1215,33 +1225,58 @@ int Renderer::CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres
         if ((shader->f_lowres && f_lowres_pass) != f_lowres){
             continue;
         }
-        shader->Use();
-        shader->Setmat4("mat_worldcam",camera->mat_cam);
-        //A custom shader that reconstructs a ray - anything raymarched - needs the ray origin,
-        //which the default shaders get under this same name.
-        shader->Setvec3("eye_position",eye);
-        shader->Setvec2("render_target_size",target_size);
-
-        glBindTextureUnit(TEXUNIT_GBUFFER_DEPTH,deferred_depth_tex_id);
-        glBindTextureUnit(TEXUNIT_GBUFFER_POSITION,deferred_position_tex_id);
-        glBindTextureUnit(TEXUNIT_GBUFFER_NORMAL,deferred_normal_tex_id);
-        //A surface lit through shaders/lighting.glsl, which needs the sun's matrix and the rest.
-        //The shadow map itself is still on unit 0 from the colour pass; nothing here rebinds it.
-        if (shader->f_lit){
-            UploadLighting(shader);
-        }
-
-        //We'd like a callback so the custom shader can set its own uniforms and such.
-        if (shader->uniform_callback){
-            shader->uniform_callback();
-        }
-        RenderUniqueMeshes(MESH_MODE_SHADER,i);
-        glCullFace(GL_BACK);
-        glDepthMask(GL_TRUE);
-        glEnable(GL_DEPTH_TEST);
+        CustomShaderSubPass(camera,i,target_size);
         num_drawn++;
     }
     return num_drawn;
+}
+
+/*
+    The custom shaders that asked to be drawn with the solid geometry (Shader::f_solid), from the
+    colour pass straight after the NORMAL meshes - before the SSAO is multiplied in, and with the
+    blend state those meshes were drawn with. Full resolution always.
+*/
+void Renderer::SolidCustomShaderPass(Camera* camera){
+    if (!camera){
+        return;
+    }
+    vec2 target_size((float)render_width,(float)render_height);
+    for (int i = 0;i < (int)custom_shaders.size();i++){
+        Shader* shader = custom_shaders.at(i);
+        if (shader && shader->f_solid){
+            CustomShaderSubPass(camera,i,target_size);
+        }
+    }
+}
+
+//One custom shader's sub-pass: everything it is handed (see AddCustomShader), its own uniforms,
+//its meshes - left out where outside the camera when f_frustum_cull is on - and the state reset.
+void Renderer::CustomShaderSubPass(Camera* camera, int index, const vec2& target_size){
+    Shader* shader = custom_shaders.at(index);
+    shader->Use();
+    shader->Setmat4("mat_worldcam",camera->mat_cam);
+    //A custom shader that reconstructs a ray - anything raymarched - needs the ray origin,
+    //which the default shaders get under this same name.
+    shader->Setvec3("eye_position",camera->GetPosition());
+    shader->Setvec2("render_target_size",target_size);
+
+    glBindTextureUnit(TEXUNIT_GBUFFER_DEPTH,deferred_depth_tex_id);
+    glBindTextureUnit(TEXUNIT_GBUFFER_POSITION,deferred_position_tex_id);
+    glBindTextureUnit(TEXUNIT_GBUFFER_NORMAL,deferred_normal_tex_id);
+    //A surface lit through shaders/lighting.glsl, which needs the sun's matrix and the rest.
+    //The shadow map itself is still on unit 0 from the colour pass; nothing here rebinds it.
+    if (shader->f_lit){
+        UploadLighting(shader);
+    }
+
+    //We'd like a callback so the custom shader can set its own uniforms and such.
+    if (shader->uniform_callback){
+        shader->uniform_callback();
+    }
+    RenderUniqueMeshes(MESH_MODE_SHADER,index,false,true);
+    glCullFace(GL_BACK);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
 }
 
 /*
@@ -1985,7 +2020,15 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
         shader->Setfloat("alpha_clip",alpha_clip);
         shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
         RenderDepthPasses(shader,MESH_MODE_NORMAL);
-        //RenderDepthPasses(shader,MESH_MODE_SHADER);
+        //Custom-shader meshes whose program casts a shadow (Shader::f_casts_shadow), with this
+        //same depth program - only when one has asked, so no other app pays a second walk.
+        bool f_custom_casters = false;
+        for (Shader* s : custom_shaders){
+            f_custom_casters = f_custom_casters || (s && s->f_casts_shadow);
+        }
+        if (f_custom_casters){
+            RenderDepthPasses(shader,MESH_MODE_SHADER);
+        }
         FinishDepthPasses();
     }
     EndGPUPass(GPU_PASS_SHADOW);
@@ -2074,6 +2117,8 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
         glDisable(GL_BLEND);
     }
     RenderUniqueMeshes(MESH_MODE_NORMAL,-1,false,true);
+    //Solid surfaces with a colour of their own (Shader::f_solid): here, among the solid geometry.
+    SolidCustomShaderPass(camera);
     if (!f_opaque_blend){
         glEnable(GL_BLEND);
     }

@@ -20,6 +20,9 @@
     View only: built from a ZoneState, read by nothing in a tick.
 */
 
-void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out);
+//`field_stage`: per building id, the FIELD_STAGE_* a field is drawn at (CropMesh.h); NULL, or an id
+//past its end, draws a field ripe.
+void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out,
+                    const std::vector<uint8_t>* field_stage = NULL);
 
 #endif

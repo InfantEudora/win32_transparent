@@ -27,9 +27,19 @@
 
 namespace {
 
-//The ridges' palette column by crop (ZONE_CROP_*); the base is always earth. Ripe wheat and two
-//greens - a patchwork, as in A Little Age, now of the player's choosing.
+//The ridges' palette column by crop (ZONE_CROP_*) when ripe; the base is always earth. Ripe wheat
+//and two greens - a patchwork, as in A Little Age, now of the player's choosing.
 const int crop_columns[ZONE_CROP_COUNT] = {PAL_FIELD,PAL_LEAF_LIGHT,PAL_LEAF};
+
+/*
+    The ridges at each stage (FIELD_STAGE_*): how much of a row's width they cover, how high their
+    crest stands, and their colour - tilled earth, then thin sprouts, then a dark green that every
+    crop shares, then the crop's own colour at full height. The base and the furrows are the same
+    earth throughout, so a field always reads as rows.
+*/
+const float stage_fill[FIELD_STAGE_COUNT] = {CROP_FILL,0.28f,CROP_FILL,CROP_FILL};
+const float stage_height[FIELD_STAGE_COUNT] = {0.08f,0.10f,0.13f,CROP_RIDGE_HEIGHT};
+const int stage_columns[FIELD_STAGE_RIPE] = {PAL_PATH,PAL_LEAF_LIGHT,PAL_BUSH};
 
 //Child k's quarter of the coarse square: its own corner 0 and the two directions its local s and t
 //run in, as coarse (u, v). Its corners are corner k, then the midpoint of edge k, the middle, and the
@@ -79,7 +89,18 @@ private:
 
 }
 
-void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
+//Bare until it shows, sprouts for a while, green for most of its time, ripe near the end.
+int FieldStageOf(float growth){
+    if (growth < 0.10f){
+        return FIELD_STAGE_BARE;
+    }
+    if (growth < 0.35f){
+        return FIELD_STAGE_SPROUTS;
+    }
+    return (growth < 0.75f) ? FIELD_STAGE_GREEN : FIELD_STAGE_RIPE;
+}
+
+void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int stage, std::vector<vertex>& out){
     const Grid& g = *w.grid;
     const GridQuad& quad = g.fine.quads[fine_quad];
     int cell = quad.parent;
@@ -102,7 +123,9 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     uint32_t hash = MeshHash((uint32_t)cell,0x0F1E1Du);
     uint32_t id = z.field[cell];
     int crop = (id && id < z.buildings.size()) ? z.buildings[id].crop : ZONE_CROP_WHEAT;
-    int column = crop_columns[std::max(0,std::min(ZONE_CROP_COUNT - 1,crop))];
+    stage = std::max(0,std::min(FIELD_STAGE_RIPE,stage));
+    int column = (stage == FIELD_STAGE_RIPE) ? crop_columns[std::max(0,std::min(ZONE_CROP_COUNT - 1,crop))]
+                                             : stage_columns[stage];
     bool f_along_v = ((hash >> 16) & 1) != 0;
 
     ChildMap map(p,h,k);
@@ -118,7 +141,8 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     };
 
     const float row_width = (1.0f - 2.0f * CROP_MARGIN) / CROP_ROWS;
-    const float half_ridge = row_width * CROP_FILL * 0.5f;
+    const float half_ridge = row_width * stage_fill[stage] * 0.5f;
+    const float ridge_height = stage_height[stage];
     float a0 = std::max(along0,CROP_MARGIN);
     float a1 = std::min(along1,1.0f - CROP_MARGIN);
     if (a1 <= a0){
@@ -136,8 +160,8 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         vec3 foot_lo1 = map.At(uv(a1,lo),CROP_RIDGE_LIFT);
         vec3 foot_hi0 = map.At(uv(a0,hi),CROP_RIDGE_LIFT);
         vec3 foot_hi1 = map.At(uv(a1,hi),CROP_RIDGE_LIFT);
-        vec3 crest0 = map.At(uv(a0,mid),CROP_RIDGE_HEIGHT);
-        vec3 crest1 = map.At(uv(a1,mid),CROP_RIDGE_HEIGHT);
+        vec3 crest0 = map.At(uv(a0,mid),ridge_height);
+        vec3 crest1 = map.At(uv(a1,mid),ridge_height);
         //The two faces lean away from the crest: each wants the normal pointing out of the ridge and up.
         vec3 across_dir = foot_hi0 - foot_lo0;
         MeshQuad(out,foot_lo0,foot_lo1,crest1,crest0,up - across_dir,column);

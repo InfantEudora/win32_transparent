@@ -16,6 +16,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_GROUND_PAINT:  return "ground_paint";
         case ZONE_OP_GROUND_ERASE:  return "ground_erase";
         case ZONE_OP_FIELD_CROP:    return "field_crop";
+        case ZONE_OP_STORE_ALLOW:   return "store_allow";
         default:                    return "none";
     }
 }
@@ -686,6 +687,8 @@ void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
     for (size_t k = 1; k < pieces.size(); k++){
         uint32_t fresh = NewBuilding(state.buildings[id].kind);
         state.buildings[fresh].crop = state.buildings[id].crop;
+        state.buildings[fresh].allow = state.buildings[id].allow;
+        state.buildings[fresh].split_from = id;
         for (int at : pieces[k]){
             owner[at] = fresh;
             //Its own look now - a roof colour of its own - so all of it is drawn again.
@@ -984,6 +987,21 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke){
             }
             break;
         }
+        case ZONE_OP_STORE_ALLOW:{
+            //Changes nothing that is drawn, only what the store takes - so nothing is touched.
+            int plot = (int)index;
+            if (plot < 0 || plot >= (int)state.building.size() || state.KindOf(plot) != ZONE_KIND_STORE){
+                last_refusal = "no store there";
+                return false;
+            }
+            uint8_t mask = (uint8_t)(kind & GOODS_ALL);
+            uint32_t id = state.building[plot];
+            if (state.buildings[id].allow == mask){
+                return false;
+            }
+            state.buildings[id].allow = mask;
+            break;
+        }
         case ZONE_OP_GROUND_PAINT:{
             if (kind <= ZONE_GROUND_NONE || kind >= ZONE_GROUND_COUNT){
                 last_refusal = "no such ground";
@@ -1047,6 +1065,7 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
         }
         state.buildings[b.id].kind = (uint8_t)b.kind;
         state.buildings[b.id].crop = (uint8_t)std::max(0,std::min(ZONE_CROP_COUNT - 1,b.crop));
+        state.buildings[b.id].allow = (uint8_t)(b.allow & GOODS_ALL);
     }
     //Then what stands on the ground, in the order the rules want: fields, ground, buildings - each
     //through the same questions a command asks.
@@ -1113,6 +1132,7 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& state){
             b.id = id;
             b.kind = state.buildings[id].kind;
             b.crop = state.buildings[id].crop;
+            b.allow = state.buildings[id].allow;
             out.push_back(b);
         }
     }
@@ -1174,6 +1194,7 @@ ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, ui
     info.id = id;
     info.kind = z.buildings[id].kind;
     info.crop = z.buildings[id].crop;
+    info.allow = z.buildings[id].allow;
     info.size = z.buildings[id].size;
     if (info.kind == ZONE_KIND_FIELD){
         for (size_t c = 0; c < z.field.size(); c++){

@@ -32,6 +32,7 @@
 #define PAL_MIST_DARK       2
 #define PAL_FOAM            3
 #define PAL_SWAMP_MIST      4       //the swamp's low haze: a pale grey-green, quieter than foam
+#define PAL_VOID            5       //black: the chasm floor under the mist, which nothing uses (TerrainMesh.cpp)
 
 //Columns: materials.
 #define PAL_GRASS_0         0       //four close shades, picked per triangle for the faceted look
@@ -39,8 +40,8 @@
 #define PAL_LIP             4       //the plateau's edge along a cliff top
 #define PAL_ROCK_0          5       //four strata
 #define PAL_ROCK_COUNT      4
-#define PAL_FLOOR           9
-#define PAL_FLOOR_DARK      10      //chasm floor at the foot of a wall
+#define PAL_FLOOR           9       //unused since the floor became the void (PAL_VOID)
+#define PAL_FLOOR_DARK      10
 #define PAL_EARTH           11      //the map's cut edge (the skirt)
 #define PAL_FIELD           12
 #define PAL_PATH            13

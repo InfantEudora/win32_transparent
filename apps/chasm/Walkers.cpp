@@ -86,7 +86,14 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
         return z.storeys[landing] == 0 || landing == to || landing == from;
     }
     if (t.wet[a] || t.wet[b]){
-        return false;   //a river - until there are bridges
+        //A river - until there are bridges. But a water collector stands at the water's edge, so a
+        //walk that starts or ends on one may step onto its wet plot (economy_plan.md: its worker).
+        auto collector = [&](int v){
+            return (v == from || v == to) && z.KindOf(v) == ZONE_KIND_WATER;
+        };
+        if ((t.wet[a] && !collector(a)) || (t.wet[b] && !collector(b))){
+            return false;
+        }
     }
     if (t.Mountain(a) || t.Mountain(b)){
         return false;   //the north mountain, which nothing crosses (biomes_plan.md)
@@ -449,4 +456,19 @@ float Walkers::Height(const ChasmWorld& w, const Walker& k, const vec2& at){
         }
     }
     return t.GroundHeight(at,t.Height(a));
+}
+
+bool Walkers::PlanRoute(const ZoneState& z, int from, int to, std::vector<int>& plots, std::vector<float>& speeds){
+    plots.clear();
+    speeds.clear();
+    if (!set.world || set.world != z.world){
+        return false;
+    }
+    EnsureGraph();
+    EnsureLinks(z);
+    plots = FindPath(z,from,to);
+    for (size_t i = 0; i + 1 < plots.size(); i++){
+        speeds.push_back(EdgeSpeed(z,plots[i],plots[i + 1]));
+    }
+    return !plots.empty();
 }

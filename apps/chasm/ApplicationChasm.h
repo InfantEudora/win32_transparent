@@ -16,6 +16,8 @@
 #include "ZoneMesh.h"
 #include "ChasmSave.h"
 #include "Walkers.h"
+#include "Calendar.h"
+#include "Economy.h"
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -62,11 +64,15 @@
 #define INPUT_CHASM_TOOL_WOODCUTTER INPUT_LAST+14
 #define INPUT_CHASM_TOOL_WATER      INPUT_LAST+15
 #define INPUT_CHASM_TOOL_WINCH      INPUT_LAST+16
+#define INPUT_CHASM_PAUSE          INPUT_LAST+17     //space; core's own is the Pause key
+#define INPUT_CHASM_SLOWER         INPUT_LAST+18
+#define INPUT_CHASM_FASTER         INPUT_LAST+19
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
                                                         //value[1]: ground kind for ZONE_OP_GROUND_PAINT
 #define CHASM_CMD_WALKER            SIM_CMD_LAST+1      //subtype: WalkerOp; value[0]: home plot; value[1]: goal plot
+#define CHASM_CMD_CALENDAR          SIM_CMD_LAST+2      //sets the date: subtype the day, value[0] the tick in it
 
 //What a walker command asks for (step 10). Never renumber - recordings refer to these by value.
 enum WalkerOp{
@@ -233,6 +239,87 @@ private:
     void RenderWalkerPanel();
 #endif
 
+    /*
+        --- The economy (docs/economy_plan.md, P2 + P3; ApplicationChasmEconomy.cpp) -----------------
+        `economy` is SIMULATION state, the physics thread's alone, ticked after the walkers; a copy is
+        published after every tick that changed it (economy_snapshot, under grid_mutex) - the zones'
+        pattern again. The view reads the copy: felled trees and stumps, the workers, the fields' growth.
+    */
+    Economy economy;
+    std::shared_ptr<const EconomyState> economy_snapshot;
+    void TickEconomy();                         //physics thread, from RunSimulationTick
+    void PublishEconomy();                      //physics thread
+    std::shared_ptr<const EconomyState> GetEconomy();
+    void HashEconomy(StateHash& h);
+    json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
+#ifdef USE_MCP
+    void RegisterEconomyTools();
+#endif
+#ifdef USE_IMGUI
+    void RenderEconomyInfo(uint32_t id);        //in the building info, for the building under the cursor
+    void RenderSelectedStore(int plot);         //what the selected store takes, to be set there
+#endif
+
+    /*
+        --- The economy, drawn (ApplicationChasmWorkersView.cpp, and the forest and zones below) -----
+        Each worker a walker's figure in his job's tunic, with what he carries on him; one object per
+        worker, reused, placed every frame from the published state. Render thread.
+    */
+    Mesh* worker_meshes[3 * 2] = {};                //job * 2 + carrying (WORKER_JOB_*)
+    std::vector<Object*> worker_objects;
+    std::vector<int> worker_object_mesh;            //per object: which of worker_meshes it has, -1 none
+    void BuildWorkerScene();                        //from BuildScene
+    void UploadWorkers();                           //from PreRender
+    //The woodcutters' log piles outside their huts (ApplicationChasmPiles.cpp). Render thread.
+    Object* pile_set = NULL;
+    std::shared_ptr<const ChasmWorld> pile_built_world;
+    std::vector<std::pair<uint32_t,int>> pile_built;    //hut, logs - as last drawn
+    uint32_t pile_built_zones = 0;
+    void UploadPiles();                             //from PreRender
+
+    /*
+        --- The calendar and the speed (gameplay_plan.md P1, ApplicationChasmTime.cpp) ---------------
+        `calendar_tick` is SIMULATION state, the physics thread's alone: one more every tick, reset with
+        the zones on a new map, set by a load (Calendar.h). `calendar_shown` is its copy for everyone
+        else, written after each tick. The SPEED is the viewer's, not the simulation's: it sets how many
+        ticks a second run (Application::physics_time_factor) and never what a tick is, so a replay is
+        the same at any speed and the speed is neither saved nor hashed.
+    */
+    uint64_t calendar_tick = 0;
+    std::atomic<uint64_t> calendar_shown{0};
+    std::atomic<int> speed_index{0};            //into the speeds in ApplicationChasmTime.cpp
+    void TickCalendar();                        //physics thread, from RunSimulationTick
+    void SetCalendar(uint64_t tick);            //physics thread: a load, a new map, the date command
+    void RegisterTimeCommands();
+    std::atomic<uint32_t> calendar_commands_done{0};
+    void UpdateTimeKeys();                      //physics thread, from UpdateView: pause and speed
+    void SetSpeed(int index);                   //any thread
+    int SpeedCount();
+    float SpeedFactor(int index);
+    //Any thread: the winter snow's mean front (CalendarSnowFrontZ) for the date shown, on this map.
+    float SnowFrontNow();
+    void DrawOverlay(void) override;            //render thread: the date and the speed, every build
+#ifdef USE_IMGUI
+    void RenderTimePanel();
+#endif
+#ifdef USE_MCP
+    void RegisterTimeTools();
+#endif
+    //A view-only override of the snow's cover for looking at winter on any date: < 0 is off. Never
+    //read by the simulation (chasm_time snow_cover, debug builds).
+    std::atomic<float> snow_cover_override{-1.0f};
+
+    /*
+        --- Winter, drawn (gameplay_plan.md P1, ApplicationChasmSnow.cpp) ------------------------------
+        The ground, the zones and the forest drawn by shaders/chasm_ground.frag, which puts what faces
+        up north of the snow's front onto the palette's frozen row. Render thread.
+    */
+    Shader* ground_shader = NULL;
+    int ground_shader_index = -1;
+    void BuildGroundShader();                   //from BuildScene
+    void SetGroundUniforms();
+    void UseGroundShader(Mesh* mesh);           //a mesh drawn with the palette, onto the ground shader
+
     char save_name[64] = "village";     //the panel's name field
     std::string save_status;            //render thread: what the last save/load said
 
@@ -247,9 +334,13 @@ private:
     */
     bool f_props_loaded[PROP_KIND_COUNT] = {};
     std::vector<Object*> prop_sets;                 //chunk * PROP_KIND_COUNT + kind
-    void RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, int chunk);
+    //`e`: the economy for this world, or NULL - a felled tree is a stump, with its log while it lies.
+    void RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, const EconomyState* e, int chunk);
     std::shared_ptr<const ChasmWorld> forest_built_world;
     std::vector<uint32_t> forest_zone_version;      //per chunk: the zones' version it was hidden for
+    std::vector<uint8_t> forest_prop_state;         //per prop: the PROP_STATE_* the sets were built with
+    std::vector<int> forest_prop_chunk;             //per prop: the chunk whose sets hold it
+    uint32_t forest_felled_version = 0xFFFFFFFFu;   //the economy's felled_version they were built at
     std::atomic<bool> f_view_forest{true};
     bool f_forest_shown = true;
     void LoadProps();
@@ -298,6 +389,7 @@ private:
 
     std::vector<Object*> zone_chunks;
     std::vector<uint32_t> zone_chunk_built;     //render thread: chunk_version each was built at
+    std::vector<uint8_t> zone_field_stage;      //render thread: per building id, the stage a field was drawn at
     std::shared_ptr<const ChasmWorld> zone_built_world;
     void UploadZones();
 

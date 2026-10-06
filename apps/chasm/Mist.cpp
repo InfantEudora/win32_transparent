@@ -12,6 +12,16 @@
 #define MIST_SQUASH         0.72f   //a puff's height against its width
 #define MIST_ROLL           2.6f    //how far the blanket's top rises and falls over the chasm
 #define MIST_ROLL_SCALE     38.0f   //world units over which it does
+/*
+    THE SWELL (2026-10-06): a second, broader roll under the first, several units deep, so the
+    blanket is hills and hollows rather than a lid. In its hollows the mist thins - fewer puffs,
+    sunk lower - and the void below shows through, which is what gives the chasm its depth; on its
+    crests it heaps, a smaller puff sitting on top of some of them.
+*/
+#define MIST_SWELL          9.0f    //how far the swell carries the blanket's top up and down
+#define MIST_SWELL_SCALE    65.0f   //world units over which it does
+#define MIST_THIN           0.8f    //at the deepest hollow, the share of puffs left out
+#define MIST_HEAP           0.45f   //on a crest, the share of puffs with one heaped on top
 #define MIST_BOB            0.45f   //how far a puff rises and sinks in its cycle
 #define MIST_BREATH         0.06f   //and how much it swells
 //The swamp's mist: small, flat, pale wisps just over the pools.
@@ -60,24 +70,49 @@ void BuildMist(const Grid& g, const Terrain& t, const TerrainMeshData& mesh, Mis
             continue;
         }
         const vec2& base = g.fine.pos[v];
-        MistPuff p;
         vec2 at = base + vec2(Unit(MeshHash(h,1)) - 0.5f,Unit(MeshHash(h,2)) - 0.5f) * 2.0f;
-        p.radius = MIST_RADIUS_MIN + (MIST_RADIUS_MAX - MIST_RADIUS_MIN) * Unit(MeshHash(h,3));
-        float roll = RollNoise(at.x / MIST_ROLL_SCALE,at.y / MIST_ROLL_SCALE) * MIST_ROLL;
+        //The swell, offset into the noise so it does not echo the roll's pattern. -1 hollow, 1 crest.
+        float swell = RollNoise(at.x / MIST_SWELL_SCALE + 57.3f,at.y / MIST_SWELL_SCALE - 31.9f);
+        float roll_n = RollNoise(at.x / MIST_ROLL_SCALE,at.y / MIST_ROLL_SCALE);
+        /*
+            Thinned in the hollows: from none left out where the swell is level to MIST_THIN at its
+            floor. And in the roll's deepest dips too, wherever the swell is - smaller holes, so the
+            void shows here and there all through the blanket and not only where the swell is low.
+        */
+        float thin = std::max(0.0f,std::min(1.0f,-swell * 1.8f - 0.05f)) * MIST_THIN;
+        thin = std::max(thin,std::max(0.0f,std::min(1.0f,-roll_n * 2.5f - 1.0f)) * MIST_THIN);
+        if (Unit(MeshHash(h,8)) < thin){
+            continue;
+        }
+        float roll = roll_n * MIST_ROLL;
+        float rise = roll + swell * MIST_SWELL;
         //Its top near the blanket's, give or take: a big puff sits a little lower than a small one.
-        float top = CHASM_MIST_TOP + roll + (Unit(MeshHash(h,4)) - 0.5f) * 1.6f;
-        p.pos = vec3(at.x,top - p.radius * MIST_SQUASH * 0.85f,at.y);
-        p.phase = Unit(MeshHash(h,5));
-        p.period = 11.0f + 7.0f * Unit(MeshHash(h,6));
-        //Lighter where the blanket rises, darker in its hollows - the shades follow the roll.
-        float shade = roll / MIST_ROLL * 0.5f + 0.5f + (Unit(MeshHash(h,7)) - 0.5f) * 0.5f;
-        p.variant = (uint8_t)((shade > 0.62f) ? 0 : (shade > 0.30f ? 1 : 2));
+        float top = CHASM_MIST_TOP + rise + (Unit(MeshHash(h,4)) - 0.5f) * 1.6f;
+        float radius = MIST_RADIUS_MIN + (MIST_RADIUS_MAX - MIST_RADIUS_MIN) * Unit(MeshHash(h,3));
+        //Lighter where the blanket rises, darker in its hollows - the shades follow its height.
+        float shade = rise / (MIST_ROLL + MIST_SWELL) * 0.5f + 0.5f + (Unit(MeshHash(h,7)) - 0.5f) * 0.4f;
         int cx = std::max(0,std::min(mesh.chunks_x - 1,(int)((at.x - g.bounds_min.x) / TERRAIN_CHUNK_SIZE)));
         int cz = std::max(0,std::min(mesh.chunks_z - 1,(int)((at.y - g.bounds_min.y) / TERRAIN_CHUNK_SIZE)));
-        p.bob = MIST_BOB;
-        p.breath = MIST_BREATH;
-        out.chunk_puffs[(size_t)cz * mesh.chunks_x + cx].push_back((int)out.puffs.size());
-        out.puffs.push_back(p);
+        auto Add = [&](const vec2& xz, float puff_top, float r, float s, uint32_t salt){
+            MistPuff p;
+            p.radius = r;
+            p.pos = vec3(xz.x,puff_top - r * MIST_SQUASH * 0.85f,xz.y);
+            p.phase = Unit(MeshHash(h,5 + salt));
+            p.period = 11.0f + 7.0f * Unit(MeshHash(h,6 + salt));
+            p.variant = (uint8_t)((s > 0.62f) ? 0 : (s > 0.30f ? 1 : 2));
+            p.bob = MIST_BOB;
+            p.breath = MIST_BREATH;
+            out.chunk_puffs[(size_t)cz * mesh.chunks_x + cx].push_back((int)out.puffs.size());
+            out.puffs.push_back(p);
+        };
+        Add(at,top,radius,shade,0);
+        //A heap on a crest: a smaller puff on top, a little off centre, a shade lighter.
+        float heap = std::max(0.0f,std::min(1.0f,swell * 1.6f - 0.3f)) * MIST_HEAP;
+        if (Unit(MeshHash(h,9)) < heap){
+            float r = radius * (0.55f + 0.2f * Unit(MeshHash(h,10)));
+            vec2 off = vec2(Unit(MeshHash(h,11)) - 0.5f,Unit(MeshHash(h,12)) - 0.5f) * radius;
+            Add(at + off,top + r * MIST_SQUASH * 1.1f,r,shade + 0.25f,100);
+        }
     }
     out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
 }

@@ -8,12 +8,14 @@ Chasm's replay test: a recording made from a save replays to the same state, twi
        onto, a second walker, a third that lives in the garden and leaves by its gate; and buildings -
        a store made in one stroke and then split by an erase in its middle, a woodcutter, a house
        extended by a stroke that starts on it, a field's crop changed; a WINCH on the rim above the
-       home balcony and a walker who lives on the balcony and rides it up to the plateau) at different
-       ticks, stop.
+       home balcony and a walker who lives on the balcony and rides it up to the plateau; the date set
+       to autumn, a recorded calendar command; a store beside the woodcutter, which makes it his wood
+       store, and the split store's first half set to take food only - so the woodcutter's worker
+       fells and carries during the recording) at different ticks, stop.
     3. Paint junk on top, so a replay that failed to restore the start would show it.
     4. Replay twice. Each must end in exactly the zones the original reached (compared as saves:
        every building with its id, kind, plots and storeys or cells and crop, every ground and road
-       plot) and with the same
+       plot), on the same day, and with the same
        walkers (home and goal - where they are depends on how long after the end the save is taken),
        and the two replays' per-tick traces must match - which covers the walkers tick by tick.
 
@@ -116,7 +118,8 @@ def zones_of(save_name):
     walkers = sorted((k["home"], k["goal"]) for k in s.get("walkers", []))
     buildings = sorted((b["id"], b["kind"], tuple(sorted(map(tuple, b.get("plots", [])))),
                         tuple(sorted(b.get("cells", []))), b.get("crop", "")) for b in s["buildings"])
-    return (buildings, sorted(map(tuple, s.get("grounds", []))), walkers, s["world_hash"])
+    day = s.get("calendar", 0) // 2250     # CALENDAR_DAY_TICKS: the day, not the tick - the save is late by a few
+    return (buildings, sorted(map(tuple, s.get("grounds", []))), walkers, s["world_hash"], day)
 
 
 def main():
@@ -167,9 +170,16 @@ def main():
     paint("build_erase", -94 + 3 * 1.6, 15.5, kind="store")
     for i in range(3):
         paint("build_paint", -58 + i * 1.6, 20.0, kind="woodcutter", stroke=2)
+    for i in range(2):
+        paint("build_paint", -58 + (i + 3) * 1.6, 20.0, kind="store", stroke=4)
+    econ = call("chasm_economy", {"op": "store_allow", "x": -94 + DX, "z": 15.5, "goods": ["wheat", "greens", "beans"]})
+    if econ.get("refusal"):
+        REFUSED["store_allow: " + econ["refusal"]] = REFUSED.get("store_allow: " + econ["refusal"], 0) + 1
     paint("build_paint", -90.0, 20.0, kind="house", stroke=3)
     paint("build_paint", -90.0, 22.0, kind="house", stroke=3)
     paint("field_crop", -84.0, 40.0, crop="beans")
+    # the date: autumn's third day, a quarter through it (gameplay_plan.md P1)
+    call("chasm_time", {"set_day": 22, "day_fraction": 0.25})
     # the winch, and a walker who lives on the balcony below it and works on the plateau
     rider = None
     if winch:
@@ -178,6 +188,7 @@ def main():
         call("chasm_walker", {"op": "spawn", "home_x": home[0], "home_z": home[1], "goal_x": goal[0], "goal_z": goal[1]})
         rider = call("chasm_walker", {"op": "list"})["walkers"][-1]
     time.sleep(0.3)
+    time.sleep(3.0)     # long enough for the woodcutter to walk out and start on a tree
     status = call("input_record", {"action": "stop"})
     recording = status.get("last_recording") or status.get("last_file") or ""
     original = zones_of("replay_test_original")
@@ -206,6 +217,7 @@ def main():
                     break
             print("  ground original %d, replay %d" % (len(original[1]), len(zones[1])))
             print("  walkers original %s, replay %s" % (original[2], zones[2]))
+            print("  day original %s, replay %s" % (original[4], zones[4]))
     t1 = results[0][1]
     t2 = results[1][1]
     if json.dumps(t1, sort_keys=True) != json.dumps(t2, sort_keys=True):
@@ -218,6 +230,13 @@ def main():
     print("original: buildings %s, %d ground plots, %d walkers" %
           (", ".join("%d %s" % (n, k) for k, n in sorted(kinds.items())), len(original[1]), len(original[2])))
     print("recording %s, %s traced ticks" % (recording or "(last)", ticks or "?"))
+    e = call("chasm_economy", {})
+    print("economy at the end: %d workers %s, %d felled, stores %s" % (
+        len(e["workers"]), sorted(set(w["state"] for w in e["workers"])), e["felled"],
+        [(st["id"], st["takes"], st["stock"]) for st in e["stores"]]))
+    if original[4] != 22:
+        ok = False
+        print("the recorded date jump did not hold: the original ends on day %s, not 22" % original[4])
     print("refusals while painting (the junk and the replays included): %s" % (REFUSED or "none"))
     if not lane.get("gates"):
         ok = False

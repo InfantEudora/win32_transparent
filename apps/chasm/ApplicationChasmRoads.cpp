@@ -133,9 +133,10 @@ void ApplicationChasm::UpdateWalkerTool(const GridPick& hover, bool f_shift){
 /*
     A walker's figure: a tunic tapering up from the feet, a head, a hat - about two thirds of a storey,
     a little taller than life so it reads at the game's zoom, like A Little Age's chunky villagers.
-    Origin at the feet. One mesh, shared by every walker's object.
+    Origin at the feet, facing +z. One mesh, shared by every walker's object; the economy's workers
+    are the same figure in their job's tunic (ApplicationChasmWorkersView.cpp).
 */
-static void BuildWalkerFigure(std::vector<vertex>& out){
+void BuildWalkerFigure(std::vector<vertex>& out, int tunic_column){
     out.clear();
     //Square sections, bottom to top: tunic from 0 to 0.50, a neck, the head, a hat brim and crown.
     auto frustum = [&out](float y0, float h0, float y1, float h1, int column){
@@ -149,7 +150,7 @@ static void BuildWalkerFigure(std::vector<vertex>& out){
         MeshQuad(out,t[0],t[1],t[2],t[3],vec3(0,1,0),column);
         MeshQuad(out,b[0],b[1],b[2],b[3],vec3(0,-1,0),column);
     };
-    frustum(0.00f,0.17f,0.50f,0.11f,PAL_ROOF);          //tunic: red, so a walker is found at a glance
+    frustum(0.00f,0.17f,0.50f,0.11f,tunic_column);      //tunic: a walker's red, a worker's by job
     frustum(0.50f,0.06f,0.54f,0.06f,PAL_WALL);          //neck
     frustum(0.54f,0.10f,0.72f,0.09f,PAL_WALL);          //head
     frustum(0.72f,0.15f,0.75f,0.15f,PAL_TIMBER);        //hat brim
@@ -159,7 +160,7 @@ static void BuildWalkerFigure(std::vector<vertex>& out){
 //RENDER THREAD, from BuildScene (Init, before the physics thread exists).
 void ApplicationChasm::BuildWalkerScene(){
     std::vector<vertex> verts;
-    BuildWalkerFigure(verts);
+    BuildWalkerFigure(verts,PAL_ROOF);      //red, so a debug walker is found at a glance
     walker_mesh = new Mesh();
     walker_mesh->SetMeshData(verts.data(),(int)verts.size());
 #ifdef DEBUG

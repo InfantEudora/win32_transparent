@@ -9,6 +9,7 @@
 #include "GridPick.h"
 #include "Terrain.h"
 #include "TerrainMesh.h"
+#include "Goods.h"
 
 /*
     WHAT THE PLAYER PAINTED: the zones (grid_plan.md section 5). Simulation state - changed only by
@@ -150,6 +151,7 @@ enum ZoneOp{
     ZONE_OP_GROUND_PAINT,   //plot: ground of the kind in value[1] (ZONE_GROUND_*)
     ZONE_OP_GROUND_ERASE,   //plot: no ground
     ZONE_OP_FIELD_CROP,     //coarse cell: its whole field to the crop in value[1] (ZONE_CROP_*)
+    ZONE_OP_STORE_ALLOW,    //plot: its store takes the goods in value[1], a mask of GOOD_BIT (economy_plan.md)
     ZONE_OP_COUNT
 };
 const char* ZoneOpName(int op);
@@ -157,11 +159,19 @@ int ZoneOpByName(const std::string& name);  //the names above, and the old house
 
 struct ChasmWorld;     //ChasmWorld.h
 
-//One building: its kind, what a field grows, and how many plots or cells it covers (0: gone).
+/*
+    One building: its kind, what a field grows, and how many plots or cells it covers (0: gone).
+    `allow` is what a STORE takes when it stands on its own - the player's setting, all goods by
+    default; next to a workplace it takes that workplace's goods instead (Economy.h). `split_from` is
+    the building a piece was split off by an erase, for the economy to share its stock out by; not
+    saved, since the economy has done that by the time anything is.
+*/
 struct ZoneBuilding{
     uint8_t kind = ZONE_KIND_NONE;
     uint8_t crop = ZONE_CROP_WHEAT;
+    uint8_t allow = GOODS_ALL;
     int size = 0;
+    uint32_t split_from = 0;
 };
 
 struct ZoneState{
@@ -199,6 +209,7 @@ struct ZoneSavedBuilding{
     uint32_t id = 0;
     int kind = ZONE_KIND_HOUSE;
     int crop = ZONE_CROP_WHEAT;
+    int allow = GOODS_ALL;                      //a store's own setting
     std::vector<std::pair<int,int>> plots;      //plot, storeys
     std::vector<int> cells;                     //a field's coarse cells
 };
@@ -277,6 +288,7 @@ struct ZoneBuildingInfo{
     uint32_t id = 0;
     int kind = ZONE_KIND_NONE;
     int crop = ZONE_CROP_WHEAT;
+    int allow = GOODS_ALL;
     int size = 0;
     int storeys = 0;            //summed over its plots
     float floor_area = 0.0f;

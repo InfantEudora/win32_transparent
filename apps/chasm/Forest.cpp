@@ -139,6 +139,11 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
         if (!PlotIsFlat(g,picker,t,v)){
             continue;
         }
+        //Nothing grows on the chasm floor: it is under the mist, drawn as the void (TerrainMesh.cpp),
+        //and never built on or used - props there were only ever paid for in the shadow pass.
+        if (t.level[v] == TERRAIN_FLOOR){
+            continue;
+        }
         const vec2& base = g.fine.pos[v];
         /*
             The north mountain (biomes_plan.md) grows nothing yet: a scatter of rocks on the snow, no
@@ -223,11 +228,9 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
         }
         float n = Noise(base.x / FOREST_SCALE,base.y / FOREST_SCALE,seed) * 0.75f +
                   Noise(base.x / FOREST_DETAIL,base.y / FOREST_DETAIL,seed + 7) * 0.25f;
-        //The chasm floor is a darker, sparser place; an island's top bare stone and scrub, a
-        //balcony's a little less bare - it catches what falls from the rim.
-        if (t.level[v] == TERRAIN_FLOOR){
-            n -= 0.12f;
-        }else if (t.level[v] == TERRAIN_ISLAND){
+        //An island's top is bare stone and scrub, a balcony's a little less bare - it catches what
+        //falls from the rim.
+        if (t.level[v] == TERRAIN_ISLAND){
             n -= 0.30f;
         }else if (t.level[v] == TERRAIN_BALCONY){
             n -= 0.20f;
