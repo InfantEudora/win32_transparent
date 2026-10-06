@@ -89,6 +89,9 @@ Every seed has one or two balconies at home and none to two on the far side (bui
 - **Several crop types, rotated every year**, or the field's yield drops. Some of the harvest has
   to be **stocked for the winter**.
 
+- **No day and night** (the user, 2026-10-06): none of the reference games has one, and it would change
+  too often. Perhaps later a darker winter, coming on gradually - not now.
+
 ### Goods and food (agreed 2026-10-06)
 
 - **The first goods are wood, food and water**, always. Steam, floatstone, coal, rope, leather and
@@ -300,9 +303,9 @@ the zones and walkers already are. Each part adds its own state-hash part.
 | # | Feature | Smallest version that tests it | Builds on |
 |---|---|---|---|
 | P1 (BUILT 2026-10-06) | **Calendar and seasons** | Days and a year in ticks (a year about 30 minutes at normal speed), four seasons; the snow line moves south in winter and back; fields do not grow under snow. A speed control. | `SnowLine` in `Terrain`, the ground colour |
-| P2 | **Goods and storage** | Three goods: wood, food, water (agreed 2026-10-06; food in its three keeping-kinds, see "Goods and food"). Stocks per store - the store building exists (`buildings_plan.md`) - shown on the panel. | `Zones`, the store |
-| P3 | **Production** | Felling: the woodcutter fells nearby props (the forest finally shrinks). A field yields its crop's food at harvest. The water collector fills with water. (Steam and the boiler come later.) | `Forest` (felling), fields, rivers |
-| P4 | **People and carriers** | Houses hold families. Every person has the base skills, random at the start. A worker walks from home to a workplace (an attached house means no walk); someone from the house fetches food from the town centre; a carrier takes goods to the nearest store. All by A*, so walls and roads change how long it takes. | `Walkers` |
+| P2 (BUILT 2026-10-06, `economy_plan.md`) | **Goods and storage** | Three goods: wood, food, water (agreed 2026-10-06; food in its three keeping-kinds, see "Goods and food"). Stocks per store - the store building exists (`buildings_plan.md`) - shown on the panel. | `Zones`, the store |
+| P3 (BUILT 2026-10-06) | **Production** | Felling: the woodcutter fells nearby props (the forest finally shrinks). A field yields its crop's food at harvest. The water collector fills with water. (Steam and the boiler come later.) | `Forest` (felling), fields, rivers |
+| P4 (people BUILT 2026-10-06, `people_plan.md`) | **People and carriers** | Houses hold families. Every person has the base skills, random at the start. A worker walks from home to a workplace (an attached house means no walk); someone from the house fetches food from the town centre; a carrier takes goods to the nearest store. All by A*, so walls and roads change how long it takes. | `Walkers` |
 | P5 | **Needs and winter** | People eat food and drink water daily and burn wood for heat in winter. A shortage makes them leave. That is the first way to lose. | P1-P4 |
 | P6 | **Zombies** | A small wave from the swamp in summer, none while it is frozen: walkers with their own costs (walls closed, breakable). Stopped by a ballista tower and by archers: workers who give a share of their time to training. | `Walkers`, boundaries, gates |
 

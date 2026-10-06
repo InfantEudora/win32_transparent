@@ -27,10 +27,21 @@ void ApplicationChasm::PublishEconomy(){
     economy_snapshot = copy;
 }
 
-//PHYSICS THREAD, after the walkers and before the calendar moves on.
+/*
+    PHYSICS THREAD, after the walkers and before the calendar moves on. What the builders finished stands
+    on this same tick: the economy names the plots, the zones raise them (construction_plan.md) - not a
+    command, since it follows from the state, and a replay builds it again by itself.
+*/
 void ApplicationChasm::TickEconomy(){
     uint32_t before = economy.State().version;
     economy.Tick(zones.State(),walkers,calendar_tick,main_scene->GetPhysicsTimestep());
+    bool f_raised = false;
+    for (int plot : economy.Raises()){
+        f_raised = zones.Apply(ZONE_OP_BUILD_RAISE,(uint32_t)plot) || f_raised;
+    }
+    if (f_raised){
+        PublishZones();
+    }
     if (economy.State().version != before){
         PublishEconomy();
     }
@@ -52,8 +63,13 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     h.Bytes(e.prop_state.data(),e.prop_state.size());
     n = (uint32_t)e.workers.size();
     h.Bytes(&n,sizeof(n));
+    h.Bytes(&e.next_person,sizeof(e.next_person));
     for (const EconomyWorker& k : e.workers){
-        int32_t head[9] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg};
+        int32_t who[5] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,k.age,(int32_t)k.f_indoors};
+        h.Bytes(who,sizeof(who));
+        h.Bytes(k.skills,sizeof(k.skills));
+        int32_t head[10] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
+                            (int32_t)k.site};
         h.Bytes(head,sizeof(head));
         h.Bytes(&k.along,sizeof(k.along));
         h.Bytes(&k.pos,sizeof(k.pos));
@@ -63,9 +79,12 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(k.speed.data(),k.speed.size() * sizeof(float));
     }
     for (const EconomyField& f : e.fields){
-        int32_t pair[3] = {(int32_t)f.building,f.crop,f.grown_ticks};
+        int32_t pair[3] = {(int32_t)f.building,f.crop,f.grown};
         h.Bytes(pair,sizeof(pair));
     }
+    n = (uint32_t)e.site.size();
+    h.Bytes(&n,sizeof(n));
+    h.Bytes(e.site.data(),e.site.size() * sizeof(int));
 }
 
 namespace {
@@ -92,7 +111,13 @@ json StockJson(const EconomyState& e, uint32_t id){
 }
 
 json WorkerJson(const EconomyWorker& k){
-    json j{{"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
+    json skills = json::object();
+    for (int sk = 0; sk < SKILL_COUNT; sk++){
+        skills[SkillName(sk)] = (int)k.skills[sk];
+    }
+    json j{{"id",k.id},{"name",EconomyPersonName(k)},{"family",k.family},{"house",k.house},{"age",k.age},
+           {"skills",skills},{"indoors",EconomyIndoors(k)},
+           {"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
            {"x",k.pos.x},{"z",k.pos.y},{"legs_to_go",std::max(0,(int)k.route.size() - 1 - k.seg)}};
     if (k.carry > 0){
         j["carrying"] = json{{GoodName(k.carry_good),k.carry}};
@@ -102,6 +127,9 @@ json WorkerJson(const EconomyWorker& k){
     }
     if (k.store){
         j["store"] = k.store;
+    }
+    if (k.site){
+        j["site"] = k.site;
     }
     return j;
 }
@@ -116,6 +144,20 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         return nullptr;
     }
     json j{{"stock",StockJson(*e,id)}};
+    //A construction site: the wood its planned storeys take, what has been brought, who carries for it.
+    int site_wood = EconomySiteWood(*z->world,*z,id);
+    if (site_wood > 0){
+        ZoneBuildingInfo info = ZoneBuildingFigures(*z->world,*z,id);
+        json carriers = json::array();
+        for (const EconomyWorker& k : e->workers){
+            if (k.site == id){
+                carriers.push_back(EconomyPersonName(k));
+            }
+        }
+        j["construction"] = json{{"storeys_to_build",info.site_storeys},{"storeys_standing",info.storeys},
+                                 {"wood_needed",site_wood},{"wood_brought",EconomySiteBrought(*e,id)},
+                                 {"carriers",carriers}};
+    }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
         uint8_t takes = EconomyAccepts(*e,id);
         j["takes"] = GoodsJson(takes);
@@ -125,6 +167,16 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     }
     if (z->buildings[id].kind == ZONE_KIND_FIELD){
         j["growth"] = EconomyFieldGrowth(*e,*z,id);
+    }
+    if (z->buildings[id].kind == ZONE_KIND_HOUSE || z->buildings[id].kind == ZONE_KIND_CAMP){
+        json family = json::array();
+        for (const EconomyWorker& k : e->workers){
+            if (k.house == id){
+                family.push_back(EconomyPersonName(k));
+            }
+        }
+        j["family"] = family;
+        j["holds"] = (id < e->capacity.size()) ? e->capacity[id] : 0;
     }
     for (const EconomyWorker& k : e->workers){
         if (k.building == id){
@@ -152,6 +204,17 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
             stock += buf;
         }
     }
+    int site_wood = EconomySiteWood(*z->world,*z,id);
+    if (site_wood > 0){
+        ZoneBuildingInfo info = ZoneBuildingFigures(*z->world,*z,id);
+        int carrying = 0;
+        for (const EconomyWorker& k : e->workers){
+            carrying += (k.site == id) ? 1 : 0;
+        }
+        ImGui::TextColored(ImVec4(0.95f,0.8f,0.4f,1.0f),"  under construction: %i storeys to build (%i standing)",
+                           info.site_storeys,info.storeys);
+        ImGui::Text("  wood %i of %i brought, %i carrying for it",EconomySiteBrought(*e,id),site_wood,carrying);
+    }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
         int room = (id < e->room.size()) ? e->room[id] : 0;
         ImGui::Text("  holds %i of %i: %s",EconomyStockTotal(*e,id),room,stock.empty() ? "nothing" : stock.c_str());
@@ -161,15 +224,36 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
     if (z->buildings[id].kind == ZONE_KIND_FIELD){
         ImGui::Text("  grown %.0f%% toward the harvest",EconomyFieldGrowth(*e,*z,id) * 100.0f);
     }
-    for (const EconomyWorker& k : e->workers){
-        if (k.building == id){
-            if (k.carry > 0){
-                ImGui::Text("  its %s: %s, carrying %i %s",EconomyJobName(k.job),EconomyWorkerStateName(k.state),
-                            k.carry,GoodName(k.carry_good));
-            }else{
-                ImGui::Text("  its %s: %s",EconomyJobName(k.job),EconomyWorkerStateName(k.state));
+    if (z->buildings[id].kind == ZONE_KIND_HOUSE || z->buildings[id].kind == ZONE_KIND_CAMP){
+        int holds = (id < e->capacity.size()) ? e->capacity[id] : 0;
+        int living = 0;
+        for (const EconomyWorker& k : e->workers){
+            living += (k.house == id) ? 1 : 0;
+        }
+        ImGui::Text("  holds %i; %i live here",holds,living);
+        for (const EconomyWorker& k : e->workers){
+            if (k.house == id){
+                ImGui::Text("    %s, %i - %s%s",EconomyPersonName(k).c_str(),k.age,EconomyJobName(k.job),
+                            EconomyIndoors(k) ? ", at home" : "");
             }
         }
+    }
+    bool f_worked = false;
+    for (const EconomyWorker& k : e->workers){
+        if (k.building == id){
+            f_worked = true;
+            int skill = EconomyJobSkill(k.job);
+            ImGui::Text("  worked by %s (%s %i): %s",EconomyPersonName(k).c_str(),SkillName(skill),(int)k.skills[skill],
+                        EconomyWorkerStateName(k.state));
+            if (k.carry > 0){
+                ImGui::SameLine();
+                ImGui::Text(", carrying %i %s",k.carry,GoodName(k.carry_good));
+            }
+        }
+    }
+    int kind = z->buildings[id].kind;
+    if (!f_worked && (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_FIELD || kind == ZONE_KIND_WATER)){
+        ImGui::TextColored(ImVec4(1.0f,0.6f,0.35f,1.0f),"  nobody works here - it needs a free adult with a house");
     }
 }
 
@@ -219,7 +303,7 @@ void ApplicationChasm::RegisterEconomyTools(){
         "The colony's goods and workers (docs/economy_plan.md). op status (default): the goods in all "
         "stores together, every store (id, what it takes, its own setting, whether it is next to a "
         "workplace, room, stock), every worker (building, job, state, where, what he carries, his tree or "
-        "store), every field's growth toward its harvest, and how many trees are felled. op store_allow: "
+        "store), every field's growth toward its harvest, every construction site (wood needed, brought, its carriers), and how many trees are felled. op store_allow: "
         "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. include_screenshot as elsewhere.",
@@ -312,6 +396,30 @@ void ApplicationChasm::RegisterEconomyTools(){
                                       {"waiting",StockJson(*e,f.building)}});
             }
             result["fields"] = fields;
+            json sites = json::array();
+            for (size_t id = 1; id < z->buildings.size(); id++){
+                if (z->buildings[id].size > 0 && z->buildings[id].kind != ZONE_KIND_FIELD){
+                    json b = EconomyBuildingJson((uint32_t)id);
+                    if (b.is_object() && b.contains("construction")){
+                        json s = b["construction"];
+                        s["id"] = id;
+                        s["kind"] = ZoneKindName(z->buildings[id].kind);
+                        sites.push_back(s);
+                    }
+                }
+            }
+            result["sites"] = sites;
+            int housed = 0;
+            int employed = 0;
+            for (const EconomyWorker& k : e->workers){
+                housed += k.house ? 1 : 0;
+                employed += (k.job != WORKER_JOB_NONE) ? 1 : 0;
+            }
+            result["people"] = json{{"total",e->workers.size()},{"housed",housed},{"working",employed},
+                                    {"camp_plot",e->camp_plot}};
+            if (e->camp_plot >= 0){
+                result["camp"] = json{{"x",w->grid->fine.pos[e->camp_plot].x},{"z",w->grid->fine.pos[e->camp_plot].y}};
+            }
             int felled = 0;
             for (uint8_t s : e->prop_state){
                 felled += (s != PROP_STATE_STANDING) ? 1 : 0;

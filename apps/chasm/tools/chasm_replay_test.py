@@ -11,7 +11,9 @@ Chasm's replay test: a recording made from a save replays to the same state, twi
        home balcony and a walker who lives on the balcony and rides it up to the plateau; the date set
        to autumn, a recorded calendar command; a store beside the woodcutter, which makes it his wood
        store, and the split store's first half set to take food only - so the woodcutter's worker
-       fells and carries during the recording) at different ticks, stop.
+       fells and carries during the recording; and by the settlers' camp, houses for its families and
+       a woodcutter's hut, so families move in and the best-suited of them walks to work) at different
+       ticks, stop.
     3. Paint junk on top, so a replay that failed to restore the start would show it.
     4. Replay twice. Each must end in exactly the zones the original reached (compared as saves:
        every building with its id, kind, plots and storeys or cells and crop, every ground and road
@@ -188,6 +190,15 @@ def main():
         call("chasm_walker", {"op": "spawn", "home_x": home[0], "home_z": home[1], "goal_x": goal[0], "goal_z": goal[1]})
         rider = call("chasm_walker", {"op": "list"})["walkers"][-1]
     time.sleep(0.3)
+    # people (P4): beside the settlers' camp, a two-storey house and two of one, and a woodcutter's hut
+    camp = call("chasm_economy", {}).get("camp")
+    if camp:
+        cx, cz = camp["x"], camp["z"]
+        for i, (dx, storeys) in enumerate([(-4.0, 2), (-1.5, 1), (1.0, 1)]):
+            for _ in range(storeys):
+                call("chasm_paint", {"op": "build_add", "kind": "house", "x": cx + dx, "z": cz + 9.0, "stroke": 40 + i})
+        for i in range(2):
+            call("chasm_paint", {"op": "build_paint", "kind": "woodcutter", "x": cx - 10.0 + i * 1.6, "z": cz + 9.0, "stroke": 45})
     time.sleep(3.0)     # long enough for the woodcutter to walk out and start on a tree
     status = call("input_record", {"action": "stop"})
     recording = status.get("last_recording") or status.get("last_file") or ""
@@ -231,9 +242,12 @@ def main():
           (", ".join("%d %s" % (n, k) for k, n in sorted(kinds.items())), len(original[1]), len(original[2])))
     print("recording %s, %s traced ticks" % (recording or "(last)", ticks or "?"))
     e = call("chasm_economy", {})
-    print("economy at the end: %d workers %s, %d felled, stores %s" % (
-        len(e["workers"]), sorted(set(w["state"] for w in e["workers"])), e["felled"],
+    print("economy at the end: %d people %s, %d felled, stores %s" % (
+        len(e["workers"]), e["people"], e["felled"],
         [(st["id"], st["takes"], st["stock"]) for st in e["stores"]]))
+    if e["people"]["housed"] == 0 or e["people"]["working"] == 0:
+        ok = False
+        print("nobody moved in or went to work by the camp")
     if original[4] != 22:
         ok = False
         print("the recorded date jump did not hold: the original ends on day %s, not 22" % original[4])

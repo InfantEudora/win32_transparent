@@ -18,6 +18,7 @@
 #include "Walkers.h"
 #include "Calendar.h"
 #include "Economy.h"
+#include "Exploration.h"
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -67,6 +68,8 @@
 #define INPUT_CHASM_PAUSE          INPUT_LAST+17     //space; core's own is the Pause key
 #define INPUT_CHASM_SLOWER         INPUT_LAST+18
 #define INPUT_CHASM_FASTER         INPUT_LAST+19
+#define INPUT_CHASM_TOOL_CAMP      INPUT_LAST+20
+#define INPUT_CHASM_FOG            INPUT_LAST+21     //V: the clouds over unexplored ground, in debug mode
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -94,7 +97,8 @@ enum ChasmTool{
     CHASM_TOOL_STORE,       //docs/buildings_plan.md: buildings of these kinds, a drag each
     CHASM_TOOL_WOODCUTTER,
     CHASM_TOOL_WATER,
-    CHASM_TOOL_WINCH        //docs/buildings_plan.md step 2: on the rim above a balcony
+    CHASM_TOOL_WINCH,       //docs/buildings_plan.md step 2: on the rim above a balcony
+    CHASM_TOOL_CAMP         //docs/people_plan.md: tents and fires
 };
 
 class ApplicationChasm : public Application{
@@ -261,11 +265,46 @@ private:
 #endif
 
     /*
+        --- Exploration and the clouds (docs/play_mode_plan.md steps 2-4, ApplicationChasmExplore.cpp) ---
+        `exploration` is SIMULATION state, the physics thread's alone: cleared round what is built and
+        round the people as the tick goes (Exploration.h), saved and hashed, a copy published when it
+        changes. The clouds are its view: puffs over what is not explored, shown in play mode and in
+        debug mode only when asked for.
+    */
+    Exploration exploration;
+    std::shared_ptr<const Exploration> exploration_snapshot;   //under grid_mutex
+    std::vector<uint8_t> explored_plot;         //physics thread: per fine vertex, already cleared round
+    std::vector<uint8_t> explored_cell;         //per coarse quad, the same for a field's cells
+    uint32_t explored_zones_version = 0xFFFFFFFFu;
+    void ResetExploration();                    //physics thread: a new map, nothing explored
+    void TickExploration();                     //physics thread, from RunSimulationTick
+    void PublishExploration();                  //physics thread
+    std::shared_ptr<const Exploration> GetExploration();
+    //Whether a zone command's plot or cell is explored - the rule a PLAY command is held to.
+    bool ZoneCommandExplored(const ChasmWorld& w, int op, int index);
+    std::atomic<bool> f_view_clouds{false};     //debug mode: the clouds drawn anyway (play mode always draws them)
+    Mesh* cloud_meshes[2] = {};
+    std::vector<Object*> cloud_sets;            //chunk * 2 + shade
+    std::shared_ptr<const Exploration> clouds_built_for;
+    std::shared_ptr<const ChasmWorld> clouds_built_world;
+    bool f_clouds_shown = false;
+    //Each lattice point's place and the ground its puff sits on - per map, as the exploration changes often.
+    struct CloudSpot{
+        vec2 p;
+        float ground;
+        uint32_t hash;
+    };
+    std::vector<CloudSpot> cloud_lattice;
+    std::shared_ptr<const ChasmWorld> cloud_lattice_world;
+    void BuildCloudScene();                     //from BuildScene
+    void UploadClouds();                        //render thread, from PreRender
+
+    /*
         --- The economy, drawn (ApplicationChasmWorkersView.cpp, and the forest and zones below) -----
         Each worker a walker's figure in his job's tunic, with what he carries on him; one object per
         worker, reused, placed every frame from the published state. Render thread.
     */
-    Mesh* worker_meshes[3 * 2] = {};                //job * 2 + carrying (WORKER_JOB_*)
+    Mesh* worker_meshes[4 * 2] = {};                //job * 2 + carrying (WORKER_JOB_*; the last, no job)
     std::vector<Object*> worker_objects;
     std::vector<int> worker_object_mesh;            //per object: which of worker_meshes it has, -1 none
     void BuildWorkerScene();                        //from BuildScene
@@ -405,6 +444,16 @@ private:
     void SetupInput();
     void UpdateCamera();
     void ApplyCamera();
+    /*
+        --- Play mode (docs/play_mode_plan.md) --------------------------------------------------------
+        DEBUG MODE is the panels shown: the debug views, the tools, the free camera. PLAY MODE is the
+        panels hidden (U, core's f_show_ui; a release exe starts there, a ship exe has no panels):
+        the game's camera and none of the debug views or tools. A VIEW, never a rule - nothing a tick
+        reads may depend on it. Any thread.
+    */
+    bool PlayMode() const;
+    bool f_view_was_play = false;               //render thread: the mode the debug views were last set for
+    void UpdatePlayModeViews();                 //render thread, from PreRender
 
     DirectionalLight* sun = NULL;
     //Where the sun stands relative to what it lights, set in BuildScene.

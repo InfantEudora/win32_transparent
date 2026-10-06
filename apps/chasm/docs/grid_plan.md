@@ -634,6 +634,24 @@ style as archer's waterfall foam.
   puffs left out) and the void shows through; on its crests it heaps, a smaller puff on top of some.
   The roll's deepest dips open smaller holes anywhere. Seed 1: 3,154 puffs -> 2,821. The shades now
   follow the blanket's height (roll and swell). Seeds 1-10 pass, the replay test passes.
+- **Rivers wander and pool** (2026-10-06, `Terrain::BuildRivers`): a river's width now varies along
+  it (`TerrainRiver::half`, per smoothed point): a slow wander of 30% either way, and on the longer
+  rivers a LAKE or two (one per 160 units of course before the fall, two at most, a quarter of
+  rivers one fewer) between 35% and 80% of the way to the fall - a smooth bulge 2.6-4x the river's
+  half-width over 1.6-2.4x that along it. It widens only where it has room: kept
+  `RIVER_LAKE_CLEAR` (bank + wet margin + 7) from every rim and the map's edge, so no lake meets a
+  cliff, and it eases back to the usual width over 25 units toward the source and the fall (whose
+  sheet keeps the layout's width). The edge raster, `RiverCoords`' across and so the channel, the
+  banks, the wet margin, the shader's shore and the water surface all read it; the layout and the
+  grid hash are unchanged. Seed 1: 6080 -> 6405 wet vertices. Seeds 1-20 pass, the replay test
+  passes. The lakes are symmetric about the course - an offset to one side would read as more natural.
+- **The seam at a balcony's end** (2026-10-06, `TerrainMesh.cpp`, `Builder::WallJitter`): a slit
+  through the cliff from the lip down at each end of a balcony. The junction's cell is pinned
+  small (half-edges of 0.3), and a stratum's Jitter (up to 1.4) at one end of such a strip, with
+  the other held still at the cell's centre, swung it round to face away - culled, see-through.
+  The roughness now fades to nothing within 1.5 of a junction (full from 6), still by position
+  alone. A small step between two walls' strata remains where they meet (rows are placed by each
+  wall's share of its drop, and the relief differs between levels).
 - **The foam**: 32 balls per fall that swell, rise and shrink at its foot, one life after another.
   Like the mist it keeps nothing: each ball's position is a function of the clock (tick * step)
   alone, so a paused game holds it still and the same tick always looks the same. View only - not in

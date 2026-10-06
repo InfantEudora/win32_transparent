@@ -108,8 +108,19 @@ extern const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS];
 
 struct TerrainRiver{
     std::vector<vec2> points;   //world, smoothed, from the source; the last runs past the rim
-    float width = 6.0f;         //across the water, world units
+    float width = 6.0f;         //across the water, world units: the layout's, the river's usual width
     float length = 0.0f;        //along `points`
+    /*
+        Half the water's width at each point (2026-10-06): the usual width wandering a little either
+        way along the course, and swelling into a LAKE or two on the longer rivers - only where the
+        rims and the map's edge leave room, and back to `width` toward the source and the fall.
+        Everything that knew the water's edge from `width` reads this instead (Terrain::BuildRivers).
+    */
+    std::vector<float> half;
+    int lakes = 0;
+    float HalfAt(size_t seg, float t) const{
+        return half[seg] + (half[seg + 1] - half[seg]) * t;
+    }
 };
 
 //Where a river goes over the rim: its centre line crossing the rim's line.

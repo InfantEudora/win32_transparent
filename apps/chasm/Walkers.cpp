@@ -103,11 +103,15 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
         return false;
     }
     //A house is walked into only where the walk ends, and out of only where it starts. A winch is
-    //walked through: its plot is the way on to the rope.
-    if (z.storeys[b] > 0 && b != to && z.KindOf(b) != ZONE_KIND_WINCH){
+    //walked through - its plot is the way on to the rope - and so is a camp, open ground between tents.
+    auto passage = [&](int v){
+        int kind = z.KindOf(v);
+        return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_CAMP;
+    };
+    if (z.storeys[b] > 0 && b != to && !passage(b)){
         return false;
     }
-    if (z.storeys[a] > 0 && a != from && z.KindOf(a) != ZONE_KIND_WINCH){
+    if (z.storeys[a] > 0 && a != from && !passage(a)){
         return false;
     }
     //A wall or palisade is crossed at its gate and nowhere else.

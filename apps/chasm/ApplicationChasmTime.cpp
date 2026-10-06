@@ -223,16 +223,39 @@ void ApplicationChasm::DrawOverlay(void){
     if (e && z && e->world == z->world){
         std::array<int,GOOD_COUNT> t = EconomyStoredTotals(*e,*z);
         int food = t[GOOD_WHEAT] + t[GOOD_GREENS] + t[GOOD_BEANS];
-        vec2 q0(p0.x + w * 0.5f - 160.0f * s,p1.y + 6.0f * s);
-        vec2 q1(p0.x + w * 0.5f + 160.0f * s,q0.y + 30.0f * s);
+        int people = (int)e->workers.size();
+        int housed = 0;
+        for (const EconomyWorker& k : e->workers){
+            housed += k.house ? 1 : 0;
+        }
+        //Each item's text, measured, so the bar is as wide as what it says - centred under the date.
+        const uint32_t colours[4] = {UIColor(238,236,226),UIColor(206,160,110),UIColor(236,202,92),UIColor(140,190,240)};
+        char items[4][32];
+        if (housed < people){
+            snprintf(items[0],sizeof(items[0]),"PEOPLE %i/%i",housed,people);  //housed, of all of them
+        }else{
+            snprintf(items[0],sizeof(items[0]),"PEOPLE %i",people);
+        }
+        snprintf(items[1],sizeof(items[1]),"WOOD %i",t[GOOD_WOOD]);
+        snprintf(items[2],sizeof(items[2]),"FOOD %i",food);
+        snprintf(items[3],sizeof(items[3]),"WATER %i",t[GOOD_WATER]);
+        const float size = 16.0f * s;
+        const float gap = 22.0f * s;
+        const float side = 14.0f * s;
+        float widths[4];
+        float total = side * 2.0f + gap * 3.0f;
+        for (int i = 0; i < 4; i++){
+            widths[i] = overlay->MeasureText(items[i],size).x;
+            total += widths[i];
+        }
+        float cx = p0.x + w * 0.5f;
+        vec2 q0(cx - total * 0.5f,p1.y + 6.0f * s);
+        vec2 q1(cx + total * 0.5f,q0.y + 30.0f * s);
         overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
-        const char* names[3] = {"WOOD","FOOD","WATER"};
-        int values[3] = {t[GOOD_WOOD],food,t[GOOD_WATER]};
-        const uint32_t colours[3] = {UIColor(206,160,110),UIColor(236,202,92),UIColor(140,190,240)};
-        float cw = (q1.x - q0.x) / 3.0f;
-        for (int i = 0; i < 3; i++){
-            snprintf(buf,sizeof(buf),"%s %i",names[i],values[i]);
-            overlay->AddText(buf,vec2(q0.x + cw * (i + 0.5f),q0.y + 21.0f * s),16.0f * s,colours[i],UI_ALIGN_CENTER);
+        float x = q0.x + side;
+        for (int i = 0; i < 4; i++){
+            overlay->AddText(items[i],vec2(x,q0.y + 21.0f * s),size,colours[i],UI_ALIGN_LEFT);
+            x += widths[i] + gap;
         }
     }
 }

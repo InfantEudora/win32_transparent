@@ -41,6 +41,7 @@ struct ChasmSave{
     std::vector<Walker> walkers;                        //step 10, with their paths (Walkers.h); absent in older saves
     uint64_t calendar_tick = 0;                         //the date (Calendar.h); absent in older saves, which start in spring
     EconomySaved economy;                               //stocks, felled trees, workers, fields (Economy.h); absent in older saves
+    std::string explored;                               //Exploration::ToString (play_mode_plan.md); absent in older saves, which load all explored
 };
 
 nlohmann::json ChasmSaveToJson(const ChasmSave& s);

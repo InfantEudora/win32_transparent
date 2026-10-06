@@ -9,6 +9,8 @@
 #define WALL_BAND_HEIGHT    6.0f    //a rock stratum; also the wall's vertical resolution
 #define WALL_ROUGHNESS      1.4f    //how far a stratum may stand out or sit back, world units
 #define WALL_NOISE_SCALE    7.0f    //world units over which one stratum's offset changes
+#define WALL_CALM_INNER     1.5f    //no roughness this close to a balcony's junction (Builder::WallJitter)
+#define WALL_CALM_OUTER     6.0f    //full roughness from this far
 
 /*
     The ground's gentle relief, looks only (grid_plan.md section 4: buildable land is flat within a
@@ -90,6 +92,12 @@ class Builder{
 public:
     Builder(const Grid& g, TerrainMeshData& out) : grid(g), data(out){
         origin = g.bounds_min;
+        for (const GridFeature& f : g.layout.features){
+            if (f.kind == GRID_FEATURE_BALCONY && !f.line.points.empty()){
+                junctions.push_back(f.line.points.front());
+                junctions.push_back(f.line.points.back());
+            }
+        }
         vec2 size = g.bounds_max - g.bounds_min;
         data.chunks_x = std::max(1,(int)std::ceil(size.x / TERRAIN_CHUNK_SIZE));
         data.chunks_z = std::max(1,(int)std::ceil(size.y / TERRAIN_CHUNK_SIZE));
@@ -225,8 +233,7 @@ public:
         float drop = top - bottom;
         if (drop <= 0.0f){
             return;
-        }
-        //Row heights below the plateau's level, and each one's stratum index.
+        }        //Row heights below the plateau's level, and each one's stratum index.
         float rows[64];
         int index[64];
         int n = 0;
@@ -247,10 +254,10 @@ public:
             float t1 = (top - rows[j + 1]) / drop;
             bool f_inner0 = j > 0;
             bool f_inner1 = j + 2 < n;
-            vec2 a0 = a + ((f_inner0 && !f_still_a) ? Jitter(a,index[j]) : vec2(0.0f,0.0f));
-            vec2 b0 = b + ((f_inner0 && !f_still_b) ? Jitter(b,index[j]) : vec2(0.0f,0.0f));
-            vec2 a1 = a + ((f_inner1 && !f_still_a) ? Jitter(a,index[j + 1]) : vec2(0.0f,0.0f));
-            vec2 b1 = b + ((f_inner1 && !f_still_b) ? Jitter(b,index[j + 1]) : vec2(0.0f,0.0f));
+            vec2 a0 = a + ((f_inner0 && !f_still_a) ? WallJitter(a,index[j]) : vec2(0.0f,0.0f));
+            vec2 b0 = b + ((f_inner0 && !f_still_b) ? WallJitter(b,index[j]) : vec2(0.0f,0.0f));
+            vec2 a1 = a + ((f_inner1 && !f_still_a) ? WallJitter(a,index[j + 1]) : vec2(0.0f,0.0f));
+            vec2 b1 = b + ((f_inner1 && !f_still_b) ? WallJitter(b,index[j + 1]) : vec2(0.0f,0.0f));
             vec3 A0(a0.x,top_a + (bot_a - top_a) * t0,a0.y);
             vec3 B0(b0.x,top_b + (bot_b - top_b) * t0,b0.y);
             vec3 A1(a1.x,top_a + (bot_a - top_a) * t1,a1.y);
@@ -501,6 +508,25 @@ private:
     const Grid& grid;
     TerrainMeshData& data;
     vec2 origin;
+    std::vector<vec2> junctions;        //where each balcony's line meets its rim's (WALL_CALM_*)
+
+    /*
+        A wall point's Jitter, calmed to nothing at a balcony's junction. The cell a junction falls in
+        is pinned small - its half-edges can be a few tenths of a unit - and a stratum pushed out by
+        up to WALL_ROUGHNESS at one end of such a strip, while its other end holds still at the
+        cell's centre, swings the strip right round: it faces away, is culled, and a slit opens
+        through the cliff from the lip down (seed 1's home balcony). Still a function of position
+        alone, so two cells computing one point agree as before.
+    */
+    vec2 WallJitter(const vec2& p, int band) const{
+        float calm = 1.0f;
+        for (const vec2& j : junctions){
+            float d = (p - j).length();
+            float t = std::max(0.0f,std::min(1.0f,(d - WALL_CALM_INNER) / (WALL_CALM_OUTER - WALL_CALM_INNER)));
+            calm = std::min(calm,t * t * (3.0f - 2.0f * t));
+        }
+        return (calm > 0.0f) ? Jitter(p,band) * calm : vec2(0.0f,0.0f);
+    }
     TerrainChunk* chunk = NULL;
 };
 

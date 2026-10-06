@@ -405,6 +405,17 @@ const char* TerrainBiomeName(int biome){
 
 //--- Rivers --------------------------------------------------------------------------------------
 
+//A river's width along its course (BuildRivers).
+#define RIVER_WANDER        0.30f   //how far the width wanders either way, a share of the usual
+#define RIVER_WANDER_LENGTH 45.0f   //world units of course over which it does
+#define RIVER_EASE          25.0f   //back to the usual width over this much toward the source and the fall
+#define RIVER_LAKE_RUN      160.0f  //a lake per this much course before the fall (two at most)
+#define RIVER_LAKE_FROM     0.35f   //lakes lie between these shares of the way to the fall
+#define RIVER_LAKE_TO       0.80f
+//Water widens only this far short of a rim or the map's edge: past its bank and wet margin, room
+//for a cliff-top path, so a lake never reaches a cliff.
+#define RIVER_LAKE_CLEAR    (TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + 7.0f)
+
 namespace {
 
 //Chaikin's corner cutting, ends kept: a hand-placed line of a few points made into a smooth curve.
@@ -507,6 +518,97 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
         }
     }
 
+    /*
+        --- Each river's width along it (2026-10-06) ---------------------------------------------
+        The layout gives a river one width. Along the course it now WANDERS - a slow noise, a third
+        either way - and the longer rivers swell into a LAKE or two: a smooth bulge several times the
+        river's width over a stretch, the river running in at one end and out at the other. All of
+        it eases back to the usual width toward the source and over the fall (whose sheet is drawn
+        at that width), and it only WIDENS where there is room - kept RIVER_LAKE_CLEAR clear of
+        every rim and of the map's edge, so no lake reaches a cliff. The edge raster below, and
+        so the channel, the banks, the wet margin and the water's surface, all follow it.
+    */
+    for (int ri = 0; ri < (int)rivers.size(); ri++){
+        TerrainRiver& r = rivers[ri];
+        size_t n = r.points.size();
+        std::vector<float> s(n,0.0f);
+        for (size_t i = 1; i < n; i++){
+            s[i] = s[i - 1] + (r.points[i] - r.points[i - 1]).length();
+        }
+        float fall_at = r.length;
+        for (const TerrainFall& f : falls){
+            if (f.river == ri){
+                fall_at = f.along;
+            }
+        }
+        const uint32_t seed = g.settings.seed * 0x9E3779B1u ^ (uint32_t)(ri + 1) * 0x85EBCA77u;
+        auto unit = [seed](uint32_t salt){
+            uint32_t h = seed ^ (salt * 0xC2B2AE3Du);
+            h ^= h >> 15; h *= 0x2C1B3C6Du; h ^= h >> 12; h *= 0x297A2D39u; h ^= h >> 15;
+            return (float)(h & 0xFFFFFF) / (float)0x1000000;
+        };
+        const float base = r.width * 0.5f;
+        //The lakes: one per RIVER_LAKE_RUN of course before the fall (two at most, and sometimes one
+        //fewer), spread over its middle, where the source and the fall are far off.
+        struct Lake{ float at, half, reach; };
+        std::vector<Lake> lakes;
+        int want = std::min(2,(int)(fall_at / RIVER_LAKE_RUN));
+        if (want > 0 && unit(1) < 0.25f){
+            want--;
+        }
+        for (int k = 0; k < want; k++){
+            Lake l;
+            l.at = fall_at * (RIVER_LAKE_FROM + (RIVER_LAKE_TO - RIVER_LAKE_FROM) * ((float)k + 0.2f + 0.6f * unit(2 + k)) / (float)want);
+            l.half = base * (2.6f + 1.4f * unit(10 + k));
+            l.reach = l.half * (1.6f + 0.8f * unit(20 + k));
+            lakes.push_back(l);
+        }
+        //How far a point is from the nearest rim and from the map's edge - the room it has to widen.
+        auto room = [&](const vec2& p){
+            float d = std::min(std::min(p.x - g.bounds_min.x,g.bounds_max.x - p.x),
+                               std::min(p.y - g.bounds_min.y,g.bounds_max.y - p.y));
+            for (size_t fi = 0; fi < features.size(); fi++){
+                if (g.LineKind(g.feature_line_base + (int)fi) != GRID_FEATURE_RIM){
+                    continue;
+                }
+                const std::vector<vec2>& rim = features[fi].points;
+                for (size_t j = 0; j + 1 < rim.size(); j++){
+                    float t;
+                    d = std::min(d,SegmentDistance(p,rim[j],rim[j + 1],t));
+                }
+            }
+            return d - RIVER_LAKE_CLEAR;
+        };
+        r.half.assign(n,base);
+        r.lakes = 0;
+        for (size_t i = 0; i < n; i++){
+            float h = base * (1.0f + RIVER_WANDER * ReliefNoise(vec2(s[i],(float)ri * 53.0f),RIVER_WANDER_LENGTH,seed));
+            for (const Lake& l : lakes){
+                float d = std::fabs(s[i] - l.at) / l.reach;
+                if (d < 1.0f){
+                    float bump = std::cos(d * 1.5707963f);
+                    h = std::max(h,base + (l.half - base) * bump * bump);
+                }
+            }
+            float ease = SmoothStep(0.0f,RIVER_EASE,s[i]) * SmoothStep(0.0f,RIVER_EASE,fall_at - s[i]);
+            h = base + (h - base) * ease;
+            if (h > base){
+                h = std::max(base,std::min(h,room(r.points[i])));
+            }
+            r.half[i] = h;
+        }
+        for (const Lake& l : lakes){
+            //Counted where it came to something: a lake squeezed back by a rim is no lake.
+            float widest = 0.0f;
+            for (size_t i = 0; i < n; i++){
+                if (std::fabs(s[i] - l.at) < l.reach){
+                    widest = std::max(widest,r.half[i]);
+                }
+            }
+            r.lakes += (widest > base * 1.8f) ? 1 : 0;
+        }
+    }
+
     //--- The edge raster: distance past the nearest water edge -------------------------------------
     //Out as far as the relief's fade along a river (BuildRelief), past the wet margin it was made for.
     const float reach = TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + RELIEF_RIVER_FADE + 2.0f;
@@ -516,11 +618,10 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
     edge_h = (int)std::ceil(size.y / edge_cell) + 2;
     edge.assign((size_t)edge_w * edge_h,1e3f);
     for (const TerrainRiver& r : rivers){
-        float half = r.width * 0.5f;
         for (size_t i = 0; i + 1 < r.points.size(); i++){
             vec2 a = r.points[i];
             vec2 b = r.points[i + 1];
-            float pad = half + reach;
+            float pad = std::max(r.half[i],r.half[i + 1]) + reach;
             int x0 = std::max(0,(int)std::floor((std::min(a.x,b.x) - pad - edge_origin.x) / edge_cell));
             int x1 = std::min(edge_w - 1,(int)std::ceil((std::max(a.x,b.x) + pad - edge_origin.x) / edge_cell));
             int z0 = std::max(0,(int)std::floor((std::min(a.y,b.y) - pad - edge_origin.y) / edge_cell));
@@ -529,7 +630,8 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
                 for (int x = x0; x <= x1; x++){
                     vec2 p = edge_origin + vec2(x * edge_cell,z * edge_cell);
                     float t;
-                    float e = SegmentDistance(p,a,b,t) - half;
+                    float d = SegmentDistance(p,a,b,t);
+                    float e = d - r.HalfAt(i,t);
                     float& cell = edge[(size_t)z * edge_w + x];
                     cell = std::min(cell,e);
                 }
@@ -588,13 +690,14 @@ bool Terrain::RiverCoords(const vec2& p, float reach, int& river, float& along, 
             float len = (b - a).length();
             float t;
             float d = SegmentDistance(p,a,b,t);
-            if (d < best && d - r.width * 0.5f < reach){
+            float half = r.HalfAt(i,t);
+            if (d < best && d - half < reach){
                 best = d;
                 river = ri;
                 along = run + len * t;
                 vec2 ab = b - a;
                 float side = ab.x * (p.y - a.y) - ab.y * (p.x - a.x);
-                across = ((side < 0.0f) ? -d : d) / (r.width * 0.5f);
+                across = ((side < 0.0f) ? -d : d) / half;
             }
             run += len;
         }

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-06T10:03:13.081Z
+  modified: 2026-10-06T12:20:36.336Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -77,6 +77,12 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   chasm_economy tool): user rules - a store NEXT TO a workplace takes only its goods (fixed); a free
   store takes all, settable per good; workers walk STRAIGHT where clear, grid A* otherwise; stand-in
   worker per workplace until P4, he carries his own goods; spoilage waits for P5. View by worker 39.
+  Woodcutter piles logs at his hut when no store (never idle in the woods); going home between trees is
+  WANTED (forces house near hut+store). P4 PEOPLE BUILT same day (docs/people_plan.md): settlers only
+  (families 4/3/3, wait at a camp inland of the home balcony), rounds start+end at the HOUSE, jobs
+  automatic by skill vs walk, skill = pace; rivers split the home side until bridges. CAMP is a building
+  kind (tents + fires, house rules, 1 person/plot, walkable), a new map starts with one sized to the
+  settlers. NO day/night (user: none of the references have it); maybe a gradual darker winter later.
   If the user's chasm_nophysics.exe holds the link, link a copy by hand (make -n link line, -o renamed)
   instead of killing it twice.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.

@@ -17,14 +17,14 @@
 //ApplicationChasmRoads.cpp: the walker's figure, origin at the feet, facing +z.
 void BuildWalkerFigure(std::vector<vertex>& out, int tunic_column);
 
-#define WORKER_JOBS         3       //WORKER_JOB_*
+#define WORKER_JOBS         4       //WORKER_JOB_*, and the last for nobody's (WORKER_JOB_NONE)
 #define WORKER_CHOP_RATE    1.6f    //a working woodcutter's swings a second
 #define WORKER_CHOP_BOB     0.07f   //and how far each lifts him
 
 namespace {
 
 //A tunic per job, from the palette's temperate row: the forest's dark green, the wheat, the water.
-const int job_tunics[WORKER_JOBS] = {PAL_PINE_DARK,PAL_FIELD,PAL_WATER};
+const int job_tunics[WORKER_JOBS] = {PAL_PINE_DARK,PAL_FIELD,PAL_WATER,PAL_WALL};    //no job: plain linen
 
 //An axis-aligned box from lo to hi, flat-shaded.
 void Box(std::vector<vertex>& out, const vec3& lo, const vec3& hi, int column){
@@ -115,7 +115,7 @@ void ApplicationChasm::UploadWorkers(){
     bool f_swap = false;
     for (size_t i = 0; i < n; i++){
         const EconomyWorker& k = e->workers[i];
-        int job = std::max(0,std::min(WORKER_JOBS - 1,k.job));
+        int job = (k.job < 0) ? WORKER_JOBS - 1 : std::min(WORKER_JOBS - 1,k.job);
         want[i] = job * 2 + (k.carry > 0 ? 1 : 0);
         f_swap = f_swap || want[i] != worker_object_mesh[i];
     }
@@ -137,6 +137,11 @@ void ApplicationChasm::UploadWorkers(){
             continue;
         }
         const EconomyWorker& k = e->workers[i];
+        //At home, he is indoors (P4): not drawn.
+        if (EconomyIndoors(k)){
+            o->SetVisibility(false);
+            continue;
+        }
         //On the ground of the plot he stands on.
         GridPick pick = w->picker->Pick(k.pos);
         float y = pick.f_hit ? w->terrain->GroundHeight(k.pos,w->terrain->Height(pick.plot)) : 0.0f;

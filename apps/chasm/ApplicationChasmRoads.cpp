@@ -218,7 +218,8 @@ void ApplicationChasm::UploadWalkers(){
 #ifdef DEBUG
     //The paths, rebuilt when the set changes (a plot passed, a plan made), not every frame.
     uint32_t version = (ws && n) ? ws->version : 0;
-    if (version == walker_path_built){
+    //A debug view: not in play mode (UpdatePlayModeViews hides it on the way in).
+    if (version == walker_path_built || PlayMode()){
         return;
     }
     walker_path_built = version;

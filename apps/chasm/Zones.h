@@ -54,6 +54,13 @@
         among its cells' corners and no open chasm - the one exception to "too close to a cliff". It
         lowers to its LANDING (ZoneWinchLanding), a balcony plot nothing may be built on.
 
+    CONSTRUCTION (docs/construction_plan.md): of a plot's storeys, `standing[v]` are built; the rest
+    are a CONSTRUCTION SITE. A debug command builds what it paints at once - standing = storeys on the
+    plots it touches. A PLAY command (Zones::Apply's f_play) only plans: the storeys are the building's,
+    and the rules and the walkers treat them as there, but nothing stands until the economy's builders
+    raise it, a storey at a time (ZONE_OP_BUILD_RAISE), as the wood for it comes in. What a building
+    does - its room, who it houses, whether it is worked - goes by what stands (ZoneBuildingFigures).
+
     A ZoneState is immutable once published (Zones::Publish), the way the world is, and carries the
     world it was painted on: a new map makes every index in it meaningless.
 */
@@ -69,7 +76,8 @@
 #define ZONE_KIND_WATER         4       //a water collector, at a river's bank or a pool
 #define ZONE_KIND_FIELD         5       //on coarse cells, not plots
 #define ZONE_KIND_WINCH         6       //on the rim above a balcony; walkers ride it down (Walkers.h)
-#define ZONE_KIND_COUNT         7
+#define ZONE_KIND_CAMP          7       //tents and fires: a house's rules, a person a tent (docs/people_plan.md)
+#define ZONE_KIND_COUNT         8
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 int ZoneKindMaxStoreys(int kind);
@@ -152,6 +160,7 @@ enum ZoneOp{
     ZONE_OP_GROUND_ERASE,   //plot: no ground
     ZONE_OP_FIELD_CROP,     //coarse cell: its whole field to the crop in value[1] (ZONE_CROP_*)
     ZONE_OP_STORE_ALLOW,    //plot: its store takes the goods in value[1], a mask of GOOD_BIT (economy_plan.md)
+    ZONE_OP_BUILD_RAISE,    //plot: one more of its planned storeys stands - the builders' (construction_plan.md)
     ZONE_OP_COUNT
 };
 const char* ZoneOpName(int op);
@@ -183,6 +192,7 @@ struct ZoneState{
     std::vector<ZoneBuilding> buildings;
     std::vector<uint32_t> building;             //per fine vertex: the building on it, 0 none
     std::vector<uint8_t> storeys;               //per fine vertex: 0 with no building
+    std::vector<uint8_t> standing;              //per fine vertex: of those, how many are built - the rest a site's
     std::vector<uint8_t> ground;                //per fine vertex, ZONE_GROUND_*
     std::vector<uint32_t> field;                //per coarse quad: the field it is part of, 0 none
     //The drag in progress: its stroke number and the building it is making (0: none yet).
@@ -211,6 +221,7 @@ struct ZoneSavedBuilding{
     int crop = ZONE_CROP_WHEAT;
     int allow = GOODS_ALL;                      //a store's own setting
     std::vector<std::pair<int,int>> plots;      //plot, storeys
+    std::vector<int> standing;                  //per plot above, what of it stands - empty: all of it
     std::vector<int> cells;                     //a field's coarse cells
 };
 
@@ -222,7 +233,8 @@ public:
 
     //Applies one command. True if anything changed; otherwise `last_refusal` says why not.
     //`kind` is the ground, building or crop the op takes (ZoneOp); `stroke` the drag it is part of.
-    bool Apply(int op, uint32_t index, int kind = 0, uint32_t stroke = 0);
+    //`f_play`: a player's command, whose building is a construction site until it is raised.
+    bool Apply(int op, uint32_t index, int kind = 0, uint32_t stroke = 0, bool f_play = false);
 
     /*
         Empty zones for `world`, then a saved set put back through the rules, each building under
@@ -233,6 +245,13 @@ public:
                 uint32_t next_id, const std::vector<std::pair<int,int>>& grounds,
                 uint32_t stroke, uint32_t stroke_building);
     std::string last_refusal;
+
+    /*
+        A new colony's camp: from ZoneStartCampPlot outward, plot by plot in the order a flood reaches
+        them, every plot the camp may take, until it has `tents` tents. Through the same rules as a
+        player's camp. Physics thread, on empty zones - a new map, not a load.
+    */
+    void PlaceStartCamp(int tents);
 
     //The current state, read-only. Physics thread.
     const ZoneState& State() const { return state; }
@@ -266,6 +285,25 @@ int ZoneWinchLanding(const ChasmWorld& w, int plot);
 //Every winch as (its plot, its landing), in plot order - the walkers' links between the levels.
 void ZoneWinchLinks(const ChasmWorld& w, const ZoneState& z, std::vector<std::pair<int,int>>& out);
 
+/*
+    THE CAMP (docs/people_plan.md): the settlers' first home - tents and fires, built by a house's rules
+    but one storey high and one person to a plot instead of three to a storey. A plot of a camp has a
+    tent on it, or - one in ZONE_CAMP_FIRE_EVERY, by the plot's own hash - a fire. A new map starts
+    with one, at ZoneStartCampPlot, just big enough for its settlers (Zones::PlaceStartCamp); more can
+    be painted.
+*/
+#define ZONE_CAMP_FIRE_EVERY    5
+bool ZoneCampFire(int plot);
+//Which way a camp plot's tent faces (radians), by the plot's hash - the look and the people agree on it.
+float ZoneCampYaw(int plot);
+//Where someone living in that tent stands when he is home: out in front of its door. People in a camp
+//are never indoors, so a camp full of them shows there are too few houses (the user, 2026-10-06).
+vec2 ZoneCampDoor(const ChasmWorld& w, int plot);
+//How many a camp holds: its tents.
+int ZoneCampTents(const ZoneState& z, uint32_t id);
+//Where a new colony camps: on the home side, inland of its balcony, on flat dry plateau. -1 if nowhere.
+int ZoneStartCampPlot(const ChasmWorld& w);
+
 //Plot v's neighbours along fine edges, each once, in a fixed order. Returns how many (at most `max`).
 int ZonePlotNeighbours(const ChasmWorld& w, int v, int* out, int max);
 
@@ -290,8 +328,10 @@ struct ZoneBuildingInfo{
     int crop = ZONE_CROP_WHEAT;
     int allow = GOODS_ALL;
     int size = 0;
-    int storeys = 0;            //summed over its plots
-    float floor_area = 0.0f;
+    int storeys = 0;            //summed over its plots: standing ones
+    float floor_area = 0.0f;    //standing - what it holds and houses
+    int site_storeys = 0;       //planned and not yet standing: a construction site's
+    float site_area = 0.0f;
 };
 ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, uint32_t id);
 

@@ -2,6 +2,7 @@
 #include "ChasmWorld.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -17,7 +18,8 @@ const char* ZoneOpName(int op){
         case ZONE_OP_GROUND_ERASE:  return "ground_erase";
         case ZONE_OP_FIELD_CROP:    return "field_crop";
         case ZONE_OP_STORE_ALLOW:   return "store_allow";
-        default:                    return "none";
+        case ZONE_OP_BUILD_RAISE:   return "build_raise";
+        default:                   return "none";
     }
 }
 
@@ -43,6 +45,7 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_WATER:       return "water";
         case ZONE_KIND_FIELD:       return "field";
         case ZONE_KIND_WINCH:       return "winch";
+        case ZONE_KIND_CAMP:        return "camp";
         default:                    return "none";
     }
 }
@@ -67,6 +70,7 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_WOODCUTTER:  return 2;
         case ZONE_KIND_WATER:       return 1;
         case ZONE_KIND_WINCH:       return 1;
+        case ZONE_KIND_CAMP:        return 1;
         default:                    return 0;
     }
 }
@@ -199,8 +203,9 @@ int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_
                 roads_out[roads] = u;
             }
             roads++;
-        }else if (z.storeys[u] >= 2){
-            top = std::min(top,(int)z.storeys[u]);
+        }else if (z.standing[u] >= 2){
+            //What stands: a site's storeys bridge nothing yet.
+            top = std::min(top,(int)z.standing[u]);
         }else{
             return 0;           //an open side: nothing to bridge from
         }
@@ -561,6 +566,124 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
     return true;
 }
 
+bool ZoneCampFire(int plot){
+    uint32_t h = (uint32_t)plot * 2654435761u;
+    h ^= h >> 13;
+    h *= 0x5bd1e995u;
+    h ^= h >> 15;
+    return (h % ZONE_CAMP_FIRE_EVERY) == 0;
+}
+
+float ZoneCampYaw(int plot){
+    uint32_t h = (uint32_t)plot * 0x9E3779B1u + 0xCA4Bu;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    return (float)(h % 628) * 0.01f;
+}
+
+#define ZONE_CAMP_DOOR_OUT  1.05f   //from the plot's vertex: past the tent's front end (half its 1.25), and a step
+
+vec2 ZoneCampDoor(const ChasmWorld& w, int plot){
+    float yaw = ZoneCampYaw(plot);
+    return w.grid->fine.pos[plot] + vec2(std::cos(yaw),std::sin(yaw)) * ZONE_CAMP_DOOR_OUT;
+}
+
+int ZoneCampTents(const ZoneState& z, uint32_t id){
+    if (id == 0 || id >= z.buildings.size() || z.buildings[id].kind != ZONE_KIND_CAMP){
+        return 0;
+    }
+    int n = 0;
+    for (size_t v = 0; v < z.building.size(); v++){
+        if (z.building[v] == id && !ZoneCampFire((int)v)){
+            n++;
+        }
+    }
+    return n;
+}
+
+#define ZONE_CAMP_INLAND    30.0f   //from the middle of the home balcony's stretch of rim
+
+int ZoneStartCampPlot(const ChasmWorld& w){
+    const Grid& g = *w.grid;
+    const Terrain& t = *w.terrain;
+    const GridPicker& p = *w.picker;
+    //The home side's balcony - every map has one (gameplay_plan.md) - or, failing that, the east middle.
+    vec2 target((g.bounds_min.x + g.bounds_max.x) * 0.5f + (g.bounds_max.x - g.bounds_min.x) * 0.25f,
+                (g.bounds_min.y + g.bounds_max.y) * 0.5f);
+    for (const GridFeature& f : g.layout.features){
+        if (f.kind == GRID_FEATURE_BALCONY && f.side > 0 && f.line.points.size() >= 3){
+            vec2 chord = (f.line.points.front() + f.line.points.back()) * 0.5f;
+            vec2 out = chord - f.line.points[f.line.points.size() / 2];
+            float l = out.length();
+            if (l > 1e-3f){
+                target = chord + out * (ZONE_CAMP_INLAND / l);
+            }
+            break;
+        }
+    }
+    int best_v = -1;
+    float best = 1e30f;
+    for (size_t v = 0; v < g.fine.pos.size(); v++){
+        if (t.level[v] != TERRAIN_PLATEAU || t.wet[v] || t.Mountain((int)v) || g.fine.f_boundary[v]){
+            continue;
+        }
+        float d = (g.fine.pos[v] - target).length();
+        if (d >= best){
+            continue;
+        }
+        bool f_flat = true;
+        for (int i = 0; i < p.PlotQuadCount((int)v) && f_flat; i++){
+            const GridQuad& q = g.fine.quads[p.PlotQuadCorner((int)v,i) / 4];
+            for (int c = 0; c < 4; c++){
+                f_flat = f_flat && t.level[q.v[c]] == TERRAIN_PLATEAU && !t.wet[q.v[c]];
+            }
+        }
+        if (f_flat){
+            best = d;
+            best_v = (int)v;
+        }
+    }
+    return best_v;
+}
+
+void Zones::PlaceStartCamp(int tents){
+    if (!state.world){
+        return;
+    }
+    const ChasmWorld& w = *state.world;
+    int start = ZoneStartCampPlot(w);
+    if (start < 0){
+        return;
+    }
+    //A stroke number no drag will reach, put back after: the camp is one building, made as a drag is.
+    const uint32_t CAMP_STROKE = 0x7FFFFFu;
+    std::vector<int> queue(1,start);
+    std::vector<uint8_t> seen(state.building.size(),0);
+    seen[start] = 1;
+    int have = 0;
+    for (size_t at = 0; at < queue.size() && have < tents; at++){
+        int v = queue[at];
+        uint32_t joining = state.stroke_building;
+        if (ZoneCanBuild(w,state,v,ZONE_KIND_CAMP,joining,NULL) && Apply(ZONE_OP_BUILD_PAINT,(uint32_t)v,ZONE_KIND_CAMP,CAMP_STROKE)){
+            have += ZoneCampFire(v) ? 0 : 1;
+        }else if (at > 0){
+            continue;   //not a camp plot: the flood goes on only through the camp
+        }
+        int nb[8];
+        int n = ZonePlotNeighbours(w,v,nb,8);
+        for (int j = 0; j < n; j++){
+            if (!seen[nb[j]]){
+                seen[nb[j]] = 1;
+                queue.push_back(nb[j]);
+            }
+        }
+    }
+    state.stroke = 0;
+    state.stroke_building = 0;
+    last_refusal.clear();
+}
+
 void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state = ZoneState();
     state.world = world;
@@ -572,6 +695,7 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state.buildings.assign(1,ZoneBuilding());   //id 0: none
     state.building.assign(g.fine.pos.size(),0);
     state.storeys.assign(g.fine.pos.size(),0);
+    state.standing.assign(g.fine.pos.size(),0);
     state.ground.assign(g.fine.pos.size(),ZONE_GROUND_NONE);
     state.field.assign(g.coarse.quads.size(),0);
     state.chunk_version.assign(world->mesh->chunks.size(),0);
@@ -707,7 +831,7 @@ void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
     }
 }
 
-bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke){
+bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play){
     last_refusal.clear();
     if (!state.world){
         last_refusal = "no world";
@@ -817,6 +941,9 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke){
                     return false;
                 }
                 s++;
+                if (!f_play){
+                    state.standing[plot] = s;   //a debug click builds it, and any site under it, at once
+                }
                 touch_road(plot);     //an arch over a road beside it may come or go
                 break;
             }
@@ -857,6 +984,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke){
             if (bridge >= 0 && ZoneCanBuild(w,state,plot,kind,joining,NULL)){
                 state.building[bridge] = joining;
                 state.storeys[bridge] = 1;
+                state.standing[bridge] = f_play ? 0 : 1;
                 state.buildings[joining].size++;
                 state.built_plots++;
                 touch_road(bridge);
@@ -872,6 +1000,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke){
             state.stroke_building = joining;
             state.building[plot] = joining;
             state.storeys[plot] = 1;
+            state.standing[plot] = f_play ? 0 : 1;      //a player's: a site, until the builders raise it
             state.buildings[joining].size++;
             state.built_plots++;
             touch_road(plot);
@@ -887,10 +1016,12 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke){
             uint8_t& s = state.storeys[plot];
             if (op == ZONE_OP_BUILD_REMOVE && s > 1){
                 s--;
+                state.standing[plot] = std::min(state.standing[plot],s);    //the top comes off, built or not
                 touch_road(plot);
                 break;
             }
             s = 0;
+            state.standing[plot] = 0;
             state.building[plot] = 0;
             state.buildings[id].size--;
             state.built_plots--;
@@ -985,6 +1116,16 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke){
                     }
                 }
             }
+            break;
+        }
+        case ZONE_OP_BUILD_RAISE:{
+            //The builders' work: the next storey of a site stands. Only what was planned.
+            if (plot < 0 || plot >= (int)state.storeys.size() || state.standing[plot] >= state.storeys[plot]){
+                last_refusal = "nothing to build there";
+                return false;
+            }
+            state.standing[plot]++;
+            touch_road(plot);
             break;
         }
         case ZONE_OP_STORE_ALLOW:{
@@ -1092,15 +1233,18 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
         if (b.kind == ZONE_KIND_FIELD || b.id == 0 || state.buildings[b.id].kind == ZONE_KIND_NONE){
             continue;
         }
-        for (const auto& pl : b.plots){
-            int v = pl.first;
+        for (size_t i = 0; i < b.plots.size(); i++){
+            int v = b.plots[i].first;
             if (v < 0 || v >= (int)state.building.size() || state.building[v] ||
                 !ZoneCanBuild(w,state,v,b.kind,0,NULL)){
                 refused++;
                 continue;
             }
             state.building[v] = b.id;
-            state.storeys[v] = (uint8_t)std::max(1,std::min(ZoneKindMaxStoreys(b.kind),pl.second));
+            state.storeys[v] = (uint8_t)std::max(1,std::min(ZoneKindMaxStoreys(b.kind),b.plots[i].second));
+            //A save from before construction has no `standing`: everything in it stood.
+            int st = (i < b.standing.size()) ? b.standing[i] : state.storeys[v];
+            state.standing[v] = (uint8_t)std::max(0,std::min((int)state.storeys[v],st));
             state.buildings[b.id].size++;
             state.built_plots++;
         }
@@ -1140,6 +1284,7 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& state){
         uint32_t id = state.building[v];
         if (id && slot[id] >= 0){
             out[slot[id]].plots.push_back(std::make_pair((int)v,(int)state.storeys[v]));
+            out[slot[id]].standing.push_back((int)state.standing[v]);
         }
     }
     for (size_t c = 0; c < state.field.size(); c++){
@@ -1161,8 +1306,8 @@ ZoneStats ComputeZoneStats(const ChasmWorld& w, const ZoneState& z){
     for (size_t v = 0; v < z.storeys.size(); v++){
         if (z.storeys[v]){
             s.built_plots++;
-            s.storeys += z.storeys[v];
-            s.floor_area[z.KindOf((int)v)] += w.picker->PlotArea((int)v) * z.storeys[v];
+            s.storeys += z.standing[v];
+            s.floor_area[z.KindOf((int)v)] += w.picker->PlotArea((int)v) * z.standing[v];
         }
     }
     for (size_t c = 0; c < z.field.size(); c++){
@@ -1206,8 +1351,11 @@ ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, ui
     }
     for (size_t v = 0; v < z.building.size(); v++){
         if (z.building[v] == id){
-            info.storeys += z.storeys[v];
-            info.floor_area += w.picker->PlotArea((int)v) * z.storeys[v];
+            int site = z.storeys[v] - z.standing[v];
+            info.storeys += z.standing[v];
+            info.floor_area += w.picker->PlotArea((int)v) * z.standing[v];
+            info.site_storeys += site;
+            info.site_area += w.picker->PlotArea((int)v) * site;
         }
     }
     return info;
@@ -1239,7 +1387,7 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
     ZoneState probe = z;
     for (size_t v = 0; v < z.storeys.size(); v++){
         bool f_built = z.building[v] != 0;
-        if (f_built != (z.storeys[v] > 0)){
+        if (f_built != (z.storeys[v] > 0) || z.standing[v] > z.storeys[v]){
             bad++;
             issue("zone building",(int)v,w.grid->fine.pos[v]);
             continue;

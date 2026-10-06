@@ -39,6 +39,7 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_STONE_LIGHT,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},               //water collector
     {PAL_WALL,{PAL_ROOF,PAL_TIMBER},DOOR_CHANCE,DOOR_W,1,0},           //field: never a building on a plot
     {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //winch: drawn by BuildWinch instead
+    {PAL_WALL,{PAL_WALL,PAL_WALL},2,DOOR_W,2,0},                          //camp: drawn by BuildCampPlot instead
 };
 
 /*
@@ -120,12 +121,112 @@ void BuildWinch(const ChasmWorld& w, int plot, std::vector<vertex>& out){
     Beam(out,shed - side * 0.65f,shed + side * 0.65f,y0 + 0.95f,0.14f,1.05f,PAL_STONE_DARK);
 }
 
+#define TENT_LENGTH         1.25f   //along its ridge
+#define TENT_HALF_W         0.55f   //from the ridge out to a side's foot
+#define TENT_HEIGHT         0.85f
+#define FIRE_RING           0.32f   //the stones' circle
+#define FIRE_STONES         7
+
+/*
+    A CAMP's plot (Zones.h, THE CAMP): a tent - an A-frame of canvas on a ridge pole, its door a dark
+    triangle in the front end - or, on one plot in ZONE_CAMP_FIRE_EVERY, a fire: a ring of stones round
+    two crossed logs and a flame, with a log to sit on beside it. Each tent faces its own way and some
+    are a paler canvas, by the plot's hash, so a camp looks pitched by hand rather than laid out.
+*/
+void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column);
+
+void BuildCampPlot(const ChasmWorld& w, int plot, std::vector<vertex>& out){
+    vec2 p = w.grid->fine.pos[plot];
+    float y = w.terrain->ground[plot];
+    uint32_t h = MeshHash((uint32_t)plot,0xCA4Bu);
+    float yaw = ZoneCampYaw(plot);      //the way its people step out of it agrees (ZoneCampDoor)
+    vec2 dir(std::cos(yaw),std::sin(yaw));
+    vec2 side(-dir.y,dir.x);
+    if (ZoneCampFire(plot)){
+        //Stones round the fire, then the logs crossed in it, then the flame - red, and yellow in its heart.
+        for (int i = 0; i < FIRE_STONES; i++){
+            float a = yaw + 6.2831853f * (float)i / FIRE_STONES;
+            Box(out,p + vec2(std::cos(a),std::sin(a)) * FIRE_RING,0.13f,y - 0.02f,y + 0.09f,PAL_STONE);
+        }
+        Beam(out,p - dir * 0.24f,p + dir * 0.24f,y,0.07f,0.08f,PAL_BARK_DARK);
+        Beam(out,p - side * 0.24f,p + side * 0.24f,y + 0.05f,0.07f,0.08f,PAL_BARK_DARK);
+        auto flame = [&](float half, float top, int column){
+            vec3 apex(p.x,y + top,p.y);
+            vec3 c[4];
+            for (int i = 0; i < 4; i++){
+                vec2 q = p + (i & 1 ? side : dir) * ((i & 2) ? -half : half);
+                c[i] = vec3(q.x,y + 0.08f,q.y);
+            }
+            int order[4] = {0,1,2,3};
+            vec2 corner[4] = {dir,side,dir * -1.0f,side * -1.0f};
+            for (int i = 0; i < 4; i++){
+                vec2 o = corner[i] + corner[(i + 1) % 4];
+                MeshTri(out,c[order[i]],c[order[(i + 1) % 4]],apex,vec3(o.x,0.4f,o.y),column);
+            }
+        };
+        flame(0.15f,0.48f,PAL_ACCENT);
+        flame(0.08f,0.62f,PAL_FIELD);
+        //A log to sit on, a little way off.
+        vec2 seat = p - side * 0.85f;
+        Beam(out,seat - dir * 0.4f,seat + dir * 0.4f,y,0.16f,0.18f,PAL_BARK);
+        return;
+    }
+    int canvas = ((h >> 10) % 10 < 7) ? PAL_WALL : PAL_STONE_LIGHT;
+    vec2 f = p + dir * (TENT_LENGTH * 0.5f);
+    vec2 b = p - dir * (TENT_LENGTH * 0.5f);
+    vec3 rf(f.x,y + TENT_HEIGHT,f.y), rb(b.x,y + TENT_HEIGHT,b.y);
+    vec3 lf(f.x + side.x * TENT_HALF_W,y,f.y + side.y * TENT_HALF_W);
+    vec3 lb(b.x + side.x * TENT_HALF_W,y,b.y + side.y * TENT_HALF_W);
+    vec3 qf(f.x - side.x * TENT_HALF_W,y,f.y - side.y * TENT_HALF_W);
+    vec3 qb(b.x - side.x * TENT_HALF_W,y,b.y - side.y * TENT_HALF_W);
+    //The two sloping sides, and the two ends.
+    MeshQuad(out,lb,lf,rf,rb,vec3(side.x,0.6f,side.y),canvas);
+    MeshQuad(out,qb,qf,rf,rb,vec3(-side.x,0.6f,-side.y),canvas);
+    MeshTri(out,lf,qf,rf,vec3(dir.x,0.0f,dir.y),canvas);
+    MeshTri(out,lb,qb,rb,vec3(-dir.x,0.0f,-dir.y),canvas);
+    //The door: a dark triangle a hair in front of the front end, a little under half its height.
+    vec2 d = f + dir * FACE_OUT;
+    vec3 dl(d.x + side.x * TENT_HALF_W * 0.38f,y,d.y + side.y * TENT_HALF_W * 0.38f);
+    vec3 dr(d.x - side.x * TENT_HALF_W * 0.38f,y,d.y - side.y * TENT_HALF_W * 0.38f);
+    vec3 dt(d.x,y + TENT_HEIGHT * 0.62f,d.y);
+    MeshTri(out,dl,dr,dt,vec3(dir.x,0.0f,dir.y),PAL_BARK_DARK);
+    //The ridge pole, standing a little proud at both ends.
+    Beam(out,b - dir * 0.08f,f + dir * 0.08f,y + TENT_HEIGHT - 0.02f,0.05f,0.05f,PAL_TIMBER);
+}
+
+/*
+    A slab standing out of a wall: from u0 to u1 along it (`dir`, from `c`), y0 to y1 up, `depth`
+    out (`out2`). Its back is against the wall and never seen, so it has five faces.
+*/
+void WallSlab(std::vector<vertex>& out, const vec2& c, const vec2& dir, const vec2& out2, const vec3& outward,
+              float u0, float u1, float y0, float y1, float depth, int column){
+    auto P = [&](float u, float y, float d){
+        vec2 q = c + dir * u + out2 * d;
+        return vec3(q.x,y,q.y);
+    };
+    vec3 side(dir.x,0.0f,dir.y);
+    MeshQuad(out,P(u0,y0,depth),P(u1,y0,depth),P(u1,y1,depth),P(u0,y1,depth),outward,column);
+    MeshQuad(out,P(u0,y1,0.0f),P(u1,y1,0.0f),P(u1,y1,depth),P(u0,y1,depth),vec3(0,1,0),column);
+    MeshQuad(out,P(u0,y0,0.0f),P(u1,y0,0.0f),P(u1,y0,depth),P(u0,y0,depth),vec3(0,-1,0),column);
+    MeshQuad(out,P(u0,y0,0.0f),P(u0,y1,0.0f),P(u0,y1,depth),P(u0,y0,depth),side * -1.0f,column);
+    MeshQuad(out,P(u1,y0,0.0f),P(u1,y1,0.0f),P(u1,y1,depth),P(u1,y0,depth),side,column);
+}
+
 /*
     A window or door: a dark rectangle a hair in front of the wall a->b (facing `out`), centred at
-    `t` along it, between heights y0 and y1.
+    `t` along it, between heights y0 and y1 - set into a SURROUND of the wall's own colour that
+    stands out from the wall around it (jambs and a head, and a sill under a window). The pane then
+    sits back inside it, and the sun lights the surround's inner faces differently from its front:
+    the depth of an inset without cutting a hole in the wall.
 */
+#define SURROUND_W          0.05f   //a jamb's or head's width, world units
+#define SURROUND_DEPTH      0.07f   //how far the surround stands out of the wall
+#define SILL_OVERHANG       0.04f   //a sill past the jambs either side
+#define SILL_DEPTH          0.11f
+#define SILL_H              0.045f
+
 void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3& outward, float t,
-             float half_w, float y0, float y1, int column){
+             float half_w, float y0, float y1, int column, int surround_column, bool f_sill){
     vec2 dir = b - a;
     float len = dir.length();
     if (len < 1e-4f){
@@ -134,10 +235,20 @@ void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3&
     dir = dir / len;
     half_w = std::min(half_w,len * 0.38f);
     vec2 c = a + (b - a) * t;
-    vec2 off(outward.x * FACE_OUT,outward.z * FACE_OUT);
+    vec2 out2(outward.x,outward.z);
+    vec2 off = out2 * FACE_OUT;
     vec2 l = c - dir * half_w + off;
     vec2 r = c + dir * half_w + off;
     MeshQuad(out,vec3(l.x,y0,l.y),vec3(r.x,y0,r.y),vec3(r.x,y1,r.y),vec3(l.x,y1,l.y),outward,column);
+    //The surround: two jambs, a head across their tops, and under a window a sill wider than both.
+    const float w = SURROUND_W;
+    WallSlab(out,c,dir,out2,outward,-half_w - w,-half_w,y0,y1 + w,SURROUND_DEPTH,surround_column);
+    WallSlab(out,c,dir,out2,outward,half_w,half_w + w,y0,y1 + w,SURROUND_DEPTH,surround_column);
+    WallSlab(out,c,dir,out2,outward,-half_w,half_w,y1,y1 + w,SURROUND_DEPTH,surround_column);
+    if (f_sill){
+        WallSlab(out,c,dir,out2,outward,-half_w - w - SILL_OVERHANG,half_w + w + SILL_OVERHANG,
+                 y0 - SILL_H,y0,SILL_DEPTH,surround_column);
+    }
 }
 
 //A box standing on (x, z) from y0 to y1, `w` across, square to the world axes - a chimney.
@@ -206,6 +317,13 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_WINCH){
             if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
                 BuildWinch(w,v,out);
+            }
+            s[k] = 0;
+        }
+        //A camp is no house body either: a tent or a fire on each of its plots, the same way.
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_CAMP){
+            if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+                BuildCampPlot(w,v,out);
             }
             s[k] = 0;
         }
@@ -338,11 +456,11 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                     bool f_door = (st == 0) && (f_into_arch || wall_hash % (uint32_t)kl.door_chance == 0);
                     if (f_door){
                         Opening(out,a,b,outward,0.5f,kl.door_w * 0.5f,floor_y,floor_y + DOOR_H,
-                                (kl.wall == PAL_BARK_DARK) ? PAL_STONE_DARK : PAL_BARK_DARK);
+                                (kl.wall == PAL_BARK_DARK) ? PAL_STONE_DARK : PAL_BARK_DARK,kl.wall,false);
                     }else if ((wall_hash >> 8) % (uint32_t)kl.window_every == 0){
                         float y0 = floor_y + ZONE_STOREY_HEIGHT * WINDOW_SILL;
                         Opening(out,a,b,outward,0.5f,WINDOW_W * 0.5f,y0,y0 + WINDOW_H,
-                                (kl.wall == PAL_TIMBER) ? PAL_BARK_DARK : PAL_TIMBER);
+                                (kl.wall == PAL_TIMBER) ? PAL_BARK_DARK : PAL_TIMBER,kl.wall,true);
                     }
                 }
             }

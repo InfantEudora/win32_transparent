@@ -84,3 +84,4 @@
 - [Core features over workarounds](core_features_over_workarounds.md) — missing general engine feature? add it to core (defaults unchanged), never an app-side fake; no need to build other apps
 - [Solid custom shader flags](solid_custom_shader_flags.md) — opaque mesh on a custom shader needs f_writes_gbuffer+f_lit+f_casts_shadow+f_solid (2026-10-06) or loses shadows/SSAO; re-tag after SetMeshData
 - [Object::SetMesh releases the old mesh](object_setmesh_releases_old.md) — swapping objects among a pool of meshes frees them unless each is Retained; GL invalid-VAO spam then heap corruption
+- [Chasm cliff kit](chasm_cliff_kit.md) — blender_chasm_cliffs.py: aigen_1 chasm as a FRESH rift (jagged, cracks inland, matching walls, spike rocks; not flowery); palette row 0 warmed; arch still weak

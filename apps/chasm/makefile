@@ -44,6 +44,8 @@ APP_SRCS += Economy.cpp
 APP_SRCS += ApplicationChasmEconomy.cpp
 APP_SRCS += ApplicationChasmWorkersView.cpp
 APP_SRCS += ApplicationChasmPiles.cpp
+APP_SRCS += Exploration.cpp
+APP_SRCS += ApplicationChasmExplore.cpp
 
 #NO PHYSICS: the grid, the terrain and the colony are this app's own rules, and nothing here
 #creates a PhysicsWorld. See the USE_PHYSICS block in engine.mk.
