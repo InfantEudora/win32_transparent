@@ -91,7 +91,7 @@ placement carries a flag saying so), set by whoever issued it.
 
 ## The ghost (2026-10-06)
 
-In play mode the line mesh is gone (it stays for a bridge's drag, the chain green or red); a paint tool
+In play mode the line mesh is gone (since 2026-10-07 for the bridge too); a paint tool
 shows a GHOST of what it would place instead (`ApplicationChasmGhost.cpp`): see-through
 (`chasm_ghost.frag`, lit, alpha 0.45, no depth write), green where the rules allow it and red where they
 refuse, with the outline pass round it in the same colour.
@@ -100,7 +100,14 @@ refuse, with the outline pass round it in the same colour.
   one storey more (the existing storeys sink into the real ones; the new one shows on top). Built with
   `BuildHouseCell` on a cut-down ZoneState, as the selection's outline mesh is.
 - Garden, lot, road: the plot's ground as a tile; field: the coarse cell; erase: what would go, in red.
-- Play mode's own rule counts: red under the clouds.
+- Winch (2026-10-07): the gantry as above, plus its plot as a tile and its landing on the balcony as
+  another - the gantry is thin, and absent wherever there is no balcony to lower to, which was most of
+  the map showing nothing at all.
+- Bridge (2026-10-07): tiles, as a road's line. Before the press the bank it would start from (dry, free);
+  dragged, the whole `ZoneBridgeChain` to the cursor in one colour, since the verdict is the whole
+  bridge's. A tile never lies below the deck's height (`BuildPlotTile`'s `floor`), so over the water it is
+  where the deck will run rather than on the river bed.
+- Play mode's own rule counts: red under the clouds - for a bridge, at both ends.
 - Rebuilt only when the hover, tool, zones or exploration there change (`GhostKey`).
 - `chasm_tool hover_x/hover_z` pins the hover for a script (a script has no mouse); `hover_release`
   frees it. The tool's name table now covers camp and bridge too (it read past its end for them).

@@ -652,7 +652,47 @@ void Window::SetFullscreen(bool f_on){
     }
 }
 
+/*
+    Where Resize puts the window: centred on the work area of the monitor it is on - the work area
+    being the monitor minus the taskbar, so the window is centred in the space actually free for it.
+    It used to be a fixed 400,320, which put the bottom of anything taller than about 720 px below
+    the edge of a 1080p screen: chasm's 1440x810 ended at y=1169. A window bigger than the work area
+    keeps its top-left corner on it instead, so the title bar is always there to drag.
+
+    `outer` is the size of the whole window, frame included. The result is in SCREEN coordinates;
+    `workspace_offset` is what to subtract to get the WORKSPACE coordinates WINDOWPLACEMENT wants
+    instead. Those are measured from the work area, so they differ from screen coordinates whenever
+    the taskbar is at the top or on the left, and mixing the two up makes a window creep across the
+    screen a taskbar's width at a time.
+
+    MonitorFromWindow on a minimised window answers for where it will be restored to, which is the
+    monitor the --minimized branch of Resize wants.
+*/
+static RECT CenteredWindowRect(HWND hWnd, int outer_width, int outer_height, POINT* workspace_offset){
+    RECT rect = {400, 320, 400 + outer_width, 320 + outer_height};     //only if no monitor answers
+    *workspace_offset = {0, 0};
+    MONITORINFO monitor = {};
+    monitor.cbSize = sizeof(monitor);
+    if (!GetMonitorInfo(MonitorFromWindow(hWnd,MONITOR_DEFAULTTONEAREST),&monitor)){
+        return rect;
+    }
+    const RECT& work = monitor.rcWork;
+    int left = work.left + ((work.right - work.left) - outer_width) / 2;
+    int top = work.top + ((work.bottom - work.top) - outer_height) / 2;
+    if (left < work.left){
+        left = work.left;
+    }
+    if (top < work.top){
+        top = work.top;
+    }
+    rect = {left, top, left + outer_width, top + outer_height};
+    *workspace_offset = {work.left - monitor.rcMonitor.left, work.top - monitor.rcMonitor.top};
+    return rect;
+}
+
 void Window::Resize(int _width, int _height){
+    POINT workspace_offset;
+    RECT target = CenteredWindowRect(hWnd, _width + 16, _height + 39, &workspace_offset);
     /*
         A MINIMISED window gets no WM_SIZE for this, so without the branch below the renderer
         would keep drawing at whatever size the window was created at. That is exactly the state
@@ -671,10 +711,10 @@ void Window::Resize(int _width, int _height){
         WINDOWPLACEMENT placement = {};
         placement.length = sizeof(placement);
         if (GetWindowPlacement(hWnd,&placement)){
-            placement.rcNormalPosition.left = 400;
-            placement.rcNormalPosition.top = 320;
-            placement.rcNormalPosition.right = 400 + _width + 16;
-            placement.rcNormalPosition.bottom = 320 + _height + 39;
+            placement.rcNormalPosition.left = target.left - workspace_offset.x;
+            placement.rcNormalPosition.top = target.top - workspace_offset.y;
+            placement.rcNormalPosition.right = target.right - workspace_offset.x;
+            placement.rcNormalPosition.bottom = target.bottom - workspace_offset.y;
             placement.showCmd = SW_SHOWMINNOACTIVE;
             SetWindowPlacement(hWnd,&placement);
         }
@@ -687,7 +727,7 @@ void Window::Resize(int _width, int _height){
         f_resized = true;
         return;
     }
-    MoveWindow(hWnd,400,320,_width + 16,_height + 39,true);
+    MoveWindow(hWnd,target.left,target.top,target.right - target.left,target.bottom - target.top,true);
 }
 
 void Window::SetOnFileDropped(std::function<void(std::string)> callback){

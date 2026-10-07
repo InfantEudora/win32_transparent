@@ -60,7 +60,7 @@ together.
   and each chain plot gets a tile. The ghost is tinted as ONE mesh (`f_ghost_ok`), so a per-plot verdict
   (`ZoneCanGround`: green allowed, red refused) needs a second ghost object for the red plots, or a
   vertex colour. In debug mode the line pick view draws the chain too, beside the bridge's preview (play
-  mode hides the pick view for every tool but the bridge).
+  mode hides the pick view for every tool, the bridge included since 2026-10-07: its chain is ghost tiles).
 - On release the chain goes out as one stroke of per-plot `ZONE_OP_GROUND_PAINT` commands with the play
   flag. They are recorded like every zone command, so working out the chain need not be deterministic.
   Refused plots are skipped - a road broken at a river is where a bridge goes. A refusal shows above the

@@ -1329,10 +1329,10 @@ void ApplicationChasm::UpdatePickView(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     /*
         Play mode selects by outline (selection_plan.md) and shows a paint tool as a GHOST of what it would
-        place (UpdateGhost): the line mesh is only a bridge's chain there, while one is dragged. Checked
-        every frame, since neither the mode nor the tool moves the pick; drawn again whole once it is back.
+        place (UpdateGhost) - a bridge's chain too - so the line mesh is debug mode's alone. Checked every
+        frame, since the mode does not move the pick; drawn again whole once it is back.
     */
-    if (PlayMode() && paint_tool != CHASM_TOOL_BRIDGE){
+    if (PlayMode()){
         pick_view->SetVisibility(false);
         pick_view_built_version = -1;
         return;

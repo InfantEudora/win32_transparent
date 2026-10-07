@@ -5,6 +5,8 @@
 #include "BoundaryMesh.h"
 #include "RoadMesh.h"
 
+#include <algorithm>
+
 #define GROUND_LIFT         0.04f   //a garden or lot plot above the ground's relief
 
 namespace {
@@ -71,12 +73,12 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
     }
 }
 
-void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out){
+void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out, float floor){
     const GridPicker& p = *w.picker;
     const Grid& g = *w.grid;
     float level = w.terrain->Height(v);
     auto at = [&](const vec2& x){
-        return vec3(x.x,w.terrain->GroundHeight(x,level) + lift,x.y);
+        return vec3(x.x,std::max(w.terrain->GroundHeight(x,level) + lift,floor),x.y);
     };
     for (int i = 0; i < p.PlotQuadCount(v); i++){
         int qc = p.PlotQuadCorner(v,i);

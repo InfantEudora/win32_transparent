@@ -27,6 +27,7 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
 
 //Plot v's own ground - the quarters of the cells round it - as a flat tile laid `lift` over the relief,
 //appended to `out`: the play mode's ghost of a ground tool, and a lot's outline when it is highlighted.
-void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out);
+//Nowhere below `floor`: a bridge's ghost lies on its deck over the water, not on the river bed under it.
+void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out, float floor = -1e30f);
 
 #endif

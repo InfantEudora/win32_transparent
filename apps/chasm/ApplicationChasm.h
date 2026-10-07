@@ -393,9 +393,11 @@ private:
         int plot = -1, coarse = -1, tool = -1;
         bool f_explored = false;
         uint32_t line_version = 0;              //a road being drawn: its chain (0 with none)
+        int bridge_from = -1;                   //a bridge being dragged: the bank it starts from
         bool operator==(const GhostKey& o) const{
             return world == o.world && zones_version == o.zones_version && plot == o.plot && coarse == o.coarse
-                   && tool == o.tool && f_explored == o.f_explored && line_version == o.line_version;
+                   && tool == o.tool && f_explored == o.f_explored && line_version == o.line_version
+                   && bridge_from == o.bridge_from;
         }
     };
     GhostKey ghost_built;

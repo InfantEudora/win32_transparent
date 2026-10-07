@@ -21,6 +21,15 @@
     A ROAD BEING DRAWN (docs/line_works_plan.md) is the whole line, a tile a plot, each green or red by
     itself: a plot the line may not take carries a negative u, which chasm_ghost.frag tints red whatever
     the ghost's tint - so one mesh, one object, and the outline green while any of it will be placed.
+
+    A BRIDGE (docs/bridge_plan.md) is tiles too: before the press, the bank it would start from; dragged,
+    the whole chain to the cursor, all one colour, since the rules are the whole bridge's (ZoneBridgeChain)
+    and neither end may be under the clouds. Over the water a tile lies at the deck's height, where the
+    bridge will run, rather than on the river bed out of sight.
+
+    A WINCH is a thin gantry, and none at all where there is no balcony below to lower to - which is most
+    of the map, so most of where the cursor goes showed nothing. Its plot is laid as a tile under the
+    gantry, and the landing it lowers to as another.
 */
 
 #define GHOST_LIFT          0.06f       //a ground ghost over the ground's relief, clear of the ground's own fill
@@ -138,7 +147,8 @@ void ApplicationChasm::UpdateGhost(){
         line_at = line_version.load();
     }
     bool f_line = !chain.empty();
-    bool f_tool = tool != CHASM_TOOL_SELECT && tool != CHASM_TOOL_BRIDGE && tool != CHASM_TOOL_WALKER;
+    int from = (tool == CHASM_TOOL_BRIDGE) ? bridge_from.load() : -1;
+    bool f_tool = tool != CHASM_TOOL_SELECT && tool != CHASM_TOOL_WALKER;
     bool f_show = PlayMode() && f_tool && (hover.f_hit || f_line) && w && zs && zs->world == w;
     if (!f_show){
         if (ghost->IsVisible()){
@@ -162,8 +172,13 @@ void ApplicationChasm::UpdateGhost(){
         vec2 where = f_field ? (cw.grid->FineQuadCentre(hover.coarse_quad * 4) + cw.grid->FineQuadCentre(hover.coarse_quad * 4 + 2)) * 0.5f
                              : cw.grid->fine.pos[hover.plot];
         key.f_explored = !ex || ex->Explored(where);
+        //A bridge's far end is under the cursor; its near one, where the press was, is held to the clouds too.
+        if (ex && from >= 0 && from < (int)cw.grid->fine.pos.size()){
+            key.f_explored = key.f_explored && ex->Explored(cw.grid->fine.pos[from]);
+        }
     }
     key.line_version = f_line ? line_at : 0;
+    key.bridge_from = from;
     if (key == ghost_built){
         return;
     }
@@ -198,17 +213,36 @@ void ApplicationChasm::UpdateGhost(){
                 }
             }
         }
+    }else if (tool == CHASM_TOOL_BRIDGE){
+        //Not yet pressed, or back over where it was: the bank it would start from, dry and free.
+        std::vector<int> span;
+        if (from >= 0 && from != plot){
+            f_ok = ZoneBridgeChain(cw,z,from,plot,span,NULL);
+        }else{
+            span.push_back(plot);
+            f_ok = !cw.terrain->wet[plot] && ZoneCanBuild(cw,z,plot,ZONE_KIND_BRIDGE,0,NULL);
+        }
+        for (int v : span){
+            BuildPlotTile(cw,v,GHOST_LIFT,verts,terrain_levels[cw.terrain->level[v]].height + ZONE_BRIDGE_DECK);
+        }
     }else if (kind != ZONE_KIND_NONE){
         //A click on a building is one storey more of it, whatever the tool; on empty ground, a new one.
         uint32_t on = z.building[plot];
+        int shown = on ? z.buildings[on].kind : kind;
         if (on){
-            int on_kind = z.buildings[on].kind;
-            int top = ZoneKindMaxStoreys(on_kind);
+            int top = ZoneKindMaxStoreys(shown);
             f_ok = z.storeys[plot] < top;
-            GhostBuildingPlot(cw,z,plot,on_kind,std::min(top,z.storeys[plot] + 1),on,verts);
+            GhostBuildingPlot(cw,z,plot,shown,std::min(top,z.storeys[plot] + 1),on,verts);
         }else{
             f_ok = ZoneCanBuild(cw,z,plot,kind,0,NULL);
             GhostBuildingPlot(cw,z,plot,kind,1,0,verts);
+        }
+        if (shown == ZONE_KIND_WINCH){
+            GhostPlotTile(cw,plot,verts);
+            int landing = ZoneWinchLanding(cw,plot);
+            if (landing >= 0){
+                GhostPlotTile(cw,landing,verts);
+            }
         }
     }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || tool == CHASM_TOOL_ROAD){
         int ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : (tool == CHASM_TOOL_LOT) ? ZONE_GROUND_LOT : ZONE_GROUND_ROAD;
