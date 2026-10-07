@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include "type_vec2.h"
+#include "Calendar.h"
 #include "Goods.h"
 #include "Zones.h"
 
@@ -32,10 +33,10 @@ class Walkers;
     A store split by an erase shares its stock out by floor area: the largest piece keeps its id and
     the rest of it (Zones::SplitAfterRemoval names each new piece's parent, ZoneBuilding::split_from).
     A store pulled down loses what it held.
-    A HOUSE has room too, smaller (ECONOMY_HOUSE_ROOM), for what its family keeps at home - food and
-    firewood (ECONOMY_HOUSE_KEEPS, `keeps`) - shared out on a split like a store's. Ready for P5, where
-    people eat and burn wood (gameplay_plan.md); nothing carries goods home yet, so a house is not in
-    `accepts` and no carrier delivers to one.
+    A HOUSE has room too, smaller (ECONOMY_HOUSE_ROOM), for what its family keeps at home - food, water
+    and firewood (ECONOMY_HOUSE_KEEPS, `keeps`) - shared out on a split like a store's. Its family eats
+    and drinks from it (NEEDS, below). It is not in `accepts`: no carrier delivers to a house - its own
+    family fetches (needs_plan.md, step 2).
 
     --- PEOPLE (docs/people_plan.md, P4) ---------------------------------------------------------------
     The colony is the SETTLERS it starts with - families of adults, each with base skills (SKILL_*,
@@ -95,14 +96,26 @@ class Walkers;
     wall. His `site` names the plot as a ground site does. Done with a piece, he takes the next one along
     the line within ECONOMY_ROAD_REACH of him, up to ECONOMY_ROAD_STINT pieces a trip, and goes home.
 
+    --- NEEDS (docs/needs_plan.md, P5) -----------------------------------------------------------------
+    A person has HEALTH and WATER, each counted in ticks of life left, one gone every tick: full health
+    (NEEDS_HEALTH_FULL) is five days without food, a full water bar (NEEDS_WATER_FULL) three. HEALTH IS
+    THE FOOD METER - there is no hunger of its own (the user's): food comes in whole units, so what a
+    food is worth is the health it gives (EconomyFoodWorth) - wheat a day, greens half a day, beans two.
+    With the water bar empty he is DRY: health falls three times as fast and food no longer raises it,
+    so eating cannot outrun thirst. He eats and drinks AT HOME and nowhere else, from his house's stock
+    or his camp's supplies, and only a whole unit that fits under full, so nothing is wasted - of the
+    foods that fit, the one that keeps worst first. Health at nothing, he dies: struck from the colony
+    and written into `dead`. Nobody leaves and nobody arrives, so a colony that cannot feed itself dies
+    out - the first way to lose.
+
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
     a world): standing, felled with its log lying, or a stump with the log taken. Saved and hashed.
 */
 
 #define ECONOMY_STORE_ROOM          5.0f    //units of goods per unit of floor area: about 20 a plot-storey
-#define ECONOMY_HOUSE_ROOM          1.5f    //a house's, for its own food and firewood: about 6 a plot-storey
-#define ECONOMY_HOUSE_KEEPS         (GOODS_FOOD | GOOD_BIT(GOOD_WOOD))
+#define ECONOMY_HOUSE_ROOM          1.5f    //a house's, for its own food, water and firewood: about 6 a plot-storey
+#define ECONOMY_HOUSE_KEEPS         (GOODS_FOOD | GOOD_BIT(GOOD_WOOD) | GOOD_BIT(GOOD_WATER))
 #define ECONOMY_LOAD                5       //what a farmer or a water carrier carries at once
 #define ECONOMY_WOOD_PER_TREE       4
 #define ECONOMY_HUT_PILE            24      //wood piled outside the hut when no store takes it: 6 logs
@@ -131,6 +144,18 @@ inline int EconomyGroundSitePlot(uint32_t site){ return (int)(site & ~ECONOMY_SI
 #define ECONOMY_START_WHEAT         20
 #define ECONOMY_START_BEANS         10
 #define ECONOMY_START_WATER         20
+
+//Needs (needs_plan.md), in ticks of life left - first numbers, to be tuned once a colony runs on them.
+#define NEEDS_HEALTH_FULL           (5 * CALENDAR_DAY_TICKS)    //five days without food, from full
+#define NEEDS_WATER_FULL            (3 * CALENDAR_DAY_TICKS)    //three days without water
+#define NEEDS_WATER_WORTH           CALENDAR_DAY_TICKS          //a unit of water: a day of the bar
+#define NEEDS_DRY_DRAIN             2                           //health a tick more, dry: three times as fast
+//The health a unit of food gives: wheat a day, greens half a day, beans two (the user's); 0 for no food.
+int EconomyFoodWorth(int good);
+//What a person died of. Never renumber: saves hold these.
+#define NEEDS_DIED_HUNGER           0
+#define NEEDS_DIED_THIRST           1       //dry when his health ran out
+const char* EconomyDeathCause(int cause);
 
 //The base skills (gameplay_plan.md, "People" - the proposal; names may change). Never renumber.
 #define SKILL_STRENGTH          0       //woodcutter, carrier, builder
@@ -200,6 +225,23 @@ struct EconomyWorker{
     float along = 0.0f;
     vec2 pos;                   //where he stands now - kept, so a re-plan starts from exactly here
     bool f_indoors = false;     //in his house (or tent): arrived home, and not set out since
+    int health = NEEDS_HEALTH_FULL;     //ticks of life left (NEEDS, above)
+    int water = NEEDS_WATER_FULL;       //ticks until he is dry
+};
+
+//Dry: his water bar empty - losing health three times as fast, and food doing him no good.
+inline bool EconomyDry(const EconomyWorker& k){
+    return k.water <= 0;
+}
+
+//Someone who died, and of what: the colony's record of its dead, in the order they died.
+struct EconomyDeath{
+    uint32_t id = 0;
+    uint32_t family = 0;
+    bool f_female = false;      //with the id and family, his name (EconomyDeathName)
+    int age = 0;
+    uint64_t tick = 0;          //the calendar's
+    int cause = NEEDS_DIED_HUNGER;
 };
 
 struct EconomyField{
@@ -214,6 +256,7 @@ struct EconomyState{
     std::vector<uint8_t> prop_state;                    //by prop index (ForestData::props)
     std::vector<EconomyWorker> workers;                 //THE PEOPLE, in id order
     uint32_t next_person = 1;
+    std::vector<EconomyDeath> dead;                     //in the order they died
     std::vector<EconomyField> fields;                   //in id order
     std::vector<int> site;                              //by building id: wood brought to its construction
     std::vector<int> ground_site;                       //by plot: wood brought to a garden's or lot's
@@ -239,6 +282,7 @@ struct EconomySaved{
     std::vector<std::pair<uint32_t,int>> sites;         //sites with wood brought: building, wood
     std::vector<std::pair<int,int>> ground_sites;       //gardens and lots with wood brought: plot, wood
     uint32_t next_person = 1;
+    std::vector<EconomyDeath> dead;
 };
 
 class Economy{
@@ -298,6 +342,9 @@ private:
     bool AtHome(const EconomyWorker& k) const;
     bool CanWalk(const ZoneState& z, Walkers& walkers, const vec2& from, int to);
     bool FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //Needs: every person's tick of health and water, a meal and a drink at home, and the dead struck off.
+    void Needs(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick);
+    void EatAndDrink(EconomyWorker& k, const ZoneState& z);
     //Construction: what a site still wants, carrying for one, and building with what it has. A site is
     //a building id or a garden or lot plot (ECONOMY_SITE_GROUND).
     int SiteNeed(const ZoneState& z, uint32_t id) const;
@@ -346,6 +393,7 @@ float EconomySkillFactor(int skill);
 int EconomySettlerCount();
 //A person's name, from his id and his family's: for the panel and the tools.
 std::string EconomyPersonName(const EconomyWorker& k);
+std::string EconomyDeathName(const EconomyDeath& d);
 //Inside his house or tent, so not drawn.
 inline bool EconomyIndoors(const EconomyWorker& k){
     return k.f_indoors && k.house != 0 && k.state == WORKER_AT_HOME;

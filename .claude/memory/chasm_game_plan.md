@@ -98,6 +98,11 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   placed whole (ZONE_OP_BRIDGE, ZoneBridgeChain: dry ends, wet between, water <= 2x river width),
   wood-built from the banks in, deck drawn straight between the dry ends; tool J; chasm_bridge.
   User: make a NEW replay test recording on the new generator when we next do replays.
+  P5 NEEDS AGREED 2026-10-07 (docs/needs_plan.md, not built): HEALTH is the food meter (-20%/day; wheat
+  +20, greens +10, beans +40), a THIRST bar (3 days, then health falls faster), COLD the same in winter.
+  People STARVE - no leaving, no immigrants. Target: one field cell feeds one person a year. Numbers to tune.
+  User: they eat ONLY AT HOME (forces fetching). STEP 1 BUILT same day (Economy::Needs/EatAndDrink, health+
+  water per person in ticks, EconomyState::dead): until step 2 (fetching) a housed family dies in ~3.7 days.
   If the user's chasm_nophysics.exe holds the link, link a copy by hand (make -n link line, -o renamed)
   instead of killing it twice.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.

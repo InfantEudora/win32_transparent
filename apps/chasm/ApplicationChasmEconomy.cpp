@@ -81,6 +81,15 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(&len,sizeof(len));
         h.Bytes(k.route.data(),k.route.size() * sizeof(vec2));
         h.Bytes(k.speed.data(),k.speed.size() * sizeof(float));
+        int32_t needs[2] = {k.health,k.water};
+        h.Bytes(needs,sizeof(needs));
+    }
+    //The dead (needs_plan.md): who, when, of what.
+    n = (uint32_t)e.dead.size();
+    h.Bytes(&n,sizeof(n));
+    for (const EconomyDeath& d : e.dead){
+        uint64_t death[3] = {d.id,d.tick,(uint64_t)d.cause};
+        h.Bytes(death,sizeof(death));
     }
     for (const EconomyField& f : e.fields){
         int32_t pair[3] = {(int32_t)f.building,f.crop,f.grown};
@@ -124,7 +133,13 @@ json WorkerJson(const EconomyWorker& k){
            {"female",k.f_female},
            {"skills",skills},{"indoors",EconomyIndoors(k)},
            {"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
-           {"x",k.pos.x},{"z",k.pos.y},{"legs_to_go",std::max(0,(int)k.route.size() - 1 - k.seg)}};
+           {"x",k.pos.x},{"z",k.pos.y},{"legs_to_go",std::max(0,(int)k.route.size() - 1 - k.seg)},
+           //Needs (needs_plan.md) in days of life left - the unit the plan's numbers are in.
+           {"health_days",std::round(k.health * 100.0 / CALENDAR_DAY_TICKS) / 100.0},
+           {"water_days",std::round(k.water * 100.0 / CALENDAR_DAY_TICKS) / 100.0}};
+    if (EconomyDry(k)){
+        j["dry"] = true;
+    }
     if (k.carry > 0){
         j["carrying"] = json{{GoodName(k.carry_good),k.carry}};
     }
@@ -189,7 +204,7 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         j["family"] = family;
         j["holds"] = (id < e->capacity.size()) ? e->capacity[id] : 0;
     }
-    //A house's own store of food and firewood (P5's - nothing fills it yet).
+    //A house's own store of food, water and firewood, which its family eats and drinks from (needs_plan.md).
     if (z->buildings[id].kind == ZONE_KIND_HOUSE){
         j["keeps"] = GoodsJson((id < e->keeps.size()) ? e->keeps[id] : 0);
         j["room"] = (id < e->room.size()) ? e->room[id] : 0;
@@ -253,8 +268,9 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         ImGui::Text("  holds %i; %i live here",holds,living);
         for (const EconomyWorker& k : e->workers){
             if (k.house == id){
-                ImGui::Text("    %s, %i - %s%s",EconomyPersonName(k).c_str(),k.age,EconomyJobName(k.job),
-                            EconomyIndoors(k) ? ", at home" : "");
+                ImGui::Text("    %s, %i - %s%s, health %i%%, water %i%%",EconomyPersonName(k).c_str(),k.age,
+                            EconomyJobName(k.job),EconomyIndoors(k) ? ", at home" : "",
+                            k.health * 100 / NEEDS_HEALTH_FULL,k.water * 100 / NEEDS_WATER_FULL);
             }
         }
     }
@@ -323,7 +339,10 @@ void ApplicationChasm::RegisterEconomyTools(){
         "The colony's goods and workers (docs/economy_plan.md). op status (default): the goods in all "
         "stores together, every store (id, what it takes, its own setting, whether it is next to a "
         "workplace, room, stock), every worker (building, job, state, where, what he carries, his tree or "
-        "store), every field's growth toward its harvest, every construction site (wood needed, brought, its carriers), and how many trees are felled. op store_allow: "
+        "store, his health and water in days of life left and whether he is dry - docs/needs_plan.md), "
+        "every field's growth toward its harvest, every construction site (wood needed, brought, its "
+        "carriers), how many trees are felled, and the dead (who, the colony's day they died on - a "
+        "fraction, from 0 at its first dawn - and of what). op store_allow: "
         "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. include_screenshot as elsewhere.",
@@ -449,6 +468,13 @@ void ApplicationChasm::RegisterEconomyTools(){
             }
             result["people"] = json{{"total",e->workers.size()},{"housed",housed},{"working",employed},
                                     {"camp_plot",e->camp_plot}};
+            //The dead (needs_plan.md), in the order they died, with the day of the colony each died on.
+            json dead = json::array();
+            for (const EconomyDeath& d : e->dead){
+                dead.push_back(json{{"id",d.id},{"name",EconomyDeathName(d)},{"age",d.age},
+                                    {"day",(double)d.tick / CALENDAR_DAY_TICKS},{"cause",EconomyDeathCause(d.cause)}});
+            }
+            result["dead"] = dead;
             if (e->camp_plot >= 0){
                 result["camp"] = json{{"x",w->grid->fine.pos[e->camp_plot].x},{"z",w->grid->fine.pos[e->camp_plot].y}};
             }

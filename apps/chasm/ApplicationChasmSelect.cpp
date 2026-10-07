@@ -304,6 +304,20 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         doing[0] = (char)toupper(doing[0]);
         c.Text(doing,HUD_TEXT_DIM);
     }
+    /*
+        His needs (needs_plan.md): health - which is also how fed he is - and water, amber once a day or two
+        is all that is left. Dry, the water line says what it costs him.
+    */
+    float health = (float)k.health / NEEDS_HEALTH_FULL;
+    c.Bar(Format("Health %i%%",(int)std::ceil(health * 100.0f)),health,
+          (k.health <= 2 * CALENDAR_DAY_TICKS) ? HUD_AMBER : HUD_TEXT);
+    float water = (float)k.water / NEEDS_WATER_FULL;
+    if (EconomyDry(k)){
+        c.Bar("Water 0% - thirsty, losing health fast",0.0f,HUD_AMBER);
+    }else{
+        c.Bar(Format("Water %i%%",(int)std::ceil(water * 100.0f)),water,
+              (k.water <= CALENDAR_DAY_TICKS) ? HUD_AMBER : HUD_TEXT);
+    }
     for (int sk = 0; sk < SKILL_COUNT; sk++){
         std::string name = SkillName(sk);
         name[0] = (char)toupper(name[0]);
@@ -356,11 +370,15 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                        EconomyIndoors(k) ? HUD_TEXT_DIM : HUD_TEXT);
             }
         }
-        //Its family's own food and firewood (ECONOMY_HOUSE_KEEPS) - empty until P5 has them fetch it.
+        //Its family's own food, water and firewood (ECONOMY_HOUSE_KEEPS), which they eat and drink from.
         int room = (id < e->room.size()) ? e->room[id] : 0;
         if (b.kind == ZONE_KIND_HOUSE && room > 0){
             int held = EconomyStockTotal(*e,id);
-            c.Bar(Format("Food and firewood %i of %i",held,room),(float)held / room,HUD_TEXT_DIM);
+            c.Bar(Format("Food, water and firewood %i of %i",held,room),(float)held / room,HUD_TEXT_DIM);
+            std::string larder = GoodsList(*e,id);
+            if (!larder.empty()){
+                c.Text("  " + larder,HUD_TEXT_DIM);
+            }
         }
     }
     if (b.kind == ZONE_KIND_STORE && info.storeys > 0){

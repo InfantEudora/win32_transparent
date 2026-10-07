@@ -145,7 +145,8 @@ Files: `ApplicationChasmWorkersView.cpp`, `CropMesh.*`, `ZoneMesh.*`, the forest
 
 ## As built: house storage and the woodpile's lot (2026-10-06)
 
-- **A house keeps food and firewood** for P5 (people eat, and burn wood in winter): `room` at
+- **A house keeps food and firewood** - and water, since P5 (`needs_plan.md`), whose families eat and
+  drink from it: `room` at
   `ECONOMY_HOUSE_ROOM` (1.5) of its standing floor area - about 6 a plot-storey against a store's 20 -
   and `keeps` = `ECONOMY_HOUSE_KEEPS` (the foods and wood). Shared out on a split like a store's stock,
   lost when it is pulled down. Nothing fills it yet: a house is not in `accepts`, so no carrier delivers

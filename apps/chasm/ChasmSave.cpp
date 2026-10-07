@@ -62,7 +62,8 @@ json ChasmSaveToJson(const ChasmSave& s){
     }
     /*
         The economy (Economy.h): stocks by building and good name, felled props, every worker on his
-        route, every field's growth. Floats as JSON doubles, which read back to the same bits.
+        route with his health and water, every field's growth, the dead. Floats as JSON doubles, which
+        read back to the same bits.
     */
     json economy = json::object();
     {
@@ -95,7 +96,13 @@ json ChasmSaveToJson(const ChasmSave& s){
                                    {"skills",skills},{"building",k.building},{"job",k.job},{"state",k.state},{"prop",k.prop},
                                    {"store",k.store},{"site",k.site},{"carry_good",k.carry_good},{"carry",k.carry},
                                    {"timer",k.timer},{"stint",k.stint},{"route",route},{"speed",k.speed},{"seg",k.seg},
-                                   {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors}});
+                                   {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors},
+                                   {"health",k.health},{"water",k.water}});
+        }
+        //The colony's dead (needs_plan.md): id, family, female, age, the tick they died on, of what.
+        json dead = json::array();
+        for (const EconomyDeath& d : e.dead){
+            dead.push_back(json::array({d.id,d.family,d.f_female,d.age,d.tick,d.cause}));
         }
         json fields = json::array();
         for (const EconomyField& f : e.fields){
@@ -111,7 +118,7 @@ json ChasmSaveToJson(const ChasmSave& s){
             ground_sites.push_back(json::array({st.first,st.second}));
         }
         economy = json{{"stocks",stocks},{"felled",props},{"people",workers},{"fields",fields},
-                       {"sites",sites},{"ground_sites",ground_sites},{"next_person",e.next_person}};
+                       {"sites",sites},{"ground_sites",ground_sites},{"next_person",e.next_person},{"dead",dead}};
     }
     return json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -255,12 +262,28 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
                 k.pos = vec2(wk["pos"][0].get<float>(),wk["pos"][1].get<float>());
             }
             k.f_indoors = wk.value("indoors",false);
+            //A save from before needs (needs_plan.md): everyone fed and watered.
+            k.health = wk.value("health",(int)NEEDS_HEALTH_FULL);
+            k.water = wk.value("water",(int)NEEDS_WATER_FULL);
             if (k.route.empty()){
                 k.route.push_back(k.pos);
             }
             out.economy.workers.push_back(k);
         }
         out.economy.next_person = e.value("next_person",1u);
+        for (const json& dj : e.value("dead",json::array())){
+            if (!dj.is_array() || dj.size() < 6){
+                continue;
+            }
+            EconomyDeath d;
+            d.id = dj[0].get<uint32_t>();
+            d.family = dj[1].get<uint32_t>();
+            d.f_female = dj[2].get<bool>();
+            d.age = dj[3].get<int>();
+            d.tick = dj[4].get<uint64_t>();
+            d.cause = dj[5].get<int>();
+            out.economy.dead.push_back(d);
+        }
         for (const json& st : e.value("sites",json::array())){
             out.economy.sites.push_back(std::make_pair(st[0].get<uint32_t>(),st[1].get<int>()));
         }

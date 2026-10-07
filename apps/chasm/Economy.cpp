@@ -103,8 +103,8 @@ namespace {
 /*
     A crop's growing time, in days of growing weather, and its yield per unit of field area. Greens
     are fast and light, beans slow and rich, wheat between (gameplay_plan.md, "Goods and food") - so
-    over a growing year greens come in about four times, wheat twice, beans once or twice. Food values
-    and keeping come with eating (P5).
+    over a growing year greens come in about four times, wheat twice, beans once or twice. What a unit
+    is worth eaten is EconomyFoodWorth's (needs_plan.md).
 */
 const int crop_days[ZONE_CROP_COUNT] = {18,8,25};
 const float crop_yield[ZONE_CROP_COUNT] = {0.6f,0.35f,0.45f};
@@ -1476,9 +1476,117 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     for (EconomyWorker& k : state.workers){
         TickWorker(k,z,walkers,tick,dt);
     }
+    Needs(z,walkers,tick);
     if (!state.workers.empty()){
         state.version++;    //they move every tick - the view redraws them
     }
+}
+
+//--- Needs (docs/needs_plan.md) ---------------------------------------------------------------------
+
+int EconomyFoodWorth(int good){
+    switch (good){
+        case GOOD_WHEAT:    return CALENDAR_DAY_TICKS;
+        case GOOD_GREENS:   return CALENDAR_DAY_TICKS / 2;
+        case GOOD_BEANS:    return CALENDAR_DAY_TICKS * 2;
+        default:            return 0;
+    }
+}
+
+const char* EconomyDeathCause(int cause){
+    switch (cause){
+        case NEEDS_DIED_HUNGER: return "hunger";
+        case NEEDS_DIED_THIRST: return "thirst";
+        default:                return "?";
+    }
+}
+
+std::string EconomyDeathName(const EconomyDeath& d){
+    EconomyWorker k;
+    k.id = d.id;
+    k.family = d.family;
+    k.f_female = d.f_female;
+    return EconomyPersonName(k);
+}
+
+/*
+    A meal and a drink, standing at home - from his house's own stock, or his camp's supplies - and only a
+    whole unit that fits under full, so nothing is wasted. Water first: food does nothing for someone dry.
+    Then food while any fits, the kind that keeps worst first - greens rot, wheat keeps, beans keep longest
+    (gameplay_plan.md, "Goods and food") - so a larder eats down its greens and saves its beans.
+*/
+void Economy::EatAndDrink(EconomyWorker& k, const ZoneState& z){
+    if (!k.house || k.house >= state.stock.size() || k.house >= z.buildings.size() || k.state != WORKER_AT_HOME
+        || !AtHome(k)){
+        return;
+    }
+    int kind = z.buildings[k.house].kind;
+    if (kind != ZONE_KIND_HOUSE && kind != ZONE_KIND_CAMP){
+        return;
+    }
+    std::array<int,GOOD_COUNT>& home = state.stock[k.house];
+    while (home[GOOD_WATER] > 0 && k.water + NEEDS_WATER_WORTH <= NEEDS_WATER_FULL){
+        home[GOOD_WATER]--;
+        k.water += NEEDS_WATER_WORTH;
+        state.version++;
+    }
+    if (EconomyDry(k)){
+        return;
+    }
+    static const int keeps_worst_first[] = {GOOD_GREENS,GOOD_WHEAT,GOOD_BEANS};
+    for (bool f_ate = true; f_ate;){
+        f_ate = false;
+        for (int good : keeps_worst_first){
+            int worth = EconomyFoodWorth(good);
+            if (home[good] > 0 && k.health + worth <= NEEDS_HEALTH_FULL){
+                home[good]--;
+                k.health += worth;
+                f_ate = true;
+                state.version++;
+                break;
+            }
+        }
+    }
+}
+
+/*
+    Every person, every tick, after his round has moved on: a tick of water gone, and of health - three
+    while dry - then a meal and a drink if he stands at home. Health at nothing: he dies. He is struck from
+    the colony with whatever he carried; his family stays in its house, and on this same tick his job is
+    given out again, and a house left empty taken by a family waiting for one.
+*/
+void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
+    bool f_died = false;
+    for (EconomyWorker& k : state.workers){
+        if (k.water > 0){
+            k.water--;
+        }
+        k.health -= 1 + (EconomyDry(k) ? NEEDS_DRY_DRAIN : 0);
+        EatAndDrink(k,z);
+        f_died = f_died || k.health <= 0;
+    }
+    if (!f_died){
+        return;
+    }
+    std::vector<EconomyWorker> living;
+    for (EconomyWorker& k : state.workers){
+        if (k.health > 0){
+            living.push_back(std::move(k));
+            continue;
+        }
+        EconomyDeath d;
+        d.id = k.id;
+        d.family = k.family;
+        d.f_female = k.f_female;
+        d.age = k.age;
+        d.tick = tick;
+        d.cause = EconomyDry(k) ? NEEDS_DIED_THIRST : NEEDS_DIED_HUNGER;
+        state.dead.push_back(d);
+    }
+    state.workers.swap(living);
+    HouseFamilies(z,walkers);
+    AssignJobs(z,walkers);
+    state.version++;
 }
 
 //--- Construction ----------------------------------------------------------------------------------
@@ -1966,6 +2074,7 @@ EconomySaved EconomySaveState(const EconomyState& state){
         }
     }
     s.next_person = state.next_person;
+    s.dead = state.dead;
     return s;
 }
 
@@ -2001,6 +2110,7 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     if (f_people){
         state.workers = saved.workers;
         state.next_person = saved.next_person;
+        state.dead = saved.dead;
     }
     state.fields = saved.fields;
     state.site.assign(z.buildings.size(),0);
