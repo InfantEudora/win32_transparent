@@ -44,21 +44,15 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
             jb["allow"] = allow;
         }
+        //A site the player put first - written only when it is.
+        if (b.f_priority){
+            jb["priority"] = true;
+        }
         buildings.push_back(jb);
     }
     json grounds = json::array();
     for (const auto& gr : s.grounds){
         grounds.push_back(json::array({gr.first,gr.second}));
-    }
-    /*
-        A walker as it stands: where it walks between, which way, the path it is on and how far down
-        it. `along` is a float; written as JSON's double it reads back to the same bits, which the
-        replay's state hash depends on.
-    */
-    json walkers = json::array();
-    for (const Walker& k : s.walkers){
-        walkers.push_back(json{{"home",k.home},{"goal",k.goal},{"outward",k.f_outward},{"path",k.path},
-                               {"seg",k.seg},{"along",k.along},{"stuck",k.f_stuck},{"legs",k.legs}});
     }
     /*
         The economy (Economy.h): stocks by building and good name, felled props, every worker on his
@@ -136,7 +130,6 @@ json ChasmSaveToJson(const ChasmSave& s){
         {"next_building",s.next_building},
         {"stroke",{s.stroke,s.stroke_building}},
         {"grounds",grounds},
-        {"walkers",walkers},
         {"calendar",s.calendar_tick},
         {"explored",s.explored},
         {"economy",economy}
@@ -185,6 +178,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
                 }
             }
         }
+        b.f_priority = jb.value("priority",false);
         out.buildings.push_back(b);
         out.next_building = std::max(out.next_building,b.id + 1);
     }
@@ -301,18 +295,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     for (const json& gr : j.value("grounds",json::array())){
         out.grounds.push_back(std::make_pair(gr[0].get<int>(),gr[1].get<int>()));
     }
-    for (const json& wj : j.value("walkers",json::array())){
-        Walker k;
-        k.home = wj.value("home",-1);
-        k.goal = wj.value("goal",-1);
-        k.f_outward = wj.value("outward",true);
-        k.path = wj.value("path",std::vector<int>());
-        k.seg = wj.value("seg",0);
-        k.along = wj.value("along",0.0f);
-        k.f_stuck = wj.value("stuck",false);
-        k.legs = wj.value("legs",0u);
-        out.walkers.push_back(k);
-    }
+    //An older save's "walkers" - the debug walker, retired 2026-10-07 - are let go unread.
     return true;
 }
 

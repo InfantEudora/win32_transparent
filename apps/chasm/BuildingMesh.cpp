@@ -42,6 +42,7 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //winch: drawn by BuildWinch instead
     {PAL_WALL,{PAL_WALL,PAL_WALL},2,DOOR_W,2,0},                          //camp: drawn by BuildCampPlot instead
     {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //bridge: a road over the water, drawn by RoadMesh
+    {PAL_TIMBER,{PAL_ROOF,PAL_ROOF},2,DOOR_W * 1.6f,2,0},                 //builders' hut: planks under tile, beams and a ladder by it
 };
 
 /*
@@ -349,6 +350,91 @@ void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, i
     MeshQuad(out,c[1],c[3],c[7],c[5],vec3(1,0,0),column);
 }
 
+#define YARD_BEAM           0.13f   //a builders' hut's beams, square
+#define YARD_BEAM_LONG      1.1f
+#define LADDER_W            0.34f
+#define LADDER_RAIL         0.06f
+#define LADDER_RUNG_EVERY   0.28f
+#define LADDER_LEAN         0.55f   //its foot, out from the wall
+
+//The lowest plot of a building that stands - the one its one-a-building parts are drawn on.
+bool LowestStandingPlot(const ChasmWorld& w, const ZoneState& z, int plot){
+    uint32_t id = z.building[plot];
+    std::vector<int> seen(1,plot);
+    std::vector<int> stack(1,plot);
+    while (!stack.empty()){
+        int at = stack.back();
+        stack.pop_back();
+        if (at < plot && z.standing[at] > 0){
+            return false;
+        }
+        int nb[8];
+        int n = ZonePlotNeighbours(w,at,nb,8);
+        for (int i = 0; i < n; i++){
+            if (z.building[nb[i]] == id && std::find(seen.begin(),seen.end(),nb[i]) == seen.end()){
+                seen.push_back(nb[i]);
+                stack.push_back(nb[i]);
+            }
+        }
+    }
+    return true;
+}
+
+/*
+    A BUILDERS' HUT's yard (builders_plan.md): out by the wall toward its first open neighbour, a stack of
+    three beams - two side by side and one on them - and a ladder leant against the wall up to the eaves.
+    What tells it from the woodcutter's hut. Once a building, on its lowest standing plot. The wall toward
+    a neighbour sharing an edge runs through the edge's midpoint, so halfway there.
+*/
+void BuildBuildersYard(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
+    const Terrain& t = *w.terrain;
+    vec2 p = w.grid->fine.pos[plot];
+    int nb[8];
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    int open = -1;
+    for (int i = 0; i < n; i++){
+        if (z.building[nb[i]] == 0 && !t.wet[nb[i]] && (open < 0 || nb[i] < open)){
+            open = nb[i];
+        }
+    }
+    if (open < 0){
+        return;     //built in on every side: nowhere to lean a ladder
+    }
+    vec2 dir = w.grid->fine.pos[open] - p;
+    float l = dir.length();
+    if (l < 1e-4f){
+        return;
+    }
+    dir = dir * (1.0f / l);
+    vec2 side(-dir.y,dir.x);
+    float wall = l * 0.5f;
+    float level = t.Height(plot);
+    //The beams, along the wall.
+    vec2 c = p + dir * (wall + 0.35f) + side * 0.4f;
+    float ground = t.GroundHeight(c,level);
+    for (int i = 0; i < 3; i++){
+        float off = (i == 2) ? 0.0f : ((i == 0) ? -0.55f : 0.55f) * YARD_BEAM;
+        float y = ground - 0.03f + ((i == 2) ? YARD_BEAM : 0.0f);
+        Beam(out,c + dir * off - side * (YARD_BEAM_LONG * 0.5f),c + dir * off + side * (YARD_BEAM_LONG * 0.5f),
+             y,YARD_BEAM,YARD_BEAM,PAL_TIMBER);
+    }
+    //The ladder: two rails from the ground up to the eaves, and rungs between.
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    float eave = (float)std::lround(t.ground[plot] / HALF) * HALF + z.standing[plot] * ZONE_STOREY_HEIGHT - 0.1f;
+    vec2 at = p + dir * wall - side * 0.45f;
+    vec2 foot = at + dir * LADDER_LEAN;
+    float y0 = t.GroundHeight(foot,level);
+    for (int r = -1; r <= 1; r += 2){
+        vec2 o = side * (r * LADDER_W * 0.5f);
+        SlopedBeam(out,foot + o,y0,at + dir * 0.04f + o,eave,LADDER_RAIL,PAL_BARK_DARK);
+    }
+    for (float y = y0 + LADDER_RUNG_EVERY; y < eave - 0.1f; y += LADDER_RUNG_EVERY){
+        float f = (y - y0) / std::max(0.1f,eave - y0);
+        vec2 q = foot + (at + dir * 0.04f - foot) * f;
+        Beam(out,q - side * (LADDER_W * 0.5f),q + side * (LADDER_W * 0.5f),y - 0.02f,0.04f,0.04f,PAL_BARK_DARK);
+    }
+}
+
 #define SITE_POLE           0.09f
 #define SITE_PLANK          0.07f
 #define SITE_INSET          0.82f   //the poles stand this far out from the plot's vertex toward its cells' centres
@@ -395,11 +481,66 @@ vec2 BridgeRun(const ChasmWorld& w, const ZoneState& z, int plot){
     return (l > 1e-4f) ? d * (1.0f / l) : vec2(1.0f,0.0f);
 }
 
+#define SITE_FLAG_POLE      1.3f    //how far the pole stands above the scaffold
+#define SITE_FLAG_W         0.55f
+#define SITE_FLAG_H         0.34f
+
+/*
+    A site the player put first (ZoneBuilding::f_priority) flies a red pennant over its scaffold - once,
+    on the lowest plot index of it still to build, so a house of four plots has one flag, not four. Its
+    plots are found by flooding through its neighbours: a building is a few plots and always one piece
+    (Zones::SplitAfterRemoval).
+*/
+bool SiteFlagPlot(const ChasmWorld& w, const ZoneState& z, int plot){
+    uint32_t id = z.building[plot];
+    std::vector<int> seen(1,plot);
+    std::vector<int> stack(1,plot);
+    while (!stack.empty()){
+        int at = stack.back();
+        stack.pop_back();
+        if (at < plot && z.storeys[at] > z.standing[at]){
+            return false;
+        }
+        int nb[8];
+        int n = ZonePlotNeighbours(w,at,nb,8);
+        for (int i = 0; i < n; i++){
+            if (z.building[nb[i]] == id && std::find(seen.begin(),seen.end(),nb[i]) == seen.end()){
+                seen.push_back(nb[i]);
+                stack.push_back(nb[i]);
+            }
+        }
+    }
+    return true;
+}
+
+void SiteFlag(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    vec2 p = w.grid->fine.pos[plot];
+    float ground = w.terrain->ground[plot];
+    float y0, top;
+    if (z.KindOf(plot) == ZONE_KIND_BRIDGE){
+        //Out on the water, from the deck's piles; on the bank, from the ground.
+        y0 = w.terrain->wet[plot] ? BridgeDeckY(w,plot) : ground;
+        top = std::max(y0,BridgeDeckY(w,plot)) + 0.15f;
+    }else{
+        //From what stands, past the scaffold's top - BuildSite's heights.
+        float foot = (float)std::lround(ground / HALF) * HALF;
+        y0 = (z.standing[plot] > 0) ? foot + z.standing[plot] * ZONE_STOREY_HEIGHT : ground - 0.3f;
+        top = foot + z.storeys[plot] * ZONE_STOREY_HEIGHT + 0.25f;
+    }
+    float y1 = top + SITE_FLAG_POLE;
+    Upright(out,p,SITE_POLE,y0,y1,PAL_BARK_DARK);
+    Beam(out,p,p + vec2(SITE_FLAG_W,0.0f),y1 - SITE_FLAG_H,SITE_FLAG_H,0.03f,PAL_ACCENT);
+}
+
 void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
     const GridPicker& picker = *w.picker;
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
     vec2 p = w.grid->fine.pos[plot];
     float ground = w.terrain->ground[plot];
+    if (z.buildings[z.building[plot]].f_priority && SiteFlagPlot(w,z,plot)){
+        SiteFlag(w,z,plot,out);
+    }
     //A bridge being built: its piles already stand out of the water, waiting for the deck; on the
     //bank, a stack of its planks.
     if (z.KindOf(plot) == ZONE_KIND_BRIDGE){
@@ -542,6 +683,11 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         //A water collector is a house body, and its pipe out over the bank's stones to the water.
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_WATER && picker.PlotQuadCorner(v,0) / 4 == fine_quad){
             BuildWaterPipe(w,v,out);
+        }
+        //A builders' hut too, with its beams and ladder by one wall.
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_BUILDERS && picker.PlotQuadCorner(v,0) / 4 == fine_quad
+            && LowestStandingPlot(w,z,v)){
+            BuildBuildersYard(w,z,v,out);
         }
         solid[k] = s[k] > 0;
         bid[k] = (base > 0) ? ARCH : z.building[v];

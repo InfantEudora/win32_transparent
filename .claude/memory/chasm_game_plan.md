@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-06T20:08:35.844Z
+  modified: 2026-10-07T21:18:55.147Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -98,11 +98,37 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   placed whole (ZONE_OP_BRIDGE, ZoneBridgeChain: dry ends, wet between, water <= 2x river width),
   wood-built from the banks in, deck drawn straight between the dry ends; tool J; chasm_bridge.
   User: make a NEW replay test recording on the new generator when we next do replays.
+  2026-10-07: chasm_replay_test.py prints FAIL on STALE FIXTURES only (camp woodcutter spot refused "too
+  close to a cliff", OAKS offsets have no oaks on seed 1) - the replay/trace comparison itself passes.
+  SITE QUEUE + "BUILD FIRST" BUILT same day (construction_plan.md "Which site goes first"): nearest, but
+  within ECONOMY_QUEUE_SLACK placing order (= building id); ZoneBuilding::f_priority beats distance.
   P5 NEEDS AGREED 2026-10-07 (docs/needs_plan.md, not built): HEALTH is the food meter (-20%/day; wheat
   +20, greens +10, beans +40), a THIRST bar (3 days, then health falls faster), COLD the same in winter.
   People STARVE - no leaving, no immigrants. Target: one field cell feeds one person a year. Numbers to tune.
-  User: they eat ONLY AT HOME (forces fetching). STEP 1 BUILT same day (Economy::Needs/EatAndDrink, health+
-  water per person in ticks, EconomyState::dead): until step 2 (fetching) a housed family dies in ~3.7 days.
+  User first said eat ONLY AT HOME, then CHANGED it same day: below a third of water or health a person takes
+  no new work and eats/drinks at the nearest store/camp/collector/field (SeekSupply, WORKER_TO_SUPPLY/SUPPLYING;
+  one-unit claims, waits at a filling collector) - BUILT. STEP 1 BUILT same day (Economy::Needs/EatAndDrink,
+  health+water per person in ticks, EconomyState::dead). STEP 2 FETCHING HOME BUILT same day (FetchHome/TakeHome,
+  states 16-18): house < 2 days -> a load from nearest STORE OR CAMP (user: camp counts; camp families don't fetch),
+  idle member first, capped at 3 days so water can't crowd out food; house room 1.5 -> 4 (plan's figure).
+  chasm_replay_test FAILs on 'working 0' + seed-1 oaks with or without step 2 (A/B-checked) - not a regression.
+  BUILDERS BUILT 2026-10-07 (docs/builders_plan.md): user chose a BUILDERS' HUT workplace (ZONE_KIND_BUILDERS 9,
+  WORKER_JOB_BUILDER 3, tool G - B is previous seed); a place per standing plot-storey, a hut SITE employs one
+  who builds it first; AssignJobs fills huts first then workplaces by id, newest wait (EconomyState::places).
+  Job overview bottom-left (DrawJobsOverview, EconomyJobCounts); chasm_economy has `jobs`.
+  DEBUG WALKER RETIRED 2026-10-07 (user): tool 7, chasm_walker, saves/trace part gone; Walkers is only
+  PlanRoute now; CHASM_CMD_WALKER number kept unhandled. Debug panel PEOPLE section: per-villager health/
+  water sliders -> recorded CHASM_CMD_NEEDS on release; chasm_economy op set_needs. An edit at home is
+  eaten straight back up (needs run after commands). To screenshot a panel section below the fold, build a
+  throwaway copy with it moved to the top - MCP cannot scroll ImGui.
+  REPLAY TEST is seed-1 layout; user set Grid.h default seed 12 (2026-10-07) and will make NEW tests on it
+  themselves - old replay tests may be removed. Don't run seed-1 variants of it.
+  THIRST MARK (user's ask, same day) then the PERSON BADGE (user's, same evening): ONE badge over everyone
+  out of doors - job icon (axe/wheat/bucket/hammer/log) ringed by health (core UIOverlay::AddArc), the drop
+  replaces the icon when short of water, ring red when dry; selection pins MERGED into it (orange/amber ring
+  + stem). Roof drop for indoor families kept (DrawRoofThirst). ApplicationChasmSelect.cpp DrawPersonBadge.
+  engine.mk REFUSES `EXE=` on the command line - copy-link via `make -n` lines with -o renamed.
+  sim_step runs at tick rate (50/s) and blocks the HTTP reply: keep it under ~5000 ticks a call.
   If the user's chasm_nophysics.exe holds the link, link a copy by hand (make -n link line, -o renamed)
   instead of killing it twice.
   Engine HAS instancing (Renderer instancedata SSBO) - I wrongly said it didn't once.

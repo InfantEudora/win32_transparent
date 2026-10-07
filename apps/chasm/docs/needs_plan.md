@@ -47,10 +47,12 @@ their own, per person:
 
 ## Agreed (the user, 2026-10-07, on the proposals)
 
-- **Eating and drinking happen at home, and only there** - which is what forces the fetching. From the
-  house's own stock (`ECONOMY_HOUSE_KEEPS` gains water) or, for a family in the camp, the camp's supplies.
-  Going home early when low turned out not to be needed: every round starts and ends at home (P4) and
-  none runs past about a day - a farmer waits for his harvest at home, not at the field.
+- **Eating and drinking happen at home** - from the house's own stock (`ECONOMY_HOUSE_KEEPS` gains water)
+  or, for a family in the camp, the camp's supplies. ~~And only there~~: CHANGED by the user the same day -
+  **a pressing need is met wherever there is food or water.** Below a third of his water, or of his health,
+  a person takes on no new work and goes to the nearest store, camp or collector that has it, and eats and
+  drinks there ("this is what would happen in reality - you wouldn't necessarily drink at home"). Home
+  stays where he normally eats; fetching (step 2) is still what keeps him from those trips.
 - **Fetching home** - the gameplay plan's errand, the walk to the shops that makes where a house stands
   matter. When a home holds less than two days of what its family eats, drinks or (in autumn and winter)
   burns, a member fetches a load (`ECONOMY_LOAD`, 5) from the nearest store that has it: an idle member
@@ -82,7 +84,8 @@ their own, per person:
 - **Winter**, for ten people: 100 days of food and, where the collectors are under the snow, 100 water,
   stocked before it - about ten plot-storeys of store - and the firewood.
 - **A house's room is too small.** `ECONOMY_HOUSE_ROOM` gives about 6 a plot-storey, and two days of food
-  and water for a family of three is already 12. It goes to about 4 (16 a plot-storey).
+  and water for a family of three is already 12. It goes to about 4 (16 a plot-storey). DONE with step 2,
+  which could not work without it (see "As built: step 2").
 
 ## Not in this step
 
@@ -96,9 +99,9 @@ their own, per person:
 
 1. Health and water per person: falling, eating and drinking at home from the house's or the camp's
    stock, dying. Saved, hashed, on the person's card and in `chasm_economy`.
-2. Fetching home from the stores.
+2. Fetching home from the stores. BUILT 2026-10-07, below.
 3. Cold: firewood burned under the snow, and the cold drain.
-4. The yields and a house's room retuned. Measured: a new colony with nothing built (the first death about
+4. The yields and a house's room retuned (the room already, with step 2). Measured: a new colony with nothing built (the first death about
    day 9), the same with a collector and a greens field (it lives), and a first winter with and without
    firewood.
 5. The overlay: a death says so, as a refusal does; a lost colony says so.
@@ -132,9 +135,119 @@ Files: `Economy.*` (`Needs`, `EatAndDrink`, `EconomyFoodWorth`, `EconomyDeath`),
   - A save and load in the middle of a run gives back every person's health and water to the tick.
   - The replay test PASSES.
 
-**Until step 2, a family in a house dies within four days**: nothing fills a larder, and only the camp's
-supplies feed anyone. Every save with houses lived in - `village` among them - dies off.
+**The thirst mark** (the user's, 2026-10-07; `DrawSelectionOverlay` in `ApplicationChasmSelect.cpp`): in play
+mode, everyone down to a day of water - where the card's bar goes amber - has a drop on a stem over his head,
+drawn like a selection pin; ringed red once he is dry. A pinned person's sits beside his pin; a family indoors
+gets one over its roof. Only on screen - unlike a pin it is not kept at the edge, or a thirsty camp would
+bury the pins. Seen on seed 12 with nothing built: the marks come up on day 5, the rings on day 6.
+
+**The badge** (the user's, same day; `DrawPersonBadge` in `ApplicationChasmSelect.cpp`) replaced the thirst
+mark for anyone out of doors: one badge over everyone, always - his job's icon in a ring that is his health,
+full at full and running back to twelve o'clock (core's new `UIOverlay::AddArc`). The thirst mark lives on in
+it: below the same third of water the drop takes the job icon's place. The ring is coloured as the card's
+health bar - amber with two days left - and red while he is dry. The selection's pins merged into it too
+(`selection_plan.md`). A family indoors still gets the drop alone over its roof, ringed red if one is dry.
+Seen (seed 12, debug, 3x speed with no collector): drops on everyone at 4.3 days of health, the ring two
+thirds white; then all dry at 2.8 days, the ring red and under half. Not seen: a roof's drop (no family was
+indoors and thirsty in the run), and amber, which dry overtakes in a camp without water.
 
 **Open:**
-- A worker HOLDING a load no store will take waits where he is, away from home, and can starve there with it.
 - Nothing yet says a death happened beyond the card and the tool - that is step 5's overlay.
+
+## As built: pressing needs (2026-10-07)
+
+The user's change to "only at home", above. Files: `Economy.*` (`EconomyPressing`, `SeekSupply`, `Consume`,
+`WORKER_TO_SUPPLY` / `WORKER_SUPPLYING`), the card's line in `ApplicationChasmSelect.cpp`.
+
+- **Pressing**: water below `NEEDS_PRESSING_WATER` (a third: one day), or health below `NEEDS_PRESSING_HEALTH`
+  (a third: 1.67 days) and not dry - food does nothing for the dry, and would only send him from store to store.
+  The thirst mark now uses the same threshold, so a drop over someone means he is going for water.
+- **Where it is checked** - wherever he would take on new work: at home before a job or an errand, at the end
+  of every task (`GoHome`), between pieces of road work (the stint ends), and holding a load nobody takes
+  (he takes it along, then tries to deliver it again). What he is in the middle of, he finishes.
+- **Where he goes** (`SeekSupply`): what his home has he gets at home; the rest, at the nearest building with
+  it - a store, the camp's supplies, a collector's water, a field's harvest, never another family's house -
+  by the straight line, the first of the nearest four he can walk to. **Nowhere: he carries on as before**,
+  since stopping would save nobody and the work may be the collector that would.
+- **Claims**: a supply is only gone to while some of it is not already counted on - one unit for each person
+  walking there or eating there. Counting each one's full drink instead kept three thirsty people at home
+  while the collector refilled under them, and they died.
+- **There**: a while eating (`ECONOMY_MEAL_SECONDS`), then he eats and drinks his fill, as at home
+  (`Consume`, shared with home). At a **collector that is filling** he waits for the next unit, a few seconds
+  off, until he is full (unless hunger is also pressing) - walking home with nothing and back again kept two
+  of a camp dry for a day.
+- **Fixed on the way** (an old bug, `TO_HOME` in `TickWorker`): a person walking home when his family was
+  given a house arrived at the OLD home and stayed there "at home, indoors" in the new one - out of sight,
+  never looking for work or water, until the zones next changed. He now walks on to the new home. Painting a
+  house in a new colony's first ticks did it every time.
+- **Measured** (seed 12, debug, speed 3; a 3-storey house 16 from the camp, the Veens in it and one of them the
+  collector's carrier; a collector on the river 42 east of the camp; no store, so its water stays there):
+  - Day 2.2: the Veens, their house empty, go to the camp for water. Day 4: the camp's water gone, all ten go
+    to the collector, a 0.6-day walk from the camp; the last to arrive wait there for its refill.
+  - Nobody dies of thirst: the lowest water anyone reaches is 0.06 days, waiting at the collector. All ten
+    die of hunger on days 8.3-9.0 - no fields - which is the plan's "first death about day 9".
+  - Before the waiting and the one-unit claims, the same colony lost one or three to thirst.
+- **The replay test** on seed 12 (Grid.h's default since 2026-10-07): both replays end in the original's
+  zones and their traces match; its layout checks fail - the oaks and the woodcutter's spot are seed 1's.
+  Seed 12 gets new tests (the user's).
+
+**Open:**
+- Every trip is a long walk where the water is far: from this camp more than a day's round trip. That is
+  the layout's price, as intended - a store by the camp, filled by the carrier, is the cure.
+- ~~Housed families still eat only from the camp and the stores until fetching home (step 2).~~ Built, below.
+
+## The People panel (2026-10-07, the user's)
+
+The debug panel's **People** section (`RenderPeoplePanel`, `ApplicationChasmEconomy.cpp`), in place of the retired
+walker's: every villager - id and name, age, job, what he is doing - with his health and water as sliders in
+days; the name amber while a need is pressing, red while he is dry. A slider sends one recorded
+`CHASM_CMD_NEEDS` (person, health and water in ticks, -1 for unchanged) when it is let go, not one a frame
+while dragged; ctrl-click types a value. Buttons above set everyone at once: all full, all thirsty (half
+of the pressing level), all dry, all hungry. The dead are listed under. The tool's form is
+`chasm_economy op:set_needs` (person, health_days, water_days).
+
+An edit lands before the tick's eating, so someone at home with food and water tops straight back up -
+health 0 kills only someone who cannot eat on that tick.
+
+## As built: step 2, fetching home (2026-10-07)
+
+Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `WORKER_TO_GET`, `WORKER_GETTING`,
+`WORKER_TO_LARDER`, appended), the card's lines and a store's related people in `ApplicationChasmSelect.cpp`.
+
+- **When**: a HOUSE holding less than `ECONOMY_HOME_DAYS` (2) of what its family drinks or eats, counted in days
+  of their bars (water at `NEEDS_WATER_WORTH` a unit, food at its worth). The scarcer first, water on a tie.
+  Only with room at home for a trip's worth - half a load, or half the room if less - or a house too small
+  for both was fetched for a unit at a time.
+- **From where** (the user's choice): the nearest STORE or CAMP with some to spare - the camp's supplies are the
+  colony's. Never a collector or a field: what they make goes to the stores by their workers. Spare is what is
+  there less a load for each other fetcher on his way to it. Of food, the kind the place has most of.
+- **Who**: an idle member first; one with a job only between rounds, and only with no jobless member home to
+  go instead. One errand a house at a time. Checked at home after a pressing need, before wood for a site and
+  before a worker's own round.
+- **How much**: a load (`ECONOMY_LOAD`, 5), no more than the room left, and no more than takes the house a day
+  past the mark (3 days). Without that last cap water filled a house's room and left none for food - nine
+  water and nothing to eat for a day, the family of four going hungry beside it.
+- **Into the house** on arrival, as far as it keeps the good and has room; what does not fit goes to a store.
+  A family moved while he walked: on to the new home with it.
+- **A pressing trip brings a load home**: someone who ate or drank at a store or the camp, his house short of
+  what is there, carries a load home rather than going back for it.
+- **A camp's own families do not fetch** (the user's choice): its supplies are what the settlers brought.
+- **The house's room** went from 1.5 to 4 of floor area (about 16 a plot-storey), this plan's own figure:
+  two days of water and food for four is 12, and the old room was 11 for a two-storey one-plot house.
+- **Measured** (seed 12, debug, a two-storey house of four 11 from the camp):
+  - Stocked from the camp: water, then wheat, one errand at a time, by the jobless members while the farmers
+    stayed home. Over nine days the family kept 5-7 days of health and 2-4 of water, never pressing.
+  - One of them set thirsty (0.5 days of water) with the house empty: he drank at the camp and carried 4 water
+    home with him.
+  - A store beside a water collector, the house 5 from it and 23 from the camp: the first water came from the
+    camp (the store was still empty), every load after from the store; food from the camp, the only place
+    with any.
+- **The replay test**: both replays end in the original's zones and their traces match. It still prints FAIL,
+  on two checks that fail the same with this step switched off (a build with `HomeShort` returning nothing and
+  the old room, run the same way): nobody employed at the end ("working 0") and the road's oaks, which are
+  seed 1's.
+
+**Open:**
+- Firewood (step 3): `HomeShort` counts water and food; wood joins it with the burning.
+- The cap counts what is in the house, not what is on its way: a pressing trip's load and a fetcher's can both
+  arrive (nine water once, room allowing).

@@ -192,7 +192,6 @@ void ApplicationChasm::BuildScene(){
     renderer->AddMaterial(puff);
     puff_material = renderer->FindMaterialIndex(puff.name);
     BuildWaterScene();
-    BuildWalkerScene();
     BuildGroundShader();
     BuildCloudScene();
     BuildGhostScene();
@@ -237,13 +236,13 @@ void ApplicationChasm::SetupInput(){
     input->AddKeyMap('4',INPUT_CHASM_TOOL_GARDEN);
     input->AddKeyMap('5',INPUT_CHASM_TOOL_LOT);
     input->AddKeyMap('6',INPUT_CHASM_TOOL_ROAD);
-    input->AddKeyMap('7',INPUT_CHASM_TOOL_WALKER);
     input->AddKeyMap('8',INPUT_CHASM_TOOL_STORE);
     input->AddKeyMap('9',INPUT_CHASM_TOOL_WOODCUTTER);
     input->AddKeyMap('0',INPUT_CHASM_TOOL_WATER);
     input->AddKeyMap('H',INPUT_CHASM_TOOL_WINCH);     //H for hoist: the digits are all taken
     input->AddKeyMap('C',INPUT_CHASM_TOOL_CAMP);
     input->AddKeyMap('J',INPUT_CHASM_TOOL_BRIDGE);
+    input->AddKeyMap('G',INPUT_CHASM_TOOL_BUILDERS);
     input->AddKeyMap('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     input->AddKeyMap(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -544,7 +543,6 @@ void ApplicationChasm::EnsureZonesWorld(){
     }
     if (walkers.GetWorld() != w){
         walkers.Reset(w);
-        PublishWalkers();
     }
 }
 
@@ -623,13 +621,12 @@ void ApplicationChasm::RegisterCommandHandlers(){
             zone_commands_done++;
             return OBJECTID_INVALID;
         });
-    RegisterWalkerCommands();
     RegisterTimeCommands();
+    RegisterEconomyCommands();
 }
 
 void ApplicationChasm::RunSimulationTick(void){
     EnsureZonesWorld();
-    TickWalkers();
     //Before the calendar moves on: this tick's work is done on this tick's date.
     TickEconomy();
     TickExploration();
@@ -662,10 +659,6 @@ ChasmSave ApplicationChasm::MakeSave(){
                 s.grounds.push_back(std::make_pair((int)v,(int)z->ground[v] | site));
             }
         }
-    }
-    std::shared_ptr<const WalkerSet> ws = GetWalkers();
-    if (ws && ws->world == w){
-        s.walkers = ws->walkers;
     }
     s.calendar_tick = calendar_shown;
     std::shared_ptr<const Exploration> ex = GetExploration();
@@ -702,10 +695,8 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
     int refused = zones.Restore(w,save.buildings,save.next_building,save.grounds,save.stroke,save.stroke_building);
     paint_stroke = save.stroke;
     PublishZones();
-    //After the zones, and told their version: the walkers' paths were planned on exactly these.
-    walkers.Restore(w,save.walkers,zones.State().version);
-    PublishWalkers();
-    //After the zones too: the stocks and workers name their buildings.
+    walkers.Reset(w);
+    //After the zones: the stocks and workers name their buildings.
     economy.Restore(w,save.economy,zones.State());
     //What had been seen; a save from before exploration existed has seen everything.
     ResetExploration();
@@ -756,10 +747,10 @@ void ApplicationChasm::HashSimState(StateHash& h){
     h.Begin("buildings");
     h.Bytes(z.building.data(),z.building.size() * sizeof(uint32_t));
     for (const ZoneBuilding& b : z.buildings){
-        h.Add((uint64_t)b.kind | ((uint64_t)b.crop << 8) | ((uint64_t)b.allow << 16) | ((uint64_t)(uint32_t)b.size << 24));
+        h.Add((uint64_t)b.kind | ((uint64_t)b.crop << 8) | ((uint64_t)b.allow << 16) | ((uint64_t)(uint32_t)b.size << 24)
+              | ((uint64_t)b.f_priority << 56));
     }
     h.Add(((uint64_t)z.stroke << 32) | z.stroke_building);
-    HashWalkers(h);
     HashEconomy(h);
     h.Begin("calendar");
     h.Add(calendar_tick);
@@ -833,11 +824,6 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         ground = ToolKind(tool);
     }else if (tool == CHASM_TOOL_FIELD){
         op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_FIELD_PAINT;
-    }else if (tool == CHASM_TOOL_WALKER){
-        //Clicks only - a drag would spawn a walker per plot crossed.
-        if (f_clicked){
-            UpdateWalkerTool(hover,f_shift);
-        }
     }else if (tool == CHASM_TOOL_ERASE){
         std::shared_ptr<const ZoneState> z = GetZones();
         if (z && !z->storeys.empty() && z->storeys[hover.plot]){
@@ -1309,6 +1295,7 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_WINCH:      return ZONE_KIND_WINCH;
         case CHASM_TOOL_CAMP:       return ZONE_KIND_CAMP;
         case CHASM_TOOL_BRIDGE:     return ZONE_KIND_BRIDGE;
+        case CHASM_TOOL_BUILDERS:   return ZONE_KIND_BUILDERS;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -1602,12 +1589,8 @@ void ApplicationChasm::UpdatePlayModeViews(){
         if (grid_view){
             grid_view->SetVisibility(false);
         }
-        if (walker_path_view){
-            walker_path_view->SetVisibility(false);
-        }
     }else{
         view_version++;
-        walker_path_built = 0xFFFFFFFFu;
     }
 #endif
 }
@@ -1840,27 +1823,22 @@ void ApplicationChasm::UpdateView(void){
     UpdateTimeKeys();
     /*
         Play mode builds (construction_plan.md): the tool keys work there too, and what they place is a
-        construction site. The debug walker is debug mode's alone, as are the seed and frame keys.
+        construction site. The seed, frame and fog keys are debug mode's alone.
     */
     const bool f_debug_keys = !PlayMode();
-    if (!f_debug_keys && (paint_tool == CHASM_TOOL_WALKER)){
-        paint_tool = CHASM_TOOL_SELECT;
-        pick_version++;
-    }
     //The tool keys toggle: the active tool's key again puts it down.
     if (input->IsInputLive()){
         const int keys[13] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
-                              INPUT_CHASM_TOOL_WALKER,INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
+                              INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
                               INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
-                              INPUT_CHASM_TOOL_BRIDGE};
+                              INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS};
         const int tools[13] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
-                               CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,CHASM_TOOL_WALKER,
+                               CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
-                               CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE};
+                               CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
-            bool f_debug_tool = tools[i] == CHASM_TOOL_WALKER;
-            if (input->WasKeyPressed(keys[i]) && (f_debug_keys || !f_debug_tool)){
+            if (input->WasKeyPressed(keys[i])){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
                 pick_version++;
             }
@@ -1905,7 +1883,6 @@ void ApplicationChasm::PreRender(void){
     UploadForest();
     UploadWater();
     UpdateMist();
-    UploadWalkers();
     UploadWorkers();
     UploadPiles();
     UploadClouds();
@@ -2404,8 +2381,6 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Lot (5)##tool",tool == CHASM_TOOL_LOT)) tool = CHASM_TOOL_LOT;
         ImGui::SameLine();
         if (ImGui::RadioButton("Road (6)##tool",tool == CHASM_TOOL_ROAD)) tool = CHASM_TOOL_ROAD;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Walker (7)##tool",tool == CHASM_TOOL_WALKER)) tool = CHASM_TOOL_WALKER;
         if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Woodcutter (9)##tool",tool == CHASM_TOOL_WOODCUTTER)) tool = CHASM_TOOL_WOODCUTTER;
@@ -2417,6 +2392,8 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Camp (C)##tool",tool == CHASM_TOOL_CAMP)) tool = CHASM_TOOL_CAMP;
         ImGui::SameLine();
         if (ImGui::RadioButton("Bridge (J)##tool",tool == CHASM_TOOL_BRIDGE)) tool = CHASM_TOOL_BRIDGE;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Builders (G)##tool",tool == CHASM_TOOL_BUILDERS)) tool = CHASM_TOOL_BUILDERS;
         if (tool != paint_tool){
             paint_tool = tool;
             pick_version++;
@@ -2426,10 +2403,11 @@ void ApplicationChasm::RenderChasmPanel(){
         std::shared_ptr<const ZoneState> z = GetZones();
         if (zw && z && z->world == zw){
             ZoneStats st = ComputeZoneStats(*zw,*z);
-            ImGui::Text("%i houses (%.0f floor), %i stores (%.0f), %i woodcutters, %i water collectors, %i winches",
+            ImGui::Text("%i houses (%.0f floor), %i stores (%.0f), %i woodcutters, %i water collectors, %i winches, "
+                        "%i builders' huts",
                         st.buildings[ZONE_KIND_HOUSE],st.floor_area[ZONE_KIND_HOUSE],st.buildings[ZONE_KIND_STORE],
                         st.floor_area[ZONE_KIND_STORE],st.buildings[ZONE_KIND_WOODCUTTER],st.buildings[ZONE_KIND_WATER],
-                        st.buildings[ZONE_KIND_WINCH]);
+                        st.buildings[ZONE_KIND_WINCH],st.buildings[ZONE_KIND_BUILDERS]);
             ImGui::Text("%i fields on %i cells, %.0f units of field",st.buildings[ZONE_KIND_FIELD],st.field_cells,
                         st.floor_area[ZONE_KIND_FIELD]);
             ImGui::Text("%i garden and %i lot plots, %.0f units of ground; %i road plots",st.gardens,st.lots,
@@ -2446,8 +2424,8 @@ void ApplicationChasm::RenderChasmPanel(){
         }
     }
 
-    RenderWalkerPanel();
     RenderTimePanel();
+    RenderPeoplePanel();
 
     if (ImGui::CollapsingHeader("Save")){
         ImGui::InputText("name##save",save_name,sizeof(save_name));
@@ -2801,7 +2779,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
                                                   "build_erase","field_crop"}}}},
-                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch"}},{"description","for build_* (default house)"}}},
+                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans"}},{"description","for field_crop"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"ground",{{"type","string"},{"enum",{"garden","lot","road"}},{"description","for ground_paint"}}},
@@ -2887,6 +2865,7 @@ void ApplicationChasm::RegisterMCPTools(){
                                         {"woodcutters",st.buildings[ZONE_KIND_WOODCUTTER]},
                                         {"water_collectors",st.buildings[ZONE_KIND_WATER]},
                                         {"winches",st.buildings[ZONE_KIND_WINCH]},
+                                        {"builders_huts",st.buildings[ZONE_KIND_BUILDERS]},
                                         {"fields",st.buildings[ZONE_KIND_FIELD]},{"built_plots",st.built_plots},
                                         {"storeys",st.storeys},{"field_cells",st.field_cells},
                                         {"floor_area",st.floor_area[ZONE_KIND_HOUSE]},{"field_area",st.floor_area[ZONE_KIND_FIELD]}};
@@ -2962,15 +2941,15 @@ void ApplicationChasm::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("chasm_tool",
-        "Pick the mouse's tool, as keys 1-0, H, C and J do: select, house, field, erase, garden, lot, road, walker, store, "
-        "woodcutter, water, winch, camp, bridge. With a paint tool the hover outline goes green where a click would "
+        "Pick the mouse's tool, as keys 1-0, H, C, J and G do: select, house, field, erase, garden, lot, road, store, "
+        "woodcutter, water, winch, camp, bridge, builders. With a paint tool the hover outline goes green where a click would "
         "paint and red where the rules refuse - in play mode, the ghost of what it would place. hover_x/hover_z pin "
         "the hover to that point (a script has no mouse), until a call with hover_release.",
         json{
             {"type","object"},
             {"properties",{
-                {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road","walker",
-                                                    "store","woodcutter","water","winch","camp","bridge"}}}},
+                {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
+                                                    "store","woodcutter","water","winch","camp","bridge","builders"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -2983,8 +2962,8 @@ void ApplicationChasm::RegisterMCPTools(){
         },
         [this](const json& args) -> json {
             //In ChasmTool order - every tool, so the name returned is always one of these.
-            const char* names[CHASM_TOOL_COUNT] = {"select","house","field","erase","garden","lot","road","walker",
-                                                   "store","woodcutter","water","winch","camp","bridge"};
+            const char* names[CHASM_TOOL_COUNT] = {"select","house","field","erase","garden","lot","road",
+                                                   "store","woodcutter","water","winch","camp","bridge","builders"};
             std::string t = args.value("tool",std::string());
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){
                 if (t == names[i]){
@@ -3058,7 +3037,7 @@ void ApplicationChasm::RegisterMCPTools(){
             return json{{"error","chasm_check is debug-only; this is a release build"}};
         });
 #endif
-    RegisterWalkerTools();
+    RegisterRoadTools();
     RegisterTimeTools();
     RegisterEconomyTools();
     RegisterSelectTools();

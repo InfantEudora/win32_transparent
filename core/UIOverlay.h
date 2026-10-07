@@ -229,6 +229,20 @@ public:
     void AddLine(vec2 a, vec2 b, float thickness, uint32_t color);
 
     /*
+        A circular arc `thickness` pixels wide, round-capped, on a circle of `radius` round `centre`.
+        Angles are radians FROM TWELVE O'CLOCK, CLOCKWISE on screen - a clock hand's, which is what a
+        ring that fills or empties wants: AddArc(c,r,0,f * 2pi,...) is a ring full to f. `a1` below
+        `a0` runs the other way; more than a turn is a turn.
+
+        AddLine STROKES ALONG CHORDS, each short enough to stray under a quarter pixel from the
+        circle, so it needs nothing new from the shader. The joints are round caps overlapping, and
+        AddLine's rule holds: an opaque colour is seamless, a translucent one shows every joint. A
+        whole translucent ring is AddRectOutline with the radius at half its size, which is exact.
+        A zero span draws the cap alone, a dot at `a0`, as a zero-length AddLine does.
+    */
+    void AddArc(vec2 centre, float radius, float a0, float a1, float thickness, uint32_t color);
+
+    /*
         Darkens EVERYTHING OUTSIDE a rounded box - nothing at its edge, all of `color` `soft`
         pixels beyond it - over the whole surface. A vignette, an iris, a fade to black: one quad.
 

@@ -37,25 +37,23 @@ std::shared_ptr<const WalkGraph> BuildWalkGraph(std::shared_ptr<const ChasmWorld
 
 }
 
-void Walkers::Reset(std::shared_ptr<const ChasmWorld> world){
-    uint32_t version = set.version;
-    set = WalkerSet();
-    set.world = world;
-    set.version = version + 1;
+void Walkers::Reset(std::shared_ptr<const ChasmWorld> w){
+    world = w;
     graph.reset();
-    last_refusal.clear();
+    links.clear();
+    links_version = 0xFFFFFFFFu;
 }
 
 void Walkers::EnsureGraph(){
-    if (set.world && (!graph || graph->world != set.world)){
-        graph = BuildWalkGraph(set.world);
+    if (world && (!graph || graph->world != world)){
+        graph = BuildWalkGraph(world);
         links_version = 0xFFFFFFFFu;
     }
 }
 
 void Walkers::EnsureLinks(const ZoneState& z){
-    if (links_version != z.version && set.world && z.world == set.world){
-        ZoneWinchLinks(*set.world,z,links);
+    if (links_version != z.version && world && z.world == world){
+        ZoneWinchLinks(*world,z,links);
         links_version = z.version;
     }
 }
@@ -70,13 +68,13 @@ bool Walkers::IsLink(int a, int b) const{
 }
 
 float Walkers::EdgeLength(int a, int b) const{
-    const GridLevel& f = set.world->grid->fine;
+    const GridLevel& f = world->grid->fine;
     return (f.pos[a] - f.pos[b]).length();
 }
 
 //Whether a walk from `from` to `to` may use the edge a -> b.
 bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const{
-    const Terrain& t = *set.world->terrain;
+    const Terrain& t = *world->terrain;
     if (!t.SameGround(a,b)){
         //A cliff - unless a winch rides it, with its landing clear (or the walk ending on it).
         if (!IsLink(a,b)){
@@ -111,7 +109,7 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
         return false;
     }
     //A wall or palisade is crossed at its gate and nowhere else.
-    return ZoneBoundaryBetween(z,a,b) == ZONE_BOUNDARY_NONE || ZoneGateBetween(*set.world,z,a,b);
+    return ZoneBoundaryBetween(z,a,b) == ZONE_BOUNDARY_NONE || ZoneGateBetween(*world,z,a,b);
 }
 
 //A field is the coarse cells round a vertex: walking through one is slow, along its edge is not.
@@ -127,21 +125,21 @@ static bool InField(const ChasmWorld& w, const ZoneState& z, int v){
 
 float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
     //A winch's ride takes its time however far the landing is across.
-    if (!set.world->terrain->SameGround(a,b)){
+    if (!world->terrain->SameGround(a,b)){
         return std::max(1e-3f,EdgeLength(a,b)) / WINCH_RIDE_SECONDS;
     }
     float speed = WALKER_SPEED_GROUND;
     //A road, or a bridge's deck - and from one onto the other, so a road over a bridge is all road.
     if (ZoneRoadStands(z,a) && ZoneRoadStands(z,b)){
         speed = WALKER_SPEED_ROAD;
-    }else if (InField(*set.world,z,a) && InField(*set.world,z,b)){
+    }else if (InField(*world,z,a) && InField(*world,z,b)){
         speed = WALKER_SPEED_FIELD;
-    }else if (set.world->terrain->biome[a] == TERRAIN_BIOME_SWAMP && set.world->terrain->biome[b] == TERRAIN_BIOME_SWAMP){
+    }else if (world->terrain->biome[a] == TERRAIN_BIOME_SWAMP && world->terrain->biome[b] == TERRAIN_BIOME_SWAMP){
         speed = WALKER_SPEED_SWAMP;     //off a road the swamp is mud
     }
     //Slower up and down a slope, by how steep it is - never faster, so A*'s estimate (the straight
     //line at road speed) still never overestimates.
-    const Terrain& t = *set.world->terrain;
+    const Terrain& t = *world->terrain;
     float grade = std::fabs(t.ground[b] - t.ground[a]) / std::max(1e-3f,EdgeLength(a,b));
     return speed / (1.0f + WALKER_SLOPE_COST * grade);
 }
@@ -161,7 +159,7 @@ std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to) const{
         path.push_back(from);
         return path;
     }
-    const GridLevel& f = set.world->grid->fine;
+    const GridLevel& f = world->grid->fine;
     size_t n = f.pos.size();
     std::vector<float> cost(n,INFINITY);
     std::vector<int> came(n,-1);
@@ -220,249 +218,11 @@ std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to) const{
     return path;
 }
 
-bool Walkers::Spawn(const ZoneState& z, int home, int goal){
-    last_refusal.clear();
-    if (!set.world){
-        last_refusal = "no world";
-        return false;
-    }
-    int n = (int)set.world->grid->fine.pos.size();
-    if (home < 0 || home >= n || goal < 0 || goal >= n){
-        last_refusal = "no such plot";
-        return false;
-    }
-    if ((int)set.walkers.size() >= WALKER_MAX){
-        last_refusal = "as many walkers as there may be";
-        return false;
-    }
-    EnsureGraph();
-    EnsureLinks(z);
-    Walker k;
-    k.home = home;
-    k.goal = goal;
-    k.path.push_back(home);
-    Replan(z,k);
-    set.walkers.push_back(k);
-    set.zones_version = z.version;
-    set.version++;
-    return true;
-}
-
-void Walkers::Clear(){
-    set.walkers.clear();
-    set.version++;
-}
-
-/*
-    Plans the rest of k's walk to its target. On an edge, it keeps the edge and plans from where the
-    edge leads - unless that plot is now closed to it, when it turns back down the edge and plans from
-    where it came from.
-*/
-void Walkers::Replan(const ZoneState& z, Walker& k){
-    int target = k.f_outward ? k.goal : k.home;
-    bool f_on_edge = k.seg + 1 < (int)k.path.size();
-    std::vector<int> head;  //what the new path starts with: the edge kept, or the plot stood on
-    float along = 0.0f;
-    if (f_on_edge){
-        int a = k.path[k.seg];
-        int b = k.path[k.seg + 1];
-        if (EdgeOpen(z,a,b,a,target)){
-            head = {a,b};
-            along = k.along;
-        }else{
-            head = {b,a};
-            along = std::max(0.0f,EdgeLength(a,b) - k.along);
-        }
-    }else{
-        head = {k.path[k.seg]};
-    }
-    std::vector<int> rest = FindPath(z,head.back(),target);
-    k.f_stuck = rest.empty();
-    k.path = head;
-    for (size_t i = 1; i < rest.size(); i++){
-        k.path.push_back(rest[i]);
-    }
-    k.seg = 0;
-    k.along = along;
-}
-
-void Walkers::Tick(const ZoneState& z, float dt){
-    if (!set.world || z.world != set.world || set.walkers.empty()){
-        return;
-    }
-    EnsureGraph();
-    EnsureLinks(z);
-    bool f_changed = false;
-    if (set.zones_version != z.version){
-        set.zones_version = z.version;
-        for (Walker& k : set.walkers){
-            Replan(z,k);
-        }
-        f_changed = true;
-    }
-    for (Walker& k : set.walkers){
-        //At the end of the path: a target reached turns it round; a stuck walker waits for a change.
-        if (k.seg + 1 >= (int)k.path.size()){
-            if (k.f_stuck){
-                continue;
-            }
-            k.f_outward = !k.f_outward;
-            k.legs++;
-            k.path = {k.path.back()};
-            k.seg = 0;
-            k.along = 0.0f;
-            Replan(z,k);
-            f_changed = true;
-            continue;
-        }
-        //One tick's distance at each edge's own speed, the leftover carried into the next edge.
-        float time = dt;
-        while (time > 0.0f && k.seg + 1 < (int)k.path.size()){
-            int a = k.path[k.seg];
-            int b = k.path[k.seg + 1];
-            float len = EdgeLength(a,b);
-            float speed = EdgeSpeed(z,a,b);
-            float left = (len - k.along) / speed;
-            if (left > time){
-                k.along += time * speed;
-                time = 0.0f;
-            }else{
-                time -= left;
-                k.seg++;
-                k.along = 0.0f;
-                f_changed = true;
-            }
-        }
-    }
-    if (f_changed){
-        set.version++;
-    }
-}
-
-void Walkers::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Walker>& walkers,
-                      uint32_t zones_version){
-    Reset(world);
-    if (!world){
-        return;
-    }
-    int n = (int)world->grid->fine.pos.size();
-    for (const Walker& k : walkers){
-        bool f_ok = k.home >= 0 && k.home < n && k.goal >= 0 && k.goal < n && !k.path.empty() &&
-                    k.seg >= 0 && k.seg < (int)k.path.size();
-        for (int v : k.path){
-            f_ok = f_ok && v >= 0 && v < n;
-        }
-        if (f_ok && (int)set.walkers.size() < WALKER_MAX){
-            set.walkers.push_back(k);
-        }
-    }
-    set.zones_version = zones_version;
-    EnsureGraph();
-}
-
-/*
-    Where a walker is drawn. Not straight down the edges: through each plot it passes, it takes the same
-    curve a road does (RoadMesh.h) - from the last edge's midpoint to the next one's, the plot pulling
-    it - so it rounds a corner instead of turning on the spot, and stays on a road where the road bends.
-    View only: the simulation's state is the edge and the distance down it, and nothing reads this.
-*/
-vec2 Walkers::Position(const ChasmWorld& w, const Walker& k, vec2* facing){
-    const GridLevel& f = w.grid->fine;
-    if (k.path.empty()){
-        return vec2();
-    }
-    if (k.seg + 1 >= (int)k.path.size()){
-        return f.pos[k.path[k.seg]];
-    }
-    vec2 a = f.pos[k.path[k.seg]];
-    vec2 b = f.pos[k.path[k.seg + 1]];
-    float len = (b - a).length();
-    if (len < 1e-6f){
-        return a;
-    }
-    /*
-        On a winch's rope: out from the rim to above the landing first, then straight down - or up
-        first and then in. The rope hangs over the landing, so on the way down the walker is over it
-        after the first WINCH_STEP_OUT of the ride, and on the way up until the last.
-    */
-    const Terrain& terrain = *w.terrain;
-    if (!terrain.SameGround(k.path[k.seg],k.path[k.seg + 1])){
-        float s = std::max(0.0f,std::min(1.0f,k.along / len));
-        bool f_down = terrain.steps[k.path[k.seg]] < terrain.steps[k.path[k.seg + 1]];
-        vec2 rim = f_down ? a : b;
-        vec2 rope = f_down ? b : a;
-        float out = f_down ? std::min(1.0f,s / WINCH_STEP_OUT) : std::max(0.0f,(s - (1.0f - WINCH_STEP_OUT)) / WINCH_STEP_OUT);
-        if (facing){
-            *facing = (rope - rim) / std::max(1e-6f,(rope - rim).length()) * (f_down ? 1.0f : -1.0f);
-        }
-        return f_down ? rim + (rope - rim) * out : rope + (rim - rope) * out;
-    }
-    //The corner to round: the plot behind in the first half of the edge, the one ahead in the second.
-    vec2 p0, c, p1;
-    float t;
-    float half = len * 0.5f;
-    if (k.along < half && k.seg > 0){
-        vec2 prev = f.pos[k.path[k.seg - 1]];
-        float back = (a - prev).length() * 0.5f;
-        p0 = (prev + a) * 0.5f;
-        c = a;
-        p1 = (a + b) * 0.5f;
-        t = (k.along + back) / (back + half);
-    }else if (k.along >= half && k.seg + 2 < (int)k.path.size()){
-        vec2 next = f.pos[k.path[k.seg + 2]];
-        float ahead = (next - b).length() * 0.5f;
-        p0 = (a + b) * 0.5f;
-        c = b;
-        p1 = (b + next) * 0.5f;
-        t = (k.along - half) / (half + ahead);
-    }else{
-        if (facing){
-            *facing = (b - a) / len;
-        }
-        return a + (b - a) * std::min(1.0f,k.along / len);
-    }
-    t = std::max(0.0f,std::min(1.0f,t));
-    float s = 1.0f - t;
-    if (facing){
-        vec2 d = (c - p0) * s + (p1 - c) * t;
-        float dl = d.length();
-        if (dl > 1e-6f){
-            *facing = d / dl;
-        }
-    }
-    return p0 * (s * s) + c * (2.0f * s * t) + p1 * (t * t);
-}
-
-float Walkers::Height(const ChasmWorld& w, const Walker& k, const vec2& at){
-    const Terrain& t = *w.terrain;
-    if (k.path.empty()){
-        return 0.0f;
-    }
-    int a = k.path[k.seg];
-    if (k.seg + 1 < (int)k.path.size()){
-        int b = k.path[k.seg + 1];
-        if (!t.SameGround(a,b)){
-            //The rope: at the rim's height while stepping out, then down to the landing's (or the
-            //other way round).
-            float len = std::max(1e-6f,(w.grid->fine.pos[b] - w.grid->fine.pos[a]).length());
-            float s = std::max(0.0f,std::min(1.0f,k.along / len));
-            bool f_down = t.steps[a] < t.steps[b];
-            int rim = f_down ? a : b;
-            int landing = f_down ? b : a;
-            float top = t.ground[rim];
-            float bottom = t.ground[landing];
-            float drop = f_down ? std::max(0.0f,(s - WINCH_STEP_OUT) / (1.0f - WINCH_STEP_OUT))
-                                : 1.0f - std::min(1.0f,s / (1.0f - WINCH_STEP_OUT));
-            return top + (bottom - top) * drop;
-        }
-    }
-    return t.GroundHeight(at,t.Height(a));
-}
-
+//The economy's people (Economy.h) walk these: the same graph, rules and A* the debug walker had.
 bool Walkers::PlanRoute(const ZoneState& z, int from, int to, std::vector<int>& plots, std::vector<float>& speeds){
     plots.clear();
     speeds.clear();
-    if (!set.world || set.world != z.world){
+    if (!world || world != z.world){
         return false;
     }
     EnsureGraph();

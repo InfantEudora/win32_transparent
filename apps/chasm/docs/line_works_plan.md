@@ -23,6 +23,25 @@ together.
 - **Building sites clear their trees too.** A house painted in the woods today just hides the trees under
   it; it should have them felled first, like a road.
 
+## Queued with everything else (the user, 2026-10-07)
+
+Buildings got a queue the same day (`construction_plan.md`, "Which site goes first"): nearest first, but of
+the errands within `ECONOMY_QUEUE_SLACK` of the nearest, the one PLACED first; and a building can be put
+first ("Build first"). Line works join that queue - "that fits in better with the rest":
+
+- **Roads and walls are queued with the buildings, in one placing order.** A drawn LINE is one entry in it,
+  not each of its plots, so a line needs an id from the same counter as the buildings - an entry in the
+  building table, or a per-plot line id handed out from it - saved with its plots. Inside a line the work
+  still starts at the end nearest the village and goes outward.
+- **Roads take their place in the queue too.** Today road work is only what the idle do when there is no
+  wood to carry anywhere; from step 3 a road drawn before a house, about as near, is cleared and laid
+  before that house's wood is carried. The price, accepted: an idle person may lay road while a later
+  site waits for wood. The two errands compare by their walks - home, wood, site for a carry; home and the
+  plot (or the tree in its way) for road work - so `FindSiteWork` and `FindRoadWork` become one ranking.
+- **Never put first.** Neither a line nor a piece of one can be prioritised; "Build first" is for buildings.
+- **A wall is a road with a cost**: its trees felled as a road's, then its wood carried per plot as a
+  garden's (`ground_site[plot]`), then raised.
+
 ## The plan
 
 ### The model: ground on a chain of plots
@@ -114,7 +133,7 @@ together.
 |---|---|---|
 | 1 | The tool: drag, preview, release, cancel - for roads; debug and play still lay them at once | BUILT 2026-10-06 |
 | 2 | Road sites: `ZoneRoadStands` (+ `ground_built`), the staked look, the clearing + laying errand, saves, replay test with a road through a forest edge | BUILT 2026-10-06 |
-| 3 | Walls: the kind, its rules, walkers closed where it stands, the palisade mesh and gates, its wood | planned |
+| 3 | Walls: the kind, its rules, walkers closed where it stands, the palisade mesh and gates, its wood; roads and walls in the site queue by line (above) | planned |
 | 4 | Building sites fell their trees first | planned |
 | later | A bridge's chain drawn freehand with the same stroke (dry bank, wet run, dry bank) - c4's suggestion | idea |
 
@@ -210,4 +229,5 @@ laid-only), `ZoneMesh.cpp`, `ApplicationChasm.cpp` (`PropHidden`, the felled log
 **Open:**
 - Erasing a planned road loses nothing (no wood), but trees already felled for it stay felled.
 - The economy fells a little wider than the view hides, so a stump can stand just off a laid road.
-- No priorities between road work and anything else: wood carrying always comes first.
+- No priorities between road work and anything else: wood carrying always comes first. To change with
+  step 3 - roads join the site queue ("Queued with everything else").

@@ -15,12 +15,12 @@ static Debugger* debug = new Debugger("ChasmPeople",DEBUG_ALL);
     the good, not the job: an idle carrier taking wood to a site carries a log, not a pail.) A woodcutter
     at work, and a builder, bob as they swing.
 
-    View only, like the walkers: one object per person, reused, placed every frame from the published
+    View only: one object per person, reused, placed every frame from the published
     EconomyState. The state moves on ticks, so a person steps at the tick rate.
 */
 
-//ApplicationChasmRoads.cpp: the walker's figure, origin at the feet, facing +z - the stand-in when the
-//props file has no figure.
+//ApplicationChasmRoads.cpp: the retired debug walker's figure, origin at the feet, facing +z - the
+//stand-in when the props file has no figure.
 void BuildWalkerFigure(std::vector<vertex>& out, int tunic_column);
 
 const char* person_asset_names[PERSON_FIGURES] = {"adult_male","adult_female","kid_male","kid_female"};

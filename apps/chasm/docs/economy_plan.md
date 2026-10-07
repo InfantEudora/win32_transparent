@@ -147,10 +147,11 @@ Files: `ApplicationChasmWorkersView.cpp`, `CropMesh.*`, `ZoneMesh.*`, the forest
 
 - **A house keeps food and firewood** - and water, since P5 (`needs_plan.md`), whose families eat and
   drink from it: `room` at
-  `ECONOMY_HOUSE_ROOM` (1.5) of its standing floor area - about 6 a plot-storey against a store's 20 -
-  and `keeps` = `ECONOMY_HOUSE_KEEPS` (the foods and wood). Shared out on a split like a store's stock,
-  lost when it is pulled down. Nothing fills it yet: a house is not in `accepts`, so no carrier delivers
-  there; P5 decides who brings food home. The house card shows "Food and firewood n of room".
+  `ECONOMY_HOUSE_ROOM` (4 since needs step 2; 1.5 before) of its standing floor area - about 16 a
+  plot-storey against a store's 20 - and `keeps` = `ECONOMY_HOUSE_KEEPS` (the foods and wood). Shared out on
+  a split like a store's stock, lost when it is pulled down. A house is not in `accepts`, so no carrier
+  delivers there: its own family fetches (`needs_plan.md`, step 2). The house card shows "Food and firewood
+  n of room".
 - **The woodpile is on a LOT** beside the hut (`ZoneLotBeside`, the lowest plot index of any of the hut's
   plots' lot neighbours; `EconomyState::pile_plot`, derived). ONE LOT PLOT TO A WOODCUTTER: they are given
   out in building-id order, each taking the lowest one nobody before him has (the user found two huts
@@ -164,3 +165,20 @@ Files: `ApplicationChasmWorkersView.cpp`, `CropMesh.*`, `ZoneMesh.*`, the forest
   pile view (ApplicationChasmPiles.cpp) draws the logs on `pile_plot`, leaning toward that hut plot.
 - The lot's fence is low now: stakes 0.52 (were 0.95), the gate posts 0.95 (were 1.35) - about the
   garden wall's height.
+
+## Fixed: a field's harvest went untouched (2026-10-07)
+
+Found by the user in play: crops waiting at a field were picked up by nobody - not its farmer, not anyone
+hungry. A field lies on coarse cells, so it has no plots in `plots_of`, and `Economy::SourcePlot` - where goods
+are taken from a building - asked only those: -1 for a field. Since `5dbb953` (the woodcutter's pile door)
+`FetchFromWorkplace` walks the farmer there, so his way to plot -1 failed and he never set out; and
+`SeekSupply` passes over a building with no plot to walk to, so the hungry never went to a field. Now a building
+with no plots is reached at its `home_plot` - a field's middle vertex, where its farmer went before - and
+`FetchFromWorkplace` no longer reads a position for plot -1.
+
+Measured (seed 12, debug): a one-cell greens field's harvest (3) sat untouched with no store; a store beside it,
+and its farmer walked out and carried the 3 in. With the camp out of food and no store, a villager made hungry
+walked to the field and ate them there.
+
+The rule that was never broken: a farmer only fetches when some store takes his crop and has room for a load.
+

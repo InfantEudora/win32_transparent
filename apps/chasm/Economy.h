@@ -45,10 +45,14 @@ class Walkers;
     and move out as soon as a house has room for a whole family: a house holds one family, as many as its
     floor area allows (ECONOMY_PERSON_AREA each, at most ECONOMY_HOUSE_MOST). A home pulled down sends its
     family to a camp with room, or to the camp's spot with nowhere to live.
-    JOBS are given out automatically: a workplace with nobody takes the free housed adult with the best
-    score - his skill for the job (ECONOMY_SKILL_DISTANCE world units a point) less the walk from his
-    house - so where the player paints a house is what decides who works where. One worker a workplace.
-    A worker's skill sets how fast he works (EconomySkillFactor).
+    JOBS are given out automatically: an empty place at a workplace takes the free housed adult with the
+    best score - his skill for the job (ECONOMY_SKILL_DISTANCE world units a point) less the walk from his
+    house - so where the player paints a house is what decides who works where. A workplace has one place
+    once it stands; a BUILDERS' HUT one per plot-storey standing, and one while it is still a site, to build
+    it (docs/builders_plan.md). Places are filled IN ORDER - the huts first, then the rest as they were
+    placed - so with fewer people than places the newest workplaces stand empty, and a new hut takes its
+    builders from them (`places`). A builder does what anyone without a job does: carries wood to sites
+    and lays roads. A worker's skill sets how fast he works (EconomySkillFactor).
 
     A worker walks a ROUTE of points: the grid's A* (Walkers::PlanRoute) where he must, and STRAIGHT where
     the line is clear (EconomyStraightClear) - in the open he need not follow the grid (the user's note).
@@ -84,6 +88,9 @@ class Walkers;
     id, so a worker's `site` names it as ECONOMY_SITE_GROUND | plot; its wood is `ground_site`, by plot,
     and it goes up through ZONE_OP_GROUND_RAISE (Economy::GroundRaises). It is built FROM OUTSIDE: a
     builder stands on an open plot beside it (GroundSiteApproach), so the fence never goes up round him.
+    WHICH SITE FIRST: nearest, by the walk - so a colony is built close - but of the errands within
+    ECONOMY_QUEUE_SLACK of the shortest, the building placed first (the lowest id); and a site the player
+    PUT FIRST (ZoneBuilding::f_priority) before every other, however far (Economy::FindSiteWork).
     A new colony's camp holds the SUPPLIES the settlers brought (ECONOMY_START_*), so the first
     buildings can go up before there is a woodcutter.
 
@@ -102,11 +109,22 @@ class Walkers;
     THE FOOD METER - there is no hunger of its own (the user's): food comes in whole units, so what a
     food is worth is the health it gives (EconomyFoodWorth) - wheat a day, greens half a day, beans two.
     With the water bar empty he is DRY: health falls three times as fast and food no longer raises it,
-    so eating cannot outrun thirst. He eats and drinks AT HOME and nowhere else, from his house's stock
-    or his camp's supplies, and only a whole unit that fits under full, so nothing is wasted - of the
-    foods that fit, the one that keeps worst first. Health at nothing, he dies: struck from the colony
-    and written into `dead`. Nobody leaves and nobody arrives, so a colony that cannot feed itself dies
-    out - the first way to lose.
+    so eating cannot outrun thirst. He eats and drinks AT HOME, from his house's stock or his camp's
+    supplies, and only a whole unit that fits under full, so nothing is wasted - of the foods that fit,
+    the one that keeps worst first. A PRESSING NEED (EconomyPressing: water, or health, below a third)
+    that his home cannot meet stops him taking on more work: he finishes what he is doing and goes to the
+    nearest place that has it - a store, the camp's supplies, a collector or a field's harvest, never
+    another family's house - and eats and drinks there as he would at home (the user's: you would not
+    necessarily drink at home). Health at nothing, he dies: struck from the colony and written into
+    `dead`. Nobody leaves and nobody arrives, so a colony that cannot feed itself dies out - the first
+    way to lose.
+    FETCHING HOME (step 2) is what keeps him from those trips: a HOUSE holding less than ECONOMY_HOME_DAYS
+    of what its family drinks or eats - the scarcer first, counted in days - sends one of them for a load
+    from the nearest store or camp with some to spare (the camp's supplies are the colony's, the user's).
+    An idle member goes first; one with a job only between rounds, with no jobless member home to go
+    instead; one errand a house at a time, and before wood for a site. Someone eating at a store or the
+    camp on a pressing need brings a load home with him. A camp's own families do not fetch - its supplies
+    are what the settlers brought, and running short of them is the reason to build houses.
 
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
@@ -114,7 +132,7 @@ class Walkers;
 */
 
 #define ECONOMY_STORE_ROOM          5.0f    //units of goods per unit of floor area: about 20 a plot-storey
-#define ECONOMY_HOUSE_ROOM          1.5f    //a house's, for its own food, water and firewood: about 6 a plot-storey
+#define ECONOMY_HOUSE_ROOM          4.0f    //a house's, for its own food, water and firewood: about 16 a plot-storey (needs_plan.md)
 #define ECONOMY_HOUSE_KEEPS         (GOODS_FOOD | GOOD_BIT(GOOD_WOOD) | GOOD_BIT(GOOD_WATER))
 #define ECONOMY_LOAD                5       //what a farmer or a water carrier carries at once
 #define ECONOMY_WOOD_PER_TREE       4
@@ -132,6 +150,7 @@ class Walkers;
 #define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area: about 8 a plot
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
 #define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence: about 2 a plot
+#define ECONOMY_QUEUE_SLACK         8.0f    //errands this much longer than the shortest still go in placing order: ~4 plots
 #define ECONOMY_LAY_SECONDS         4.0f    //laying a road plot, at the worker's pace
 #define ECONOMY_ROAD_STINT          8       //pieces of road work - a tree felled, a plot laid - a trip
 #define ECONOMY_ROAD_REACH          10.0f   //how far from him the next piece of a stint may be
@@ -141,15 +160,19 @@ inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROU
 inline int EconomyGroundSitePlot(uint32_t site){ return (int)(site & ~ECONOMY_SITE_GROUND); }
 //What the settlers bring (in the camp): enough wood for the first few buildings.
 #define ECONOMY_START_WOOD          40
-#define ECONOMY_START_WHEAT         20
-#define ECONOMY_START_BEANS         10
-#define ECONOMY_START_WATER         20
+#define ECONOMY_START_WHEAT         40
+#define ECONOMY_START_BEANS         20
+#define ECONOMY_START_WATER         40
 
 //Needs (needs_plan.md), in ticks of life left - first numbers, to be tuned once a colony runs on them.
-#define NEEDS_HEALTH_FULL           (5 * CALENDAR_DAY_TICKS)    //five days without food, from full
-#define NEEDS_WATER_FULL            (3 * CALENDAR_DAY_TICKS)    //three days without water
-#define NEEDS_WATER_WORTH           CALENDAR_DAY_TICKS          //a unit of water: a day of the bar
+#define NEEDS_HEALTH_FULL           (7 * CALENDAR_DAY_TICKS)    //five days without food, from full
+#define NEEDS_WATER_FULL            (4 * CALENDAR_DAY_TICKS)    //three days without water
+#define NEEDS_WATER_WORTH           (2 * CALENDAR_DAY_TICKS)    //a unit of water: a day of the bar
 #define NEEDS_DRY_DRAIN             2                           //health a tick more, dry: three times as fast
+#define NEEDS_PRESSING_WATER        (NEEDS_WATER_FULL / 3)      //below this he goes for water (the user's third)
+#define NEEDS_PRESSING_HEALTH       (NEEDS_HEALTH_FULL / 4)     //...and for food
+#define ECONOMY_MEAL_SECONDS        2.0f                        //eating and drinking away from home
+#define ECONOMY_HOME_DAYS           2                           //a house fetches below this many days of its family's water or food
 //The health a unit of food gives: wheat a day, greens half a day, beans two (the user's); 0 for no food.
 int EconomyFoodWorth(int good);
 //What a person died of. Never renumber: saves hold these.
@@ -175,6 +198,8 @@ const char* SkillName(int skill);
 #define WORKER_JOB_WOODCUTTER   0
 #define WORKER_JOB_FARMER       1
 #define WORKER_JOB_WATER        2
+#define WORKER_JOB_BUILDER      3       //at a builders' hut: carries wood to sites and builds, lays roads
+#define WORKER_JOB_COUNT        4
 
 //Where a worker is in his round. Never renumber.
 #define WORKER_AT_HOME          0       //at his house (or the camp), waiting for something to do
@@ -191,6 +216,11 @@ const char* SkillName(int skill);
 #define WORKER_TO_ROAD          11      //idle, walking to a planned road (`site`): to a tree in its way (`prop`), or to lay it
 #define WORKER_CLEARING         12      //felling that tree (timer); it is left lying as a log
 #define WORKER_LAYING           13      //laying the plot (timer)
+#define WORKER_TO_SUPPLY        14      //a pressing need: walking to food or water (`store`), still holding any load
+#define WORKER_SUPPLYING        15      //eating and drinking there (timer)
+#define WORKER_TO_GET           16      //fetching home: walking to a store or the camp (`store`) for a kind (`carry_good`, carry 0)
+#define WORKER_GETTING          17      //picking a load of it up there (timer)
+#define WORKER_TO_LARDER        18      //carrying it home, into his house's own stock
 
 /*
     A PERSON, and what he is doing. Who he is: an id (from 1, never reused), a family, the house the
@@ -234,6 +264,19 @@ inline bool EconomyDry(const EconomyWorker& k){
     return k.water <= 0;
 }
 
+//What he must have before he takes on more work: water, below a third of its bar; food, with health below
+//a third - unless he is dry, when food does him no good and would only send him from store to store.
+inline uint8_t EconomyPressing(const EconomyWorker& k){
+    uint8_t want = 0;
+    if (k.water < NEEDS_PRESSING_WATER){
+        want |= GOOD_BIT(GOOD_WATER);
+    }
+    if (k.health < NEEDS_PRESSING_HEALTH && !EconomyDry(k)){
+        want |= GOODS_FOOD;
+    }
+    return want;
+}
+
 //Someone who died, and of what: the colony's record of its dead, in the order they died.
 struct EconomyDeath{
     uint32_t id = 0;
@@ -267,6 +310,7 @@ struct EconomyState{
     std::vector<int> room;                              //a store's, and a house's (ECONOMY_HOUSE_ROOM)
     std::vector<int> pile_plot;                         //a woodcutter's woodpile: a lot beside him, -1 none
     std::vector<int> capacity;                          //a house's: how many it holds
+    std::vector<int> places;                            //a workplace's: how many it employs (0: not one)
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
     uint32_t felled_version = 0;                        //bumped when a prop's state changes - the view
@@ -295,6 +339,10 @@ public:
     void Tick(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick, float dt);
 
     void Restore(std::shared_ptr<const ChasmWorld> world, const EconomySaved& saved, const ZoneState& z);
+    //A debug edit (the panel's villager list, CHASM_CMD_NEEDS): a person's health and water in ticks, each
+    //held to its bar; -1 leaves one as it is. Applied before the tick's needs, so someone at home with food
+    //and water eats and drinks straight back up; health 0 kills only someone who cannot. False with no such person.
+    bool SetNeeds(uint32_t person, int health, int water);
     EconomySaved Save() const;          //EconomySaveState of the live state
     const EconomyState& State() const { return state; }
     //The plots whose next storey stands after this tick - the app raises them (ZONE_OP_BUILD_RAISE).
@@ -345,6 +393,15 @@ private:
     //Needs: every person's tick of health and water, a meal and a drink at home, and the dead struck off.
     void Needs(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick);
     void EatAndDrink(EconomyWorker& k, const ZoneState& z);
+    void Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
+    //A pressing need his home cannot meet: off to the nearest place that can. True if he set off.
+    bool SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //Fetching home (needs_plan.md, step 2): what his house is short of; off to fetch it; a load of it picked
+    //up at `from` and carried home; and the way home itself.
+    uint8_t HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* first) const;
+    bool FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    bool TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, uint8_t goods);
+    bool RouteHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //Construction: what a site still wants, carrying for one, and building with what it has. A site is
     //a building id or a garden or lot plot (ECONOMY_SITE_GROUND).
     int SiteNeed(const ZoneState& z, uint32_t id) const;
@@ -386,6 +443,14 @@ vec2 EconomyWorkerFacing(const EconomyWorker& k);
 
 const char* EconomyWorkerStateName(int state);
 const char* EconomyJobName(int job);
+//The job a kind of building employs, WORKER_JOB_NONE for one that employs nobody.
+int EconomyJobOf(int kind);
+//The colony's jobs at a glance - the overview's and the tool's: per job, who works it and its places.
+struct EconomyJobCount{
+    int working = 0;
+    int places = 0;
+};
+void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount out[WORKER_JOB_COUNT], int* jobless);
 //The skill a job leans on, and how fast a worker with `skill` of it works: 1 at 5, 1.4 at 10, 0.68 at 1.
 int EconomyJobSkill(int job);
 float EconomySkillFactor(int skill);

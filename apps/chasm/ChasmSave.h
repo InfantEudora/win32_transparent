@@ -6,7 +6,6 @@
 #include <utility>
 #include <vector>
 #include "Grid.h"
-#include "Walkers.h"
 #include "Zones.h"
 #include "Economy.h"
 #include "tinygltf/json.hpp"
@@ -38,7 +37,6 @@ struct ChasmSave{
     uint32_t stroke = 0;                                //the drag in progress, and its building
     uint32_t stroke_building = 0;
     std::vector<std::pair<int,int>> grounds;            //plot, ZONE_GROUND_* (step 8; absent in older saves)
-    std::vector<Walker> walkers;                        //step 10, with their paths (Walkers.h); absent in older saves
     uint64_t calendar_tick = 0;                         //the date (Calendar.h); absent in older saves, which start in spring
     EconomySaved economy;                               //stocks, felled trees, workers, fields (Economy.h); absent in older saves
     std::string explored;                               //Exploration::ToString (play_mode_plan.md); absent in older saves, which load all explored

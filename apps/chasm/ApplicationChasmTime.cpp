@@ -263,6 +263,7 @@ void ApplicationChasm::DrawOverlay(void){
     overlay_hits_drawing.clear();
     if (PlayMode()){
         DrawBuildBar(s);
+        DrawJobsOverview(s);
         DrawSelectionOverlay(s);
     }
     {
@@ -280,7 +281,8 @@ void ApplicationChasm::DrawBuildBar(float s){
     struct BarTool{ const char* key; const char* name; int tool; };
     static const BarTool bar[] = {
         {"1","HOUSE",CHASM_TOOL_HOUSE},{"8","STORE",CHASM_TOOL_STORE},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
-        {"0","WATER",CHASM_TOOL_WATER},{"2","FIELD",CHASM_TOOL_FIELD},{"6","ROAD",CHASM_TOOL_ROAD},
+        {"0","WATER",CHASM_TOOL_WATER},{"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},
+        {"6","ROAD",CHASM_TOOL_ROAD},
         {"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
         {"C","CAMP",CHASM_TOOL_CAMP},{"J","BRIDGE",CHASM_TOOL_BRIDGE},{"H","WINCH",CHASM_TOOL_WINCH},
         {"3","ERASE",CHASM_TOOL_ERASE}};
@@ -303,6 +305,8 @@ void ApplicationChasm::DrawBuildBar(float s){
     vec2 q1(cx + total * 0.5f,bottom);
     overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
     overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
+    build_bar_min = q0;
+    build_bar_max = q1;
     int tool = paint_tool.load();
     float x = q0.x + side;
     for (int i = 0; i < count; i++){
@@ -387,6 +391,66 @@ void ApplicationChasm::DrawBuildBar(float s){
             overlay->AddRect(r0,r1,9.0f * s,HUD_PANEL);
             overlay->AddText(buf2,vec2(cx,r0.y + 21.0f * s),size,UIColor(206,160,110),UI_ALIGN_CENTER);
         }
+    }
+}
+
+/*
+    RENDER THREAD, from DrawOverlay in play mode (builders_plan.md): bottom left, how many work at each job
+    against its places - amber where a place stands empty, which with too few people is the newest
+    workplace's - and the jobless, who carry wood and build too. Level with the build bar; above it when the
+    window is too narrow for the two side by side. Only what has places or people.
+*/
+void ApplicationChasm::DrawJobsOverview(float s){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!e || !z || e->world != z->world || e->workers.empty()){
+        return;
+    }
+    EconomyJobCount counts[WORKER_JOB_COUNT];
+    int jobless = 0;
+    EconomyJobCounts(*e,*z,counts,&jobless);
+    struct Row{ const char* name; int working; int places; bool f_places; };
+    std::vector<Row> rows;
+    static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER};
+    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS"};
+    for (int i = 0; i < 4; i++){
+        const EconomyJobCount& c = counts[shown[i]];
+        if (c.places > 0 || c.working > 0){
+            rows.push_back(Row{names[i],c.working,c.places,true});
+        }
+    }
+    rows.push_back(Row{"NO JOB",jobless,0,false});
+    const float size = 14.0f * s;
+    const float line_h = 20.0f * s;
+    const float pad = 12.0f * s;
+    float label_w = 0.0f;
+    for (const Row& r : rows){
+        label_w = std::max(label_w,overlay->MeasureText(r.name,size).x);
+    }
+    float w = pad * 2.0f + label_w + overlay->MeasureText("00 / 00",size).x + 14.0f * s;
+    float h = pad * 0.6f + line_h * (float)rows.size() + pad * 0.4f;
+    float x0 = 16.0f * s;
+    float bottom = (float)main_window->height - 14.0f * s;
+    if (x0 + w > build_bar_min.x - 10.0f * s){
+        bottom = build_bar_min.y - 8.0f * s;
+    }
+    vec2 p0(x0,bottom - h);
+    vec2 p1(x0 + w,bottom);
+    overlay->AddRect(p0,p1,9.0f * s,HUD_PANEL);
+    overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
+    float y = p0.y + pad * 0.6f;
+    for (const Row& r : rows){
+        y += line_h;
+        bool f_short = r.f_places && r.working < r.places;
+        uint32_t colour = !r.f_places ? HUD_TEXT_DIM : f_short ? HUD_AMBER : HUD_TEXT;
+        overlay->AddText(r.name,vec2(p0.x + pad,y - 5.0f * s),size,colour,UI_ALIGN_LEFT);
+        char value[24];
+        if (r.f_places){
+            snprintf(value,sizeof(value),"%i / %i",r.working,r.places);
+        }else{
+            snprintf(value,sizeof(value),"%i",r.working);
+        }
+        overlay->AddText(value,vec2(p1.x - pad,y - 5.0f * s),size,colour,UI_ALIGN_RIGHT);
     }
 }
 

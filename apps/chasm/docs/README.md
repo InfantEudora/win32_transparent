@@ -148,8 +148,10 @@ line number.
 | `grid_plan.md` | the irregular grid, terrain levels and cliffs, painting zones, and the build order up to a first replay |
 | `biomes_plan.md` | biomes and terrain height: levels for the hard edges plus a relief field; the north mountain that seals the chasm off, hills and peaks, mountain pockets, the swamp and the desert, snow and the ground's colours (steps 1-5 built) |
 | `gameplay_plan.md` | the game on top of it all: steam, zeppelins, seasons, zombies from the swamp, the pyramid; suggestions, open questions, and the first prototype (nothing built) |
-| `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A*, gates in walls, arches under houses |
+| `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A* (retired 2026-10-07), gates in walls, arches under houses |
 | `line_works_plan.md` | roads and walls drawn as a line and placed on release, then built by idle villagers who fell the trees in the way (step 1, the tool, built) |
+| `needs_plan.md` | P5: health as the food meter, thirst, cold; eating at home or, when pressing, at the nearest store (step 1 and pressing needs built) |
+| `builders_plan.md` | the builders' hut - builders as a job, staffed before the other workplaces - and the job overview (built) |
 
 ### Later, agreed but not yet planned
 

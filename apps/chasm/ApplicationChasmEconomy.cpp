@@ -6,6 +6,7 @@
 #include "MCPServer.h"
 #endif
 #include "Debug.h"
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -28,7 +29,7 @@ void ApplicationChasm::PublishEconomy(){
 }
 
 /*
-    PHYSICS THREAD, after the walkers and before the calendar moves on. What the builders finished stands
+    PHYSICS THREAD, after the commands and before the calendar moves on. What the builders finished stands
     on this same tick: the economy names the plots, the zones raise them (construction_plan.md) - not a
     command, since it follows from the state, and a replay builds it again by itself.
 */
@@ -99,6 +100,32 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     h.Bytes(&n,sizeof(n));
     h.Bytes(e.site.data(),e.site.size() * sizeof(int));
     h.Bytes(e.ground_site.data(),e.ground_site.size() * sizeof(int));
+}
+
+/*
+    The economy's one command: a person's health and water set - the debug panel's villager list and the
+    tool's set_needs, for putting a colony on the edge without waiting days for it. RECORDED, like the
+    date command, since it changes simulation state and a replay must make the same edit on the same tick.
+*/
+void ApplicationChasm::RegisterEconomyCommands(){
+    main_scene->RegisterCommandHandler(CHASM_CMD_NEEDS,
+        [this](const SimCommand& cmd) -> objectid_t {
+            if (economy.SetNeeds(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1])){
+                PublishEconomy();
+            }
+            needs_commands_done++;
+            return OBJECTID_INVALID;
+        });
+}
+
+void ApplicationChasm::SubmitNeeds(uint32_t person, int health, int water){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_NEEDS;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    cmd.value[0] = (float)health;   //ticks, well inside a float's exact integers
+    cmd.value[1] = (float)water;
+    main_scene->SubmitCommand(cmd);
 }
 
 namespace {
@@ -182,7 +209,7 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         }
         j["construction"] = json{{"storeys_to_build",info.site_storeys},{"storeys_standing",info.storeys},
                                  {"wood_needed",site_wood},{"wood_brought",EconomySiteBrought(*e,id)},
-                                 {"carriers",carriers}};
+                                 {"carriers",carriers},{"priority",info.f_priority}};
     }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
         uint8_t takes = EconomyAccepts(*e,id);
@@ -249,6 +276,16 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         ImGui::TextColored(ImVec4(0.95f,0.8f,0.4f,1.0f),"  under construction: %i storeys to build (%i standing)",
                            info.site_storeys,info.storeys);
         ImGui::Text("  wood %i of %i brought, %i carrying for it",EconomySiteBrought(*e,id),site_wood,carrying);
+        //The player's "build this first" - a recorded zone command on any plot of it (construction_plan.md).
+        bool f_first = info.f_priority;
+        if (ImGui::Checkbox("  build this first",&f_first)){
+            for (size_t v = 0; v < z->building.size(); v++){
+                if (z->building[v] == id){
+                    SubmitZone(ZONE_OP_SITE_PRIORITY,(int)v,f_first ? 1 : 0);
+                    break;
+                }
+            }
+        }
     }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
         int room = (id < e->room.size()) ? e->room[id] : 0;
@@ -288,7 +325,7 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         }
     }
     int kind = z->buildings[id].kind;
-    if (!f_worked && (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_FIELD || kind == ZONE_KIND_WATER)){
+    if (!f_worked && EconomyJobOf(kind) != WORKER_JOB_NONE){
         ImGui::TextColored(ImVec4(1.0f,0.6f,0.35f,1.0f),"  nobody works here - it needs a free adult with a house");
     }
 }
@@ -329,6 +366,102 @@ void ApplicationChasm::RenderSelectedStore(int plot){
         ImGui::EndDisabled();
     }
 }
+
+/*
+    THE PEOPLE (needs_plan.md): every villager - name, age, job, what he is doing - with his health and
+    water as sliders in days, to put a colony on the edge without waiting days for it. A slider is the
+    panel's own while it is dragged (needs_editing) and goes out as ONE recorded CHASM_CMD_NEEDS when it is
+    let go, so a drag is one edit in a recording rather than one a frame; ctrl-click types a value. The
+    buttons set everyone at once. A name goes amber while his need is pressing, red while he is dry.
+*/
+void ApplicationChasm::RenderPeoplePanel(){
+    if (!ImGui::CollapsingHeader("People",ImGuiTreeNodeFlags_DefaultOpen)){
+        return;
+    }
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!e || !z || e->world != z->world){
+        ImGui::TextDisabled("no colony yet");
+        return;
+    }
+    const float day = (float)CALENDAR_DAY_TICKS;
+    ImGui::Text("%i living, %i dead",(int)e->workers.size(),(int)e->dead.size());
+    auto everyone = [&](int health, int water){
+        for (const EconomyWorker& k : e->workers){
+            SubmitNeeds(k.id,health,water);
+        }
+    };
+    if (ImGui::SmallButton("All full##people")){
+        everyone(NEEDS_HEALTH_FULL,NEEDS_WATER_FULL);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("All thirsty##people")){
+        everyone(-1,NEEDS_PRESSING_WATER / 2);      //half a day left: past pressing, short of dry
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("All dry##people")){
+        everyone(-1,0);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("All hungry##people")){
+        everyone(NEEDS_PRESSING_HEALTH / 2,-1);
+    }
+    auto slider = [&](const char* id, uint32_t person, int bar, int now, int full){
+        uint64_t key = ((uint64_t)person << 1) | (uint64_t)bar;
+        auto it = needs_editing.find(key);
+        float v = (it != needs_editing.end()) ? it->second : now / day;
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat(id,&v,0.0f,full / day,"%.2f d");
+        if (ImGui::IsItemActive()){
+            needs_editing[key] = v;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()){
+            int ticks = (int)std::lround(v * day);
+            SubmitNeeds(person,(bar == 0) ? ticks : -1,(bar == 1) ? ticks : -1);
+        }
+        if (!ImGui::IsItemActive()){
+            needs_editing.erase(key);
+        }
+    };
+    ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
+    if (ImGui::BeginTable("people##table",6,flags)){
+        ImGui::TableSetupColumn("name",ImGuiTableColumnFlags_WidthStretch,1.6f);
+        ImGui::TableSetupColumn("age",ImGuiTableColumnFlags_WidthStretch,0.4f);
+        ImGui::TableSetupColumn("job",ImGuiTableColumnFlags_WidthStretch,1.0f);
+        ImGui::TableSetupColumn("doing",ImGuiTableColumnFlags_WidthStretch,1.0f);
+        ImGui::TableSetupColumn("health",ImGuiTableColumnFlags_WidthStretch,1.3f);
+        ImGui::TableSetupColumn("water",ImGuiTableColumnFlags_WidthStretch,1.3f);
+        ImGui::TableHeadersRow();
+        for (const EconomyWorker& k : e->workers){
+            ImGui::PushID((int)k.id);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            uint8_t pressing = EconomyPressing(k);
+            ImVec4 colour = EconomyDry(k) ? ImVec4(1.0f,0.4f,0.35f,1.0f)
+                          : pressing ? ImVec4(1.0f,0.75f,0.35f,1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+            ImGui::TextColored(colour,"%u %s",k.id,EconomyPersonName(k).c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%i",k.age);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(EconomyJobName(k.job));
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(EconomyWorkerStateName(k.state));
+            ImGui::TableNextColumn();
+            slider("##health",k.id,0,k.health,NEEDS_HEALTH_FULL);
+            ImGui::TableNextColumn();
+            slider("##water",k.id,1,k.water,NEEDS_WATER_FULL);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (!e->dead.empty() && ImGui::TreeNode("people_dead","The dead (%i)",(int)e->dead.size())){
+        for (const EconomyDeath& d : e->dead){
+            ImGui::Text("%s, %i - day %.2f, of %s",EconomyDeathName(d).c_str(),d.age,(double)d.tick / CALENDAR_DAY_TICKS,
+                        EconomyDeathCause(d.cause));
+        }
+        ImGui::TreePop();
+    }
+}
 #endif
 
 //--- The tool -------------------------------------------------------------------------------------
@@ -345,7 +478,12 @@ void ApplicationChasm::RegisterEconomyTools(){
         "fraction, from 0 at its first dawn - and of what). op store_allow: "
         "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
-        "that workplace's goods whatever it is set to. include_screenshot as elsewhere.",
+        "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
+        "plot) goes first (`on`, default true) or back in the queue - recorded the same way; a site's "
+        "`priority` shows in `sites`. op set_needs: person `person`'s health_days and/or water_days (held to their bars) "
+        "set - a RECORDED debug edit (CHASM_CMD_NEEDS), the panel's villager list's. It lands before the "
+        "tick's eating, so someone at home with food and water tops straight back up; health 0 kills only "
+        "someone who cannot eat on that tick. include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
@@ -354,6 +492,10 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"z",{{"type","number"}}},
                 {"plot",{{"type","integer"}}},
                 {"goods",{{"type","array"},{"items",{{"type","string"}}}}},
+                {"on",{{"type","boolean"}}},
+                {"person",{{"type","integer"},{"description","set_needs: the person's id"}}},
+                {"health_days",{{"type","number"}}},
+                {"water_days",{{"type","number"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -365,26 +507,31 @@ void ApplicationChasm::RegisterEconomyTools(){
             }
             std::string op = args.value("op",std::string("status"));
             json result = json::object();
-            if (op == "store_allow"){
+            if (op == "store_allow" || op == "site_priority"){
                 int plot = args.value("plot",-1);
                 if (plot < 0 && args.contains("x") && args.contains("z")){
                     GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
                     plot = p.f_hit ? p.plot : -1;
                 }
-                uint8_t mask = 0;
-                for (const json& g : args.value("goods",json::array())){
-                    int good = GoodByName(g.get<std::string>());
-                    if (good < 0){
-                        return json{{"error","no such good: " + g.get<std::string>()}};
+                //What the op sets: a store's goods, or whether a site goes first.
+                int value = 0;
+                if (op == "store_allow"){
+                    for (const json& g : args.value("goods",json::array())){
+                        int good = GoodByName(g.get<std::string>());
+                        if (good < 0){
+                            return json{{"error","no such good: " + g.get<std::string>()}};
+                        }
+                        value |= GOOD_BIT(good);
                     }
-                    mask |= GOOD_BIT(good);
+                }else{
+                    value = args.value("on",true) ? 1 : 0;
                 }
                 SimCommand cmd;
                 cmd.type = CHASM_CMD_ZONE;
                 cmd.flags = SIM_CMD_FLAG_RECORD;
                 cmd.subtype = (uint32_t)std::max(0,plot);
-                cmd.value[0] = (float)ZONE_OP_STORE_ALLOW;
-                cmd.value[1] = (float)mask;
+                cmd.value[0] = (float)((op == "store_allow") ? ZONE_OP_STORE_ALLOW : ZONE_OP_SITE_PRIORITY);
+                cmd.value[1] = (float)value;
                 cmd.value[2] = 0.0f;
                 uint32_t before = zone_commands_done.load();
                 SubmitCommandAndWait(cmd);
@@ -396,8 +543,21 @@ void ApplicationChasm::RegisterEconomyTools(){
                 result["ran"] = zone_commands_done.load() != before;
                 result["refusal"] = refusal;
                 result["plot"] = plot;
-                //The economy works out what the store takes on its next tick.
+                //The economy works out what the store takes, or who carries first, on its next tick.
                 main_scene->AtTickBoundary([](){});
+            }else if (op == "set_needs"){
+                auto ticks = [&](const char* name){
+                    return args.contains(name) ? (int)std::lround(args[name].get<double>() * CALENDAR_DAY_TICKS) : -1;
+                };
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_NEEDS;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)args.value("person",0);
+                cmd.value[0] = (float)ticks("health_days");
+                cmd.value[1] = (float)ticks("water_days");
+                uint32_t before = needs_commands_done.load();
+                SubmitCommandAndWait(cmd);
+                result["ran"] = needs_commands_done.load() != before;
             }
             std::shared_ptr<const EconomyState> e = GetEconomy();
             std::shared_ptr<const ZoneState> z = GetZones();
@@ -468,6 +628,16 @@ void ApplicationChasm::RegisterEconomyTools(){
             }
             result["people"] = json{{"total",e->workers.size()},{"housed",housed},{"working",employed},
                                     {"camp_plot",e->camp_plot}};
+            //Per job, who works it and its places - the overview's figures (builders_plan.md).
+            EconomyJobCount counts[WORKER_JOB_COUNT];
+            int jobless = 0;
+            EconomyJobCounts(*e,*z,counts,&jobless);
+            json jobs = json::object();
+            for (int j = 0; j < WORKER_JOB_COUNT; j++){
+                jobs[EconomyJobName(j)] = json{{"working",counts[j].working},{"places",counts[j].places}};
+            }
+            jobs["none"] = jobless;
+            result["jobs"] = jobs;
             //The dead (needs_plan.md), in the order they died, with the day of the colony each died on.
             json dead = json::array();
             for (const EconomyDeath& d : e->dead){

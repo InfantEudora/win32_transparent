@@ -35,7 +35,8 @@ supplies), `ApplicationChasmEconomy.cpp` (applying the raises, the panel, `chasm
   wants is its planned storeys' wood, less what it has, less what is on its way (a load for each carrier
   still going to fetch, what each carries for it), so carriers do not over-bring. An idle person, on
   his look, takes the pair of (wood, site) with the shortest straight walk from him to the wood and on
-  to the site: wood is a standing store's, the camp's supplies or a woodcutter's pile. His round is
+  to the site - ordered by the player's queue and "build first" since 2026-10-07 (below): wood is a
+  standing store's, the camp's supplies or a woodcutter's pile. His round is
   `to_fetch`, `fetching`, `to_site`, `building`, home. When he finishes building, every storey the site's
   wood pays for stands - the lowest level first over the whole building, so it rises level by level.
   A site's storeys do nothing until they stand: no room, no family, no worker, no tent to sleep in.
@@ -53,10 +54,9 @@ supplies), `ApplicationChasmEconomy.cpp` (applying the raises, the panel, `chasm
 
 **Open:**
 - Delivered wood is not shown at the site; logs piled by the scaffold would read well.
-- No priorities: every site is served nearest-first. A player may want to say which goes first.
 - No refund for a site pulled down.
-- Jobs come first: someone given a job stops carrying when his errand is done, so a colony with as many
-  workplaces as people builds nothing. Whether a builder should be a job of its own comes with P5.
+- ~~Jobs come first: a colony with as many workplaces as people builds nothing.~~ Answered 2026-10-07 by the
+  BUILDERS' HUT (`builders_plan.md`): a workplace whose builders are staffed before every other job.
 
 ## Gardens and lots (2026-10-06, the user's)
 
@@ -77,6 +77,31 @@ in play has been a site too since line works step 2 - see the end).
 - In a save's ground list a site's kind carries `ZONE_GROUND_SAVED_SITE` (16). Old saves were let go (the
   user), so nothing reads the town-era format.
 - The build bar's BUILDING / WOOD line counts each garden or lot plot still to build as a site.
+
+## Which site goes first (2026-10-07, the user's)
+
+Nearest-first stays - it is what makes a colony build close together - but the player gets a say in two
+ways, both in `Economy::FindSiteWork`:
+
+- **The queue.** Of the errands about as short as the shortest - within `ECONOMY_QUEUE_SLACK` (8 world
+  units, about 4 plots) of it - the building PLACED first goes first. Building ids are handed out in
+  placement order and never reused, so the queue is the id. A site clearly nearer still wins; the queue
+  only orders what is close enough for the walk not to matter. Gardens and lots have no place in the
+  queue (no id), so they keep their place by distance among the buildings being reordered.
+- **Build first.** A site can be PUT FIRST (`ZoneBuilding::f_priority`, the site card's "Build first"
+  chip, `ZONE_OP_SITE_PRIORITY` - a recorded zone command, op 14): its errands come before every other
+  site's, however far. Among several put first, the same queue rule. Carriers still do not over-bring
+  (`SiteLeft`), so once a site's wood is all on its way the next idle person goes to the next site. It
+  drops by itself when nothing of the building is left to build (`Zones::SettlePriorities`), so a storey
+  added later is queued like any other. Its scaffold flies a red pennant (BuildingMesh `SiteFlag`), one
+  per building. Saved as the building's `"priority": true`, hashed with the building table. Only
+  buildings can be put first, not gardens, lots or roads.
+- **Not chosen:** assigning people to a site by hand. Builders are whoever is idle; giving one a site of
+  his own is state to keep valid through jobs, needs, deaths and sites pulled down, and fights the
+  automatic jobs. A builder JOB came instead: the builders' hut (`builders_plan.md`).
+- **Roads and walls join the queue** (decided the same day, not built): each drawn line one entry in the
+  same placing order, roads no longer only what the idle do with no wood to carry, never put first -
+  `line_works_plan.md`, "Queued with everything else", with its step 3.
 
 ROADS in play are sites on this same per-plot path since 2026-10-06 (line_works_plan.md, step 2): labour
 only, no wood, so not among the ground sites the carriers serve - an idle person with no wood to carry

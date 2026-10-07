@@ -20,8 +20,10 @@
         a paler colour round what belongs with it - a house's family, a workplace's worker, a site's
         carriers, a person's house and workplace. The outline itself is core's; buildings are merged
         into one mesh a chunk, so each outlined building is rebuilt alone into an OUTLINE-ONLY object;
-      - PINS over the heads of the people who belong with the selection, so they can be found across
-        the map (a person is a few pixels tall at play zoom);
+      - a BADGE over everyone out of doors: his job's icon ringed by his health, the icon a drop of water
+        while he is running out of it (needs_plan.md). The people who belong with the selection have
+        theirs PINNED - on a stem, in the selection's colour, kept on screen - so they can be found
+        across the map (a person is a few pixels tall at play zoom);
       - a CARD on the right saying what it is - a store's goods with chips to set what it takes.
     View state only: the one thing that reaches the simulation is a chip's store_allow, a recorded zone
     command like the debug panel's.
@@ -37,6 +39,13 @@
 #define PERSON_PICK_PX      14.0f       //a person is picked within this many pixels (at 810 high) of his middle
 #define PERSON_MIDDLE       0.55f       //world units above his feet: where he is picked
 #define PERSON_PIN          1.55f       //...and where his pin points
+#define THIRST_MARK_WATER   NEEDS_PRESSING_WATER    //water left at which his badge shows a drop: when he goes for it
+#define THIRST_MARK_ROOF    0.3f        //a family's drop points this far over its house's roof
+#define BADGE_RADIUS        11.0f       //a person's badge's dark disc, at 810 high
+#define BADGE_RING          9.0f        //...the health ring's middle, on the disc
+#define BADGE_RING_W        2.2f        //...and its width
+#define BADGE_ICON          0.85f       //the icons' scale, against the drop's size at 1
+#define BADGE_LOW_HEALTH    (2 * CALENDAR_DAY_TICKS)    //his ring goes amber here, as the card's bar does
 #define FIELD_OUTLINE_LIFT  0.06f       //a field's outline slab over its ground
 #define RIGHT_CLICK_SLOP    6           //pixels a right press may move and still be a click, not a pan
 #define CARD_W              300.0f      //at 810 high
@@ -76,6 +85,138 @@ bool ScreenOf(Camera* cam, float width, float height, const vec3& p, vec2& out){
     return true;
 }
 
+//The badges' icons' own colours - the HUD's are for text and states.
+#define ICON_WOOD       UIColor(198,148,98,255)     //a handle, a log, a bucket
+#define ICON_WOOD_END   UIColor(234,200,150,255)    //a log's cut end
+#define ICON_STEEL      UIColor(214,220,224,255)    //an axe's head, a hammer's, a bucket's handle
+#define ICON_WHEAT      UIColor(236,200,100,255)
+
+/*
+    THE BADGES' ICONS: a few opaque strokes each, so where they overlap does not show (AddLine's note), on
+    a grid about 15 across round `c` - `s` the scale, 1 a pixel at 810 high.
+*/
+//A drop of water: its round end, and circles shrinking from it to the point, each a stroke from the round
+//end - together the cone of a drop.
+void DrawDropIcon(UIOverlay* o, const vec2& c, float s){
+    vec2 base = c + vec2(0.0f,1.9f * s);    //the middle of the drop's round end
+    float round = 4.1f * s;
+    float reach = 8.0f * s;                 //from there to the point's last circle
+    const int steps = 8;                    //about a pixel apart at 810 high
+    for (int i = 0; i <= steps; i++){
+        float t = (float)i / steps;
+        float ri = round + (0.5f * s - round) * t;
+        o->AddLine(base,base - vec2(0.0f,reach * t),ri * 2.0f,HUD_WATER);
+    }
+    vec2 glint = base + vec2(-1.6f * s,-0.5f * s);
+    o->AddLine(glint,glint,1.8f * s,HudFaded(HUD_MARK,200));
+}
+
+/*
+    A woodcutter's axe: the handle leaning right, and off its top a blade fanned out to a curved edge - a
+    wedge, which is what tells it from the hammer's block at this size (a neck and an edge read as one).
+*/
+void DrawAxeIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(-5.3f,6.8f),p(1.4f,-5.2f),1.8f * s,ICON_WOOD);
+    vec2 hub = p(0.7f,-3.9f);
+    const float a0 = 1.13f, a1 = 2.88f;     //65 to 165 degrees from twelve o'clock: across the handle
+    const int fan = 8;
+    for (int i = 0; i <= fan; i++){
+        float a = a0 + (a1 - a0) * i / fan;
+        o->AddLine(hub,hub + vec2(sinf(a),-cosf(a)) * (5.0f * s),1.8f * s,ICON_STEEL);
+    }
+    o->AddArc(hub,5.0f * s,a0,a1,1.4f * s,HUD_MARK);
+}
+
+//A farmer's ear of wheat: a stalk, a grain on top and three pairs down it.
+void DrawWheatIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(0.0f,6.5f),p(0.0f,-2.0f),1.4f * s,ICON_WHEAT);
+    o->AddLine(p(0.0f,-4.6f),p(0.0f,-6.4f),2.6f * s,ICON_WHEAT);
+    for (int i = 0; i < 3; i++){
+        float y = -3.4f + 2.5f * i;
+        o->AddLine(p(0.0f,y),p(-2.4f,y - 2.0f),2.6f * s,ICON_WHEAT);
+        o->AddLine(p(0.0f,y),p(2.4f,y - 2.0f),2.6f * s,ICON_WHEAT);
+    }
+}
+
+//A water carrier's bucket: rows narrowing to the bottom, water at the brim, the handle over it.
+void DrawBucketIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddArc(p(0.0f,-1.2f),4.6f * s,-1.5707963f,1.5707963f,1.3f * s,ICON_STEEL);
+    const int rows = 5;
+    for (int i = 0; i < rows; i++){
+        float t = (float)i / (rows - 1);
+        float y = -1.2f + 6.0f * t;
+        float half = 4.6f - 1.4f * t;
+        o->AddLine(p(-half,y),p(half,y),2.2f * s,(i == 0) ? HUD_WATER : ICON_WOOD);
+    }
+}
+
+//A builder's hammer: the handle leaning right, the head across its top.
+void DrawHammerIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(-4.0f,6.2f),p(1.6f,-1.8f),1.8f * s,ICON_WOOD);
+    o->AddLine(p(-0.9f,-5.2f),p(4.6f,-1.3f),3.4f * s,ICON_STEEL);
+}
+
+//The jobless's log, for the wood they carry to the sites: lying across, its cut end toward us.
+void DrawLogIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    vec2 end = p(3.8f,-1.8f);
+    o->AddLine(p(-4.8f,2.6f),end,4.8f * s,ICON_WOOD);
+    o->AddLine(end,end,4.8f * s,ICON_WOOD_END);
+    o->AddLine(end,end,1.4f * s,ICON_WOOD);
+}
+
+/*
+    A PERSON'S BADGE (the user's, 2026-10-07): one over everyone out of doors - his job on a dark disc, and
+    round it a ring that is his health, full at full and running back to twelve o'clock as it goes. While he
+    is short of water the drop takes the job's place, so the badge says the one thing most worth knowing.
+    The ring is coloured as the card's health bar - amber with two days left - and red once he is dry, losing
+    it three times as fast. `pin`, for someone selected or related to the selection, rings the whole badge in
+    that colour: it is what his pin was.
+*/
+void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& k, uint32_t pin){
+    float back = BADGE_RADIUS * s;
+    o->AddRect(c - vec2(back,back),c + vec2(back,back),back,HudFaded(HUD_PANEL,220));
+    if (pin){
+        float edge = back + 1.0f * s;
+        o->AddRectOutline(c - vec2(edge,edge),c + vec2(edge,edge),edge,2.5f * s,pin);
+    }
+    float ring = BADGE_RING * s;
+    o->AddRectOutline(c - vec2(ring,ring),c + vec2(ring,ring),ring,BADGE_RING_W * s,HudFaded(HUD_TEXT,70));
+    float health = std::max(0.0f,std::min(1.0f,(float)k.health / NEEDS_HEALTH_FULL));
+    uint32_t colour = EconomyDry(k) ? HUD_DANGER : (k.health <= BADGE_LOW_HEALTH) ? HUD_AMBER : HUD_TEXT;
+    if (health > 0.0f){
+        o->AddArc(c,ring,0.0f,health * 6.2831853f,BADGE_RING_W * s,colour);
+    }
+    float is = BADGE_ICON * s;
+    if (k.water < THIRST_MARK_WATER){
+        DrawDropIcon(o,c,is);
+        return;
+    }
+    switch (k.job){
+        case WORKER_JOB_WOODCUTTER: DrawAxeIcon(o,c,is); break;
+        case WORKER_JOB_FARMER:     DrawWheatIcon(o,c,is); break;
+        case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
+        case WORKER_JOB_BUILDER:    DrawHammerIcon(o,c,is); break;
+        default:                    DrawLogIcon(o,c,is); break;
+    }
+}
+
+//A family indoors short of water: the drop over its roof, ringed red if any of them is dry. No health ring -
+//a roof has several people under it.
+void DrawRoofThirst(UIOverlay* o, const vec2& c, float s, bool f_dry){
+    float back = BADGE_RADIUS * s;
+    o->AddRect(c - vec2(back,back),c + vec2(back,back),back,HudFaded(HUD_PANEL,220));
+    if (f_dry){
+        float ring = BADGE_RING * s;
+        o->AddRectOutline(c - vec2(ring,ring),c + vec2(ring,ring),ring,BADGE_RING_W * s,HUD_DANGER);
+    }
+    DrawDropIcon(o,c,BADGE_ICON * s);
+}
+
 //Where a person's feet are: on the ground of the plot he stands on, as the workers' view puts him.
 vec3 FeetOf(const ChasmWorld& w, const EconomyWorker& k){
     GridPick pick = w.picker->Pick(k.pos);
@@ -106,6 +247,19 @@ const char* Doing(const EconomyWorker& k){
         case WORKER_FETCHING:   return "picking up wood";
         case WORKER_TO_SITE:    return "carrying wood to a site";
         case WORKER_BUILDING:   return "building";
+        case WORKER_TO_ROAD:    return (k.prop >= 0) ? "going to clear a road" : "going to lay a road";
+        case WORKER_CLEARING:   return "clearing a road";
+        case WORKER_LAYING:     return "laying a road";
+        case WORKER_TO_SUPPLY:{
+            uint8_t want = EconomyPressing(k);
+            bool f_water = (want & GOOD_BIT(GOOD_WATER)) != 0;
+            bool f_food = (want & GOODS_FOOD) != 0;
+            return (f_water && f_food) ? "going for food and water" : f_water ? "going for water" : "going for food";
+        }
+        case WORKER_SUPPLYING:  return "eating and drinking";
+        case WORKER_TO_GET:     return (k.carry_good == GOOD_WATER) ? "fetching water for home" : "fetching food for home";
+        case WORKER_GETTING:    return "picking up for home";
+        case WORKER_TO_LARDER:  return "taking it home";
         default:                return "";
     }
 }
@@ -120,6 +274,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_WINCH:       return "Winch";
         case ZONE_KIND_CAMP:        return "Camp";
         case ZONE_KIND_BRIDGE:      return "Bridge";
+        case ZONE_KIND_BUILDERS:    return "Builders' hut";
         default:                    return "?";
     }
 }
@@ -129,6 +284,7 @@ const char* JobTitle(int job){
         case WORKER_JOB_WOODCUTTER: return "Woodcutter";
         case WORKER_JOB_FARMER:     return "Farmer";
         case WORKER_JOB_WATER:      return "Water carrier";
+        case WORKER_JOB_BUILDER:    return "Builder";
         default:                    return "No job";
     }
 }
@@ -145,7 +301,7 @@ int FirstPlotOf(const ZoneState& z, uint32_t id){
 
 /*
     The people who belong with a selection, for their outlines and pins: a house's or camp's family,
-    a workplace's worker, a site's carriers, a store's carriers (to it or fetching from it).
+    a workplace's worker, a site's carriers, a store's carriers (to it or fetching from it, for a site or home).
 */
 void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e, std::vector<uint32_t>& out){
     out.clear();
@@ -160,7 +316,8 @@ void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e,
         }
         if (kind == ZONE_KIND_STORE){
             f = f || (k.store == p.id && (k.state == WORKER_TO_STORE || k.state == WORKER_TO_FETCH ||
-                                          k.state == WORKER_UNLOADING || k.state == WORKER_FETCHING));
+                                          k.state == WORKER_UNLOADING || k.state == WORKER_FETCHING ||
+                                          k.state == WORKER_TO_GET || k.state == WORKER_GETTING));
         }
         if (f){
             out.push_back(k.id);
@@ -226,18 +383,20 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
 }
 
 /*
-    THE CARD: a title, then lines - text, a text with a bar (0..1), or a row of a store's goods as chips.
-    Made from the published states, for the overlay and for the tool alike.
+    THE CARD: a title, then lines - text, a text with a bar (0..1), a row of a store's goods as chips, or
+    one chip that turns a setting on and off. Made from the published states, for the overlay and for the
+    tool alike.
 */
 #define CARD_TEXT   0
 #define CARD_BAR    1
 #define CARD_CHIPS  2
+#define CARD_TOGGLE 3       //a site's "Build first"
 struct CardLine{
     int type = CARD_TEXT;
     std::string text;
     uint32_t colour = HUD_TEXT;
     float bar = 0.0f;
-    uint8_t chips_on = 0;       //CARD_CHIPS: the goods taken
+    uint8_t chips_on = 0;       //CARD_CHIPS: the goods taken; CARD_TOGGLE: 1 while on
     bool f_locked = false;      //...and whether they can be changed here
 };
 struct Card{
@@ -293,6 +452,8 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     }
     if (k.job == WORKER_JOB_NONE){
         c.Text("No job: carries wood for the builders");
+    }else if (k.job == WORKER_JOB_BUILDER){
+        c.Text(Format("Builder at the builders' hut %u: carries wood to sites and builds",k.building));
     }else{
         c.Text(Format("%s at %s %u",JobTitle(k.job),KindTitle(z.buildings[k.building].kind),k.building));
     }
@@ -346,6 +507,12 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Text(carriers ? Format("%i carrying for it",carriers) : std::string("Waiting for someone free to carry"),
                    HUD_TEXT_DIM);
         }
+        //The player's say over the queue (construction_plan.md): this one before every other site.
+        CardLine first;
+        first.type = CARD_TOGGLE;
+        first.text = "Build first";
+        first.chips_on = b.f_priority;
+        c.lines.push_back(first);
     }
     if (!e){
         return;
@@ -434,6 +601,26 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     }
     if (b.kind == ZONE_KIND_WINCH && info.storeys > 0){
         c.Text("Lowers to the balcony below",HUD_TEXT_DIM);
+    }
+    //Its builders (builders_plan.md): its places filled before any other workplace's.
+    if (b.kind == ZONE_KIND_BUILDERS){
+        int places = (id < e->places.size()) ? e->places[id] : 0;
+        int working = 0;
+        for (const EconomyWorker& k : e->workers){
+            working += (k.building == id) ? 1 : 0;
+        }
+        c.Text(Format("%i of %i builder%s",working,places,places == 1 ? "" : "s"),(working < places) ? HUD_AMBER : HUD_TEXT);
+        if (info.storeys == 0){
+            c.Text("Its first builder builds it",HUD_TEXT_DIM);
+        }
+        for (const EconomyWorker& k : e->workers){
+            if (k.building == id){
+                c.Text(Format("  %s (strength %i) - %s",EconomyPersonName(k).c_str(),(int)k.skills[SKILL_STRENGTH],Doing(k)));
+            }
+        }
+        if (working < places){
+            c.Text("Too few people: every place here is filled before any other workplace's",HUD_TEXT_DIM);
+        }
     }
 }
 
@@ -671,7 +858,7 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 play_selected = PlayPick();
                 play_pick_version++;
-            }else if (hit.action == OVERLAY_HIT_STORE_ALLOW){
+            }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_SITE_FIRST){
                 PlayPick sel;
                 {
                     std::lock_guard<std::mutex> lock(pick_mutex);
@@ -681,8 +868,12 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 if (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size()){
                     int plot = (sel.plot >= 0 && sel.plot < (int)z->building.size() && z->building[sel.plot] == sel.id)
                                ? sel.plot : FirstPlotOf(*z,sel.id);
-                    uint8_t mask = z->buildings[sel.id].allow ^ (uint8_t)GOOD_BIT(hit.value);
-                    SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
+                    if (hit.action == OVERLAY_HIT_STORE_ALLOW){
+                        uint8_t mask = z->buildings[sel.id].allow ^ (uint8_t)GOOD_BIT(hit.value);
+                        SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
+                    }else{
+                        SubmitZone(ZONE_OP_SITE_PRIORITY,plot,z->buildings[sel.id].f_priority ? 0 : 1);
+                    }
                 }
             }
         }
@@ -891,8 +1082,8 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     float width = (float)main_window->width;
     float height = (float)main_window->height;
     /*
-        PINS: over everyone who belongs with the selection and is out of doors - and the selected person
-        himself - a dot on a stem, kept on screen at its edge when he is off it, so he can be found.
+        PINNED: everyone who belongs with the selection, and the selected person himself - his badge on a
+        stem in the selection's colour, kept on screen at its edge when he is off it, so he can be found.
     */
     std::vector<uint32_t> pinned;
     if (ep){
@@ -901,29 +1092,91 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             pinned.push_back(sel.id);
         }
     }
-    for (uint32_t id : pinned){
-        const EconomyWorker* k = ep ? PersonById(*ep,id) : NULL;
-        if (!k || EconomyIndoors(*k)){
-            continue;
+    //Where a pin over a world point goes: kept on screen, clear of the build bar along the bottom, with
+    //whether it had to be (then it has no stem). False behind the camera.
+    auto pin_spot = [&](const vec3& stem, const vec3& top, float rise, vec2& head, vec2& dot, bool& f_off){
+        vec2 tip;
+        if (!ScreenOf(main_scene->camera,width,height,top,tip)){
+            return false;
         }
-        vec3 feet = FeetOf(*w,*k);
-        vec2 head, tip;
-        if (!ScreenOf(main_scene->camera,width,height,feet + vec3(0.0f,PERSON_PIN,0.0f),tip)){
-            continue;
-        }
-        ScreenOf(main_scene->camera,width,height,feet + vec3(0.0f,PERSON_PIN * 0.75f,0.0f),head);
-        //Kept on screen, clear of the build bar along the bottom.
+        ScreenOf(main_scene->camera,width,height,stem,head);
         float margin = 18.0f * s;
         float bottom = height - 64.0f * s;
-        bool f_off = tip.x < margin || tip.y < margin || tip.x > width - margin || tip.y > bottom;
-        vec2 dot(std::max(margin,std::min(width - margin,tip.x)),std::max(margin,std::min(bottom,tip.y - 16.0f * s)));
-        uint32_t colour = (sel.kind == PLAY_PICK_PERSON && sel.id == id) ? HUD_SELECT : HUD_AMBER;
-        if (!f_off){
-            overlay->AddLine(head,dot,2.0f * s,HudFaded(colour,220));
+        f_off = tip.x < margin || tip.y < margin || tip.x > width - margin || tip.y > bottom;
+        dot = vec2(std::max(margin,std::min(width - margin,tip.x)),std::max(margin,std::min(bottom,tip.y - rise * s)));
+        return true;
+    };
+    auto person_spot = [&](const EconomyWorker& k, vec2& head, vec2& dot, bool& f_off){
+        vec3 feet = FeetOf(*w,k);
+        return pin_spot(feet + vec3(0.0f,PERSON_PIN * 0.75f,0.0f),feet + vec3(0.0f,PERSON_PIN,0.0f),16.0f,head,dot,f_off);
+    };
+
+    /*
+        THE BADGES (the user's, 2026-10-07): one over everyone out of doors, where a pin would be - so a
+        selection adds a stem and its colour and nothing moves. A pinned badge is kept on screen at its
+        edge; the rest only drawn where they are on it, or a crowd at the edges would bury the ones that
+        are there to be found. A family indoors short of water gets a drop over its roof. Roofs first, then
+        everyone, then the pinned, so those stay on top - the selected person's last of all.
+    */
+    if (ep){
+        struct Roof{
+            uint32_t house;
+            vec3 top;
+            bool f_dry;
+        };
+        std::vector<Roof> roofs;
+        for (const EconomyWorker& k : ep->workers){
+            if (!EconomyIndoors(k) || k.water >= THIRST_MARK_WATER){
+                continue;
+            }
+            bool f_dry = EconomyDry(k);
+            auto r = std::find_if(roofs.begin(),roofs.end(),[&](const Roof& o){ return o.house == k.house; });
+            if (r != roofs.end()){
+                r->f_dry = r->f_dry || f_dry;
+                continue;
+            }
+            //He is at his door, on the house's first plot (Economy::HomePlot) - its roof is over him.
+            GridPick pick = w->picker->Pick(k.pos);
+            float top = (pick.f_hit && z->building[pick.plot] == k.house) ? ShapeTop(*w,*z,pick.plot)
+                                                                          : FeetOf(*w,k).y + PERSON_PIN;
+            roofs.push_back(Roof{k.house,vec3(k.pos.x,top + THIRST_MARK_ROOF,k.pos.y),f_dry});
         }
-        float r = 6.0f * s;
-        overlay->AddRect(dot - vec2(r + 1.5f * s,r + 1.5f * s),dot + vec2(r + 1.5f * s,r + 1.5f * s),r + 1.5f * s,HudFaded(HUD_PANEL,220));
-        overlay->AddRect(dot - vec2(r,r),dot + vec2(r,r),r,colour);
+        for (const Roof& r : roofs){
+            vec2 head, dot;
+            bool f_off = false;
+            if (pin_spot(r.top,r.top,20.0f,head,dot,f_off) && !f_off){
+                overlay->AddLine(head,dot,2.0f * s,HudFaded(HUD_WATER,220));
+                DrawRoofThirst(overlay,dot,s,r.f_dry);
+            }
+        }
+        for (const EconomyWorker& k : ep->workers){
+            if (EconomyIndoors(k) || std::find(pinned.begin(),pinned.end(),k.id) != pinned.end()){
+                continue;
+            }
+            //On a stem in the disc's colour: floating free, a crowd's badges could be anybody's.
+            vec2 head, dot;
+            bool f_off = false;
+            if (person_spot(k,head,dot,f_off) && !f_off){
+                overlay->AddLine(head,dot,2.0f * s,HudFaded(HUD_PANEL,220));
+                DrawPersonBadge(overlay,dot,s,k,0);
+            }
+        }
+        for (uint32_t id : pinned){
+            const EconomyWorker* k = PersonById(*ep,id);
+            if (!k || EconomyIndoors(*k)){
+                continue;
+            }
+            vec2 head, dot;
+            bool f_off = false;
+            if (!person_spot(*k,head,dot,f_off)){
+                continue;
+            }
+            uint32_t colour = (sel.kind == PLAY_PICK_PERSON && sel.id == id) ? HUD_SELECT : HUD_AMBER;
+            if (!f_off){
+                overlay->AddLine(head,dot,2.0f * s,HudFaded(colour,220));
+            }
+            DrawPersonBadge(overlay,dot,s,*k,colour);
+        }
     }
 
     //THE CARD, on the right under the date's level.
@@ -940,7 +1193,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     float card_w = CARD_W * s;
     float h = pad + 26.0f * s;
     for (const CardLine& l : card.lines){
-        h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS) ? chips_h : line_h;
+        h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS || l.type == CARD_TOGGLE) ? chips_h : line_h;
         //A long line widens the card rather than running off it.
         card_w = std::max(card_w,overlay->MeasureText(l.text.c_str(),text_size).x + pad * 2.0f);
     }
@@ -960,6 +1213,24 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     overlay->AddLine(vec2(x1.x - 3.0f * s,x0.y + 3.0f * s),vec2(x0.x + 3.0f * s,x1.y - 3.0f * s),2.0f * s,HUD_TEXT_DIM);
     overlay_hits_drawing.push_back(OverlayHit{x0 - vec2(4.0f * s,4.0f * s),x1 + vec2(4.0f * s,4.0f * s),OVERLAY_HIT_CLOSE,0});
     y += 12.0f * s;
+    //A chip: lit while on; a click turns it over (not while it is fixed). Returns where the next one goes.
+    auto chip = [&](float x, const char* name, bool f_on, bool f_locked, int action, int value) -> float {
+        float tw = overlay->MeasureText(name,text_size).x;
+        vec2 k0(x,y - 24.0f * s);
+        vec2 k1(x + tw + 14.0f * s,y - 4.0f * s);
+        uint8_t alpha = f_locked ? 110 : 235;
+        if (f_on){
+            overlay->AddRect(k0,k1,8.0f * s,HudFaded(HUD_AMBER,alpha));
+        }else{
+            overlay->AddRectOutline(k0,k1,8.0f * s,1.5f * s,HudFaded(HUD_TEXT,alpha / 2));
+        }
+        overlay->AddText(name,vec2(x + 7.0f * s,y - 9.0f * s),text_size,f_on ? HudFaded(HUD_PANEL,255) : HudFaded(HUD_TEXT,alpha),
+                         UI_ALIGN_LEFT);
+        if (!f_locked){
+            overlay_hits_drawing.push_back(OverlayHit{k0,k1,action,value});
+        }
+        return k1.x + 6.0f * s;
+    };
     for (const CardLine& l : card.lines){
         if (l.type == CARD_TEXT){
             y += line_h;
@@ -971,28 +1242,15 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             vec2 b1(c1.x - pad,y - 2.0f * s);
             overlay->AddRect(b0,b1,2.0f * s,HudFaded(HUD_TEXT,45));
             overlay->AddRect(b0,vec2(b0.x + (b1.x - b0.x) * l.bar,b1.y),2.0f * s,HudFaded(l.colour,210));
+        }else if (l.type == CARD_TOGGLE){
+            y += chips_h;
+            chip(c0.x + pad,l.text.c_str(),l.chips_on != 0,l.f_locked,OVERLAY_HIT_SITE_FIRST,0);
         }else{
-            //A chip per good: lit if the store takes it; a click turns it over (not while it is fixed).
+            //A chip per good: lit if the store takes it.
             y += chips_h;
             float x = c0.x + pad;
             for (int g = 0; g < GOOD_COUNT; g++){
-                const char* name = GoodName(g);
-                float tw = overlay->MeasureText(name,text_size).x;
-                vec2 k0(x,y - 24.0f * s);
-                vec2 k1(x + tw + 14.0f * s,y - 4.0f * s);
-                bool f_on = (l.chips_on & GOOD_BIT(g)) != 0;
-                uint8_t alpha = l.f_locked ? 110 : 235;
-                if (f_on){
-                    overlay->AddRect(k0,k1,8.0f * s,HudFaded(HUD_AMBER,alpha));
-                }else{
-                    overlay->AddRectOutline(k0,k1,8.0f * s,1.5f * s,HudFaded(HUD_TEXT,alpha / 2));
-                }
-                overlay->AddText(name,vec2(x + 7.0f * s,y - 9.0f * s),text_size,f_on ? HudFaded(HUD_PANEL,255) : HudFaded(HUD_TEXT,alpha),
-                                 UI_ALIGN_LEFT);
-                if (!l.f_locked){
-                    overlay_hits_drawing.push_back(OverlayHit{k0,k1,OVERLAY_HIT_STORE_ALLOW,g});
-                }
-                x = k1.x + 6.0f * s;
+                x = chip(x,GoodName(g),(l.chips_on & GOOD_BIT(g)) != 0,l.f_locked,OVERLAY_HIT_STORE_ALLOW,g);
             }
         }
     }
@@ -1106,6 +1364,8 @@ void ApplicationChasm::RegisterSelectTools(){
                             }
                         }
                         lines.push_back(json{{"chips",takes},{"locked",l.f_locked}});
+                    }else if (l.type == CARD_TOGGLE){
+                        lines.push_back(json{{"toggle",l.text},{"on",l.chips_on != 0}});
                     }else{
                         lines.push_back(l.type == CARD_BAR ? json{{"text",l.text},{"bar",l.bar}} : json(l.text));
                     }

@@ -2,6 +2,7 @@
 #define _APPLICATION_CHASM_H_
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <chrono>
@@ -48,6 +49,7 @@ extern const char* person_asset_names[PERSON_FIGURES];
 #define OVERLAY_HIT_TOOL        1       //the build bar: take up tool `value`
 #define OVERLAY_HIT_STORE_ALLOW 2       //a store's card: let it take good `value`, or not
 #define OVERLAY_HIT_CLOSE       3       //a card's close mark: clear the selection
+#define OVERLAY_HIT_SITE_FIRST  4       //a site's card: put it first, or back in the queue
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -81,8 +83,8 @@ struct OverlayHit{
 */
 
 
-//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1-7 pick
-//(and pick again to drop) the house, field, erase, garden, town, road and walker tools.
+//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1-6 pick
+//(and pick again to drop) the house, field, erase, garden, lot and road tools; 7 was the debug walker.
 #define INPUT_CHASM_ROTATE_LEFT     INPUT_LAST+1
 #define INPUT_CHASM_ROTATE_RIGHT    INPUT_LAST+2
 #define INPUT_CHASM_FRAME           INPUT_LAST+3
@@ -93,7 +95,6 @@ struct OverlayHit{
 #define INPUT_CHASM_TOOL_GARDEN     INPUT_LAST+8
 #define INPUT_CHASM_TOOL_LOT        INPUT_LAST+9
 #define INPUT_CHASM_TOOL_ROAD       INPUT_LAST+10
-#define INPUT_CHASM_TOOL_WALKER     INPUT_LAST+11
 #define INPUT_CHASM_PREVIOUS_SEED   INPUT_LAST+12
 #define INPUT_CHASM_TOOL_STORE      INPUT_LAST+13
 #define INPUT_CHASM_TOOL_WOODCUTTER INPUT_LAST+14
@@ -105,19 +106,15 @@ struct OverlayHit{
 #define INPUT_CHASM_TOOL_CAMP      INPUT_LAST+20
 #define INPUT_CHASM_FOG            INPUT_LAST+21     //V: the clouds over unexplored ground, in debug mode
 #define INPUT_CHASM_TOOL_BRIDGE    INPUT_LAST+22     //J, for jetty: B is the previous seed
+#define INPUT_CHASM_TOOL_BUILDERS  INPUT_LAST+23     //G, for guild: B again
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
                                                         //value[1]: ground kind for ZONE_OP_GROUND_PAINT
-#define CHASM_CMD_WALKER            SIM_CMD_LAST+1      //subtype: WalkerOp; value[0]: home plot; value[1]: goal plot
+#define CHASM_CMD_WALKER            SIM_CMD_LAST+1      //RETIRED with the debug walker (2026-10-07): never reuse
 #define CHASM_CMD_CALENDAR          SIM_CMD_LAST+2      //sets the date: subtype the day, value[0] the tick in it
-
-//What a walker command asks for (step 10). Never renumber - recordings refer to these by value.
-enum WalkerOp{
-    WALKER_OP_NONE = 0,
-    WALKER_OP_SPAWN,        //a debug walker between home and goal
-    WALKER_OP_CLEAR         //every walker gone
-};
+#define CHASM_CMD_NEEDS             SIM_CMD_LAST+3      //a person's needs set (a debug edit): subtype his id;
+                                                        //value[0] health, value[1] water, in ticks - -1 leaves it
 
 //What a left click does.
 enum ChasmTool{
@@ -128,13 +125,13 @@ enum ChasmTool{
     CHASM_TOOL_GARDEN,
     CHASM_TOOL_LOT,
     CHASM_TOOL_ROAD,        //step 10: ground of kind road
-    CHASM_TOOL_WALKER,      //click a home, then a goal: a debug walker between them
     CHASM_TOOL_STORE,       //docs/buildings_plan.md: buildings of these kinds, a drag each
     CHASM_TOOL_WOODCUTTER,
     CHASM_TOOL_WATER,
     CHASM_TOOL_WINCH,       //docs/buildings_plan.md step 2: on the rim above a balcony
     CHASM_TOOL_CAMP,        //docs/people_plan.md: tents and fires
     CHASM_TOOL_BRIDGE,      //docs/bridge_plan.md: press on one bank, let go on the other
+    CHASM_TOOL_BUILDERS,    //docs/builders_plan.md: a builders' hut, a drag
     CHASM_TOOL_COUNT
 };
 
@@ -286,53 +283,33 @@ private:
                          const char** why);
 
     /*
-        --- Roads and walkers (step 10, ApplicationChasmRoads.cpp; docs/roads_plan.md) ---------------
-        A road is ground, painted through the zone commands. `walkers` is simulation state like
-        `zones`, the physics thread's alone, changed by CHASM_CMD_WALKER and by the tick, and
-        published the same way: a copy after each change, under grid_mutex. The view draws a figure
-        per walker and, in a debug build, its path.
+        --- Roads and walking (step 10, ApplicationChasmRoads.cpp; docs/roads_plan.md) ---------------
+        A road is ground, painted through the zone commands. `walkers` is the plot graph the economy's
+        people find their ways on (Walkers.h) - no state of its own beyond what follows from the world
+        and the zones; the debug walker it once carried was retired 2026-10-07.
     */
     Walkers walkers;
-    std::shared_ptr<const WalkerSet> walker_snapshot;
-    std::string walker_last_refusal;            //under grid_mutex
-    std::atomic<uint32_t> walker_commands_done{0};
-    int walker_tool_home = -1;                  //physics thread: the walker tool's first click
-    void PublishWalkers();                      //physics thread
-    std::shared_ptr<const WalkerSet> GetWalkers();
-    void SubmitWalker(int op, int home, int goal);
-    void RegisterWalkerCommands();
-    void TickWalkers();                         //physics thread, from RunSimulationTick
-    void HashWalkers(StateHash& h);
-    void UpdateWalkerTool(const GridPick& hover, bool f_shift);
-    Mesh* walker_mesh = NULL;
-    std::vector<Object*> walker_objects;        //render thread: one per walker, reused
-    std::atomic<bool> f_view_walkers{true};
-    void BuildWalkerScene();                    //from BuildScene
-    void UploadWalkers();                       //render thread, from PreRender
-#ifdef DEBUG
-    Object* walker_path_view = NULL;
-    Mesh* walker_path_mesh = NULL;
-    uint32_t walker_path_built = 0xFFFFFFFFu;
-#endif
 #ifdef USE_MCP
-    void RegisterWalkerTools();
-#endif
-#ifdef USE_IMGUI
-    void RenderWalkerPanel();
+    void RegisterRoadTools();
 #endif
 
     /*
         --- The economy (docs/economy_plan.md, P2 + P3; ApplicationChasmEconomy.cpp) -----------------
-        `economy` is SIMULATION state, the physics thread's alone, ticked after the walkers; a copy is
+        `economy` is SIMULATION state, the physics thread's alone, ticked after the zones; a copy is
         published after every tick that changed it (economy_snapshot, under grid_mutex) - the zones'
         pattern again. The view reads the copy: felled trees and stumps, the workers, the fields' growth.
+        CHASM_CMD_NEEDS is its one command, a debug edit of a person's health and water - recorded, so
+        a replay makes the same edit on the same tick.
     */
     Economy economy;
     std::shared_ptr<const EconomyState> economy_snapshot;
+    std::atomic<uint32_t> needs_commands_done{0};
     void TickEconomy();                         //physics thread, from RunSimulationTick
     void PublishEconomy();                      //physics thread
     std::shared_ptr<const EconomyState> GetEconomy();
     void HashEconomy(StateHash& h);
+    void RegisterEconomyCommands();
+    void SubmitNeeds(uint32_t person, int health, int water);  //any thread; -1 leaves one as it is
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
     void RegisterEconomyTools();
@@ -340,6 +317,8 @@ private:
 #ifdef USE_IMGUI
     void RenderEconomyInfo(uint32_t id);        //in the building info, for the building under the cursor
     void RenderSelectedStore(int plot);         //what the selected store takes, to be set there
+    void RenderPeoplePanel();                   //the villagers, their health and water to be set
+    std::map<uint64_t,float> needs_editing;     //render thread: a slider being dragged, by person and bar
 #endif
 
     /*
@@ -576,7 +555,10 @@ private:
     bool OverlayHitAt(int2 px, OverlayHit* hit);
     void UploadSelection();                                 //render thread, from PreRender
     void DrawBuildBar(float s);                             //render thread, from DrawOverlay
+    void DrawJobsOverview(float s);                         //render thread, from DrawOverlay: builders_plan.md
     void DrawSelectionOverlay(float s);                     //render thread, from DrawOverlay: card + pins
+    vec2 build_bar_min;                                     //render thread: where the bar was last drawn, for the overview
+    vec2 build_bar_max;
 #ifdef USE_MCP
     void RegisterSelectTools();
     void RegisterBridgeTools();

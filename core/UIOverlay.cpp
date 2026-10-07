@@ -4,9 +4,9 @@
 #include "File.h"
 #include <string.h>
 #include <stddef.h>
-//sqrtf, for AddLine's direction, and fabsf for AddVignette's reach.
+//sqrtf, for AddLine's direction, fabsf for AddVignette's reach, and the trig for AddArc's chords.
 #include <math.h>
-//std::min/max, for AddVignette's clamps.
+//std::min/max, for AddVignette's and AddArc's clamps.
 #include <algorithm>
 
 static Debugger* debug = new Debugger("UIOverlay", DEBUG_INFO);
@@ -664,6 +664,33 @@ void UIOverlay::AddLine(vec2 a, vec2 b, float thickness, uint32_t color){
         v.distance_scale = font.distance_range_px;
         v.color          = color;
         vertices.push_back(v);
+    }
+}
+
+//See the header: chords of the circle, drawn as AddLine strokes whose round caps close the joints.
+void UIOverlay::AddArc(vec2 centre, float radius, float a0, float a1, float thickness, uint32_t color){
+    if (!f_ready){
+        return;
+    }
+    if (thickness <= 0.0f || radius <= 0.0f){
+        return;
+    }
+    const float turn = 6.2831853f;
+    float span = std::max(-turn,std::min(turn,a1 - a0));
+    //The chord angle whose sagitta, radius * (1 - cos(step / 2)), is a quarter pixel. A circle too
+    //small for that to mean anything gets quarter-turn chords - their caps fill it anyway.
+    float step = (radius > 0.25f) ? 2.0f * acosf(1.0f - 0.25f / radius) : turn * 0.25f;
+    int n = (int)ceilf(fabsf(span) / step);
+    n = std::max(1,std::min(128,n));
+    float px = centre.x + sinf(a0) * radius;
+    float py = centre.y - cosf(a0) * radius;
+    for (int i = 1; i <= n; i++){
+        float a = a0 + span * (float)i / (float)n;
+        float x = centre.x + sinf(a) * radius;
+        float y = centre.y - cosf(a) * radius;
+        AddLine(vec2(px,py),vec2(x,y),thickness,color);
+        px = x;
+        py = y;
     }
 }
 

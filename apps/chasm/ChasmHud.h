@@ -15,6 +15,8 @@
 #define HUD_MARK        UIColor(255,255,255,255)
 #define HUD_AMBER       UIColor(236,202,92,255)     //what wants attention: a site, someone without a house
 #define HUD_SELECT      UIColor(255,158,40,255)     //Blender's selection orange: the selection's own colour
+#define HUD_WATER       UIColor(104,178,240,255)    //the thirst mark's drop
+#define HUD_DANGER      UIColor(226,72,56,255)      //what is costing a life now: someone dry
 
 inline uint32_t HudFaded(uint32_t c, uint8_t alpha){
     return (c & 0x00FFFFFFu) | ((uint32_t)alpha << 24);

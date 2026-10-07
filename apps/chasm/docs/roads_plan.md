@@ -6,6 +6,12 @@ everything else**, and **the first walker is a debug walker** - one figure walki
 plots by A*, to prove pathfinding and replay before there is any economy for it to serve. Gates come
 after, because a gate is where a road meets a wall.
 
+**The debug walker was RETIRED 2026-10-07** (the user's: it had outlived its purpose - the villagers walk
+these routes now). Gone: the walker tool (7), the Walkers panel, `chasm_walker`, the walkers in saves and
+the trace's `walkers` part; `CHASM_CMD_WALKER` keeps its number, unhandled, so an old recording's walker
+commands are only logged. What stays is the graph and its rules - `Walkers::PlanRoute`, which the economy's
+people walk by - and the figure, as the people's stand-in. What follows is the walker as it was built.
+
 ---
 
 ## Roads

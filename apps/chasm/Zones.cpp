@@ -21,6 +21,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_BUILD_RAISE:   return "build_raise";
         case ZONE_OP_BRIDGE:        return "bridge";
         case ZONE_OP_GROUND_RAISE:  return "ground_raise";
+        case ZONE_OP_SITE_PRIORITY: return "site_priority";
         default:                   return "none";
     }
 }
@@ -49,6 +50,7 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_WINCH:       return "winch";
         case ZONE_KIND_CAMP:        return "camp";
         case ZONE_KIND_BRIDGE:      return "bridge";
+        case ZONE_KIND_BUILDERS:    return "builders";
         default:                    return "none";
     }
 }
@@ -75,6 +77,7 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_WINCH:       return 1;
         case ZONE_KIND_CAMP:        return 1;
         case ZONE_KIND_BRIDGE:      return 1;
+        case ZONE_KIND_BUILDERS:    return 2;       //a workshop, like the woodcutter's
         default:                    return 0;
     }
 }
@@ -993,6 +996,7 @@ void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
         uint32_t fresh = NewBuilding(state.buildings[id].kind);
         state.buildings[fresh].crop = state.buildings[id].crop;
         state.buildings[fresh].allow = state.buildings[id].allow;
+        state.buildings[fresh].f_priority = state.buildings[id].f_priority;
         state.buildings[fresh].split_from = id;
         for (int at : pieces[k]){
             owner[at] = fresh;
@@ -1329,6 +1333,14 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             state.standing[plot]++;
             touch_road(plot);
+            //A site put first: its flag moves on to the next plot of it still to build (BuildingMesh).
+            if (state.buildings[state.building[plot]].f_priority && state.standing[plot] == state.storeys[plot]){
+                for (size_t v = 0; v < state.building.size(); v++){
+                    if (state.building[v] == state.building[plot]){
+                        touch_plot((int)v);
+                    }
+                }
+            }
             break;
         }
         case ZONE_OP_STORE_ALLOW:{
@@ -1400,12 +1412,70 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             touch_road(plot);       //its wall, a gate where a road meets it, the road's curve and verge
             break;
         }
+        case ZONE_OP_SITE_PRIORITY:{
+            //The player's "build this first" (construction_plan.md). Only a site can be put first; any
+            //building can be put back, so a flag never sticks where the card no longer offers it.
+            if (plot < 0 || plot >= (int)state.building.size() || state.building[plot] == 0){
+                last_refusal = "nothing built there";
+                return false;
+            }
+            uint32_t id = state.building[plot];
+            uint8_t want = kind ? 1 : 0;
+            if (state.buildings[id].f_priority == want){
+                return false;
+            }
+            bool f_site = false;
+            for (size_t v = 0; v < state.building.size() && !f_site; v++){
+                f_site = state.building[v] == id && state.standing[v] < state.storeys[v];
+            }
+            if (want && !f_site){
+                last_refusal = "nothing to build there";
+                return false;
+            }
+            state.buildings[id].f_priority = want;
+            //Its scaffolds fly a flag while it is first (BuildingMesh), so every plot of it is drawn again.
+            for (size_t v = 0; v < state.building.size(); v++){
+                if (state.building[v] == id){
+                    touch_plot((int)v);
+                }
+            }
+            break;
+        }
         default:
             last_refusal = "unknown zone op";
             return false;
     }
+    if (op == ZONE_OP_BUILD_ADD || op == ZONE_OP_BUILD_REMOVE || op == ZONE_OP_BUILD_ERASE || op == ZONE_OP_BUILD_RAISE){
+        SettlePriorities();
+    }
     state.version++;
     return true;
+}
+
+/*
+    A site put first stops being first once nothing of it is left to build - raised by its builders,
+    finished by a debug click, or its last planned storey taken off - so a storey added later is queued
+    like any other. One pass over the plots, and only while anything is first at all.
+*/
+void Zones::SettlePriorities(){
+    bool f_any = false;
+    for (const ZoneBuilding& b : state.buildings){
+        f_any = f_any || b.f_priority;
+    }
+    if (!f_any){
+        return;
+    }
+    std::vector<uint8_t> open(state.buildings.size(),0);
+    for (size_t v = 0; v < state.building.size(); v++){
+        if (state.standing[v] < state.storeys[v]){
+            open[state.building[v]] = 1;
+        }
+    }
+    for (size_t id = 1; id < state.buildings.size(); id++){
+        if (!open[id]){
+            state.buildings[id].f_priority = 0;
+        }
+    }
 }
 
 int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<ZoneSavedBuilding>& buildings,
@@ -1431,6 +1501,7 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
         state.buildings[b.id].kind = (uint8_t)b.kind;
         state.buildings[b.id].crop = (uint8_t)std::max(0,std::min(ZONE_CROP_COUNT - 1,b.crop));
         state.buildings[b.id].allow = (uint8_t)(b.allow & GOODS_ALL);
+        state.buildings[b.id].f_priority = b.f_priority ? 1 : 0;
     }
     //Then what stands on the ground, in the order the rules want: fields, ground, buildings - each
     //through the same questions a command asks.
@@ -1506,6 +1577,7 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& state){
             b.kind = state.buildings[id].kind;
             b.crop = state.buildings[id].crop;
             b.allow = state.buildings[id].allow;
+            b.f_priority = state.buildings[id].f_priority != 0;
             out.push_back(b);
         }
     }
@@ -1569,6 +1641,7 @@ ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, ui
     info.kind = z.buildings[id].kind;
     info.crop = z.buildings[id].crop;
     info.allow = z.buildings[id].allow;
+    info.f_priority = z.buildings[id].f_priority != 0;
     info.size = z.buildings[id].size;
     if (info.kind == ZONE_KIND_FIELD){
         for (size_t c = 0; c < z.field.size(); c++){

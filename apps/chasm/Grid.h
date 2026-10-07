@@ -231,7 +231,7 @@ GridLine GridSmoothLine(const std::vector<vec2>& corners, bool f_closed, float s
 float GridLineGap(const GridLine& a, const GridLine& b, float skip_arc, vec2* where);
 
 struct GridSettings{
-    uint32_t seed = 1;
+    uint32_t seed = 12;
     //How many FINE cells to aim for. The lattice is sized from it, so the count that comes out is
     //close but not exact - the merge decides how many quads each triangle becomes.
     int target_fine_cells = 100000;

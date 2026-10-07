@@ -42,7 +42,9 @@ Files: `Economy.*` (the people are `EconomyState::workers`, one `EconomyWorker` 
 - **Jobs**: every workplace with nobody takes the free housed adult with the best score - his skill for
   the job (woodcutter: strength, farmer: husbandry, water carrier: ingenuity), 4 world units a point,
   less the straight line from his house - among those who can walk there. One worker a workplace; a job
-  stays his until the workplace or his house goes.
+  stays his until the workplace or his house goes. Since 2026-10-07 (`builders_plan.md`): a builders' hut
+  has a place per plot-storey, places are filled in order - huts first, then workplaces as placed - and
+  with too few people the newest workplaces stand empty, so a job can also move to an older place.
 - **Skill is pace**: 0.6 + 0.08 x the skill - 1.0 at 5, 1.4 at 10, 0.68 at 1. A woodcutter fells at his
   pace; a field grows at its farmer's; a field without a farmer does not grow, and a collector without a
   carrier does not fill.

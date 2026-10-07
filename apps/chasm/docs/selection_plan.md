@@ -79,8 +79,12 @@ date), hooks in `ApplicationChasm.cpp` (UpdatePick, UpdatePickView, PreRender) a
   it is drawn as standing by itself; a field is a slab over its cells, since its crops would outline
   every plant), when what it holds or the zones change. People's outlines are set every frame. Colours:
   selected orange, related pale gold, hover faint.
-- **Pins**: over each person related to the selection, out of doors (and the selected person), a dot on
-  a stem, kept on screen at its edge, clear of the build bar.
+- **Badges** (the user's, 2026-10-07): ONE over everyone out of doors, on a short stem - his job's icon
+  (axe, wheat, bucket, hammer, a log for the jobless who carry) on a dark disc, ringed by his health, the
+  icon a water drop while he is short of water (`needs_plan.md`). Only on screen.
+- **Pins are the badges**: each person related to the selection (and the selected person) has his badge
+  ringed and stemmed in the selection's colour - orange selected, amber related - kept on screen at its
+  edge, clear of the build bar, and drawn last so it stays on top. A selection adds colour; nothing moves.
 - **The card** (right side): as listed above. A store's chips send a recorded `store_allow` - a PLAY
   command, from play mode - and are dimmed and fixed while the store is next to a workplace.
 - **Tool**: `chasm_select` (select a building at x,z or by id, or a person by id; clear; status - the

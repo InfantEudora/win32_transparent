@@ -148,7 +148,7 @@ void ApplicationChasm::UpdateGhost(){
     }
     bool f_line = !chain.empty();
     int from = (tool == CHASM_TOOL_BRIDGE) ? bridge_from.load() : -1;
-    bool f_tool = tool != CHASM_TOOL_SELECT && tool != CHASM_TOOL_WALKER;
+    bool f_tool = tool != CHASM_TOOL_SELECT;
     bool f_show = PlayMode() && f_tool && (hover.f_hit || f_line) && w && zs && zs->world == w;
     if (!f_show){
         if (ghost->IsVisible()){

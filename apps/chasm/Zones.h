@@ -93,7 +93,8 @@
 #define ZONE_KIND_WINCH         6       //on the rim above a balcony; walkers ride it down (Walkers.h)
 #define ZONE_KIND_CAMP          7       //tents and fires: a house's rules, a person a tent (docs/people_plan.md)
 #define ZONE_KIND_BRIDGE        8       //across a river, bank to bank (docs/bridge_plan.md)
-#define ZONE_KIND_COUNT         9
+#define ZONE_KIND_BUILDERS      9       //a builders' hut: employs builders, staffed first (docs/builders_plan.md)
+#define ZONE_KIND_COUNT         10
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 int ZoneKindMaxStoreys(int kind);
@@ -182,6 +183,7 @@ enum ZoneOp{
     ZONE_OP_BUILD_RAISE,    //plot: one more of its planned storeys stands - the builders' (construction_plan.md)
     ZONE_OP_BRIDGE,         //plot: a bridge from it to the plot in value[1], across the water (bridge_plan.md)
     ZONE_OP_GROUND_RAISE,   //plot: its garden or lot site is built - the builders' (construction_plan.md)
+    ZONE_OP_SITE_PRIORITY,  //plot: its building's site goes first (value[1] 1) or back in the queue (0)
     ZONE_OP_COUNT
 };
 const char* ZoneOpName(int op);
@@ -192,14 +194,18 @@ struct ChasmWorld;     //ChasmWorld.h
 /*
     One building: its kind, what a field grows, and how many plots or cells it covers (0: gone).
     `allow` is what a STORE takes when it stands on its own - the player's setting, all goods by
-    default; next to a workplace it takes that workplace's goods instead (Economy.h). `split_from` is
-    the building a piece was split off by an erase, for the economy to share its stock out by; not
-    saved, since the economy has done that by the time anything is.
+    default; next to a workplace it takes that workplace's goods instead (Economy.h). `f_priority` is
+    the player's "build this first" on a construction site: its carriers come before any other site's,
+    however far (construction_plan.md); it drops by itself when nothing of the building is left to
+    build, so a storey added later is queued like any other. `split_from` is the building a piece was
+    split off by an erase, for the economy to share its stock out by; not saved, since the economy has
+    done that by the time anything is.
 */
 struct ZoneBuilding{
     uint8_t kind = ZONE_KIND_NONE;
     uint8_t crop = ZONE_CROP_WHEAT;
     uint8_t allow = GOODS_ALL;
+    uint8_t f_priority = 0;
     int size = 0;
     uint32_t split_from = 0;
 };
@@ -242,6 +248,7 @@ struct ZoneSavedBuilding{
     int kind = ZONE_KIND_HOUSE;
     int crop = ZONE_CROP_WHEAT;
     int allow = GOODS_ALL;                      //a store's own setting
+    bool f_priority = false;                    //a site the player put first
     std::vector<std::pair<int,int>> plots;      //plot, storeys
     std::vector<int> standing;                  //per plot above, what of it stands - empty: all of it
     std::vector<int> cells;                     //a field's coarse cells
@@ -285,6 +292,7 @@ private:
     void Touch(int fine_quad);
     uint32_t NewBuilding(int kind);
     void SplitAfterRemoval(uint32_t id, int removed, bool f_field);
+    void SettlePriorities();
 };
 
 //A state's buildings as a save holds them - the inverse of Zones::Restore. Any thread, on a published copy.
@@ -397,6 +405,7 @@ struct ZoneBuildingInfo{
     float floor_area = 0.0f;    //standing - what it holds and houses
     int site_storeys = 0;       //planned and not yet standing: a construction site's
     float site_area = 0.0f;
+    bool f_priority = false;    //the site goes first
 };
 ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, uint32_t id);
 
