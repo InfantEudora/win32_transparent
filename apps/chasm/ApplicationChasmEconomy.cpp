@@ -97,7 +97,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(death,sizeof(death));
     }
     for (const EconomyField& f : e.fields){
-        int32_t pair[7] = {(int32_t)f.building,f.crop,f.grown,(int32_t)f.f_sown,f.yield,f.last,(int32_t)f.owner};
+        int32_t pair[8] = {(int32_t)f.building,f.crop,f.grown,(int32_t)f.f_sown,f.yield,f.last,(int32_t)f.owner,f.frost};
         h.Bytes(pair,sizeof(pair));
     }
     n = (uint32_t)e.site.size();
@@ -289,14 +289,16 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         ImGui::TextColored(ImVec4(0.95f,0.8f,0.4f,1.0f),"  under construction: %i storeys to build (%i standing)",
                            info.site_storeys,info.storeys);
         ImGui::Text("  wood %i of %i brought, %i carrying for it",EconomySiteBrought(*e,id),site_wood,carrying);
-        //The player's "build this first" - a recorded zone command on any plot of it (construction_plan.md).
+        //The player's "build this first" - a recorded zone command on any plot of it, or a field's on any
+        //cell (construction_plan.md).
         bool f_first = info.f_priority;
         if (ImGui::Checkbox("  build this first",&f_first)){
-            for (size_t v = 0; v < z->building.size(); v++){
-                if (z->building[v] == id){
-                    SubmitZone(ZONE_OP_SITE_PRIORITY,(int)v,f_first ? 1 : 0);
-                    break;
-                }
+            auto plot = std::find(z->building.begin(),z->building.end(),id);
+            auto cell = std::find(z->field.begin(),z->field.end(),id);
+            if (plot != z->building.end()){
+                SubmitZone(ZONE_OP_SITE_PRIORITY,(int)(plot - z->building.begin()),f_first ? 1 : 0);
+            }else if (cell != z->field.end()){
+                SubmitZone(ZONE_OP_FIELD_PRIORITY,(int)(cell - z->field.begin()),f_first ? 1 : 0);
             }
         }
     }
@@ -548,9 +550,17 @@ void ApplicationChasm::RegisterEconomyTools(){
             json result = json::object();
             if (op == "store_allow" || op == "site_priority"){
                 int plot = args.value("plot",-1);
+                int zone_op = (op == "store_allow") ? ZONE_OP_STORE_ALLOW : ZONE_OP_SITE_PRIORITY;
                 if (plot < 0 && args.contains("x") && args.contains("z")){
                     GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
                     plot = p.f_hit ? p.plot : -1;
+                    //A field there, and no building: a field site goes first by its cell.
+                    std::shared_ptr<const ZoneState> zs = GetZones();
+                    if (p.f_hit && zone_op == ZONE_OP_SITE_PRIORITY && zs && zs->world == w && !zs->building[p.plot]
+                        && p.coarse_quad >= 0 && p.coarse_quad < (int)zs->field.size() && zs->field[p.coarse_quad]){
+                        zone_op = ZONE_OP_FIELD_PRIORITY;
+                        plot = p.coarse_quad;
+                    }
                 }
                 //What the op sets: a store's goods, or whether a site goes first.
                 int value = 0;
@@ -569,7 +579,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.type = CHASM_CMD_ZONE;
                 cmd.flags = SIM_CMD_FLAG_RECORD;
                 cmd.subtype = (uint32_t)std::max(0,plot);
-                cmd.value[0] = (float)((op == "store_allow") ? ZONE_OP_STORE_ALLOW : ZONE_OP_SITE_PRIORITY);
+                cmd.value[0] = (float)zone_op;
                 cmd.value[1] = (float)value;
                 cmd.value[2] = 0.0f;
                 uint32_t before = zone_commands_done.load();
@@ -581,7 +591,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 result["ran"] = zone_commands_done.load() != before;
                 result["refusal"] = refusal;
-                result["plot"] = plot;
+                result[zone_op == ZONE_OP_FIELD_PRIORITY ? "cell" : "plot"] = plot;
                 //The economy works out what the store takes, or who carries first, on its next tick.
                 main_scene->AtTickBoundary([](){});
             }else if (op == "set_needs"){
@@ -647,12 +657,24 @@ void ApplicationChasm::RegisterEconomyTools(){
                         at += w->grid->FineQuadCentre(c * 4 + q) * 0.25f;
                     }
                 }
+                //THE FROST (Economy.h): the growing weather it has left at its middle, what is sown now in it, and
+                //whether what grows ripens in time.
+                float pace = EconomyFieldPace(*e,f.building);
+                int left = EconomyGrowingTicksLeft(*w,at,calendar_shown.load());
+                int now = EconomyFieldSowNow(f,zb,pace,left);
+                json frost{{"growing_days_left",(float)left / CALENDAR_DAY_TICKS},{"pace",pace},
+                           {"sows_now",(now >= 0) ? ZoneCropName(now) : "none"},
+                           {"took",(f.frost >= 0) ? ZoneCropName(f.frost) : "none"}};
+                if (f.f_sown && f.crop >= 0){
+                    frost["ripens_in_time"] = EconomyRipenTicks(f.crop,f.grown,pace) <= left;
+                }
                 fields.push_back(json{{"id",f.building},{"x",at.x},{"z",at.y},{"sown",f.f_sown},{"owner",f.owner},{"land_of",zb.land_of},
                                       {"farmer",farmer},{"fallow",farmer == 0},
                                       {"crop",(f.f_sown && f.crop >= 0) ? ZoneCropName(f.crop) : "none"},
                                       {"yield",f.yield},{"last",(f.last >= 0) ? ZoneCropName(f.last) : "none"},
                                       {"starting_crop",ZoneCropName(zb.crop)},{"next_crop",ZoneCropName(zb.next_crop)},
                                       {"sows_next",(sow >= 0) ? ZoneCropName(sow) : "none"},{"next_yields",yields},
+                                      {"frost",frost},
                                       {"site_cells",ZoneBuildingFigures(*w,*z,f.building).site_cells},
                                       {"growth",EconomyFieldGrowth(*e,*z,f.building)},
                                       {"waiting",StockJson(*e,f.building)}});
@@ -683,6 +705,38 @@ void ApplicationChasm::RegisterEconomyTools(){
                 on_roads += (k.state == WORKER_TO_ROAD || k.state == WORKER_CLEARING || k.state == WORKER_LAYING) ? 1 : 0;
             }
             result["roads"] = json{{"planned",planned},{"laid",laid},{"people_on_them",on_roads}};
+            /*
+                Each plot still to lay (the first 64): where it is, its line, and the trees in its way - each with
+                where it stands and whether a building or a field covers it - so a road that is never laid can be
+                looked at without sending anyone. The trees are the economy's (RoadTrees), read between ticks.
+            */
+            json planned_plots = json::array();
+            main_scene->AtTickBoundary([&](){
+                const ZoneState& zs = zones.State();
+                std::shared_ptr<const ChasmWorld> wz = zones.GetWorld();
+                if (!wz || !wz->forest){
+                    return;
+                }
+                std::vector<int> trees;
+                for (size_t v = 0; v < zs.ground.size() && planned_plots.size() < 64; v++){
+                    if (!ZoneRoadPlanned(zs,(int)v)){
+                        continue;
+                    }
+                    economy.RoadTrees(zs,(int)v,trees);
+                    json tj = json::array();
+                    for (int i : trees){
+                        const PropInstance& pr = wz->forest->props[i];
+                        //What paints over it - none, since RoadTrees leaves covered trees out (EconomyPropCovered).
+                        const char* cover = !EconomyPropCovered(zs,pr.plot,pr.coarse) ? "none"
+                                          : (pr.plot >= 0 && zs.storeys[pr.plot] > 0) ? "building"
+                                          : (pr.coarse >= 0 && zs.field[pr.coarse]) ? "field" : "garden or lot";
+                        tj.push_back(json{{"prop",i},{"x",pr.pos.x},{"z",pr.pos.z},{"plot",pr.plot},{"covered_by",cover}});
+                    }
+                    const vec2& p = wz->grid->fine.pos[v];
+                    planned_plots.push_back(json{{"plot",v},{"x",p.x},{"z",p.y},{"line",zs.line[v]},{"trees",tj}});
+                }
+            });
+            result["roads"]["planned_plots"] = planned_plots;
             //The walls (line_works_plan.md, step 3): plots planned and standing, the wood brought to the
             //planned, and who is out clearing their way or carrying for them.
             int wall_planned = 0, wall_standing = 0, wall_wood = 0, on_walls = 0;

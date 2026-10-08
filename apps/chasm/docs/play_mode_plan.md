@@ -43,7 +43,8 @@ placement carries a flag saying so), set by whoever issued it.
    CONSTRUCTION SITE: it takes wood (the only thing it takes, the user's call), carried there by idle
    people, who build with each load before the storeys stand. In debug mode a placement still places it
    at once; `chasm_paint play:true` starts a construction from the tools. Play mode has the building
-   tools (all but the debug walker) and a bar along the bottom showing them and their keys.
+   tools (all but the debug walker) and a bar along the bottom showing them and their keys (a grid in the
+   bottom right corner since 2026-10-08, `selection_plan.md`).
 
 ## As built (steps 1-4, 2026-10-06)
 

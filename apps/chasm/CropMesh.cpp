@@ -26,6 +26,9 @@
 #define CROP_RIDGE_HEIGHT   0.16f   //its crest above the base
 #define FIELD_SITE_STAKE    0.55f   //a field site's corner stakes, above the ground
 #define FIELD_SITE_CORD     0.32f   //and the cord strung between them
+#define FIELD_FLAG_POLE     1.3f    //a field put first: its pennant's pole over the stake (BuildingMesh's SITE_FLAG_*)
+#define FIELD_FLAG_W        0.55f
+#define FIELD_FLAG_H        0.34f
 
 namespace {
 
@@ -91,6 +94,29 @@ private:
 
 }
 
+//A field site's first cell still staked out - the one that flies its pennant while it is put first. -1 none.
+static int FirstSiteCell(const ZoneState& z, uint32_t id){
+    for (size_t c = 0; c < z.field.size(); c++){
+        if (z.field[c] == id && !z.field_built[c]){
+            return (int)c;
+        }
+    }
+    return -1;
+}
+
+//A box of half-width `half` from y0 to y1 round p - a stake, a pole.
+static void FieldPost(std::vector<vertex>& out, const vec2& p, float half, float y0, float y1, int column){
+    vec3 c[8];
+    for (int i = 0; i < 8; i++){
+        c[i] = vec3(p.x + ((i & 1) ? half : -half),(i & 4) ? y1 : y0,p.y + ((i & 2) ? half : -half));
+    }
+    MeshQuad(out,c[4],c[5],c[7],c[6],vec3(0,1,0),column);
+    MeshQuad(out,c[0],c[1],c[5],c[4],vec3(0,0,-1),column);
+    MeshQuad(out,c[2],c[3],c[7],c[6],vec3(0,0,1),column);
+    MeshQuad(out,c[0],c[2],c[6],c[4],vec3(-1,0,0),column);
+    MeshQuad(out,c[1],c[3],c[7],c[5],vec3(1,0,0),column);
+}
+
 //Bare until it shows, sprouts for a while, green for most of its time, ripe near the end.
 int FieldStageOf(float growth){
     if (growth < 0.10f){
@@ -126,17 +152,21 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
     if (cell < (int)z.field_built.size() && !z.field_built[cell]){
         vec2 stake = p[0] + (p[2] - p[0]) * 0.08f;
         float ground = h[0] - FIELD_LIFT;
-        const float half = 0.04f;
         const float top = ground + FIELD_SITE_STAKE;
-        vec3 c[8];
-        for (int i = 0; i < 8; i++){
-            c[i] = vec3(stake.x + ((i & 1) ? half : -half),(i & 4) ? top : ground - 0.1f,stake.y + ((i & 2) ? half : -half));
+        FieldPost(out,stake,0.04f,ground - 0.1f,top,PAL_TIMBER);
+        /*
+            A field put first (ZoneBuilding::f_priority) flies the red pennant a building site's scaffold
+            does (BuildingMesh, SiteFlag) - once, from the first stake of its first cell still staked out.
+        */
+        uint32_t site = z.field[cell];
+        if (k == 0 && site && site < z.buildings.size() && z.buildings[site].f_priority && FirstSiteCell(z,site) == cell){
+            float y1 = top + FIELD_FLAG_POLE;
+            FieldPost(out,stake,0.025f,top,y1,PAL_BARK_DARK);
+            vec3 a(stake.x,y1 - FIELD_FLAG_H,stake.y), b(stake.x + FIELD_FLAG_W,y1 - FIELD_FLAG_H,stake.y);
+            vec3 c(stake.x + FIELD_FLAG_W,y1,stake.y), d(stake.x,y1,stake.y);
+            MeshQuad(out,a,b,c,d,vec3(0,0,1),PAL_ACCENT);
+            MeshQuad(out,a,b,c,d,vec3(0,0,-1),PAL_ACCENT);
         }
-        MeshQuad(out,c[4],c[5],c[7],c[6],up,PAL_TIMBER);
-        MeshQuad(out,c[0],c[1],c[5],c[4],vec3(0,0,-1),PAL_TIMBER);
-        MeshQuad(out,c[2],c[3],c[7],c[6],vec3(0,0,1),PAL_TIMBER);
-        MeshQuad(out,c[0],c[2],c[6],c[4],vec3(-1,0,0),PAL_TIMBER);
-        MeshQuad(out,c[1],c[3],c[7],c[5],vec3(1,0,0),PAL_TIMBER);
         for (int e = 1; e <= 3; e += 2){
             vec2 to = p[e] + (p[2] - p[e]) * 0.08f;
             float y0 = ground + FIELD_SITE_CORD;

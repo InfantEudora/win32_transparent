@@ -112,9 +112,10 @@ and a store's `"allow"`), the overlay's totals in `ApplicationChasmTime.cpp`.
   last with no wall or fence between and no step steeper than a walker's) - otherwise A* over the plots,
   with a straight step from where he stands onto the grid and off it at the end. Re-planned from where he
   stands whenever the zones change; a route is saved, never re-planned on load.
-- **Fields** grow every tick that is not winter and not under the snow: wheat 18 days, greens 8, beans
-  25; then they yield 0.6, 0.35 or 0.45 food per unit of area into their own stock, and grow again. A
-  crop changed is sown again from nothing.
+- **Fields** grow every tick that is not winter and not under the snow: wheat 15 days, greens 8, beans
+  20 (18 and 25 until the frost came, 2026-10-08 - `fields_plan.md`, "The frost"); then they yield 0.6,
+  0.35 or 0.45 food per unit of area into their own stock, and grow again. A crop changed is sown again
+  from nothing.
 - **Collectors** fill a unit every 4 s, up to 10, not under the snow.
 - **Measured** (debug, seed 1, 3x speed): a woodcutter with a store beside him fells and stores a tree
   every ~15 s of game time, filling the store (56 of its 59) and then waiting with his next log; a
@@ -194,4 +195,29 @@ routes stepped back on the tick of the change; straight walks did not.
 Now, when the path's first plot is behind him (the turn there sharper than square) and its second can be
 walked to straight, he goes on to the second along the edge he is on. The same run: 0 of 45. The carriers
 still finished the site.
+
+## The woodcutter: logs first, two a round (2026-10-08, the user's)
+
+Seen in play: with logs lying all round the village - the road builders fell the trees in a road's way and
+leave them where they fall (line_works_plan.md) - the woodcutters still felled trees. He took the nearest
+piece of wood by the straight line from his hut, standing or felled alike, and his hut is in the wood while
+the logs lie by the roads, so a tree was nearly always nearer. And he carried one log a round.
+
+Now (`Economy::WoodNear`, `GoForWood`, the log branch of `TickWorker`):
+
+- **Logs first.** Of what lies within his reach of the hut (`ECONOMY_WOODCUTTER_REACH`), the nearest felled
+  log, before any standing tree, however near; a tree only with no log in reach.
+- **Two logs a round.** With a log on his shoulder, he looks for another within `ECONOMY_LOG_PAIR_REACH` (12,
+  about six plots) of where he picked it up, and picks that up too - `ECONOMY_WOODCUTTER_LOGS`, 8 wood - before
+  he carries them off; only when a store, or his pile, has room for both. A tree he felled counts as his
+  first: a log lying near it is his second.
+- **The second gone** when he gets there - another woodcutter was quicker - he carries off the one he has
+  rather than walk home with it; and so does one moved to another job on his way to it
+  (`AssignJobs`), to a store, or holding it.
+- Nothing new is saved: what he carries was always saved and hashed.
+- **Measured** (`village.json`, seed 12, debug, a copied exe): planned roads painted through the wood, cleared
+  by the idle, left their logs. With their piles full the two woodcutters waited; with stores painted they
+  carried the piles over first, then went for logs - and felled nothing in the two minutes after, at speed 3,
+  while logs lay in reach. Of the log rounds most were two logs, 8 wood; a single log, 4, where no second lay
+  within reach. The logs by the wood went from 9 to 0.
 

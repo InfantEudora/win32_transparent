@@ -219,8 +219,14 @@ enum ZoneOp{
     ZONE_OP_FIELD_NEXT,     //coarse cell: its field's next crop to value[1], a crop or ZONE_CROP_AUTO (fields_plan.md)
     ZONE_OP_FIELD_RAISE,    //coarse cell: its field site's cell is built - the builders' (fields_plan.md)
     ZONE_OP_FIELD_LAND,     //coarse cell: its field given to the house in value[1], 0 automatic (land_plan.md)
+    ZONE_OP_FIELD_PRIORITY, //coarse cell: its field's site goes first (value[1] 1) or back in the queue (0)
     ZONE_OP_COUNT
 };
+//Whether an op names a coarse cell (a field's) rather than a plot.
+inline bool ZoneOpOnCell(int op){
+    return op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP || op == ZONE_OP_FIELD_NEXT
+        || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND || op == ZONE_OP_FIELD_PRIORITY;
+}
 const char* ZoneOpName(int op);
 int ZoneOpByName(const std::string& name);  //the names above, and the old house_* ones; -1 if none
 
@@ -397,9 +403,26 @@ float ZoneCampYaw(int plot);
 vec2 ZoneCampDoor(const ChasmWorld& w, int plot);
 //How many a camp holds: its tents.
 int ZoneCampTents(const ZoneState& z, uint32_t id);
-//Where a new colony camps: on the home side's flat dry plateau, inland of the rim and near a river
-//(Zones.cpp, WHERE A NEW COLONY CAMPS). -1 if nowhere.
-int ZoneStartCampPlot(const ChasmWorld& w);
+/*
+    A spot a new colony might camp on, scored (Zones.cpp, WHERE A NEW COLONY CAMPS) - every one looked at,
+    refused ones too, so the debug view and chasm_camp can show why the camp went where it did.
+*/
+#define ZONE_CAMP_SURVEY    24.0f   //the ground a spot is scored on: what a walk from it reaches within this
+struct ZoneCampSpot{
+    int plot = -1;
+    const char* refused = NULL;     //why it may not be the camp; NULL if it may
+    bool f_fallback = false;        //not by a river: none there passed
+    float score = 0.0f;             //the parts below, weighted
+    float flat = 0.0f;              //0-1: the house share and the field share, averaged
+    float trees = 0.0f;             //0-1: 1 with the best share wooded
+    float middle = 0.0f;            //0-1: 1 level with the map's middle
+    float house_share = 0.0f;       //of a whole survey disc, the share a house may stand on
+    float field_share = 0.0f;       //...and a field lie on
+    float tree_share = 0.0f;        //of the survey's plots, the share with a tree on
+};
+void ZoneCampSpots(const ChasmWorld& w, int tents, std::vector<ZoneCampSpot>& out);
+//Where a new colony of `tents` camps: the best of ZoneCampSpots. -1 if nowhere.
+int ZoneStartCampPlot(const ChasmWorld& w, int tents);
 
 /*
     BRIDGES (docs/bridge_plan.md). The plots a bridge from `from` to `to` would take - a chain along fine

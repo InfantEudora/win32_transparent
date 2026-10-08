@@ -115,9 +115,14 @@ json ChasmSaveToJson(const ChasmSave& s){
             dead.push_back(json::array({d.id,d.family,d.f_female,d.age,d.tick,d.cause}));
         }
         json fields = json::array();
-        //[building, crop growing, grown, sown, yield %, last crop harvested (fields_plan.md), owner (land_plan.md)].
+        //[building, crop growing, grown, sown, yield %, last crop harvested (fields_plan.md), owner (land_plan.md),
+        //and the crop the frost took while it waits to be sown again].
         for (const EconomyField& f : e.fields){
-            fields.push_back(json::array({f.building,f.crop,f.grown,f.f_sown,f.yield,f.last,f.owner}));
+            json one = json::array({f.building,f.crop,f.grown,f.f_sown,f.yield,f.last,f.owner});
+            if (f.frost >= 0){
+                one.push_back(f.frost);
+            }
+            fields.push_back(one);
         }
         json sites = json::array();
         for (const auto& st : e.sites){
@@ -316,6 +321,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             fd.last = (f.size() > 5) ? f[5].get<int>() : -1;
             //...and one from before land (land_plan.md) no owner: it gets one on its first tick.
             fd.owner = (f.size() > 6) ? f[6].get<uint32_t>() : 0;
+            fd.frost = (f.size() > 7) ? f[7].get<int>() : -1;
             out.economy.f_before_land = out.economy.f_before_land || f.size() <= 6;
             out.economy.fields.push_back(fd);
         }

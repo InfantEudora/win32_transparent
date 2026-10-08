@@ -320,7 +320,19 @@ public:
         if (under_top < WALL_SOIL + 0.02f){
             return rock_under_cap;
         }
+        if (InMouth(h,z)){
+            return -TERRAIN_MOUTH_DEPTH;
+        }
         return RockOffset(h,Band(z));
+    }
+
+    /*
+        A SPRING'S MOUTH (Terrain.h, TerrainSpring): its stratum of the column's wall set back by
+        TERRAIN_MOUTH_DEPTH - the chamfers above and below it become its roof and floor, and the joints
+        with the columns either side, half set back, its tapering sides.
+    */
+    bool InMouth(int h, float z) const{
+        return terrain.mouth[h] != 0 && Band(z) == (int)terrain.mouth[h];
     }
 
     /*
@@ -364,7 +376,7 @@ public:
         }else if (num_faces > 1){
             o -= WALL_GROOVE;
         }
-        o = std::max(-0.6f,std::min(0.75f,o));
+        o = std::max(-0.6f - TERRAIN_MOUTH_DEPTH,std::min(0.75f,o));     //only a mouth sits back past -0.6
         vec2 sum(0.0f,0.0f);
         for (int i = 0; i < num_normals; i++){
             sum += normals[i];
@@ -589,6 +601,9 @@ public:
         if (up < -0.4f){
             return PAL_ROCK_0 + 2;
         }
+        if (InMouth(high,zm)){
+            return COLUMN_VOID;     //the dark inside a spring's mouth
+        }
         return StrataColumn(Band(zm),high);
     }
 
@@ -641,6 +656,41 @@ public:
         }
     }
 
+    /*
+        A SWALLOW HOLE (rivers_plan.md step 4): where a stream sinks, a dark hole on its water ringed by
+        wet rock a little proud of it - the stream runs in and is gone, to come out of the wall below
+        as a spring. Over the water's surface, so the water does not show through.
+    */
+    void SwallowHoles(){
+        const vec3 up(0.0f,1.0f,0.0f);
+        for (size_t ri = 0; ri < terrain.rivers.size(); ri++){
+            const TerrainRiver& r = terrain.rivers[ri];
+            if (r.end != GRID_RIVER_SINK || r.points.empty() || r.half.empty()){
+                continue;
+            }
+            vec2 c = r.points.back();
+            SetChunkAt(c);
+            float hole = r.half.back() * 0.8f;
+            float lip = r.half.back() * 1.2f;
+            const int sides = 9;
+            vec3 centre(c.x,TERRAIN_WATER_Y + 0.03f,c.y);
+            vec3 inner[sides], outer[sides];
+            for (int k = 0; k < sides; k++){
+                float jitter = 0.85f + 0.3f * (float)(Hash3((int32_t)ri,k,91) & 0xFF) / 255.0f;
+                float a = 6.2831853f * (float)k / (float)sides;
+                vec2 d(std::cos(a),std::sin(a));
+                inner[k] = vec3(c.x + d.x * hole * jitter,TERRAIN_WATER_Y + 0.03f,c.y + d.y * hole * jitter);
+                outer[k] = vec3(c.x + d.x * lip * jitter,TERRAIN_WATER_Y + 0.10f,c.y + d.y * lip * jitter);
+            }
+            for (int k = 0; k < sides; k++){
+                int n = (k + 1) % sides;
+                Tri(centre,inner[k],inner[n],up,COLUMN_VOID);
+                Tri(inner[k],outer[k],outer[n],up,PAL_ROCK_0 + 2);
+                Tri(inner[k],outer[n],inner[n],up,PAL_ROCK_0 + 2);
+            }
+        }
+    }
+
     int row = PAL_TEMPERATE;    //the current cell's biome row - see Cell; ground triangles choose their own
     int ground_level = TERRAIN_PLATEAU;     //the kind of the ground being fanned, for GroundColour
     int grass_column = PAL_GRASS_0;     //the current cell's, see COLUMN_GRASS
@@ -679,5 +729,6 @@ void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out){
     }
     b.row = PAL_TEMPERATE;      //the skirt is cut earth, whatever stands above it
     b.Skirt();
+    b.SwallowHoles();
     out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
 }

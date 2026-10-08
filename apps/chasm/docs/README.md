@@ -56,7 +56,7 @@ against temperate is a per-vertex row choice, and winter can be a uniform that s
 Keep that in mind when laying the palette out, even before seasons exist.
 
 **Where it is (built in step 4):** `assets/textures/palette.png`, 32 x 16 cells of 8 pixels (widened from 16 columns for the props and buildings) - a row
-per biome (temperate, desert, frozen, swamp; row 15 the EFFECTS row - mist and foam, the same in every biome; the rest spare), a column per material. `Palette.h`
+per biome (temperate, desert, frozen, swamp; rows 4-7 the SEASONS - spring, autumn, autumn's red leaves, winter - each a copy of temperate, which is summer, and row 8 summer kept, written by the app, `seasons_plan.md`; row 15 the EFFECTS row - mist and foam, the same in every biome; the rest spare), a column per material. `Palette.h`
 names the rows and columns. **The PNG is the source - edit it in any paint program**, one flat
 colour per cell; `tools/make_palette.py` only wrote the first one and refuses to overwrite it
 without `--force`. The background colour is read from the palette's haze cell, so it follows an
@@ -148,6 +148,7 @@ line number.
 | Plan | What |
 |---|---|
 | `grid_plan.md` | the irregular grid, terrain levels and cliffs, painting zones, and the build order up to a first replay |
+| `rivers_plan.md` | always a river at home, branches joining rivers, springs pouring from the chasm's wall, and the swallow-hole streams that feed them (built 2026-10-08) |
 | `biomes_plan.md` | biomes and terrain height: levels for the hard edges plus a relief field; the north mountain that seals the chasm off, hills and peaks, mountain pockets, the swamp and the desert, snow and the ground's colours (steps 1-5 built) |
 | `gameplay_plan.md` | the game on top of it all: steam, zeppelins, seasons, zombies from the swamp, the pyramid; suggestions, open questions, and the first prototype (nothing built) |
 | `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A* (retired 2026-10-07), gates in walls, arches under houses |
@@ -156,6 +157,7 @@ line number.
 | `fields_plan.md` | fields built (2 wood a cell), sown by the farmer with a chosen crop, and rotated by a follows-what yield table (built) |
 | `builders_plan.md` | the builders' hut - builders as a job, staffed before the other workplaces - and the job overview (built) |
 | `land_plan.md` | family land: fields belong to a house (the camp's at first), farmed by its family at 6 cells a farmer, harvest home first (built) |
+| `seasons_plan.md` | the year drawn: seasonal palette rows the grass fades through, flowers in season, oaks and bushes turning, thinning, bare and budding plant by plant, bare oaks modelled (built) |
 
 ### Later, agreed but not yet planned
 

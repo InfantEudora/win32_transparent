@@ -2,6 +2,8 @@
 #include "Calendar.h"
 #include "Palette.h"
 #include "Shader.h"
+#include "Texture.h"
+#include <algorithm>
 
 /*
     Winter, drawn (gameplay_plan.md P1). The terrain, the zones and the forest are drawn by
@@ -19,11 +21,24 @@
 
     With no snow on the map the shader takes default.frag's own path, and the frame is the frame
     the default shader drew - above the void, where it also darkens the chasm's walls into the dark.
+
+    THE SEASONS (docs/seasons_plan.md, 2026-10-08): the palette texture's TEMPERATE ROW, on the GPU, is
+    rewritten as a blend of two season rows - the season before's and this one's, faded over the
+    season's first GROUND_SEASON_FADE_DAYS, everywhere at once (the user's: the snow's front is for
+    something else). Everything drawn on the temperate row changes colour with it, at no cost per
+    pixel; blending in the shader instead sampled the palette twice a fragment and cost about 15% of
+    the colour pass. The leaf columns keep summer's, for the crops that borrow them (CropMesh); the
+    broadleaves themselves are never on this row - every stage of theirs has a fixed row of its own
+    (Seasons.h), so they turn tree by tree. The first spring fades from nothing - there was no winter
+    before it, as there was no snow.
 */
 
 #define GROUND_SNOW_EDGE        6.0f    //world units either side of the front the ragged edge reaches
 #define GROUND_SNOW_UP          0.55f   //normal.y from which ground and roofs hold snow
 #define GROUND_SNOW_UP_FOLIAGE  0.2f    //...and needles, leaves and bushes, which hold it steeper
+#define GROUND_SEASON_FADE_DAYS 4.0f    //into each season's colours over its first this many days (tuning)
+//Each season's palette row, by SEASON_*: summer is the temperate row itself.
+static const int ground_season_rows[CALENDAR_SEASONS] = {PAL_SPRING,PAL_TEMPERATE,PAL_AUTUMN,PAL_WINTER};
 /*
     The void (the frag's note): the walls darken from just under the balconies, which keep their
     colour (the islands' tops, at -24, lose about 5%), to black a little above the floor. The mist's
@@ -62,6 +77,8 @@ void ApplicationChasm::SetGroundUniforms(){
     if (!f_snow){
         return;
     }
+    ground_shader->Setint("season_rows_first",PAL_SPRING);
+    ground_shader->Setint("season_rows_last",PAL_SUMMER);
     ground_shader->Setfloat("snow_front_z",front);
     ground_shader->Setfloat("snow_wobble",CALENDAR_SNOW_WOBBLE);
     ground_shader->Setfloat("snow_edge",GROUND_SNOW_EDGE);
@@ -84,4 +101,49 @@ void ApplicationChasm::UseGroundShader(Mesh* mesh){
     }
     mesh->mesh_mode = MESH_MODE_SHADER;
     mesh->custom_shader_index = ground_shader_index;
+}
+
+/*
+    RENDER THREAD, from PreRender. The temperate row of the palette texture for today's date: this
+    season's row faded in from the one before's, eased at both ends, the leaf columns left at summer.
+    Rewritten only when the blend moves by a 255th - a few times a second during a fade at normal
+    speed, never between them - and in place (Texture::UploadTexture, as InvertRGB does), so the
+    texture keeps its name and bindless handle and no material needs touching.
+*/
+void ApplicationChasm::UpdateSeasonPalette(){
+    Texture* p = palette_texture;
+    if (!p || !p->img_data || !p->IsResident() || palette_rows.empty()){
+        return;
+    }
+    CalendarDate d = CalendarDateOf(calendar_shown.load());
+    int to = ground_season_rows[d.season];
+    int from = (d.year == 1 && d.season == SEASON_SPRING) ? to
+             : ground_season_rows[(d.season + CALENDAR_SEASONS - 1) % CALENDAR_SEASONS];
+    float t = std::min(1.0f,d.season_fraction * (float)CALENDAR_DAYS_PER_SEASON / GROUND_SEASON_FADE_DAYS);
+    t = t * t * (3.0f - 2.0f * t);
+    uint32_t steps = (uint32_t)(t * 255.0f + 0.5f);
+    if (from == to){
+        steps = 255;
+    }
+    uint32_t key = (uint32_t)from | ((uint32_t)to << 8) | (steps << 16);
+    if (key == palette_season_key){
+        return;
+    }
+    palette_season_key = key;
+    int channels = (p->image_format == GL_RGBA) ? 4 : 3;
+    size_t band = (size_t)p->width * (size_t)(p->height / PALETTE_ROWS) * (size_t)channels;
+    int cell_w = p->width / PALETTE_COLS;
+    const uint8_t* a = &palette_rows[(size_t)from * band];
+    const uint8_t* b = &palette_rows[(size_t)to * band];
+    const uint8_t* summer = &palette_rows[(size_t)PAL_TEMPERATE * band];
+    uint8_t* out = p->img_data + (size_t)PAL_TEMPERATE * band;
+    for (size_t i = 0; i < band; i++){
+        int column = (int)((i / channels) % (size_t)p->width) / cell_w;
+        if (column >= PAL_LEAF_DARK && column <= PAL_LEAF_LIGHT){
+            out[i] = summer[i];
+        }else{
+            out[i] = (uint8_t)(((uint32_t)a[i] * (255 - steps) + (uint32_t)b[i] * steps + 127) / 255);
+        }
+    }
+    p->UploadTexture(p->image_format,p->gl_target);
 }

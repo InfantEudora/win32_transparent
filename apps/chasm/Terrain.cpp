@@ -143,6 +143,7 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
     //The rivers first: their wet plots and their falls are what the heights keep clear of.
     BuildRivers(g,features);
     BuildHeights(g,features);
+    BuildMouths(g);
     BuildKinds(g);
     //The biomes (TerrainBiomeAt), from the layout's mountain, pockets and south regions. A plot at the
     //plateau's height is plateau for them, bare or not.
@@ -288,6 +289,11 @@ void Terrain::BuildHeights(const Grid& g, const std::vector<GridLine>& features)
         for (const TerrainFall& f : falls){
             if ((g.fine.pos[v] - f.lip).length() < reach){
                 return true;
+            }
+        }
+        for (const TerrainSpring& s : springs){
+            if ((g.fine.pos[v] - s.lip).length() < reach){
+                return true;    //a spring's wall whole too, and its water's drop clear
             }
         }
         return false;
@@ -511,6 +517,11 @@ int Terrain::FringeSteps(const Grid& g, const vec2& p, uint32_t salt) const{
     for (const TerrainFall& f : falls){
         if ((p - f.lip).length() < HEIGHT_FALL_CLEAR){
             return TERRAIN_FLOOR_STEPS;
+        }
+    }
+    for (const TerrainSpring& s : springs){
+        if ((p - s.lip).length() < HEIGHT_FALL_CLEAR){
+            return TERRAIN_FLOOR_STEPS;     //the wall under a spring's mouth whole, and its water's drop clear
         }
     }
     float depth = std::max(0.0f,-ChasmRiftDistance(g.layout,p));
@@ -823,7 +834,12 @@ std::vector<vec2> Smooth(const std::vector<vec2>& in, int rounds){
     return p;
 }
 
-//Where segments a0-a1 and b0-b1 cross, as the share of the way along a; false if they do not.
+/*
+    Where segments a0-a1 and b0-b1 cross, as the share of the way along a; false if they do not. A hair
+    past either end still counts: a fall's lip is one of its rim's own points, so a river crosses its
+    rim exactly at a joint between two segments - where rounding could put the crossing on neither
+    (seed 144, 2026-10-08).
+*/
 bool SegmentsCross(const vec2& a0, const vec2& a1, const vec2& b0, const vec2& b1, float& t){
     vec2 r = a1 - a0;
     vec2 s = b1 - b0;
@@ -834,7 +850,8 @@ bool SegmentsCross(const vec2& a0, const vec2& a1, const vec2& b0, const vec2& b
     vec2 w = b0 - a0;
     t = (w.x * s.y - w.y * s.x) / d;
     float u = (w.x * r.y - w.y * r.x) / d;
-    return t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f;
+    const float eps = 1e-4f;
+    return t >= -eps && t <= 1.0f + eps && u >= -eps && u <= 1.0f + eps;
 }
 
 //Distance from p to segment a-b, with how far along it (0..1) the nearest point is.
@@ -857,16 +874,46 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
         TerrainRiver r;
         r.points = Smooth(def.points,3);
         r.width = def.width;
+        r.end = def.end;
+        r.joins = def.joins;
         r.length = 0.0f;
         for (size_t i = 0; i + 1 < r.points.size(); i++){
             r.length += (r.points[i + 1] - r.points[i]).length();
         }
         rivers.push_back(r);
     }
+    /*
+        A branch's water carries on into its river's (TerrainRiver::along0): where it comes in at the
+        river's bank, half the river's width short of its end on the river's line, it is as far along
+        as the river is there - so the two agree where the water's coordinates blend (RiverCoords).
+        Smoothing keeps a line's ends, so the junction is still on the river's line. Before the
+        rivers' widths are worked out below, so the river's usual width stands in for its half there.
+    */
+    for (TerrainRiver& r : rivers){
+        if (r.end != GRID_RIVER_JOIN || r.joins < 0 || r.joins >= (int)rivers.size()){
+            continue;
+        }
+        const TerrainRiver& into = rivers[r.joins];
+        float best = 1e30f, run = 0.0f, at = 0.0f;
+        for (size_t i = 0; i + 1 < into.points.size(); i++){
+            float t;
+            float d = SegmentDistance(r.points.back(),into.points[i],into.points[i + 1],t);
+            float len = (into.points[i + 1] - into.points[i]).length();
+            if (d < best){
+                best = d;
+                at = run + len * t;
+            }
+            run += len;
+        }
+        r.along0 = into.along0 + at - r.length + into.width * 0.5f;
+    }
 
     //--- Falls: each river's first crossing of any rim -------------------------------------------
     for (int ri = 0; ri < (int)rivers.size(); ri++){
         const TerrainRiver& r = rivers[ri];
+        if (r.end != GRID_RIVER_FALL){
+            continue;
+        }
         float along = 0.0f;
         bool f_found = false;
         for (size_t i = 0; i + 1 < r.points.size() && !f_found; i++){
@@ -907,6 +954,20 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
         }
     }
 
+    //--- Springs: the layout's, their mouths found once the walls are (BuildMouths) -----------------
+    springs.clear();
+    for (const GridSpring& gs : g.layout.springs){
+        TerrainSpring s;
+        s.lip = gs.lip;
+        s.out = gs.out;
+        s.across = vec2(-gs.out.y,gs.out.x);
+        s.width = gs.width;
+        s.band = std::max(1,gs.band);
+        s.stream = gs.stream;
+        s.floor_y = -TERRAIN_STEP * (float)(s.band + 1);
+        springs.push_back(s);
+    }
+
     /*
         --- Each river's width along it (2026-10-06) ---------------------------------------------
         The layout gives a river one width. Along the course it now WANDERS - a slow noise, a third
@@ -944,6 +1005,9 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
         int want = std::min(2,(int)(fall_at / RIVER_LAKE_RUN));
         if (want > 0 && unit(1) < 0.25f){
             want--;
+        }
+        if (r.end == GRID_RIVER_JOIN || r.end == GRID_RIVER_SINK){
+            want = 0;       //a branch or a stream: too thin and short for a lake
         }
         for (int k = 0; k < want; k++){
             Lake l;
@@ -1038,6 +1102,45 @@ void Terrain::BuildRivers(const Grid& g, const std::vector<GridLine>& features){
     }
 }
 
+/*
+    THE SPRINGS' MOUTHS (rivers_plan.md step 3): a spring's mouth is in the walls of the rim plots under
+    its lip - plateau plots within half its width of it along the rim, with a drop past the mouth's
+    stratum beside them. A spring left with no such plot has nothing drawn (TerrainSpring::plots).
+*/
+void Terrain::BuildMouths(const Grid& g){
+    size_t n = g.fine.pos.size();
+    mouth.assign(n,0);
+    if (springs.empty()){
+        return;
+    }
+    //Each plot's deepest neighbour, by the cells round it: how far down the wall beside it goes.
+    std::vector<uint8_t> deepest(n,0);
+    for (const GridQuad& q : g.fine.quads){
+        uint8_t d = 0;
+        for (int k = 0; k < 4; k++){
+            d = std::max(d,steps[q.v[k]]);
+        }
+        for (int k = 0; k < 4; k++){
+            deepest[q.v[k]] = std::max(deepest[q.v[k]],d);
+        }
+    }
+    for (TerrainSpring& s : springs){
+        s.plots = 0;
+        float half = s.width * 0.5f + 0.6f;
+        for (size_t v = 0; v < n; v++){
+            if (steps[v] != 0 || deepest[v] < s.band + 1){
+                continue;
+            }
+            vec2 d = g.fine.pos[v] - s.lip;
+            if (std::fabs(d.dot(s.across)) > half || std::fabs(d.dot(s.out)) > 3.0f){
+                continue;
+            }
+            mouth[v] = (uint8_t)s.band;
+            s.plots++;
+        }
+    }
+}
+
 float Terrain::EdgeDistance(const vec2& p) const{
     if (edge.empty()){
         return 1e3f;
@@ -1067,29 +1170,69 @@ float Terrain::RiverDip(const vec2& p) const{
     return TERRAIN_RIVER_DEPTH * t * t * (3.0f - 2.0f * t);
 }
 
+/*
+    Where two rivers' water meets - a branch's mouth - each point's coordinates are both rivers', blended
+    by how much deeper it is in the one than the other, over this much: picking one or the other left a
+    jump inside the water's triangles that pinched the streaks into a bright line across the mouth.
+*/
+#define RIVER_COORDS_BLEND  3.0f
+
 bool Terrain::RiverCoords(const vec2& p, float reach, int& river, float& along, float& across) const{
     float best = 1e30f;
+    float second = 1e30f, along2 = 0.0f, across2 = 0.0f;
     river = -1;
+    along = 0.0f;
+    across = 0.0f;
     for (int ri = 0; ri < (int)rivers.size(); ri++){
+        //Within one river, by its nearest centre line - a lake's sides keep the coordinates of the
+        //stretch they swell from; between rivers, by how deep in each one's water p is.
         const TerrainRiver& r = rivers[ri];
-        float run = 0.0f;
+        float run = r.along0;
+        float nearest = 1e30f;
+        float edge = 1e30f, at = 0.0f, off = 0.0f;
         for (size_t i = 0; i + 1 < r.points.size(); i++){
             vec2 a = r.points[i];
             vec2 b = r.points[i + 1];
             float len = (b - a).length();
             float t;
             float d = SegmentDistance(p,a,b,t);
-            float half = r.HalfAt(i,t);
-            if (d < best && d - half < reach){
-                best = d;
-                river = ri;
-                along = run + len * t;
+            if (d < nearest){
+                float half = r.HalfAt(i,t);
+                nearest = d;
+                edge = d - half;
+                at = run + len * t;
                 vec2 ab = b - a;
                 float side = ab.x * (p.y - a.y) - ab.y * (p.x - a.x);
-                across = ((side < 0.0f) ? -d : d) / half;
+                off = ((side < 0.0f) ? -d : d) / half;
+                //Past either end of the line, across its line carried on: by the distance to the end
+                //point, the side flipped along the line's own axis - inside a river, at a branch's mouth.
+                bool f_past = (i == 0 && t <= 0.0f) || (i + 2 == r.points.size() && t >= 1.0f);
+                if (f_past && len > 1e-6f){
+                    off = side / len / half;
+                }
             }
             run += len;
         }
+        if (edge < best && edge < reach){
+            second = best;
+            along2 = along;
+            across2 = across;
+            best = edge;
+            river = ri;
+            along = at;
+            across = off;
+        }else if (edge < second){
+            second = edge;
+            along2 = at;
+            across2 = off;
+        }
+    }
+    if (river >= 0 && second - best < RIVER_COORDS_BLEND){
+        //Half and half where the two are as deep, all the deeper one's RIVER_COORDS_BLEND on.
+        float s = (second - best) / RIVER_COORDS_BLEND;
+        float w = 0.5f + 0.5f * s * s * (3.0f - 2.0f * s);
+        along = along * w + along2 * (1.0f - w);
+        across = across * w + across2 * (1.0f - w);
     }
     return river >= 0;
 }
@@ -1186,9 +1329,10 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
     }
 
     /*
-        --- Rivers: each one reaches the rim, and goes over it from the plateau ------------------
+        --- Rivers: at least one, and each reaches the rim and goes over it from the plateau ------
         A river that never crosses the rim has no fall and ends in the grass; one whose lip is not
-        on plateau ground pours from nowhere.
+        on plateau ground pours from nowhere. A map with none has no water for its camp
+        (rivers_plan.md: every map has a river at home).
     */
     {
         int bad = 0;
@@ -1213,10 +1357,39 @@ void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLin
                 add_issue("fall",f.river,f.lip,true);
             }
         }
-        bool f_ok = (t.falls.size() == t.rivers.size()) && bad == 0;
-        snprintf(buf,sizeof(buf),"%i rivers, %i falls, %i not from plateau to floor; %i wet vertices",
-                 (int)t.rivers.size(),(int)t.falls.size(),bad,t.wet_count);
+        //By kind (Grid.h): every FALL river has its fall, and every branch ends in its river's water.
+        int count[4] = {};
+        int adrift = 0;
+        for (int ri = 0; ri < (int)t.rivers.size(); ri++){
+            const TerrainRiver& r = t.rivers[ri];
+            count[std::max(0,std::min(3,r.end))]++;
+            if (r.end == GRID_RIVER_JOIN && t.WaterEdgeDistance(r.points.back()) > -0.5f){
+                adrift++;
+                add_issue("branch",ri,r.points.back(),true);
+            }
+        }
+        int mains = count[GRID_RIVER_FALL] + count[GRID_RIVER_EDGE];
+        bool f_ok = mains > 0 && (int)t.falls.size() == count[GRID_RIVER_FALL] && bad == 0 && adrift == 0;
+        snprintf(buf,sizeof(buf),"%i rivers (%i off the map's edge), %i branches, %i streams; %i falls, %i not from "
+                 "plateau to floor; %i branches not in their river; %i wet vertices",
+                 mains,count[GRID_RIVER_EDGE],count[GRID_RIVER_JOIN],count[GRID_RIVER_SINK],(int)t.falls.size(),bad,
+                 adrift,t.wet_count);
         add_result("rivers",f_ok,buf);
+    }
+
+    //--- Springs: each one's mouth is in a wall - a rim plot over a drop past its stratum ----------
+    {
+        int dry = 0;
+        int plots = 0;
+        for (int si = 0; si < (int)t.springs.size(); si++){
+            plots += t.springs[si].plots;
+            if (t.springs[si].plots == 0){
+                dry++;
+                add_issue("spring",si,t.springs[si].lip,true);
+            }
+        }
+        snprintf(buf,sizeof(buf),"%i springs, %i with no wall for a mouth; %i mouth plots",(int)t.springs.size(),dry,plots);
+        add_result("springs",dry == 0,buf);
     }
 
     /*

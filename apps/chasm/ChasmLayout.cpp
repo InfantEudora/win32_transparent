@@ -1150,6 +1150,24 @@ struct Builder{
     //clear of the bank, the wet margin and half the widest river.
     #define RIVER_SWING         10.0f
     #define RIVER_RIM_CLEAR     14.0f
+    #define RIVER_KEEP_OFF      24.0f   //plus its swing: how far other courses keep from a river's line
+    #define RIVER_FALLS_APART   80.0f
+    /*
+        A fall's course ends in a straight run square to the rim: from a point this far past the
+        course's clearance from every rim - where its search starts - to the lip. Until 2026-10-08 the
+        run was 24 long and the clearance 24 too, so on any rim but a dead straight one the search
+        started in a shut cell: a third of all tries, and most maps' second river (rivers_plan.md).
+    */
+    #define RIVER_APPROACH      6.0f
+    /*
+        THE SMALL RIVER (rivers_plan.md step 1): the last resort for a map whose home rim takes no fall
+        by the rules above - crowded by its balconies, ledges and cracks. A fall nearer the map's edge
+        and a crack, only the drop right under its sheet clear, swung less, and from any source it can
+        reach, inland too. Small, but every map gets a river at home: the camp's water.
+    */
+    #define SMALL_RIVER_SWING   4.0f
+    #define SMALL_RIVER_EDGE    30.0f   //a fall this near the map's edge (a river's: 60)
+    #define SMALL_RIVER_CRACK   12.0f   //...and a crack (a river's: 24)
 
     struct Fall{
         vec2 lip;
@@ -1158,159 +1176,81 @@ struct Builder{
     };
 
     /*
-        Falls first: points on a rim with the HOME side's plateau behind - rivers run only on the
-        east (Grid.h, "THE SIDES") - open floor ahead (no island or balcony under the water), away
-        from the map's edge and from each other. Then each one's course, the cheapest path over the
-        home side from a source on its east edge, or the north edge east of the main tip - the cost
-        wanders on noise, which is the meander; rims cannot be crossed, nor the far side, nor the
-        ground beside a river already placed.
+        The rivers' search raster, 4 units a cell: each cell's distance outside the rift and what a unit
+        of course costs there; and the lines placed so far, each with the band round it that no other
+        course enters.
     */
-    void PlaceRivers(const std::vector<GridFeature>& features){
-        int wanted = rng.GetInt(2,5);
-        out.rivers_wanted = wanted;
-        std::vector<Fall> candidates;
-        for (const GridFeature& f : features){
-            if (f.kind != GRID_FEATURE_RIM){
-                continue;
-            }
-            for (size_t k = 0; k < f.line.points.size(); k += 4){
-                vec2 lip = f.line.points[k];
-                if (EdgeDistance(lip) < 60.0f){
-                    continue;
-                }
-                vec2 g = rift.Gradient(lip);
-                if (g.dot(g) < 0.09f){
-                    continue;
-                }
-                Fall fall;
-                fall.lip = lip;
-                fall.out = -Unit(g);
-                fall.back = lip - fall.out * 24.0f;
-                bool f_ok = rift.Sample(fall.back) > 18.0f && SideAt(fall.back) == 1 && CrackDistance(lip) > 24.0f;
-                for (float t = 6.0f; t <= 24.0f && f_ok; t += 6.0f){
-                    vec2 q = lip + fall.out * t;
-                    if (rift.Sample(q) > -4.0f){
-                        f_ok = false;
-                    }
-                    for (const GridFeature& o : features){
-                        if (o.kind != GRID_FEATURE_RIM && PointLineDistance(q,o.line) < 6.0f){
-                            f_ok = false;
-                        }
-                        if (o.kind == GRID_FEATURE_BALCONY && PointInside(q,o.region)){
-                            f_ok = false;   //onto a balcony
-                        }
-                    }
-                }
-                if (f_ok){
-                    candidates.push_back(fall);
-                }
-            }
-        }
-        for (int i = (int)candidates.size() - 1; i > 0; i--){
-            std::swap(candidates[i],candidates[rng.GetInt(0,i)]);
-        }
+    Field river_cost;
+    std::vector<float> river_rate;
+    struct RiverBand{
+        std::vector<vec2> points;
+        float keep_off = 0.0f;
+        int line = -1;                      //its line in out.rivers
+    };
+    std::vector<RiverBand> river_bands;
+    std::vector<vec2> river_sources;
 
-        Field cost;
-        cost.Init(lo,hi,4.0f,0.0f);
-        std::vector<uint8_t> blocked(cost.d.size(),0);
-        for (int j = 0; j < cost.h; j++){
-            for (int i = 0; i < cost.w; i++){
-                vec2 q = cost.Pos(i,j);
-                cost.At(i,j) = rift.Sample(q);
-                //Not near a rim or a crack; not on the far side, nor round the main tip to it through
-                //the mountain.
-                int side = SideAt(q);
-                if (cost.At(i,j) < RIVER_RIM_CLEAR + RIVER_SWING || side == -1 || (side == 0 && q.x < main_tip.x) ||
-                    CrackDistance(q) < RIVER_RIM_CLEAR + RIVER_SWING){
-                    blocked[(size_t)j * cost.w + i] = 1;
-                }
-            }
-        }
-        /*
-            What a step costs per unit, per cell, worked out once rather than on every step of
-            every search. Two scales of noise: the river's broad swings, and the wiggle in them -
-            with the broad one alone the path ran dead straight along the raster's axes wherever
-            the cost was nearly flat. Dearer close to a rim, and close to the map's edge, which a
-            river reaches but should not follow.
-        */
-        uint32_t meander = Seed();
-        std::vector<float> rate(cost.d.size(),1.0f);
-        for (int j = 0; j < cost.h; j++){
-            for (int i = 0; i < cost.w; i++){
-                vec2 p = cost.Pos(i,j);
-                float c = 1.0f + 1.6f * (0.5f + 0.5f * Noise(p,80.0f,meander)) +
-                          0.9f * (0.5f + 0.5f * Noise(p,28.0f,meander ^ 0x51F15EEDu));
-                float rim = cost.At(i,j);
-                if (rim < 34.0f){
-                    c += (34.0f - rim) * 0.08f;
-                }
-                float edge = EdgeDistance(p);
-                if (edge < 60.0f){
-                    c *= 1.0f + (60.0f - edge) / 12.0f;
-                }
-                rate[(size_t)j * cost.w + i] = c;
-            }
-        }
-        std::vector<Fall> falls;
-        std::vector<vec2> sources;
-        for (const Fall& fall : candidates){
-            if ((int)out.rivers.size() >= wanted){
-                break;
-            }
-            bool f_far = true;
-            for (const Fall& o : falls){
-                vec2 d = o.lip - fall.lip;
-                if (d.dot(d) < 80.0f * 80.0f){
-                    f_far = false;
-                }
-            }
-            if (!f_far){
-                continue;
-            }
-            GridRiverLine river;
-            river.width = rng.GetFloat(5.0f,7.5f);
-            if (!Course(cost,blocked,rate,fall,sources,river)){
-                continue;
-            }
-            falls.push_back(fall);
-            sources.push_back(river.points.front());
-            //Nothing else comes within reach of it: its banks, its wet margin and another's.
-            const float keep_off = 24.0f + RIVER_SWING;
-            for (size_t k = 0; k + 1 < river.points.size(); k++){
-                vec2 a = river.points[k];
-                vec2 b = river.points[k + 1];
-                int i0 = std::max(0,(int)std::floor((std::min(a.x,b.x) - keep_off - lo.x) / cost.cx));
-                int i1 = std::min(cost.w - 1,(int)std::ceil((std::max(a.x,b.x) + keep_off - lo.x) / cost.cx));
-                int j0 = std::max(0,(int)std::floor((std::min(a.y,b.y) - keep_off - lo.y) / cost.cz));
-                int j1 = std::min(cost.h - 1,(int)std::ceil((std::max(a.y,b.y) + keep_off - lo.y) / cost.cz));
-                for (int j = j0; j <= j1; j++){
-                    for (int i = i0; i <= i1; i++){
-                        if (SegmentDistance(cost.Pos(i,j),a,b) < keep_off){
-                            blocked[(size_t)j * cost.w + i] = 1;
-                        }
+    int RiverCell(const vec2& p) const{
+        int i = std::max(0,std::min(river_cost.w - 1,(int)std::lround((p.x - lo.x) / river_cost.cx)));
+        int j = std::max(0,std::min(river_cost.h - 1,(int)std::lround((p.y - lo.y) / river_cost.cz)));
+        return j * river_cost.w + i;
+    }
+
+    //Every cell within `keep_off` of the line, shut.
+    void ShutBand(std::vector<uint8_t>& shut, const std::vector<vec2>& pts, float keep_off) const{
+        const Field& f = river_cost;
+        for (size_t k = 0; k + 1 < pts.size(); k++){
+            vec2 a = pts[k];
+            vec2 b = pts[k + 1];
+            int i0 = std::max(0,(int)std::floor((std::min(a.x,b.x) - keep_off - lo.x) / f.cx));
+            int i1 = std::min(f.w - 1,(int)std::ceil((std::max(a.x,b.x) + keep_off - lo.x) / f.cx));
+            int j0 = std::max(0,(int)std::floor((std::min(a.y,b.y) - keep_off - lo.y) / f.cz));
+            int j1 = std::min(f.h - 1,(int)std::ceil((std::max(a.y,b.y) + keep_off - lo.y) / f.cz));
+            for (int j = j0; j <= j1; j++){
+                for (int i = i0; i <= i1; i++){
+                    if (SegmentDistance(f.Pos(i,j),a,b) < keep_off){
+                        shut[(size_t)j * f.w + i] = 1;
                     }
                 }
             }
-            out.rivers.push_back(river);
         }
     }
 
-    bool Course(const Field& cost, const std::vector<uint8_t>& blocked, const std::vector<float>& rate, const Fall& fall,
-                const std::vector<vec2>& sources, GridRiverLine& river){
-        int w = cost.w;
-        int h = cost.h;
-        auto cell_of = [&](const vec2& p){
-            int i = std::max(0,std::min(w - 1,(int)std::lround((p.x - lo.x) / cost.cx)));
-            int j = std::max(0,std::min(h - 1,(int)std::lround((p.y - lo.y) / cost.cz)));
-            return j * w + i;
-        };
-        int start = cell_of(fall.back);
-        if (blocked[start]){
-            return false;
+    //Where a course may not run: nearer a rim or a crack than `clear`, the far side, round the main tip
+    //to it through the mountain, and the bands of the lines placed so far - but line `open`'s.
+    std::vector<uint8_t> RiverShut(float clear, int open = -1) const{
+        const Field& f = river_cost;
+        std::vector<uint8_t> shut(f.d.size(),0);
+        for (int j = 0; j < f.h; j++){
+            for (int i = 0; i < f.w; i++){
+                vec2 q = f.Pos(i,j);
+                int side = SideAt(q);
+                if (f.At(i,j) < clear || side == -1 || (side == 0 && q.x < main_tip.x) || CrackDistance(q) < clear){
+                    shut[(size_t)j * f.w + i] = 1;
+                }
+            }
         }
-        const float INF = 1e30f;
-        std::vector<float> dist(cost.d.size(),INF);
-        std::vector<int> back(cost.d.size(),-1);
+        for (const RiverBand& b : river_bands){
+            if (b.line != open){
+                ShutBand(shut,b.points,b.keep_off);
+            }
+        }
+        return shut;
+    }
+
+    /*
+        The cheapest course from `start` to every open cell, over the cost of river_rate times
+        `dearer` (per cell; empty for none). `back` leads each cell one step toward the start, and
+        `length` is how long that course is, in world units.
+    */
+    void RiverSearch(int start, const std::vector<uint8_t>& shut, const std::vector<float>& dearer,
+                     std::vector<float>& dist, std::vector<int>& back, std::vector<float>& length) const{
+        const Field& f = river_cost;
+        int w = f.w;
+        int h = f.h;
+        dist.assign(f.d.size(),1e30f);
+        back.assign(f.d.size(),-1);
+        length.assign(f.d.size(),0.0f);
         typedef std::pair<float,int> Entry;
         std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> open;
         dist[start] = 0.0f;
@@ -1332,73 +1272,421 @@ struct Builder{
                     continue;
                 }
                 int n = nj * w + ni;
-                if (blocked[n]){
+                if (shut[n]){
                     continue;
                 }
-                vec2 d = cost.Pos(ni,nj) - cost.Pos(ci,cj);
+                vec2 d = f.Pos(ni,nj) - f.Pos(ci,cj);
                 float len = std::sqrt(d.dot(d));
-                float c = 0.5f * (rate[e.second] + rate[n]);
+                float c = 0.5f * (river_rate[e.second] + river_rate[n]);
+                if (!dearer.empty()){
+                    c *= 0.5f * (dearer[e.second] + dearer[n]);
+                }
                 float nd = e.first + len * c;
                 if (nd < dist[n]){
                     dist[n] = nd;
                     back[n] = e.second;
+                    length[n] = length[e.second] + len;
                     open.push(Entry(nd,n));
                 }
             }
         }
-        /*
-            The source: on the east edge, or the north edge east of the main tip, reached, not by
-            another source or a corner.
-            Neither the nearest edge - a river should cross some country - nor the farthest, which
-            is far only because the way there winds round something.
-        */
-        std::vector<int> edge_cells;
-        float far = 0.0f;
-        for (int pass = 0; pass < 2; pass++){
-            for (int j = 0; j < h; j++){
-                for (int i = 0; i < w; i++){
-                    bool f_edge = i == w - 1 || (j == 0 && cost.Pos(i,j).x > main_tip.x);
-                    int c = j * w + i;
-                    if (!f_edge || dist[c] >= INF){
-                        continue;
+    }
+
+    /*
+        The meander. A cheapest path is straight wherever it can be, whatever the noise in its cost,
+        so a course is swung either side of it on noise along its length - up to `swing`, which the
+        search kept clear for it from rims and other rivers - fading to nothing over `fade` at either
+        end: a source stays where it is, and a fall's approach square to its rim.
+    */
+    void Swing(std::vector<vec2>& pts, float swing, float fade_over){
+        uint32_t swing_seed = Seed();
+        size_t num = pts.size();
+        std::vector<float> arc(num,0.0f);
+        for (size_t k = 1; k < num; k++){
+            vec2 d = pts[k] - pts[k - 1];
+            arc[k] = arc[k - 1] + std::sqrt(d.dot(d));
+        }
+        std::vector<vec2> swung = pts;
+        for (size_t k = 1; k + 1 < num; k++){
+            float fade = std::min(1.0f,std::min(arc[k],arc[num - 1] - arc[k]) / fade_over);
+            vec2 side = Perp(Unit(pts[k + 1] - pts[k - 1]));
+            swung[k] = pts[k] + side * (swing * fade * Noise(vec2(arc[k],0.0f),70.0f,swing_seed));
+        }
+        pts = swung;
+    }
+
+    /*
+        The rim points that take a fall: `side`'s plateau behind - rivers run only on the HOME side, the
+        east (Grid.h, "THE SIDES") - all plateau for `approach` back from the lip, the course's start
+        there open (if `shut` is given), and open floor ahead (no island or balcony under the water),
+        away from the map's edge and from cracks. A spring's water drops the same way, so its places are
+        found here too. A small river's fall and a spring - narrow water both - look only at the drop
+        right under the sheet (`f_small`).
+    */
+    std::vector<Fall> Falls(const std::vector<GridFeature>& features, const std::vector<uint8_t>* shut, float approach,
+                            bool f_small, int side) const{
+        const float edge_clear = f_small ? SMALL_RIVER_EDGE : 60.0f;
+        const float crack_clear = f_small ? SMALL_RIVER_CRACK : 24.0f;
+        const float ahead = f_small ? 9.0f : 24.0f;         //how far out the floor must be open
+        const float ahead_step = f_small ? 3.0f : 6.0f;
+        const float inside = f_small ? 1.0f : 4.0f;         //how far into the rift each look must be
+        const float near = f_small ? 4.0f : 6.0f;           //no island's or balcony's line nearer a look
+        std::vector<Fall> found;
+        for (const GridFeature& f : features){
+            if (f.kind != GRID_FEATURE_RIM){
+                continue;
+            }
+            for (size_t k = 0; k < f.line.points.size(); k += 4){
+                vec2 lip = f.line.points[k];
+                if (EdgeDistance(lip) < edge_clear || CrackDistance(lip) < crack_clear){
+                    continue;
+                }
+                vec2 g = rift.Gradient(lip);
+                if (g.dot(g) < 0.09f){
+                    continue;
+                }
+                Fall fall;
+                fall.lip = lip;
+                fall.out = -Unit(g);
+                fall.back = lip - fall.out * approach;
+                bool f_ok = (!shut || !(*shut)[RiverCell(fall.back)]) && SideAt(fall.back) == side;
+                for (float t = 4.0f; t < approach && f_ok; t += 4.0f){
+                    f_ok = rift.Sample(lip - fall.out * t) > 0.0f;
+                }
+                for (float t = ahead_step; t <= ahead && f_ok; t += ahead_step){
+                    vec2 q = lip + fall.out * t;
+                    if (rift.Sample(q) > -inside){
+                        f_ok = false;
                     }
-                    vec2 p = cost.Pos(i,j);
-                    bool f_corner = std::min(p.x - lo.x,hi.x - p.x) < 40.0f && std::min(p.y - lo.y,hi.y - p.y) < 40.0f;
-                    bool f_crowded = false;
-                    for (const vec2& s : sources){
-                        vec2 d = s - p;
-                        if (d.dot(d) < 60.0f * 60.0f){
-                            f_crowded = true;
+                    for (const GridFeature& o : features){
+                        if (o.kind != GRID_FEATURE_RIM && PointLineDistance(q,o.line) < near){
+                            f_ok = false;
+                        }
+                        if (o.kind == GRID_FEATURE_BALCONY && PointInside(q,o.region)){
+                            f_ok = false;   //onto a balcony
                         }
                     }
-                    if (f_corner || f_crowded){
-                        continue;
-                    }
-                    if (pass == 0){
-                        far = std::max(far,dist[c]);
-                    }else if (dist[c] >= 0.4f * far && dist[c] <= 0.8f * far){
-                        edge_cells.push_back(c);
-                    }
+                }
+                if (f_ok){
+                    found.push_back(fall);
                 }
             }
         }
+        return found;
+    }
+
+    /*
+        Falls first, then each one's course: the cheapest path back over the home side to a source on
+        its east edge, or the north edge east of the main tip - the cost wanders on noise, which is the
+        meander; rims cannot be crossed, nor the far side, nor the ground beside a river already placed.
+        A map that gets no river this way gets a small one (above).
+    */
+    void PlaceRivers(const std::vector<GridFeature>& features){
+        int wanted = rng.GetInt(2,5);
+        out.rivers_wanted = wanted;
+        river_cost.Init(lo,hi,4.0f,0.0f);
+        for (int j = 0; j < river_cost.h; j++){
+            for (int i = 0; i < river_cost.w; i++){
+                river_cost.At(i,j) = rift.Sample(river_cost.Pos(i,j));
+            }
+        }
+        /*
+            What a step costs per unit, per cell, worked out once rather than on every step of
+            every search. Two scales of noise: the river's broad swings, and the wiggle in them -
+            with the broad one alone the path ran dead straight along the raster's axes wherever
+            the cost was nearly flat. Dearer close to a rim, and close to the map's edge, which a
+            river reaches but should not follow.
+        */
+        uint32_t meander = Seed();
+        river_rate.assign(river_cost.d.size(),1.0f);
+        for (int j = 0; j < river_cost.h; j++){
+            for (int i = 0; i < river_cost.w; i++){
+                vec2 p = river_cost.Pos(i,j);
+                float c = 1.0f + 1.6f * (0.5f + 0.5f * Noise(p,80.0f,meander)) +
+                          0.9f * (0.5f + 0.5f * Noise(p,28.0f,meander ^ 0x51F15EEDu));
+                float rim = river_cost.At(i,j);
+                if (rim < 34.0f){
+                    c += (34.0f - rim) * 0.08f;
+                }
+                float edge = EdgeDistance(p);
+                if (edge < 60.0f){
+                    c *= 1.0f + (60.0f - edge) / 12.0f;
+                }
+                river_rate[(size_t)j * river_cost.w + i] = c;
+            }
+        }
+        PlaceFalls(features,wanted,false);
+        if (out.rivers.empty()){
+            out.f_river_small = true;
+            PlaceFalls(features,1,true);
+        }
+        if (out.rivers.empty()){
+            PlaceEdgeRiver();
+        }
+        PlaceBranches();
+        PlaceSinks(features);
+        PlaceSprings(features);
+    }
+
+    #define SPRING_APART        50.0f
+    #define SPRING_FROM_FALL    40.0f
+    /*
+        SWALLOW-HOLE STREAMS (rivers_plan.md step 4): one or two on the home side, each a thin stream from
+        an inland spring to a hole SINK_BACK short of a rim, coming out of the wall below the rim as a
+        spring. Short of the rim by more than its wet margin, so the land along the rim there stays dry
+        and the cliff-top way is not cut. After the rivers and branches: they take what room is left.
+    */
+    #define SINK_BACK           16.0f   //from the rim's line to the hole
+    #define SINK_RIM_CLEAR      12.0f   //how far a stream's course keeps from a rim or crack
+    #define SINK_LENGTH_MIN     40.0f   //of course, from the head to the hole
+    #define SINK_LENGTH_MAX     110.0f
+    #define SINK_SWING          5.0f    //a branch's (below)
+    #define SINK_KEEP_OFF       14.0f   //plus its swing: how far other courses keep from a stream's line
+    void PlaceSinks(const std::vector<GridFeature>& features){
+        int want = rng.GetInt(1,2);
+        std::vector<uint8_t> shut = RiverShut(SINK_RIM_CLEAR);
+        std::vector<Fall> spots = Falls(features,&shut,SINK_BACK,true,1);
+        for (int i = (int)spots.size() - 1; i > 0; i--){
+            std::swap(spots[i],spots[rng.GetInt(0,i)]);
+        }
+        int placed = 0;
+        for (const Fall& f : spots){
+            if (placed >= want){
+                break;
+            }
+            if (!SpringRoom(f.lip) || shut[RiverCell(f.back)]){
+                continue;       //shut since: a stream placed before this one came by
+            }
+            if (Sink(shut,f)){
+                placed++;
+            }
+        }
+    }
+
+    //A stream to the hole at f.back, and the spring under f.lip it comes out of.
+    bool Sink(std::vector<uint8_t>& shut, const Fall& f){
+        const Field& cost = river_cost;
+        int w = cost.w;
+        int start = RiverCell(f.back);
+        std::vector<float> dist;
+        std::vector<int> back;
+        std::vector<float> length;
+        RiverSearch(start,shut,std::vector<float>(),dist,back,length);
+        std::vector<std::pair<float,int>> direct;
+        for (size_t c = 0; c < dist.size(); c++){
+            if (dist[c] >= 1e30f || length[c] < SINK_LENGTH_MIN || length[c] > SINK_LENGTH_MAX){
+                continue;
+            }
+            vec2 p = cost.Pos((int)c % w,(int)c / w);
+            if (EdgeDistance(p) < 12.0f || p.y < MountainReach(p.x)){
+                continue;
+            }
+            bool f_crowded = false;
+            for (const vec2& s : river_sources){
+                vec2 e = s - p;
+                f_crowded = f_crowded || e.dot(e) < 30.0f * 30.0f;
+            }
+            if (!f_crowded){
+                vec2 d = p - f.back;
+                direct.push_back(std::make_pair(dist[c] / std::max(1.0f,std::sqrt(d.dot(d))),(int)c));
+            }
+        }
+        if (direct.empty()){
+            return false;
+        }
+        int head = MostDirect(direct);
+        GridRiverLine s;
+        s.end = GRID_RIVER_SINK;
+        s.width = rng.GetFloat(2.2f,3.2f);
+        int step = 0;
+        for (int c = head; c >= 0 && back[c] >= 0; c = back[c], step++){
+            if (step % 3 == 0){
+                s.points.push_back(cost.Pos(c % w,c / w));
+            }
+        }
+        s.points.push_back(f.back);
+        if (s.points.size() < 3){
+            return false;
+        }
+        Swing(s.points,SINK_SWING,15.0f);
+        GridSpring spring;
+        spring.lip = f.lip;
+        spring.out = f.out;
+        spring.band = rng.GetInt(1,2);
+        spring.width = s.width * 0.9f;
+        spring.stream = (int)out.rivers.size();
+        out.springs.push_back(spring);
+        river_sources.push_back(s.points.front());
+        RiverBand keep;
+        keep.points = s.points;
+        keep.keep_off = SINK_KEEP_OFF + SINK_SWING;
+        keep.line = (int)out.rivers.size();
+        ShutBand(shut,keep.points,keep.keep_off);
+        river_bands.push_back(keep);
+        out.rivers.push_back(s);
+        return true;
+    }
+
+    /*
+        SPRINGS (rivers_plan.md step 3). The far side's: one or two, pouring from its walls for the look of
+        it - it has no rivers (its water is snow and steam). Apart from each other and from every fall.
+    */
+    void PlaceSprings(const std::vector<GridFeature>& features){
+        int want = rng.GetInt(1,2);
+        std::vector<Fall> spots = Falls(features,nullptr,8.0f,true,-1);
+        for (int i = (int)spots.size() - 1; i > 0; i--){
+            std::swap(spots[i],spots[rng.GetInt(0,i)]);
+        }
+        int placed = 0;
+        for (const Fall& f : spots){
+            if (placed >= want){
+                break;
+            }
+            if (!SpringRoom(f.lip)){
+                continue;
+            }
+            GridSpring s;
+            s.lip = f.lip;
+            s.out = f.out;
+            s.band = rng.GetInt(1,2);
+            s.width = rng.GetFloat(2.4f,3.4f);
+            out.springs.push_back(s);
+            placed++;
+        }
+    }
+
+    bool SpringRoom(const vec2& lip) const{
+        for (const GridSpring& s : out.springs){
+            vec2 d = s.lip - lip;
+            if (d.dot(d) < SPRING_APART * SPRING_APART){
+                return false;
+            }
+        }
+        for (const GridRiverLine& r : out.rivers){
+            if (r.end == GRID_RIVER_FALL && r.points.size() >= 2){
+                vec2 d = r.points[r.points.size() - 2] - lip;
+                if (d.dot(d) < SPRING_FROM_FALL * SPRING_FROM_FALL){
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void PlaceFalls(const std::vector<GridFeature>& features, int wanted, bool f_small){
+        const float swing = f_small ? SMALL_RIVER_SWING : RIVER_SWING;
+        const float clear = RIVER_RIM_CLEAR + swing;
+        std::vector<uint8_t> shut = RiverShut(clear);
+        std::vector<Fall> candidates = Falls(features,&shut,clear + RIVER_APPROACH,f_small,1);
+        for (int i = (int)candidates.size() - 1; i > 0; i--){
+            std::swap(candidates[i],candidates[rng.GetInt(0,i)]);
+        }
+        out.river_tries[0] += (int)candidates.size();
+        std::vector<Fall> falls;
+        for (const Fall& fall : candidates){
+            if ((int)out.rivers.size() >= wanted){
+                break;
+            }
+            bool f_far = true;
+            for (const Fall& o : falls){
+                vec2 d = o.lip - fall.lip;
+                if (d.dot(d) < RIVER_FALLS_APART * RIVER_FALLS_APART){
+                    f_far = false;
+                }
+            }
+            if (!f_far){
+                out.river_tries[1]++;
+                continue;
+            }
+            GridRiverLine river;
+            river.width = f_small ? rng.GetFloat(3.5f,5.0f) : rng.GetFloat(5.0f,7.5f);
+            if (!Course(shut,fall,swing,f_small,river)){
+                continue;
+            }
+            falls.push_back(fall);
+            river_sources.push_back(river.points.front());
+            //Nothing else comes within reach of it: its banks, its wet margin and another's.
+            RiverBand band;
+            band.points = river.points;
+            band.keep_off = RIVER_KEEP_OFF + swing;
+            band.line = (int)out.rivers.size();
+            ShutBand(shut,band.points,band.keep_off);
+            river_bands.push_back(band);
+            out.rivers.push_back(river);
+        }
+    }
+
+    bool Course(const std::vector<uint8_t>& shut, const Fall& fall, float swing, bool f_small, GridRiverLine& river){
+        const Field& cost = river_cost;
+        int w = cost.w;
+        int h = cost.h;
+        int start = RiverCell(fall.back);
+        if (shut[start]){
+            out.river_tries[2]++;
+            return false;
+        }
+        std::vector<float> dist;
+        std::vector<int> back;
+        std::vector<float> length;
+        RiverSearch(start,shut,std::vector<float>(),dist,back,length);
+        /*
+            The source: on the east edge, or the north edge east of the main tip, reached, not by
+            another source or a corner - or for a small river with none of those, anywhere inland.
+            Neither the nearest - a river should cross some country - nor the farthest, which is far
+            only because the way there winds round something.
+        */
+        auto sources = [&](bool f_inland){
+            std::vector<int> cells;
+            float far = 0.0f;
+            for (int pass = 0; pass < 2; pass++){
+                for (int j = 0; j < h; j++){
+                    for (int i = 0; i < w; i++){
+                        vec2 p = cost.Pos(i,j);
+                        bool f_edge = i == w - 1 || (j == 0 && p.x > main_tip.x);
+                        int c = j * w + i;
+                        if ((f_inland ? EdgeDistance(p) < 10.0f : !f_edge) || dist[c] >= 1e30f){
+                            continue;
+                        }
+                        bool f_corner = std::min(p.x - lo.x,hi.x - p.x) < 40.0f && std::min(p.y - lo.y,hi.y - p.y) < 40.0f;
+                        bool f_crowded = false;
+                        for (const vec2& s : river_sources){
+                            vec2 d = s - p;
+                            if (d.dot(d) < 60.0f * 60.0f){
+                                f_crowded = true;
+                            }
+                        }
+                        if (f_corner || f_crowded){
+                            continue;
+                        }
+                        if (pass == 0){
+                            far = std::max(far,dist[c]);
+                        }else if (dist[c] >= 0.4f * far && dist[c] <= 0.8f * far){
+                            cells.push_back(c);
+                        }
+                    }
+                }
+            }
+            return cells;
+        };
+        std::vector<int> edge_cells = sources(false);
+        if (edge_cells.empty() && f_small){
+            edge_cells = sources(true);
+        }
         if (edge_cells.empty()){
+            out.river_tries[3]++;
             return false;
         }
         /*
-            Of those, one of the most direct quarter - path cost over straight distance - so a river
-            heads off across the country from its edge instead of running along beside it, which
-            the cost's own edge penalty alone did not stop. Sorted by index on ties, for the same
-            order in every build.
+            Of those, one of the most direct - path cost over straight distance - so a river heads off
+            across the country from its edge instead of running along beside it, which the cost's own
+            edge penalty alone did not stop.
         */
         std::vector<std::pair<float,int>> direct;
         for (int c : edge_cells){
             vec2 d = cost.Pos(c % w,c / w) - fall.back;
             direct.push_back(std::make_pair(dist[c] / std::max(1.0f,std::sqrt(d.dot(d))),c));
         }
-        std::sort(direct.begin(),direct.end());
-        int keep = std::max(1,(int)direct.size() / 4);
-        int source = direct[rng.GetInt(0,keep - 1)].second;
+        int source = MostDirect(direct);
         std::vector<vec2> path;
         for (int c = source; c >= 0; c = back[c]){
             path.push_back(cost.Pos(c % w,c / w));
@@ -1408,30 +1696,240 @@ struct Builder{
         for (size_t k = 0; k + 1 < path.size(); k += 4){
             river.points.push_back(path[k]);
         }
-        /*
-            The meander. A cheapest path is straight wherever it can be, whatever the noise in its
-            cost, so the river is swung either side of it on noise along its length - up to
-            RIVER_SWING, which the search kept clear for it from rims and other rivers - fading to
-            nothing at the source, which stays on the map's edge, and before the fall, whose
-            approach must stay square to the rim.
-        */
-        uint32_t swing_seed = Seed();
-        size_t num = river.points.size();
-        std::vector<float> arc(num,0.0f);
-        for (size_t k = 1; k < num; k++){
-            vec2 d = river.points[k] - river.points[k - 1];
-            arc[k] = arc[k - 1] + std::sqrt(d.dot(d));
-        }
-        std::vector<vec2> swung = river.points;
-        for (size_t k = 1; k + 1 < num; k++){
-            float fade = std::min(1.0f,std::min(arc[k],arc[num - 1] - arc[k]) / 40.0f);
-            vec2 side = Perp(Unit(river.points[k + 1] - river.points[k - 1]));
-            swung[k] = river.points[k] + side * (RIVER_SWING * fade * Noise(vec2(arc[k],0.0f),70.0f,swing_seed));
-        }
-        river.points = swung;
+        Swing(river.points,swing,40.0f);
         river.points.push_back(fall.back);
         river.points.push_back(fall.lip);
         river.points.push_back(fall.lip + fall.out * 10.0f);
+        return true;
+    }
+
+    //One of `cells` (per cell: the course's cost over the straight distance from `from`): of the most
+    //direct quarter, at random. Sorted by index on ties, for the same order in every build.
+    int MostDirect(std::vector<std::pair<float,int>>& cells){
+        std::sort(cells.begin(),cells.end());
+        int keep = std::max(1,(int)cells.size() / 4);
+        return cells[rng.GetInt(0,keep - 1)].second;
+    }
+
+    /*
+        THE LAST RESORT (rivers_plan.md step 1): a home rim with room for no fall at all - balconies
+        along most of it, a crack in the gap, the mountain over its head (seed 39) - still gets a
+        river, one that runs off the map's east edge instead. Its mouth is the open edge cell nearest
+        the edge's middle; its source inland, chosen as a fall's is.
+    */
+    void PlaceEdgeRiver(){
+        const Field& cost = river_cost;
+        int w = cost.w;
+        int h = cost.h;
+        std::vector<uint8_t> shut = RiverShut(RIVER_RIM_CLEAR + SMALL_RIVER_SWING);
+        int mouth = -1;
+        for (int d = 0; d < h && mouth < 0; d++){
+            for (int s = -1; s <= 1 && mouth < 0; s += 2){
+                int j = h / 2 + s * d;
+                if (j >= 0 && j < h && !shut[(size_t)j * w + w - 1]){
+                    mouth = j * w + w - 1;
+                }
+            }
+        }
+        if (mouth < 0){
+            return;
+        }
+        std::vector<float> dist;
+        std::vector<int> back;
+        std::vector<float> length;
+        RiverSearch(mouth,shut,std::vector<float>(),dist,back,length);
+        float far = 0.0f;
+        for (size_t c = 0; c < dist.size(); c++){
+            if (dist[c] < 1e30f && EdgeDistance(cost.Pos((int)c % w,(int)c / w)) >= 10.0f){
+                far = std::max(far,dist[c]);
+            }
+        }
+        std::vector<std::pair<float,int>> direct;
+        vec2 at = cost.Pos(mouth % w,mouth / w);
+        for (size_t c = 0; c < dist.size(); c++){
+            vec2 p = cost.Pos((int)c % w,(int)c / w);
+            if (dist[c] < 1e30f && EdgeDistance(p) >= 10.0f && dist[c] >= 0.4f * far && dist[c] <= 0.8f * far){
+                vec2 d = p - at;
+                direct.push_back(std::make_pair(dist[c] / std::max(1.0f,std::sqrt(d.dot(d))),(int)c));
+            }
+        }
+        if (direct.empty()){
+            return;
+        }
+        int source = MostDirect(direct);
+        GridRiverLine river;
+        river.end = GRID_RIVER_EDGE;
+        river.width = rng.GetFloat(3.5f,5.0f);
+        int step = 0;
+        for (int c = source; c >= 0; c = back[c], step++){
+            if (step % 4 == 0 || back[c] < 0){
+                river.points.push_back(cost.Pos(c % w,c / w));
+            }
+        }
+        Swing(river.points,SMALL_RIVER_SWING,40.0f);
+        river.points.push_back(at + vec2(10.0f,0.0f));
+        river_sources.push_back(river.points.front());
+        RiverBand band;
+        band.points = river.points;
+        band.keep_off = RIVER_KEEP_OFF + SMALL_RIVER_SWING;
+        band.line = (int)out.rivers.size();
+        river_bands.push_back(band);
+        out.rivers.push_back(river);
+    }
+
+    /*
+        BRANCHES (rivers_plan.md step 2): two or three thinner streams joining each river, rising at
+        springs inland - never on the map's edge, so the land between a branch and its river stays open
+        round the branch's head. After every river, so they take only the room the rivers left.
+    */
+    #define BRANCH_SWING        5.0f
+    #define BRANCH_RIM_CLEAR    10.0f   //bank, wet margin and half the widest branch, from a rim or crack
+    #define BRANCH_KEEP_OFF     14.0f   //plus its swing: how far other courses keep from a branch's line
+    #define BRANCH_FROM         0.25f   //junctions lie between these shares of a river's way to its end
+    #define BRANCH_TO           0.80f
+    #define BRANCH_APART        45.0f   //along a river, between two of its junctions
+    #define BRANCH_LENGTH_MIN   30.0f   //of course, from the junction to the head
+    #define BRANCH_LENGTH_MAX   75.0f
+    #define BRANCH_HEAD_OFF     20.0f   //a head's least distance from the river it joins
+    #define BRANCH_ALONGSIDE    1.8f    //a step's cost inside its river's band, against outside it
+    #define BRANCH_OPEN         8.0f    //round the junction, its river's own water is open to it
+
+    void PlaceBranches(){
+        int rivers = (int)out.rivers.size();
+        for (int ri = 0; ri < rivers; ri++){
+            const std::vector<vec2> pts = out.rivers[ri].points;    //a copy: out.rivers grows below
+            int want = rng.GetInt(2,3);
+            out.branches_wanted += want;
+            //The way to its end: to a fall's straight approach, or to the map's edge.
+            size_t n = pts.size();
+            size_t last = (out.rivers[ri].end == GRID_RIVER_FALL) ? n - 3 : n - 2;
+            std::vector<float> arc(n,0.0f);
+            for (size_t k = 1; k < n; k++){
+                vec2 d = pts[k] - pts[k - 1];
+                arc[k] = arc[k - 1] + std::sqrt(d.dot(d));
+            }
+            std::vector<size_t> at;
+            //Out of the mountain too: a river's head in it is cut off later (PlaceMountainFoot).
+            for (size_t k = 1; k < last; k++){
+                if (arc[k] >= BRANCH_FROM * arc[last] && arc[k] <= BRANCH_TO * arc[last] &&
+                    pts[k].y > MountainReach(pts[k].x)){
+                    at.push_back(k);
+                }
+            }
+            for (int i = (int)at.size() - 1; i > 0; i--){
+                std::swap(at[i],at[rng.GetInt(0,i)]);
+            }
+            std::vector<float> taken;
+            for (size_t k : at){
+                if ((int)taken.size() >= want){
+                    break;
+                }
+                bool f_apart = true;
+                for (float a : taken){
+                    f_apart = f_apart && std::fabs(arc[k] - a) >= BRANCH_APART;
+                }
+                if (!f_apart){
+                    continue;
+                }
+                int side = rng.Roll(0.5f) ? 1 : -1;
+                if (Branch(ri,pts,k,side) || Branch(ri,pts,k,-side)){
+                    taken.push_back(arc[k]);
+                }
+            }
+        }
+    }
+
+    /*
+        One branch into river `parent` at its point k, on `side` of it (+1 left looking downstream). Its
+        course is a river's search from the junction outward, with the river's own band open to it but
+        dearer - so it leaves at an angle rather than running alongside - and the river's water shut
+        but round the junction, so it never crosses to the other bank. Its head: upstream of the
+        junction, as a tributary points downstream where it joins, clear of its river, the map's edge
+        and the mountain.
+    */
+    bool Branch(int parent, const std::vector<vec2>& pts, size_t k, int side){
+        const Field& cost = river_cost;
+        int w = cost.w;
+        vec2 J = pts[k];
+        vec2 down = Unit(pts[k + 1] - pts[k - 1]);
+        std::vector<uint8_t> shut = RiverShut(BRANCH_RIM_CLEAR + BRANCH_SWING,parent);
+        int start = RiverCell(J);
+        if (shut[start]){
+            return false;
+        }
+        const float water = out.rivers[parent].width * 0.5f + 2.5f;
+        const float band = RIVER_KEEP_OFF + RIVER_SWING;
+        std::vector<float> dearer(cost.d.size(),1.0f);
+        std::vector<float> off(cost.d.size(),1e30f);
+        for (size_t c = 0; c < off.size(); c++){
+            vec2 p = cost.Pos((int)c % w,(int)c / w);
+            float d = 1e30f;
+            for (size_t i = 0; i + 1 < pts.size(); i++){
+                d = std::min(d,SegmentDistance(p,pts[i],pts[i + 1]));
+            }
+            off[c] = d;
+            vec2 dj = p - J;
+            if (d < water && dj.dot(dj) > BRANCH_OPEN * BRANCH_OPEN){
+                shut[c] = 1;
+            }
+            if (d < band){
+                dearer[c] = BRANCH_ALONGSIDE;
+            }
+        }
+        std::vector<float> dist;
+        std::vector<int> back;
+        std::vector<float> length;
+        RiverSearch(start,shut,dearer,dist,back,length);
+        std::vector<std::pair<float,int>> direct;
+        for (size_t c = 0; c < dist.size(); c++){
+            if (dist[c] >= 1e30f || length[c] < BRANCH_LENGTH_MIN || length[c] > BRANCH_LENGTH_MAX){
+                continue;
+            }
+            vec2 p = cost.Pos((int)c % w,(int)c / w);
+            if (off[c] < BRANCH_HEAD_OFF || EdgeDistance(p) < 12.0f || p.y < MountainReach(p.x)){
+                continue;
+            }
+            vec2 d = p - J;
+            float straight = std::sqrt(d.dot(d));
+            if (-d.dot(down) < 0.25f * straight || (down.x * d.y - down.y * d.x) * (float)side <= 0.0f){
+                continue;
+            }
+            bool f_crowded = false;
+            for (const vec2& s : river_sources){
+                vec2 e = s - p;
+                f_crowded = f_crowded || e.dot(e) < 30.0f * 30.0f;
+            }
+            if (!f_crowded){
+                direct.push_back(std::make_pair(dist[c] / std::max(1.0f,straight),(int)c));
+            }
+        }
+        if (direct.empty()){
+            return false;
+        }
+        int head = MostDirect(direct);
+        GridRiverLine b;
+        b.end = GRID_RIVER_JOIN;
+        b.joins = parent;
+        b.width = rng.GetFloat(2.2f,3.4f);
+        //Every third cell, and the junction itself rather than its cell: the branch ends on its river's line.
+        int step = 0;
+        for (int c = head; c >= 0 && back[c] >= 0; c = back[c], step++){
+            if (step % 3 == 0){
+                b.points.push_back(cost.Pos(c % w,c / w));
+            }
+        }
+        b.points.push_back(J);
+        if (b.points.size() < 3){
+            return false;
+        }
+        Swing(b.points,BRANCH_SWING,15.0f);
+        river_sources.push_back(b.points.front());
+        RiverBand keep;
+        keep.points = b.points;
+        keep.keep_off = BRANCH_KEEP_OFF + BRANCH_SWING;
+        keep.line = (int)out.rivers.size();
+        river_bands.push_back(keep);
+        out.rivers.push_back(b);
         return true;
     }
 };

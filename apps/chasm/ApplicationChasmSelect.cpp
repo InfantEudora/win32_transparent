@@ -8,8 +8,10 @@
 #include "MCPServer.h"
 #endif
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <ctype.h>
+#include <thread>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -247,8 +249,11 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
     }
     switch (k.state){
         case WORKER_AT_HOME:    return EconomyIndoors(k) ? "at home" : (k.house ? "at his tent" : "waiting");
-        case WORKER_TO_WORK:    return (k.prop >= 0) ? "going to a tree" : "going to work";
-        case WORKER_WORKING:    return (k.prop >= 0) ? "felling" : "picking up";
+        //A woodcutter out for wood - a log first, a tree if none lies near - and, with one on him, for a second log;
+        //at it, felling for longer than a pick-up takes.
+        case WORKER_TO_WORK:    return (k.prop >= 0) ? ((k.carry > 0) ? "going for another log" : "going for wood") : "going to work";
+        case WORKER_WORKING:    return (k.prop < 0) ? "picking up"
+                                     : (k.timer > (int)(ECONOMY_PICK_SECONDS * CALENDAR_TICKS_PER_SECOND)) ? "felling" : "picking up a log";
         case WORKER_TO_STORE:   return "carrying to a store";
         case WORKER_UNLOADING:  return "unloading";
         case WORKER_TO_HOME:    return "going home";
@@ -563,7 +568,7 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     (void)e;
 }
 
-void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint32_t id, Card& c){
+void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint32_t id, uint64_t tick, Card& c){
     const ZoneBuilding& b = z.buildings[id];
     ZoneBuildingInfo info = ZoneBuildingFigures(w,z,id);
     c.title = KindTitle(b.kind);
@@ -590,14 +595,29 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Text(carriers ? Format("%i carrying for it",carriers) : std::string("Waiting for someone free to carry"),
                    HUD_TEXT_DIM);
         }
-        //The player's say over the queue (construction_plan.md): this one before every other site. A
-        //building's - put first by one of its plots, which a field has not.
-        if (!f_field){
-            CardLine first;
-            first.type = CARD_TOGGLE;
-            first.text = "Build first";
-            first.chips_on = b.f_priority;
-            c.lines.push_back(first);
+        //The player's say over the queue (construction_plan.md): this one before every other site - a
+        //building put first by one of its plots, a field by one of its cells (OVERLAY_HIT_SITE_FIRST).
+        CardLine first;
+        first.type = CARD_TOGGLE;
+        first.text = "Build first";
+        first.chips_on = b.f_priority;
+        c.lines.push_back(first);
+        /*
+            A field's starting crop, chosen while it is still being built (the user's, 2026-10-08), so its
+            farmer sows it the day it stands - as long as it was never sown: a sown field growing by more
+            cells keeps its next crop, on its card once they are built.
+        */
+        const EconomyField* grown = (f_field && e) ? EconomyFieldOf(*e,id) : NULL;
+        if (f_field && (!grown || (!grown->f_sown && grown->last < 0))){
+            c.Text("Start with:",HUD_TEXT_DIM);
+            CardLine choice;
+            choice.type = CARD_CHOICE;
+            choice.choice_action = OVERLAY_HIT_FIELD_CROP;
+            choice.choice_on = (b.crop < ZONE_CROP_COUNT) ? (int)b.crop : -1;
+            for (int k = 0; k < ZONE_CROP_COUNT; k++){
+                choice.choices.push_back(std::make_pair(CropTitle(k),k));
+            }
+            c.lines.push_back(choice);
         }
     }
     if (!e){
@@ -690,18 +710,56 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             crop now growing (or last harvested).
         */
         const EconomyField* f = (f_field && info.site_cells == 0) ? EconomyFieldOf(*e,id) : NULL;
+        int sow_now = -1;
         if (f){
+            /*
+                THE FROST (Economy.h): the growing weather the field has left - at its middle, where its farmer
+                stands - against its farmer's pace: whether what grows ripens in time, and why nothing is
+                sown when nothing is.
+            */
+            vec2 mid(0.0f,0.0f);
+            auto first = std::find(z.field.begin(),z.field.end(),id);
+            if (first != z.field.end()){
+                for (int j = 0; j < 4; j++){
+                    mid += w.grid->FineQuadCentre((int)(first - z.field.begin()) * 4 + j) * 0.25f;
+                }
+            }
+            float pace = EconomyFieldPace(*e,id);
+            int left = EconomyGrowingTicksLeft(w,mid,tick);
             int after = -1;
             if (f->f_sown && f->crop >= 0){
                 float g = EconomyFieldGrowth(*e,z,id);
                 c.Bar(Format("%s at %i%% yield - %.0f%% grown",CropTitle(f->crop).c_str(),f->yield,g * 100.0f),g);
+                int ripen = EconomyRipenTicks(f->crop,f->grown,pace);
+                if (pace > 0.0f && ripen > left){
+                    int days = (ripen - left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS;
+                    c.Text(Format("The frost will take it first - %i day%s short",days,days == 1 ? "" : "s"),HUD_DANGER);
+                }
                 after = f->crop;
             }else{
+                if (f->frost >= 0){
+                    c.Text(Format("The frost took its %s",ZoneCropName(f->frost)),HUD_AMBER);
+                }
                 int sow = EconomyFieldSowCrop(*f,b);
+                sow_now = EconomyFieldSowNow(*f,b,pace,left);
+                bool f_auto = f->last >= 0 && b.next_crop >= ZONE_CROP_COUNT;
                 if (sow < 0){
                     c.Text("Empty - choose a crop to sow",HUD_AMBER);
+                }else if (sow_now >= 0){
+                    c.Text(Format("Empty - its farmer is to sow %s, at %i%%",ZoneCropName(sow_now),EconomyCropYield(f->last,sow_now)));
+                }else if (CalendarDateOf(tick).season == SEASON_WINTER){
+                    c.Text("Empty - nothing is sown in winter",HUD_TEXT_DIM);
+                }else if (left == 0){
+                    c.Text("Empty - under the snow until spring",HUD_TEXT_DIM);
+                }else if (pace <= 0.0f){
+                    c.Text(Format("Empty - %s, once somebody farms it",ZoneCropName(sow)),HUD_TEXT_DIM);
+                }else if (!f_auto && EconomyRipenTicks(sow,0,pace) > EconomyGrowingSeasonTicks(w,mid,tick)){
+                    c.Text(Format("%s never ripens here before the frost at its farmer's pace - choose another crop",
+                                  CropTitle(sow).c_str()),HUD_AMBER);
                 }else{
-                    c.Text(Format("Empty - its farmer is to sow %s, at %i%%",ZoneCropName(sow),EconomyCropYield(f->last,sow)));
+                    c.Text(f_auto ? std::string("Empty - too late in the year for any crop to ripen: sown in spring")
+                                  : Format("Empty - too late in the year for %s to ripen: sown in spring",ZoneCropName(sow)),
+                           HUD_TEXT_DIM);
                 }
                 after = f->last;
             }
@@ -718,7 +776,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 c.Text("Next:",HUD_TEXT_DIM);
                 choice.choice_action = OVERLAY_HIT_FIELD_NEXT;
                 choice.choice_on = b.next_crop;
-                choice.choices.push_back(std::make_pair("Auto: " + CropTitle(EconomyAutoCrop(after)),(int)ZONE_CROP_AUTO));
+                //AUTO names what it picks: while the field waits, what is sown now, the frost allowing.
+                int pick = (!f->f_sown && sow_now >= 0 && b.next_crop >= ZONE_CROP_COUNT) ? sow_now : EconomyAutoCrop(after);
+                choice.choices.push_back(std::make_pair("Auto: " + CropTitle(pick),(int)ZONE_CROP_AUTO));
                 for (int k = 0; k < ZONE_CROP_COUNT; k++){
                     choice.choices.push_back(std::make_pair(Format("%s %i%%",CropTitle(k).c_str(),EconomyCropYield(after,k)),k));
                 }
@@ -829,7 +889,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     }
 }
 
-bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, Card& c){
+bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint64_t tick, Card& c){
     if (p.kind == PLAY_PICK_PERSON && e){
         const EconomyWorker* k = PersonById(*e,p.id);
         if (k){
@@ -837,7 +897,7 @@ bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const 
             return true;
         }
     }else if (p.kind == PLAY_PICK_BUILDING && p.id < z.buildings.size() && z.buildings[p.id].size > 0){
-        BuildingCard(w,z,(e && e->world == z.world) ? e : NULL,p.id,c);
+        BuildingCard(w,z,(e && e->world == z.world) ? e : NULL,p.id,tick,c);
         return true;
     }
     return false;
@@ -1051,6 +1111,18 @@ bool ApplicationChasm::OverlayHitAt(int2 px, OverlayHit* hit){
 */
 void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked){
     InputController* input = main_scene->inputcontroller;
+    //A scripted click (chasm_select op press): this pass, at its pixel, as the mouse's would be.
+    if (f_script_press.exchange(false)){
+        {
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            px = script_press_px;
+        }
+        f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
+        f_clicked = f_over_scene;
+        if (f_over_scene){
+            hover = PickUnderPixel(px);
+        }
+    }
     OverlayHit hit;
     if (f_over_scene && OverlayHitAt(px,&hit)){
         f_over_scene = false;
@@ -1065,6 +1137,17 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 play_selected = PlayPick();
                 play_pick_version++;
+            }else if (hit.action == OVERLAY_HIT_PERSON){
+                //The neediest list (DrawNeediest): him, selected, and the view taken to him (the camera's glide).
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    PlayPick p;
+                    p.kind = PLAY_PICK_PERSON;
+                    p.id = (uint32_t)hit.value;
+                    play_selected = p;
+                    play_pick_version++;
+                }
+                cam_seek_person = (uint32_t)hit.value;
             }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_SITE_FIRST){
                 PlayPick sel;
                 {
@@ -1075,11 +1158,15 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 if (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size()){
                     int plot = (sel.plot >= 0 && sel.plot < (int)z->building.size() && z->building[sel.plot] == sel.id)
                                ? sel.plot : FirstPlotOf(*z,sel.id);
+                    int want = z->buildings[sel.id].f_priority ? 0 : 1;
+                    auto cell = std::find(z->field.begin(),z->field.end(),sel.id);
                     if (hit.action == OVERLAY_HIT_STORE_ALLOW){
                         uint8_t mask = z->buildings[sel.id].allow ^ (uint8_t)GOOD_BIT(hit.value);
                         SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
+                    }else if (z->buildings[sel.id].kind == ZONE_KIND_FIELD && cell != z->field.end()){
+                        SubmitZone(ZONE_OP_FIELD_PRIORITY,(int)(cell - z->field.begin()),want);     //a field: by a cell
                     }else{
-                        SubmitZone(ZONE_OP_SITE_PRIORITY,plot,z->buildings[sel.id].f_priority ? 0 : 1);
+                        SubmitZone(ZONE_OP_SITE_PRIORITY,plot,want);
                     }
                 }
             }else if (hit.action == OVERLAY_HIT_FIELD_CROP || hit.action == OVERLAY_HIT_FIELD_NEXT
@@ -1291,6 +1378,99 @@ void ApplicationChasm::UploadSelection(){
 
 //--- The card and the pins (render thread) ---------------------------------------------------------
 
+/*
+    THE NEEDIEST (the user's, 2026-10-08): over the jobs in the bottom left corner, the NEEDIEST_SHOWN people
+    with the least health - the dry first where it is even, as they lose it fastest - each with his badge,
+    his name, what he is short of and how much health he has left, so whoever is in trouble can be found
+    before it is too late. A click on one selects him and takes the view to him (OVERLAY_HIT_PERSON).
+*/
+#define NEEDIEST_SHOWN      5
+void ApplicationChasm::DrawNeediest(float s, float bottom){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!e || !z || e->world != z->world || e->workers.empty()){
+        return;
+    }
+    std::vector<const EconomyWorker*> order;
+    for (const EconomyWorker& k : e->workers){
+        order.push_back(&k);
+    }
+    int shown = std::min(NEEDIEST_SHOWN,(int)order.size());
+    std::partial_sort(order.begin(),order.begin() + shown,order.end(),[](const EconomyWorker* a, const EconomyWorker* b){
+        if (a->health != b->health){
+            return a->health < b->health;
+        }
+        if (EconomyDry(*a) != EconomyDry(*b)){
+            return EconomyDry(*a);
+        }
+        return a->id < b->id;
+    });
+    PlayPick sel;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        sel = play_selected;
+    }
+    //Each row's words: what he is short of, as his badge says it - dry, then thirsty, then hungry - and his
+    //health in the badge ring's colour.
+    struct Row{
+        const EconomyWorker* k;
+        std::string name;
+        const char* need;
+        uint32_t need_colour;
+        char health[8];
+        uint32_t colour;
+    };
+    std::vector<Row> rows;
+    for (int i = 0; i < shown; i++){
+        const EconomyWorker& k = *order[i];
+        Row r;
+        r.k = &k;
+        r.name = EconomyPersonName(k);
+        r.need = EconomyDry(k) ? "DRY" : (k.water < THIRST_MARK_WATER) ? "THIRSTY" : (k.health < NEEDS_PRESSING_HEALTH) ? "HUNGRY" : "";
+        r.need_colour = EconomyDry(k) ? HUD_DANGER : (k.water < THIRST_MARK_WATER) ? HUD_WATER : HUD_AMBER;
+        snprintf(r.health,sizeof(r.health),"%i%%",(int)std::lround(100.0f * std::max(0,k.health) / NEEDS_HEALTH_FULL));
+        r.colour = EconomyDry(k) ? HUD_DANGER : (k.health <= BADGE_LOW_HEALTH) ? HUD_AMBER : HUD_TEXT;
+        rows.push_back(r);
+    }
+    const float size = 14.0f * s;
+    const float title_size = 12.0f * s;
+    const float title_h = 18.0f * s;
+    const float line_h = 26.0f * s;
+    const float pad = 12.0f * s;
+    const float badge = BADGE_RADIUS * s;
+    const float col_gap = 14.0f * s;
+    float name_w = 0.0f;
+    for (const Row& r : rows){
+        name_w = std::max(name_w,overlay->MeasureText(r.name.c_str(),size).x);
+    }
+    float need_w = overlay->MeasureText("THIRSTY",size).x;
+    float health_w = overlay->MeasureText("100%",size).x;
+    float w = pad * 2.0f + badge * 2.0f + 8.0f * s + name_w + col_gap + need_w + col_gap + health_w;
+    float h = pad * 0.8f + title_h + line_h * (float)rows.size() + pad * 0.4f;
+    vec2 p0(16.0f * s,bottom - h);
+    vec2 p1(p0.x + w,bottom);
+    overlay->AddRect(p0,p1,9.0f * s,HUD_PANEL);
+    overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
+    overlay->AddText("MOST IN NEED",vec2(p0.x + pad,p0.y + pad * 0.8f + 11.0f * s),title_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+    float name_x = p0.x + pad + badge * 2.0f + 8.0f * s;
+    float need_x = name_x + name_w + col_gap;
+    for (size_t i = 0; i < rows.size(); i++){
+        const Row& r = rows[i];
+        float top = p0.y + pad * 0.8f + title_h + line_h * (float)i;
+        float mid = top + line_h * 0.5f;
+        bool f_selected = sel.kind == PLAY_PICK_PERSON && sel.id == r.k->id;
+        if (f_selected){
+            overlay->AddRect(vec2(p0.x + 4.0f * s,top + 1.0f * s),vec2(p1.x - 4.0f * s,top + line_h - 1.0f * s),6.0f * s,
+                             HudFaded(HUD_SELECT,60));
+        }
+        DrawPersonBadge(overlay,vec2(p0.x + pad + badge,mid),s,*r.k,f_selected ? HUD_SELECT : 0);
+        overlay->AddText(r.name.c_str(),vec2(name_x,mid + 5.0f * s),size,HUD_TEXT,UI_ALIGN_LEFT);
+        overlay->AddText(r.need,vec2(need_x,mid + 5.0f * s),size,r.need_colour,UI_ALIGN_LEFT);
+        overlay->AddText(r.health,vec2(p1.x - pad,mid + 5.0f * s),size,r.colour,UI_ALIGN_RIGHT);
+        overlay_hits_drawing.push_back(OverlayHit{vec2(p0.x,top),vec2(p1.x,top + line_h),OVERLAY_HIT_PERSON,(int)r.k->id});
+    }
+}
+
 void ApplicationChasm::DrawSelectionOverlay(float s){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     std::shared_ptr<const ZoneState> z = GetZones();
@@ -1317,7 +1497,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             pinned.push_back(sel.id);
         }
     }
-    //Where a pin over a world point goes: kept on screen, clear of the build bar along the bottom, with
+    //Where a pin over a world point goes: kept on screen, off the bottom edge the panels stand on, with
     //whether it had to be (then it has no stem). False behind the camera.
     auto pin_spot = [&](const vec3& stem, const vec3& top, float rise, vec2& head, vec2& dot, bool& f_off){
         vec2 tip;
@@ -1406,7 +1586,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
 
     //THE CARD, on the right under the date's level.
     Card card;
-    if (!MakeCard(sel,*w,*z,ep,card)){
+    if (!MakeCard(sel,*w,*z,ep,calendar_shown.load(),card)){
         return;
     }
     const float pad = 14.0f * s;
@@ -1503,6 +1683,9 @@ void ApplicationChasm::RegisterSelectTools(){
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
         "op select: the building at x,z (or by `building` id), or a person by `person` id; op clear; op under "
         "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives); op "
+        "press px,py: a left click there, as the player's - on the HUD it presses what is drawn there (a tool of the "
+        "grid, a card's chip, pause, speed, a row of the neediest list), on the scene it selects; `pressed` says what "
+        "the HUD had there and the tool in hand after; op "
         "status (default): the selection and hover, the card as text lines, and the people pinned with it. "
         "View state only - nothing recorded. The card and outlines show in play mode (chasm_view play). "
         "include_screenshot as elsewhere.",
@@ -1542,6 +1725,39 @@ void ApplicationChasm::RegisterSelectTools(){
                                {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0}};
                 });
                 return json{{"under",out}};
+            }
+            /*
+                A left click at a pixel, as the player's (UpdatePlayPick): on the overlay it presses what is
+                drawn there - a tool, a chip, the calendar's buttons, a row of the neediest - and on the
+                scene it selects. Taken on the next pass, which runs paused too; the reply waits for it.
+            */
+            json pressed;
+            if (op == "press"){
+                if (!PlayMode()){
+                    return json{{"error","press is play mode's click - chasm_view play first"}};
+                }
+                if (!(args.contains("px") && args.contains("py") && args["px"].is_number() && args["py"].is_number())){
+                    return json{{"error","press needs px and py"}};
+                }
+                int2 px(args["px"].get<int>(),args["py"].get<int>());
+                OverlayHit hit;
+                static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
+                                                      "field_next","pause","speed","field_land","person"};
+                if (OverlayHitAt(px,&hit)){
+                    pressed = json{{"overlay",actions[std::max(0,std::min(10,hit.action))]},{"value",hit.value}};
+                }else{
+                    pressed = json{{"overlay",nullptr}};
+                }
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    script_press_px = px;
+                }
+                f_script_press = true;
+                for (int i = 0; i < 400 && f_script_press.load(); i++){
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                pressed["taken"] = !f_script_press.load();
+                pressed["tool"] = (int)paint_tool.load();
             }
             if (op == "clear" || op == "select"){
                 PlayPick p;
@@ -1590,9 +1806,12 @@ void ApplicationChasm::RegisterSelectTools(){
                 return json{{"kind",kinds[std::max(0,std::min(2,p.kind))]},{"id",p.id},{"plot",p.plot}};
             };
             json result{{"selected",pick_json(sel)},{"hover",pick_json(hover)},{"play_mode",PlayMode()}};
+            if (!pressed.is_null()){
+                result["pressed"] = pressed;
+            }
             const EconomyState* ep = (e && e->world == w) ? e.get() : NULL;
             Card card;
-            if (MakeCard(sel,*w,*z,ep,card)){
+            if (MakeCard(sel,*w,*z,ep,calendar_shown.load(),card)){
                 json lines = json::array();
                 for (const CardLine& l : card.lines){
                     if (l.type == CARD_CHIPS){

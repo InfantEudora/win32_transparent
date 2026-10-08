@@ -42,6 +42,54 @@ const float fall_out[] = {0.0f,1.6f,2.8f,3.6f,4.1f};
 const float fall_down[] = {0.0f,0.7f,3.0f,8.0f,0.0f};    //the last row is set from the mist
 const int fall_rows = 5;
 #define FALL_BELOW_MIST     10.0f   //how far the sheet runs on down inside the mist
+/*
+    A spring's (Terrain.h, TerrainSpring): from the back of its mouth, over the mouth's floor - which
+    the chamfer lifts a little at the back - and out past the strata under it, then down.
+*/
+const float spring_out[] = {-1.4f,1.4f,2.6f,3.4f,3.9f};
+const float spring_down[] = {-0.4f,0.2f,2.4f,7.0f,0.0f};
+
+/*
+    One sheet of falling water: from (lip, top_y), out along `out` and down by the profile, `width`
+    across, into the mist. uv.x across (-1..1), uv.y down - 1 where it meets the mist.
+*/
+void Sheet(std::vector<vertex>& sheets, const vec2& lip, const vec2& out, const vec2& across, float width, float top_y,
+           const float* prof_out, const float* prof_down){
+    vec3 row_l[fall_rows], row_r[fall_rows];
+    float arc[fall_rows];
+    float bottom = CHASM_MIST_TOP - FALL_BELOW_MIST;
+    float run = 0.0f;
+    float mist_arc = 0.0f;
+    for (int r = 0; r < fall_rows; r++){
+        float y = (r + 1 < fall_rows) ? top_y - prof_down[r] : bottom;
+        vec2 c = lip + out * prof_out[r];
+        //A little narrower than the river where it goes over, spreading as it falls.
+        float spread = (r + 1 < fall_rows) ? 0.92f + 0.05f * r : 1.35f;
+        vec2 half = across * (width * 0.5f * spread);
+        row_l[r] = vec3(c.x - half.x,y,c.y - half.y);
+        row_r[r] = vec3(c.x + half.x,y,c.y + half.y);
+        if (r > 0){
+            vec3 prev = (row_l[r - 1] + row_r[r - 1]) * 0.5f;
+            vec3 here = (row_l[r] + row_r[r]) * 0.5f;
+            float seg = (here - prev).length();
+            if (r + 1 == fall_rows){
+                //Where along the last, straight drop the mist's top is.
+                float frac = (prev.y - CHASM_MIST_TOP) / std::max(1e-3f,prev.y - here.y);
+                mist_arc = run + seg * frac;
+            }
+            run += seg;
+        }
+        arc[r] = run;
+    }
+    for (int r = 0; r + 1 < fall_rows; r++){
+        float v0 = arc[r] / mist_arc;
+        float v1 = arc[r + 1] / mist_arc;
+        //Facing out of the chasm wall: the side a camera over the chasm sees.
+        vec3 want(out.x,0.35f,out.y);
+        WaterTri(sheets,row_l[r],vec2(-1.0f,v0),row_r[r],vec2(1.0f,v0),row_r[r + 1],vec2(1.0f,v1),want);
+        WaterTri(sheets,row_l[r],vec2(-1.0f,v0),row_r[r + 1],vec2(1.0f,v1),row_l[r + 1],vec2(-1.0f,v1),want);
+    }
+}
 
 }
 
@@ -142,39 +190,12 @@ void BuildWaterMesh(const Grid& g, const Terrain& t, WaterMeshData& out){
 
     //--- The falls --------------------------------------------------------------------------------
     for (const TerrainFall& f : t.falls){
-        vec3 row_l[fall_rows], row_r[fall_rows];
-        float arc[fall_rows];
-        float bottom = CHASM_MIST_TOP - FALL_BELOW_MIST;
-        float run = 0.0f;
-        float mist_arc = 0.0f;
-        for (int r = 0; r < fall_rows; r++){
-            float y = (r + 1 < fall_rows) ? TERRAIN_WATER_Y - fall_down[r] : bottom;
-            vec2 c = f.lip + f.out * fall_out[r];
-            //A little narrower than the river where it goes over, spreading as it falls.
-            float spread = (r + 1 < fall_rows) ? 0.92f + 0.05f * r : 1.35f;
-            vec2 half = f.across * (f.width * 0.5f * spread);
-            row_l[r] = vec3(c.x - half.x,y,c.y - half.y);
-            row_r[r] = vec3(c.x + half.x,y,c.y + half.y);
-            if (r > 0){
-                vec3 prev = (row_l[r - 1] + row_r[r - 1]) * 0.5f;
-                vec3 here = (row_l[r] + row_r[r]) * 0.5f;
-                float seg = (here - prev).length();
-                if (r + 1 == fall_rows){
-                    //Where along the last, straight drop the mist's top is.
-                    float frac = (prev.y - CHASM_MIST_TOP) / std::max(1e-3f,prev.y - here.y);
-                    mist_arc = run + seg * frac;
-                }
-                run += seg;
-            }
-            arc[r] = run;
-        }
-        for (int r = 0; r + 1 < fall_rows; r++){
-            float v0 = arc[r] / mist_arc;
-            float v1 = arc[r + 1] / mist_arc;
-            //Facing out of the chasm wall: the side a camera over the chasm sees.
-            vec3 want(f.out.x,0.35f,f.out.y);
-            WaterTri(out.sheets,row_l[r],vec2(-1.0f,v0),row_r[r],vec2(1.0f,v0),row_r[r + 1],vec2(1.0f,v1),want);
-            WaterTri(out.sheets,row_l[r],vec2(-1.0f,v0),row_r[r + 1],vec2(1.0f,v1),row_l[r + 1],vec2(-1.0f,v1),want);
+        Sheet(out.sheets,f.lip,f.out,f.across,f.width,TERRAIN_WATER_Y,fall_out,fall_down);
+    }
+    //--- The springs: the same sheet, out of a mouth in the wall -----------------------------------
+    for (const TerrainSpring& s : t.springs){
+        if (s.plots > 0){
+            Sheet(out.sheets,s.lip,s.out,s.across,s.width,s.floor_y,spring_out,spring_down);
         }
     }
     out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();

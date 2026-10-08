@@ -901,6 +901,15 @@ uint64_t Grid::Hash() const{
     for (const GridRiverLine& r : layout.rivers){
         h = Fnv(h,r.points.data(),r.points.size() * sizeof(vec2));
         h = Fnv(h,&r.width,sizeof(r.width));
+        h = Fnv(h,&r.end,sizeof(r.end));
+        h = Fnv(h,&r.joins,sizeof(r.joins));
+    }
+    for (const GridSpring& s : layout.springs){
+        h = Fnv(h,&s.lip,sizeof(s.lip));
+        h = Fnv(h,&s.out,sizeof(s.out));
+        h = Fnv(h,&s.band,sizeof(s.band));
+        h = Fnv(h,&s.width,sizeof(s.width));
+        h = Fnv(h,&s.stream,sizeof(s.stream));
     }
     return h;
 }
@@ -928,11 +937,12 @@ struct PinnedGridHash{
 //the same in the debug and release builds. Seeds 2 and 3 re-pinned the same day when rivers came to
 //rise at the mountain's foot (biomes_plan.md step 3); seed 1 has no river from the north edge. All
 //three re-pinned 2026-10-05 for balconies, the sides made whole and rivers on the home side only,
-//and 2026-10-06 when the features stopped being pinned (one chasm, the terrain as columns).
+//and 2026-10-06 when the features stopped being pinned (one chasm, the terrain as columns); and
+//2026-10-08 for branches, springs and swallow-hole streams, and every map a river (rivers_plan.md).
 static const PinnedGridHash pinned_grid_hashes[] = {
-    {1,0xfce10a5bd5ed576bull},
-    {2,0x5c89f61c4436cc92ull},
-    {3,0xbc5356fa808d3848ull},
+    {1,0xcd4670d6d890abe0ull},
+    {2,0x63d208c57b6ca624ull},
+    {3,0x0b8e0ae5e0cfda96ull},
 };
 
 #define GRID_ISSUES_MAX         200     //enough to see a pattern, few enough to draw and list
@@ -1128,12 +1138,17 @@ GridCheckReport RunGridChecks(const Grid& grid){
     //--- Layout: what the seed made of the chasm - a figure, and a failure only if no rift fitted --
     {
         const ChasmLayout& l = grid.layout;
+        int ends[4] = {};
+        for (const GridRiverLine& r : l.rivers){
+            ends[std::max(0,std::min(3,r.end))]++;
+        }
         snprintf(buf,sizeof(buf),"%i rifts, %i cracks; balconies %i east, %i west; ledges %i of %i, shards %i of %i, "
-                 "columns %i of %i; rivers %i of %i; %i attempts%s (%.1f ms)",
+                 "columns %i of %i; rivers %i of %i%s, branches %i of %i, streams %i, springs %i; %i attempts%s (%.1f ms)",
                  l.rifts,(int)l.cracks.size(),l.balconies[1],l.balconies[0],l.count[GRID_FEATURE_LEDGE],l.wanted[GRID_FEATURE_LEDGE],
                  l.count[GRID_FEATURE_SHARD],l.wanted[GRID_FEATURE_SHARD],l.count[GRID_FEATURE_COLUMN],
-                 l.wanted[GRID_FEATURE_COLUMN],(int)l.rivers.size(),l.rivers_wanted,l.attempts,
-                 l.f_rifts_ok ? "" : " - NONE KEPT ITS SPACING",l.generate_ms);
+                 l.wanted[GRID_FEATURE_COLUMN],ends[GRID_RIVER_FALL] + ends[GRID_RIVER_EDGE],l.rivers_wanted,
+                 l.f_river_small ? " (small)" : "",ends[GRID_RIVER_JOIN],l.branches_wanted,ends[GRID_RIVER_SINK],
+                 (int)l.springs.size(),l.attempts,l.f_rifts_ok ? "" : " - NONE KEPT ITS SPACING",l.generate_ms);
         //Home must have a balcony: it is the only floatstone before the first zeppelin.
         add_result("layout",l.f_rifts_ok && l.rifts > 0 && l.balconies[1] > 0,false,buf);
     }

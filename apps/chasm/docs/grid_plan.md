@@ -175,8 +175,8 @@ plots and fields are grouped by their coarse parent for the look only.
 **The size: about 100,000 fine cells**, a map of roughly 3x3 screens at maximum zoom-out (decided
 2026-10-04; it changes only if playtime asks for it). **While testing the default is 50,000** (the
 user, 2026-10-08: plenty for now) - about 540 x 300 instead of 768 x 430; `GridSettings` and
-`chasm_generate target_fine_cells` still make the full size. A smaller map fits fewer rivers: 5 of
-seeds 1-30 have none at 50k (`people_plan.md`, the camp spot). Where that comes from: in A Little Age at
+`chasm_generate target_fine_cells` still make the full size. A smaller map fits fewer rivers - 5 of
+seeds 1-30 had none at 50k until the rivers work gave every map one (`rivers_plan.md`). Where that comes from: in A Little Age at
 maximum zoom-out a house is roughly 15 pixels across, and if a fine cell is about one house, a
 1920x1080 screen holds roughly 128x72, about 9,000-11,000 fine cells. That is small for generation;
 the number that matters for drawing is the per-screen one, because of the single level of detail.
@@ -842,8 +842,9 @@ in the chasm cyan) and draws each on its own level.
   zones, mist, picking) has to agree on, as the balcony's did.
 - ~~Terraces are slumped blocks with a crevice behind them, never ledges joined to the wall~~ - the
   joined ledge is built now, as the balcony, below.
-- Rivers rise on the west, east or north edge and never fork or join; none starts on the south edge,
-  which is the swamp's and desert's.
+- ~~Rivers rise on the west, east or north edge and never fork or join~~ - branches join them since
+  2026-10-08, and every map has one (`rivers_plan.md`). None starts on the south edge, which is the
+  swamp's and desert's.
 - The rifts know nothing of biomes yet - only that the north band (10% of the depth) stays clear.
 
 ### Balconies, whole sides, rivers at home (2026-10-05)

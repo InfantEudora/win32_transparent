@@ -557,6 +557,123 @@ def willow(bm, rng, height, crown_r, strands):
     lean(bm, height, 0.35, -0.15, power=1.2)
 
 
+# ---------------------------------------------------------------------------------------------
+# Bare broadleaves (docs/seasons_plan.md, step 3): an oak in winter. The game swaps a tree's mesh
+# for its bare one when its leaves have fallen, so the TRUNK must be the leafy oak's exactly - it is
+# copied from that object as it stands in the .blend, edits and all - and only the crown changes:
+# limbs reaching up and out into where the canopy was, a little short of its edge, and twigs.
+# ---------------------------------------------------------------------------------------------
+
+def frame(axis):
+    """Two unit vectors square to `axis` and to each other."""
+    axis = axis.normalized()
+    ref = Vector((0, 0, 1)) if abs(axis.z) < 0.9 else Vector((1, 0, 0))
+    u = axis.cross(ref).normalized()
+    return u, axis.cross(u).normalized()
+
+
+def limb(bm, points, radii, sides, rot):
+    """A branch along `points`: a tube of `sides` tapering through `radii` (one per point but the
+    last), ending in a point at the last one. Open at its base, which is inside what it grows from."""
+    rings = []
+    for i in range(len(points) - 1):
+        axis = points[i + 1] - points[max(0, i - 1)]
+        u, v = frame(axis)
+        rings.append([bm.verts.new(points[i] + (u * math.cos(rot + 2 * math.pi * k / sides) +
+                                               v * math.sin(rot + 2 * math.pi * k / sides)) * radii[i])
+                      for k in range(sides)])
+    tip = bm.verts.new(points[-1])
+    faces = []
+    def outward(f, on_axis):
+        f.normal_update()
+        if f.normal.dot(f.calc_center_median() - on_axis) < 0:
+            f.normal_flip()
+        faces.append(f)
+    #Triangles, not quads: two rings square to different axes do not make planar quads (tris_of_quad).
+    for i in range(len(rings) - 1):
+        a, b = rings[i], rings[i + 1]
+        mid = (points[i] + points[i + 1]) * 0.5
+        for k in range(sides):
+            for f in tris_of_quad(bm, a[k], a[(k + 1) % sides], b[(k + 1) % sides], b[k]):
+                outward(f, mid)
+    last = rings[-1]
+    mid = (points[-2] + points[-1]) * 0.5
+    for k in range(sides):
+        outward(bm.faces.new((last[k], last[(k + 1) % sides], tip)), mid)
+    return faces
+
+
+def bare_broadleaf(leafy, limbs=4):
+    """A builder for the bare form of the oak named `leafy`: its trunk as it is in the .blend, and
+    `limbs` limbs, each with a side branch and a twig, in place of the crown. Needs `leafy` built or loaded first."""
+    def build(bm, rng):
+        if leafy not in bpy.data.objects:
+            raise RuntimeError("%s needs %s in the file to copy its trunk from" % (leafy + "_bare", leafy))
+        mesh = bpy.data.objects[leafy].data
+        uvs = mesh.uv_layers.active.data
+        pal = bm.faces.layers.int["pal"]
+        #The leafy oak's faces by colour: bark is the trunk, copied; leaves give the crown's extent.
+        made = {}
+        bark_col = PAL_BARK
+        crown = []
+        for poly in mesh.polygons:
+            col = int(uvs[poly.loop_start].uv[0] * PALETTE_COLS)
+            if col in (PAL_BARK, PAL_BARK_DARK):
+                bark_col = col
+                vs = []
+                for i in poly.vertices:
+                    if i not in made:
+                        made[i] = bm.verts.new(mesh.vertices[i].co)
+                    vs.append(made[i])
+                f = bm.faces.new(vs)
+                f[pal] = col
+            elif col in (PAL_LEAF_DARK, PAL_LEAF, PAL_LEAF_LIGHT):
+                crown.extend(mesh.vertices[i].co.copy() for i in poly.vertices)
+        trunk = [v.co for v in made.values()]
+        top_z = max(c.z for c in trunk)
+        top = [c for c in trunk if c.z > top_z - 0.02]
+        fork = sum(top, Vector()) / len(top)
+        fork_r = max((Vector((c.x, c.y, 0)) - Vector((fork.x, fork.y, 0))).length for c in top)
+        lo = Vector((min(c.x for c in crown), min(c.y for c in crown), min(c.z for c in crown)))
+        hi = Vector((max(c.x for c in crown), max(c.y for c in crown), max(c.z for c in crown)))
+        centre = (lo + hi) * 0.5
+        half = (hi - lo) * 0.5
+
+        #An oak's winter shape is wide and spreading, not a broom: few heavy limbs leaving the trunk at
+        #different heights, reaching out low to about the canopy's edge and turning up at their ends.
+        faces = []
+        turn = rng.uniform(0, 2 * math.pi)
+        for i in range(limbs):
+            a = turn + 2 * math.pi * i / limbs + rng.uniform(-0.3, 0.3)
+            up = math.radians(rng.uniform(15, 50))
+            reach = rng.uniform(0.85, 1.0)
+            tip = centre + Vector((math.cos(up) * math.cos(a) * half.x, math.cos(up) * math.sin(a) * half.y,
+                                   math.sin(up) * half.z)) * reach
+            base = fork - Vector((0, 0, rng.uniform(0.10, 0.55)))
+            length = (tip - base).length
+            bend = base + (tip - base) * 0.40 + Vector((0, 0, 0.10 * length))
+            r0 = fork_r * rng.uniform(0.85, 1.0)
+            r1 = r0 * 0.55
+            sides = rng.uniform(0, 6.3)
+            faces += limb(bm, [base, bend, tip], [r0, r1], 4, sides)
+            #A side branch from the bend, forking off one way and up.
+            outer = tip - bend
+            side_a = a + rng.choice((-1, 1)) * rng.uniform(0.5, 0.9)
+            side_dir = Vector((math.cos(side_a), math.sin(side_a), 0)) * outer.xy.length + Vector((0, 0, outer.z + 0.3))
+            side_len = outer.length * rng.uniform(0.55, 0.8)
+            side_tip = bend + side_dir.normalized() * side_len
+            side_mid = bend + (side_tip - bend) * 0.5 + Vector((0, 0, 0.08 * side_len))
+            faces += limb(bm, [bend, side_mid, side_tip], [r1 * 0.8, r1 * 0.45], 3, rng.uniform(0, 6.3))
+            #And a twig off the limb's outer half, up and out.
+            at = bend + outer * rng.uniform(0.35, 0.65)
+            out = (Vector((at.x - fork.x, at.y - fork.y, 0)).normalized() * rng.uniform(0.4, 0.8) +
+                   Vector((rng.uniform(-0.4, 0.4), rng.uniform(-0.4, 0.4), 1.0)))
+            faces += limb(bm, [at, at + out.normalized() * rng.uniform(0.35, 0.55)], [r1 * 0.5], 3,
+                          rng.uniform(0, 6.3))
+        colour_by_facing(bm, faces, bark_col, bark_col, PAL_BARK_DARK, up=0.8, down=-0.5)
+    return build
+
+
 #name, seed, builder, slot (column, row) in the authoring layout
 ASSETS = [
     ("tree_pine_a", 11, lambda bm, r: conifer(bm, r, 4.0, 3, 1.90, 7, 0.40, (0.05, 0.0)), (0, 0)),
@@ -613,6 +730,10 @@ ASSETS = [
     ("tree_pine_snow_a", 71, lambda bm, r: snow_conifer(bm, r, 4.2, 3, 1.85, 7, 0.40, (0.06, -0.04)), (4, 0)),
     ("tree_palm_a", 72, lambda bm, r: palm(bm, r, 4.4, 0.9, 6), (3, 1)),
     ("tree_willow_a", 73, lambda bm, r: willow(bm, r, 3.6, 1.45, 10), (4, 1)),
+    #Winter's oaks (seasons_plan.md): after their leafy ones, whose trunks they copy.
+    ("tree_oak_a_bare", 24, bare_broadleaf("tree_oak_a"), (5, 1)),
+    ("tree_oak_b_bare", 25, bare_broadleaf("tree_oak_b"), (6, 1)),
+    ("tree_oak_c_bare", 26, bare_broadleaf("tree_oak_c", limbs=3), (7, 1)),
 ]
 
 SPACING = 5.0

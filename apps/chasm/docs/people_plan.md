@@ -27,13 +27,24 @@ Files: `Economy.*` (the people are `EconomyState::workers`, one `EconomyWorker` 
   with a ring of stones, crossed logs, a flame and a log to sit on. It holds any families together, up to
   its tents, and can be walked through (open ground between tents). A new map starts with one: placed by
   the zones at the camp spot and grown plot by plot until it has a tent for every settler - seed 1's had
-  14 plots, 10 tents and 4 fires. THE CAMP SPOT (`ZoneStartCampPlot`; the user, 2026-10-08 - before, it
-  was 30 in from the home balcony, but the winch comes years in and should not decide the start): on the
-  home side's flat dry plateau, first about 30 in from the rim level with the map's middle, then moved
-  to the nearest plot within 48 of a river's water, no nearer the chasm. A map with no river keeps the
-  old balcony rule. Seeds 1-30 at 50k cells: all 25 with a river camp by one (10-50 from its centre
-  line), 28 of 30 under the snow at full winter; seeds 4, 6, 14, 22 and 27 have no river at 50k (they
-  have one or two at 100k) and so fall back, 14 and 27 into the swamp. The settlers live in it from the start, so they can work from day one; a family
+  14 plots, 10 tents and 4 fires. THE CAMP SPOT (`ZoneStartCampPlot`, Zones.cpp "WHERE A NEW COLONY
+  CAMPS"; the user, 2026-10-08 - first it was 30 in from the home balcony, but the winch comes years in
+  and should not decide the start; then the nearest river to a point 30 in from the rim, which put seed
+  12's camp on a hill where no camp fitted). Now the best of SPOTS ALONG THE RIVERS, every map having
+  one (`rivers_plan.md`): every 16 along each river, branch and stream, on both banks, in rows 8, 16 and
+  24 back from the water. A spot is refused where the camp would not fit by a house's rules, with no
+  water collector's spot within its survey, nearer the rim than 27, off the plateau or in the swamp - and
+  then moves to the nearest plot within 8 that passes. The rest are scored on their SURVEY, the ground a
+  walk reaches within 24: **flat** (the share a house may stand on and the share a field may lie on, of
+  a whole disc that size - so a river, a cliff or the map's edge counts against it), **trees** (best
+  with half the survey's plots wooded, nothing at none or all: a forest's edge, the user's), and a little
+  for **middle** (level with the map's middle). The weights, the distances and the half are current
+  tuning, not rules. The debug view's "camp spots" layer (chasm_view `camp`) draws every spot
+  as a post as tall as its score, refused ones short and red, the camp white with its survey ringed;
+  `chasm_camp` lists them. Seeds 1-30 at 50k: every one camps with all ten settlers in tents, 14-33 from
+  the water's edge (the rows further back win: the relief climbs back from a river over 24, steepest in
+  the first row - seed 21 had no room for a camp in it anywhere), 25 of 30 under the snow at full
+  winter; scoring takes 5-25 ms in the debug build. The settlers live in it from the start, so they can work from day one; a family
   living in a camp keeps looking for a house, and moves out as soon as one holds it.
   People in a camp are NEVER INDOORS (the user, 2026-10-06): home, they stand out in front of their own
   tent's door (`ZoneCampDoor`, the way the tent faces by `ZoneCampYaw`), so a camp full of people is the

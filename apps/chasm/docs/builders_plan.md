@@ -37,8 +37,9 @@ many jobs". BUILT the same day - see the end.
   worker, who moves to the dead person's older place - a walk to a new job, but the rule held.
 - **The overview**: a row per job that has places - Builders, Woodcutters, Farmers, Water carriers -
   as working / places (`Farmers 2 / 3`), amber where a place is empty; then the jobless (who carry and
-  build). Display only. Bottom left, level with the build bar; lifted above it when the window is too
-  narrow for both side by side.
+  build). Display only. In the bottom left corner since the tools became a grid in the bottom right
+  (2026-10-08, `selection_plan.md`), with MOST IN NEED over it; lifted above the grid only when the window
+  is too narrow for both side by side.
 - **The hut**: tool G (B was taken - the previous seed), BUILDERS on the build bar. The woodcutter's workshop body for now, with a stack of
   beams and a ladder against it to tell them apart. Its card: its builders - name, what each is doing - and
   places filled.

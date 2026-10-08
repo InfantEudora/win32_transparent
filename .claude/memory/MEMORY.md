@@ -80,7 +80,7 @@
 - [Spider leg shape keys](spider_leg_shape_keys.md) — tools/blender_spider_legs.py tetrapod keys; Blender-scripting traps
 - [Blend edit in place OK](blend_edit_in_place_ok.md) — user keeps .blend backups; separate file still wise while Blender has it open
 - [Snake plan](snake_plan.md) — archer snakes drop from branches; steps 1-3 built, drop next
-- [Chasm game plan](chasm_game_plan.md) — apps/chasm colony sim on a Townscaper grid: zones, palette, replay-from-state; steps 1-10 + biomes + economy built; port 8769
+- [Chasm game plan](chasm_game_plan.md) — apps/chasm colony sim on a Townscaper grid: zones, palette, replay-from-state; steps 1-10 + biomes + economy + rivers rework built; port 8769
 - [Core features over workarounds](core_features_over_workarounds.md) — missing general feature? add it to core (defaults unchanged), never an app-side fake
 - [Solid custom shader flags](solid_custom_shader_flags.md) — opaque custom-shader mesh needs f_writes_gbuffer+f_lit+f_casts_shadow+f_solid
 - [Object::SetMesh releases the old mesh](object_setmesh_releases_old.md) — pooled meshes must be Retained or get freed (VAO spam, heap corruption)

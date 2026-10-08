@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-08T10:05:33.259Z
+  modified: 2026-10-08T13:40:14.027Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -135,9 +135,27 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   beside the sim_step.
   REPLAY TEST RETIRED 2026-10-08 (user): chasm_replay_test.py + saves/replay_test_*.json deleted; ONE new
   replay after the mapping work, made by the agent tuning rivers. Default map now 50k cells (Grid.h; planned
-  size still ~100k). START CAMP (ZoneStartCampPlot): home side (flood from river water over plateau, no
-  mountain), ~30 from the rim at the map's middle z, then nearest plot within 48 of a river's water, never
-  nearer the rim; no river -> old balcony rule. At 50k, 5/30 seeds have no river (river agent's problem).
+  size still ~100k). START CAMP (ZoneStartCampPlot(w,tents), user 2026-10-08, built): best SCORED spot along
+  the rivers (ZoneCampSpots: every 16 along, both banks, rows 8/16/24 from water; refused if the camp's flood
+  doesn't fit by house rules, no water-collector spot in survey, rim <27, swamp; nudge 8). Score on a 24
+  walk-survey: flat (house share + field share of a full disc) + trees (peak at HALF the plots wooded - the
+  user's "forest edge") + 0.25 x middle. Debug layer "camp spots" (chasm_view camp) + chasm_camp tool.
+  Seeds 1-30: all camp, all housed; the first row is in the relief's river fade band, often too steep
+  (seed 21 none fit). SEASONS DRAWN (docs/seasons_plan.md, user 2026-10-08): seasons EVERYWHERE AT ONCE
+  (snow front reserved for later biome temperature), grass fades SMOOTHLY, broadleaf leaves change PER TREE,
+  bare oaks MODELLED IN BLENDER (props are Blendered). Step 1 BUILT: palette rows 4-7 (spring/autumn/
+  autumn-red/winter, copies of temperate=summer), UpdateSeasonPalette rewrites the GPU palette's temperate
+  row in place (img_data + Texture::UploadTexture keeps the bindless handle) - shader blend cost ~15% of
+  the colour pass, row rewrite ~0; leaf columns 19-21 stay summer (trees' own); flowers only spring/summer;
+  snow also lies on season rows. Steps 2+3 BUILT same day: Seasons.h + ApplicationChasmSeasons.cpp, a MESH per
+  (oak/bush kind, stage) = 36 looks, each its own set per chunk (65 sets/chunk; materials are per OBJECT in
+  core, not per instance); green look on row 8 PAL_SUMMER (app copies row 0 there at load) so row 0 can fade
+  gardens/hedges; leaf cols kept out of the fade only for crops. Bare oaks via blender_chasm_props.py --add
+  (bare_broadleaf copies the leafy oak's trunk from the .blend); the USER tunes/re-exports them. RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
+  every map has a home river (approach bug fixed; small-river and off-the-east-edge fallbacks; `rivers`
+  check fails none), 2-3 BRANCHES per river (GRID_RIVER_JOIN, inland heads), far-side scenic SPRINGS and
+  home SWALLOW-HOLE streams (GRID_RIVER_SINK) whose spring pours from a dark mouth in the wall
+  (Terrain::mouth, TerrainMesh InMouth). Seeds 1-3 re-pinned (debug == release). All old saves and recordings deleted; the USER makes the new recording.
   THIRST MARK (user's ask, same day) then the PERSON BADGE (user's, same evening): ONE badge over everyone
   out of doors - job icon (axe/wheat/bucket/hammer/log) ringed by health (core UIOverlay::AddArc), the drop
   replaces the icon when short of water, ring red when dry; selection pins MERGED into it (orange/amber ring

@@ -66,10 +66,12 @@ class Walkers;
     the line is clear (EconomyStraightClear) - in the open he need not follow the grid (the user's note).
     Walking, he re-plans when the zones change. EVERY ROUND STARTS AND ENDS AT HIS HOUSE (the user's
     choice: so a house beside the workplace and its store is what makes a worker quick):
-      - The WOODCUTTER takes the nearest standing tree within ECONOMY_WOODCUTTER_REACH of his hut, or a
-        felled log lying there if that is nearer; walks to it, fells it (it leaves a log and a stump),
-        picks the log up and carries it, as ECONOMY_WOOD_PER_TREE wood, to the nearest store that takes
-        wood - or, with none, to his WOODPILE (ECONOMY_HUT_PILE) - and goes home. From home the pile goes
+      - The WOODCUTTER takes, within ECONOMY_WOODCUTTER_REACH of his hut, the nearest felled log lying
+        there - LOGS FIRST, the road builders' (the user's, 2026-10-08) - else the nearest standing tree;
+        walks to it, fells it if it stands (it leaves a log and a stump), picks the log up - and, with
+        another log lying within ECONOMY_LOG_PAIR_REACH and room for both where they go, that one too
+        (ECONOMY_WOODCUTTER_LOGS) - and carries them, ECONOMY_WOOD_PER_TREE wood a log, to the nearest store
+        that takes wood - or, with none, to his WOODPILE (ECONOMY_HUT_PILE) - and goes home. From home the pile goes
         first: whenever a store takes wood he fetches from the pile before he fells again. The pile is on
         a LOT beside his hut (`pile_plot`, ZoneLotBeside - the zones make a new hut need one): with no lot
         standing there he has nowhere to put wood, and fells nothing. A lot is fenced, and the HUT IS ITS
@@ -77,14 +79,17 @@ class Walkers;
         he always came home to his hut - nobody walks into the yard.
       - A FIELD (fields_plan.md) is EMPTY until a farmer of its land SOWS it - with its starting crop,
         chosen by the player, then with its next crop, AUTO by default (EconomyFieldSowCrop) - a while a
-        cell at his pace (ECONOMY_SOW_SECONDS); sowing comes before anything else he does. Sown, it grows
+        cell at his pace (ECONOMY_SOW_SECONDS); sowing comes before anything else he does - but never in
+        winter or under snow, and only a crop that ripens before the FROST (EconomyFieldSowNow). Sown, it grows
         while its share of the land has a farmer, whenever it is not winter and not under snow (Calendar.h),
-        for its crop's days at that farmer's pace, and then yields its built area x its crop's own yield x
+        for its crop's days at that farmer's pace - what is still growing on winter's first day the frost
+        takes, the field empty again - and then yields its built area x its crop's own yield x
         the YIELD it was sown at - 100% the first time, after that by what grew before it (EconomyCropYield,
         the user's follows-what table) - into its own stock, and is empty again. Its land's farmers fetch
         the harvest, a load (ECONOMY_LOAD) at a time: HOME FIRST (land_plan.md) - into his house while it is
-        short of food (HomeShort), all of it into the camp's supplies for the camp's land - and otherwise to
-        a store that takes it.
+        short of food (HomeShort) and not ahead of the colony (FAIR SHARES: less than ECONOMY_FAIR_DAYS a
+        head over the average at home), all of it into the camp's supplies for the camp's land - and
+        otherwise to a store that takes it, where the other houses fetch it.
       - A COLLECTOR fills while it has a carrier (not under snow); he fetches its water in loads.
     A load is only picked up when a store (or, for a harvest, home) takes it; one nobody takes after all is
     held, waiting.
@@ -164,6 +169,8 @@ class Walkers;
 #define ECONOMY_WOOD_PER_TREE       4
 #define ECONOMY_HUT_PILE            24      //wood piled outside the hut when no store takes it: 6 logs
 #define ECONOMY_WOODCUTTER_REACH    40.0f   //world units from the hut
+#define ECONOMY_WOODCUTTER_LOGS     2       //logs he carries off at once, a second lying near the first (the user's)
+#define ECONOMY_LOG_PAIR_REACH      12.0f   //...within this of him where he picked the first up: about six plots
 #define ECONOMY_FELL_SECONDS        6.0f
 #define ECONOMY_PICK_SECONDS        1.0f    //picking up a log, putting a load down
 #define ECONOMY_WATER_SECONDS       4.0f    //a collector fills one unit in this long
@@ -180,6 +187,7 @@ class Walkers;
 #define ECONOMY_FIELD_WOOD_PER_CELL 2       //a field site's, a coarse cell (fields_plan.md, the user's 2)
 #define ECONOMY_SOW_SECONDS         3.0f    //sowing a cell of a field, at the farmer's pace
 #define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
+#define ECONOMY_FAIR_DAYS           1       //a house keeps its land's food only while less than this a head ahead of the colony's average
 #define ECONOMY_QUEUE_SLACK         8.0f    //errands this much longer than the shortest still go in placing order: ~4 plots
 #define ECONOMY_LAY_SECONDS         4.0f    //laying a road plot, at the worker's pace
 #define ECONOMY_ROAD_STINT          8       //pieces of road work - a tree felled, a plot laid - a trip
@@ -337,6 +345,7 @@ struct EconomyField{
     int yield = 100;            //percent of its crop's own: set when sown, from what grew before
     int last = -1;              //the crop last harvested, -1 none yet
     uint32_t owner = 0;         //whose land it is: a house or the camp, 0 none yet (land_plan.md)
+    int frost = -1;             //the crop the last frost took (EconomyGrowingTicksLeft), -1 none - until it is sown again
 };
 
 struct EconomyState{
@@ -399,6 +408,9 @@ public:
     const std::vector<int>& GroundRaises() const { return ground_raises; }
     //The field cells built this tick - a field site's, all at once - the app raises them (ZONE_OP_FIELD_RAISE).
     const std::vector<int>& FieldRaises() const { return field_raises; }
+    //The standing trees in a planned road's or wall's way, to be felled before it is laid or built. Physics
+    //thread - or a tool between ticks (Scene::AtTickBoundary), which is how chasm_economy lists them.
+    void RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const;
 
 private:
     EconomyState state;
@@ -435,6 +447,12 @@ private:
     void TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t calendar_tick, float dt);
     bool RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, int to_plot, const vec2& to_point);
     bool FindTree(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //The wood a woodcutter could go for near `at`, logs first (f_logs: only logs), and out to the first of it he
+    //can reach, of the first `tries`.
+    void WoodNear(const EconomyWorker& k, const ZoneState& z, const vec2& at, float reach, bool f_logs,
+                  std::vector<std::pair<std::pair<int,float>,int>>& out) const;
+    bool GoForWood(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
+                   const std::vector<std::pair<std::pair<int,float>,int>>& found, size_t tries);
     bool FindStore(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void GoHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Walk(EconomyWorker& k, float dt);
@@ -449,11 +467,15 @@ private:
     bool FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //A field of his land built, empty, its crop decided and its share farmed: out to sow it (fields_plan.md,
     //land_plan.md). True if he set off.
-    bool GoSow(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    bool GoSow(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t calendar_tick);
     //A harvest waiting on his land, with home or a store to take it: out to fetch a load. True if he set off.
     bool FetchHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //Picking up the load at the field he came to (`store`): home first, else a store. False if nothing went.
     bool PickHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //FAIR SHARES (land_plan.md): the food a head, in ticks, a family may keep from its own land - the colony's
+    //average at home and ECONOMY_FAIR_DAYS more - and whether his house has that much already.
+    int64_t FairShare(const ZoneState& z) const;
+    bool HomeAhead(const EconomyWorker& k, const ZoneState& z) const;
     EconomyField* FieldOf(uint32_t id);
     //LAND (land_plan.md): every standing field's owner settled, then the land's places and its shares; and
     //who farms each share.
@@ -487,9 +509,8 @@ private:
     int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Build(const ZoneState& z, uint32_t id);
-    //Road works: the standing trees in a planned road's or wall's way, the next piece to do (from home,
-    //or on a stint - near where he stands), and what he does when a piece is done.
-    void RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const;
+    //Road works: the next piece to do (from home, or on a stint - near where he stands), and what he does when a
+    //piece is done. The trees in a plot's way are RoadTrees, public.
     bool FindRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_stint);
     void NextRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //A piece of line work he could take: a tree to fell on `plot`'s way (`tree`), or the road plot to lay
@@ -515,6 +536,10 @@ int EconomyStock(const EconomyState& e, uint32_t id, int good);
 int EconomyStockTotal(const EconomyState& e, uint32_t id);
 //The colony's totals, in its stores only (not what lies at workplaces or is being carried).
 std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z);
+
+//A prop the painting has covered - a building on its plot, a garden or lot on it, a field over its cell: the view
+//no longer draws it (ApplicationChasm::PropHidden, the same rule less the road's), so nobody fells it or waits on it.
+bool EconomyPropCovered(const ZoneState& z, int plot, int coarse);
 
 //Whether a worker may walk straight from a to b: on one level, over open ground and roads, not across
 //water, the mountain, a building (but the plots at either end), a field, or a wall or fence.
@@ -568,6 +593,24 @@ int EconomyAutoCrop(int last);
 //What a field will be sown with next: its starting crop until its first harvest, then its next crop (AUTO
 //worked out). -1 while its starting crop is not chosen.
 int EconomyFieldSowCrop(const EconomyField& f, const ZoneBuilding& b);
+/*
+    THE FROST (fields_plan.md, the user's 2026-10-08): whatever still grows on a field on winter's first day
+    is lost, and nothing is sown in winter or under the snow. So a farmer sows only a crop that ripens before
+    then, at his pace, in the growing weather the field has left - until winter, or until the snow reaches it
+    first, which in the north it does over autumn's last days (Calendar.h). AUTO takes the highest yield of
+    the crops that still do; a crop the player chose that no longer can waits for spring.
+*/
+//Ticks of growing weather a field at `p` has left before the frost, from `tick`: 0 in winter or under snow.
+int EconomyGrowingTicksLeft(const ChasmWorld& w, const vec2& p, uint64_t tick);
+//...and in a whole year there: from the snow leaving it in the spring after `tick`, to the frost.
+int EconomyGrowingSeasonTicks(const ChasmWorld& w, const vec2& p, uint64_t tick);
+//Ticks `crop` takes to grow from `grown` (EconomyField::grown) to ripe at a farmer's `pace`; a lot at pace 0.
+int EconomyRipenTicks(int crop, int grown, float pace);
+//What a field is to be sown with NOW, with `ticks_left` of growing weather at `pace`: EconomyFieldSowCrop's
+//if it ripens in time - AUTO the highest yield of those that do - else -1, and it waits for spring.
+int EconomyFieldSowNow(const EconomyField& f, const ZoneBuilding& b, float pace, int ticks_left);
+//A field's farmer's pace (EconomySkillFactor of his husbandry), 0 with nobody to farm it - from the state alone.
+float EconomyFieldPace(const EconomyState& e, uint32_t id);
 //A field's growing record, NULL for none.
 const EconomyField* EconomyFieldOf(const EconomyState& e, uint32_t id);
 

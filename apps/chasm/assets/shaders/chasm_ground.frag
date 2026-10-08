@@ -10,6 +10,11 @@
     makes the snow read as lying on things. Lit through lighting.glsl exactly as default.frag lights
     a material.
 
+    THE SEASONS (docs/seasons_plan.md, 2026-10-08) cost this program nothing: the app rewrites the
+    palette texture's temperate row itself as the season fades (ApplicationChasmSnow.cpp). All it
+    does for them is let snow lie on the SEASON ROWS too, where the broadleaf trees' own meshes move
+    their leaves as they turn.
+
     WITH NO SNOW THIS IS default.frag, line for line, above the void: f_snow is 0 and main() takes
     the same path, so the frame is the same frame (measured by pixel diff, ApplicationChasmSnow.cpp).
 
@@ -51,6 +56,8 @@ uniform int   roof_snow_column = 0;         //...the frozen row's grass, white
 uniform int   foliage_first = 16;           //pines and leaves, these columns inclusive
 uniform int   foliage_last = 21;
 uniform int   bush_column = 27;
+uniform int   season_rows_first = 4;        //the season rows, which snow lies on as on a biome's
+uniform int   season_rows_last = 8;
 //The void: full colour above void_top, black at void_bottom (world y).
 uniform float void_top = -1.0e9;
 uniform float void_bottom = -1.0e9;
@@ -71,21 +78,26 @@ float SnowNoise(vec2 p){
                mix(SnowHash(i + vec2(0.0,1.0)),SnowHash(i + vec2(1.0,1.0)),u.x),u.y);
 }
 
-//The palette cell this fragment's colour comes from, moved onto the frozen row if snow lies on it.
-vec2 SnowUV(){
-    ivec2 cell = ivec2(floor(vuv * palette_size));
-    if (cell.y >= biome_rows){
-        return vuv;
+//Whether snow lies on this fragment, whose palette cell is `cell`. Biome rows and season rows only.
+bool SnowLies(ivec2 cell){
+    if (f_snow == 0 || (cell.y >= biome_rows && (cell.y < season_rows_first || cell.y > season_rows_last))){
+        return false;
     }
     //North of the front, give or take the ragged edge: two octaves, the long one shaping bays
     //and tongues, the short one fraying them.
     float north = snow_front_z - SnowWobble(vposition.x) - vposition.z;
     float rag = (SnowNoise(vposition.xz * 0.08) - 0.5) * 1.6 + (SnowNoise(vposition.xz * 0.5) - 0.5) * 0.6;
     if (north + rag * snow_edge <= 0.0){
-        return vuv;
+        return false;
     }
     bool f_foliage = (cell.x >= foliage_first && cell.x <= foliage_last) || cell.x == bush_column;
-    if (normalize(vnormal).y <= (f_foliage ? snow_up_foliage : snow_up)){
+    return normalize(vnormal).y > (f_foliage ? snow_up_foliage : snow_up);
+}
+
+//The palette cell this fragment's colour comes from, moved onto the frozen row if snow lies on it.
+vec2 SnowUV(){
+    ivec2 cell = ivec2(floor(vuv * palette_size));
+    if (!SnowLies(cell)){
         return vuv;
     }
     int column = (cell.x == roof_column) ? roof_snow_column : cell.x;

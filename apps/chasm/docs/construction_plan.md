@@ -96,7 +96,8 @@ ways, both in `Economy::FindSiteWork`:
   drops by itself when nothing of the building is left to build (`Zones::SettlePriorities`), so a storey
   added later is queued like any other. Its scaffold flies a red pennant (BuildingMesh `SiteFlag`), one
   per building. Saved as the building's `"priority": true`, hashed with the building table. Only
-  buildings can be put first, not gardens, lots or roads.
+  buildings can be put first, not gardens, lots or roads - and FIELDS since 2026-10-08, by a cell
+  (`ZONE_OP_FIELD_PRIORITY`, `fields_plan.md`), their pennant on a stake.
 - **Not chosen:** assigning people to a site by hand. Builders are whoever is idle; giving one a site of
   his own is state to keep valid through jobs, needs, deaths and sites pulled down, and fights the
   automatic jobs. A builder JOB came instead: the builders' hut (`builders_plan.md`).

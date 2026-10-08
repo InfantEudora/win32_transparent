@@ -25,6 +25,18 @@
 #define PAL_DESERT          1
 #define PAL_FROZEN          2
 #define PAL_SWAMP           3
+/*
+    The SEASONS' rows (docs/seasons_plan.md): each a full copy of the temperate row - which is summer -
+    with its seasonal columns changed, so any cell can be retuned for a season in the PNG. The ground
+    shader fades temperate cells between them; the broadleaf trees' stages move their leaves onto them.
+*/
+#define PAL_SPRING          4
+#define PAL_AUTUMN          5
+#define PAL_AUTUMN_RED      6       //autumn's second leaf colour, tree by tree; its ground is row 5's
+#define PAL_WINTER          7       //where no snow lies
+//Summer KEPT: the temperate row as loaded, written here by the app (the PNG's row is spare) and never
+//faded - the broadleaves' green stage (Seasons.h), which changes only on each tree's own day.
+#define PAL_SUMMER          8
 //Not a biome: colours that are the same in every one - the chasm's mist and the falls' foam (Mist.h).
 #define PAL_EFFECTS         15
 #define PAL_MIST_LIGHT      0       //columns in the effects row

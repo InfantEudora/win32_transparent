@@ -1,5 +1,6 @@
 #include "Zones.h"
 #include "ChasmWorld.h"
+#include "Walkers.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +26,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_FIELD_NEXT:    return "field_next";
         case ZONE_OP_FIELD_RAISE:   return "field_raise";
         case ZONE_OP_FIELD_LAND:    return "field_land";
+        case ZONE_OP_FIELD_PRIORITY: return "field_priority";
         default:                   return "none";
     }
 }
@@ -794,118 +796,265 @@ int ZoneCampTents(const ZoneState& z, uint32_t id){
     return n;
 }
 
-#define ZONE_CAMP_INLAND    30.0f   //from the rim: where a new colony first looks (step 1)
-#define ZONE_CAMP_RIVER     48.0f   //...and then the farthest it may be from a river's water (step 2)
-#define ZONE_CAMP_BAND      3.0f    //step 1's slack either side of ZONE_CAMP_INLAND: plots are a few units apart
+#define ZONE_CAMP_RIM       27.0f   //no nearer the rim than this: about 30 inland (the user's)
+#define ZONE_CAMP_STEP      16.0f   //along a river's course, between the spots looked at
+#define ZONE_CAMP_BACK      8.0f    //back from the water's edge, on either bank: the first row of spots...
+#define ZONE_CAMP_ROW       8.0f    //...and every this much farther back, out to ZONE_CAMP_SURVEY
+#define ZONE_CAMP_REACH     64.0f   //...looked for no farther than this from the centre line
+#define ZONE_CAMP_NUDGE     8.0f    //how far a refused spot may move to a plot that passes
+#define ZONE_CAMP_TREES     0.5f    //the best share of a survey's plots with a tree on (the user's)
+#define ZONE_CAMP_W_FLAT    1.0f
+#define ZONE_CAMP_W_TREES   1.0f
+#define ZONE_CAMP_W_MIDDLE  0.25f
 
 /*
-    WHERE A NEW COLONY CAMPS (the user, 2026-10-08). The balcony no longer decides it - the winch is
-    something to consider a couple of in-game years in, not where to start - and the start must have water:
-      1. About ZONE_CAMP_INLAND in from the home side's rim, level with the map's middle: a place to start
-         from, nothing more.
-      2. Within ZONE_CAMP_RIVER of a river's water: of the plots that are, the one nearest that place - so the
-         camp moves to the nearest river - and never nearer the chasm than step 1, so the move runs along
-         the rim or inland.
-    Every plot either step takes is flat dry plateau on the HOME side, which is what a flood from the rivers'
-    water reaches across the plateau without the mountain: rivers run on the home side only, and the mountain's
-    tongue is all that joins the two sides (ChasmLayout, THE SIDES). With no river, the old rule stands: inland
-    of the home balcony, or the east middle.
+    WHERE A NEW COLONY CAMPS (the user, 2026-10-08): by a river, on the best ground along it. Every map has a
+    river at home (rivers_plan.md), so the spots looked at are along the rivers - every ZONE_CAMP_STEP of each
+    one's course, branches and streams too, on both banks, in rows from ZONE_CAMP_BACK back from the water: not
+    only the first, as the relief climbs back from a river's flat over RELIEF_RIVER_FADE, steepest just there
+    (seed 21 had no room for a camp along any of its rivers in that row) - and each is scored on its SURVEY,
+    the ground a walk from it reaches within ZONE_CAMP_SURVEY:
+      - FLAT: the share of the survey a house may stand on, and the share a field may lie on - out of what a
+        whole disc that size holds, so a river, a cliff or the map's edge cutting into it counts against it.
+      - TREES: best with ZONE_CAMP_TREES of the survey's plots wooded, falling to nothing at none and at all of
+        them: a forest's edge, with wood to fell and open ground to build on.
+      - MIDDLE, a little: level with the map's middle rather than up by the mountain or down by the swamp.
+    A spot is refused where the camp would not fit (PlaceStartCamp's flood, by a house's rules - a hill
+    camped nothing, 2026-10-08), with no water collector's spot in its survey, nearer the rim than
+    ZONE_CAMP_RIM, off the plateau or in the swamp; a refused spot gives way to the nearest plot within
+    ZONE_CAMP_NUDGE that passes. The best score is the camp - the balcony plays no part, a winch being
+    something for a couple of years in. With no spot by a river passing, the camp goes to the plot nearest the
+    home side's middle that does, water or not. The weights are tuning, not rules.
 */
-int ZoneStartCampPlot(const ChasmWorld& w){
+void ZoneCampSpots(const ChasmWorld& w, int tents, std::vector<ZoneCampSpot>& out){
+    out.clear();
     const Grid& g = *w.grid;
     const Terrain& t = *w.terrain;
     const GridPicker& p = *w.picker;
-    size_t n = g.fine.pos.size();
-    auto plateau = [&](int v){
-        return t.level[v] == TERRAIN_PLATEAU && !t.Mountain(v);
+    const int n = (int)g.fine.pos.size();
+    const ZoneState none;           //a new map's: nothing built yet
+    std::vector<uint8_t> wooded(n,0);
+    if (w.forest){
+        for (const PropInstance& pr : w.forest->props){
+            if (pr.kind <= PROP_SNOW_PINE && pr.plot >= 0 && pr.plot < n){
+                wooded[pr.plot] = 1;
+            }
+        }
+    }
+    auto house = [&](int v){
+        return t.level[v] == TERRAIN_PLATEAU && PlotIsBuildable(w,none,v,NULL);
     };
-    //A plot the camp may start on: dry plateau, not the mountain or the map's edge, and so is every corner of
-    //the cells round it.
-    auto usable = [&](int v){
-        if (!plateau(v) || t.wet[v] || g.fine.f_boundary[v]){
+    //A step a walker could take (Walkers::EdgeOpen, on a new map): no cliff, no water, no mountain, not too steep.
+    auto walk = [&](int a, int b){
+        float run = (g.fine.pos[b] - g.fine.pos[a]).length();
+        return t.SameGround(a,b) && !t.wet[b] && !t.Mountain(b) && std::fabs(t.ground[b] - t.ground[a]) <= WALKER_STEEPEST * run;
+    };
+    //Flood marks, a new number per flood, so nothing is cleared between them.
+    std::vector<int> camp_mark(n,0), mark(n,0), cell_mark(g.coarse.quads.size(),0);
+    int marks = 0;
+    std::vector<int> camp_queue, queue, cells;
+    //The camp fits from v: as PlaceStartCamp lays it, a flood through the plots a tent or fire may take, to `tents` tents.
+    auto fits = [&](int v){
+        if (!house(v)){
             return false;
         }
-        for (int i = 0; i < p.PlotQuadCount(v); i++){
-            const GridQuad& q = g.fine.quads[p.PlotQuadCorner(v,i) / 4];
-            for (int c = 0; c < 4; c++){
-                if (t.level[q.v[c]] != TERRAIN_PLATEAU || t.wet[q.v[c]]){
-                    return false;
+        int m = ++marks;
+        camp_queue.assign(1,v);
+        camp_mark[v] = m;
+        int have = 0;
+        for (size_t at = 0; at < camp_queue.size() && have < tents; at++){
+            have += ZoneCampFire(camp_queue[at]) ? 0 : 1;
+            int nb[8];
+            int k = ZonePlotNeighbours(w,camp_queue[at],nb,8);
+            for (int j = 0; j < k; j++){
+                if (camp_mark[nb[j]] != m && house(nb[j])){
+                    camp_mark[nb[j]] = m;
+                    camp_queue.push_back(nb[j]);
                 }
             }
         }
-        return true;
+        return have >= tents;
     };
-    //Nearest `target` of the plots `ok` lets through, the lower index on a tie; -1 if none.
-    auto nearest = [&](const vec2& target, auto ok){
-        int best_v = -1;
-        float best = 1e30f;
-        for (size_t v = 0; v < n; v++){
-            float d = (g.fine.pos[v] - target).length();
-            if (d < best && ok((int)v)){
-                best = d;
-                best_v = (int)v;
-            }
+    auto refusal = [&](int v) -> const char*{
+        if (t.level[v] != TERRAIN_PLATEAU || t.Mountain(v)){
+            return "not on the plateau";
         }
-        return best_v;
+        if (t.biome[v] == TERRAIN_BIOME_SWAMP){
+            return "in the swamp";
+        }
+        if (ChasmRiftDistance(g.layout,g.fine.pos[v]) < ZONE_CAMP_RIM){
+            return "too near the rim";
+        }
+        if (!fits(v)){
+            return "no room for the camp";
+        }
+        return NULL;
     };
-    //THE HOME SIDE: the plateau a flood from the rivers' water reaches.
-    std::vector<uint8_t> home(n,0);
-    std::vector<int> queue;
-    for (size_t v = 0; v < n; v++){
-        if (t.wet[v] && plateau((int)v)){
-            home[v] = 1;
-            queue.push_back((int)v);
-        }
-    }
-    for (size_t at = 0; at < queue.size(); at++){
-        int nb[8];
-        int k = ZonePlotNeighbours(w,queue[at],nb,8);
-        for (int j = 0; j < k; j++){
-            if (!home[nb[j]] && plateau(nb[j])){
-                home[nb[j]] = 1;
-                queue.push_back(nb[j]);
+    //The nearest plot to `from` within ZONE_CAMP_NUDGE that passes, the lower index on a tie; -1 if none.
+    std::vector<std::pair<float,int>> near;
+    auto nudge = [&](int from){
+        int m = ++marks;
+        const vec2 at = g.fine.pos[from];
+        queue.assign(1,from);
+        mark[from] = m;
+        near.clear();
+        for (size_t i = 0; i < queue.size(); i++){
+            near.push_back({(g.fine.pos[queue[i]] - at).length(),queue[i]});
+            int nb[8];
+            int k = ZonePlotNeighbours(w,queue[i],nb,8);
+            for (int j = 0; j < k; j++){
+                if (mark[nb[j]] != m && (g.fine.pos[nb[j]] - at).length() <= ZONE_CAMP_NUDGE){
+                    mark[nb[j]] = m;
+                    queue.push_back(nb[j]);
+                }
             }
         }
-    }
-    if (!t.rivers.empty() && !queue.empty()){
-        auto rim = [&](int v){
-            return ChasmRiftDistance(g.layout,g.fine.pos[v]);
-        };
-        //1. About ZONE_CAMP_INLAND from the rim, nearest the map's middle line.
-        float middle = (g.bounds_min.y + g.bounds_max.y) * 0.5f;
-        int first = -1;
-        float best = 1e30f;
-        for (size_t v = 0; v < n; v++){
-            float d = std::fabs(g.fine.pos[v].y - middle);
-            if (d < best && home[v] && std::fabs(rim((int)v) - ZONE_CAMP_INLAND) <= ZONE_CAMP_BAND && usable((int)v)){
-                best = d;
-                first = (int)v;
+        std::sort(near.begin(),near.end());
+        for (const auto& c : near){
+            if (!refusal(c.second)){
+                return c.second;
             }
         }
-        if (first >= 0){
-            //2. The nearest plot to it within reach of a river, no nearer the chasm.
-            int camp = nearest(g.fine.pos[first],[&](int v){
-                return home[v] && t.WaterEdgeDistance(g.fine.pos[v]) <= ZONE_CAMP_RIVER
-                       && rim(v) >= ZONE_CAMP_INLAND - ZONE_CAMP_BAND && usable(v);
-            });
-            return (camp >= 0) ? camp : first;
-        }
-    }
-    //No river (or no ground by one): inland of the home balcony - every map has one - or the east middle.
-    vec2 target((g.bounds_min.x + g.bounds_max.x) * 0.5f + (g.bounds_max.x - g.bounds_min.x) * 0.25f,
-                (g.bounds_min.y + g.bounds_max.y) * 0.5f);
-    for (const GridFeature& f : g.layout.features){
-        if (f.kind == GRID_FEATURE_BALCONY && f.side > 0 && f.line.points.size() >= 3){
-            vec2 chord = (f.line.points.front() + f.line.points.back()) * 0.5f;
-            vec2 out = chord - f.line.points[f.line.points.size() / 2];
-            float l = out.length();
-            if (l > 1e-3f){
-                target = chord + out * (ZONE_CAMP_INLAND / l);
+        return -1;
+    };
+    const float area = (g.bounds_max.x - g.bounds_min.x) * (g.bounds_max.y - g.bounds_min.y);
+    const float disc = 3.14159265f * ZONE_CAMP_SURVEY * ZONE_CAMP_SURVEY;
+    const float disc_plots = disc * (float)n / area;
+    const float disc_cells = disc * (float)g.coarse.quads.size() / area;
+    const float middle = (g.bounds_min.y + g.bounds_max.y) * 0.5f;
+    const float half_depth = (g.bounds_max.y - g.bounds_min.y) * 0.5f;
+    auto survey = [&](ZoneCampSpot& s){
+        int m = ++marks;
+        const vec2 at = g.fine.pos[s.plot];
+        queue.assign(1,s.plot);
+        mark[s.plot] = m;
+        cells.clear();
+        int houses = 0, trees = 0, fields = 0;
+        bool f_well = false;
+        for (size_t i = 0; i < queue.size(); i++){
+            int v = queue[i];
+            houses += house(v) ? 1 : 0;
+            trees += wooded[v];
+            f_well = f_well || PlotIsBuildable(w,none,v,NULL,ZONE_RISE_ROAD,true);
+            for (int k = 0; k < p.PlotQuadCount(v); k++){
+                int c = g.fine.quads[p.PlotQuadCorner(v,k) / 4].parent;
+                if (c >= 0 && cell_mark[c] != m){
+                    cell_mark[c] = m;
+                    cells.push_back(c);
+                }
             }
-            break;
+            int nb[8];
+            int k = ZonePlotNeighbours(w,v,nb,8);
+            for (int j = 0; j < k; j++){
+                if (mark[nb[j]] != m && (g.fine.pos[nb[j]] - at).length() <= ZONE_CAMP_SURVEY && walk(v,nb[j])){
+                    mark[nb[j]] = m;
+                    queue.push_back(nb[j]);
+                }
+            }
+        }
+        //A field's cell counts when all nine of its vertices are in the survey.
+        for (int c : cells){
+            bool f_in = true;
+            for (int q = c * 4; q < c * 4 + 4 && f_in; q++){
+                for (int k = 0; k < 4; k++){
+                    f_in = f_in && mark[g.fine.quads[q].v[k]] == m;
+                }
+            }
+            fields += (f_in && ZoneCanField(w,none,c,NULL)) ? 1 : 0;
+        }
+        s.house_share = std::min(1.0f,(float)houses / disc_plots);
+        s.field_share = std::min(1.0f,(float)fields / disc_cells);
+        s.tree_share = (float)trees / (float)queue.size();
+        s.flat = (s.house_share + s.field_share) * 0.5f;
+        s.trees = (s.tree_share < ZONE_CAMP_TREES) ? s.tree_share / ZONE_CAMP_TREES
+                                                    : (1.0f - s.tree_share) / (1.0f - ZONE_CAMP_TREES);
+        s.middle = std::max(0.0f,1.0f - std::fabs(at.y - middle) / half_depth);
+        s.score = ZONE_CAMP_W_FLAT * s.flat + ZONE_CAMP_W_TREES * s.trees + ZONE_CAMP_W_MIDDLE * s.middle;
+        if (!f_well){
+            s.refused = "no water collector's spot near";
+        }
+    };
+    std::vector<uint8_t> f_looked(n,0), f_taken(n,0);
+    for (const TerrainRiver& r : t.rivers){
+        float along = 0.0f;
+        float next = ZONE_CAMP_STEP * 0.5f;
+        for (size_t i = 0; i + 1 < r.points.size(); i++){
+            vec2 d = r.points[i + 1] - r.points[i];
+            float len = d.length();
+            if (len < 1e-4f){
+                continue;
+            }
+            vec2 dir = d / len;
+            vec2 across(-dir.y,dir.x);
+            for (; next <= along + len; next += ZONE_CAMP_STEP){
+                vec2 c = r.points[i] + dir * (next - along);
+                for (int side = -1; side <= 1; side += 2){
+                    //Out from the centre line, a spot each row past ANY river's water, so one by a confluence is back from both.
+                    float o = 0.0f;
+                    for (float back = ZONE_CAMP_BACK; back <= ZONE_CAMP_SURVEY; back += ZONE_CAMP_ROW){
+                        while (o < ZONE_CAMP_REACH && t.WaterEdgeDistance(c + across * (o * side)) < back){
+                            o += 1.0f;
+                        }
+                        GridPick at = p.Pick(c + across * (o * side));
+                        if (o >= ZONE_CAMP_REACH || !at.f_hit || f_looked[at.plot]){
+                            continue;
+                        }
+                        f_looked[at.plot] = 1;
+                        ZoneCampSpot s;
+                        s.plot = at.plot;
+                        s.refused = refusal(at.plot);
+                        int v = s.refused ? nudge(at.plot) : at.plot;
+                        if (v >= 0){
+                            if (f_taken[v]){
+                                continue;
+                            }
+                            f_taken[v] = 1;
+                            s.plot = v;
+                            s.refused = NULL;
+                            survey(s);
+                        }
+                        out.push_back(s);
+                    }
+                }
+            }
+            along += len;
         }
     }
-    return nearest(target,usable);
+    for (const ZoneCampSpot& s : out){
+        if (!s.refused){
+            return;
+        }
+    }
+    //None by a river: the plot nearest the home side's middle that passes, its water a walk away.
+    vec2 target((g.bounds_min.x + g.bounds_max.x) * 0.5f + (g.bounds_max.x - g.bounds_min.x) * 0.25f,middle);
+    near.clear();
+    for (int v = 0; v < n; v++){
+        near.push_back({(g.fine.pos[v] - target).length(),v});
+    }
+    std::sort(near.begin(),near.end());
+    for (const auto& c : near){
+        if (!refusal(c.second)){
+            ZoneCampSpot s;
+            s.plot = c.second;
+            s.f_fallback = true;
+            survey(s);
+            s.refused = NULL;
+            out.push_back(s);
+            return;
+        }
+    }
+}
+
+int ZoneStartCampPlot(const ChasmWorld& w, int tents){
+    std::vector<ZoneCampSpot> spots;
+    ZoneCampSpots(w,tents,spots);
+    int best = -1;
+    for (int i = 0; i < (int)spots.size(); i++){
+        if (!spots[i].refused && (best < 0 || spots[i].score > spots[best].score)){
+            best = i;
+        }
+    }
+    return (best >= 0) ? spots[best].plot : -1;
 }
 
 void Zones::PlaceStartCamp(int tents){
@@ -913,7 +1062,7 @@ void Zones::PlaceStartCamp(int tents){
         return;
     }
     const ChasmWorld& w = *state.world;
-    int start = ZoneStartCampPlot(w);
+    int start = ZoneStartCampPlot(w,tents);
     if (start < 0){
         return;
     }
@@ -1446,6 +1595,36 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             state.buildings[id].land_of = (uint32_t)kind;
             break;
         }
+        case ZONE_OP_FIELD_PRIORITY:{
+            //A field site's "build first" (construction_plan.md), as a building's by a plot of it - by a cell.
+            //Only a field still staked out can be put first; any can be put back.
+            int c = (int)index;
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c]){
+                last_refusal = "no field there";
+                return false;
+            }
+            uint32_t id = state.field[c];
+            uint8_t want = kind ? 1 : 0;
+            if (state.buildings[id].f_priority == want){
+                return false;
+            }
+            bool f_site = false;
+            for (size_t o = 0; o < state.field.size() && !f_site; o++){
+                f_site = state.field[o] == id && !state.field_built[o];
+            }
+            if (want && !f_site){
+                last_refusal = "nothing to build there";
+                return false;
+            }
+            state.buildings[id].f_priority = want;
+            //Its first stake flies the flag while it is first (CropMesh), so its cells are drawn again.
+            for (size_t o = 0; o < state.field.size(); o++){
+                if (state.field[o] == id){
+                    touch_field((int)o);
+                }
+            }
+            break;
+        }
         case ZONE_OP_BRIDGE:{
             //Placed whole: the chain from this plot to the plot in `kind`, if it may stand there.
             std::vector<int> plots;
@@ -1619,7 +1798,8 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             last_refusal = "unknown zone op";
             return false;
     }
-    if (op == ZONE_OP_BUILD_ADD || op == ZONE_OP_BUILD_REMOVE || op == ZONE_OP_BUILD_ERASE || op == ZONE_OP_BUILD_RAISE){
+    if (op == ZONE_OP_BUILD_ADD || op == ZONE_OP_BUILD_REMOVE || op == ZONE_OP_BUILD_ERASE || op == ZONE_OP_BUILD_RAISE
+        || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_RAISE){
         SettlePriorities();
     }
     state.version++;
@@ -1628,8 +1808,9 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
 
 /*
     A site put first stops being first once nothing of it is left to build - raised by its builders,
-    finished by a debug click, or its last planned storey taken off - so a storey added later is queued
-    like any other. One pass over the plots, and only while anything is first at all.
+    finished by a debug click, or its last planned storey taken off; a field once its cells are built or
+    the last one staked out is erased - so a storey added later is queued like any other. One pass over
+    the plots and the cells, and only while anything is first at all.
 */
 void Zones::SettlePriorities(){
     bool f_any = false;
@@ -1643,6 +1824,11 @@ void Zones::SettlePriorities(){
     for (size_t v = 0; v < state.building.size(); v++){
         if (state.standing[v] < state.storeys[v]){
             open[state.building[v]] = 1;
+        }
+    }
+    for (size_t c = 0; c < state.field.size(); c++){
+        if (state.field[c] && !state.field_built[c] && state.field[c] < open.size()){
+            open[state.field[c]] = 1;
         }
     }
     for (size_t id = 1; id < state.buildings.size(); id++){

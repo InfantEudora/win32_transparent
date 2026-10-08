@@ -217,7 +217,18 @@ void ApplicationChasm::UpdateMist(){
 
     std::vector<fmat4> foam;
     if (f_show){
-        const std::vector<TerrainFall>& falls = w->terrain->falls;
+        //The springs' water meets the mist as a fall's does (WaterMesh.cpp), so it foams the same way.
+        std::vector<TerrainFall> falls = w->terrain->falls;
+        for (const TerrainSpring& sp : w->terrain->springs){
+            if (sp.plots > 0){
+                TerrainFall f;
+                f.lip = sp.lip;
+                f.out = sp.out;
+                f.across = sp.across;
+                f.width = sp.width;
+                falls.push_back(f);
+            }
+        }
         for (int f = 0; f < (int)falls.size(); f++){
             for (int s = 0; s < FOAM_PER_FALL; s++){
                 vec3 pos;

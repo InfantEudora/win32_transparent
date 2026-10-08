@@ -20,6 +20,7 @@
 #include "Calendar.h"
 #include "Economy.h"
 #include "Exploration.h"
+#include "Seasons.h"
 
 /*
     PLAY MODE'S SELECTION (docs/selection_plan.md): a building - by id, with the plot it was clicked on
@@ -55,6 +56,7 @@ extern const char* person_asset_names[PERSON_FIGURES];
 #define OVERLAY_HIT_PAUSE       7       //the calendar's pause button: the clock stops, or goes again
 #define OVERLAY_HIT_SPEED       8       //the calendar's speed button: the next speed, round to normal after the fastest
 #define OVERLAY_HIT_FIELD_LAND  9       //a field's card: given to house `value`, 0 automatic (land_plan.md)
+#define OVERLAY_HIT_PERSON      10      //the neediest list: select person `value`, and the view goes to him
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -211,6 +213,10 @@ public:
     bool f_cam_fly_pending = false;
     bool f_cam_flying = false;
     vec2 cam_fly_to;
+    //Someone picked from the neediest list (ApplicationChasmSelect.cpp): the physics thread names him, the
+    //camera glides to where he is - at the zoom it has, unlike the glide to the camp.
+    std::atomic<uint32_t> cam_seek_person{0};
+    bool f_cam_fly_keep_zoom = false;
     //Physics thread. Puts the camera over the whole map.
     void FrameMap();
 
@@ -226,6 +232,12 @@ private:
     std::atomic<bool> f_view_terrain{true};
     int palette_material = -1;      //the one material everything is drawn with (Palette.h)
     void UploadTerrain();
+    //The seasons' colours (docs/seasons_plan.md): the palette's temperate row rewritten on the GPU as the
+    //season fades, from its rows as loaded. Render thread (ApplicationChasmSnow.cpp).
+    Texture* palette_texture = NULL;
+    std::vector<uint8_t> palette_rows;              //pixel rows of palette rows 0..PAL_WINTER, as loaded
+    uint32_t palette_season_key = 0xFFFFFFFFu;      //the blend last written: from, to and its 255ths
+    void UpdateSeasonPalette();
 
     std::mutex pick_mutex;
     //A script's hover, in place of the mouse's (chasm_tool hover_x/hover_z); the point under pick_mutex.
@@ -236,6 +248,10 @@ private:
     std::atomic<int> script_left{-1};
     bool f_script_left_was = false;             //physics thread: for the edge of a scripted press
     std::atomic<bool> f_script_right{false};
+    //...and a left click at a pixel in play mode (chasm_select op press), where the hover's is never on the
+    //overlay: what the player's click there does, the overlay's buttons included. The pixel under pick_mutex.
+    std::atomic<bool> f_script_press{false};
+    int2 script_press_px;
     GridPick hover_pick;
     GridPick selected_pick;
     std::atomic<int> pick_version{0};
@@ -475,7 +491,20 @@ private:
         are made once and reused when the map is regenerated. Render thread.
     */
     bool f_props_loaded[PROP_KIND_COUNT] = {};
-    std::vector<Object*> prop_sets;                 //chunk * PROP_KIND_COUNT + kind
+    std::vector<Object*> prop_sets;                 //chunk * ForestSetCount() + set: the kinds' own, then the looks
+    /*
+        The broadleaves' stages (Seasons.h, ApplicationChasmSeasons.cpp): a mesh per seasonal kind and
+        stage, its LOOK, each drawn as one more set per chunk after the kinds' own.
+    */
+    std::vector<Mesh*> season_look_mesh;            //by look
+    std::vector<int> season_look_kind;
+    std::vector<int> season_look_stage;
+    int season_look_set[PROP_KIND_COUNT][FOREST_STAGES] = {};  //the set a standing prop of kind, stage is drawn in
+    void BuildSeasonLooks();                        //from LoadProps
+    int ForestSetCount() const { return PROP_KIND_COUNT + (int)season_look_mesh.size(); }
+    std::vector<uint8_t> forest_prop_stage;         //per prop: the stage its chunk's sets were built with
+    int64_t forest_stage_clock = -1;                //the quarter day the stages were last looked at
+    void ForestStagesMoved(const ForestData& f, std::vector<uint8_t>& dirty);
     //`e`: the economy for this world, or NULL - a felled tree is a stump, with its log while it lies.
     void RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, const EconomyState* e, int chunk);
     std::shared_ptr<const ChasmWorld> forest_built_world;
@@ -485,6 +514,7 @@ private:
     uint32_t forest_felled_version = 0xFFFFFFFFu;   //the economy's felled_version they were built at
     std::atomic<bool> f_view_forest{true};
     bool f_forest_shown = true;
+    bool f_forest_flowers = true;                   //the flowers drawn: spring and summer (docs/seasons_plan.md)
     void LoadProps();
     void UploadForest();
     bool PropHidden(const PropInstance& p, const ZoneState* z, bool* f_by_road = NULL);
@@ -573,9 +603,10 @@ private:
     bool OverlayHitAt(int2 px, OverlayHit* hit);
     void UploadSelection();                                 //render thread, from PreRender
     void DrawBuildBar(float s);                             //render thread, from DrawOverlay
-    void DrawJobsOverview(float s);                         //render thread, from DrawOverlay: builders_plan.md
+    float DrawJobsOverview(float s);                        //render thread, from DrawOverlay: builders_plan.md; its top
+    void DrawNeediest(float s, float bottom);               //render thread, from DrawOverlay: over the jobs
     void DrawSelectionOverlay(float s);                     //render thread, from DrawOverlay: card + pins
-    vec2 build_bar_min;                                     //render thread: where the bar was last drawn, for the overview
+    vec2 build_bar_min;                                     //render thread: where the tools' grid was last drawn, for the overview
     vec2 build_bar_max;
 #ifdef USE_MCP
     void RegisterSelectTools();
@@ -620,6 +651,7 @@ private:
     std::atomic<bool> f_view_issues{true};
     std::atomic<bool> f_view_pins{true};
     std::atomic<bool> f_view_flat{false};   //every layer at y = 0 instead of on the terrain
+    std::atomic<bool> f_view_camp{false};   //the spots a new colony might camp on, and their scores
     std::atomic<int> view_version{0};
     std::atomic<int> selected_issue{-1};
 

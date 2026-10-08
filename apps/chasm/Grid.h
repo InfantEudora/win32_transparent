@@ -106,14 +106,49 @@ struct GridFeature{
     GridLine region;                            //a balcony's outline, closed - see above
 };
 
+/*
+    A RIVER as the layout makes it (rivers_plan.md): its centre line, source first - so "along" grows
+    downstream on every kind - and how it ENDS:
+      FALL  over a rim into the chasm, the rivers proper; the last point is a little past the rim.
+      JOIN  into another river, a BRANCH; the last point is on that river's centre line (`joins`).
+      SINK  into a swallow hole short of a rim, to come out of the wall below as a spring.
+      EDGE  off the map's east edge: the last resort when no home rim takes a fall; the last point
+            is a little past the edge.
+*/
+#define GRID_RIVER_FALL     0
+#define GRID_RIVER_JOIN     1
+#define GRID_RIVER_SINK     2
+#define GRID_RIVER_EDGE     3
+
 struct GridRiverLine{
-    std::vector<vec2> points;   //from the source on the map's edge; the last is a little past its rim
+    std::vector<vec2> points;
     float width = 6.0f;
+    int end = GRID_RIVER_FALL;
+    int joins = -1;             //JOIN: the river it flows into, by index
+};
+//Whether a line is a river of its own - the kinds a map must have one of - rather than one that feeds another.
+inline bool GridRiverIsMain(const GridRiverLine& r){
+    return r.end == GRID_RIVER_FALL || r.end == GRID_RIVER_EDGE;
+}
+
+/*
+    A SPRING (rivers_plan.md): water pouring out of a dark mouth in a chasm wall, below the rim. `lip` is
+    on the rim's line and `out` level into the chasm, as at a fall; the mouth is in the wall under the lip,
+    `band` strata down (1: the stratum under the rim's own). On the home side a swallow-hole stream feeds
+    it (`stream`, in `rivers`); on the far side it has no source to find - it is there to be looked at.
+*/
+struct GridSpring{
+    vec2 lip;
+    vec2 out;
+    int band = 1;
+    float width = 3.0f;         //of its water where it comes out
+    int stream = -1;
 };
 
 struct ChasmLayout{
     std::vector<GridFeature> features;      //rims first, then balconies, ledges, shards, columns
     std::vector<GridRiverLine> rivers;
+    std::vector<GridSpring> springs;
     /*
         CRACKS: the old forks, and short fissures off the rims - long thin cuts into the plateau, a
         few plots wide, deepest where they leave the rift and shallowing to nothing at their tips.
@@ -143,6 +178,11 @@ struct ChasmLayout{
     int count[GRID_FEATURE_KINDS] = {};
     int wanted[GRID_FEATURE_KINDS] = {};    //rims: unused
     int rivers_wanted = 0;
+    //Rivers' falls: the rim points that would take one, then why tries were turned down - too near a
+    //fall already placed, the course's first cell shut, no source to reach.
+    int river_tries[4] = {};
+    bool f_river_small = false;             //no river fitted, so a small one was made (rivers_plan.md)
+    int branches_wanted = 0;                //over all rivers; how many came is in `rivers`, by end
     int balconies[2] = {};                  //placed on the west [0] and east [1] side
     int attempts = 0;                       //rift layouts drawn until one kept its spacing
     bool f_rifts_ok = true;                 //false: every attempt failed, the last is used anyway

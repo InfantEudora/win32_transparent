@@ -180,6 +180,15 @@ void ApplicationChasm::BuildScene(){
         //And the swamp's haze on its pools, so it too follows an edit of the PNG.
         vec2 suv = PaletteUV(PAL_SWAMP_MIST,PAL_EFFECTS);
         swamp_haze = palette->GetValueAt(suv.x,suv.y) / 255.0f;
+        //The rows the seasons blend, kept as loaded: UpdateSeasonPalette rewrites the temperate one.
+        palette_texture = palette;
+        if (palette->img_data && palette->height % PALETTE_ROWS == 0){
+            int channels = (palette->image_format == GL_RGBA) ? 4 : 3;
+            size_t band = (size_t)palette->width * (size_t)(palette->height / PALETTE_ROWS) * (size_t)channels;
+            palette_rows.assign(palette->img_data,palette->img_data + band * (PAL_WINTER + 1));
+            //Summer kept (Palette.h): the broadleaves' green, never faded. Uploaded with the first fade.
+            std::copy(palette_rows.begin(),palette_rows.begin() + band,palette->img_data + band * PAL_SUMMER);
+        }
     }else{
         debug->Err("No palette (textures/palette.png) - the terrain draws white\n");
     }
@@ -993,6 +1002,7 @@ void ApplicationChasm::LoadProps(){
     gltfloader.LoadGLTFFile("meshes/chasm_props.glb");
     std::vector<std::string> names(prop_asset_names,prop_asset_names + PROP_KIND_COUNT);
     names.insert(names.end(),person_asset_names,person_asset_names + PERSON_FIGURES);
+    names.insert(names.end(),forest_bare_names,forest_bare_names + FOREST_OAK_KINDS);
     GetAssetsFromGLTF(names);
     int loaded = 0;
     for (int k = 0; k < PROP_KIND_COUNT; k++){
@@ -1008,6 +1018,7 @@ void ApplicationChasm::LoadProps(){
         }
     }
     debug->Info("Props: %i of %i kinds loaded\n",loaded,PROP_KIND_COUNT);
+    BuildSeasonLooks();
     //The people's figures are in the same file (ApplicationChasmWorkersView.cpp), so they are made here.
     BuildWorkerScene();
 }
@@ -1064,9 +1075,21 @@ static uint8_t PropStateOf(const EconomyState* e, size_t i){
 */
 void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z, const EconomyState* e, int chunk){
     const ForestData& f = *w.forest;
-    std::vector<fmat4> sets[PROP_KIND_COUNT];
+    const int set_count = ForestSetCount();
+    std::vector<std::vector<fmat4>> sets(set_count);
+    uint64_t tick = calendar_shown.load();
     for (int i : f.chunk_props[chunk]){
         const PropInstance& p = f.props[i];
+        if (!f_forest_flowers && (p.kind == PROP_FLOWERS_A || p.kind == PROP_FLOWERS_B)){
+            continue;
+        }
+        //A broadleaf standing is drawn in its stage's set (Seasons.h); the stage is kept, to see it move.
+        int set = p.kind;
+        if (ForestSeasonal(p.kind) != FOREST_SEASONAL_NONE){
+            int stage = ForestStage(p.kind,(size_t)i,tick);
+            forest_prop_stage[i] = (uint8_t)stage;
+            set = season_look_set[p.kind][stage];
+        }
         bool f_by_road = false;
         bool f_hidden = PropHidden(p,z,&f_by_road);
         uint8_t state = PropStateOf(e,(size_t)i);
@@ -1074,8 +1097,8 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
             continue;
         }
         if (state == PROP_STATE_STANDING){
-            sets[p.kind].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
-                                                                 vec3(p.scale,p.scale,p.scale)));
+            sets[set].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
+                                                              vec3(p.scale,p.scale,p.scale)));
             continue;
         }
         float s = p.scale;
@@ -1121,8 +1144,8 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
         }
     }
     bool f_show = f_view_forest;
-    for (int k = 0; k < PROP_KIND_COUNT; k++){
-        Object* o = prop_sets[(size_t)chunk * PROP_KIND_COUNT + k];
+    for (int k = 0; k < set_count; k++){
+        Object* o = prop_sets[(size_t)chunk * set_count + k];
         if (!o){
             continue;
         }
@@ -1149,18 +1172,33 @@ void ApplicationChasm::UploadForest(){
     const EconomyState* e = (es && es->world == w) ? es.get() : NULL;
     bool f_show = f_view_forest;
     size_t chunks = f.chunk_props.size();
+    //Flowers in spring and summer only: a change of season that brings or takes them rebuilds every chunk.
+    int season = CalendarDateOf(calendar_shown.load()).season;
+    bool f_flowers = (season == SEASON_SPRING || season == SEASON_SUMMER);
+    bool f_flowers_moved = (f_flowers != f_forest_flowers);
+    f_forest_flowers = f_flowers;
 
     if (w != forest_built_world){
         forest_built_world = w;
-        size_t need = chunks * PROP_KIND_COUNT;
+        const int set_count = ForestSetCount();
+        size_t need = chunks * set_count;
         if (prop_sets.size() < need){
             //New objects join the scene the physics thread walks - under its lock.
             main_scene->AtTickBoundary([&](){
                 while (prop_sets.size() < need){
-                    int k = (int)(prop_sets.size() % PROP_KIND_COUNT);
-                    Object* o = f_props_loaded[k] ? assetmanager->GetObjectFromAsset(prop_asset_names[k]) : NULL;
+                    int s = (int)(prop_sets.size() % set_count);
+                    //A kind's own set, from its asset; or a broadleaf's stage, on its look's mesh.
+                    int k = (s < PROP_KIND_COUNT) ? s : season_look_kind[s - PROP_KIND_COUNT];
+                    Object* o = NULL;
+                    if (s < PROP_KIND_COUNT){
+                        o = f_props_loaded[k] ? assetmanager->GetObjectFromAsset(prop_asset_names[k]) : NULL;
+                    }else{
+                        o = new Object();
+                        o->SetMesh(season_look_mesh[s - PROP_KIND_COUNT]);
+                    }
                     if (o){
-                        o->name = std::string(prop_asset_names[k]) + " set";
+                        o->name = std::string(prop_asset_names[k]) +
+                                  ((s < PROP_KIND_COUNT) ? "" : std::string(" ") + ForestStageName(season_look_stage[s - PROP_KIND_COUNT])) + " set";
                         //The GLB names a material it carries no image for; the palette is ours.
                         o->SetMaterialSlot(0,palette_material);
                         o->SetPickability(false);
@@ -1182,6 +1220,8 @@ void ApplicationChasm::UploadForest(){
         }
         forest_zone_version.assign(chunks,0);
         forest_prop_chunk.assign(f.props.size(),0);
+        forest_prop_stage.assign(f.props.size(),0xFF);
+        forest_stage_clock = -1;
         for (size_t c = 0; c < chunks; c++){
             for (int i : f.chunk_props[c]){
                 forest_prop_chunk[i] = (int)c;
@@ -1216,12 +1256,15 @@ void ApplicationChasm::UploadForest(){
         }
         forest_prop_state = e ? e->prop_state : std::vector<uint8_t>();
     }
+    //The broadleaves whose stage has moved on since their chunk was built (ApplicationChasmSeasons.cpp).
+    std::vector<uint8_t> f_staged(chunks,0);
+    ForestStagesMoved(f,f_staged);
 
-    bool f_toggle = (f_show != f_forest_shown);
+    bool f_toggle = (f_show != f_forest_shown) || f_flowers_moved;
     f_forest_shown = f_show;
     for (size_t c = 0; c < chunks; c++){
         uint32_t version = z ? z->chunk_version[c] : 0;
-        if (!f_toggle && !f_felled[c] && forest_zone_version[c] == version){
+        if (!f_toggle && !f_felled[c] && !f_staged[c] && forest_zone_version[c] == version){
             continue;
         }
         forest_zone_version[c] = version;
@@ -1532,7 +1575,17 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
         for (size_t i = 0; i < n; i += std::max<size_t>(1,n / 8)){
             pts.push_back({r.points[i].x,r.points[i].y});
         }
-        rivers.push_back(json{{"width",r.width},{"points",pts}});
+        if (n > 0 && (pts.empty() || pts.back()[0] != r.points.back().x || pts.back()[1] != r.points.back().y)){
+            pts.push_back({r.points.back().x,r.points.back().y});      //the end too: a fall's, a branch's junction
+        }
+        static const char* const ends[4] = {"river","branch","stream","river_off_edge"};
+        rivers.push_back(json{{"kind",ends[std::max(0,std::min(3,r.end))]},{"joins",r.joins},{"width",r.width},{"points",pts}});
+    }
+    //Each spring by where it pours from, so a camera can be sent to one.
+    json springs = json::array();
+    for (const GridSpring& s : g.layout.springs){
+        springs.push_back(json{{"lip",{s.lip.x,s.lip.y}},{"out",{s.out.x,s.out.y}},{"band",s.band},{"width",s.width},
+                               {"stream",s.stream}});
     }
     //Each balcony by its side and its two ends on the rim, so a camera can be sent to one.
     json cracks = json::array();
@@ -1580,9 +1633,14 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
             {"shards",g.layout.count[GRID_FEATURE_SHARD]},
             {"columns",g.layout.count[GRID_FEATURE_COLUMN]},
             {"rivers",g.layout.rivers.size()},
+            {"river_tries",{{"falls",g.layout.river_tries[0]},{"near_a_fall",g.layout.river_tries[1]},
+                            {"start_shut",g.layout.river_tries[2]},{"no_source",g.layout.river_tries[3]}}},
+            {"small_river",g.layout.f_river_small},
+            {"branches_wanted",g.layout.branches_wanted},
             {"balcony_list",balconies},
             {"crack_list",cracks},
             {"river_list",rivers},
+            {"spring_list",springs},
             {"attempts",g.layout.attempts},
             {"layout_ms",g.layout.generate_ms}
         }}
@@ -1790,7 +1848,21 @@ void ApplicationChasm::UpdateCamera(){
                           && cam_distance <= CHASM_PLAY_DIST_MAX * 1.05f;
             if (!f_seen){
                 f_cam_flying = true;
+                f_cam_fly_keep_zoom = false;
                 cam_fly_to = cw->grid->fine.pos[e->camp_plot];
+            }
+        }
+    }
+    //Someone picked from the neediest list (cam_seek_person): to where he is now, at the zoom the view has.
+    uint32_t seek = cam_seek_person.exchange(0);
+    if (seek && f_play){
+        std::shared_ptr<const EconomyState> e = GetEconomy();
+        for (size_t i = 0; e && i < e->workers.size(); i++){
+            if (e->workers[i].id == seek){
+                f_cam_flying = true;
+                f_cam_fly_keep_zoom = true;
+                cam_fly_to = e->workers[i].pos;
+                break;
             }
         }
     }
@@ -1806,9 +1878,12 @@ void ApplicationChasm::UpdateCamera(){
             at = at + (cam_fly_to - at) * k;
             camera_target.x = at.x;
             camera_target.z = at.y;
-            cam_distance += (CHASM_PLAY_START_DIST - cam_distance) * k;
-            cam_pitch += (CHASM_PLAY_START_PITCH - cam_pitch) * k;
-            if ((cam_fly_to - at).length() < 0.05f && std::fabs(cam_distance - CHASM_PLAY_START_DIST) < 0.05f){
+            if (!f_cam_fly_keep_zoom){
+                cam_distance += (CHASM_PLAY_START_DIST - cam_distance) * k;
+                cam_pitch += (CHASM_PLAY_START_PITCH - cam_pitch) * k;
+            }
+            bool f_zoomed = f_cam_fly_keep_zoom || std::fabs(cam_distance - CHASM_PLAY_START_DIST) < 0.05f;
+            if ((cam_fly_to - at).length() < 0.05f && f_zoomed){
                 f_cam_flying = false;
             }
         }
@@ -1947,6 +2022,7 @@ void ApplicationChasm::UpdateView(void){
 void ApplicationChasm::PreRender(void){
     //The clock of everything the GPU animates: the simulation's, so a pause holds the mist still.
     renderer->motion_seconds = (float)SimSeconds();
+    UpdateSeasonPalette();
     UploadTerrain();
     UploadZones();
     UploadForest();
@@ -2005,6 +2081,10 @@ uint64_t EdgeKey(int a, int b){
 #define VIEW_PIN_RIM        0xFFFF60D0u
 #define VIEW_PIN_SHARD      0xFF60F0F0u
 #define VIEW_PIN_FIXED      0xFFFF2020u
+#define VIEW_CAMP_POOR      0xFF606878u     //a camp spot that passes, from its lowest score...
+#define VIEW_CAMP_GOOD      0xFF40D060u     //...to the best
+#define VIEW_CAMP_BEST      0xFFFFFFFFu     //the camp, and its survey
+#define VIEW_CAMP_REFUSED   0xFFFF3030u
 
 /*
     RENDER THREAD. Rebuilds the line mesh when the world, the report or a layer changed, and never
@@ -2195,6 +2275,40 @@ void ApplicationChasm::UpdateGridView(){
         }
     }
 
+    //Where a new colony would camp: a post on every spot looked at, as tall as its score against the best's,
+    //short and red where refused; the camp in white with the ground its survey reaches out to.
+    if (f_view_camp){
+        std::vector<ZoneCampSpot> spots;
+        ZoneCampSpots(*w,EconomySettlerCount(),spots);
+        int best = -1;
+        for (int i = 0; i < (int)spots.size(); i++){
+            if (!spots[i].refused && (best < 0 || spots[i].score > spots[best].score)){
+                best = i;
+            }
+        }
+        float top = (best >= 0) ? std::max(1e-3f,spots[best].score) : 1.0f;
+        auto ring = [&](const vec2& c, float r, uint32_t col, int segments){
+            for (int s = 0; s < segments; s++){
+                vec2 a = c + vec2(cosf(6.2831853f * s / segments),sinf(6.2831853f * s / segments)) * r;
+                vec2 b = c + vec2(cosf(6.2831853f * (s + 1) / segments),sinf(6.2831853f * (s + 1) / segments)) * r;
+                line(a,b,col,G(a,0.0f) + 0.2f,G(b,0.0f) + 0.2f);
+            }
+        };
+        for (int i = 0; i < (int)spots.size(); i++){
+            const ZoneCampSpot& s = spots[i];
+            const vec2& at = g->fine.pos[s.plot];
+            float h = H(s.plot);
+            uint32_t c = s.refused ? VIEW_CAMP_REFUSED : (i == best) ? VIEW_CAMP_BEST
+                                   : LerpColor(VIEW_CAMP_POOR,VIEW_CAMP_GOOD,s.score / top);
+            float tall = s.refused ? 1.5f : 2.0f + 10.0f * s.score / top;
+            ring(at,unit * 0.5f,c,12);
+            line(at,at,c,h,h + unit * tall);
+        }
+        if (best >= 0){
+            ring(g->fine.pos[spots[best].plot],ZONE_CAMP_SURVEY,VIEW_CAMP_BEST,64);
+        }
+    }
+
     grid_view_vertices = (int)verts.size();
     if (verts.empty()){
         grid_view->SetVisibility(false);
@@ -2344,11 +2458,17 @@ void ApplicationChasm::RenderChasmPanel(){
         if (g){
             //What the seed made of the chasm (Grid::layout) - the thing flipping through seeds is for.
             const ChasmLayout& l = g->layout;
+            int ends[4] = {};
+            for (const GridRiverLine& r : l.rivers){
+                ends[std::max(0,std::min(3,r.end))]++;
+            }
             ImGui::Text("chasm: %i rift%s, %i crack%s; balconies %i east, %i west; islands: %i shards, "
-                        "%i columns, %i ledges; %i rivers",
+                        "%i columns, %i ledges",
                         l.rifts,l.rifts == 1 ? "" : "s",(int)l.cracks.size(),l.cracks.size() == 1 ? "" : "s",l.balconies[1],l.balconies[0],
-                        l.count[GRID_FEATURE_SHARD],l.count[GRID_FEATURE_COLUMN],l.count[GRID_FEATURE_LEDGE],
-                        (int)l.rivers.size());
+                        l.count[GRID_FEATURE_SHARD],l.count[GRID_FEATURE_COLUMN],l.count[GRID_FEATURE_LEDGE]);
+            ImGui::Text("water: %i rivers%s, %i branches, %i swallow-hole streams, %i springs",
+                        ends[GRID_RIVER_FALL] + ends[GRID_RIVER_EDGE],l.f_river_small ? " (small)" : "",ends[GRID_RIVER_JOIN],
+                        ends[GRID_RIVER_SINK],(int)l.springs.size());
             ImGui::Text("seed %u: %i coarse quads, %i fine quads, %i fine vertices",g->settings.seed,
                         (int)g->coarse.quads.size(),(int)g->fine.quads.size(),(int)g->fine.pos.size());
             ImGui::Text("%i of %i lattice triangles left unmerged",g->num_leftover_triangles,g->num_lattice_triangles);
@@ -2388,6 +2508,8 @@ void ApplicationChasm::RenderChasmPanel(){
         b = f_view_clouds;      if (ImGui::Checkbox("fog of war (V)",&b)){ f_view_clouds = b; }
         ImGui::SameLine();
         b = f_view_flat;        if (ImGui::Checkbox("flat",&b)){ f_view_flat = b; changed = true; }
+        ImGui::SameLine();
+        b = f_view_camp;        if (ImGui::Checkbox("camp spots",&b)){ f_view_camp = b; changed = true; }
         if (changed){
             view_version++;
         }
@@ -2690,6 +2812,7 @@ void ApplicationChasm::RegisterMCPTools(){
             layer("issues",f_view_issues);
             layer("pins",f_view_pins);
             layer("flat",f_view_flat);
+            layer("camp",f_view_camp);
             if (changed){
                 view_version++;
             }
@@ -2737,7 +2860,7 @@ void ApplicationChasm::RegisterMCPTools(){
             result["layers"] = json{{"fine",f_view_fine.load()},{"coarse",f_view_coarse.load()},
                                     {"valence",f_view_valence.load()},{"squareness",f_view_squareness.load()},
                                     {"issues",f_view_issues.load()},{"pins",f_view_pins.load()},
-                                    {"flat",f_view_flat.load()},{"terrain",f_view_terrain.load()},
+                                    {"flat",f_view_flat.load()},{"camp",f_view_camp.load()},{"terrain",f_view_terrain.load()},
                                     {"forest",f_view_forest.load()},{"water",f_view_water.load()},{"mist",f_view_mist.load()}};
 #endif
             //The screenshot is of a frame drawn after this returns, and PreRender rebuilds the
@@ -2873,13 +2996,16 @@ void ApplicationChasm::RegisterMCPTools(){
         "with play:true is a site (2 wood a cell), by debug there at once - empty either way; field_crop sets "
         "its STARTING crop (wheat, greens, beans), which its farmer then sows; field_next its NEXT crop for "
         "every sowing after (a crop, or auto: the highest yield); field_land gives it to `house` (a house's "
-        "building id, 0 automatic - docs/land_plan.md). The result names the building at the place.",
+        "building id, 0 automatic - docs/land_plan.md); field_priority puts a field still being built first "
+        "(`on`, default true; false puts it back) - a building's is chasm_economy site_priority. A field's "
+        "starting crop may be set while it is still a site. The result names the building at the place.",
         json{
             {"type","object"},
             {"properties",{
                 {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
-                                                  "build_erase","field_crop","field_next","field_land"}}}},
+                                                  "build_erase","field_crop","field_next","field_land","field_priority"}}}},
+                {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue"}}},
                 {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
@@ -2906,8 +3032,7 @@ void ApplicationChasm::RegisterMCPTools(){
             if (op <= ZONE_OP_NONE){
                 return json{{"error","unknown op " + name}};
             }
-            bool f_field = (op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP
-                            || op == ZONE_OP_FIELD_NEXT || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND);
+            bool f_field = ZoneOpOnCell(op);
             int index = -1;
             if (args.contains("x") && args.contains("z")){
                 GridPick pick = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
@@ -2949,6 +3074,8 @@ void ApplicationChasm::RegisterMCPTools(){
                 cmd.value[1] = (float)crop;
             }else if (op == ZONE_OP_FIELD_LAND){
                 cmd.value[1] = (float)args.value("house",0u);
+            }else if (op == ZONE_OP_FIELD_PRIORITY){
+                cmd.value[1] = args.value("on",true) ? 1.0f : 0.0f;
             }
             //A tool's strokes in a range of their own, clear of the mouse's (UpdatePaint).
             if (args.contains("stroke")){
@@ -3147,6 +3274,68 @@ void ApplicationChasm::RegisterMCPTools(){
             return json{{"error","chasm_check is debug-only; this is a release build"}};
         });
 #endif
+
+    MCPServer::Get()->RegisterTool("chasm_camp",
+        "Where a new colony camps on the current map, and why (Zones.cpp, WHERE A NEW COLONY CAMPS): every spot "
+        "looked at along the rivers, best first, with its score and the parts of it - flat (the share of its "
+        "survey a house may stand on, and a field lie on), trees (1 at half the survey's plots wooded), middle "
+        "(level with the map's middle) - or why it was refused. chasm_view's 'camp' layer draws them.",
+        json{
+            {"type","object"},
+            {"properties",{
+                {"limit",{{"type","integer"},{"description","spots to list (default 20)"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            std::shared_ptr<const ChasmWorld> w = GetWorld();
+            if (!w){
+                return json{{"error","no world"}};
+            }
+            auto t0 = std::chrono::steady_clock::now();
+            std::vector<ZoneCampSpot> spots;
+            ZoneCampSpots(*w,EconomySettlerCount(),spots);
+            float ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+            //Best first, the refused after: the order ZoneStartCampPlot picks in.
+            std::stable_sort(spots.begin(),spots.end(),[](const ZoneCampSpot& a, const ZoneCampSpot& b){
+                if ((a.refused == NULL) != (b.refused == NULL)){
+                    return a.refused == NULL;
+                }
+                return a.score > b.score;
+            });
+            auto round2 = [](float f){ return std::round((double)f * 100.0) / 100.0; };
+            int passed = 0;
+            for (const ZoneCampSpot& s : spots){
+                passed += s.refused ? 0 : 1;
+            }
+            json list = json::array();
+            int limit = args.value("limit",20);
+            for (int i = 0; i < (int)spots.size() && i < limit; i++){
+                const ZoneCampSpot& s = spots[i];
+                json j{{"plot",s.plot},{"x",round2(w->grid->fine.pos[s.plot].x)},{"z",round2(w->grid->fine.pos[s.plot].y)}};
+                if (s.refused){
+                    j["refused"] = s.refused;
+                }
+                if (s.f_fallback){
+                    j["fallback"] = true;   //no spot by a river passed
+                }
+                if (s.score > 0.0f){
+                    j["score"] = round2(s.score);
+                    j["flat"] = round2(s.flat);
+                    j["trees"] = round2(s.trees);
+                    j["middle"] = round2(s.middle);
+                    j["house_share"] = round2(s.house_share);
+                    j["field_share"] = round2(s.field_share);
+                    j["tree_share"] = round2(s.tree_share);
+                }
+                list.push_back(j);
+            }
+            json result{{"looked_at",(int)spots.size()},{"passed",passed},{"ms",round2(ms)},{"spots",list}};
+            int camp = ZoneStartCampPlot(*w,EconomySettlerCount());
+            if (camp >= 0){
+                result["camp"] = json{{"plot",camp},{"x",round2(w->grid->fine.pos[camp].x)},{"z",round2(w->grid->fine.pos[camp].y)}};
+            }
+            return result;
+        });
     RegisterRoadTools();
     RegisterTimeTools();
     RegisterEconomyTools();

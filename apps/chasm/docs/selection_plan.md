@@ -73,7 +73,8 @@ date), hooks in `ApplicationChasm.cpp` (UpdatePick, UpdatePickView, PreRender) a
   not deselect.
 - **The overlay takes the mouse** where it draws: DrawOverlay records rectangles (the build bar, the card,
   its close mark, a store's chips) and UpdatePick tests the cursor against them before it picks or
-  paints. The build bar's tools can now be CLICKED as well as keyed.
+  paints. The build bar's tools can now be CLICKED as well as keyed. (The bar is a grid in the bottom right
+  corner since 2026-10-08 - below.)
 - **Outlines**: four outline-only objects - the selected building, the hovered one, and a selected
   person's house and workplace - each rebuilt alone (the zones with every other building taken out, so
   it is drawn as standing by itself; a field is a slab over its cells, since its crops would outline
@@ -84,16 +85,38 @@ date), hooks in `ApplicationChasm.cpp` (UpdatePick, UpdatePickView, PreRender) a
   icon a water drop while he is short of water (`needs_plan.md`). Only on screen.
 - **Pins are the badges**: each person related to the selection (and the selected person) has his badge
   ringed and stemmed in the selection's colour - orange selected, amber related - kept on screen at its
-  edge, clear of the build bar, and drawn last so it stays on top. A selection adds colour; nothing moves.
+  edge, clear of the bottom edge the HUD's panels stand on, and drawn last so it stays on top. A selection adds colour; nothing moves.
 - **The card** (right side): as listed above. A store's chips send a recorded `store_allow` - a PLAY
   command, from play mode - and are dimmed and fixed while the store is next to a workplace.
 - **Tool**: `chasm_select` (select a building at x,z or by id, or a person by id; clear; status - the
   selection, the hover, the card as lines, who is pinned).
 
+### The HUD's corners and the neediest (the user's, 2026-10-08)
+
+The bar along the bottom had grown too full. Now:
+
+- **The tools are a grid in the bottom right corner** (`DrawBuildBar`): three columns, a row a group - HOUSE,
+  GARDEN, LOT; STORE, WATER, WOODCUTTER; FIELD, BUILDERS, CAMP; ROAD, WALL, BRIDGE; WINCH, ERASE - each cell
+  its key and name, the one in hand lit, a click takes it up as before. BUILDING / WOOD stands over the grid
+  at its right edge; why a placement was refused, at the bottom in the middle.
+- **The jobs overview sits in the bottom left corner** (`builders_plan.md`), lifted over the grid only in a
+  window too narrow for both.
+- **MOST IN NEED** (`DrawNeediest`), over the jobs: the five people with the least health, the dry first
+  where it is even. Each row his badge, his name, what he is short of - DRY red, THIRSTY blue, HUNGRY amber
+  (below the water and health he goes for them at, `NEEDS_PRESSING_*`) - and his health in the badge ring's
+  colour. A click on a row SELECTS him (`OVERLAY_HIT_PERSON`) and the view glides to him at the zoom it
+  has (`cam_seek_person`; the camp's glide still sets its own zoom). The selected one's row is lit orange.
+- **`chasm_select op:press px,py`**: a left click at a pixel as the player's, taken on the next pass (paused
+  too) - on the HUD it presses what is drawn there, on the scene it selects. `pressed` says what the HUD had
+  there and the tool in hand after. Checked with it 2026-10-08: a tool cell takes the tool up and a second
+  press puts it down; a row selects its person and the view went 70 units to him in 3 s, distance kept;
+  pause and speed (2x, 3x, back to 1x) - so the calendar's buttons are now checked by a click too.
+
 **Open:**
-- The chips and the right click were checked by reading the code, not by a click (MCP has no mouse here).
+- The right click was checked by reading the code, not by a click (`press` is the left button).
 - The mouse wheel over the card still zooms the camera.
 - A family at home is only on the card - indoors, they have no pin.
+- A pin kept at the bottom edge can sit under a corner panel; the badges draw over the panels.
 
 ## Who builds what
 

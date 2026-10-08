@@ -86,3 +86,60 @@ cells'), `ChasmSave.cpp`, `Economy.*` (`EconomyField` sown / yield / last, `crop
   as four corner stakes and a cord on the grass; built and empty, tilled earth inside its fence.
 
 **Not run**: the replay test (seed 12 gets new ones - the user's).
+
+## The frost (the user's, 2026-10-08)
+
+Until now winter only paused a field: a crop caught by it finished in spring, and a farmer sowed again the day
+after an autumn harvest, the field waiting through winter already sown. Now (`Economy.h`, THE FROST):
+
+- **Nothing is sown in winter or under the snow.**
+- **Winter's first day takes whatever still grows** - the field empty again, its soil as it was (the crop
+  before still its `last`, so a frost does not count as a harvest for the rotation), and the loss kept on the
+  field (`EconomyField::frost`, saved as an eighth number, hashed) for its card until it is sown again.
+- **A farmer sows only what ripens before the frost**, at his pace, in the growing weather the field has left
+  (`EconomyGrowingTicksLeft`: to winter, or to the snow where it comes first - the north over autumn's last
+  days). **AUTO** takes the highest yield of the crops still in time; a crop the player chose that is no longer
+  in time waits for spring. So late in the year a field goes to greens, then lies empty.
+- **The card says why**: "The frost will take it first - N days short" (red) on a crop that will not make it
+  (its farmer slower, or the field fallow a while); "The frost took its beans"; "nothing is sown in winter";
+  "under the snow until spring"; "too late in the year for beans to ripen: sown in spring"; and, for a crop that
+  cannot ripen there at its farmer's pace even from the thaw (`EconomyGrowingSeasonTicks`), "never ripens here
+  before the frost - choose another crop". AUTO's chip names what it would sow now.
+- `chasm_economy`'s fields carry `frost`: `growing_days_left`, `pace`, `sows_now`, `took`, and for a crop
+  growing `ripens_in_time`.
+
+**Checked** (seed 12, debug, a copied exe, the calendar moved with `chasm_time set_day`): beans sown on spring 1,
+the calendar jumped to autumn 10 - "18 days short" - and on winter 1 the field was empty, "The frost took its
+beans", nothing sown through winter; in year 2 nothing until the snow left the field (spring 3); greens still
+sown on autumn 5 (6 days left, 5.7 needed at pace 1.4) and not on autumn 9. AUTO after greens: wheat on summer
+8 (12.98 days left, 12.86 needed), greens from summer 9, nothing from autumn 6.
+
+**The season it leaves**: by the camp on seed 12 the snow leaves on spring 3, 28 growing days a year (30 in the
+first, which has no snow). At the first tuning (`crop_days` wheat 18, greens 8, beans 25) beans fitted only when
+sown in the first few days after the thaw at an average farmer's pace, and never for husbandry 3 or less - the
+user could not get them through at all. **Retuned the same day (the user's): wheat 15, beans 20, greens 8.** At
+an average farmer's pace (1.0) in that 28-day season: greens three times; wheat once - twice from husbandry 6
+(pace 1.08: 27.8 days for two); beans once, sowable until about eight days after the thaw, and for every farmer
+but husbandry 1 (pace 0.68: 29.4 days). Checked on seed 12 (its camp's farmer is husbandry 10, pace 1.4): in
+year 2 beans could be sown until summer 5, wheat until summer 9; beans sown on spring 3, the day the snow left,
+were harvested on summer 7 (6 beans from one cell), and AUTO sowed wheat after them. (A first run lost its
+farmer before the harvest - the test colony, with no collector, died of thirst on day 55 - so the needs were
+topped up with `chasm_economy set_needs` for the second.)
+
+## A field site: Build first, and its crop before it stands (the user's, 2026-10-08)
+
+- **Build first** on a field site's card, as on a building's (`construction_plan.md`, "Which site goes first"):
+  `ZONE_OP_FIELD_PRIORITY` (op 18, a recorded zone command on any cell of it - a field has no plots for
+  `ZONE_OP_SITE_PRIORITY`). `Zones::SettlePriorities` counts a field open while any cell is still staked out,
+  and runs after `FIELD_RAISE` and `FIELD_ERASE` too, so the flag drops when the field is built. Its first
+  stake flies the red pennant (`CropMesh.cpp`, `FirstSiteCell`). The economy needed nothing: a field site's
+  errands were already keyed by its building id. `ZoneOpOnCell` (Zones.h) now says which ops name a cell,
+  where two lists had to be kept in step. Also `chasm_paint op:field_priority` (`on`), `chasm_economy
+  site_priority` at a field's x,z, and the panel's checkbox.
+- **Start with** on the site card: the starting crop chosen while it is still being built, so its farmer sows
+  it the day it stands - offered as long as the field was never sown (a sown field growing by more cells keeps
+  its next crop). `ZONE_OP_FIELD_CROP` always took a field site; only the card did not offer it.
+- **Checked** (seed 12, debug, a copied exe, clicks by `chasm_select op:press`): both chips pressed on a site's
+  card - "Build first" on, Beans lit; built, its card said "its farmer is to sow beans, at 100%" and Build
+  first had gone. A/B with eight house sites placed first and the field furthest: in the queue nobody
+  carried for it in 900 ticks; put first, two carried for it from the first step.

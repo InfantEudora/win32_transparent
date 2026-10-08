@@ -379,3 +379,18 @@ of what the save and the recording put by the camp, in their order, so none is i
 - The economy fells a little wider than the view hides, so a stump can stand just off a laid road.
 - ~~No priorities between road work and anything else: wood carrying always comes first.~~ Done with step 3
   phase 4: roads and walls are in the one ranking, by their line's place ("Queued with everything else").
+
+### Fixed: a road held up by a tree nobody could see (2026-10-08)
+
+Found by the user in play (`recordings/chasm_roadwork.rec`, seed 12): three plots of two roads past a
+woodcutter's hut were never laid, with three people idle. All three waited on ONE tree - standing in the
+woodcutter's fenced lot, within the felling verge of their edges. The view had stopped drawing it (a prop on a
+garden or lot gives way, `PropHidden`), and nobody walks into a lot, so no route reached it: every idle person
+tried it, failed, and stayed home - for good, since a plot is only laid with nothing of its way standing.
+
+Now a tree COVERED by the painting - a building on its plot, a garden or lot on it, a field over its cell
+(`EconomyPropCovered`, the view's rule less the road's) - is as good as gone: `RoadTrees` leaves it out, and so
+does the woodcutter's search (`WoodNear`), which skipped those under buildings and fields but not in a garden
+or lot. Replayed: the three set out on the first tick and all three plots were laid 14 s later. `chasm_economy`'s
+`roads` now lists `planned_plots` - each still to lay, where it is, its line, and the trees in its way with
+where they stand - so the next road that will not be laid can be looked at without sending anyone.

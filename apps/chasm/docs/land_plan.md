@@ -154,3 +154,31 @@ the camp employ farmers, a field nobody), `ApplicationChasm.*` (the hash, `chasm
 
 **Not run**: the replay test - seed 12's get remade anyway (the user's); its saves are from before land, and
 load as such.
+
+## Fair shares (2026-10-08, the user's)
+
+Seen in play: one house well stocked, the next with nothing. Home first let the family that owns the land keep
+its fields' food - the farmer took it home, the family fetched from its own fields - while every other house
+could only fetch from the stores and the camp. Every house had the same ceiling (a day past
+`ECONOMY_HOME_DAYS`); what differed was who could reach the food.
+
+Proposed and agreed ("the farm houses will get some more food for themselves this way"):
+
+- **Food at home in days a head**, as the bars count it (a unit at what it is worth), for every home alike.
+- **The colony's average**: all the food in homes - houses, and a camp's supplies for those living in it - over
+  everyone living in them (`Economy::FairShare`). A hungry camp pulls it down too.
+- **A house keeps its land's food only while it is less than `ECONOMY_FAIR_DAYS` (1) a head ahead of that**
+  (`HomeAhead`), and still only while it is short, as before; a load from its own field brings it up to that
+  and no further (`TakeHome`). Otherwise the farmer carries the harvest to a store, where the other houses fetch
+  it as they always have; with no store, it stays on the field, where anyone with a pressing need eats.
+- **The same for fetching from its own fields**: a house ahead fetches from storage like any other.
+- **Not held to it**: fetching from a store or the camp - that food is everyone's already.
+- The camp's land still goes into the camp's supplies whole: they are the colony's.
+- **Measured** (seed 12, debug, a copied exe; a farm house with its own fields, a house with none, the Smits in
+  the camp; water kept up, food left to run). Five fields and a store: both houses stayed about level, two to
+  three days a head; a harvest went to the store while the farm house was not short, and the landless house
+  fetched it from there. Ten fields and no store, so the farm out-grew the rest: of 18 trips home from the
+  land, none set off with the house ahead, and in the lean days (12-14) the farm house held 1.1-1.5 days a head
+  - the average and a day - where the old ceiling alone would have let it fill to three; what it could not
+  take stayed on the fields for anyone with a pressing need. Both colonies starved in the end (five or ten
+  one-cell fields do not feed ten - needs_plan.md's sums); the shares held to the last.

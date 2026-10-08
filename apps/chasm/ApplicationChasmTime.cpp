@@ -295,10 +295,12 @@ void ApplicationChasm::DrawOverlay(void){
         }
     }
 
-    //Play mode's own UI: the build bar, the jobs, and the selection's card and pins (selection_plan.md).
+    //Play mode's own UI: the tools, the jobs and over them the neediest, and the selection's card and pins
+    //(selection_plan.md).
     if (PlayMode()){
         DrawBuildBar(s);
-        DrawJobsOverview(s);
+        float jobs_top = DrawJobsOverview(s);
+        DrawNeediest(s,jobs_top - 8.0f * s);
         DrawSelectionOverlay(s);
     }
     {
@@ -308,60 +310,63 @@ void ApplicationChasm::DrawOverlay(void){
 }
 
 /*
-    RENDER THREAD, from DrawOverlay in play mode (construction_plan.md): with no panels, a bar along the
-    bottom with each tool and its key, the one in hand lit - a click on one takes it up - and, while
-    anything is being built, how far along it is.
+    RENDER THREAD, from DrawOverlay in play mode (construction_plan.md): with no panels, the tools in a
+    grid in the bottom right corner - the user's, 2026-10-08: a bar along the bottom had grown too full -
+    each with its key, the one in hand lit, and a click on one takes it up. Over the grid, while anything
+    is being built, how far along it is; at the bottom in the middle, why a placement was just refused.
+
+    A row a group: a house and the ground round it; where goods are kept and got; the field, the builders
+    and the camp; the lines; the winch, and ERASE last.
 */
 void ApplicationChasm::DrawBuildBar(float s){
     struct BarTool{ const char* key; const char* name; int tool; };
     static const BarTool bar[] = {
-        {"1","HOUSE",CHASM_TOOL_HOUSE},{"8","STORE",CHASM_TOOL_STORE},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
-        {"0","WATER",CHASM_TOOL_WATER},{"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},
-        {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},
-        {"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
-        {"C","CAMP",CHASM_TOOL_CAMP},{"J","BRIDGE",CHASM_TOOL_BRIDGE},{"H","WINCH",CHASM_TOOL_WINCH},
-        {"3","ERASE",CHASM_TOOL_ERASE}};
+        {"1","HOUSE",CHASM_TOOL_HOUSE},{"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
+        {"8","STORE",CHASM_TOOL_STORE},{"0","WATER",CHASM_TOOL_WATER},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
+        {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
+        {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
+        {"H","WINCH",CHASM_TOOL_WINCH},{"3","ERASE",CHASM_TOOL_ERASE}};
     const int count = (int)(sizeof(bar) / sizeof(bar[0]));
+    const int columns = 3;
+    const int rows = (count + columns - 1) / columns;
     const float size = 15.0f * s;
     const float key_size = 12.0f * s;
-    const float bar_gap = 18.0f * s;
-    const float side = 14.0f * s;
-    char labels[count][24];
-    float widths[count];
-    float total = side * 2.0f + bar_gap * (count - 1);
+    const float key_gap = 6.0f * s;         //from a key to its name
+    const float inner = 9.0f * s;           //a cell's text from its sides
+    const float cell_h = 28.0f * s;
+    const float gap = 4.0f * s;             //between cells
+    const float pad = 8.0f * s;             //the panel round them
+    //Every cell as wide as the widest, so the columns line up.
+    float cell_w = 0.0f;
     for (int i = 0; i < count; i++){
-        snprintf(labels[i],sizeof(labels[i]),"%s",bar[i].name);
-        widths[i] = overlay->MeasureText(labels[i],size).x + overlay->MeasureText(bar[i].key,key_size).x + 6.0f * s;
-        total += widths[i];
+        float w = overlay->MeasureText(bar[i].key,key_size).x + key_gap + overlay->MeasureText(bar[i].name,size).x;
+        cell_w = std::max(cell_w,w + inner * 2.0f);
     }
     float cx = (float)main_window->width * 0.5f;
     float bottom = (float)main_window->height - 14.0f * s;
-    vec2 q0(cx - total * 0.5f,bottom - 32.0f * s);
-    vec2 q1(cx + total * 0.5f,bottom);
-    overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
+    vec2 q1((float)main_window->width - 16.0f * s,bottom);
+    vec2 q0(q1.x - pad * 2.0f - cell_w * columns - gap * (columns - 1),bottom - pad * 2.0f - cell_h * rows - gap * (rows - 1));
+    overlay->AddRect(q0,q1,10.0f * s,HUD_PANEL);
     overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
     build_bar_min = q0;
     build_bar_max = q1;
     int tool = paint_tool.load();
-    float x = q0.x + side;
     for (int i = 0; i < count; i++){
+        vec2 c0(q0.x + pad + (i % columns) * (cell_w + gap),q0.y + pad + (i / columns) * (cell_h + gap));
+        vec2 c1(c0.x + cell_w,c0.y + cell_h);
         bool f_on = (tool == bar[i].tool);
+        overlay->AddRect(c0,c1,6.0f * s,f_on ? UIColor(236,202,92,70) : UIColor(255,255,255,14));
+        float base = c0.y + 19.0f * s;
+        overlay->AddText(bar[i].key,vec2(c0.x + inner,base - 1.0f * s),key_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
         float key_w = overlay->MeasureText(bar[i].key,key_size).x;
-        if (f_on){
-            overlay->AddRect(vec2(x - 6.0f * s,q0.y + 4.0f * s),vec2(x + widths[i] + 6.0f * s,q1.y - 4.0f * s),6.0f * s,
-                             UIColor(236,202,92,70));
-        }
-        overlay->AddText(bar[i].key,vec2(x,q0.y + 21.0f * s),key_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
-        overlay->AddText(labels[i],vec2(x + key_w + 6.0f * s,q0.y + 22.0f * s),size,f_on ? HUD_TEXT : Faded(HUD_TEXT,170),
+        overlay->AddText(bar[i].name,vec2(c0.x + inner + key_w + key_gap,base),size,f_on ? HUD_TEXT : Faded(HUD_TEXT,170),
                          UI_ALIGN_LEFT);
         //A click on a tool takes it up, as its key does (selection_plan.md).
-        overlay_hits_drawing.push_back(OverlayHit{vec2(x - bar_gap * 0.5f,q0.y),vec2(x + widths[i] + bar_gap * 0.5f,q1.y),
-                                                  OVERLAY_HIT_TOOL,bar[i].tool});
-        x += widths[i] + bar_gap;
+        overlay_hits_drawing.push_back(OverlayHit{c0,c1,OVERLAY_HIT_TOOL,bar[i].tool});
     }
     /*
-        Why the last placement was refused, for a moment above the bar - play mode has no panel to say it
-        (under the clouds, too close to water, too wide to bridge).
+        Why the last placement was refused, for a moment at the bottom in the middle - play mode has no panel
+        to say it (under the clouds, too close to water, too wide to bridge).
     */
     {
         auto now = std::chrono::steady_clock::now();
@@ -381,8 +386,9 @@ void ApplicationChasm::DrawBuildBar(float s){
             std::transform(text.begin(),text.end(),text.begin(),::toupper);
             vec2 m = overlay->MeasureText(text.c_str(),size);
             uint8_t alpha = (uint8_t)(255.0f * std::min(1.0f,(3.0f - age) * 2.0f));
-            vec2 r0(cx - m.x * 0.5f - side,q0.y - 76.0f * s);
-            vec2 r1(cx + m.x * 0.5f + side,q0.y - 46.0f * s);
+            const float side = 14.0f * s;
+            vec2 r0(cx - m.x * 0.5f - side,bottom - 30.0f * s);
+            vec2 r1(cx + m.x * 0.5f + side,bottom);
             overlay->AddRect(r0,r1,9.0f * s,HudFaded(HUD_PANEL,(uint8_t)(alpha * 0.7f)));
             overlay->AddText(text.c_str(),vec2(cx,r0.y + 21.0f * s),size,HudFaded(UIColor(236,140,110),alpha),UI_ALIGN_CENTER);
         }
@@ -432,28 +438,32 @@ void ApplicationChasm::DrawBuildBar(float s){
             }
         }
         if (sites > 0){
+            //Over the grid, at its right edge.
             char buf2[64];
             snprintf(buf2,sizeof(buf2),"BUILDING %i  -  WOOD %i/%i",sites,brought,needed);
             vec2 m = overlay->MeasureText(buf2,size);
-            vec2 r0(cx - m.x * 0.5f - side,q0.y - 36.0f * s);
-            vec2 r1(cx + m.x * 0.5f + side,q0.y - 6.0f * s);
+            const float side = 14.0f * s;
+            vec2 r1(q1.x,q0.y - 6.0f * s);
+            vec2 r0(r1.x - m.x - side * 2.0f,r1.y - 30.0f * s);
             overlay->AddRect(r0,r1,9.0f * s,HUD_PANEL);
-            overlay->AddText(buf2,vec2(cx,r0.y + 21.0f * s),size,UIColor(206,160,110),UI_ALIGN_CENTER);
+            overlay->AddText(buf2,vec2((r0.x + r1.x) * 0.5f,r0.y + 21.0f * s),size,UIColor(206,160,110),UI_ALIGN_CENTER);
         }
     }
 }
 
 /*
-    RENDER THREAD, from DrawOverlay in play mode (builders_plan.md): bottom left, how many work at each job
-    against its places - amber where a place stands empty, which with too few people is the newest
-    workplace's - and the jobless, who carry wood and build too. Level with the build bar; above it when the
-    window is too narrow for the two side by side. Only what has places or people.
+    RENDER THREAD, from DrawOverlay in play mode (builders_plan.md): in the bottom left corner, how many work
+    at each job against its places - amber where a place stands empty, which with too few people is the
+    newest workplace's - and the jobless, who carry wood and build too. Above the tools' grid only when the
+    window is too narrow for the two side by side. Only what has places or people. Returns its top: what
+    stacks over it (DrawNeediest) goes above that.
 */
-void ApplicationChasm::DrawJobsOverview(float s){
+float ApplicationChasm::DrawJobsOverview(float s){
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
+    float corner = (float)main_window->height - 14.0f * s;
     if (!e || !z || e->world != z->world || e->workers.empty()){
-        return;
+        return corner;
     }
     EconomyJobCount counts[WORKER_JOB_COUNT];
     int jobless = 0;
@@ -479,7 +489,7 @@ void ApplicationChasm::DrawJobsOverview(float s){
     float w = pad * 2.0f + label_w + overlay->MeasureText("00 / 00",size).x + 14.0f * s;
     float h = pad * 0.6f + line_h * (float)rows.size() + pad * 0.4f;
     float x0 = 16.0f * s;
-    float bottom = (float)main_window->height - 14.0f * s;
+    float bottom = corner;
     if (x0 + w > build_bar_min.x - 10.0f * s){
         bottom = build_bar_min.y - 8.0f * s;
     }
@@ -501,6 +511,7 @@ void ApplicationChasm::DrawJobsOverview(float s){
         }
         overlay->AddText(value,vec2(p1.x - pad,y - 5.0f * s),size,colour,UI_ALIGN_RIGHT);
     }
+    return p0.y;
 }
 
 //--- The panel ------------------------------------------------------------------------------------

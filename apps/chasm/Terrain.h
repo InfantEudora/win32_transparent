@@ -123,9 +123,17 @@ extern const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS];
 #define SNOW_LINE_WAVELENGTH    70.0f
 
 struct TerrainRiver{
-    std::vector<vec2> points;   //world, smoothed, from the source; the last runs past the rim
+    std::vector<vec2> points;   //world, smoothed, from the source; how it ends is `end` (Grid.h)
     float width = 6.0f;         //across the water, world units: the layout's, the river's usual width
     float length = 0.0f;        //along `points`
+    int end = GRID_RIVER_FALL;
+    int joins = -1;             //a branch's river
+    /*
+        Where `points` starts, along the water: 0 for a river, and for a BRANCH its river's distance at
+        the junction less the branch's own length - so "along" runs on unbroken from a branch into its
+        river, and the water's streaks meet in step at the confluence (RiverCoords).
+    */
+    float along0 = 0.0f;
     /*
         Half the water's width at each point (2026-10-06): the usual width wandering a little either
         way along the course, and swelling into a LAKE or two on the longer rivers - only where the
@@ -147,6 +155,23 @@ struct TerrainFall{
     vec2 across;                //unit, along the rim
     float width = 0.0f;
     float along = 0.0f;         //distance from the river's source to the lip
+};
+
+/*
+    A SPRING (rivers_plan.md, GridSpring): a mouth in the wall under `lip`, one stratum tall, `band`
+    strata down - the rim plots whose walls it is in are marked in Terrain::mouth, which the terrain
+    mesh sets back and darkens - and its water, a fall's sheet starting on the mouth's floor.
+*/
+#define TERRAIN_MOUTH_DEPTH     2.0f    //how far a mouth's back sits behind the wall's face
+struct TerrainSpring{
+    vec2 lip;
+    vec2 out;
+    vec2 across;
+    float width = 3.0f;
+    int band = 1;
+    int stream = -1;
+    float floor_y = 0.0f;       //the mouth's floor: the foot of its stratum, where the water comes out
+    int plots = 0;              //rim plots its mouth is in; 0 - no wall there - and it is not drawn
 };
 
 class Terrain{
@@ -189,13 +214,18 @@ public:
 
     std::vector<TerrainRiver> rivers;
     std::vector<TerrainFall> falls;
+    std::vector<TerrainSpring> springs;
+    std::vector<uint8_t> mouth;     //per fine vertex: the stratum a spring's mouth is in, in its wall; 0 none
     std::vector<uint8_t> wet;       //per fine vertex: too near a river to build or grow on
     //How far a river's channel lowers the ground at p - 0 away from every river.
     float RiverDip(const vec2& p) const;
     /*
-        The river nearest p: which one, how far along it from its source, and how far across from
-        its centre line as a share of half its width (negative on its left). False if none is within
-        `reach` of p. For laying the water out - a few thousand calls, not one per ground vertex.
+        The river whose water p is deepest in - or, outside every river's water, nearest the edge of -
+        which one, how far along the water (TerrainRiver::along0), and how far across from its centre
+        line as a share of half its width (negative on its left). By the water's edge rather than the
+        centre line, so at a confluence a point in the river's water is the river's even beside the
+        branch's line. False if no water is within `reach` of p. For laying the water out - a few
+        thousand calls, not one per ground vertex.
     */
     bool RiverCoords(const vec2& p, float reach, int& river, float& along, float& across) const;
     //How far p is past the nearest river's water edge (negative in the water; large far from every river).
@@ -220,6 +250,8 @@ private:
     std::vector<float> edge;
     float EdgeDistance(const vec2& p) const;
     void BuildRivers(const Grid& g, const std::vector<GridLine>& features);
+    //The springs' mouths in the walls: after the heights, which say where the walls are.
+    void BuildMouths(const Grid& g);
     //The heights in steps, then the kinds they make (Terrain.h, THE TERRAIN). After the rivers.
     void BuildHeights(const Grid& g, const std::vector<GridLine>& features);
     int FringeSteps(const Grid& g, const vec2& p, uint32_t salt) const;
