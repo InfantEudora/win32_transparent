@@ -173,7 +173,10 @@ plots and fields are grouped by their coarse parent for the look only.
 ## 6. Size and drawing
 
 **The size: about 100,000 fine cells**, a map of roughly 3x3 screens at maximum zoom-out (decided
-2026-10-04; it changes only if playtime asks for it). Where that comes from: in A Little Age at
+2026-10-04; it changes only if playtime asks for it). **While testing the default is 50,000** (the
+user, 2026-10-08: plenty for now) - about 540 x 300 instead of 768 x 430; `GridSettings` and
+`chasm_generate target_fine_cells` still make the full size. A smaller map fits fewer rivers: 5 of
+seeds 1-30 have none at 50k (`people_plan.md`, the camp spot). Where that comes from: in A Little Age at
 maximum zoom-out a house is roughly 15 pixels across, and if a fine cell is about one house, a
 1920x1080 screen holds roughly 128x72, about 9,000-11,000 fine cells. That is small for generation;
 the number that matters for drawing is the per-screen one, because of the single level of detail.
@@ -301,6 +304,11 @@ cut by the quad's centre and the two edge midpoints at that corner.
   fine cell (area, squareness) and coarse cell (area). `chasm_pick` takes a world x/z or a window
   pixel px/py - the pixel goes through the camera exactly as the mouse does - and `select`.
 - **Both are view state, not simulation**: painting (step 5) will be a command naming a plot.
+- **Watertight** (fixed 2026-10-08): a point exactly on the edge two fine quads share was in NEITHER -
+  each quad worked the edge's crossing out from its own end, and the two roundings parted. The economy
+  picks too (where a walker stands, `RouteTo`), and a villager stopped on such a point by a re-plan had no
+  plot, so no way anywhere: he stood there until he died of thirst (the user's woutveen recording). Each
+  edge is now worked out from its lower end, so the quads either side get the same crossing to the bit.
 - **Checked:** world and pixel picks agree; four- and six-sided plots and an outline half-plot
   outline correctly; hover confirmed by hand with the mouse.
 

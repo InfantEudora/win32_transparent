@@ -20,7 +20,18 @@ json ChasmSaveToJson(const ChasmSave& s){
         json jb{{"id",b.id},{"kind",ZoneKindName(b.kind)}};
         if (b.kind == ZONE_KIND_FIELD){
             jb["cells"] = b.cells;
-            jb["crop"] = ZoneCropName(b.crop);
+            jb["crop"] = ZoneCropName(b.crop);          //its starting crop - "none" until chosen
+            if (b.next_crop != ZONE_CROP_AUTO){
+                jb["next"] = ZoneCropName(b.next_crop);
+            }
+            //The house the player gave it to (land_plan.md) - written only when given.
+            if (b.land_of){
+                jb["land"] = b.land_of;
+            }
+            //Which of them are built - written only while some are still a site (fields_plan.md).
+            if (std::find(b.cells_built.begin(),b.cells_built.end(),0) != b.cells_built.end()){
+                jb["cells_built"] = b.cells_built;
+            }
         }else{
             json plots = json::array();
             //[plot, storeys], and a third - what of it stands - on a construction site's plot.
@@ -50,9 +61,14 @@ json ChasmSaveToJson(const ChasmSave& s){
         }
         buildings.push_back(jb);
     }
+    //[plot, kind] - the kind with its site and gate flags - and a road's or wall's line as a third.
     json grounds = json::array();
-    for (const auto& gr : s.grounds){
-        grounds.push_back(json::array({gr.first,gr.second}));
+    for (const ZoneSavedGround& gr : s.grounds){
+        if (gr.line){
+            grounds.push_back(json::array({gr.plot,gr.kind,gr.line}));
+        }else{
+            grounds.push_back(json::array({gr.plot,gr.kind}));
+        }
     }
     /*
         The economy (Economy.h): stocks by building and good name, felled props, every worker on his
@@ -99,8 +115,9 @@ json ChasmSaveToJson(const ChasmSave& s){
             dead.push_back(json::array({d.id,d.family,d.f_female,d.age,d.tick,d.cause}));
         }
         json fields = json::array();
+        //[building, crop growing, grown, sown, yield %, last crop harvested (fields_plan.md), owner (land_plan.md)].
         for (const EconomyField& f : e.fields){
-            fields.push_back(json::array({f.building,f.crop,f.grown}));
+            fields.push_back(json::array({f.building,f.crop,f.grown,f.f_sown,f.yield,f.last,f.owner}));
         }
         json sites = json::array();
         for (const auto& st : e.sites){
@@ -164,6 +181,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         b.kind = ZoneKindByName(jb.value("kind",std::string()));
         int crop = ZoneCropByName(jb.value("crop",std::string("wheat")));
         b.crop = (crop < 0) ? ZONE_CROP_WHEAT : crop;
+        int next = ZoneCropByName(jb.value("next",std::string("auto")));
+        b.next_crop = (next < 0 || next == ZONE_CROP_NONE) ? ZONE_CROP_AUTO : next;
+        b.cells_built = jb.value("cells_built",std::vector<int>());
+        b.land_of = jb.value("land",0u);
         for (const json& pl : jb.value("plots",json::array())){
             b.plots.push_back(std::make_pair(pl[0].get<int>(),pl[1].get<int>()));
             b.standing.push_back((pl.size() >= 3) ? pl[2].get<int>() : pl[1].get<int>());
@@ -289,11 +310,22 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             fd.building = f[0].get<uint32_t>();
             fd.crop = f[1].get<int>();
             fd.grown = f[2].get<int>();
+            //A save from before sowing (fields_plan.md) holds only the first three: its crop was growing.
+            fd.f_sown = (f.size() > 3) ? f[3].get<bool>() : (fd.crop >= 0);
+            fd.yield = (f.size() > 4) ? f[4].get<int>() : 100;
+            fd.last = (f.size() > 5) ? f[5].get<int>() : -1;
+            //...and one from before land (land_plan.md) no owner: it gets one on its first tick.
+            fd.owner = (f.size() > 6) ? f[6].get<uint32_t>() : 0;
+            out.economy.f_before_land = out.economy.f_before_land || f.size() <= 6;
             out.economy.fields.push_back(fd);
         }
     }
     for (const json& gr : j.value("grounds",json::array())){
-        out.grounds.push_back(std::make_pair(gr[0].get<int>(),gr[1].get<int>()));
+        ZoneSavedGround g;
+        g.plot = gr[0].get<int>();
+        g.kind = gr[1].get<int>();
+        g.line = (gr.size() >= 3) ? gr[2].get<uint32_t>() : 0;
+        out.grounds.push_back(g);
     }
     //An older save's "walkers" - the debug walker, retired 2026-10-07 - are let go unread.
     return true;

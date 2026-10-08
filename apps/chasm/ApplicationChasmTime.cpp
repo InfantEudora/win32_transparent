@@ -134,10 +134,27 @@ uint32_t Faded(uint32_t c, uint8_t alpha){
 
 
 /*
-    RENDER THREAD. A panel at the top of the screen, in every build (the game's own UI, not a debug
-    panel): the season by name in its colour, the day, the year, and the speed - two bars when paused,
-    one chevron per multiple of normal speed otherwise. Under it the year as a bar of its four seasons,
-    the part gone bright, with a mark at today; and under the day a thin line filling as it passes.
+    PHYSICS THREAD, from UpdatePick: a press on the calendar's buttons. Pause is space's; speed goes round -
+    the next speed, back to normal after the fastest - and changes it whether or not the clock runs, so it
+    can be set before going again. Neither is recorded, like the keys.
+*/
+void ApplicationChasm::PressTimeButton(int action){
+    if (action == OVERLAY_HIT_PAUSE){
+        main_scene->PausePhysics(!main_scene->IsPhysicsPaused());
+    }else if (action == OVERLAY_HIT_SPEED){
+        SetSpeed((speed_index + 1) % SpeedCount());
+    }
+}
+
+/*
+    RENDER THREAD. The game's own HUD at the top of the screen, in every build (not a debug panel):
+      - TOP RIGHT, the calendar: the season by name in its colour, the day, the year, and two buttons -
+        PAUSE (two bars; lit, with the arrow that starts the clock again, while paused) and SPEED (one
+        chevron per multiple of normal; a press goes to the next). Under it the year as a bar of its four
+        seasons, the part gone bright, with a mark at today; and under the day a thin line filling as it passes.
+      - TOP MIDDLE, the colony's stores.
+    Both take the mouse where they are drawn (OverlayHit), in every mode: a press on them presses their
+    buttons, and paints or selects nothing beneath.
 
     Sized off the window's height, so it is the same part of the picture at any size.
 */
@@ -148,19 +165,27 @@ void ApplicationChasm::DrawOverlay(void){
     float s = std::max(0.5f,(float)main_window->height / 810.0f);
     CalendarDate d = CalendarDateOf(calendar_shown.load());
     bool f_paused = main_scene && main_scene->IsPhysicsPaused();
+    //What the mouse can press on the overlay is gathered while drawing and handed to UpdatePick at the end.
+    overlay_hits_drawing.clear();
 
-    float w = 440.0f * s;
+    float w = 400.0f * s;
     float h = 66.0f * s;
     float pad = 16.0f * s;
-    vec2 p0((float)main_window->width * 0.5f - w * 0.5f,12.0f * s);
+    vec2 p0((float)main_window->width - 16.0f * s - w,12.0f * s);
     vec2 p1(p0.x + w,p0.y + h);
     overlay->AddRect(p0,p1,12.0f * s,HUD_PANEL);
+    overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
 
-    //The line of text: season, day, year, and the speed in a box of its own at the right.
+    //The line of text: season, day, year - and at the right the two buttons, pause and then speed.
     float text = 20.0f * s;
     float baseline = p0.y + 29.0f * s;
-    float speed_w = 64.0f * s;
-    float right = p1.x - pad - speed_w;
+    const float button_w = 46.0f * s;
+    const float button_gap = 6.0f * s;
+    vec2 speed0(p1.x - pad - button_w,p0.y + 9.0f * s);
+    vec2 speed1(p1.x - pad,speed0.y + 30.0f * s);
+    vec2 pause0(speed0.x - button_gap - button_w,speed0.y);
+    vec2 pause1(speed0.x - button_gap,speed1.y);
+    float right = pause0.x - 4.0f * s;
     char buf[32];
     std::string season = CalendarSeasonName(d.season);
     std::transform(season.begin(),season.end(),season.begin(),::toupper);
@@ -177,21 +202,34 @@ void ApplicationChasm::DrawOverlay(void){
     overlay->AddRect(line0,line1,1.0f * s,Faded(HUD_TEXT,50));
     overlay->AddRect(line0,vec2(line0.x + (line1.x - line0.x) * d.day_fraction,line1.y),1.0f * s,Faded(HUD_TEXT,190));
 
-    //The speed: a box at the right, with two bars or one chevron per multiple.
-    vec2 b0(p1.x - pad - speed_w,p0.y + 9.0f * s);
-    vec2 b1(p1.x - pad,b0.y + 30.0f * s);
-    overlay->AddRect(b0,b1,7.0f * s,f_paused ? UIColor(196,92,72,210) : UIColor(255,255,255,28));
-    vec2 bc((b0.x + b1.x) * 0.5f,(b0.y + b1.y) * 0.5f);
+    //PAUSE: two bars to stop the clock; lit while it is stopped, with the arrow that starts it again.
+    overlay->AddRect(pause0,pause1,7.0f * s,f_paused ? UIColor(196,92,72,210) : UIColor(255,255,255,28));
+    vec2 pc((pause0.x + pause1.x) * 0.5f,(pause0.y + pause1.y) * 0.5f);
     if (f_paused){
+        //The arrow: a fan of upright lines, tall at the left, closing to a point at the right.
+        float aw = 12.0f * s;
+        float ah = 16.0f * s;
+        int n = std::max(4,(int)aw);
+        for (int i = 0; i <= n; i++){
+            float t = (float)i / n;
+            float x = pc.x - aw * 0.4f + aw * t;
+            float half = ah * 0.5f * (1.0f - t);
+            overlay->AddLine(vec2(x,pc.y - half),vec2(x,pc.y + half),aw / n + 0.6f,HUD_TEXT);
+        }
+    }else{
         float bar_w = 5.0f * s;
         float bar_h = 16.0f * s;
         float gap = 4.0f * s;
-        overlay->AddRect(vec2(bc.x - gap - bar_w,bc.y - bar_h * 0.5f),vec2(bc.x - gap,bc.y + bar_h * 0.5f),1.5f * s,HUD_TEXT);
-        overlay->AddRect(vec2(bc.x + gap,bc.y - bar_h * 0.5f),vec2(bc.x + gap + bar_w,bc.y + bar_h * 0.5f),1.5f * s,HUD_TEXT);
-    }else{
-        std::string chevrons((size_t)std::max(1,(int)SpeedFactor(speed_index)),'>');
-        overlay->AddText(chevrons.c_str(),vec2(bc.x,bc.y + 7.0f * s),text,HUD_TEXT,UI_ALIGN_CENTER);
+        overlay->AddRect(vec2(pc.x - gap - bar_w,pc.y - bar_h * 0.5f),vec2(pc.x - gap,pc.y + bar_h * 0.5f),1.5f * s,HUD_TEXT);
+        overlay->AddRect(vec2(pc.x + gap,pc.y - bar_h * 0.5f),vec2(pc.x + gap + bar_w,pc.y + bar_h * 0.5f),1.5f * s,HUD_TEXT);
     }
+    overlay_hits_drawing.push_back(OverlayHit{pause0,pause1,OVERLAY_HIT_PAUSE,0});
+    //SPEED: one chevron per multiple of normal - dim while paused, the speed it will go again at.
+    overlay->AddRect(speed0,speed1,7.0f * s,UIColor(255,255,255,28));
+    vec2 sc((speed0.x + speed1.x) * 0.5f,(speed0.y + speed1.y) * 0.5f);
+    std::string chevrons((size_t)std::max(1,(int)SpeedFactor(speed_index)),'>');
+    overlay->AddText(chevrons.c_str(),vec2(sc.x,sc.y + 7.0f * s),text,f_paused ? HUD_TEXT_DIM : HUD_TEXT,UI_ALIGN_CENTER);
+    overlay_hits_drawing.push_back(OverlayHit{speed0,speed1,OVERLAY_HIT_SPEED,0});
 
     //The year: four seasons end to end, what has gone bright, a mark at today.
     float y0 = p0.y + 46.0f * s;
@@ -212,8 +250,8 @@ void ApplicationChasm::DrawOverlay(void){
     overlay->AddRect(vec2(mark - 1.5f * s,y0 - 3.0f * s),vec2(mark + 1.5f * s,y1 + 3.0f * s),1.5f * s,HUD_MARK);
 
     /*
-        The colony's stores, under the date (docs/economy_plan.md): wood, food (the three crops summed)
-        and water - what lies in stores, not what waits at a workplace or is being carried.
+        The colony's stores, at the top in the middle (docs/economy_plan.md): wood, food (the three crops
+        summed) and water - what lies in stores, not what waits at a workplace or is being carried.
     */
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
@@ -225,7 +263,7 @@ void ApplicationChasm::DrawOverlay(void){
         for (const EconomyWorker& k : e->workers){
             housed += k.house ? 1 : 0;
         }
-        //Each item's text, measured, so the bar is as wide as what it says - centred under the date.
+        //Each item's text, measured, so the bar is as wide as what it says - centred on the screen.
         const uint32_t colours[4] = {UIColor(238,236,226),UIColor(206,160,110),UIColor(236,202,92),UIColor(140,190,240)};
         char items[4][32];
         if (housed < people){
@@ -245,10 +283,11 @@ void ApplicationChasm::DrawOverlay(void){
             widths[i] = overlay->MeasureText(items[i],size).x;
             total += widths[i];
         }
-        float cx = p0.x + w * 0.5f;
-        vec2 q0(cx - total * 0.5f,p1.y + 6.0f * s);
+        float cx = (float)main_window->width * 0.5f;
+        vec2 q0(cx - total * 0.5f,12.0f * s);
         vec2 q1(cx + total * 0.5f,q0.y + 30.0f * s);
         overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
+        overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
         float x = q0.x + side;
         for (int i = 0; i < 4; i++){
             overlay->AddText(items[i],vec2(x,q0.y + 21.0f * s),size,colours[i],UI_ALIGN_LEFT);
@@ -256,11 +295,7 @@ void ApplicationChasm::DrawOverlay(void){
         }
     }
 
-    /*
-        Play mode's own UI: the build bar, and the selection's card and pins (selection_plan.md).
-        What the mouse can press on it is gathered while drawing and handed to UpdatePick at the end.
-    */
-    overlay_hits_drawing.clear();
+    //Play mode's own UI: the build bar, the jobs, and the selection's card and pins (selection_plan.md).
     if (PlayMode()){
         DrawBuildBar(s);
         DrawJobsOverview(s);
@@ -282,7 +317,7 @@ void ApplicationChasm::DrawBuildBar(float s){
     static const BarTool bar[] = {
         {"1","HOUSE",CHASM_TOOL_HOUSE},{"8","STORE",CHASM_TOOL_STORE},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
         {"0","WATER",CHASM_TOOL_WATER},{"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},
-        {"6","ROAD",CHASM_TOOL_ROAD},
+        {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},
         {"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
         {"C","CAMP",CHASM_TOOL_CAMP},{"J","BRIDGE",CHASM_TOOL_BRIDGE},{"H","WINCH",CHASM_TOOL_WINCH},
         {"3","ERASE",CHASM_TOOL_ERASE}};
@@ -363,6 +398,12 @@ void ApplicationChasm::DrawBuildBar(float s){
                 wood[z->building[v]] += (z->storeys[v] - z->standing[v]) * EconomyStoreyWood(*z->world,*z,(int)v);
             }
         }
+        //A field still staked out (fields_plan.md): a site by its id, so much a cell.
+        for (size_t c = 0; c < z->field.size(); c++){
+            if (z->field[c] && !z->field_built[c] && z->field[c] < wood.size()){
+                wood[z->field[c]] += ECONOMY_FIELD_WOOD_PER_CELL;
+            }
+        }
         int sites = 0;
         int needed = 0;
         int brought = 0;
@@ -373,11 +414,19 @@ void ApplicationChasm::DrawBuildBar(float s){
                 brought += std::min(wood[id],EconomySiteBrought(*e,(uint32_t)id));
             }
         }
-        //Gardens and lots still to build count as a site a plot (Economy.h, CONSTRUCTION).
+        //Gardens and lots still to build count as a site a plot (Economy.h, CONSTRUCTION); a wall still to
+        //build as one a line, its wood plot by plot (line_works_plan.md, step 3).
+        std::vector<uint32_t> wall_lines;
         for (size_t v = 0; v < z->ground.size(); v++){
-            if (ZoneEnclosesGround(z->ground[v]) && !z->ground_built[v] && z->storeys[v] == 0){
-                int need = EconomyGroundWood(*z->world,(int)v);
-                sites++;
+            bool f_wall = ZoneWallPlanned(*z,(int)v);
+            if ((ZoneEnclosesGround(z->ground[v]) || f_wall) && !z->ground_built[v] && z->storeys[v] == 0){
+                int need = EconomyGroundCost(*z->world,*z,(int)v);
+                if (!f_wall || !z->line[v]){
+                    sites++;
+                }else if (std::find(wall_lines.begin(),wall_lines.end(),z->line[v]) == wall_lines.end()){
+                    wall_lines.push_back(z->line[v]);
+                    sites++;
+                }
                 needed += need;
                 brought += std::min(need,EconomyGroundBrought(*e,(int)v));
             }

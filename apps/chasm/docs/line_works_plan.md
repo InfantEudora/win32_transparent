@@ -42,6 +42,22 @@ first ("Build first"). Line works join that queue - "that fits in better with th
 - **A wall is a road with a cost**: its trees felled as a road's, then its wood carried per plot as a
   garden's (`ground_site[plot]`), then raised.
 
+## Walls, decided (the user, 2026-10-08)
+
+- **4 wood a plot**, flat - one felled tree's logs. (A garden's wall is about 2 a plot, a house storey 8-11.)
+- **Taller than a person**: about one and a half figures high, pointed logs - where a lot's fence is waist
+  high. A GATE is open for now: two tall posts and a crossbeam, no door.
+- **A road's rules for where it may go**: the road's slope limit, never on a building, and it stops at a
+  garden's or lot's edge as a road does.
+- **A gate is a mark on the road plot** where a wall and a road cross (`ZoneState::gate`), set when a wall
+  is drawn across a road or a road across a wall. The automatic gate (`ZoneGateOf`, a road ENDING against
+  a wall) cannot tell a road through a wall from one running along it.
+- **Five phases**, each tested before the next: (1) the zones - the ground kind, its rules, gates, line ids,
+  saves and hash, walkers shut out where it stands; (2) the tool - a wall key, the drag preview and erase,
+  a tool for scripts; (3) the look - stakes, the palisade rising, gate posts; (4) the work - clearing, wood,
+  raising, and roads and walls in the joint queue; (5) the tests - a wall with a gate the walkers must use,
+  and the replay test's fixtures made again on today's map (its camp woodcutter and its oaks are stale).
+
 ## The plan
 
 ### The model: ground on a chain of plots
@@ -133,7 +149,7 @@ first ("Build first"). Line works join that queue - "that fits in better with th
 |---|---|---|
 | 1 | The tool: drag, preview, release, cancel - for roads; debug and play still lay them at once | BUILT 2026-10-06 |
 | 2 | Road sites: `ZoneRoadStands` (+ `ground_built`), the staked look, the clearing + laying errand, saves, replay test with a road through a forest edge | BUILT 2026-10-06 |
-| 3 | Walls: the kind, its rules, walkers closed where it stands, the palisade mesh and gates, its wood; roads and walls in the site queue by line (above) | planned |
+| 3 | Walls: the kind, its rules, walkers closed where it stands, the palisade mesh and gates, its wood; roads and walls in the site queue by line (above) | BUILT 2026-10-08 (five phases: zones, tool, look, work + queue, the replay test) |
 | 4 | Building sites fell their trees first | planned |
 | later | A bridge's chain drawn freehand with the same stroke (dry bank, wet run, dry bank) - c4's suggestion | idea |
 
@@ -144,7 +160,8 @@ used where a road is judged for walking and for its curve; step 2 adds `&& groun
 The plain `ground == ZONE_GROUND_ROAD` tests that mean "painted as road" (the rules) stay as they are.
 
 **Testing**: `python apps/chasm/tools/chasm_replay_test.py` after each step (PASS debug and release); the
-replay test grows a planned road through trees, and later a wall with a gate.
+replay test grows a planned road through trees, and later a wall with a gate. (That test is retired since
+2026-10-08 - see `README.md`.)
 
 ## As built
 
@@ -226,8 +243,139 @@ laid-only), `ZoneMesh.cpp`, `ApplicationChasm.cpp` (`PropHidden`, the felled log
   mid-errand and both replays must match tick by tick; afterwards it must be laid with all four felled.
   PASS (debug), also with window 39's one-lot-per-woodcutter fix. Release not run.
 
+### Step 3, phase 1: walls in the zones (2026-10-08)
+
+Files: `Zones.*`, `Walkers.*`, `Economy.cpp` (the straight walk, `GroundSiteApproach`), `ChasmSave.*`,
+`ApplicationChasm.cpp` (save, hash, `chasm_paint`, `chasm_pick`), `ApplicationChasmRoads.cpp` (`chasm_road`).
+
+- **The ground.** `ZONE_GROUND_WALL` (4). `ZoneCanGround` gives it a road's rules (`ZoneLineGround`: the
+  road's slope, beside the wet, never on a building, stopping at a garden or lot); `ZoneCanBuild` keeps
+  buildings off it as off a road. In play it is a site (`ground_built` 0) like a road; `ZoneWallStands` /
+  `ZoneWallPlanned`. `ZONE_OP_GROUND_RAISE` raises it as it lays a road.
+- **Shut where it stands.** `Walkers::EdgeOpen` never walks onto a standing wall plot, nor off one except
+  where a walk starts (someone it was raised round). `EconomyStraightClear` refuses one too. A planned wall
+  is open ground. `GroundSiteApproach` never puts a builder on one.
+- **Gates** (`ZoneState::gate`, per plot): a wall painted over a road leaves the road and marks it; a road
+  painted over a wall takes the plot and marks it. A wall ERASE (`ZONE_OP_GROUND_ERASE` with kind wall)
+  takes walls off and, on a gate, only the mark - the road stays. Erasing the road of a gate leaves a gap.
+  A road crossing a wall on the slant gates two plots: an opening two plots wide.
+- **Lines** (`ZoneState::line`, per plot): a PLAY road or wall plot painted with a stroke gets the stroke's
+  line id, one id a stroke, handed out by `NewBuilding(ZONE_KIND_NONE)` - an empty slot in the building
+  table, which everything already skips - so lines and buildings share one counter: the placing order.
+  `line_stroke`/`line_id` are the line being placed (not saved: a line is sent whole on release).
+  Debug paints and strokeless ones get 0. `chasm_road` now sends each call as a stroke of its own (2^23 up,
+  clear of `chasm_paint`'s and the mouse's ranges, and exact in the command's float).
+- **Saves**: a ground is `[plot, kind]` or `[plot, kind, line]`, the kind with `ZONE_GROUND_SAVED_SITE`
+  (16) and `ZONE_GROUND_SAVED_GATE` (32) - `ZoneSavedGround`. Hashed: `line` and `gate` with the zones.
+  `RunZoneChecks` checks a gate is only on a road and a line only on a road or wall.
+- **Tools**: `chasm_road ground:wall` (and `erase`); `chasm_paint ground:wall`, reporting `line_here`,
+  `gate_here`; `chasm_pick to_x/to_z` - the A* route a villager would take and whether the straight line is
+  clear, for checking what a wall shuts.
+- **Tested** (debug, default seed): a debug ring of four wall lines round a spot by the camp shuts every way
+  out; a road out through it gates the plots it crosses and the route goes through the gate; a wall erase on
+  the gate leaves the road ungated, a wall painted back gates it; no wall on a house or into a garden, no
+  house on a gate; a play wall is planned, shuts nothing, and has a line id, the next line a later one;
+  saved and loaded, walls, gates and lines come back identical. Zone checks pass. Replay test: both replays
+  and their traces match (its stale fixtures still fail, as before).
+
+### Step 3, phase 3: the look (2026-10-08)
+
+Files: `RoadMesh.*` (`LineThrough`, `WallNeighbours`, `WallEdgeDropped`, `BuildWallStake`, `BuildPalisade`,
+`BuildGate`, `RoadNear`), `ZoneMesh.cpp`.
+
+- **The line** is a road's (`LineThrough`, split out of `RoadCentreLine`): through the plots a wall's line
+  runs through beside each - wall plots, planned or standing, and gates - a curve through two edges'
+  midpoints, a spoke to each otherwise. Each plot draws its own half of every edge, by the chunk that owns
+  its vertex (`RoadVertexOwner`); `ZoneMesh` sends a cell with a wall plot to `BuildRoadCell`.
+- **Planned**: a tall stake (0.95, a road's is 0.6) with a red ribbon, and cords to the edges - meeting a
+  planned neighbour's halfway, ending at the midpoint toward a standing one or a gate.
+- **Standing**: sharpened logs side by side, 1.3 high (one and a half villagers) with a hand-cut jitter,
+  0.17 thick, one at the middle of each equal step along a piece - so neighbours' logs never double at a
+  midpoint - and a thicker log at a vertex where the line does not run straight through.
+- **Gates**: toward a gate the piece ends in a dark post 1.8 high at the midpoint (the jamb); the gate's
+  own plot hangs a crossbeam from jamb to jamb over the road once every wall beside it stands.
+- **Walled cells**: where a line covers all four corners of one cell (two lines meeting, an overlap) every
+  corner joined only within the cell is a candidate, and the highest-index one is SPARE: its two edges in
+  the cell are not drawn, so the cell gets the palisade's L, not a ring round it. The spare plot stands as
+  a lone post - it is a wall plot, and shuts the way, so it is shown. Decided by the cell alone
+  (`WallEdgeDropped`), so both ends of an edge agree. A wall two plots thick keeps every edge.
+- **Trees** give way to a standing wall's line as to a laid road's (`RoadNear`), and logs are dragged off it.
+- **Seen** (debug, default seed, screenshots): a debug ring with a road through it - the palisade along the
+  grid's lines, a two-plot gate with jambs and a bent crossbeam; a play wall half raised by debug paints -
+  stakes and cords on the planned half, running into the palisade of the standing half.
+
+### Step 3, phase 2: the tool (2026-10-08)
+
+Files: `ApplicationChasm.h` (`CHASM_TOOL_WALL`, `INPUT_CHASM_TOOL_WALL`, `ChasmLineTool`, `ChasmLineGround`,
+`line_ground`), `ApplicationChasm.cpp` (key 7, `UpdatePaint`, the pick view, the panel, `chasm_tool`),
+`ApplicationChasmRoads.cpp` (`LinePlotAllowed`, the press, `PlaceLine`), `ApplicationChasmGhost.cpp`,
+`ApplicationChasmTime.cpp` (the build bar).
+
+- **Key 7**, beside the road's 6 - the retired debug walker's key - and WALL on the build bar after ROAD.
+- **The road's line drag**, for both: `ChasmLineTool` hands either tool to `UpdateLineDrag`; the press
+  stores the line's ground (`line_ground`, beside `f_line_erase`), so the release and both previews (the
+  play ghost, the debug pick view) judge each plot by `LinePlotAllowed` for that ground. A wall may cross a
+  road (green - it gates it); the release skips a road it already gates. Shift-drag erases: walls only, and
+  gates' marks off their roads.
+- **Tested** (play mode, scripted through `chasm_tool` - press, twelve hover steps, release): the ghost
+  showed the line as green tiles across a laid road while held; release placed ten planned wall plots under
+  one line id, the road's plots under it gated; planned, it shut nothing.
+
+### Step 3, phase 4: the work, and the joint queue (2026-10-08)
+
+Files: `Economy.*` (`Derive`, `EconomyGroundCost`, `SiteNeed`, `Build`, `RaiseWall`, `FindSiteWork`,
+`RoadTrees`, `LineJobs`, `StartLineJob`, `FindRoadWork`, the road states), `ApplicationChasmEconomy.cpp`
+(`chasm_economy` `walls`), `ApplicationChasmTime.cpp` (the build bar's count), `ApplicationChasmSelect.cpp`
+(`Doing`: "clearing a wall's way").
+
+- **A wall plot is a ground site** (`ground_sites`, and `wall_sites` for its clearing): `ECONOMY_WALL_WOOD`
+  (4) a plot (`EconomyGroundCost`), carried by the same idle people and builders as a garden's, to an open
+  plot beside it (`GroundSiteApproach`). But its wood is only offered once nothing stands in its way
+  (`RoadTrees`, now along a wall's edges toward the wall plots and gates beside it): first the clearing -
+  the road errand, `WORKER_TO_ROAD` / `WORKER_CLEARING`, with nothing to lay at the end - then the carry.
+  `RaiseWall` puts it up when its wood is all there and its way clear; felling its last tree tries again,
+  so wood that came while a tree stood is not stranded.
+- **One ranking** (`FindSiteWork`): the carries as before, and the line work - the nearest four pieces
+  nobody else is on (`LineJobs`: a tree in a road's or wall's way, a road plot to lay) - by the walk to
+  them, in one list. Each errand has a KEY, its place in the placing order: a building's id, a road's or
+  wall's line; gardens and lots, and debug lines, none. Own hut, then "Build first", then the rest; within
+  `ECONOMY_QUEUE_SLACK` of each group's nearest, keyed errands in key order (unkeyed keep their places).
+  The first four of it are tried. `FindRoadWork` is the line work alone: a stint along the line, or what
+  is left when nothing in the ranking could be walked to.
+- **Tested** (debug, default seed): a play wall of 8 plots by the camp, two trees near its line - its way
+  felled, 32 wood (4 a plot) carried from the camp's 40, every plot raised in about 10 s at 3x, up to 7
+  people on it at once; standing, it shuts the straight way across it. The queue, paused and stepped a tick
+  at a time: a road and a house both about 8 from the camp - drawn first, the road's pieces were the first
+  five errands (RRRRR); placed first, the house got the first two (all its wood) and then the road
+  (HHRRR). Replay test: both replays and their traces match (its stale fixtures still fail).
+
+### Step 3, phase 5: the replay test (2026-10-08)
+
+`tools/chasm_replay_test.py`. Its camp fixtures were seed 1's fixed offsets - the camp's woodcutter spot (now
+"too close to a cliff") and the planned road's four oaks (not there) - stale since seed 12 became the default.
+They are now FOUND BY TRYING (`find_camp_spots`), as the winch's spot already was: a dry run, on a fresh map,
+of what the save and the recording put by the camp, in their order, so none is in another's way:
+- **the road**: of 24 directions out of the camp, the one with the most standing trees within 0.8 of its line
+  (5 to 21 out) that takes a road whole; its trees, by prop, must all be felled by the end;
+- **the ring**: a PALISADE RING, 3.5 each way of a point 11-15 out on that road, painted in the SAVE as debug
+  walls (standing at once) over the planned road - so the road through it is its gates; kept only if whole,
+  gated, and walked out of by a gate. At the end, the way from its middle to a point beside it, off the road,
+  must go by a gate, the straight way shut;
+- **the woodcutter**: a lot of two plots and a hut of two beside it, rings of 9-13 out, after the camp's houses;
+- **the wall**: a 6-long PLAY wall, 10 out, whole and crossing nothing, after the construction site - painted in
+  the RECORDING, so both replays have to clear it, carry 4 wood a plot to it and raise it the same way; at the
+  end nothing of a wall may be left planned.
+- **Result** (debug, default seed, twice): PASS - both replays and their traces match, the camp's woodcutter
+  worked, the site built, the planned road's 16 trees felled and its 11 plots laid, 17 wall plots standing (the
+  ring's and the play wall's), and out of the ring by its gate. Release not run.
+
+**Open (walls):**
+- The lone post of a spare corner can read as a stray; a stub of palisade toward the wall would read
+  better, if it bothers.
+- No door in a gate yet (the user's: open for now).
+
 **Open:**
 - Erasing a planned road loses nothing (no wood), but trees already felled for it stay felled.
 - The economy fells a little wider than the view hides, so a stump can stand just off a laid road.
-- No priorities between road work and anything else: wood carrying always comes first. To change with
-  step 3 - roads join the site queue ("Queued with everything else").
+- ~~No priorities between road work and anything else: wood carrying always comes first.~~ Done with step 3
+  phase 4: roads and walls are in the one ranking, by their line's place ("Queued with everything else").

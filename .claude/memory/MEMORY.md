@@ -88,3 +88,4 @@
 - [Chasm terrace columns](chasm_terrace_columns.md) — 2026-10-06 terrain as one column per plot, in Blender AND the game: one chasm + cracks, steps of 6, bare patches, no feature pinning; grid_plan.md "Columns"
 - [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets
 - [Line works plan](line_works_plan.md) — AGREED 2026-10-06: chasm roads/walls drag-previewed, built by idle villagers felling trees; waits on window 39
+- [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants); difficulty may retune later

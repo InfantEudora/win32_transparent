@@ -44,6 +44,10 @@ void ApplicationChasm::TickEconomy(){
     for (int plot : economy.GroundRaises()){
         f_raised = zones.Apply(ZONE_OP_GROUND_RAISE,(uint32_t)plot) || f_raised;
     }
+    //A field site built: its cells, all at once (fields_plan.md).
+    for (int cell : economy.FieldRaises()){
+        f_raised = zones.Apply(ZONE_OP_FIELD_RAISE,(uint32_t)cell) || f_raised;
+    }
     if (f_raised){
         PublishZones();
     }
@@ -93,7 +97,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(death,sizeof(death));
     }
     for (const EconomyField& f : e.fields){
-        int32_t pair[3] = {(int32_t)f.building,f.crop,f.grown};
+        int32_t pair[7] = {(int32_t)f.building,f.crop,f.grown,(int32_t)f.f_sown,f.yield,f.last,(int32_t)f.owner};
         h.Bytes(pair,sizeof(pair));
     }
     n = (uint32_t)e.site.size();
@@ -230,6 +234,15 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         }
         j["family"] = family;
         j["holds"] = (id < e->capacity.size()) ? e->capacity[id] : 0;
+        //Its land (land_plan.md): its fields, their built cells, and the farmers it has places for.
+        json land = json::array();
+        for (const EconomyField& f : e->fields){
+            if (f.owner == id){
+                land.push_back(f.building);
+            }
+        }
+        j["land"] = land;
+        j["land_places"] = (id < e->places.size()) ? e->places[id] : 0;
     }
     //A house's own store of food, water and firewood, which its family eats and drinks from (needs_plan.md).
     if (z->buildings[id].kind == ZONE_KIND_HOUSE){
@@ -294,7 +307,30 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         ImGui::Text("  waiting to be carried off: %s",stock.c_str());
     }
     if (z->buildings[id].kind == ZONE_KIND_FIELD){
-        ImGui::Text("  grown %.0f%% toward the harvest",EconomyFieldGrowth(*e,*z,id) * 100.0f);
+        const EconomyField* f = EconomyFieldOf(*e,id);
+        if (f && f->f_sown){
+            ImGui::Text("  %s at %i%%, grown %.0f%% toward the harvest",ZoneCropName(f->crop),f->yield,
+                        EconomyFieldGrowth(*e,*z,id) * 100.0f);
+        }else if (f){
+            int sow = EconomyFieldSowCrop(*f,z->buildings[id]);
+            ImGui::Text("  empty - %s",(sow >= 0) ? (std::string("to be sown with ") + ZoneCropName(sow)).c_str()
+                                                  : "choose a starting crop");
+        }
+        //Whose land, and who farms it (land_plan.md).
+        if (f){
+            uint32_t farmer = (id < e->farmer_of.size()) ? e->farmer_of[id] : 0;
+            const char* who = "nobody";
+            std::string name;
+            for (const EconomyWorker& k : e->workers){
+                if (k.id == farmer){
+                    name = EconomyPersonName(k);
+                    who = name.c_str();
+                }
+            }
+            bool f_camp = f->owner && f->owner < z->buildings.size() && z->buildings[f->owner].kind == ZONE_KIND_CAMP;
+            ImGui::Text("  land of %s %u%s, farmed by %s",f_camp ? "camp" : "house",
+                        f->owner,z->buildings[id].land_of ? " (given)" : "",who);
+        }
     }
     if (z->buildings[id].kind == ZONE_KIND_HOUSE || z->buildings[id].kind == ZONE_KIND_CAMP){
         int holds = (id < e->capacity.size()) ? e->capacity[id] : 0;
@@ -325,8 +361,11 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         }
     }
     int kind = z->buildings[id].kind;
-    if (!f_worked && EconomyJobOf(kind) != WORKER_JOB_NONE){
-        ImGui::TextColored(ImVec4(1.0f,0.6f,0.35f,1.0f),"  nobody works here - it needs a free adult with a house");
+    int places = (id < e->places.size()) ? e->places[id] : 0;
+    bool f_land = kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_CAMP;
+    if (!f_worked && EconomyJobOf(kind) != WORKER_JOB_NONE && (!f_land || places > 0)){
+        ImGui::TextColored(ImVec4(1.0f,0.6f,0.35f,1.0f),f_land ? "  its land is not farmed - nobody of the family is free"
+                                                              : "  nobody works here - it needs a free adult with a house");
     }
 }
 
@@ -590,7 +629,31 @@ void ApplicationChasm::RegisterEconomyTools(){
             result["workers"] = workers;
             json fields = json::array();
             for (const EconomyField& f : e->fields){
-                fields.push_back(json{{"id",f.building},{"crop",ZoneCropName(z->buildings[f.building].crop)},
+                //fields_plan.md: what grows and how well, what it was before, and what is sown next.
+                const ZoneBuilding& zb = z->buildings[f.building];
+                int sow = EconomyFieldSowCrop(f,zb);
+                json yields = json::object();
+                for (int c = 0; c < ZONE_CROP_COUNT; c++){
+                    yields[ZoneCropName(c)] = EconomyCropYield(f.last,c);
+                }
+                //land_plan.md: whose land, the player's choice, who farms its share (0: it lies fallow).
+                uint32_t farmer = (f.building < e->farmer_of.size()) ? e->farmer_of[f.building] : 0;
+                //Where it is: the middle of its first cell, where its farmer stands - for a script's walks.
+                vec2 at(0.0f,0.0f);
+                auto first = std::find(z->field.begin(),z->field.end(),f.building);
+                if (first != z->field.end()){
+                    int c = (int)(first - z->field.begin());
+                    for (int q = 0; q < 4; q++){
+                        at += w->grid->FineQuadCentre(c * 4 + q) * 0.25f;
+                    }
+                }
+                fields.push_back(json{{"id",f.building},{"x",at.x},{"z",at.y},{"sown",f.f_sown},{"owner",f.owner},{"land_of",zb.land_of},
+                                      {"farmer",farmer},{"fallow",farmer == 0},
+                                      {"crop",(f.f_sown && f.crop >= 0) ? ZoneCropName(f.crop) : "none"},
+                                      {"yield",f.yield},{"last",(f.last >= 0) ? ZoneCropName(f.last) : "none"},
+                                      {"starting_crop",ZoneCropName(zb.crop)},{"next_crop",ZoneCropName(zb.next_crop)},
+                                      {"sows_next",(sow >= 0) ? ZoneCropName(sow) : "none"},{"next_yields",yields},
+                                      {"site_cells",ZoneBuildingFigures(*w,*z,f.building).site_cells},
                                       {"growth",EconomyFieldGrowth(*e,*z,f.building)},
                                       {"waiting",StockJson(*e,f.building)}});
             }
@@ -620,6 +683,22 @@ void ApplicationChasm::RegisterEconomyTools(){
                 on_roads += (k.state == WORKER_TO_ROAD || k.state == WORKER_CLEARING || k.state == WORKER_LAYING) ? 1 : 0;
             }
             result["roads"] = json{{"planned",planned},{"laid",laid},{"people_on_them",on_roads}};
+            //The walls (line_works_plan.md, step 3): plots planned and standing, the wood brought to the
+            //planned, and who is out clearing their way or carrying for them.
+            int wall_planned = 0, wall_standing = 0, wall_wood = 0, on_walls = 0;
+            for (size_t v = 0; v < z->ground.size(); v++){
+                if (ZoneWallPlanned(*z,(int)v)){
+                    wall_planned++;
+                    wall_wood += EconomyGroundBrought(*e,(int)v);
+                }
+                wall_standing += ZoneWallStands(*z,(int)v) ? 1 : 0;
+            }
+            for (const EconomyWorker& k : e->workers){
+                int v = (k.site && EconomyIsGroundSite(k.site)) ? EconomyGroundSitePlot(k.site) : -1;
+                on_walls += (v >= 0 && v < (int)z->ground.size() && z->ground[v] == ZONE_GROUND_WALL) ? 1 : 0;
+            }
+            result["walls"] = json{{"planned",wall_planned},{"standing",wall_standing},{"wood_brought",wall_wood},
+                                   {"wood_per_plot",ECONOMY_WALL_WOOD},{"people_on_them",on_walls}};
             int housed = 0;
             int employed = 0;
             for (const EconomyWorker& k : e->workers){

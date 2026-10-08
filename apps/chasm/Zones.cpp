@@ -22,6 +22,9 @@ const char* ZoneOpName(int op){
         case ZONE_OP_BRIDGE:        return "bridge";
         case ZONE_OP_GROUND_RAISE:  return "ground_raise";
         case ZONE_OP_SITE_PRIORITY: return "site_priority";
+        case ZONE_OP_FIELD_NEXT:    return "field_next";
+        case ZONE_OP_FIELD_RAISE:   return "field_raise";
+        case ZONE_OP_FIELD_LAND:    return "field_land";
         default:                   return "none";
     }
 }
@@ -87,6 +90,7 @@ const char* ZoneCropName(int crop){
         case ZONE_CROP_WHEAT:       return "wheat";
         case ZONE_CROP_GREENS:      return "greens";
         case ZONE_CROP_BEANS:       return "beans";
+        case ZONE_CROP_AUTO:        return "auto";
         default:                    return "none";
     }
 }
@@ -97,7 +101,10 @@ int ZoneCropByName(const std::string& name){
             return c;
         }
     }
-    return -1;
+    if (name == "auto"){
+        return ZONE_CROP_AUTO;
+    }
+    return (name == "none") ? ZONE_CROP_NONE : -1;
 }
 
 const char* ZoneGroundName(int ground){
@@ -105,6 +112,7 @@ const char* ZoneGroundName(int ground){
         case ZONE_GROUND_GARDEN:    return "garden";
         case ZONE_GROUND_LOT:       return "lot";
         case ZONE_GROUND_ROAD:      return "road";
+        case ZONE_GROUND_WALL:      return "wall";
         default:                    return "none";
     }
 }
@@ -594,8 +602,8 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (kind <= ZONE_KIND_NONE || kind >= ZONE_KIND_COUNT || kind == ZONE_KIND_FIELD){
         return refuse("no such building");
     }
-    if (!z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && z.ground[plot] == ZONE_GROUND_ROAD){
-        return refuse("a road is there");
+    if (!z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && ZoneLineGround(z.ground[plot])){
+        return refuse((z.ground[plot] == ZONE_GROUND_WALL) ? "a wall is there" : "a road is there");
     }
     if (kind == ZONE_KIND_WINCH){
         if (joining){
@@ -613,8 +621,8 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (!PlotIsBuildable(w,z,plot,why,f_water ? ZONE_RISE_ROAD : ZONE_RISE_HOUSE,f_water)){
         return false;
     }
-    if (!z.ground.empty() && z.ground[plot] == ZONE_GROUND_ROAD){
-        return refuse("a road is there");
+    if (!z.ground.empty() && ZoneLineGround(z.ground[plot])){
+        return refuse((z.ground[plot] == ZONE_GROUND_WALL) ? "a wall is there" : "a road is there");
     }
     if (joining && kind == ZONE_KIND_HOUSE && joining < z.buildings.size() &&
         z.buildings[joining].size >= ZONE_HOUSE_MAX_PLOTS){
@@ -668,11 +676,12 @@ int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built, 
 }
 
 bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why, int kind){
-    if (!PlotIsBuildable(w,z,plot,why,(kind == ZONE_GROUND_ROAD) ? ZONE_RISE_ROAD : ZONE_RISE_HOUSE,false,
-                         kind == ZONE_GROUND_ROAD)){
+    //A wall goes where a road may (the user, 2026-10-08): a line, on a road's slope, beside the wet.
+    bool f_line = ZoneLineGround(kind);
+    if (!PlotIsBuildable(w,z,plot,why,f_line ? ZONE_RISE_ROAD : ZONE_RISE_HOUSE,false,f_line)){
         return false;
     }
-    if (kind == ZONE_GROUND_ROAD && !z.storeys.empty() && z.storeys[plot] > 0){
+    if (f_line && !z.storeys.empty() && z.storeys[plot] > 0){
         if (why){
             *why = "a building is there";
         }
@@ -681,9 +690,9 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
     /*
         A road stops at a garden's or a lot's edge rather than eating into it - so a road dragged into
         a walled garden ends against the wall, which is exactly where a gate opens (Zones.h). Erase the
-        ground first to run a road through.
+        ground first to run a road through. A wall stops there too.
     */
-    if (kind == ZONE_GROUND_ROAD && !z.ground.empty() && ZoneEnclosesGround(z.ground[plot])){
+    if (f_line && !z.ground.empty() && ZoneEnclosesGround(z.ground[plot])){
         if (why){
             *why = "a garden or lot is there";
         }
@@ -785,13 +794,104 @@ int ZoneCampTents(const ZoneState& z, uint32_t id){
     return n;
 }
 
-#define ZONE_CAMP_INLAND    30.0f   //from the middle of the home balcony's stretch of rim
+#define ZONE_CAMP_INLAND    30.0f   //from the rim: where a new colony first looks (step 1)
+#define ZONE_CAMP_RIVER     48.0f   //...and then the farthest it may be from a river's water (step 2)
+#define ZONE_CAMP_BAND      3.0f    //step 1's slack either side of ZONE_CAMP_INLAND: plots are a few units apart
 
+/*
+    WHERE A NEW COLONY CAMPS (the user, 2026-10-08). The balcony no longer decides it - the winch is
+    something to consider a couple of in-game years in, not where to start - and the start must have water:
+      1. About ZONE_CAMP_INLAND in from the home side's rim, level with the map's middle: a place to start
+         from, nothing more.
+      2. Within ZONE_CAMP_RIVER of a river's water: of the plots that are, the one nearest that place - so the
+         camp moves to the nearest river - and never nearer the chasm than step 1, so the move runs along
+         the rim or inland.
+    Every plot either step takes is flat dry plateau on the HOME side, which is what a flood from the rivers'
+    water reaches across the plateau without the mountain: rivers run on the home side only, and the mountain's
+    tongue is all that joins the two sides (ChasmLayout, THE SIDES). With no river, the old rule stands: inland
+    of the home balcony, or the east middle.
+*/
 int ZoneStartCampPlot(const ChasmWorld& w){
     const Grid& g = *w.grid;
     const Terrain& t = *w.terrain;
     const GridPicker& p = *w.picker;
-    //The home side's balcony - every map has one (gameplay_plan.md) - or, failing that, the east middle.
+    size_t n = g.fine.pos.size();
+    auto plateau = [&](int v){
+        return t.level[v] == TERRAIN_PLATEAU && !t.Mountain(v);
+    };
+    //A plot the camp may start on: dry plateau, not the mountain or the map's edge, and so is every corner of
+    //the cells round it.
+    auto usable = [&](int v){
+        if (!plateau(v) || t.wet[v] || g.fine.f_boundary[v]){
+            return false;
+        }
+        for (int i = 0; i < p.PlotQuadCount(v); i++){
+            const GridQuad& q = g.fine.quads[p.PlotQuadCorner(v,i) / 4];
+            for (int c = 0; c < 4; c++){
+                if (t.level[q.v[c]] != TERRAIN_PLATEAU || t.wet[q.v[c]]){
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    //Nearest `target` of the plots `ok` lets through, the lower index on a tie; -1 if none.
+    auto nearest = [&](const vec2& target, auto ok){
+        int best_v = -1;
+        float best = 1e30f;
+        for (size_t v = 0; v < n; v++){
+            float d = (g.fine.pos[v] - target).length();
+            if (d < best && ok((int)v)){
+                best = d;
+                best_v = (int)v;
+            }
+        }
+        return best_v;
+    };
+    //THE HOME SIDE: the plateau a flood from the rivers' water reaches.
+    std::vector<uint8_t> home(n,0);
+    std::vector<int> queue;
+    for (size_t v = 0; v < n; v++){
+        if (t.wet[v] && plateau((int)v)){
+            home[v] = 1;
+            queue.push_back((int)v);
+        }
+    }
+    for (size_t at = 0; at < queue.size(); at++){
+        int nb[8];
+        int k = ZonePlotNeighbours(w,queue[at],nb,8);
+        for (int j = 0; j < k; j++){
+            if (!home[nb[j]] && plateau(nb[j])){
+                home[nb[j]] = 1;
+                queue.push_back(nb[j]);
+            }
+        }
+    }
+    if (!t.rivers.empty() && !queue.empty()){
+        auto rim = [&](int v){
+            return ChasmRiftDistance(g.layout,g.fine.pos[v]);
+        };
+        //1. About ZONE_CAMP_INLAND from the rim, nearest the map's middle line.
+        float middle = (g.bounds_min.y + g.bounds_max.y) * 0.5f;
+        int first = -1;
+        float best = 1e30f;
+        for (size_t v = 0; v < n; v++){
+            float d = std::fabs(g.fine.pos[v].y - middle);
+            if (d < best && home[v] && std::fabs(rim((int)v) - ZONE_CAMP_INLAND) <= ZONE_CAMP_BAND && usable((int)v)){
+                best = d;
+                first = (int)v;
+            }
+        }
+        if (first >= 0){
+            //2. The nearest plot to it within reach of a river, no nearer the chasm.
+            int camp = nearest(g.fine.pos[first],[&](int v){
+                return home[v] && t.WaterEdgeDistance(g.fine.pos[v]) <= ZONE_CAMP_RIVER
+                       && rim(v) >= ZONE_CAMP_INLAND - ZONE_CAMP_BAND && usable(v);
+            });
+            return (camp >= 0) ? camp : first;
+        }
+    }
+    //No river (or no ground by one): inland of the home balcony - every map has one - or the east middle.
     vec2 target((g.bounds_min.x + g.bounds_max.x) * 0.5f + (g.bounds_max.x - g.bounds_min.x) * 0.25f,
                 (g.bounds_min.y + g.bounds_max.y) * 0.5f);
     for (const GridFeature& f : g.layout.features){
@@ -805,29 +905,7 @@ int ZoneStartCampPlot(const ChasmWorld& w){
             break;
         }
     }
-    int best_v = -1;
-    float best = 1e30f;
-    for (size_t v = 0; v < g.fine.pos.size(); v++){
-        if (t.level[v] != TERRAIN_PLATEAU || t.wet[v] || t.Mountain((int)v) || g.fine.f_boundary[v]){
-            continue;
-        }
-        float d = (g.fine.pos[v] - target).length();
-        if (d >= best){
-            continue;
-        }
-        bool f_flat = true;
-        for (int i = 0; i < p.PlotQuadCount((int)v) && f_flat; i++){
-            const GridQuad& q = g.fine.quads[p.PlotQuadCorner((int)v,i) / 4];
-            for (int c = 0; c < 4; c++){
-                f_flat = f_flat && t.level[q.v[c]] == TERRAIN_PLATEAU && !t.wet[q.v[c]];
-            }
-        }
-        if (f_flat){
-            best = d;
-            best_v = (int)v;
-        }
-    }
-    return best_v;
+    return nearest(target,usable);
 }
 
 void Zones::PlaceStartCamp(int tents){
@@ -881,7 +959,10 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state.standing.assign(g.fine.pos.size(),0);
     state.ground.assign(g.fine.pos.size(),ZONE_GROUND_NONE);
     state.ground_built.assign(g.fine.pos.size(),0);
+    state.line.assign(g.fine.pos.size(),0);
+    state.gate.assign(g.fine.pos.size(),0);
     state.field.assign(g.coarse.quads.size(),0);
+    state.field_built.assign(g.coarse.quads.size(),0);
     state.chunk_version.assign(world->mesh->chunks.size(),0);
     last_refusal.clear();
     //The coarse quad across each coarse edge, for keeping a field in one piece: two quads share an
@@ -997,6 +1078,8 @@ void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
         state.buildings[fresh].crop = state.buildings[id].crop;
         state.buildings[fresh].allow = state.buildings[id].allow;
         state.buildings[fresh].f_priority = state.buildings[id].f_priority;
+        state.buildings[fresh].next_crop = state.buildings[id].next_crop;
+        state.buildings[fresh].land_of = state.buildings[id].land_of;      //a split field's pieces stay that house's
         state.buildings[fresh].split_from = id;
         for (int at : pieces[k]){
             owner[at] = fresh;
@@ -1243,6 +1326,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 }
                 if (bridge >= 0 && ZoneCanField(w,state,c,NULL)){
                     state.field[bridge] = joining;
+                    state.field_built[bridge] = f_play ? 0 : 1;
                     state.buildings[joining].size++;
                     state.field_cells++;
                     touch_field(bridge);
@@ -1255,11 +1339,16 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 return false;
             }
             if (!joining){
+                //An EMPTY field (fields_plan.md): nothing grows on it until its starting crop is chosen.
                 joining = NewBuilding(ZONE_KIND_FIELD);
+                state.buildings[joining].crop = ZONE_CROP_NONE;
+                state.buildings[joining].next_crop = ZONE_CROP_AUTO;
             }
             state.stroke = stroke;
             state.stroke_building = joining;
             state.field[c] = joining;
+            //Painted in play, a site to be built with wood; by debug, there at once.
+            state.field_built[c] = f_play ? 0 : 1;
             state.buildings[joining].size++;
             state.field_cells++;
             touch_field(c);
@@ -1273,6 +1362,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             uint32_t id = state.field[c];
             state.field[c] = 0;
+            state.field_built[c] = 0;
             state.buildings[id].size--;
             state.field_cells--;
             if (state.buildings[id].size == 0){
@@ -1305,6 +1395,55 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                     }
                 }
             }
+            break;
+        }
+        case ZONE_OP_FIELD_NEXT:{
+            //The player's pick for every sowing after the first: a crop, or the field's own (fields_plan.md).
+            int c = (int)index;
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c]){
+                last_refusal = "no field there";
+                return false;
+            }
+            if ((kind < 0 || kind >= ZONE_CROP_COUNT) && kind != ZONE_CROP_AUTO){
+                last_refusal = "no such crop";
+                return false;
+            }
+            uint32_t id = state.field[c];
+            if (state.buildings[id].next_crop == kind){
+                return false;
+            }
+            state.buildings[id].next_crop = (uint8_t)kind;
+            break;
+        }
+        case ZONE_OP_FIELD_RAISE:{
+            //The builders' work on a field site: this cell of it is built (the economy raises them all at once).
+            int c = (int)index;
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c] || state.field_built[c]){
+                last_refusal = "nothing to build there";
+                return false;
+            }
+            state.field_built[c] = 1;
+            touch_field(c);
+            break;
+        }
+        case ZONE_OP_FIELD_LAND:{
+            //The player's say over whose land it is (land_plan.md): a house, or 0 to leave it to the economy.
+            int c = (int)index;
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c]){
+                last_refusal = "no field there";
+                return false;
+            }
+            bool f_house = kind > 0 && kind < (int)state.buildings.size() && state.buildings[kind].kind == ZONE_KIND_HOUSE
+                           && state.buildings[kind].size > 0;
+            if (kind != 0 && !f_house){
+                last_refusal = "not a house";
+                return false;
+            }
+            uint32_t id = state.field[c];
+            if (state.buildings[id].land_of == (uint32_t)kind){
+                return false;
+            }
+            state.buildings[id].land_of = (uint32_t)kind;
             break;
         }
         case ZONE_OP_BRIDGE:{
@@ -1367,6 +1506,16 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = "no such plot";
                 return false;
             }
+            //Where a wall and a road cross the plot stays road, the wall's gate (Zones.h, WALLS): a wall
+            //drawn over a road leaves it, and gates it.
+            if (kind == ZONE_GROUND_WALL && state.ground[plot] == ZONE_GROUND_ROAD){
+                if (state.gate[plot]){
+                    return false;
+                }
+                state.gate[plot] = 1;
+                touch_road(plot);
+                break;
+            }
             if (state.ground[plot] == kind){
                 //Already that. A debug paint over a site builds it, as a debug click finishes a building's.
                 if (f_play || state.ground_built[plot]){
@@ -1383,26 +1532,51 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             if (state.ground[plot] == ZONE_GROUND_NONE){
                 state.grounds++;
             }
+            //...and a road drawn over a wall takes the plot, and is its gate.
+            state.gate[plot] = (kind == ZONE_GROUND_ROAD && state.ground[plot] == ZONE_GROUND_WALL) ? 1 : 0;
             state.ground[plot] = (uint8_t)kind;
             //A player's garden or lot is a site until its wood is brought, a road until it is cleared and
-            //laid (line_works_plan.md); a debug paint is there.
-            state.ground_built[plot] = (f_play && (ZoneEnclosesGround(kind) || kind == ZONE_GROUND_ROAD)) ? 0 : 1;
+            //laid, a wall until both (line_works_plan.md); a debug paint is there.
+            state.ground_built[plot] = (f_play && (ZoneEnclosesGround(kind) || ZoneLineGround(kind))) ? 0 : 1;
+            //A player's line takes its place in the queue: one id a line, from the buildings' counter.
+            if (f_play && ZoneLineGround(kind) && stroke){
+                if (stroke != state.line_stroke || !state.line_id){
+                    state.line_stroke = stroke;
+                    state.line_id = NewBuilding(ZONE_KIND_NONE);
+                }
+                state.line[plot] = state.line_id;
+            }else{
+                state.line[plot] = 0;
+            }
             touch_road(plot);       //a road's ends, gates and the forest's clearance - see touch_road
             break;
         }
         case ZONE_OP_GROUND_ERASE:{
             if (plot < 0 || plot >= (int)state.ground.size() || state.ground[plot] == ZONE_GROUND_NONE){
-                last_refusal = "no garden, lot or road there";
+                last_refusal = "no garden, lot, road or wall there";
                 return false;
+            }
+            //Taking a wall off a road it gates leaves the road, ungated; a wall erase takes up walls only.
+            if (kind == ZONE_GROUND_WALL && state.ground[plot] != ZONE_GROUND_WALL){
+                if (state.ground[plot] != ZONE_GROUND_ROAD || !state.gate[plot]){
+                    last_refusal = "no wall there";
+                    return false;
+                }
+                state.gate[plot] = 0;
+                touch_road(plot);
+                break;
             }
             state.ground[plot] = ZONE_GROUND_NONE;
             state.ground_built[plot] = 0;
+            state.line[plot] = 0;
+            state.gate[plot] = 0;       //a gate's road taken up: the wall has a gap there
             state.grounds--;
             touch_road(plot);
             break;
         }
         case ZONE_OP_GROUND_RAISE:{
-            //The builders' work on a garden or lot: its wall goes up. A road's: it is laid. Only one planned.
+            //The builders' work on a garden or lot: its wall goes up. A road's: it is laid. A wall's: it
+            //stands, and shuts the walkers out. Only one planned.
             if (plot < 0 || plot >= (int)state.ground.size() || state.ground[plot] == ZONE_GROUND_NONE
                 || state.ground_built[plot]){
                 last_refusal = "nothing to build there";
@@ -1479,7 +1653,7 @@ void Zones::SettlePriorities(){
 }
 
 int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<ZoneSavedBuilding>& buildings,
-                   uint32_t next_id, const std::vector<std::pair<int,int>>& grounds,
+                   uint32_t next_id, const std::vector<ZoneSavedGround>& grounds,
                    uint32_t stroke, uint32_t stroke_building){
     Reset(world);
     if (!world){
@@ -1499,9 +1673,14 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
             continue;
         }
         state.buildings[b.id].kind = (uint8_t)b.kind;
-        state.buildings[b.id].crop = (uint8_t)std::max(0,std::min(ZONE_CROP_COUNT - 1,b.crop));
+        bool f_crop = b.crop >= 0 && b.crop < ZONE_CROP_COUNT;
+        state.buildings[b.id].crop = f_crop ? (uint8_t)b.crop : ZONE_CROP_NONE;
+        bool f_next = (b.next_crop >= 0 && b.next_crop < ZONE_CROP_COUNT) || b.next_crop == ZONE_CROP_AUTO;
+        state.buildings[b.id].next_crop = f_next ? (uint8_t)b.next_crop : ZONE_CROP_AUTO;
         state.buildings[b.id].allow = (uint8_t)(b.allow & GOODS_ALL);
         state.buildings[b.id].f_priority = b.f_priority ? 1 : 0;
+        //A house the field was given to - ids never change, and one since gone the economy passes over.
+        state.buildings[b.id].land_of = (b.kind == ZONE_KIND_FIELD && b.land_of < top) ? b.land_of : 0;
     }
     //Then what stands on the ground, in the order the rules want: fields, ground, buildings - each
     //through the same questions a command asks.
@@ -1509,22 +1688,29 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
         if (b.kind != ZONE_KIND_FIELD || b.id == 0){
             continue;
         }
-        for (int c : b.cells){
+        for (size_t i = 0; i < b.cells.size(); i++){
+            int c = b.cells[i];
             if (c < 0 || c >= (int)state.field.size() || state.field[c] || !ZoneCanField(w,state,c,NULL)){
                 refused++;
                 continue;
             }
             state.field[c] = b.id;
+            //A save from before fields were built (fields_plan.md) has no `cells_built`: they all stood.
+            state.field_built[c] = (i < b.cells_built.size()) ? (b.cells_built[i] ? 1 : 0) : 1;
             state.buildings[b.id].size++;
             state.field_cells++;
         }
     }
-    for (const auto& gr : grounds){
-        //A site goes back as a play paint would leave it.
-        bool f_site = (gr.second & ZONE_GROUND_SAVED_SITE) != 0;
-        if (!Apply(ZONE_OP_GROUND_PAINT,(uint32_t)gr.first,gr.second & ~ZONE_GROUND_SAVED_SITE,0,f_site)){
+    for (const ZoneSavedGround& gr : grounds){
+        //A site goes back as a play paint would leave it; its line and gate as they were.
+        bool f_site = (gr.kind & ZONE_GROUND_SAVED_SITE) != 0;
+        int kind = gr.kind & ~(ZONE_GROUND_SAVED_SITE | ZONE_GROUND_SAVED_GATE);
+        if (!Apply(ZONE_OP_GROUND_PAINT,(uint32_t)gr.plot,kind,0,f_site)){
             refused++;
+            continue;
         }
+        state.line[gr.plot] = (ZoneLineGround(kind) && gr.line < state.buildings.size()) ? gr.line : 0;
+        state.gate[gr.plot] = (kind == ZONE_GROUND_ROAD && (gr.kind & ZONE_GROUND_SAVED_GATE)) ? 1 : 0;
     }
     for (const ZoneSavedBuilding& b : buildings){
         if (b.kind == ZONE_KIND_FIELD || b.id == 0 || state.buildings[b.id].kind == ZONE_KIND_NONE){
@@ -1578,6 +1764,8 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& state){
             b.crop = state.buildings[id].crop;
             b.allow = state.buildings[id].allow;
             b.f_priority = state.buildings[id].f_priority != 0;
+            b.next_crop = state.buildings[id].next_crop;
+            b.land_of = state.buildings[id].land_of;
             out.push_back(b);
         }
     }
@@ -1592,6 +1780,7 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& state){
         uint32_t id = state.field[c];
         if (id && slot[id] >= 0){
             out[slot[id]].cells.push_back((int)c);
+            out[slot[id]].cells_built.push_back((int)state.field_built[c]);
         }
     }
     return out;
@@ -1624,6 +1813,8 @@ ZoneStats ComputeZoneStats(const ChasmWorld& w, const ZoneState& z){
             s.lots++;
         }else if (z.ground[v] == ZONE_GROUND_ROAD){
             s.roads++;
+        }else if (z.ground[v] == ZONE_GROUND_WALL){
+            s.walls++;
         }
         if (ZoneEnclosesGround(z.ground[v])){
             s.ground_area += w.picker->PlotArea((int)v);
@@ -1643,10 +1834,17 @@ ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, ui
     info.allow = z.buildings[id].allow;
     info.f_priority = z.buildings[id].f_priority != 0;
     info.size = z.buildings[id].size;
+    info.next_crop = z.buildings[id].next_crop;
     if (info.kind == ZONE_KIND_FIELD){
+        //What it grows on is what is built of it; its cells still a site are its construction (fields_plan.md).
         for (size_t c = 0; c < z.field.size(); c++){
             if (z.field[c] == id){
-                info.floor_area += w.picker->CoarseArea((int)c);
+                if (z.field_built[c]){
+                    info.floor_area += w.picker->CoarseArea((int)c);
+                }else{
+                    info.site_cells++;
+                    info.site_area += w.picker->CoarseArea((int)c);
+                }
             }
         }
         return info;
@@ -1720,6 +1918,13 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
             issue("zone ground",(int)v,w.grid->fine.pos[v]);
         }
         probe.ground[v] = z.ground[v];
+    }
+    //A gate is a road's, a line a road's or a wall's (Zones.h, WALLS).
+    for (size_t v = 0; v < z.ground.size(); v++){
+        if ((z.gate[v] && z.ground[v] != ZONE_GROUND_ROAD) || (z.line[v] && !ZoneLineGround(z.ground[v]))){
+            bad++;
+            issue("zone line",(int)v,w.grid->fine.pos[v]);
+        }
     }
     for (size_t c = 0; c < z.field.size(); c++){
         if (!z.field[c]){

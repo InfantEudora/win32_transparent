@@ -82,13 +82,12 @@ float SegmentDistance(const vec2& p, const vec2& a, const vec2& b){
 /*
     Road vertex v's centre line as segments (pairs of points): the curve for two edges, the spokes to
     the midpoints otherwise. One description, used by both the mesh and the forest's clearance, so the
-    trees give way to exactly the road that is drawn.
+    trees give way to exactly the road that is drawn - and a wall's line is the same shape (LineThrough),
+    through the neighbours `nb` it joins.
 */
-int RoadCentreLine(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vec2>& segs){
+void LineThrough(const ChasmWorld& w, int v, const int* nb, int n, std::vector<vec2>& segs){
     segs.clear();
     const std::vector<vec2>& pos = w.grid->fine.pos;
-    int nb[ROAD_MAX_NEIGHBOURS];
-    int n = RoadNeighbours(w,z,v,nb);
     vec2 c = pos[v];
     if (n == 2){
         vec2 a = (c + pos[nb[0]]) * 0.5f;
@@ -110,7 +109,88 @@ int RoadCentreLine(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
             segs.push_back(c);
         }
     }
+}
+
+int RoadCentreLine(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vec2>& segs){
+    int nb[ROAD_MAX_NEIGHBOURS];
+    int n = RoadNeighbours(w,z,v,nb);
+    LineThrough(w,v,nb,n,segs);
     return n;
+}
+
+//A plot a wall's line runs through: a wall plot, planned or standing, or a gate - a road plot it crosses.
+bool WallLine(const ZoneState& z, int v){
+    return z.ground[v] == ZONE_GROUND_WALL || z.gate[v];
+}
+
+//Every plot beside v, by a fine edge, that a wall's line runs through - in the plot quads' fixed order.
+int WallNeighboursAll(const ChasmWorld& w, const ZoneState& z, int v, int* out){
+    int nb[ROAD_MAX_NEIGHBOURS];
+    int n = ZonePlotNeighbours(w,v,nb,ROAD_MAX_NEIGHBOURS);
+    int m = 0;
+    for (int i = 0; i < n; i++){
+        if (WallLine(z,nb[i])){
+            out[m++] = nb[i];
+        }
+    }
+    return m;
+}
+
+/*
+    Where a wall's line is on all four corners of one cell - two lines meeting, a stroke crossing itself -
+    each corner is a neighbour of two others, and a palisade drawn to all of them would ring the cell. The
+    wall needs only the L round it: of the corners joined to nothing outside the cell (two neighbours on
+    the line, both the cell's), the highest index is SPARE, and its two edges in the cell are not drawn -
+    it stands as a post. Decided by the cell alone, so the plots either end of an edge agree. A cell with
+    no such corner - a wall two plots thick - keeps every edge.
+*/
+bool WallEdgeDropped(const ChasmWorld& w, const ZoneState& z, int a, int b){
+    const GridPicker& p = *w.picker;
+    for (int i = 0; i < p.PlotQuadCount(a); i++){
+        int qc = p.PlotQuadCorner(a,i);
+        const GridQuad& q = w.grid->fine.quads[qc / 4];
+        int k = qc % 4;
+        if (q.v[(k + 1) % 4] != b && q.v[(k + 3) % 4] != b){
+            continue;       //a cell at a, but not on the edge a - b
+        }
+        if (!WallLine(z,q.v[0]) || !WallLine(z,q.v[1]) || !WallLine(z,q.v[2]) || !WallLine(z,q.v[3])){
+            continue;
+        }
+        int spare = -1;
+        for (int j = 0; j < 4; j++){
+            int nb[ROAD_MAX_NEIGHBOURS];
+            int n = WallNeighboursAll(w,z,q.v[j],nb);
+            bool f_inside = (n == 2);
+            for (int t = 0; t < n && f_inside; t++){
+                f_inside = nb[t] == q.v[(j + 1) % 4] || nb[t] == q.v[(j + 3) % 4];
+            }
+            if (f_inside && q.v[j] > spare){
+                spare = q.v[j];
+            }
+        }
+        if (spare == a || spare == b){
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    What wall plot v's palisade joins, by a fine edge, each once in the plot quads' fixed order: the wall
+    plots beside it, planned or standing, and the gates - the road plots its wall runs through - less the
+    edges of a walled cell's spare corner (WallEdgeDropped). For a gate plot the same: the walls and gates
+    beside it, which its crossbeam spans.
+*/
+int WallNeighbours(const ChasmWorld& w, const ZoneState& z, int v, int* out){
+    int all[ROAD_MAX_NEIGHBOURS];
+    int n = WallNeighboursAll(w,z,v,all);
+    int m = 0;
+    for (int i = 0; i < n; i++){
+        if (!WallEdgeDropped(w,z,v,all[i])){
+            out[m++] = all[i];
+        }
+    }
+    return m;
 }
 
 //A box from a to b (3D, a bar of square section `thick`): a rail, a post, a pile.
@@ -211,6 +291,164 @@ void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
     }
 }
 
+//--- Walls (line_works_plan.md, step 3) ---
+
+#define WALL_LOG_HEIGHT     1.30f   //over the ground: one and a half villagers (0.86) - the user's, 2026-10-08
+#define WALL_LOG_W          0.17f
+#define WALL_LOG_SPACING    0.18f   //log to log along the line: side by side, a chink of light here and there
+#define WALL_LOG_TIP        0.24f   //the sharpened top
+#define WALL_LOG_SINK       0.15f   //into the ground, so a slope never shows a gap under one
+#define WALL_LOG_JITTER     0.12f   //of height, by the log's hash: cut by hand
+#define WALL_GATE_POST_W    0.26f
+#define WALL_GATE_HEIGHT    1.80f   //the gate posts, and the top of the crossbeam between them
+#define WALL_GATE_BEAM      0.18f
+#define WALL_STAKE_HEIGHT   0.95f   //a planned wall's stake: taller than a road's, so the two read apart
+#define WALL_STAKE_TIE      0.70f
+
+//A sharpened log standing at p on ground y0: a square post and a four-sided tip.
+void Log(std::vector<vertex>& out, const vec2& p, float y0, float height, float width, int column){
+    float body = height - WALL_LOG_TIP;
+    Bar(out,vec3(p.x,y0 - WALL_LOG_SINK,p.y),vec3(p.x,y0 + body,p.y),width,column);
+    float h = width * 0.5f;
+    vec3 apex(p.x,y0 + height,p.y);
+    vec3 c[4] = {vec3(p.x + h,y0 + body,p.y - h),vec3(p.x + h,y0 + body,p.y + h),
+                 vec3(p.x - h,y0 + body,p.y + h),vec3(p.x - h,y0 + body,p.y - h)};
+    for (int i = 0; i < 4; i++){
+        vec3 mid = (c[i] + c[(i + 1) % 4]) * 0.5f;
+        MeshTri(out,c[i],c[(i + 1) % 4],apex,vec3(mid.x - p.x,0.3f,mid.z - p.y),column);
+    }
+}
+
+/*
+    A planned wall plot: a tall stake at its vertex with a ribbon, and a cord out to each edge the wall
+    will take - to the stakes of planned plots beside it, meeting halfway, and to the midpoint toward one
+    standing or a gate.
+*/
+void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    const vec2 c = pos[v];
+    float y0 = w.terrain->GroundHeight(c,w.terrain->Height(v));
+    Bar(out,vec3(c.x,y0 - STAKE_SINK,c.y),vec3(c.x,y0 + WALL_STAKE_HEIGHT,c.y),STAKE_THICK * 1.3f,PAL_TIMBER);
+    Bar(out,vec3(c.x,y0 + WALL_STAKE_HEIGHT - STAKE_RIBBON,c.y),vec3(c.x,y0 + WALL_STAKE_HEIGHT + 0.01f,c.y),
+        STAKE_THICK * 2.0f,PAL_ACCENT);
+    vec3 tie(c.x,y0 + WALL_STAKE_TIE,c.y);
+    int nb[ROAD_MAX_NEIGHBOURS];
+    int n = WallNeighbours(w,z,v,nb);
+    for (int i = 0; i < n; i++){
+        int u = nb[i];
+        vec2 mid = (c + pos[u]) * 0.5f;
+        float y_mid = ZoneWallPlanned(z,u) ? (tie.y + w.terrain->GroundHeight(pos[u],w.terrain->Height(u)) + WALL_STAKE_TIE) * 0.5f
+                                           : w.terrain->GroundHeight(mid,w.terrain->Height(v)) + WALL_STAKE_TIE;
+        Bar(out,tie,vec3(mid.x,y_mid,mid.y),STAKE_CORD,PAL_WALL);
+    }
+}
+
+/*
+    A standing wall plot: sharpened logs side by side along its line (LineThrough - the curve through the
+    midpoints of its two edges, or a spoke out to each). Each plot draws its own half of every edge, its
+    logs at the middles of equal steps along each piece, so two plots' logs meet at a midpoint without a
+    doubled one. A thicker log at the vertex where the line does not run straight through. Toward a gate
+    the piece ends in a tall post at the midpoint - the jamb - and the crossbeam is the gate's (BuildGate).
+*/
+void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    const float level = w.terrain->Height(v);
+    auto ground = [&](const vec2& p){
+        return w.terrain->GroundHeight(p,level);
+    };
+    int nb[ROAD_MAX_NEIGHBOURS];
+    int n = WallNeighbours(w,z,v,nb);
+    std::vector<vec2> segs;
+    LineThrough(w,v,nb,n,segs);
+    //The pieces as polylines, with the neighbour at each end (-1 at the vertex).
+    struct Piece{
+        std::vector<vec2> pts;
+        int at_start, at_end;
+    };
+    std::vector<Piece> pieces;
+    if (n == 2){
+        Piece p{{segs[0]},nb[0],nb[1]};
+        for (size_t i = 1; i < segs.size(); i += 2){
+            p.pts.push_back(segs[i]);
+        }
+        pieces.push_back(p);
+    }else{
+        for (int i = 0; i < n; i++){
+            pieces.push_back(Piece{{segs[i * 2],segs[i * 2 + 1]},-1,nb[i]});
+        }
+        Log(out,pos[v],ground(pos[v]),WALL_LOG_HEIGHT + WALL_LOG_JITTER,WALL_LOG_W * 1.4f,PAL_BARK);
+    }
+    for (size_t pi = 0; pi < pieces.size(); pi++){
+        const Piece& p = pieces[pi];
+        std::vector<float> along(1,0.0f);
+        for (size_t i = 1; i < p.pts.size(); i++){
+            along.push_back(along.back() + (p.pts[i] - p.pts[i - 1]).length());
+        }
+        float len = along.back();
+        //A jamb where the piece meets a gate: the logs stop short of it.
+        bool f_gate_start = p.at_start >= 0 && z.gate[p.at_start];
+        bool f_gate_end = p.at_end >= 0 && z.gate[p.at_end];
+        float from = f_gate_start ? WALL_GATE_POST_W : 0.0f;
+        float to = len - (f_gate_end ? WALL_GATE_POST_W : 0.0f);
+        if (f_gate_start){
+            Log(out,p.pts.front(),ground(p.pts.front()),WALL_GATE_HEIGHT,WALL_GATE_POST_W,PAL_BARK_DARK);
+        }
+        if (f_gate_end){
+            Log(out,p.pts.back(),ground(p.pts.back()),WALL_GATE_HEIGHT,WALL_GATE_POST_W,PAL_BARK_DARK);
+        }
+        if (to - from < WALL_LOG_SPACING * 0.5f){
+            continue;
+        }
+        int logs = std::max(1,(int)std::lround((to - from) / WALL_LOG_SPACING));
+        size_t seg = 1;
+        for (int i = 0; i < logs; i++){
+            float s = from + (to - from) * ((float)i + 0.5f) / logs;
+            while (seg + 1 < p.pts.size() && along[seg] < s){
+                seg++;
+            }
+            float t = (s - along[seg - 1]) / std::max(1e-6f,along[seg] - along[seg - 1]);
+            vec2 at = p.pts[seg - 1] + (p.pts[seg] - p.pts[seg - 1]) * t;
+            float jitter = (float)(MeshHash((uint32_t)v,(uint32_t)pi,(uint32_t)i) % 100) / 100.0f;
+            Log(out,at,ground(at),WALL_LOG_HEIGHT + jitter * WALL_LOG_JITTER,WALL_LOG_W,PAL_BARK);
+        }
+    }
+}
+
+/*
+    A GATE - a road plot a wall runs through (ZoneState::gate): a crossbeam over the road from jamb to jamb,
+    the posts the walls either side end in. Only once every wall beside it stands, so the beam never hangs
+    from a post not there yet.
+*/
+void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<vertex>& out){
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    int nb[ROAD_MAX_NEIGHBOURS];
+    int n = WallNeighbours(w,z,g,nb);
+    bool f_wall = false;
+    for (int i = 0; i < n; i++){
+        if (z.ground[nb[i]] == ZONE_GROUND_WALL){
+            if (!ZoneWallStands(z,nb[i])){
+                return;
+            }
+            f_wall = true;
+        }
+    }
+    if (!f_wall || n < 2){
+        return;
+    }
+    const float level = w.terrain->Height(g);
+    auto top = [&](const vec2& p){
+        return vec3(p.x,w.terrain->GroundHeight(p,level) + WALL_GATE_HEIGHT - WALL_GATE_BEAM * 0.5f,p.y);
+    };
+    const vec2 c = pos[g];
+    if (n == 2){
+        Bar(out,top((c + pos[nb[0]]) * 0.5f),top((c + pos[nb[1]]) * 0.5f),WALL_GATE_BEAM,PAL_BARK_DARK);
+        return;
+    }
+    for (int i = 0; i < n; i++){
+        Bar(out,top(c),top((c + pos[nb[i]]) * 0.5f),WALL_GATE_BEAM,PAL_BARK_DARK);
+    }
+}
+
 }
 
 void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
@@ -224,6 +462,22 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
 
     for (int k = 0; k < 4; k++){
         int v = quad.v[k];
+        //A wall (Zones.h, WALLS): staked out while planned, a palisade once it stands; over a gate's road,
+        //its crossbeam - the road itself is drawn below like any other.
+        if (z.ground[v] == ZONE_GROUND_WALL || z.gate[v]){
+            if (RoadVertexOwner(w,v) == fine_quad){
+                if (ZoneWallPlanned(z,v)){
+                    BuildWallStake(w,z,v,out);
+                }else if (ZoneWallStands(z,v)){
+                    BuildPalisade(w,z,v,out);
+                }else{
+                    BuildGate(w,z,v,out);
+                }
+            }
+            if (z.ground[v] == ZONE_GROUND_WALL){
+                continue;
+            }
+        }
         if (ZoneRoadPlanned(z,v)){
             if (RoadVertexOwner(w,v) == fine_quad){
                 BuildRoadStake(w,z,v,out);
@@ -363,20 +617,25 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
 }
 
 bool RoadNear(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& p, float clearance, bool f_line_only){
-    if (ZoneRoadLaid(z,plot) && !f_line_only){
+    if ((ZoneRoadLaid(z,plot) || ZoneWallStands(z,plot)) && !f_line_only){
         return true;
     }
-    //Every road vertex whose drawing can reach plot `plot`: its own corners' neighbours, one cell out.
+    //Every road or wall vertex whose drawing can reach plot `plot`: its own corners' neighbours, one cell out.
     const GridPicker& picker = *w.picker;
     std::vector<vec2> segs;
     for (int i = 0; i < picker.PlotQuadCount(plot); i++){
         const GridQuad& q = w.grid->fine.quads[picker.PlotQuadCorner(plot,i) / 4];
         for (int k = 0; k < 4; k++){
             int v = q.v[k];
-            if (!ZoneRoadLaid(z,v)){
+            if (ZoneRoadLaid(z,v)){
+                RoadCentreLine(w,z,v,segs);
+            }else if (ZoneWallStands(z,v)){
+                int nb[ROAD_MAX_NEIGHBOURS];
+                int n = WallNeighbours(w,z,v,nb);
+                LineThrough(w,v,nb,n,segs);
+            }else{
                 continue;
             }
-            RoadCentreLine(w,z,v,segs);
             for (size_t s = 0; s + 1 < segs.size(); s += 2){
                 if (SegmentDistance(p,segs[s],segs[s + 1]) < clearance){
                     return true;

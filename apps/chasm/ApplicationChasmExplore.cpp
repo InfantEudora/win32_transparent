@@ -108,7 +108,8 @@ std::shared_ptr<const Exploration> ApplicationChasm::GetExploration(){
 //PHYSICS THREAD, from the zone command: the plot's point, or the middle of a field's coarse cell.
 bool ApplicationChasm::ZoneCommandExplored(const ChasmWorld& w, int op, int index){
     const Grid& g = *w.grid;
-    bool f_field = (op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP);
+    bool f_field = (op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP
+                    || op == ZONE_OP_FIELD_NEXT || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND);
     vec2 p(0.0f,0.0f);
     if (f_field){
         if (index < 0 || index >= (int)g.coarse.quads.size()){

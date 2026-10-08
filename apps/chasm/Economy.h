@@ -53,6 +53,14 @@ class Walkers;
     placed - so with fewer people than places the newest workplaces stand empty, and a new hut takes its
     builders from them (`places`). A builder does what anyone without a job does: carries wood to sites
     and lays roads. A worker's skill sets how fast he works (EconomySkillFactor).
+    LAND (docs/land_plan.md): a field employs nobody itself. Every field that stands belongs to a house -
+    its LAND - or, while no house is lived in, to the camp (`EconomyField::owner`, SettleLand): the
+    player's choice (ZoneBuilding::land_of) if that house is lived in, else the house it has, else the
+    nearest lived-in house, else the camp - so the camp's land passes to a house as soon as there is one.
+    The land is its owner's workplace: shared out in field order, a farmer to each ECONOMY_FARMER_CELLS
+    cells or more of whole fields (LandPlaces), and only its own family - for the camp, whoever lives
+    there - fills those places, in the house's place in the order. A field whose share has no farmer
+    LIES FALLOW (`farmer_of` 0).
 
     A worker walks a ROUTE of points: the grid's A* (Walkers::PlanRoute) where he must, and STRAIGHT where
     the line is clear (EconomyStraightClear) - in the open he need not follow the grid (the user's note).
@@ -67,11 +75,19 @@ class Walkers;
         standing there he has nowhere to put wood, and fells nothing. A lot is fenced, and the HUT IS ITS
         DOOR: wood is put on the pile and taken off it from the hut plot beside it (`pile_door`), the way
         he always came home to his hut - nobody walks into the yard.
-      - A FIELD grows while it has a farmer, whenever it is not winter and not under snow (Calendar.h),
-        for its crop's days, at its farmer's pace, and then yields by its area into its own stock; the
-        farmer fetches it, a load (ECONOMY_LOAD) at a time, to a store that takes it. Then it grows again.
+      - A FIELD (fields_plan.md) is EMPTY until a farmer of its land SOWS it - with its starting crop,
+        chosen by the player, then with its next crop, AUTO by default (EconomyFieldSowCrop) - a while a
+        cell at his pace (ECONOMY_SOW_SECONDS); sowing comes before anything else he does. Sown, it grows
+        while its share of the land has a farmer, whenever it is not winter and not under snow (Calendar.h),
+        for its crop's days at that farmer's pace, and then yields its built area x its crop's own yield x
+        the YIELD it was sown at - 100% the first time, after that by what grew before it (EconomyCropYield,
+        the user's follows-what table) - into its own stock, and is empty again. Its land's farmers fetch
+        the harvest, a load (ECONOMY_LOAD) at a time: HOME FIRST (land_plan.md) - into his house while it is
+        short of food (HomeShort), all of it into the camp's supplies for the camp's land - and otherwise to
+        a store that takes it.
       - A COLLECTOR fills while it has a carrier (not under snow); he fetches its water in loads.
-    A load is only picked up when a store takes it; one nobody takes after all is held, waiting.
+    A load is only picked up when a store (or, for a harvest, home) takes it; one nobody takes after all is
+    held, waiting.
 
     --- CONSTRUCTION (docs/construction_plan.md) ------------------------------------------------------
     A building a player places is a SITE (Zones.h, CONSTRUCTION): its storeys are planned, and stand
@@ -88,6 +104,9 @@ class Walkers;
     id, so a worker's `site` names it as ECONOMY_SITE_GROUND | plot; its wood is `ground_site`, by plot,
     and it goes up through ZONE_OP_GROUND_RAISE (Economy::GroundRaises). It is built FROM OUTSIDE: a
     builder stands on an open plot beside it (GroundSiteApproach), so the fence never goes up round him.
+    A FIELD painted in play is a site by its building id like a building (fields_plan.md):
+    ECONOMY_FIELD_WOOD_PER_CELL for each cell still a site, brought to its middle vertex (home_plot - it
+    has no plots of its own), and all its cells built at once when it has it (Economy::FieldRaises).
     WHICH SITE FIRST: nearest, by the walk - so a colony is built close - but of the errands within
     ECONOMY_QUEUE_SLACK of the shortest, the building placed first (the lowest id); and a site the player
     PUT FIRST (ZoneBuilding::f_priority) before every other, however far (Economy::FindSiteWork).
@@ -102,16 +121,23 @@ class Walkers;
     plot (ECONOMY_LAY_SECONDS at his pace), which goes down through ZONE_OP_GROUND_RAISE like a garden's
     wall. His `site` names the plot as a ground site does. Done with a piece, he takes the next one along
     the line within ECONOMY_ROAD_REACH of him, up to ECONOMY_ROAD_STINT pieces a trip, and goes home.
+    A WALL (step 3) is a road with a cost: its trees are felled the same way, and then - only then - it is
+    a ground site like a garden's, ECONOMY_WALL_WOOD a plot carried to it and raised when it is all there.
+    THE QUEUE: carrying and line work are ONE ranking (FindSiteWork) - every errand by its walk, and within
+    ECONOMY_QUEUE_SLACK of the nearest, by its place in the placing order: a building's id, a road's or
+    wall's line (ZoneState::line), from one counter. So a road drawn before a house, about as near, is
+    cleared and laid first. A line is never put first; gardens and lots have no place, and keep their walk's.
 
     --- NEEDS (docs/needs_plan.md, P5) -----------------------------------------------------------------
     A person has HEALTH and WATER, each counted in ticks of life left, one gone every tick: full health
-    (NEEDS_HEALTH_FULL) is five days without food, a full water bar (NEEDS_WATER_FULL) three. HEALTH IS
-    THE FOOD METER - there is no hunger of its own (the user's): food comes in whole units, so what a
-    food is worth is the health it gives (EconomyFoodWorth) - wheat a day, greens half a day, beans two.
-    With the water bar empty he is DRY: health falls three times as fast and food no longer raises it,
-    so eating cannot outrun thirst. He eats and drinks AT HOME, from his house's stock or his camp's
-    supplies, and only a whole unit that fits under full, so nothing is wasted - of the foods that fit,
-    the one that keeps worst first. A PRESSING NEED (EconomyPressing: water, or health, below a third)
+    (NEEDS_HEALTH_FULL) is how long he lasts without food, a full water bar (NEEDS_WATER_FULL) how long
+    without water. HEALTH IS THE FOOD METER - there is no hunger of its own (the user's): food comes in
+    whole units, so what a food is worth is the health it gives (EconomyFoodWorth) - beans most, greens
+    least. With the water bar empty he is DRY: health falls faster (NEEDS_DRY_DRAIN) and food no longer
+    raises it, so eating cannot outrun thirst. He eats and drinks AT HOME, from his house's stock or his
+    camp's supplies, and only a whole unit that fits under full, so nothing is wasted - of the foods that
+    fit, the one that keeps worst first. Every figure here is TUNING, not a rule (needs_plan.md, "Current
+    tuning"). A PRESSING NEED (EconomyPressing: water or health below NEEDS_PRESSING_*)
     that his home cannot meet stops him taking on more work: he finishes what he is doing and goes to the
     nearest place that has it - a store, the camp's supplies, a collector or a field's harvest, never
     another family's house - and eats and drinks there as he would at home (the user's: you would not
@@ -150,6 +176,10 @@ class Walkers;
 #define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area: about 8 a plot
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
 #define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence: about 2 a plot
+#define ECONOMY_WALL_WOOD           4       //a palisade plot, flat: one felled tree's logs (the user's, 2026-10-08)
+#define ECONOMY_FIELD_WOOD_PER_CELL 2       //a field site's, a coarse cell (fields_plan.md, the user's 2)
+#define ECONOMY_SOW_SECONDS         3.0f    //sowing a cell of a field, at the farmer's pace
+#define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
 #define ECONOMY_QUEUE_SLACK         8.0f    //errands this much longer than the shortest still go in placing order: ~4 plots
 #define ECONOMY_LAY_SECONDS         4.0f    //laying a road plot, at the worker's pace
 #define ECONOMY_ROAD_STINT          8       //pieces of road work - a tree felled, a plot laid - a trip
@@ -158,22 +188,28 @@ class Walkers;
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
 inline int EconomyGroundSitePlot(uint32_t site){ return (int)(site & ~ECONOMY_SITE_GROUND); }
-//What the settlers bring (in the camp): enough wood for the first few buildings.
+//What the settlers bring (in the camp): wood for the first few buildings, food and water for the first days.
+//Tuning, like the needs below.
 #define ECONOMY_START_WOOD          40
 #define ECONOMY_START_WHEAT         40
-#define ECONOMY_START_BEANS         20
+#define ECONOMY_START_BEANS         30
 #define ECONOMY_START_WATER         40
 
-//Needs (needs_plan.md), in ticks of life left - first numbers, to be tuned once a colony runs on them.
-#define NEEDS_HEALTH_FULL           (7 * CALENDAR_DAY_TICKS)    //five days without food, from full
-#define NEEDS_WATER_FULL            (4 * CALENDAR_DAY_TICKS)    //three days without water
-#define NEEDS_WATER_WORTH           (2 * CALENDAR_DAY_TICKS)    //a unit of water: a day of the bar
-#define NEEDS_DRY_DRAIN             2                           //health a tick more, dry: three times as fast
-#define NEEDS_PRESSING_WATER        (NEEDS_WATER_FULL / 3)      //below this he goes for water (the user's third)
+/*
+    Needs (needs_plan.md), in ticks of life left. TUNING, NOT RULES: these move with playtesting and new
+    features, and a difficulty setting may pick other sets later (the user, 2026-10-08). The comments say
+    what each one is; the numbers are only here, and in needs_plan.md's "Current tuning" table.
+*/
+#define NEEDS_HEALTH_FULL           (7 * CALENDAR_DAY_TICKS)    //a full bar: how long without food, from full
+#define NEEDS_WATER_FULL            (4 * CALENDAR_DAY_TICKS)    //a full water bar: how long until dry
+#define NEEDS_WATER_WORTH           (2 * CALENDAR_DAY_TICKS)    //what a unit of water puts back on the bar
+#define NEEDS_DRY_DRAIN             2                           //health lost a tick more while dry
+#define NEEDS_PRESSING_WATER        (NEEDS_WATER_FULL / 3)      //below this he goes for water
 #define NEEDS_PRESSING_HEALTH       (NEEDS_HEALTH_FULL / 4)     //...and for food
 #define ECONOMY_MEAL_SECONDS        2.0f                        //eating and drinking away from home
 #define ECONOMY_HOME_DAYS           2                           //a house fetches below this many days of its family's water or food
-//The health a unit of food gives: wheat a day, greens half a day, beans two (the user's); 0 for no food.
+//The health a unit of food gives - beans most, then wheat, greens least (the user's order; the amounts are
+//tuning); 0 for no food.
 int EconomyFoodWorth(int good);
 //What a person died of. Never renumber: saves hold these.
 #define NEEDS_DIED_HUNGER           0
@@ -221,6 +257,8 @@ const char* SkillName(int skill);
 #define WORKER_TO_GET           16      //fetching home: walking to a store or the camp (`store`) for a kind (`carry_good`, carry 0)
 #define WORKER_GETTING          17      //picking a load of it up there (timer)
 #define WORKER_TO_LARDER        18      //carrying it home, into his house's own stock
+#define WORKER_TO_SOW           19      //a farmer walking out to sow his field (fields_plan.md)
+#define WORKER_SOWING           20      //sowing it (timer)
 
 /*
     A PERSON, and what he is doing. Who he is: an id (from 1, never reused), a family, the house the
@@ -234,11 +272,11 @@ struct EconomyWorker{
     int age = 0;                //years
     bool f_female = false;      //picks his - or her - figure and first name; births will want it too
     uint8_t skills[SKILL_COUNT] = {};
-    uint32_t building = 0;      //his workplace, 0 none
+    uint32_t building = 0;      //his workplace, 0 none - a farmer's is his house (or camp), whose land he farms
     int job = WORKER_JOB_NONE;
     int state = WORKER_AT_HOME;
     int prop = -1;              //the tree or log he is after
-    uint32_t store = 0;         //the store he is carrying to - or, for a construction, fetching from
+    uint32_t store = 0;         //the store he is carrying to - or, for a construction, fetching from; a farmer's field out there
     uint32_t site = 0;          //the construction he is carrying for, 0 none
     int carry_good = -1;
     int carry = 0;
@@ -259,13 +297,13 @@ struct EconomyWorker{
     int water = NEEDS_WATER_FULL;       //ticks until he is dry
 };
 
-//Dry: his water bar empty - losing health three times as fast, and food doing him no good.
+//Dry: his water bar empty - losing health faster (NEEDS_DRY_DRAIN), and food doing him no good.
 inline bool EconomyDry(const EconomyWorker& k){
     return k.water <= 0;
 }
 
-//What he must have before he takes on more work: water, below a third of its bar; food, with health below
-//a third - unless he is dry, when food does him no good and would only send him from store to store.
+//What he must have before he takes on more work: water, below NEEDS_PRESSING_WATER; food, with health below
+//NEEDS_PRESSING_HEALTH - unless he is dry, when food does him no good and would only send him from store to store.
 inline uint8_t EconomyPressing(const EconomyWorker& k){
     uint8_t want = 0;
     if (k.water < NEEDS_PRESSING_WATER){
@@ -287,10 +325,18 @@ struct EconomyDeath{
     int cause = NEEDS_DIED_HUNGER;
 };
 
+/*
+    A field's growing (fields_plan.md): EMPTY until its farmer sows it, then its crop grows; at harvest it is
+    empty again, that crop remembered as the LAST, which decides the next one's yield (EconomyCropYield).
+*/
 struct EconomyField{
     uint32_t building = 0;
-    int crop = -1;              //what is growing - a new crop is sown from the start
+    int crop = -1;              //what is growing, -1 none
     int grown = 0;              //of its crop's growing time, in hundredths of a tick (a farmer's pace)
+    bool f_sown = false;
+    int yield = 100;            //percent of its crop's own: set when sown, from what grew before
+    int last = -1;              //the crop last harvested, -1 none yet
+    uint32_t owner = 0;         //whose land it is: a house or the camp, 0 none yet (land_plan.md)
 };
 
 struct EconomyState{
@@ -310,7 +356,8 @@ struct EconomyState{
     std::vector<int> room;                              //a store's, and a house's (ECONOMY_HOUSE_ROOM)
     std::vector<int> pile_plot;                         //a woodcutter's woodpile: a lot beside him, -1 none
     std::vector<int> capacity;                          //a house's: how many it holds
-    std::vector<int> places;                            //a workplace's: how many it employs (0: not one)
+    std::vector<int> places;                            //a workplace's: how many it employs (0: not one) - a house's or camp's, its land's farmers
+    std::vector<uint32_t> farmer_of;                    //by building id: a field's farmer, the person its share falls to - 0 fallow
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
     uint32_t felled_version = 0;                        //bumped when a prop's state changes - the view
@@ -327,6 +374,7 @@ struct EconomySaved{
     std::vector<std::pair<int,int>> ground_sites;       //gardens and lots with wood brought: plot, wood
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;
+    bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
 };
 
 class Economy{
@@ -349,13 +397,19 @@ public:
     const std::vector<int>& Raises() const { return raises; }
     //The garden and lot plots built this tick - the app raises them (ZONE_OP_GROUND_RAISE).
     const std::vector<int>& GroundRaises() const { return ground_raises; }
+    //The field cells built this tick - a field site's, all at once - the app raises them (ZONE_OP_FIELD_RAISE).
+    const std::vector<int>& FieldRaises() const { return field_raises; }
 
 private:
     EconomyState state;
     std::vector<int> raises;                    //this tick's, in the order built
     std::vector<int> ground_raises;
-    std::vector<int> ground_sites;              //the garden and lot plots still to build, in index order (derived)
+    std::vector<int> field_raises;
+    std::vector<std::vector<int>> cells_of;     //by building id: a field's coarse cells, in index order (derived)
+    std::vector<int> site_cells;                //by building id: a field's cells still a site (derived)
+    std::vector<int> ground_sites;              //the garden, lot and wall plots still to build, in index order (derived)
     std::vector<int> road_sites;                //the road plots still to lay, in index order (derived)
+    std::vector<int> wall_sites;                //the wall plots still to build - their trees to fell first (derived)
     std::vector<int> pile_door;                 //by building id: the hut plot beside its woodpile, -1 none (derived)
     bool f_new_colony = false;                  //Reset, not Restore: the camp gets its supplies
     std::vector<uint8_t> stands;                //by building id: something of it is built (derived)
@@ -364,6 +418,9 @@ private:
     std::vector<int> home_plot;                 //by building id: where its worker waits, -1 none
     std::vector<std::vector<int>> plots_of;     //by building id: a plot building's plots, in index order
     std::vector<std::vector<int>> tents_of;     //by building id: a camp's tent plots
+    std::vector<int> share_of;                  //by building id: a field's share of its owner's land, -1 none (LandPlaces)
+    std::vector<float> field_pace;              //by building id: its farmer's pace, 0 fallow (Tending)
+    bool f_resettle = false;                    //a loaded save's land not yet settled (an older save's)
     float tree_cell = 16.0f;                    //the trees in buckets of this many world units
     int tree_nx = 0, tree_nz = 0;
     vec2 tree_origin;
@@ -390,12 +447,26 @@ private:
     bool AtHome(const EconomyWorker& k) const;
     bool CanWalk(const ZoneState& z, Walkers& walkers, const vec2& from, int to);
     bool FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //A field of his land built, empty, its crop decided and its share farmed: out to sow it (fields_plan.md,
+    //land_plan.md). True if he set off.
+    bool GoSow(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //A harvest waiting on his land, with home or a store to take it: out to fetch a load. True if he set off.
+    bool FetchHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //Picking up the load at the field he came to (`store`): home first, else a store. False if nothing went.
+    bool PickHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    EconomyField* FieldOf(uint32_t id);
+    //LAND (land_plan.md): every standing field's owner settled, then the land's places and its shares; and
+    //who farms each share.
+    void SettleLand(const ZoneState& z, Walkers& walkers);
+    void LandPlaces(const ZoneState& z);
+    void Tending();
     //Needs: every person's tick of health and water, a meal and a drink at home, and the dead struck off.
     void Needs(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick);
     void EatAndDrink(EconomyWorker& k, const ZoneState& z);
     void Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
-    //A pressing need his home cannot meet: off to the nearest place that can. True if he set off.
-    bool SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //A pressing need his home cannot meet: off to the nearest place that can. True if he set off. With
+    //f_home false he cannot get home, and what it holds is no help.
+    bool SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home = true);
     //Fetching home (needs_plan.md, step 2): what his house is short of; off to fetch it; a load of it picked
     //up at `from` and carried home; and the way home itself.
     uint8_t HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* first) const;
@@ -416,11 +487,23 @@ private:
     int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Build(const ZoneState& z, uint32_t id);
-    //Road works: the standing trees in a planned road plot's way, the next piece to do (from home, or
-    //on a stint - near where he stands), and what he does when a piece is done.
+    //Road works: the standing trees in a planned road's or wall's way, the next piece to do (from home,
+    //or on a stint - near where he stands), and what he does when a piece is done.
     void RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const;
     bool FindRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_stint);
     void NextRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //A piece of line work he could take: a tree to fell on `plot`'s way (`tree`), or the road plot to lay
+    //(`tree` -1) - where he walks to, and how far that is from him.
+    struct LineJob{
+        float walk;
+        int plot, tree, to_plot;
+        vec2 to;
+    };
+    //The nearest few pieces nobody else is on, nearest first - what FindRoadWork and FindSiteWork choose from.
+    void LineJobs(const EconomyWorker& k, const ZoneState& z, bool f_stint, std::vector<LineJob>& out) const;
+    bool StartLineJob(EconomyWorker& k, const ZoneState& z, Walkers& walkers, const LineJob& j, bool f_stint);
+    //A wall plot with its wood all there and nothing of its way standing goes up (ground_raises).
+    void RaiseWall(const ZoneState& z, int v);
 };
 
 //A published state as a save holds it - any thread.
@@ -443,7 +526,8 @@ vec2 EconomyWorkerFacing(const EconomyWorker& k);
 
 const char* EconomyWorkerStateName(int state);
 const char* EconomyJobName(int job);
-//The job a kind of building employs, WORKER_JOB_NONE for one that employs nobody.
+//The job a kind of building employs, WORKER_JOB_NONE for one that employs nobody. A house and the camp employ
+//their land's farmers; a field nobody (land_plan.md).
 int EconomyJobOf(int kind);
 //The colony's jobs at a glance - the overview's and the tool's: per job, who works it and its places.
 struct EconomyJobCount{
@@ -469,8 +553,22 @@ int EconomySiteWood(const ChasmWorld& w, const ZoneState& z, uint32_t id);
 int EconomySiteBrought(const EconomyState& e, uint32_t id);
 //A garden's or lot's plot: the wood it takes to build, and what has been brought to it.
 int EconomyGroundWood(const ChasmWorld& w, int plot);
+//What a garden's, lot's or wall's plot takes to build: a wall ECONOMY_WALL_WOOD, the rest by area; a road 0.
+int EconomyGroundCost(const ChasmWorld& w, const ZoneState& z, int plot);
 int EconomyGroundBrought(const EconomyState& e, int plot);
 //How far a field has grown toward its harvest, 0..1 - the look's cue too.
 float EconomyFieldGrowth(const EconomyState& e, const ZoneState& z, uint32_t id);
+/*
+    FIELDS (fields_plan.md). The yield, in percent of a crop's own, it is sown at after `last` was harvested
+    - the user's follows-what table; -1 for a field's first crop, which is 100.
+*/
+int EconomyCropYield(int last, int crop);
+//What AUTO sows after `last`: the highest yield, the earlier crop (ZONE_CROP_*) on a tie.
+int EconomyAutoCrop(int last);
+//What a field will be sown with next: its starting crop until its first harvest, then its next crop (AUTO
+//worked out). -1 while its starting crop is not chosen.
+int EconomyFieldSowCrop(const EconomyField& f, const ZoneBuilding& b);
+//A field's growing record, NULL for none.
+const EconomyField* EconomyFieldOf(const EconomyState& e, uint32_t id);
 
 #endif

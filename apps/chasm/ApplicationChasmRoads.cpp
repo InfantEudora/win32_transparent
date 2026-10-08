@@ -94,12 +94,13 @@ static void LineStepTo(const ChasmWorld& w, std::vector<int>& chain, int to){
 }
 
 bool ApplicationChasm::LinePlotAllowed(const ChasmWorld& w, const ZoneState& z, const Exploration* ex, bool f_erase,
-                                       int plot, const char** why){
+                                       int ground, int plot, const char** why){
     if (plot < 0 || plot >= (int)z.ground.size()){
         return false;
     }
+    //Erasing takes up the line's own ground only - and a wall's, its gate's mark off a road (Zones.h, WALLS).
     if (f_erase){
-        return z.ground[plot] == ZONE_GROUND_ROAD;
+        return z.ground[plot] == ground || (ground == ZONE_GROUND_WALL && z.gate[plot]);
     }
     //Play mode's own rule (play_mode_plan.md), which the command handler holds a play command to.
     if (PlayMode() && ex && !ex->Explored(w.grid->fine.pos[plot])){
@@ -108,13 +109,18 @@ bool ApplicationChasm::LinePlotAllowed(const ChasmWorld& w, const ZoneState& z, 
         }
         return false;
     }
-    return z.ground[plot] == ZONE_GROUND_ROAD || ZoneCanGround(w,z,plot,why,ZONE_GROUND_ROAD);
+    //Already the line's ground - or a wall over a road, which leaves the road and gates it.
+    if (z.ground[plot] == ground || (ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)){
+        return true;
+    }
+    return ZoneCanGround(w,z,plot,why,ground);
 }
 
 /*
-    PHYSICS THREAD, from UpdatePaint with the road tool. A press on the map starts a line (with shift, a
-    line that takes road up); held, each plot the cursor reaches goes onto it (LineStepTo); let go, it is
-    placed (PlaceLine). Dropped (DropLine, a right press), nothing more happens until the button is up.
+    PHYSICS THREAD, from UpdatePaint with the road or wall tool. A press on the map starts a line of the
+    tool's ground (with shift, a line that takes that ground up); held, each plot the cursor reaches goes
+    onto it (LineStepTo); let go, it is placed (PlaceLine). Dropped (DropLine, a right press), nothing more
+    happens until the button is up.
 */
 void ApplicationChasm::UpdateLineDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
@@ -132,6 +138,7 @@ void ApplicationChasm::UpdateLineDrag(const GridPick& hover, bool f_over_scene, 
         std::lock_guard<std::mutex> lock(pick_mutex);
         line_chain.assign(1,hover.plot);
         f_line_erase = main_scene->inputcontroller->IsKeyDown(INPUT_SHIFT);
+        line_ground = ChasmLineGround(paint_tool);
         line_version++;
         pick_version++;
         return;
@@ -159,15 +166,18 @@ void ApplicationChasm::UpdateLineDrag(const GridPick& hover, bool f_over_scene, 
     the bridge goes in the gap - and the first of it is sent LAST, refused by the zones as it would have
     been, so the overlay says why ("CAN'T BUILD: ...") as for any refused placement: a refusal sent
     earlier would be cleared by the plots placed after it. An erasing line takes up the road on it and
-    leaves everything else.
+    leaves everything else - or a wall's, the wall, and a gate's mark off its road. A wall across a road
+    leaves the road and gates it (Zones.h, WALLS).
 */
 void ApplicationChasm::PlaceLine(){
     std::vector<int> chain;
     bool f_erase = false;
+    int ground = ZONE_GROUND_ROAD;
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         chain.swap(line_chain);
         f_erase = f_line_erase;
+        ground = line_ground;
         line_version++;
         pick_version++;
     }
@@ -186,19 +196,22 @@ void ApplicationChasm::PlaceLine(){
             continue;
         }
         sent.push_back(v);
-        if (!LinePlotAllowed(*w,*z,ex.get(),f_erase,v,NULL)){
+        if (!LinePlotAllowed(*w,*z,ex.get(),f_erase,ground,v,NULL)){
             if (refused < 0 && !f_erase){
                 refused = v;
             }
             continue;
         }
-        if (!f_erase && z->ground[v] == ZONE_GROUND_ROAD && (z->ground_built[v] || PlayMode())){
-            continue;   //road already - or planned, which in debug the paint lays at once
+        if (!f_erase && z->ground[v] == ground && (z->ground_built[v] || PlayMode())){
+            continue;   //that already - or planned, which in debug the paint builds at once
         }
-        SubmitZone(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT,v,ZONE_GROUND_ROAD,paint_stroke);
+        if (!f_erase && ground == ZONE_GROUND_WALL && z->gate[v]){
+            continue;   //a road this wall gates already
+        }
+        SubmitZone(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT,v,ground,paint_stroke);
     }
     if (refused >= 0){
-        SubmitZone(ZONE_OP_GROUND_PAINT,refused,ZONE_GROUND_ROAD,paint_stroke);
+        SubmitZone(ZONE_OP_GROUND_PAINT,refused,ground,paint_stroke);
     }
 }
 
@@ -250,7 +263,9 @@ void ApplicationChasm::RegisterRoadTools(){
         "diagonally, so the road is joined. Each plot is one recorded zone command. Returns how many "
         "were painted and the refusals by reason (a road needs flat ground, no river, no field, no house). "
         "play:true paints it as a PLAY command: a planned road the idle clear of trees and lay "
-        "(docs/line_works_plan.md), refused under the clouds.",
+        "(docs/line_works_plan.md), refused under the clouds. ground:wall draws a palisade instead (Zones.h, "
+        "WALLS) - over a road it leaves the road and gates it, and erase takes walls (and gates) off only. "
+        "Each call is one stroke, so one LINE: one place in the construction queue.",
         json{
             {"type","object"},
             {"properties",{
@@ -260,6 +275,7 @@ void ApplicationChasm::RegisterRoadTools(){
                 {"z1",{{"type","number"}}},
                 {"erase",{{"type","boolean"}}},
                 {"play",{{"type","boolean"},{"description","a planned road, built by the villagers (default false: laid at once)"}}},
+                {"ground",{{"type","string"},{"enum",{"road","wall"}},{"description","what the line is (default road)"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }},
@@ -274,6 +290,14 @@ void ApplicationChasm::RegisterRoadTools(){
             vec2 b(args["x1"].get<float>(),args["z1"].get<float>());
             bool f_erase = args.value("erase",false);
             bool f_play = args.value("play",false);
+            int ground = (args.value("ground",std::string("road")) == "wall") ? ZONE_GROUND_WALL : ZONE_GROUND_ROAD;
+            /*
+                One stroke for the call, so the line is one (Zones.h, LINES): in a range of the tool's own,
+                above chasm_paint's (2^22 up) and the mouse's (below), and below 2^24 - the stroke travels
+                in a float.
+            */
+            static std::atomic<uint32_t> tool_lines{0};
+            uint32_t stroke = (1u << 23) + (++tool_lines & 0x7FFFFF);
             //The plots in the order a drag would reach them, bridged where the drag stepped diagonally.
             std::vector<int> plots;
             int steps = std::max(1,(int)((b - a).length() / 0.25f));
@@ -299,7 +323,8 @@ void ApplicationChasm::RegisterRoadTools(){
                 cmd.flags = SIM_CMD_FLAG_RECORD;
                 cmd.subtype = (uint32_t)plot;
                 cmd.value[0] = (float)(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT);
-                cmd.value[1] = (float)ZONE_GROUND_ROAD;
+                cmd.value[1] = (float)ground;
+                cmd.value[2] = (float)stroke;
                 cmd.value[3] = f_play ? 1.0f : 0.0f;
                 SubmitCommandAndWait(cmd);
                 std::string refusal;
@@ -320,7 +345,15 @@ void ApplicationChasm::RegisterRoadTools(){
             if (z && z->world == w){
                 json arches = json::array();
                 json gates = json::array();
+                json wall_gates = json::array();
+                uint32_t line = 0;
                 for (int plot : plots){
+                    if (z->gate[plot]){
+                        wall_gates.push_back(plot);     //a road this line's wall runs through, or crosses
+                    }
+                    if (!line && z->ground[plot] == ground){
+                        line = z->line[plot];
+                    }
                     int arch = ZoneArchStoreys(*w,*z,plot);
                     if (arch > 0){
                         arches.push_back(json{{"plot",plot},{"storeys",arch}});
@@ -332,6 +365,8 @@ void ApplicationChasm::RegisterRoadTools(){
                 }
                 result["arches"] = arches;
                 result["gates"] = gates;
+                result["wall_gates"] = wall_gates;
+                result["line"] = line;
             }
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
         });

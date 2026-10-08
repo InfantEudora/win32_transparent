@@ -11,8 +11,9 @@ Step 5 of `play_mode_plan.md`: in play mode a building is not placed but BUILT. 
 - **Idle people carry and build.** Anyone without a job: from his home to the nearest wood, a load
   (`ECONOMY_LOAD`, 5) to the site, a while there building with it (`ECONOMY_BUILD_SECONDS`, 5, at his
   pace - strength), and home. There is no builder job and no builders' hut yet.
-- **The settlers bring supplies.** A new colony's camp holds 40 wood, 20 wheat, 10 beans and 20 water,
-  so the first few buildings go up before there is a woodcutter. The overlay's totals count them.
+- **The settlers bring supplies.** A new colony's camp holds wood, food and water (`ECONOMY_START_*` - tuning,
+  see `needs_plan.md`'s "Current tuning"; first 40 wood, 20 wheat, 10 beans and 20 water), so the first few
+  buildings go up before there is a woodcutter. The overlay's totals count them.
 - **Debug mode still places at once.** The difference travels in the command (`value[3]`, the play
   flag of step 3), never in the mode: a debug command builds what it paints, a play command plans it.
 

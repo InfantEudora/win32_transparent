@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-07T21:18:55.147Z
+  modified: 2026-10-08T10:05:33.259Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -43,7 +43,7 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   -> assets/meshes/chasm_props.glb (palette.png stays the single source; palette is 32x16 now).
   STEP 6 BUILT same day: core SIM_CMD_FLAG_RECORD (commands recorded into .rec as `cmd` lines,
   replayed at their tick, live ones dropped during replay); ChasmSave.* saves = recording state;
-  run `python apps/chasm/tools/chasm_replay_test.py` after rule changes (PASS debug+release).
+  (the chasm_replay_test.py that checked rule changes was retired 2026-10-08 - see REPLAY TEST RETIRED below).
   ALL 6 PLANNED STEPS DONE 2026-10-04. Steps 7-9 agreed: 7 forests (BUILT: Forest.*, 148k props via
   core INSTANCE SETS Object::SetInstances + RebuildUniqueMeshList map fix), 8 procedural buildings +
   boundaries that form themselves (walls/fences/palisades on plot-boundary segments whose sides
@@ -97,14 +97,18 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   edge) stays unwalkable; collector on the last DRY plot with a pipe over the stones; ZONE_KIND_BRIDGE
   placed whole (ZONE_OP_BRIDGE, ZoneBridgeChain: dry ends, wet between, water <= 2x river width),
   wood-built from the banks in, deck drawn straight between the dry ends; tool J; chasm_bridge.
-  User: make a NEW replay test recording on the new generator when we next do replays.
-  2026-10-07: chasm_replay_test.py prints FAIL on STALE FIXTURES only (camp woodcutter spot refused "too
-  close to a cliff", OAKS offsets have no oaks on seed 1) - the replay/trace comparison itself passes.
-  SITE QUEUE + "BUILD FIRST" BUILT same day (construction_plan.md "Which site goes first"): nearest, but
+  2026-10-08: chasm_replay_test.py's camp fixtures are FOUND BY TRYING (find_camp_spots: road through trees,
+  palisade ring + gate, woodcutter, play wall) - PASS on seed 12; fixed offsets went stale on a default-seed change.
+  SITE QUEUE + "BUILD FIRST" BUILT 2026-10-07 (construction_plan.md "Which site goes first"): nearest, but
   within ECONOMY_QUEUE_SLACK placing order (= building id); ZoneBuilding::f_priority beats distance.
-  P5 NEEDS AGREED 2026-10-07 (docs/needs_plan.md, not built): HEALTH is the food meter (-20%/day; wheat
-  +20, greens +10, beans +40), a THIRST bar (3 days, then health falls faster), COLD the same in winter.
-  People STARVE - no leaving, no immigrants. Target: one field cell feeds one person a year. Numbers to tune.
+  PALISADE WALLS BUILT 2026-10-08 (line_works_plan.md step 3, five phases): ZONE_GROUND_WALL drawn with key 7
+  like a road, 4 wood/plot, trees felled first; gates = road plots marked ZoneState::gate; ZoneState::line ids
+  share the building-id counter, so roads + walls + buildings are ONE queue (FindSiteWork ranks carries and
+  line work together). Lines never "Build first".
+  P5 NEEDS AGREED 2026-10-07 (docs/needs_plan.md): HEALTH is the food meter, a THIRST bar (empty -> health
+  falls faster), COLD the same in winter, beans worth most/greens least. People STARVE - no leaving, no
+  immigrants. Target: one field cell feeds one person a year. ALL FIGURES ARE TUNING (needs_plan.md "Current
+  tuning" table; 2026-10-08 now 7-day health, 4-day water, 2-day water unit) - see [[tuning-numbers-not-rules]].
   User first said eat ONLY AT HOME, then CHANGED it same day: below a third of water or health a person takes
   no new work and eats/drinks at the nearest store/camp/collector/field (SeekSupply, WORKER_TO_SUPPLY/SUPPLYING;
   one-unit claims, waits at a filling collector) - BUILT. STEP 1 BUILT same day (Economy::Needs/EatAndDrink,
@@ -121,8 +125,19 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   water sliders -> recorded CHASM_CMD_NEEDS on release; chasm_economy op set_needs. An edit at home is
   eaten straight back up (needs run after commands). To screenshot a panel section below the fold, build a
   throwaway copy with it moved to the top - MCP cannot scroll ImGui.
-  REPLAY TEST is seed-1 layout; user set Grid.h default seed 12 (2026-10-07) and will make NEW tests on it
-  themselves - old replay tests may be removed. Don't run seed-1 variants of it.
+  FIELDS BUILT 2026-10-08 (docs/fields_plan.md): FOLLOWS-WHAT yield table (crop_after), sowing costs TIME,
+  a play field is a site (2 wood/cell, field_built per coarse cell, FIELD_RAISE), empty until a starting
+  crop (ZoneBuilding::crop, NONE) is chosen; next_crop sticky, AUTO default (best, ties wheat<greens<beans);
+  farmer sows first (TO_SOW/SOWING 19/20); store next to a field takes all food; card CARD_CHOICE chips.
+  2026-10-07 FIXES: field harvest untouched (SourcePlot -1 for fields: no plots_of; falls back to home_plot);
+  walk-back twitch on any placement (RouteTo started at the plot behind; now skips it). Movement bugs: pause,
+  sim_step 1 tick at a time, read chasm_economy x/z; chasm_paint while paused blocks - send it on a thread
+  beside the sim_step.
+  REPLAY TEST RETIRED 2026-10-08 (user): chasm_replay_test.py + saves/replay_test_*.json deleted; ONE new
+  replay after the mapping work, made by the agent tuning rivers. Default map now 50k cells (Grid.h; planned
+  size still ~100k). START CAMP (ZoneStartCampPlot): home side (flood from river water over plateau, no
+  mountain), ~30 from the rim at the map's middle z, then nearest plot within 48 of a river's water, never
+  nearer the rim; no river -> old balcony rule. At 50k, 5/30 seeds have no river (river agent's problem).
   THIRST MARK (user's ask, same day) then the PERSON BADGE (user's, same evening): ONE badge over everyone
   out of doors - job icon (axe/wheat/bucket/hammer/log) ringed by health (core UIOverlay::AddArc), the drop
   replaces the icon when short of water, ring red when dry; selection pins MERGED into it (orange/amber ring

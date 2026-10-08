@@ -108,7 +108,12 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
     if (z.storeys[a] > 0 && a != from && !passage(a)){
         return false;
     }
-    //A wall or palisade is crossed at its gate and nowhere else.
+    //A standing palisade is never walked onto, nor through; off one only by someone the builders raised
+    //it round, where his walk starts (Zones.h, WALLS). A gate is road, and open.
+    if (ZoneWallStands(z,b) || (ZoneWallStands(z,a) && a != from)){
+        return false;
+    }
+    //A garden's wall or a lot's fence is crossed at its gate and nowhere else.
     return ZoneBoundaryBetween(z,a,b) == ZONE_BOUNDARY_NONE || ZoneGateBetween(*world,z,a,b);
 }
 

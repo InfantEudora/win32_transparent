@@ -15,13 +15,24 @@ float PolyArea(const vec2* p, int n){
     return a * 0.5f;
 }
 
-//Crossing-number test rather than a convexity one: a quarter of a convex quad is convex in
-//practice, but nothing guarantees it, and a pick that silently misses is worse than a slower test.
+/*
+    Crossing-number test rather than a convexity one: a quarter of a convex quad is convex in
+    practice, but nothing guarantees it, and a pick that silently misses is worse than a slower test.
+
+    WATERTIGHT: an edge's crossing is worked out from its LOWER end, whichever way round the polygon
+    walks it. Two quads share an edge in opposite directions, and worked out from each one's own end
+    the two crossings rounded apart - a point exactly on the edge was then outside BOTH, and the pick
+    missed. A villager stopped on such a point had no plot under him, so a re-plan found him no way
+    anywhere and he stood there until he died of thirst (the woutveen recording, 2026-10-08). From the
+    same end, both quads get the same crossing to the bit, and every point is in exactly one of them.
+*/
 bool InPolygon(const vec2& pt, const vec2* p, int n){
     bool f_in = false;
     for (int i = 0, j = n - 1; i < n; j = i++){
         if ((p[i].y > pt.y) != (p[j].y > pt.y)){
-            float x = p[j].x + (pt.y - p[j].y) * (p[i].x - p[j].x) / (p[i].y - p[j].y);
+            const vec2& lo = (p[i].y < p[j].y) ? p[i] : p[j];
+            const vec2& hi = (p[i].y < p[j].y) ? p[j] : p[i];
+            float x = lo.x + (pt.y - lo.y) * (hi.x - lo.x) / (hi.y - lo.y);
             if (pt.x < x){
                 f_in = !f_in;
             }

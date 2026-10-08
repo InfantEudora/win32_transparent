@@ -82,7 +82,7 @@ Files: `Goods.h`, `Economy.*` (the rules), `ApplicationChasmEconomy.cpp` (tick, 
 and a store's `"allow"`), the overlay's totals in `ApplicationChasmTime.cpp`.
 
 - **Goods**: wood, water, wheat, greens, beans (`Goods.h`). The overlay shows WOOD, FOOD (the three
-  summed) and WATER in the stores, under the date.
+  summed) and WATER in the stores, at the top centre (the date has moved to the top right, 2026-10-08).
 - **Stores**: room = floor area x 5 (about 20 a plot-storey). Next to a woodcutter or collector (a shared
   fine edge) or a field (one plot away - buildings keep a plot off fields) a store takes exactly that
   workplace's goods (`attached`, derived); otherwise its own `allow`, set per good in the panel (select
@@ -181,4 +181,17 @@ and its farmer walked out and carried the 3 in. With the camp out of food and no
 walked to the field and ate them there.
 
 The rule that was never broken: a farmer only fetches when some store takes his crop and has room for a load.
+
+## Fixed: walkers twitched back on every placement (2026-10-07)
+
+Found by the user in play: placing anything made the villagers on their way step back and then go on. Any
+zone change re-plans everyone walking (`Economy::Replan`), from where he stands - and on a grid route
+`RouteTo` started from the plot under him, which part way along an edge is often the one he has just left. He
+walked back to it and turned round. Measured with a paused, tick-by-tick run (seed 12, carriers routing
+round a row of houses to a site, a garden plot painted and erased eight times): 24 of 29 walkers on grid
+routes stepped back on the tick of the change; straight walks did not.
+
+Now, when the path's first plot is behind him (the turn there sharper than square) and its second can be
+walked to straight, he goes on to the second along the edge he is on. The same run: 0 of 45. The carriers
+still finished the site.
 

@@ -189,13 +189,18 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
 
     //--- Field outline: this child's edges 0 and 3 lie on its coarse cell's outline -----------------
     int cell = quad.parent;
-    if (z.field.empty() || !z.field[cell]){
+    //A field's cell still a site (fields_plan.md) has no fence yet - it is staked out (CropMesh) - and a
+    //fence beside one is drawn as beside open ground.
+    auto fenced = [&](int c){
+        return z.field[c] && (c >= (int)z.field_built.size() || z.field_built[c]);
+    };
+    if (z.field.empty() || !fenced(cell)){
         return;
     }
     const int outline_edges[2] = {0,3};
     for (int e : outline_edges){
         int across = QuadAcross(w,fine_quad,e);
-        uint32_t other = (across >= 0) ? z.field[g.fine.quads[across].parent] : 0;
+        uint32_t other = (across >= 0 && fenced(g.fine.quads[across].parent)) ? z.field[g.fine.quads[across].parent] : 0;
         if (other == z.field[cell]){
             continue;   //inside one field: no fence
         }

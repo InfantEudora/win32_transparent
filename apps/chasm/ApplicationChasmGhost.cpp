@@ -136,14 +136,16 @@ void ApplicationChasm::UpdateGhost(){
     }
     int tool = paint_tool;
     GridPick hover = GetHoverPick();
-    //A road being drawn: its line, shown wherever the cursor has gone meanwhile - off the map too.
+    //A road or wall being drawn: its line, shown wherever the cursor has gone meanwhile - off the map too.
     std::vector<int> chain;
     bool f_erase_line = false;
+    int line_ground_drawn = ZONE_GROUND_ROAD;
     uint32_t line_at = 0;
-    if (tool == CHASM_TOOL_ROAD){
+    if (ChasmLineTool(tool)){
         std::lock_guard<std::mutex> lock(pick_mutex);
         chain = line_chain;
         f_erase_line = f_line_erase;
+        line_ground_drawn = line_ground;
         line_at = line_version.load();
     }
     bool f_line = !chain.empty();
@@ -189,14 +191,14 @@ void ApplicationChasm::UpdateGhost(){
     int plot = hover.plot;
     int kind = ToolKind(tool);
     if (f_line){
-        //Each plot once, a tile each. Erasing, only what has road to take up, all of it red - what goes.
+        //Each plot once, a tile each. Erasing, only what has road (or wall) to take up, all of it red - what goes.
         std::vector<int> drawn;
         for (int v : chain){
             if (std::find(drawn.begin(),drawn.end(),v) != drawn.end()){
                 continue;
             }
             drawn.push_back(v);
-            bool f_plot_ok = LinePlotAllowed(cw,z,ex.get(),f_erase_line,v,NULL);
+            bool f_plot_ok = LinePlotAllowed(cw,z,ex.get(),f_erase_line,line_ground_drawn,v,NULL);
             if (f_erase_line && !f_plot_ok){
                 continue;
             }
@@ -244,9 +246,12 @@ void ApplicationChasm::UpdateGhost(){
                 GhostPlotTile(cw,landing,verts);
             }
         }
-    }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || tool == CHASM_TOOL_ROAD){
-        int ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : (tool == CHASM_TOOL_LOT) ? ZONE_GROUND_LOT : ZONE_GROUND_ROAD;
-        f_ok = z.ground[plot] == ground || ZoneCanGround(cw,z,plot,NULL,ground);
+    }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || ChasmLineTool(tool)){
+        int ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : (tool == CHASM_TOOL_LOT) ? ZONE_GROUND_LOT
+                                                                     : ChasmLineGround(tool);
+        //A wall over a road is allowed: it gates it (Zones.h, WALLS).
+        f_ok = z.ground[plot] == ground || (ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)
+               || ZoneCanGround(cw,z,plot,NULL,ground);
         GhostPlotTile(cw,plot,verts);
     }else if (f_field){
         f_ok = z.field[hover.coarse_quad] || ZoneCanField(cw,z,hover.coarse_quad,NULL);

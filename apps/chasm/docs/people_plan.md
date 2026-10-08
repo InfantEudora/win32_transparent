@@ -26,9 +26,14 @@ Files: `Economy.*` (the people are `EconomyState::workers`, one `EconomyWorker` 
   one storey and a person to a plot - a tent on each plot, or on one in five (by the plot's hash) a fire
   with a ring of stones, crossed logs, a flame and a log to sit on. It holds any families together, up to
   its tents, and can be walked through (open ground between tents). A new map starts with one: placed by
-  the zones at the camp spot (on the home side, 30 in from the middle of its balcony's stretch of rim, on
-  flat dry plateau) and grown plot by plot until it has a tent for every settler - seed 1's has 14 plots,
-  10 tents and 4 fires. The settlers live in it from the start, so they can work from day one; a family
+  the zones at the camp spot and grown plot by plot until it has a tent for every settler - seed 1's had
+  14 plots, 10 tents and 4 fires. THE CAMP SPOT (`ZoneStartCampPlot`; the user, 2026-10-08 - before, it
+  was 30 in from the home balcony, but the winch comes years in and should not decide the start): on the
+  home side's flat dry plateau, first about 30 in from the rim level with the map's middle, then moved
+  to the nearest plot within 48 of a river's water, no nearer the chasm. A map with no river keeps the
+  old balcony rule. Seeds 1-30 at 50k cells: all 25 with a river camp by one (10-50 from its centre
+  line), 28 of 30 under the snow at full winter; seeds 4, 6, 14, 22 and 27 have no river at 50k (they
+  have one or two at 100k) and so fall back, 14 and 27 into the swamp. The settlers live in it from the start, so they can work from day one; a family
   living in a camp keeps looking for a house, and moves out as soon as one holds it.
   People in a camp are NEVER INDOORS (the user, 2026-10-06): home, they stand out in front of their own
   tent's door (`ZoneCampDoor`, the way the tent faces by `ZoneCampYaw`), so a camp full of people is the

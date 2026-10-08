@@ -43,8 +43,10 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
             p[k] = g.fine.pos[quad.v[k]];
             f_house = f_house || z.storeys[quad.v[k]] > 0;
             f_ground = f_ground || ZoneEnclosesGround(z.ground[quad.v[k]]);
-            //A standing bridge is drawn as a road over the water, a planned road as its stakes.
-            f_road = f_road || ZoneRoadStands(z,quad.v[k]) || ZoneRoadPlanned(z,quad.v[k]);
+            //A standing bridge is drawn as a road over the water, a planned road as its stakes - and a
+            //wall along the edges the same way, planned or standing (RoadMesh.h, WALLS).
+            f_road = f_road || ZoneRoadStands(z,quad.v[k]) || ZoneRoadPlanned(z,quad.v[k])
+                     || z.ground[quad.v[k]] == ZONE_GROUND_WALL;
         }
         if (f_ground){
             for (int k = 0; k < 4; k++){

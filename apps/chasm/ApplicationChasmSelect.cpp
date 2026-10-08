@@ -233,8 +233,18 @@ const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
     return NULL;
 }
 
-//What he is doing, as a sentence's end - the card's and the house's list's.
-const char* Doing(const EconomyWorker& k){
+//What he is doing, as a sentence's end - the card's and the house's list's. With the zones, a wall's way
+//cleared is told from a road's (line_works_plan.md, step 3): the same errand on another line.
+const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
+    int line_plot = (z && k.site && EconomyIsGroundSite(k.site)) ? EconomyGroundSitePlot(k.site) : -1;
+    if (line_plot >= 0 && line_plot < (int)z->ground.size() && z->ground[line_plot] == ZONE_GROUND_WALL){
+        if (k.state == WORKER_TO_ROAD){
+            return "going to clear a wall's way";
+        }
+        if (k.state == WORKER_CLEARING){
+            return "clearing a wall's way";
+        }
+    }
     switch (k.state){
         case WORKER_AT_HOME:    return EconomyIndoors(k) ? "at home" : (k.house ? "at his tent" : "waiting");
         case WORKER_TO_WORK:    return (k.prop >= 0) ? "going to a tree" : "going to work";
@@ -260,6 +270,8 @@ const char* Doing(const EconomyWorker& k){
         case WORKER_TO_GET:     return (k.carry_good == GOOD_WATER) ? "fetching water for home" : "fetching food for home";
         case WORKER_GETTING:    return "picking up for home";
         case WORKER_TO_LARDER:  return "taking it home";
+        case WORKER_TO_SOW:     return "going to sow";
+        case WORKER_SOWING:     return "sowing";
         default:                return "";
     }
 }
@@ -301,7 +313,8 @@ int FirstPlotOf(const ZoneState& z, uint32_t id){
 
 /*
     The people who belong with a selection, for their outlines and pins: a house's or camp's family,
-    a workplace's worker, a site's carriers, a store's carriers (to it or fetching from it, for a site or home).
+    a workplace's worker, a field's farmer (land_plan.md), a site's carriers, a store's carriers (to it or
+    fetching from it, for a site or home).
 */
 void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e, std::vector<uint32_t>& out){
     out.clear();
@@ -309,8 +322,9 @@ void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e,
         return;
     }
     int kind = z.buildings[p.id].kind;
+    uint32_t farmer = (kind == ZONE_KIND_FIELD && p.id < e.farmer_of.size()) ? e.farmer_of[p.id] : 0;
     for (const EconomyWorker& k : e.workers){
-        bool f = k.site == p.id || k.building == p.id;
+        bool f = k.site == p.id || k.building == p.id || (farmer && k.id == farmer);
         if (kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_CAMP){
             f = f || k.house == p.id;
         }
@@ -329,9 +343,10 @@ void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e,
     THE PLACES that belong with a selection, for their outlines in the related colour - what a player
     asks "whose is this?" of (the user, 2026-10-06). One list, so a new kind of belonging is a case here:
       - a woodcutter's hut: his woodpile's lot, and his worker's house;
-      - any other workplace (a field, a collector): its worker's house;
-      - a house: its family's workplaces - a farmer's field, a woodcutter's hut and lot;
-      - a person: his house and workplace, and a woodcutter's lot.
+      - any other workplace (a collector): its worker's house;
+      - a field: the house - or camp - whose land it is (land_plan.md);
+      - a house: its family's workplaces - a woodcutter's hut and lot - and its land's fields;
+      - a person: his house and workplace, a woodcutter's lot, and the fields a farmer farms.
     A garden belongs to nobody yet (it does nothing yet). Each listed once, the selection itself never.
 */
 struct RelatedPlaces{
@@ -361,10 +376,24 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
                 lot_of(k.building);
             }
         }
+        for (const EconomyField& f : e.fields){
+            if (f.building < e.farmer_of.size() && e.farmer_of[f.building] == p.id){
+                building(f.building);
+            }
+        }
     }else if (p.kind == PLAY_PICK_BUILDING && p.id < z.buildings.size()){
         int kind = z.buildings[p.id].kind;
         if (kind == ZONE_KIND_WOODCUTTER){
             lot_of(p.id);
+        }
+        //Land (land_plan.md): a field's owner, a house's or camp's fields.
+        for (const EconomyField& f : e.fields){
+            if (f.building == p.id){
+                building(f.owner);
+            }
+            if ((kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_CAMP) && f.owner == p.id){
+                building(f.building);
+            }
         }
         for (const EconomyWorker& k : e.workers){
             if (k.building == p.id){
@@ -391,6 +420,7 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
 #define CARD_BAR    1
 #define CARD_CHIPS  2
 #define CARD_TOGGLE 3       //a site's "Build first"
+#define CARD_CHOICE 4       //a row of chips, one of them lit: a field's crops (fields_plan.md)
 struct CardLine{
     int type = CARD_TEXT;
     std::string text;
@@ -398,7 +428,17 @@ struct CardLine{
     float bar = 0.0f;
     uint8_t chips_on = 0;       //CARD_CHIPS: the goods taken; CARD_TOGGLE: 1 while on
     bool f_locked = false;      //...and whether they can be changed here
+    std::vector<std::pair<std::string,int>> choices;    //CARD_CHOICE: each chip's label and value
+    int choice_on = -1;         //...the value lit
+    int choice_action = 0;      //...and what a click on one does (OVERLAY_HIT_*), with its value
 };
+
+//A crop's name as a card says it: capitalised.
+std::string CropTitle(int crop){
+    std::string s = ZoneCropName(crop);
+    s[0] = (char)toupper(s[0]);
+    return s;
+}
 struct Card{
     std::string title;
     std::vector<CardLine> lines;
@@ -439,6 +479,35 @@ std::string GoodsList(const EconomyState& e, uint32_t id){
     return s;
 }
 
+//A family's name, from any of them: a person's name less the first name.
+std::string FamilyName(const EconomyWorker& k){
+    std::string s = EconomyPersonName(k);
+    size_t at = s.find(' ');
+    return (at == std::string::npos) ? s : s.substr(at + 1);
+}
+
+//The family living in house `id`, by name - empty with nobody there.
+std::string HouseFamily(const EconomyState& e, uint32_t id){
+    for (const EconomyWorker& k : e.workers){
+        if (k.house == id){
+            return FamilyName(k);
+        }
+    }
+    return std::string();
+}
+
+//Whose land a field is, as a card says it (land_plan.md): "the Veen family's", "the camp's", "nobody's".
+std::string LandName(const ZoneState& z, const EconomyState& e, uint32_t owner){
+    if (!owner || owner >= z.buildings.size()){
+        return "nobody's";
+    }
+    if (z.buildings[owner].kind == ZONE_KIND_CAMP){
+        return "the camp's";
+    }
+    std::string family = HouseFamily(e,owner);
+    return family.empty() ? Format("house %u's",owner) : "the " + family + " family's";
+}
+
 void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, const EconomyWorker& k, Card& c){
     (void)w;
     c.title = EconomyPersonName(k);
@@ -454,10 +523,17 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         c.Text("No job: carries wood for the builders");
     }else if (k.job == WORKER_JOB_BUILDER){
         c.Text(Format("Builder at the builders' hut %u: carries wood to sites and builds",k.building));
+    }else if (k.job == WORKER_JOB_FARMER){
+        //His share of his family's land (land_plan.md).
+        int fields = 0;
+        for (uint32_t farmer : e.farmer_of){
+            fields += (farmer == k.id) ? 1 : 0;
+        }
+        c.Text(Format("Farmer of %s land: %i field%s",LandName(z,e,k.building).c_str(),fields,fields == 1 ? "" : "s"));
     }else{
         c.Text(Format("%s at %s %u",JobTitle(k.job),KindTitle(z.buildings[k.building].kind),k.building));
     }
-    std::string doing = Doing(k);
+    std::string doing = Doing(k,&z);
     if (k.carry > 0){
         doing += Format(", with %i %s",k.carry,GoodName(k.carry_good));
     }
@@ -491,14 +567,21 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     const ZoneBuilding& b = z.buildings[id];
     ZoneBuildingInfo info = ZoneBuildingFigures(w,z,id);
     c.title = KindTitle(b.kind);
-    int site_wood = (b.kind == ZONE_KIND_FIELD) ? 0 : EconomySiteWood(w,z,id);
+    int site_wood = EconomySiteWood(w,z,id);
+    bool f_field = b.kind == ZONE_KIND_FIELD;
     if (site_wood > 0){
         //Under construction: how far along, and who is carrying for it.
         int brought = e ? std::min(site_wood,EconomySiteBrought(*e,id)) : 0;
-        c.title += info.storeys > 0 ? " - building on" : " - being built";
+        c.title += (info.storeys > 0 || (f_field && info.floor_area > 0.0f)) ? " - building on" : " - being built";
         c.Bar(Format("Wood %i of %i",brought,site_wood),site_wood ? (float)brought / site_wood : 0.0f,HUD_AMBER);
-        c.Text(Format("%i storey%s to build%s",info.site_storeys,info.site_storeys == 1 ? "" : "s",
-                      info.storeys ? Format(", %i standing",info.storeys).c_str() : ""),HUD_TEXT_DIM);
+        if (f_field){
+            //A field site (fields_plan.md): staked out, all its cells built at once.
+            c.Text(Format("%i cell%s to build - then empty, to be sown",info.site_cells,info.site_cells == 1 ? "" : "s"),
+                   HUD_TEXT_DIM);
+        }else{
+            c.Text(Format("%i storey%s to build%s",info.site_storeys,info.site_storeys == 1 ? "" : "s",
+                          info.storeys ? Format(", %i standing",info.storeys).c_str() : ""),HUD_TEXT_DIM);
+        }
         if (e){
             int carriers = 0;
             for (const EconomyWorker& k : e->workers){
@@ -507,12 +590,15 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Text(carriers ? Format("%i carrying for it",carriers) : std::string("Waiting for someone free to carry"),
                    HUD_TEXT_DIM);
         }
-        //The player's say over the queue (construction_plan.md): this one before every other site.
-        CardLine first;
-        first.type = CARD_TOGGLE;
-        first.text = "Build first";
-        first.chips_on = b.f_priority;
-        c.lines.push_back(first);
+        //The player's say over the queue (construction_plan.md): this one before every other site. A
+        //building's - put first by one of its plots, which a field has not.
+        if (!f_field){
+            CardLine first;
+            first.type = CARD_TOGGLE;
+            first.text = "Build first";
+            first.chips_on = b.f_priority;
+            c.lines.push_back(first);
+        }
     }
     if (!e){
         return;
@@ -533,8 +619,38 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         }
         for (const EconomyWorker& k : e->workers){
             if (k.house == id){
-                c.Text(Format("  %s, %i - %s, %s",EconomyPersonName(k).c_str(),k.age,JobTitle(k.job),Doing(k)),
+                c.Text(Format("  %s, %i - %s, %s",EconomyPersonName(k).c_str(),k.age,JobTitle(k.job),Doing(k,&z)),
                        EconomyIndoors(k) ? HUD_TEXT_DIM : HUD_TEXT);
+            }
+        }
+        //Its LAND (land_plan.md): its fields and their built cells, who farms it, and what lies fallow.
+        int fields = 0;
+        int fallow = 0;
+        std::vector<uint8_t> mine(z.buildings.size(),0);
+        for (const EconomyField& f : e->fields){
+            if (f.owner == id && f.building < mine.size()){
+                mine[f.building] = 1;
+                fields++;
+                fallow += (f.building >= e->farmer_of.size() || !e->farmer_of[f.building]) ? 1 : 0;
+            }
+        }
+        if (fields > 0){
+            int cells = 0;
+            for (size_t q = 0; q < z.field.size(); q++){
+                cells += (z.field[q] < mine.size() && mine[z.field[q]] && z.field_built[q]) ? 1 : 0;
+            }
+            std::string farmers;
+            for (const EconomyWorker& k : e->workers){
+                if (k.job == WORKER_JOB_FARMER && k.building == id){
+                    std::string name = EconomyPersonName(k);
+                    farmers += (farmers.empty() ? "" : ", ") + name.substr(0,name.find(' '));
+                }
+            }
+            c.Text(Format("Land: %i field%s, %i cell%s - %s",fields,fields == 1 ? "" : "s",cells,cells == 1 ? "" : "s",
+                          farmers.empty() ? "nobody farms it" : ("farmed by " + farmers).c_str()),
+                   farmers.empty() ? HUD_AMBER : HUD_TEXT);
+            if (fallow > 0 && !farmers.empty()){
+                c.Text(Format("%i field%s lie%s fallow: too few hands",fallow,fallow == 1 ? "" : "s",fallow == 1 ? "s" : ""),HUD_AMBER);
             }
         }
         //Its family's own food, water and firewood (ECONOMY_HOUSE_KEEPS), which they eat and drink from.
@@ -567,21 +683,110 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         c.lines.push_back(chips);
     }
     if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_FIELD){
-        if (b.kind == ZONE_KIND_FIELD){
-            std::string crop = ZoneCropName(b.crop);
-            crop[0] = (char)toupper(crop[0]);
-            c.Bar(Format("%s, %.0f%% grown",crop.c_str(),EconomyFieldGrowth(*e,z,id) * 100.0f),EconomyFieldGrowth(*e,z,id));
-        }
-        bool f_worked = false;
-        for (const EconomyWorker& k : e->workers){
-            if (k.building == id){
-                f_worked = true;
-                int skill = EconomyJobSkill(k.job);
-                c.Text(Format("%s (%s %i) - %s",EconomyPersonName(k).c_str(),SkillName(skill),(int)k.skills[skill],Doing(k)));
+        /*
+            A FIELD (fields_plan.md), once it stands: what grows on it, at what yield and how far; or, empty,
+            what its farmer will sow. Then its choices - its starting crop until it has been sown once, then
+            its next crop: AUTO (naming what it picks) or a crop, each with the yield it would get after the
+            crop now growing (or last harvested).
+        */
+        const EconomyField* f = (f_field && info.site_cells == 0) ? EconomyFieldOf(*e,id) : NULL;
+        if (f){
+            int after = -1;
+            if (f->f_sown && f->crop >= 0){
+                float g = EconomyFieldGrowth(*e,z,id);
+                c.Bar(Format("%s at %i%% yield - %.0f%% grown",CropTitle(f->crop).c_str(),f->yield,g * 100.0f),g);
+                after = f->crop;
+            }else{
+                int sow = EconomyFieldSowCrop(*f,b);
+                if (sow < 0){
+                    c.Text("Empty - choose a crop to sow",HUD_AMBER);
+                }else{
+                    c.Text(Format("Empty - its farmer is to sow %s, at %i%%",ZoneCropName(sow),EconomyCropYield(f->last,sow)));
+                }
+                after = f->last;
             }
+            CardLine choice;
+            choice.type = CARD_CHOICE;
+            if (!f->f_sown && f->last < 0){
+                c.Text("Start with:",HUD_TEXT_DIM);
+                choice.choice_action = OVERLAY_HIT_FIELD_CROP;
+                choice.choice_on = (b.crop < ZONE_CROP_COUNT) ? (int)b.crop : -1;
+                for (int k = 0; k < ZONE_CROP_COUNT; k++){
+                    choice.choices.push_back(std::make_pair(CropTitle(k),k));
+                }
+            }else{
+                c.Text("Next:",HUD_TEXT_DIM);
+                choice.choice_action = OVERLAY_HIT_FIELD_NEXT;
+                choice.choice_on = b.next_crop;
+                choice.choices.push_back(std::make_pair("Auto: " + CropTitle(EconomyAutoCrop(after)),(int)ZONE_CROP_AUTO));
+                for (int k = 0; k < ZONE_CROP_COUNT; k++){
+                    choice.choices.push_back(std::make_pair(Format("%s %i%%",CropTitle(k).c_str(),EconomyCropYield(after,k)),k));
+                }
+            }
+            c.lines.push_back(choice);
         }
-        if (!f_worked && info.storeys > 0){
-            c.Text("Nobody works here - it needs a free adult with a house",HUD_AMBER);
+        if (f){
+            /*
+                WHOSE LAND (land_plan.md): its owner and the farmer its share falls to - or that it lies fallow -
+                then the player's say: AUTO, or one of the nearest houses lived in, by their family's name.
+            */
+            std::string land = LandName(z,*e,f->owner) + " land";
+            land[0] = (char)toupper(land[0]);
+            c.Text(land,f->owner ? HUD_TEXT : HUD_AMBER);
+            const EconomyWorker* k = PersonById(*e,(id < e->farmer_of.size()) ? e->farmer_of[id] : 0);
+            if (k){
+                c.Text(Format("%s (husbandry %i) - %s",EconomyPersonName(*k).c_str(),(int)k->skills[SKILL_HUSBANDRY],Doing(*k,&z)));
+            }else{
+                c.Text(f->owner ? "Lies fallow: nobody of the family is free to farm it" : "No house or camp can reach it to farm it",
+                       HUD_AMBER);
+            }
+            vec2 at(0.0f,0.0f);
+            int n_cells = 0;
+            for (size_t q = 0; q < z.field.size(); q++){
+                if (z.field[q] == id){
+                    for (int j = 0; j < 4; j++){
+                        at += w.grid->FineQuadCentre((int)q * 4 + j) * 0.25f;
+                    }
+                    n_cells++;
+                }
+            }
+            at = at * (1.0f / (float)std::max(1,n_cells));
+            std::vector<std::pair<float,uint32_t>> houses;
+            for (size_t h = 1; h < z.buildings.size(); h++){
+                int plot = (z.buildings[h].kind == ZONE_KIND_HOUSE && z.buildings[h].size > 0) ? FirstPlotOf(z,(uint32_t)h) : -1;
+                if (plot >= 0 && !HouseFamily(*e,(uint32_t)h).empty()){
+                    houses.push_back(std::make_pair((w.grid->fine.pos[plot] - at).length(),(uint32_t)h));
+                }
+            }
+            std::sort(houses.begin(),houses.end());
+            CardLine give;
+            give.type = CARD_CHOICE;
+            give.choice_action = OVERLAY_HIT_FIELD_LAND;
+            bool f_given = std::any_of(houses.begin(),houses.end(),[&](const std::pair<float,uint32_t>& h){ return h.second == b.land_of; });
+            give.choice_on = f_given ? (int)b.land_of : 0;
+            give.choices.push_back(std::make_pair(std::string("Auto"),0));
+            for (size_t t = 0; t < houses.size(); t++){
+                //The four nearest - and the one it was given to, wherever that is.
+                if (t < 4 || (f_given && houses[t].second == b.land_of)){
+                    give.choices.push_back(std::make_pair(HouseFamily(*e,houses[t].second),(int)houses[t].second));
+                }
+            }
+            if (houses.size() > 0){
+                c.Text("Give to:",HUD_TEXT_DIM);
+                c.lines.push_back(give);
+            }
+        }else{
+            bool f_worked = false;
+            for (const EconomyWorker& k : e->workers){
+                if (k.building == id){
+                    f_worked = true;
+                    int skill = EconomyJobSkill(k.job);
+                    c.Text(Format("%s (%s %i) - %s",EconomyPersonName(k).c_str(),SkillName(skill),(int)k.skills[skill],Doing(k,&z)));
+                }
+            }
+            if (!f_worked && info.storeys > 0){
+                c.Text("Nobody works here - it needs a free adult with a house",HUD_AMBER);
+            }
         }
         //His woodpile is on a lot beside the hut: with none standing there, he fells nothing.
         bool f_no_lot = b.kind == ZONE_KIND_WOODCUTTER && (id >= e->pile_plot.size() || e->pile_plot[id] < 0);
@@ -615,7 +820,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         }
         for (const EconomyWorker& k : e->workers){
             if (k.building == id){
-                c.Text(Format("  %s (strength %i) - %s",EconomyPersonName(k).c_str(),(int)k.skills[SKILL_STRENGTH],Doing(k)));
+                c.Text(Format("  %s (strength %i) - %s",EconomyPersonName(k).c_str(),(int)k.skills[SKILL_STRENGTH],Doing(k,&z)));
             }
         }
         if (working < places){
@@ -854,6 +1059,8 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             if (hit.action == OVERLAY_HIT_TOOL){
                 paint_tool = (paint_tool == hit.value) ? CHASM_TOOL_SELECT : hit.value;
                 pick_version++;
+            }else if (hit.action == OVERLAY_HIT_PAUSE || hit.action == OVERLAY_HIT_SPEED){
+                PressTimeButton(hit.action);    //the calendar's buttons (ApplicationChasmTime.cpp)
             }else if (hit.action == OVERLAY_HIT_CLOSE){
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 play_selected = PlayPick();
@@ -873,6 +1080,24 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                         SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
                     }else{
                         SubmitZone(ZONE_OP_SITE_PRIORITY,plot,z->buildings[sel.id].f_priority ? 0 : 1);
+                    }
+                }
+            }else if (hit.action == OVERLAY_HIT_FIELD_CROP || hit.action == OVERLAY_HIT_FIELD_NEXT
+                      || hit.action == OVERLAY_HIT_FIELD_LAND){
+                //A field's crops (fields_plan.md) and whose land it is (land_plan.md) - recorded zone commands
+                //on a cell of it.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const ZoneState> z = GetZones();
+                if (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size()){
+                    auto cell = std::find(z->field.begin(),z->field.end(),sel.id);
+                    if (cell != z->field.end()){
+                        int op = (hit.action == OVERLAY_HIT_FIELD_CROP) ? ZONE_OP_FIELD_CROP
+                               : (hit.action == OVERLAY_HIT_FIELD_NEXT) ? ZONE_OP_FIELD_NEXT : ZONE_OP_FIELD_LAND;
+                        SubmitZone(op,(int)(cell - z->field.begin()),hit.value);
                     }
                 }
             }
@@ -1193,9 +1418,16 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     float card_w = CARD_W * s;
     float h = pad + 26.0f * s;
     for (const CardLine& l : card.lines){
-        h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS || l.type == CARD_TOGGLE) ? chips_h : line_h;
-        //A long line widens the card rather than running off it.
+        h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS || l.type == CARD_TOGGLE || l.type == CARD_CHOICE) ? chips_h : line_h;
+        //A long line widens the card rather than running off it - and so does a row of chips.
         card_w = std::max(card_w,overlay->MeasureText(l.text.c_str(),text_size).x + pad * 2.0f);
+        if (l.type == CARD_CHOICE){
+            float row = pad * 2.0f;
+            for (const auto& ch : l.choices){
+                row += overlay->MeasureText(ch.first.c_str(),text_size).x + 20.0f * s;
+            }
+            card_w = std::max(card_w,row);
+        }
     }
     card_w = std::min(card_w,width * 0.45f);
     h += pad * 0.5f;
@@ -1245,6 +1477,13 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
         }else if (l.type == CARD_TOGGLE){
             y += chips_h;
             chip(c0.x + pad,l.text.c_str(),l.chips_on != 0,l.f_locked,OVERLAY_HIT_SITE_FIRST,0);
+        }else if (l.type == CARD_CHOICE){
+            //One chip per choice, the one in force lit; a click on another chooses it.
+            y += chips_h;
+            float x = c0.x + pad;
+            for (const auto& ch : l.choices){
+                x = chip(x,ch.first.c_str(),ch.second == l.choice_on,l.f_locked,l.choice_action,ch.second);
+            }
         }else{
             //A chip per good: lit if the store takes it.
             y += chips_h;
@@ -1366,6 +1605,14 @@ void ApplicationChasm::RegisterSelectTools(){
                         lines.push_back(json{{"chips",takes},{"locked",l.f_locked}});
                     }else if (l.type == CARD_TOGGLE){
                         lines.push_back(json{{"toggle",l.text},{"on",l.chips_on != 0}});
+                    }else if (l.type == CARD_CHOICE){
+                        json labels = json::array();
+                        std::string on;
+                        for (const auto& ch : l.choices){
+                            labels.push_back(ch.first);
+                            on = (ch.second == l.choice_on) ? ch.first : on;
+                        }
+                        lines.push_back(json{{"choice",labels},{"on",on}});
                     }else{
                         lines.push_back(l.type == CARD_BAR ? json{{"text",l.text},{"bar",l.bar}} : json(l.text));
                     }

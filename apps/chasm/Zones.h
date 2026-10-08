@@ -74,7 +74,27 @@
     play is a site too (docs/line_works_plan.md), costing no wood: the idle fell the trees in its way and
     lay it, a plot at a time, through the same op. Until it is laid it holds its plot - the rules see a
     road there - but nothing else does: it is walked as open ground, opens no gate, makes no arch and is
-    drawn as stakes (ZoneRoadLaid). Fields cost nothing and are there at once.
+    drawn as stakes (ZoneRoadLaid). A FIELD painted in play is a site too (fields_plan.md): its cells
+    (`field_built`) are staked out until its wood is brought (ZONE_OP_FIELD_RAISE, all of them at once),
+    and only then can it be sown.
+
+    A FIELD'S CROPS are two choices of the player's (fields_plan.md): its STARTING crop (`crop`, none
+    until chosen - an empty field waits for it) for its first sowing, and its NEXT crop (`next_crop`) for
+    every sowing after, AUTO by default. What is growing, and how well, is the economy's (EconomyField).
+    WHOSE LAND it is (land_plan.md) is a third choice, `land_of`: the house the player gave it to, 0 to
+    leave it to the economy, which keeps the owner (EconomyField::owner).
+
+    WALLS (line_works_plan.md, step 3): a palisade is ground too, ZONE_GROUND_WALL, drawn as a line the
+    way a road is and built the same way, plot by plot - a road with a cost in wood. A wall plot that
+    STANDS is shut to walkers (Walkers::EdgeOpen, the straight walks): a chain joined along fine edges
+    cannot be crossed on this grid without passing through one of its plots. One still planned is open
+    ground - a half-built wall has gaps, and a planned ring does not shut its builders in. It keeps off
+    buildings and stops at a garden's or lot's edge, on a road's slope limit. Where a wall and a road
+    cross, the plot stays ROAD and is marked a GATE (`gate`): a wall drawn over a road leaves it and gates
+    it; a road drawn over a wall takes the plot and gates it.
+
+    LINES: every road and wall plot painted in play carries the LINE it was drawn in (`line`), an id from
+    the buildings' own counter, so lines and buildings share one placing order - the construction queue.
 
     A ZoneState is immutable once published (Zones::Publish), the way the world is, and carries the
     world it was painted on: a new map makes every index in it meaningless.
@@ -104,18 +124,30 @@ int ZoneKindMaxStoreys(int kind);
 #define ZONE_CROP_GREENS        1
 #define ZONE_CROP_BEANS         2
 #define ZONE_CROP_COUNT         3
+//Not crops, but what a field's choices may be instead (fields_plan.md): its starting crop not chosen yet,
+//and a next crop left to the field - the best yield after what was just harvested.
+#define ZONE_CROP_NONE          255
+#define ZONE_CROP_AUTO          254
 const char* ZoneCropName(int crop);
-int ZoneCropByName(const std::string& name);    //-1 if none
+int ZoneCropByName(const std::string& name);    //"none" and "auto" too; -1 if neither nor a crop
 
 //What a plot's ground is. Never renumber - saves and recordings refer to these by value.
 #define ZONE_GROUND_NONE    0
 #define ZONE_GROUND_GARDEN  1       //green, walled: Townscaper's gardens
 #define ZONE_GROUND_LOT     2       //a yard of trodden earth behind a low fence - a woodpile's
 #define ZONE_GROUND_ROAD    3       //step 10: drawn along the grid's edges, walked fastest (docs/roads_plan.md)
-#define ZONE_GROUND_COUNT   4
+#define ZONE_GROUND_WALL    4       //a palisade along a chain of plots, shut to walkers where it stands (line_works_plan.md)
+#define ZONE_GROUND_COUNT   5
 const char* ZoneGroundName(int ground);
-//In a save's ground list, with the kind: a garden or lot planned and not yet built (a site).
+//In a save's ground list, with the kind: a garden, lot, road or wall planned and not yet built (a site).
 #define ZONE_GROUND_SAVED_SITE  16
+//...and a road plot a wall runs through: its gate (ZoneState::gate).
+#define ZONE_GROUND_SAVED_GATE  32
+
+//Ground drawn as a LINE - a drag's chain of plots, placed whole: queued as one (ZoneState::line).
+inline bool ZoneLineGround(int ground){
+    return ground == ZONE_GROUND_ROAD || ground == ZONE_GROUND_WALL;
+}
 
 /*
     What a boundary encloses: a garden or lot plot with no house on it. A road is ground but not
@@ -184,6 +216,9 @@ enum ZoneOp{
     ZONE_OP_BRIDGE,         //plot: a bridge from it to the plot in value[1], across the water (bridge_plan.md)
     ZONE_OP_GROUND_RAISE,   //plot: its garden or lot site is built - the builders' (construction_plan.md)
     ZONE_OP_SITE_PRIORITY,  //plot: its building's site goes first (value[1] 1) or back in the queue (0)
+    ZONE_OP_FIELD_NEXT,     //coarse cell: its field's next crop to value[1], a crop or ZONE_CROP_AUTO (fields_plan.md)
+    ZONE_OP_FIELD_RAISE,    //coarse cell: its field site's cell is built - the builders' (fields_plan.md)
+    ZONE_OP_FIELD_LAND,     //coarse cell: its field given to the house in value[1], 0 automatic (land_plan.md)
     ZONE_OP_COUNT
 };
 const char* ZoneOpName(int op);
@@ -203,11 +238,13 @@ struct ChasmWorld;     //ChasmWorld.h
 */
 struct ZoneBuilding{
     uint8_t kind = ZONE_KIND_NONE;
-    uint8_t crop = ZONE_CROP_WHEAT;
+    uint8_t crop = ZONE_CROP_WHEAT;             //a field's starting crop; ZONE_CROP_NONE until chosen
     uint8_t allow = GOODS_ALL;
     uint8_t f_priority = 0;
+    uint8_t next_crop = ZONE_CROP_AUTO;         //a field's crop for every sowing after its first
     int size = 0;
     uint32_t split_from = 0;
+    uint32_t land_of = 0;                       //a field: the house the player gave it to, 0 automatic
 };
 
 struct ZoneState{
@@ -221,11 +258,20 @@ struct ZoneState{
     std::vector<uint8_t> storeys;               //per fine vertex: 0 with no building
     std::vector<uint8_t> standing;              //per fine vertex: of those, how many are built - the rest a site's
     std::vector<uint8_t> ground;                //per fine vertex, ZONE_GROUND_*
-    std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden, lot or road still a site
+    std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden, lot, road or wall still a site
+    std::vector<uint32_t> line;                 //per fine vertex: a road's or wall's line - its place in the queue, 0 none
+    std::vector<uint8_t> gate;                  //per fine vertex: 1 on a road plot a wall runs through
     std::vector<uint32_t> field;                //per coarse quad: the field it is part of, 0 none
+    std::vector<uint8_t> field_built;           //per coarse quad: 0 for a field's cell still a site
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
     uint32_t stroke_building = 0;
+    /*
+        The line being placed: its stroke and the id it was given. A line is sent whole on release, in
+        one batch, so it never outlives the tick it is placed on - neither is saved.
+    */
+    uint32_t line_stroke = 0;
+    uint32_t line_id = 0;
     std::vector<uint32_t> chunk_version;        //per terrain chunk: bumped when its zones change
     uint32_t version = 0;
     int built_plots = 0;
@@ -249,9 +295,19 @@ struct ZoneSavedBuilding{
     int crop = ZONE_CROP_WHEAT;
     int allow = GOODS_ALL;                      //a store's own setting
     bool f_priority = false;                    //a site the player put first
+    int next_crop = ZONE_CROP_AUTO;             //a field's (fields_plan.md)
+    uint32_t land_of = 0;                       //a field's, given to a house (land_plan.md)
     std::vector<std::pair<int,int>> plots;      //plot, storeys
     std::vector<int> standing;                  //per plot above, what of it stands - empty: all of it
     std::vector<int> cells;                     //a field's coarse cells
+    std::vector<int> cells_built;               //per cell above, 1 if built - empty: all of them
+};
+
+//A plot's ground as a save holds it: the kind with ZONE_GROUND_SAVED_SITE / _GATE added, and its line.
+struct ZoneSavedGround{
+    int plot = 0;
+    int kind = ZONE_GROUND_NONE;
+    uint32_t line = 0;
 };
 
 class Zones{
@@ -270,9 +326,8 @@ public:
         its own id - so a save can only ever put the state where the rules allow. Returns how many
         plots, cells and grounds the rules refused, which for a save made on the same world is 0.
     */
-    //`grounds` is (plot, kind), the kind with ZONE_GROUND_SAVED_SITE added for one still a site.
     int Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<ZoneSavedBuilding>& buildings,
-                uint32_t next_id, const std::vector<std::pair<int,int>>& grounds,
+                uint32_t next_id, const std::vector<ZoneSavedGround>& grounds,
                 uint32_t stroke, uint32_t stroke_building);
     std::string last_refusal;
 
@@ -312,7 +367,7 @@ inline bool ZoneGroundStands(const ZoneState& z, int v){
     return ZoneEnclosesGround(z.ground[v]) && z.ground_built[v];
 }
 bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why);
-//`kind` is the ground to be painted: a road has one rule more than a garden.
+//`kind` is the ground to be painted: a road has one rule more than a garden, and a wall a road's rules.
 bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why,
                    int kind = ZONE_GROUND_GARDEN);
 
@@ -342,7 +397,8 @@ float ZoneCampYaw(int plot);
 vec2 ZoneCampDoor(const ChasmWorld& w, int plot);
 //How many a camp holds: its tents.
 int ZoneCampTents(const ZoneState& z, uint32_t id);
-//Where a new colony camps: on the home side, inland of its balcony, on flat dry plateau. -1 if nowhere.
+//Where a new colony camps: on the home side's flat dry plateau, inland of the rim and near a river
+//(Zones.cpp, WHERE A NEW COLONY CAMPS). -1 if nowhere.
 int ZoneStartCampPlot(const ChasmWorld& w);
 
 /*
@@ -376,6 +432,14 @@ inline bool ZoneRoadStands(const ZoneState& z, int v){
 inline bool ZoneRoadPlanned(const ZoneState& z, int v){
     return z.ground[v] == ZONE_GROUND_ROAD && !z.ground_built[v];
 }
+//A wall plot that STANDS: shut to walkers (Zones.h, WALLS).
+inline bool ZoneWallStands(const ZoneState& z, int v){
+    return z.ground[v] == ZONE_GROUND_WALL && z.ground_built[v];
+}
+//A wall plot still to build: open ground, staked out.
+inline bool ZoneWallPlanned(const ZoneState& z, int v){
+    return z.ground[v] == ZONE_GROUND_WALL && !z.ground_built[v];
+}
 
 //Plot v's neighbours along fine edges, each once, in a fixed order. Returns how many (at most `max`).
 int ZonePlotNeighbours(const ChasmWorld& w, int v, int* out, int max);
@@ -390,6 +454,7 @@ struct ZoneStats{
     int gardens = 0;
     int lots = 0;
     int roads = 0;
+    int walls = 0;
     float ground_area = 0.0f;   //gardens and lots
 };
 ZoneStats ComputeZoneStats(const ChasmWorld& w, const ZoneState& z);
@@ -405,7 +470,9 @@ struct ZoneBuildingInfo{
     float floor_area = 0.0f;    //standing - what it holds and houses
     int site_storeys = 0;       //planned and not yet standing: a construction site's
     float site_area = 0.0f;
+    int site_cells = 0;         //a field's cells still a site
     bool f_priority = false;    //the site goes first
+    int next_crop = ZONE_CROP_AUTO;
 };
 ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, uint32_t id);
 

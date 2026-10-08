@@ -233,8 +233,10 @@ float GridLineGap(const GridLine& a, const GridLine& b, float skip_arc, vec2* wh
 struct GridSettings{
     uint32_t seed = 12;
     //How many FINE cells to aim for. The lattice is sized from it, so the count that comes out is
-    //close but not exact - the merge decides how many quads each triangle becomes.
-    int target_fine_cells = 100000;
+    //close but not exact - the merge decides how many quads each triangle becomes. 50k while testing
+    //(the user, 2026-10-08: plenty for now) - a map about 0.7 of the planned one each way; the planned
+    //size is about 100k (grid_plan.md, "The size").
+    int target_fine_cells = 50000;
     //Map width (x) over depth (z).
     float aspect = 16.0f / 9.0f;
     //Lattice triangle side, in world units. A fine cell comes out about a quarter of this across.

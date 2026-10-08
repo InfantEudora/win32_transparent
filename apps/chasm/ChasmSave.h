@@ -36,7 +36,7 @@ struct ChasmSave{
     uint32_t next_building = 1;                         //the next id the zones would hand out
     uint32_t stroke = 0;                                //the drag in progress, and its building
     uint32_t stroke_building = 0;
-    std::vector<std::pair<int,int>> grounds;            //plot, ZONE_GROUND_* (step 8; absent in older saves)
+    std::vector<ZoneSavedGround> grounds;               //plot, ZONE_GROUND_* and flags, line (step 8; absent in older saves)
     uint64_t calendar_tick = 0;                         //the date (Calendar.h); absent in older saves, which start in spring
     EconomySaved economy;                               //stocks, felled trees, workers, fields (Economy.h); absent in older saves
     std::string explored;                               //Exploration::ToString (play_mode_plan.md); absent in older saves, which load all explored

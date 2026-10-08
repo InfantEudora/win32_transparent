@@ -25,18 +25,25 @@
 
     A PLANNED road plot (painted in play, not yet laid - docs/line_works_plan.md) is no road yet: it is
     drawn as a surveyor's stake at its vertex with a cord out to each edge it will take.
+
+    WALLS (line_works_plan.md, step 3) take the same line along the edges - through the wall plots and
+    the gates beside each - drawn as a PALISADE of sharpened logs once a plot stands, a taller stake
+    while it is planned. Where a wall meets a gate (a road plot it runs through) it ends in a tall post
+    at the edge's midpoint, and the gate's plot hangs a crossbeam from post to post over the road.
 */
 
 //How near a road's centre line no prop stands: half its width and a canopy. The view hides what is
 //nearer (RoadNear); the economy fells the trees in it before a planned road is laid.
 #define ROAD_PROP_CLEARANCE     1.3f
 
-//Draws the road vertices this fine cell owns - laid roads and standing bridges, and planned roads' stakes.
+//Draws the road vertices this fine cell owns - laid roads and standing bridges, and planned roads' stakes -
+//and its wall vertices: palisades, stakes, gates' crossbeams.
 void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out);
 
-//Whether p, standing in plot `plot`, is within `clearance` of a laid road's centre line - what the forest
-//gives way to, so no tree stands on a road or leans over it. A planned road's trees still stand. Anything
-//on a road plot counts as near, unless `f_line_only`: then only the distance to the line itself.
+//Whether p, standing in plot `plot`, is within `clearance` of a laid road's centre line, or a standing
+//wall's - what the forest gives way to, so no tree stands on a road or leans over it, nor grows through a
+//palisade. A planned road's or wall's trees still stand. Anything on such a plot counts as near, unless
+//`f_line_only`: then only the distance to the line itself.
 bool RoadNear(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& p, float clearance,
               bool f_line_only = false);
 

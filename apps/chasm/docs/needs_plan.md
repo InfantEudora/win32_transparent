@@ -4,44 +4,71 @@ Step 5 of `gameplay_plan.md`'s first prototype, after people (P4, `people_plan.m
 (`construction_plan.md`): people eat, drink and keep warm, and die when they cannot. Talked through with
 the user 2026-10-07; step 1 (health, water, death) BUILT the same day - see the end.
 
+**The numbers are tuning, not rules** (the user, 2026-10-08). What was decided is the MECHANICS: health as
+the food meter, thirst as a bar of its own, foods worth different amounts, eating only what fits, dry and
+cold as faster drains, starving. Every figure - how long a bar lasts, what a unit is worth, how fast it
+drains, when a need is pressing, what the settlers bring - is the current tuning. It will change with
+playtesting and as features arrive, and a difficulty setting may later pick a different set of starting
+values and drains. The code is where the numbers live (`NEEDS_*` and `ECONOMY_START_*` in `Economy.h`,
+`EconomyFoodWorth` in `Economy.cpp`); "Current tuning" below lists them and is the one place here kept up to
+date. A figure anywhere else in this plan is the tuning of the day it was written, to read its reasoning by.
+
 ## Decided (the user, 2026-10-07)
 
-- **Health is the food meter.** A person has HEALTH, which falls 20% a day - five days from full to
-  nothing - and eating raises it again. A unit of food is a whole number, so what a food is WORTH is how
-  much health it gives: **wheat 20% (a day), greens 10% (half a day), beans 40% (two days)**. There is no
-  hunger bar of its own.
-- **Thirst is a bar of its own**, three days from full to empty; a unit of water fills a day of it. Once
-  it is empty, health falls faster.
+- **Health is the food meter.** A person has HEALTH, which falls steadily and is raised again by eating;
+  there is no hunger bar of its own. A unit of food is a whole number, so what a food is WORTH is how much
+  health it gives - **beans the most, wheat between, greens the least**. (First tuned as a 5-day bar falling
+  20% a day, wheat a day, greens half a day, beans two.)
+- **Thirst is a bar of its own**, filled by water a unit at a time; once it is empty, health falls faster.
+  (First tuned as a 3-day bar, a unit filling a day of it.)
 - **Cold works the same way**: in winter, a person whose home has no firewood loses health faster.
 - **They starve.** Health at zero is death. Nobody leaves and nobody arrives - there are no immigrants -
   so a colony that cannot feed itself dies out, and that is the first way to lose. (The prototype's table
   said "a shortage makes them leave"; changed.)
 - **The target for the fields: one field cell feeds one person for a year.**
-- **First numbers, tuned once it runs.** Real people last weeks without food; early gathering (berries,
-  say) may come later to soften the start.
+- **Tuned once it runs - and again and again.** Real people last weeks without food; early gathering
+  (berries, say) may come later to soften the start; a difficulty setting may tune it all differently.
 
 ## The model
 
-In ticks (a day is `CALENDAR_DAY_TICKS`, 2,250) and whole numbers, saved and hashed as a state part of
-their own, per person:
-
-| | Full | Falls | Refilled by |
-|---|---|---|---|
-| Health | 5 days (11,250) | 1 a tick, +1 cold, +2 dry | wheat +2,250, greens +1,125, beans +4,500 |
-| Water | 3 days (6,750) | 1 a tick | a water +2,250 |
+In ticks (a day is `CALENDAR_DAY_TICKS`) and whole numbers, saved and hashed as a state part of their own,
+per person: a HEALTH bar and a WATER bar, each one tick lower every tick.
 
 - **Eating when there is room.** A food is eaten only when the whole of it fits - health at most full less
-  its worth - so nothing is wasted: a bean every two days, a wheat a day, greens twice a day. Of the foods
-  that fit, the one that keeps worst goes first: greens, then wheat, then beans. Water the same way.
-- **Dry** (the water bar empty): health falls three times as fast (60% a day) and **food no longer raises
-  it**. Without water a person lasts about four and a half days from full, whatever he eats. As first put
-  - the bar empty at three days, then health falling faster - eating could have outrun the thirst, and
-  death would have come well after the three days.
+  its worth - so nothing is wasted. A person eats the drain back: a day of health a day, whatever the bar's
+  size, so the bar decides how long he lasts without food, not how much he eats. Of the foods that fit, the
+  one that keeps worst goes first: greens, then wheat, then beans. Water the same way.
+- **Dry** (the water bar empty): health falls faster and **food no longer raises it**, so eating cannot
+  outrun the thirst - as first put, the bar empty and then health falling faster, it could, and death came
+  well after the water ran out. A dry person eats nothing.
 - **Cold** (the user agreed to the drain; the details are proposed): his home's plot under the snow
   (`CalendarSnowAt` - the south stays bare, so it is not cold there) and no firewood burned at home today.
-  Health falls twice as fast (40% a day) and **food still counts**, so a cold family eats twice as much: a
-  wood shortage shows up as a food shortage first, and kills only once the food runs out too. Cold and
-  dry add up.
+  Health falls faster and **food still counts**, so a cold family eats more - twice as much with the drain
+  as proposed: a wood shortage shows up as a food shortage first, and kills only once the food runs out
+  too. Cold and dry add up.
+
+## Current tuning
+
+The values in the code on 2026-10-08, with the first ones for comparison. Change the code and this table
+together; a difficulty setting would make this one column of several.
+
+| What | In the code | Now | First (2026-10-07) |
+|---|---|---|---|
+| Full health: how long without food | `NEEDS_HEALTH_FULL` | 7 days | 5 days |
+| Health drain | `Needs` | 1 a tick (a day a day) | the same |
+| ...more while dry | `NEEDS_DRY_DRAIN` | +2 a tick (3x) | the same |
+| ...more while cold | not built (step 3) | +1 a tick proposed (2x) | - |
+| A unit of food | `EconomyFoodWorth` | wheat 1 day, greens 1/2, beans 2 | the same |
+| Full water bar | `NEEDS_WATER_FULL` | 4 days | 3 days |
+| A unit of water | `NEEDS_WATER_WORTH` | 2 days | 1 day |
+| Pressing: water below | `NEEDS_PRESSING_WATER` | a third of the bar (1.33 days) | a third (1 day) |
+| Pressing: health below | `NEEDS_PRESSING_HEALTH` | a quarter of the bar (1.75 days) | a third (1.67 days) |
+| A house fetches below | `ECONOMY_HOME_DAYS` | 2 days for its family | - (step 2) |
+| A house's room | `ECONOMY_HOUSE_ROOM` | 4 a unit of floor area | 1.5 |
+| The settlers bring | `ECONOMY_START_*` | 40 wood, 40 wheat, 30 beans, 40 water | 40, 20, 10, 20 |
+
+So per person a day: 1 wheat (or 2 greens, or half a bean) - unchanged since the first tuning - and now
+half a unit of water, where it was one.
 - **Death** at zero health: the person is gone, his job is given out again, his family stays. Nothing
   is left behind yet. With everyone gone, the overlay says the colony is lost.
 
@@ -49,24 +76,27 @@ their own, per person:
 
 - **Eating and drinking happen at home** - from the house's own stock (`ECONOMY_HOUSE_KEEPS` gains water)
   or, for a family in the camp, the camp's supplies. ~~And only there~~: CHANGED by the user the same day -
-  **a pressing need is met wherever there is food or water.** Below a third of his water, or of his health,
-  a person takes on no new work and goes to the nearest store, camp or collector that has it, and eats and
+  **a pressing need is met wherever there is food or water.** Below a pressing level of his water or his
+  health (a third of each, as first tuned), a person takes on no new work and goes to the nearest store, camp or collector that has it, and eats and
   drinks there ("this is what would happen in reality - you wouldn't necessarily drink at home"). Home
   stays where he normally eats; fetching (step 2) is still what keeps him from those trips.
 - **Fetching home** - the gameplay plan's errand, the walk to the shops that makes where a house stands
-  matter. When a home holds less than two days of what its family eats, drinks or (in autumn and winter)
-  burns, a member fetches a load (`ECONOMY_LOAD`, 5) from the nearest store that has it: an idle member
+  matter. When a home holds less than a few days (`ECONOMY_HOME_DAYS`) of what its family eats, drinks or
+  (in autumn and winter) burns, a member fetches a load (`ECONOMY_LOAD`) from the nearest store that has it: an idle member
   first, otherwise its worker between rounds. It comes before carrying wood to a site.
-- **Firewood**: a home under the snow burns 1 wood per plot-storey of floor area at each dawn, from its
-  own stock; when it cannot, its family is cold that day. A camp burns by its floor area too - seed 1's
-  14 plots would burn 14 a day against about 4 for ten people in houses - which is the reason to have
-  built the houses by winter.
+- **Firewood**: a home under the snow burns wood by its floor area at each dawn (1 a plot-storey, as a first
+  number), from its own stock; when it cannot, its family is cold that day. A camp burns by its floor area
+  too - seed 1's 14 plots would burn 14 a day against about 4 for ten people in houses - which is the reason
+  to have built the houses by winter.
 
-## What the rates mean (rough, from today's constants)
+## What the rates mean (rough sums from the current tuning - redo them when it changes)
+
+Arithmetic from the "Current tuning" table, not measurements. Each line says what it rests on, so it can
+be redone for another tuning or difficulty.
 
 - **Fields** grow about 30 days a year (not in winter, not under the snow - fewer in the north) and a
-  coarse cell is about 16 in area. For a cell to feed a person a year, 40 days' worth, the yields
-  (`crop_yield` in `Economy.cpp`) go up:
+  coarse cell is about 16 in area. A person eats 40 wheat-days a year (a day a day), so for a cell to feed
+  one, the yields (`crop_yield` in `Economy.cpp`) would have to be:
 
   | Crop | Days to grow | Harvests a year | Yield per area now | For one person a cell |
   |---|---|---|---|---|
@@ -75,17 +105,20 @@ their own, per person:
   | Beans | 25 | 1.2 | 0.45 | 1.05 |
 
   As they stand, the 10 settlers would need about 27 cells of wheat. A farmer's pace (0.68-1.4) moves
-  every figure either way.
-- **The first spring is on a knife-edge.** The camp's 20 wheat and 10 beans are 40 days of food, four for
-  ten people, and full health is five more: the first death about day 9 - just when the earliest greens,
-  painted on day 1, could come in. Its 20 water is two days; with the three in the bar and the dry spell
-  after, deaths about day 7 without a collector. A collector makes about 11 a day, enough for ten. The
-  starting supplies may want raising.
-- **Winter**, for ten people: 100 days of food and, where the collectors are under the snow, 100 water,
-  stocked before it - about ten plot-storeys of store - and the firewood.
-- **A house's room is too small.** `ECONOMY_HOUSE_ROOM` gives about 6 a plot-storey, and two days of food
-  and water for a family of three is already 12. It goes to about 4 (16 a plot-storey). DONE with step 2,
-  which could not work without it (see "As built: step 2").
+  every figure either way, and so does the rotation (`fields_plan.md`): a crop sown at less than 100% yields
+  that much less, so these are the best case.
+- **The first spring.** The camp's 40 wheat and 30 beans are 100 days of food, ten for ten people, and full
+  health is seven more: with water but nothing harvested, the first death from hunger about day 17 - room
+  for a first greens harvest (8 days' growing) and most of a wheat one. At the first tuning (20 wheat, 10
+  beans, a 5-day bar) it was about day 9, a knife-edge. Its 40 water is 80 days, eight for ten; with the four
+  in the bar and the dry spell after, deaths from thirst about day 14 without a collector (day 7 at the
+  first tuning) - so with nothing built, thirst still comes first. A collector makes about 11 a day, enough
+  now for about twenty.
+- **Winter**, for ten people: 100 days of food and, where the collectors are under the snow, 50 water
+  (100 at the first tuning), stocked before it, and the firewood.
+- **A house's room was too small** at the first tuning: about 6 a plot-storey, when two days of food and
+  water for a family of three was already 12. It went to about 16 with step 2, which could not work without
+  it (see "As built: step 2").
 
 ## Not in this step
 
@@ -101,14 +134,19 @@ their own, per person:
    stock, dying. Saved, hashed, on the person's card and in `chasm_economy`.
 2. Fetching home from the stores. BUILT 2026-10-07, below.
 3. Cold: firewood burned under the snow, and the cold drain.
-4. The yields and a house's room retuned (the room already, with step 2). Measured: a new colony with nothing built (the first death about
-   day 9), the same with a collector and a greens field (it lives), and a first winter with and without
-   firewood.
+4. A first tuning pass: the yields and a house's room (the room already, with step 2; the bars, water and
+   the settlers' supplies were retuned in 2b40394). Measured: a new colony with nothing built (when the
+   first dies), the same with a collector and a greens field (it lives), and a first winter with and
+   without firewood. Not the last pass - see "The numbers are tuning, not rules".
 5. The overlay: a death says so, as a refusal does; a lost colony says so.
 
-After each step, `tools/chasm_replay_test.py` must still pass.
+After each step, `tools/chasm_replay_test.py` must still pass. (Retired 2026-10-08 - see `README.md`; a new
+replay comes after the mapping work.)
 
 ## As built: step 1, health, water and death (2026-10-07)
+
+(The as-built sections record what was built and measured on their day, with that day's tuning; for the
+values now, see "Current tuning".)
 
 Files: `Economy.*` (`Needs`, `EatAndDrink`, `EconomyFoodWorth`, `EconomyDeath`), `ChasmSave.cpp`, the hash and
 `chasm_economy` in `ApplicationChasmEconomy.cpp`, the person's card in `ApplicationChasmSelect.cpp`.
@@ -195,6 +233,15 @@ The user's change to "only at home", above. Files: `Economy.*` (`EconomyPressing
 - Every trip is a long walk where the water is far: from this camp more than a day's round trip. That is
   the layout's price, as intended - a store by the camp, filled by the carrier, is the cure.
 - ~~Housed families still eat only from the camp and the stores until fetching home (step 2).~~ Built, below.
+
+**Fixed 2026-10-08 - stranded short of home** (the user's woutveen recording: Wout Veen idle in the road,
+dead of thirst). Someone a re-plan stopped short of home - "at home" where he stood, the way there cut -
+only waited for the zones to change, and never looked to his needs: when the player stopped building, he
+stood there until he died. Now, every look, he goes for a pressing need wherever he can reach it (his home's
+larder no help out there: `SeekSupply`'s `f_home`), and every fourth look tries the way home again. What cut
+Wout's way was the picker missing the point he stood on (`grid_plan.md`, Step 2, "Watertight"); with that
+fixed the recording plays through with nobody dead. The stranded case itself was not seen again - nothing in
+the recording cuts anyone off now - so it is checked by reading only.
 
 ## The People panel (2026-10-07, the user's)
 

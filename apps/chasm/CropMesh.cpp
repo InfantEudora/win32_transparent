@@ -24,6 +24,8 @@
 #define CROP_FILL           0.72f   //of a row's width the ridge covers; the rest is furrow
 #define CROP_RIDGE_LIFT     0.02f   //a ridge's foot above the base
 #define CROP_RIDGE_HEIGHT   0.16f   //its crest above the base
+#define FIELD_SITE_STAKE    0.55f   //a field site's corner stakes, above the ground
+#define FIELD_SITE_CORD     0.32f   //and the cord strung between them
 
 namespace {
 
@@ -100,7 +102,7 @@ int FieldStageOf(float growth){
     return (growth < 0.75f) ? FIELD_STAGE_GREEN : FIELD_STAGE_RIPE;
 }
 
-void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int stage, std::vector<vertex>& out){
+void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int look, std::vector<vertex>& out){
     const Grid& g = *w.grid;
     const GridQuad& quad = g.fine.quads[fine_quad];
     int cell = quad.parent;
@@ -116,13 +118,48 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
         h[i] = w.terrain->GroundHeight(p[i],level) + FIELD_LIFT;
         base[i] = vec3(p[i].x,h[i],p[i].y);
     }
+    /*
+        A cell still a site (fields_plan.md): staked out on the untilled ground - a stake at the coarse
+        corner this child holds (its own corner 0), a little in, and a cord from it to the midpoints of
+        the two edges it touches (its corners 1 and 3), where the children either side carry it on.
+    */
+    if (cell < (int)z.field_built.size() && !z.field_built[cell]){
+        vec2 stake = p[0] + (p[2] - p[0]) * 0.08f;
+        float ground = h[0] - FIELD_LIFT;
+        const float half = 0.04f;
+        const float top = ground + FIELD_SITE_STAKE;
+        vec3 c[8];
+        for (int i = 0; i < 8; i++){
+            c[i] = vec3(stake.x + ((i & 1) ? half : -half),(i & 4) ? top : ground - 0.1f,stake.y + ((i & 2) ? half : -half));
+        }
+        MeshQuad(out,c[4],c[5],c[7],c[6],up,PAL_TIMBER);
+        MeshQuad(out,c[0],c[1],c[5],c[4],vec3(0,0,-1),PAL_TIMBER);
+        MeshQuad(out,c[2],c[3],c[7],c[6],vec3(0,0,1),PAL_TIMBER);
+        MeshQuad(out,c[0],c[2],c[6],c[4],vec3(-1,0,0),PAL_TIMBER);
+        MeshQuad(out,c[1],c[3],c[7],c[5],vec3(1,0,0),PAL_TIMBER);
+        for (int e = 1; e <= 3; e += 2){
+            vec2 to = p[e] + (p[2] - p[e]) * 0.08f;
+            float y0 = ground + FIELD_SITE_CORD;
+            float y1 = (h[e] - FIELD_LIFT) + FIELD_SITE_CORD;
+            vec3 a(stake.x,y0,stake.y), b(to.x,y1,to.y);
+            vec3 drop(0.0f,0.03f,0.0f);
+            vec3 side(a.z - b.z,0.0f,b.x - a.x);     //across the cord, both ways: a ribbon seen from either side
+            MeshQuad(out,a - drop,b - drop,b + drop,a + drop,side,PAL_WALL);
+            MeshQuad(out,b - drop,a - drop,a + drop,b + drop,side * -1.0f,PAL_WALL);
+        }
+        return;
+    }
     MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_EARTH);
 
-    //What grows is the field's crop, the player's choice for the whole field (docs/buildings_plan.md);
-    //which way the rows run in each cell is the cell's own.
+    //What grows is the crop SOWN on it - the economy's, in the look - or with none, the field's starting
+    //crop; which way the rows run in each cell is the cell's own.
     uint32_t hash = MeshHash((uint32_t)cell,0x0F1E1Du);
     uint32_t id = z.field[cell];
-    int crop = (id && id < z.buildings.size()) ? z.buildings[id].crop : ZONE_CROP_WHEAT;
+    int stage = look & 0x0F;
+    int crop = ((look >> 4) & 0x0F) - 1;
+    if (crop < 0){
+        crop = (id && id < z.buildings.size() && z.buildings[id].crop < ZONE_CROP_COUNT) ? z.buildings[id].crop : ZONE_CROP_WHEAT;
+    }
     stage = std::max(0,std::min(FIELD_STAGE_RIPE,stage));
     int column = (stage == FIELD_STAGE_RIPE) ? crop_columns[std::max(0,std::min(ZONE_CROP_COUNT - 1,crop))]
                                              : stage_columns[stage];

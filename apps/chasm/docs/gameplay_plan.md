@@ -332,15 +332,20 @@ the speed, the overlay, the panel's Time section, `chasm_time`), `ChasmSave.*`, 
 - **The speed**: 1x, 2x, 3x - more ticks a second (core's `physics_time_factor`), never longer ones, so
   a replay is the same at any speed and the speed is neither saved nor hashed. Space pauses, `-` and `=`
   slow down and speed up (`=` from a pause just starts it again); the panel and `chasm_time speed`
-  too. Measured in the debug build: 3x runs 283 ticks in 2 s of the 300 asked - near enough; release
+  too - and during a replay as well since 2026-10-08: every chasm key is the viewer's and stays out of
+  recordings (`SetupInput`, `view_key`), where before a replay owned them and dropped the keys pressed
+  while it ran (the user could only replay at 1x). Measured in the debug build: 3x runs 283 ticks in 2 s of the 300 asked - near enough; release
   will keep up better.
 - **Setting the date** is a recorded command (`CHASM_CMD_CALENDAR`: the day in the subtype, the tick in
   the day in a value), since the date is simulation state - the panel's "to the next" season buttons
   and `chasm_time set_day`. For looking at winter, not for play.
-- **The overlay**, in every build, through core's `UIOverlay`: a dark panel at the top centre with the
-  season's name in its colour, the day with a thin line filling as it passes, the year, and the speed
-  (two bars on red when paused, one chevron per multiple otherwise); under them the year as four
-  season bars, the part gone bright, with a white mark at today.
+- **The overlay**, in every build, through core's `UIOverlay`: a dark panel at the TOP RIGHT (since
+  2026-10-08, the user's - it was at the top centre) with the season's name in its colour, the day with a
+  thin line filling as it passes, the year, and two BUTTONS, clickable in either mode: PAUSE (two bars;
+  red with a play arrow while paused) and SPEED (one chevron per multiple; a press goes to the next, round
+  to 1x after 3x, and sets it even while paused). Under them the year as four season bars, the part gone
+  bright, with a white mark at today. The stores' totals sit at the TOP CENTRE. Both panels take the
+  mouse: a click on them paints and selects nothing beneath (`OVERLAY_HIT_PAUSE` / `_SPEED` / `_BLOCK`).
 - **Winter's snow**: a front running east-west that comes down from the north - first snow over
   autumn's last two days, sweeping south through winter's first four to 65% of the map's depth (the
   swamp and the desert stay bare), melted back over spring's first five; the first spring has none.

@@ -107,9 +107,11 @@ current game and F10 / `input_replay` puts the game back there and replays. **Th
 commands are in the recording, not just their input**: a click becomes a zone command by way of
 the camera, which is view and is not replayed, so `SIM_CMD_FLAG_RECORD` (core) writes the command
 itself into the recording and applies it on replay at its tick - and drops live ones meanwhile.
-**After a change to the rules, run `python apps/chasm/tools/chasm_replay_test.py`** against a
-running chasm: it records a painting session from a save and replays it twice; both must end in
-the original's state with identical traces. It prints PASS or the first difference.
+**The replay test is retired** (the user, 2026-10-08): `tools/chasm_replay_test.py` and its
+`saves/replay_test_*.json` are gone - its village sat at fixed coordinates on a map that keeps
+changing. ONE new replay is to be made once the mapping work settles (by the agent on the rivers).
+Until then a rule change is checked by hand, or by replaying a recording of its own and comparing
+replay against replay (`replay_trace`).
 
 ### Rules and view are split
 
@@ -151,7 +153,9 @@ line number.
 | `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A* (retired 2026-10-07), gates in walls, arches under houses |
 | `line_works_plan.md` | roads and walls drawn as a line and placed on release, then built by idle villagers who fell the trees in the way (step 1, the tool, built) |
 | `needs_plan.md` | P5: health as the food meter, thirst, cold; eating at home or, when pressing, at the nearest store (step 1 and pressing needs built) |
+| `fields_plan.md` | fields built (2 wood a cell), sown by the farmer with a chosen crop, and rotated by a follows-what yield table (built) |
 | `builders_plan.md` | the builders' hut - builders as a job, staffed before the other workplaces - and the job overview (built) |
+| `land_plan.md` | family land: fields belong to a house (the camp's at first), farmed by its family at 6 cells a farmer, harvest home first (built) |
 
 ### Later, agreed but not yet planned
 

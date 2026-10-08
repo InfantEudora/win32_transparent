@@ -50,6 +50,11 @@ extern const char* person_asset_names[PERSON_FIGURES];
 #define OVERLAY_HIT_STORE_ALLOW 2       //a store's card: let it take good `value`, or not
 #define OVERLAY_HIT_CLOSE       3       //a card's close mark: clear the selection
 #define OVERLAY_HIT_SITE_FIRST  4       //a site's card: put it first, or back in the queue
+#define OVERLAY_HIT_FIELD_CROP  5       //a field's card: its starting crop to `value` (fields_plan.md)
+#define OVERLAY_HIT_FIELD_NEXT  6       //...its next crop to `value`, a crop or ZONE_CROP_AUTO
+#define OVERLAY_HIT_PAUSE       7       //the calendar's pause button: the clock stops, or goes again
+#define OVERLAY_HIT_SPEED       8       //the calendar's speed button: the next speed, round to normal after the fastest
+#define OVERLAY_HIT_FIELD_LAND  9       //a field's card: given to house `value`, 0 automatic (land_plan.md)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -83,8 +88,8 @@ struct OverlayHit{
 */
 
 
-//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1-6 pick
-//(and pick again to drop) the house, field, erase, garden, lot and road tools; 7 was the debug walker.
+//App keys, past core's - Q/E turn the view, F frames the whole map, N is the next seed, 1-7 pick
+//(and pick again to drop) the house, field, erase, garden, lot, road and wall tools.
 #define INPUT_CHASM_ROTATE_LEFT     INPUT_LAST+1
 #define INPUT_CHASM_ROTATE_RIGHT    INPUT_LAST+2
 #define INPUT_CHASM_FRAME           INPUT_LAST+3
@@ -107,6 +112,7 @@ struct OverlayHit{
 #define INPUT_CHASM_FOG            INPUT_LAST+21     //V: the clouds over unexplored ground, in debug mode
 #define INPUT_CHASM_TOOL_BRIDGE    INPUT_LAST+22     //J, for jetty: B is the previous seed
 #define INPUT_CHASM_TOOL_BUILDERS  INPUT_LAST+23     //G, for guild: B again
+#define INPUT_CHASM_TOOL_WALL      INPUT_LAST+24     //7, beside the road: the debug walker's key, free since it went
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -132,8 +138,17 @@ enum ChasmTool{
     CHASM_TOOL_CAMP,        //docs/people_plan.md: tents and fires
     CHASM_TOOL_BRIDGE,      //docs/bridge_plan.md: press on one bank, let go on the other
     CHASM_TOOL_BUILDERS,    //docs/builders_plan.md: a builders' hut, a drag
+    CHASM_TOOL_WALL,        //line_works_plan.md step 3: a palisade, drawn as a line like a road
     CHASM_TOOL_COUNT
 };
+
+//The tools that draw a LINE and place it on release (UpdateLineDrag), and the ground each lays.
+inline bool ChasmLineTool(int tool){
+    return tool == CHASM_TOOL_ROAD || tool == CHASM_TOOL_WALL;
+}
+inline int ChasmLineGround(int tool){
+    return (tool == CHASM_TOOL_WALL) ? ZONE_GROUND_WALL : ZONE_GROUND_ROAD;
+}
 
 class ApplicationChasm : public Application{
 public:
@@ -263,24 +278,26 @@ private:
     void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
 
     /*
-        THE LINE DRAG (docs/line_works_plan.md, ApplicationChasmRoads.cpp): the road tool draws its road
-        FREEHAND and places it on release. While the button is held, `line_chain` is the plots the cursor
-        has crossed, in order and joined along fine edges; nothing is sent until the button comes up, when
-        the chain goes out as one stroke. A right press drops it. Written by the physics thread, read by
-        the previews (the ghost, the pick view) under pick_mutex; line_version moves with every change.
+        THE LINE DRAG (docs/line_works_plan.md, ApplicationChasmRoads.cpp): the road and wall tools draw
+        their line FREEHAND and place it on release. While the button is held, `line_chain` is the plots
+        the cursor has crossed, in order and joined along fine edges; nothing is sent until the button
+        comes up, when the chain goes out as one stroke. A right press drops it. Written by the physics
+        thread, read by the previews (the ghost, the pick view) under pick_mutex; line_version moves with
+        every change.
     */
     enum LineDrag{ LINE_DRAG_NONE = 0, LINE_DRAG_DRAWING, LINE_DRAG_DROPPED };
     int line_drag = LINE_DRAG_NONE;             //physics thread; DROPPED waits for the left button to come up
     std::vector<int> line_chain;                //under pick_mutex
-    bool f_line_erase = false;                  //under pick_mutex: a shift-drag, taking road up
+    bool f_line_erase = false;                  //under pick_mutex: a shift-drag, taking road (or wall) up
+    int line_ground = ZONE_GROUND_ROAD;         //under pick_mutex: what the line lays - its tool's, at the press
     std::atomic<uint32_t> line_version{0};
     void UpdateLineDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
     void PlaceLine();
     void DropLine();
-    //Whether a line may take `plot` - or, erasing, take its road up: the release's rule and the previews'
-    //colour. `ex` may be NULL (all explored). Any thread, on published state.
-    bool LinePlotAllowed(const ChasmWorld& w, const ZoneState& z, const Exploration* ex, bool f_erase, int plot,
-                         const char** why);
+    //Whether a line of `ground` may take `plot` - or, erasing, take its ground up: the release's rule and the
+    //previews' colour. `ex` may be NULL (all explored). Any thread, on published state.
+    bool LinePlotAllowed(const ChasmWorld& w, const ZoneState& z, const Exploration* ex, bool f_erase, int ground,
+                         int plot, const char** why);
 
     /*
         --- Roads and walking (step 10, ApplicationChasmRoads.cpp; docs/roads_plan.md) ---------------
@@ -417,6 +434,7 @@ private:
     void RegisterTimeCommands();
     std::atomic<uint32_t> calendar_commands_done{0};
     void UpdateTimeKeys();                      //physics thread, from UpdateView: pause and speed
+    void PressTimeButton(int action);           //physics thread, from UpdatePick: OVERLAY_HIT_PAUSE or _SPEED
     void SetSpeed(int index);                   //any thread
     int SpeedCount();
     float SpeedFactor(int index);

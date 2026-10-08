@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 333e7cd8-0bfc-473a-a24b-63891d98371c
-  modified: 2026-09-25T11:35:54.539Z
+  modified: 2026-10-08T09:21:44.875Z
 ---
 
 Built 2026-09-25 at the user's request: they capture scenarios faster by hand (controller/keyboard) than by script, and want those as replayable test cases. Later the same stream is meant for multiplayer. First slice of step 7 in [[deterministic-sim-plan]] — record/replay, NO state hash yet.
@@ -19,3 +19,10 @@ Built 2026-09-25 at the user's request: they capture scenarios faster by hand (c
 
 **Why:** a fix belongs in the app's restore, not the recorder — the recorder's input stream was verified exact.
 **How to apply:** when judging replay fidelity, compare replay-vs-replay; if asked to tighten it, reset the Puppet/animation state in `ApplicationArcher::RestoreRecordingState`.
+
+**The user hands over bugs as recordings** (2026-10-08, chasm `recordings/chasm_replay_woutveen.rec`; they called
+it really useful). Method that found the bug in minutes: replay on a copied exe on its own port
+(`input_replay file=... restore_state`), follow one actor via the app's tool to the rough moment, then restart
+paused and `sim_step` 1 tick at a time to the EXACT tick, and test the actor's state at it (there: `chasm_pick`
+with to_x/to_z at the actor's exact float pos — rounding the pos hid the bug). In chasm every key is unrecorded
+(view_key), so recordings hold only `cmd` lines and replays can be sped up.
