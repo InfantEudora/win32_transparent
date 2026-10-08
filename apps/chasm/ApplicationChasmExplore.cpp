@@ -8,9 +8,9 @@
 /*
     EXPLORATION AND THE CLOUDS (docs/play_mode_plan.md, steps 2-4).
 
-    The simulation's half: what has been seen (Exploration.h) grows round everything built - each
-    plot, field cell and road once, when the zones change - and round every person out of doors,
-    every EXPLORATION_PERSON_TICKS. A play zone command under unexplored ground is refused.
+    The simulation's half: what has been seen (Exploration.h) grows by what every person out of doors
+    can see, every EXPLORATION_PERSON_TICKS - a line of sight over the ground, not a disc, and nothing
+    round what is merely placed. A play zone command under unexplored ground is refused.
 
     The view's half: CLOUDS over what is not explored - lumpy flat-shaded white puffs like the chasm's
     mist (Mist.h; they breathe on the GPU the same way, core's INSTANCE_MOTION_PUFF), on a jittered
@@ -36,58 +36,54 @@
 
 //--- The simulation ---------------------------------------------------------------------------------
 
-//PHYSICS THREAD. A new map, or a load: nothing explored, and nothing yet cleared round.
+//PHYSICS THREAD. A new map, or a load: nothing explored, and nothing yet looked round from.
 void ApplicationChasm::ResetExploration(){
     std::shared_ptr<const ChasmWorld> w = zones.GetWorld();
     exploration = Exploration();
     if (w){
         exploration.Reset(w->grid->bounds_min,w->grid->bounds_max);
     }
-    explored_plot.assign(w ? w->grid->fine.pos.size() : 0,0);
-    explored_cell.assign(w ? w->grid->coarse.quads.size() : 0,0);
-    explored_zones_version = 0xFFFFFFFFu;
+    looked_from.assign(exploration.cells.size(),NAN);
     PublishExploration();
 }
 
 /*
-    PHYSICS THREAD, every tick. Round what is built, once a plot (explored never goes back, so a plot
-    cleared round needs no second look - which keeps a big town's every repaint cheap), and round the
-    people out of doors every few ticks.
+    The eye's ground is the person's own plot's, at his cell's middle - not the cell's, which at a rim
+    may be the chasm's floor below him. At the middle rather than where he stands, so it is the same for
+    everyone in the cell on that plot, and a look from there need only be taken once (looked_from).
 */
+float ApplicationChasm::SightEyeGround(const ChasmWorld& w, const Exploration& ex, int cell, const vec2& at){
+    GridPick pick = w.picker->Pick(at);
+    if (pick.plot < 0){
+        return w.sight->ground[(size_t)cell];
+    }
+    return w.terrain->GroundHeight(ex.CellCentre(cell),w.terrain->Height(pick.plot));
+}
+
+//PHYSICS THREAD, every tick: every few ticks, each person out of doors looks round from where he stands.
 void ApplicationChasm::TickExploration(){
     std::shared_ptr<const ChasmWorld> w = zones.GetWorld();
-    if (!w){
+    if (!w || !w->sight){
         return;
     }
     if (exploration.Empty()){
         ResetExploration();
     }
-    const Grid& g = *w->grid;
-    const ZoneState& z = zones.State();
-    bool f_changed = false;
-    if (z.version != explored_zones_version){
-        explored_zones_version = z.version;
-        size_t n = std::min(explored_plot.size(),std::min(z.building.size(),z.ground.size()));
-        for (size_t v = 0; v < n; v++){
-            if (!explored_plot[v] && (z.building[v] || z.ground[v])){
-                explored_plot[v] = 1;
-                f_changed = exploration.Reveal(g.fine.pos[v],EXPLORATION_BUILT_RADIUS) || f_changed;
-            }
-        }
-        size_t m = std::min(explored_cell.size(),z.field.size());
-        for (size_t c = 0; c < m; c++){
-            if (!explored_cell[c] && z.field[c]){
-                explored_cell[c] = 1;
-                f_changed = exploration.Reveal(g.FineQuadCentre((int)c * 4),EXPLORATION_BUILT_RADIUS) || f_changed;
-            }
-        }
+    if (calendar_tick % EXPLORATION_PERSON_TICKS != 0){
+        return;
     }
-    if (calendar_tick % EXPLORATION_PERSON_TICKS == 0){
-        for (const EconomyWorker& k : economy.State().workers){
-            if (!k.f_indoors){
-                f_changed = exploration.Reveal(k.pos,EXPLORATION_PERSON_RADIUS) || f_changed;
-            }
+    bool f_changed = false;
+    for (const EconomyWorker& k : economy.State().workers){
+        int cell = exploration.CellAt(k.pos);
+        if (k.f_indoors || cell < 0){
+            continue;
         }
+        float eye_ground = SightEyeGround(*w,exploration,cell,k.pos);
+        if (looked_from[(size_t)cell] == eye_ground){
+            continue;
+        }
+        looked_from[(size_t)cell] = eye_ground;
+        f_changed = exploration.See(*w->sight,cell,eye_ground) || f_changed;
     }
     if (f_changed){
         PublishExploration();

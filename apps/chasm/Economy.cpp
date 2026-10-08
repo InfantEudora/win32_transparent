@@ -5,6 +5,7 @@
 #include "RoadMesh.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 const char* GoodName(int good){
     switch (good){
@@ -150,10 +151,12 @@ namespace {
     on spring 3 - so wheat and beans were shortened (the user's, 2026-10-08: 18 and 25 before, beans
     never came through): at an average farmer's pace greens come in three times a season, wheat once
     (twice for a good farmer), beans once if sown in the first week or so after the thaw. What a unit
-    is worth eaten is EconomyFoodWorth's (needs_plan.md).
+    is worth eaten is EconomyFoodWorth's (needs_plan.md). The yields were doubled the same day (the
+    user's, from 0.6 / 0.35 / 0.45): ten people took about 37 cells, and now about 16 (needs_plan.md,
+    "What the rates mean").
 */
 const int crop_days[ZONE_CROP_COUNT] = {15,8,20};
-const float crop_yield[ZONE_CROP_COUNT] = {0.6f,0.35f,0.45f};
+const float crop_yield[ZONE_CROP_COUNT] = {1.2f,0.7f,0.9f};
 
 /*
     THE ROTATION (fields_plan.md, the user's follows-what table): a crop's yield, in percent, by the crop
@@ -274,6 +277,16 @@ int MostOf(const std::array<int,GOOD_COUNT>& s, uint8_t goods){
     return best;
 }
 
+}
+
+bool EconomyFrozen(const ChasmWorld& w, const ZoneState& z, uint32_t id, uint64_t tick){
+    //The first plot, as home_plot takes it.
+    for (size_t v = 0; v < z.building.size(); v++){
+        if (z.building[v] == id){
+            return UnderSnow(w,w.grid->fine.pos[v],tick);
+        }
+    }
+    return false;
 }
 
 //--- Walking straight ------------------------------------------------------------------------------
@@ -961,6 +974,7 @@ void Economy::Derive(const ZoneState& z, bool f_share){
     size_t n = z.buildings.size();
     size_t known = state.stock.size();
     state.stock.resize(n,std::array<int,GOOD_COUNT>{});
+    state.heat.resize(std::max<size_t>(n,1),HEAT_NONE);
     //Every plot building's plots, and a field's first cell.
     plots_of.assign(n,std::vector<int>());
     for (size_t v = 0; v < z.building.size(); v++){
@@ -1186,6 +1200,10 @@ void Economy::Derive(const ZoneState& z, bool f_share){
     }
     //How many a house holds: its floor area at ECONOMY_PERSON_AREA each, one family at most this big.
     state.capacity.assign(n,0);
+    state.burn.assign(n,0);
+    state.woodshed.assign(n,0);
+    state.snowed.assign(n,0);
+    float full_winter = CalendarSnowFrontZ(1.0f,w.grid->bounds_min.y,w.grid->bounds_max.y);
     tents_of.assign(n,std::vector<int>());
     for (size_t id = 1; id < n; id++){
         if (!stands[id]){
@@ -1197,6 +1215,14 @@ void Economy::Derive(const ZoneState& z, bool f_share){
             //Its family's own food and firewood (P5): smaller than a store's, by the same floor area.
             state.keeps[id] = ECONOMY_HOUSE_KEEPS;
             state.room[id] = (int)std::floor(area * ECONOMY_HOUSE_ROOM);
+            //HEAT: its fire, a plot-storey standing at a time; its woodshed; whether winter's snow reaches it.
+            int plot_storeys = 0;
+            for (int v : plots_of[id]){
+                plot_storeys += z.standing[v];
+            }
+            state.burn[id] = plot_storeys * ECONOMY_FIREWOOD_BURN;
+            state.woodshed[id] = state.burn[id] * ECONOMY_WOODSHED_DAYS;
+            state.snowed[id] = (!plots_of[id].empty() && CalendarSnowAt(w.grid->fine.pos[plots_of[id][0]],full_winter)) ? 1 : 0;
         }else if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0){
             //A camp holds a person a tent, any number of families (Zones.h, THE CAMP).
             for (int v : plots_of[id]){
@@ -1205,6 +1231,8 @@ void Economy::Derive(const ZoneState& z, bool f_share){
                 }
             }
             state.capacity[id] = (int)tents_of[id].size();
+            //Its fires burn by its floor area too: a plot each, tents and fires alike (needs_plan.md).
+            state.burn[id] = (int)plots_of[id].size() * ECONOMY_FIREWOOD_BURN;
         }
     }
     //A growing record for every field, kept in id order.
@@ -1963,7 +1991,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
             //Of the kind he came for, what is there now and what home still has room for - either may have
             //changed on the way. Of food, whichever there is most of: what he set out for may be gone.
-            uint8_t goods = (k.carry_good == GOOD_WATER) ? GOOD_BIT(GOOD_WATER) : GOODS_FOOD;
+            uint8_t goods = (k.carry_good == GOOD_WATER || k.carry_good == GOOD_WOOD) ? (uint8_t)GOOD_BIT(k.carry_good)
+                                                                                       : (uint8_t)GOODS_FOOD;
             if (!TakeHome(k,z,walkers,k.store,goods)){
                 k.carry_good = -1;
                 GoHome(k,z,walkers);
@@ -1989,7 +2018,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 if (z.buildings[h].kind == ZONE_KIND_CAMP){
                     put = k.carry;
                 }else if (h < state.keeps.size() && (state.keeps[h] & GOOD_BIT(k.carry_good))){
-                    put = std::min(k.carry,std::max(0,state.room[h] - CarryTotal(state.stock[h])));
+                    put = std::min(k.carry,HouseRoom(h,k.carry_good));
                 }
                 state.stock[h][k.carry_good] += put;
             }
@@ -2231,6 +2260,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         return;
     }
     const ChasmWorld& w = *state.world;
+    now = tick;
     raises.clear();
     ground_raises.clear();
     field_raises.clear();
@@ -2322,6 +2352,10 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
             }
         }
     }
+    //HEAT: every home's fire, lit or not, at dawn.
+    if (tick % (uint64_t)CALENDAR_DAY_TICKS == 0){
+        Heat(z,tick);
+    }
     for (EconomyWorker& k : state.workers){
         TickWorker(k,z,walkers,tick,dt);
     }
@@ -2346,6 +2380,7 @@ const char* EconomyDeathCause(int cause){
     switch (cause){
         case NEEDS_DIED_HUNGER: return "hunger";
         case NEEDS_DIED_THIRST: return "thirst";
+        case NEEDS_DIED_COLD:   return "cold";
         default:                return "?";
     }
 }
@@ -2505,12 +2540,14 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
 }
 
 /*
-    FETCHING HOME (needs_plan.md, step 2). What his house is short of: water, food or both, where it holds less
-    than ECONOMY_HOME_DAYS of what its family drinks or eats - each counted in days of the family's bars, which
-    fall a day's worth a day. `first` is the scarcer, water on a tie: thirst kills sooner. Nothing for a camp,
-    whose families do not fetch, or for a house without room for a trip's worth - half a load, or half its
-    room if that is less: a house too small for two days of both is always short, and was fetched for a unit
-    at a time, every look.
+    FETCHING HOME (needs_plan.md, step 2). What his house is short of: water, food, firewood or any of them -
+    water or food where it holds less than ECONOMY_HOME_DAYS of what its family drinks or eats, each counted in
+    days of the family's bars, which fall a day's worth a day; firewood (step 3, HEAT) in its season, where it
+    holds less than ECONOMY_HOME_DAYS of its burning or its fair share, whichever is less. `first` is the
+    scarcest, in days - water on a tie, then food: thirst kills sooner. Nothing for a camp, whose families do
+    not fetch, nor of a kind without room for a trip's worth - half a load, or half the room if that is less:
+    a house too small for two days of both is always short, and was fetched for a unit at a time, every look.
+    Food and water share the house's room; firewood has its woodshed.
 */
 uint8_t Economy::HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* first) const{
     uint32_t h = k.house;
@@ -2518,17 +2555,37 @@ uint8_t Economy::HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* 
         || z.buildings[h].kind != ZONE_KIND_HOUSE){
         return 0;
     }
-    int trip = std::max(1,std::min((ECONOMY_LOAD + 1) / 2,(state.room[h] + 1) / 2));
-    if (state.room[h] - CarryTotal(state.stock[h]) < trip){
-        return 0;
-    }
-    int64_t enough = Living(state.workers,h) * ECONOMY_HOME_DAYS * CALENDAR_DAY_TICKS;
+    auto trip_fits = [&](int good){
+        int room = (good == GOOD_WOOD) ? state.woodshed[h] : state.room[h];
+        return room > 0 && HouseRoom(h,good) >= std::max(1,std::min((ECONOMY_LOAD + 1) / 2,(room + 1) / 2));
+    };
+    int64_t living = std::max<int64_t>(1,Living(state.workers,h));
+    int64_t enough = living * ECONOMY_HOME_DAYS * CALENDAR_DAY_TICKS;
     int64_t water = HeldTicks(state.stock[h],GOOD_BIT(GOOD_WATER));
     int64_t food = HeldTicks(state.stock[h],GOODS_FOOD);
-    uint8_t short_of = (uint8_t)((water < enough ? GOOD_BIT(GOOD_WATER) : 0) | (food < enough ? GOODS_FOOD : 0));
+    uint8_t short_of = (uint8_t)((water < enough && trip_fits(GOOD_WATER) ? GOOD_BIT(GOOD_WATER) : 0)
+                                 | (food < enough && trip_fits(GOOD_WHEAT) ? GOODS_FOOD : 0));
+    //Firewood's days are its burning's: ticks of it held, against water's and food's ticks a head.
+    int64_t wood_ticks = INT64_MAX;
+    if (FirewoodNow(h)){
+        int wood = state.stock[h][GOOD_WOOD];
+        if (wood < std::min(state.burn[h] * ECONOMY_HOME_DAYS,FirewoodFair(z,h)) && trip_fits(GOOD_WOOD)){
+            short_of |= GOOD_BIT(GOOD_WOOD);
+            wood_ticks = (int64_t)wood * CALENDAR_DAY_TICKS / state.burn[h];
+        }
+    }
     if (first){
-        bool f_both = short_of == (uint8_t)(GOOD_BIT(GOOD_WATER) | GOODS_FOOD);
-        *first = f_both ? ((food < water) ? (uint8_t)GOODS_FOOD : (uint8_t)GOOD_BIT(GOOD_WATER)) : short_of;
+        *first = 0;
+        int64_t least = INT64_MAX;
+        const std::pair<uint8_t,int64_t> kinds[3] = {{(uint8_t)GOOD_BIT(GOOD_WATER),water / living},
+                                                     {(uint8_t)GOODS_FOOD,food / living},
+                                                     {(uint8_t)GOOD_BIT(GOOD_WOOD),wood_ticks}};
+        for (const auto& kd : kinds){
+            if ((short_of & kd.first) && (kd.second < least || !*first)){
+                least = kd.second;
+                *first = kd.first;
+            }
+        }
     }
     return short_of;
 }
@@ -2584,7 +2641,14 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
             own_land[f.building] = 1;
         }
     }
-    const uint8_t order[2] = {first,(uint8_t)(short_of & ~first)};
+    //The scarcest first, then the others a kind at a time: water, food, firewood.
+    uint8_t order[3] = {first,0,0};
+    int kinds = 1;
+    for (uint8_t kd : {(uint8_t)GOOD_BIT(GOOD_WATER),(uint8_t)GOODS_FOOD,(uint8_t)GOOD_BIT(GOOD_WOOD)}){
+        if ((short_of & kd) && kd != first){
+            order[kinds++] = kd;
+        }
+    }
     for (uint8_t goods : order){
         if (!goods){
             continue;
@@ -2592,9 +2656,13 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         std::vector<std::pair<float,uint32_t>> found;
         for (size_t id = 1; id < n; id++){
             int kind = z.buildings[id].kind;
-            bool f_land = own_land[id] && !(goods & GOOD_BIT(GOOD_WATER));
+            bool f_land = own_land[id] && goods == GOODS_FOOD;
             if (((kind != ZONE_KIND_STORE && kind != ZONE_KIND_CAMP) && !f_land) || z.buildings[id].size <= 0 || !stands[id]
                 || spare((uint32_t)id,goods) <= 0){
+                continue;
+            }
+            //A camp with people in it keeps its wood for its own fires (HEAT): they cannot fetch any more.
+            if (kind == ZONE_KIND_CAMP && goods == GOOD_BIT(GOOD_WOOD) && Living(state.workers,(uint32_t)id) > 0){
                 continue;
             }
             int plot = SourcePlot((uint32_t)id,k.pos);
@@ -2622,10 +2690,11 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
 
 /*
     A load for his house picked up at `from`: of `goods`, the kind there is most of - as much as a load and the
-    house's room allow, and no more than brings the house to a day past ECONOMY_HOME_DAYS of it, so the next
-    errand is a day off and water does not fill the room food needs (it did: nine water, no food, for a day)
-    - nor, from its own land's field, past its fair share (FairShare) - and off home with it (WORKER_TO_LARDER).
-    False, taking nothing, with none there, no room at home or no way back.
+    house's room for it allow, and no more than brings the house to a day past ECONOMY_HOME_DAYS of it, so the
+    next errand is a day off and water does not fill the room food needs (it did: nine water, no food, for a
+    day) - nor, from its own land's field, past its fair share (FairShare) - and off home with it
+    (WORKER_TO_LARDER). Firewood the same, in days of its burning, into its woodshed, in its season, and never
+    past its fair share (FirewoodFair). False, taking nothing, with none there, no room at home or no way back.
 */
 bool Economy::TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, uint8_t goods){
     uint32_t h = k.house;
@@ -2637,14 +2706,21 @@ bool Economy::TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, u
     if (good < 0){
         return false;
     }
-    int room = state.room[h] - CarryTotal(state.stock[h]);
-    int worth = (good == GOOD_WATER) ? NEEDS_WATER_WORTH : EconomyFoodWorth(good);
-    int64_t want = Living(state.workers,h) * (ECONOMY_HOME_DAYS + 1) * CALENDAR_DAY_TICKS - HeldTicks(state.stock[h],goods);
-    if (from < z.buildings.size() && z.buildings[from].kind == ZONE_KIND_FIELD){
-        want = std::min(want,Living(state.workers,h) * FairShare(z) - HeldTicks(state.stock[h],goods));
+    int upto = 0;
+    if (good == GOOD_WOOD){
+        if (FirewoodNow(h)){
+            upto = std::min(state.burn[h] * (ECONOMY_HOME_DAYS + 1),FirewoodFair(z,h)) - state.stock[h][GOOD_WOOD];
+        }
+    }else{
+        uint8_t kind = (good == GOOD_WATER) ? (uint8_t)GOOD_BIT(GOOD_WATER) : (uint8_t)GOODS_FOOD;
+        int worth = (good == GOOD_WATER) ? NEEDS_WATER_WORTH : EconomyFoodWorth(good);
+        int64_t want = Living(state.workers,h) * (ECONOMY_HOME_DAYS + 1) * CALENDAR_DAY_TICKS - HeldTicks(state.stock[h],kind);
+        if (from < z.buildings.size() && z.buildings[from].kind == ZONE_KIND_FIELD){
+            want = std::min(want,Living(state.workers,h) * FairShare(z) - HeldTicks(state.stock[h],kind));
+        }
+        upto = (want > 0 && worth > 0) ? (int)((want + worth - 1) / worth) : 0;
     }
-    int upto = (want > 0 && worth > 0) ? (int)((want + worth - 1) / worth) : 0;
-    int take = std::min(std::min(ECONOMY_LOAD,upto),std::min(state.stock[from][good],room));
+    int take = std::min(std::min(ECONOMY_LOAD,upto),std::min(state.stock[from][good],HouseRoom(h,good)));
     if (take <= 0 || !RouteHome(k,z,walkers)){
         return false;
     }
@@ -2659,6 +2735,83 @@ bool Economy::TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, u
 }
 
 /*
+    HEAT (Economy.h), at dawn: every inhabited home under the snow burns its firewood - a whole day's, or none
+    - and is warm or cold until the next dawn; any other home wants no fire. The homeless (heat[0]) are cold
+    under the snow at the camp's spot, where they wait.
+*/
+void Economy::Heat(const ZoneState& z, uint64_t tick){
+    const ChasmWorld& w = *state.world;
+    std::vector<int> living(state.heat.size(),0);
+    for (const EconomyWorker& k : state.workers){
+        if (k.house < living.size()){
+            living[k.house]++;
+        }
+    }
+    size_t n = std::min(std::min(state.heat.size(),z.buildings.size()),std::min(state.stock.size(),state.burn.size()));
+    for (size_t id = 1; id < n; id++){
+        uint8_t heat = HEAT_NONE;
+        if (state.burn[id] > 0 && living[id] > 0 && id < plots_of.size() && !plots_of[id].empty()
+            && UnderSnow(w,w.grid->fine.pos[plots_of[id][0]],tick)){
+            int& wood = state.stock[id][GOOD_WOOD];
+            heat = (wood >= state.burn[id]) ? HEAT_WARM : HEAT_COLD;
+            wood -= (heat == HEAT_WARM) ? state.burn[id] : 0;
+        }
+        state.heat[id] = heat;
+    }
+    if (!state.heat.empty()){
+        bool f_out = living[0] > 0 && state.camp_plot >= 0 && UnderSnow(w,w.grid->fine.pos[state.camp_plot],tick);
+        state.heat[0] = f_out ? HEAT_COLD : HEAT_NONE;
+    }
+    state.version++;
+}
+
+int Economy::HouseRoom(uint32_t h, int good) const{
+    if (h >= state.stock.size() || h >= state.room.size() || good < 0 || good >= GOOD_COUNT){
+        return 0;
+    }
+    const std::array<int,GOOD_COUNT>& s = state.stock[h];
+    if (good == GOOD_WOOD){
+        return std::max(0,((h < state.woodshed.size()) ? state.woodshed[h] : 0) - s[GOOD_WOOD]);
+    }
+    return std::max(0,state.room[h] - (CarryTotal(s) - s[GOOD_WOOD]));
+}
+
+//Its family fetches firewood: a house the full winter's snow reaches, lived in, from autumn's first day to the
+//snow leaving it in spring.
+bool Economy::FirewoodNow(uint32_t h) const{
+    if (h >= state.snowed.size() || !state.snowed[h] || state.burn[h] <= 0 || h >= plots_of.size() || plots_of[h].empty()
+        || Living(state.workers,h) <= 0){
+        return false;
+    }
+    CalendarDate d = CalendarDateOf(now);
+    if (d.season == SEASON_AUTUMN || d.season == SEASON_WINTER){
+        return true;
+    }
+    return d.season == SEASON_SPRING && UnderSnow(*state.world,state.world->grid->fine.pos[plots_of[h][0]],now);
+}
+
+/*
+    FAIR SHARES of firewood (the user's, 2026-10-08): as food's, the colony's AT HOME - every house fetching
+    firewood, its wood over their burning - so house h's share is its burning's part of it, and
+    ECONOMY_FAIR_DAYS of its burning more. While wood is short the houses rise together, a day at a time.
+*/
+int Economy::FirewoodFair(const ZoneState& z, uint32_t h) const{
+    int64_t wood = 0;
+    int64_t burn = 0;
+    size_t n = std::min(z.buildings.size(),std::min(state.stock.size(),state.burn.size()));
+    for (size_t id = 1; id < n; id++){
+        if (FirewoodNow((uint32_t)id)){
+            wood += state.stock[id][GOOD_WOOD];
+            burn += state.burn[id];
+        }
+    }
+    if (h >= state.burn.size() || burn <= 0){
+        return 0;
+    }
+    return (int)((wood * state.burn[h] + burn - 1) / burn) + state.burn[h] * ECONOMY_FAIR_DAYS;
+}
+
+/*
     Every person, every tick, after his round has moved on: a tick of water gone, and of health - three
     while dry - then a meal and a drink if he stands at home. Health at nothing: he dies. He is struck from
     the colony with whatever he carried; his family stays in its house, and on this same tick his job is
@@ -2670,7 +2823,7 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         if (k.water > 0){
             k.water--;
         }
-        k.health -= 1 + (EconomyDry(k) ? NEEDS_DRY_DRAIN : 0);
+        k.health -= 1 + (EconomyDry(k) ? NEEDS_DRY_DRAIN : 0) + (EconomyCold(state,k) ? NEEDS_COLD_DRAIN : 0);
         EatAndDrink(k,z);
         f_died = f_died || k.health <= 0;
     }
@@ -2689,7 +2842,7 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         d.f_female = k.f_female;
         d.age = k.age;
         d.tick = tick;
-        d.cause = EconomyDry(k) ? NEEDS_DIED_THIRST : NEEDS_DIED_HUNGER;
+        d.cause = EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD : NEEDS_DIED_HUNGER;
         state.dead.push_back(d);
     }
     state.workers.swap(living);
@@ -3347,6 +3500,11 @@ EconomySaved EconomySaveState(const EconomyState& state){
             s.ground_sites.push_back(std::make_pair((int)v,state.ground_site[v]));
         }
     }
+    for (size_t id = 0; id < state.heat.size(); id++){
+        if (state.heat[id] != HEAT_NONE){
+            s.heats.push_back(std::make_pair((uint32_t)id,(int)state.heat[id]));
+        }
+    }
     s.next_person = state.next_person;
     s.dead = state.dead;
     return s;
@@ -3400,6 +3558,12 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
         }
     }
     f_new_colony = false;       //a saved colony has had its supplies
+    state.heat.assign(std::max<size_t>(z.buildings.size(),1),HEAT_NONE);
+    for (const auto& h : saved.heats){
+        if (h.first < state.heat.size()){
+            state.heat[h.first] = (uint8_t)h.second;
+        }
+    }
     Derive(z,false);
     /*
         Land never settled (land_plan.md): a save from before land - its fields have no owner, its farmers work
@@ -3449,10 +3613,26 @@ int EconomyCropYield(int last, int crop){
     return (last < 0 || last >= ZONE_CROP_COUNT) ? 100 : crop_after[last][crop];
 }
 
+namespace {
+
+/*
+    What AUTO ranks crops by (fields_plan.md, "AUTO by food", the user's 2026-10-08): the health a crop
+    gives per day it grows, sown after `last` - its yield per area x the rotation's percent x what a unit
+    is worth eaten, over its growing days. By percent alone it never sowed beans, the most food there is:
+    they tied with wheat or greens at 100% and lost on table order. Area and pace are the same for
+    every crop, so they are left out.
+*/
+double CropFood(int last, int crop){
+    return (double)crop_yield[crop] * (double)EconomyCropYield(last,crop)
+           * (double)EconomyFoodWorth(GoodOfCrop(crop)) / (double)crop_days[crop];
+}
+
+}
+
 int EconomyAutoCrop(int last){
     int best = 0;
     for (int c = 1; c < ZONE_CROP_COUNT; c++){
-        if (EconomyCropYield(last,c) > EconomyCropYield(last,best)){
+        if (CropFood(last,c) > CropFood(last,best)){
             best = c;
         }
     }
@@ -3509,10 +3689,10 @@ int EconomyFieldSowNow(const EconomyField& f, const ZoneBuilding& b, float pace,
         return EconomyRipenTicks(c,0,pace) <= ticks_left;
     };
     if (f.last >= 0 && b.next_crop >= ZONE_CROP_COUNT){
-        //AUTO: the highest yield of the crops still in time, the earlier crop on a tie.
+        //AUTO: the most food of the crops still in time, the earlier crop on a tie.
         int best = -1;
         for (int c = 0; c < ZONE_CROP_COUNT; c++){
-            if (ripens(c) && (best < 0 || EconomyCropYield(f.last,c) > EconomyCropYield(f.last,best))){
+            if (ripens(c) && (best < 0 || CropFood(f.last,c) > CropFood(f.last,best))){
                 best = c;
             }
         }

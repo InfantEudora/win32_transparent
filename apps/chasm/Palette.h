@@ -45,6 +45,8 @@
 #define PAL_FOAM            3
 #define PAL_SWAMP_MIST      4       //the swamp's low haze: a pale grey-green, quieter than foam
 #define PAL_VOID            5       //black: the chasm floor under the mist, which nothing uses (TerrainMesh.cpp)
+#define PAL_WINDOW_LIT      6       //a warm house's window panes, its fire behind them (needs_plan.md step 3)
+#define PAL_SMOKE           7       //chimney smoke: a light grey, between the mist and the foam
 
 //Columns: materials.
 #define PAL_GRASS_0         0       //four close shades, picked per triangle for the faceted look

@@ -9,7 +9,8 @@ field belongs to a house's land, farmed by its family (`land_plan.md`).
 ## Decided (the user, 2026-10-08)
 
 - **A field shows its yield** - 100% for its first crop - and lets you **pick the next crop**, each choice
-  with the yield it would get. The next crop **defaults to the one with the highest yield**.
+  with the yield it would get. The next crop **defaults to the one with the highest yield** (since
+  2026-10-08 the most FOOD - see "AUTO by food" at the end).
 - **What decides the yield: a follows-what table** on the crop just harvested (gameplay_plan.md section 8,
   "Crop rotation on the coarse cell" - the idea it sketched). Repeating a crop wears it down; beans feed the
   soil for whatever follows:
@@ -98,7 +99,7 @@ after an autumn harvest, the field waiting through winter already sown. Now (`Ec
   field (`EconomyField::frost`, saved as an eighth number, hashed) for its card until it is sown again.
 - **A farmer sows only what ripens before the frost**, at his pace, in the growing weather the field has left
   (`EconomyGrowingTicksLeft`: to winter, or to the snow where it comes first - the north over autumn's last
-  days). **AUTO** takes the highest yield of the crops still in time; a crop the player chose that is no longer
+  days). **AUTO** takes the highest yield (now the most food, below) of the crops still in time; a crop the player chose that is no longer
   in time waits for spring. So late in the year a field goes to greens, then lies empty.
 - **The card says why**: "The frost will take it first - N days short" (red) on a crop that will not make it
   (its farmer slower, or the field fallow a while); "The frost took its beans"; "nothing is sown in winter";
@@ -143,3 +144,23 @@ topped up with `chasm_economy set_needs` for the second.)
   card - "Build first" on, Beans lit; built, its card said "its farmer is to sow beans, at 100%" and Build
   first had gone. A/B with eight house sites placed first and the field furthest: in the queue nobody
   carried for it in 900 ticks; put first, two carried for it from the first step.
+
+## AUTO by food, and the yields doubled (the user's, 2026-10-08)
+
+With the frost, an average farmer on AUTO needed about 37 cells to feed ten people (`needs_plan.md`, "What
+the rates mean"). The main reason was AUTO's tie rule. It never sowed beans: after greens they tied with
+wheat at 100%, after wheat with greens, and lost on table order both times. Beans are the most food for
+their growing time, and greens about half of it.
+
+- **AUTO sows the most food per growing day** (`CropFood` in `Economy.cpp`): a crop's yield per area x the
+  rotation's percentage x what a unit is worth eaten (`EconomyFoodWorth`), over its growing days. That is
+  of the crops that still ripen before the frost, as before; a tie still goes to the earlier crop in the
+  table. Area and the farmer's pace are the same for every crop, so they do not change the choice. The
+  card still shows each crop's yield percentage, so AUTO can name a crop at a lower percentage: wheat at
+  60% is still more food per day than greens at 100%.
+- **The yields are doubled**: `crop_yield` 1.2 / 0.7 / 0.9 (from 0.6 / 0.35 / 0.45).
+- **A store holds 1.5 times as much**: `ECONOMY_STORE_ROOM` 7.5 (about 30 a plot-storey). The user wants a
+  decent row of stores at ten people, rather than one shed holding the winter.
+- **What it comes to** (arithmetic, not measured): an average farmer's field takes turns - beans one year,
+  wheat at 120% and then greens the next. That is about 25 health-days a cell a year, so about 16 cells feed
+  ten people.

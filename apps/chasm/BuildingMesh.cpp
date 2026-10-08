@@ -12,8 +12,15 @@
 #define DOOR_W              0.34f
 #define DOOR_H              0.72f
 #define DOOR_CHANCE         4       //one ground-floor segment in this many gets a door
-#define CHIMNEY_CHANCE      45      //percent of houses
+#define CHIMNEY_CHANCE      45      //percent of plots, of a kind with chimneys but not a house's one
 #define CHIMNEY_W           0.22f
+#define CHIMNEY_TOP         0.35f   //a chimney's top above the ridge
+#define CHIMNEY_SIDE_SHARE  50      //percent of houses whose chimney is a stack up a wall rather than through the roof
+#define STACK_BASE_W        0.50f   //the stack's base along the wall...
+#define STACK_BASE_D        0.30f   //...and out from it
+#define STACK_FLUE_W        0.30f   //its flue above the eaves
+#define STACK_FLUE_D        0.24f
+#define STACK_CAP           0.07f   //the flue's cap, a little wider all round
 #define FACE_OUT            0.012f  //windows and doors stand this far off their wall
 
 namespace {
@@ -229,7 +236,8 @@ void WallSlab(std::vector<vertex>& out, const vec2& c, const vec2& dir, const ve
 #define SILL_H              0.045f
 
 void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3& outward, float t,
-             float half_w, float y0, float y1, int column, int surround_column, bool f_sill){
+             float half_w, float y0, float y1, int column, int surround_column, bool f_sill,
+             BuildingPane* pane = NULL){
     vec2 dir = b - a;
     float len = dir.length();
     if (len < 1e-4f){
@@ -243,6 +251,13 @@ void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3&
     vec2 l = c - dir * half_w + off;
     vec2 r = c + dir * half_w + off;
     MeshQuad(out,vec3(l.x,y0,l.y),vec3(r.x,y0,r.y),vec3(r.x,y1,r.y),vec3(l.x,y1,l.y),outward,column);
+    if (pane){
+        pane->corner[0] = vec3(l.x,y0,l.y);
+        pane->corner[1] = vec3(r.x,y0,r.y);
+        pane->corner[2] = vec3(r.x,y1,r.y);
+        pane->corner[3] = vec3(l.x,y1,l.y);
+        pane->outward = outward;
+    }
     //The surround: two jambs, a head across their tops, and under a window a sill wider than both.
     const float w = SURROUND_W;
     WallSlab(out,c,dir,out2,outward,-half_w - w,-half_w,y0,y1 + w,SURROUND_DEPTH,surround_column);
@@ -356,6 +371,68 @@ void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, i
 #define LADDER_RAIL         0.06f
 #define LADDER_RUNG_EVERY   0.28f
 #define LADDER_LEAN         0.55f   //its foot, out from the wall
+
+bool LowestStandingPlot(const ChasmWorld& w, const ZoneState& z, int plot);
+
+/*
+    A HOUSE'S CHIMNEY (needs_plan.md step 3, the user's 2026-10-08): every house has one, on its lowest
+    standing plot, of one of two kinds by the house's hash - through the roof, partway from the ridge, as
+    other kinds' chimneys are; or a stone STACK up the outside of a wall, on the first of the plot's quarters
+    (counting from one by the plot's hash) with a whole outside wall - the corner across it with nothing
+    standing - whose window it takes the place of. A house with no such wall has a roof chimney. Decided
+    from the zones alone, so every cell round the plot agrees which of them builds it: `quad` is that cell,
+    `edge` the wall (0 toward the quarter's next corner, 1 its previous), -1 for a roof chimney.
+*/
+struct ChimneyPlace{
+    int quad = -1;
+    int edge = -1;
+};
+
+//Whether corner v stands as a house body in BuildHouseCell: its storeys or an arch's, and not a winch,
+//camp or bridge, which are drawn apart from the bodies.
+bool CornerSolid(const ChasmWorld& w, const ZoneState& z, int v){
+    int s = z.standing[v];
+    if (s == 0){
+        s = ZoneArchStoreys(w,z,v);
+    }
+    int kind = z.KindOf(v);
+    return s > 0 && kind != ZONE_KIND_WINCH && kind != ZONE_KIND_CAMP && kind != ZONE_KIND_BRIDGE;
+}
+
+bool HouseChimney(const ChasmWorld& w, const ZoneState& z, int plot, ChimneyPlace& at){
+    uint32_t id = z.building[plot];
+    if (!id || id >= z.buildings.size() || z.buildings[id].kind != ZONE_KIND_HOUSE || z.standing[plot] == 0
+        || !LowestStandingPlot(w,z,plot)){
+        return false;
+    }
+    const GridPicker& picker = *w.picker;
+    const Grid& g = *w.grid;
+    int n = picker.PlotQuadCount(plot);
+    if (n <= 0){
+        return false;
+    }
+    uint32_t look = MeshHash((uint32_t)plot,0x40115Eu);
+    int chosen = (int)((look >> 16) % (uint32_t)n);
+    at.quad = picker.PlotQuadCorner(plot,chosen) / 4;
+    at.edge = -1;
+    if (MeshHash(id,0xC41A7u) % 100 >= (uint32_t)CHIMNEY_SIDE_SHARE){
+        return true;
+    }
+    for (int i = 0; i < n; i++){
+        int qc = picker.PlotQuadCorner(plot,(chosen + i) % n);
+        const GridQuad& q = g.fine.quads[qc / 4];
+        int k = qc % 4;
+        int across[2] = {q.v[(k + 1) % 4],q.v[(k + 3) % 4]};
+        for (int e = 0; e < 2; e++){
+            if (!CornerSolid(w,z,across[e])){
+                at.quad = qc / 4;
+                at.edge = e;
+                return true;
+            }
+        }
+    }
+    return true;
+}
 
 //The lowest plot of a building that stands - the one its one-a-building parts are drawn on.
 bool LowestStandingPlot(const ChasmWorld& w, const ZoneState& z, int plot){
@@ -612,7 +689,8 @@ void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<ve
 
 }
 
-void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
+void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
+                    BuildingFixtures* fixtures){
     const Grid& g = *w.grid;
     const Terrain& t = *w.terrain;
     const GridPicker& picker = *w.picker;
@@ -724,6 +802,17 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         }
         int kind = (owner != ARCH && owner < z.buildings.size()) ? z.buildings[owner].kind : ZONE_KIND_HOUSE;
         const KindLook& kl = kind_looks[kind];
+        //Where this corner's chimney goes, if this cell builds it: a house's one (HouseChimney), or by
+        //chance on a plot of another kind that has them - through the roof.
+        ChimneyPlace chimney;
+        bool f_chimney = false;
+        if (lo[k] == foot[k] && bid[k] != ARCH && kind == ZONE_KIND_HOUSE){
+            f_chimney = HouseChimney(w,z,plot,chimney) && chimney.quad == fine_quad;
+        }else if (lo[k] == foot[k] && kind != ZONE_KIND_HOUSE && (look >> 8) % 100 < (uint32_t)kl.chimney_chance){
+            int n = picker.PlotQuadCount(plot);
+            f_chimney = picker.PlotQuadCorner(plot,(int)((look >> 16) % (uint32_t)n)) / 4 == fine_quad;
+        }
+        bool f_reports = fixtures && kind == ZONE_KIND_HOUSE && bid[k] != ARCH;
         //One roof colour for a whole building, by its id.
         uint32_t building_look = MeshHash(owner,0xB017D1u);
         int roof_column = ((building_look % 10) < 7) ? kl.roof[0] : kl.roof[1];
@@ -784,6 +873,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             side = side / std::max(1e-6f,side.length());
             vec3 outward(side.x,0.0f,side.y);
             bool f_into_arch = solid[j] && lo[j] > foot[j];
+            bool f_stack = f_chimney && chimney.edge == e;      //the stack stands where its window would
             for (int pc = 0; pc < n_pieces; pc++){
                 int from = pieces[pc][0];
                 int to = pieces[pc][1];
@@ -808,7 +898,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                     sometimes a door - and always one into an arch's passage, where a house beside a
                     road is most likely entered.
                 */
-                for (int st = 0; st < s[k]; st++){
+                for (int st = 0; st < s[k] && !f_stack; st++){
                     int floor_half = foot[k] + 2 * st;
                     if (floor_half < from || floor_half + 2 > to){
                         continue;
@@ -821,21 +911,67 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                                 (kl.wall == PAL_BARK_DARK) ? PAL_STONE_DARK : PAL_BARK_DARK,kl.wall,false);
                     }else if ((wall_hash >> 8) % (uint32_t)kl.window_every == 0){
                         float y0 = floor_y + ZONE_STOREY_HEIGHT * WINDOW_SILL;
+                        BuildingPane pane;
                         Opening(out,a,b,outward,0.5f,WINDOW_W * 0.5f,y0,y0 + WINDOW_H,
-                                (kl.wall == PAL_TIMBER) ? PAL_BARK_DARK : PAL_TIMBER,kl.wall,true);
+                                (kl.wall == PAL_TIMBER) ? PAL_BARK_DARK : PAL_TIMBER,kl.wall,true,
+                                f_reports ? &pane : NULL);
+                        if (f_reports){
+                            pane.building = bid[k];
+                            fixtures->panes.push_back(pane);
+                        }
                     }
+                }
+            }
+            /*
+                The stack: a base as wide as a hearth up to just under the eaves, against the middle of this
+                wall from its footing, then a narrower flue past the ridge with a cap on it. The base has the
+                wall behind it; the flue and the cap stand clear of it above the eaves, where the roof slopes
+                away, so they are closed all round - built as a slab, they showed their open backs, and the
+                cap's top, level with the flue's, fought it (the user's, 2026-10-08).
+            */
+            if (f_stack){
+                vec2 c = (a + b) * 0.5f;
+                vec2 dir = along / std::max(1e-6f,along.length());
+                float base_top = eave - 0.20f;
+                float top = eave + ROOF_RISE + CHIMNEY_TOP;
+                WallSlab(out,c,dir,side,outward,-STACK_BASE_W * 0.5f,STACK_BASE_W * 0.5f,foot[k] * HALF - HOUSE_FOOTING,
+                         base_top,STACK_BASE_D,PAL_STONE);
+                //A block from u0 to u1 along the wall, d0 to d1 out from it, y0 to y1 up: all six faces.
+                auto block = [&](float u0, float u1, float d0, float d1, float y0, float y1, int column){
+                    auto P = [&](float u, float y, float d){
+                        vec2 q = c + dir * u + side * d;
+                        return vec3(q.x,y,q.y);
+                    };
+                    vec3 along3(dir.x,0.0f,dir.y);
+                    MeshQuad(out,P(u0,y0,d1),P(u1,y0,d1),P(u1,y1,d1),P(u0,y1,d1),outward,column);
+                    MeshQuad(out,P(u0,y0,d0),P(u1,y0,d0),P(u1,y1,d0),P(u0,y1,d0),outward * -1.0f,column);
+                    MeshQuad(out,P(u0,y0,d0),P(u0,y1,d0),P(u0,y1,d1),P(u0,y0,d1),along3 * -1.0f,column);
+                    MeshQuad(out,P(u1,y0,d0),P(u1,y1,d0),P(u1,y1,d1),P(u1,y0,d1),along3,column);
+                    MeshQuad(out,P(u0,y1,d0),P(u1,y1,d0),P(u1,y1,d1),P(u0,y1,d1),vec3(0,1,0),column);
+                    MeshQuad(out,P(u0,y0,d0),P(u1,y0,d0),P(u1,y0,d1),P(u0,y0,d1),vec3(0,-1,0),column);
+                };
+                float hw = STACK_FLUE_W * 0.5f;
+                block(-hw,hw,0.0f,STACK_FLUE_D,base_top - 0.02f,top,PAL_STONE);
+                block(-hw - STACK_CAP,hw + STACK_CAP,-STACK_CAP,STACK_FLUE_D + STACK_CAP,top - 0.02f,top + 0.06f,PAL_STONE_DARK);
+                if (f_reports){
+                    vec2 mid = c + side * (STACK_FLUE_D * 0.5f);
+                    BuildingChimney ch;
+                    ch.building = bid[k];
+                    ch.top = vec3(mid.x,top + 0.06f,mid.y);
+                    fixtures->chimneys.push_back(ch);
                 }
             }
         }
 
-        //--- A chimney on some plots of a kind that has them, built by one of the plot's quarters ----
-        if (lo[k] == foot[k] && (look >> 8) % 100 < (uint32_t)kl.chimney_chance){
-            int n = picker.PlotQuadCount(plot);
-            int chosen = (int)((look >> 16) % (uint32_t)n);
-            if (picker.PlotQuadCorner(plot,chosen) / 4 == fine_quad){
-                //Partway from the ridge toward the cell's centre, through the roof.
-                vec2 at = p[k] + (centre - p[k]) * 0.45f;
-                Box(out,at,CHIMNEY_W,eave + ROOF_RISE * 0.3f,eave + ROOF_RISE + 0.35f,PAL_STONE);
+        //--- A chimney through the roof, partway from the ridge toward the cell's centre ----------------
+        if (f_chimney && chimney.edge < 0){
+            vec2 at = p[k] + (centre - p[k]) * 0.45f;
+            Box(out,at,CHIMNEY_W,eave + ROOF_RISE * 0.3f,eave + ROOF_RISE + CHIMNEY_TOP,PAL_STONE);
+            if (f_reports){
+                BuildingChimney ch;
+                ch.building = bid[k];
+                ch.top = vec3(at.x,eave + ROOF_RISE + CHIMNEY_TOP,at.y);
+                fixtures->chimneys.push_back(ch);
             }
         }
     }

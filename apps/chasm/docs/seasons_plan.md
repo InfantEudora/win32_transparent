@@ -104,3 +104,23 @@ tree is felled - a stage change rebuilds the same way.
    heavy limbs (three on the slim oak C) leaving the trunk at different heights and reaching out to
    about the canopy's edge, each with a side branch and a twig - 82-106 triangles, bark-coloured. The
    user tunes or remodels them in Blender and re-exports; the game only needs the names.
+
+## Ice (2026-10-08)
+
+The user, after a recording where Nora the water carrier sat at home with no water to carry: her collector
+was under the late snow, and a collector fills only off the snow (Economy.cpp) - a rule nothing showed.
+Now the water freezes where the snow lies, and the collector's card says why it gives nothing.
+
+- **The view** (`shaders/chasm_water.glsl`, ICE; uniforms from `SetIceUniforms`, ApplicationChasmSnow.cpp):
+  north of the snow's front, with the ground's own ragged edge formula for formula, the rivers and pools
+  are still ice - flat PLATES (a jittered-cell pattern, about three units across) in three pale blues, dark
+  seams between, a few plates snowed over, and snow drifted onto it along the banks. Smooth noise was tried
+  first and read as a blur; plates match the terrain's low-poly look. The FALLS freeze too, their streaks
+  stopped and paled into a sheet of ice, so no frozen river pours over the rim, and a frozen fall churns
+  no foam at its foot. No snow on the map: the water's own path, unchanged.
+- **The card**: a water collector under the snow says "Frozen: no water can be collected until the thaw",
+  from `EconomyFrozen` - the economy's own test at the collector's first plot, so the card and the rule
+  cannot disagree. The ice's ragged edge can stray a few units either side of the rule's line, as the
+  snow on the ground does.
+- Checked on `chasm_water_nora`: frozen at its start (front at z -25, the collector at -46), the line gone
+  1100 ticks on (front at -58), when Nora is fetching again.

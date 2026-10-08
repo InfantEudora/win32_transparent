@@ -41,11 +41,11 @@ per person: a HEALTH bar and a WATER bar, each one tick lower every tick.
 - **Dry** (the water bar empty): health falls faster and **food no longer raises it**, so eating cannot
   outrun the thirst - as first put, the bar empty and then health falling faster, it could, and death came
   well after the water ran out. A dry person eats nothing.
-- **Cold** (the user agreed to the drain; the details are proposed): his home's plot under the snow
-  (`CalendarSnowAt` - the south stays bare, so it is not cold there) and no firewood burned at home today.
-  Health falls faster and **food still counts**, so a cold family eats more - twice as much with the drain
-  as proposed: a wood shortage shows up as a food shortage first, and kills only once the food runs out
-  too. Cold and dry add up.
+- **Cold** (built 2026-10-08, step 3): his home under the snow at dawn (`UnderSnow` - the south stays bare,
+  so it is never cold there) and its firewood not burned that dawn. Health falls faster and **food still
+  counts**, so a cold family eats more - twice as much with the drain as tuned: a wood shortage shows up as a
+  food shortage first, and kills only once the food runs out too. Cold and dry add up. Someone with no home
+  at all is cold under the snow where he waits, at the camp's spot.
 
 ## Current tuning
 
@@ -57,7 +57,10 @@ together; a difficulty setting would make this one column of several.
 | Full health: how long without food | `NEEDS_HEALTH_FULL` | 7 days | 5 days |
 | Health drain | `Needs` | 1 a tick (a day a day) | the same |
 | ...more while dry | `NEEDS_DRY_DRAIN` | +2 a tick (3x) | the same |
-| ...more while cold | not built (step 3) | +1 a tick proposed (2x) | - |
+| ...more while cold | `NEEDS_COLD_DRAIN` | +1 a tick (2x) | - (step 3) |
+| Firewood a home burns at dawn under the snow | `ECONOMY_FIREWOOD_BURN` | 1 a plot-storey (a camp: a plot) | - (step 3) |
+| A house's woodshed | `ECONOMY_WOODSHED_DAYS` | 4 days of its burning, apart from its room | - (step 3) |
+| Fair share's margin, food and firewood | `ECONOMY_FAIR_DAYS` | 1 day | - |
 | A unit of food | `EconomyFoodWorth` | wheat 1 day, greens 1/2, beans 2 | the same |
 | Full water bar | `NEEDS_WATER_FULL` | 4 days | 3 days |
 | A unit of water | `NEEDS_WATER_WORTH` | 2 days | 1 day |
@@ -88,25 +91,44 @@ half a unit of water, where it was one.
   number), from its own stock; when it cannot, its family is cold that day. A camp burns by its floor area
   too - seed 1's 14 plots would burn 14 a day against about 4 for ten people in houses - which is the reason
   to have built the houses by winter.
+- **Firewood, fetched** (the user, 2026-10-08): only from AUTUMN on, from storage, the way food is fetched -
+  shared out evenly across the houses with a margin: a house is held to its FAIR SHARE, the colony's
+  firewood AT HOME (as food's, not counting the stores) spread over every house's burning, and a day more.
+  No wood is kept back for building sites: by autumn the building should be done. A home burns only while
+  someone lives in it - a camp too, which works as a house does. A house keeps its firewood APART from its
+  food and water, in a woodshed of its own.
+- **Seen from outside** (the user's): a warm home smokes - a grey-white column from its chimney, or from a
+  camp's fires - and a house's windows glow orange. EVERY HOUSE HAS A CHIMNEY, and what varies is its kind:
+  through the roof, or a stack up the side of the house.
 
 ## What the rates mean (rough sums from the current tuning - redo them when it changes)
 
 Arithmetic from the "Current tuning" table, not measurements. Each line says what it rests on, so it can
 be redone for another tuning or difficulty.
 
-- **Fields** grow about 30 days a year (not in winter, not under the snow - fewer in the north) and a
-  coarse cell is about 16 in area. A person eats 40 wheat-days a year (a day a day), so for a cell to feed
-  one, the yields (`crop_yield` in `Economy.cpp`) would have to be:
+- **Fields** (redone 2026-10-08 for the frost, `crop_days` 15 / 8 / 20, the yields doubled to 1.2 / 0.7 /
+  0.9 and AUTO by food). A crop must ripen between the thaw and winter: 28 growing days by seed 12's camp
+  (snow until spring 3), 30 where no snow comes or in the first year. A coarse cell is 14 in area on
+  average (seed 12, 336 sampled: a tenth under 9, a tenth over 18.6). A person eats 40 health-days a year.
+  A cell's harvest at 100%, in health-days:
 
-  | Crop | Days to grow | Harvests a year | Yield per area now | For one person a cell |
+  | Crop | Days to grow | A cell's harvest | Health-days | Per growing day |
   |---|---|---|---|---|
-  | Wheat | 18 | 1.7 | 0.6 | 1.5 |
-  | Greens | 8 | 3.75 | 0.35 | 1.35 |
-  | Beans | 25 | 1.2 | 0.45 | 1.05 |
+  | Wheat | 15 | 16.8 units | 16.8 | 1.12 |
+  | Greens | 8 | 9.8 units | 4.9 | 0.61 |
+  | Beans | 20 | 12.6 units | 25.2 | 1.26 |
 
-  As they stand, the 10 settlers would need about 27 cells of wheat. A farmer's pace (0.68-1.4) moves
-  every figure either way, and so does the rotation (`fields_plan.md`): a crop sown at less than 100% yields
-  that much less, so these are the best case.
+  AUTO sows the most food per growing day of the crops that still ripen in time (the last column, times
+  the rotation's percentage). At an average farmer's pace (1.0) a field takes turns: beans one year;
+  wheat at 120% and then greens the next. That comes to about 25 health-days a cell a year, so **ten
+  people need about 16 cells** - three farmers, since a share is whole fields of 6 cells or more
+  (`ECONOMY_FARMER_CELLS`). A husbandry-10 farmer fits beans and then wheat every year: about 45 a cell,
+  9 cells. A husbandry-2 farmer still fits beans (26 of the 28 days): about 23 a cell, 18 cells.
+  Husbandry 1 is too slow for beans. AUTO then sows wheat every year, because wheat at 60% is still more
+  food per day than greens: about 10 a cell, 40 cells. Before (AUTO by yield percentage, the yields half
+  these) it was 37 cells for an average farmer: AUTO never sowed beans, since they tied with wheat or
+  greens at 100% and lost on table order. One large field needs only one farmer, but sowing takes 3 s a
+  cell, twice a season, so keep fields to a share's size or so.
 - **The first spring.** The camp's 40 wheat and 30 beans are 100 days of food, ten for ten people, and full
   health is seven more: with water but nothing harvested, the first death from hunger about day 17 - room
   for a first greens harvest (8 days' growing) and most of a wheat one. At the first tuning (20 wheat, 10
@@ -114,8 +136,16 @@ be redone for another tuning or difficulty.
   in the bar and the dry spell after, deaths from thirst about day 14 without a collector (day 7 at the
   first tuning) - so with nothing built, thirst still comes first. A collector makes about 11 a day, enough
   now for about twenty.
-- **Winter**, for ten people: 100 days of food and, where the collectors are under the snow, 50 water
-  (100 at the first tuning), stocked before it, and the firewood.
+- **Winter**, for ten people. With the frost, the store has to last until the first harvest of the next
+  year, not only through winter. On AUTO at pace 1.0 the last harvest comes on autumn 3 (beans) or autumn 6
+  (greens), and the next year's first on summer 8 (wheat) or autumn 3 (beans): 35 to 37 days. That is
+  about 300 health-days of food in store by autumn, after the 7 days each person carries in their health
+  bar. As beans that is about 150 units; as wheat and greens about 360, 12 plot-storeys of store at
+  `ECONOMY_STORE_ROOM` 7.5 (1.5 times the first 5, the user's, 2026-10-08, for a decent row of stores at
+  ten people). Add 50 water where the collectors are under the snow (100 at the first tuning) and the
+  firewood. In the first year the settlers' 100 days cover only the first 10. Its first sowing should be
+  greens, because wheat sown on day 3 ripens on day 18, after the first hunger deaths (about day 17,
+  below); AUTO then follows with wheat.
 - **A house's room was too small** at the first tuning: about 6 a plot-storey, when two days of food and
   water for a family of three was already 12. It went to about 16 with step 2, which could not work without
   it (see "As built: step 2").
@@ -133,7 +163,7 @@ be redone for another tuning or difficulty.
 1. Health and water per person: falling, eating and drinking at home from the house's or the camp's
    stock, dying. Saved, hashed, on the person's card and in `chasm_economy`.
 2. Fetching home from the stores. BUILT 2026-10-07, below.
-3. Cold: firewood burned under the snow, and the cold drain.
+3. Cold: firewood burned under the snow, and the cold drain. BUILT 2026-10-08, below.
 4. A first tuning pass: the yields and a house's room (the room already, with step 2; the bars, water and
    the settlers' supplies were retuned in 2b40394). Measured: a new colony with nothing built (when the
    first dies), the same with a collector and a greens field (it lives), and a first winter with and
@@ -295,6 +325,49 @@ Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `W
   seed 1's.
 
 **Open:**
-- Firewood (step 3): `HomeShort` counts water and food; wood joins it with the burning.
+- ~~Firewood (step 3): `HomeShort` counts water and food; wood joins it with the burning.~~ Done in step 3.
 - The cap counts what is in the house, not what is on its way: a pressing trip's load and a fetcher's can both
   arrive (nine water once, room allowing).
+
+## As built: step 3, firewood and cold (2026-10-08)
+
+- **The fire** (`Economy::Heat`): at each dawn every inhabited home - a house, or a camp - whose first plot is
+  under the snow burns `burn` wood from its own stock (its standing plot-storeys; a camp, its plots, tents
+  and fires alike) and is WARM until the next dawn; with less than that it burns none and is COLD. Any other
+  home is neither. `heat`, by building (slot 0 for anyone with no home, cold under the snow at the camp's
+  spot), is saved (`"heat"` in a save's economy - absent in older saves, which start with no fire until the
+  next dawn) and hashed with the economy.
+- **The cold drain**: a cold person's health falls `NEEDS_COLD_DRAIN` a tick faster. A death while cold (and
+  not dry) is recorded as of the cold (`NEEDS_DIED_COLD`).
+- **The woodshed**: a house's firewood has room of its own, `ECONOMY_WOODSHED_DAYS` of its burning; food and
+  water share the rest of its room (`HouseRoom`), so firewood never crowds out a meal.
+- **Fetching it** (`HomeShort`, `TakeHome`, `FetchHome`): a house the full winter's snow reaches (`snowed`,
+  from the front at its furthest) fetches firewood from autumn's first day through winter, and in spring
+  while the snow still lies on it - below `ECONOMY_HOME_DAYS` of its burning, up to a day more, never past
+  its FAIR SHARE (`FirewoodFair`: the firewood in every such house over their burning, its own burning's part
+  of that, and `ECONOMY_FAIR_DAYS` more). Wood comes from stores, and from the camp once nobody lives there
+  - an inhabited camp keeps its wood for its own fires, its families being unable to fetch more. The
+  scarcest kind is fetched first, in days: water, food and firewood each its own errand.
+- **The chimneys** (`BuildingMesh.cpp`, `HouseChimney`): every house has exactly one, on its lowest standing
+  plot - through the roof as before, or for half of them by the house's hash a stone STACK up the middle of
+  an outside wall, a wide base to the eaves and a capped flue past the ridge, in place of that wall's window.
+  Other kinds keep their chimneys by chance. Every house changes look with this (its chimney moved or added).
+- **Smoke and glow** (`ApplicationChasmHearth.cpp`): a warm house's chimney top, and each fire of a warm
+  camp, gets a column of five smoke puffs on core's LIFE motion (the palette's new `PAL_SMOKE`, a light
+  grey); a warm house's window panes are overlaid by unlit orange ones (`PAL_WINDOW_LIT`). Where they go is
+  where the house's mesh put them: `BuildHouseCell` reports its chimneys and panes when asked. Rebuilt when a
+  home's heat or the zones change.
+- **Measured** (seed 12, debug, 2026-10-08): three two-plot houses by the camp (families of 4, 3 and 3, each
+  burning 2 a dawn), the empty camp's 40 wood the only firewood, from autumn's sixth day at 10x:
+  - Each house fetched 4 (two days' burning, its fair share then) on that first day, and held it.
+  - The snow reached them on winter's third dawn (day 33): every house warm from then, burning 2 a dawn and
+    topping up from the camp, whose wood was gone by winter's seventh day. Nobody cold.
+  - Two died that day - of THIRST: the camp's water ran out, with no collector in the test.
+  - The same run before a fix (a wood errand's pickup took food - `WORKER_GETTING` knew only water and food):
+    no house fetched wood, all three were cold from day 33, and the least health fell from 5.7 days to 0.5
+    in three - the cold drain at work.
+  - Smoke rose from the three chimneys (15 puffs) and 25 window panes glowed. A camp's smoke was not seen in
+    a test: no camp was lived in under the snow.
+- **The side stack, fixed** (the user's, same day): first built as slabs against the wall, the flue and its
+  cap showed their open backs above the eaves, where the roof slopes away, and the cap's top fought the
+  flue's; they are closed blocks now, the cap's top above the flue's.

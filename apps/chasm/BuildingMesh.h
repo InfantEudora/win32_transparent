@@ -18,7 +18,9 @@
         corner is the same height AND THE SAME BUILDING the ridge carries on across the edge between
         them - so a house of several plots becomes one roof, a lone plot a hipped one, and two
         buildings side by side meet in a valley, each its own roof colour.
-      - A CHIMNEY on some plots of a kind that has them, built by one of the plot's quarters.
+      - A CHIMNEY on some plots of a kind that has them, built by one of the plot's quarters - and on
+        EVERY HOUSE exactly one (needs_plan.md step 3, the user's 2026-10-08): through its roof or, by
+        the house's hash, a stone stack up the outside of one of its walls.
 
     Every building kind is drawn here (docs/buildings_plan.md); a kind differs in its walls, roof,
     doors, windows and chimneys (kind_looks in BuildingMesh.cpp).
@@ -26,6 +28,27 @@
 
 #define ZONE_STOREY_HEIGHT  1.3f    //world units - a fine cell (about one house) is 2 across
 
-void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out);
+/*
+    What of a house the view lights up while it is warm (needs_plan.md, step 3): its chimney's top, where
+    its smoke rises, and its windows' panes, which glow. BuildHouseCell reports them when asked, so they are
+    where the mesh put them.
+*/
+struct BuildingChimney{
+    uint32_t building = 0;
+    vec3 top;                   //the middle of the chimney's top
+};
+struct BuildingPane{
+    uint32_t building = 0;
+    vec3 corner[4];             //on the pane, counter-clockwise seen from outside
+    vec3 outward;
+};
+struct BuildingFixtures{
+    std::vector<BuildingChimney> chimneys;
+    std::vector<BuildingPane> panes;
+};
+
+//`fixtures`, if given, gets the houses' chimneys and panes this cell builds.
+void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
+                    BuildingFixtures* fixtures = NULL);
 
 #endif

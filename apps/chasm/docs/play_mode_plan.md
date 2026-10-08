@@ -25,11 +25,9 @@ placement carries a flag saying so), set by whoever issued it.
    the map. Leaving debug mode zoomed out eases the camera in. The cursor highlight is the game's and
    stays.
 2. **Exploration - simulation state.** A raster over the map (`Exploration`, 2 units a cell) of what has
-   been seen. Cleared, and staying clear:
-   - round everything BUILT - buildings, fields, roads, the camp - a radius each (larger than a
-     person's), worked out again when the zones change;
-   - round every PERSON and worker as they walk, a smaller radius, sampled every few ticks;
-   - a new map starts with the area round the camp spot clear.
+   been seen. Cleared, and staying clear, by what every PERSON out of doors can SEE as they walk,
+   sampled every few ticks - a line of sight over the ground (see "Sight" below; it replaced a radius
+   round everything built, 2026-10-08). A new map's settlers clear the camp's ground on the first tick.
    Saved and hashed (a trace part `explored`), so a replay and a load agree on it.
 3. **The build rule.** A paint command on a plot or cell that is not explored is refused ("under the
    clouds") - unless the command carries the debug flag, which the debug tools always set. So in
@@ -58,12 +56,11 @@ placement carries a flag saying so), set by whoever issued it.
   user found zooming out and springing back odd); only a view already outside, leaving a debug view
   far out or a camera_set, eases in at 6/s. 55 matches the user's reference screenshot (pines about
   half the height they stand at distance 24).
-- **Exploration** (`Exploration.*`, `ApplicationChasmExplore.cpp`): a 2-unit raster (seed 1: 385 x 216),
-  cleared 26 round each built plot, field cell and road (once a plot - explored never goes back, so a
-  repaint costs nothing) and 14 round every person out of doors every 10 ticks. Reset on a new map, so
-  the camp clears its own ground on the first tick (seed 1: a clearing about 35 across once the
-  settlers have stirred). Saved as `explored` - run lengths, a couple of hundred characters for a new
-  colony; a save without it loads all explored - and hashed as the trace part `explored`.
+- **Exploration** (`Exploration.*`, `ApplicationChasmExplore.cpp`): a 2-unit raster (seed 1: 385 x 216).
+  As first built it was cleared 26 round each built plot, field cell and road and 14 round every person;
+  since 2026-10-08 only by sight (below). Reset on a new map. Saved as `explored` - run lengths, a
+  couple of hundred characters for a new colony; a save without it loads all explored - and hashed as
+  the trace part `explored`.
 - **The rule**: a zone command with `value[3]` set (a PLAY command) on unexplored ground is refused
   "under the clouds", in the zone command's handler before the zones see it. Nothing issues play
   commands yet; `chasm_paint play:true` does, to test it - refused far from the camp, accepted beside it,
@@ -89,6 +86,35 @@ placement carries a flag saying so), set by whoever issued it.
 - Play mode has no way to see the date's controls' effect beyond the overlay. Its build UI is the
   bar of tool keys (construction_plan.md); there is no way to click a tool yet.
 
+
+## Sight (2026-10-08)
+
+The user: a road placed at the edge of the clouds revealed what lay past it at once - placing things
+explored. Exploring should be the villagers' own LINE OF SIGHT. So nothing is cleared round what is
+placed or built any more; only what people see.
+
+- **Who looks:** every person out of doors (`EconomyWorker::f_indoors` false - the camp's tents count as
+  out of doors), every 10 ticks, from their exploration cell's middle, the eye 0.8 over their own plot's
+  ground (`SightEyeGround`: the plot's, not the cell's, which at a rim may be the chasm floor).
+- **What they see** (`Exploration::See`): rays to every cell on a square's edge, one cell a step; along
+  each, the horizon is the steepest the ground has risen so far, and a cell is seen when a point 1.0 over
+  its ground clears it. Range 20 on level ground, plus 1 for every unit the eye stands over the cell
+  (a hill or a terrace step looks out further over lower ground), at most 40. Anything lower than both
+  the eye's ground and the LID - the plateau's own ground there, its rise and fall carried on over the
+  chasm, where the clouds lie - counts as air at the lower of the two: from the rim one sees ACROSS the
+  chasm from its very edge (the lid is what is seen), from a balcony across it at the balcony's height.
+  A flat 0 for the plateau was tried first: where the rim stands on a rise, the chasm at a person's feet
+  hid behind the lip.
+- **The ground it runs over** (`ExplorationSight`, `ChasmWorld::sight`): the ground's height and the lid
+  under every cell of the raster, from the world alone - built with the map (12 ms, seed 7).
+- **Cost:** a look is a few hundred to a few thousand cell steps. One from the same cell at the same eye
+  height clears the same cells again, so it is skipped (`looked_from`, not saved: emptied on a load, after
+  which the first looks clear nothing the save had not) - the daily walk to work costs nothing after the
+  first time.
+- **Tuning** (`SIGHT_*` in `Exploration.h`, current tuning, not rules): eye 0.8, target 1.0, range 20,
+  +1 per unit of height, at most 40.
+- `chasm_pick sight:true` returns what a person standing at a point would see, on a blank raster of its
+  own (read only); `chasm_view` returns how many cells are explored.
 
 ## The ghost (2026-10-06)
 

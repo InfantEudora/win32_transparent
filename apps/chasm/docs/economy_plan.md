@@ -83,7 +83,8 @@ and a store's `"allow"`), the overlay's totals in `ApplicationChasmTime.cpp`.
 
 - **Goods**: wood, water, wheat, greens, beans (`Goods.h`). The overlay shows WOOD, FOOD (the three
   summed) and WATER in the stores, at the top centre (the date has moved to the top right, 2026-10-08).
-- **Stores**: room = floor area x 5 (about 20 a plot-storey). Next to a woodcutter or collector (a shared
+- **Stores**: room = floor area x 7.5 (about 30 a plot-storey; 5 until 2026-10-08, the user's 1.5x for
+  a decent row of stores at ten people). Next to a woodcutter or collector (a shared
   fine edge) or a field (one plot away - buildings keep a plot off fields) a store takes exactly that
   workplace's goods (`attached`, derived); otherwise its own `allow`, set per good in the panel (select
   the store) or by `chasm_economy store_allow`, a recorded zone command. A split store shares its stock
@@ -113,8 +114,9 @@ and a store's `"allow"`), the overlay's totals in `ApplicationChasmTime.cpp`.
   with a straight step from where he stands onto the grid and off it at the end. Re-planned from where he
   stands whenever the zones change; a route is saved, never re-planned on load.
 - **Fields** grow every tick that is not winter and not under the snow: wheat 15 days, greens 8, beans
-  20 (18 and 25 until the frost came, 2026-10-08 - `fields_plan.md`, "The frost"); then they yield 0.6,
-  0.35 or 0.45 food per unit of area into their own stock, and grow again. A crop changed is sown again
+  20 (18 and 25 until the frost came, 2026-10-08 - `fields_plan.md`, "The frost"); then they yield 1.2,
+  0.7 or 0.9 food per unit of area into their own stock (double the first 0.6 / 0.35 / 0.45, the user's,
+  2026-10-08: about 37 cells were needed to feed ten), and grow again. A crop changed is sown again
   from nothing.
 - **Collectors** fill a unit every 4 s, up to 10, not under the snow.
 - **Measured** (debug, seed 1, 3x speed): a woodcutter with a store beside him fells and stores a tree
@@ -149,7 +151,7 @@ Files: `ApplicationChasmWorkersView.cpp`, `CropMesh.*`, `ZoneMesh.*`, the forest
 - **A house keeps food and firewood** - and water, since P5 (`needs_plan.md`), whose families eat and
   drink from it: `room` at
   `ECONOMY_HOUSE_ROOM` (4 since needs step 2; 1.5 before) of its standing floor area - about 16 a
-  plot-storey against a store's 20 - and `keeps` = `ECONOMY_HOUSE_KEEPS` (the foods and wood). Shared out on
+  plot-storey against a store's 30 - and `keeps` = `ECONOMY_HOUSE_KEEPS` (the foods and wood). Shared out on
   a split like a store's stock, lost when it is pulled down. A house is not in `accepts`, so no carrier
   delivers there: its own family fetches (`needs_plan.md`, step 2). The house card shows "Food and firewood
   n of room".

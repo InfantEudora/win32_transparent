@@ -203,6 +203,7 @@ void ApplicationChasm::BuildScene(){
     BuildWaterScene();
     BuildGroundShader();
     BuildCloudScene();
+    BuildHearthScene();
     BuildGhostScene();
 
     pick_view = new Object();
@@ -306,9 +307,12 @@ void ApplicationChasm::RegenerateGrid(const GridSettings& s){
     std::shared_ptr<WaterMeshData> water = std::make_shared<WaterMeshData>();
     BuildWaterMesh(*g,*t,*water);
     w->water = water;
-    debug->Info("Chasm: %i mist puffs (%.1f ms), %i rivers, %i falls, %i wet vertices, water %.1f ms\n",
-                (int)mist->puffs.size(),mist->build_ms,(int)t->rivers.size(),(int)t->falls.size(),
-                t->wet_count,water->build_ms);
+    std::shared_ptr<ExplorationSight> sight = std::make_shared<ExplorationSight>();
+    sight->Build(*g,*w->picker,*t);
+    w->sight = sight;
+    debug->Info("Chasm: %i mist puffs (%.1f ms), %i rivers, %i falls, %i wet vertices, water %.1f ms, "
+                "sight %.1f ms\n",(int)mist->puffs.size(),mist->build_ms,(int)t->rivers.size(),
+                (int)t->falls.size(),t->wet_count,water->build_ms,sight->build_ms);
     debug->Info("Grid: seed %u, %i coarse and %i fine quads, %i leftover triangles of %i, %.1f ms "
                 "(+%.1f ms picker, %.1f ms levels, %.1f ms mesh: %i triangles, %i in walls, %i chunks)\n",
                 s.seed,(int)g->coarse.quads.size(),(int)g->fine.quads.size(),
@@ -2036,6 +2040,7 @@ void ApplicationChasm::PreRender(void){
     UploadWorkers();
     UploadPiles();
     UploadClouds();
+    UploadHearth();
     UpdatePickView();
     UpdateGhost();
     UploadSelection();
@@ -2773,7 +2778,8 @@ void ApplicationChasm::RegisterMCPTools(){
         "horizon; yaw 0 looks toward -z). frame_map puts the whole map in view; focus_issue sends "
         "the camera to issue n of the last chasm_check and highlights it. Layers: fine, coarse, "
         "valence (stars where 3, 5 or 6 quads meet), squareness (each quad inset, green square to red "
-        "skewed), issues (the last check's marks). Returns the camera and layers; screenshot optional.",
+        "skewed), issues (the last check's marks). Returns the camera, the layers and how many cells "
+        "of the exploration's raster are explored (2 units a cell); screenshot optional.",
         json{
             {"type","object"},
             {"properties",{
@@ -2868,6 +2874,10 @@ void ApplicationChasm::RegisterMCPTools(){
                                     {"flat",f_view_flat.load()},{"camp",f_view_camp.load()},{"terrain",f_view_terrain.load()},
                                     {"forest",f_view_forest.load()},{"water",f_view_water.load()},{"mist",f_view_mist.load()}};
 #endif
+            std::shared_ptr<const Exploration> ex = GetExploration();
+            if (ex && !ex->Empty()){
+                result["explored"] = json{{"cells",ex->CountExplored()},{"of",(int)ex->cells.size()}};
+            }
             //The screenshot is of a frame drawn after this returns, and PreRender rebuilds the
             //lines at the top of that frame - so new layers are already in the picture.
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
@@ -2891,6 +2901,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"py",{{"type","integer"},{"description","window pixel, from the top"}}},
                 {"select",{{"type","boolean"}}},
                 {"trees_within",{{"type","number"},{"description","list the trees within this distance of x/z, nearest first, standing, log or stump"}}},
+                {"sight",{{"type","boolean"},{"description","what a person standing here would see (play_mode_plan.md, sight): the eye's ground, how many cells, and the cells as a save's explored run lengths - read only"}}},
                 {"to_x",{{"type","number"},{"description","with to_z: the walk from x/z to here"}}},
                 {"to_z",{{"type","number"}}},
                 {"include_screenshot",{{"type","boolean"}}},
@@ -2930,6 +2941,20 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["zone_ground_built"] = (bool)z->ground_built[pick.plot];
                     result["zone_line"] = z->line[pick.plot];
                     result["zone_gate"] = (bool)z->gate[pick.plot];
+                }
+                //What a person standing here would see (Exploration.h, SIGHT), on a blank raster of its
+                //own: the game's exploration is not touched, so a script may ask anywhere at any time.
+                std::shared_ptr<const ChasmWorld> sw = GetWorld();
+                if (pick.f_hit && args.value("sight",false) && sw && sw->sight){
+                    Exploration seen;
+                    seen.Reset(sw->grid->bounds_min,sw->grid->bounds_max);
+                    int cell = seen.CellAt(pick.at);
+                    if (cell >= 0){
+                        float eye_ground = SightEyeGround(*sw,seen,cell,pick.at);
+                        seen.See(*sw->sight,cell,eye_ground);
+                        result["sight"] = json{{"eye_ground",eye_ground},{"cells",seen.CountExplored()},
+                                               {"seen",seen.ToString()}};
+                    }
                 }
                 //The walk from here to to_x/to_z, as a villager would take it - for checking what shuts
                 //a way (a palisade, line_works_plan.md) without sending anyone.
@@ -3000,7 +3025,7 @@ void ApplicationChasm::RegisterMCPTools(){
         "building - without one, each call starts its own. FIELDS (docs/fields_plan.md): a field painted "
         "with play:true is a site (2 wood a cell), by debug there at once - empty either way; field_crop sets "
         "its STARTING crop (wheat, greens, beans), which its farmer then sows; field_next its NEXT crop for "
-        "every sowing after (a crop, or auto: the highest yield); field_land gives it to `house` (a house's "
+        "every sowing after (a crop, or auto: the most food); field_land gives it to `house` (a house's "
         "building id, 0 automatic - docs/land_plan.md); field_priority puts a field still being built first "
         "(`on`, default true; false puts it back) - a building's is chasm_economy site_priority. A field's "
         "starting crop may be set while it is still a site. The result names the building at the place.",

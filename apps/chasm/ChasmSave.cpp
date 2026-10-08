@@ -133,8 +133,13 @@ json ChasmSaveToJson(const ChasmSave& s){
         for (const auto& st : e.ground_sites){
             ground_sites.push_back(json::array({st.first,st.second}));
         }
+        //Homes warm or cold since dawn (needs_plan.md, step 3): building (0 the homeless), heat.
+        json heats = json::array();
+        for (const auto& hh : e.heats){
+            heats.push_back(json::array({hh.first,hh.second}));
+        }
         economy = json{{"stocks",stocks},{"felled",props},{"people",workers},{"fields",fields},
-                       {"sites",sites},{"ground_sites",ground_sites},{"next_person",e.next_person},{"dead",dead}};
+                       {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"next_person",e.next_person},{"dead",dead}};
     }
     return json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -309,6 +314,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         }
         for (const json& st : e.value("ground_sites",json::array())){
             out.economy.ground_sites.push_back(std::make_pair(st[0].get<int>(),st[1].get<int>()));
+        }
+        //Absent before firewood: no home warm or cold until the next dawn.
+        for (const json& hh : e.value("heat",json::array())){
+            out.economy.heats.push_back(std::make_pair(hh[0].get<uint32_t>(),hh[1].get<int>()));
         }
         for (const json& f : e.value("fields",json::array())){
             EconomyField fd;

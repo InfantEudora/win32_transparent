@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-08T13:40:14.027Z
+  modified: 2026-10-08T15:26:54.932Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -151,7 +151,13 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   (oak/bush kind, stage) = 36 looks, each its own set per chunk (65 sets/chunk; materials are per OBJECT in
   core, not per instance); green look on row 8 PAL_SUMMER (app copies row 0 there at load) so row 0 can fade
   gardens/hedges; leaf cols kept out of the fade only for crops. Bare oaks via blender_chasm_props.py --add
-  (bare_broadleaf copies the leafy oak's trunk from the .blend); the USER tunes/re-exports them. RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
+  (bare_broadleaf copies the leafy oak's trunk from the .blend); the USER tunes/re-exports them.
+  FIREWOOD (needs step 3, user 2026-10-08, BUILT): dawn burn under snow (1/plot-storey; camp 1/plot) only if
+  inhabited, `heat` saved+hashed ([0]=homeless), cold drain +1; separate WOODSHED (4 days' burn); fetch from
+  AUTUMN (and spring while snowed) from stores/empty camp, fair share = firewood AT HOMES only (user) + 1 day;
+  no reserve for sites. Every house ONE chimney (roof or side stack, HouseChimney); smoke = LIFE puffs + unlit
+  orange panes (ApplicationChasmHearth.cpp, BuildHouseCell fixtures). Bug found: WORKER_GETTING mapped wood to
+  food. RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
   every map has a home river (approach bug fixed; small-river and off-the-east-edge fallbacks; `rivers`
   check fails none), 2-3 BRANCHES per river (GRID_RIVER_JOIN, inland heads), far-side scenic SPRINGS and
   home SWALLOW-HOLE streams (GRID_RIVER_SINK) whose spring pours from a dark mouth in the wall

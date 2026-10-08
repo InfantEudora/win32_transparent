@@ -836,6 +836,11 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 c.lines.push_back(give);
             }
         }else{
+            //A collector fills only off the snow (Economy.cpp): frozen, it gives nothing until the thaw and its
+            //carrier waits at home - which, unexplained, looked like her doing nothing (user, 2026-10-08).
+            if (b.kind == ZONE_KIND_WATER && info.storeys > 0 && EconomyFrozen(w,z,id,tick)){
+                c.Text("Frozen: no water can be collected until the thaw",HUD_AMBER);
+            }
             bool f_worked = false;
             for (const EconomyWorker& k : e->workers){
                 if (k.building == id){

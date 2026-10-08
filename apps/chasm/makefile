@@ -23,6 +23,7 @@ APP_SRCS += ApplicationChasmSelect.cpp
 APP_SRCS += ApplicationChasmBridge.cpp
 APP_SRCS += ApplicationChasmWater.cpp
 APP_SRCS += ApplicationChasmSeasons.cpp
+APP_SRCS += ApplicationChasmHearth.cpp
 APP_SRCS += Grid.cpp
 APP_SRCS += ChasmLayout.cpp
 APP_SRCS += GridPick.cpp

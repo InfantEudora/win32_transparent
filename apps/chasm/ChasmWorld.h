@@ -10,6 +10,7 @@
 #include "Forest.h"
 #include "Mist.h"
 #include "WaterMesh.h"
+#include "Exploration.h"
 
 /*
     Everything GENERATED for one map, as one immutable bundle: built together from the seed, swapped
@@ -25,6 +26,7 @@ struct ChasmWorld{
     std::shared_ptr<const ForestData> forest;
     std::shared_ptr<const MistData> mist;
     std::shared_ptr<const WaterMeshData> water;
+    std::shared_ptr<const ExplorationSight> sight;  //the ground the people's lines of sight run over
 };
 
 #endif

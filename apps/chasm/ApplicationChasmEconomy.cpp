@@ -106,6 +106,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     h.Bytes(&n,sizeof(n));
     h.Bytes(e.site.data(),e.site.size() * sizeof(int));
     h.Bytes(e.ground_site.data(),e.ground_site.size() * sizeof(int));
+    //Every home's fire since dawn (needs_plan.md, step 3).
+    n = (uint32_t)e.heat.size();
+    h.Bytes(&n,sizeof(n));
+    h.Bytes(e.heat.data(),e.heat.size());
 }
 
 /*
@@ -157,7 +161,7 @@ json StockJson(const EconomyState& e, uint32_t id){
     return out;
 }
 
-json WorkerJson(const EconomyWorker& k){
+json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     json skills = json::object();
     for (int sk = 0; sk < SKILL_COUNT; sk++){
         skills[SkillName(sk)] = (int)k.skills[sk];
@@ -172,6 +176,9 @@ json WorkerJson(const EconomyWorker& k){
            {"water_days",std::round(k.water * 100.0 / CALENDAR_DAY_TICKS) / 100.0}};
     if (EconomyDry(k)){
         j["dry"] = true;
+    }
+    if (e && EconomyCold(*e,k)){
+        j["cold"] = true;       //his home under the snow with no fire today (needs_plan.md, step 3)
     }
     if (k.carry > 0){
         j["carrying"] = json{{GoodName(k.carry_good),k.carry}};
@@ -250,6 +257,15 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     if (z->buildings[id].kind == ZONE_KIND_HOUSE){
         j["keeps"] = GoodsJson((id < e->keeps.size()) ? e->keeps[id] : 0);
         j["room"] = (id < e->room.size()) ? e->room[id] : 0;
+        j["woodshed"] = (id < e->woodshed.size()) ? e->woodshed[id] : 0;
+        j["winter_snow"] = (id < e->snowed.size() && e->snowed[id] != 0);
+    }
+    //Its fire (step 3): what it burns a dawn under the snow, and whether it is warm or cold today.
+    if (z->buildings[id].kind == ZONE_KIND_HOUSE || z->buildings[id].kind == ZONE_KIND_CAMP){
+        static const char* heats[3] = {"none","warm","cold"};
+        int heat = (id < e->heat.size()) ? e->heat[id] : HEAT_NONE;
+        j["burns"] = (id < e->burn.size()) ? e->burn[id] : 0;
+        j["heat"] = heats[std::min(2,std::max(0,heat))];
     }
     //A woodcutter's woodpile: the lot plot it is on, or -1 with no lot standing beside the hut.
     if (z->buildings[id].kind == ZONE_KIND_WOODCUTTER){
@@ -257,7 +273,7 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     }
     for (const EconomyWorker& k : e->workers){
         if (k.building == id){
-            j["worker"] = WorkerJson(k);
+            j["worker"] = WorkerJson(k,e.get());
         }
     }
     return j;
@@ -636,7 +652,7 @@ void ApplicationChasm::RegisterEconomyTools(){
             result["stores"] = stores;
             json workers = json::array();
             for (const EconomyWorker& k : e->workers){
-                workers.push_back(WorkerJson(k));
+                workers.push_back(WorkerJson(k,e.get()));
             }
             result["workers"] = workers;
             json fields = json::array();

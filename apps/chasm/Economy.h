@@ -156,13 +156,25 @@ class Walkers;
     instead; one errand a house at a time, and before wood for a site. Someone eating at a store or the
     camp on a pressing need brings a load home with him. A camp's own families do not fetch - its supplies
     are what the settlers brought, and running short of them is the reason to build houses.
+    HEAT (step 3, the user's 2026-10-08): at each dawn every INHABITED home under the snow - a house or a camp
+    - burns its firewood, ECONOMY_FIREWOOD_BURN a plot-storey, from its own stock, and is WARM that day
+    (`heat`, saved); with too little it burns none and its family is COLD that day: health falls faster
+    (NEEDS_COLD_DRAIN) while food still counts, so cold shows as hunger first. Nobody home, nothing burns;
+    the south, never under the snow, never burns. Someone with no home is cold under the snow at the camp's
+    spot (heat[0]). A house keeps its firewood apart from its food and water, in a WOODSHED of
+    ECONOMY_WOODSHED_DAYS of its burning. Its family FETCHES FIREWOOD like food - below ECONOMY_HOME_DAYS of
+    burning, up to a day more - but only from autumn's first day, through winter and while the snow lies on it
+    in spring, and only a house the full winter's snow reaches (`snowed`); and never past its FAIR SHARE: the
+    colony's firewood at home, shared evenly over every such house's burning, and ECONOMY_FAIR_DAYS more (as
+    food's, at home only - the user's). No wood is kept back for building sites: by autumn the building is
+    meant to be done.
 
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
     a world): standing, felled with its log lying, or a stump with the log taken. Saved and hashed.
 */
 
-#define ECONOMY_STORE_ROOM          5.0f    //units of goods per unit of floor area: about 20 a plot-storey
+#define ECONOMY_STORE_ROOM          7.5f    //units of goods per unit of floor area: about 30 a plot-storey
 #define ECONOMY_HOUSE_ROOM          4.0f    //a house's, for its own food, water and firewood: about 16 a plot-storey (needs_plan.md)
 #define ECONOMY_HOUSE_KEEPS         (GOODS_FOOD | GOOD_BIT(GOOD_WOOD) | GOOD_BIT(GOOD_WATER))
 #define ECONOMY_LOAD                5       //what a farmer or a water carrier carries at once
@@ -215,13 +227,17 @@ inline int EconomyGroundSitePlot(uint32_t site){ return (int)(site & ~ECONOMY_SI
 #define NEEDS_PRESSING_WATER        (NEEDS_WATER_FULL / 3)      //below this he goes for water
 #define NEEDS_PRESSING_HEALTH       (NEEDS_HEALTH_FULL / 4)     //...and for food
 #define ECONOMY_MEAL_SECONDS        2.0f                        //eating and drinking away from home
-#define ECONOMY_HOME_DAYS           2                           //a house fetches below this many days of its family's water or food
+#define ECONOMY_HOME_DAYS           2                           //a house fetches below this many days of its family's water, food or firewood
+#define ECONOMY_FIREWOOD_BURN       1                           //wood a home under the snow burns at dawn, a plot-storey
+#define ECONOMY_WOODSHED_DAYS       4                           //a house's room for firewood, apart from its food and water's: days of burning
+#define NEEDS_COLD_DRAIN            1                           //health lost a tick more while cold
 //The health a unit of food gives - beans most, then wheat, greens least (the user's order; the amounts are
 //tuning); 0 for no food.
 int EconomyFoodWorth(int good);
 //What a person died of. Never renumber: saves hold these.
 #define NEEDS_DIED_HUNGER           0
 #define NEEDS_DIED_THIRST           1       //dry when his health ran out
+#define NEEDS_DIED_COLD             2       //cold (and not dry) when it did
 const char* EconomyDeathCause(int cause);
 
 //The base skills (gameplay_plan.md, "People" - the proposal; names may change). Never renumber.
@@ -358,6 +374,7 @@ struct EconomyState{
     std::vector<EconomyField> fields;                   //in id order
     std::vector<int> site;                              //by building id: wood brought to its construction
     std::vector<int> ground_site;                       //by plot: wood brought to a garden's or lot's
+    std::vector<uint8_t> heat;                          //by building id: a home's HEAT_* since dawn; [0] the homeless
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<uint8_t> accepts;
     std::vector<uint8_t> attached;                      //the goods of the workplaces a store is next to
@@ -367,11 +384,23 @@ struct EconomyState{
     std::vector<int> capacity;                          //a house's: how many it holds
     std::vector<int> places;                            //a workplace's: how many it employs (0: not one) - a house's or camp's, its land's farmers
     std::vector<uint32_t> farmer_of;                    //by building id: a field's farmer, the person its share falls to - 0 fallow
+    std::vector<int> burn;                              //a house's or camp's firewood a dawn under the snow
+    std::vector<int> woodshed;                          //a house's room for firewood
+    std::vector<uint8_t> snowed;                        //a house the full winter's snow reaches: it fetches firewood
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
     uint32_t felled_version = 0;                        //bumped when a prop's state changes - the view
     uint32_t version = 0;                               //bumped on any change
 };
+
+//A home's heat since dawn (HEAT, above). Never renumber: saves hold these.
+#define HEAT_NONE   0       //no fire wanted: no snow on it at dawn, or nobody home
+#define HEAT_WARM   1       //its firewood burned
+#define HEAT_COLD   2       //under the snow with too little to burn
+//Whether he is cold today: his home's heat, or the homeless's.
+inline bool EconomyCold(const EconomyState& e, const EconomyWorker& k){
+    return k.house < e.heat.size() && e.heat[k.house] == HEAT_COLD;
+}
 
 //As a save holds it.
 struct EconomySaved{
@@ -381,6 +410,7 @@ struct EconomySaved{
     std::vector<EconomyField> fields;
     std::vector<std::pair<uint32_t,int>> sites;         //sites with wood brought: building, wood
     std::vector<std::pair<int,int>> ground_sites;       //gardens and lots with wood brought: plot, wood
+    std::vector<std::pair<uint32_t,int>> heats;         //homes not HEAT_NONE: building (0 the homeless), heat
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;
     bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
@@ -433,6 +463,7 @@ private:
     std::vector<int> share_of;                  //by building id: a field's share of its owner's land, -1 none (LandPlaces)
     std::vector<float> field_pace;              //by building id: its farmer's pace, 0 fallow (Tending)
     bool f_resettle = false;                    //a loaded save's land not yet settled (an older save's)
+    uint64_t now = 0;                           //the tick being run, for the rules that ask the date inside it
     float tree_cell = 16.0f;                    //the trees in buckets of this many world units
     int tree_nx = 0, tree_nz = 0;
     vec2 tree_origin;
@@ -492,6 +523,12 @@ private:
     //Fetching home (needs_plan.md, step 2): what his house is short of; off to fetch it; a load of it picked
     //up at `from` and carried home; and the way home itself.
     uint8_t HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* first) const;
+    //HEAT (above): every home's fire at dawn; what house h has room for of `good` (its woodshed for wood, the
+    //rest of its room for food and water); whether it fetches firewood now; and its fair share of it.
+    void Heat(const ZoneState& z, uint64_t calendar_tick);
+    int HouseRoom(uint32_t h, int good) const;
+    bool FirewoodNow(uint32_t h) const;
+    int FirewoodFair(const ZoneState& z, uint32_t h) const;
     bool FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     bool TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, uint8_t goods);
     bool RouteHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
@@ -588,7 +625,8 @@ float EconomyFieldGrowth(const EconomyState& e, const ZoneState& z, uint32_t id)
     - the user's follows-what table; -1 for a field's first crop, which is 100.
 */
 int EconomyCropYield(int last, int crop);
-//What AUTO sows after `last`: the highest yield, the earlier crop (ZONE_CROP_*) on a tie.
+//What AUTO sows after `last`: the most food per growing day at the yield it would get (fields_plan.md,
+//"AUTO by food"), the earlier crop (ZONE_CROP_*) on a tie.
 int EconomyAutoCrop(int last);
 //What a field will be sown with next: its starting crop until its first harvest, then its next crop (AUTO
 //worked out). -1 while its starting crop is not chosen.
@@ -597,7 +635,7 @@ int EconomyFieldSowCrop(const EconomyField& f, const ZoneBuilding& b);
     THE FROST (fields_plan.md, the user's 2026-10-08): whatever still grows on a field on winter's first day
     is lost, and nothing is sown in winter or under the snow. So a farmer sows only a crop that ripens before
     then, at his pace, in the growing weather the field has left - until winter, or until the snow reaches it
-    first, which in the north it does over autumn's last days (Calendar.h). AUTO takes the highest yield of
+    first, which in the north it does over autumn's last days (Calendar.h). AUTO takes the most food of
     the crops that still do; a crop the player chose that no longer can waits for spring.
 */
 //Ticks of growing weather a field at `p` has left before the frost, from `tick`: 0 in winter or under snow.
@@ -606,8 +644,11 @@ int EconomyGrowingTicksLeft(const ChasmWorld& w, const vec2& p, uint64_t tick);
 int EconomyGrowingSeasonTicks(const ChasmWorld& w, const vec2& p, uint64_t tick);
 //Ticks `crop` takes to grow from `grown` (EconomyField::grown) to ripe at a farmer's `pace`; a lot at pace 0.
 int EconomyRipenTicks(int crop, int grown, float pace);
+//Whether building `id` stands under the snow at `tick`, at its first plot - where the rule that a water
+//collector fills only off the snow reads it - so a card can say so.
+bool EconomyFrozen(const ChasmWorld& w, const ZoneState& z, uint32_t id, uint64_t tick);
 //What a field is to be sown with NOW, with `ticks_left` of growing weather at `pace`: EconomyFieldSowCrop's
-//if it ripens in time - AUTO the highest yield of those that do - else -1, and it waits for spring.
+//if it ripens in time - AUTO the most food of those that do - else -1, and it waits for spring.
 int EconomyFieldSowNow(const EconomyField& f, const ZoneBuilding& b, float pace, int ticks_left);
 //A field's farmer's pace (EconomySkillFactor of his husbandry), 0 with nobody to farm it - from the state alone.
 float EconomyFieldPace(const EconomyState& e, uint32_t id);

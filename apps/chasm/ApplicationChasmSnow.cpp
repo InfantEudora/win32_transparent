@@ -94,6 +94,24 @@ void ApplicationChasm::SetGroundUniforms(){
     ground_shader->Setint("bush_column",PAL_BUSH);
 }
 
+/*
+    RENDER THREAD, from the water's uniform callbacks: the rivers, pools and falls freeze north of the same
+    front, with the same ragged edge (shaders/chasm_water.glsl, ICE) - nothing at all while no snow is on
+    the map.
+*/
+void ApplicationChasm::SetIceUniforms(Shader* s){
+    std::shared_ptr<const Grid> g = GetGrid();
+    float front = SnowFrontNow();
+    bool f_ice = g && (front + CALENDAR_SNOW_WOBBLE + GROUND_SNOW_EDGE > g->bounds_min.y);
+    s->Setint("f_ice",f_ice ? 1 : 0);
+    if (!f_ice){
+        return;
+    }
+    s->Setfloat("snow_front_z",front);
+    s->Setfloat("snow_wobble",CALENDAR_SNOW_WOBBLE);
+    s->Setfloat("snow_edge",GROUND_SNOW_EDGE);
+}
+
 //RENDER THREAD. After every SetMeshData, which puts a mesh back to MESH_MODE_NORMAL.
 void ApplicationChasm::UseGroundShader(Mesh* mesh){
     if (!mesh || ground_shader_index < 0){

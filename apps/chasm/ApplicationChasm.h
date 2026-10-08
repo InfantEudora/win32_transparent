@@ -356,16 +356,22 @@ private:
 
     /*
         --- Exploration and the clouds (docs/play_mode_plan.md steps 2-4, ApplicationChasmExplore.cpp) ---
-        `exploration` is SIMULATION state, the physics thread's alone: cleared round what is built and
-        round the people as the tick goes (Exploration.h), saved and hashed, a copy published when it
-        changes. The clouds are its view: puffs over what is not explored, shown in play mode and in
-        debug mode only when asked for.
+        `exploration` is SIMULATION state, the physics thread's alone: cleared by what the people see as
+        the tick goes (Exploration.h), saved and hashed, a copy published when it changes. The clouds
+        are its view: puffs over what is not explored, shown in play mode and in debug mode only when
+        asked for.
     */
     Exploration exploration;
     std::shared_ptr<const Exploration> exploration_snapshot;   //under grid_mutex
-    std::vector<uint8_t> explored_plot;         //physics thread: per fine vertex, already cleared round
-    std::vector<uint8_t> explored_cell;         //per coarse quad, the same for a field's cells
-    uint32_t explored_zones_version = 0xFFFFFFFFu;
+    /*
+        Physics thread: per cell, the eye's ground it was last looked round from (NAN never). A look
+        from the same place and height clears the same cells again, and explored stays explored, so it
+        is skipped - the daily walk to work costs nothing after the first. Not saved: emptied with the
+        exploration on a load, after which a look is taken once more and clears nothing the save had not.
+    */
+    std::vector<float> looked_from;
+    //The ground a person at `at`, in exploration cell `cell`, looks from: his own plot's, at the cell's middle.
+    static float SightEyeGround(const ChasmWorld& w, const Exploration& ex, int cell, const vec2& at);
     void ResetExploration();                    //physics thread: a new map, nothing explored
     void TickExploration();                     //physics thread, from RunSimulationTick
     void PublishExploration();                  //physics thread
@@ -390,6 +396,19 @@ private:
     std::shared_ptr<const ChasmWorld> cloud_lattice_world;
     void BuildCloudScene();                     //from BuildScene
     void UploadClouds();                        //render thread, from PreRender
+
+    //The hearths (needs_plan.md step 3, ApplicationChasmHearth.cpp): a warm home's chimney smoke and lit windows.
+    Mesh* hearth_puff_mesh = NULL;
+    Mesh* hearth_pane_mesh = NULL;
+    int smoke_material = -1;                    //the palette moving as core's INSTANCE_MOTION_LIFE
+    int glow_material = -1;                     //...and unlit
+    Object* hearth_smoke = NULL;
+    Object* hearth_panes = NULL;
+    std::shared_ptr<const ChasmWorld> hearth_built_world;
+    uint32_t hearth_built_zones = 0xFFFFFFFFu;
+    std::vector<uint8_t> hearth_built_heat;     //the economy's heat they were built for
+    void BuildHearthScene();                    //from BuildScene
+    void UploadHearth();                        //render thread, from PreRender
     /*
         THE GHOST (ApplicationChasmGhost.cpp): in play mode, what the tool in hand would place under the
         cursor - see-through, green where the rules allow it and red where they refuse, with an outline
@@ -481,6 +500,7 @@ private:
     int ground_shader_index = -1;
     void BuildGroundShader();                   //from BuildScene
     void SetGroundUniforms();
+    void SetIceUniforms(Shader* s);     //the water's freezing, from the same front (ApplicationChasmSnow.cpp)
     void UseGroundShader(Mesh* mesh);           //a mesh drawn with the palette, onto the ground shader
 
     char save_name[64] = "village";     //the panel's name field

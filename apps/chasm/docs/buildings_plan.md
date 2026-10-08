@@ -106,7 +106,8 @@ panel, `chasm_paint`), `tools/chasm_replay_test.py`.
   vertex 0.15 above it.
 - **The look**: a roof runs on only to a corner of the same building at the same height (an arch
   matches either side), so neighbouring buildings meet in a valley; one roof colour per building, by
-  its id. Houses plaster under tile or shingle with chimneys; stores timber under slate, wide doors,
+  its id. Houses plaster under tile or shingle, each with ONE chimney - through the roof, or a stone
+  stack up an outside wall (needs_plan.md step 3, 2026-10-08); stores timber under slate, wide doors,
   few windows; the woodcutter dark planks under thatch; the water collector stone under shingle.
   Fields: the crop's colour for the whole field; one fence between two fields, none inside one.
 - **Saves**, version 2: `buildings` - id, kind, plots with storeys or cells, crop - with

@@ -90,6 +90,7 @@ void ApplicationChasm::SetWaterSheetUniforms(){
     glDisable(GL_CULL_FACE);
     water_sheet_shader->Setfloat("water_seconds",(float)SimSeconds());
     water_sheet_shader->Setfloat("flow_speed",0.32f);
+    SetIceUniforms(water_sheet_shader);
 }
 
 //Standing water: the streaks hardly drift, and it is murky - a swamp's green-brown, not a river's blue
@@ -104,11 +105,13 @@ void ApplicationChasm::SetWaterPoolUniforms(){
     //The swamp's haze on the water, in the palette's swamp-mist cell (BuildScene reads it).
     water_pool_shader->Setfloat("haze_amount",0.6f);
     water_pool_shader->Setvec3("haze_colour",swamp_haze);
+    SetIceUniforms(water_pool_shader);
 }
 
 void ApplicationChasm::SetWaterFlatUniforms(){
     water_flat_shader->Setfloat("water_seconds",(float)SimSeconds());
     water_flat_shader->Setfloat("flow_speed",2.2f);
+    SetIceUniforms(water_flat_shader);
 }
 
 /*
@@ -229,7 +232,12 @@ void ApplicationChasm::UpdateMist(){
                 falls.push_back(f);
             }
         }
+        //A fall frozen at its lip (chasm_water.glsl, ICE) churns nothing up at its foot.
+        float front = SnowFrontNow();
         for (int f = 0; f < (int)falls.size(); f++){
+            if (CalendarSnowAt(falls[f].lip,front)){
+                continue;
+            }
             for (int s = 0; s < FOAM_PER_FALL; s++){
                 vec3 pos;
                 float r;
