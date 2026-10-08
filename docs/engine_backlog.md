@@ -134,6 +134,22 @@ and 61 ended up stranded under a band that no longer said anything about them.
 
 ## Band B — under an hour each
 
+- [ ] **97. A ticking pass applies its hardware input twice, so a relative axis counts double.**
+  Found 2026-10-08 while building item 96, not measured. `UpdateKeyState` drains the pass's events
+  into `tick_events` and applies them; `ApplyTickInput` then APPENDS the tick's scripted events to
+  that same list (`DrainAndApplyEvents(true, ...)`) and applies the WHOLE list - the hardware events a
+  second time. Keys do not care (a key already held is not counted again), but
+  `INPUT_EVENT_AXIS_RELATIVE` adds to `delta`, so the mouse's movement and the wheel read double on
+  every pass that ticks and single on one that does not; and `INPUT_EVENT_AXIS_ABSOLUTE`, re-applied,
+  sets `delta` to 0. The comment there ("this pass already applied whatever hardware input it
+  sampled, and that is part of this tick's input too") reads as meaning the LIST should hold both,
+  for the recorder and `GetTickEvents`, not that both should be applied again. The fix is to apply
+  only what was appended. **Why it is not just done:** it changes mouse sensitivity in every app
+  while running, and any recording with relative axes in it replays differently afterwards (both
+  replays agree with each other, but not with their baselines) - so it wants the user's call and a
+  look at archer's aiming. Item 96's `BetweenTicks` already clears the list between the ticks of a
+  batch, so it does not compound there.
+
 - [ ] **93. An app's asset roots are declared twice, in two languages, and nothing checks they
   agree - so twelve of the fifteen apps still cannot `make ship`.**
   Found 2026-09-17 while making `apps/bomber` shippable. The packing MACHINERY is not the problem

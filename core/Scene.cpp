@@ -59,6 +59,11 @@ bool Scene::BeginPass(){
     return f_tick_this_pass;
 }
 
+//The next tick of a batched pass - see the header. Only ever after a tick of this pass has run.
+bool Scene::ContinuePass(){
+    return f_tick_this_pass && ((!f_paused) || (pending_physics_steps > 0));
+}
+
 void Scene::UpdateAnimations(float delta_time){
     /*
         Animation only advances on a tick that actually RUNS.

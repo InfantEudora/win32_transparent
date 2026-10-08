@@ -317,6 +317,11 @@ struct KeyState{
     //an axis nobody is consuming cannot bank movement indefinitely. Physics thread only.
     int                     delta_unread_passes = 0;
     int                     num_mappings = 1;   // Amount of keys that are mapped to this state.
+    //A batched pass's edges and delta, held back from its later ticks for the view work after them
+    //(InputController::BetweenTicks / EndTicks). Physics thread only.
+    bool                    f_pass_pressed = false;
+    bool                    f_pass_released = false;
+    int32_t                 pass_delta = 0;
 };
 
 /*
@@ -455,6 +460,20 @@ class InputController{
         Driving it from the tick itself removes the approximation rather than tuning it.
     */
     void ApplyTickInput(uint64_t sim_tick);
+    /*
+        BATCHED PASSES (Application: fast-forward runs several ticks in one pass). A pass's input
+        belongs to its FIRST tick - it is drained once, stamped with that tick in a recording, and a
+        replay puts it back there - so a press must reach that tick and no other. Every edge and
+        delta raised so far is therefore held back between the ticks of a batch, and the next tick
+        starts with only what its own ApplyTickInput brings: the scripted holds and the replay's
+        events, which are denominated in ticks and so already land on the right one. Held keys stay
+        held - f_isdown is a level, not an edge.
+        EndTicks hands everything held back to the view work that follows the batch, which then sees
+        what it would have seen after one tick: every edge of the pass, read or not. Both are
+        physics thread only, under the pass's lock; EndTicks is harmless after a pass of one tick.
+    */
+    void BetweenTicks();
+    void EndTicks();
     //What ApplyPendingEvents just applied: the exact input this tick ran with. A recorder writes
     //this out; a replay submits it back. Physics thread only, valid until the next call.
     const std::vector<InputEvent>& GetTickEvents() const { return tick_events; }
@@ -919,6 +938,7 @@ protected:
     bool f_synthetic_release_tick = false;       //guarded by state_mutex
     std::vector<InputEvent> pending_events; //producers append, the physics thread drains
     std::vector<InputEvent> tick_events;    //physics thread only: this tick's applied input
+    bool f_batch_held = false;              //physics thread only: BetweenTicks has held edges back this pass
     //Shared body of ApplyPendingEvents and ApplyTickInput: take everything submitted since the
     //last drain and apply it. f_append keeps what tick_events already holds, so a ticking pass
     //ends up with the hardware input it sampled AND the scripted input its tick advanced - which

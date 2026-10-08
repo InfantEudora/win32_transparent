@@ -51,8 +51,10 @@ void ApplicationChasm::TickEconomy(){
     if (f_raised){
         PublishZones();
     }
+    //Copied for the view once the pass's ticks are done (UpdateView), not after each of them: a whole
+    //copy of the economy a tick, ten a pass at 10x, of which the view only ever looks at the last.
     if (economy.State().version != before){
-        PublishEconomy();
+        f_economy_unpublished = true;
     }
 }
 

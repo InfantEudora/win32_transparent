@@ -258,6 +258,9 @@ json Application::SimClockJson(){
         {"paused", main_scene->IsPhysicsPaused()},
         {"pending_steps", main_scene->GetPendingPhysicsSteps()},
         {"timestep", main_scene->GetPhysicsTimestep()},
+        //Fast-forward (Application.h): what was asked for, and what the machine is managing.
+        {"time_factor", physics_time_factor},
+        {"speed", GetPhysicsSpeed()},
         {"input_focused", input ? input->HasFocus() : false}
     };
 }
@@ -568,9 +571,11 @@ void Application::RegisterCoreMCPTools(){
         "Advance a paused simulation by exactly num_ticks ticks and return the resulting clock. "
         "Each tick is the same fixed timestep a free-running one uses, and a tick here is a whole "
         "tick - input, animation, the app's own per-tick logic and the physics step - so stepping "
-        "advances the entire simulation, not just the physics. Requires sim_pause first. Blocks "
-        "until the physics thread has consumed the steps, and reports ticks_advanced, which is the "
-        "value to trust: if it is short of num_ticks the call timed out and the rest is still queued.",
+        "advances the entire simulation, not just the physics. Requires sim_pause first. The ticks "
+        "run in batches, as fast as the machine allows (up to 1000 a pass of 20 ms) rather than 50 a "
+        "second, each exactly as a free-running one. Blocks until the physics thread has consumed "
+        "the steps, and reports ticks_advanced, which is the value to trust: if it is short of "
+        "num_ticks the call timed out and the rest is still queued.",
         json{
             {"type","object"},
             {"properties", {

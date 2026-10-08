@@ -18,13 +18,15 @@
     THE CALENDAR AND THE SPEED (gameplay_plan.md P1). The date is Calendar.h's, from one simulation
     number; this file advances it, sets it, shows it, and runs the clock faster or slower.
 
-    The speeds are whole multiples of normal, so at every one a tick is still exactly a tick: 3x is
-    150 ticks a second of the same 20 ms, never 50 ticks of 60 ms. A year at 3x is 10 minutes.
+    At every speed a tick is still exactly a tick: 4x is four ticks of the same 20 ms in each pass of
+    the physics loop (core's batches, Application::physics_time_factor), never one tick of 80 ms. The
+    PLAY speeds are 1x, 2x and 4x (the user's, 2026-10-08) - the calendar's button and the keys go
+    through them; the tool and the panel set any factor from 1 to 10. A year at 4x is 7.5 minutes.
 */
 
 namespace {
 
-const float speeds[] = {1.0f,2.0f,3.0f};
+const float speeds[] = {1.0f,2.0f,4.0f};
 
 }
 
@@ -36,6 +38,16 @@ float ApplicationChasm::SpeedFactor(int index){
     return speeds[std::max(0,std::min(SpeedCount() - 1,index))];
 }
 
+int ApplicationChasm::NearestSpeed(){
+    int best = 0;
+    for (int i = 1; i < SpeedCount(); i++){
+        if (std::fabs(speeds[i] - physics_time_factor) < std::fabs(speeds[best] - physics_time_factor)){
+            best = i;
+        }
+    }
+    return best;
+}
+
 /*
     Any thread. physics_time_factor is read once per pass by the physics loop, outside its lock - one
     float, which is how core's own slider sets it too.
@@ -44,6 +56,13 @@ void ApplicationChasm::SetSpeed(int index){
     index = std::max(0,std::min(SpeedCount() - 1,index));
     speed_index = index;
     physics_time_factor = speeds[index];
+}
+
+void ApplicationChasm::SetSpeedFactor(float factor){
+    factor = std::max(1.0f,std::min(PHYSICS_TIME_FACTOR_MAX,factor));
+    physics_time_factor = factor;
+    int i = NearestSpeed();
+    speed_index = (std::fabs(speeds[i] - factor) < 0.01f) ? i : -1;
 }
 
 //PHYSICS THREAD, the last thing a tick does: the tick that ran is a tick of the colony's life.
@@ -75,15 +94,17 @@ void ApplicationChasm::UpdateTimeKeys(){
     if (f_pause){
         main_scene->PausePhysics(!main_scene->IsPhysicsPaused());
     }
+    //From another factor (the tool's, the panel's), the keys go on from the play speed nearest it.
+    int at = (speed_index >= 0) ? (int)speed_index : NearestSpeed();
     if (f_slower){
-        SetSpeed(speed_index - 1);
+        SetSpeed(at - 1);
     }
     if (f_faster){
         //Faster from a pause also starts the clock again: that key means "go", whatever came before.
         if (main_scene->IsPhysicsPaused()){
             main_scene->PausePhysics(false);
         }else{
-            SetSpeed(speed_index + 1);
+            SetSpeed(at + 1);
         }
     }
 }
@@ -142,7 +163,8 @@ void ApplicationChasm::PressTimeButton(int action){
     if (action == OVERLAY_HIT_PAUSE){
         main_scene->PausePhysics(!main_scene->IsPhysicsPaused());
     }else if (action == OVERLAY_HIT_SPEED){
-        SetSpeed((speed_index + 1) % SpeedCount());
+        int at = (speed_index >= 0) ? (int)speed_index : NearestSpeed();
+        SetSpeed((at + 1) % SpeedCount());
     }
 }
 
@@ -224,12 +246,33 @@ void ApplicationChasm::DrawOverlay(void){
         overlay->AddRect(vec2(pc.x + gap,pc.y - bar_h * 0.5f),vec2(pc.x + gap + bar_w,pc.y + bar_h * 0.5f),1.5f * s,HUD_TEXT);
     }
     overlay_hits_drawing.push_back(OverlayHit{pause0,pause1,OVERLAY_HIT_PAUSE,0});
-    //SPEED: one chevron per multiple of normal - dim while paused, the speed it will go again at.
+    //SPEED: one chevron per multiple of normal - dim while paused, the speed it will go again at. Four
+    //chevrons (4x) a size smaller to fit; a factor that is no play speed (the tool's, the panel's) as its
+    //number. Amber while the simulation cannot keep up with it.
+    float factor = physics_time_factor;
+    int si = speed_index;
+    float reached = GetPhysicsSpeed();
+    bool f_short = !f_paused && factor > 1.0f && reached < factor * 0.9f;
     overlay->AddRect(speed0,speed1,7.0f * s,UIColor(255,255,255,28));
     vec2 sc((speed0.x + speed1.x) * 0.5f,(speed0.y + speed1.y) * 0.5f);
-    std::string chevrons((size_t)std::max(1,(int)SpeedFactor(speed_index)),'>');
-    overlay->AddText(chevrons.c_str(),vec2(sc.x,sc.y + 7.0f * s),text,f_paused ? HUD_TEXT_DIM : HUD_TEXT,UI_ALIGN_CENTER);
+    std::string label;
+    float label_size = text;
+    if (si >= 0){
+        label.assign((size_t)std::max(1,(int)SpeedFactor(si)),'>');
+        label_size = (label.size() > 3) ? text * 0.75f : text;
+    }else{
+        snprintf(buf,sizeof(buf),"%gx",std::round(factor * 10.0f) / 10.0f);
+        label = buf;
+        label_size = text * 0.75f;
+    }
+    overlay->AddText(label.c_str(),vec2(sc.x,sc.y + label_size * 0.35f),label_size,
+                     f_paused ? HUD_TEXT_DIM : f_short ? HUD_AMBER : HUD_TEXT,UI_ALIGN_CENTER);
     overlay_hits_drawing.push_back(OverlayHit{speed0,speed1,OVERLAY_HIT_SPEED,0});
+    //Under the calendar, while it falls short: what it is managing - the simulation's work is the limit.
+    if (f_short){
+        snprintf(buf,sizeof(buf),"RUNNING AT %.1fx",reached);
+        overlay->AddText(buf,vec2(p1.x - 4.0f * s,p1.y + 18.0f * s),13.0f * s,HUD_AMBER,UI_ALIGN_RIGHT);
+    }
 
     //The year: four seasons end to end, what has gone bright, a mark at today.
     float y0 = p0.y + 46.0f * s;
@@ -539,6 +582,15 @@ void ApplicationChasm::RenderTimePanel(){
             SetSpeed(i);
         }
     }
+    //Any factor, 1-10 (core batches the ticks), and what the machine is managing at it.
+    float factor = physics_time_factor;
+    if (ImGui::SliderFloat("speed##factor",&factor,1.0f,PHYSICS_TIME_FACTOR_MAX,"%.1fx")){
+        SetSpeedFactor(factor);
+    }
+    float reached = GetPhysicsSpeed();
+    bool f_short = !f_paused && physics_time_factor > 1.0f && reached < physics_time_factor * 0.9f;
+    ImGui::TextColored(f_short ? ImVec4(1.0f,0.6f,0.35f,1.0f) : ImVec4(0.7f,0.7f,0.7f,1.0f),"running at %.2fx%s",reached,
+                       f_short ? " - the simulation cannot keep up" : "");
     //A jump forward to the next start of each season: a recorded command, like any change to the date.
     ImGui::TextDisabled("to the next:");
     for (int k = 0; k < CALENDAR_SEASONS; k++){
@@ -582,8 +634,9 @@ void ApplicationChasm::RegisterTimeTools(){
     MCPServer::Get()->RegisterTool("chasm_time",
         "The colony's calendar and the game speed (gameplay_plan.md P1). Returns the date (year from 1, "
         "season, day of the season from 1, how far through the day), the tick, the snow's cover (0 none "
-        "past the mountain, 1 winter's furthest) and its front's mean z, the speed and whether paused. "
-        "Optional: speed (1, 2 or 3 times normal - the viewer's, not recorded); paused (true/false); "
+        "past the mountain, 1 winter's furthest) and its front's mean z, the speed asked for and the "
+        "speed reached (lower when the simulation cannot keep up), and whether paused. Optional: speed "
+        "(any factor 1-10 - the play speeds are 1, 2 and 4 - the viewer's, not recorded); paused (true/false); "
         "set_day (days since the colony began, from 0: 0 is spring of year 1, 30 winter of year 1, 40 "
         "spring of year 2) with day_fraction 0-1 - a RECORDED command, applied before this returns; "
         "snow_cover (0-1, negative for off) - a view-only override of the snow for looking at winter "
@@ -602,14 +655,7 @@ void ApplicationChasm::RegisterTimeTools(){
         },
         [this](const json& args) -> json {
             if (args.contains("speed")){
-                float want = args["speed"].get<float>();
-                int best = 0;
-                for (int i = 1; i < SpeedCount(); i++){
-                    if (std::fabs(speeds[i] - want) < std::fabs(speeds[best] - want)){
-                        best = i;
-                    }
-                }
-                SetSpeed(best);
+                SetSpeedFactor(args["speed"].get<float>());
             }
             if (args.contains("paused")){
                 bool f_paused = args["paused"].get<bool>();
@@ -643,7 +689,8 @@ void ApplicationChasm::RegisterTimeTools(){
                 {"snow_cover",CalendarSnowCover(tick)},
                 {"snow_cover_override",snow_cover_override.load()},
                 {"snow_front_z",SnowFrontNow()},
-                {"speed",SpeedFactor(speed_index)},
+                {"speed",physics_time_factor},
+                {"speed_reached",GetPhysicsSpeed()},
                 {"paused",main_scene->IsPhysicsPaused()},
                 {"ran",f_ran}
             };

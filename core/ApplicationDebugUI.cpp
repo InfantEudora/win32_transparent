@@ -165,11 +165,16 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
             cmd.velocity = gravity;
             SubmitUICommand(cmd);
         }
-        if (ImGui::DragFloat("Time Factor (tick rate)",&physics_time_factor,0.01f,0.1f,2.0f)){
+        if (ImGui::DragFloat("Time Factor (tick rate)",&physics_time_factor,0.01f,0.1f,PHYSICS_TIME_FACTOR_MAX)){
             //Nothing to do here, it's applied in the physics update loop - and it changes how
             //OFTEN a tick runs, not how long a tick is. The timestep stays GetPhysicsTimestep().
         }
-        ImGui::SetItemTooltip("Runs ticks more/less often in real time. The simulation timestep itself never changes.");
+        ImGui::SetItemTooltip("Runs ticks more/less often in real time - above 1, several a pass. The simulation timestep itself never changes.");
+        //What the machine is managing: below the factor when the ticks do not fit a pass.
+        float speed = GetPhysicsSpeed();
+        bool f_short = !main_scene->IsPhysicsPaused() && speed < physics_time_factor * 0.95f;
+        ImGui::TextColored(f_short ? ImVec4(1.0f,0.6f,0.35f,1.0f) : ImVec4(0.7f,0.7f,0.7f,1.0f),
+                           "Running at %.2fx%s",speed,f_short ? " - limited by the simulation's work" : "");
         float tps = physics_tps;
         if (ImGui::DragFloat("Target Physics TPS",&tps,1.0f,1.0f,250.0f)){
             SetPhysicsTPS(tps);

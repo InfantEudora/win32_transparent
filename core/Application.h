@@ -42,6 +42,14 @@
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;
 
+//Fast-forward (physics_time_factor, below): how fast it may be asked to go, and how much of a pass's
+//time a batch of ticks may take - the rest is the view's, and the render thread's turn at the lock.
+#define PHYSICS_TIME_FACTOR_MAX     10.0f
+#define PHYSICS_BATCH_BUDGET        0.8
+//Stepping a paused scene batches too (sim_step): at most this many of its queued ticks a pass, as far
+//as the same budget allows, so a long step runs as fast as the machine can rather than at 50 a second.
+#define PHYSICS_STEP_BATCH_MAX      1000
+
 /*
     THE ON-SCREEN TOUCH UI, AND THE ONE LINE THAT TURNS IT ON.
 
@@ -462,15 +470,31 @@ public:
     //Physics Settings
     float physics_tps           = 50.0f; //Target physics ticks per second
     double physics_us_per_tick  = 20000.0f;
-    //Speeds up or slows down physics globally by running ticks more or less OFTEN. It must never
-    //scale the timestep: a simulation stepped with a varying dt is not reproducible, and the goal
-    //is that a recorded run replays to the identical state. Slow motion means fewer ticks per
-    //second of real time, each still exactly GetPhysicsTimestep() long.
+    /*
+        Speeds up or slows down physics globally by running ticks more or less OFTEN. It must never
+        scale the timestep: a simulation stepped with a varying dt is not reproducible, and the goal
+        is that a recorded run replays to the identical state. Slow motion means fewer ticks per
+        second of real time, each still exactly GetPhysicsTimestep() long.
+        BELOW 1 the passes come further apart, a tick each. ABOVE 1 they come at the normal rate and
+        each runs several ticks - a BATCH: the ticks owed (the factor a pass, fractions carried) as
+        far as PHYSICS_BATCH_BUDGET of a pass's time allows. So 3x is three ticks a pass, not 150
+        passes a second, and the view, the input and the pacing stay at 50 Hz however fast the
+        simulation goes. What the machine could not fit carries over, at most a pass's worth, so a
+        slow machine tops out at its own speed rather than falling ever further behind - and no tick
+        is ever skipped. GetPhysicsSpeed() says what it reached. Up to PHYSICS_TIME_FACTOR_MAX.
+    */
     float physics_time_factor   = 1.0f;
     void SetPhysicsTPS(float tps){
         physics_tps = tps;
         physics_us_per_tick = 1000000.0f / physics_tps;
     }
+    //The simulation's speed as it runs, a multiple of normal: ticks run over the last half second
+    //against the ticks of real time in it - below physics_time_factor when the ticks do not fit; 0
+    //while paused, unless it is being stepped (how fast the steps went). Any thread.
+    float GetPhysicsSpeed() const { return physics_speed.load(); }
+    std::atomic<float> physics_speed{0.0f};
+    //Physics thread: the ticks owed to a batched pass, its fraction carried to the next.
+    double physics_tick_credit = 0.0;
 
     /*
         What this application calls itself. Start() hands it to the window, so it is what shows in

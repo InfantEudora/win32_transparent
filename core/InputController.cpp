@@ -441,6 +441,51 @@ void InputController::ApplyTickInput(uint64_t sim_tick){
     DrainAndApplyEvents(true,sim_tick);
 }
 
+void InputController::BetweenTicks(){
+    //What the tick that just ran applied stays applied - but it must not be applied AGAIN: the next
+    //tick's ApplyTickInput appends to this list and applies the whole of it, and a relative axis adds.
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        tick_events.clear();
+    }
+    //Several mappings can share a state; the second visit finds it already emptied.
+    for (KeyMap& km: keymap){
+        KeyState* s = km.state;
+        if (!s){
+            continue;
+        }
+        s->f_pass_pressed = s->f_pass_pressed || s->f_was_pressed;
+        s->f_pass_released = s->f_pass_released || s->f_was_released;
+        s->f_was_pressed = false;
+        s->f_was_released = false;
+        s->f_pressed_read = false;
+        s->f_released_read = false;
+        s->pass_delta += s->delta.exchange(0);
+    }
+    f_batch_held = true;
+}
+
+void InputController::EndTicks(){
+    if (!f_batch_held){
+        return;
+    }
+    f_batch_held = false;
+    for (KeyMap& km: keymap){
+        KeyState* s = km.state;
+        if (!s){
+            continue;
+        }
+        s->f_was_pressed = s->f_was_pressed || s->f_pass_pressed;
+        s->f_was_released = s->f_was_released || s->f_pass_released;
+        //f_processed is left as the ticks left it: a delta the first tick read is spent, and Tick()
+        //clears it at the end of the pass exactly as it would after a pass of one tick.
+        s->delta += s->pass_delta;
+        s->f_pass_pressed = false;
+        s->f_pass_released = false;
+        s->pass_delta = 0;
+    }
+}
+
 void InputController::DrainAndApplyEvents(bool f_append, uint64_t sim_tick){
     {
         std::lock_guard<std::mutex> lock(state_mutex);

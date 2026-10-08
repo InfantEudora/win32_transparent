@@ -444,16 +444,21 @@ private:
     */
     uint64_t calendar_tick = 0;
     std::atomic<uint64_t> calendar_shown{0};
-    std::atomic<int> speed_index{0};            //into the speeds in ApplicationChasmTime.cpp
+    std::atomic<int> speed_index{0};            //into the play speeds in ApplicationChasmTime.cpp, -1 for another factor
     void TickCalendar();                        //physics thread, from RunSimulationTick
     void SetCalendar(uint64_t tick);            //physics thread: a load, a new map, the date command
     void RegisterTimeCommands();
     std::atomic<uint32_t> calendar_commands_done{0};
     void UpdateTimeKeys();                      //physics thread, from UpdateView: pause and speed
     void PressTimeButton(int action);           //physics thread, from UpdatePick: OVERLAY_HIT_PAUSE or _SPEED
-    void SetSpeed(int index);                   //any thread
+    void SetSpeed(int index);                   //any thread: a play speed
+    void SetSpeedFactor(float factor);          //any thread: any factor 1-PHYSICS_TIME_FACTOR_MAX (the tool, the panel)
     int SpeedCount();
     float SpeedFactor(int index);
+    int NearestSpeed();                         //the play speed nearest the factor running now
+    //Published once a pass, after its ticks (UpdateView): a batched pass (fast-forward) runs several, and
+    //only the last one's copy would ever be looked at. Physics thread.
+    bool f_economy_unpublished = false;
     //Any thread: the winter snow's mean front (CalendarSnowFrontZ) for the date shown, on this map.
     float SnowFrontNow();
     void DrawOverlay(void) override;            //render thread: the date and the speed, every build

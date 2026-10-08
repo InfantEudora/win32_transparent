@@ -7,7 +7,7 @@ been reworded: each entry is the text it carried when it was closed, including t
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
 
-Numbers are stable and are never reused. They run 1-95 across both files; **28 was never
+Numbers are stable and are never reused. They run 1-97 across both files; **28 was never
 assigned**.
 
 Sources: `docs/tetris_findings.md` (the `APP=Tetris` run) and `docs/breakout_findings.md` (the
@@ -1603,6 +1603,47 @@ Status key: `[x]` done · `[-]` decided against.
   **Verified** in the harness (reverse mid-hold reaches `GetAxis`; re-asserting the same value
   keeps it) and live: the Breakout paddle now tracks +1/-1/+1/-1 cleanly across the full arena,
   where before it travelled right and then refused to come back.
+
+- [x] **96. Fast-forward ran more PASSES, not more ticks; a pass now runs a batch.** Asked for by
+  the user, 2026-10-08, from Chasm. The physics loop ran at most one tick a pass and
+  `physics_time_factor` only shortened the gap between passes - so 3x was 150 whole passes a
+  second, each repeating input sampling, `UpdateView`, two lock round trips and a timed sleep, and
+  `sim_step` crawled at 50 ticks a second.
+
+  **Now**, from a factor of 1 up, the passes keep the normal rate and each runs the ticks it owes - the
+  factor's worth, the fraction carried in `physics_tick_credit` - as far as `PHYSICS_BATCH_BUDGET`
+  (0.8) of a pass's time allows; what did not fit carries over, at most a pass's worth, so a slow
+  machine tops out at its own speed instead of spiralling, and no tick is ever skipped. Below 1, slow
+  motion is unchanged (the passes come further apart). Stepping a paused scene batches the same way,
+  up to `PHYSICS_STEP_BATCH_MAX` (1000) a pass. The factor is clamped at `PHYSICS_TIME_FACTOR_MAX` (10).
+  Each tick of a batch is exactly a pass-of-one's tick - its input, replay commands, animation,
+  simulation, physics, trace - and between two of them:
+  - the lock is let go and taken again, so the render thread can draw during a long batch;
+  - `Scene::ContinuePass` asks again, since a pause or the last queued step may have come meanwhile;
+  - `InputController::BetweenTicks` holds the pass's edges and deltas back, so a live press reaches
+    only the batch's FIRST tick (the one a recording stamps it with), and clears `tick_events`, which
+    the next `ApplyTickInput` would otherwise apply again; `EndTicks` hands them all back to
+    `UpdateView`, which sees what it would after one tick. Scripted holds and replays are
+    denominated in ticks and already land on the right one.
+  `GetPhysicsSpeed()` measures what was reached (ticks run against real ticks, every half second);
+  `sim_pause`/`sim_step`'s clock reports `time_factor` and `speed`, the debug panel's slider goes to
+  10 and says when the simulation cannot keep up.
+
+  **Chasm** with it: play speeds 1x, 2x and 4x (the user's), any factor 1-10 from `chasm_time` and
+  the panel; the calendar's button turns amber with "RUNNING AT n x" beneath it when the machine
+  falls short; and its economy is copied for the view once a pass (`UpdateView`), not every tick.
+
+  **Verified** (Chasm, debug, seed 12): `recordings/chasm_roadwork.rec` replayed at 1x, at 10x and
+  stepped paused in one `sim_step` gave the SAME state hash on all 310 ticks. Plain play reached
+  1.00, 2.00, 4.00, 5.98, 8.04 and 10.01x of 1, 2, 4, 6, 8 and 10 asked (by the tick count over
+  three seconds, the reported speed agreeing). A replay at 10x reached about 6x - its per-tick state
+  hash is the work that does not fit - and showed so on the calendar; the paused `sim_step` of 312
+  ticks took 1.1 s where it took 6.2 s. **Not exercised:** a live key press inside a batch (Chasm
+  reads its keys in `UpdateView` only) - an app with gameplay edges, run above 1x, is the check.
+  Other apps not built or run (the user's). At 1x nothing changes: one tick a pass, as before.
+  `core/Application.{h,cpp}`, `core/Scene.{h,cpp}`, `core/InputController.{h,cpp}`,
+  `core/ApplicationMCP.cpp`, `core/ApplicationDebugUI.cpp`; `apps/chasm/ApplicationChasmTime.cpp`,
+  `ApplicationChasm.{h,cpp}`, `ApplicationChasmEconomy.cpp`.
 
 ---
 

@@ -795,17 +795,22 @@ void Application::PhysicsThreadFunction(Application* app){
         app->debug_physics->Warn("Physics pacing is on the low-resolution timer path\n");
     }
     sleeper.ResetSchedule();
+    //GetPhysicsSpeed()'s count: the ticks run since `speed_since`.
+    double speed_since = PrecisionSleeper::NowUs();
+    int64_t speed_ticks = 0;
 
     //Tested once per pass rather than once per tick, so a scene that is paused - or not there at
     //all - still shuts down promptly. StopPhysicsThread is what clears it.
     while (app->f_physics_running){
         if (app->main_scene){
-            //How long one tick should take in REAL time. physics_time_factor stretches or
-            //compresses this interval only - the timestep handed to the simulation stays
-            //GetPhysicsTimestep() no matter what, so slow motion is "fewer ticks per second",
-            //never "smaller ticks". Recomputed every loop because the UI slider can change it
-            //mid-run. Clamped low so a factor near zero can't produce an infinite interval.
-            double us_looptime_desired = app->physics_us_per_tick / max(app->physics_time_factor,0.01f);
+            //How long one PASS should take in REAL time. Below a factor of 1 that stretches - the
+            //timestep handed to the simulation stays GetPhysicsTimestep() no matter what, so slow
+            //motion is "fewer ticks per second", never "smaller ticks". From 1 up the passes keep the
+            //normal rate and each runs a BATCH of ticks instead (below; Application.h). Recomputed
+            //every loop because the UI slider can change it mid-run. Clamped low so a factor near
+            //zero can't produce an infinite interval, and high at PHYSICS_TIME_FACTOR_MAX.
+            float factor = max(0.01f,min(PHYSICS_TIME_FACTOR_MAX,app->physics_time_factor));
+            double us_looptime_desired = app->physics_us_per_tick / min(factor,1.0f);
 
             //Time spent on aquiring a lock
             app->renderer->physics_mutex.lock();
@@ -834,22 +839,72 @@ void Application::PhysicsThreadFunction(Application* app){
 
             //Time spent on this pass's work
             app->tmr_physics->Restart();
+            int ran = 0;
             if (f_tick){
-                //Scripted input advances HERE rather than in UpdateInput above, because only now
-                //is it known that this pass runs a tick. An edge raised on a pass that does not
-                //tick is cleared by NextInput() below without any gameplay seeing it - which is
-                //what made every edge-triggered action undeliverable under sim_step. Backlog
-                //item 84; the long version is on InputController::ApplyTickInput.
-                app->TraceTickStart();
-                app->UpdateTickInput();
-                //A replay's recorded commands for this tick - after its input, before the tick
-                //reads either. See SIM_CMD_FLAG_RECORD.
-                app->ApplyReplayCommands();
-                app->UpdateAnimations();
-                app->RunSimulationTick();
-                app->UpdatePhysics();
-                //The state this tick ended in, while a replay runs - see HashSimState.
-                app->TraceTickEnd();
+                /*
+                    THE BATCH. How many ticks this pass owes: one, up to normal speed; above it the
+                    factor's worth, fractions carried (physics_tick_credit); stepping a paused scene,
+                    its queued steps, up to PHYSICS_STEP_BATCH_MAX. Each tick is a whole one, exactly
+                    as a pass of one runs it, so a replay cannot tell 1x from 10x. Between two of them
+                    the lock is let go, so the render thread can draw (the state between two ticks is
+                    as whole as between two passes); the pass's live input is held back, so a press
+                    reaches only the first tick (InputController::BetweenTicks); and the scene is
+                    asked again (ContinuePass), since a pause or the last queued step may have come
+                    meanwhile. A batch stops at PHYSICS_BATCH_BUDGET of a pass's time.
+                */
+                InputController* input = app->main_scene->inputcontroller;
+                bool f_stepping = app->main_scene->IsPhysicsPaused();
+                int owed = 1;
+                if (f_stepping){
+                    owed = PHYSICS_STEP_BATCH_MAX;
+                }else if (factor > 1.0f){
+                    app->physics_tick_credit += factor;
+                    owed = max(1,(int)app->physics_tick_credit);
+                }else{
+                    app->physics_tick_credit = 0.0;
+                }
+                double budget_us = app->physics_us_per_tick * PHYSICS_BATCH_BUDGET;
+                double batch_start = PrecisionSleeper::NowUs();
+                for (;;){
+                    //Scripted input advances HERE rather than in UpdateInput above, because only now
+                    //is it known that this pass runs a tick. An edge raised on a pass that does not
+                    //tick is cleared by NextInput() below without any gameplay seeing it - which is
+                    //what made every edge-triggered action undeliverable under sim_step. Backlog
+                    //item 84; the long version is on InputController::ApplyTickInput.
+                    app->TraceTickStart();
+                    app->UpdateTickInput();
+                    //A replay's recorded commands for this tick - after its input, before the tick
+                    //reads either. See SIM_CMD_FLAG_RECORD.
+                    app->ApplyReplayCommands();
+                    app->UpdateAnimations();
+                    app->RunSimulationTick();
+                    app->UpdatePhysics();
+                    //The state this tick ended in, while a replay runs - see HashSimState.
+                    app->TraceTickEnd();
+                    ran++;
+                    if (ran >= owed || PrecisionSleeper::NowUs() - batch_start >= budget_us){
+                        break;
+                    }
+                    app->renderer->physics_mutex.unlock();
+                    app->renderer->physics_mutex.lock();
+                    if (!app->main_scene->ContinuePass()){
+                        break;
+                    }
+                    if (input){
+                        input->BetweenTicks();
+                    }
+                }
+                if (!f_stepping && factor > 1.0f){
+                    //What did not fit carries over - at most a pass's worth, so a machine that cannot
+                    //keep up tops out at its own speed rather than banking a backlog to burn later.
+                    app->physics_tick_credit = min(app->physics_tick_credit - ran,(double)factor);
+                }
+                //The pass's input back for the view work below, as it would be after one tick.
+                if (input){
+                    input->EndTicks();
+                }
+            }else{
+                app->physics_tick_credit = 0.0;
             }
 
             //View work runs AFTER the tick, and on the passes that did not tick as well. After,
@@ -876,6 +931,16 @@ void Application::PhysicsThreadFunction(Application* app){
             app->tmr_physics_sleep->Restart();
             sleeper.SleepUntilNextTick(us_looptime_desired);
             app->tmr_physics_sleep->Stop();
+
+            //The speed reached (GetPhysicsSpeed): the ticks run against the ticks of real time, every
+            //half second - so a batch that does not fit its budget shows as a lower number.
+            speed_ticks += ran;
+            double speed_now = PrecisionSleeper::NowUs();
+            if (speed_now - speed_since >= 500000.0){
+                app->physics_speed = (float)((double)speed_ticks * app->physics_us_per_tick / (speed_now - speed_since));
+                speed_ticks = 0;
+                speed_since = speed_now;
+            }
 
             //Clearing the per-tick edge flags stays HERE, after the sleep, rather than moving
             //inside the tick's critical section above: the render thread consumes mouse deltas

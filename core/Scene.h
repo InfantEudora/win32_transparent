@@ -92,6 +92,16 @@ public:
     */
     bool BeginPass();
 
+    /*
+        A BATCHED pass (Application, physics_time_factor above 1, or stepping a paused scene) runs
+        several ticks: BeginPass decides the first, this each one after it - the same rule, running
+        or a queued step left, asked again because a pause or the last step can land between two
+        ticks of a batch. No commands drain and no pause key is read here: those are the pass's, and
+        happened at its top. A false answer ends the batch but leaves IsTickingThisPass() true, since
+        the pass DID tick - what the view work after it is asking.
+    */
+    bool ContinuePass();
+
     //The answer BeginPass reached for the pass now running. False on a pass that is only spinning
     //because the simulation is paused: view work still runs on those, simulation work must not.
     bool IsTickingThisPass(){ return f_tick_this_pass; }

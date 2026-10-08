@@ -1962,6 +1962,11 @@ void ApplicationChasm::FollowSun(){
 
 void ApplicationChasm::UpdateView(void){
     InputController* input = main_scene->inputcontroller;
+    //The economy as this pass's ticks left it (TickEconomy), before anything here reads the copy.
+    if (f_economy_unpublished){
+        f_economy_unpublished = false;
+        PublishEconomy();
+    }
     UpdateCamera();
     FollowSun();
     UpdateTimeKeys();
