@@ -91,7 +91,9 @@
     ground - a half-built wall has gaps, and a planned ring does not shut its builders in. It keeps off
     buildings and stops at a garden's or lot's edge, on a road's slope limit. Where a wall and a road
     cross, the plot stays ROAD and is marked a GATE (`gate`): a wall drawn over a road leaves it and gates
-    it; a road drawn over a wall takes the plot and gates it.
+    it; a road drawn over a wall takes the plot and gates it. A gate has a DOOR (defence_plan.md, step 3),
+    open as it is made; SHUT by the player (ZONE_OP_GATE_SHUT), it is closed to walkers as a standing wall
+    plot is, the player's own people too (ZoneShutToWalkers).
 
     LINES: every road and wall plot painted in play carries the LINE it was drawn in (`line`), an id from
     the buildings' own counter, so lines and buildings share one placing order - the construction queue.
@@ -125,7 +127,8 @@ int ZoneKindMaxStoreys(int kind);
 #define ZONE_CROP_BEANS         2
 #define ZONE_CROP_COUNT         3
 //Not crops, but what a field's choices may be instead (fields_plan.md): its starting crop not chosen yet,
-//and a next crop left to the field - the best yield after what was just harvested.
+//and a crop left to the field - the most food of what still ripens - for what follows a harvest, or for the
+//start too, the player's or after a field has waited a day for one (issues_plan.md).
 #define ZONE_CROP_NONE          255
 #define ZONE_CROP_AUTO          254
 const char* ZoneCropName(int crop);
@@ -143,6 +146,12 @@ const char* ZoneGroundName(int ground);
 #define ZONE_GROUND_SAVED_SITE  16
 //...and a road plot a wall runs through: its gate (ZoneState::gate).
 #define ZONE_GROUND_SAVED_GATE  32
+//...with its door shut (defence_plan.md).
+#define ZONE_GROUND_SAVED_SHUT  64
+//What ZoneState::gate holds on a plot: no gate, a gate with its door open, or shut.
+#define ZONE_GATE_NONE      0
+#define ZONE_GATE_OPEN      1
+#define ZONE_GATE_SHUT      2
 
 //Ground drawn as a LINE - a drag's chain of plots, placed whole: queued as one (ZoneState::line).
 inline bool ZoneLineGround(int ground){
@@ -210,7 +219,7 @@ enum ZoneOp{
     ZONE_OP_FIELD_ERASE,    //coarse cell: out of its field
     ZONE_OP_GROUND_PAINT,   //plot: ground of the kind in value[1] (ZONE_GROUND_*)
     ZONE_OP_GROUND_ERASE,   //plot: no ground
-    ZONE_OP_FIELD_CROP,     //coarse cell: its whole field to the crop in value[1] (ZONE_CROP_*)
+    ZONE_OP_FIELD_CROP,     //coarse cell: its whole field to the crop in value[1] (ZONE_CROP_*, or AUTO)
     ZONE_OP_STORE_ALLOW,    //plot: its store takes the goods in value[1], a mask of GOOD_BIT (economy_plan.md)
     ZONE_OP_BUILD_RAISE,    //plot: one more of its planned storeys stands - the builders' (construction_plan.md)
     ZONE_OP_BRIDGE,         //plot: a bridge from it to the plot in value[1], across the water (bridge_plan.md)
@@ -220,6 +229,7 @@ enum ZoneOp{
     ZONE_OP_FIELD_RAISE,    //coarse cell: its field site's cell is built - the builders' (fields_plan.md)
     ZONE_OP_FIELD_LAND,     //coarse cell: its field given to the house in value[1], 0 automatic (land_plan.md)
     ZONE_OP_FIELD_PRIORITY, //coarse cell: its field's site goes first (value[1] 1) or back in the queue (0)
+    ZONE_OP_GATE_SHUT,      //plot: its gate's door shut (value[1] 1) or open (0), and the gate plots joined to it (defence_plan.md)
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's) rather than a plot.
@@ -266,7 +276,7 @@ struct ZoneState{
     std::vector<uint8_t> ground;                //per fine vertex, ZONE_GROUND_*
     std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden, lot, road or wall still a site
     std::vector<uint32_t> line;                 //per fine vertex: a road's or wall's line - its place in the queue, 0 none
-    std::vector<uint8_t> gate;                  //per fine vertex: 1 on a road plot a wall runs through
+    std::vector<uint8_t> gate;                  //per fine vertex: on a road plot a wall runs through, its door (ZONE_GATE_*)
     std::vector<uint32_t> field;                //per coarse quad: the field it is part of, 0 none
     std::vector<uint8_t> field_built;           //per coarse quad: 0 for a field's cell still a site
     //The drag in progress: its stroke number and the building it is making (0: none yet).
@@ -462,6 +472,15 @@ inline bool ZoneWallStands(const ZoneState& z, int v){
 //A wall plot still to build: open ground, staked out.
 inline bool ZoneWallPlanned(const ZoneState& z, int v){
     return z.ground[v] == ZONE_GROUND_WALL && !z.ground_built[v];
+}
+//A gate with its door SHUT (defence_plan.md).
+inline bool ZoneGateShut(const ZoneState& z, int v){
+    return z.gate[v] == ZONE_GATE_SHUT;
+}
+//Closed to walkers - never walked onto, nor through: a standing wall plot, or a shut gate (Walkers, the
+//economy's straight walks).
+inline bool ZoneShutToWalkers(const ZoneState& z, int v){
+    return ZoneWallStands(z,v) || ZoneGateShut(z,v);
 }
 
 //Plot v's neighbours along fine edges, each once, in a fixed order. Returns how many (at most `max`).

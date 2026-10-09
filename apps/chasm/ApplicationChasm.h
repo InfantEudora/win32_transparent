@@ -29,6 +29,7 @@
 #define PLAY_PICK_NONE          0
 #define PLAY_PICK_BUILDING      1       //a building or field, by id
 #define PLAY_PICK_PERSON        2       //an EconomyWorker, by id
+#define PLAY_PICK_GATE          3       //a wall's gate, by its plot - in `id` as in `plot` (defence_plan.md)
 struct PlayPick{
     int kind = PLAY_PICK_NONE;
     uint32_t id = 0;
@@ -57,11 +58,38 @@ extern const char* person_asset_names[PERSON_FIGURES];
 #define OVERLAY_HIT_SPEED       8       //the calendar's speed button: the next speed, round to normal after the fastest
 #define OVERLAY_HIT_FIELD_LAND  9       //a field's card: given to house `value`, 0 automatic (land_plan.md)
 #define OVERLAY_HIT_PERSON      10      //the neediest list: select person `value`, and the view goes to him
+#define OVERLAY_HIT_RELEASE     11      //a posted person's card: released from his post (defence_plan.md)
+#define OVERLAY_HIT_TAKE_TOOL   12      //NEEDS ATTENTION's hint: take up tool `value` - and keep it up, unlike the grid
+#define OVERLAY_HIT_BUILDING    13      //NEEDS ATTENTION's place: select building `value`, and the view goes to it
+#define OVERLAY_HIT_GATE        14      //a gate's card: its door shut, or opened (defence_plan.md)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
     int value = 0;
 };
+
+/*
+    NEEDS ATTENTION (docs/issues_plan.md, ApplicationChasmIssues.cpp): one row of what wants doing. Worked out
+    from the published state whenever it is asked for, never saved. Tiers in the order they are listed.
+*/
+#define ISSUE_DANGER            0       //a next step whose deadline is under two days: red
+#define ISSUE_COUNTDOWN         1       //a choice the game makes for the player when its time runs out
+#define ISSUE_STUCK             2       //something placed that cannot work as it is
+#define ISSUE_NEXT              3       //a next step: the tutorial
+struct ChasmIssue{
+    const char* kind = "";              //for the tool: choose_crop, build_water, ...
+    int tier = ISSUE_NEXT;
+    float order = 0.0f;                 //within its tier, the lower first
+    std::string text;                   //as drawn, upper case
+    std::string value;                  //at the row's right; may be empty
+    float left = -1.0f;                 //a countdown's share still to run, 1 to 0; -1 none
+    uint32_t building = 0;              //the place it is about - a click selects it - or 0
+    int tool = -1;                      //...or the tool a click takes up
+};
+//Every issue, most urgent first.
+void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out);
+//The middle of a building's plots, or of a field's cells - where the view goes to show it. False if it is gone.
+bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, vec2& out);
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -123,6 +151,8 @@ struct OverlayHit{
 #define CHASM_CMD_CALENDAR          SIM_CMD_LAST+2      //sets the date: subtype the day, value[0] the tick in it
 #define CHASM_CMD_NEEDS             SIM_CMD_LAST+3      //a person's needs set (a debug edit): subtype his id;
                                                         //value[0] health, value[1] water, in ticks - -1 leaves it
+#define CHASM_CMD_ORDER             SIM_CMD_LAST+4      //a person posted (docs/defence_plan.md): subtype his id;
+                                                        //value[0] the plot he is sent to, -1 released
 
 //What a left click does.
 enum ChasmTool{
@@ -216,6 +246,7 @@ public:
     //Someone picked from the neediest list (ApplicationChasmSelect.cpp): the physics thread names him, the
     //camera glides to where he is - at the zoom it has, unlike the glide to the camp.
     std::atomic<uint32_t> cam_seek_person{0};
+    std::atomic<uint32_t> cam_seek_building{0};     //...and a place picked from NEEDS ATTENTION, the same way
     bool f_cam_fly_keep_zoom = false;
     //Physics thread. Puts the camera over the whole map.
     void FrameMap();
@@ -251,6 +282,7 @@ private:
     //...and a left click at a pixel in play mode (chasm_select op press), where the hover's is never on the
     //overlay: what the player's click there does, the overlay's buttons included. The pixel under pick_mutex.
     std::atomic<bool> f_script_press{false};
+    std::atomic<bool> f_script_press_right{false};  //...made with the right button: an order (defence_plan.md)
     int2 script_press_px;
     GridPick hover_pick;
     GridPick selected_pick;
@@ -331,18 +363,27 @@ private:
         `economy` is SIMULATION state, the physics thread's alone, ticked after the zones; a copy is
         published after every tick that changed it (economy_snapshot, under grid_mutex) - the zones'
         pattern again. The view reads the copy: felled trees and stumps, the workers, the fields' growth.
-        CHASM_CMD_NEEDS is its one command, a debug edit of a person's health and water - recorded, so
-        a replay makes the same edit on the same tick.
+        Its commands are CHASM_CMD_NEEDS, a debug edit of a person's health and water, and CHASM_CMD_ORDER,
+        a person sent to a post or released (defence_plan.md) - recorded, so a replay makes the same edit
+        on the same tick.
     */
     Economy economy;
     std::shared_ptr<const EconomyState> economy_snapshot;
     std::atomic<uint32_t> needs_commands_done{0};
+    std::atomic<uint32_t> order_commands_done{0};
+    //An order the economy refused, and why (Economy::Order) - the play overlay shows it as it does a
+    //refused placement. The text under grid_mutex.
+    std::atomic<uint32_t> order_refusals{0};
+    std::string order_last_refusal;
+    uint32_t order_refusal_seen = 0;            //render thread: the last one shown
+    std::string refusal_shown;                  //render thread: the refusal on screen, either kind, whole
     void TickEconomy();                         //physics thread, from RunSimulationTick
     void PublishEconomy();                      //physics thread
     std::shared_ptr<const EconomyState> GetEconomy();
     void HashEconomy(StateHash& h);
     void RegisterEconomyCommands();
     void SubmitNeeds(uint32_t person, int health, int water);  //any thread; -1 leaves one as it is
+    void SubmitOrder(uint32_t person, int plot);                //any thread; plot -1 releases him
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
     void RegisterEconomyTools();
@@ -627,13 +668,16 @@ private:
     void UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked);   //physics thread
     bool OverlayHitAt(int2 px, OverlayHit* hit);
     void UploadSelection();                                 //render thread, from PreRender
-    void DrawBuildBar(float s);                             //render thread, from DrawOverlay
+    float DrawBuildBar(float s);                            //render thread, from DrawOverlay; the top of it and its BUILDING line
+    float DrawIssues(float s, float bottom);                //render thread, from DrawOverlay: over the grid (issues_plan.md); its top
     float DrawJobsOverview(float s);                        //render thread, from DrawOverlay: builders_plan.md; its top
     void DrawNeediest(float s, float bottom);               //render thread, from DrawOverlay: over the jobs
     void DrawSelectionOverlay(float s);                     //render thread, from DrawOverlay: card + pins
     vec2 build_bar_min;                                     //render thread: where the tools' grid was last drawn, for the overview
     vec2 build_bar_max;
+    float build_stack_top = 0.0f;                           //render thread: the top of the grid and all stacked over it
 #ifdef USE_MCP
+    void RegisterIssueTools();
     void RegisterSelectTools();
     void RegisterBridgeTools();
 #endif

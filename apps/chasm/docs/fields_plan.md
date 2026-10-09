@@ -164,3 +164,11 @@ their growing time, and greens about half of it.
 - **What it comes to** (arithmetic, not measured): an average farmer's field takes turns - beans one year,
   wheat at 120% and then greens the next. That is about 25 health-days a cell a year, so about 16 cells feed
   ten people.
+
+## AUTO as a starting crop (the user's, 2026-10-09)
+
+A field nobody chose a crop for lay empty for good. Now (`issues_plan.md`): the starting crop can be AUTO too -
+the same rule as the next crop's, the most food of the crops that still ripen before the frost - on the card's
+"Start with:" row as a chip of its own. A field built and never sown with no starting crop waits one game day
+(`ECONOMY_CROP_GRACE`, tuning) for the player, its countdown on its card and in NEEDS ATTENTION, and then
+starts with AUTO: the economy names it, the app sets it on the same tick (`ZONE_OP_FIELD_CROP`, not recorded).

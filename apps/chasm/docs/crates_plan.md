@@ -1,0 +1,247 @@
+# Crates: dropped loads, and finds on the map
+
+Written up 2026-10-09 and talked through with the user the same day: the decisions are below. Nothing in
+the game is built yet. Defence step 1 (`defence_plan.md`, "As built: step 1") lets the player send a
+person to a post with a right click. At first, anyone carrying a load when the order came (wood for a
+site, food fetched home, a woodcutter's logs) kept it for the whole posting, and with no store held it for
+good. Since defence step 2 the load is LOST the moment the order lands (`Economy::Order`), as the user's
+stand-in until crates exist. The user wants the load DROPPED instead, and left on the ground as a CRATE.
+Crates are also meant to grow into something bigger: finds lying on the map, the way They Are Billions
+scatters bonus resources to be reached.
+
+**All of it is rules**: a crate is saved, hashed and replayed like a store's stock. Random crates come
+from a hash of the world's seed, never from the shared random stream, the same way the lifelines work
+(`lifeline_plan.md`).
+
+## Decided (the user, 2026-10-09)
+
+- **A posted person drops their load** instead of losing it, and it is left on the ground as a CRATE
+  holding it. This replaces the stand-in under "Open" in `defence_plan.md` (the load lost at the order).
+- **Crates will also lie on the map at random**, found and fetched for their goods, as in They Are
+  Billions. This plan deals with the dropped load first, and random crates come next.
+- **A crate is a store that villagers can only take from**, and it is destroyed when it is empty.
+- **Moving crates to a storehouse is a CARETAKER'S errand**: the builders', as caretakers
+  (`defence_plan.md`, "The builder as caretaker"), and the LAST on their list.
+- **Building over a crate is refused, with a message.**
+- **A few crates are generated on the map, and in debug mode more can be spawned.**
+- **Holding becomes dropping, for everyone**: anyone with a load that nobody takes puts it down as a
+  crate. The user: "a nice solution for that problem too".
+- **One crate for everything**: the same crate whatever it holds, "that makes it clear what it is".
+- **The crate prop** is added to `chasm_props.blend` by an agent, and the user tunes it if needed (see
+  "The prop", at the end).
+
+## The plan
+
+Proposed in the first draft, with the answers above worked in; the user read it through after and had
+nothing to correct. FETCH FIRST and the badge are still proposals, marked where they come.
+
+### What a crate is
+
+- **A store that only gives** (the user's), kept in **its own list in the economy, not as a building**
+  (`EconomyState::crates`, in id order; ids start at 1 and are never reused, from `next_crate`). Stocks by
+  building id, the zones and the staffing know nothing of crates. A crate has:
+  - a plot, and a point on it;
+  - a stock by good, like a building's (`std::array<int,GOOD_COUNT>`), so a find can hold a mix;
+  - where it came from, DROPPED or FOUND, and for a dropped one, who dropped it and when (for its card);
+  - for a find, whether it has been FOUND yet (below); and FETCH FIRST (below).
+
+  It is saved as `crates` (goods by name, as a store's stock is) and hashed in the trace part `economy`.
+- **The forest's logs are the model for how a crate behaves, not for how it is stored.** A log lies
+  where it fell until a woodcutter fetches it. But `prop_state` is one byte per prop, on a fixed list
+  generated from the seed. A crate's goods change as it is emptied, and a dropped crate is made by play,
+  so crates need a list of their own.
+- **Destroyed when empty** (the user's). It has no room limit, and nothing in it spoils (until spoilage
+  exists).
+- **Crates lie only on open ground**: a plot with nothing built on it. That rules out a building (a
+  bridge and the camp count as buildings), a wall, a garden, a lot and a field. A road counts as open
+  ground, so a crate may lie on one.
+- **One crate per plot.** A load put down where a crate already lies goes into that crate. This keeps
+  picking, the card and the look simple.
+
+### Dropping
+
+- **When**: the moment the order lands, in `Economy::Order`. That is where the load is lost today
+  (defence step 2), so the line that throws the load away becomes the line that puts it down, and nothing
+  else in the posting changes. This also covers someone ordered on the way to a pressing need: the load
+  is already gone from them at the order, so it is dropped there and not carried to the meal.
+  - The crate is placed against the zones as they stand when the order lands. A paint command after it
+    sees the crate and is refused (below), and both are recorded commands in order, so a replay agrees.
+  - The other place it could go is `TakePost`, on the next tick, after that tick's zones. That would need
+    a second hook for someone on the way to a meal, since `TakePost` skips them. Not worth it.
+- **At once**, with no time taken to put it down. An order may be urgent (`defence_plan.md`, "The pack").
+- **Where they stand**, if that is open ground. Otherwise the crate goes on the nearest open plot
+  beside it, the lowest index on a tie, the way `GroundSiteApproach` picks where a builder stands. A
+  person stands on a building's plot whenever an order lands just as they arrive somewhere.
+- **At a store that takes the load, the load goes into the store instead.** That covers standing at
+  the store's plot, unloading there, or just arriving. The load was going there anyway.
+- **The whole load is dropped**, whatever it is: wood for a site, a woodcutter's logs (as wood), a
+  harvest, food or firewood fetched home, or water. The PACK (`EconomyWorker::pack`, defence step 2) is
+  not a load, and stays with them.
+- **Release is unchanged.** It already just sends them home (`Economy::Order`), since there is no load
+  left on them to deal with.
+
+### Taking from a crate, and moving it
+
+- **Villagers take from a crate wherever they take from a store** (the user's: a store they can only take
+  from). So a crate is a source of:
+  - **wood for a site** (the sources in `FindSiteWork`), ranked by the walk like a store's. A carrier
+    who is sent off on the way to a site drops the wood on the way, so the next carrier's nearest wood is
+    very likely that crate.
+  - **what a house fetches** (`FetchHome`): food, water and firewood. Food dropped on the way home is
+    fetched by that house the next time it runs short.
+  - **a pressing need** (`SeekSupply`): people eat and drink at a crate as at a store.
+
+  Nobody ever delivers to a crate: it is never in the list of what takes goods (`accepts`), so no
+  carrier, harvest or woodcutter takes a load there.
+- **The caretakers move crates to a storehouse** (the user's). It is a builder's errand, a load
+  (`ECONOMY_LOAD`) at a time, to the nearest store that takes it. A load is picked up only when a store
+  takes the whole of it and has the room, so nothing is picked up just to be held.
+  - **The jobless do not move crates**, just as they do not resupply towers (`defence_plan.md`: caretaking
+    is the builders' only). They still TAKE from crates, for sites and for home, like anyone.
+  - So **without a builders' hut, crates are used where they lie and never moved**.
+  - **LAST on the caretaker's list** (the user's): after towers, provisions and building. A crate keeps,
+    while a site is waiting on its wood. A crate put FETCH FIRST (below) comes before
+    building.
+- **The person who dropped it is not sent back for it.** That would tie a person to a crate, and a crate
+  belongs to everyone. Whatever wanted the load usually finds it anyway (above).
+- **If nothing wants the goods and nothing moves them, the crate just lies there.** The goods are on
+  the ground rather than on a person, which is the point.
+
+### Building over a crate
+
+- **Refused, with a message** (the user's): a play command that would cover a crate's plot - a building,
+  a wall, a garden, a lot, or a field over the crate's cell - is refused, and the play overlay says
+  CAN'T BUILD: A CRATE LIES THERE, as it does for the clouds. The check goes where "under the clouds" is
+  checked (the zone command's handler, before the zones see the command). The ghost shows the plot red,
+  and a wall drawn as a line asks the question per plot, as the clouds rule does. A road may run under a
+  crate.
+- **A debug placement goes ahead anyway**, and the crate under it is lost, as a tree under a house is.
+  Debug commands skip the clouds rule in the same way.
+
+### Random crates: finds
+
+- **A few are placed when a new colony starts** (the user's; `Economy::Reset`, after the camp is found).
+  Each one comes from a hash of the world's seed and the crate's number (`Mix`, which also gives the
+  settlers their ages and skills), tried again until it lands on a plot that fits. The shared random
+  stream is never used.
+- **More can be spawned in debug mode** (the user's), by a recorded debug command, `CHASM_CMD_CRATE`
+  (like `CHASM_CMD_NEEDS`): a crate with given goods on a plot. It is issued by the tool (`chasm_economy`
+  op `crate`, at x, z or a plot) and by the debug panel, at the plot under the cursor. A spawned crate is
+  a find, already found.
+- **Saved like any other crate.** Spawned and dropped crates have to be saved, so finds are saved whole
+  too: one list. A later change to how finds are placed then cannot move them in a saved game. A save
+  made before crates existed loads with none.
+- **Where**: open, dry ground anywhere a person could one day stand. That includes both halves of the
+  valley and the chasm's terraces (balconies and islands), where a find waits for a winch or a
+  zeppelin. Never on the mountain, in water, or on a plot with a tree or a rock. Never within the camp's
+  first sight, and well apart from each other (the numbers are tuning, below).
+- **What they hold** (tuning): finds near the camp are small and hold one good: wood, wheat or beans.
+  Finds further out are larger and mixed. Later, finds could hold goods the colony cannot make yet (rope,
+  coal, floatstone, from `gameplay_plan.md`), which is where they get interesting.
+- **A find is FOUND when its spot is explored** (`Exploration::Explored` at its point). Exploration
+  belongs to the app, not the economy, so the app marks finds in the tick, after `TickExploration`. The
+  exploration raster is simulation state, so this is as deterministic as everything else. Until it is
+  found, no search includes the crate and it is not drawn (it is under the clouds anyway). In debug mode
+  with the clouds off it shows faintly, so testing can see where the finds are.
+- **When a crate is found, the overlay says so** for a moment, the way it shows a refusal: "CRATE
+  FOUND: 12 WOOD, 8 BEANS". Clicking that line glides the view to the crate, as a MOST IN NEED row does.
+- **Orders give finds a purpose.** Today people explore only as far as their work takes them. A right
+  click can now send someone into the clouds on purpose (`Economy::Order` does not refuse an unexplored
+  plot), and finds are the reward for scouting.
+
+### The look
+
+- **One crate for everything** (the user's): the same crate whatever it holds and however much, so it is
+  always clear what it is. The prop is `crate_a` in `chasm_props.blend` (see "The prop", at the end),
+  instanced like the other props, drawn where the crate lies with a yaw from its id.
+- **A badge** (proposed) like a person's - a crate on a dark disc - over each crate in view. At play zoom
+  a crate is a few pixels across, and a few badges on the map are not a crowd.
+
+### Selecting and the card
+
+- **A crate is picked the way a person is**: the nearest one within a few pixels of its middle on
+  screen, after people and before buildings.
+- **The card** shows "Crate" or "Found crate", then its goods, one row each. Then where it came from,
+  for example "Dropped by Dirk when sent to a post, summer 3" or "Found summer 9". Last, who is on the
+  way to it, and what for: a site, a house or a store.
+- **FETCH FIRST** (proposed), a chip on the card, sends a recorded command that puts moving this crate
+  ahead of the caretakers' building, the way a site can be put first. A find far out is what the player
+  will want brought home.
+- **Tools**: `chasm_economy` gives `crates` (id, plot, x, z, goods, origin, by, tick, found, first), and
+  op `crate` spawns one (above); `chasm_select` selects a crate by id.
+
+### Dropping instead of holding, for everyone (the user's)
+
+- **Today a load that nobody takes is HELD** (`WORKER_HOLDING`). This happens to:
+  - a carrier whose site is pulled down while no store takes wood;
+  - a woodcutter whose store is full and whose pile is full too;
+  - a farmer whose house filled its larder before the farmer got home with the harvest.
+
+  The person holding it can do no other work until something takes the load, and with no store at all
+  that is forever. It is the same problem the posted carrier has.
+- **Now anyone holding a load that nobody takes puts it down** at once, by the same rules as a posted
+  person, and is free again. The farmer's leftover harvest becomes a crate on the way home, and the house
+  fetches from it when it runs short, which is what the holding was waiting for. `WORKER_HOLDING` keeps
+  its number, unused (states are never renumbered).
+- **The dead drop what they were carrying**, instead of it vanishing with them.
+- **Full stores then show as crates piling up beside them**, which tells the player to build a store
+  more clearly than people standing still does.
+
+## Build order
+
+Each step is tested before the next, with the tool and with two replays of one recording compared
+against each other.
+
+1. **Crates and the drop**: the list, saved and hashed; a posted person's load dropped (on open ground,
+   one crate per plot, or into a store that takes it); the debug spawn and the tool; crates drawn with
+   the prop. Tested: a carrier taking wood to a site and sent off leaves a crate where they stood; one at
+   a store's door puts the load in the store; a load dropped where a crate lies goes into it; a save and
+   load keeps every crate.
+2. **Taking and moving**: crates as a source of wood for sites, of what houses fetch, and of pressing
+   needs; the caretakers moving crates to stores; building over a crate refused in play mode, with the
+   message, and shown red by the ghost. Tested: the site's next carrier takes the dropped wood; a crate
+   lies until there is a store that takes it and a builder free, and is then moved there; dropped food
+   is fetched home; the jobless never move a crate.
+3. **The card**: picking, the card, the badge and FETCH FIRST.
+4. **Random crates**: placing them from the seed, finding them by sight, the overlay message, and their
+   numbers. Tested over the 30 surveyed seeds: every map gets its few, none within the camp's first
+   sight, and the same seed always gives the same crates.
+5. **Dropping instead of holding**, and the dead dropping their loads.
+
+## Current tuning
+
+First guesses. Each one becomes a named constant beside the `ECONOMY_*` ones.
+
+| What | Value |
+|---|---|
+| Moved per trip | `ECONOMY_LOAD` (5), as a site's carrier carries |
+| Random crates on a map | 5 ("a few", the user's) |
+| Closest a find may be to the camp | 60 (the camp's first sight reaches 20-40) |
+| Closest two finds may be to each other | 60 |
+| A find within 200 of the camp | 8-12 of one good: wood, wheat or beans |
+| A find further out | 20-30, of two goods |
+
+## Open
+
+- **FETCH FIRST and the badge**: proposed, not yet talked through.
+- **Water in finds**: left out for now. A collector is cheap and water is everywhere.
+- **Spoilage**, when it comes: if food in a crate out in the open spoils faster than food in a store,
+  clearing crates starts to matter more.
+- **Zombies** (P6) could break crates open, or guard a find, as in They Are Billions.
+
+## The prop (2026-10-09)
+
+`crate_a`, added to the Export collection of `art_source/chasm/chasm_props.blend` by an agent, for the
+user to tune. Preview: `art_source/chasm/previews/crate.png`, beside a man at game scale and a stump.
+
+- **The look**: light cut-wood panels (the path cell, column 13, which the stumps' tops and the logs' ends
+  already borrow) set 0.012 into a dark frame (dark bark, column 23), with a diagonal brace across each
+  side and the lid. The lid matters most, since the game's camera looks down on it. Both cells are the
+  same in every season's row.
+- **Size**: 0.52 x 0.42, 0.40 high - a little under half a man's 0.86 in the game (the figures are drawn
+  at 0.46), and about a stump's height. No bottom face; the walls start 0.04 under the ground, as the
+  other props sink.
+- **100 triangles**, flat shaded, origin at the centre of the base. It stands at (20, -15) in the
+  authoring layout, after `bush_b` on the stump and log row.
+- **Not exported yet**: the game has no crates to draw, so `chasm_props.glb` is unchanged. Step 1 exports
+  the collection (one click, as for the other props) and loads `crate_a` from the glb by its name.

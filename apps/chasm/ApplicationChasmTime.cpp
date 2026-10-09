@@ -338,10 +338,11 @@ void ApplicationChasm::DrawOverlay(void){
         }
     }
 
-    //Play mode's own UI: the tools, the jobs and over them the neediest, and the selection's card and pins
-    //(selection_plan.md).
+    //Play mode's own UI: the tools and over them what needs attention (issues_plan.md), the jobs and over
+    //them the neediest, and the selection's card and pins (selection_plan.md).
     if (PlayMode()){
-        DrawBuildBar(s);
+        float bar_top = DrawBuildBar(s);
+        build_stack_top = DrawIssues(s,bar_top - 6.0f * s);
         float jobs_top = DrawJobsOverview(s);
         DrawNeediest(s,jobs_top - 8.0f * s);
         DrawSelectionOverlay(s);
@@ -359,9 +360,10 @@ void ApplicationChasm::DrawOverlay(void){
     is being built, how far along it is; at the bottom in the middle, why a placement was just refused.
 
     A row a group: a house and the ground round it; where goods are kept and got; the field, the builders
-    and the camp; the lines; the winch, and ERASE last.
+    and the camp; the lines; the winch, and ERASE last. Returns the top of the grid, or of the BUILDING line
+    over it: what stacks over them (DrawIssues) goes above that.
 */
-void ApplicationChasm::DrawBuildBar(float s){
+float ApplicationChasm::DrawBuildBar(float s){
     struct BarTool{ const char* key; const char* name; int tool; };
     static const BarTool bar[] = {
         {"1","HOUSE",CHASM_TOOL_HOUSE},{"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
@@ -409,23 +411,25 @@ void ApplicationChasm::DrawBuildBar(float s){
     }
     /*
         Why the last placement was refused, for a moment at the bottom in the middle - play mode has no panel
-        to say it (under the clouds, too close to water, too wide to bridge).
+        to say it (under the clouds, too close to water, too wide to bridge) - or the last order (no way there:
+        defence_plan.md), whichever came last.
     */
     {
         auto now = std::chrono::steady_clock::now();
         uint32_t refusals = zone_refusals.load();
-        if (refusals != refusal_seen){
+        uint32_t orders = order_refusals.load();
+        if (refusals != refusal_seen || orders != order_refusal_seen){
+            bool f_order = orders != order_refusal_seen;
             refusal_seen = refusals;
+            order_refusal_seen = orders;
             refusal_since = now;
-        }
-        std::string why;
-        {
             std::lock_guard<std::mutex> lock(grid_mutex);
-            why = zone_last_refusal;
+            const std::string& why = f_order ? order_last_refusal : zone_last_refusal;
+            refusal_shown = why.empty() ? std::string() : (f_order ? "CAN'T SEND: " : "CAN'T BUILD: ") + why;
         }
         float age = std::chrono::duration<float>(now - refusal_since).count();
-        if (refusals > 0 && age < 3.0f && !why.empty()){
-            std::string text = "CAN'T BUILD: " + why;
+        if (age < 3.0f && !refusal_shown.empty()){
+            std::string text = refusal_shown;
             std::transform(text.begin(),text.end(),text.begin(),::toupper);
             vec2 m = overlay->MeasureText(text.c_str(),size);
             uint8_t alpha = (uint8_t)(255.0f * std::min(1.0f,(3.0f - age) * 2.0f));
@@ -437,6 +441,7 @@ void ApplicationChasm::DrawBuildBar(float s){
         }
     }
     //What is being built: the sites, and the wood they have had of what they need.
+    float top = q0.y;
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
     if (e && z && e->world == z->world){
@@ -490,16 +495,18 @@ void ApplicationChasm::DrawBuildBar(float s){
             vec2 r0(r1.x - m.x - side * 2.0f,r1.y - 30.0f * s);
             overlay->AddRect(r0,r1,9.0f * s,HUD_PANEL);
             overlay->AddText(buf2,vec2((r0.x + r1.x) * 0.5f,r0.y + 21.0f * s),size,UIColor(206,160,110),UI_ALIGN_CENTER);
+            top = r0.y;
         }
     }
+    return top;
 }
 
 /*
     RENDER THREAD, from DrawOverlay in play mode (builders_plan.md): in the bottom left corner, how many work
     at each job against its places - amber where a place stands empty, which with too few people is the
-    newest workplace's - and the jobless, who carry wood and build too. Above the tools' grid only when the
-    window is too narrow for the two side by side. Only what has places or people. Returns its top: what
-    stacks over it (DrawNeediest) goes above that.
+    newest workplace's - and the jobless, who carry wood and build too, and any away at a post (defence_plan.md).
+    Above the tools' grid only when the window is too narrow for the two side by side. Only what has places or
+    people. Returns its top: what stacks over it (DrawNeediest) goes above that.
 */
 float ApplicationChasm::DrawJobsOverview(float s){
     std::shared_ptr<const EconomyState> e = GetEconomy();
@@ -522,6 +529,14 @@ float ApplicationChasm::DrawJobsOverview(float s){
         }
     }
     rows.push_back(Row{"NO JOB",jobless,0,false});
+    //Away at a post (defence_plan.md) - each still counted in his own row, whose place waits for him.
+    int posted = 0;
+    for (const EconomyWorker& k : e->workers){
+        posted += (k.post >= 0) ? 1 : 0;
+    }
+    if (posted > 0){
+        rows.push_back(Row{"POSTED",posted,0,false});
+    }
     const float size = 14.0f * s;
     const float line_h = 20.0f * s;
     const float pad = 12.0f * s;
@@ -534,7 +549,7 @@ float ApplicationChasm::DrawJobsOverview(float s){
     float x0 = 16.0f * s;
     float bottom = corner;
     if (x0 + w > build_bar_min.x - 10.0f * s){
-        bottom = build_bar_min.y - 8.0f * s;
+        bottom = build_stack_top - 8.0f * s;     //over the grid and what stacks on it (DrawIssues)
     }
     vec2 p0(x0,bottom - h);
     vec2 p1(x0 + w,bottom);

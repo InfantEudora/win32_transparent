@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-09T09:49:02.501Z
+  modified: 2026-10-09T12:58:28.570Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -169,7 +169,18 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   + ageing + children playing (no births, no old age, skills random). STEP 1 BUILT 2026-10-09: born/mother/
   father (age derived, EconomyState::tick, Restore takes calendar tick); PLAYING is a JOB (-2, below NONE) so
   idle-adult code skips kids for free; grow-up in Tick re-runs AssignJobs; play spots incl. camp tents;
-  12 settlers, seeds 1-30 all camp. Old saves dropped, not converted (user). RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
+  12 settlers, seeds 1-30 all camp. Old saves dropped, not converted (user). DOORS FIXED same day: home_plot =
+  lowest plot Walkers::OpenFromOutside (was lowest plot: often shut in - coarse verts have lowest ids); doors
+  move -> KeepAtDoors moves indoor people + Replan home via RouteHome (a family died shut in otherwise).
+  Names: 30/30 first, 28 surnames, stride (no dupes in first 30). SHUT IN flag (user, same day):
+  EconomyState::shut/EconomyShutIn, door needs WALKER_OPEN_GROUND 24 joined open plots behind it; shut house
+  = uninhabitable (HouseFamilies can_take), card warning; flag meant for reuse. Economy only Derives on a
+  TICK - read flags with the sim running, not paused. LIFELINES STEP 2 BUILT 2026-10-09: partner/due saved;
+  jobs BABY -3 / CARING -4 (EconomyStageJob = below NONE); chance at dawn after Heat on EconomyCoupleDay (room
+  50% / full 25%, user: room likelier, house APPEAL later via gardens); birth when mother next home after due;
+  issues rows HOUSE CROWDED / HOUSE SHUT IN (issues_plan 9-10). User sometimes plays in my test copy.
+  CAMP FAMILIES NOW FETCH (user reversed own rule 2026-10-09 after a camp baby went dry): camp has room+woodshed,
+  never fetches from itself. Fetching takes only from stores/camps - no store, no water to homes. RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
   every map has a home river (approach bug fixed; small-river and off-the-east-edge fallbacks; `rivers`
   check fails none), 2-3 BRANCHES per river (GRID_RIVER_JOIN, inland heads), far-side scenic SPRINGS and
   home SWALLOW-HOLE streams (GRID_RIVER_SINK) whose spring pours from a dark mouth in the wall

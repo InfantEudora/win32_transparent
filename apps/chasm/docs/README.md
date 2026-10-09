@@ -143,6 +143,15 @@ line number.
 
 ---
 
+## The wiki: what the game does today
+
+The plans below are the reasons and the history, and they still hold decisions that were reversed
+later. **`../wiki/` is the present tense**: a short page per thing in the game (the woodcutter, a
+store, thirst), what it does now, what it touches and what is planned for it, built into one
+clickable `build/wiki.html` by `python apps/chasm/tools/chasm_wiki.py`. Figures on a page are
+constants read from the code, so a retune keeps them right on its own. A change to what a mechanic
+does updates its page (`../wiki/README.md`). Started 2026-10-09 with the woodcutter's loop.
+
 ## The plans
 
 | Plan | What |
@@ -159,7 +168,10 @@ line number.
 | `land_plan.md` | family land: fields belong to a house (the camp's at first), farmed by its family at 6 cells a farmer, harvest home first (built) |
 | `seasons_plan.md` | the year drawn: seasonal palette rows the grass fades through, flowers in season, oaks and bushes turning, thinning, bare and budding plant by plant, bare oaks modelled (built) |
 | `lifeline_plan.md` | a person's whole life: a baby's year in its mother's care, playing, young adult, adult; parents and couples, births, skills passed on, old age (talked through 2026-10-09; step 1, families and ageing, built) |
-| `defence_plan.md` | toward P6: posts as a job, direct orders, a soldier's pack, provisions (a food made from wheat and beans by the builders as caretakers), the guard tower stocked with them and water, gate doors that shut (agreed 2026-10-09, not built) |
+| `defence_plan.md` | toward P6: posts as a job, direct orders, a soldier's pack, provisions (a food made from wheat and beans by the builders as caretakers), the guard tower stocked with them and water, gate doors that shut (agreed 2026-10-09; steps 1-2, orders and the pack, built) |
+| `yards_plan.md` | lots and gardens that belong to a house or a woodcutter, painted with it selected; a woodcutter placeable without a lot (agreed 2026-10-09) |
+| `issues_plan.md` | NEEDS ATTENTION over the tools: a top five of what wants doing - a crop left unchosen (AUTO after a day), what is stuck, and the next steps that teach the game (agreed 2026-10-09) |
+| `crates_plan.md` | crates: a load nobody takes - a posted person's first - dropped on the ground as a crate, a store villagers only take from, moved to a storehouse by the caretakers; then a few finds placed from the seed under the clouds, as in They Are Billions (agreed 2026-10-09; the prop modelled, nothing else built) |
 
 ### Later, agreed but not yet planned
 

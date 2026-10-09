@@ -243,6 +243,13 @@ undeliverable while stepping until 2026-09-14; if one seems to do nothing under 
 a regression of that rather than the action.
 Durations here are ticks, so this is the unit everything else is already written in.
 
+**Chasm's wiki: update it when you change a mechanic.** `apps/chasm/wiki/*.md` is a page per thing
+in the game - what it does today, in a few lines - built into `apps/chasm/build/wiki.html` by
+`python apps/chasm/tools/chasm_wiki.py`. If your change alters what a page says, fix the page, set its
+`verified:` date and run the tool, which fails on a constant, function or plan heading a page names that
+no longer exists. A retune needs nothing: pages show constants by name, read from the code. How to write
+a page: `apps/chasm/wiki/README.md`.
+
 ---
 
 ## Working alongside other agents

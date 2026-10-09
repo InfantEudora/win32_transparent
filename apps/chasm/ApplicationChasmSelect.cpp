@@ -27,8 +27,9 @@
         theirs PINNED - on a stem, in the selection's colour, kept on screen - so they can be found
         across the map (a person is a few pixels tall at play zoom);
       - a CARD on the right saying what it is - a store's goods with chips to set what it takes.
-    View state only: the one thing that reaches the simulation is a chip's store_allow, a recorded zone
-    command like the debug panel's.
+    View state only: what reaches the simulation is a card's chips - recorded zone commands like the debug
+    panel's - and ORDERS (defence_plan.md): a right click sending the selected person to a plot, and his
+    card's Release, both recorded CHASM_CMD_ORDERs.
 
     Threads: the hover and the click are worked out on the physics thread (UpdatePick, which has the
     camera's ray); the outlines are rebuilt on the render thread (PreRender); the card and pins are
@@ -172,11 +173,38 @@ void DrawLogIcon(UIOverlay* o, const vec2& c, float s){
     o->AddLine(end,end,1.4f * s,ICON_WOOD);
 }
 
+/*
+    A posted person's spear (defence_plan.md): the shaft leaning right, and a broad leaf of a blade - widest a
+    third of the way up, to a point. A thin blade read as a slash across the disc, a "no" sign, at badge size.
+*/
+void DrawSpearIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(-5.4f,6.4f),p(0.6f,-0.6f),2.0f * s,ICON_WOOD);
+    vec2 base = p(-0.2f,0.2f);
+    vec2 tip = p(5.4f,-6.6f);
+    const int steps = 8;
+    for (int i = 0; i < steps; i++){
+        float t = (i + 0.5f) / steps;
+        float width = 8.0f * std::min(1.0f,t * 2.5f) * (1.0f - t);     //a leaf: up to about 4.8 at t 0.4
+        o->AddLine(base + (tip - base) * ((float)i / steps),base + (tip - base) * ((float)(i + 1) / steps),
+                   std::max(0.8f,width) * s,ICON_STEEL);
+    }
+}
+
 //A child's ball (lifeline_plan.md), with a pale band round it.
 void DrawBallIcon(UIOverlay* o, const vec2& c, float s){
     float r = 4.6f * s;
     o->AddRect(c - vec2(r,r),c + vec2(r,r),r,ICON_BALL);
     o->AddArc(c,r * 0.62f,-0.6f,1.3f,1.5f * s,ICON_WOOD_END);
+}
+
+//A baby swaddled: a pale face on a bundle - a baby's, and its mother's while she cares for it.
+void DrawBabyIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(-1.2f,1.6f),p(1.6f,1.6f),6.4f * s,ICON_STEEL);
+    float r = 2.4f * s;
+    vec2 face = p(-1.8f,-1.2f);
+    o->AddRect(face - vec2(r,r),face + vec2(r,r),r,ICON_WOOD_END);
 }
 
 /*
@@ -206,12 +234,19 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
         DrawDropIcon(o,c,is);
         return;
     }
+    //Posted, his post is his job while it lasts (defence_plan.md) - whatever his work was.
+    if (k.post >= 0){
+        DrawSpearIcon(o,c,is);
+        return;
+    }
     switch (k.job){
         case WORKER_JOB_WOODCUTTER: DrawAxeIcon(o,c,is); break;
         case WORKER_JOB_FARMER:     DrawWheatIcon(o,c,is); break;
         case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
         case WORKER_JOB_BUILDER:    DrawHammerIcon(o,c,is); break;
         case WORKER_JOB_PLAYING:    DrawBallIcon(o,c,is); break;
+        case WORKER_JOB_BABY:
+        case WORKER_JOB_CARING:     DrawBabyIcon(o,c,is); break;
         default:                    DrawLogIcon(o,c,is); break;
     }
 }
@@ -288,6 +323,9 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_SOWING:     return "sowing";
         case WORKER_TO_PLAY:    return "going out to play";
         case WORKER_PLAYING:    return "playing";
+        //Posted (defence_plan.md): standing there, or kept from it - a wall, a gate - and waiting for a way.
+        case WORKER_TO_POST:    return "going to the post";
+        case WORKER_ON_POST:    return (z && z->world && !EconomyAtPost(*z->world,k)) ? "cut off from the post" : "standing guard";
         default:                return "";
     }
 }
@@ -314,6 +352,8 @@ const char* JobTitle(int job){
         case WORKER_JOB_WATER:      return "Water carrier";
         case WORKER_JOB_BUILDER:    return "Builder";
         case WORKER_JOB_PLAYING:    return "Child";
+        case WORKER_JOB_BABY:       return "Baby";
+        case WORKER_JOB_CARING:     return "Caring";
         default:                    return "No job";
     }
 }
@@ -363,7 +403,8 @@ void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e,
       - any other workplace (a collector): its worker's house;
       - a field: the house - or camp - whose land it is (land_plan.md);
       - a house: its family's workplaces - a woodcutter's hut and lot - and its land's fields;
-      - a person: his house and workplace, a woodcutter's lot, and the fields a farmer farms.
+      - a person: his house and workplace, a woodcutter's lot, the fields a farmer farms, and his post;
+      - a gate: its own plots - it has no building to outline - those of a gate on the slant together.
     A garden belongs to nobody yet (it does nothing yet). Each listed once, the selection itself never.
 */
 struct RelatedPlaces{
@@ -391,6 +432,28 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
                 building(k.house);
                 building(k.building);
                 lot_of(k.building);
+                //Where he was sent (defence_plan.md): the plot itself, outlined as a lot's is.
+                if (k.post >= 0 && k.post < (int)z.ground.size()){
+                    out.plots.push_back(k.post);
+                }
+            }
+        }
+    }else if (p.kind == PLAY_PICK_GATE && z.world && p.plot >= 0 && p.plot < (int)z.gate.size() && z.gate[p.plot]){
+        //A gate: its plot, and any gate plot joined to it - a road crossing on the slant gates two, one opening.
+        std::vector<int> todo(1,p.plot);
+        while (!todo.empty()){
+            int v = todo.back();
+            todo.pop_back();
+            if (std::find(out.plots.begin(),out.plots.end(),v) != out.plots.end()){
+                continue;
+            }
+            out.plots.push_back(v);
+            int nb[8];
+            int n = ZonePlotNeighbours(*z.world,v,nb,8);
+            for (int i = 0; i < n; i++){
+                if (z.gate[nb[i]]){
+                    todo.push_back(nb[i]);
+                }
             }
         }
         for (const EconomyField& f : e.fields){
@@ -436,7 +499,7 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
 #define CARD_TEXT   0
 #define CARD_BAR    1
 #define CARD_CHIPS  2
-#define CARD_TOGGLE 3       //a site's "Build first"
+#define CARD_TOGGLE 3       //a site's "Build first"; a posted person's "Release" (its own choice_action)
 #define CARD_CHOICE 4       //a row of chips, one of them lit: a field's crops (fields_plan.md)
 struct CardLine{
     int type = CARD_TEXT;
@@ -563,6 +626,16 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         std::string both = (!mother.empty() && !father.empty()) ? father + " and " + mother : mother + father;
         c.Text(Format("%s of %s",k.f_female ? "Daughter" : "Son",both.c_str()),HUD_TEXT_DIM);
     }
+    //BIRTHS: the partner, and a child on the way.
+    std::string partner = FirstNameOf(e,k.partner);
+    if (!partner.empty()){
+        c.Text(Format("%s of %s",k.f_female ? "Wife" : "Husband",partner.c_str()),HUD_TEXT_DIM);
+    }
+    if (k.due){
+        int64_t left = (int64_t)k.due - (int64_t)e.tick;
+        int days = (int)std::max<int64_t>(0,(left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
+        c.Text(days ? Format("Expecting - due in %i day%s",days,days == 1 ? "" : "s") : std::string("Expecting - due now, once home"));
+    }
     std::string children;
     for (int f_dead = 0; f_dead < 2; f_dead++){
         auto add = [&](uint32_t id, uint32_t mother_id, uint32_t father_id){
@@ -595,6 +668,22 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         int64_t left = k.born + LIFE_CHILD_TICKS - (int64_t)e.tick;
         int days = (int)std::max<int64_t>(0,(left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
         c.Text(Format("Plays near home - grows up in %i day%s",days,days == 1 ? "" : "s"));
+    }else if (k.job == WORKER_JOB_BABY){
+        int64_t left = k.born + LIFE_BABY_TICKS - (int64_t)e.tick;
+        int days = (int)std::max<int64_t>(0,(left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
+        c.Text(Format("In its mother's care - a child in %i day%s",days,days == 1 ? "" : "s"));
+    }else if (k.job == WORKER_JOB_CARING){
+        //Back to work when her baby turns one: the youngest of hers still a baby.
+        int64_t left = 0;
+        for (const EconomyWorker& o : e.workers){
+            if (o.mother == k.id && o.job == WORKER_JOB_BABY){
+                left = std::max<int64_t>(left,o.born + LIFE_BABY_TICKS - (int64_t)e.tick);
+            }
+        }
+        int days = (int)std::max<int64_t>(0,(left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
+        c.Text(Format("Caring for her baby - back to work in %i day%s",days,days == 1 ? "" : "s"));
+    }else if (k.job == WORKER_JOB_NONE && k.post >= 0){
+        c.Text("No job - none is given while posted");
     }else if (k.job == WORKER_JOB_NONE){
         c.Text("No job: carries wood for the builders");
     }else if (k.job == WORKER_JOB_BUILDER){
@@ -608,6 +697,32 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         c.Text(Format("Farmer of %s land: %i field%s",LandName(z,e,k.building).c_str(),fields,fields == 1 ? "" : "s"));
     }else{
         c.Text(Format("%s at %s %u",JobTitle(k.job),KindTitle(z.buildings[k.building].kind),k.building));
+    }
+    /*
+        POSTED (defence_plan.md): the post is the job while it lasts; work there was waits, its place kept.
+        The Release chip ends it (OVERLAY_HIT_RELEASE, a recorded order).
+    */
+    if (k.post >= 0){
+        if (k.job >= 0){
+            c.Text("Posted - this work waits until released",HUD_AMBER);
+        }else{
+            c.Text("Posted",HUD_AMBER);
+        }
+        CardLine release;
+        release.type = CARD_TOGGLE;
+        release.text = "Release";
+        release.choice_action = OVERLAY_HIT_RELEASE;
+        c.lines.push_back(release);
+    }
+    //His pack (defence_plan.md): what he carries to live on - posted, or home again with what the larder had no room for.
+    std::string pack;
+    for (int g = 0; g < GOOD_COUNT; g++){
+        if (k.pack[g] > 0){
+            pack += Format("%s%i %s",pack.empty() ? "" : ", ",k.pack[g],GoodName(g));
+        }
+    }
+    if (!pack.empty()){
+        c.Text("Pack: " + pack,HUD_TEXT_DIM);
     }
     std::string doing = Doing(k,&z);
     if (k.carry > 0){
@@ -684,7 +799,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             CardLine choice;
             choice.type = CARD_CHOICE;
             choice.choice_action = OVERLAY_HIT_FIELD_CROP;
-            choice.choice_on = (b.crop < ZONE_CROP_COUNT) ? (int)b.crop : -1;
+            choice.choice_on = (b.crop < ZONE_CROP_COUNT || b.crop == ZONE_CROP_AUTO) ? (int)b.crop : -1;
+            //AUTO as a start too (issues_plan.md), naming the most food: the frost is not asked until it stands.
+            choice.choices.push_back(std::make_pair("Auto: " + CropTitle(EconomyAutoCrop(-1)),(int)ZONE_CROP_AUTO));
             for (int k = 0; k < ZONE_CROP_COUNT; k++){
                 choice.choices.push_back(std::make_pair(CropTitle(k),k));
             }
@@ -707,6 +824,15 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             }
         }else if (info.storeys > 0){
             c.Text(Format("Holds %i, %i living here",holds,living));
+            //More than it holds - a child born into a full house (lifeline_plan.md): a storey or a plot more.
+            if (living > holds){
+                c.Text("Crowded - add a storey or a plot",HUD_AMBER);
+            }
+        }
+        //SHUT IN on every side, with no door: nobody moves in, and those inside cannot get out (EconomyShutIn).
+        if (b.kind == ZONE_KIND_HOUSE && EconomyShutIn(*e,id)){
+            c.Text(living ? "Uninhabitable: shut in on every side - its family cannot get out"
+                          : "Uninhabitable: shut in on every side, with no way in",living ? HUD_DANGER : HUD_AMBER);
         }
         for (const EconomyWorker& k : e->workers){
             if (k.house == id){
@@ -814,9 +940,11 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 }
                 int sow = EconomyFieldSowCrop(*f,b);
                 sow_now = EconomyFieldSowNow(*f,b,pace,left);
-                bool f_auto = f->last >= 0 && b.next_crop >= ZONE_CROP_COUNT;
+                bool f_auto = (f->last >= 0) ? b.next_crop >= ZONE_CROP_COUNT : b.crop == ZONE_CROP_AUTO;
                 if (sow < 0){
-                    c.Text("Empty - choose a crop to sow",HUD_AMBER);
+                    //The day it waits for the player, draining - then AUTO is chosen for him (issues_plan.md).
+                    c.Bar("Empty - choose a crop to sow, or it starts with Auto",
+                          1.0f - std::min(1.0f,(float)f->wait / ECONOMY_CROP_GRACE),HUD_AMBER);
                 }else if (sow_now >= 0){
                     c.Text(Format("Empty - its farmer is to sow %s, at %i%%",ZoneCropName(sow_now),EconomyCropYield(f->last,sow_now)));
                 }else if (CalendarDateOf(tick).season == SEASON_WINTER){
@@ -840,7 +968,13 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             if (!f->f_sown && f->last < 0){
                 c.Text("Start with:",HUD_TEXT_DIM);
                 choice.choice_action = OVERLAY_HIT_FIELD_CROP;
-                choice.choice_on = (b.crop < ZONE_CROP_COUNT) ? (int)b.crop : -1;
+                choice.choice_on = (b.crop < ZONE_CROP_COUNT || b.crop == ZONE_CROP_AUTO) ? (int)b.crop : -1;
+                //AUTO names what it would sow now, the frost allowing - else the most food (issues_plan.md).
+                ZoneBuilding as_auto = b;
+                as_auto.crop = ZONE_CROP_AUTO;
+                int pick = EconomyFieldSowNow(*f,as_auto,pace,left);
+                choice.choices.push_back(std::make_pair("Auto: " + CropTitle(pick >= 0 ? pick : EconomyAutoCrop(-1)),
+                                                        (int)ZONE_CROP_AUTO));
                 for (int k = 0; k < ZONE_CROP_COUNT; k++){
                     choice.choices.push_back(std::make_pair(CropTitle(k),k));
                 }
@@ -966,8 +1100,42 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     }
 }
 
+/*
+    A GATE's card (defence_plan.md, step 3): its door, open or shut, as a choice of two chips - a recorded
+    zone command (OVERLAY_HIT_GATE) - and what that means for the walks through it.
+*/
+void GateCard(const ChasmWorld& w, const ZoneState& z, int plot, Card& c){
+    c.title = "Gate";
+    bool f_shut = ZoneGateShut(z,plot);
+    if (f_shut){
+        c.Text("Shut - nobody passes, our own people neither",HUD_AMBER);
+    }else{
+        c.Text("Open - anyone passes");
+    }
+    CardLine door;
+    door.type = CARD_CHOICE;
+    door.choices = {{"Open",0},{"Shut",1}};
+    door.choice_on = f_shut ? 1 : 0;
+    door.choice_action = OVERLAY_HIT_GATE;
+    c.lines.push_back(door);
+    //Its wall still planned beside it: a gap the door does not close.
+    int nb[8];
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    for (int i = 0; i < n; i++){
+        if (ZoneWallPlanned(z,nb[i])){
+            c.Text("Its wall still has gaps to build",HUD_TEXT_DIM);
+            break;
+        }
+    }
+}
+
 bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint64_t tick, Card& c){
-    if (p.kind == PLAY_PICK_PERSON && e){
+    if (p.kind == PLAY_PICK_GATE){
+        if (p.plot >= 0 && p.plot < (int)z.gate.size() && z.gate[p.plot]){
+            GateCard(w,z,p.plot,c);
+            return true;
+        }
+    }else if (p.kind == PLAY_PICK_PERSON && e){
         const EconomyWorker* k = PersonById(*e,p.id);
         if (k){
             PersonCard(w,z,*e,*k,c);
@@ -1153,6 +1321,11 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
             out.kind = PLAY_PICK_BUILDING;
             out.id = b;
             out.plot = hover.plot;
+        }else if (z->gate[hover.plot]){
+            //A wall's gate, for its door (defence_plan.md): the road plot under its crossbeam.
+            out.kind = PLAY_PICK_GATE;
+            out.id = (uint32_t)hover.plot;
+            out.plot = hover.plot;
         }
     }
     return out;
@@ -1183,19 +1356,23 @@ bool ApplicationChasm::OverlayHitAt(int2 px, OverlayHit* hit){
 /*
     PHYSICS THREAD, from UpdatePick in play mode, before any painting: the overlay takes the mouse
     where it is drawn (a press on it does what it says and nothing beneath is picked or painted); a
-    right click - pressed and let go without dragging, which would be a pan - puts a tool down, or
-    with none clears the selection; and with no tool the hover and a click's selection.
+    right click - pressed and let go without dragging, which would be a pan - puts a tool down, sends
+    a selected person to the plot under it (an ORDER, defence_plan.md), or with neither clears the
+    selection; and with no tool the hover and a click's selection.
 */
 void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked){
     InputController* input = main_scene->inputcontroller;
-    //A scripted click (chasm_select op press): this pass, at its pixel, as the mouse's would be.
+    //A scripted click (chasm_select op press): this pass, at its pixel, as the mouse's would be - the
+    //right button's too.
+    bool f_script_right = false;
     if (f_script_press.exchange(false)){
         {
             std::lock_guard<std::mutex> lock(pick_mutex);
             px = script_press_px;
         }
+        f_script_right = f_script_press_right.exchange(false);
         f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
-        f_clicked = f_over_scene;
+        f_clicked = f_over_scene && !f_script_right;
         if (f_over_scene){
             hover = PickUnderPixel(px);
         }
@@ -1214,6 +1391,25 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 play_selected = PlayPick();
                 play_pick_version++;
+            }else if (hit.action == OVERLAY_HIT_TAKE_TOOL){
+                //A hint in NEEDS ATTENTION (issues_plan.md): its tool in hand - a second press keeps it there.
+                paint_tool = hit.value;
+                pick_version++;
+            }else if (hit.action == OVERLAY_HIT_BUILDING){
+                //A place in NEEDS ATTENTION: selected, and the view taken to it, as the neediest list does a person.
+                std::shared_ptr<const ZoneState> z = GetZones();
+                if (z && (uint32_t)hit.value < z->buildings.size() && z->buildings[hit.value].size > 0){
+                    {
+                        std::lock_guard<std::mutex> lock(pick_mutex);
+                        PlayPick p;
+                        p.kind = PLAY_PICK_BUILDING;
+                        p.id = (uint32_t)hit.value;
+                        p.plot = FirstPlotOf(*z,p.id);
+                        play_selected = p;
+                        play_pick_version++;
+                    }
+                    cam_seek_building = (uint32_t)hit.value;
+                }
             }else if (hit.action == OVERLAY_HIT_PERSON){
                 //The neediest list (DrawNeediest): him, selected, and the view taken to him (the camera's glide).
                 {
@@ -1225,6 +1421,26 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     play_pick_version++;
                 }
                 cam_seek_person = (uint32_t)hit.value;
+            }else if (hit.action == OVERLAY_HIT_GATE){
+                //A gate's card: its door shut (1) or opened (0) - a recorded zone command (defence_plan.md).
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                if (sel.kind == PLAY_PICK_GATE && sel.plot >= 0){
+                    SubmitZone(ZONE_OP_GATE_SHUT,sel.plot,hit.value);
+                }
+            }else if (hit.action == OVERLAY_HIT_RELEASE){
+                //A posted person's card: back to his work (defence_plan.md) - a recorded order.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                if (sel.kind == PLAY_PICK_PERSON){
+                    SubmitOrder(sel.id,-1);
+                }
             }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_SITE_FIRST){
                 PlayPick sel;
                 {
@@ -1268,23 +1484,34 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
         }
         f_clicked = false;
     }
-    //The right button: a click, not a drag.
+    //The right button: a click, not a drag - or a script's, at its pixel.
+    bool f_right_click = f_script_right && f_over_scene;
     if (input->WasKeyPressed(INPUT_CLICK_RIGHT) && f_over_scene){
         right_press_px = px;
         f_right_press = true;
     }
     if (input->WasKeyReleased(INPUT_CLICK_RIGHT) && f_right_press){
         f_right_press = false;
-        if (std::abs(px.x - right_press_px.x) <= RIGHT_CLICK_SLOP && std::abs(px.y - right_press_px.y) <= RIGHT_CLICK_SLOP){
-            if (paint_tool != CHASM_TOOL_SELECT){
-                paint_tool = CHASM_TOOL_SELECT;
-                pick_version++;
-            }else{
-                std::lock_guard<std::mutex> lock(pick_mutex);
-                if (play_selected.kind != PLAY_PICK_NONE){
-                    play_selected = PlayPick();
-                    play_pick_version++;
-                }
+        f_right_click = std::abs(px.x - right_press_px.x) <= RIGHT_CLICK_SLOP && std::abs(px.y - right_press_px.y) <= RIGHT_CLICK_SLOP;
+    }
+    if (f_right_click){
+        PlayPick sel;
+        {
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            sel = play_selected;
+        }
+        if (paint_tool != CHASM_TOOL_SELECT){
+            paint_tool = CHASM_TOOL_SELECT;
+            pick_version++;
+        }else if (sel.kind == PLAY_PICK_PERSON && hover.f_hit && hover.plot >= 0){
+            //An ORDER: the selected person goes to the plot under the cursor and stands there. The economy
+            //decides whether he can, and the overlay says why not (CHASM_CMD_ORDER).
+            SubmitOrder(sel.id,hover.plot);
+        }else{
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            if (play_selected.kind != PLAY_PICK_NONE){
+                play_selected = PlayPick();
+                play_pick_version++;
             }
         }
     }
@@ -1733,7 +1960,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             overlay->AddRect(b0,vec2(b0.x + (b1.x - b0.x) * l.bar,b1.y),2.0f * s,HudFaded(l.colour,210));
         }else if (l.type == CARD_TOGGLE){
             y += chips_h;
-            chip(c0.x + pad,l.text.c_str(),l.chips_on != 0,l.f_locked,OVERLAY_HIT_SITE_FIRST,0);
+            chip(c0.x + pad,l.text.c_str(),l.chips_on != 0,l.f_locked,l.choice_action ? l.choice_action : OVERLAY_HIT_SITE_FIRST,0);
         }else if (l.type == CARD_CHOICE){
             //One chip per choice, the one in force lit; a click on another chooses it.
             y += chips_h;
@@ -1758,13 +1985,15 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
 void ApplicationChasm::RegisterSelectTools(){
     MCPServer::Get()->RegisterTool("chasm_select",
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
-        "op select: the building at x,z (or by `building` id), or a person by `person` id; op clear; op under "
+        "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md) - or a person by `person` id; op clear; op under "
         "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives); op "
         "press px,py: a left click there, as the player's - on the HUD it presses what is drawn there (a tool of the "
-        "grid, a card's chip, pause, speed, a row of the neediest list), on the scene it selects; `pressed` says what "
-        "the HUD had there and the tool in hand after; op "
+        "grid, a card's chip, pause, speed, a row of the neediest list or of NEEDS ATTENTION), on the scene it selects; `pressed` says what "
+        "the HUD had there and the tool in hand after. With `button` right it is a right click: a tool put down, a "
+        "selected person sent to the plot there (an order, docs/defence_plan.md), or the selection cleared; op "
         "status (default): the selection and hover, the card as text lines, and the people pinned with it. "
-        "View state only - nothing recorded. The card and outlines show in play mode (chasm_view play). "
+        "View state only - nothing recorded but what a press sends: a chip's setting, an order, a Release. The card "
+        "and outlines show in play mode (chasm_view play). "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -1776,6 +2005,7 @@ void ApplicationChasm::RegisterSelectTools(){
                 {"person",{{"type","integer"}}},
                 {"px",{{"type","integer"}}},
                 {"py",{{"type","integer"}}},
+                {"button",{{"type","string"},{"description","press: left (default) or right"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -1796,8 +2026,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 main_scene->AtTickBoundary([&](){
                     GridPick ground = PickUnderPixel(px);
                     PlayPick p = PlayPickUnder(px,ground);
-                    const char* kinds[] = {"none","building","person"};
-                    out = json{{"kind",kinds[std::max(0,std::min(2,p.kind))]},{"id",p.id},{"plot",p.plot},
+                    const char* kinds[] = {"none","building","person","gate"};
+                    out = json{{"kind",kinds[std::max(0,std::min(3,p.kind))]},{"id",p.id},{"plot",p.plot},
                                {"ground_plot",ground.f_hit ? ground.plot : -1},
                                {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0}};
                 });
@@ -1819,9 +2049,11 @@ void ApplicationChasm::RegisterSelectTools(){
                 int2 px(args["px"].get<int>(),args["py"].get<int>());
                 OverlayHit hit;
                 static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
-                                                      "field_next","pause","speed","field_land","person"};
+                                                      "field_next","pause","speed","field_land","person","release",
+                                                      "take_tool","building","gate"};
+                const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
                 if (OverlayHitAt(px,&hit)){
-                    pressed = json{{"overlay",actions[std::max(0,std::min(10,hit.action))]},{"value",hit.value}};
+                    pressed = json{{"overlay",actions[std::max(0,std::min(last,hit.action))]},{"value",hit.value}};
                 }else{
                     pressed = json{{"overlay",nullptr}};
                 }
@@ -1829,6 +2061,9 @@ void ApplicationChasm::RegisterSelectTools(){
                     std::lock_guard<std::mutex> lock(pick_mutex);
                     script_press_px = px;
                 }
+                bool f_right = args.value("button",std::string("left")) == "right";
+                pressed["button"] = f_right ? "right" : "left";
+                f_script_press_right = f_right;
                 f_script_press = true;
                 for (int i = 0; i < 400 && f_script_press.load(); i++){
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -1861,6 +2096,10 @@ void ApplicationChasm::RegisterSelectTools(){
                                 p.kind = PLAY_PICK_BUILDING;
                                 p.id = b;
                                 p.plot = g.plot;
+                            }else if (z->gate[g.plot]){
+                                p.kind = PLAY_PICK_GATE;        //a wall's gate (defence_plan.md)
+                                p.id = (uint32_t)g.plot;
+                                p.plot = g.plot;
                             }
                         }
                     }
@@ -1879,8 +2118,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 hover = play_hover;
             }
             auto pick_json = [](const PlayPick& p) -> json {
-                const char* kinds[] = {"none","building","person"};
-                return json{{"kind",kinds[std::max(0,std::min(2,p.kind))]},{"id",p.id},{"plot",p.plot}};
+                const char* kinds[] = {"none","building","person","gate"};
+                return json{{"kind",kinds[std::max(0,std::min(3,p.kind))]},{"id",p.id},{"plot",p.plot}};
             };
             json result{{"selected",pick_json(sel)},{"hover",pick_json(hover)},{"play_mode",PlayMode()}};
             if (!pressed.is_null()){

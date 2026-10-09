@@ -1,6 +1,6 @@
 # Lifelines
 
-Talked through with the user 2026-10-09; step 1 (families and ageing) BUILT the same day - see "As built"
+Talked through with the user 2026-10-09; steps 1 (families and ageing) and 2 (births) BUILT the same day - see "As built"
 at the end. Until then the colony was the settlers it started with: ten adults whose ages never changed and
 who had no parents (`people_plan.md`). This plan
 gives people a whole life - expected, born, cared for, playing, working, growing old - and gives everyone
@@ -175,7 +175,12 @@ Three families, twelve people: ten grown and two children.
   her most children (`ECONOMY_CHILDREN_MOST`, tuning; the settler mothers' children so far count). That
   limit, and old age, replace the bearing years of the first draft.
 - **A full house does not stop a birth.** Being crowded is the cost (`people_plan.md`, agreed
-  2026-10-05) that pushes the player to build or add a storey.
+  2026-10-05) that pushes the player to build or add a storey - a house that holds 3 getting a child needs
+  expanding (the user's, 2026-10-09), which makes "a crowded house" a row for the issues panel
+  (`issues_plan.md`; the session building that panel was told).
+- **Room makes a child likelier** (the user's, same day): the year's chance is higher in a house with a
+  place to spare than in a full one (`LIFE_BIRTH_ROOM`, `LIFE_BIRTH_FULL`, tuning). A house's APPEAL, later,
+  will raise it further - which gives the gardens a use.
 - **The baby** gets the next person id, the couple's surname, and a first name from the woman's or the
   man's list by sex.
 
@@ -222,7 +227,7 @@ First guesses, except where marked. Tuning, not rules: each becomes a named cons
 | Young adult | 2 years (the user's) |
 | Old | from 36 |
 | Dying of old age | between 38 and 43 ("around 40", the user's) |
-| A couple's chance of a child, each year | 1 in 2 |
+| A couple's chance of a child, each year | 1 in 2 with a place to spare in the house, 1 in 4 in a full one |
 | A mother's most children | 4 |
 | Taking after a parent, per skill | 7 in 10 |
 | Growing towards the house's trade | a point a birthday, as child and young adult |
@@ -246,7 +251,7 @@ Each step is its own small feature, playable and checked before the next.
    families with two children; children PLAYING (no job, no errands, no site work; the kid figures; a walk
    round the house now and then) until they are young adults and take a job; the cards and
    `chasm_economy` showing age, stage and parents. Skills stay random, as today. No births, no old age.
-2. **Births**: the settler couples, the yearly chance and its conditions, expecting, the baby indoors, the
+2. **(BUILT 2026-10-09)** **Births**: the settler couples, the yearly chance and its conditions, expecting, the baby indoors, the
    mother's CARING year (her place filled, her errands kept), a mother's most children; the settler couple
    that starts out expecting. Babies' skills random until step 5.
 3. **Couples**: grown people of two families pairing into a free house, a new family; surnames kept per
@@ -298,17 +303,86 @@ Files: `Economy.*` (LIFELINES in `Economy.h`; `MakeSettlers`, `GoPlay`, the grow
 - **Names** (the user's, same day): 30 first names a list and 28 surnames, stepped through by a stride with
   no factor in common with the list's length, so the first 30 people, and families, never share one (two
   Catos on seed 12 before, from a hash over 15).
-- **Seen in passing, not lifelines - a building's door can be boxed in.** A building's door - where its
-  family walks home to, where its workers are reached (`home_plot`) - is its LOWEST-NUMBERED plot
-  (`Economy::Derive`). The coarse grid's vertices keep the lowest numbers when it is subdivided
-  (`Subdivide`), and a coarse vertex's only fine neighbours are the four or so midpoints round it; so a
-  building that takes a coarse vertex and every plot round it - a 3 x 3 block centred on one, a plus -
-  has its door in its middle. A walk enters a built plot only where it ends (`Walkers::EdgeOpen`), so
-  nobody reaches it: a family never moves into such a house (HouseFamilies wants a way to the door), a
-  workplace's empty places are never filled (AssignJobs likewise), and a woodcutter's pick-ups at his hut
-  fail. Found on a builders' hut painted as a 3 x 10 block: the builders given places while it was small
-  kept them, and a new one could not be given one. A building EXTENDED over its door's neighbours moves
-  the door inside under a family already living there, who then cannot get home. Stores, fields and the
-  camp are not touched by it (their goods go to the nearest plot; a field's door is a cell's centre; a
-  camp's people have their tents). Fixing it - the lowest plot with a way in from outside - waits for the
-  user's go-ahead.
+- **Seen in passing, not lifelines - a building's door could be boxed in. FIXED the same day (the user's
+  go-ahead).** A building's door - where its family walks home to, where its workers are reached
+  (`home_plot`) - was its LOWEST-NUMBERED plot (`Economy::Derive`). The coarse grid's vertices keep the
+  lowest numbers when it is subdivided (`Subdivide`), and a coarse vertex's only fine neighbours are the
+  four or so midpoints round it; so a building that takes a coarse vertex and every plot round it - a 3 x 3
+  block centred on one, a plus - had its door in its middle, and so did a house whose lowest plot its
+  NEIGHBOURS' houses closed in, which a block of houses painted in one go does all the time. A walk enters a
+  built plot only where it ends (`Walkers::EdgeOpen`), so nobody reached it: a family never moved into such
+  a house (HouseFamilies wants a way to the door), a workplace's empty places were never filled
+  (AssignJobs likewise), and a woodcutter's pick-ups at his hut failed. Found on a builders' hut painted as
+  a 3 x 10 block: the builders given places while it was small kept them, and a new one could not be
+  given one. The user had run into it too.
+  - **The door now** is the building's lowest plot that a walk from OUTSIDE can end on
+    (`Walkers::OpenFromOutside`: a neighbour with nothing built on it, or a passage, the edge from it open,
+    and behind it at least `WALKER_OPEN_GROUND` - 24 - plots of open ground joined together), and its lowest
+    plot only when no plot is. The open ground counts because a block of houses painted in one go leaves
+    a plot or two unbuilt inside it - a pocket nobody gets to, which the first version took for a way in.
+    So `Derive` takes the walkers, and so does `Economy::Restore`.
+  - **A door that moves takes the family with it.** Painting round a lived-in house moves its door, and
+    those indoors were left standing where it had been, shut in by the new building: "at home", so never
+    going out, and never fetching. Measured on seed 12 with a block of houses painted while the game ran:
+    the Wevers, moved in while their house was small, all died of thirst on day 5 without once going out.
+    Now anyone indoors is moved to the door whenever the zones change (`Economy::KeepAtDoors`), unseen,
+    and anyone walking home re-plans to the door as it is now (`Replan`, by `RouteHome`). The same run
+    then: nobody died, the Wevers fetched like everyone else, and two replays of a recording painted round
+    lived-in houses were the same.
+  - **SHUT IN** (the user's, same day): a building with no door at all - closed in on every side by other
+    buildings, walls or water - is flagged (`EconomyState::shut`, `EconomyShutIn`; worked out with the
+    door, never saved) so the flag can be used again later. A house shut in is UNINHABITABLE: no family
+    moves in (`HouseFamilies` - which also stops a family next door stepping in through the shared wall,
+    which the walk check alone let through). A family already living there keeps it; nobody can get them
+    out but the player. Its card says so - amber, "Uninhabitable: shut in on every side, with no way in";
+    red with a family inside, "...- its family cannot get out" - and `chasm_economy`/`chasm_pick` give
+    `shut_in`. Measured on seed 12: a 8 x 8 block of houses painted in one go made 15 houses, of which the
+    5 no route from the camp reaches were exactly the 5 flagged; none was moved into; erasing two plots of
+    the houses beside one gave it a door, and the flag and the warning went. A house boxed in round its
+    family showed the red warning. Stores, fields and the camp were never touched by doors (their goods go
+    to the nearest plot; a field's door is a cell's centre; a camp's people have their tents) - the flag is
+    set for a store or a workplace all the same, and nothing reads it there yet.
+
+## As built: step 2, births (2026-10-09)
+
+Files: `Economy.*` (BIRTHS in `Economy.h`; `Economy::Lifelines`, `Economy::ChancesOfChildren`, the settlers'
+couples and the expecting one in `MakeSettlers`), `ChasmSave.cpp`, `ApplicationChasmEconomy.cpp`,
+`ApplicationChasmSelect.cpp`, `ApplicationChasmIssues.cpp` (two house rows, `issues_plan.md` 9 and 10).
+
+- **A person keeps `partner` and `due`**, saved and hashed. The settler couples are partners from the start; one
+  settler mother, the seed's, is expecting, her child due between day 5 and day 20.
+- **Two more jobs of a stage of life**, below `WORKER_JOB_NONE` like playing (`EconomyStageJob`):
+  `WORKER_JOB_BABY` and `WORKER_JOB_CARING`. So the job hand-out passes both by, and a mother's place is filled
+  by the next free adult the moment she has her child.
+- **The chance**, at dawn after the fires (`ChancesOfChildren`), on the couple's day of the year
+  (`EconomyCoupleDay`): their own standing house, not the camp; not cold; neither short of food or water; both
+  adults and under 36; she not expecting nor caring, with fewer than 4 children, the dead counted
+  (`EconomyChildrenOf`). 1 in 2 with a place to spare in the house, 1 in 4 in a full one, drawn from the seed,
+  the mother and the year.
+- **The birth** waits for her to be home after the due tick (`Lifelines`), so she is never pulled from her
+  work: the baby at her side, indoors - in a camp, in her tent, which `KeepAtDoors` now leaves alone. A baby
+  does nothing at all, never goes for food or water itself, and is fed from the house's stock. Its skills are
+  random, as a settler's, until step 5.
+- **Caring**: home, but for the house's errands - she counts as idle for them, so the others leave them to her
+  (`FetchHome`), and a meal at a store brings a load home as anyone's does. She is free again once no baby of
+  hers is a baby: its first birthday, or its death.
+- **Shown**: "Wife of Siem" / "Husband of Anouk"; "Expecting - due in n days"; a baby's "In its mother's care -
+  a child in n days"; "Caring for her baby - back to work in n days"; job titles Baby and Caring; a swaddled-baby
+  badge for both; the house card's "Crowded - add a storey or a plot"; and NEEDS ATTENTION's HOUSE CROWDED and
+  HOUSE SHUT IN. `chasm_economy` gives a person's partner, `due_in_days`, a woman's `children` and the couple's
+  day, and the people's babies, expecting and caring.
+- **Measured** (seed 12, debug):
+  - The couples: Jelle and Kaat De Wit, Siem and Anouk Wever, Floris and Elin Veen. Anouk expecting, due day 8.
+  - She had her son, Thijs, on day 8, at home in their two-storey house; her job went to caring, and the
+    jobs were handed out again on that tick.
+  - The Veens' chance: on their day in year 1 it did not come up; in year 2 it did, and Elin was due 20 days
+    later.
+  - Thijs's first birthday: a child, playing, and Anouk free for a place again.
+  - A storey off the Wevers' house: holds 2, 5 living there - the crowded row and the card's line.
+  - Two replays of a 6,000-tick recording across Elin's birth: the same, tick for tick.
+- **A birth in the camp** (played by the user, same day): it works - but the camp was never supplied, so the
+  baby went dry with the settlers' water (a baby never goes for water itself). Now a camp's families fetch for it
+  like a house's (the user's choice; `needs_plan.md`, "A camp's own families"), and on seed 12 the baby born in
+  the camp on day 8 always had two to four days of water.
+- **Not checked by a run**: a mother dying while caring (the rule is in the same pass as the birthday), and the
+  4-children limit reached.

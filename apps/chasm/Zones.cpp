@@ -27,6 +27,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_FIELD_RAISE:   return "field_raise";
         case ZONE_OP_FIELD_LAND:    return "field_land";
         case ZONE_OP_FIELD_PRIORITY: return "field_priority";
+        case ZONE_OP_GATE_SHUT:     return "gate_shut";
         default:                   return "none";
     }
 }
@@ -1528,7 +1529,8 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = "no field there";
                 return false;
             }
-            if (kind < 0 || kind >= ZONE_CROP_COUNT){
+            //A crop, or AUTO: the player's, or the economy's once a field has waited too long (issues_plan.md).
+            if ((kind < 0 || kind >= ZONE_CROP_COUNT) && kind != ZONE_CROP_AUTO){
                 last_refusal = "no such crop";
                 return false;
             }
@@ -1794,6 +1796,39 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             break;
         }
+        case ZONE_OP_GATE_SHUT:{
+            /*
+                A gate's DOOR shut, or opened (defence_plan.md, step 3) - the player's, from the gate's card. A
+                road crossing a wall on the slant gates two plots side by side, one opening: every gate plot
+                joined to this one along fine edges goes with it, so a gate is never half shut.
+            */
+            if (plot < 0 || plot >= (int)state.gate.size() || !state.gate[plot]){
+                last_refusal = "no gate there";
+                return false;
+            }
+            uint8_t want = kind ? ZONE_GATE_SHUT : ZONE_GATE_OPEN;
+            if (state.gate[plot] == want){
+                return false;
+            }
+            std::vector<int> todo(1,plot);
+            while (!todo.empty()){
+                int v = todo.back();
+                todo.pop_back();
+                if (state.gate[v] == want){
+                    continue;
+                }
+                state.gate[v] = want;
+                touch_road(v);      //its door drawn again
+                int nb[8];
+                int n = ZonePlotNeighbours(w,v,nb,8);
+                for (int i = 0; i < n; i++){
+                    if (state.gate[nb[i]] && state.gate[nb[i]] != want){
+                        todo.push_back(nb[i]);
+                    }
+                }
+            }
+            break;
+        }
         default:
             last_refusal = "unknown zone op";
             return false;
@@ -1859,7 +1894,7 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
             continue;
         }
         state.buildings[b.id].kind = (uint8_t)b.kind;
-        bool f_crop = b.crop >= 0 && b.crop < ZONE_CROP_COUNT;
+        bool f_crop = (b.crop >= 0 && b.crop < ZONE_CROP_COUNT) || b.crop == ZONE_CROP_AUTO;
         state.buildings[b.id].crop = f_crop ? (uint8_t)b.crop : ZONE_CROP_NONE;
         bool f_next = (b.next_crop >= 0 && b.next_crop < ZONE_CROP_COUNT) || b.next_crop == ZONE_CROP_AUTO;
         state.buildings[b.id].next_crop = f_next ? (uint8_t)b.next_crop : ZONE_CROP_AUTO;
@@ -1890,13 +1925,14 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
     for (const ZoneSavedGround& gr : grounds){
         //A site goes back as a play paint would leave it; its line and gate as they were.
         bool f_site = (gr.kind & ZONE_GROUND_SAVED_SITE) != 0;
-        int kind = gr.kind & ~(ZONE_GROUND_SAVED_SITE | ZONE_GROUND_SAVED_GATE);
+        int kind = gr.kind & ~(ZONE_GROUND_SAVED_SITE | ZONE_GROUND_SAVED_GATE | ZONE_GROUND_SAVED_SHUT);
         if (!Apply(ZONE_OP_GROUND_PAINT,(uint32_t)gr.plot,kind,0,f_site)){
             refused++;
             continue;
         }
         state.line[gr.plot] = (ZoneLineGround(kind) && gr.line < state.buildings.size()) ? gr.line : 0;
-        state.gate[gr.plot] = (kind == ZONE_GROUND_ROAD && (gr.kind & ZONE_GROUND_SAVED_GATE)) ? 1 : 0;
+        state.gate[gr.plot] = (kind != ZONE_GROUND_ROAD || !(gr.kind & ZONE_GROUND_SAVED_GATE)) ? ZONE_GATE_NONE
+                            : (gr.kind & ZONE_GROUND_SAVED_SHUT) ? ZONE_GATE_SHUT : ZONE_GATE_OPEN;
     }
     for (const ZoneSavedBuilding& b : buildings){
         if (b.kind == ZONE_KIND_FIELD || b.id == 0 || state.buildings[b.id].kind == ZONE_KIND_NONE){

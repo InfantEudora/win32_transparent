@@ -302,6 +302,10 @@ void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
 #define WALL_GATE_POST_W    0.26f
 #define WALL_GATE_HEIGHT    1.80f   //the gate posts, and the top of the crossbeam between them
 #define WALL_GATE_BEAM      0.18f
+#define WALL_DOOR_HEIGHT    1.42f   //a gate's door's logs (defence_plan.md): over the palisade's, under the beam
+#define WALL_DOOR_LOG_W     0.15f
+#define WALL_DOOR_BATTEN    0.21f   //the battens across a leaf: wider than its logs, so they show either side
+#define WALL_DOOR_GAP       0.03f   //between the two leaves of a shut door
 #define WALL_STAKE_HEIGHT   0.95f   //a planned wall's stake: taller than a road's, so the two read apart
 #define WALL_STAKE_TIE      0.70f
 
@@ -414,10 +418,37 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
     }
 }
 
+//A gate door's leaf: sharpened logs from `hinge` to `end` on the gate's ground level, and two battens across.
+void DoorLeaf(const ChasmWorld& w, float level, const vec2& hinge, const vec2& end, int g, int leaf,
+              std::vector<vertex>& out){
+    float len = (end - hinge).length();
+    if (len < WALL_DOOR_LOG_W){
+        return;
+    }
+    int logs = std::max(1,(int)std::lround(len / WALL_LOG_SPACING));
+    float lowest = 1e30f;
+    for (int i = 0; i < logs; i++){
+        vec2 at = hinge + (end - hinge) * (((float)i + 0.5f) / logs);
+        float y0 = w.terrain->GroundHeight(at,level);
+        lowest = std::min(lowest,y0);
+        float jitter = (float)(MeshHash((uint32_t)g,(uint32_t)(leaf + 16),(uint32_t)i) % 100) / 100.0f;
+        Log(out,at,y0,WALL_DOOR_HEIGHT + jitter * WALL_LOG_JITTER * 0.5f,WALL_DOOR_LOG_W,PAL_TIMBER);
+    }
+    vec2 a = hinge + (end - hinge) * (0.5f / logs);
+    vec2 b = end - (end - hinge) * (0.5f / logs);
+    for (float h : {0.32f,1.02f}){
+        Bar(out,vec3(a.x,lowest + h,a.y),vec3(b.x,lowest + h,b.y),WALL_DOOR_BATTEN * 0.45f,PAL_BARK_DARK);
+    }
+}
+
 /*
     A GATE - a road plot a wall runs through (ZoneState::gate): a crossbeam over the road from jamb to jamb,
     the posts the walls either side end in. Only once every wall beside it stands, so the beam never hangs
     from a post not there yet.
+    Its DOOR (defence_plan.md, step 3): a leaf from each jamb to the gate's middle. SHUT, the leaves meet
+    there across the road; OPEN, each is swung back about its jamb to lie along the road - both to the same
+    side of the wall, by a fixed direction, so the two of a gate never fold opposite ways. Between the two plots
+    of a gate on the slant there is no jamb: shut, the leaves run on to their meeting; open, nothing hangs there.
 */
 void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<vertex>& out){
     const std::vector<vec2>& pos = w.grid->fine.pos;
@@ -442,10 +473,33 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
     const vec2 c = pos[g];
     if (n == 2){
         Bar(out,top((c + pos[nb[0]]) * 0.5f),top((c + pos[nb[1]]) * 0.5f),WALL_GATE_BEAM,PAL_BARK_DARK);
-        return;
+    }else{
+        for (int i = 0; i < n; i++){
+            Bar(out,top(c),top((c + pos[nb[i]]) * 0.5f),WALL_GATE_BEAM,PAL_BARK_DARK);
+        }
     }
+    bool f_shut = ZoneGateShut(z,g);
     for (int i = 0; i < n; i++){
-        Bar(out,top(c),top((c + pos[nb[i]]) * 0.5f),WALL_GATE_BEAM,PAL_BARK_DARK);
+        vec2 mid = (c + pos[nb[i]]) * 0.5f;
+        vec2 in = c - mid;
+        float half = in.length();
+        if (half < 1e-4f){
+            continue;
+        }
+        in = in * (1.0f / half);
+        bool f_jamb = z.ground[nb[i]] == ZONE_GROUND_WALL;
+        //From the jamb's inner face - or, with no jamb, from the meeting with the next plot's leaf.
+        vec2 hinge = mid + in * (f_jamb ? WALL_GATE_POST_W * 0.5f : 0.0f);
+        float reach = half - (f_jamb ? WALL_GATE_POST_W * 0.5f : 0.0f) - WALL_DOOR_GAP * 0.5f;
+        if (f_shut){
+            DoorLeaf(w,level,hinge,hinge + in * reach,g,i,out);
+        }else if (f_jamb){
+            vec2 side(-in.y,in.x);
+            if (side.x * 0.6f + side.y * 0.8f < 0.0f){
+                side = side * -1.0f;
+            }
+            DoorLeaf(w,level,hinge + side * (WALL_DOOR_LOG_W * 0.6f),hinge + side * (WALL_DOOR_LOG_W * 0.6f + reach),g,i,out);
+        }
     }
 }
 

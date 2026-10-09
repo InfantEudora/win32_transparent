@@ -48,6 +48,10 @@ void ApplicationChasm::TickEconomy(){
     for (int cell : economy.FieldRaises()){
         f_raised = zones.Apply(ZONE_OP_FIELD_RAISE,(uint32_t)cell) || f_raised;
     }
+    //A field that waited its day for a crop: it starts with AUTO (issues_plan.md).
+    for (int cell : economy.CropDefaults()){
+        f_raised = zones.Apply(ZONE_OP_FIELD_CROP,(uint32_t)cell,ZONE_CROP_AUTO) || f_raised;
+    }
     if (f_raised){
         PublishZones();
     }
@@ -80,9 +84,11 @@ void ApplicationChasm::HashEconomy(StateHash& h){
                           (int32_t)k.f_indoors,(int32_t)k.f_female};
         h.Bytes(who,sizeof(who));
         h.Bytes(&k.born,sizeof(k.born));
+        h.Bytes(&k.partner,sizeof(k.partner));
+        h.Bytes(&k.due,sizeof(k.due));
         h.Bytes(k.skills,sizeof(k.skills));
-        int32_t head[11] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
-                            (int32_t)k.site,k.stint};
+        int32_t head[12] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
+                            (int32_t)k.site,k.stint,k.post};
         h.Bytes(head,sizeof(head));
         h.Bytes(&k.along,sizeof(k.along));
         h.Bytes(&k.pos,sizeof(k.pos));
@@ -92,6 +98,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(k.speed.data(),k.speed.size() * sizeof(float));
         int32_t needs[2] = {k.health,k.water};
         h.Bytes(needs,sizeof(needs));
+        h.Bytes(k.pack.data(),sizeof(int) * GOOD_COUNT);     //his pack (defence_plan.md)
     }
     //The dead (needs_plan.md): who, when, of what.
     n = (uint32_t)e.dead.size();
@@ -101,7 +108,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(death,sizeof(death));
     }
     for (const EconomyField& f : e.fields){
-        int32_t pair[8] = {(int32_t)f.building,f.crop,f.grown,(int32_t)f.f_sown,f.yield,f.last,(int32_t)f.owner,f.frost};
+        int32_t pair[9] = {(int32_t)f.building,f.crop,f.grown,(int32_t)f.f_sown,f.yield,f.last,(int32_t)f.owner,f.frost,f.wait};
         h.Bytes(pair,sizeof(pair));
     }
     n = (uint32_t)e.site.size();
@@ -115,9 +122,12 @@ void ApplicationChasm::HashEconomy(StateHash& h){
 }
 
 /*
-    The economy's one command: a person's health and water set - the debug panel's villager list and the
-    tool's set_needs, for putting a colony on the edge without waiting days for it. RECORDED, like the
-    date command, since it changes simulation state and a replay must make the same edit on the same tick.
+    The economy's commands, RECORDED like the date command, since they change simulation state and a replay
+    must make the same change on the same tick:
+      - a person's health and water set - the debug panel's villager list and the tool's set_needs, for
+        putting a colony on the edge without waiting days for it;
+      - an ORDER (defence_plan.md): a person sent to stand on a plot - his post, which is then his job - or
+        released from it. A refused one says why on the play overlay, as a refused placement does.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
     main_scene->RegisterCommandHandler(CHASM_CMD_NEEDS,
@@ -128,6 +138,30 @@ void ApplicationChasm::RegisterEconomyCommands(){
             needs_commands_done++;
             return OBJECTID_INVALID;
         });
+    main_scene->RegisterCommandHandler(CHASM_CMD_ORDER,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+}
+
+void ApplicationChasm::SubmitOrder(uint32_t person, int plot){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_ORDER;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    cmd.value[0] = (float)plot;     //a plot index, well inside a float's exact integers
+    main_scene->SubmitCommand(cmd);
 }
 
 void ApplicationChasm::SubmitNeeds(uint32_t person, int health, int water){
@@ -173,6 +207,7 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     json j{{"id",k.id},{"name",EconomyPersonName(k)},{"family",k.family},{"house",k.house},
            {"age",EconomyAgeAt(k.born,tick)},{"stage",EconomyStageName(EconomyStageAt(k.born,tick))},
            {"birthday",EconomyBirthdayName(k.born)},{"born",k.born},{"mother",k.mother},{"father",k.father},
+           {"partner",k.partner},
            {"female",k.f_female},
            {"skills",skills},{"indoors",EconomyIndoors(k)},
            {"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
@@ -185,6 +220,17 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     }
     if (e && EconomyCold(*e,k)){
         j["cold"] = true;       //his home under the snow with no fire today (needs_plan.md, step 3)
+    }
+    //BIRTHS: expecting (and in how many days the child is due - 0 once it is, until she is home), her children,
+    //and the couple's day of the year for its chance.
+    if (k.due){
+        j["due_in_days"] = std::max(0.0,std::round(((double)k.due - (double)tick) * 100.0 / CALENDAR_DAY_TICKS) / 100.0);
+    }
+    if (k.f_female && e){
+        j["children"] = EconomyChildrenOf(*e,k.id);
+    }
+    if (k.partner){
+        j["couple_day"] = EconomyCoupleDay(k.id,k.partner);
     }
     if (k.carry > 0){
         j["carrying"] = json{{GoodName(k.carry_good),k.carry}};
@@ -203,6 +249,22 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     }else if (k.site){
         j["site"] = k.site;
     }
+    //His post (defence_plan.md): the plot he was sent to, where it is, and whether he stands there now.
+    if (k.post >= 0 && e && e->world && k.post < (int)e->world->grid->fine.pos.size()){
+        vec2 p = e->world->grid->fine.pos[k.post];
+        j["post"] = json{{"plot",k.post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e->world,k)}};
+    }
+    //His pack: what he carries to live on, by good, and its food in days.
+    json pack = json::object();
+    for (int g = 0; g < GOOD_COUNT; g++){
+        if (k.pack[g] > 0){
+            pack[GoodName(g)] = k.pack[g];
+        }
+    }
+    if (!pack.empty()){
+        pack["food_days"] = std::round(EconomyPackFood(k) * 100.0 / CALENDAR_DAY_TICKS) / 100.0;
+        j["pack"] = pack;
+    }
     return j;
 }
 
@@ -216,6 +278,10 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         return nullptr;
     }
     json j{{"stock",StockJson(*e,id)}};
+    //No door: no plot of it can be walked onto from open ground (EconomyShutIn) - a house so is uninhabitable.
+    if (EconomyShutIn(*e,id)){
+        j["shut_in"] = true;
+    }
     //A construction site: the wood its planned storeys take, what has been brought, who carries for it.
     int site_wood = EconomySiteWood(*z->world,*z,id);
     if (site_wood > 0){
@@ -550,7 +616,11 @@ void ApplicationChasm::RegisterEconomyTools(){
         "`priority` shows in `sites`. op set_needs: person `person`'s health_days and/or water_days (held to their bars) "
         "set - a RECORDED debug edit (CHASM_CMD_NEEDS), the panel's villager list's. It lands before the "
         "tick's eating, so someone at home with food and water tops straight back up; health 0 kills only "
-        "someone who cannot eat on that tick. include_screenshot as elsewhere.",
+        "someone who cannot eat on that tick. op order: person `person` is sent to the plot at x,z (or "
+        "`plot`) and stands there - his post, now his job (docs/defence_plan.md); op release: he leaves it "
+        "and goes back to his work. Both RECORDED (CHASM_CMD_ORDER), the right click's and the card's; "
+        "`refusal` says why one was refused (a child, nowhere open to stand, no way there). A worker's "
+        "`post` shows where and whether he is there. include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
@@ -560,7 +630,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"plot",{{"type","integer"}}},
                 {"goods",{{"type","array"},{"items",{{"type","string"}}}}},
                 {"on",{{"type","boolean"}}},
-                {"person",{{"type","integer"},{"description","set_needs: the person's id"}}},
+                {"person",{{"type","integer"},{"description","set_needs, order, release: the person's id"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
                 {"include_screenshot",{{"type","boolean"}}},
@@ -633,6 +703,34 @@ void ApplicationChasm::RegisterEconomyTools(){
                 uint32_t before = needs_commands_done.load();
                 SubmitCommandAndWait(cmd);
                 result["ran"] = needs_commands_done.load() != before;
+            }else if (op == "order" || op == "release"){
+                int plot = -1;
+                if (op == "order"){
+                    plot = args.value("plot",-1);
+                    if (plot < 0 && args.contains("x") && args.contains("z")){
+                        GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
+                        plot = p.f_hit ? p.plot : -1;
+                    }
+                    if (plot < 0){
+                        return json{{"error","order: no plot at x,z (or give `plot`)"}};
+                    }
+                }
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_ORDER;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)args.value("person",0);
+                cmd.value[0] = (float)plot;
+                uint32_t before = order_commands_done.load();
+                uint32_t refused = order_refusals.load();
+                SubmitCommandAndWait(cmd);
+                result["ran"] = order_commands_done.load() != before;
+                std::string refusal;
+                if (order_refusals.load() != refused){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = order_last_refusal;
+                }
+                result["refusal"] = refusal;
+                result["plot"] = plot;
             }
             std::shared_ptr<const EconomyState> e = GetEconomy();
             std::shared_ptr<const ZoneState> z = GetZones();
@@ -782,13 +880,23 @@ void ApplicationChasm::RegisterEconomyTools(){
             int housed = 0;
             int employed = 0;
             int playing = 0;
+            int posted = 0;
+            int babies = 0;
+            int expecting = 0;
+            int caring = 0;
             for (const EconomyWorker& k : e->workers){
                 housed += k.house ? 1 : 0;
                 employed += (k.job >= 0) ? 1 : 0;
                 playing += (k.job == WORKER_JOB_PLAYING) ? 1 : 0;
+                posted += (k.post >= 0) ? 1 : 0;
+                babies += (k.job == WORKER_JOB_BABY) ? 1 : 0;
+                expecting += k.due ? 1 : 0;
+                caring += (k.job == WORKER_JOB_CARING) ? 1 : 0;
             }
+            //Posted (defence_plan.md): standing at a post; a job they had still counts in `working`, its place kept.
             result["people"] = json{{"total",e->workers.size()},{"housed",housed},{"working",employed},
-                                    {"children",playing},{"camp_plot",e->camp_plot}};
+                                    {"children",playing},{"babies",babies},{"expecting",expecting},{"caring",caring},
+                                    {"posted",posted},{"camp_plot",e->camp_plot}};
             //Per job, who works it and its places - the overview's figures (builders_plan.md).
             EconomyJobCount counts[WORKER_JOB_COUNT];
             int jobless = 0;

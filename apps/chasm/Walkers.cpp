@@ -109,8 +109,9 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
         return false;
     }
     //A standing palisade is never walked onto, nor through; off one only by someone the builders raised
-    //it round, where his walk starts (Zones.h, WALLS). A gate is road, and open.
-    if (ZoneWallStands(z,b) || (ZoneWallStands(z,a) && a != from)){
+    //it round, where his walk starts (Zones.h, WALLS). A gate is road, and open - unless its door is shut
+    //(defence_plan.md), when it is the palisade's: off it only for someone it was shut on.
+    if (ZoneShutToWalkers(z,b) || (ZoneShutToWalkers(z,a) && a != from)){
         return false;
     }
     //A garden's wall or a lot's fence is crossed at its gate and nowhere else.
@@ -237,4 +238,42 @@ bool Walkers::PlanRoute(const ZoneState& z, int from, int to, std::vector<int>& 
         speeds.push_back(EdgeSpeed(z,plots[i],plots[i + 1]));
     }
     return !plots.empty();
+}
+
+/*
+    No walk starts on the neighbour (`from` -1), so a built one is shut, as it is to anyone passing. Behind an
+    open one, the open ground is walked out over - by the same edges, never onto a built plot - only until there
+    is enough of it, so a door costs a few dozen plots looked at, not the map. Each pocket is walked once.
+*/
+bool Walkers::OpenFromOutside(const ZoneState& z, int v){
+    if (!world || world != z.world){
+        return false;
+    }
+    EnsureGraph();
+    EnsureLinks(z);
+    if (!graph || v < 0 || v + 1 >= (int)graph->start.size()){
+        return false;
+    }
+    std::vector<int> seen;
+    for (int i = graph->start[v]; i < graph->start[v + 1]; i++){
+        int n = graph->next[i];
+        if (!EdgeOpen(z,n,v,-1,v) || std::find(seen.begin(),seen.end(),n) != seen.end()){
+            continue;
+        }
+        size_t first = seen.size();
+        seen.push_back(n);
+        for (size_t q = first; q < seen.size() && seen.size() - first < WALKER_OPEN_GROUND; q++){
+            int a = seen[q];
+            for (int j = graph->start[a]; j < graph->start[a + 1]; j++){
+                int b = graph->next[j];
+                if (b != v && std::find(seen.begin(),seen.end(),b) == seen.end() && EdgeOpen(z,a,b,-1,-1)){
+                    seen.push_back(b);
+                }
+            }
+        }
+        if (seen.size() - first >= WALKER_OPEN_GROUND){
+            return true;
+        }
+    }
+    return false;
 }

@@ -37,6 +37,7 @@
 #define WALKER_SLOPE_COST       3.0f    //speed divided by 1 + this x the grade (rise over run)
 #define WALKER_STEEPEST         0.75f   //rise over run past which an edge cannot be walked at all
 #define WINCH_RIDE_SECONDS      5.0f    //from the rim down to the balcony, or up
+#define WALKER_OPEN_GROUND      24      //plots of open ground, joined, that make OUTSIDE; fewer, closed in by buildings, are a yard
 
 /*
     The plot graph of one world: CSR adjacency of the fine level, with each edge's length. Built once
@@ -59,6 +60,13 @@ public:
         order, both ends included, and each edge's speed. False, and both empty, when there is no way.
     */
     bool PlanRoute(const ZoneState& z, int from, int to, std::vector<int>& plots, std::vector<float>& speeds);
+    /*
+        Whether a walk can end on plot `v` from OUTSIDE: a neighbour with nothing built on it (or a passage),
+        the edge from it into `v` open, and behind it at least WALKER_OPEN_GROUND plots of open ground joined
+        together - not a pocket a block of buildings closed in, which nobody gets to. What makes a building's
+        plot its door (Economy::Derive); with none, the building is shut in (EconomyShutIn).
+    */
+    bool OpenFromOutside(const ZoneState& z, int v);
 
 private:
     std::shared_ptr<const ChasmWorld> world;

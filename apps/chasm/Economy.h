@@ -37,6 +37,13 @@ class Walkers;
     and firewood (ECONOMY_HOUSE_KEEPS, `keeps`) - shared out on a split like a store's. Its family eats
     and drinks from it (NEEDS, below). It is not in `accepts`: no carrier delivers to a house - its own
     family fetches (needs_plan.md, step 2).
+    WHOSE IT IS (the user's, 2026-10-09): a home's own goods are its family's alone while anyone lives
+    there, and anyone's - a store's, in effect - the moment nobody does (Economy::PrivateStock). A CAMP
+    holds two stocks: its SUPPLIES (`stock`), the settlers' and the colony's whoever lives there, and its
+    LARDER (`larder`), what its families fetch home, theirs alone as a house's is - with a house's room
+    and woodshed. Its people eat, drink and burn from the larder first, then the supplies. When the last
+    of them leaves, the larder joins the supplies at once (Economy::OpenLarders); a camp pulled down
+    loses both.
 
     --- PEOPLE (docs/people_plan.md, P4) ---------------------------------------------------------------
     The colony is the SETTLERS it starts with - three families, each a couple with grown children and some
@@ -79,7 +86,8 @@ class Walkers;
         DOOR: wood is put on the pile and taken off it from the hut plot beside it (`pile_door`), the way
         he always came home to his hut - nobody walks into the yard.
       - A FIELD (fields_plan.md) is EMPTY until a farmer of its land SOWS it - with its starting crop,
-        chosen by the player, then with its next crop, AUTO by default (EconomyFieldSowCrop) - a while a
+        chosen by the player (AUTO once it has stood a day without one: ECONOMY_CROP_GRACE, issues_plan.md),
+        then with its next crop, AUTO by default (EconomyFieldSowCrop) - a while a
         cell at his pace (ECONOMY_SOW_SECONDS); sowing comes before anything else he does - but never in
         winter or under snow, and only a crop that ripens before the FROST (EconomyFieldSowNow). Sown, it grows
         while its share of the land has a farmer, whenever it is not winter and not under snow (Calendar.h),
@@ -141,12 +149,12 @@ class Walkers;
     whole units, so what a food is worth is the health it gives (EconomyFoodWorth) - beans most, greens
     least. With the water bar empty he is DRY: health falls faster (NEEDS_DRY_DRAIN) and food no longer
     raises it, so eating cannot outrun thirst. He eats and drinks AT HOME, from his house's stock or his
-    camp's supplies, and only a whole unit that fits under full, so nothing is wasted - of the foods that
+    camp's larder and then its supplies, and only a whole unit that fits under full, so nothing is wasted - of the foods that
     fit, the one that keeps worst first. Every figure here is TUNING, not a rule (needs_plan.md, "Current
     tuning"). A PRESSING NEED (EconomyPressing: water or health below NEEDS_PRESSING_*)
     that his home cannot meet stops him taking on more work: he finishes what he is doing and goes to the
-    nearest place that has it - a store, the camp's supplies, a collector or a field's harvest, never
-    another family's house - and eats and drinks there as he would at home (the user's: you would not
+    nearest place that has it - a store, the camp's supplies, a collector, a field's harvest or a house
+    nobody lives in, never a lived-in house - and eats and drinks there as he would at home (the user's: you would not
     necessarily drink at home). Health at nothing, he dies: struck from the colony and written into
     `dead`. Nobody leaves and nobody arrives, so a colony that cannot feed itself dies out - the first
     way to lose.
@@ -155,8 +163,10 @@ class Walkers;
     from the nearest store or camp with some to spare (the camp's supplies are the colony's, the user's).
     An idle member goes first; one with a job only between rounds, with no jobless member home to go
     instead; one errand a house at a time, and before wood for a site. Someone eating at a store or the
-    camp on a pressing need brings a load home with him. A camp's own families do not fetch - its supplies
-    are what the settlers brought, and running short of them is the reason to build houses.
+    camp on a pressing need brings a load home with him. A CAMP's families fetch for it the same way (the
+    user's, 2026-10-09; before, they did not, and a baby born there went dry with the settlers' supplies) -
+    into its LARDER (STORES, above), with a room and a woodshed by its floor area - but never from its own
+    supplies, which count as what it holds. A house nobody lives in is fetched from like a store.
     HEAT (step 3, the user's 2026-10-08): at each dawn every INHABITED home under the snow - a house or a camp
     - burns its firewood, ECONOMY_FIREWOOD_BURN a plot-storey, from its own stock, and is WARM that day
     (`heat`, saved); with too little it burns none and its family is COLD that day: health falls faster
@@ -169,6 +179,20 @@ class Walkers;
     colony's firewood at home, shared evenly over every such house's burning, and ECONOMY_FAIR_DAYS more (as
     food's, at home only - the user's). No wood is kept back for building sites: by autumn the building is
     meant to be done.
+
+    --- POSTS (docs/defence_plan.md) -------------------------------------------------------------------
+    An ORDER sends a person to stand on a plot - his POST, which is his job while it lasts. He drops what he
+    was doing for it on the spot (a load on him is LOST, until crates come to hold it; a storey he was
+    putting up stands with what it has) and walks there; he does not go home, run errands or build. His needs
+    are anyone's: a pressing one sends him to the nearest supply - his own house one of them, by its distance
+    - and then back to the post. Cut off from it, he waits where he is and tries again, as someone cut off
+    from home does. A job he had is KEPT: its place is his and stands idle - a collector does not fill, his
+    share of a field does not grow - and released, he goes back to it; a jobless one is given none until
+    then. Posted people are out of the staffing altogether (AssignJobs). Children cannot be sent.
+    His PACK is what he takes along to live on: water and food, apart from any load (NEEDS_PACK_*). Filled
+    from his home's larder when he sets out from home, and topped up at every supply trip; eaten from as he
+    would eat at home, a whole unit whenever it fits, so his bars stay up while it lasts and a pressing need
+    comes only once it is empty. Home again after he is released, it goes back into the larder.
 
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
@@ -200,11 +224,13 @@ class Walkers;
 #define ECONOMY_FIELD_WOOD_PER_CELL 2       //a field site's, a coarse cell (fields_plan.md, the user's 2)
 #define ECONOMY_SOW_SECONDS         3.0f    //sowing a cell of a field, at the farmer's pace
 #define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
+#define ECONOMY_CROP_GRACE          (CALENDAR_DAY_TICKS)    //a field built with no crop waits this long for one, then starts with AUTO (issues_plan.md)
 #define ECONOMY_FAIR_DAYS           1       //a house keeps its land's food only while less than this a head ahead of the colony's average
 #define ECONOMY_QUEUE_SLACK         8.0f    //errands this much longer than the shortest still go in placing order: ~4 plots
 #define ECONOMY_LAY_SECONDS         4.0f    //laying a road plot, at the worker's pace
 #define ECONOMY_ROAD_STINT          8       //pieces of road work - a tree felled, a plot laid - a trip
 #define ECONOMY_ROAD_REACH          10.0f   //how far from him the next piece of a stint may be
+#define ECONOMY_POST_REACH          0.5f    //within this of his post's point he stands on it (defence_plan.md)
 //A worker's `site` naming a garden or lot plot rather than a building (the plot in the low bits).
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
@@ -232,6 +258,8 @@ inline int EconomyGroundSitePlot(uint32_t site){ return (int)(site & ~ECONOMY_SI
 #define ECONOMY_FIREWOOD_BURN       1                           //wood a home under the snow burns at dawn, a plot-storey
 #define ECONOMY_WOODSHED_DAYS       4                           //a house's room for firewood, apart from its food and water's: days of burning
 #define NEEDS_COLD_DRAIN            1                           //health lost a tick more while cold
+#define NEEDS_PACK_WATER            3                           //a posted person's PACK (POSTS): units of water
+#define NEEDS_PACK_FOOD             (3 * CALENDAR_DAY_TICKS)    //...and food, by the health it gives: a provision's worth
 //The health a unit of food gives - beans most, then wheat, greens least (the user's order; the amounts are
 //tuning); 0 for no food.
 int EconomyFoodWorth(int good);
@@ -263,6 +291,11 @@ const char* SkillName(int skill);
 #define WORKER_JOB_COUNT        4
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
+#define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
+#define WORKER_JOB_CARING       -4      //its mother, that year: at home but for the house's errands
+inline bool EconomyStageJob(int job){
+    return job < WORKER_JOB_NONE;
+}
 
 //Where a worker is in his round. Never renumber.
 #define WORKER_AT_HOME          0       //at his house (or the camp), waiting for something to do
@@ -288,6 +321,8 @@ const char* SkillName(int skill);
 #define WORKER_SOWING           20      //sowing it (timer)
 #define WORKER_TO_PLAY          21      //a child walking out to play, a plot or two from home
 #define WORKER_PLAYING          22      //playing there (timer), then home
+#define WORKER_TO_POST          23      //posted (defence_plan.md): walking to his post
+#define WORKER_ON_POST          24      //standing on it - or cut off from it, waiting where he is for a way
 
 /*
     LIFELINES (docs/lifeline_plan.md, step 1). A person is BORN on a calendar tick - a settler before the
@@ -315,6 +350,25 @@ int EconomyBirthday(int64_t born);
 std::string EconomyBirthdayName(int64_t born);      //"summer 4"
 
 /*
+    BIRTHS (step 2). A COUPLE (`partner`; the settlers' couples from the start) has one chance a year of a
+    child, at dawn on the couple's own day of the year (EconomyCoupleDay) - in a house of their own, warm that
+    day, both fed, both adults and neither old, she neither expecting nor caring, and her children so far, the
+    dead too, fewer than LIFE_CHILDREN_MOST. A house with a place to spare makes it likelier (the user's). A
+    chance that comes up makes her EXPECTING (`due`); she works on, and the child is born the first time she
+    is home after it is due - a BABY (WORKER_JOB_BABY), indoors in its mother's care for its first year, while
+    she is CARING (WORKER_JOB_CARING): her place goes to someone else at once, and she stays home but for the
+    house's errands, which she runs like anyone without a job. On its first birthday it is a child, and she is
+    free for a place again - as she is if it dies. Tuning, like the stages (lifeline_plan.md).
+*/
+#define LIFE_EXPECTING_TICKS    (CALENDAR_YEAR_TICKS / 2)          //from the chance to the birth (the user's)
+#define LIFE_CHILDREN_MOST      4                                   //a mother's children, a settler's counted
+#define LIFE_OLD_TICKS          (CALENDAR_YEAR_TICKS * 36)         //no more once either is this old (old age itself: step 4)
+#define LIFE_BIRTH_ROOM         50      //percent a year, with a place to spare in the house
+#define LIFE_BIRTH_FULL         25      //...and with none
+//A couple's day of the year for its chance (0 - 39), the same whichever of them is asked.
+int EconomyCoupleDay(uint32_t a, uint32_t b);
+
+/*
     A PERSON, and what he is doing. Who he is: an id (from 1, never reused), a family, the house the
     family lives in (0: at the camp), when he was born and to whom, his base skills. What he does: his job
     and its workplace, and where he is in his round.
@@ -326,7 +380,9 @@ struct EconomyWorker{
     int64_t born = 0;           //the calendar tick he was born on (LIFELINES)
     uint32_t mother = 0;        //person ids - 0 for a settler couple's own parents, who never came
     uint32_t father = 0;
-    bool f_female = false;      //picks his - or her - figure and first name; births will want it too
+    uint32_t partner = 0;       //his wife or her husband (BIRTHS), 0 none
+    uint64_t due = 0;           //expecting: the tick her child is due, 0 not
+    bool f_female = false;      //picks his - or her - figure and first name, and which of a couple has the child
     uint8_t skills[SKILL_COUNT] = {};
     uint32_t building = 0;      //his workplace, 0 none - a farmer's is his house (or camp), whose land he farms
     int job = WORKER_JOB_NONE;
@@ -351,7 +407,16 @@ struct EconomyWorker{
     bool f_indoors = false;     //in his house (or tent): arrived home, and not set out since
     int health = NEEDS_HEALTH_FULL;     //ticks of life left (NEEDS, above)
     int water = NEEDS_WATER_FULL;       //ticks until he is dry
+    int post = -1;                      //his POST (above): the plot he was sent to stand on, -1 none
+    std::array<int,GOOD_COUNT> pack = {};   //his PACK (POSTS): water and food he carries for himself, by good
 };
+
+//Standing on his post (ECONOMY_POST_REACH), rather than on his way to it or cut off from it.
+bool EconomyAtPost(const ChasmWorld& w, const EconomyWorker& k);
+//Old enough to be sent to a post: a young adult or older (LIFELINES).
+bool EconomyCanOrder(const EconomyWorker& k, uint64_t tick);
+//The food in his pack, by the health it gives (ticks).
+int EconomyPackFood(const EconomyWorker& k);
 
 //Dry: his water bar empty - losing health faster (NEEDS_DRY_DRAIN), and food doing him no good.
 inline bool EconomyDry(const EconomyWorker& k){
@@ -396,12 +461,14 @@ struct EconomyField{
     int last = -1;              //the crop last harvested, -1 none yet
     uint32_t owner = 0;         //whose land it is: a house or the camp, 0 none yet (land_plan.md)
     int frost = -1;             //the crop the last frost took (EconomyGrowingTicksLeft), -1 none - until it is sown again
+    int wait = 0;               //ticks it has stood built and never sown with no starting crop, 0 not waiting (ECONOMY_CROP_GRACE)
 };
 
 struct EconomyState{
     std::shared_ptr<const ChasmWorld> world;
-    std::vector<std::array<int,GOOD_COUNT>> stock;     //by building id
-    std::vector<uint8_t> prop_state;                    //by prop index (ForestData::props)
+    std::vector<std::array<int,GOOD_COUNT>> stock;     //by building id - a camp's: its SUPPLIES
+    std::vector<std::array<int,GOOD_COUNT>> larder;    //by building id: a camp's LARDER, its families' own (STORES)
+    std::vector<uint8_t> prop_state;                   //by prop index (ForestData::props)
     std::vector<EconomyWorker> workers;                 //THE PEOPLE, in id order
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;                     //in the order they died
@@ -421,6 +488,7 @@ struct EconomyState{
     std::vector<int> burn;                              //a house's or camp's firewood a dawn under the snow
     std::vector<int> woodshed;                          //a house's room for firewood
     std::vector<uint8_t> snowed;                        //a house the full winter's snow reaches: it fetches firewood
+    std::vector<uint8_t> shut;                          //by building id: SHUT IN, no door (EconomyShutIn)
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
     uint64_t tick = 0;                                  //the calendar's at its last tick or load: what ages are read at
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
@@ -437,9 +505,24 @@ inline bool EconomyCold(const EconomyState& e, const EconomyWorker& k){
     return k.house < e.heat.size() && e.heat[k.house] == HEAT_COLD;
 }
 
+/*
+    SHUT IN: none of a building's plots can be walked onto from open ground - it is closed in on every side by
+    other buildings, walls or water - so it has no door (Economy::Derive, Walkers::OpenFromOutside). A house
+    shut in is UNINHABITABLE: no family moves in, and one already living there cannot get out until a plot
+    beside it is cleared. Worked out from the zones, never saved; set for every kind of building, so a
+    workplace or a store can ask it too.
+*/
+inline bool EconomyShutIn(const EconomyState& e, uint32_t id){
+    return id < e.shut.size() && e.shut[id] != 0;
+}
+
+//A mother's children so far (BIRTHS), the living and the dead.
+int EconomyChildrenOf(const EconomyState& e, uint32_t mother);
+
 //As a save holds it.
 struct EconomySaved{
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> stocks;    //non-empty ones only
+    std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> larders;   //camps' (STORES), non-empty ones only
     std::vector<std::pair<int,int>> props;              //felled props: index, state
     std::vector<EconomyWorker> workers;
     std::vector<EconomyField> fields;
@@ -460,13 +543,19 @@ public:
     //share their stock), grow and fill, and move every worker one tick on. `walkers` plans the routes.
     void Tick(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick, float dt);
 
-    //`calendar_tick` the save's, which its people's ages are read against.
+    //`calendar_tick` the save's, which its people's ages are read against; `walkers` finds the doors.
     void Restore(std::shared_ptr<const ChasmWorld> world, const EconomySaved& saved, const ZoneState& z,
-                 uint64_t calendar_tick);
+                 Walkers& walkers, uint64_t calendar_tick);
     //A debug edit (the panel's villager list, CHASM_CMD_NEEDS): a person's health and water in ticks, each
     //held to its bar; -1 leaves one as it is. Applied before the tick's needs, so someone at home with food
     //and water eats and drinks straight back up; health 0 kills only someone who cannot. False with no such person.
     bool SetNeeds(uint32_t person, int health, int water);
+    /*
+        An ORDER (POSTS, CHASM_CMD_ORDER): person `person` sent to stand on `plot`, or released from his post
+        with -1. Applied between ticks, like SetNeeds; what he was doing he drops on the tick that follows. False,
+        and `why` says it, if refused: nobody by that id, a child, nothing open to stand on, no way there.
+    */
+    bool Order(uint32_t person, int plot, const ZoneState& z, Walkers& walkers, std::string* why);
     EconomySaved Save() const;          //EconomySaveState of the live state
     const EconomyState& State() const { return state; }
     //The plots whose next storey stands after this tick - the app raises them (ZONE_OP_BUILD_RAISE).
@@ -475,6 +564,8 @@ public:
     const std::vector<int>& GroundRaises() const { return ground_raises; }
     //The field cells built this tick - a field site's, all at once - the app raises them (ZONE_OP_FIELD_RAISE).
     const std::vector<int>& FieldRaises() const { return field_raises; }
+    //A cell of each field that waited ECONOMY_CROP_GRACE for a crop this tick - the app starts it with AUTO.
+    const std::vector<int>& CropDefaults() const { return crop_defaults; }
     //The standing trees in a planned road's or wall's way, to be felled before it is laid or built. Physics
     //thread - or a tool between ticks (Scene::AtTickBoundary), which is how chasm_economy lists them.
     void RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const;
@@ -484,6 +575,7 @@ private:
     std::vector<int> raises;                    //this tick's, in the order built
     std::vector<int> ground_raises;
     std::vector<int> field_raises;
+    std::vector<int> crop_defaults;
     std::vector<std::vector<int>> cells_of;     //by building id: a field's coarse cells, in index order (derived)
     std::vector<int> site_cells;                //by building id: a field's cells still a site (derived)
     std::vector<int> ground_sites;              //the garden, lot and wall plots still to build, in index order (derived)
@@ -500,6 +592,7 @@ private:
     std::vector<int> share_of;                  //by building id: a field's share of its owner's land, -1 none (LandPlaces)
     std::vector<float> field_pace;              //by building id: its farmer's pace, 0 fallow (Tending)
     bool f_resettle = false;                    //a loaded save's land not yet settled (an older save's)
+    bool f_restaff = false;                     //an order given or ended since the last tick: staffing again
     uint64_t now = 0;                           //the tick being run, for the rules that ask the date inside it
     float tree_cell = 16.0f;                    //the trees in buckets of this many world units
     int tree_nx = 0, tree_nz = 0;
@@ -508,9 +601,10 @@ private:
     std::vector<int> tree_items;                //prop indices, in index order within a bucket
     void BuildTrees();
     //What follows from the zones: stocks sized (and a split store's shared out, if f_share), what
-    //each store takes and its room, where each building's worker stands; workers and fields kept in
-    //step with the buildings.
-    void Derive(const ZoneState& z, bool f_share);
+    //each store takes and its room, each building's door (where its worker stands); workers and fields
+    //kept in step with the buildings.
+    void Derive(const ZoneState& z, Walkers& walkers, bool f_share);
+    void KeepAtDoors();                         //anyone indoors moved to his house's door, wherever Derive put it
     void Replan(const ZoneState& z, Walkers& walkers);
     void TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t calendar_tick, float dt);
     bool RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, int to_plot, const vec2& to_point);
@@ -523,12 +617,22 @@ private:
                    const std::vector<std::pair<std::pair<int,float>,int>>& found, size_t tries);
     bool FindStore(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void GoHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //POSTS: what he was doing dropped for his post; and the way there - with none, waiting where he is.
+    void TakePost(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    void GoToPost(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //His pack filled from a stock, up to NEEDS_PACK_*; and, home again, emptied back into his larder.
+    void FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
+    void Unpack(EconomyWorker& k, const ZoneState& z);
     void Walk(EconomyWorker& k, float dt);
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
     void MakeSettlers();
     //A child at home: out to a plot or two away to play, now and then. True if he set off.
     bool GoPlay(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t tick);
+    //LIFELINES, a tick of them: the stages moving on and the births. True when the places want sharing out again.
+    bool Lifelines(uint64_t tick);
+    //BIRTHS, at dawn after the fires are lit: the couples whose day it is, and their chance of a child.
+    void ChancesOfChildren(const ZoneState& z, uint64_t tick);
     void HouseFamilies(const ZoneState& z, Walkers& walkers);
     void AssignJobs(const ZoneState& z, Walkers& walkers);
     int HomePlot(const EconomyWorker& k) const;
@@ -565,7 +669,16 @@ private:
     //HEAT (above): every home's fire at dawn; what house h has room for of `good` (its woodshed for wood, the
     //rest of its room for food and water); whether it fetches firewood now; and its fair share of it.
     void Heat(const ZoneState& z, uint64_t calendar_tick);
-    int HouseRoom(uint32_t h, int good) const;
+    int HouseRoom(const ZoneState& z, uint32_t h, int good) const;
+    //WHOSE IT IS (STORES, above): building `id`'s stock a family's own - a house somebody lives in - so nobody
+    //else may take from it. A camp's stock is its supplies, never private; its families' own is its larder.
+    bool PrivateStock(const ZoneState& z, uint32_t id) const;
+    //A home's own goods, where its fetching goes - a house's stock, a camp's larder; and all it holds for its
+    //family to live on - a camp's larder and supplies together.
+    std::array<int,GOOD_COUNT>& HomeLarder(const ZoneState& z, uint32_t h);
+    std::array<int,GOOD_COUNT> HomeHeld(const ZoneState& z, uint32_t h) const;
+    //A camp the last of its people has left: its larder into its supplies, at once.
+    void OpenLarders(const ZoneState& z);
     bool FirewoodNow(uint32_t h) const;
     int FirewoodFair(const ZoneState& z, uint32_t h) const;
     bool FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
@@ -668,7 +781,7 @@ int EconomyCropYield(int last, int crop);
 //"AUTO by food"), the earlier crop (ZONE_CROP_*) on a tie.
 int EconomyAutoCrop(int last);
 //What a field will be sown with next: its starting crop until its first harvest, then its next crop (AUTO
-//worked out). -1 while its starting crop is not chosen.
+//worked out, for either). -1 while its starting crop is not chosen.
 int EconomyFieldSowCrop(const EconomyField& f, const ZoneBuilding& b);
 /*
     THE FROST (fields_plan.md, the user's 2026-10-08): whatever still grows on a field on winter's first day

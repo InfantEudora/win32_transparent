@@ -102,13 +102,20 @@ json ChasmSaveToJson(const ChasmSave& s){
             for (int sk = 0; sk < SKILL_COUNT; sk++){
                 skills.push_back((int)k.skills[sk]);
             }
+            //His pack (defence_plan.md), by good name, as a store's goods are.
+            json pack = json::object();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (k.pack[g] > 0){
+                    pack[GoodName(g)] = k.pack[g];
+                }
+            }
             workers.push_back(json{{"id",k.id},{"family",k.family},{"house",k.house},{"born",k.born},{"mother",k.mother},
-                                   {"father",k.father},{"female",k.f_female},
+                                   {"father",k.father},{"partner",k.partner},{"due",k.due},{"female",k.f_female},
                                    {"skills",skills},{"building",k.building},{"job",k.job},{"state",k.state},{"prop",k.prop},
                                    {"store",k.store},{"site",k.site},{"carry_good",k.carry_good},{"carry",k.carry},
                                    {"timer",k.timer},{"stint",k.stint},{"route",route},{"speed",k.speed},{"seg",k.seg},
                                    {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors},
-                                   {"health",k.health},{"water",k.water}});
+                                   {"health",k.health},{"water",k.water},{"post",k.post},{"pack",pack}});
         }
         //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father.
         json dead = json::array();
@@ -117,11 +124,15 @@ json ChasmSaveToJson(const ChasmSave& s){
         }
         json fields = json::array();
         //[building, crop growing, grown, sown, yield %, last crop harvested (fields_plan.md), owner (land_plan.md),
-        //and the crop the frost took while it waits to be sown again].
+        //and the crop the frost took while it waits to be sown again, and how long it has waited for a crop
+        //(issues_plan.md) - each only while it has one].
         for (const EconomyField& f : e.fields){
             json one = json::array({f.building,f.crop,f.grown,f.f_sown,f.yield,f.last,f.owner});
-            if (f.frost >= 0){
+            if (f.frost >= 0 || f.wait > 0){
                 one.push_back(f.frost);
+            }
+            if (f.wait > 0){
+                one.push_back(f.wait);
             }
             fields.push_back(one);
         }
@@ -265,6 +276,8 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.born = wk.value("born",(int64_t)0);
             k.mother = wk.value("mother",0u);
             k.father = wk.value("father",0u);
+            k.partner = wk.value("partner",0u);         //BIRTHS (lifeline_plan.md step 2)
+            k.due = wk.value("due",(uint64_t)0);
             //A save from before people had a sex: one by the id, so a load always gives the same.
             k.f_female = wk.contains("female") ? wk["female"].get<bool>() : (k.id % 2) == 0;
             std::vector<int> skills = wk.value("skills",std::vector<int>());
@@ -294,6 +307,15 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             //A save from before needs (needs_plan.md): everyone fed and watered.
             k.health = wk.value("health",(int)NEEDS_HEALTH_FULL);
             k.water = wk.value("water",(int)NEEDS_WATER_FULL);
+            k.post = wk.value("post",-1);       //defence_plan.md: nobody was posted before orders
+            if (wk.contains("pack") && wk["pack"].is_object()){
+                for (auto it = wk["pack"].begin(); it != wk["pack"].end(); ++it){
+                    int g = GoodByName(it.key());
+                    if (g >= 0 && it.value().is_number_integer()){
+                        k.pack[g] = it.value().get<int>();
+                    }
+                }
+            }
             if (k.route.empty()){
                 k.route.push_back(k.pos);
             }
@@ -337,6 +359,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             //...and one from before land (land_plan.md) no owner: it gets one on its first tick.
             fd.owner = (f.size() > 6) ? f[6].get<uint32_t>() : 0;
             fd.frost = (f.size() > 7) ? f[7].get<int>() : -1;
+            fd.wait = (f.size() > 8) ? f[8].get<int>() : 0;
             out.economy.f_before_land = out.economy.f_before_land || f.size() <= 6;
             out.economy.fields.push_back(fd);
         }

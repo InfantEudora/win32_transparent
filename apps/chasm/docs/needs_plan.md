@@ -69,6 +69,7 @@ together; a difficulty setting would make this one column of several.
 | A house fetches below | `ECONOMY_HOME_DAYS` | 2 days for its family | - (step 2) |
 | A house's room | `ECONOMY_HOUSE_ROOM` | 4 a unit of floor area | 1.5 |
 | The settlers bring | `ECONOMY_START_*` | 40 wood, 40 wheat, 30 beans, 40 water | 40, 20, 10, 20 |
+| A posted person's pack (`defence_plan.md`) | `NEEDS_PACK_WATER`, `NEEDS_PACK_FOOD` | 3 water, 3 days of food (beans first: 2 beans) | - (2026-10-09) |
 
 So per person a day: 1 wheat (or 2 greens, or half a bean) - unchanged since the first tuning - and now
 half a unit of water, where it was one.
@@ -308,7 +309,14 @@ Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `W
   A family moved while he walked: on to the new home with it.
 - **A pressing trip brings a load home**: someone who ate or drank at a store or the camp, his house short of
   what is there, carries a load home rather than going back for it.
-- **A camp's own families do not fetch** (the user's choice): its supplies are what the settlers brought.
+- ~~**A camp's own families do not fetch** (the user's choice): its supplies are what the settlers brought.~~
+  **Changed 2026-10-09 (the user's): a camp's families fetch for it** like a house's - water, food and, in its
+  season, firewood - never from its own supplies; it has a larder's room and a woodshed by its floor area. With
+  births (`lifeline_plan.md`) a baby born in the camp went dry once the settlers' water did: grown people drink
+  at a store or collector on a pressing need, a baby cannot. Measured on seed 12 with nobody housed, a collector
+  and a store by the river: two of the camp's people took turns fetching water from the store, the camp's water
+  never ran out, and the baby born there on day 8 always had two to four days of it. Fetching takes from stores
+  and camps only, so water reaches a home - a house or the camp - only once there is a store.
 - **The house's room** went from 1.5 to 4 of floor area (about 16 a plot-storey), this plan's own figure:
   two days of water and food for four is 12, and the old room was 11 for a two-storey one-plot house.
 - **Measured** (seed 12, debug, a two-storey house of four 11 from the camp):

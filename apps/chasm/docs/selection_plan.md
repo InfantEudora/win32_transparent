@@ -106,6 +106,10 @@ The bar along the bottom had grown too full. Now:
   (below the water and health he goes for them at, `NEEDS_PRESSING_*`) - and his health in the badge ring's
   colour. A click on a row SELECTS him (`OVERLAY_HIT_PERSON`) and the view glides to him at the zoom it
   has (`cam_seek_person`; the camp's glide still sets its own zoom). The selected one's row is lit orange.
+- **NEEDS ATTENTION** (`DrawIssues`, 2026-10-09, `issues_plan.md`), over the grid and its BUILDING line: the
+  top five of what wants doing. A row on a place selects it and glides there (`OVERLAY_HIT_BUILDING`,
+  `cam_seek_building`); a hint takes its tool up and keeps it up (`OVERLAY_HIT_TAKE_TOOL`). In a narrow window
+  the jobs overview goes over it too (`build_stack_top`).
 - **`chasm_select op:press px,py`**: a left click at a pixel as the player's, taken on the next pass (paused
   too) - on the HUD it presses what is drawn there, on the scene it selects. `pressed` says what the HUD had
   there and the tool in hand after. Checked with it 2026-10-08: a tool cell takes the tool up and a second

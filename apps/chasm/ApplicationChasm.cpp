@@ -699,11 +699,11 @@ ChasmSave ApplicationChasm::MakeSave(){
         for (size_t v = 0; v < z->ground.size(); v++){
             if (z->ground[v]){
                 //A garden, lot, road or wall still a site carries ZONE_GROUND_SAVED_SITE with its kind, a
-                //wall's gate ZONE_GROUND_SAVED_GATE; a road or wall its line.
+                //wall's gate ZONE_GROUND_SAVED_GATE - and _SHUT with its door shut; a road or wall its line.
                 ZoneSavedGround g;
                 g.plot = (int)v;
                 g.kind = (int)z->ground[v] | (!z->ground_built[v] ? ZONE_GROUND_SAVED_SITE : 0)
-                         | (z->gate[v] ? ZONE_GROUND_SAVED_GATE : 0);
+                         | (z->gate[v] ? ZONE_GROUND_SAVED_GATE : 0) | (ZoneGateShut(*z,(int)v) ? ZONE_GROUND_SAVED_SHUT : 0);
                 g.line = z->line[v];
                 s.grounds.push_back(g);
             }
@@ -746,7 +746,7 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
     PublishZones();
     walkers.Reset(w);
     //After the zones: the stocks and workers name their buildings.
-    economy.Restore(w,save.economy,zones.State(),save.calendar_tick);
+    economy.Restore(w,save.economy,zones.State(),walkers,save.calendar_tick);
     //What had been seen; a save from before exploration existed has seen everything.
     ResetExploration();
     if (save.explored.empty() || !exploration.FromString(save.explored)){
@@ -1376,6 +1376,11 @@ void ApplicationChasm::RenderBuildingInfo(const ChasmWorld& w, const ZoneState& 
                 SubmitZone(ZONE_OP_FIELD_CROP,selected.coarse_quad,c);
             }
         }
+        //...or AUTO, as NEEDS ATTENTION's countdown sets it (issues_plan.md).
+        ImGui::SameLine();
+        if (ImGui::RadioButton("auto##crop",f.crop == ZONE_CROP_AUTO) && f.crop != ZONE_CROP_AUTO){
+            SubmitZone(ZONE_OP_FIELD_CROP,selected.coarse_quad,ZONE_CROP_AUTO);
+        }
         ImGui::Text("  next:");
         ImGui::SameLine();
         std::string auto_label = std::string("auto (") + ZoneCropName(EconomyAutoCrop(last)) + ")##next";
@@ -1868,6 +1873,18 @@ void ApplicationChasm::UpdateCamera(){
                 cam_fly_to = e->workers[i].pos;
                 break;
             }
+        }
+    }
+    //...and a place picked from NEEDS ATTENTION (issues_plan.md): to its middle, the same way.
+    uint32_t seek_building = cam_seek_building.exchange(0);
+    if (seek_building && f_play){
+        std::shared_ptr<const ChasmWorld> cw = GetWorld();
+        std::shared_ptr<const ZoneState> z = GetZones();
+        vec2 at;
+        if (cw && z && z->world == cw && ChasmBuildingPoint(*cw,*z,seek_building,at)){
+            f_cam_flying = true;
+            f_cam_fly_keep_zoom = true;
+            cam_fly_to = at;
         }
     }
     if (f_cam_flying){
@@ -3028,14 +3045,19 @@ void ApplicationChasm::RegisterMCPTools(){
         "every sowing after (a crop, or auto: the most food); field_land gives it to `house` (a house's "
         "building id, 0 automatic - docs/land_plan.md); field_priority puts a field still being built first "
         "(`on`, default true; false puts it back) - a building's is chasm_economy site_priority. A field's "
-        "starting crop may be set while it is still a site. The result names the building at the place.",
+        "starting crop may be set while it is still a site. GATES (docs/defence_plan.md, step 3): gate_shut "
+        "shuts the door of the gate at the place (`on`, default true; false opens it), the gate plots joined to "
+        "it too - shut, nobody walks through, the colony's own people neither. The result names the building at "
+        "the place, and `gate_here` says none, open or shut.",
         json{
             {"type","object"},
             {"properties",{
                 {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
-                                                  "build_erase","field_crop","field_next","field_land","field_priority"}}}},
-                {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue"}}},
+                                                  "build_erase","field_crop","field_next","field_land","field_priority",
+                                                  "gate_shut"}}}},
+                {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
+                                                        "for gate_shut: shut (default) or open"}}},
                 {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
@@ -3096,15 +3118,15 @@ void ApplicationChasm::RegisterMCPTools(){
                 }
                 cmd.value[1] = (float)kind;
             }else if (op == ZONE_OP_FIELD_CROP || op == ZONE_OP_FIELD_NEXT){
-                //A starting crop is a crop; a next crop may be "auto" too (fields_plan.md).
+                //A crop or "auto", for the start as for what follows (fields_plan.md, issues_plan.md).
                 int crop = ZoneCropByName(args.value("crop",std::string(op == ZONE_OP_FIELD_NEXT ? "auto" : "wheat")));
-                if (crop < 0 || crop == ZONE_CROP_NONE || (crop == ZONE_CROP_AUTO && op == ZONE_OP_FIELD_CROP)){
+                if (crop < 0 || crop == ZONE_CROP_NONE){
                     return json{{"error","no such crop"}};
                 }
                 cmd.value[1] = (float)crop;
             }else if (op == ZONE_OP_FIELD_LAND){
                 cmd.value[1] = (float)args.value("house",0u);
-            }else if (op == ZONE_OP_FIELD_PRIORITY){
+            }else if (op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_GATE_SHUT){
                 cmd.value[1] = args.value("on",true) ? 1.0f : 0.0f;
             }
             //A tool's strokes in a range of their own, clear of the mouse's (UpdatePaint).
@@ -3139,7 +3161,7 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["ground_here"] = ZoneGroundName(z->ground[index]);
                     result["ground_built_here"] = (bool)z->ground_built[index];
                     result["line_here"] = z->line[index];
-                    result["gate_here"] = (bool)z->gate[index];
+                    result["gate_here"] = !z->gate[index] ? "none" : ZoneGateShut(*z,index) ? "shut" : "open";
                     result["building_here"] = BuildingJson(*w,*z,z->building[index]);
                 }else{
                     result["field_here"] = (bool)z->field[index];
@@ -3368,6 +3390,7 @@ void ApplicationChasm::RegisterMCPTools(){
         });
     RegisterRoadTools();
     RegisterTimeTools();
+    RegisterIssueTools();
     RegisterEconomyTools();
     RegisterSelectTools();
     RegisterBridgeTools();
