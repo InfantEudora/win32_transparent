@@ -182,6 +182,13 @@ void ApplicationChasm::UpdateGhost(){
     key.line_version = f_line ? line_at : 0;
     key.bridge_from = from;
     key.owner = PaintOwner(tool);       //a yard being painted: whose (yards_plan.md)
+    //Nothing is put over a crate in play (crates_plan.md): red where the zone command would refuse it.
+    std::shared_ptr<const EconomyState> es = GetEconomy();
+    bool f_crates = es && es->world == w && !es->crates.empty();
+    key.crates_version = (es && es->world == w) ? es->crates_version : 0;
+    auto crate_in_way = [&](int op, int index, int value){
+        return f_crates && EconomyCrateInTheWay(*es,cw,op,index,value);
+    };
     if (key == ghost_built){
         return;
     }
@@ -199,7 +206,8 @@ void ApplicationChasm::UpdateGhost(){
                 continue;
             }
             drawn.push_back(v);
-            bool f_plot_ok = LinePlotAllowed(cw,z,ex.get(),f_erase_line,line_ground_drawn,v,NULL);
+            bool f_plot_ok = LinePlotAllowed(cw,z,ex.get(),f_erase_line,line_ground_drawn,v,NULL)
+                             && (f_erase_line || !crate_in_way(ZONE_OP_GROUND_PAINT,v,line_ground_drawn));
             if (f_erase_line && !f_plot_ok){
                 continue;
             }
@@ -237,7 +245,7 @@ void ApplicationChasm::UpdateGhost(){
             f_ok = z.storeys[plot] < top;
             GhostBuildingPlot(cw,z,plot,shown,std::min(top,z.storeys[plot] + 1),on,verts);
         }else{
-            f_ok = ZoneCanBuild(cw,z,plot,kind,0,NULL);
+            f_ok = ZoneCanBuild(cw,z,plot,kind,0,NULL) && !crate_in_way(ZONE_OP_BUILD_ADD,plot,0);
             GhostBuildingPlot(cw,z,plot,kind,1,0,verts);
         }
         if (shown == ZONE_KIND_WINCH){
@@ -255,10 +263,12 @@ void ApplicationChasm::UpdateGhost(){
         f_ok = z.ground[plot] == ground || (ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)
                || ZoneCanGround(cw,z,plot,NULL,ground);
         bool f_own = z.ground[plot] == ground && ZoneGroundOwner(z,plot) == key.owner;
-        f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL));
+        f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL))
+               && !crate_in_way(ZONE_OP_GROUND_PAINT,plot,ground);
         GhostPlotTile(cw,plot,verts);
     }else if (f_field){
-        f_ok = z.field[hover.coarse_quad] || ZoneCanField(cw,z,hover.coarse_quad,NULL);
+        f_ok = (z.field[hover.coarse_quad] || ZoneCanField(cw,z,hover.coarse_quad,NULL))
+               && !crate_in_way(ZONE_OP_FIELD_PAINT,hover.coarse_quad,0);
         GhostCellTile(cw,hover.coarse_quad,verts);
     }else if (tool == CHASM_TOOL_ERASE){
         //What would go, in red: the plot's building as it stands, its ground, or the field under it.

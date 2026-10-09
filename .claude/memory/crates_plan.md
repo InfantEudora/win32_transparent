@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 47e6cba0-a787-423c-b97b-1ca2ffa6b50e
-  modified: 2026-10-09T14:50:42.014Z
+  modified: 2026-10-09T16:49:33.926Z
 ---
 
 Chasm crates, agreed with the user 2026-10-09 in `apps/chasm/docs/crates_plan.md`. The user's decisions: a
@@ -20,8 +20,11 @@ ECONOMY_CRATE_RINGS stepping across open ground, camp and bridges); `CHASM_CMD_C
 `crate`, panel on the selected plot); `ApplicationChasmCrates.cpp` draws `crate_a` (exported to
 chasm_props.glb). Wiki page `apps/chasm/wiki/crate.md` holds the planned bullets.
 
-Next (step 2): crates as a source wherever a store is (FindSiteWork, FetchHome, SeekSupply), caretakers moving
-them, building over refused in play (zone handler beside "under the clouds", and the ghost).
+STEP 2 BUILT 2026-10-09: a worker's `store` names a crate as ECONOMY_STORE_CRATE|id; read stocks via
+Economy::SourceStock, never state.stock[k.store]. Crates are sources in FindSiteWork/SeekSupply/FetchHome/TakeHome;
+builders move them last (MoveCrate after FindSiteWork+FindRoadWork; states 27 TO_CRATE, 28 LIFTING; c8's defence
+step 5 takes 29+ and hooks provisions before FindSiteWork); EconomyCrateInTheWay refuses play paint over a crate
+and turns the ghost red. Next: step 3 (card; FETCH FIRST and badge still open), 4 finds, 5 holding->dropping.
 
 **Why:** the user's fix for a posted carrier's load, and the small start of They Are Billions-style finds.
 **How to apply:** build in the plan's order, asking before each step; after any economy change run a replay

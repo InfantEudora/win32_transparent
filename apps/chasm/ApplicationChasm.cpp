@@ -661,10 +661,14 @@ void ApplicationChasm::RegisterCommandHandlers(){
                 !ZoneCommandExplored(*zw,ZONE_OP_BRIDGE,(int)cmd.value[1])){
                 f_clouded = true;
             }
-            if (f_clouded){
+            //Nor over a crate (crates_plan.md, the user's): it has to be cleared away first. Play commands only, like
+            //the clouds; a debug placement goes ahead, and the crate under it is lost (Economy::LoseCoveredCrates).
+            bool f_crate = !f_clouded && f_play && zw && economy.State().world == zw
+                           && EconomyCrateInTheWay(economy.State(),*zw,(int)cmd.value[0],(int)cmd.subtype,(int)cmd.value[1]);
+            if (f_clouded || f_crate){
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
-                    zone_last_refusal = "under the clouds";
+                    zone_last_refusal = f_clouded ? "under the clouds" : "a crate lies there";
                 }
                 zone_refusals++;
                 zone_commands_done++;
@@ -829,8 +833,10 @@ void ApplicationChasm::HashSimState(StateHash& h){
     h.Bytes(z.building.data(),z.building.size() * sizeof(uint32_t));
     for (size_t id = 0; id < z.buildings.size(); id++){
         const ZoneBuilding& b = z.buildings[id];
-        h.Add((uint64_t)b.kind | ((uint64_t)b.crop << 8) | ((uint64_t)b.allow << 16) | ((uint64_t)(uint32_t)b.size << 24)
+        //A store's goods apart: 16 bits since provisions (defence_plan.md), which would run into the size here.
+        h.Add((uint64_t)b.kind | ((uint64_t)b.crop << 8) | ((uint64_t)(uint32_t)b.size << 24)
               | ((uint64_t)b.f_priority << 56) | ((uint64_t)(b.next_crop & 0x7F) << 57));
+        h.Add(b.allow);
         //A field given to a house (land_plan.md), with its id - only where given, so most tables hash as before.
         if (b.land_of){
             h.Add(((uint64_t)id << 32) | b.land_of);
@@ -3300,7 +3306,8 @@ void ApplicationChasm::RegisterMCPTools(){
             {"type","object"},
             {"properties",{
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
-                                                    "store","woodcutter","water","winch","camp","bridge","builders","wall"}}}},
+                                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
+                                                    "range"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -3312,9 +3319,12 @@ void ApplicationChasm::RegisterMCPTools(){
             }}
         },
         [this](const json& args) -> json {
-            //In ChasmTool order - every tool, so the name returned is always one of these.
-            const char* names[CHASM_TOOL_COUNT] = {"select","house","field","erase","garden","lot","road",
-                                                   "store","woodcutter","water","winch","camp","bridge","builders","wall"};
+            //In ChasmTool order - every tool, so the name returned is always one of these. One short (the range's,
+            //2026-10-09) left a NULL at the end that every name was compared against: any call crashed.
+            const char* names[] = {"select","house","field","erase","garden","lot","road",
+                                   "store","woodcutter","water","winch","camp","bridge","builders","wall",
+                                   "range"};
+            static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             std::string t = args.value("tool",std::string());
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){
                 if (t == names[i]){

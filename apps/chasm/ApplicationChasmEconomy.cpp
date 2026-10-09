@@ -75,10 +75,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     for (const auto& s : e.stock){
         h.Bytes(s.data(),sizeof(int) * GOOD_COUNT);
     }
-    //Camps' larders (Economy.h, STORES): by building id, like the stocks.
-    n = (uint32_t)e.larder.size();
+    //Camps' pantries (Economy.h, STORES): by building id, like the stocks.
+    n = (uint32_t)e.pantry.size();
     h.Bytes(&n,sizeof(n));
-    for (const auto& s : e.larder){
+    for (const auto& s : e.pantry){
         h.Bytes(s.data(),sizeof(int) * GOOD_COUNT);
     }
     h.Bytes(e.prop_state.data(),e.prop_state.size());
@@ -160,6 +160,14 @@ void ApplicationChasm::RegisterEconomyCommands(){
             needs_commands_done++;
             return OBJECTID_INVALID;
         });
+    main_scene->RegisterCommandHandler(CHASM_CMD_STOCK,
+        [this](const SimCommand& cmd) -> objectid_t {
+            if (economy.SetStock(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],cmd.value[2] != 0.0f)){
+                PublishEconomy();
+            }
+            stock_commands_done++;
+            return OBJECTID_INVALID;
+        });
     main_scene->RegisterCommandHandler(CHASM_CMD_ORDER,
         [this](const SimCommand& cmd) -> objectid_t {
             std::string why;
@@ -223,7 +231,7 @@ void ApplicationChasm::SubmitNeeds(uint32_t person, int health, int water){
 
 namespace {
 
-json GoodsJson(uint8_t mask){
+json GoodsJson(GoodsMask mask){
     json out = json::array();
     for (int g = 0; g < GOOD_COUNT; g++){
         if (mask & GOOD_BIT(g)){
@@ -298,7 +306,9 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (k.prop >= 0){
         j["tree"] = k.prop;
     }
-    if (k.store){
+    if (k.store && EconomyIsCrateStore(k.store)){
+        j["crate"] = EconomyCrateOfStore(k.store);     //a crate he is taking from or moving (crates_plan.md)
+    }else if (k.store){
         j["store"] = k.store;
     }
     if (k.site && EconomyIsGroundSite(k.site)){
@@ -371,7 +381,7 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
                                  {"carriers",carriers},{"priority",info.f_priority}};
     }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
-        uint8_t takes = EconomyAccepts(*e,id);
+        GoodsMask takes = EconomyAccepts(*e,id);
         j["takes"] = GoodsJson(takes);
         j["own_setting"] = GoodsJson(z->buildings[id].allow);
         j["attached"] = (id < e->attached.size() && e->attached[id] != 0);
@@ -400,16 +410,16 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         j["land_places"] = (id < e->places.size()) ? e->places[id] : 0;
     }
     //A house's own store of food, water and firewood, which its family eats and drinks from (needs_plan.md) - a
-    //camp's is its LARDER, beside its supplies (`stock`) (Economy.h, STORES).
+    //camp's is its PANTRY, beside its supplies (`stock`) (Economy.h, STORES).
     if (z->buildings[id].kind == ZONE_KIND_CAMP){
-        json larder = json::object();
+        json pantry = json::object();
         for (int g = 0; g < GOOD_COUNT; g++){
-            int n = (id < e->larder.size()) ? e->larder[id][g] : 0;
+            int n = (id < e->pantry.size()) ? e->pantry[id][g] : 0;
             if (n){
-                larder[GoodName(g)] = n;
+                pantry[GoodName(g)] = n;
             }
         }
-        j["larder"] = larder;
+        j["pantry"] = pantry;
     }
     if (z->buildings[id].kind == ZONE_KIND_HOUSE || z->buildings[id].kind == ZONE_KIND_CAMP){
         j["keeps"] = GoodsJson((id < e->keeps.size()) ? e->keeps[id] : 0);
@@ -566,8 +576,8 @@ void ApplicationChasm::RenderSelectedStore(int plot){
         return;
     }
     uint32_t id = z->building[plot];
-    uint8_t own = z->buildings[id].allow;
-    uint8_t takes = EconomyAccepts(*e,id);
+    GoodsMask own = z->buildings[id].allow;
+    GoodsMask takes = EconomyAccepts(*e,id);
     bool f_attached = (id < e->attached.size() && e->attached[id] != 0);
     ImGui::Text("selected store %u takes%s:",id,f_attached ? " (next to a workplace - its goods only)" : "");
     if (f_attached){
@@ -580,7 +590,7 @@ void ApplicationChasm::RenderSelectedStore(int plot){
         bool f_on = (f_attached ? takes : own) & GOOD_BIT(g);
         std::string label = std::string(GoodName(g)) + "##takes";
         if (ImGui::Checkbox(label.c_str(),&f_on) && !f_attached){
-            uint8_t mask = f_on ? (uint8_t)(own | GOOD_BIT(g)) : (uint8_t)(own & ~GOOD_BIT(g));
+            GoodsMask mask = f_on ? (GoodsMask)(own | GOOD_BIT(g)) : (GoodsMask)(own & ~GOOD_BIT(g));
             SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
         }
     }
@@ -705,7 +715,7 @@ void ApplicationChasm::RenderPeoplePanel(){
             ImGui::PushID((int)k.id);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            uint8_t pressing = EconomyPressing(k);
+            GoodsMask pressing = EconomyPressing(k);
             ImVec4 colour = EconomyDry(k) ? ImVec4(1.0f,0.4f,0.35f,1.0f)
                           : pressing ? ImVec4(1.0f,0.75f,0.35f,1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
             ImGui::TextColored(colour,"%u %s",k.id,EconomyPersonName(k).c_str());
@@ -746,7 +756,7 @@ void ApplicationChasm::RegisterEconomyTools(){
         "every field's growth toward its harvest, every construction site (wood needed, brought, its "
         "carriers), how many trees are felled, and the dead (who, the colony's day they died on - a "
         "fraction, from 0 at its first dawn - and of what). op store_allow: "
-        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans) - "
+        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
         "plot) goes first (`on`, default true) or back in the queue - recorded the same way; a site's "
@@ -761,7 +771,12 @@ void ApplicationChasm::RegisterEconomyTools(){
         "crate put down at x,z (or `plot`) holding `contents` (goods by name and amount, e.g. {\"wood\":8,"
         "\"beans\":4}) - RECORDED debug edits (CHASM_CMD_CRATE), a good at a time, into the crate already "
         "there if one is; refused off open ground (docs/crates_plan.md). `crates` lists every crate lying "
-        "about: id, plot, x, z, goods, origin (dropped or found), who put it down and the day. "
+        "about: id, plot, x, z, goods, origin (dropped or found), who put it down and the day; a worker "
+        "taking from one, or a builder moving it to a store (to_crate, lifting), names it as `crate`. "
+        "op set_stock: the stock of building `building` (or the one at x,z; a camp's supplies) set to "
+        "`contents` (goods by name and amount, e.g. {\"provisions\":6,\"wheat\":0}) - RECORDED debug edits "
+        "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead. `provisions` reports PROVISIONS (docs/defence_plan.md): how many "
+        "are still lacking beyond what is made, and what each builders' hut holds. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -771,7 +786,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"z",{{"type","number"}}},
                 {"plot",{{"type","integer"}}},
                 {"goods",{{"type","array"},{"items",{{"type","string"}}}}},
-                {"contents",{{"type","object"},{"description","crate: goods by name and amount"}}},
+                {"contents",{{"type","object"},{"description","crate, set_stock: goods by name and amount"}}},
+                {"building",{{"type","integer"},{"description","set_stock: the building's id"}}},
+                {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
                 {"on",{{"type","boolean"}}},
                 {"person",{{"type","integer"},{"description","set_needs, order, release: the person's id"}}},
                 {"health_days",{{"type","number"}}},
@@ -846,6 +863,40 @@ void ApplicationChasm::RegisterEconomyTools(){
                 uint32_t before = needs_commands_done.load();
                 SubmitCommandAndWait(cmd);
                 result["ran"] = needs_commands_done.load() != before;
+            }else if (op == "set_stock"){
+                //A building's stock set (CHASM_CMD_STOCK), a good at a time: by `building` id, or the one at x,z.
+                uint32_t id = args.value("building",0u);
+                std::shared_ptr<const ZoneState> zs = GetZones();
+                if (!id && args.contains("x") && args.contains("z") && zs && zs->world == w){
+                    GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
+                    id = (p.f_hit && p.plot < (int)zs->building.size()) ? zs->building[p.plot] : 0;
+                }
+                if (!id){
+                    return json{{"error","set_stock: no building (give `building` or x,z on one)"}};
+                }
+                json contents = args.value("contents",json::object());
+                for (auto it = contents.begin(); it != contents.end(); ++it){
+                    int good = GoodByName(it.key());
+                    if (good < 0){
+                        return json{{"error","no such good: " + it.key()}};
+                    }
+                    SimCommand cmd;
+                    cmd.type = CHASM_CMD_STOCK;
+                    cmd.flags = SIM_CMD_FLAG_RECORD;
+                    cmd.subtype = id;
+                    cmd.value[0] = (float)good;
+                    cmd.value[1] = (float)it.value().get<int>();
+                    cmd.value[2] = args.value("pantry",false) ? 1.0f : 0.0f;
+                    SubmitCommandAndWait(cmd);
+                }
+                //A building placed on this very tick is not the economy's yet (its next tick takes it in).
+                std::shared_ptr<const EconomyState> es = GetEconomy();
+                result["ran"] = es && id < es->stock.size();
+                if (!result["ran"].get<bool>()){
+                    result["refusal"] = "the economy has no such building yet - step a tick after placing it";
+                }
+                result["building"] = id;
+                result["stock"] = es ? StockJson(*es,id) : json::object();
             }else if (op == "order" || op == "release"){
                 int plot = -1;
                 if (op == "order"){
@@ -1001,6 +1052,19 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             result["sites"] = sites;
+            //PROVISIONS (defence_plan.md): still lacking beyond what is made - worked out by the rules, between
+            //ticks - and what each builders' hut holds for making them.
+            int lacking = 0;
+            main_scene->AtTickBoundary([&](){
+                lacking = economy.ProvisionsLacking(zones.State());
+            });
+            json huts = json::array();
+            for (size_t id = 1; id < z->buildings.size(); id++){
+                if (z->buildings[id].size > 0 && z->buildings[id].kind == ZONE_KIND_BUILDERS){
+                    huts.push_back(json{{"id",id},{"holds",StockJson(*e,(uint32_t)id)}});
+                }
+            }
+            result["provisions"] = json{{"lacking",lacking},{"huts",huts}};
             //The road works (line_works_plan.md): plots still to lay, the people out on them, trees felled.
             int planned = 0;
             int laid = 0;

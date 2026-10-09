@@ -116,7 +116,38 @@ The bar along the bottom had grown too full. Now:
   press puts it down; a row selects its person and the view went 70 units to him in 3 s, distance kept;
   pause and speed (2x, 3x, back to 1x) - so the calendar's buttons are now checked by a click too.
 
+### The goods strip (the user's, 2026-10-09)
+
+Every card that holds goods shows them the same way, so a player can tell at a glance what is UP FOR GRABS
+and what is KEPT for a house, a field or a site. A goods line is a header ("Pantry - the Veen family's", the
+figure "9 of 19" at the right), a strip over its room cut into a piece per good, and a key under it
+naming each good and how many (`ChasmHud.h` / `ChasmHud.cpp`: `HudStock`, `DrawHudStock`; the card's
+`CARD_STOCK`).
+
+- **Colours** (`HudGoodColour`): the top bar's wood, food and water, wheat taking the food's gold, and a
+  colour of its own for every other food - greens green, beans rose, provisions a pale hardtack (the user
+  chose three food colours over one). The top bar reads its colours from the same function. Strips, keys
+  and a store's chips run in the top bar's order: wood, the foods, water (`HudGoodsOrder`).
+- **The fill says who may take it**: SOLID anyone's - a store, the camp's supplies, a woodpile, a
+  collector's water, a house nobody lives in; HOLLOW kept - a lived-in house's pantry and woodshed, the
+  camp's pantry and woodshed, a field's harvest (its land's family first), a builders' hut's wheat, beans
+  and provisions, what a site has been brought; STRIPED (the user's) what somebody is already on his way
+  to take - a site carrier's load, a builder's for provisions, a load fetched home (`EconomyReserved`, the
+  same counts `GoodFree` and `FetchHome` keep). Kept or not is `EconomyPrivateStock`, which the rules'
+  `PrivateStock` now calls, so the card cannot disagree with what villagers do.
+- **A house is two rows** (the user's): food and water in its PANTRY against `room`, firewood in its
+  WOODSHED against `woodshed`. The one bar before counted the firewood against the pantry's room and could
+  read "18 of 16". The camp the same, plus its SUPPLIES; its pantry was on no card before.
+- **A store's "Takes" chips** are their goods' colours: on, filled with it and ticked; off, outlined with
+  its swatch.
+- **A card too long to end above the bottom right stack** (NEEDS ATTENTION and the tools) moves to its left
+  (`build_stack_left`), as the jobs overview rises over it. A camp full of settlers does this.
+- `chasm_select` reports a goods line as `{"stock", "whose", "kept", "room", "goods", "reserved"}`.
+- Checked in play 2026-10-09 on a village round the start camp, stocks set with `chasm_economy set_stock`:
+  every card above, a camp's 5 wheat reserved by a girl fetching home drawn striped.
+
 **Open:**
+- A person's pack, and a crate once it can be selected, are still text: the same strip fits both.
 - The right click was checked by reading the code, not by a click (`press` is the left button).
 - The mouse wheel over the card still zooms the camera.
 - A family at home is only on the card - indoors, they have no pin.

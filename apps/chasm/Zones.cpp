@@ -1788,7 +1788,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = "no store there";
                 return false;
             }
-            uint8_t mask = (uint8_t)(kind & GOODS_ALL);
+            GoodsMask mask = (GoodsMask)(kind & GOODS_ALL);
             uint32_t id = state.building[plot];
             if (state.buildings[id].allow == mask){
                 return false;
@@ -2031,7 +2031,7 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
         state.buildings[b.id].crop = f_crop ? (uint8_t)b.crop : ZONE_CROP_NONE;
         bool f_next = (b.next_crop >= 0 && b.next_crop < ZONE_CROP_COUNT) || b.next_crop == ZONE_CROP_AUTO;
         state.buildings[b.id].next_crop = f_next ? (uint8_t)b.next_crop : ZONE_CROP_AUTO;
-        state.buildings[b.id].allow = (uint8_t)(b.allow & GOODS_ALL);
+        state.buildings[b.id].allow = (GoodsMask)(b.allow & GOODS_ALL);
         state.buildings[b.id].f_priority = b.f_priority ? 1 : 0;
         //A house the field was given to - ids never change, and one since gone the economy passes over.
         state.buildings[b.id].land_of = (b.kind == ZONE_KIND_FIELD && b.land_of < top) ? b.land_of : 0;

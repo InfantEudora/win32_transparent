@@ -14,6 +14,7 @@ const char* GoodName(int good){
         case GOOD_WHEAT:    return "wheat";
         case GOOD_GREENS:   return "greens";
         case GOOD_BEANS:    return "beans";
+        case GOOD_PROVISIONS: return "provisions";
         default:            return "?";
     }
 }
@@ -53,9 +54,15 @@ const char* EconomyWorkerStateName(int state){
         case WORKER_ON_POST:    return "on_post";
         case WORKER_TO_RANGE:   return "to_range";
         case WORKER_TRAINING:   return "training";
+        case WORKER_TO_CRATE:   return "to_crate";
+        case WORKER_LIFTING:    return "lifting";
+        case WORKER_TO_INPUT:   return "to_input";
+        case WORKER_TAKING_INPUT: return "taking_input";
+        case WORKER_TO_WORKSHOP: return "to_workshop";
+        case WORKER_MAKING:     return "making";
         case WORKER_TO_GET:     return "to_get";
         case WORKER_GETTING:    return "getting";
-        case WORKER_TO_LARDER:  return "to_larder";
+        case WORKER_TO_PANTRY:  return "to_pantry";
         default:                return "?";
     }
 }
@@ -277,8 +284,8 @@ uint32_t Mix(uint32_t a, uint32_t b){
 
 /*
     The settlers (lifeline_plan.md): three families, each a couple with their grown children, two of them with
-    a child too - twelve people. Sizes 5, 4 and 3, so the first houses are a real choice: a family of three
-    fits a one-plot, one-storey house, the larger two do not.
+    a child too - twelve people. Sizes 5, 4 and 3, so the first houses are a real choice: a house just big
+    enough for the family of three is too small for the other two.
 */
 struct SettlerFamily{
     int grown;          //grown children, besides the couple
@@ -351,8 +358,13 @@ int CarryTotal(const std::array<int,GOOD_COUNT>& s){
     return n;
 }
 
+//A builders' hut that stands: where provisions are made (POSTS, Economy.h).
+static bool Workshop(const ZoneState& z, const std::vector<uint8_t>& stands, uint32_t h){
+    return h && h < z.buildings.size() && z.buildings[h].kind == ZONE_KIND_BUILDERS && h < stands.size() && stands[h];
+}
+
 //What a stock holds of water or food (`goods`) in ticks of a person's bar: a unit at what it is worth.
-int64_t HeldTicks(const std::array<int,GOOD_COUNT>& s, uint8_t goods){
+int64_t HeldTicks(const std::array<int,GOOD_COUNT>& s, GoodsMask goods){
     int64_t held = 0;
     for (int g = 0; g < GOOD_COUNT; g++){
         if (goods & GOOD_BIT(g)){
@@ -371,8 +383,28 @@ int64_t Living(const std::vector<EconomyWorker>& workers, uint32_t home){
     return n;
 }
 
+/*
+    RESERVED (EconomyReserved): what o, on his way to take from `id`, counts on of `good` - for a site, a carrier's
+    load or a builder's for provisions (GoodFree leaves these out), and for his home, a load (FetchHome's spare
+    leaves it out). The rules and the cards' striped goods count by the same two.
+*/
+static int SiteReservation(const EconomyWorker& o, uint32_t id, int good){
+    if (o.store != id || o.carry_good != good){
+        return 0;
+    }
+    if (o.site && (o.state == WORKER_TO_FETCH || o.state == WORKER_FETCHING)){
+        return ECONOMY_LOAD;
+    }
+    //A builder on his way for wheat or beans for provisions: the load he set out for (MakeProvisions).
+    return (o.state == WORKER_TO_INPUT || o.state == WORKER_TAKING_INPUT) ? o.stint : 0;
+}
+
+static int HomeReservation(const EconomyWorker& o, uint32_t id, int good){
+    return (o.store == id && o.carry_good == good && (o.state == WORKER_TO_GET || o.state == WORKER_GETTING)) ? ECONOMY_LOAD : 0;
+}
+
 //Of `goods`, the one a stock holds most of, the lower on a tie; -1 for none.
-int MostOf(const std::array<int,GOOD_COUNT>& s, uint8_t goods){
+int MostOf(const std::array<int,GOOD_COUNT>& s, GoodsMask goods){
     int best = -1;
     for (int g = 0; g < GOOD_COUNT; g++){
         if ((goods & GOOD_BIT(g)) && s[g] > 0 && (best < 0 || s[g] > s[best])){
@@ -1305,7 +1337,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     size_t n = z.buildings.size();
     size_t known = state.stock.size();
     state.stock.resize(n,std::array<int,GOOD_COUNT>{});
-    state.larder.resize(n,std::array<int,GOOD_COUNT>{});    //a camp's; split, it stays with the piece keeping the id
+    state.pantry.resize(n,std::array<int,GOOD_COUNT>{});    //a camp's; split, it stays with the piece keeping the id
     state.heat.resize(std::max<size_t>(n,1),HEAT_NONE);
     //Every plot building's plots, and a field's first cell.
     plots_of.assign(n,std::vector<int>());
@@ -1406,7 +1438,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     for (size_t id = 1; id < n; id++){
         if (z.buildings[id].size <= 0){
             state.stock[id] = std::array<int,GOOD_COUNT>{};
-            state.larder[id] = std::array<int,GOOD_COUNT>{};
+            state.pantry[id] = std::array<int,GOOD_COUNT>{};
             state.site[id] = std::array<int,GOOD_COUNT>{};
         }
     }
@@ -1487,7 +1519,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         if (z.buildings[id].kind != ZONE_KIND_STORE || z.buildings[id].size <= 0 || !stands[id]){
             continue;
         }
-        uint8_t attached = 0;
+        GoodsMask attached = 0;
         for (int v : plots_of[id]){
             int nb[8];
             int k = ZonePlotNeighbours(w,v,nb,8);
@@ -1586,7 +1618,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
             state.burn[id] = (int)plots_of[id].size() * ECONOMY_FIREWOOD_BURN;
             /*
                 Its families FETCH for it like a house's (the user's, 2026-10-09 - they did not, so a baby born
-                there went dry once the settlers' supplies did): a larder's room and a woodshed by its floor area,
+                there went dry once the settlers' supplies did): a pantry's room and a woodshed by its floor area,
                 and whether winter's snow reaches it. A load brought home is all taken in, as the supplies are.
             */
             state.room[id] = (int)std::floor(ZoneBuildingFigures(w,z,(uint32_t)id).floor_area * ECONOMY_HOUSE_ROOM);
@@ -1761,8 +1793,9 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
         }
         if (k.state != WORKER_TO_WORK && k.state != WORKER_TO_STORE && k.state != WORKER_TO_HOME
             && k.state != WORKER_TO_FETCH && k.state != WORKER_TO_SITE && k.state != WORKER_TO_ROAD
-            && k.state != WORKER_TO_SUPPLY && k.state != WORKER_TO_GET && k.state != WORKER_TO_LARDER
-            && k.state != WORKER_TO_SOW){
+            && k.state != WORKER_TO_SUPPLY && k.state != WORKER_TO_GET && k.state != WORKER_TO_PANTRY
+            && k.state != WORKER_TO_SOW && k.state != WORKER_TO_CRATE && k.state != WORKER_TO_INPUT
+            && k.state != WORKER_TO_WORKSHOP){
             continue;
         }
         if (Arrived(k)){
@@ -1780,7 +1813,7 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
             goal_plot = at.f_hit ? at.plot : plots_of[k.store].front();
         }
         //Home is wherever its door is now: the change may have moved it (Derive), and the old one may be shut in.
-        bool f_home = (k.state == WORKER_TO_HOME || k.state == WORKER_TO_LARDER);
+        bool f_home = (k.state == WORKER_TO_HOME || k.state == WORKER_TO_PANTRY);
         if (!(f_home ? RouteHome(k,z,walkers) : RouteTo(k,z,walkers,goal_plot,goal))){
             //No way now: stop where he is and think again at the next look - posted, as one cut off from his post.
             k.route.assign(1,k.pos);
@@ -1965,7 +1998,7 @@ void Economy::GoHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     at: he drops it for his post. A pressing need he is seeing to he finishes first (GoHome sends him on after).
     A storey he was putting up stands with what it has - its wood is in the site already, and nobody else would
     come to finish it. The rest of the errand - a tree, a site, a store - is let go for others (a load on him
-    went with the order: Order). Setting out from home, he packs what he will live on from its larder.
+    went with the order: Order). Setting out from home, he packs what he will live on from its pantry.
 */
 void Economy::TakePost(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     if (k.state == WORKER_TO_SUPPLY || k.state == WORKER_SUPPLYING){
@@ -1976,7 +2009,7 @@ void Economy::TakePost(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     }
     if (k.state == WORKER_AT_HOME && AtHome(k) && k.house && k.house < state.stock.size() && k.house < z.buildings.size()
         && (z.buildings[k.house].kind == ZONE_KIND_HOUSE || z.buildings[k.house].kind == ZONE_KIND_CAMP)){
-        FillPack(k,HomeLarder(z,k.house));
+        FillPack(k,HomePantry(z,k.house));
         if (z.buildings[k.house].kind == ZONE_KIND_CAMP){
             FillPack(k,state.stock[k.house]);       //then the supplies, as he would eat
         }
@@ -2018,7 +2051,8 @@ void Economy::FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
         k.pack[GOOD_WATER]++;
         state.version++;
     }
-    static const int keeps_best_first[] = {GOOD_BEANS,GOOD_WHEAT,GOOD_GREENS};
+    //Provisions first where there are any - a soldier's food, one is the whole pack's (defence_plan.md).
+    static const int keeps_best_first[] = {GOOD_PROVISIONS,GOOD_BEANS,GOOD_WHEAT,GOOD_GREENS};
     for (int good : keeps_best_first){
         while (from[good] > 0 && EconomyPackFood(k) < NEEDS_PACK_FOOD){
             from[good]--;
@@ -2028,23 +2062,24 @@ void Economy::FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
     }
 }
 
-//Home again, released: his pack back into the larder, as far as it keeps each good and has room - a camp's
-//larder takes it all. What does not fit stays packed, for his next post.
+//Home again, released: his pack back into the pantry, as far as it keeps each good and has room - a camp's
+//pantry takes it all, but PROVISIONS, which no home holds (defence_plan.md). What does not fit stays packed,
+//for his next post.
 void Economy::Unpack(EconomyWorker& k, const ZoneState& z){
     uint32_t h = k.house;
     if (!h || h >= z.buildings.size() || h >= state.stock.size()){
         return;
     }
     bool f_camp = z.buildings[h].kind == ZONE_KIND_CAMP;
-    std::array<int,GOOD_COUNT>& larder = HomeLarder(z,h);
+    std::array<int,GOOD_COUNT>& pantry = HomePantry(z,h);
     for (int g = 0; g < GOOD_COUNT; g++){
-        if (k.pack[g] <= 0){
+        if (k.pack[g] <= 0 || g == GOOD_PROVISIONS){
             continue;
         }
         int put = f_camp ? k.pack[g]
                 : (h < state.keeps.size() && (state.keeps[h] & GOOD_BIT(g))) ? std::min(k.pack[g],HouseRoom(z,h,g)) : 0;
         if (put > 0){
-            larder[g] += put;
+            pantry[g] += put;
             k.pack[g] -= put;
             state.version++;
         }
@@ -2093,7 +2128,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
             /*
                 Not home - his way there was cut (a river, a wall), or a re-plan stopped him short of it: he sees
-                to a pressing need wherever he can reach one, his own larder being no use to him out here, and
+                to a pressing need wherever he can reach one, his own pantry being no use to him out here, and
                 every few looks tries the way home again (a failed search can cover the whole map). He used to
                 wait for the zones to change, and when they did not he stood there until he died of thirst.
             */
@@ -2107,7 +2142,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (k.job == WORKER_JOB_BABY){
                 break;
             }
-            //Home from a post: his pack back into the larder (POSTS).
+            //Home from a post: his pack back into the pantry (POSTS).
             if (std::any_of(k.pack.begin(),k.pack.end(),[](int n){ return n > 0; })){
                 Unpack(k,z);
             }
@@ -2120,7 +2155,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 GoPlay(k,z,walkers,tick);
                 break;
             }
-            //Then his house's larder, running low, if he is the one to go (step 2) - before wood for a site, and
+            //Then his house's pantry, running low, if he is the one to go (step 2) - before wood for a site, and
             //before his own round.
             if (FetchHome(k,z,walkers)){
                 break;
@@ -2129,12 +2164,18 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (k.job == WORKER_JOB_CARING){
                 break;
             }
+            //A builder, as a caretaker: provisions wanted, before building (MakeProvisions, defence_plan.md).
+            if (k.job == WORKER_JOB_BUILDER && MakeProvisions(k,z,walkers)){
+                break;
+            }
             if (k.job == WORKER_JOB_NONE || k.job == WORKER_JOB_BUILDER){
                 //Nothing of his own to do, or a builder: he carries wood to a construction that wants it, or
                 //goes out to clear a planned road's or wall's way and lay a road - whichever comes first in
                 //the one ranking (FindSiteWork; line_works_plan.md); the line work alone if none of that could go.
-                if (!FindSiteWork(k,z,walkers)){
-                    FindRoadWork(k,z,walkers,false);
+                //And a builder, as caretaker, with none of that to do: a crate to a storehouse, LAST of his
+                //errands (crates_plan.md, the user's) - never the jobless.
+                if (!FindSiteWork(k,z,walkers) && !FindRoadWork(k,z,walkers,false) && k.job == WORKER_JOB_BUILDER){
+                    MoveCrate(k,z,walkers);
                 }
                 break;
             }
@@ -2360,21 +2401,123 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         case WORKER_HOLDING:
             //Holding a load: a store that takes it, or room on his pile, whichever comes first; else, for food,
             //his own house once it is short of food again (HomeShort) and not ahead of the colony (FairShare) - a
-            //harvest left over when the larder filled while he walked (land_plan.md) was held for good. Only
+            //harvest left over when the pantry filled while he walked (land_plan.md) was held for good. Only
             //then, so it never crowds out the water; and
-            //never wood, which would fill the larder. With none, a pressing need is not left to kill him where
+            //never wood, which would fill the pantry. With none, a pressing need is not left to kill him where
             //he stands; he takes the load along.
             if (f_look){
                 deliver();
                 if (k.state == WORKER_HOLDING && k.carry_good >= 0 && (GOODS_FOOD & GOOD_BIT(k.carry_good))
                     && (HomeShort(k,z,NULL) & GOODS_FOOD) && !HomeAhead(k,z) && RouteHome(k,z,walkers)){
                     k.store = 0;
-                    k.state = WORKER_TO_LARDER;
+                    k.state = WORKER_TO_PANTRY;
                 }
                 if (k.state == WORKER_HOLDING){
                     SeekSupply(k,z,walkers);
                 }
             }
+            break;
+        //--- Moving a crate (crates_plan.md) ---
+        case WORKER_TO_CRATE:
+            Walk(k,dt);
+            if (Arrived(k)){
+                k.state = WORKER_LIFTING;
+                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+            }
+            break;
+        case WORKER_LIFTING:{
+            if (--k.timer > 0){
+                break;
+            }
+            /*
+                A load of the good he came for - or, that gone, of the first that is there - that a store still takes
+                whole, with the room, and off to it (FindStore). The crate may have been emptied while he walked, or a
+                store filled: then he takes nothing and goes home.
+            */
+            uint32_t from = k.store;
+            std::array<int,GOOD_COUNT>* src = SourceStock(from);
+            int good = -1;
+            for (int pass = 0; pass < 2 && src && good < 0; pass++){
+                for (int g = 0; g < GOOD_COUNT && good < 0; g++){
+                    if ((pass == 0) != (g == k.carry_good) || (*src)[g] <= 0){
+                        continue;
+                    }
+                    int amount = std::min(ECONOMY_LOAD,(*src)[g]);
+                    for (size_t s = 1; s < state.accepts.size(); s++){
+                        if ((state.accepts[s] & GOOD_BIT(g)) && state.room[s] - CarryTotal(state.stock[s]) >= amount){
+                            good = g;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (good >= 0){
+                k.carry_good = good;
+                k.carry = std::min(ECONOMY_LOAD,(*src)[good]);
+                if (FindStore(k,z,walkers)){
+                    (*src)[good] -= k.carry;
+                    CrateTouched(from);
+                    break;
+                }
+            }
+            k.carry = 0;
+            k.carry_good = -1;
+            GoHome(k,z,walkers);
+            break;
+        }
+        //--- Provisions (defence_plan.md, step 5): a builder's wheat and beans to his hut, and making them there ---
+        case WORKER_TO_INPUT:
+            Walk(k,dt);
+            if (Arrived(k)){
+                k.state = WORKER_TAKING_INPUT;
+                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+            }
+            break;
+        case WORKER_TAKING_INPUT:{
+            if (--k.timer > 0){
+                break;
+            }
+            //The load he set out for, or what is left of it there - taken by others, or eaten, while he walked.
+            uint32_t from = k.store;
+            std::array<int,GOOD_COUNT>* src = SourceStock(from);
+            int good = k.carry_good;
+            int take = (src && good >= 0 && good < GOOD_COUNT) ? std::min(k.stint,(*src)[good]) : 0;
+            uint32_t h = k.building;
+            int plot = (take > 0 && h < z.buildings.size()) ? NearestPlot(h,k.pos) : -1;
+            if (plot < 0 || !RouteTo(k,z,walkers,plot,state.world->grid->fine.pos[plot])){
+                k.store = 0;
+                k.stint = 0;
+                k.carry_good = -1;
+                GoHome(k,z,walkers);
+                break;
+            }
+            (*src)[good] -= take;
+            CrateTouched(from);
+            k.carry = take;
+            k.store = 0;
+            k.stint = 0;
+            k.state = WORKER_TO_WORKSHOP;
+            state.version++;
+            break;
+        }
+        case WORKER_TO_WORKSHOP:
+            Walk(k,dt);
+            if (Arrived(k)){
+                AtWorkshop(k,z,walkers,pace);
+            }
+            break;
+        case WORKER_MAKING:
+            if (--k.timer > 0){
+                break;
+            }
+            //One made, into the hut's stock - the hut gone meanwhile, it went with it - and on (AtWorkshop).
+            if (Workshop(z,stands,k.building)){
+                state.stock[k.building][GOOD_PROVISIONS]++;
+                state.version++;
+            }
+            k.stint++;
+            k.state = WORKER_TO_WORKSHOP;   //not MAKING while AtWorkshop counts what is being made
+            AtWorkshop(k,z,walkers,pace);
             break;
         case WORKER_TO_FETCH:
             Walk(k,dt);
@@ -2392,7 +2535,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             uint32_t from = k.store;
             int good = k.carry_good;
             bool f_site = SiteAlive(z,k.site) && good >= 0 && good < GOOD_COUNT;
-            int have = (f_site && from && from < state.stock.size()) ? state.stock[from][good] : 0;
+            std::array<int,GOOD_COUNT>* src = SourceStock(from);     //a building's, or a crate's - gone, if emptied meanwhile
+            int have = (f_site && src) ? (*src)[good] : 0;
             int take = f_site ? std::min(ECONOMY_LOAD,std::min(have,SiteLeft(z,k.site,&k)[good])) : 0;
             int to = !f_site ? -1 : EconomyIsGroundSite(k.site) ? GroundSiteApproach(z,EconomyGroundSitePlot(k.site))
                                                                 : NearestPlot(k.site,k.pos,true);
@@ -2402,7 +2546,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 GoHome(k,z,walkers);
                 break;
             }
-            state.stock[from][good] -= take;
+            (*src)[good] -= take;
+            CrateTouched(from);
             k.carry = take;
             k.store = 0;
             k.state = WORKER_TO_SITE;
@@ -2518,12 +2663,13 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 break;
             }
             //From what is there now - others may have been quicker - as he would at home: at his own (posted), its
-            //larder first.
-            if (k.store && k.store < state.stock.size()){
+            //pantry first. A crate is gone if it was emptied meanwhile, and goes if he empties it.
+            if (std::array<int,GOOD_COUNT>* src = SourceStock(k.store)){
                 if (k.store == k.house){
-                    Consume(k,HomeLarder(z,k.house));
+                    Consume(k,HomePantry(z,k.house));
                 }
-                Consume(k,state.stock[k.store]);
+                Consume(k,*src);
+                CrateTouched(k.store);
             }
             /*
                 At a collector that is filling, with room for more and no hunger to see to: he waits for its
@@ -2543,11 +2689,12 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 k.store = 0;
                 //Posted (defence_plan.md): his pack topped up from what is here, and back to the post.
                 if (k.post >= 0){
-                    if (from && from < state.stock.size()){
+                    if (std::array<int,GOOD_COUNT>* src = SourceStock(from)){
                         if (from == k.house){
-                            FillPack(k,HomeLarder(z,k.house));
+                            FillPack(k,HomePantry(z,k.house));
                         }
-                        FillPack(k,state.stock[from]);
+                        FillPack(k,*src);
+                        CrateTouched(from);
                     }
                     GoHome(k,z,walkers);
                     break;
@@ -2563,12 +2710,12 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     top-up, the scarcest kind first, as far as TakeHome allows: a field's fair share, firewood's.
                     Not a child: errands are for the grown (LIFELINES).
                 */
-                if (from < z.buildings.size() && (!EconomyStageJob(k.job) || k.job == WORKER_JOB_CARING)
+                if ((from < z.buildings.size() || EconomyIsCrateStore(from)) && (!EconomyStageJob(k.job) || k.job == WORKER_JOB_CARING)
                     && FetchFrom(k,z,from)){
-                    uint8_t first = 0;
+                    GoodsMask first = 0;
                     HomeShort(k,z,&first);
                     bool f_took = false;
-                    for (uint8_t goods : {first,(uint8_t)GOOD_BIT(GOOD_WATER),(uint8_t)GOODS_FOOD,(uint8_t)GOOD_BIT(GOOD_WOOD)}){
+                    for (GoodsMask goods : {first,(GoodsMask)GOOD_BIT(GOOD_WATER),(GoodsMask)GOODS_FOOD,(GoodsMask)GOOD_BIT(GOOD_WOOD)}){
                         f_took = f_took || (goods && TakeHome(k,z,walkers,from,goods));
                     }
                     if (f_took){
@@ -2592,15 +2739,15 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
             //Of the kind he came for, what is there now and what home still has room for - either may have
             //changed on the way. Of food, whichever there is most of: what he set out for may be gone.
-            uint8_t goods = (k.carry_good == GOOD_WATER || k.carry_good == GOOD_WOOD) ? (uint8_t)GOOD_BIT(k.carry_good)
-                                                                                       : (uint8_t)GOODS_FOOD;
+            GoodsMask goods = (k.carry_good == GOOD_WATER || k.carry_good == GOOD_WOOD) ? (GoodsMask)GOOD_BIT(k.carry_good)
+                                                                                       : (GoodsMask)GOODS_FOOD;
             if (!TakeHome(k,z,walkers,k.store,goods)){
                 k.carry_good = -1;
                 GoHome(k,z,walkers);
             }
             break;
         }
-        case WORKER_TO_LARDER:{
+        case WORKER_TO_PANTRY:{
             Walk(k,dt);
             if (!Arrived(k)){
                 break;
@@ -2613,7 +2760,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 break;
             }
             /*
-                Into the house's own stock as far as it keeps it and has room; a camp's larder takes it all - but a
+                Into the house's own stock as far as it keeps it and has room; a camp's pantry takes it all - but a
                 harvest from the camp's own land (PickHarvest: `store` the camp) goes into its supplies, the colony's.
             */
             uint32_t h = k.house;
@@ -2621,7 +2768,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (h && h < z.buildings.size() && h < state.stock.size() && k.carry_good >= 0){
                 if (z.buildings[h].kind == ZONE_KIND_CAMP){
                     put = k.carry;
-                    (k.store == h ? state.stock[h] : HomeLarder(z,h))[k.carry_good] += put;
+                    (k.store == h ? state.stock[h] : HomePantry(z,h))[k.carry_good] += put;
                 }else if (h < state.keeps.size() && (state.keeps[h] & GOOD_BIT(k.carry_good))){
                     put = std::min(k.carry,HouseRoom(z,h,k.carry_good));
                     state.stock[h][k.carry_good] += put;
@@ -2843,9 +2990,9 @@ bool Economy::PickHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walkers
         own[good] -= take;
         k.carry_good = good;
         k.carry = take;
-        k.store = k.house;      //for the camp's supplies, not its larder (WORKER_TO_LARDER)
+        k.store = k.house;      //for the camp's supplies, not its pantry (WORKER_TO_PANTRY)
         k.prop = -1;
-        k.state = WORKER_TO_LARDER;
+        k.state = WORKER_TO_PANTRY;
         state.version++;
         return true;
     }
@@ -2867,7 +3014,7 @@ bool Economy::PickHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walkers
 
 /*
     FAIR SHARES (the user's, 2026-10-08): a family kept its fields' food at home while the next house had none -
-    its own land was a larder nobody else could reach. So what a house may keep from its own land is the
+    its own land was a pantry nobody else could reach. So what a house may keep from its own land is the
     colony's average - all the food in homes, the camps' supplies with them, over everyone living in them - and
     ECONOMY_FAIR_DAYS a head more; a house with that much sends its harvest to storage, where the others fetch it.
     Fetching from a store or the camp is not held to it: that food is everyone's already.
@@ -2884,7 +3031,7 @@ int64_t Economy::FairShare(const ZoneState& z) const{
     }
     int64_t food = 0;
     for (size_t id = 1; id < n; id++){
-        food += home[id] ? HeldTicks(HomeHeld(z,(uint32_t)id),GOODS_FOOD) : 0;    //a camp's larder with its supplies
+        food += home[id] ? HeldTicks(HomeHeld(z,(uint32_t)id),GOODS_FOOD) : 0;    //a camp's pantry with its supplies
     }
     return (people ? food / people : 0) + (int64_t)ECONOMY_FAIR_DAYS * CALENDAR_DAY_TICKS;
 }
@@ -3040,8 +3187,8 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         TickWorker(k,z,walkers,tick,dt);
     }
     Needs(z,walkers,tick);
-    //After everyone has moved, died or moved out: a camp left empty opens its larder to all.
-    OpenLarders(z);
+    //After everyone has moved, died or moved out: a camp left empty opens its pantry to all.
+    OpenPantries(z);
     if (!state.workers.empty()){
         state.version++;    //they move every tick - the view redraws them
     }
@@ -3054,6 +3201,8 @@ int EconomyFoodWorth(int good){
         case GOOD_WHEAT:    return CALENDAR_DAY_TICKS;
         case GOOD_GREENS:   return CALENDAR_DAY_TICKS / 2;
         case GOOD_BEANS:    return CALENDAR_DAY_TICKS * 2;
+        //Made from a wheat and a beans, and worth the two together (defence_plan.md, PROVISIONS).
+        case GOOD_PROVISIONS: return EconomyFoodWorth(GOOD_WHEAT) + EconomyFoodWorth(GOOD_BEANS);
         default:            return 0;
     }
 }
@@ -3085,7 +3234,7 @@ void Economy::EatAndDrink(EconomyWorker& k, const ZoneState& z){
     if (kind != ZONE_KIND_HOUSE && kind != ZONE_KIND_CAMP){
         return;
     }
-    Consume(k,HomeLarder(z,k.house));
+    Consume(k,HomePantry(z,k.house));
     if (kind == ZONE_KIND_CAMP){
         Consume(k,state.stock[k.house]);    //then the supplies (STORES, Economy.h)
     }
@@ -3095,7 +3244,8 @@ void Economy::EatAndDrink(EconomyWorker& k, const ZoneState& z){
     Eating and drinking from a stock, at home or away: only a whole unit that fits under full, so nothing is
     wasted. Water first: food does nothing for someone dry. Then food while any fits, the kind that keeps
     worst first - greens rot, wheat keeps, beans keep longest (gameplay_plan.md, "Goods and food") - so a
-    larder eats down its greens and saves its beans.
+    pantry eats down its greens and saves its beans. PROVISIONS last of all (defence_plan.md): kept for
+    soldiers, eaten only when nothing else there fits.
 */
 void Economy::Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
     while (from[GOOD_WATER] > 0 && k.water + NEEDS_WATER_WORTH <= NEEDS_WATER_FULL){
@@ -3106,7 +3256,7 @@ void Economy::Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
     if (EconomyDry(k)){
         return;
     }
-    static const int keeps_worst_first[] = {GOOD_GREENS,GOOD_WHEAT,GOOD_BEANS};
+    static const int keeps_worst_first[] = {GOOD_GREENS,GOOD_WHEAT,GOOD_BEANS,GOOD_PROVISIONS};
     for (bool f_ate = true; f_ate;){
         f_ate = false;
         for (int good : keeps_worst_first){
@@ -3120,6 +3270,15 @@ void Economy::Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
             }
         }
     }
+}
+
+bool Economy::SetStock(uint32_t id, int good, int amount, bool f_pantry){
+    if (!id || id >= state.stock.size() || id >= state.pantry.size() || good < 0 || good >= GOOD_COUNT || amount < 0){
+        return false;
+    }
+    (f_pantry ? state.pantry[id] : state.stock[id])[good] = amount;
+    state.version++;
+    return true;
 }
 
 bool Economy::SetNeeds(uint32_t person, int health, int water){
@@ -3217,20 +3376,38 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
     would save nobody, and the work may be the collector that would. `f_home` false: he cannot get home, so
     what it holds does not count. POSTED (defence_plan.md), he is not going home either: his own house is
     then a supply like any other, by its distance - another family's still never is.
+    PROVISIONS (defence_plan.md): a posted person's food is any food, provisions too, the nearest place
+    first. A villager's is the crops; only if no place he can get to has any does he look again, with
+    provisions - his LAST RESORT.
 */
 bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home){
-    uint8_t want = EconomyPressing(k);
+    GoodsMask pressing = EconomyPressing(k);
     //A baby goes nowhere for it (BIRTHS): its family's fetching is what feeds it.
-    if (!want || k.job == WORKER_JOB_BABY){
+    if (!pressing || k.job == WORKER_JOB_BABY){
         return false;
     }
     bool f_posted = k.post >= 0;
     if (f_posted){
-        f_home = false;
+        return SeekSupplyOf(k,z,walkers,false,pressing);
     }
-    //What building `id` has of `goods` - his own home, all it holds for him: a camp's larder with its supplies.
-    auto has = [&](uint32_t id, uint8_t goods){
-        std::array<int,GOOD_COUNT> s = (id == k.house) ? HomeHeld(z,id) : state.stock[id];
+    if (SeekSupplyOf(k,z,walkers,f_home,(GoodsMask)(pressing & ~GOOD_BIT(GOOD_PROVISIONS)))){
+        return true;
+    }
+    return (pressing & GOODS_FOOD) && SeekSupplyOf(k,z,walkers,f_home,pressing);
+}
+
+//SeekSupply's search for a place with some of `want`: water, and food - provisions only where `want` has them.
+bool Economy::SeekSupplyOf(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home, GoodsMask want){
+    bool f_posted = k.post >= 0;
+    //What building `id` - or a crate (ECONOMY_STORE_CRATE) - holds for him: his own home all of it, a camp's
+    //pantry with its supplies.
+    auto held = [&](uint32_t id){
+        const std::array<int,GOOD_COUNT>* s = SourceStock(id);
+        return (id == k.house) ? HomeHeld(z,id) : s ? *s : std::array<int,GOOD_COUNT>{};
+    };
+    //What `id` has of `goods`.
+    auto has = [&](uint32_t id, GoodsMask goods){
+        std::array<int,GOOD_COUNT> s = held(id);
         for (int g = 0; g < GOOD_COUNT; g++){
             if ((goods & GOOD_BIT(g)) && s[g] > 0){
                 return true;
@@ -3241,10 +3418,10 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     //What his home has he gets there, on his way back.
     if (f_home && k.house && k.house < state.stock.size()){
         if (has(k.house,GOOD_BIT(GOOD_WATER))){
-            want &= (uint8_t)~GOOD_BIT(GOOD_WATER);
+            want &= (GoodsMask)~GOOD_BIT(GOOD_WATER);
         }
         if (has(k.house,GOODS_FOOD)){
-            want &= (uint8_t)~GOODS_FOOD;
+            want &= (GoodsMask)~GOODS_EATEN;
         }
     }
     if (!want){
@@ -3257,8 +3434,8 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         for a day); counting each one's fill instead kept the thirsty at home dry while the collector
         refilled under them (three of ten died).
     */
-    auto spare = [&](uint32_t id, uint8_t goods){
-        std::array<int,GOOD_COUNT> s = (id == k.house) ? HomeHeld(z,id) : state.stock[id];
+    auto spare = [&](uint32_t id, GoodsMask goods){
+        std::array<int,GOOD_COUNT> s = held(id);
         int left = 0;
         for (int g = 0; g < GOOD_COUNT; g++){
             left += (goods & GOOD_BIT(g)) ? s[g] : 0;
@@ -3271,9 +3448,10 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         }
         return left;
     };
+    GoodsMask food = want & GOODS_EATEN;
     auto offers = [&](uint32_t id){
         return ((want & GOOD_BIT(GOOD_WATER)) && spare(id,GOOD_BIT(GOOD_WATER)) > 0)
-            || ((want & GOODS_FOOD) && spare(id,GOODS_FOOD) > 0);
+            || (food && spare(id,food) > 0);
     };
     const ChasmWorld& w = *state.world;
     //Where he would eat there: his own house at its door, anywhere else at its plot nearest him.
@@ -3284,8 +3462,9 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     size_t n = std::min(z.buildings.size(),state.stock.size());
     for (size_t id = 1; id < n; id++){
         bool f_own = f_posted && id == k.house;
+        //Never a builders' hut: its wheat, beans and provisions are for the sites (defence_plan.md).
         if ((id == k.house && !f_own) || z.buildings[id].size <= 0 || (PrivateStock(z,(uint32_t)id) && !f_own)
-            || !has((uint32_t)id,want) || !offers((uint32_t)id)){
+            || z.buildings[id].kind == ZONE_KIND_BUILDERS || !has((uint32_t)id,want) || !offers((uint32_t)id)){
             continue;
         }
         int plot = source((uint32_t)id);
@@ -3293,11 +3472,18 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             found.push_back(std::make_pair((w.grid->fine.pos[plot] - k.pos).length(),(uint32_t)id));
         }
     }
+    //A crate is a store anyone may eat and drink at (crates_plan.md).
+    for (const EconomyCrate& c : state.crates){
+        uint32_t id = ECONOMY_STORE_CRATE | c.id;
+        if (has(id,want) && offers(id)){
+            found.push_back(std::make_pair((c.pos - k.pos).length(),id));
+        }
+    }
     std::sort(found.begin(),found.end());
     for (size_t t = 0; t < found.size() && t < 4; t++){
         uint32_t id = found[t].second;
         int plot = source(id);
-        if (RouteTo(k,z,walkers,plot,w.grid->fine.pos[plot])){
+        if (RouteTo(k,z,walkers,plot,SourcePoint(id,plot,k.pos))){
             k.store = id;
             k.prop = -1;
             k.state = WORKER_TO_SUPPLY;
@@ -3312,13 +3498,13 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     water or food where it holds less than ECONOMY_HOME_DAYS of what its family drinks or eats, each counted in
     days of the family's bars, which fall a day's worth a day; firewood (step 3, HEAT) in its season, where it
     holds less than ECONOMY_HOME_DAYS of its burning or its fair share, whichever is less. `first` is the
-    scarcest, in days - water on a tie, then food: thirst kills sooner. A camp counts its larder and its
-    supplies together (HomeHeld), since its families live on both, but has room only in its larder. Nothing
+    scarcest, in days - water on a tie, then food: thirst kills sooner. A camp counts its pantry and its
+    supplies together (HomeHeld), since its families live on both, but has room only in its pantry. Nothing
     of a kind without room for a trip's worth - half a load, or half the room if that is less:
     a house too small for two days of both is always short, and was fetched for a unit at a time, every look.
     Food and water share the house's room; firewood has its woodshed.
 */
-uint8_t Economy::HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* first) const{
+GoodsMask Economy::HomeShort(const EconomyWorker& k, const ZoneState& z, GoodsMask* first) const{
     uint32_t h = k.house;
     if (!h || h >= z.buildings.size() || h >= state.stock.size() || h >= stands.size() || !stands[h]
         || (z.buildings[h].kind != ZONE_KIND_HOUSE && z.buildings[h].kind != ZONE_KIND_CAMP)){
@@ -3333,7 +3519,7 @@ uint8_t Economy::HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* 
     int64_t enough = living * ECONOMY_HOME_DAYS * CALENDAR_DAY_TICKS;
     int64_t water = HeldTicks(held,GOOD_BIT(GOOD_WATER));
     int64_t food = HeldTicks(held,GOODS_FOOD);
-    uint8_t short_of = (uint8_t)((water < enough && trip_fits(GOOD_WATER) ? GOOD_BIT(GOOD_WATER) : 0)
+    GoodsMask short_of = (GoodsMask)((water < enough && trip_fits(GOOD_WATER) ? GOOD_BIT(GOOD_WATER) : 0)
                                  | (food < enough && trip_fits(GOOD_WHEAT) ? GOODS_FOOD : 0));
     //Firewood's days are its burning's: ticks of it held, against water's and food's ticks a head.
     int64_t wood_ticks = INT64_MAX;
@@ -3347,9 +3533,9 @@ uint8_t Economy::HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* 
     if (first){
         *first = 0;
         int64_t least = INT64_MAX;
-        const std::pair<uint8_t,int64_t> kinds[3] = {{(uint8_t)GOOD_BIT(GOOD_WATER),water / living},
-                                                     {(uint8_t)GOODS_FOOD,food / living},
-                                                     {(uint8_t)GOOD_BIT(GOOD_WOOD),wood_ticks}};
+        const std::pair<GoodsMask,int64_t> kinds[3] = {{(GoodsMask)GOOD_BIT(GOOD_WATER),water / living},
+                                                     {(GoodsMask)GOODS_FOOD,food / living},
+                                                     {(GoodsMask)GOOD_BIT(GOOD_WOOD),wood_ticks}};
         for (const auto& kd : kinds){
             if ((short_of & kd.first) && (kd.second < least || !*first)){
                 least = kd.second;
@@ -3371,6 +3557,10 @@ uint8_t Economy::HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* 
     The scarcer first; the other if nowhere has the scarcer. True if he set off.
 */
 bool Economy::FetchFrom(const EconomyWorker& k, const ZoneState& z, uint32_t id) const{
+    //A crate is a store anyone may take from (crates_plan.md), while it lies there.
+    if (EconomyIsCrateStore(id)){
+        return SourceStock(id) != NULL;
+    }
     if (!id || id == k.house || id >= z.buildings.size() || id >= state.stock.size() || id >= stands.size()
         || z.buildings[id].size <= 0 || !stands[id]){
         return false;
@@ -3393,8 +3583,8 @@ bool Economy::FetchFrom(const EconomyWorker& k, const ZoneState& z, uint32_t id)
 }
 
 bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
-    uint8_t first = 0;
-    uint8_t short_of = HomeShort(k,z,&first);
+    GoodsMask first = 0;
+    GoodsMask short_of = HomeShort(k,z,&first);
     if (!short_of){
         return false;
     }
@@ -3406,23 +3596,23 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         if (&o == &k || o.house != k.house){
             continue;
         }
-        if (o.state == WORKER_TO_GET || o.state == WORKER_GETTING || o.state == WORKER_TO_LARDER){
+        if (o.state == WORKER_TO_GET || o.state == WORKER_GETTING || o.state == WORKER_TO_PANTRY){
             return false;       //one errand a house at a time
         }
         if (!idle(k) && idle(o) && o.state == WORKER_AT_HOME && AtHome(o)){
             return false;       //an idle one is home: he goes, at his next look
         }
     }
-    //What a place has of `goods` that nobody else fetching home already counts on: a load each.
-    auto spare = [&](uint32_t id, uint8_t goods){
+    //What a place - a building or a crate - has of `goods` that nobody else fetching home already counts on: a load each.
+    auto spare = [&](uint32_t id, GoodsMask goods){
+        const std::array<int,GOOD_COUNT>* s = SourceStock(id);
         int left = 0;
-        for (int g = 0; g < GOOD_COUNT; g++){
-            left += (goods & GOOD_BIT(g)) ? state.stock[id][g] : 0;
+        for (int g = 0; g < GOOD_COUNT && s; g++){
+            left += (goods & GOOD_BIT(g)) ? (*s)[g] : 0;
         }
         for (const EconomyWorker& o : state.workers){
-            if (&o != &k && o.store == id && (o.state == WORKER_TO_GET || o.state == WORKER_GETTING)
-                && o.carry_good >= 0 && (goods & GOOD_BIT(o.carry_good))){
-                left -= ECONOMY_LOAD;
+            if (&o != &k && o.carry_good >= 0 && (goods & GOOD_BIT(o.carry_good))){
+                left -= HomeReservation(o,id,o.carry_good);
             }
         }
         return left;
@@ -3431,14 +3621,14 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     int home = HomePlot(k);
     size_t n = std::min(z.buildings.size(),state.stock.size());
     //The scarcest first, then the others a kind at a time: water, food, firewood.
-    uint8_t order[3] = {first,0,0};
+    GoodsMask order[3] = {first,0,0};
     int kinds = 1;
-    for (uint8_t kd : {(uint8_t)GOOD_BIT(GOOD_WATER),(uint8_t)GOODS_FOOD,(uint8_t)GOOD_BIT(GOOD_WOOD)}){
+    for (GoodsMask kd : {(GoodsMask)GOOD_BIT(GOOD_WATER),(GoodsMask)GOODS_FOOD,(GoodsMask)GOOD_BIT(GOOD_WOOD)}){
         if ((short_of & kd) && kd != first){
             order[kinds++] = kd;
         }
     }
-    for (uint8_t goods : order){
+    for (GoodsMask goods : order){
         if (!goods){
             continue;
         }
@@ -3459,14 +3649,21 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
                 found.push_back(std::make_pair((w.grid->fine.pos[plot] - k.pos).length(),(uint32_t)id));
             }
         }
+        //...and the crates lying about (crates_plan.md): a store anyone may take from.
+        for (const EconomyCrate& c : state.crates){
+            uint32_t id = ECONOMY_STORE_CRATE | c.id;
+            if (spare(id,goods) > 0){
+                found.push_back(std::make_pair((c.pos - k.pos).length(),id));
+            }
+        }
         std::sort(found.begin(),found.end());
         for (size_t t = 0; t < found.size() && t < 4; t++){
             uint32_t id = found[t].second;
             int plot = SourcePlot(id,k.pos);
-            vec2 at = w.grid->fine.pos[plot];
+            vec2 at = SourcePoint(id,plot,k.pos);
             if (CanWalk(z,walkers,at,home) && RouteTo(k,z,walkers,plot,at)){
                 k.store = id;
-                k.carry_good = MostOf(state.stock[id],goods);   //the kind he is after; nothing carried yet
+                k.carry_good = MostOf(*SourceStock(id),goods);   //the kind he is after; nothing carried yet
                 k.carry = 0;
                 k.prop = -1;
                 k.state = WORKER_TO_GET;
@@ -3482,17 +3679,19 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     house's room for it allow, and no more than brings the house to a day past ECONOMY_HOME_DAYS of it, so the
     next errand is a day off and water does not fill the room food needs (it did: nine water, no food, for a
     day) - nor, from its own land's field, past its fair share (FairShare) - and off home with it
-    (WORKER_TO_LARDER). Firewood the same, in days of its burning, into its woodshed, in its season, and never
+    (WORKER_TO_PANTRY). Firewood the same, in days of its burning, into its woodshed, in its season, and never
     past its fair share (FirewoodFair). False, taking nothing, with none there, no room at home or no way back.
 */
-bool Economy::TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, uint8_t goods){
+bool Economy::TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, GoodsMask goods){
     uint32_t h = k.house;
+    //A building's stock, or a crate's (crates_plan.md) - gone if it was emptied while he walked.
+    std::array<int,GOOD_COUNT>* src = SourceStock(from);
     //Never from a home somebody lives in (WHOSE IT IS, Economy.h) - whoever asks.
-    if (!from || from >= state.stock.size() || !h || h >= z.buildings.size() || h >= state.room.size() || from == h
+    if (!src || !h || h >= z.buildings.size() || h >= state.room.size() || from == h
         || (z.buildings[h].kind != ZONE_KIND_HOUSE && z.buildings[h].kind != ZONE_KIND_CAMP) || PrivateStock(z,from)){
         return false;
     }
-    int good = MostOf(state.stock[from],goods);
+    int good = MostOf(*src,goods);
     if (good < 0){
         return false;
     }
@@ -3503,7 +3702,7 @@ bool Economy::TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, u
             upto = std::min(state.burn[h] * (ECONOMY_HOME_DAYS + 1),FirewoodFair(z,h)) - held[GOOD_WOOD];
         }
     }else{
-        uint8_t kind = (good == GOOD_WATER) ? (uint8_t)GOOD_BIT(GOOD_WATER) : (uint8_t)GOODS_FOOD;
+        GoodsMask kind = (good == GOOD_WATER) ? (GoodsMask)GOOD_BIT(GOOD_WATER) : (GoodsMask)GOODS_FOOD;
         int worth = (good == GOOD_WATER) ? NEEDS_WATER_WORTH : EconomyFoodWorth(good);
         int64_t want = Living(state.workers,h) * (ECONOMY_HOME_DAYS + 1) * CALENDAR_DAY_TICKS - HeldTicks(held,kind);
         if (from < z.buildings.size() && z.buildings[from].kind == ZONE_KIND_FIELD){
@@ -3511,16 +3710,17 @@ bool Economy::TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, u
         }
         upto = (want > 0 && worth > 0) ? (int)((want + worth - 1) / worth) : 0;
     }
-    int take = std::min(std::min(ECONOMY_LOAD,upto),std::min(state.stock[from][good],HouseRoom(z,h,good)));
+    int take = std::min(std::min(ECONOMY_LOAD,upto),std::min((*src)[good],HouseRoom(z,h,good)));
     if (take <= 0 || !RouteHome(k,z,walkers)){
         return false;
     }
-    state.stock[from][good] -= take;
+    (*src)[good] -= take;
+    CrateTouched(from);
     k.carry_good = good;
     k.carry = take;
     k.store = 0;
     k.prop = -1;
-    k.state = WORKER_TO_LARDER;
+    k.state = WORKER_TO_PANTRY;
     state.version++;
     return true;
 }
@@ -3539,13 +3739,13 @@ void Economy::Heat(const ZoneState& z, uint64_t tick){
         }
     }
     size_t n = std::min(std::min(state.heat.size(),z.buildings.size()),std::min(state.stock.size(),state.burn.size()));
-    n = std::min(n,state.larder.size());
+    n = std::min(n,state.pantry.size());
     for (size_t id = 1; id < n; id++){
         uint8_t heat = HEAT_NONE;
         if (state.burn[id] > 0 && living[id] > 0 && id < plots_of.size() && !plots_of[id].empty()
             && UnderSnow(w,w.grid->fine.pos[plots_of[id][0]],tick)){
-            //A camp's larder first, then its supplies (STORES); a house's larder is its stock, so this is only that.
-            int& own = state.larder[id][GOOD_WOOD];
+            //A camp's pantry first, then its supplies (STORES); a house's pantry is its stock, so this is only that.
+            int& own = state.pantry[id][GOOD_WOOD];
             int& wood = state.stock[id][GOOD_WOOD];
             heat = (own + wood >= state.burn[id]) ? HEAT_WARM : HEAT_COLD;
             if (heat == HEAT_WARM){
@@ -3564,12 +3764,12 @@ void Economy::Heat(const ZoneState& z, uint64_t tick){
 }
 
 int Economy::HouseRoom(const ZoneState& z, uint32_t h, int good) const{
-    if (h >= state.stock.size() || h >= state.room.size() || h >= state.larder.size() || good < 0 || good >= GOOD_COUNT){
+    if (h >= state.stock.size() || h >= state.room.size() || h >= state.pantry.size() || good < 0 || good >= GOOD_COUNT){
         return 0;
     }
-    //A camp's room is its larder's: the supplies beside it are not its families' to fill.
+    //A camp's room is its pantry's: the supplies beside it are not its families' to fill.
     bool f_camp = h < z.buildings.size() && z.buildings[h].kind == ZONE_KIND_CAMP;
-    const std::array<int,GOOD_COUNT>& s = f_camp ? state.larder[h] : state.stock[h];
+    const std::array<int,GOOD_COUNT>& s = f_camp ? state.pantry[h] : state.stock[h];
     if (good == GOOD_WOOD){
         return std::max(0,((h < state.woodshed.size()) ? state.woodshed[h] : 0) - s[GOOD_WOOD]);
     }
@@ -3577,19 +3777,19 @@ int Economy::HouseRoom(const ZoneState& z, uint32_t h, int good) const{
 }
 
 bool Economy::PrivateStock(const ZoneState& z, uint32_t id) const{
-    return id && id < z.buildings.size() && z.buildings[id].kind == ZONE_KIND_HOUSE && Living(state.workers,id) > 0;
+    return EconomyPrivateStock(state,z,id);
 }
 
-std::array<int,GOOD_COUNT>& Economy::HomeLarder(const ZoneState& z, uint32_t h){
-    bool f_camp = h < z.buildings.size() && z.buildings[h].kind == ZONE_KIND_CAMP && h < state.larder.size();
-    return f_camp ? state.larder[h] : state.stock[h];
+std::array<int,GOOD_COUNT>& Economy::HomePantry(const ZoneState& z, uint32_t h){
+    bool f_camp = h < z.buildings.size() && z.buildings[h].kind == ZONE_KIND_CAMP && h < state.pantry.size();
+    return f_camp ? state.pantry[h] : state.stock[h];
 }
 
 std::array<int,GOOD_COUNT> Economy::HomeHeld(const ZoneState& z, uint32_t h) const{
     std::array<int,GOOD_COUNT> held = (h < state.stock.size()) ? state.stock[h] : std::array<int,GOOD_COUNT>{};
-    if (h < z.buildings.size() && z.buildings[h].kind == ZONE_KIND_CAMP && h < state.larder.size()){
+    if (h < z.buildings.size() && z.buildings[h].kind == ZONE_KIND_CAMP && h < state.pantry.size()){
         for (int g = 0; g < GOOD_COUNT; g++){
-            held[g] += state.larder[h][g];
+            held[g] += state.pantry[h][g];
         }
     }
     return held;
@@ -3599,16 +3799,16 @@ std::array<int,GOOD_COUNT> Economy::HomeHeld(const ZoneState& z, uint32_t h) con
     A camp nobody lives in any more: what its families had fetched is nobody's, so it joins the supplies, where
     anyone may take it (the user's, 2026-10-09) - on the tick the last of them left, not carried anywhere.
 */
-void Economy::OpenLarders(const ZoneState& z){
-    size_t n = std::min(std::min(state.larder.size(),state.stock.size()),z.buildings.size());
+void Economy::OpenPantries(const ZoneState& z){
+    size_t n = std::min(std::min(state.pantry.size(),state.stock.size()),z.buildings.size());
     for (size_t id = 1; id < n; id++){
-        if (CarryTotal(state.larder[id]) == 0 || Living(state.workers,(uint32_t)id) > 0){
+        if (CarryTotal(state.pantry[id]) == 0 || Living(state.workers,(uint32_t)id) > 0){
             continue;
         }
         for (int g = 0; g < GOOD_COUNT; g++){
-            state.stock[id][g] += state.larder[id][g];
+            state.stock[id][g] += state.pantry[id][g];
         }
-        state.larder[id] = std::array<int,GOOD_COUNT>{};
+        state.pantry[id] = std::array<int,GOOD_COUNT>{};
         state.version++;
     }
 }
@@ -3862,19 +4062,23 @@ std::array<int,GOOD_COUNT> Economy::SiteLeft(const ZoneState& z, uint32_t id, co
     return left;
 }
 
-//A good at a building nobody is already on his way to take: a load for each carrier going there for it.
+//A good at a building - or a crate - nobody is already on his way to take: a load for each carrier going there for it.
 int Economy::GoodFree(uint32_t id, int good) const{
-    int free = state.stock[id][good];
+    const std::array<int,GOOD_COUNT>* s = SourceStock(id);
+    int free = s ? (*s)[good] : 0;
     for (const EconomyWorker& o : state.workers){
-        if (o.site && o.store == id && o.carry_good == good && (o.state == WORKER_TO_FETCH || o.state == WORKER_FETCHING)){
-            free -= ECONOMY_LOAD;
-        }
+        free -= SiteReservation(o,id,good);
     }
     return free;
 }
 
-//Where goods are taken from building `id`: a woodcutter's on his pile, the rest at its plot nearest `to`.
+//Where goods are taken from building `id`: a woodcutter's on his pile, the rest at its plot nearest `to`; a
+//crate's (ECONOMY_STORE_CRATE) on the plot it lies on.
 int Economy::SourcePlot(uint32_t id, const vec2& to) const{
+    if (EconomyIsCrateStore(id)){
+        const EconomyCrate* c = CrateById(EconomyCrateOfStore(id));
+        return c ? c->plot : -1;
+    }
     if (id < pile_door.size() && pile_door[id] >= 0){
         return pile_door[id];
     }
@@ -3933,7 +4137,8 @@ int Economy::NearestPlot(uint32_t id, const vec2& to, bool f_dry) const{
 
 /*
     An idle person's errand: of every site that still wants a good and every building with that good to
-    spare - a store, the camp's supplies, a house nobody lives in, a woodcutter's pile - the pair with the
+    spare - a store, the camp's supplies, a house nobody lives in, a woodcutter's pile - or crate lying about
+    with it (crates_plan.md), the pair with the
     shortest walk, by the straight line, from him to the good and on to the site (the lower ids, then the
     lower good, on a tie), in the player's order where the walks are close (below). The first of the nearest
     few he can walk to, and from whose goods the site can be walked to. Each good a site wants is an errand
@@ -3969,16 +4174,28 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
             }
         }
         //A camp's supplies are the colony's; a house's stock only once nobody lives there (WHOSE IT IS, Economy.h).
-        bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP || b.kind == ZONE_KIND_WOODCUTTER
+        //A builders' hut's PROVISIONS too, made for the sites - never its wheat and beans (defence_plan.md).
+        bool f_hut = b.kind == ZONE_KIND_BUILDERS;
+        bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP || b.kind == ZONE_KIND_WOODCUTTER || f_hut
                        || (b.kind == ZONE_KIND_HOUSE && !PrivateStock(z,(uint32_t)id));
         if (f_holds && stands[id]){
             Holding h{(uint32_t)id,{}};
             for (int g = 0; g < GOOD_COUNT; g++){
-                h.free[g] = GoodFree((uint32_t)id,g);
+                h.free[g] = (!f_hut || g == GOOD_PROVISIONS) ? GoodFree((uint32_t)id,g) : 0;
             }
             if (wants(h.free)){
                 sources.push_back(h);
             }
+        }
+    }
+    //The crates (crates_plan.md): goods lying on the ground are a store's to anyone carrying for a site.
+    for (const EconomyCrate& c : state.crates){
+        Holding h{ECONOMY_STORE_CRATE | c.id,{}};
+        for (int g = 0; g < GOOD_COUNT; g++){
+            h.free[g] = GoodFree(h.id,g);
+        }
+        if (wants(h.free)){
+            sources.push_back(h);
         }
     }
     //The gardens, lots and walls still to build, after the buildings - so on a tie a building comes first.
@@ -4087,7 +4304,7 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
             }
             continue;
         }
-        vec2 at = w.grid->fine.pos[e.from_plot];
+        vec2 at = SourcePoint(e.from,e.from_plot,k.pos);
         if (!CanWalk(z,walkers,at,site_plot(e.site,at))){
             continue;
         }
@@ -4444,6 +4661,28 @@ const EconomyCrate* EconomyCrateOn(const EconomyState& e, int plot){
     return NULL;
 }
 
+bool EconomyCrateInTheWay(const EconomyState& e, const ChasmWorld& w, int op, int index, int value){
+    switch (op){
+        case ZONE_OP_BUILD_PAINT:
+        case ZONE_OP_BUILD_ADD:
+            return EconomyCrateOn(e,index) != NULL;
+        case ZONE_OP_GROUND_PAINT:
+            return value != ZONE_GROUND_ROAD && EconomyCrateOn(e,index) != NULL;
+        case ZONE_OP_FIELD_PAINT:
+        case ZONE_OP_RANGE_PAINT:
+            //A cell holds a crate whose point lies in it (EconomyCrateGround asks the same).
+            for (const EconomyCrate& c : e.crates){
+                GridPick p = w.picker->Pick(c.pos);
+                if (p.f_hit && p.coarse_quad == index){
+                    return true;
+                }
+            }
+            return false;
+        default:
+            return false;     //a bridge's plots are wet, where no crate lies; the rest put nothing down
+    }
+}
+
 void Economy::AddToCrate(int plot, const vec2& at, int good, int amount, int origin, uint32_t by){
     for (EconomyCrate& c : state.crates){
         if (c.plot == plot){
@@ -4581,6 +4820,333 @@ bool Economy::SpawnCrate(int plot, int good, int amount, const ZoneState& z, std
     return true;
 }
 
+const EconomyCrate* Economy::CrateById(uint32_t id) const{
+    for (const EconomyCrate& c : state.crates){
+        if (c.id == id){
+            return &c;
+        }
+    }
+    return NULL;
+}
+
+std::array<int,GOOD_COUNT>* Economy::SourceStock(uint32_t id){
+    return const_cast<std::array<int,GOOD_COUNT>*>(static_cast<const Economy*>(this)->SourceStock(id));
+}
+
+const std::array<int,GOOD_COUNT>* Economy::SourceStock(uint32_t id) const{
+    if (EconomyIsCrateStore(id)){
+        const EconomyCrate* c = CrateById(EconomyCrateOfStore(id));
+        return c ? &c->stock : NULL;
+    }
+    return (id && id < state.stock.size()) ? &state.stock[id] : NULL;
+}
+
+//A crate taken from: the view told, and - emptied - off the map (the user's: gone when empty).
+void Economy::CrateTouched(uint32_t store){
+    if (!EconomyIsCrateStore(store)){
+        return;
+    }
+    uint32_t id = EconomyCrateOfStore(store);
+    state.crates.erase(std::remove_if(state.crates.begin(),state.crates.end(),[&](const EconomyCrate& c){
+        return c.id == id && CarryTotal(c.stock) <= 0;
+    }),state.crates.end());
+    state.crates_version++;
+    state.version++;
+}
+
+//Beside it, on the side he comes from - not in it, as he would stand at the foot of a tree (GoForWood).
+vec2 Economy::CrateStand(const EconomyCrate& c, const vec2& from) const{
+    vec2 to = c.pos - from;
+    float l = to.length();
+    return (l > ECONOMY_CRATE_STAND * 2.0f) ? c.pos - to * (ECONOMY_CRATE_STAND / l) : c.pos;
+}
+
+vec2 Economy::SourcePoint(uint32_t id, int plot, const vec2& from) const{
+    const EconomyCrate* c = EconomyIsCrateStore(id) ? CrateById(EconomyCrateOfStore(id)) : NULL;
+    return c ? CrateStand(*c,from) : state.world->grid->fine.pos[plot];
+}
+
+/*
+    THE CARETAKERS' LAST ERRAND (crates_plan.md, the user's): a crate's goods to a storehouse - only a builder's,
+    and only once there is nothing to carry or build and no line work (TickWorker). Of the crates holding a good
+    some store takes a load of - its whole load, with the room - and that he could walk on to that store from,
+    the nearest by the straight line, the lower id on a tie: the first of the nearest few he can walk to. A
+    crate another caretaker is already on his way to only while it holds more than that one's load.
+*/
+bool Economy::MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    const ChasmWorld& w = *state.world;
+    //The nearest store that takes `amount` of `good` whole, by the straight line from `at` - its plot nearest
+    //there - or -1.
+    auto store_plot = [&](int good, int amount, const vec2& at){
+        int best = -1;
+        float best_d = 1e30f;
+        for (size_t s = 1; s < state.accepts.size() && s < plots_of.size(); s++){
+            if (!(state.accepts[s] & GOOD_BIT(good)) || state.room[s] - CarryTotal(state.stock[s]) < amount){
+                continue;
+            }
+            for (int v : plots_of[s]){
+                float d = (w.grid->fine.pos[v] - at).length();
+                if (d < best_d){
+                    best_d = d;
+                    best = v;
+                }
+            }
+        }
+        return best;
+    };
+    std::vector<std::pair<float,uint32_t>> found;
+    for (const EconomyCrate& c : state.crates){
+        uint32_t id = ECONOMY_STORE_CRATE | c.id;
+        int left = CarryTotal(c.stock);
+        for (const EconomyWorker& o : state.workers){
+            if (&o != &k && o.store == id && (o.state == WORKER_TO_CRATE || o.state == WORKER_LIFTING)){
+                left -= ECONOMY_LOAD;
+            }
+        }
+        if (left > 0){
+            found.push_back(std::make_pair((c.pos - k.pos).length(),id));
+        }
+    }
+    std::sort(found.begin(),found.end());
+    for (size_t t = 0; t < found.size() && t < 4; t++){
+        const EconomyCrate* c = CrateById(EconomyCrateOfStore(found[t].second));
+        int good = -1;
+        for (int g = 0; g < GOOD_COUNT && good < 0; g++){
+            int sp = (c->stock[g] > 0) ? store_plot(g,std::min(ECONOMY_LOAD,c->stock[g]),c->pos) : -1;
+            if (sp >= 0 && CanWalk(z,walkers,c->pos,sp)){
+                good = g;
+            }
+        }
+        if (good < 0){
+            continue;
+        }
+        if (RouteTo(k,z,walkers,c->plot,CrateStand(*c,k.pos))){
+            k.store = found[t].second;
+            k.carry_good = good;        //the kind he goes for; nothing carried yet
+            k.carry = 0;
+            k.prop = -1;
+            k.state = WORKER_TO_CRATE;
+            return true;
+        }
+    }
+    return false;
+}
+
+//--- Provisions (docs/defence_plan.md, step 5) -------------------------------------------------------
+
+/*
+    How many provisions are still wanted beyond what is made: what the sites still lack of them (SiteLeft,
+    less what is on its way) - towers short of them come with step 7 - less what lies made where the sites'
+    carriers take from (a store, the camp's supplies, a house nobody lives in, a builders' hut, a crate) and
+    what is being made. Below 0: made and wanted by nobody. Wheat and beans at the huts are not counted -
+    they are made into provisions only while this is above 0.
+*/
+int Economy::ProvisionsLacking(const ZoneState& z) const{
+    int lacking = 0;
+    size_t n = std::min(z.buildings.size(),state.site.size());
+    for (size_t id = 1; id < n; id++){
+        const ZoneBuilding& b = z.buildings[id];
+        if (b.size <= 0){
+            continue;
+        }
+        if (site_storeys[id] > 0 || site_cells[id] > 0){
+            lacking += std::max(0,SiteLeft(z,(uint32_t)id,NULL)[GOOD_PROVISIONS]);
+        }
+        bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP || b.kind == ZONE_KIND_BUILDERS
+                       || (b.kind == ZONE_KIND_HOUSE && !PrivateStock(z,(uint32_t)id));
+        if (f_holds && stands[id]){
+            lacking -= std::max(0,GoodFree((uint32_t)id,GOOD_PROVISIONS));
+        }
+    }
+    for (const EconomyCrate& c : state.crates){
+        lacking -= std::max(0,GoodFree(ECONOMY_STORE_CRATE | c.id,GOOD_PROVISIONS));
+    }
+    for (const EconomyWorker& o : state.workers){
+        lacking -= (o.state == WORKER_MAKING) ? 1 : 0;
+    }
+    return lacking;
+}
+
+/*
+    A builder's provisions errand, from home - before his building work (the user's order: towers, then
+    provisions, then building, then crates). While some are wanted (ProvisionsLacking): to his hut to make
+    them, with a wheat and a beans there; else, with too few on hand and on their way at every hut for what is
+    wanted, for a load of the scarcer of the two at his own hut - from the nearest store, camp's supplies,
+    house nobody lives in or crate with some to spare. With none wanted, to his hut for a load of what lies
+    there for nobody, to a store that takes it. False if none of that is to do, or he can get to none of it.
+*/
+bool Economy::MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    const ChasmWorld& w = *state.world;
+    uint32_t h = k.building;
+    if (k.job != WORKER_JOB_BUILDER || !Workshop(z,stands,h)){
+        return false;
+    }
+    const std::array<int,GOOD_COUNT>& hut = state.stock[h];
+    int lacking = ProvisionsLacking(z);
+    auto to_hut = [&](){
+        int plot = NearestPlot(h,k.pos);
+        if (plot < 0 || !RouteTo(k,z,walkers,plot,w.grid->fine.pos[plot])){
+            return false;
+        }
+        k.store = 0;
+        k.site = 0;
+        k.prop = -1;
+        k.stint = 0;
+        k.state = WORKER_TO_WORKSHOP;
+        return true;
+    };
+    if (lacking > 0 && hut[GOOD_WHEAT] > 0 && hut[GOOD_BEANS] > 0){
+        return to_hut();
+    }
+    if (lacking <= 0){
+        //Something there nobody wants any more, and a store with room for a load of it (as AtWorkshop takes it).
+        for (int g : {GOOD_PROVISIONS,GOOD_WHEAT,GOOD_BEANS}){
+            int load = std::min(ECONOMY_LOAD,(g == GOOD_PROVISIONS) ? std::min(hut[g],-lacking) : hut[g]);
+            for (size_t s = 1; load > 0 && s < state.accepts.size(); s++){
+                if ((state.accepts[s] & GOOD_BIT(g)) && state.room[s] - CarryTotal(state.stock[s]) >= load){
+                    return to_hut();
+                }
+            }
+        }
+        return false;
+    }
+    //What every hut will make with what it has and what is on its way to it: its wheat and beans, in pairs.
+    auto coming = [&](uint32_t hh, int good){
+        int n = 0;
+        for (const EconomyWorker& o : state.workers){
+            if (o.building != hh || o.carry_good != good){
+                continue;
+            }
+            n += (o.state == WORKER_TO_INPUT || o.state == WORKER_TAKING_INPUT) ? o.stint
+               : (o.state == WORKER_TO_WORKSHOP) ? o.carry : 0;
+        }
+        return n;
+    };
+    int will_make = 0;
+    int mine[2] = {0,0};
+    for (size_t hh = 1; hh < z.buildings.size() && hh < state.stock.size(); hh++){
+        if (!Workshop(z,stands,(uint32_t)hh)){
+            continue;
+        }
+        int wheat = state.stock[hh][GOOD_WHEAT] + coming((uint32_t)hh,GOOD_WHEAT);
+        int beans = state.stock[hh][GOOD_BEANS] + coming((uint32_t)hh,GOOD_BEANS);
+        will_make += std::min(wheat,beans);
+        if (hh == h){
+            mine[0] = wheat;
+            mine[1] = beans;
+        }
+    }
+    int pairs = lacking - will_make;
+    if (pairs <= 0){
+        return false;
+    }
+    //Where wheat or beans can be had: a store, the camp's supplies, a house nobody lives in, a crate - with
+    //some nobody else is on his way for. By the straight line from him.
+    auto sources = [&](int good, std::vector<std::pair<float,uint32_t>>& out){
+        out.clear();
+        for (size_t id = 1; id < z.buildings.size() && id < stands.size(); id++){
+            const ZoneBuilding& b = z.buildings[id];
+            bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP
+                           || (b.kind == ZONE_KIND_HOUSE && !PrivateStock(z,(uint32_t)id));
+            int plot = (b.size > 0 && f_holds && stands[id] && GoodFree((uint32_t)id,good) > 0) ? SourcePlot((uint32_t)id,k.pos) : -1;
+            if (plot >= 0){
+                out.push_back(std::make_pair((w.grid->fine.pos[plot] - k.pos).length(),(uint32_t)id));
+            }
+        }
+        for (const EconomyCrate& c : state.crates){
+            uint32_t id = ECONOMY_STORE_CRATE | c.id;
+            if (GoodFree(id,good) > 0){
+                out.push_back(std::make_pair((c.pos - k.pos).length(),id));
+            }
+        }
+        std::sort(out.begin(),out.end());
+    };
+    /*
+        The scarcer at his hut - wheat on a tie - as many as the pairs still wanted (each pair takes one more of
+        it). Only as many as pair with what is there of the other, where none of the other is to be had: no
+        wheat or no beans, no provisions (defence_plan.md), and nothing fetched to wait at the hut for its half.
+    */
+    int good = (mine[0] <= mine[1]) ? GOOD_WHEAT : GOOD_BEANS;
+    int other = (good == GOOD_WHEAT) ? GOOD_BEANS : GOOD_WHEAT;
+    int diff = std::abs(mine[0] - mine[1]);
+    std::vector<std::pair<float,uint32_t>> found;
+    sources(other,found);
+    int amount = std::min(ECONOMY_LOAD,found.empty() ? std::min(diff,pairs) : pairs);
+    if (amount <= 0){
+        return false;
+    }
+    sources(good,found);
+    for (size_t t = 0; t < found.size() && t < 4; t++){
+        uint32_t id = found[t].second;
+        int plot = SourcePlot(id,k.pos);
+        if (plot >= 0 && RouteTo(k,z,walkers,plot,SourcePoint(id,plot,k.pos))){
+            k.store = id;
+            k.carry_good = good;        //the kind he goes for; nothing carried yet
+            k.carry = 0;
+            k.stint = std::min(amount,GoodFree(id,good));
+            k.site = 0;
+            k.prop = -1;
+            k.state = WORKER_TO_INPUT;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    At his builders' hut (WORKER_TO_WORKSHOP arrived, or a provision made): wheat or beans he brought go into
+    its stock; then, while provisions are wanted and it has a wheat and a beans, he makes one - taking them at
+    the start - up to a load a round; else, with none wanted, a load of what lies there for nobody goes to a
+    store that takes it; else home. His hut gone, or no longer his: what he holds to a store.
+*/
+void Economy::AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace){
+    uint32_t h = k.building;
+    if (k.job != WORKER_JOB_BUILDER || !Workshop(z,stands,h)){
+        if (k.carry > 0 && !FindStore(k,z,walkers)){
+            k.state = WORKER_HOLDING;
+        }else if (k.carry <= 0){
+            GoHome(k,z,walkers);
+        }
+        return;
+    }
+    std::array<int,GOOD_COUNT>& hut = state.stock[h];
+    if (k.carry > 0 && k.carry_good >= 0){
+        hut[k.carry_good] += k.carry;
+        k.carry = 0;
+        k.carry_good = -1;
+        k.stint = 0;
+        state.version++;
+    }
+    int lacking = ProvisionsLacking(z);
+    if (lacking > 0 && hut[GOOD_WHEAT] > 0 && hut[GOOD_BEANS] > 0 && k.stint < ECONOMY_LOAD){
+        hut[GOOD_WHEAT]--;
+        hut[GOOD_BEANS]--;
+        k.state = WORKER_MAKING;
+        k.timer = SecondsToTicks(ECONOMY_PROVISION_SECONDS / pace);
+        state.version++;
+        return;
+    }
+    if (lacking <= 0){
+        for (int g : {GOOD_PROVISIONS,GOOD_WHEAT,GOOD_BEANS}){
+            int spare = (g == GOOD_PROVISIONS) ? std::min(hut[g],-lacking) : hut[g];
+            if (spare <= 0){
+                continue;
+            }
+            k.carry = std::min(ECONOMY_LOAD,spare);
+            k.carry_good = g;
+            hut[g] -= k.carry;
+            if (FindStore(k,z,walkers)){
+                state.version++;
+                return;
+            }
+            hut[g] += k.carry;      //no store takes it: it stays at the hut
+            k.carry = 0;
+            k.carry_good = -1;
+        }
+    }
+    GoHome(k,z,walkers);
+}
+
 //--- Saves -----------------------------------------------------------------------------------------
 
 EconomySaved Economy::Save() const{
@@ -4594,9 +5160,9 @@ EconomySaved EconomySaveState(const EconomyState& state){
             s.stocks.push_back(std::make_pair((uint32_t)id,state.stock[id]));
         }
     }
-    for (size_t id = 1; id < state.larder.size(); id++){
-        if (CarryTotal(state.larder[id]) > 0){
-            s.larders.push_back(std::make_pair((uint32_t)id,state.larder[id]));
+    for (size_t id = 1; id < state.pantry.size(); id++){
+        if (CarryTotal(state.pantry[id]) > 0){
+            s.pantries.push_back(std::make_pair((uint32_t)id,state.pantry[id]));
         }
     }
     for (size_t i = 0; i < state.prop_state.size(); i++){
@@ -4647,10 +5213,10 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
             state.stock[st.first] = st.second;
         }
     }
-    state.larder.assign(z.buildings.size(),std::array<int,GOOD_COUNT>{});
-    for (const auto& st : saved.larders){
-        if (st.first < state.larder.size()){
-            state.larder[st.first] = st.second;
+    state.pantry.assign(z.buildings.size(),std::array<int,GOOD_COUNT>{});
+    for (const auto& st : saved.pantries){
+        if (st.first < state.pantry.size()){
+            state.pantry[st.first] = st.second;
         }
     }
     for (const auto& pr : saved.props){
@@ -4721,7 +5287,7 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
 
 //--- Questions -------------------------------------------------------------------------------------
 
-uint8_t EconomyAccepts(const EconomyState& e, uint32_t id){
+GoodsMask EconomyAccepts(const EconomyState& e, uint32_t id){
     return (id < e.accepts.size()) ? e.accepts[id] : 0;
 }
 
@@ -4731,6 +5297,20 @@ int EconomyStock(const EconomyState& e, uint32_t id, int good){
 
 int EconomyStockTotal(const EconomyState& e, uint32_t id){
     return (id < e.stock.size()) ? CarryTotal(e.stock[id]) : 0;
+}
+
+bool EconomyPrivateStock(const EconomyState& e, const ZoneState& z, uint32_t id){
+    return id && id < z.buildings.size() && z.buildings[id].kind == ZONE_KIND_HOUSE && Living(e.workers,id) > 0;
+}
+
+std::array<int,GOOD_COUNT> EconomyReserved(const EconomyState& e, uint32_t id){
+    std::array<int,GOOD_COUNT> r{};
+    for (const EconomyWorker& o : e.workers){
+        if (o.store == id && o.carry_good >= 0 && o.carry_good < GOOD_COUNT){
+            r[o.carry_good] += SiteReservation(o,id,o.carry_good) + HomeReservation(o,id,o.carry_good);
+        }
+    }
+    return r;
 }
 
 std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z){

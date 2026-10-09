@@ -15,7 +15,7 @@ Built 2026-10-09 with the user's agreement (docs/range_plan.md).
   field-site machinery.
 - ZoneKindOnCells(kind) is the "lives on cells" test. A plain `kind == ZONE_KIND_FIELD` now means crop-specific
   only.
-- Cost is 3 wood + 2 wheat a cell, via EconomyCellCost (defence step 4's per-good sites).
+- Cost is 12 wood + 8 wheat a cell (4x the first price, the user: "not something you'd build early on"; a tech tree may come later), via EconomyCellCost.
 
 **The user's three decisions:**
 - full-time trainees first (one job a person);

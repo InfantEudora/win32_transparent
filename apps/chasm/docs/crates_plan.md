@@ -1,7 +1,8 @@
 # Crates: dropped loads, and finds on the map
 
-Written up 2026-10-09 and talked through with the user the same day: the decisions are below. Step 1, the
-crates themselves and the drop, BUILT the same day - see "As built: step 1" at the end. Defence step 1 (`defence_plan.md`, "As built: step 1") lets the player send a
+Written up 2026-10-09 and talked through with the user the same day: the decisions are below. Steps 1 (the
+crates themselves and the drop) and 2 (taking from them and moving them) BUILT the same day - see "As built"
+at the end. Defence step 1 (`defence_plan.md`, "As built: step 1") lets the player send a
 person to a post with a right click. At first, anyone carrying a load when the order came (wood for a
 site, food fetched home, a woodcutter's logs) kept it for the whole posting, and with no store held it for
 good. Since defence step 2 the load is LOST the moment the order lands (`Economy::Order`), as the user's
@@ -175,7 +176,7 @@ nothing to correct. FETCH FIRST and the badge are still proposals, marked where 
 - **Today a load that nobody takes is HELD** (`WORKER_HOLDING`). This happens to:
   - a carrier whose site is pulled down while no store takes wood;
   - a woodcutter whose store is full and whose pile is full too;
-  - a farmer whose house filled its larder before the farmer got home with the harvest.
+  - a farmer whose house filled its pantry before the farmer got home with the harvest.
 
   The person holding it can do no other work until something takes the load, and with no store at all
   that is forever. It is the same problem the posted carrier has.
@@ -197,7 +198,7 @@ against each other.
    the prop. Tested: a carrier taking wood to a site and sent off leaves a crate where they stood; one at
    a store's door puts the load in the store; a load dropped where a crate lies goes into it; a save and
    load keeps every crate.
-2. **Taking and moving**: crates as a source of wood for sites, of what houses fetch, and of pressing
+2. **(BUILT 2026-10-09)** **Taking and moving**: crates as a source of wood for sites, of what houses fetch, and of pressing
    needs; the caretakers moving crates to stores; building over a crate refused in play mode, with the
    message, and shown red by the ghost. Tested: the site's next carrier takes the dropped wood; a crate
    lies until there is a store that takes it and a builder free, and is then moved there; dropped food
@@ -294,3 +295,52 @@ loading the prop, `UploadCrates` from `PreRender`, the panel's call), `makefile`
   - Replay: a 251-tick recording with an order that dropped wood, a spawned crate and a release, replayed
     twice: every tick's hash equal, nothing changed between ticks, the same two crates at the end of both.
   - Drawn: a crate beside the camp's tents, in a close screenshot (distance 6), carriers walking past it.
+
+## As built: step 2 (2026-10-09)
+
+Files: `Economy.*` (CRATES in `Economy.h`; `ECONOMY_STORE_CRATE`, `ECONOMY_CRATE_STAND`, `WORKER_TO_CRATE`
+(27) and `WORKER_LIFTING` (28); `SourceStock`, `CrateById`, `CrateTouched`, `CrateStand`, `SourcePoint`,
+`MoveCrate`, `EconomyCrateInTheWay`; `FindSiteWork`, `GoodFree`, `SourcePlot`, `SeekSupply`, `FetchFrom`,
+`FetchHome`, `TakeHome`, `TickWorker`, `Replan`), `ApplicationChasm.*` (the zone command's refusal, the
+ghost's key), `ApplicationChasmGhost.cpp`, `ApplicationChasmEconomy.cpp` (a worker's `crate` in the tool).
+
+- **A crate as a source**: a worker's `store` names a crate as `ECONOMY_STORE_CRATE | id`, the way a
+  garden's site is named in `site`. Every stock taken from goes through `SourceStock` - a building's or a
+  crate's, NULL once a crate is gone - so a crate emptied, or built over, while someone walks to it is
+  simply nothing there when he arrives, as an empty store is. He stands `ECONOMY_CRATE_STAND` (0.5) short of
+  it on the side he comes from (`CrateStand`), as at a tree's foot.
+- **Taken from wherever a store is**: `FindSiteWork` lists crates beside the stores as places a site's goods
+  lie (by good, what nobody is already on his way for - `GoodFree`); `SeekSupply` and `FetchHome` list them
+  beside the buildings, by the same masks - so provisions, outside `GOODS_FOOD`, stay a last resort there by
+  themselves (defence step 5); `FetchFrom` takes any crate; `TakeHome`, a meal (`WORKER_SUPPLYING`) and a
+  posted person's pack refill take from it. Every take ends in `CrateTouched`: the view told, and the crate
+  gone if that emptied it.
+- **Moved by the caretakers**: `MoveCrate`, from `TickWorker`'s at-home look, only for a builder and only
+  when neither `FindSiteWork` nor `FindRoadWork` gave him anything - the last of his errands (the user's).
+  Defence step 5's provisions errand is to go in before `FindSiteWork` (agreed with that window). The
+  nearest crate holding a good some store takes a whole load of, with a way from the crate to that store,
+  that is not already being emptied by others; to it (`WORKER_TO_CRATE`), a load picked up
+  (`WORKER_LIFTING`: the good he came for, else any a store still takes whole), and off by `FindStore` as
+  any carrier. Nothing taken if no store will have it by then.
+- **Building over a crate refused in play**: `EconomyCrateInTheWay` - a building on its plot, ground but road
+  there, a field or range over its cell - asked by the zone command beside "under the clouds" (play commands
+  only; refusal "a crate lies there", on the play overlay as CAN'T BUILD) and by the ghost, red, a wall line
+  per plot. The ghost's key carries `crates_version`, so it turns red as a crate lands under the cursor.
+- **Found on the way**: `chasm_tool` crashed on every call since the range was added: its name table had 15
+  names for 16 tools, and every name was compared against the NULL at the end. "range" added, with a
+  `static_assert` that the table matches `ChasmTool`.
+- **Tested** (seed 12, debug, sim paused and stepped):
+  - A crate of 7 wood: lay untouched with no store (600 ticks); with a store and no builders' hut, still
+    untouched and nobody in `to_crate`/`lifting` (600 more); a builders' hut placed - Dolf, its builder, moved
+    it in two loads (5, then 2), the crate gone when he lifted the last; the store 7 wood. Only he moved it.
+  - Refused in play over a crate: a house, a garden, a field - "a crate lies there"; a road accepted, the
+    crate still there.
+  - A house (debug) with a crate of 9 wheat and 9 water beside it: its family fetched 5 water from the crate.
+  - Eight house sites placed in play past what the camp's and the store's wood could pay for: two jobless
+    carriers took 5 of a 12-wood crate's wood for them.
+  - Jelle posted beside a crate of 6 water, made thirsty until his pack was empty: he drank at the crate and
+    filled his pack from it (6 -> 2).
+  - The ghost in play mode, the house tool held over a crate: red.
+  - Replay: 1,201 ticks recorded with crates being emptied by site carriers and a house, a spawned crate, a
+    carrier's load dropped by an order, a refused paint over a crate - replayed twice: every tick's hash
+    equal, nothing changed between ticks, the same two crates at the end of both.

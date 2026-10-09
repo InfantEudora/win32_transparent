@@ -158,6 +158,9 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
                                                         //value[0] the plot he is sent to, -1 released
 #define CHASM_CMD_CRATE             SIM_CMD_LAST+5      //a crate put down (a debug edit, docs/crates_plan.md):
                                                         //subtype the plot; value[0] the good, value[1] how many
+#define CHASM_CMD_STOCK             SIM_CMD_LAST+6      //a building's stock of a good set (a debug edit): subtype
+                                                        //the building; value[0] the good, value[1] how many;
+                                                        //value[2] 1 for a camp's pantry, not its supplies
 
 //What a left click does.
 enum ChasmTool{
@@ -387,6 +390,7 @@ private:
     std::atomic<uint32_t> needs_commands_done{0};
     std::atomic<uint32_t> order_commands_done{0};
     std::atomic<uint32_t> crate_commands_done{0};
+    std::atomic<uint32_t> stock_commands_done{0};
     std::atomic<uint32_t> crate_refusals{0};
     std::string crate_last_refusal;             //under grid_mutex, like order_last_refusal
     //An order the economy refused, and why (Economy::Order) - the play overlay shows it as it does a
@@ -489,10 +493,11 @@ private:
         uint32_t line_version = 0;              //a road being drawn: its chain (0 with none)
         int bridge_from = -1;                   //a bridge being dragged: the bank it starts from
         uint32_t owner = 0;                     //a yard being painted: the building it is for (yards_plan.md)
+        uint32_t crates_version = 0;            //the crates, which nothing may be built over (crates_plan.md)
         bool operator==(const GhostKey& o) const{
             return world == o.world && zones_version == o.zones_version && plot == o.plot && coarse == o.coarse
                    && tool == o.tool && f_explored == o.f_explored && line_version == o.line_version
-                   && bridge_from == o.bridge_from && owner == o.owner;
+                   && bridge_from == o.bridge_from && owner == o.owner && crates_version == o.crates_version;
         }
     };
     GhostKey ghost_built;
@@ -722,6 +727,7 @@ private:
     vec2 build_bar_min;                                     //render thread: where the tools' grid was last drawn, for the overview
     vec2 build_bar_max;
     float build_stack_top = 0.0f;                           //render thread: the top of the grid and all stacked over it
+    float build_stack_left = 0.0f;                          //...and its left edge: the grid's, or a wider panel's over it
 #ifdef USE_MCP
     void RegisterIssueTools();
     void RegisterSelectTools();

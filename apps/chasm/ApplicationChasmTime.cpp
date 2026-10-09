@@ -306,8 +306,9 @@ void ApplicationChasm::DrawOverlay(void){
         for (const EconomyWorker& k : e->workers){
             housed += k.house ? 1 : 0;
         }
-        //Each item's text, measured, so the bar is as wide as what it says - centred on the screen.
-        const uint32_t colours[4] = {UIColor(238,236,226),UIColor(206,160,110),UIColor(236,202,92),UIColor(140,190,240)};
+        //Each item's text, measured, so the bar is as wide as what it says - centred on the screen. The goods in
+        //their colours on the cards' strips (HudGoodColour): food in wheat's, the gold the foods share here.
+        const uint32_t colours[4] = {HUD_TEXT,HudGoodColour(GOOD_WOOD),HudGoodColour(GOOD_WHEAT),HudGoodColour(GOOD_WATER)};
         char items[4][32];
         if (housed < people){
             snprintf(items[0],sizeof(items[0]),"PEOPLE %i/%i",housed,people);  //housed, of all of them
@@ -342,6 +343,7 @@ void ApplicationChasm::DrawOverlay(void){
     //them the neediest, and the selection's card and pins (selection_plan.md).
     if (PlayMode()){
         float bar_top = DrawBuildBar(s);
+        build_stack_left = build_bar_min.x;
         build_stack_top = DrawIssues(s,bar_top - 6.0f * s);
         float jobs_top = DrawJobsOverview(s);
         DrawNeediest(s,jobs_top - 8.0f * s);

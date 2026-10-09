@@ -16,10 +16,10 @@ Every [[Person|person]] has a water bar. It is full at {NEEDS_WATER_FULL:days} a
 A unit of [[Water|water]] puts {NEEDS_WATER_WORTH:days} back on the bar, and is drunk only when all of
 it fits, so nothing is wasted. Water comes before food.
 
-- **At home**, from the house's own stock, or the camp's larder and then its supplies, whenever the person is standing at home.
+- **At home**, from the house's own stock, or the camp's pantry and then its supplies, whenever the person is standing at home.
 - **Away, when thirst is pressing**: with less than {NEEDS_PRESSING_WATER:days} left and none at home,
   the person finishes what they are doing, takes on no new work, and goes to the nearest place with water
-  to spare: a [[Store]], the [[Camp]] or a [[Water collector]], but never a house somebody lives in. A drink
+  to spare: a [[Store]], the [[Camp]], a [[Water collector]] or a [[Crate|crate]], but never a house somebody lives in. A drink
   away from home takes {ECONOMY_MEAL_SECONDS:#seconds}.
 
 ## Dry

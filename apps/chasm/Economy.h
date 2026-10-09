@@ -40,9 +40,9 @@ class Walkers;
     WHOSE IT IS (the user's, 2026-10-09): a home's own goods are its family's alone while anyone lives
     there, and anyone's - a store's, in effect - the moment nobody does (Economy::PrivateStock). A CAMP
     holds two stocks: its SUPPLIES (`stock`), the settlers' and the colony's whoever lives there, and its
-    LARDER (`larder`), what its families fetch home, theirs alone as a house's is - with a house's room
-    and woodshed. Its people eat, drink and burn from the larder first, then the supplies. When the last
-    of them leaves, the larder joins the supplies at once (Economy::OpenLarders); a camp pulled down
+    PANTRY (`pantry`), what its families fetch home, theirs alone as a house's is - with a house's room
+    and woodshed. Its people eat, drink and burn from the pantry first, then the supplies. When the last
+    of them leaves, the pantry joins the supplies at once (Economy::OpenPantries); a camp pulled down
     loses both.
 
     --- PEOPLE (docs/people_plan.md, P4) ---------------------------------------------------------------
@@ -151,7 +151,7 @@ class Walkers;
     whole units, so what a food is worth is the health it gives (EconomyFoodWorth) - beans most, greens
     least. With the water bar empty he is DRY: health falls faster (NEEDS_DRY_DRAIN) and food no longer
     raises it, so eating cannot outrun thirst. He eats and drinks AT HOME, from his house's stock or his
-    camp's larder and then its supplies, and only a whole unit that fits under full, so nothing is wasted - of the foods that
+    camp's pantry and then its supplies, and only a whole unit that fits under full, so nothing is wasted - of the foods that
     fit, the one that keeps worst first. Every figure here is TUNING, not a rule (needs_plan.md, "Current
     tuning"). A PRESSING NEED (EconomyPressing: water or health below NEEDS_PRESSING_*)
     that his home cannot meet stops him taking on more work: he finishes what he is doing and goes to the
@@ -167,7 +167,7 @@ class Walkers;
     instead; one errand a house at a time, and before wood for a site. Someone eating at a store or the
     camp on a pressing need brings a load home with him. A CAMP's families fetch for it the same way (the
     user's, 2026-10-09; before, they did not, and a baby born there went dry with the settlers' supplies) -
-    into its LARDER (STORES, above), with a room and a woodshed by its floor area - but never from its own
+    into its PANTRY (STORES, above), with a room and a woodshed by its floor area - but never from its own
     supplies, which count as what it holds. A house nobody lives in is fetched from like a store.
     HEAT (step 3, the user's 2026-10-08): at each dawn every INHABITED home under the snow - a house or a camp
     - burns its firewood, ECONOMY_FIREWOOD_BURN a plot-storey, from its own stock, and is WARM that day
@@ -192,9 +192,20 @@ class Walkers;
     share of a field does not grow - and released, he goes back to it; a jobless one is given none until
     then. Posted people are out of the staffing altogether (AssignJobs). Children cannot be sent.
     His PACK is what he takes along to live on: water and food, apart from any load (NEEDS_PACK_*). Filled
-    from his home's larder when he sets out from home, and topped up at every supply trip; eaten from as he
+    from his home's pantry when he sets out from home, and topped up at every supply trip; eaten from as he
     would eat at home, a whole unit whenever it fits, so his bars stay up while it lasts and a pressing need
-    comes only once it is empty. Home again after he is released, it goes back into the larder.
+    comes only once it is empty. Home again after he is released, it goes back into the pantry.
+    PROVISIONS (GOOD_PROVISIONS, step 5) are a soldier's food, worth a wheat and a beans together, and OUTSIDE
+    GOODS_FOOD (Goods.h): nobody fetches them home and no home holds them. A posted person's food is any food,
+    provisions too - the nearest place first, provisions first into his pack. A villager's is the crops; with
+    none in any place he can reach he looks again with provisions, his LAST RESORT; and wherever anyone eats,
+    provisions go last. MADE by the CARETAKERS - the builders - and only as many as are WANTED: what sites
+    still lack of them (towers short of them, step 7), less what lies made in stores, the camp, crates and the
+    builders' huts, and what is being made (ProvisionsLacking). A builder, before his building work: with
+    wheat and beans at his hut, makes them there (ECONOMY_PROVISION_SECONDS each at his pace, up to a load a
+    round); with too few on hand and on their way for what is wanted, fetches a load of the scarcer from a
+    store, the camp or a crate. The sites' carriers take them from the hut as from a store. What the hut holds
+    that nobody wants any more goes to a store that takes it. A hut's stock is for this alone: nobody eats from it.
 
     --- CRATES (docs/crates_plan.md) -------------------------------------------------------------------
     A CRATE is goods lying on the ground: a store villagers only take from, gone when empty. A posted
@@ -202,14 +213,19 @@ class Walkers;
     stands at one that takes it; else where he stands, or on the nearest open plot round it. A crate lies only
     on OPEN GROUND (EconomyCrateGround), ONE TO A PLOT - a load put down where one lies goes into it - and one
     whose plot is built over is lost. The debug tools put crates down too (SpawnCrate). Saved and hashed.
+    TAKEN FROM wherever a store is (step 2): goods for a building site, what a house fetches, a pressing need -
+    a worker's `store` then names the crate (ECONOMY_STORE_CRATE), and he stands beside it to take. Nothing is
+    ever delivered to one. MOVED by the caretakers - the builders, never the jobless - as the LAST of their
+    errands, a load at a time, to a store that takes it whole (MoveCrate).
 
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
     a world): standing, felled with its log lying, or a stump with the log taken. Saved and hashed.
 */
 
-#define ECONOMY_STORE_ROOM          7.5f    //units of goods per unit of floor area: about 30 a plot-storey
-#define ECONOMY_HOUSE_ROOM          4.0f    //a house's, for its own food, water and firewood: about 16 a plot-storey (needs_plan.md)
+//Per unit of floor area, not per plot: plots differ in size, and what one holds is wiki/cells.md's.
+#define ECONOMY_STORE_ROOM          7.5f    //units of goods per unit of floor area
+#define ECONOMY_HOUSE_ROOM          4.0f    //a house's, for its own food, water and firewood, per unit of floor area (needs_plan.md)
 #define ECONOMY_HOUSE_KEEPS         (GOODS_FOOD | GOOD_BIT(GOOD_WOOD) | GOOD_BIT(GOOD_WATER))
 #define ECONOMY_LOAD                5       //what a farmer or a water carrier carries at once
 #define ECONOMY_WOOD_PER_TREE       4
@@ -223,16 +239,16 @@ class Walkers;
 #define ECONOMY_WATER_HOLD          10      //and holds at most this, uncarried
 #define ECONOMY_STRAIGHT_STEP       0.5f    //world units between the samples of a straight walk
 #define ECONOMY_WORKER_SPEED        1.6f    //walking straight: WALKER_SPEED_GROUND
-#define ECONOMY_PERSON_AREA         1.3f    //floor area a person needs: a one-plot, one-storey house holds 3
+#define ECONOMY_PERSON_AREA         1.3f    //floor area a person needs: a house holds its floor area over this, whole people
 #define ECONOMY_HOUSE_MOST          6       //the largest family a house holds, however big
 #define ECONOMY_SKILL_DISTANCE      4.0f    //what a point of skill is worth against the walk to work
-#define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area: about 8 a plot
+#define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
-#define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence: about 2 a plot
+#define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence, per unit of the plot's area
 #define ECONOMY_WALL_WOOD           4       //a palisade plot, flat: one felled tree's logs (the user's, 2026-10-08)
 #define ECONOMY_FIELD_WOOD_PER_CELL 2       //a field site's, a coarse cell (fields_plan.md, the user's 2)
-#define ECONOMY_RANGE_WOOD_PER_CELL 3       //an archery range site's, a cell: a field's and the targets' stands (range_plan.md)
-#define ECONOMY_RANGE_WHEAT_PER_CELL 2      //...and its wheat, the bales' straw (the user's: wheat, once sites took it)
+#define ECONOMY_RANGE_WOOD_PER_CELL 12      //an archery range site's, a cell: a field's and the targets' stands (range_plan.md) (4x, the user's 2026-10-09: a range is not an early building)
+#define ECONOMY_RANGE_WHEAT_PER_CELL 8      //...and its wheat, the bales' straw (the user's: wheat, once sites took it)
 /*
     TRAINING (range_plan.md): a trainee at a range trains a stint on its line, then goes home and out again.
     ARCHERY grows by ARCHERY_PER_TICK a tick trained at his precision's pace, up to his precision's cap - a
@@ -242,6 +258,7 @@ class Walkers;
 #define ARCHERY_FULL                1000000 //archery's 100%
 #define ARCHERY_PER_TICK            36      //what a tick of training adds, at pace 1
 #define ECONOMY_SOW_SECONDS         3.0f    //sowing a cell of a field, at the farmer's pace
+#define ECONOMY_PROVISION_SECONDS   3.0f    //making a provision at the builders' hut, at the builder's pace (defence_plan.md)
 #define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
 #define ECONOMY_CROP_GRACE          (CALENDAR_DAY_TICKS)    //a field built with no crop waits this long for one, then starts with AUTO (issues_plan.md)
 #define ECONOMY_FAIR_DAYS           1       //a house keeps its land's food only while less than this a head ahead of the colony's average
@@ -254,6 +271,10 @@ class Walkers;
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
 inline int EconomyGroundSitePlot(uint32_t site){ return (int)(site & ~ECONOMY_SITE_GROUND); }
+//A worker's `store` naming a CRATE he is taking from rather than a building (the crate's id in the low bits).
+#define ECONOMY_STORE_CRATE         0x40000000u
+inline bool EconomyIsCrateStore(uint32_t store){ return (store & ECONOMY_STORE_CRATE) != 0; }
+inline uint32_t EconomyCrateOfStore(uint32_t store){ return store & ~ECONOMY_STORE_CRATE; }
 //What the settlers bring (in the camp): wood for the first few buildings, food and water for the first days.
 //Tuning, like the needs below.
 #define ECONOMY_START_WOOD          40
@@ -336,7 +357,7 @@ inline bool EconomyStageJob(int job){
 #define WORKER_SUPPLYING        15      //eating and drinking there (timer)
 #define WORKER_TO_GET           16      //fetching home: walking to a store or the camp (`store`) for a kind (`carry_good`, carry 0)
 #define WORKER_GETTING          17      //picking a load of it up there (timer)
-#define WORKER_TO_LARDER        18      //carrying it home, into his house's own stock
+#define WORKER_TO_PANTRY        18      //carrying it home, into his house's own stock
 #define WORKER_TO_SOW           19      //a farmer walking out to sow his field (fields_plan.md)
 #define WORKER_SOWING           20      //sowing it (timer)
 #define WORKER_TO_PLAY          21      //a child walking out to play, a plot or two from home
@@ -345,6 +366,12 @@ inline bool EconomyStageJob(int job){
 #define WORKER_ON_POST          24      //standing on it - or cut off from it, waiting where he is for a way
 #define WORKER_TO_RANGE         25      //a trainee walking to his place on the range's line (range_plan.md)
 #define WORKER_TRAINING         26      //training there (timer), then home
+#define WORKER_TO_CRATE         27      //a caretaker walking to a crate (`store`) to move it to a storehouse (crates_plan.md)
+#define WORKER_LIFTING          28      //picking a load of it up (timer), then off to the store with it
+#define WORKER_TO_INPUT         29      //a builder walking to wheat or beans (`store`, `carry_good`; `stint` the load) for provisions
+#define WORKER_TAKING_INPUT     30      //picking it up (timer)
+#define WORKER_TO_WORKSHOP      31      //to his builders' hut, with it or to make provisions there (defence_plan.md)
+#define WORKER_MAKING           32      //making one there (timer; its wheat and beans taken at the start)
 
 /*
     LIFELINES (docs/lifeline_plan.md, step 1). A person is BORN on a calendar tick - a settler before the
@@ -453,13 +480,13 @@ inline bool EconomyDry(const EconomyWorker& k){
 
 //What he must have before he takes on more work: water, below NEEDS_PRESSING_WATER; food, with health below
 //NEEDS_PRESSING_HEALTH - unless he is dry, when food does him no good and would only send him from store to store.
-inline uint8_t EconomyPressing(const EconomyWorker& k){
-    uint8_t want = 0;
+inline GoodsMask EconomyPressing(const EconomyWorker& k){
+    GoodsMask want = 0;
     if (k.water < NEEDS_PRESSING_WATER){
         want |= GOOD_BIT(GOOD_WATER);
     }
     if (k.health < NEEDS_PRESSING_HEALTH && !EconomyDry(k)){
-        want |= GOODS_FOOD;
+        want |= GOODS_EATEN;    //any food: whether provisions do is the seeker's to say (SeekSupply)
     }
     return want;
 }
@@ -496,6 +523,7 @@ struct EconomyField{
 #define CRATE_DROPPED           0       //a load someone put down
 #define CRATE_FOUND             1       //lying on the map - a debug spawn for now; finds from the seed later
 #define ECONOMY_CRATE_RINGS     6       //rings of plots round him searched for open ground to put a load down on: past a camp's tents
+#define ECONOMY_CRATE_STAND     0.5f    //a crate is taken from beside it: this far short of it, on the side he comes from
 
 //A CRATE (above): what lies where, and where it came from.
 struct EconomyCrate{
@@ -511,7 +539,7 @@ struct EconomyCrate{
 struct EconomyState{
     std::shared_ptr<const ChasmWorld> world;
     std::vector<std::array<int,GOOD_COUNT>> stock;     //by building id - a camp's: its SUPPLIES
-    std::vector<std::array<int,GOOD_COUNT>> larder;    //by building id: a camp's LARDER, its families' own (STORES)
+    std::vector<std::array<int,GOOD_COUNT>> pantry;    //by building id: a camp's PANTRY, its families' own (STORES)
     std::vector<uint8_t> prop_state;                   //by prop index (ForestData::props)
     std::vector<EconomyWorker> workers;                 //THE PEOPLE, in id order
     uint32_t next_person = 1;
@@ -523,9 +551,9 @@ struct EconomyState{
     std::vector<EconomyCrate> crates;                   //CRATES, in id order
     uint32_t next_crate = 1;
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
-    std::vector<uint8_t> accepts;
-    std::vector<uint8_t> attached;                      //the goods of the workplaces a store is next to
-    std::vector<uint8_t> keeps;                         //what a building may hold: a store's goods, a house's own
+    std::vector<GoodsMask> accepts;
+    std::vector<GoodsMask> attached;                      //the goods of the workplaces a store is next to
+    std::vector<GoodsMask> keeps;                         //what a building may hold: a store's goods, a house's own
     std::vector<int> room;                              //a store's, and a house's (ECONOMY_HOUSE_ROOM)
     std::vector<int> pile_plot;                         //a woodcutter's woodpile: a lot beside him, -1 none
     std::vector<int> capacity;                          //a house's: how many it holds
@@ -572,12 +600,16 @@ int EconomyChildrenOf(const EconomyState& e, uint32_t mother);
 bool EconomyCrateGround(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& at);
 //The crate lying on `plot`, NULL for none.
 const EconomyCrate* EconomyCrateOn(const EconomyState& e, int plot);
+//Whether zone op `op` (ZoneOp) on `index` - a plot, or a coarse cell for a cell op - would cover a crate: a building
+//on its plot, ground other than road there (`value`, ZONE_GROUND_*, for ZONE_OP_GROUND_PAINT), a field or a range
+//over its cell. Play mode refuses it (the user's): the crate has to go first.
+bool EconomyCrateInTheWay(const EconomyState& e, const ChasmWorld& w, int op, int index, int value);
 const char* EconomyCrateOriginName(int origin);
 
 //As a save holds it.
 struct EconomySaved{
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> stocks;    //non-empty ones only
-    std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> larders;   //camps' (STORES), non-empty ones only
+    std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> pantries;   //camps' (STORES), non-empty ones only
     std::vector<std::pair<int,int>> props;              //felled props: index, state
     std::vector<EconomyWorker> workers;
     std::vector<EconomyField> fields;
@@ -607,6 +639,13 @@ public:
     //held to its bar; -1 leaves one as it is. Applied before the tick's needs, so someone at home with food
     //and water eats and drinks straight back up; health 0 kills only someone who cannot. False with no such person.
     bool SetNeeds(uint32_t person, int health, int water);
+    //A debug edit (CHASM_CMD_STOCK, the tool's set_stock): building `id`'s stock of `good` set to `amount` - a
+    //camp's supplies, or with f_pantry its pantry. For putting provisions in a store, or emptying one, without
+    //waiting for it. False if none.
+    bool SetStock(uint32_t id, int good, int amount, bool f_pantry = false);
+    //PROVISIONS (POSTS): how many are still wanted beyond what is made and being made - below 0, made and not
+    //wanted. The rules' own figure: call it on the simulation thread, between ticks.
+    int ProvisionsLacking(const ZoneState& z) const;
     /*
         An ORDER (POSTS, CHASM_CMD_ORDER): person `person` sent to stand on `plot`, or released from his post
         with -1. Applied between ticks, like SetNeeds; what he was doing he drops on the tick that follows. False,
@@ -683,7 +722,7 @@ private:
     //POSTS: what he was doing dropped for his post; and the way there - with none, waiting where he is.
     void TakePost(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void GoToPost(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
-    //His pack filled from a stock, up to NEEDS_PACK_*; and, home again, emptied back into his larder.
+    //His pack filled from a stock, up to NEEDS_PACK_*; and, home again, emptied back into his pantry.
     void FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
     void Unpack(EconomyWorker& k, const ZoneState& z);
     //CRATES: his load put down - into a store he stands at that takes it, else as a crate where he stands or on
@@ -692,6 +731,21 @@ private:
     void DropLoad(EconomyWorker& k, const ZoneState& z);
     void AddToCrate(int plot, const vec2& at, int good, int amount, int origin, uint32_t by);
     void LoseCoveredCrates(const ZoneState& z);
+    //...and as a place goods are taken from (step 2): the stock behind a worker's `store` - a building's, or a
+    //crate's (ECONOMY_STORE_CRATE) - NULL if there is none or it is gone; a crate by its id; a crate touched,
+    //taken off the map if that emptied it; and where a person stands to take from one, on the side he comes from.
+    std::array<int,GOOD_COUNT>* SourceStock(uint32_t id);
+    const std::array<int,GOOD_COUNT>* SourceStock(uint32_t id) const;
+    const EconomyCrate* CrateById(uint32_t id) const;
+    void CrateTouched(uint32_t store);
+    vec2 CrateStand(const EconomyCrate& c, const vec2& from) const;
+    //Where he goes to take from `id` at `plot`: beside a crate, else the plot's point.
+    vec2 SourcePoint(uint32_t id, int plot, const vec2& from) const;
+    //A caretaker's last errand: a crate's goods off to a storehouse. True if he set off.
+    bool MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //PROVISIONS (POSTS): a builder's errand for them, from home (true if he set off); what he does at his hut.
+    bool MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    void AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace);
     void Walk(EconomyWorker& k, float dt);
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
@@ -734,22 +788,23 @@ private:
     //A pressing need his home cannot meet: off to the nearest place that can. True if he set off. With
     //f_home false he cannot get home, and what it holds is no help.
     bool SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home = true);
+    bool SeekSupplyOf(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home, GoodsMask want);
     //Fetching home (needs_plan.md, step 2): what his house is short of; off to fetch it; a load of it picked
     //up at `from` and carried home; and the way home itself.
-    uint8_t HomeShort(const EconomyWorker& k, const ZoneState& z, uint8_t* first) const;
+    GoodsMask HomeShort(const EconomyWorker& k, const ZoneState& z, GoodsMask* first) const;
     //HEAT (above): every home's fire at dawn; what house h has room for of `good` (its woodshed for wood, the
     //rest of its room for food and water); whether it fetches firewood now; and its fair share of it.
     void Heat(const ZoneState& z, uint64_t calendar_tick);
     int HouseRoom(const ZoneState& z, uint32_t h, int good) const;
     //WHOSE IT IS (STORES, above): building `id`'s stock a family's own - a house somebody lives in - so nobody
-    //else may take from it. A camp's stock is its supplies, never private; its families' own is its larder.
+    //else may take from it. A camp's stock is its supplies, never private; its families' own is its pantry.
     bool PrivateStock(const ZoneState& z, uint32_t id) const;
-    //A home's own goods, where its fetching goes - a house's stock, a camp's larder; and all it holds for its
-    //family to live on - a camp's larder and supplies together.
-    std::array<int,GOOD_COUNT>& HomeLarder(const ZoneState& z, uint32_t h);
+    //A home's own goods, where its fetching goes - a house's stock, a camp's pantry; and all it holds for its
+    //family to live on - a camp's pantry and supplies together.
+    std::array<int,GOOD_COUNT>& HomePantry(const ZoneState& z, uint32_t h);
     std::array<int,GOOD_COUNT> HomeHeld(const ZoneState& z, uint32_t h) const;
-    //A camp the last of its people has left: its larder into its supplies, at once.
-    void OpenLarders(const ZoneState& z);
+    //A camp the last of its people has left: its pantry into its supplies, at once.
+    void OpenPantries(const ZoneState& z);
     bool FirewoodNow(uint32_t h) const;
     int FirewoodFair(const ZoneState& z, uint32_t h) const;
     bool FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
@@ -757,7 +812,7 @@ private:
     //water collector, a woodcutter's pile, or its own land's field within its fair share - never its own home,
     //another family's house or another family's field.
     bool FetchFrom(const EconomyWorker& k, const ZoneState& z, uint32_t id) const;
-    bool TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, uint8_t goods);
+    bool TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, GoodsMask goods);
     bool RouteHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //Construction: what a site still wants, carrying for one, and building with what it has. A site is
     //a building id or a garden or lot plot (ECONOMY_SITE_GROUND); each by good (CONSTRUCTION).
@@ -795,9 +850,16 @@ private:
 EconomySaved EconomySaveState(const EconomyState& e);
 
 //The goods a store takes and its room - for the panel and the tools, on a published state.
-uint8_t EconomyAccepts(const EconomyState& e, uint32_t id);
+GoodsMask EconomyAccepts(const EconomyState& e, uint32_t id);
 int EconomyStock(const EconomyState& e, uint32_t id, int good);
 int EconomyStockTotal(const EconomyState& e, uint32_t id);
+//WHOSE IT IS (STORES): building `id`'s stock a family's own - a house somebody lives in - so nobody else takes from
+//it. Economy::PrivateStock is this; the cards ask it too.
+bool EconomyPrivateStock(const EconomyState& e, const ZoneState& z, uint32_t id);
+//RESERVED: of building (or crate) `id`'s goods, what somebody already on his way counts on taking - a site
+//carrier's load, a builder's for provisions, a load fetched home - as the rules count them (GoodFree, FetchHome).
+//A meal there is a unit, not a load, and only those after one count it (SeekSupply): not here. For the cards.
+std::array<int,GOOD_COUNT> EconomyReserved(const EconomyState& e, uint32_t id);
 //The colony's totals, in its stores only (not what lies at workplaces or is being carried).
 std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z);
 

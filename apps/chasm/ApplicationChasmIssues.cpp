@@ -22,7 +22,7 @@
 namespace {
 
 //What the colony holds to live on, in days of it for everyone: water, and food at what each unit is worth.
-//Stores, the camp's supplies and the houses' larders - not what lies at a workplace or is being carried.
+//Stores, the camp's supplies and the houses' pantries - not what lies at a workplace or is being carried.
 void DaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food){
     int64_t water_ticks = 0;
     int64_t food_ticks = 0;
@@ -311,6 +311,7 @@ float ApplicationChasm::DrawIssues(float s, float bottom){
     vec2 p0(p1.x - w,bottom - h);
     overlay->AddRect(p0,p1,9.0f * s,HUD_PANEL);
     overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
+    build_stack_left = std::min(build_stack_left,p0.x);     //wider than the grid, for the card to keep clear of
     float title_y = p0.y + pad * 0.8f + 11.0f * s;
     overlay->AddText("NEEDS ATTENTION",vec2(p0.x + pad,title_y),title_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
     if ((int)issues.size() > shown){

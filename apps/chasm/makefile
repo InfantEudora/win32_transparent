@@ -20,6 +20,7 @@ PROJECT := chasm
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationChasm.cpp
 APP_SRCS += ApplicationChasmSelect.cpp
+APP_SRCS += ChasmHud.cpp
 APP_SRCS += ApplicationChasmIssues.cpp
 APP_SRCS += ApplicationChasmBridge.cpp
 APP_SRCS += ApplicationChasmWater.cpp

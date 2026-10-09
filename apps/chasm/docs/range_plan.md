@@ -103,16 +103,23 @@ is that, made concrete. Talked through the same day; the user's answers are belo
 
 ## Later
 
-- **Wheat in its cost**, with site costs per good (`defence_plan.md` step 4).
+- **Wheat in its cost**, with site costs per good (`defence_plan.md` step 4) - done, see below.
+- **A TECH TREE, or an order things are built in** (the user's thought, 2026-10-09): a range is not something
+  built early on, and later something like a tech tree may require buildings in a specific order. For now its
+  price says so instead (below).
 - **The share of time**: trainees who keep their trade (gameplay plan, "Time is split").
 - **The tower staffed by archery** (defence step 5), and the alarm sending trainees to their posts.
 - **Shooting at something**: zombies, and what archery does there.
 
 ## As built (2026-10-09)
 
-All five steps, and the wheat: defence step 4 ("site costs per good") landed while this was built, so a range costs
-**3 wood and 2 wheat a cell** from the start (`EconomyCellCost`; `ECONOMY_RANGE_WOOD_PER_CELL`,
+All five steps, and the wheat: defence step 4 ("site costs per good") landed while this was built, so a range cost
+3 wood and 2 wheat a cell from the start (`EconomyCellCost`; `ECONOMY_RANGE_WOOD_PER_CELL`,
 `ECONOMY_RANGE_WHEAT_PER_CELL`).
+
+**Current tuning: 12 wood and 8 wheat a cell** - four times that, the user's after seeing it (2026-10-09): "a range
+is not something you'd build early on". A two-cell range is 24 wood and 16 wheat - more than half the camp's
+starting wood (40) and two fifths of its wheat (40). The figures below were measured at the first price.
 
 - **Changed from the plan**: every range SHOOTS NORTH (`ZoneRangeCellAt`): its targets at each cell's north side
   face the camera, rings and all, and its trainees stand at the south side with their backs to the view. Along

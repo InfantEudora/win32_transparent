@@ -30,14 +30,15 @@ took is used up. A site pulled down loses what was brought to it.
 
 Everyone without a job, and **builders**, the job at a **builders' hut**. They go from home to the nearest
 of what the site still lacks - [[Wood|wood]], or any other good it takes - (a [[Store]], the [[Camp|camp's]]
-supplies, a [[Woodcutter|woodpile]] for wood, an empty [[House|house]]), carry a load to the site, and build
+supplies, a [[Woodcutter|woodpile]] for wood, an empty [[House|house]], a [[Crate|crate]]), carry a load to the site, and build
 with it for {ECONOMY_BUILD_SECONDS:#seconds} at their pace ([[Skills|strength]]). Once enough is there, every
 storey it pays for stands, lowest first. Nothing is kept back: a site's food or water comes out of the same
 stocks people live on.
 
 Builders' huts are staffed before any other workplace: one builder for each standing plot-storey of the
 hut, and one while it is still a site, who builds the hut first. When everyone has a job, the huts are
-what keep building going.
+what keep building going. With nothing to build and no road work, a builder carries a [[Crate|crate]]'s
+goods to a store.
 
 ## Which site first
 

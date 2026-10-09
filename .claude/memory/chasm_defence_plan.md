@@ -1,16 +1,17 @@
 ---
 name: chasm-defence-plan
-description: "AGREED 2026-10-09 apps/chasm/docs/defence_plan.md - posts/orders, pack, provisions, guard tower, gate doors; 8-step build order, steps 1-4 (orders, pack, gate doors, site costs per good) BUILT 2026-10-09"
+description: "AGREED 2026-10-09 apps/chasm/docs/defence_plan.md - posts/orders, pack, provisions, guard tower, gate doors; 8-step build order, steps 1-5 (orders, pack, gate doors, site costs per good, provisions) BUILT 2026-10-09"
 metadata:
   node_type: memory
   type: project
   originSessionId: 81514510-853a-4457-94ca-3d840e8ed249
-  modified: 2026-10-09T15:43:10.878Z
+  modified: 2026-10-09T18:06:17.386Z
 ---
 
 Chasm's defence groundwork was talked through and agreed with the user on 2026-10-09, written up as
-`apps/chasm/docs/defence_plan.md`. Steps 1-4 BUILT and tested 2026-10-09 (see the plan's "As built"); step 5,
-provisions, is next. An ordered load is dropped as a crate (crates plan, another window). Build order: 1 orders
+`apps/chasm/docs/defence_plan.md`. Steps 1-5 BUILT and tested 2026-10-09 (see the plan's "As built"); step 6,
+the guard tower, is next (it is the first thing that wants provisions; GOOD_PROVISIONS 5, GoodsMask 16 bits, a
+builder's MakeProvisions before FindSiteWork; chasm_economy op set_stock for tests). An ordered load is dropped as a crate (crates plan, another window). Build order: 1 orders
 (right-click a selected person to post him; a post is his job; ordered people are out of `AssignJobs`), 2 the
 pack, 3 gate doors (shut for everyone), 4 site costs per good (`StoreyGoods`/`EconomyCellCost` in Economy.cpp
 are where a kind declares a non-wood cost - all 0 so far; window 38's archery range will add wheat per cell),
@@ -20,6 +21,10 @@ resupply towers, 8 right-click on a tower.
 Window 38 built the archery range (range_plan.md): ZONE_KIND_RANGE 10, WORKER_JOB_ARCHER 4, WORKER_TO_RANGE 25 /
 WORKER_TRAINING 26, ZONE_OP_RANGE_PAINT after GATE_SHUT, ZoneKindOnCells(); EconomyWorker::archery exists - so
 step 6 may staff guards by archery then precision (plan says precision; raise with the user then).
+
+Window 28 (card goods strips) routed GoodFree and FetchHome's spare through static SiteReservation /
+HomeReservation helpers (the card's "reserved" stripes use them): a new reservation kind (tower resupply,
+step 7) must go there. Provisions colour: HudGoodColour(GOOD_PROVISIONS).
 
 Open from step 4: sites take food/water from the same stocks people live on, nothing kept back (a test hut
 drained the camp's water) - raised with the user, not decided.

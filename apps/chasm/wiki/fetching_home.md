@@ -1,6 +1,6 @@
 ---
 title: Fetching home
-aliases: fetch, fetching, larder
+aliases: fetch, fetching, pantry
 kind: systems
 status: built
 summary: A home running low on water, food or firewood sends one of its family for a load from a store, the camp's supplies, or its own fields.
@@ -28,13 +28,13 @@ The scarcest kind, counted in days, is fetched first. Water wins a tie.
 only between rounds, and only when nobody jobless is home. Fetching comes before carrying wood to
 building sites and before the next round of work.
 
-Families living in the [[Camp]] fetch the same way, into the camp's larder. They count its supplies as
+Families living in the [[Camp]] fetch the same way, into the camp's pantry. They count its supplies as
 part of what they hold, but never fetch from them.
 
 ## Where from, and how much
 
-- The nearest [[Store]], [[Camp|camp's supplies]] or empty [[House]] with some to spare, after counting
-  the loads that others are already on their way to take. Never a house somebody lives in.
+- The nearest [[Store]], [[Camp|camp's supplies]], empty [[House]] or [[Crate|crate]] with some to spare,
+  after counting the loads that others are already on their way to take. Never a house somebody lives in.
 - For food, also the house's own [[Field|fields]], while the house isn't ahead of the colony (below).
 - A load is at most {ECONOMY_LOAD}, and never more than brings the house to a day past
   {ECONOMY_HOME_DAYS:#days}, so water doesn't crowd out the room that food needs.

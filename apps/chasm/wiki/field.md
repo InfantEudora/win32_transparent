@@ -11,7 +11,8 @@ verified: 2026-10-09
 
 A field is painted over **coarse cells**, each on flat ground, and buildings keep a plot away from it.
 Placed in play it is a [[Construction|building site]] first, at {ECONOMY_FIELD_WOOD_PER_CELL} [[Wood|wood]]
-a cell. Then it stands **empty** until it is sown.
+a cell. Then it stands **empty** until it is sown. Cells vary in size, so its card shows its **size** as
+both: how many cells, and their area, which is what a harvest is counted from.
 
 ## Whose land
 

@@ -168,11 +168,11 @@ does updates its page (`../wiki/README.md`). Started 2026-10-09 with the woodcut
 | `land_plan.md` | family land: fields belong to a house (the camp's at first), farmed by its family at 6 cells a farmer, harvest home first (built) |
 | `seasons_plan.md` | the year drawn: seasonal palette rows the grass fades through, flowers in season, oaks and bushes turning, thinning, bare and budding plant by plant, bare oaks modelled (built) |
 | `lifeline_plan.md` | a person's whole life: a baby's year in its mother's care, playing, young adult, adult; parents and couples, births, skills passed on, old age (talked through 2026-10-09; step 1, families and ageing, built) |
-| `defence_plan.md` | toward P6: posts as a job, direct orders, a soldier's pack, provisions (a food made from wheat and beans by the builders as caretakers), the guard tower stocked with them and water, gate doors that shut (agreed 2026-10-09; steps 1-4, orders, the pack, gate doors and site costs per good, built) |
+| `defence_plan.md` | toward P6: posts as a job, direct orders, a soldier's pack, provisions (a food made from wheat and beans by the builders as caretakers), the guard tower stocked with them and water, gate doors that shut (agreed 2026-10-09; steps 1-5, orders, the pack, gate doors, site costs per good and provisions, built) |
 | `yards_plan.md` | lots and gardens that belong to a house or a woodcutter, painted with it selected; a woodcutter placeable without a lot (built 2026-10-09) |
 | `range_plan.md` | the archery range: painted on cells like a field, 3 wood and 2 wheat a cell; full-time trainees by precision, ARCHERY experience capped by it; targets, bales and arrows modelled in Blender (built 2026-10-09) |
 | `issues_plan.md` | NEEDS ATTENTION over the tools: a top five of what wants doing - a crop left unchosen (AUTO after a day), what is stuck, and the next steps that teach the game (agreed 2026-10-09) |
-| `crates_plan.md` | crates: a load nobody takes - a posted person's first - dropped on the ground as a crate, a store villagers only take from, moved to a storehouse by the caretakers; then a few finds placed from the seed under the clouds, as in They Are Billions (agreed 2026-10-09; step 1, the crates and the posted person's drop, built) |
+| `crates_plan.md` | crates: a load nobody takes - a posted person's first - dropped on the ground as a crate, a store villagers only take from, moved to a storehouse by the caretakers; then a few finds placed from the seed under the clouds, as in They Are Billions (agreed 2026-10-09; steps 1-2 built: the drop, taking from crates, builders moving them) |
 
 ### Later, agreed but not yet planned
 

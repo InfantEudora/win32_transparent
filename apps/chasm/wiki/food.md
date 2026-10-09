@@ -37,13 +37,13 @@ doesn't count as a harvest.
 
 ## Where it is
 
-Food is in [[Store|stores]], houses' larders, the [[Camp|camp's]] supplies and larder, and fields'
+Food is in [[Store|stores]], houses' pantries, the [[Camp|camp's]] supplies and pantry, and fields'
 harvests waiting to be carried in. The settlers bring {ECONOMY_START_WHEAT} wheat and
-{ECONOMY_START_BEANS} beans. People eat the food that keeps worst first: greens, then wheat, then beans.
+{ECONOMY_START_BEANS} beans. People eat the food that keeps worst first: greens, then wheat, then beans -
+and [[Provisions|provisions]] last of all, a food made from a wheat and a beans for people on posts.
 
 ## Planned
 
 - [planned] Spoilage: greens rotting when winter comes, wheat a little each season, beans not at all.
-- [planned] Provisions: a food made from wheat and beans for people on [[Posts|posts]].
 - [idea] Early gathering: food from the wild for the first days.
 - [idea] Fruit (keeps a short while), and animals for meat and leather.

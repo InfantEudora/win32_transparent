@@ -76,7 +76,7 @@ These are sums from tuning, and change with it.
   states, appended (never renumber): `WORKER_TO_POST` and `WORKER_ON_POST`.
 - **On his post** he stands there. He does not go home, does not fetch for his family, and is not idle
   labour for sites or roads.
-- **On a tower, the tower is his larder** (the user's): he eats and drinks from its stock exactly as he
+- **On a tower, the tower is his pantry** (the user's): he eats and drinks from its stock exactly as he
   would at home - a unit whenever the whole of it fits (`Consume`) - so while it has any he never goes
   pressing, and his pack waits untouched. Only an empty tower sends him looking, as below.
 - **A pressing need**: `SeekSupply` as now, with three differences. Since he is not going home, his own
@@ -114,7 +114,7 @@ These are sums from tuning, and change with it.
   greens, 1-2 beans - balanced so both run out together, and under a load. Named constants with the other `NEEDS_*`/`ECONOMY_*` values.
 - **Eaten as at home**: a unit whenever the whole of it fits (`Consume`), so his bars stay near full while
   the pack lasts.
-- **Filled**: when he sets out for a post from home, from his home's larder - no detour, and
+- **Filled**: when he sets out for a post from home, from his home's pantry - no detour, and
   the family's fetching makes it up; a home never holds provisions - and at every supply trip, wherever
   he eats, provisions included. An order given while
   he is out sends him straight there with the pack as it is: an order may be urgent.
@@ -126,7 +126,7 @@ These are sums from tuning, and change with it.
   and a beans** and is **worth the two together**: 3 days of health (`EconomyFoodWorth`: 1 + 2). It keeps
   long, for when spoilage comes.
 - **A bit of its own, kept OUT of `GOODS_FOOD`.** Everything villagers do with food today - fetching
-  home, a house's larder, fair shares, a home's days of food - then ignores provisions with no change, and
+  home, a house's pantry, fair shares, a home's days of food - then ignores provisions with no change, and
   "villagers never stock provisions" holds by itself. Provisions count only where they are added on
   purpose:
   - a POSTED person's pressing need and pack: any food, nearest first;
@@ -162,7 +162,7 @@ These are sums from tuning, and change with it.
 - **Its guards**: places like any workplace (2, tuning), filled in order like the others, by
   **precision** (the archer's skill). A new job, `WORKER_JOB_GUARD`. A guard's home stays his house.
 - **Its stock**: it keeps provisions and water - provisions are its food, and a guard still drinks.
-  **Only posted people draw on it** - its guards, as their larder, and anyone under an order nearby, as a
+  **Only posted people draw on it** - its guards, as their pantry, and anyone under an order nearby, as a
   supply. `SeekSupply` skips it for villagers, the way it skips other families' houses, or the village
   would empty it.
 - **Built with provisions**: wood by its storeys as any building, plus (tuning, agreed) **12 water and 8
@@ -217,9 +217,10 @@ Each step tested before the next, by the tool and a replay.
    of the others and can be built at any point, by another window if one is free.
 4. **Site costs per good** - BUILT 2026-10-09, below: construction carrying food and water as well as wood.
    General - stone and the rest will use it. No kind takes any other good yet.
-5. **Provisions**: the good, its own bit, the eating rules (posted: nearest of any food; villagers: last
-   resort), the store chip, and caretakers making them at the hut. Tested: made only when wanted;
-   villagers eat them only with nothing else in reach and never fetch them home.
+5. **Provisions** - BUILT 2026-10-09, below: the good, its own bit, the eating rules (posted: nearest of any
+   food; villagers: last resort), the store chip, and caretakers making them at the hut. Tested: made only
+   when wanted; villagers eat them only with nothing else in reach and never fetch them home. Nothing wants
+   any yet: the tower (step 6) is the first.
 6. **The guard tower**: the kind, its mesh, placement including the wall's line, its places and the guard
    job, its stock for posted people only, built with provisions and water.
 7. **The caretakers' resupply**: builders keep towers full, ahead of building.
@@ -304,13 +305,13 @@ name), `ApplicationChasmEconomy.cpp` (the hash, the tool's `pack`), `Application
 
 - **The pack** is `EconomyWorker::pack`, a count per good: saved by good name, hashed. 3 water and 3 days of
   food (`NEEDS_PACK_WATER`, `NEEDS_PACK_FOOD` - tuning, in `needs_plan.md`'s table).
-- **Filled** (`FillPack`) when he sets out for his post from home - his house's larder or his camp's supplies,
+- **Filled** (`FillPack`) when he sets out for his post from home - his house's pantry or his camp's supplies,
   as he drops what he was doing (`TakePost`) - and at the end of every supply trip, from what is there. Water
   first, then food, the kind that keeps best first (beans, wheat, greens), a whole unit more while still short
   of the mark: from a camp, 2 beans - 4 days.
 - **Eaten** in `Needs`, every tick while posted, by `Consume` - a whole unit whenever it fits, as at home. So
   his bars stay up while it lasts, and a pressing need sends him off only once it is empty.
-- **Home again** after release, the at-home look puts it back into the larder (`Unpack`) as far as the house
+- **Home again** after release, the at-home look puts it back into the pantry (`Unpack`) as far as the house
   keeps each good and has room; a camp takes it all. What does not fit stays packed, for the next post.
 - **A load on him at the order is lost** (`Order`), as the user asked, until crates hold what is dropped -
   which they do since crates step 1 (`crates_plan.md`): it is put down as a crate.
@@ -406,6 +407,69 @@ doing), `ApplicationChasmTime.cpp` (the BUILDING banner).
   - That test also showed the cost of it: **nothing is kept back**. The builders' hut took the camp's water
     down to none, and "water under a day" came up - carriers take a site's food and water from the same stocks
     people live on, as they take wood from firewood today. See Open.
+
+## As built: step 5, provisions (2026-10-09)
+
+Files: `Goods.h` (the good, `GoodsMask`, `GOODS_EATEN`), `Economy.*` (worth, eating, the pack, `SeekSupply`,
+`ProvisionsLacking`, `MakeProvisions`, `AtWorkshop`, the four states, `SetStock`), `Zones.*` (a store's goods, 16
+bits), `ApplicationChasm.*` (the zones hash, `CHASM_CMD_STOCK`), `ApplicationChasmEconomy.cpp` (the command, the
+tool), `ApplicationChasmSelect.cpp` (what a builder is doing, the hut's card, the chips wrapping).
+
+- **The good**: `GOOD_PROVISIONS` (5; `GOOD_COUNT` 6), named "provisions" in saves. Worth a wheat and a beans
+  together (`EconomyFoodWorth`: 3 days). Saves name goods by name, so old ones load as they were.
+- **Masks are 16 bits**: `GoodsMask` (`uint16_t`) for every goods mask - a store's setting, what a building
+  takes and keeps, a pressing need, a house's shortage. A store's setting is now hashed apart from its size, as
+  16 bits would run into it.
+- **Outside `GOODS_FOOD`**: fetching home, a house's pantry and its days of food, fair shares, the top bar's
+  FOOD - all ignore provisions with no change. `GOODS_EATEN` (the crops and provisions) is what a pressing
+  food need now asks for, and the seeker says whether provisions count:
+  - **posted**: any food, the nearest place first (`SeekSupply` with `GOODS_EATEN`);
+  - **villagers**: the crops; only if that finds no place he can get to, again with provisions - his LAST
+    RESORT. A villager next to provisions and with wheat across the map walks to the wheat.
+- **Eaten last**: wherever anyone eats (`Consume`) - greens, wheat, beans, then provisions. Into a pack
+  FIRST (`FillPack`): provisions, beans, wheat, greens - one provision is the whole pack's 3 days.
+- **No home holds them**: a house never keeps them (`ECONOMY_HOUSE_KEEPS`), and a soldier home again keeps
+  his provisions in his pack, even at the camp, whose pantry takes the rest (`Unpack`).
+- **Stores** take them by default and have a provisions chip; the card's goods chips now WRAP onto a second
+  row instead of running off the card.
+- **How many are wanted** (`ProvisionsLacking`): what the sites still lack of them (less what is on its way),
+  less what lies made in a store, the camp's supplies, a house nobody lives in, a builders' hut or a crate, and
+  less what is being made. Towers short of them join this in step 7. Wheat and beans at the huts are not
+  counted: they become provisions only while this is above 0.
+- **Making** (`MakeProvisions`, a builder's errand from home, before his building - so ahead of carrying and
+  line work, and of crates, the caretakers' last): with some wanted -
+  - a wheat and a beans at his hut: off to it to make them (`WORKER_TO_WORKSHOP`), one at a time
+    (`WORKER_MAKING`, `ECONOMY_PROVISION_SECONDS` at his pace - strength), the wheat and beans taken at the
+    start, up to a load a round, and home;
+  - too few at every hut, counting what is on its way, for what is wanted: a load of the scarcer of the two
+    for his own hut - as many as the pairs still wanted - from the nearest store, camp's supplies, house nobody
+    lives in or crate with some to spare (`WORKER_TO_INPUT`, `WORKER_TAKING_INPUT`, then `WORKER_TO_WORKSHOP`
+    carrying it). With none of the other half to be had, only as many as pair with what the hut already has of it.
+  - none wanted: what lies at the hut for nobody - provisions beyond what is wanted, any wheat and beans - a
+    load at a time to a store that takes it. With none that does, it stays at the hut.
+- **Carried to the sites** as any good is (step 4): a builders' hut is a source for its PROVISIONS only, never
+  its wheat and beans - so the range's wheat is not taken from a hut's half-made provisions.
+- **Nobody eats from a hut**: `SeekSupply` passes builders' huts by, as it passes other families' houses.
+- **Shown**: a builder is "fetching wheat for provisions", "taking beans to the hut", "making provisions";
+  the hut's card says what it holds for them. `chasm_economy` gives `provisions`: `lacking`, and each hut's
+  stock.
+- **A debug edit**: `CHASM_CMD_STOCK` (`chasm_economy` op `set_stock`), a building's stock of a good set - a
+  camp's pantry with `pantry` - recorded. A building placed on the same tick is not the economy's until its
+  next tick; the op says so then.
+- **Tested** (seed 12, a builders' hut and a store placed standing, the colony in the camp):
+  - Wood only, before and after, the same sites painted as a player: identical every 250 ticks for 3,000.
+  - With a TEMPORARY cost (a store's storey 2 provisions), taken out again:
+    - with no site wanting any, nothing made and nothing at the hut;
+    - a store site wanting 2: the builder fetched 2 wheat, then 2 beans, made 2, and the site's carriers took
+      them; the site stood; nothing left at the hut or in a store;
+    - a second site erased while its provisions were being made: what the hut held went to the store;
+    - with no crops in the camp or any store, a hungry villager went to the store with provisions and ate;
+      with wheat in a store three times as far, another walked past the provisions to the wheat; nobody
+      fetched provisions home, and the camp's pantry never held any;
+    - posted beside the store, a hungry man ate its provisions, nearer than the camp's wheat, and packed one;
+    - a save and load kept the stores' provisions and his pack. The recording, 5,613 ticks: two replays equal
+      on every tick.
+  - The store card's chips: six, on two rows; the provisions chip pressed off and on through the overlay.
 
 ## Later: agreed in the gameplay plan, not planned yet
 

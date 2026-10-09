@@ -15,7 +15,8 @@ verified: 2026-10-09
   [[Woodcutter|woodcutter's hut]], [[Water|water]] beside a [[Water collector]], and every
   [[Food|food]] beside a [[Field]] (one plot away from the field is as close as a store can get). This
   holds for as long as they touch, and the player can't change it.
-- **On its own**, a store takes whatever the player allows on its card, which is every good to start with.
+- **On its own**, a store takes whatever the player allows on its card, which is every good to start with,
+  [[Provisions|provisions]] included.
 
 Workers carry to the *nearest* store that takes their load and has room for all of it, so a store beside
 a workplace is in effect that workplace's own.
@@ -38,8 +39,10 @@ it. It does nothing until it has been built ([[Construction]]).
 If an erase splits a store, its stock is shared out by floor area. If a store is pulled down, what it
 held is lost.
 
+A [[Crate|crate]] lying about is a store of its own that villagers only take from, and builders carry its
+goods here.
+
 ## Planned
 
 A load that no store will take is to be put down as a [[Crate|crate]], instead of being carried around
-until a store will take it - and a crate is to be a store that villagers only take from. Both are on the
-crate's page.
+until a store will take it - on the crate's page.

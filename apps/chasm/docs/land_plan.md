@@ -132,7 +132,7 @@ the camp employ farmers, a field nobody), `ApplicationChasm.*` (the hash, `chasm
   reach it. A camp that owns a field keeps it unasked, so camp land costs no search on every change.
 - **Two things the first runs showed, fixed:** fetching home (needs_plan.md, step 2) now goes to the house's own
   fields for food too - a family walked to the camp for food past its own full fields; and someone holding food
-  that no store takes brings it home once the house is short again - a harvest left over when the larder filled
+  that no store takes brings it home once the house is short again - a harvest left over when the pantry filled
   on the way was held for good.
 - **A save from before land** (`EconomySaved::f_before_land`, a field record of six numbers) is settled on its
   first tick: owners, places, farmers - without a re-plan, so everyone walks on as saved. Only such a save: a
@@ -145,7 +145,7 @@ the camp employ farmers, a field nobody), `ApplicationChasm.*` (the hash, `chasm
   the choice was kept, and house 9 farmed it meanwhile, until a storey more let the Vissers in - then it and
   four fields given with it went over: four places for
   three Vissers, the last field "lies fallow: too few hands" (FARMERS 5 / 6). A harvest went home: the farmer
-  carried his field's greens into the larder, and the jobless fetched from their own fields once it ran low.
+  carried his field's greens into the pantry, and the jobless fetched from their own fields once it ran low.
   Save and load kept every owner, choice and farmer.
 - **Seen, not changed** (a consequence of the user's camp rule, worth a look in play): with all the camp's land
   passing to the first house lived in, and its harvest feeding that family first, the camp's families are left

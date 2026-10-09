@@ -84,7 +84,7 @@ json ChasmSaveToJson(const ChasmSave& s){
     json economy = json::object();
     {
         const EconomySaved& e = s.economy;
-        //Stocks, and camps' larders (Economy.h, STORES) the same way: by building, goods by name.
+        //Stocks, and camps' pantries (Economy.h, STORES) the same way: by building, goods by name.
         auto by_building = [](const std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>>& list){
             json out = json::array();
             for (const auto& st : list){
@@ -99,7 +99,7 @@ json ChasmSaveToJson(const ChasmSave& s){
             return out;
         };
         json stocks = by_building(e.stocks);
-        json larders = by_building(e.larders);
+        json pantries = by_building(e.pantries);
         json props = json::array();
         for (const auto& pr : e.props){
             props.push_back(json::array({pr.first,pr.second}));
@@ -182,7 +182,7 @@ json ChasmSaveToJson(const ChasmSave& s){
             crates.push_back(json{{"id",c.id},{"plot",c.plot},{"pos",json::array({c.pos.x,c.pos.y})},{"goods",goods},
                                   {"origin",c.origin},{"by",c.by},{"tick",c.tick}});
         }
-        economy = json{{"stocks",stocks},{"larders",larders},{"felled",props},{"people",workers},{"fields",fields},
+        economy = json{{"stocks",stocks},{"pantries",pantries},{"felled",props},{"people",workers},{"fields",fields},
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
                        {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead}};
     }
@@ -285,7 +285,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     out.explored = j.value("explored",std::string());
     if (j.contains("economy") && j["economy"].is_object()){
         const json& e = j["economy"];
-        //A save from before camps had larders has none: its camps' families start with an empty one.
+        //A save from before camps had pantries has none: its camps' families start with an empty one.
         auto by_building = [&](const char* key, std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>>& list){
             for (const json& st : e.value(key,json::array())){
                 std::array<int,GOOD_COUNT> goods{};
@@ -299,7 +299,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             }
         };
         by_building("stocks",out.economy.stocks);
-        by_building("larders",out.economy.larders);
+        by_building("pantries",out.economy.pantries);
         for (const json& pr : e.value("felled",json::array())){
             out.economy.props.push_back(std::make_pair(pr[0].get<int>(),pr[1].get<int>()));
         }

@@ -83,3 +83,10 @@ hut's card, the builder's line on a person's card), `ApplicationChasmEconomy.cpp
 
 **Not done**: the replay test (seed 12 needs new ones - the user's). A hut's builders start from home like
 everyone; the hut itself is only where they are employed - giving it a stock of wood of its own is a later idea.
+
+## Since: builders as caretakers (`defence_plan.md`, 2026-10-09)
+
+A builder is also a CARETAKER. His errands, in order: towers short of provisions or water (step 7, not built
+yet), then PROVISIONS some site still wants - fetching wheat and beans to his own hut and making them there,
+the hut's first stock (step 5) - then building and line work as above, then moving crates to a store
+(`crates_plan.md`). The jobless still carry and build, but never make provisions or move crates.

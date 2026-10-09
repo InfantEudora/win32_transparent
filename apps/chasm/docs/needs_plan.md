@@ -69,7 +69,8 @@ together; a difficulty setting would make this one column of several.
 | A house fetches below | `ECONOMY_HOME_DAYS` | 2 days for its family | - (step 2) |
 | A house's room | `ECONOMY_HOUSE_ROOM` | 4 a unit of floor area | 1.5 |
 | The settlers bring | `ECONOMY_START_*` | 40 wood, 40 wheat, 30 beans, 40 water | 40, 20, 10, 20 |
-| A posted person's pack (`defence_plan.md`) | `NEEDS_PACK_WATER`, `NEEDS_PACK_FOOD` | 3 water, 3 days of food (beans first: 2 beans) | - (2026-10-09) |
+| A posted person's pack (`defence_plan.md`) | `NEEDS_PACK_WATER`, `NEEDS_PACK_FOOD` | 3 water, 3 days of food (provisions first: 1; else beans first: 2 beans) | - (2026-10-09) |
+| Making a provision (`defence_plan.md`, step 5) | `ECONOMY_PROVISION_SECONDS` | 3 s at the builder's pace (a wheat and a beans; worth the two) | - (2026-10-09) |
 
 So per person a day: 1 wheat (or 2 greens, or half a bean) - unchanged since the first tuning - and now
 half a unit of water, where it was one.
@@ -193,12 +194,12 @@ Files: `Economy.*` (`Needs`, `EatAndDrink`, `EconomyFoodWorth`, `EconomyDeath`),
   sex, age, tick, hunger or thirst - saved as `"dead"`, hashed), then `HouseFamilies` and `AssignJobs` on the
   same tick, so an emptied house is taken and a job given out again.
 - **Seen**: the card has Health and Water bars, amber with two days of health or one of water left, and
-  "Water 0% - thirsty, losing health fast" when dry; the house card lists its larder; `chasm_economy` gives
+  "Water 0% - thirsty, losing health fast" when dry; the house card lists its pantry; `chasm_economy` gives
   each person's `health_days`, `water_days` and `dry`, and the dead with the colony's day they died on.
 - **Measured** (seed 1, debug):
   - A new colony, nothing built: the camp's wheat lasts two days and its water two, its beans go on day
     4, everyone is dry on day 5 and all ten die of thirst at day 6.33 - the plan's sums exactly.
-  - No food and no water at all - a family in a house, whose larder nothing fills yet - dies at day 3.67:
+  - No food and no water at all - a family in a house, whose pantry nothing fills yet - dies at day 3.67:
     dry at day 3 with two days of health left, which go at three times the pace. A family of four in a
     two-storey house by the camp died then, and on that tick a camp family moved into the house.
   - A save and load in the middle of a run gives back every person's health and water to the tick.
@@ -269,7 +270,7 @@ The user's change to "only at home", above. Files: `Economy.*` (`EconomyPressing
 dead of thirst). Someone a re-plan stopped short of home - "at home" where he stood, the way there cut -
 only waited for the zones to change, and never looked to his needs: when the player stopped building, he
 stood there until he died. Now, every look, he goes for a pressing need wherever he can reach it (his home's
-larder no help out there: `SeekSupply`'s `f_home`), and every fourth look tries the way home again. What cut
+pantry no help out there: `SeekSupply`'s `f_home`), and every fourth look tries the way home again. What cut
 Wout's way was the picker missing the point he stood on (`grid_plan.md`, Step 2, "Watertight"); with that
 fixed the recording plays through with nobody dead. The stranded case itself was not seen again - nothing in
 the recording cuts anyone off now - so it is checked by reading only.
@@ -290,7 +291,7 @@ health 0 kills only someone who cannot eat on that tick.
 ## As built: step 2, fetching home (2026-10-07)
 
 Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `WORKER_TO_GET`, `WORKER_GETTING`,
-`WORKER_TO_LARDER`, appended), the card's lines and a store's related people in `ApplicationChasmSelect.cpp`.
+`WORKER_TO_PANTRY`, appended), the card's lines and a store's related people in `ApplicationChasmSelect.cpp`.
 
 - **When**: a HOUSE holding less than `ECONOMY_HOME_DAYS` (2) of what its family drinks or eats, counted in days
   of their bars (water at `NEEDS_WATER_WORTH` a unit, food at its worth). The scarcer first, water on a tie.
@@ -324,12 +325,12 @@ Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `W
   recording of it: the same.
 - ~~**A camp's own families do not fetch** (the user's choice): its supplies are what the settlers brought.~~
   **Changed 2026-10-09 (the user's): a camp's families fetch for it** like a house's - water, food and, in its
-  season, firewood - never from its own supplies; it has a larder's room and a woodshed by its floor area. With
+  season, firewood - never from its own supplies; it has a pantry's room and a woodshed by its floor area. With
   births (`lifeline_plan.md`) a baby born in the camp went dry once the settlers' water did: grown people drink
   at a store or collector on a pressing need, a baby cannot. Measured on seed 12 with nobody housed, a collector
   and a store by the river: two of the camp's people took turns fetching water from the store, the camp's water
   never ran out, and the baby born there on day 8 always had two to four days of it. (What they fetch goes into
-  the camp's own LARDER beside the open supplies - the camp larder, built the same day by another session.)
+  the camp's own PANTRY beside the open supplies - the camp pantry, built the same day by another session.)
 - **The house's room** went from 1.5 to 4 of floor area (about 16 a plot-storey), this plan's own figure:
   two days of water and food for four is 12, and the old room was 11 for a two-storey one-plot house.
 - **Measured** (seed 12, debug, a two-storey house of four 11 from the camp):

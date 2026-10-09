@@ -182,7 +182,7 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   CAMP FAMILIES NOW FETCH (user reversed own rule 2026-10-09 after a camp baby went dry): camp has room+woodshed,
   never fetches from itself. FETCH FROM ANYTHING (user, same day): Economy::FetchFrom = store, camp supplies, empty
   house, collector, woodcutter pile, own field (fair share); pressing trip brings a load home via FetchFrom +
-  TakeHome top-up. Camp LARDER (another session) holds what camp families fetch. RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
+  TakeHome top-up. Camp PANTRY (another session) holds what camp families fetch. RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
   every map has a home river (approach bug fixed; small-river and off-the-east-edge fallbacks; `rivers`
   check fails none), 2-3 BRANCHES per river (GRID_RIVER_JOIN, inland heads), far-side scenic SPRINGS and
   home SWALLOW-HOLE streams (GRID_RIVER_SINK) whose spring pours from a dark mouth in the wall
@@ -206,11 +206,11 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   touches nothing else; `--replace NAME` rebuilds one). Snow = PINE_LIGHT: the frozen row makes
   that cell white. Trees are ~2x A Little Age's tree/house ratio at the briefed sizes, so the game
   draws them at 0.7 scale, two per plot - keep modelling at the briefed sizes, scale is game-side.
-  CAMP LARDER (user 2026-10-09, chose "two stocks"): a camp = open SUPPLIES (`stock`, the colony's, whoever lives
-  there) + private LARDER (`EconomyState::larder`, what camp families fetch, house room/woodshed); eat/drink/burn
-  larder first; larder joins supplies the tick the camp empties (OpenLarders). RULE: a lived-in HOUSE's stock is
+  CAMP PANTRY (user 2026-10-09, chose "two stocks"): a camp = open SUPPLIES (`stock`, the colony's, whoever lives
+  there) + private PANTRY (`EconomyState::pantry`, what camp families fetch, house room/woodshed); eat/drink/burn
+  pantry first; pantry joins supplies the tick the camp empties (OpenPantries). RULE: a lived-in HOUSE's stock is
   its family's alone, an empty one's is anyone's (Economy::PrivateStock; TakeHome refuses a private source).
-  Saved as "larders", hashed. Verified live: camp fetched water into larder, emptied camp merged it.
+  Saved as "pantries", hashed. Verified live: camp fetched water into pantry, emptied camp merged it.
 - RRandom IS seedable now (Generate(seed)); world gen should use its own instance.
 - STEP 10 BUILT 2026-10-05 (session 0052a3e4, alongside win32-transparent-35's roads/walker/gates):
   the chasm is GENERATED from the seed - ChasmLayout.cpp (rift spines -> distance field -> rims as

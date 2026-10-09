@@ -279,7 +279,7 @@ struct ChasmWorld;     //ChasmWorld.h
 struct ZoneBuilding{
     uint8_t kind = ZONE_KIND_NONE;
     uint8_t crop = ZONE_CROP_WHEAT;             //a field's starting crop; ZONE_CROP_NONE until chosen
-    uint8_t allow = GOODS_ALL;
+    GoodsMask allow = GOODS_ALL;
     uint8_t f_priority = 0;
     uint8_t next_crop = ZONE_CROP_AUTO;         //a field's crop for every sowing after its first
     int size = 0;

@@ -46,7 +46,7 @@ expand it").
 least time left first; then what is stuck (7, 8); then the next steps in the table's order. A new map opens
 with rows 2-5: the first screen is the checklist.
 
-**The days**: what the colony holds - stores, the camp's supplies and the houses' larders - over everyone,
+**The days**: what the colony holds - stores, the camp's supplies and the houses' pantries - over everyone,
 children too. Water: a unit is `NEEDS_WATER_WORTH` of one person's bar. Food: each unit at what it is worth
 eaten (`EconomyFoodWorth`). Not what lies at workplaces or is carried, and nothing of what is being made: a
 deadline for a colony with no source of it, which is when the hint shows. At the start (12 settlers, 40 water,

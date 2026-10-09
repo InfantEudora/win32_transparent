@@ -327,7 +327,7 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_CLEARING:   return "clearing a road";
         case WORKER_LAYING:     return "laying a road";
         case WORKER_TO_SUPPLY:{
-            uint8_t want = EconomyPressing(k);
+            GoodsMask want = EconomyPressing(k);
             bool f_water = (want & GOOD_BIT(GOOD_WATER)) != 0;
             bool f_food = (want & GOODS_FOOD) != 0;
             return (f_water && f_food) ? "going for food and water" : f_water ? "going for water" : "going for food";
@@ -335,7 +335,7 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_SUPPLYING:  return "eating and drinking";
         case WORKER_TO_GET:     return (k.carry_good == GOOD_WATER) ? "fetching water for home" : "fetching food for home";
         case WORKER_GETTING:    return "picking up for home";
-        case WORKER_TO_LARDER:  return "taking it home";
+        case WORKER_TO_PANTRY:  return "taking it home";
         case WORKER_TO_SOW:     return "going to sow";
         case WORKER_SOWING:     return "sowing";
         case WORKER_TO_PLAY:    return "going out to play";
@@ -345,6 +345,12 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_ON_POST:    return (z && z->world && !EconomyAtPost(*z->world,k)) ? "cut off from the post" : "standing guard";
         case WORKER_TO_RANGE:   return "going to the range";
         case WORKER_TRAINING:   return "training";
+        //A builder as a caretaker: provisions for the sites (defence_plan.md, step 5).
+        case WORKER_TO_INPUT:   return (k.carry_good == GOOD_BEANS) ? "fetching beans for provisions" : "fetching wheat for provisions";
+        case WORKER_TAKING_INPUT: return (k.carry_good == GOOD_BEANS) ? "picking up beans" : "picking up wheat";
+        case WORKER_TO_WORKSHOP: return (k.carry <= 0) ? "going to make provisions"
+                                      : (k.carry_good == GOOD_BEANS) ? "taking beans to the hut" : "taking wheat to the hut";
+        case WORKER_MAKING:     return "making provisions";
         default:                return "";
     }
 }
@@ -522,25 +528,27 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
 }
 
 /*
-    THE CARD: a title, then lines - text, a text with a bar (0..1), a row of a store's goods as chips, or
-    one chip that turns a setting on and off. Made from the published states, for the overlay and for the
-    tool alike.
+    THE CARD: a title, then lines - text, a text with a bar (0..1), a row of a store's goods as chips, one
+    chip that turns a setting on and off, or a goods strip: what a building holds and whose it is
+    (ChasmHud.h). Made from the published states, for the overlay and for the tool alike.
 */
 #define CARD_TEXT   0
 #define CARD_BAR    1
 #define CARD_CHIPS  2
 #define CARD_TOGGLE 3       //a site's "Build first"; a posted person's "Release" (its own choice_action)
 #define CARD_CHOICE 4       //a row of chips, one of them lit: a field's crops (fields_plan.md)
+#define CARD_STOCK  5       //a goods strip (the user's, 2026-10-09)
 struct CardLine{
     int type = CARD_TEXT;
     std::string text;
     uint32_t colour = HUD_TEXT;
     float bar = 0.0f;
-    uint8_t chips_on = 0;       //CARD_CHIPS: the goods taken; CARD_TOGGLE: 1 while on
+    GoodsMask chips_on = 0;       //CARD_CHIPS: the goods taken; CARD_TOGGLE: 1 while on
     bool f_locked = false;      //...and whether they can be changed here
     std::vector<std::pair<std::string,int>> choices;    //CARD_CHOICE: each chip's label and value
     int choice_on = -1;         //...the value lit
     int choice_action = 0;      //...and what a click on one does (OVERLAY_HIT_*), with its value
+    HudStock stock;             //CARD_STOCK
 };
 
 //A crop's name as a card says it: capitalised.
@@ -566,7 +574,23 @@ struct Card{
         l.colour = colour;
         lines.push_back(l);
     }
+    void Stock(const std::string& label, const std::string& whose, const std::array<int,GOOD_COUNT>& goods, int room,
+               bool f_kept, const std::array<int,GOOD_COUNT>& reserved = {}){
+        CardLine l;
+        l.type = CARD_STOCK;
+        l.stock.label = label;
+        l.stock.whose = whose;
+        l.stock.goods = goods;
+        l.stock.reserved = reserved;
+        l.stock.room = room;
+        l.stock.f_kept = f_kept;
+        lines.push_back(l);
+    }
 };
+
+bool AnyGoods(const std::array<int,GOOD_COUNT>& goods){
+    return std::any_of(goods.begin(),goods.end(),[](int n){ return n > 0; });
+}
 
 std::string Format(const char* fmt, ...) __attribute__((format(printf,1,2)));
 std::string Format(const char* fmt, ...){
@@ -746,7 +770,7 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         release.choice_action = OVERLAY_HIT_RELEASE;
         c.lines.push_back(release);
     }
-    //His pack (defence_plan.md): what he carries to live on - posted, or home again with what the larder had no room for.
+    //His pack (defence_plan.md): what he carries to live on - posted, or home again with what the pantry had no room for.
     std::string pack;
     for (int g = 0; g < GOOD_COUNT; g++){
         if (k.pack[g] > 0){
@@ -827,18 +851,30 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     std::array<int,GOOD_COUNT> site_cost = EconomySiteCost(w,z,id);
     bool f_field = b.kind == ZONE_KIND_FIELD;
     bool f_cells = ZoneKindOnCells(b.kind);     //a field, or a range painted like one (range_plan.md)
+    if (f_cells){
+        //Its SIZE (the user's, 2026-10-09), built and still a site: a harvest is its area's, cells vary in size.
+        int cells = (int)std::count(z.field.begin(),z.field.end(),id);
+        c.Text(Format("Size: %i cell%s, area %.0f",cells,cells == 1 ? "" : "s",info.floor_area + info.site_area),
+               HUD_TEXT_DIM);
+    }
     if (std::any_of(site_cost.begin(),site_cost.end(),[](int x){ return x > 0; })){
-        //Under construction: how far along, of each good it takes, and who is carrying for it.
+        /*
+            Under construction: what it takes, what it has been brought of that - kept, a strip over the whole
+            of what it takes (the goods strip, ChasmHud.h) - and who is carrying for it.
+        */
         c.title += (info.storeys > 0 || (f_cells && info.floor_area > 0.0f)) ? " - building on" : " - being built";
-        for (int g = 0; g < GOOD_COUNT; g++){
-            if (site_cost[g] <= 0){
-                continue;
+        std::array<int,GOOD_COUNT> brought{};
+        int cost = 0;
+        std::string takes;
+        for (int g : HudGoodsOrder()){
+            if (site_cost[g] > 0){
+                brought[g] = e ? std::min(site_cost[g],EconomySiteBrought(*e,id,g)) : 0;
+                cost += site_cost[g];
+                takes += Format("%s%i %s",takes.empty() ? "" : ", ",site_cost[g],GoodName(g));
             }
-            int brought = e ? std::min(site_cost[g],EconomySiteBrought(*e,id,g)) : 0;
-            std::string name = GoodName(g);
-            name[0] = (char)toupper(name[0]);
-            c.Bar(Format("%s %i of %i",name.c_str(),brought,site_cost[g]),(float)brought / site_cost[g],HUD_AMBER);
         }
+        c.Stock("Brought","for this building",brought,cost,true);
+        c.Text("It takes " + takes,HUD_TEXT_DIM);
         if (f_field){
             //A field site (fields_plan.md): staked out, all its cells built at once.
             c.Text(Format("%i cell%s to build - then empty, to be sown",info.site_cells,info.site_cells == 1 ? "" : "s"),
@@ -951,26 +987,47 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         if (b.kind == ZONE_KIND_HOUSE){
             YardLines(z,id,c);
         }
-        //Its family's own food, water and firewood (ECONOMY_HOUSE_KEEPS), which they eat and drink from.
+        /*
+            Its family's own food, water and firewood (ECONOMY_HOUSE_KEEPS), which they live on: food and water in
+            its PANTRY, against its room, and firewood in its WOODSHED, against that one's (Economy::HouseRoom - the
+            two are apart, so one figure over both read "18 of 16"). KEPT while anyone lives there, anyone's once
+            nobody does (EconomyPrivateStock). A camp's own is its pantry (STORES), its families', the same two
+            rows while anyone lives there; its supplies, anyone's, follow below.
+        */
+        bool f_camp = b.kind == ZONE_KIND_CAMP;
         int room = (id < e->room.size()) ? e->room[id] : 0;
-        if (b.kind == ZONE_KIND_HOUSE && room > 0){
-            int held = EconomyStockTotal(*e,id);
-            c.Bar(Format("Food, water and firewood %i of %i",held,room),(float)held / room,HUD_TEXT_DIM);
-            std::string larder = GoodsList(*e,id);
-            if (!larder.empty()){
-                c.Text("  " + larder,HUD_TEXT_DIM);
+        int shed = (id < e->woodshed.size()) ? e->woodshed[id] : 0;
+        std::array<int,GOOD_COUNT> own{};
+        if (f_camp ? id < e->pantry.size() : id < e->stock.size()){
+            own = f_camp ? e->pantry[id] : e->stock[id];
+        }
+        bool f_shown = f_camp ? living > 0 : room > 0;
+        if (f_shown){
+            bool f_kept = f_camp || EconomyPrivateStock(*e,z,id);
+            std::string family = HouseFamily(*e,id);
+            std::string whose = !f_kept ? "anyone's" : f_camp ? "the camp families'"
+                              : family.empty() ? "its family's" : "the " + family + " family's";
+            //Taken from only while nobody lives there - and a camp's pantry never: its supplies are what is taken.
+            std::array<int,GOOD_COUNT> reserved = f_camp ? std::array<int,GOOD_COUNT>{} : EconomyReserved(*e,id);
+            if (!f_kept && AnyGoods(own)){
+                c.Text("Nobody lives here: anyone may take what it holds",HUD_TEXT_DIM);
+            }
+            std::array<int,GOOD_COUNT> food = own;
+            std::array<int,GOOD_COUNT> fire{};
+            std::array<int,GOOD_COUNT> food_reserved = reserved;
+            std::array<int,GOOD_COUNT> fire_reserved{};
+            std::swap(food[GOOD_WOOD],fire[GOOD_WOOD]);
+            std::swap(food_reserved[GOOD_WOOD],fire_reserved[GOOD_WOOD]);
+            c.Stock("Pantry",whose,food,room,f_kept,food_reserved);
+            if (shed > 0 || fire[GOOD_WOOD] > 0){
+                c.Stock("Woodshed",whose,fire,shed,f_kept,fire_reserved);
             }
         }
     }
     if (b.kind == ZONE_KIND_STORE && info.storeys > 0){
         int room = (id < e->room.size()) ? e->room[id] : 0;
-        int held = EconomyStockTotal(*e,id);
-        c.Bar(Format("Holds %i of %i",held,room),room ? (float)held / room : 0.0f);
-        for (int g = 0; g < GOOD_COUNT; g++){
-            int n = EconomyStock(*e,id,g);
-            if (n){
-                c.Bar(Format("  %s %i",GoodName(g),n),room ? (float)n / room : 0.0f,HUD_TEXT_DIM);
-            }
+        if (id < e->stock.size()){
+            c.Stock("Holds","anyone's",e->stock[id],room,false,EconomyReserved(*e,id));
         }
         bool f_attached = id < e->attached.size() && e->attached[id] != 0;
         CardLine chips;
@@ -1156,16 +1213,31 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         if (b.kind == ZONE_KIND_WOODCUTTER){
             YardLines(z,id,c);
         }
-        std::string waiting = GoodsList(*e,id);
-        if (!waiting.empty()){
-            c.Text(b.kind == ZONE_KIND_WOODCUTTER ? "On the woodpile: " + waiting : "Waiting to be carried: " + waiting,HUD_TEXT_DIM);
+        /*
+            What waits here to be carried off: the woodpile and the collector's water, anyone's (FetchFrom), each
+            against what it holds at most; a field's harvest, KEPT for its land - its family fetches it, its farmer
+            carries the rest on (land_plan.md).
+        */
+        std::array<int,GOOD_COUNT> held = (id < e->stock.size()) ? e->stock[id] : std::array<int,GOOD_COUNT>{};
+        if (b.kind == ZONE_KIND_WOODCUTTER && (!f_no_lot || AnyGoods(held))){
+            c.Stock("Woodpile","anyone's",held,ECONOMY_HUT_PILE,false,EconomyReserved(*e,id));
+        }else if (b.kind == ZONE_KIND_WATER && (info.storeys > 0 || AnyGoods(held))){
+            c.Stock("Collected","anyone's",held,ECONOMY_WATER_HOLD,false,EconomyReserved(*e,id));
+        }else if (f_field && AnyGoods(held)){
+            const EconomyField* land = EconomyFieldOf(*e,id);
+            uint32_t owner = land ? land->owner : 0;
+            c.Stock("Harvest",LandName(z,*e,owner),held,0,true,EconomyReserved(*e,id));
+            if (owner && owner < z.buildings.size()){
+                c.Text(z.buildings[owner].kind == ZONE_KIND_CAMP ? "Its farmer carries it to the camp's supplies"
+                                                                 : "Its family's first - the rest is carried to a store",HUD_TEXT_DIM);
+            }
+        }else if (AnyGoods(held)){
+            c.Text("Waiting to be carried: " + GoodsList(*e,id),HUD_TEXT_DIM);
         }
     }
-    if (b.kind == ZONE_KIND_CAMP){
-        std::string supplies = GoodsList(*e,id);
-        if (!supplies.empty()){
-            c.Text("Supplies: " + supplies,HUD_TEXT_DIM);
-        }
+    //A camp's SUPPLIES (STORES): the settlers' and the colony's, anyone's, under its families' own pantry above.
+    if (b.kind == ZONE_KIND_CAMP && id < e->stock.size() && AnyGoods(e->stock[id])){
+        c.Stock("Supplies","anyone's",e->stock[id],0,false,EconomyReserved(*e,id));
     }
     if (b.kind == ZONE_KIND_WINCH && info.storeys > 0){
         c.Text("Lowers to the balcony below",HUD_TEXT_DIM);
@@ -1188,6 +1260,12 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         }
         if (working < places){
             c.Text("Too few people: every place here is filled before any other workplace's",HUD_TEXT_DIM);
+        }
+        //PROVISIONS (defence_plan.md): the wheat and beans to make them, and those made - kept: for the sites'
+        //carriers, and nobody eats from it.
+        if (id < e->stock.size() && AnyGoods(e->stock[id])){
+            c.Stock("Holds","for provisions",e->stock[id],0,true,EconomyReserved(*e,id));
+            c.Text("Wheat and beans are made into provisions here, for the sites",HUD_TEXT_DIM);
         }
     }
 }
@@ -1546,7 +1624,7 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     int want = z->buildings[sel.id].f_priority ? 0 : 1;
                     auto cell = std::find(z->field.begin(),z->field.end(),sel.id);
                     if (hit.action == OVERLAY_HIT_STORE_ALLOW){
-                        uint8_t mask = z->buildings[sel.id].allow ^ (uint8_t)GOOD_BIT(hit.value);
+                        GoodsMask mask = z->buildings[sel.id].allow ^ (GoodsMask)GOOD_BIT(hit.value);
                         SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
                     }else if (ZoneKindOnCells(z->buildings[sel.id].kind) && cell != z->field.end()){
                         SubmitZone(ZONE_OP_FIELD_PRIORITY,(int)(cell - z->field.begin()),want);     //a field or range: by a cell
@@ -1992,9 +2070,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     const float bar_h = 26.0f * s;
     const float chips_h = 30.0f * s;
     float card_w = CARD_W * s;
-    float h = pad + 26.0f * s;
     for (const CardLine& l : card.lines){
-        h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS || l.type == CARD_TOGGLE || l.type == CARD_CHOICE) ? chips_h : line_h;
         //A long line widens the card rather than running off it - and so does a row of chips.
         card_w = std::max(card_w,overlay->MeasureText(l.text.c_str(),text_size).x + pad * 2.0f);
         if (l.type == CARD_CHOICE){
@@ -2004,11 +2080,56 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             }
             card_w = std::max(card_w,row);
         }
+        //A goods strip as wide as its header, or its key on one line - past the limit below, the key wraps.
+        if (l.type == CARD_STOCK){
+            card_w = std::max(card_w,HudStockWidth(overlay,l.stock,s) + pad * 2.0f);
+        }
     }
     card_w = std::min(card_w,width * 0.45f);
+    /*
+        A store's goods chips WRAP onto as many rows as the card's width needs, rather than widening it: with
+        provisions (defence_plan.md) the six ran off its edge, and more goods are coming. Where each chip goes,
+        for the height here and the drawing below.
+    */
+    const float chip_gap = 6.0f * s;
+    const float swatch_w = 13.0f * s;      //a good's chip: its colour's swatch before its name (HudGoodColour)
+    auto chip_w = [&](const char* name){
+        return overlay->MeasureText(name,text_size).x + 14.0f * s;
+    };
+    auto good_chip_w = [&](int g){
+        return chip_w(GoodName(g)) + swatch_w;
+    };
+    auto goods_rows = [&](){
+        int rows = 1;
+        float x = 0.0f;
+        for (int g : HudGoodsOrder()){
+            float w = good_chip_w(g);
+            if (x > 0.0f && x + w > card_w - pad * 2.0f){
+                rows++;
+                x = 0.0f;
+            }
+            x += w + chip_gap;
+        }
+        return rows;
+    };
+    float h = pad + 26.0f * s;
+    for (const CardLine& l : card.lines){
+        h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS) ? chips_h * goods_rows()
+           : (l.type == CARD_TOGGLE || l.type == CARD_CHOICE) ? chips_h
+           : (l.type == CARD_STOCK) ? HudStockHeight(overlay,l.stock,card_w - pad * 2.0f,s) : line_h;
+    }
     h += pad * 0.5f;
-    vec2 c0(width - 16.0f * s - card_w,128.0f * s);
-    vec2 c1(width - 16.0f * s,c0.y + h);
+    /*
+        A card too long to end above the tools' grid and what stacks over it (DrawIssues) goes to their left,
+        rather than over them - as the jobs overview rises over them (DrawJobsOverview). A camp full of
+        settlers, with its pantry, woodshed and supplies, runs that long.
+    */
+    float right = width - 16.0f * s;
+    if (128.0f * s + h > build_stack_top - 8.0f * s){
+        right = std::min(right,build_stack_left - 10.0f * s);
+    }
+    vec2 c0(right - card_w,128.0f * s);
+    vec2 c1(right,c0.y + h);
     overlay->AddRect(c0,c1,10.0f * s,HUD_PANEL);
     overlay->AddRect(vec2(c0.x,c0.y),vec2(c0.x + 4.0f * s,c1.y),2.0f * s,HUD_SELECT);
     overlay_hits_drawing.push_back(OverlayHit{c0,c1,OVERLAY_HIT_BLOCK,0});
@@ -2021,18 +2142,35 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     overlay->AddLine(vec2(x1.x - 3.0f * s,x0.y + 3.0f * s),vec2(x0.x + 3.0f * s,x1.y - 3.0f * s),2.0f * s,HUD_TEXT_DIM);
     overlay_hits_drawing.push_back(OverlayHit{x0 - vec2(4.0f * s,4.0f * s),x1 + vec2(4.0f * s,4.0f * s),OVERLAY_HIT_CLOSE,0});
     y += 12.0f * s;
-    //A chip: lit while on; a click turns it over (not while it is fixed). Returns where the next one goes.
-    auto chip = [&](float x, const char* name, bool f_on, bool f_locked, int action, int value) -> float {
-        float tw = overlay->MeasureText(name,text_size).x;
+    /*
+        A chip: lit while on; a click turns it over (not while it is fixed). Returns where the next one goes.
+        A GOOD's chip is its colour (HudGoodColour): lit, filled with it and ticked; off, its swatch before
+        its name - the same width either way, so a click moves nothing.
+    */
+    auto chip = [&](float x, const char* name, bool f_on, bool f_locked, int action, int value, uint32_t good_colour = 0) -> float {
+        float tw = overlay->MeasureText(name,text_size).x + (good_colour ? swatch_w : 0.0f);
         vec2 k0(x,y - 24.0f * s);
         vec2 k1(x + tw + 14.0f * s,y - 4.0f * s);
         uint8_t alpha = f_locked ? 110 : 235;
         if (f_on){
-            overlay->AddRect(k0,k1,8.0f * s,HudFaded(HUD_AMBER,alpha));
+            overlay->AddRect(k0,k1,8.0f * s,HudFaded(good_colour ? good_colour : HUD_AMBER,alpha));
         }else{
             overlay->AddRectOutline(k0,k1,8.0f * s,1.5f * s,HudFaded(HUD_TEXT,alpha / 2));
         }
-        overlay->AddText(name,vec2(x + 7.0f * s,y - 9.0f * s),text_size,f_on ? HudFaded(HUD_PANEL,255) : HudFaded(HUD_TEXT,alpha),
+        float tx = x + 7.0f * s;
+        if (good_colour){
+            vec2 q0(tx,y - 18.5f * s);
+            vec2 q1(tx + 9.0f * s,y - 9.5f * s);
+            if (f_on){
+                uint32_t ink = HudFaded(HUD_PANEL,255);
+                overlay->AddLine(vec2(q0.x + 1.0f * s,q0.y + 4.5f * s),vec2(q0.x + 3.5f * s,q1.y - 1.0f * s),1.8f * s,ink);
+                overlay->AddLine(vec2(q0.x + 3.5f * s,q1.y - 1.0f * s),vec2(q1.x,q0.y + 0.5f * s),1.8f * s,ink);
+            }else{
+                overlay->AddRect(q0,q1,2.0f * s,HudFaded(good_colour,alpha));
+            }
+            tx += swatch_w;
+        }
+        overlay->AddText(name,vec2(tx,y - 9.0f * s),text_size,f_on ? HudFaded(HUD_PANEL,255) : HudFaded(HUD_TEXT,alpha),
                          UI_ALIGN_LEFT);
         if (!f_locked){
             overlay_hits_drawing.push_back(OverlayHit{k0,k1,action,value});
@@ -2060,12 +2198,18 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             for (const auto& ch : l.choices){
                 x = chip(x,ch.first.c_str(),ch.second == l.choice_on,l.f_locked,l.choice_action,ch.second);
             }
+        }else if (l.type == CARD_STOCK){
+            y += DrawHudStock(overlay,l.stock,c0.x + pad,y,c1.x - c0.x - pad * 2.0f,s);
         }else{
-            //A chip per good: lit if the store takes it.
+            //A chip per good: lit if the store takes it - on a new row where the next would run off the card.
             y += chips_h;
             float x = c0.x + pad;
-            for (int g = 0; g < GOOD_COUNT; g++){
-                x = chip(x,GoodName(g),(l.chips_on & GOOD_BIT(g)) != 0,l.f_locked,OVERLAY_HIT_STORE_ALLOW,g);
+            for (int g : HudGoodsOrder()){
+                if (x > c0.x + pad && x + good_chip_w(g) > c1.x - pad){
+                    y += chips_h;
+                    x = c0.x + pad;
+                }
+                x = chip(x,GoodName(g),(l.chips_on & GOOD_BIT(g)) != 0,l.f_locked,OVERLAY_HIT_STORE_ALLOW,g,HudGoodColour(g));
             }
         }
     }
@@ -2240,6 +2384,21 @@ void ApplicationChasm::RegisterSelectTools(){
                             on = (ch.second == l.choice_on) ? ch.first : on;
                         }
                         lines.push_back(json{{"choice",labels},{"on",on}});
+                    }else if (l.type == CARD_STOCK){
+                        //A goods strip: by name, what it holds and what of that is reserved, its room (0 none), kept or anyone's.
+                        json goods = json::object();
+                        json reserved = json::object();
+                        for (int g = 0; g < GOOD_COUNT; g++){
+                            if (l.stock.goods[g] > 0){
+                                goods[GoodName(g)] = l.stock.goods[g];
+                            }
+                            int r = std::min(l.stock.reserved[g],l.stock.goods[g]);
+                            if (r > 0){
+                                reserved[GoodName(g)] = r;
+                            }
+                        }
+                        lines.push_back(json{{"stock",l.stock.label},{"whose",l.stock.whose},{"kept",l.stock.f_kept},
+                                             {"room",l.stock.room},{"goods",goods},{"reserved",reserved}});
                     }else{
                         lines.push_back(l.type == CARD_BAR ? json{{"text",l.text},{"bar",l.bar}} : json(l.text));
                     }

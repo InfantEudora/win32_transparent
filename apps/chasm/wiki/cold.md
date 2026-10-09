@@ -28,7 +28,7 @@ chance of a child in a home that was warm that day ([[Lifelines]]).
 ## Firewood
 
 - A house keeps its firewood in a **woodshed**, apart from its food and water, holding
-  {ECONOMY_WOODSHED_DAYS:#days} of its burning. A camp has one too, in its larder.
+  {ECONOMY_WOODSHED_DAYS:#days} of its burning. A camp has one too, in its pantry.
 - The family [[Fetching home|fetches]] firewood when it holds less than {ECONOMY_HOME_DAYS:#days} of
   burning. That happens only from autumn's first day, through winter, and in spring while snow lies on the
   house, and only for houses that the full winter's snow reaches.

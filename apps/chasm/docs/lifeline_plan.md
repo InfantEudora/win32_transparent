@@ -89,8 +89,8 @@ how the first generation leaves.
 - **PLAYING is at home**, with now and then a short walk to a plot or two round the house and back - when,
   and where to, from a hash.
 - **No work, no errands, no building.** They eat and drink at home, and the family's fetching keeps the
-  larder up. A child still sees to a pressing need of their own like anyone, so a child never dies of
-  thirst beside an empty larder with a store in reach.
+  pantry up. A child still sees to a pressing need of their own like anyone, so a child never dies of
+  thirst beside an empty pantry with a store in reach.
 
 ### Young adult
 
