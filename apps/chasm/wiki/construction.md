@@ -6,7 +6,7 @@ status: built
 summary: What the player places in play is a site, built a storey at a time from wood that people without a job, and builders, carry to it.
 plans: construction_plan.md > As built; construction_plan.md > Which site goes first; builders_plan.md > As built
 code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyCellCost; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND
-verified: 2026-10-09
+verified: 2026-10-10
 ---
 
 ## Sites
@@ -17,7 +17,8 @@ storey does nothing: no room, no family, no worker. **Wood is all it takes**:
 - a building's storey: {ECONOMY_BUILD_WOOD_PER_AREA} per unit of floor area, more or less by kind (a
   camp's tents less, a winch more, a bridge less: `BuildFactor`);
 - a garden's or lot's plot: {ECONOMY_GROUND_WOOD_PER_AREA} per unit of area, built from a plot beside it,
-  so the fence never goes up around the builder;
+  so the fence never goes up around the builder. Anyone else it goes up around may climb out over it, but
+  nobody climbs in;
 - a [[Field|field]]: {ECONOMY_FIELD_WOOD_PER_CELL} a cell, every cell at once;
 - roads and walls: see [[Roads and walls]].
 

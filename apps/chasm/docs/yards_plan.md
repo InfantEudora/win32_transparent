@@ -108,3 +108,18 @@ hut's card; the yard in `FindRelatedPlaces`), `Economy.cpp` (the woodpile from h
   ground cannot be given a lot from play until the ground is explored.
 - **Not checked by a run**: a house's yard by "Add garden" through the clicks (the same path as "Add lot"), and the
   ghost's red, seen only in code.
+
+### Fix: shut in a yard (2026-10-10)
+
+The user's recording `chasm_dirk_dewit.rec`: Dirk de Wit stood in woodcutter 4's one-plot lot, "at home" but nowhere
+near it, a quarter of his water left - no route from there to anywhere. A lot is meant to be empty (the woodpile is
+reached from the hut beside it), and its fence is crossed only at a gate, where a road ends at it. This one had roads
+running past it on three sides and ending at none, so no gate; and a hut is walked through only at a walk's ends. How
+he got in is not in the recording, which starts with him there; most likely he was crossing the lot while it was
+still a site, which is open ground, when its fence went up, and the re-plan stopped him where he stood. A road run on
+past a gate would shut someone in the same way.
+
+The fix is in the walking rule (`Walkers::EdgeOpen`): **someone whose walk starts inside a standing yard may go out
+over its fence, never in.** Entering is still closed, so the walk can only reach that fence from inside the yard it
+started in. Checked by replaying the recording: within 25 ticks he was over the fence onto the road, drank at the
+collector and walked home to his tent.

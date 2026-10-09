@@ -92,7 +92,7 @@
 - [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: orders/posts, pack, provisions, guard tower, gate doors; steps 1-5 (orders, pack, gate doors, site costs per good, provisions) built; guard tower next
 - [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop defaults to AUTO after a day; add rows in ChasmIssues
 - [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes; figures are constant names
-- [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-2 BUILT (drop, take as a store via SourceStock, builders move last); step 3 card next
+- [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-3 BUILT (drop, take via SourceStock, builders move, card); finds and holding->dropping next
 - [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; hut buildable without a lot
 - [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, full-time archers by precision, per-person archery; props in chasm_props.glb
 - [Chasm goods strip](chasm_goods_strip.md) — cards show stocks as strips: solid anyone's, hollow kept, striped reserved; HudGoodColour per good

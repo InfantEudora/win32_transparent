@@ -30,6 +30,7 @@
 #define PLAY_PICK_BUILDING      1       //a building or field, by id
 #define PLAY_PICK_PERSON        2       //an EconomyWorker, by id
 #define PLAY_PICK_GATE          3       //a wall's gate, by its plot - in `id` as in `plot` (defence_plan.md)
+#define PLAY_PICK_CRATE         4       //a crate lying about, by its id (crates_plan.md)
 struct PlayPick{
     int kind = PLAY_PICK_NONE;
     uint32_t id = 0;
@@ -47,6 +48,8 @@ struct PlayPick{
 extern const char* person_asset_names[PERSON_FIGURES];
 //The archery range's props in chasm_props.glb (ApplicationChasmRange.cpp): target, hay bale, arrow.
 extern const char* range_asset_names[];
+//How a crate is turned where it lies, from its id (ApplicationChasmCrates.cpp) - its outline turns the same.
+float CrateYaw(uint32_t id);
 
 //A place on the overlay the mouse can press, drawn this frame: what pressing it does.
 #define OVERLAY_HIT_BLOCK       0       //a panel: the click is the overlay's, nothing under it is picked
@@ -715,6 +718,8 @@ private:
     uint32_t select_outline_zones[SELECT_OUTLINES] = {};    //...built at this zones version
     std::vector<uint32_t> select_related_buildings;         //render thread: what slot 2 was built from
     std::vector<int> select_related_plots;                  //...and slot 3
+    //A crate's outlines (crates_plan.md): the selected one, the hovered one - outline-only copies of the crate.
+    Object* crate_outline[2] = {};
     PlayPick PlayPickUnder(int2 px, const GridPick& hover);
     void UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked);   //physics thread
     bool OverlayHitAt(int2 px, OverlayHit* hit);

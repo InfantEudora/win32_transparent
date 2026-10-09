@@ -13,6 +13,10 @@
 
 #define CRATE_SCALE     1.0f    //drawn as modelled - the rocks' and bushes' scale; trees and their logs are 0.7
 
+float CrateYaw(uint32_t id){
+    return (float)(MeshHash(id,0x63726174u) % 6283u) / 1000.0f;
+}
+
 //RENDER THREAD, from PreRender.
 void ApplicationChasm::UploadCrates(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
@@ -51,7 +55,7 @@ void ApplicationChasm::UploadCrates(){
             if (c.plot < 0 || c.plot >= (int)w->terrain->wet.size()){
                 continue;
             }
-            float yaw = (float)(MeshHash(c.id,0x63726174u) % 6283u) / 1000.0f;
+            float yaw = CrateYaw(c.id);
             float ground = w->terrain->GroundHeight(c.pos,w->terrain->Height(c.plot));
             crates.push_back(Object::ComposeTransformScale(vec3(c.pos.x,ground,c.pos.y),quat(vec3(0.0f,1.0f,0.0f),yaw),
                                                            vec3(CRATE_SCALE,CRATE_SCALE,CRATE_SCALE)));

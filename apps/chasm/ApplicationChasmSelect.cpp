@@ -42,6 +42,8 @@
 #define PERSON_PICK_PX      14.0f       //a person is picked within this many pixels (at 810 high) of his middle
 #define PERSON_MIDDLE       0.55f       //world units above his feet: where he is picked
 #define PERSON_PIN          1.55f       //...and where his pin points
+#define CRATE_PICK_PX       12.0f       //a crate is picked within this many pixels (at 810 high) of its middle
+#define CRATE_MIDDLE        0.2f        //...which is this far above the ground under it (crate_a stands 0.40)
 #define THIRST_MARK_WATER   NEEDS_PRESSING_WATER    //water left at which his badge shows a drop: when he goes for it
 #define THIRST_MARK_ROOF    0.3f        //a family's drop points this far over its house's roof
 #define BADGE_RADIUS        11.0f       //a person's badge's dark disc, at 810 high
@@ -351,6 +353,9 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_TO_WORKSHOP: return (k.carry <= 0) ? "going to make provisions"
                                       : (k.carry_good == GOOD_BEANS) ? "taking beans to the hut" : "taking wheat to the hut";
         case WORKER_MAKING:     return "making provisions";
+        //A caretaker taking a crate's goods to a store (crates_plan.md).
+        case WORKER_TO_CRATE:   return "going to move a crate";
+        case WORKER_LIFTING:    return "lifting from a crate";
         default:                return "";
     }
 }
@@ -398,10 +403,18 @@ int FirstPlotOf(const ZoneState& z, uint32_t id){
 /*
     The people who belong with a selection, for their outlines and pins: a house's or camp's family,
     a workplace's worker, a field's farmer (land_plan.md), a site's carriers, a store's carriers (to it or
-    fetching from it, for a site or home).
+    fetching from it, for a site or home), and everyone on his way to a crate or taking from it (crates_plan.md).
 */
 void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e, std::vector<uint32_t>& out){
     out.clear();
+    if (p.kind == PLAY_PICK_CRATE){
+        for (const EconomyWorker& k : e.workers){
+            if (k.store == (ECONOMY_STORE_CRATE | p.id)){
+                out.push_back(k.id);
+            }
+        }
+        return;
+    }
     if (p.kind != PLAY_PICK_BUILDING || p.id >= z.buildings.size()){
         return;
     }
@@ -1299,7 +1312,46 @@ void GateCard(const ChasmWorld& w, const ZoneState& z, int plot, Card& c){
     }
 }
 
+/*
+    A CRATE's card (crates_plan.md, step 3): what it holds - anyone's, striped where somebody is already on his
+    way to take it - where it came from and when, and who is coming for it and what for (Doing). The day is
+    the season's, with the year only when it is not this one.
+*/
+void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& crate, uint64_t tick, Card& c){
+    uint32_t id = ECONOMY_STORE_CRATE | crate.id;
+    c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : "Crate";
+    c.Stock("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
+    CalendarDate when = CalendarDateOf(crate.tick);
+    std::string date = std::string(CalendarSeasonName(when.season)) + " " + std::to_string(when.day)
+                       + ((when.year != CalendarDateOf(tick).year) ? Format(", year %i",when.year) : std::string());
+    std::string by = FirstNameOf(e,crate.by);
+    if (crate.origin == CRATE_FOUND){
+        c.Text("Found " + date,HUD_TEXT_DIM);
+    }else{
+        c.Text(by.empty() ? "Put down " + date : "Dropped by " + by + ", " + date,HUD_TEXT_DIM);
+    }
+    int coming = 0;
+    for (const EconomyWorker& k : e.workers){
+        if (k.store == id){
+            c.Text(EconomyPersonName(k) + ", " + Doing(k,&z));
+            coming++;
+        }
+    }
+    if (!coming){
+        c.Text("Nobody is on the way to it",HUD_TEXT_DIM);
+    }
+}
+
 bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint64_t tick, Card& c){
+    if (p.kind == PLAY_PICK_CRATE && e){
+        for (const EconomyCrate& crate : e->crates){
+            if (crate.id == p.id){
+                CrateCard(z,*e,crate,tick,c);
+                return true;
+            }
+        }
+        return false;       //emptied, or built over, since it was picked
+    }
     if (p.kind == PLAY_PICK_GATE){
         if (p.plot >= 0 && p.plot < (int)z.gate.size() && z.gate[p.plot]){
             GateCard(w,z,p.plot,c);
@@ -1397,6 +1449,11 @@ float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
     }
 }
 
+//A crate's middle (crates_plan.md), on the ground it is drawn on (ApplicationChasmCrates.cpp): where it is picked.
+vec3 CrateMiddle(const ChasmWorld& w, const EconomyCrate& c){
+    return vec3(c.pos.x,w.terrain->GroundHeight(c.pos,w.terrain->Height(c.plot)) + CRATE_MIDDLE,c.pos.y);
+}
+
 /*
     The building the ray through a pixel meets first, BY ITS SHAPE: sampled from well above the ground
     the cursor is over down to that ground, each sample asking the plot under it whether what stands
@@ -1436,8 +1493,9 @@ uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r,
 
 /*
     What is under the cursor in play mode: a person first - the nearest on screen within PERSON_PICK_PX
-    of his middle, out of doors - since he stands on a plot that would otherwise win; then the building
-    or field on the plot under the cursor.
+    of his middle, out of doors - since he stands on a plot that would otherwise win; then a crate, the same
+    way, within CRATE_PICK_PX of its middle (crates_plan.md); then the building or field on the plot under
+    the cursor.
 */
 PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
     PlayPick out;
@@ -1463,6 +1521,22 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
                     best = d;
                     out.kind = PLAY_PICK_PERSON;
                     out.id = k.id;
+                }
+            }
+        }
+        if (out.kind != PLAY_PICK_NONE){
+            return out;
+        }
+        best = CRATE_PICK_PX * s;
+        for (const EconomyCrate& c : e->crates){
+            vec2 sp;
+            if (ScreenOf(main_scene->camera,(float)main_window->width,(float)main_window->height,CrateMiddle(*w,c),sp)){
+                float d = (sp - at).length();
+                if (d < best){
+                    best = d;
+                    out.kind = PLAY_PICK_CRATE;
+                    out.id = c.id;
+                    out.plot = c.plot;
                 }
             }
         }
@@ -1848,6 +1922,52 @@ void ApplicationChasm::UploadSelection(){
         }
         SetOutlineOf(worker_objects[i],c);
     }
+    /*
+        A crate (crates_plan.md): an outline-only copy of chasm_props.glb's crate where the selected one lies, and
+        another where the hovered one does - the crates themselves are one instance set, which outlines skip.
+    */
+    if (!crate_outline[0] && f_crate_loaded){
+        Mesh* mesh = assetmanager->GetMeshFromAsset(CHASM_CRATE_ASSET);
+        main_scene->AtTickBoundary([&](){
+            for (int i = 0; i < 2; i++){
+                Object* o = new Object();
+                o->name = (i == 0) ? "Selected crate outline" : "Hovered crate outline";
+                mesh->Retain();     //the crates' set's mesh too: held for good, or a SetMesh would free it under the set
+                o->SetMesh(mesh);
+                o->SetMaterialSlot(0,palette_material);
+                o->SetPickability(false);
+                o->SetVisualOnly(true);
+                o->SetCastsShadow(false);
+                o->SetVisibility(false);
+#if CHASM_OUTLINE_READY
+                o->SetOutlineOnly(true);
+#endif
+                main_scene->AddObject(o);
+                crate_outline[i] = o;
+            }
+        });
+    }
+    for (int i = 0; i < 2; i++){
+        Object* o = crate_outline[i];
+        if (!o){
+            continue;
+        }
+        const PlayPick& p = (i == 0) ? sel : hover;
+        const EconomyCrate* c = NULL;
+        if (f_play && f_ready && e && e->world == w && p.kind == PLAY_PICK_CRATE && !(i == 1 && hover == sel)){
+            for (const EconomyCrate& x : e->crates){
+                c = (x.id == p.id) ? &x : c;
+            }
+        }
+        if (!c){
+            o->SetVisibility(false);
+            continue;
+        }
+        o->SetPosition(vec3(c->pos.x,w->terrain->GroundHeight(c->pos,w->terrain->Height(c->plot)),c->pos.y),false);
+        o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),CrateYaw(c->id)),false);
+        SetOutlineOf(o,(i == 0) ? SELECT_COLOUR : HOVER_COLOUR);
+        o->SetVisibility(CHASM_OUTLINE_READY != 0);
+    }
 }
 
 //--- The card and the pins (render thread) ---------------------------------------------------------
@@ -2221,7 +2341,8 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
 void ApplicationChasm::RegisterSelectTools(){
     MCPServer::Get()->RegisterTool("chasm_select",
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
-        "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md) - or a person by `person` id; op clear; op under "
+        "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md) - or a person by `person` id, "
+        "or a crate by `crate` id (docs/crates_plan.md); op clear; op under "
         "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives); op "
         "press px,py: a left click there, as the player's - on the HUD it presses what is drawn there (a tool of the "
         "grid, a card's chip, pause, speed, a row of the neediest list or of NEEDS ATTENTION), on the scene it selects; `pressed` says what "
@@ -2239,6 +2360,7 @@ void ApplicationChasm::RegisterSelectTools(){
                 {"z",{{"type","number"}}},
                 {"building",{{"type","integer"}}},
                 {"person",{{"type","integer"}}},
+                {"crate",{{"type","integer"}}},
                 {"px",{{"type","integer"}}},
                 {"py",{{"type","integer"}}},
                 {"button",{{"type","string"},{"description","press: left (default) or right"}}},
@@ -2262,8 +2384,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 main_scene->AtTickBoundary([&](){
                     GridPick ground = PickUnderPixel(px);
                     PlayPick p = PlayPickUnder(px,ground);
-                    const char* kinds[] = {"none","building","person","gate"};
-                    out = json{{"kind",kinds[std::max(0,std::min(3,p.kind))]},{"id",p.id},{"plot",p.plot},
+                    const char* kinds[] = {"none","building","person","gate","crate"};
+                    out = json{{"kind",kinds[std::max(0,std::min(4,p.kind))]},{"id",p.id},{"plot",p.plot},
                                {"ground_plot",ground.f_hit ? ground.plot : -1},
                                {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0}};
                 });
@@ -2314,6 +2436,20 @@ void ApplicationChasm::RegisterSelectTools(){
                     if (args.contains("person") && args["person"].is_number_unsigned()){
                         p.kind = PLAY_PICK_PERSON;
                         p.id = args["person"].get<uint32_t>();
+                    }else if (args.contains("crate") && args["crate"].is_number_unsigned()){
+                        //A crate (crates_plan.md), by its id - the plot it lies on with it.
+                        p.kind = PLAY_PICK_CRATE;
+                        p.id = args["crate"].get<uint32_t>();
+                        const EconomyCrate* c = NULL;
+                        if (e && e->world == w){
+                            for (const EconomyCrate& x : e->crates){
+                                c = (x.id == p.id) ? &x : c;
+                            }
+                        }
+                        if (!c){
+                            return json{{"error","no such crate"}};
+                        }
+                        p.plot = c->plot;
                     }else if (args.contains("building") && args["building"].is_number_unsigned()){
                         p.kind = PLAY_PICK_BUILDING;
                         p.id = args["building"].get<uint32_t>();
@@ -2336,6 +2472,10 @@ void ApplicationChasm::RegisterSelectTools(){
                                 p.kind = PLAY_PICK_GATE;        //a wall's gate (defence_plan.md)
                                 p.id = (uint32_t)g.plot;
                                 p.plot = g.plot;
+                            }else if (const EconomyCrate* c = (e && e->world == w) ? EconomyCrateOn(*e,g.plot) : NULL){
+                                p.kind = PLAY_PICK_CRATE;       //a crate lying there (crates_plan.md)
+                                p.id = c->id;
+                                p.plot = g.plot;
                             }
                         }
                     }
@@ -2354,8 +2494,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 hover = play_hover;
             }
             auto pick_json = [](const PlayPick& p) -> json {
-                const char* kinds[] = {"none","building","person","gate"};
-                return json{{"kind",kinds[std::max(0,std::min(3,p.kind))]},{"id",p.id},{"plot",p.plot}};
+                const char* kinds[] = {"none","building","person","gate","crate"};
+                return json{{"kind",kinds[std::max(0,std::min(4,p.kind))]},{"id",p.id},{"plot",p.plot}};
             };
             json result{{"selected",pick_json(sel)},{"hover",pick_json(hover)},{"play_mode",PlayMode()}};
             if (!pressed.is_null()){

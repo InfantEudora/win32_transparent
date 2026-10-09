@@ -1,8 +1,8 @@
 # Crates: dropped loads, and finds on the map
 
 Written up 2026-10-09 and talked through with the user the same day: the decisions are below. Steps 1 (the
-crates themselves and the drop) and 2 (taking from them and moving them) BUILT the same day - see "As built"
-at the end. Defence step 1 (`defence_plan.md`, "As built: step 1") lets the player send a
+crates themselves and the drop), 2 (taking from them and moving them) and 3 (the card, but for FETCH FIRST
+and the badge, left open) BUILT the same day - see "As built" at the end. Defence step 1 (`defence_plan.md`, "As built: step 1") lets the player send a
 person to a post with a right click. At first, anyone carrying a load when the order came (wood for a
 site, food fetched home, a woodcutter's logs) kept it for the whole posting, and with no store held it for
 good. Since defence step 2 the load is LOST the moment the order lands (`Economy::Order`), as the user's
@@ -203,7 +203,8 @@ against each other.
    message, and shown red by the ghost. Tested: the site's next carrier takes the dropped wood; a crate
    lies until there is a store that takes it and a builder free, and is then moved there; dropped food
    is fetched home; the jobless never move a crate.
-3. **The card**: picking, the card, the badge and FETCH FIRST.
+3. **(BUILT 2026-10-09, but FETCH FIRST and the badge)** **The card**: picking, the card, the badge and
+   FETCH FIRST. The last two left open for now (the user, 2026-10-09).
 4. **Random crates**: placing them from the seed, finding them by sight, the overlay message, and their
    numbers. Tested over the 30 surveyed seeds: every map gets its few, none within the camp's first
    sight, and the same seed always gives the same crates.
@@ -344,3 +345,39 @@ ghost's key), `ApplicationChasmGhost.cpp`, `ApplicationChasmEconomy.cpp` (a work
   - Replay: 1,201 ticks recorded with crates being emptied by site carriers and a house, a spawned crate, a
     carrier's load dropped by an order, a refused paint over a crate - replayed twice: every tick's hash
     equal, nothing changed between ticks, the same two crates at the end of both.
+
+## As built: step 3, the card (2026-10-09)
+
+Files: `ApplicationChasmSelect.cpp` (`PLAY_PICK_CRATE` in `PlayPickUnder`, `CrateCard` in `MakeCard`,
+`RelatedPeople`, the crate outlines in `UploadSelection`, `Doing`, the tool), `ApplicationChasm.h`,
+`ApplicationChasmCrates.cpp` (`CrateYaw`, shared with the outline). View only: nothing recorded, nothing a tick
+reads.
+
+- **Picking**: a crate is `PLAY_PICK_CRATE`, by its id, the plot it lies on with it. Under the cursor, after
+  people and before buildings: the nearest crate whose middle (`CRATE_MIDDLE`, 0.2 over its ground) is within
+  `CRATE_PICK_PX` (12, at 810 high) of the cursor on screen - as a person is picked by his.
+- **The card** (`CrateCard`): "Crate" or "Found crate"; a goods strip, "Holds - anyone's", striped where
+  somebody is already on his way to take it (`EconomyReserved`, which a crate's flagged id needed nothing
+  for); where it came from - "Dropped by Kaat, spring 1" (the late ... for the dead), or "Found spring 1", the
+  year only when it is not this one; then a line for everyone on the way to it or taking from it, with what
+  he is doing ("Floris Veen, fetching wood"), or "Nobody is on the way to it". The wording leaves out WHY it
+  was dropped - "when sent to a post" in the plan's example - since step 5 will drop loads for other reasons.
+  A crate emptied or built over while selected loses its card, as a person who dies does.
+- **Outlined**: the crates are one instance set, which the outline pass skips, so two outline-only copies
+  of the crate's mesh (`crate_outline`, the mesh retained for good) stand where the selected crate lies, in
+  the selection's orange, and the hovered one, faint - turned by `CrateYaw`, as the set draws it. The people
+  on their way to it are pinned and outlined in the related colour (`RelatedPeople`).
+- **Doing**: "going to move a crate" and "lifting from a crate" for step 2's states, which had shown an empty
+  line on a builder's card.
+- **Tool**: `chasm_select` op select takes `crate` (an id), and x, z selects a crate lying on the plot there
+  when no building or gate is; op under and the selection report kind `crate`.
+- **Tested** (seed 12, debug, play mode, minimised - core's overlay draws there):
+  - By id: Kaat's dropped 3 wood - "Crate", "Holds - anyone's: wood 3", "Dropped by Kaat, spring 1", "Nobody
+    is on the way to it"; a spawned crate of 6 wheat and 2 water - "Found crate", "Found spring 1"; crate 999
+    refused, "no such crate".
+  - Under the cursor: a scan of the screen found the crate picked over a patch about 24 pixels across on its
+    plot; 60 pixels off, nothing. A press there selected it and drew its card, the crate outlined in orange.
+  - Floris on his way to fetch Kaat's wood for a site: the card's line "Floris Veen, fetching wood", the strip
+    striped "3 reserved", and Floris pinned in amber.
+- **Not checked**: the hover's faint outline over a crate (it needs a mouse over the window; the code is the
+  selected outline's with the hover's colour).

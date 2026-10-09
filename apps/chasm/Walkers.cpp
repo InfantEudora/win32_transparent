@@ -115,7 +115,17 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
         return false;
     }
     //A garden's wall or a lot's fence is crossed at its gate and nowhere else.
-    return ZoneBoundaryBetween(z,a,b) == ZONE_BOUNDARY_NONE || ZoneGateBetween(*world,z,a,b);
+    if (ZoneBoundaryBetween(z,a,b) == ZONE_BOUNDARY_NONE || ZoneGateBetween(*world,z,a,b)){
+        return true;
+    }
+    /*
+        SHUT IN A YARD: out over it, never in, for someone whose walk starts inside one. Nobody is meant to be
+        there (a woodpile is reached from its hut), but a site is open ground: a fence went up round a man
+        crossing it, and with no gate (no road ends at it) and the hut no way through, he stood in the lot
+        until he died of thirst (the user's recording, 2026-10-09). A road run on past a gate shuts one the same.
+        Entering is still closed, so he can only have walked to this edge from inside the yard he started in.
+    */
+    return from >= 0 && ZoneGroundStands(z,from) && z.storeys[from] == 0 && ZoneGroundStands(z,a);
 }
 
 //A field is the coarse cells round a vertex: walking through one is slow, along its edge is not.

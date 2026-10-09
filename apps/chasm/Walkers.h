@@ -18,7 +18,7 @@
     The plots: a fine vertex joined to each vertex a fine edge joins it to. An edge is closed across a
     cliff (its ends on different levels), beside a river (either end wet), into a house that is not
     where the walk starts or ends, through a garden's wall or a lot's fence (ZoneBoundaryBetween) except
-    at a gate (ZoneGateBetween), onto a palisade that stands (ZoneWallStands - its gates are road), onto
+    at a gate (ZoneGateBetween) or out of a yard the walk starts in (shut in it), onto a palisade that stands (ZoneWallStands - its gates are road), onto
     the north mountain, and up a slope steeper than WALKER_STEEPEST. It
     costs its length over the speed it is walked at - fastest on a road, slowest through a field, and
     slower the steeper it is.

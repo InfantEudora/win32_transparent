@@ -172,7 +172,7 @@ does updates its page (`../wiki/README.md`). Started 2026-10-09 with the woodcut
 | `yards_plan.md` | lots and gardens that belong to a house or a woodcutter, painted with it selected; a woodcutter placeable without a lot (built 2026-10-09) |
 | `range_plan.md` | the archery range: painted on cells like a field, 3 wood and 2 wheat a cell; full-time trainees by precision, ARCHERY experience capped by it; targets, bales and arrows modelled in Blender (built 2026-10-09) |
 | `issues_plan.md` | NEEDS ATTENTION over the tools: a top five of what wants doing - a crop left unchosen (AUTO after a day), what is stuck, and the next steps that teach the game (agreed 2026-10-09) |
-| `crates_plan.md` | crates: a load nobody takes - a posted person's first - dropped on the ground as a crate, a store villagers only take from, moved to a storehouse by the caretakers; then a few finds placed from the seed under the clouds, as in They Are Billions (agreed 2026-10-09; steps 1-2 built: the drop, taking from crates, builders moving them) |
+| `crates_plan.md` | crates: a load nobody takes - a posted person's first - dropped on the ground as a crate, a store villagers only take from, moved to a storehouse by the caretakers; then a few finds placed from the seed under the clouds, as in They Are Billions (agreed 2026-10-09; steps 1-3 built: the drop, taking from crates, builders moving them, a crate's card) |
 
 ### Later, agreed but not yet planned
 

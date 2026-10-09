@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 47e6cba0-a787-423c-b97b-1ca2ffa6b50e
-  modified: 2026-10-09T16:49:33.926Z
+  modified: 2026-10-09T18:41:34.652Z
 ---
 
 Chasm crates, agreed with the user 2026-10-09 in `apps/chasm/docs/crates_plan.md`. The user's decisions: a
@@ -24,7 +24,12 @@ STEP 2 BUILT 2026-10-09: a worker's `store` names a crate as ECONOMY_STORE_CRATE
 Economy::SourceStock, never state.stock[k.store]. Crates are sources in FindSiteWork/SeekSupply/FetchHome/TakeHome;
 builders move them last (MoveCrate after FindSiteWork+FindRoadWork; states 27 TO_CRATE, 28 LIFTING; c8's defence
 step 5 takes 29+ and hooks provisions before FindSiteWork); EconomyCrateInTheWay refuses play paint over a crate
-and turns the ghost red. Next: step 3 (card; FETCH FIRST and badge still open), 4 finds, 5 holding->dropping.
+and turns the ghost red.
+
+STEP 3 BUILT 2026-10-09 (the card): PLAY_PICK_CRATE picked like a person (CRATE_PICK_PX of its middle), CrateCard in
+MakeCard, outline-only copies of the crate mesh for selected/hovered (CrateYaw shared). FETCH FIRST and the badge
+LEFT OPEN by the user. Next: step 4 (finds from the seed under the clouds), step 5 (holding -> dropping).
+Testing tip: in play mode chasm_view's target glides, so find a crate's pixel by scanning chasm_select op under.
 
 **Why:** the user's fix for a posted carrier's load, and the small start of They Are Billions-style finds.
 **How to apply:** build in the plan's order, asking before each step; after any economy change run a replay

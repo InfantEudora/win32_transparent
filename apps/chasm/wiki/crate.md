@@ -4,8 +4,8 @@ aliases: crates, find, finds
 kind: goods
 status: partial
 summary: Goods lying on the ground - the load of someone sent to a post - a store villagers take from, and builders carry off to a store.
-plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2
-code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SourceStock
+plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3
+code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SourceStock; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
 verified: 2026-10-09
 ---
 
@@ -44,12 +44,13 @@ the crate is lost.
 
 ## Seeing it
 
-A small wooden crate, the same whatever it holds. In debug mode the panel shows the crate on the selected
-plot and can put one down there; `chasm_economy` lists every crate, and its `crate` op puts one down.
+A small wooden crate, the same whatever it holds. **Clicked** in play mode, it is outlined and its card
+says what it holds (striped where someone is already on the way to take it), who dropped it and when - or
+when it was found - and everyone on the way to it and what for, pinned on the map. In debug mode the panel
+shows the crate on the selected plot and can put one down there; `chasm_economy` lists every crate.
 
 ## Planned
 
-- [planned] A card for a crate when it is clicked.
 - [proposed] A FETCH FIRST button on that card, and a badge over each crate on the map.
 - [planned] Anyone holding a load that nobody takes puts it down as a crate, and so do the dead.
 - [planned] A few crates placed on the map from the seed, under the clouds, found by exploring.
