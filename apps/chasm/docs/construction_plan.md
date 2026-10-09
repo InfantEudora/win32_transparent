@@ -8,6 +8,8 @@ Step 5 of `play_mode_plan.md`: in play mode a building is not placed but BUILT. 
 - **Wood only.** A storey takes `ECONOMY_BUILD_WOOD_PER_AREA` (2) wood per unit of its floor area, about
   8 for a plot - a tent half that, a winch half again more. Fields and roads cost nothing and are still
   painted at once, in either mode; gardens and lots cost a little since 2026-10-06 (see the end).
+  **Since 2026-10-09 a site can take other goods too** - by kind, carried the same way from wherever each is
+  nearest (`defence_plan.md`, "As built: step 4"). No kind takes any yet; wood is still all that is built with.
 - **Idle people carry and build.** Anyone without a job: from his home to the nearest wood, a load
   (`ECONOMY_LOAD`, 5) to the site, a while there building with it (`ECONOMY_BUILD_SECONDS`, 5, at his
   pace - strength), and home. There is no builder job and no builders' hut yet.

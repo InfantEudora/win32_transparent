@@ -79,3 +79,32 @@ garden and lot, a woodcutter's lot. Talked through the same day; proposed and ag
 - A house's lots extend its storage (the user's idea, 2026-10-09).
 - What a garden does (food for its family, or comfort) - nothing yet.
 - Other kinds with a yard: a store's lot as outdoor storage, a builders' hut's timber yard.
+
+## As built (2026-10-09)
+
+All four steps. Files: `Zones.*` (`ground_owner`, `ZoneOwnsGround`, `ZoneKindHasYard`, `ZoneGroundOwner`,
+`ZoneCanYard`, `ZoneAutoOwner`, `ZoneYardPlots`; `Apply`'s `owner`; a building plot's `claim_yard`; the yard let go
+with its last plot; `ZoneCommandValue3` / `ZoneCommandPlay` / `ZoneCommandOwner`; `ZoneLotBeside` and `ZoneLotTaken`
+gone with the woodcutter's placing rule), `ApplicationChasm.*` (`PaintOwner`, `SubmitZone`'s owner, the handler, the
+hash - owned plots only, so zones without a yard hash as before - the save, `chasm_paint owner` and
+`ground_owner_here`, a building's json `yard`), `ApplicationChasmGhost.cpp` (`GhostKey::owner`, red where
+`ZoneCanYard` refuses), `ApplicationChasmSelect.cpp` (`YardLines`: the yard line and the Add chips on a house's and a
+hut's card; the yard in `FindRelatedPlaces`), `Economy.cpp` (the woodpile from his own yard; `lot_used` gone),
+`ChasmSave.cpp` (a ground entry's fourth number).
+
+- **Checked** (debug, a copied exe on 8774, paused and stepped; seed as the default):
+  - a hut painted on bare grass: placed, and NO LOT TO PILE ON listed;
+  - a lot painted for it (`owner`): its yard, and the row gone; one painted away from it refused "a lot goes beside
+    its building, or its yard"; a garden for it refused "a woodcutter's hut has no garden";
+  - a house, then a garden beside it with nobody named: the house's; a garden painted on from that one, touching
+    only the garden: the house's;
+  - a lot painted alone: nobody's; a hut put beside it: the lot became the hut's;
+  - saved and loaded: every owner back; the house erased: its garden nobody's;
+  - in play, by clicks (`chasm_select press`): NO LOT's row selected a new hut by the camp and took the view to it;
+    its card's "Add lot" took the LOT tool up with the hut still selected; a click beside the hut painted a lot site
+    into its yard ("Yard: 1 lot plot", BUILDING 1 - WOOD 0/3). 1000 ticks on the idle had built it, the row had gone
+    and the woodcutter was going for wood - the lot fenced beside the hut, outlined with it.
+- **Under the clouds** a player's paint is refused as ever, yard or not: a hut placed by a debug paint in unexplored
+  ground cannot be given a lot from play until the ground is explored.
+- **Not checked by a run**: a house's yard by "Add garden" through the clicks (the same path as "Add lot"), and the
+  ghost's red, seen only in code.

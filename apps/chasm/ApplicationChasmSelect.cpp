@@ -191,6 +191,18 @@ void DrawSpearIcon(UIOverlay* o, const vec2& c, float s){
     }
 }
 
+//An archer's bow (range_plan.md): its limb an arc, its string straight across, an arrow nocked on it.
+void DrawBowIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddArc(p(-2.6f,0.0f),7.0f * s,-1.05f,1.05f,1.8f * s,ICON_WOOD);
+    vec2 top = p(-2.6f + 7.0f * 0.5f,-7.0f * 0.866f);
+    vec2 bottom = p(-2.6f + 7.0f * 0.5f,7.0f * 0.866f);
+    o->AddLine(top,bottom,0.7f * s,HUD_TEXT_DIM);
+    o->AddLine(p(0.9f,0.0f),p(-6.0f,0.0f),1.1f * s,ICON_WOOD);
+    o->AddLine(p(-6.0f,0.0f),p(-4.4f,-1.4f),1.0f * s,ICON_STEEL);
+    o->AddLine(p(-6.0f,0.0f),p(-4.4f,1.4f),1.0f * s,ICON_STEEL);
+}
+
 //A child's ball (lifeline_plan.md), with a pale band round it.
 void DrawBallIcon(UIOverlay* o, const vec2& c, float s){
     float r = 4.6f * s;
@@ -244,6 +256,7 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
         case WORKER_JOB_FARMER:     DrawWheatIcon(o,c,is); break;
         case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
         case WORKER_JOB_BUILDER:    DrawHammerIcon(o,c,is); break;
+        case WORKER_JOB_ARCHER:     DrawBowIcon(o,c,is); break;
         case WORKER_JOB_PLAYING:    DrawBallIcon(o,c,is); break;
         case WORKER_JOB_BABY:
         case WORKER_JOB_CARING:     DrawBabyIcon(o,c,is); break;
@@ -302,9 +315,13 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_UNLOADING:  return "unloading";
         case WORKER_TO_HOME:    return "going home";
         case WORKER_HOLDING:    return "waiting with a load";
-        case WORKER_TO_FETCH:   return "fetching wood";
-        case WORKER_FETCHING:   return "picking up wood";
-        case WORKER_TO_SITE:    return "carrying wood to a site";
+        //For a site: whatever good it wants (defence_plan.md step 4).
+        case WORKER_TO_FETCH:   return (k.carry_good == GOOD_WATER) ? "fetching water for a site"
+                                     : GoodIsFood(k.carry_good) ? "fetching food for a site" : "fetching wood";
+        case WORKER_FETCHING:   return (k.carry_good == GOOD_WATER) ? "picking up water"
+                                     : GoodIsFood(k.carry_good) ? "picking up food" : "picking up wood";
+        case WORKER_TO_SITE:    return (k.carry_good == GOOD_WATER) ? "carrying water to a site"
+                                     : GoodIsFood(k.carry_good) ? "carrying food to a site" : "carrying wood to a site";
         case WORKER_BUILDING:   return "building";
         case WORKER_TO_ROAD:    return (k.prop >= 0) ? "going to clear a road" : "going to lay a road";
         case WORKER_CLEARING:   return "clearing a road";
@@ -326,6 +343,8 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         //Posted (defence_plan.md): standing there, or kept from it - a wall, a gate - and waiting for a way.
         case WORKER_TO_POST:    return "going to the post";
         case WORKER_ON_POST:    return (z && z->world && !EconomyAtPost(*z->world,k)) ? "cut off from the post" : "standing guard";
+        case WORKER_TO_RANGE:   return "going to the range";
+        case WORKER_TRAINING:   return "training";
         default:                return "";
     }
 }
@@ -341,6 +360,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_CAMP:        return "Camp";
         case ZONE_KIND_BRIDGE:      return "Bridge";
         case ZONE_KIND_BUILDERS:    return "Builders' hut";
+        case ZONE_KIND_RANGE:       return "Archery range";
         default:                    return "?";
     }
 }
@@ -351,6 +371,7 @@ const char* JobTitle(int job){
         case WORKER_JOB_FARMER:     return "Farmer";
         case WORKER_JOB_WATER:      return "Water carrier";
         case WORKER_JOB_BUILDER:    return "Builder";
+        case WORKER_JOB_ARCHER:     return "Archer";
         case WORKER_JOB_PLAYING:    return "Child";
         case WORKER_JOB_BABY:       return "Baby";
         case WORKER_JOB_CARING:     return "Caring";
@@ -405,7 +426,8 @@ void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e,
       - a house: its family's workplaces - a woodcutter's hut and lot - and its land's fields;
       - a person: his house and workplace, a woodcutter's lot, the fields a farmer farms, and his post;
       - a gate: its own plots - it has no building to outline - those of a gate on the slant together.
-    A garden belongs to nobody yet (it does nothing yet). Each listed once, the selection itself never.
+    A house or a hut also has its YARD (yards_plan.md) - every garden and lot plot it owns - so while one is
+    painted for it, what it has already stands out. Each listed once, the selection itself never.
 */
 struct RelatedPlaces{
     std::vector<uint32_t> buildings;    //sorted
@@ -465,6 +487,14 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
         int kind = z.buildings[p.id].kind;
         if (kind == ZONE_KIND_WOODCUTTER){
             lot_of(p.id);
+        }
+        //Its yard (yards_plan.md).
+        if (ZoneKindHasYard(kind)){
+            for (size_t v = 0; v < z.ground_owner.size(); v++){
+                if (z.ground_owner[v] == p.id && ZoneGroundOwner(z,(int)v) == p.id){
+                    out.plots.push_back((int)v);
+                }
+            }
         }
         //Land (land_plan.md): a field's owner, a house's or camp's fields.
         for (const EconomyField& f : e.fields){
@@ -688,6 +718,8 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         c.Text("No job: carries wood for the builders");
     }else if (k.job == WORKER_JOB_BUILDER){
         c.Text(Format("Builder at the builders' hut %u: carries wood to sites and builds",k.building));
+    }else if (k.job == WORKER_JOB_ARCHER){
+        c.Text(Format("Trains at the archery range %u",k.building));
     }else if (k.job == WORKER_JOB_FARMER){
         //His share of his family's land (land_plan.md).
         int fields = 0;
@@ -751,24 +783,69 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         name[0] = (char)toupper(name[0]);
         c.Bar(Format("%s %i",name.c_str(),(int)k.skills[sk]),k.skills[sk] / 10.0f);
     }
+    //ARCHERY (range_plan.md): what he has reached of what his precision allows - once he has trained.
+    if (k.archery > 0 || k.job == WORKER_JOB_ARCHER){
+        int cap = EconomyArcheryCap(k);
+        c.Bar(Format("Archery %i%% (of %i%%)",(int)(k.archery * 100LL / ARCHERY_FULL),(int)(cap * 100LL / ARCHERY_FULL)),
+              (float)k.archery / ARCHERY_FULL);
+    }
     (void)e;
+}
+
+/*
+    A house's or a hut's YARD (yards_plan.md): what it owns, and the chips that take up the tool to add to it -
+    the building staying selected, so what is painted is its own.
+*/
+void YardLines(const ZoneState& z, uint32_t id, Card& c){
+    int kind = z.buildings[id].kind;
+    int gardens = ZoneYardPlots(z,id,ZONE_GROUND_GARDEN);
+    int lots = ZoneYardPlots(z,id,ZONE_GROUND_LOT);
+    if (gardens + lots > 0){
+        std::string yard;
+        if (gardens){
+            yard = Format("%i garden plot%s",gardens,gardens == 1 ? "" : "s");
+        }
+        if (lots){
+            yard += (yard.empty() ? "" : ", ") + Format("%i lot plot%s",lots,lots == 1 ? "" : "s");
+        }
+        c.Text("Yard: " + yard,HUD_TEXT_DIM);
+    }
+    CardLine add;
+    add.type = CARD_CHOICE;
+    add.choice_action = OVERLAY_HIT_TAKE_TOOL;
+    add.choices.push_back(std::make_pair(std::string("Add lot"),(int)CHASM_TOOL_LOT));
+    if (ZoneOwnsGround(kind,ZONE_GROUND_GARDEN)){
+        add.choices.push_back(std::make_pair(std::string("Add garden"),(int)CHASM_TOOL_GARDEN));
+    }
+    c.lines.push_back(add);
 }
 
 void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint32_t id, uint64_t tick, Card& c){
     const ZoneBuilding& b = z.buildings[id];
     ZoneBuildingInfo info = ZoneBuildingFigures(w,z,id);
     c.title = KindTitle(b.kind);
-    int site_wood = EconomySiteWood(w,z,id);
+    std::array<int,GOOD_COUNT> site_cost = EconomySiteCost(w,z,id);
     bool f_field = b.kind == ZONE_KIND_FIELD;
-    if (site_wood > 0){
-        //Under construction: how far along, and who is carrying for it.
-        int brought = e ? std::min(site_wood,EconomySiteBrought(*e,id)) : 0;
-        c.title += (info.storeys > 0 || (f_field && info.floor_area > 0.0f)) ? " - building on" : " - being built";
-        c.Bar(Format("Wood %i of %i",brought,site_wood),site_wood ? (float)brought / site_wood : 0.0f,HUD_AMBER);
+    bool f_cells = ZoneKindOnCells(b.kind);     //a field, or a range painted like one (range_plan.md)
+    if (std::any_of(site_cost.begin(),site_cost.end(),[](int x){ return x > 0; })){
+        //Under construction: how far along, of each good it takes, and who is carrying for it.
+        c.title += (info.storeys > 0 || (f_cells && info.floor_area > 0.0f)) ? " - building on" : " - being built";
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (site_cost[g] <= 0){
+                continue;
+            }
+            int brought = e ? std::min(site_cost[g],EconomySiteBrought(*e,id,g)) : 0;
+            std::string name = GoodName(g);
+            name[0] = (char)toupper(name[0]);
+            c.Bar(Format("%s %i of %i",name.c_str(),brought,site_cost[g]),(float)brought / site_cost[g],HUD_AMBER);
+        }
         if (f_field){
             //A field site (fields_plan.md): staked out, all its cells built at once.
             c.Text(Format("%i cell%s to build - then empty, to be sown",info.site_cells,info.site_cells == 1 ? "" : "s"),
                    HUD_TEXT_DIM);
+        }else if (f_cells){
+            //A range site (range_plan.md): the same, and a trainee a cell once it stands.
+            c.Text(Format("%i cell%s to build - a trainee a cell",info.site_cells,info.site_cells == 1 ? "" : "s"),HUD_TEXT_DIM);
         }else{
             c.Text(Format("%i storey%s to build%s",info.site_storeys,info.site_storeys == 1 ? "" : "s",
                           info.storeys ? Format(", %i standing",info.storeys).c_str() : ""),HUD_TEXT_DIM);
@@ -871,6 +948,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 c.Text(Format("%i field%s lie%s fallow: too few hands",fallow,fallow == 1 ? "" : "s",fallow == 1 ? "s" : ""),HUD_AMBER);
             }
         }
+        if (b.kind == ZONE_KIND_HOUSE){
+            YardLines(z,id,c);
+        }
         //Its family's own food, water and firewood (ECONOMY_HOUSE_KEEPS), which they eat and drink from.
         int room = (id < e->room.size()) ? e->room[id] : 0;
         if (b.kind == ZONE_KIND_HOUSE && room > 0){
@@ -900,7 +980,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         c.Text(f_attached ? "Takes (next to a workplace: its goods only):" : "Takes:",HUD_TEXT_DIM);
         c.lines.push_back(chips);
     }
-    if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_FIELD){
+    if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_FIELD || b.kind == ZONE_KIND_RANGE){
         /*
             A FIELD (fields_plan.md), once it stands: what grows on it, at what yield and how far; or, empty,
             what its farmer will sow. Then its choices - its starting crop until it has been sown once, then
@@ -1052,17 +1132,29 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 if (k.building == id){
                     f_worked = true;
                     int skill = EconomyJobSkill(k.job);
-                    c.Text(Format("%s (%s %i) - %s",EconomyPersonName(k).c_str(),SkillName(skill),(int)k.skills[skill],Doing(k,&z)));
+                    std::string line = Format("%s (%s %i) - %s",EconomyPersonName(k).c_str(),SkillName(skill),(int)k.skills[skill],
+                                              Doing(k,&z));
+                    if (k.job == WORKER_JOB_ARCHER){
+                        line += Format(", archery %i%%",(int)(k.archery * 100LL / ARCHERY_FULL));     //range_plan.md
+                    }
+                    c.Text(line);
                 }
             }
-            if (!f_worked && info.storeys > 0){
-                c.Text("Nobody works here - it needs a free adult with a house",HUD_AMBER);
+            //Something of it standing: a building's storey, or a range's built cell (range_plan.md).
+            bool f_stands = info.storeys > 0 || (b.kind == ZONE_KIND_RANGE && info.floor_area > 0.0f);
+            if (!f_worked && f_stands){
+                c.Text(b.kind == ZONE_KIND_RANGE ? "Nobody trains here - it needs a free adult with a house"
+                                                 : "Nobody works here - it needs a free adult with a house",HUD_AMBER);
             }
         }
-        //His woodpile is on a lot beside the hut: with none standing there, he fells nothing.
+        //His woodpile is on a lot of his own yard beside the hut (yards_plan.md): with none standing there, he
+        //fells nothing.
         bool f_no_lot = b.kind == ZONE_KIND_WOODCUTTER && (id >= e->pile_plot.size() || e->pile_plot[id] < 0);
         if (f_no_lot){
-            c.Text("No lot beside the hut: nowhere to pile wood",HUD_AMBER);
+            c.Text("No lot of its own beside the hut: nowhere to pile wood",HUD_AMBER);
+        }
+        if (b.kind == ZONE_KIND_WOODCUTTER){
+            YardLines(z,id,c);
         }
         std::string waiting = GoodsList(*e,id);
         if (!waiting.empty()){
@@ -1160,7 +1252,7 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
     }
     const Grid& g = *w.grid;
     const GridPicker& picker = *w.picker;
-    if (z.buildings[id].kind == ZONE_KIND_FIELD){
+    if (ZoneKindOnCells(z.buildings[id].kind)){
         for (size_t c = 0; c < z.field.size(); c++){
             if (z.field[c] != id){
                 continue;
@@ -1456,8 +1548,8 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     if (hit.action == OVERLAY_HIT_STORE_ALLOW){
                         uint8_t mask = z->buildings[sel.id].allow ^ (uint8_t)GOOD_BIT(hit.value);
                         SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
-                    }else if (z->buildings[sel.id].kind == ZONE_KIND_FIELD && cell != z->field.end()){
-                        SubmitZone(ZONE_OP_FIELD_PRIORITY,(int)(cell - z->field.begin()),want);     //a field: by a cell
+                    }else if (ZoneKindOnCells(z->buildings[sel.id].kind) && cell != z->field.end()){
+                        SubmitZone(ZONE_OP_FIELD_PRIORITY,(int)(cell - z->field.begin()),want);     //a field or range: by a cell
                     }else{
                         SubmitZone(ZONE_OP_SITE_PRIORITY,plot,want);
                     }

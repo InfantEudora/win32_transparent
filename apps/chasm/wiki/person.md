@@ -33,7 +33,7 @@ that, slower below (`EconomySkillFactor`). Everyone walks at the same speed.
 
 Anyone without a job carries wood to [[Construction|building sites]], and clears and lays
 [[Road|roads]]. The player can **order** a grown-up to stand on a [[Posts|post]]; that is their job until
-they are released.
+they are released. A load they are carrying when the order comes is put down as a [[Crate|crate]].
 
 ## A round
 
@@ -50,4 +50,3 @@ the colony records the cause: hunger, thirst or cold.
 ## Planned
 
 - [planned] Births, old age, and couples moving into a free house as a new family.
-- [planned] A person sent to a post drops their load as a crate, instead of losing it.

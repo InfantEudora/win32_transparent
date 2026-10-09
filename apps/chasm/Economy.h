@@ -81,8 +81,8 @@ class Walkers;
         (ECONOMY_WOODCUTTER_LOGS) - and carries them, ECONOMY_WOOD_PER_TREE wood a log, to the nearest store
         that takes wood - or, with none, to his WOODPILE (ECONOMY_HUT_PILE) - and goes home. From home the pile goes
         first: whenever a store takes wood he fetches from the pile before he fells again. The pile is on
-        a LOT beside his hut (`pile_plot`, ZoneLotBeside - the zones make a new hut need one): with no lot
-        standing there he has nowhere to put wood, and fells nothing. A lot is fenced, and the HUT IS ITS
+        a LOT of his own yard beside his hut (`pile_plot`, yards_plan.md - a hut may be built without one):
+        with no lot standing there he has nowhere to put wood, and fells nothing. A lot is fenced, and the HUT IS ITS
         DOOR: wood is put on the pile and taken off it from the hut plot beside it (`pile_door`), the way
         he always came home to his hut - nobody walks into the yard.
       - A FIELD (fields_plan.md) is EMPTY until a farmer of its land SOWS it - with its starting crop,
@@ -105,14 +105,16 @@ class Walkers;
 
     --- CONSTRUCTION (docs/construction_plan.md) ------------------------------------------------------
     A building a player places is a SITE (Zones.h, CONSTRUCTION): its storeys are planned, and stand
-    only when built. WOOD is all a storey takes (the user, 2026-10-06): ECONOMY_BUILD_WOOD_PER_AREA of
-    its floor area, more or less by kind. IDLE PEOPLE - anyone without a job - carry it: from his home
-    to the nearest wood (a store's, the camp's supplies, a woodcutter's pile), a load to the site, and
-    a while building with it there (ECONOMY_BUILD_SECONDS at his pace). What a site has been brought
-    is `site`, by building id. When a builder finishes, every storey the site's wood pays for stands -
-    the lowest first, so a building rises level by level - through ZONE_OP_BUILD_RAISE, which the app
-    applies on the same tick (Economy::Raises). Until a storey stands it does nothing: no room, no
-    family, no worker. A site pulled down loses the wood it was brought.
+    only when built. A storey takes WOOD - ECONOMY_BUILD_WOOD_PER_AREA of its floor area, more or less by
+    kind - and, by kind, other goods (EconomyStoreyCost: SITE COSTS PER GOOD, defence_plan.md step 4; no
+    kind takes any yet). IDLE PEOPLE - anyone without a job - carry them: from his home to the nearest
+    of a good the site still wants (a store's, the camp's supplies, a house nobody lives in, a
+    woodcutter's pile), a load to the site, and a while building with it there (ECONOMY_BUILD_SECONDS at
+    his pace), whatever the good. What a site has been brought is `site`, by building id and good. When a
+    builder finishes, every storey the site's goods pay for stands - all it takes of every good, the
+    lowest first, so a building rises level by level - through ZONE_OP_BUILD_RAISE, which the app
+    applies on the same tick (Economy::Raises); what it took is used up. Until a storey stands it does
+    nothing: no room, no family, no worker. A site pulled down loses what it was brought.
     A GARDEN or LOT painted in play is a site too, a plot at a time (ZoneState::ground_built): a little
     wood (ECONOMY_GROUND_WOOD_PER_AREA), its builders the same idle people. Such a site has no building
     id, so a worker's `site` names it as ECONOMY_SITE_GROUND | plot; its wood is `ground_site`, by plot,
@@ -182,8 +184,8 @@ class Walkers;
 
     --- POSTS (docs/defence_plan.md) -------------------------------------------------------------------
     An ORDER sends a person to stand on a plot - his POST, which is his job while it lasts. He drops what he
-    was doing for it on the spot (a load on him is LOST, until crates come to hold it; a storey he was
-    putting up stands with what it has) and walks there; he does not go home, run errands or build. His needs
+    was doing for it on the spot (a load on him is put down as a CRATE, below; a storey he was putting up
+    stands with what it has) and walks there; he does not go home, run errands or build. His needs
     are anyone's: a pressing one sends him to the nearest supply - his own house one of them, by its distance
     - and then back to the post. Cut off from it, he waits where he is and tries again, as someone cut off
     from home does. A job he had is KEPT: its place is his and stands idle - a collector does not fill, his
@@ -193,6 +195,13 @@ class Walkers;
     from his home's larder when he sets out from home, and topped up at every supply trip; eaten from as he
     would eat at home, a whole unit whenever it fits, so his bars stay up while it lasts and a pressing need
     comes only once it is empty. Home again after he is released, it goes back into the larder.
+
+    --- CRATES (docs/crates_plan.md) -------------------------------------------------------------------
+    A CRATE is goods lying on the ground: a store villagers only take from, gone when empty. A posted
+    person's load is put down as one the moment the order lands (Order, DropLoad) - into a store instead if he
+    stands at one that takes it; else where he stands, or on the nearest open plot round it. A crate lies only
+    on OPEN GROUND (EconomyCrateGround), ONE TO A PLOT - a load put down where one lies goes into it - and one
+    whose plot is built over is lost. The debug tools put crates down too (SpawnCrate). Saved and hashed.
 
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
@@ -222,6 +231,16 @@ class Walkers;
 #define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence: about 2 a plot
 #define ECONOMY_WALL_WOOD           4       //a palisade plot, flat: one felled tree's logs (the user's, 2026-10-08)
 #define ECONOMY_FIELD_WOOD_PER_CELL 2       //a field site's, a coarse cell (fields_plan.md, the user's 2)
+#define ECONOMY_RANGE_WOOD_PER_CELL 3       //an archery range site's, a cell: a field's and the targets' stands (range_plan.md)
+#define ECONOMY_RANGE_WHEAT_PER_CELL 2      //...and its wheat, the bales' straw (the user's: wheat, once sites took it)
+/*
+    TRAINING (range_plan.md): a trainee at a range trains a stint on its line, then goes home and out again.
+    ARCHERY grows by ARCHERY_PER_TICK a tick trained at his precision's pace, up to his precision's cap - a
+    tenth of ARCHERY_FULL a point. Tuning: an average trainee (precision 5) reaches his cap in about a season.
+*/
+#define ECONOMY_TRAIN_SECONDS       40.0f   //a stint on the line
+#define ARCHERY_FULL                1000000 //archery's 100%
+#define ARCHERY_PER_TICK            36      //what a tick of training adds, at pace 1
 #define ECONOMY_SOW_SECONDS         3.0f    //sowing a cell of a field, at the farmer's pace
 #define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
 #define ECONOMY_CROP_GRACE          (CALENDAR_DAY_TICKS)    //a field built with no crop waits this long for one, then starts with AUTO (issues_plan.md)
@@ -288,7 +307,8 @@ const char* SkillName(int skill);
 #define WORKER_JOB_FARMER       1
 #define WORKER_JOB_WATER        2
 #define WORKER_JOB_BUILDER      3       //at a builders' hut: carries wood to sites and builds, lays roads
-#define WORKER_JOB_COUNT        4
+#define WORKER_JOB_ARCHER       4       //a trainee at an archery range: trains there, full time (range_plan.md)
+#define WORKER_JOB_COUNT        5
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
@@ -305,7 +325,7 @@ inline bool EconomyStageJob(int job){
 #define WORKER_UNLOADING        4       //putting the load down (timer)
 #define WORKER_TO_HOME          5       //walking back to his house (or the camp)
 #define WORKER_HOLDING          6       //carrying, and neither a store nor his pile will take it: waiting
-#define WORKER_TO_FETCH         7       //idle, walking to wood (`store`) for a construction (`site`)
+#define WORKER_TO_FETCH         7       //idle, walking to goods (`store`; the kind `carry_good`, carry 0) for a construction (`site`)
 #define WORKER_FETCHING         8       //picking it up (timer)
 #define WORKER_TO_SITE          9       //carrying it to the site
 #define WORKER_BUILDING         10      //building with it (timer)
@@ -323,6 +343,8 @@ inline bool EconomyStageJob(int job){
 #define WORKER_PLAYING          22      //playing there (timer), then home
 #define WORKER_TO_POST          23      //posted (defence_plan.md): walking to his post
 #define WORKER_ON_POST          24      //standing on it - or cut off from it, waiting where he is for a way
+#define WORKER_TO_RANGE         25      //a trainee walking to his place on the range's line (range_plan.md)
+#define WORKER_TRAINING         26      //training there (timer), then home
 
 /*
     LIFELINES (docs/lifeline_plan.md, step 1). A person is BORN on a calendar tick - a settler before the
@@ -409,7 +431,13 @@ struct EconomyWorker{
     int water = NEEDS_WATER_FULL;       //ticks until he is dry
     int post = -1;                      //his POST (above): the plot he was sent to stand on, -1 none
     std::array<int,GOOD_COUNT> pack = {};   //his PACK (POSTS): water and food he carries for himself, by good
+    int archery = 0;                    //ARCHERY (TRAINING, above): experience, of ARCHERY_FULL - kept when he stops
 };
+
+//The most archery he can reach: a tenth of ARCHERY_FULL a point of precision (range_plan.md).
+inline int EconomyArcheryCap(const EconomyWorker& k){
+    return (int)k.skills[SKILL_PRECISION] * (ARCHERY_FULL / 10);
+}
 
 //Standing on his post (ECONOMY_POST_REACH), rather than on his way to it or cut off from it.
 bool EconomyAtPost(const ChasmWorld& w, const EconomyWorker& k);
@@ -464,6 +492,22 @@ struct EconomyField{
     int wait = 0;               //ticks it has stood built and never sown with no starting crop, 0 not waiting (ECONOMY_CROP_GRACE)
 };
 
+//Where a crate came from (CRATES). Never renumber: saves hold these.
+#define CRATE_DROPPED           0       //a load someone put down
+#define CRATE_FOUND             1       //lying on the map - a debug spawn for now; finds from the seed later
+#define ECONOMY_CRATE_RINGS     6       //rings of plots round him searched for open ground to put a load down on: past a camp's tents
+
+//A CRATE (above): what lies where, and where it came from.
+struct EconomyCrate{
+    uint32_t id = 0;            //from 1, never reused
+    int plot = -1;              //the plot it lies on
+    vec2 pos;                   //where on it (x, world z)
+    std::array<int,GOOD_COUNT> stock = {};
+    int origin = CRATE_DROPPED;
+    uint32_t by = 0;            //who put it down, a person's id - 0 for a find
+    uint64_t tick = 0;          //the calendar tick it was put down or placed
+};
+
 struct EconomyState{
     std::shared_ptr<const ChasmWorld> world;
     std::vector<std::array<int,GOOD_COUNT>> stock;     //by building id - a camp's: its SUPPLIES
@@ -473,9 +517,11 @@ struct EconomyState{
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;                     //in the order they died
     std::vector<EconomyField> fields;                   //in id order
-    std::vector<int> site;                              //by building id: wood brought to its construction
+    std::vector<std::array<int,GOOD_COUNT>> site;       //by building id: goods brought to its construction
     std::vector<int> ground_site;                       //by plot: wood brought to a garden's or lot's
     std::vector<uint8_t> heat;                          //by building id: a home's HEAT_* since dawn; [0] the homeless
+    std::vector<EconomyCrate> crates;                   //CRATES, in id order
+    uint32_t next_crate = 1;
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<uint8_t> accepts;
     std::vector<uint8_t> attached;                      //the goods of the workplaces a store is next to
@@ -493,6 +539,7 @@ struct EconomyState{
     uint64_t tick = 0;                                  //the calendar's at its last tick or load: what ages are read at
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
     uint32_t felled_version = 0;                        //bumped when a prop's state changes - the view
+    uint32_t crates_version = 0;                        //bumped when a crate changes - the view
     uint32_t version = 0;                               //bumped on any change
 };
 
@@ -519,6 +566,14 @@ inline bool EconomyShutIn(const EconomyState& e, uint32_t id){
 //A mother's children so far (BIRTHS), the living and the dead.
 int EconomyChildrenOf(const EconomyState& e, uint32_t mother);
 
+//OPEN GROUND a crate may lie on (CRATES): dry, off the mountain, nothing built on the plot - no building (a
+//camp's tents and a bridge count), garden, lot or wall, planned or standing - and no field over the cell at `at`.
+//A road is open.
+bool EconomyCrateGround(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& at);
+//The crate lying on `plot`, NULL for none.
+const EconomyCrate* EconomyCrateOn(const EconomyState& e, int plot);
+const char* EconomyCrateOriginName(int origin);
+
 //As a save holds it.
 struct EconomySaved{
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> stocks;    //non-empty ones only
@@ -526,9 +581,11 @@ struct EconomySaved{
     std::vector<std::pair<int,int>> props;              //felled props: index, state
     std::vector<EconomyWorker> workers;
     std::vector<EconomyField> fields;
-    std::vector<std::pair<uint32_t,int>> sites;         //sites with wood brought: building, wood
+    std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> sites;     //sites with goods brought: building, goods
     std::vector<std::pair<int,int>> ground_sites;       //gardens and lots with wood brought: plot, wood
     std::vector<std::pair<uint32_t,int>> heats;         //homes not HEAT_NONE: building (0 the homeless), heat
+    std::vector<EconomyCrate> crates;
+    uint32_t next_crate = 1;
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;
     bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
@@ -556,6 +613,12 @@ public:
         and `why` says it, if refused: nobody by that id, a child, nothing open to stand on, no way there.
     */
     bool Order(uint32_t person, int plot, const ZoneState& z, Walkers& walkers, std::string* why);
+    /*
+        A CRATE put down by the debug tools (CHASM_CMD_CRATE): `amount` of `good` on `plot` - into the crate lying
+        there if there is one, so a crate of several goods is several of these. A find (CRATE_FOUND). Applied
+        between ticks, like SetNeeds. False, and `why` says it, on ground a crate may not lie on.
+    */
+    bool SpawnCrate(int plot, int good, int amount, const ZoneState& z, std::string* why);
     EconomySaved Save() const;          //EconomySaveState of the live state
     const EconomyState& State() const { return state; }
     //The plots whose next storey stands after this tick - the app raises them (ZONE_OP_BUILD_RAISE).
@@ -623,6 +686,12 @@ private:
     //His pack filled from a stock, up to NEEDS_PACK_*; and, home again, emptied back into his larder.
     void FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
     void Unpack(EconomyWorker& k, const ZoneState& z);
+    //CRATES: his load put down - into a store he stands at that takes it, else as a crate where he stands or on
+    //open ground near it; `amount` of `good` into the crate on `plot` (a new one at `at` if none lies there); and
+    //the crates whose ground has been built over, lost.
+    void DropLoad(EconomyWorker& k, const ZoneState& z);
+    void AddToCrate(int plot, const vec2& at, int good, int amount, int origin, uint32_t by);
+    void LoseCoveredCrates(const ZoneState& z);
     void Walk(EconomyWorker& k, float dt);
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
@@ -642,6 +711,8 @@ private:
     //A field of his land built, empty, its crop decided and its share farmed: out to sow it (fields_plan.md,
     //land_plan.md). True if he set off.
     bool GoSow(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t calendar_tick);
+    //A trainee at home: out to his place on his range's line (range_plan.md). True if he set off.
+    bool GoTrain(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //A harvest waiting on his land, with home or a store to take it: out to fetch a load. True if he set off.
     bool FetchHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //Picking up the load at the field he came to (`store`): home first, else a store. False if nothing went.
@@ -682,19 +753,23 @@ private:
     bool FirewoodNow(uint32_t h) const;
     int FirewoodFair(const ZoneState& z, uint32_t h) const;
     bool FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //Where a home may fetch from (the user's, 2026-10-09): a store, a camp's supplies, a house nobody lives in, a
+    //water collector, a woodcutter's pile, or its own land's field within its fair share - never its own home,
+    //another family's house or another family's field.
+    bool FetchFrom(const EconomyWorker& k, const ZoneState& z, uint32_t id) const;
     bool TakeHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint32_t from, uint8_t goods);
     bool RouteHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //Construction: what a site still wants, carrying for one, and building with what it has. A site is
-    //a building id or a garden or lot plot (ECONOMY_SITE_GROUND).
-    int SiteNeed(const ZoneState& z, uint32_t id) const;
-    int SiteBrought(uint32_t id) const;
+    //a building id or a garden or lot plot (ECONOMY_SITE_GROUND); each by good (CONSTRUCTION).
+    std::array<int,GOOD_COUNT> SiteNeed(const ZoneState& z, uint32_t id) const;
+    std::array<int,GOOD_COUNT> SiteBrought(uint32_t id) const;
     bool SiteAlive(const ZoneState& z, uint32_t id) const;
-    //Where a building's wood is fetched from: a woodcutter's pile's door, else its plot nearest `to`.
+    //Where a building's goods are fetched from: a woodcutter's pile's door, else its plot nearest `to`.
     int SourcePlot(uint32_t id, const vec2& to) const;
     //Where a builder stands to build a garden or lot plot: an open plot beside it, else the plot itself.
     int GroundSiteApproach(const ZoneState& z, int v) const;
-    int SiteLeft(const ZoneState& z, uint32_t id, const EconomyWorker* except) const;
-    int WoodFree(uint32_t id) const;
+    std::array<int,GOOD_COUNT> SiteLeft(const ZoneState& z, uint32_t id, const EconomyWorker* except) const;
+    int GoodFree(uint32_t id, int good) const;
     int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Build(const ZoneState& z, uint32_t id);
@@ -761,10 +836,13 @@ std::string EconomyDeathName(const EconomyDeath& d);
 inline bool EconomyIndoors(const EconomyWorker& k){
     return k.f_indoors && k.house != 0 && k.state == WORKER_AT_HOME;
 }
-//Construction: the wood one storey on `plot` takes, and all a building's planned storeys still take.
-int EconomyStoreyWood(const ChasmWorld& w, const ZoneState& z, int plot);
-int EconomySiteWood(const ChasmWorld& w, const ZoneState& z, uint32_t id);
-int EconomySiteBrought(const EconomyState& e, uint32_t id);
+//Construction (CONSTRUCTION): what one storey on `plot` takes of `good`; what all a building's planned storeys -
+//a field site's cells - still take, by good; and what has been brought to it.
+int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int good);
+//...and what a coarse cell of a site painted on cells (a field) takes of `good`, by its kind.
+int EconomyCellCost(int kind, int good);
+std::array<int,GOOD_COUNT> EconomySiteCost(const ChasmWorld& w, const ZoneState& z, uint32_t id);
+int EconomySiteBrought(const EconomyState& e, uint32_t id, int good);
 //A garden's or lot's plot: the wood it takes to build, and what has been brought to it.
 int EconomyGroundWood(const ChasmWorld& w, int plot);
 //What a garden's, lot's or wall's plot takes to build: a wall ECONOMY_WALL_WOOD, the rest by area; a road 0.

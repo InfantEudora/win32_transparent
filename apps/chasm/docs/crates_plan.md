@@ -1,7 +1,7 @@
 # Crates: dropped loads, and finds on the map
 
-Written up 2026-10-09 and talked through with the user the same day: the decisions are below. Nothing in
-the game is built yet. Defence step 1 (`defence_plan.md`, "As built: step 1") lets the player send a
+Written up 2026-10-09 and talked through with the user the same day: the decisions are below. Step 1, the
+crates themselves and the drop, BUILT the same day - see "As built: step 1" at the end. Defence step 1 (`defence_plan.md`, "As built: step 1") lets the player send a
 person to a post with a right click. At first, anyone carrying a load when the order came (wood for a
 site, food fetched home, a woodcutter's logs) kept it for the whole posting, and with no store held it for
 good. Since defence step 2 the load is LOST the moment the order lands (`Economy::Order`), as the user's
@@ -192,7 +192,7 @@ nothing to correct. FETCH FIRST and the badge are still proposals, marked where 
 Each step is tested before the next, with the tool and with two replays of one recording compared
 against each other.
 
-1. **Crates and the drop**: the list, saved and hashed; a posted person's load dropped (on open ground,
+1. **(BUILT 2026-10-09)** **Crates and the drop**: the list, saved and hashed; a posted person's load dropped (on open ground,
    one crate per plot, or into a store that takes it); the debug spawn and the tool; crates drawn with
    the prop. Tested: a carrier taking wood to a site and sent off leaves a crate where they stood; one at
    a store's door puts the load in the store; a load dropped where a crate lies goes into it; a save and
@@ -243,5 +243,54 @@ user to tune. Preview: `art_source/chasm/previews/crate.png`, beside a man at ga
   other props sink.
 - **100 triangles**, flat shaded, origin at the centre of the base. It stands at (20, -15) in the
   authoring layout, after `bush_b` on the stump and log row.
-- **Not exported yet**: the game has no crates to draw, so `chasm_props.glb` is unchanged. Step 1 exports
-  the collection (one click, as for the other props) and loads `crate_a` from the glb by its name.
+- **Exported with step 1**: the collection's own exporter, its saved settings - the same as the one-click
+  export. Compared node by node with the glb before it: the other 36 nodes byte for byte the same, and
+  `crate_a` added (200 vertices).
+
+## As built: step 1 (2026-10-09)
+
+Files: `Economy.*` (CRATES in `Economy.h`; `EconomyCrate`, `EconomyCrateGround`, `EconomyCrateOn`;
+`DropLoad`, `AddToCrate`, `LoseCoveredCrates`, `SpawnCrate`; `Order`, `Tick`, the save and `Restore`),
+`ChasmSave.cpp` (`"crates"`, `"next_crate"`), `ApplicationChasmEconomy.cpp` (`CHASM_CMD_CRATE`, the hash,
+the tool, the panel), `ApplicationChasmCrates.cpp` (new: drawing them), `ApplicationChasm.*` (the command,
+loading the prop, `UploadCrates` from `PreRender`, the panel's call), `makefile`, `chasm_props.glb`.
+
+- **A crate** is `EconomyCrate` in `EconomyState::crates`, in id order (`next_crate`): its plot, its point,
+  a stock by good, where it came from (`CRATE_DROPPED`, `CRATE_FOUND`), who put it down and the calendar
+  tick. Saved as `crates` (goods by name), hashed in the trace part `economy`; `crates_version` tells the
+  view. A save from before crates loads with none.
+- **The drop** is `DropLoad`, where `Order` used to throw the load away: at a store that takes it, into the
+  store as far as it has room; the rest at his feet if his plot is open ground, else onto the nearest open
+  plot within `ECONOMY_CRATE_RINGS` (6) steps - stepping only across open ground, a camp and a standing
+  bridge, on his own level. Into the crate already on that plot if there is one.
+- **Open ground** is `EconomyCrateGround`: dry, off the mountain, no building, no ground but road, no field
+  over the cell at the crate's point.
+- **Built over**: when the zones change, a crate no longer on open ground is lost (`LoseCoveredCrates`, in
+  `Tick` after `Derive`). Only a debug placement can do that until step 2 refuses it in play.
+- **Spawning** is `CHASM_CMD_CRATE`, recorded: subtype the plot, value[0] the good, value[1] how many - one
+  good a command, so a crate of several goods is several, each into the same crate. A spawned crate is
+  `CRATE_FOUND`. Refused off open ground ("not open ground"). From `chasm_economy` op `crate` (x, z or
+  `plot`, `contents` by good name) and from the debug panel: the selected plot's crate, if any, and a good,
+  an amount and "Put a crate here" / "Add to the crate", disabled off open ground.
+- **Drawn** (`ApplicationChasmCrates.cpp`): one instance set of `crate_a` for every crate, at scale 1 (the
+  rocks' and bushes'; trees and their logs are 0.7), turned by a hash of its id, rebuilt when
+  `crates_version` moves.
+- **Tool**: `chasm_economy` gives `crates` (id, plot, x, z, goods, origin, by, by_name, day).
+- **Found in testing**: the first search for open ground stepped on only across open ground, and a carrier
+  standing among the camp's tents lost his load - every plot round him was the camp's. It now steps across
+  the camp too, and six rings out.
+- **Also found**: a build of chasm at 16:20 caught these files half edited, so the next build relinked
+  objects from two versions of `ApplicationChasm.h` and the crates were never drawn. Touching the changed
+  headers and building again put it right.
+- **Tested** (seed 12, debug, five house sites placed in play by the camp, sim paused and stepped):
+  - Floris, carrying 5 wood among the camp's tents, ordered off: a crate of 5 wood, by him, on the open plot
+    just outside the camp; his load gone from him.
+  - Jelle, carrying wood on open ground, ordered off: a crate where he stood, to the thousandth.
+  - Siem, unloading 2 wood at a store when ordered off: the store went from empty to 2 wood, no crate.
+  - Spawned wood 8 and beans 4 at one point: one crate holding both; water 3 there after: the same crate;
+    a spawn on a house site refused, "not open ground".
+  - Saved and loaded: the same three crates. A debug house painted on a crate's plot: the crate gone on the
+    next tick.
+  - Replay: a 251-tick recording with an order that dropped wood, a spawned crate and a release, replayed
+    twice: every tick's hash equal, nothing changed between ticks, the same two crates at the end of both.
+  - Drawn: a crate beside the camp's tents, in a close screenshot (distance 6), carriers walking past it.

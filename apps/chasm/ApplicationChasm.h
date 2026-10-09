@@ -45,6 +45,8 @@ struct PlayPick{
 #define PERSON_KID_MALE         2
 #define PERSON_KID_FEMALE       3
 extern const char* person_asset_names[PERSON_FIGURES];
+//The archery range's props in chasm_props.glb (ApplicationChasmRange.cpp): target, hay bale, arrow.
+extern const char* range_asset_names[];
 
 //A place on the overlay the mouse can press, drawn this frame: what pressing it does.
 #define OVERLAY_HIT_BLOCK       0       //a panel: the click is the overlay's, nothing under it is picked
@@ -143,6 +145,7 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define INPUT_CHASM_TOOL_BRIDGE    INPUT_LAST+22     //J, for jetty: B is the previous seed
 #define INPUT_CHASM_TOOL_BUILDERS  INPUT_LAST+23     //G, for guild: B again
 #define INPUT_CHASM_TOOL_WALL      INPUT_LAST+24     //7, beside the road: the debug walker's key, free since it went
+#define INPUT_CHASM_TOOL_RANGE     INPUT_LAST+25     //R: the archery range (range_plan.md)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -153,6 +156,8 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
                                                         //value[0] health, value[1] water, in ticks - -1 leaves it
 #define CHASM_CMD_ORDER             SIM_CMD_LAST+4      //a person posted (docs/defence_plan.md): subtype his id;
                                                         //value[0] the plot he is sent to, -1 released
+#define CHASM_CMD_CRATE             SIM_CMD_LAST+5      //a crate put down (a debug edit, docs/crates_plan.md):
+                                                        //subtype the plot; value[0] the good, value[1] how many
 
 //What a left click does.
 enum ChasmTool{
@@ -171,8 +176,14 @@ enum ChasmTool{
     CHASM_TOOL_BRIDGE,      //docs/bridge_plan.md: press on one bank, let go on the other
     CHASM_TOOL_BUILDERS,    //docs/builders_plan.md: a builders' hut, a drag
     CHASM_TOOL_WALL,        //line_works_plan.md step 3: a palisade, drawn as a line like a road
+    CHASM_TOOL_RANGE,       //range_plan.md: an archery range, painted on coarse cells as a field is
     CHASM_TOOL_COUNT
 };
+
+//The tools that paint COARSE CELLS rather than plots: the field, and the range painted like one.
+inline bool ChasmCellTool(int tool){
+    return tool == CHASM_TOOL_FIELD || tool == CHASM_TOOL_RANGE;
+}
 
 //The tools that draw a LINE and place it on release (UpdateLineDrag), and the ground each lays.
 inline bool ChasmLineTool(int tool){
@@ -308,7 +319,11 @@ private:
     void EnsureZonesWorld();                    //physics thread: a new map empties the zones
     void PublishZones();                        //physics thread
     std::shared_ptr<const ZoneState> GetZones();
-    void SubmitZone(int op, int index, int kind = 0, uint32_t stroke = 0);   //any thread; queued for the next tick
+    //Any thread; queued for the next tick. `owner`: the building a garden or lot is painted for (yards_plan.md).
+    void SubmitZone(int op, int index, int kind = 0, uint32_t stroke = 0, uint32_t owner = 0);
+    //Whose yard the GARDEN or LOT tool paints for: the building selected in play, if it has a yard; else 0,
+    //whatever the plot touches (yards_plan.md). Any thread.
+    uint32_t PaintOwner(int tool);
     void RegisterCommandHandlers();
 
     std::atomic<int> paint_tool{CHASM_TOOL_SELECT};
@@ -363,14 +378,17 @@ private:
         `economy` is SIMULATION state, the physics thread's alone, ticked after the zones; a copy is
         published after every tick that changed it (economy_snapshot, under grid_mutex) - the zones'
         pattern again. The view reads the copy: felled trees and stumps, the workers, the fields' growth.
-        Its commands are CHASM_CMD_NEEDS, a debug edit of a person's health and water, and CHASM_CMD_ORDER,
-        a person sent to a post or released (defence_plan.md) - recorded, so a replay makes the same edit
-        on the same tick.
+        Its commands are CHASM_CMD_NEEDS, a debug edit of a person's health and water, CHASM_CMD_ORDER,
+        a person sent to a post or released (defence_plan.md), and CHASM_CMD_CRATE, a debug crate put down
+        (crates_plan.md) - recorded, so a replay makes the same edit on the same tick.
     */
     Economy economy;
     std::shared_ptr<const EconomyState> economy_snapshot;
     std::atomic<uint32_t> needs_commands_done{0};
     std::atomic<uint32_t> order_commands_done{0};
+    std::atomic<uint32_t> crate_commands_done{0};
+    std::atomic<uint32_t> crate_refusals{0};
+    std::string crate_last_refusal;             //under grid_mutex, like order_last_refusal
     //An order the economy refused, and why (Economy::Order) - the play overlay shows it as it does a
     //refused placement. The text under grid_mutex.
     std::atomic<uint32_t> order_refusals{0};
@@ -384,6 +402,7 @@ private:
     void RegisterEconomyCommands();
     void SubmitNeeds(uint32_t person, int health, int water);  //any thread; -1 leaves one as it is
     void SubmitOrder(uint32_t person, int plot);                //any thread; plot -1 releases him
+    void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
     void RegisterEconomyTools();
@@ -391,8 +410,11 @@ private:
 #ifdef USE_IMGUI
     void RenderEconomyInfo(uint32_t id);        //in the building info, for the building under the cursor
     void RenderSelectedStore(int plot);         //what the selected store takes, to be set there
+    void RenderSelectedCrate(int plot);         //the crate on the selected plot, or one to put down there
     void RenderPeoplePanel();                   //the villagers, their health and water to be set
     std::map<uint64_t,float> needs_editing;     //render thread: a slider being dragged, by person and bar
+    int crate_edit_good = 0;                    //render thread: what the panel's crate holds, and how much
+    int crate_edit_amount = 10;
 #endif
 
     /*
@@ -466,10 +488,11 @@ private:
         bool f_explored = false;
         uint32_t line_version = 0;              //a road being drawn: its chain (0 with none)
         int bridge_from = -1;                   //a bridge being dragged: the bank it starts from
+        uint32_t owner = 0;                     //a yard being painted: the building it is for (yards_plan.md)
         bool operator==(const GhostKey& o) const{
             return world == o.world && zones_version == o.zones_version && plot == o.plot && coarse == o.coarse
                    && tool == o.tool && f_explored == o.f_explored && line_version == o.line_version
-                   && bridge_from == o.bridge_from;
+                   && bridge_from == o.bridge_from && owner == o.owner;
         }
     };
     GhostKey ghost_built;
@@ -493,6 +516,29 @@ private:
     std::vector<std::pair<uint32_t,int>> pile_built;    //hut, logs - as last drawn
     uint32_t pile_built_zones = 0;
     void UploadPiles();                             //from PreRender
+    //The crates lying about (ApplicationChasmCrates.cpp, crates_plan.md): one set of chasm_props.glb's crate.
+    #define CHASM_CRATE_ASSET "crate_a"
+    Object* crate_set = NULL;
+    bool f_crate_loaded = false;                    //LoadProps found it
+    std::shared_ptr<const ChasmWorld> crate_built_world;
+    uint32_t crate_built_version = 0xFFFFFFFFu;     //the economy's crates_version, as last drawn
+    void UploadCrates();                            //from PreRender
+    /*
+        The archery ranges (ApplicationChasmRange.cpp, range_plan.md): targets, hay bales and arrows, an instance
+        set each - chasm_props.glb's prop by its name in range_asset_names, or a stand-in until it is modelled.
+    */
+    #define RANGE_PROPS         3                   //target, hay bale, arrow
+    Object* range_set[RANGE_PROPS] = {};
+    Mesh* range_mesh[RANGE_PROPS] = {};
+    std::shared_ptr<const ChasmWorld> range_built_world;
+    uint32_t range_built_zones = 0xFFFFFFFFu;       //the zones' version, as last drawn
+    std::vector<int> range_target_cell;             //each target drawn: its cell, where it stands, how it is turned
+    std::vector<vec3> range_target_pos;
+    std::vector<float> range_target_yaw;
+    uint64_t range_arrows_key = ~0ull;              //the arrows as last drawn: rebuilt only when they change
+    void BuildRangeScene();                         //from LoadProps
+    void UploadRange();                             //from PreRender
+    void BuildRangeProps(const ChasmWorld& w, const ZoneState* z);  //from UploadRange, when the zones change
 
     /*
         --- The calendar and the speed (gameplay_plan.md P1, ApplicationChasmTime.cpp) ---------------

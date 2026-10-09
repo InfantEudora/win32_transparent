@@ -57,6 +57,10 @@ PAL_STONE = 25
 PAL_STONE_DARK = 26
 PAL_BUSH = 27
 PAL_ACCENT = 28
+PAL_FIELD = 12          #ripe wheat: straw
+PAL_WATER = 14
+PAL_WALL = 29           #plaster: a pale white
+PAL_TIMBER = 31
 
 GROUND_SINK = 0.08      #how far trunks and rock bases reach below z = 0, so a slope does not show a gap
 
@@ -675,6 +679,76 @@ def bare_broadleaf(leafy, limbs=4):
 
 
 #name, seed, builder, slot (column, row) in the authoring layout
+# ---------------------------------------------------------------------------------------------
+# The archery range (range_plan.md). Each FACES -Y - south once exported (glTF's +Z), toward the
+# shooters and the game's camera - as ApplicationChasmRange.cpp places them.
+# ---------------------------------------------------------------------------------------------
+
+def disc_ring(bm, y, z, radius, sides):
+    """A ring of verts in the XZ plane at depth y, round height z: a disc that faces along Y."""
+    return [bm.verts.new((radius * math.cos(2 * math.pi * (i + 0.5) / sides), y,
+                          z + radius * math.sin(2 * math.pi * (i + 0.5) / sides))) for i in range(sides)]
+
+
+def range_target(bm, rng):
+    """A straw boss on two legs, its face ringed white, blue, red and gold, the gold in the middle."""
+    #Wound by hand (a ring in order faces -Y), not by recalc_face_normals, which guesses on open shapes.
+    sides, r, zc, depth = 8, 0.34, 0.74, 0.06
+    back = disc_ring(bm, depth, zc, r, sides)
+    rims = [disc_ring(bm, -depth, zc, rr, sides) for rr in (r, 0.25, 0.16, 0.07)]
+    side = [bm.faces.new((back[i], back[(i + 1) % sides], rims[0][(i + 1) % sides], rims[0][i]))
+            for i in range(sides)]
+    colour(bm, side, PAL_FIELD)
+    colour(bm, [bm.faces.new(list(reversed(back)))], PAL_FIELD)
+    for band, col in enumerate((PAL_WALL, PAL_WATER, PAL_ACCENT)):
+        outer, inner = rims[band], rims[band + 1]
+        colour(bm, [bm.faces.new((outer[i], outer[(i + 1) % sides], inner[(i + 1) % sides], inner[i]))
+                    for i in range(sides)], col)
+    colour(bm, [bm.faces.new(rims[3])], PAL_FIELD)
+    #The legs: square posts behind the boss, leaning back a little under its weight.
+    for x in (-0.22, 0.22):
+        legs, cap = add_prism(bm, Vector((x, 0.10, 0.0)), 0.04, zc + 0.05, 4, math.pi / 4, rng, top=True,
+                              top_tilt=(0.0, 0.0))
+        for v in {v for f in legs for v in f.verts}:
+            v.co.y -= v.co.z * 0.10
+        colour(bm, legs + cap, PAL_TIMBER)
+
+
+def hay_bale(bm, rng):
+    """A block of straw lying on its side, bound by two bands of twine."""
+    hx, hy, h = 0.28, 0.18, 0.34
+    box = [bm.verts.new((sx * hx, sy * hy, z)) for z in (0.0, h) for sy in (-1, 1) for sx in (-1, 1)]
+    quads = [(4, 5, 7, 6), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5)]
+    colour(bm, [bm.faces.new([box[i] for i in q]) for q in quads], PAL_FIELD)
+    #Each band a strip round the top and both long sides, standing just proud of the straw.
+    for x in (-0.12, 0.12):
+        a, b, o = x - 0.018, x + 0.018, 0.006
+        lo = [bm.verts.new((u, s * (hy + o), 0.0)) for s in (-1, 1) for u in (a, b)]
+        hi = [bm.verts.new((u, s * (hy + o), h + o)) for s in (-1, 1) for u in (a, b)]
+        strip = [bm.faces.new((lo[0], lo[1], hi[1], hi[0])), bm.faces.new((hi[0], hi[1], hi[3], hi[2])),
+                 bm.faces.new((hi[2], hi[3], lo[3], lo[2]))]
+        colour(bm, strip, PAL_TIMBER)
+
+
+def arrow(bm, rng):
+    """A shaft along Y, lying level, its point to +Y (into the target) and its fletching to -Y."""
+    sides, r, half = 3, 0.014, 0.16
+    a = [bm.verts.new((r * math.cos(2 * math.pi * i / sides), -half, r * math.sin(2 * math.pi * i / sides)))
+         for i in range(sides)]
+    b = [bm.verts.new((v.co.x, half, v.co.z)) for v in a]
+    shaft = [bm.faces.new((a[i], b[i], b[(i + 1) % sides], a[(i + 1) % sides])) for i in range(sides)]
+    shaft.append(bm.faces.new(a))       #the nock end, toward the archer: the end that is seen
+    colour(bm, shaft, PAL_BARK_DARK)
+    #Two crossed fins at the back, each two quads back to back a hair apart, so it is seen from either side
+    #and remove_doubles keeps both.
+    for horizontal in (True, False):
+        w, gap = 0.035, 0.002
+        p = [(-w, -half), (w, -half), (w, -half + 0.07), (-w, -half + 0.07)]
+        for side, order in ((gap, p), (-gap, list(reversed(p)))):
+            pts = [bm.verts.new((u, y, side) if horizontal else (side, y, u)) for u, y in order]
+            colour(bm, [bm.faces.new(pts)], PAL_WALL)
+
+
 ASSETS = [
     ("tree_pine_a", 11, lambda bm, r: conifer(bm, r, 4.0, 3, 1.90, 7, 0.40, (0.05, 0.0)), (0, 0)),
     ("tree_pine_b", 12, lambda bm, r: conifer(bm, r, 5.0, 4, 1.80, 7, 0.45, (0.18, 0.10)), (1, 0)),
@@ -734,6 +808,10 @@ ASSETS = [
     ("tree_oak_a_bare", 24, bare_broadleaf("tree_oak_a"), (5, 1)),
     ("tree_oak_b_bare", 25, bare_broadleaf("tree_oak_b"), (6, 1)),
     ("tree_oak_c_bare", 26, bare_broadleaf("tree_oak_c", limbs=3), (7, 1)),
+    #The archery range (range_plan.md, 2026-10-09).
+    ("range_target", 91, range_target, (0, 6)),
+    ("hay_bale", 92, hay_bale, (1, 6)),
+    ("arrow", 93, arrow, (2, 6)),
 ]
 
 SPACING = 5.0

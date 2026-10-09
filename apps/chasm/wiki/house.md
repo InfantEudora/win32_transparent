@@ -5,7 +5,7 @@ kind: buildings
 status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
 plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3
-code: Economy.cpp: Derive HouseFamilies HouseRoom; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys; Economy.h: EconomyShutIn
+code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys; Economy.h: EconomyShutIn
 verified: 2026-10-09
 ---
 
@@ -35,6 +35,9 @@ Every round starts and ends at the house, so where it stands decides who gets wh
 
 No carrier ever delivers to a house. Its family [[Fetching home|fetches]] for it, and its farmer brings
 part of the harvest in from the house's own [[Field|land]].
+
+**What a house holds is its family's alone while anyone lives there.** Nobody else fetches, eats or builds
+from it. Once nobody lives there, its stock is anyone's, like a [[Store|store's]].
 
 ## Doors and shut-in houses
 

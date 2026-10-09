@@ -33,7 +33,8 @@ inline uint8_t FieldLook(int stage, int crop){
 }
 
 //`look` is a FieldLook (a plain FIELD_STAGE_* is one with no crop). A cell still a site (ZoneState::
-//field_built) is drawn staked out whatever the look: a stake at each corner and a cord along its edges.
+//field_built) is drawn staked out whatever the look: a stake at each corner and a cord along its edges. A
+//range's cell (range_plan.md) is drawn here too: staked out the same, then trodden earth.
 void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int look, std::vector<vertex>& out);
 
 #endif

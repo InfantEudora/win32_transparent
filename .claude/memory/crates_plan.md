@@ -1,27 +1,29 @@
 ---
 name: crates-plan
-description: "AGREED 2026-10-09 chasm crates (apps/chasm/docs/crates_plan.md) - dropped loads as give-only stores, caretakers move them, a few seeded finds; crate_a prop modelled, no code yet"
+description: "chasm crates (apps/chasm/docs/crates_plan.md) - AGREED 2026-10-09; step 1 BUILT same day (crate list, posted person's drop, debug spawn, drawn); steps 2-5 next"
 metadata:
   node_type: memory
   type: project
   originSessionId: 47e6cba0-a787-423c-b97b-1ca2ffa6b50e
-  modified: 2026-10-09T12:47:20.167Z
+  modified: 2026-10-09T14:50:42.014Z
 ---
 
-Chasm crates, agreed with the user 2026-10-09 in `apps/chasm/docs/crates_plan.md`; nothing in the game
-built yet. The user's decisions: a crate is a STORE VILLAGERS ONLY TAKE FROM, destroyed when empty;
-moving crates to a storehouse is the CARETAKERS' (builders') errand, LAST on their list, not the jobless's; building over a
-crate is refused with a message; A FEW finds are generated from the seed, and debug can spawn more;
-holding (WORKER_HOLDING) becomes dropping for EVERYONE; one crate look for everything.
+Chasm crates, agreed with the user 2026-10-09 in `apps/chasm/docs/crates_plan.md`. The user's decisions: a
+crate is a STORE VILLAGERS ONLY TAKE FROM, destroyed when empty; moving crates to a storehouse is the
+CARETAKERS' (builders') errand, LAST on their list, not the jobless's; building over a crate is refused with a
+message; A FEW finds are generated from the seed, and debug can spawn more; holding (WORKER_HOLDING) becomes
+dropping for EVERYONE; one crate look for everything. FETCH FIRST and the crate badge: left open (the user).
 
-The drop hooks where defence step 2 currently throws the load away: `Economy::Order` (`k->carry = 0`).
+STEP 1 BUILT 2026-10-09 ("As built: step 1" in the plan): `EconomyCrate` list in EconomyState, saved/hashed;
+`Economy::DropLoad` from `Order` (into a store he stands at, else his plot, else nearest open plot within
+ECONOMY_CRATE_RINGS stepping across open ground, camp and bridges); `CHASM_CMD_CRATE` debug spawn (tool op
+`crate`, panel on the selected plot); `ApplicationChasmCrates.cpp` draws `crate_a` (exported to
+chasm_props.glb). Wiki page `apps/chasm/wiki/crate.md` holds the planned bullets.
 
-Prop: `crate_a` in art_source/chasm/chasm_props.blend's Export collection (100 tris, path-cell panels,
-dark-bark frame and braces, 0.52 x 0.42 x 0.40), made by a background-Blender script and saved in place;
-preview art_source/chasm/previews/crate.png. NOT yet exported to chasm_props.glb - step 1 does that.
+Next (step 2): crates as a source wherever a store is (FindSiteWork, FetchHome, SeekSupply), caretakers moving
+them, building over refused in play (zone handler beside "under the clouds", and the ghost).
 
-**Why:** the user's fix for a posted carrier's load (lost at the order since defence step 2), and the
-small start of They Are Billions-style finds under the clouds.
-**How to apply:** build in the plan's order (drop, take/move, card, finds, holding); still open: only
-FETCH FIRST and the badge. Related: [[chasm-defence-plan]],
-[[chasm-game-plan]].
+**Why:** the user's fix for a posted carrier's load, and the small start of They Are Billions-style finds.
+**How to apply:** build in the plan's order, asking before each step; after any economy change run a replay
+pair (replay_trace). Watch for other windows building chasm mid-edit - a stale object mix cost a rebuild
+here (touch the changed headers). Related: [[chasm-defence-plan]], [[chasm-game-plan]], [[chasm-wiki]].

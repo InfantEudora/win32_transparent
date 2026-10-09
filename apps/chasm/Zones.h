@@ -46,8 +46,11 @@
       - A road and a building never share a plot (step 10): a building hides a garden, but would cut
         a road.
       - A road is not painted over a garden or lot: it stops at the edge, where it makes a gate.
-      - A new WOODCUTTER needs a lot of its own on a plot beside it - one no other woodcutter stands
-        beside (ZoneLotTaken): that is where his woodpile goes (Economy), one lot plot to a woodcutter.
+      - YARDS (docs/yards_plan.md): a garden or lot belongs to a house, a lot to a woodcutter - or to
+        nobody (ZoneState::ground_owner). Painted for a building named in the command, each plot must touch
+        it or its yard (ZoneCanYard); painted for none, it goes to what it touches (ZoneAutoOwner). A
+        building put beside ground nobody owns takes it. A woodcutter piles on a lot of his own beside him
+        (Economy): with none he fells nothing - he may still be built, as he could not before.
       - Not too steep (biomes_plan.md step 2): the ground may rise only so much across a plot (a road's
         limit is twice a house's) or a field's cell - ZONE_RISE_* in Zones.cpp. Not on the mountain.
       - A house is at most ZONE_HOUSE_MAX_PLOTS plots, since it holds one family.
@@ -116,9 +119,14 @@
 #define ZONE_KIND_CAMP          7       //tents and fires: a house's rules, a person a tent (docs/people_plan.md)
 #define ZONE_KIND_BRIDGE        8       //across a river, bank to bank (docs/bridge_plan.md)
 #define ZONE_KIND_BUILDERS      9       //a builders' hut: employs builders, staffed first (docs/builders_plan.md)
-#define ZONE_KIND_COUNT         10
+#define ZONE_KIND_RANGE         10      //an archery range, on coarse cells like a field: archers train there (docs/range_plan.md)
+#define ZONE_KIND_COUNT         11
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
+//A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range painted like one.
+inline bool ZoneKindOnCells(int kind){
+    return kind == ZONE_KIND_FIELD || kind == ZONE_KIND_RANGE;
+}
 int ZoneKindMaxStoreys(int kind);
 
 //What grows on a field. Never renumber.
@@ -205,9 +213,10 @@ int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot);
 
 /*
     What a command asks for. Travels in SimCommand::value[0]; the plot or cell index in subtype,
-    value[1] the kind (ground, building or crop, by op), value[2] the stroke. Never renumber - the
-    building ops are the house ops they grew from, so a recording from before them replays (a kind
-    of 0 there means a house).
+    value[1] the kind (ground, building or crop, by op), value[2] the stroke, value[3] the play flag
+    and the owner a garden or lot is painted for (ZoneCommandValue3). Never renumber - the building
+    ops are the house ops they grew from, so a recording from before them replays (a kind of 0 there
+    means a house).
 */
 enum ZoneOp{
     ZONE_OP_NONE = 0,
@@ -230,15 +239,30 @@ enum ZoneOp{
     ZONE_OP_FIELD_LAND,     //coarse cell: its field given to the house in value[1], 0 automatic (land_plan.md)
     ZONE_OP_FIELD_PRIORITY, //coarse cell: its field's site goes first (value[1] 1) or back in the queue (0)
     ZONE_OP_GATE_SHUT,      //plot: its gate's door shut (value[1] 1) or open (0), and the gate plots joined to it (defence_plan.md)
+    ZONE_OP_RANGE_PAINT,    //coarse cell: join the stroke's range, or start one (range_plan.md) - erased, raised, put first as a field
     ZONE_OP_COUNT
 };
-//Whether an op names a coarse cell (a field's) rather than a plot.
+//Whether an op names a coarse cell (a field's or a range's) rather than a plot.
 inline bool ZoneOpOnCell(int op){
     return op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP || op == ZONE_OP_FIELD_NEXT
-        || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND || op == ZONE_OP_FIELD_PRIORITY;
+        || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND || op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_RANGE_PAINT;
 }
 const char* ZoneOpName(int op);
 int ZoneOpByName(const std::string& name);  //the names above, and the old house_* ones; -1 if none
+/*
+    A zone command's value[3]: the PLAY flag in bit 0, and above it the building a garden or lot is
+    painted for (yards_plan.md), 0 for whatever it touches. Every recording before yards has 0 or 1 there
+    - no owner - so it means what it meant. Exact while owner * 2 stays under a float's 2^24.
+*/
+inline float ZoneCommandValue3(bool f_play, uint32_t owner){
+    return (float)(owner * 2u + (f_play ? 1u : 0u));
+}
+inline bool ZoneCommandPlay(float v3){
+    return ((uint32_t)v3 & 1u) != 0;
+}
+inline uint32_t ZoneCommandOwner(float v3){
+    return (uint32_t)v3 >> 1;
+}
 
 struct ChasmWorld;     //ChasmWorld.h
 
@@ -277,7 +301,8 @@ struct ZoneState{
     std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden, lot, road or wall still a site
     std::vector<uint32_t> line;                 //per fine vertex: a road's or wall's line - its place in the queue, 0 none
     std::vector<uint8_t> gate;                  //per fine vertex: on a road plot a wall runs through, its door (ZONE_GATE_*)
-    std::vector<uint32_t> field;                //per coarse quad: the field it is part of, 0 none
+    std::vector<uint32_t> ground_owner;         //per fine vertex: the building a garden or lot is the yard of, 0 nobody (ZoneGroundOwner)
+    std::vector<uint32_t> field;                //per coarse quad: the field - or range (ZoneKindOnCells) - it is part of, 0 none
     std::vector<uint8_t> field_built;           //per coarse quad: 0 for a field's cell still a site
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
@@ -319,11 +344,13 @@ struct ZoneSavedBuilding{
     std::vector<int> cells_built;               //per cell above, 1 if built - empty: all of them
 };
 
-//A plot's ground as a save holds it: the kind with ZONE_GROUND_SAVED_SITE / _GATE added, and its line.
+//A plot's ground as a save holds it: the kind with ZONE_GROUND_SAVED_SITE / _GATE added, its line, and
+//the building whose yard it is.
 struct ZoneSavedGround{
     int plot = 0;
     int kind = ZONE_GROUND_NONE;
     uint32_t line = 0;
+    uint32_t owner = 0;
 };
 
 class Zones{
@@ -334,8 +361,9 @@ public:
 
     //Applies one command. True if anything changed; otherwise `last_refusal` says why not.
     //`kind` is the ground, building or crop the op takes (ZoneOp); `stroke` the drag it is part of.
-    //`f_play`: a player's command, whose building is a construction site until it is raised.
-    bool Apply(int op, uint32_t index, int kind = 0, uint32_t stroke = 0, bool f_play = false);
+    //`f_play`: a player's command, whose building is a construction site until it is raised. `owner`: the
+    //building a garden or lot is painted for (yards_plan.md), 0 for whatever it touches.
+    bool Apply(int op, uint32_t index, int kind = 0, uint32_t stroke = 0, bool f_play = false, uint32_t owner = 0);
 
     /*
         Empty zones for `world`, then a saved set put back through the rules, each building under
@@ -372,12 +400,24 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& z);
 //The rules as questions, for the commands and for the view's hover (red when it would be refused).
 //`why` may be NULL. A building of `kind` on `plot`; it joins `joining` (an id, or 0 for a new one).
 bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining, const char** why);
-//A lot's plot with nothing built on it, beside plot v - where a woodcutter on v may pile. -1 if none;
-//the lowest index of them. `f_built`: only a lot that stands (the pile's), not one still a site (enough
-//for the rule - it will stand). `f_free`: only one no woodcutter stands beside (ZoneLotTaken).
-int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built, bool f_free = false);
-//Whether a woodcutter other than building `except` stands beside lot plot `lot` - so it is his yard.
-bool ZoneLotTaken(const ChasmWorld& w, const ZoneState& z, int lot, uint32_t except);
+/*
+    YARDS (docs/yards_plan.md): the gardens and lots a building owns. A house owns gardens and lots, a
+    woodcutter lots - his woodpile's; no other kind, and no road or wall, is ever owned.
+*/
+bool ZoneOwnsGround(int kind, int ground);              //a building of `kind` may have `ground` in its yard
+inline bool ZoneKindHasYard(int kind){
+    return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_WOODCUTTER;
+}
+//Whose yard plot v is: its owner while that building stands and may own it, else 0.
+uint32_t ZoneGroundOwner(const ZoneState& z, int v);
+//`ground` painted on `plot` for building `owner`: it must touch the building or its yard, be ground it may
+//own, and not be another building's yard. True for owner 0, and for a road or a wall: nothing to ask.
+bool ZoneCanYard(const ChasmWorld& w, const ZoneState& z, int plot, int ground, uint32_t owner, const char** why);
+//Whose yard `ground` painted on `plot` for nobody in particular joins: a building it touches that may own it,
+//the lowest id; else the owner of yard ground it touches; else 0.
+uint32_t ZoneAutoOwner(const ChasmWorld& w, const ZoneState& z, int plot, int ground);
+//How many plots of `ground` building `id`'s yard has.
+int ZoneYardPlots(const ZoneState& z, uint32_t id, int ground);
 //Ground that encloses and is built: a wall or fence round it, walked round (ZoneBoundaryBetween).
 inline bool ZoneGroundStands(const ZoneState& z, int v){
     return ZoneEnclosesGround(z.ground[v]) && z.ground_built[v];
@@ -394,6 +434,28 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
     for the rules, the walkers and the look.
 */
 int ZoneWinchLanding(const ChasmWorld& w, int plot);
+
+/*
+    A RANGE CELL's layout (range_plan.md), one rule for the trainees and the look: every range shoots NORTH,
+    the way the camera looks - its targets at each cell's north side face the view with their rings, and its
+    trainees stand on a line at the south side, their backs to it. `middle` is the plot at the cell's middle,
+    where a walk to the cell ends (as a farmer's does) before the last straight step to the line.
+*/
+#define ZONE_RANGE_LINE         0.30f   //the shooting line, this much of the cell's width south of its middle
+#define ZONE_RANGE_TARGET       0.28f   //the target, this much north of it
+struct ZoneRangeCell{
+    vec2 centre;
+    vec2 dir;               //the way it shoots: north, (0, -1)
+    float size = 0.0f;      //about the cell's width
+    int middle = -1;
+};
+ZoneRangeCell ZoneRangeCellAt(const ChasmWorld& w, int cell);
+inline vec2 ZoneRangeLine(const ZoneRangeCell& r){
+    return r.centre - r.dir * (r.size * ZONE_RANGE_LINE);
+}
+inline vec2 ZoneRangeTarget(const ZoneRangeCell& r){
+    return r.centre + r.dir * (r.size * ZONE_RANGE_TARGET);
+}
 //Every winch as (its plot, its landing), in plot order - the walkers' links between the levels.
 void ZoneWinchLinks(const ChasmWorld& w, const ZoneState& z, std::vector<std::pair<int,int>>& out);
 

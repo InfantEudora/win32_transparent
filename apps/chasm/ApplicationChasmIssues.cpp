@@ -57,6 +57,7 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_WOODCUTTER:  return "THE WOODCUTTER'S HUT";
         case ZONE_KIND_WATER:       return "THE WATER COLLECTOR";
         case ZONE_KIND_BUILDERS:    return "THE BUILDERS' HUT";
+        case ZONE_KIND_RANGE:       return "THE RANGE";
         default:                    return "A WORKPLACE";
     }
 }
@@ -91,6 +92,8 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     for (size_t q = 0; q < z.field.size(); q++){
         if (z.field[q] && !z.field_built[q]){
             field_site[z.field[q]] = 1;
+        }else if (z.field[q]){
+            stands[z.field[q]] = 1;     //a building on cells - a range - stands with a built cell
         }
     }
     int placed[ZONE_KIND_COUNT] = {};
@@ -178,7 +181,8 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         if (b.size <= 0){
             continue;
         }
-        bool f_workplace = b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS;
+        bool f_workplace = b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS
+                           || b.kind == ZONE_KIND_RANGE;
         if (f_workplace && stands[id] && id < e.places.size() && e.places[id] > 0 && working[id] == 0){
             ChasmIssue i;
             i.kind = "nobody_at";

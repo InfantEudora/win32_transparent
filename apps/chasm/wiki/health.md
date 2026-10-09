@@ -25,7 +25,7 @@ tick, and food is what puts it back. From full, it lasts {NEEDS_HEALTH_FULL:days
 greens the least** (`EconomyFoodWorth`). A unit is eaten only when all of it fits under full, so nothing
 is wasted. Of the foods that fit, the one that keeps worst goes first: greens, then wheat, then beans.
 
-- **At home**, from the house's own stock or the camp's supplies.
+- **At home**, from the house's own stock, or the camp's larder and then its supplies.
 - **Away, when hunger is pressing**: with health below {NEEDS_PRESSING_HEALTH:days} and no food at home,
   the person finishes what they are doing and goes to the nearest [[Store]], the [[Camp]] or a
   [[Field|field's]] harvest. A meal away from home takes {ECONOMY_MEAL_SECONDS:#seconds}.

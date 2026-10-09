@@ -308,15 +308,28 @@ Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `W
 - **Into the house** on arrival, as far as it keeps the good and has room; what does not fit goes to a store.
   A family moved while he walked: on to the new home with it.
 - **A pressing trip brings a load home**: someone who ate or drank at a store or the camp, his house short of
-  what is there, carries a load home rather than going back for it.
+  what is there, carries a load home rather than going back for it. **Since 2026-10-09 (the user's)** from
+  anywhere a home may fetch from (below), and whenever the house has room under its top-up - not only once it
+  is short - within the same fair shares as any fetching.
+- **Where a home fetches from** (`Economy::FetchFrom`, the user's 2026-10-09: "from anything"): a store, a
+  camp's supplies, a house nobody lives in, a WATER COLLECTOR and a WOODCUTTER'S PILE - and a field of its own
+  land while it is not ahead of its fair share. Never its own home, another family's house or another
+  family's field. Before, only stores and camps: a house beside a collector stayed dry until a store stood,
+  though its people drank at the collector on a pressing need. Producers lose some of what their carriers
+  would have taken to a store to the homes nearest them - where you live matters, for supplies too.
+  Measured on seed 12 with three houses and a collector by the river, and no store: the families fetched water
+  from the collector (three of them took turns), the houses kept some, and nobody went dry. A pressing trip to
+  the collector reached the load-home step, but each time the family's own fetching had just emptied it, so a
+  load home from a pressing trip was not seen; nor was firewood from a woodcutter's pile. Two replays of a
+  recording of it: the same.
 - ~~**A camp's own families do not fetch** (the user's choice): its supplies are what the settlers brought.~~
   **Changed 2026-10-09 (the user's): a camp's families fetch for it** like a house's - water, food and, in its
   season, firewood - never from its own supplies; it has a larder's room and a woodshed by its floor area. With
   births (`lifeline_plan.md`) a baby born in the camp went dry once the settlers' water did: grown people drink
   at a store or collector on a pressing need, a baby cannot. Measured on seed 12 with nobody housed, a collector
   and a store by the river: two of the camp's people took turns fetching water from the store, the camp's water
-  never ran out, and the baby born there on day 8 always had two to four days of it. Fetching takes from stores
-  and camps only, so water reaches a home - a house or the camp - only once there is a store.
+  never ran out, and the baby born there on day 8 always had two to four days of it. (What they fetch goes into
+  the camp's own LARDER beside the open supplies - the camp larder, built the same day by another session.)
 - **The house's room** went from 1.5 to 4 of floor area (about 16 a plot-storey), this plan's own figure:
   two days of water and food for four is 12, and the old room was 11 for a two-storey one-plot house.
 - **Measured** (seed 12, debug, a two-storey house of four 11 from the camp):

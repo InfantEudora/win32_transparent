@@ -50,7 +50,7 @@ KINDS = [
     ("systems", "Systems"),
 ]
 KIND_NAMES = [k for k, _ in KINDS]
-KEYS = ("title", "aliases", "kind", "status", "summary", "plans", "code", "tuning", "verified")
+KEYS = ("title", "aliases", "kind", "status", "summary", "plans", "code", "tuning", "measured", "verified")
 REQUIRED = ("title", "kind", "status", "summary", "verified")
 #Non-blank lines a page's body may have. Past this it is a plan, or two pages.
 MAX_LINES = 45
@@ -66,7 +66,12 @@ LITERAL_RE = re.compile(r"\b(0[xX][0-9a-fA-F]+|\d+\.\d*(?:[eE][-+]?\d+)?|\d+)[fF
 LIST_RE = re.compile(r"^(\s*)([-*]|\d+[.)])\s+(.*)$")
 TOKEN_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]"           #[[Page]] or [[Page|label]]
                       r"|\[([^\]]+)\]\(([^)\s]+)\)"                  #[label](path)
-                      r"|\{([A-Z][A-Z0-9_]+)(?::(#?[a-z]+))?\}")     #{CONSTANT}, {CONSTANT:unit}, {CONSTANT:#noun}
+                      r"|\{([A-Z][A-Z0-9_]+|[a-z_][a-z0-9_]*(?:\[[A-Za-z0-9_]+\])+)(?::(#?[a-z]+))?\}"
+                                                                    #{CONSTANT}, {table[i]}, then :unit or :#noun
+                      r"|\{=\s*([^{}:]+?)\s*(?::(#?[a-z]+))?\}")    #{= expression of those and measured figures}
+TABLE_TOKEN_RE = re.compile(r"[a-z_][a-z0-9_]*(?:\[[A-Za-z0-9_]+\])+")
+ARRAY_RE = re.compile(r"^[ \t]*(?:static[ \t]+)?const[ \t]+(?:unsigned[ \t]+)?\w+[ \t]+([a-z_][a-z0-9_]*)[ \t]*"
+                      r"((?:\[[^\]\n]*\])+)[ \t]*=[ \t]*(\{.*?\});", re.M | re.S)
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 ITALIC_RE = re.compile(r"(?<![\w*])\*(?![\s*])(.+?)(?<![\s*])\*(?![\w*])")
 BADGE_RE = re.compile(r"^\[([a-z]+)\]\s+(.*)$")
@@ -93,6 +98,7 @@ class Page:
         self.body = []              #(line number, text)
         self.used = []              #constants, in the order first used
         self.units = {}             #the unit a constant was shown in
+        self.measured = {}          #`measured:` - figures taken off the map, not the code, for {= expressions}
         self.html = ""
         self.summary_html = ""
         self.text = ""              #plain, for the search
@@ -118,6 +124,13 @@ def number(v):
     return str(v)
 
 
+def about(v):
+    """An estimate, shown as one: whole from 10 up, a decimal below that, two below 1."""
+    if abs(v) >= 10:
+        return str(int(round(v)))
+    return ("%.1f" % v if abs(v) >= 1 else "%.2f" % v).rstrip("0").rstrip(".")
+
+
 def plain(fragment):
     return html.unescape(re.sub(r"<[^>]+>", " ", fragment))
 
@@ -126,6 +139,8 @@ class Wiki:
     def __init__(self, out):
         self.out_dir = os.path.dirname(os.path.abspath(out))
         self.defs = {}
+        self.arrays = {}            #name -> (values, file, line): the constant tables
+        self.extra = {}             #names a {= expression} may use beside the defines, while it is worked out
         self.pages = []
         self.by_slug = {}
         self.names = {}             #lower-case title or alias -> slug
@@ -156,6 +171,45 @@ class Wiki:
                 body = re.sub(r"/\*.*?\*/", "", body).strip()
                 if body:
                     self.defs[m.group(1)] = Define(m.group(1), body, comment, fn, no)
+            #Constant tables too (`const int crop_days[N] = {...};`), for {crop_days[ZONE_CROP_BEANS]}.
+            text = read(os.path.join(APP, fn))
+            for m in ARRAY_RE.finditer(text):
+                if m.group(1) in self.arrays:
+                    continue
+                body = re.sub(r"//[^\n]*|/\*.*?\*/", "", m.group(3), flags=re.S)
+                body = LITERAL_RE.sub(lambda x: x.group(1), body.replace("{", "[").replace("}", "]"))
+                try:
+                    values = ast.literal_eval(body)
+                except (SyntaxError, ValueError):
+                    continue
+                self.arrays[m.group(1)] = (values, fn, text.count("\n", 0, m.start(1)) + 1)
+
+    def element(self, page, no, token):
+        """
+        An element of a constant table, `name[i]` or `name[i][j]`, each index a number or a #define: a Define of
+        its own, so it shows and goes in the tuning table like one. None, with the error made, if there is none.
+        """
+        if token in self.defs:
+            return self.defs[token]
+        name = token[:token.index("[")]
+        if name not in self.arrays:
+            self.error(page, no, "no table %s in apps/chasm - renamed or gone? Fix the page" % name)
+            return None
+        v, fn, line = self.arrays[name]
+        for i in re.findall(r"\[([A-Za-z0-9_]+)\]", token):
+            k = int(i) if i.isdigit() else self.value(self.defs.get(i))
+            if not isinstance(k, int) or not isinstance(v, list) or not 0 <= k < len(v):
+                self.error(page, no, "%s: index %s is not in the table" % (token, i))
+                return None
+            v = v[k]
+        if isinstance(v, list):
+            self.error(page, no, "%s is a row of the table, not one number - index it further" % token)
+            return None
+        d = Define(token, number(v), "from the table %s" % name, fn, line)
+        d.f_done = True
+        d.value = v
+        self.defs[token] = d
+        return d
 
     def value(self, d, seen=()):
         """A define's value, worked out as C would - integer division truncates - or None if it is not a number."""
@@ -175,6 +229,8 @@ class Wiki:
         if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool):
             return n.value
         if isinstance(n, ast.Name):
+            if n.id in self.extra:
+                return self.extra[n.id]     #a page's measured figure, or a table's element, in a {= expression}
             v = self.value(self.defs.get(n.id), seen)
             if v is None:
                 raise ValueError(n.id)
@@ -302,7 +358,62 @@ class Wiki:
             return self.wikilink(page, m.group(1).strip(), m.group(2) if m.group(2) is not None else m.group(1))
         if m.group(3) is not None:
             return self.link(page, no, m.group(3), m.group(4))
+        if m.group(7) is not None:
+            return self.expression(page, no, m.group(7), m.group(8))
         return self.constant(page, no, m.group(5), m.group(6))
+
+    def expression(self, page, no, expr, unit):
+        """
+        {= expression}: arithmetic on constants, table elements and the page's `measured:` figures - what an
+        average plot holds, say - worked out at every build like a single constant, and shown rounded, since
+        it is an estimate. Its constants go in the page's tuning table.
+        """
+        names = dict(page.measured)
+        def table(m):
+            d = self.element(page, no, m.group(0))
+            if d is None:
+                return "0"
+            if m.group(0) not in page.used:
+                page.used.append(m.group(0))
+            key = "_t%d" % len(names)
+            names[key] = d.value
+            return key
+        text = TABLE_TOKEN_RE.sub(table, expr)
+        try:
+            tree = ast.parse(text, mode="eval")
+        except SyntaxError:
+            self.error(page, no, "{= %s} is not an expression" % expr)
+            return '<span class="tune bad">%s</span>' % html.escape(expr)
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Name) and n.id not in names:
+                if n.id not in self.defs:
+                    self.error(page, no, "{= %s}: no constant or measured figure %s" % (expr, n.id))
+                    return '<span class="tune bad">%s</span>' % html.escape(expr)
+                if n.id not in page.used:
+                    page.used.append(n.id)
+        self.extra = names
+        try:
+            v = self.walk(tree.body, ())
+        except (ValueError, TypeError, ZeroDivisionError):
+            v = None
+        finally:
+            self.extra = {}
+        if v is None:
+            self.error(page, no, "{= %s} does not work out to a number" % expr)
+            return '<span class="tune bad">%s</span>' % html.escape(expr)
+        if unit and not unit.startswith("#"):
+            per = self.value(self.defs.get(UNITS.get(unit, "")))
+            if not per:
+                self.error(page, no, "unknown unit '%s'" % unit)
+                return '<span class="tune bad">%s</span>' % html.escape(expr)
+            v = v / per
+        s = about(v)
+        if unit:
+            word = unit.lstrip("#")
+            s += " " + (word[:-1] if s == "1" and word.endswith("s") else word)
+        used = ", ".join("%s = %s" % (k, number(names[k])) for k in sorted(page.measured) if k in expr)
+        tip = "= %s%s" % (expr, ("\nmeasured: " + used) if used else "")
+        return '<span class="tune" title="%s">%s</span>' % (html.escape(tip), html.escape(s))
 
     def wikilink(self, page, target, label):
         slug = self.resolve(target)
@@ -344,9 +455,10 @@ class Wiki:
         return "%s %s" % (s, unit[:-1] if s == "1" else unit)
 
     def constant(self, page, no, name, unit):
-        d = self.defs.get(name)
+        d = self.element(page, no, name) if "[" in name else self.defs.get(name)
         if d is None:
-            self.error(page, no, "no constant %s in apps/chasm - renamed or gone? Fix the page" % name)
+            if "[" not in name:
+                self.error(page, no, "no constant %s in apps/chasm - renamed or gone? Fix the page" % name)
             return '<span class="tune bad">%s</span>' % name
         if unit and not unit.startswith("#") and unit not in UNITS:
             self.error(page, no, "unknown unit '%s' (units: %s; or #noun for a count)" % (unit, ", ".join(sorted(UNITS))))
@@ -525,6 +637,14 @@ class Wiki:
 
     def render(self):
         for p in self.pages:
+            for part in split_list(p.meta.get("measured", "")):
+                m = re.match(r"^([A-Z][A-Z0-9_]*)\s*=\s*(-?\d+(?:\.\d+)?)$", part)
+                if not m:
+                    self.error(p, p.meta_line.get("measured", 1), "measured: wants NAME = number, ';' between: '%s'" % part)
+                elif m.group(1) in self.defs:
+                    self.error(p, p.meta_line.get("measured", 1), "measured: %s is a constant in the code already" % m.group(1))
+                else:
+                    p.measured[m.group(1)] = float(m.group(2))
             p.summary_html = self.inline(p, p.meta_line.get("summary", 1), p.meta.get("summary", ""))
             p.html = self.blocks(p, p.body)
             for name in split_list(p.meta.get("tuning", ""), ","):
@@ -559,6 +679,10 @@ class Wiki:
             meta.append("<dt>Plans</dt><dd>%s</dd>" % "<br>".join(p.plans_html))
         if p.code_html:
             meta.append("<dt>Code</dt><dd>%s</dd>" % "<br>".join(p.code_html))
+        if p.measured:
+            meta.append("<dt>Measured</dt><dd>%s <span class=\"muted\">- taken off the map, not read from the code: measure "
+                        "again when the grid changes</span></dd>" % ", ".join(
+                            "<code>%s</code> %s" % (k, number(v)) for k, v in p.measured.items()))
         meta.append("<dt>Checked</dt><dd>against the code on %s</dd>" % html.escape(p.meta.get("verified", "?")))
         back = sorted(self.backlinks.get(p.slug, ()), key=lambda s: self.by_slug[s].title().lower())
         back_html = ""
@@ -688,6 +812,7 @@ h3{font-size:1rem;margin:1.4em 0 .4em}
 h3 .badge{font-size:.75rem}
 li .badge{vertical-align:.1em;margin-right:.2em}
 """ + "".join(".s-%s.badge{color:var(--s-%s)} .s-%s.dot{background:var(--s-%s)}\n" % (s, s, s, s) for s in STATUS_NAMES) + """
+.s-partial.dot{background:linear-gradient(90deg,var(--s-built) 50%,transparent 50%);box-shadow:inset 0 0 0 1.5px var(--s-built)}
 .tune{border-bottom:1.5px dotted var(--accent);cursor:help;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tune.bad{color:var(--missing)}
 a.wl.missing,span.wl.missing{color:var(--missing);text-decoration:underline dotted;cursor:default}

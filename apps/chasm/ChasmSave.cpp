@@ -18,15 +18,18 @@ json ChasmSaveToJson(const ChasmSave& s){
     json buildings = json::array();
     for (const ZoneSavedBuilding& b : s.buildings){
         json jb{{"id",b.id},{"kind",ZoneKindName(b.kind)}};
-        if (b.kind == ZONE_KIND_FIELD){
+        if (ZoneKindOnCells(b.kind)){
+            //A field's cells - or a range's (range_plan.md), which has no crop or land.
             jb["cells"] = b.cells;
-            jb["crop"] = ZoneCropName(b.crop);          //its starting crop - "none" until chosen
-            if (b.next_crop != ZONE_CROP_AUTO){
-                jb["next"] = ZoneCropName(b.next_crop);
-            }
-            //The house the player gave it to (land_plan.md) - written only when given.
-            if (b.land_of){
-                jb["land"] = b.land_of;
+            if (b.kind == ZONE_KIND_FIELD){
+                jb["crop"] = ZoneCropName(b.crop);      //its starting crop - "none" until chosen
+                if (b.next_crop != ZONE_CROP_AUTO){
+                    jb["next"] = ZoneCropName(b.next_crop);
+                }
+                //The house the player gave it to (land_plan.md) - written only when given.
+                if (b.land_of){
+                    jb["land"] = b.land_of;
+                }
             }
             //Which of them are built - written only while some are still a site (fields_plan.md).
             if (std::find(b.cells_built.begin(),b.cells_built.end(),0) != b.cells_built.end()){
@@ -61,10 +64,13 @@ json ChasmSaveToJson(const ChasmSave& s){
         }
         buildings.push_back(jb);
     }
-    //[plot, kind] - the kind with its site and gate flags - and a road's or wall's line as a third.
+    //[plot, kind] - the kind with its site and gate flags - and a road's or wall's line as a third; a garden's
+    //or lot's owner as a fourth, its yard's building (yards_plan.md), the line 0 before it.
     json grounds = json::array();
     for (const ZoneSavedGround& gr : s.grounds){
-        if (gr.line){
+        if (gr.owner){
+            grounds.push_back(json::array({gr.plot,gr.kind,gr.line,gr.owner}));
+        }else if (gr.line){
             grounds.push_back(json::array({gr.plot,gr.kind,gr.line}));
         }else{
             grounds.push_back(json::array({gr.plot,gr.kind}));
@@ -72,22 +78,28 @@ json ChasmSaveToJson(const ChasmSave& s){
     }
     /*
         The economy (Economy.h): stocks by building and good name, felled props, every worker on his
-        route with his health and water, every field's growth, the dead. Floats as JSON doubles, which
+        route with his health and water, every field's growth, the crates lying about, the dead. Floats as JSON doubles, which
         read back to the same bits.
     */
     json economy = json::object();
     {
         const EconomySaved& e = s.economy;
-        json stocks = json::array();
-        for (const auto& st : e.stocks){
-            json goods = json::object();
-            for (int g = 0; g < GOOD_COUNT; g++){
-                if (st.second[g]){
-                    goods[GoodName(g)] = st.second[g];
+        //Stocks, and camps' larders (Economy.h, STORES) the same way: by building, goods by name.
+        auto by_building = [](const std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>>& list){
+            json out = json::array();
+            for (const auto& st : list){
+                json goods = json::object();
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    if (st.second[g]){
+                        goods[GoodName(g)] = st.second[g];
+                    }
                 }
+                out.push_back(json{{"building",st.first},{"goods",goods}});
             }
-            stocks.push_back(json{{"building",st.first},{"goods",goods}});
-        }
+            return out;
+        };
+        json stocks = by_building(e.stocks);
+        json larders = by_building(e.larders);
         json props = json::array();
         for (const auto& pr : e.props){
             props.push_back(json::array({pr.first,pr.second}));
@@ -115,7 +127,8 @@ json ChasmSaveToJson(const ChasmSave& s){
                                    {"store",k.store},{"site",k.site},{"carry_good",k.carry_good},{"carry",k.carry},
                                    {"timer",k.timer},{"stint",k.stint},{"route",route},{"speed",k.speed},{"seg",k.seg},
                                    {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors},
-                                   {"health",k.health},{"water",k.water},{"post",k.post},{"pack",pack}});
+                                   {"health",k.health},{"water",k.water},{"post",k.post},{"pack",pack},
+                                   {"archery",k.archery}});
         }
         //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father.
         json dead = json::array();
@@ -136,9 +149,16 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
             fields.push_back(one);
         }
+        //Construction sites: building, the goods brought by name (defence_plan.md step 4; before, the wood alone).
         json sites = json::array();
         for (const auto& st : e.sites){
-            sites.push_back(json::array({st.first,st.second}));
+            json goods = json::object();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (st.second[g]){
+                    goods[GoodName(g)] = st.second[g];
+                }
+            }
+            sites.push_back(json::array({st.first,goods}));
         }
         //Gardens and lots being built: plot, wood brought.
         json ground_sites = json::array();
@@ -150,8 +170,21 @@ json ChasmSaveToJson(const ChasmSave& s){
         for (const auto& hh : e.heats){
             heats.push_back(json::array({hh.first,hh.second}));
         }
-        economy = json{{"stocks",stocks},{"felled",props},{"people",workers},{"fields",fields},
-                       {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"next_person",e.next_person},{"dead",dead}};
+        //Crates (crates_plan.md): where each lies, its goods by name, where it came from, who put it down and when.
+        json crates = json::array();
+        for (const EconomyCrate& c : e.crates){
+            json goods = json::object();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (c.stock[g]){
+                    goods[GoodName(g)] = c.stock[g];
+                }
+            }
+            crates.push_back(json{{"id",c.id},{"plot",c.plot},{"pos",json::array({c.pos.x,c.pos.y})},{"goods",goods},
+                                  {"origin",c.origin},{"by",c.by},{"tick",c.tick}});
+        }
+        economy = json{{"stocks",stocks},{"larders",larders},{"felled",props},{"people",workers},{"fields",fields},
+                       {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
+                       {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead}};
     }
     return json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -252,16 +285,21 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     out.explored = j.value("explored",std::string());
     if (j.contains("economy") && j["economy"].is_object()){
         const json& e = j["economy"];
-        for (const json& st : e.value("stocks",json::array())){
-            std::array<int,GOOD_COUNT> goods{};
-            for (auto it = st["goods"].begin(); it != st["goods"].end(); ++it){
-                int g = GoodByName(it.key());
-                if (g >= 0){
-                    goods[g] = it.value().get<int>();
+        //A save from before camps had larders has none: its camps' families start with an empty one.
+        auto by_building = [&](const char* key, std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>>& list){
+            for (const json& st : e.value(key,json::array())){
+                std::array<int,GOOD_COUNT> goods{};
+                for (auto it = st["goods"].begin(); it != st["goods"].end(); ++it){
+                    int g = GoodByName(it.key());
+                    if (g >= 0){
+                        goods[g] = it.value().get<int>();
+                    }
                 }
+                list.push_back(std::make_pair(st.value("building",0u),goods));
             }
-            out.economy.stocks.push_back(std::make_pair(st.value("building",0u),goods));
-        }
+        };
+        by_building("stocks",out.economy.stocks);
+        by_building("larders",out.economy.larders);
         for (const json& pr : e.value("felled",json::array())){
             out.economy.props.push_back(std::make_pair(pr[0].get<int>(),pr[1].get<int>()));
         }
@@ -308,6 +346,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.health = wk.value("health",(int)NEEDS_HEALTH_FULL);
             k.water = wk.value("water",(int)NEEDS_WATER_FULL);
             k.post = wk.value("post",-1);       //defence_plan.md: nobody was posted before orders
+            k.archery = wk.value("archery",0);  //range_plan.md: nobody had trained before ranges
             if (wk.contains("pack") && wk["pack"].is_object()){
                 for (auto it = wk["pack"].begin(); it != wk["pack"].end(); ++it){
                     int g = GoodByName(it.key());
@@ -337,8 +376,20 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             d.father = dj[7].get<uint32_t>();
             out.economy.dead.push_back(d);
         }
+        //A save from before site costs per good holds the wood alone, as a number.
         for (const json& st : e.value("sites",json::array())){
-            out.economy.sites.push_back(std::make_pair(st[0].get<uint32_t>(),st[1].get<int>()));
+            std::array<int,GOOD_COUNT> goods{};
+            if (st[1].is_number()){
+                goods[GOOD_WOOD] = st[1].get<int>();
+            }else{
+                for (auto it = st[1].begin(); it != st[1].end(); ++it){
+                    int g = GoodByName(it.key());
+                    if (g >= 0){
+                        goods[g] = it.value().get<int>();
+                    }
+                }
+            }
+            out.economy.sites.push_back(std::make_pair(st[0].get<uint32_t>(),goods));
         }
         for (const json& st : e.value("ground_sites",json::array())){
             out.economy.ground_sites.push_back(std::make_pair(st[0].get<int>(),st[1].get<int>()));
@@ -347,6 +398,28 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         for (const json& hh : e.value("heat",json::array())){
             out.economy.heats.push_back(std::make_pair(hh[0].get<uint32_t>(),hh[1].get<int>()));
         }
+        //Absent before crates: none lying.
+        for (const json& cj : e.value("crates",json::array())){
+            EconomyCrate c;
+            c.id = cj.value("id",0u);
+            c.plot = cj.value("plot",-1);
+            if (cj.contains("pos")){
+                c.pos = vec2(cj["pos"][0].get<float>(),cj["pos"][1].get<float>());
+            }
+            if (cj.contains("goods") && cj["goods"].is_object()){
+                for (auto it = cj["goods"].begin(); it != cj["goods"].end(); ++it){
+                    int g = GoodByName(it.key());
+                    if (g >= 0 && it.value().is_number_integer()){
+                        c.stock[g] = it.value().get<int>();
+                    }
+                }
+            }
+            c.origin = cj.value("origin",(int)CRATE_DROPPED);
+            c.by = cj.value("by",0u);
+            c.tick = cj.value("tick",(uint64_t)0);
+            out.economy.crates.push_back(c);
+        }
+        out.economy.next_crate = e.value("next_crate",1u);
         for (const json& f : e.value("fields",json::array())){
             EconomyField fd;
             fd.building = f[0].get<uint32_t>();
@@ -369,6 +442,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         g.plot = gr[0].get<int>();
         g.kind = gr[1].get<int>();
         g.line = (gr.size() >= 3) ? gr[2].get<uint32_t>() : 0;
+        g.owner = (gr.size() >= 4) ? gr[3].get<uint32_t>() : 0;
         out.grounds.push_back(g);
     }
     //An older save's "walkers" - the debug walker, retired 2026-10-07 - are let go unread.

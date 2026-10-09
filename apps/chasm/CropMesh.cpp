@@ -179,6 +179,16 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
         }
         return;
     }
+    /*
+        An archery range's cell (range_plan.md), built: trodden earth, as a lot's. Staked out the same as a field
+        while it is a site (above). Its targets, bales and arrows are instances of their own
+        (ApplicationChasmRange.cpp), not part of this mesh, so the props modelled for them drop in.
+    */
+    uint32_t on = z.field[cell];
+    if (on && on < z.buildings.size() && z.buildings[on].kind == ZONE_KIND_RANGE){
+        MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_PATH);
+        return;
+    }
     MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_EARTH);
 
     //What grows is the crop SOWN on it - the economy's, in the look - or with none, the field's starting

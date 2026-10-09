@@ -35,7 +35,7 @@ proposed, as are the first 8 issues").
 | 5 | BUILD HOUSES | anyone living in the camp (or nowhere) | n IN THE CAMP | the HOUSE tool |
 | 6 | BUILD A STORE | no store placed, once a woodcutter or collector stands | - | the STORE tool |
 | 7 | NOBODY AT THE ... | a workplace standing with a place and nobody in it (the card's "Nobody works here") | - | selects it |
-| 8 | WOODCUTTER: NO LOT TO PILE ON | a hut with no lot beside it (the card's "nowhere to pile wood") | - | selects it |
+| 8 | WOODCUTTER: NO LOT TO PILE ON | a hut with no lot of its own beside it (the card's "nowhere to pile wood"; `yards_plan.md`) | - | selects it |
 | 9 | HOUSE SHUT IN | a house with no door - shut in on every side (`EconomyShutIn`); RED at the very top with anyone living in it, who cannot get out | n INSIDE | selects it |
 | 10 | HOUSE CROWDED | a house standing with more living in it than it holds - a child born into a full house (`lifeline_plan.md`) | n IN ROOM FOR m | selects it |
 
@@ -105,7 +105,8 @@ two clicks, the card's Auto chip and countdown bar, `chasm_select press` naming 
     TO PILE ON at the top, and a click on it selected the hut and took the view from the camp to it;
   - a hint pressed twice: WATER in hand both times;
   - with MCP and ImGui off (as `make ship`), the changed files compile clean.
-- **A hut cannot be PLACED without a lot** (Zones refuses it), so row 8 is for a lot erased afterwards.
+- **A hut could not be PLACED without a lot** (Zones refused it), so row 8 was for a lot erased afterwards. Since
+  `yards_plan.md` a hut is placed bare and row 8 is the usual way to hear it has no lot.
 - **Not checked by a run**: NOBODY AT (every test hut found a worker - it needs more workplaces than free adults),
   and the red tier (a hint under two days).
 - **Rows 9 and 10** (added with births, lifeline_plan.md step 2): in `ChasmIssues`' loop over buildings, with a

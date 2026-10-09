@@ -40,10 +40,19 @@ the limit means it is two pages, or detail that belongs in the plan.
 **Never type a figure.** Write the constant instead. `{ECONOMY_WOODCUTTER_REACH}` shows its value, and
 `{NEEDS_WATER_FULL:days}` shows a tick count as days (`seasons`, `years` and `seconds` work too). A
 constant that already counts something takes its noun with a `#`: `{ECONOMY_HOME_DAYS:#days}` shows
-"2 days", or "1 day" if it is retuned to 1, so a figure followed by a countable noun never reads wrong. Values
+"2 days", or "1 day" if it is retuned to 1, so a figure followed by a countable noun never reads wrong. A
+constant TABLE (`const int crop_days[ZONE_CROP_COUNT] = {...};`) is read too: `{crop_days[ZONE_CROP_BEANS]}`,
+indexed by a number or by a `#define`, two indexes for a two-dimensional table, and `:#days` and the rest
+after it as for any constant. Values
 are filled in at every build, so retuning never leaves a page wrong, and a renamed constant fails the
 build. A figure that lives in a function rather than a `#define` (the food values, the skill pace) is
 described in words, with the function named.
+
+**Figures measured off the map** (a plot's average area, say) are not in the code, so they go on the
+page's `measured:` line, `measured: PLOT = 3.3; CELL = 13.1`, and the page's header shows them as
+measured. `{= ECONOMY_STORE_ROOM * PLOT}` then works out arithmetic on constants, table elements and
+those figures at every build, shown rounded since it is an estimate, with `:#noun` or a unit after it as
+usual. Measure again when the grid's settings change; `cells.md` says how its figures were taken.
 
 **Link everything the page touches**, as `[[Store]]` or `[[Store|stores]]`; a plural finds its page on
 its own. Every page gets a "Linked from" list, so a link only has to be made in one direction. Linking to
@@ -81,6 +90,7 @@ A paragraph or two. Then ## headings, lists, tables, **bold**, *italic*, `code`,
 | `plans` | `file.md > start of a heading`, with `;` between entries. The heading is checked |
 | `code` | `File.cpp: Symbol Symbol`, with `;` between files. Each symbol is checked to be in its file |
 | `tuning` | Constants for the page's tuning table that the text does not mention, separated by commas |
+| `measured` | Figures taken off the map, not the code: `NAME = number`, with `;` between them |
 | `verified` | The date the page was last checked against the code |
 
 ## Statuses

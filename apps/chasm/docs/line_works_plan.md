@@ -46,7 +46,8 @@ first ("Build first"). Line works join that queue - "that fits in better with th
 
 - **4 wood a plot**, flat - one felled tree's logs. (A garden's wall is about 2 a plot, a house storey 8-11.)
 - **Taller than a person**: about one and a half figures high, pointed logs - where a lot's fence is waist
-  high. A GATE is open for now: two tall posts and a crossbeam, no door.
+  high. A GATE is open for now: two tall posts and a crossbeam, no door. (Since 2026-10-09 it has a door the
+  player can shut - `defence_plan.md`, step 3.)
 - **A road's rules for where it may go**: the road's slope limit, never on a building, and it stops at a
   garden's or lot's edge as a road does.
 - **A gate is a mark on the road plot** where a wall and a road cross (`ZoneState::gate`), set when a wall
@@ -372,7 +373,7 @@ of what the save and the recording put by the camp, in their order, so none is i
 **Open (walls):**
 - The lone post of a spare corner can read as a stray; a stub of palisade toward the wall would read
   better, if it bothers.
-- No door in a gate yet (the user's: open for now).
+- ~~No door in a gate yet (the user's: open for now).~~ A door that shuts: `defence_plan.md`, step 3 (2026-10-09).
 
 **Open:**
 - Erasing a planned road loses nothing (no wood), but trees already felled for it stay felled.

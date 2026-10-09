@@ -215,8 +215,8 @@ Each step tested before the next, by the tool and a replay.
    the sums above.
 3. **Gate doors** - BUILT 2026-10-09, below: the state, the look, walkers closed, the card and command. This step depends on none
    of the others and can be built at any point, by another window if one is free.
-4. **Site costs per good**: construction carrying food and water as well as wood. General - stone and
-   the rest will use it.
+4. **Site costs per good** - BUILT 2026-10-09, below: construction carrying food and water as well as wood.
+   General - stone and the rest will use it. No kind takes any other good yet.
 5. **Provisions**: the good, its own bit, the eating rules (posted: nearest of any food; villagers: last
    resort), the store chip, and caretakers making them at the hut. Tested: made only when wanted;
    villagers eat them only with nothing else in reach and never fetch them home.
@@ -233,10 +233,14 @@ Each step tested before the next, by the tool and a replay.
   figures for playtesting to move (`needs_plan.md`, "The numbers are tuning, not rules").
 - **The tower's roof**, and its key on the build grid.
 - **Releasing a tower's guard** by an order: the order would suspend the tower job like any other.
-- **A load on him when he is ordered is LOST** for now (the user, 2026-10-09; `Economy::Order`). It was
-  held on his post and taken to a store after release; to come instead: he DROPS it, left on the ground as a
-  CRATE holding the load - the start of crates lying on the map at random, as They Are Billions' bonus
-  resources. Handed to its own plan (a crates plan, being written up by another window).
+- **Sites take food and water people need** (step 4): a site's water and provisions come out of the same
+  stores and camp people drink and eat from, with nothing kept back. For a tower's 12 water that is a day of
+  a small colony's drinking. A floor below which carriers leave food and water for the people - the fetching
+  home's days, say - is one answer, if it bites in play.
+- **A load on him when he is ordered** - SETTLED: he DROPS it, left on the ground as a CRATE holding the
+  load (`crates_plan.md`, step 1 built 2026-10-09). It was held on his post and taken to a store after
+  release, then lost at the order as the user's stand-in. Crates are also the start of finds lying on the
+  map, as They Are Billions' bonus resources (`crates_plan.md`).
 
 ## As built: step 1, orders (2026-10-09)
 
@@ -256,7 +260,7 @@ the card, the badge, the post outlined), `ApplicationChasmTime.cpp` (POSTED in t
   `TickWorker`), after whatever the zones did that tick, and the staffing follows on that tick too
   (`f_restaff`). A storey he was building is built with what it has (`Build`): its wood is in the site
   already, and nobody else would come to finish it. A load stayed on him (since step 2: it is lost at the
-  order, until crates); his tree, site or store is let go.
+  order; since crates step 1, put down as a crate); his tree, site or store is let go.
   A pressing need under way goes on first. Already posted, he turns for the new post at once.
 - **On the post** he only stands and looks to his needs, every look. `SeekSupply` takes his own house
   as a supply by its distance (at its door) while he is posted, since he is not going home; after the meal,
@@ -308,7 +312,8 @@ name), `ApplicationChasmEconomy.cpp` (the hash, the tool's `pack`), `Application
   his bars stay up while it lasts, and a pressing need sends him off only once it is empty.
 - **Home again** after release, the at-home look puts it back into the larder (`Unpack`) as far as the house
   keeps each good and has room; a camp takes it all. What does not fit stays packed, for the next post.
-- **A load on him at the order is lost** (`Order`), as the user asked, until crates hold what is dropped.
+- **A load on him at the order is lost** (`Order`), as the user asked, until crates hold what is dropped -
+  which they do since crates step 1 (`crates_plan.md`): it is put down as a crate.
 - **The card** says "Pack: 3 water, 2 beans"; the tool gives a worker's `pack` with its `food_days`.
 - **Tested** (seed 12, debug, a builders' hut by the camp; everyone else kept fed by debug edits so the camp's
   supplies stayed his):
@@ -362,6 +367,45 @@ card), `ApplicationChasm.h`.
     overlay; the door drawn shut and swung open.
   - Replay with an order and four door changes in it, 1,061 ticks: two replays equal on every tick, nothing
     changed between ticks.
+
+## As built: step 4, site costs per good (2026-10-09)
+
+Files: `Economy.*` (the costs, `site`, carrying, `Build`, the old-save fallback), `ChasmSave.cpp`,
+`ApplicationChasmEconomy.cpp` (the hash, the tool), `ApplicationChasmSelect.cpp` (the card, what a carrier is
+doing), `ApplicationChasmTime.cpp` (the BUILDING banner).
+
+- **What a site takes**, by good: a building's storey its WOOD by floor area and kind, as before
+  (`EconomyStoreyCost`), and any other good by its kind alone, so much a plot-storey (`StoreyGoods`, all 0 -
+  the tower's water and provisions go here in step 6). A site on coarse cells (a field) so much a cell by kind
+  and good (`EconomyCellCost`; a field its wood) - the archery range's wheat goes there. Gardens, lots and walls
+  stay wood only.
+- **Built when all of it is in**: a storey stands only with all it takes of every good there, the lowest
+  first as before; a field's cells go down when every good is in. What it took is USED UP. Whether a tower's
+  water and provisions become its stock instead is step 6's to decide.
+- **Brought** is `EconomyState::site`, by building id and good; `Economy::SiteNeed`, `SiteBrought` and
+  `SiteLeft` answer by good. Saved by good name (`[id, {"wood": 8, "water": 6}]`); an older save's bare number
+  is read as wood. Hashed whole.
+- **Carrying**: each good a site still lacks is an errand of its own in the one ranking (`FindSiteWork`): by
+  walk, then the placing queue and "build first", as before - on a tie the lower good. A carrier going to fetch
+  names the good in `carry_good` with nothing carried yet, as one fetching for home already did. Goods come
+  from where wood came from: a store, the camp's supplies, a house nobody lives in, and a woodcutter's pile,
+  which only ever holds wood. Not from a collector or a field: their goods reach a store first.
+- **A load of any good is a while's building** at the site (`ECONOMY_BUILD_SECONDS`), as wood's was.
+- **Shown**: a site's card has a bar per good it takes ("Water 34 of 60"); the banner over the build grid adds
+  any good other than wood that some site wants ("WOOD 8/8, WATER 34/60"); a carrier is "fetching water for a
+  site", "carrying food to a site"; `chasm_economy` gives a site's `needed` and `brought` by good (and
+  `wood_needed`/`wood_brought` as before), a carrier on his way his `fetching`.
+- **Tested** (seed 12):
+  - Wood only, the build before and after the change, the same four sites painted as a player: people's states,
+    positions, loads and the sites' wood identical every 250 ticks for 4,000 ticks.
+  - With TEMPORARY costs, taken out again: a store's storey 6 water, a builders' hut's 60 (more than the colony
+    had), a field cell 1 wheat. Water was fetched for the store and carried to it, and the store stood; wheat
+    was fetched for the field, and it was built; the builders' hut had all its wood and 34 water and did not
+    stand. A save and load kept its 34 water and 8 wood. The recording, 2,176 ticks: two replays equal on
+    every tick.
+  - That test also showed the cost of it: **nothing is kept back**. The builders' hut took the camp's water
+    down to none, and "water under a day" came up - carriers take a site's food and water from the same stocks
+    people live on, as they take wood from firewood today. See Open.
 
 ## Later: agreed in the gameplay plan, not planned yet
 

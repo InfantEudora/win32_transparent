@@ -40,5 +40,6 @@ held is lost.
 
 ## Planned
 
-- [proposed] A load that no store will take is dropped on the ground as a crate, instead of being carried
-  around until a store will take it.
+A load that no store will take is to be put down as a [[Crate|crate]], instead of being carried around
+until a store will take it - and a crate is to be a store that villagers only take from. Both are on the
+crate's page.

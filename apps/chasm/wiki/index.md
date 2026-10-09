@@ -9,5 +9,6 @@ links shows how the mechanics hang together. The reasons and the history are in 
 Figures with a dotted underline are read from the code every time the wiki is built. Hover over one to see
 its constant. Links in red are pages that haven't been written yet.
 
-So far the pages cover the woodcutter's loop and the needs and homes around it. The rest gets written
-as features are worked on.
+The pages cover what is built as of 2026-10-09: people and their lifelines, the needs, homes, the goods
+and where they come from, fields and crops, building, roads and walls, posts, and the seasons. New pages
+get written as features are worked on.

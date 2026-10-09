@@ -370,7 +370,7 @@ float ApplicationChasm::DrawBuildBar(float s){
         {"8","STORE",CHASM_TOOL_STORE},{"0","WATER",CHASM_TOOL_WATER},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
         {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
         {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
-        {"H","WINCH",CHASM_TOOL_WINCH},{"3","ERASE",CHASM_TOOL_ERASE}};
+        {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"3","ERASE",CHASM_TOOL_ERASE}};
     const int count = (int)(sizeof(bar) / sizeof(bar[0]));
     const int columns = 3;
     const int rows = (count + columns - 1) / columns;
@@ -440,32 +440,38 @@ float ApplicationChasm::DrawBuildBar(float s){
             overlay->AddText(text.c_str(),vec2(cx,r0.y + 21.0f * s),size,HudFaded(UIColor(236,140,110),alpha),UI_ALIGN_CENTER);
         }
     }
-    //What is being built: the sites, and the wood they have had of what they need.
+    //What is being built: the sites, and what they have had of what they need, by good (defence_plan.md step 4).
     float top = q0.y;
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
     if (e && z && e->world == z->world){
         //One pass over the plots, not one a building: this is every frame.
-        std::vector<int> wood(z->buildings.size(),0);
+        std::vector<std::array<int,GOOD_COUNT>> cost(z->buildings.size(),std::array<int,GOOD_COUNT>{});
         for (size_t v = 0; v < z->building.size(); v++){
             if (z->storeys[v] > z->standing[v]){
-                wood[z->building[v]] += (z->storeys[v] - z->standing[v]) * EconomyStoreyWood(*z->world,*z,(int)v);
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    cost[z->building[v]][g] += (z->storeys[v] - z->standing[v]) * EconomyStoreyCost(*z->world,*z,(int)v,g);
+                }
             }
         }
         //A field still staked out (fields_plan.md): a site by its id, so much a cell.
         for (size_t c = 0; c < z->field.size(); c++){
-            if (z->field[c] && !z->field_built[c] && z->field[c] < wood.size()){
-                wood[z->field[c]] += ECONOMY_FIELD_WOOD_PER_CELL;
+            if (z->field[c] && !z->field_built[c] && z->field[c] < cost.size()){
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    cost[z->field[c]][g] += EconomyCellCost(z->buildings[z->field[c]].kind,g);
+                }
             }
         }
         int sites = 0;
-        int needed = 0;
-        int brought = 0;
-        for (size_t id = 1; id < wood.size(); id++){
-            if (wood[id] > 0){
+        std::array<int,GOOD_COUNT> needed{};
+        std::array<int,GOOD_COUNT> brought{};
+        for (size_t id = 1; id < cost.size(); id++){
+            if (std::any_of(cost[id].begin(),cost[id].end(),[](int x){ return x > 0; })){
                 sites++;
-                needed += wood[id];
-                brought += std::min(wood[id],EconomySiteBrought(*e,(uint32_t)id));
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    needed[g] += cost[id][g];
+                    brought[g] += std::min(cost[id][g],EconomySiteBrought(*e,(uint32_t)id,g));
+                }
             }
         }
         //Gardens and lots still to build count as a site a plot (Economy.h, CONSTRUCTION); a wall still to
@@ -481,14 +487,21 @@ float ApplicationChasm::DrawBuildBar(float s){
                     wall_lines.push_back(z->line[v]);
                     sites++;
                 }
-                needed += need;
-                brought += std::min(need,EconomyGroundBrought(*e,(int)v));
+                needed[GOOD_WOOD] += need;
+                brought[GOOD_WOOD] += std::min(need,EconomyGroundBrought(*e,(int)v));
             }
         }
         if (sites > 0){
-            //Over the grid, at its right edge.
-            char buf2[64];
-            snprintf(buf2,sizeof(buf2),"BUILDING %i  -  WOOD %i/%i",sites,brought,needed);
+            //Over the grid, at its right edge: wood always, any other good while some site wants it.
+            char buf2[160];
+            int at = snprintf(buf2,sizeof(buf2),"BUILDING %i  -  WOOD %i/%i",sites,brought[GOOD_WOOD],needed[GOOD_WOOD]);
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (g != GOOD_WOOD && needed[g] > 0 && at > 0 && at < (int)sizeof(buf2)){
+                    std::string name = GoodName(g);
+                    std::transform(name.begin(),name.end(),name.begin(),::toupper);
+                    at += snprintf(buf2 + at,sizeof(buf2) - at,", %s %i/%i",name.c_str(),brought[g],needed[g]);
+                }
+            }
             vec2 m = overlay->MeasureText(buf2,size);
             const float side = 14.0f * s;
             vec2 r1(q1.x,q0.y - 6.0f * s);
@@ -520,9 +533,10 @@ float ApplicationChasm::DrawJobsOverview(float s){
     EconomyJobCounts(*e,*z,counts,&jobless);
     struct Row{ const char* name; int working; int places; bool f_places; };
     std::vector<Row> rows;
-    static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER};
-    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS"};
-    for (int i = 0; i < 4; i++){
+    static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER,
+                                WORKER_JOB_ARCHER};
+    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","ARCHERS"};
+    for (int i = 0; i < (int)(sizeof(shown) / sizeof(shown[0])); i++){
         const EconomyJobCount& c = counts[shown[i]];
         if (c.places > 0 || c.working > 0){
             rows.push_back(Row{names[i],c.working,c.places,true});

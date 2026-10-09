@@ -1,0 +1,39 @@
+---
+name: chasm-range
+description: "chasm archery range (docs/range_plan.md) - ZONE_KIND_RANGE on coarse cells like a field, full-time WORKER_JOB_ARCHER trainees, per-person archery; BUILT 2026-10-09"
+metadata:
+  node_type: memory
+  type: project
+  originSessionId: 962d00b9-0f7e-485d-b7ba-0758261e2ced
+  modified: 2026-10-09T15:42:33.940Z
+---
+
+Built 2026-10-09 with the user's agreement (docs/range_plan.md).
+
+**What it is:**
+- ZONE_KIND_RANGE (10), painted on coarse cells by ZONE_OP_RANGE_PAINT. It shares ZoneState::field and the
+  field-site machinery.
+- ZoneKindOnCells(kind) is the "lives on cells" test. A plain `kind == ZONE_KIND_FIELD` now means crop-specific
+  only.
+- Cost is 3 wood + 2 wheat a cell, via EconomyCellCost (defence step 4's per-good sites).
+
+**The user's three decisions:**
+- full-time trainees first (one job a person);
+- wheat in the cost once sites took goods;
+- training all year, snow included.
+
+**Trainees:**
+- One place per built cell, filled by precision (WORKER_JOB_ARCHER 4).
+- States WORKER_TO_RANGE 25 / WORKER_TRAINING 26; a 40 s stint, then home.
+- EconomyWorker::archery (0..ARCHERY_FULL) grows only while training, capped at precision × 10%. An average
+  trainee caps in about 9 days (measured).
+
+**The look:**
+- Every range shoots NORTH (ZoneRangeCellAt), so the targets face the camera.
+- Props `range_target` / `hay_bale` / `arrow` are in chasm_props.glb, added with blender_chasm_props.py --add.
+  ApplicationChasmRange.cpp draws them as instance sets, with stand-ins if the GLB lacks a prop.
+
+**Why:** archers are the first unit; archery is groundwork for the guard tower (defence step 5, staff by
+archery then precision) and the zombies.
+**How to apply:** a trainee's cell is not stored (store/site/prop mean other things) - find it from his
+position. The later "share of time" step should only change how many ticks he trains. See [[chasm-game-plan]].

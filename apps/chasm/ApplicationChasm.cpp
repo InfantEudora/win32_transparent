@@ -272,6 +272,7 @@ void ApplicationChasm::SetupInput(){
     view_key('C',INPUT_CHASM_TOOL_CAMP);
     view_key('J',INPUT_CHASM_TOOL_BRIDGE);
     view_key('G',INPUT_CHASM_TOOL_BUILDERS);
+    view_key('R',INPUT_CHASM_TOOL_RANGE);
     view_key('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     view_key(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -601,7 +602,24 @@ void ApplicationChasm::PublishZones(){
     pick_version++;
 }
 
-void ApplicationChasm::SubmitZone(int op, int index, int kind, uint32_t stroke){
+uint32_t ApplicationChasm::PaintOwner(int tool){
+    if ((tool != CHASM_TOOL_GARDEN && tool != CHASM_TOOL_LOT) || !PlayMode()){
+        return 0;
+    }
+    PlayPick sel;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        sel = play_selected;
+    }
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (sel.kind != PLAY_PICK_BUILDING || !z || sel.id >= z->buildings.size() || z->buildings[sel.id].size <= 0){
+        return 0;
+    }
+    //A house or a hut: named, so a garden for a hut is refused with a reason rather than given to whatever is near.
+    return ZoneKindHasYard(z->buildings[sel.id].kind) ? sel.id : 0;
+}
+
+void ApplicationChasm::SubmitZone(int op, int index, int kind, uint32_t stroke, uint32_t owner){
     if (index < 0){
         return;
     }
@@ -615,8 +633,9 @@ void ApplicationChasm::SubmitZone(int op, int index, int kind, uint32_t stroke){
     cmd.value[1] = (float)kind;
     cmd.value[2] = (float)stroke;     //exact: strokes stay far below a float's 2^24
     //A play-mode command is a PLAY command: held to the clouds, and what it builds is a construction
-    //site (construction_plan.md). The mode is read here, by the view, and travels in the command.
-    cmd.value[3] = PlayMode() ? 1.0f : 0.0f;
+    //site (construction_plan.md). The mode is read here, by the view, and travels in the command - with
+    //the yard's owner a garden or lot is painted for (Zones.h, ZoneCommandValue3).
+    cmd.value[3] = ZoneCommandValue3(PlayMode(),owner);
     main_scene->SubmitCommand(cmd);
 }
 
@@ -630,14 +649,15 @@ void ApplicationChasm::RegisterCommandHandlers(){
         [this](const SimCommand& cmd) -> objectid_t {
             EnsureZonesWorld();
             /*
-                A PLAY command (value[3], play_mode_plan.md) is held to the clouds: none on ground not
-                yet explored. Every debug tool's command, and every recording made before play mode,
-                has 0 there, so they paint as they always did.
+                A PLAY command (value[3]'s bit 0, play_mode_plan.md) is held to the clouds: none on ground
+                not yet explored. Every debug tool's command, and every recording made before play mode,
+                has 0 there, so they paint as they always did. Above that bit, a yard's owner (yards_plan.md).
             */
+            bool f_play = ZoneCommandPlay(cmd.value[3]);
             std::shared_ptr<const ChasmWorld> zw = zones.GetWorld();
-            bool f_clouded = cmd.value[3] != 0.0f && zw && !ZoneCommandExplored(*zw,(int)cmd.value[0],(int)cmd.subtype);
+            bool f_clouded = f_play && zw && !ZoneCommandExplored(*zw,(int)cmd.value[0],(int)cmd.subtype);
             //A bridge has two ends, and neither may be under the clouds.
-            if (cmd.value[3] != 0.0f && zw && (int)cmd.value[0] == ZONE_OP_BRIDGE &&
+            if (f_play && zw && (int)cmd.value[0] == ZONE_OP_BRIDGE &&
                 !ZoneCommandExplored(*zw,ZONE_OP_BRIDGE,(int)cmd.value[1])){
                 f_clouded = true;
             }
@@ -651,7 +671,7 @@ void ApplicationChasm::RegisterCommandHandlers(){
                 return OBJECTID_INVALID;
             }
             bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype,(int)cmd.value[1],(uint32_t)cmd.value[2],
-                                         cmd.value[3] != 0.0f);
+                                         f_play,ZoneCommandOwner(cmd.value[3]));
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 zone_last_refusal = zones.last_refusal;
@@ -705,6 +725,7 @@ ChasmSave ApplicationChasm::MakeSave(){
                 g.kind = (int)z->ground[v] | (!z->ground_built[v] ? ZONE_GROUND_SAVED_SITE : 0)
                          | (z->gate[v] ? ZONE_GROUND_SAVED_GATE : 0) | (ZoneGateShut(*z,(int)v) ? ZONE_GROUND_SAVED_SHUT : 0);
                 g.line = z->line[v];
+                g.owner = ZoneGroundOwner(*z,(int)v);      //whose yard (yards_plan.md), 0 nobody's
                 s.grounds.push_back(g);
             }
         }
@@ -795,6 +816,12 @@ void ApplicationChasm::HashSimState(StateHash& h){
     //Roads' and walls' lines - their place in the queue - and walls' gates (line_works_plan.md).
     h.Bytes(z.line.data(),z.line.size() * sizeof(uint32_t));
     h.Bytes(z.gate.data(),z.gate.size());
+    //Yards (yards_plan.md): each owned plot with its owner - only those, so zones with no yard hash as before.
+    for (size_t v = 0; v < z.ground_owner.size(); v++){
+        if (z.ground_owner[v]){
+            h.Add(((uint64_t)v << 32) | z.ground_owner[v]);
+        }
+    }
     //Which of a field's cells are built (fields_plan.md).
     h.Bytes(z.field_built.data(),z.field_built.size());
     //The buildings (docs/buildings_plan.md): which each plot is part of, the table, the drag in progress.
@@ -859,7 +886,7 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
     }
     bool f_shift = input->IsKeyDown(INPUT_SHIFT);
     int tool = paint_tool;
-    int index = (tool == CHASM_TOOL_FIELD) ? hover.coarse_quad : hover.plot;
+    int index = ChasmCellTool(tool) ? hover.coarse_quad : hover.plot;
     if (!f_clicked && index == paint_last_index){
         return;     //still on what the drag already painted
     }
@@ -883,6 +910,8 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         ground = ToolKind(tool);
     }else if (tool == CHASM_TOOL_FIELD){
         op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_FIELD_PAINT;
+    }else if (tool == CHASM_TOOL_RANGE){
+        op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_RANGE_PAINT;      //erased as a field is (range_plan.md)
     }else if (tool == CHASM_TOOL_ERASE){
         std::shared_ptr<const ZoneState> z = GetZones();
         if (z && !z->storeys.empty() && z->storeys[hover.plot]){
@@ -895,7 +924,8 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         }
     }
     if (op != ZONE_OP_NONE){
-        SubmitZone(op,index,ground,paint_stroke);
+        //A garden or lot painted with a house or hut selected is its yard (yards_plan.md).
+        SubmitZone(op,index,ground,paint_stroke,(op == ZONE_OP_GROUND_PAINT) ? PaintOwner(tool) : 0);
     }
 }
 
@@ -1007,6 +1037,8 @@ void ApplicationChasm::LoadProps(){
     std::vector<std::string> names(prop_asset_names,prop_asset_names + PROP_KIND_COUNT);
     names.insert(names.end(),person_asset_names,person_asset_names + PERSON_FIGURES);
     names.insert(names.end(),forest_bare_names,forest_bare_names + FOREST_OAK_KINDS);
+    names.push_back(CHASM_CRATE_ASSET);
+    names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
     GetAssetsFromGLTF(names);
     int loaded = 0;
     for (int k = 0; k < PROP_KIND_COUNT; k++){
@@ -1022,6 +1054,16 @@ void ApplicationChasm::LoadProps(){
         }
     }
     debug->Info("Props: %i of %i kinds loaded\n",loaded,PROP_KIND_COUNT);
+    //The crate (crates_plan.md) is in the same file, though no forest grows it.
+    Mesh* crate = assetmanager->GetMeshFromAsset(CHASM_CRATE_ASSET);
+    f_crate_loaded = (crate != NULL);
+    if (crate){
+        UseGroundShader(crate);
+    }else{
+        debug->Warn("'%s' not in chasm_props.glb - crates will not be drawn\n",CHASM_CRATE_ASSET);
+    }
+    //The archery range's props (range_plan.md): the GLB's where it has them, stand-ins where not.
+    BuildRangeScene();
     BuildSeasonLooks();
     //The people's figures are in the same file (ApplicationChasmWorkersView.cpp), so they are made here.
     BuildWorkerScene();
@@ -1328,8 +1370,14 @@ json ApplicationChasm::BuildingJson(const ChasmWorld& w, const ZoneState& z, uin
         j["crop"] = ZoneCropName(b.crop);           //its starting crop, "none" until chosen
         j["next"] = ZoneCropName(b.next_crop);      //a crop, or "auto"
         j["site_cells"] = b.site_cells;
+    }else if (b.kind == ZONE_KIND_RANGE){
+        j["site_cells"] = b.site_cells;             //range_plan.md: cells still a site
     }else{
         j["storeys"] = b.storeys;
+    }
+    //Its yard (yards_plan.md): the gardens and lots it owns, by kind.
+    if (ZoneKindHasYard(b.kind)){
+        j["yard"] = json{{"gardens",ZoneYardPlots(z,id,ZONE_GROUND_GARDEN)},{"lots",ZoneYardPlots(z,id,ZONE_GROUND_LOT)}};
     }
     j["economy"] = EconomyBuildingJson(id);
     return j;
@@ -1352,6 +1400,8 @@ void ApplicationChasm::RenderBuildingInfo(const ChasmWorld& w, const ZoneState& 
         if (b.kind == ZONE_KIND_FIELD){
             ImGui::Text("under the cursor: field %u, %i cells, %.0f units, %s",b.id,b.size,b.floor_area,
                         ZoneCropName(b.crop));
+        }else if (b.kind == ZONE_KIND_RANGE){
+            ImGui::Text("under the cursor: range %u, %i cells, %.0f units",b.id,b.size,b.floor_area);
         }else{
             ImGui::Text("under the cursor: %s %u, %i plots, %i storeys in all, %.0f units of floor",
                         ZoneKindName(b.kind),b.id,b.size,b.storeys,b.floor_area);
@@ -1361,6 +1411,7 @@ void ApplicationChasm::RenderBuildingInfo(const ChasmWorld& w, const ZoneState& 
         ImGui::TextDisabled("under the cursor: no building");
     }
     RenderSelectedStore(selected.f_hit ? selected.plot : -1);
+    RenderSelectedCrate(selected.f_hit ? selected.plot : -1);
     uint32_t field = selected.f_hit ? z.field[selected.coarse_quad] : 0;
     ZoneBuildingInfo f = ZoneBuildingFigures(w,z,field);
     if (f.id){
@@ -1536,7 +1587,7 @@ void ApplicationChasm::UpdatePickView(){
             bool f_ok = (!z.storeys.empty() && z.storeys[hover.plot]) ||
                         ZoneCanBuild(*w,z,hover.plot,ToolKind(tool),0,NULL);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
-        }else if (tool == CHASM_TOOL_FIELD){
+        }else if (ChasmCellTool(tool)){
             bool f_ok = (!z.field.empty() && z.field[hover.coarse_quad]) || ZoneCanField(*w,z,hover.coarse_quad,NULL);
             coarse_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || ChasmLineTool(tool)){
@@ -1998,15 +2049,17 @@ void ApplicationChasm::UpdateView(void){
     const bool f_debug_keys = !PlayMode();
     //The tool keys toggle: the active tool's key again puts it down.
     if (input->IsInputLive()){
-        const int keys[14] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+        const int keys[15] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
                               INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
-                              INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS,INPUT_CHASM_TOOL_WALL};
-        const int tools[14] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                              INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS,INPUT_CHASM_TOOL_WALL,
+                              INPUT_CHASM_TOOL_RANGE};
+        const int tools[15] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
                                CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
-                               CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL};
+                               CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
+                               CHASM_TOOL_RANGE};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
             if (input->WasKeyPressed(keys[i])){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
@@ -2056,6 +2109,8 @@ void ApplicationChasm::PreRender(void){
     UpdateMist();
     UploadWorkers();
     UploadPiles();
+    UploadCrates();
+    UploadRange();
     UploadClouds();
     UploadHearth();
     UpdatePickView();
@@ -2601,6 +2656,8 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Road (6)##tool",tool == CHASM_TOOL_ROAD)) tool = CHASM_TOOL_ROAD;
         ImGui::SameLine();
         if (ImGui::RadioButton("Wall (7)##tool",tool == CHASM_TOOL_WALL)) tool = CHASM_TOOL_WALL;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Range (R)##tool",tool == CHASM_TOOL_RANGE)) tool = CHASM_TOOL_RANGE;
         if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Woodcutter (9)##tool",tool == CHASM_TOOL_WOODCUTTER)) tool = CHASM_TOOL_WOODCUTTER;
@@ -3055,13 +3112,16 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
                                                   "build_erase","field_crop","field_next","field_land","field_priority",
-                                                  "gate_shut"}}}},
+                                                  "gate_shut","range_paint"}}}},
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open"}}},
                 {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
+                {"owner",{{"type","integer"},{"description","for ground_paint of a garden or lot: the house or woodcutter whose "
+                                                            "yard it is - it must touch it or its yard (docs/yards_plan.md); 0 "
+                                                            "(default) whatever it touches"}}},
                 {"ground",{{"type","string"},{"enum",{"garden","lot","road","wall"}},
                            {"description","for ground_paint; for ground_erase, wall takes a wall off (or a gate off its road) and nothing else"}}},
                 {"x",{{"type","number"}}},
@@ -3100,7 +3160,7 @@ void ApplicationChasm::RegisterMCPTools(){
             SimCommand cmd;
             cmd.type = CHASM_CMD_ZONE;
             cmd.flags = SIM_CMD_FLAG_RECORD;     //a tool painting is a player too - see SubmitZone
-            cmd.value[3] = args.value("play",false) ? 1.0f : 0.0f;
+            cmd.value[3] = ZoneCommandValue3(args.value("play",false),(op == ZONE_OP_GROUND_PAINT) ? args.value("owner",0u) : 0u);
             cmd.subtype = (uint32_t)index;
             cmd.value[0] = (float)op;
             std::string ground_name = args.value("ground",std::string("garden"));
@@ -3152,7 +3212,8 @@ void ApplicationChasm::RegisterMCPTools(){
                                         {"water_collectors",st.buildings[ZONE_KIND_WATER]},
                                         {"winches",st.buildings[ZONE_KIND_WINCH]},
                                         {"builders_huts",st.buildings[ZONE_KIND_BUILDERS]},
-                                        {"fields",st.buildings[ZONE_KIND_FIELD]},{"built_plots",st.built_plots},
+                                        {"fields",st.buildings[ZONE_KIND_FIELD]},{"ranges",st.buildings[ZONE_KIND_RANGE]},
+                                        {"built_plots",st.built_plots},
                                         {"storeys",st.storeys},{"field_cells",st.field_cells},
                                         {"floor_area",st.floor_area[ZONE_KIND_HOUSE]},{"field_area",st.floor_area[ZONE_KIND_FIELD]}};
                 if (!f_field){
@@ -3160,6 +3221,7 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["standing_here"] = z->standing[index];
                     result["ground_here"] = ZoneGroundName(z->ground[index]);
                     result["ground_built_here"] = (bool)z->ground_built[index];
+                    result["ground_owner_here"] = ZoneGroundOwner(*z,index);    //whose yard, 0 nobody's (yards_plan.md)
                     result["line_here"] = z->line[index];
                     result["gate_here"] = !z->gate[index] ? "none" : ZoneGateShut(*z,index) ? "shut" : "open";
                     result["building_here"] = BuildingJson(*w,*z,z->building[index]);

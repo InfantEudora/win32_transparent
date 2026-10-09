@@ -162,7 +162,7 @@ void ApplicationChasm::UpdateGhost(){
     }
     const ChasmWorld& cw = *w;
     const ZoneState& z = *zs;
-    bool f_field = (tool == CHASM_TOOL_FIELD);
+    bool f_field = ChasmCellTool(tool);     //a field, or a range painted like one (range_plan.md)
     std::shared_ptr<const Exploration> ex = GetExploration();
     GhostKey key;
     key.world = w.get();
@@ -181,6 +181,7 @@ void ApplicationChasm::UpdateGhost(){
     }
     key.line_version = f_line ? line_at : 0;
     key.bridge_from = from;
+    key.owner = PaintOwner(tool);       //a yard being painted: whose (yards_plan.md)
     if (key == ghost_built){
         return;
     }
@@ -249,9 +250,12 @@ void ApplicationChasm::UpdateGhost(){
     }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || ChasmLineTool(tool)){
         int ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : (tool == CHASM_TOOL_LOT) ? ZONE_GROUND_LOT
                                                                      : ChasmLineGround(tool);
-        //A wall over a road is allowed: it gates it (Zones.h, WALLS).
+        //A wall over a road is allowed: it gates it (Zones.h, WALLS). A yard painted for a selected building must
+        //touch it, and not be another's (yards_plan.md) - over its own ground too, which it would take.
         f_ok = z.ground[plot] == ground || (ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)
                || ZoneCanGround(cw,z,plot,NULL,ground);
+        bool f_own = z.ground[plot] == ground && ZoneGroundOwner(z,plot) == key.owner;
+        f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL));
         GhostPlotTile(cw,plot,verts);
     }else if (f_field){
         f_ok = z.field[hover.coarse_quad] || ZoneCanField(cw,z,hover.coarse_quad,NULL);

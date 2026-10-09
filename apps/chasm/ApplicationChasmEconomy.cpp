@@ -75,6 +75,12 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     for (const auto& s : e.stock){
         h.Bytes(s.data(),sizeof(int) * GOOD_COUNT);
     }
+    //Camps' larders (Economy.h, STORES): by building id, like the stocks.
+    n = (uint32_t)e.larder.size();
+    h.Bytes(&n,sizeof(n));
+    for (const auto& s : e.larder){
+        h.Bytes(s.data(),sizeof(int) * GOOD_COUNT);
+    }
     h.Bytes(e.prop_state.data(),e.prop_state.size());
     n = (uint32_t)e.workers.size();
     h.Bytes(&n,sizeof(n));
@@ -99,6 +105,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         int32_t needs[2] = {k.health,k.water};
         h.Bytes(needs,sizeof(needs));
         h.Bytes(k.pack.data(),sizeof(int) * GOOD_COUNT);     //his pack (defence_plan.md)
+        //His archery (range_plan.md) - only once he has some, so a colony nobody trains in hashes as before.
+        if (k.archery){
+            h.Add(((uint64_t)k.id << 32) | (uint32_t)k.archery);
+        }
     }
     //The dead (needs_plan.md): who, when, of what.
     n = (uint32_t)e.dead.size();
@@ -113,12 +123,23 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     }
     n = (uint32_t)e.site.size();
     h.Bytes(&n,sizeof(n));
-    h.Bytes(e.site.data(),e.site.size() * sizeof(int));
+    h.Bytes(e.site.data(),e.site.size() * sizeof(e.site[0]));     //by good (defence_plan.md step 4)
     h.Bytes(e.ground_site.data(),e.ground_site.size() * sizeof(int));
     //Every home's fire since dawn (needs_plan.md, step 3).
     n = (uint32_t)e.heat.size();
     h.Bytes(&n,sizeof(n));
     h.Bytes(e.heat.data(),e.heat.size());
+    //The crates (crates_plan.md): where each lies and what it holds, and who put it down when.
+    n = (uint32_t)e.crates.size();
+    h.Bytes(&n,sizeof(n));
+    h.Bytes(&e.next_crate,sizeof(e.next_crate));
+    for (const EconomyCrate& c : e.crates){
+        int32_t head[4] = {(int32_t)c.id,c.plot,c.origin,(int32_t)c.by};
+        h.Bytes(head,sizeof(head));
+        h.Bytes(&c.tick,sizeof(c.tick));
+        h.Bytes(&c.pos,sizeof(c.pos));
+        h.Bytes(c.stock.data(),sizeof(int) * GOOD_COUNT);
+    }
 }
 
 /*
@@ -127,7 +148,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
       - a person's health and water set - the debug panel's villager list and the tool's set_needs, for
         putting a colony on the edge without waiting days for it;
       - an ORDER (defence_plan.md): a person sent to stand on a plot - his post, which is then his job - or
-        released from it. A refused one says why on the play overlay, as a refused placement does.
+        released from it. A refused one says why on the play overlay, as a refused placement does;
+      - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
     main_scene->RegisterCommandHandler(CHASM_CMD_NEEDS,
@@ -153,6 +175,31 @@ void ApplicationChasm::RegisterEconomyCommands(){
             order_commands_done++;
             return OBJECTID_INVALID;
         });
+    main_scene->RegisterCommandHandler(CHASM_CMD_CRATE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.SpawnCrate((int)cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],zones.State(),&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    crate_last_refusal = why;
+                }
+                crate_refusals++;
+            }
+            crate_commands_done++;
+            return OBJECTID_INVALID;
+        });
+}
+
+void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_CRATE;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = (uint32_t)std::max(0,plot);
+    cmd.value[0] = (float)good;
+    cmd.value[1] = (float)amount;   //well inside a float's exact integers
+    main_scene->SubmitCommand(cmd);
 }
 
 void ApplicationChasm::SubmitOrder(uint32_t person, int plot){
@@ -197,6 +244,17 @@ json StockJson(const EconomyState& e, uint32_t id){
     return out;
 }
 
+//A stock of its own, a crate's: the goods it has, by name.
+json StockJson(const std::array<int,GOOD_COUNT>& s){
+    json out = json::object();
+    for (int g = 0; g < GOOD_COUNT; g++){
+        if (s[g]){
+            out[GoodName(g)] = s[g];
+        }
+    }
+    return out;
+}
+
 json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     json skills = json::object();
     for (int sk = 0; sk < SKILL_COUNT; sk++){
@@ -234,6 +292,8 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     }
     if (k.carry > 0){
         j["carrying"] = json{{GoodName(k.carry_good),k.carry}};
+    }else if ((k.state == WORKER_TO_FETCH || k.state == WORKER_FETCHING) && k.carry_good >= 0){
+        j["fetching"] = GoodName(k.carry_good);     //for a site: the good he is on his way for
     }
     if (k.prop >= 0){
         j["tree"] = k.prop;
@@ -265,6 +325,11 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
         pack["food_days"] = std::round(EconomyPackFood(k) * 100.0 / CALENDAR_DAY_TICKS) / 100.0;
         j["pack"] = pack;
     }
+    //His archery (range_plan.md), in percent, and the most his precision lets him reach.
+    if (k.archery || k.job == WORKER_JOB_ARCHER){
+        j["archery"] = json{{"percent",std::round(k.archery * 10000.0 / ARCHERY_FULL) / 100.0},
+                            {"cap",std::round(EconomyArcheryCap(k) * 100.0 / ARCHERY_FULL)}};
+    }
     return j;
 }
 
@@ -282,9 +347,9 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     if (EconomyShutIn(*e,id)){
         j["shut_in"] = true;
     }
-    //A construction site: the wood its planned storeys take, what has been brought, who carries for it.
-    int site_wood = EconomySiteWood(*z->world,*z,id);
-    if (site_wood > 0){
+    //A construction site: what its planned storeys take of each good, what has been brought, who carries for it.
+    std::array<int,GOOD_COUNT> site_cost = EconomySiteCost(*z->world,*z,id);
+    if (std::any_of(site_cost.begin(),site_cost.end(),[](int x){ return x > 0; })){
         ZoneBuildingInfo info = ZoneBuildingFigures(*z->world,*z,id);
         json carriers = json::array();
         for (const EconomyWorker& k : e->workers){
@@ -292,8 +357,17 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
                 carriers.push_back(EconomyPersonName(k));
             }
         }
+        json needed = json::object();
+        json brought = json::object();
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (site_cost[g] > 0 || EconomySiteBrought(*e,id,g) > 0){
+                needed[GoodName(g)] = site_cost[g];
+                brought[GoodName(g)] = EconomySiteBrought(*e,id,g);
+            }
+        }
         j["construction"] = json{{"storeys_to_build",info.site_storeys},{"storeys_standing",info.storeys},
-                                 {"wood_needed",site_wood},{"wood_brought",EconomySiteBrought(*e,id)},
+                                 {"wood_needed",site_cost[GOOD_WOOD]},{"wood_brought",EconomySiteBrought(*e,id,GOOD_WOOD)},
+                                 {"needed",needed},{"brought",brought},
                                  {"carriers",carriers},{"priority",info.f_priority}};
     }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
@@ -325,8 +399,19 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         j["land"] = land;
         j["land_places"] = (id < e->places.size()) ? e->places[id] : 0;
     }
-    //A house's own store of food, water and firewood, which its family eats and drinks from (needs_plan.md).
-    if (z->buildings[id].kind == ZONE_KIND_HOUSE){
+    //A house's own store of food, water and firewood, which its family eats and drinks from (needs_plan.md) - a
+    //camp's is its LARDER, beside its supplies (`stock`) (Economy.h, STORES).
+    if (z->buildings[id].kind == ZONE_KIND_CAMP){
+        json larder = json::object();
+        for (int g = 0; g < GOOD_COUNT; g++){
+            int n = (id < e->larder.size()) ? e->larder[id][g] : 0;
+            if (n){
+                larder[GoodName(g)] = n;
+            }
+        }
+        j["larder"] = larder;
+    }
+    if (z->buildings[id].kind == ZONE_KIND_HOUSE || z->buildings[id].kind == ZONE_KIND_CAMP){
         j["keeps"] = GoodsJson((id < e->keeps.size()) ? e->keeps[id] : 0);
         j["room"] = (id < e->room.size()) ? e->room[id] : 0;
         j["woodshed"] = (id < e->woodshed.size()) ? e->woodshed[id] : 0;
@@ -369,8 +454,8 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
             stock += buf;
         }
     }
-    int site_wood = EconomySiteWood(*z->world,*z,id);
-    if (site_wood > 0){
+    std::array<int,GOOD_COUNT> site_cost = EconomySiteCost(*z->world,*z,id);
+    if (std::any_of(site_cost.begin(),site_cost.end(),[](int x){ return x > 0; })){
         ZoneBuildingInfo info = ZoneBuildingFigures(*z->world,*z,id);
         int carrying = 0;
         for (const EconomyWorker& k : e->workers){
@@ -378,7 +463,12 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         }
         ImGui::TextColored(ImVec4(0.95f,0.8f,0.4f,1.0f),"  under construction: %i storeys to build (%i standing)",
                            info.site_storeys,info.storeys);
-        ImGui::Text("  wood %i of %i brought, %i carrying for it",EconomySiteBrought(*e,id),site_wood,carrying);
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (site_cost[g] > 0){
+                ImGui::Text("  %s %i of %i brought",GoodName(g),EconomySiteBrought(*e,id,g),site_cost[g]);
+            }
+        }
+        ImGui::Text("  %i carrying for it",carrying);
         //The player's "build this first" - a recorded zone command on any plot of it, or a field's on any
         //cell (construction_plan.md).
         bool f_first = info.f_priority;
@@ -496,6 +586,53 @@ void ApplicationChasm::RenderSelectedStore(int plot){
     }
     if (f_attached){
         ImGui::EndDisabled();
+    }
+}
+
+/*
+    The selected plot's CRATE (crates_plan.md): what lies there, and a debug crate to put down - a good and how
+    much, a recorded CHASM_CMD_CRATE, into the crate already there if there is one. Refused off open ground.
+*/
+void ApplicationChasm::RenderSelectedCrate(int plot){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!e || !z || e->world != z->world || plot < 0 || plot >= (int)z->building.size()){
+        return;
+    }
+    const EconomyCrate* c = EconomyCrateOn(*e,plot);
+    if (c){
+        std::string goods;
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (c->stock[g]){
+                char buf[32];
+                snprintf(buf,sizeof(buf),"%s%s %i",goods.empty() ? "" : ", ",GoodName(g),c->stock[g]);
+                goods += buf;
+            }
+        }
+        ImGui::Text("crate %u here (%s): %s",c->id,EconomyCrateOriginName(c->origin),goods.c_str());
+    }
+    const char* names[GOOD_COUNT];
+    for (int g = 0; g < GOOD_COUNT; g++){
+        names[g] = GoodName(g);
+    }
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::Combo("##crate_good",&crate_edit_good,names,GOOD_COUNT);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::InputInt("##crate_amount",&crate_edit_amount);
+    crate_edit_amount = std::max(1,crate_edit_amount);
+    ImGui::SameLine();
+    bool f_open = EconomyCrateGround(*z->world,*z,plot,z->world->grid->fine.pos[plot]);
+    if (!f_open){
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::SmallButton(c ? "Add to the crate" : "Put a crate here")){
+        SubmitCrate(plot,crate_edit_good,crate_edit_amount);
+    }
+    if (!f_open){
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("(not open ground)");
     }
 }
 
@@ -620,7 +757,12 @@ void ApplicationChasm::RegisterEconomyTools(){
         "`plot`) and stands there - his post, now his job (docs/defence_plan.md); op release: he leaves it "
         "and goes back to his work. Both RECORDED (CHASM_CMD_ORDER), the right click's and the card's; "
         "`refusal` says why one was refused (a child, nowhere open to stand, no way there). A worker's "
-        "`post` shows where and whether he is there. include_screenshot as elsewhere.",
+        "`post` shows where and whether he is there; a load he carried is put down as a crate. op crate: a "
+        "crate put down at x,z (or `plot`) holding `contents` (goods by name and amount, e.g. {\"wood\":8,"
+        "\"beans\":4}) - RECORDED debug edits (CHASM_CMD_CRATE), a good at a time, into the crate already "
+        "there if one is; refused off open ground (docs/crates_plan.md). `crates` lists every crate lying "
+        "about: id, plot, x, z, goods, origin (dropped or found), who put it down and the day. "
+        "include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
@@ -629,6 +771,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"z",{{"type","number"}}},
                 {"plot",{{"type","integer"}}},
                 {"goods",{{"type","array"},{"items",{{"type","string"}}}}},
+                {"contents",{{"type","object"},{"description","crate: goods by name and amount"}}},
                 {"on",{{"type","boolean"}}},
                 {"person",{{"type","integer"},{"description","set_needs, order, release: the person's id"}}},
                 {"health_days",{{"type","number"}}},
@@ -728,6 +871,47 @@ void ApplicationChasm::RegisterEconomyTools(){
                 if (order_refusals.load() != refused){
                     std::lock_guard<std::mutex> lock(grid_mutex);
                     refusal = order_last_refusal;
+                }
+                result["refusal"] = refusal;
+                result["plot"] = plot;
+            }else if (op == "crate"){
+                int plot = args.value("plot",-1);
+                if (plot < 0 && args.contains("x") && args.contains("z")){
+                    GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
+                    plot = p.f_hit ? p.plot : -1;
+                }
+                if (plot < 0){
+                    return json{{"error","crate: no plot at x,z (or give `plot`)"}};
+                }
+                if (!args.contains("contents") || !args["contents"].is_object() || args["contents"].empty()){
+                    return json{{"error","crate: give `contents`, goods by name and amount"}};
+                }
+                //A good a command, in the goods' own order, so a replay puts them in the same way; the first refusal stops it.
+                std::array<int,GOOD_COUNT> amounts{};
+                for (auto it = args["contents"].begin(); it != args["contents"].end(); ++it){
+                    int good = GoodByName(it.key());
+                    if (good < 0 || !it.value().is_number()){
+                        return json{{"error","crate: no such good, or no amount: " + it.key()}};
+                    }
+                    amounts[good] = (int)std::lround(it.value().get<double>());
+                }
+                std::string refusal;
+                for (int g = 0; g < GOOD_COUNT && refusal.empty(); g++){
+                    if (amounts[g] <= 0){
+                        continue;
+                    }
+                    SimCommand cmd;
+                    cmd.type = CHASM_CMD_CRATE;
+                    cmd.flags = SIM_CMD_FLAG_RECORD;
+                    cmd.subtype = (uint32_t)plot;
+                    cmd.value[0] = (float)g;
+                    cmd.value[1] = (float)amounts[g];
+                    uint32_t refused = crate_refusals.load();
+                    SubmitCommandAndWait(cmd);
+                    if (crate_refusals.load() != refused){
+                        std::lock_guard<std::mutex> lock(grid_mutex);
+                        refusal = crate_last_refusal;
+                    }
                 }
                 result["refusal"] = refusal;
                 result["plot"] = plot;
@@ -923,6 +1107,20 @@ void ApplicationChasm::RegisterEconomyTools(){
                 felled += (s != PROP_STATE_STANDING) ? 1 : 0;
             }
             result["felled"] = felled;
+            //The crates lying about (crates_plan.md), in id order.
+            json crates = json::array();
+            for (const EconomyCrate& c : e->crates){
+                std::string by;
+                for (const EconomyWorker& k : e->workers){
+                    if (c.by && k.id == c.by){
+                        by = EconomyPersonName(k);
+                    }
+                }
+                crates.push_back(json{{"id",c.id},{"plot",c.plot},{"x",c.pos.x},{"z",c.pos.y},{"goods",StockJson(c.stock)},
+                                      {"origin",EconomyCrateOriginName(c.origin)},{"by",c.by},{"by_name",by},
+                                      {"day",(double)c.tick / CALENDAR_DAY_TICKS}});
+            }
+            result["crates"] = crates;
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
         });
 }

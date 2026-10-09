@@ -28,6 +28,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_FIELD_LAND:    return "field_land";
         case ZONE_OP_FIELD_PRIORITY: return "field_priority";
         case ZONE_OP_GATE_SHUT:     return "gate_shut";
+        case ZONE_OP_RANGE_PAINT:   return "range_paint";
         default:                   return "none";
     }
 }
@@ -57,6 +58,7 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_CAMP:        return "camp";
         case ZONE_KIND_BRIDGE:      return "bridge";
         case ZONE_KIND_BUILDERS:    return "builders";
+        case ZONE_KIND_RANGE:       return "range";
         default:                    return "none";
     }
 }
@@ -350,6 +352,33 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
     return true;
 }
 
+ZoneRangeCell ZoneRangeCellAt(const ChasmWorld& w, int cell){
+    ZoneRangeCell r;
+    const Grid& g = *w.grid;
+    if (cell < 0 || cell * 4 + 3 >= (int)g.fine.quads.size()){
+        return r;
+    }
+    //The middle is the one vertex all four of its children share - found, as Economy's CoarseCentre does,
+    //rather than trusted to a corner's place in the quad.
+    r.middle = g.fine.quads[cell * 4].v[2];
+    for (int k = 0; k < 4; k++){
+        int v = g.fine.quads[cell * 4].v[k];
+        bool f_all = true;
+        for (int q = cell * 4 + 1; q < cell * 4 + 4 && f_all; q++){
+            const GridQuad& fq = g.fine.quads[q];
+            f_all = (fq.v[0] == v || fq.v[1] == v || fq.v[2] == v || fq.v[3] == v);
+        }
+        if (f_all){
+            r.middle = v;
+            break;
+        }
+    }
+    r.centre = g.fine.pos[r.middle];
+    r.dir = vec2(0.0f,-1.0f);
+    r.size = std::sqrt(std::max(0.0f,w.picker->CoarseArea(cell)));
+    return r;
+}
+
 int ZoneWinchLanding(const ChasmWorld& w, int plot){
     const Grid& g = *w.grid;
     const GridPicker& p = *w.picker;
@@ -602,7 +631,7 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
         }
         return false;
     };
-    if (kind <= ZONE_KIND_NONE || kind >= ZONE_KIND_COUNT || kind == ZONE_KIND_FIELD){
+    if (kind <= ZONE_KIND_NONE || kind >= ZONE_KIND_COUNT || ZoneKindOnCells(kind)){
         return refuse("no such building");
     }
     if (!z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && ZoneLineGround(z.ground[plot])){
@@ -631,51 +660,99 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
         z.buildings[joining].size >= ZONE_HOUSE_MAX_PLOTS){
         return refuse("a house is at most four plots - one family");
     }
-    /*
-        A new woodcutter's hut goes up beside a lot of its own, where his woodpile will be (Economy): a lot
-        plot no other woodcutter stands beside - two huts sharing one plot piled onto the same spot (the
-        user, 2026-10-06). Only a NEW one: a plot joining a woodcutter already has the lot its first plot
-        was put beside. A lot still a site is enough - it will stand. Erasing the lot later is allowed;
-        he then has nowhere to pile and stops felling, which his card says.
-    */
-    if (kind == ZONE_KIND_WOODCUTTER && !joining && ZoneLotBeside(w,z,plot,false,true) < 0){
-        return refuse("a woodcutter needs a lot of its own beside it, for his woodpile");
-    }
+    //A woodcutter needs no lot to be built (yards_plan.md, the user's 2026-10-09): without one of his own he
+    //fells nothing, and his card and NEEDS ATTENTION say so - as a house shut in on every side does.
     return true;
 }
 
-bool ZoneLotTaken(const ChasmWorld& w, const ZoneState& z, int lot, uint32_t except){
+bool ZoneOwnsGround(int kind, int ground){
+    return (kind == ZONE_KIND_HOUSE && ZoneEnclosesGround(ground)) || (kind == ZONE_KIND_WOODCUTTER && ground == ZONE_GROUND_LOT);
+}
+
+uint32_t ZoneGroundOwner(const ZoneState& z, int v){
+    if (v < 0 || v >= (int)z.ground_owner.size()){
+        return 0;
+    }
+    uint32_t id = z.ground_owner[v];
+    bool f_alive = id && id < z.buildings.size() && z.buildings[id].size > 0;
+    return (f_alive && ZoneOwnsGround(z.buildings[id].kind,z.ground[v])) ? id : 0;
+}
+
+namespace {
+
+//Plot `plot` shares an edge with building `owner` or with ground of its yard.
+bool TouchesYard(const ChasmWorld& w, const ZoneState& z, int plot, uint32_t owner){
     int nb[8];
-    int n = ZonePlotNeighbours(w,lot,nb,8);
+    int n = ZonePlotNeighbours(w,plot,nb,8);
     for (int i = 0; i < n; i++){
-        uint32_t b = z.building[nb[i]];
-        if (b && b != except && z.buildings[b].kind == ZONE_KIND_WOODCUTTER){
+        if (z.building[nb[i]] == owner || ZoneGroundOwner(z,nb[i]) == owner){
             return true;
         }
     }
     return false;
 }
 
-int ZoneLotBeside(const ChasmWorld& w, const ZoneState& z, int v, bool f_built, bool f_free){
-    if (v < 0 || v >= (int)z.ground.size()){
-        return -1;
+}
+
+bool ZoneCanYard(const ChasmWorld& w, const ZoneState& z, int plot, int ground, uint32_t owner, const char** why){
+    auto refuse = [&](const char* reason){
+        if (why){
+            *why = reason;
+        }
+        return false;
+    };
+    if (!owner || !ZoneEnclosesGround(ground)){
+        return true;
+    }
+    if (owner >= z.buildings.size() || z.buildings[owner].size <= 0){
+        return refuse("that building is gone");
+    }
+    int kind = z.buildings[owner].kind;
+    if (!ZoneOwnsGround(kind,ground)){
+        return refuse((kind == ZONE_KIND_WOODCUTTER) ? "a woodcutter's hut has no garden"
+                                                     : "only a house or a woodcutter's hut has a yard");
+    }
+    //Another building's yard stays its own: erase it first to give it away.
+    uint32_t held = ZoneEnclosesGround(z.ground[plot]) ? ZoneGroundOwner(z,plot) : 0;
+    if (held && held != owner){
+        return refuse("that is another building's yard");
+    }
+    if (!TouchesYard(w,z,plot,owner)){
+        return refuse((ground == ZONE_GROUND_LOT) ? "a lot goes beside its building, or its yard"
+                                                  : "a garden goes beside its house, or its yard");
+    }
+    return true;
+}
+
+int ZoneYardPlots(const ZoneState& z, uint32_t id, int ground){
+    int n = 0;
+    for (size_t v = 0; v < z.ground_owner.size(); v++){
+        n += (z.ground_owner[v] == id && z.ground[v] == ground && ZoneGroundOwner(z,(int)v) == id) ? 1 : 0;
+    }
+    return n;
+}
+
+uint32_t ZoneAutoOwner(const ChasmWorld& w, const ZoneState& z, int plot, int ground){
+    if (!ZoneEnclosesGround(ground)){
+        return 0;
     }
     int nb[8];
-    int n = ZonePlotNeighbours(w,v,nb,8);
-    int best = -1;
-    for (int i = 0; i < n; i++){
-        int o = nb[i];
-        if (z.ground[o] != ZONE_GROUND_LOT || z.storeys[o] > 0 || (f_built && !z.ground_built[o])){
-            continue;
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    //A building it touches first - so a lot beside a hut is the hut's even where a house's garden adjoins it -
+    //then a yard it grows from.
+    for (int pass = 0; pass < 2; pass++){
+        uint32_t best = 0;
+        for (int i = 0; i < n; i++){
+            uint32_t b = pass ? ZoneGroundOwner(z,nb[i]) : z.building[nb[i]];
+            if (b && ZoneOwnsGround(z.buildings[b].kind,ground) && (!best || b < best)){
+                best = b;
+            }
         }
-        if (f_free && ZoneLotTaken(w,z,o,0)){
-            continue;
-        }
-        if (best < 0 || o < best){
-            best = o;
+        if (best){
+            return best;
         }
     }
-    return best;
+    return 0;
 }
 
 bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why, int kind){
@@ -1111,6 +1188,7 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state.ground_built.assign(g.fine.pos.size(),0);
     state.line.assign(g.fine.pos.size(),0);
     state.gate.assign(g.fine.pos.size(),0);
+    state.ground_owner.assign(g.fine.pos.size(),0);
     state.field.assign(g.coarse.quads.size(),0);
     state.field_built.assign(g.coarse.quads.size(),0);
     state.chunk_version.assign(world->mesh->chunks.size(),0);
@@ -1249,7 +1327,7 @@ void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
     }
 }
 
-bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play){
+bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play, uint32_t owner){
     last_refusal.clear();
     if (!state.world){
         last_refusal = "no world";
@@ -1316,6 +1394,32 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
         }
         return false;
     };
+    /*
+        A building plot just put down takes the ground nobody owns beside it that its kind may own, and all of
+        that ground joined to it (yards_plan.md) - so a lot painted first and a hut put beside it after is the
+        hut's, every plot of it.
+    */
+    auto claim_yard = [&](int v, uint32_t id){
+        if (!ZoneKindHasYard(state.buildings[id].kind)){
+            return;
+        }
+        std::vector<int> open(1,v);
+        while (!open.empty()){
+            int at = open.back();
+            open.pop_back();
+            int nb[8];
+            int n = ZonePlotNeighbours(w,at,nb,8);
+            for (int i = 0; i < n; i++){
+                int o = nb[i];
+                if (state.storeys[o] == 0 && ZoneOwnsGround(state.buildings[id].kind,state.ground[o])
+                    && !ZoneGroundOwner(state,o)){
+                    state.ground_owner[o] = id;
+                    touch_plot(o);
+                    open.push_back(o);
+                }
+            }
+        }
+    };
     auto cell_touches = [&](int c, uint32_t id){
         for (int k = 0; k < 4; k++){
             int o = coarse_across[c * 4 + k];
@@ -1332,7 +1436,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             if (kind == ZONE_KIND_NONE){
                 kind = ZONE_KIND_HOUSE;     //a recording from when every building was a house
             }
-            if (kind < 0 || kind >= ZONE_KIND_COUNT || kind == ZONE_KIND_FIELD){
+            if (kind < 0 || kind >= ZONE_KIND_COUNT || ZoneKindOnCells(kind)){
                 last_refusal = "no such building";
                 return false;
             }
@@ -1410,6 +1514,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 state.buildings[joining].size++;
                 state.built_plots++;
                 touch_road(bridge);
+                claim_yard(bridge,joining);
             }
             if (!ZoneCanBuild(w,state,plot,kind,joining,&why)){
                 last_refusal = why;
@@ -1426,6 +1531,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             state.buildings[joining].size++;
             state.built_plots++;
             touch_road(plot);
+            claim_yard(plot,joining);
             break;
         }
         case ZONE_OP_BUILD_REMOVE:
@@ -1449,13 +1555,23 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             state.built_plots--;
             if (state.buildings[id].size == 0){
                 state.buildings[id].kind = ZONE_KIND_NONE;    //gone; its id is never handed out again
+                //...and its yard is nobody's, for the next building beside it to take (yards_plan.md).
+                for (size_t v = 0; v < state.ground_owner.size(); v++){
+                    if (state.ground_owner[v] == id){
+                        state.ground_owner[v] = 0;
+                        touch_plot((int)v);
+                    }
+                }
             }else{
                 SplitAfterRemoval(id,plot,false);
             }
             touch_road(plot);     //an arch over a road beside it may come or go
             break;
         }
-        case ZONE_OP_FIELD_PAINT:{
+        case ZONE_OP_FIELD_PAINT:
+        case ZONE_OP_RANGE_PAINT:{
+            //A range is painted as a field is, on the same cells and by the same rules (range_plan.md).
+            int cell_kind = (op == ZONE_OP_RANGE_PAINT) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD;
             int c = (int)index;
             if (c >= 0 && c < (int)state.field.size() && state.field[c]){
                 if (stroke != state.stroke){
@@ -1464,7 +1580,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 }
                 return false;
             }
-            uint32_t joining = stroke_target(ZONE_KIND_FIELD);
+            uint32_t joining = stroke_target(cell_kind);
             //A diagonal step, as for buildings: through a cell beside both, the first that can be a field.
             if (joining && !cell_touches(c,joining)){
                 int bridge = -1;
@@ -1490,9 +1606,11 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             if (!joining){
                 //An EMPTY field (fields_plan.md): nothing grows on it until its starting crop is chosen.
-                joining = NewBuilding(ZONE_KIND_FIELD);
-                state.buildings[joining].crop = ZONE_CROP_NONE;
-                state.buildings[joining].next_crop = ZONE_CROP_AUTO;
+                joining = NewBuilding(cell_kind);
+                if (cell_kind == ZONE_KIND_FIELD){
+                    state.buildings[joining].crop = ZONE_CROP_NONE;
+                    state.buildings[joining].next_crop = ZONE_CROP_AUTO;
+                }
             }
             state.stroke = stroke;
             state.stroke_building = joining;
@@ -1525,7 +1643,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
         }
         case ZONE_OP_FIELD_CROP:{
             int c = (int)index;
-            if (c < 0 || c >= (int)state.field.size() || !state.field[c]){
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c] || state.buildings[state.field[c]].kind != ZONE_KIND_FIELD){
                 last_refusal = "no field there";
                 return false;
             }
@@ -1551,7 +1669,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
         case ZONE_OP_FIELD_NEXT:{
             //The player's pick for every sowing after the first: a crop, or the field's own (fields_plan.md).
             int c = (int)index;
-            if (c < 0 || c >= (int)state.field.size() || !state.field[c]){
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c] || state.buildings[state.field[c]].kind != ZONE_KIND_FIELD){
                 last_refusal = "no field there";
                 return false;
             }
@@ -1580,7 +1698,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
         case ZONE_OP_FIELD_LAND:{
             //The player's say over whose land it is (land_plan.md): a house, or 0 to leave it to the economy.
             int c = (int)index;
-            if (c < 0 || c >= (int)state.field.size() || !state.field[c]){
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c] || state.buildings[state.field[c]].kind != ZONE_KIND_FIELD){
                 last_refusal = "no field there";
                 return false;
             }
@@ -1698,7 +1816,18 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 break;
             }
             if (state.ground[plot] == kind){
-                //Already that. A debug paint over a site builds it, as a debug click finishes a building's.
+                //Already that, painted for a building whose yard it is not: it takes it, if nobody owns it and
+                //it touches the building or its yard (yards_plan.md).
+                if (owner && ZoneEnclosesGround(kind) && ZoneGroundOwner(state,plot) != owner){
+                    if (!ZoneCanYard(w,state,plot,kind,owner,&why)){
+                        last_refusal = why;
+                        return false;
+                    }
+                    state.ground_owner[plot] = owner;
+                    touch_plot(plot);
+                    break;
+                }
+                //A debug paint over a site builds it, as a debug click finishes a building's.
                 if (f_play || state.ground_built[plot]){
                     return false;
                 }
@@ -1706,10 +1835,13 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 touch_road(plot);
                 break;
             }
-            if (!ZoneCanGround(w,state,plot,&why,kind)){
+            if (!ZoneCanGround(w,state,plot,&why,kind) || !ZoneCanYard(w,state,plot,kind,owner,&why)){
                 last_refusal = why;
                 return false;
             }
+            //Whose yard it joins (yards_plan.md): the building it was painted for, else what it touches. A road
+            //or wall is nobody's - and one drawn over a garden or lot takes the plot out of its yard.
+            state.ground_owner[plot] = ZoneEnclosesGround(kind) ? (owner ? owner : ZoneAutoOwner(w,state,plot,kind)) : 0;
             if (state.ground[plot] == ZONE_GROUND_NONE){
                 state.grounds++;
             }
@@ -1751,6 +1883,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             state.ground_built[plot] = 0;
             state.line[plot] = 0;
             state.gate[plot] = 0;       //a gate's road taken up: the wall has a gap there
+            state.ground_owner[plot] = 0;
             state.grounds--;
             touch_road(plot);
             break;
@@ -1906,7 +2039,7 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
     //Then what stands on the ground, in the order the rules want: fields, ground, buildings - each
     //through the same questions a command asks.
     for (const ZoneSavedBuilding& b : buildings){
-        if (b.kind != ZONE_KIND_FIELD || b.id == 0){
+        if (!ZoneKindOnCells(b.kind) || b.id == 0){
             continue;
         }
         for (size_t i = 0; i < b.cells.size(); i++){
@@ -1935,16 +2068,13 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
                             : (gr.kind & ZONE_GROUND_SAVED_SHUT) ? ZONE_GATE_SHUT : ZONE_GATE_OPEN;
     }
     for (const ZoneSavedBuilding& b : buildings){
-        if (b.kind == ZONE_KIND_FIELD || b.id == 0 || state.buildings[b.id].kind == ZONE_KIND_NONE){
+        if (ZoneKindOnCells(b.kind) || b.id == 0 || state.buildings[b.id].kind == ZONE_KIND_NONE){
             continue;
         }
         for (size_t i = 0; i < b.plots.size(); i++){
             int v = b.plots[i].first;
-            //A woodcutter is put back as a building already there, which the lot rule does not ask of:
-            //it is a rule for placing one, and its lot may since have been erased.
-            uint32_t join = (b.kind == ZONE_KIND_WOODCUTTER) ? b.id : 0;
             if (v < 0 || v >= (int)state.building.size() || state.building[v] ||
-                !ZoneCanBuild(w,state,v,b.kind,join,NULL)){
+                !ZoneCanBuild(w,state,v,b.kind,0,NULL)){
                 refused++;
                 continue;
             }
@@ -1960,6 +2090,15 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
     for (ZoneBuilding& b : state.buildings){
         if (b.size == 0){
             b.kind = ZONE_KIND_NONE;
+        }
+    }
+    //Every yard to its owner as saved (yards_plan.md) - not as the rules would give it now: the ground went back
+    //before the buildings, with nobody beside it. A save from before yards has none: every yard nobody's.
+    std::fill(state.ground_owner.begin(),state.ground_owner.end(),0u);
+    for (const ZoneSavedGround& gr : grounds){
+        if (gr.plot >= 0 && gr.plot < (int)state.ground_owner.size() && gr.owner && gr.owner < state.buildings.size()
+            && state.buildings[gr.owner].size > 0 && ZoneOwnsGround(state.buildings[gr.owner].kind,state.ground[gr.plot])){
+            state.ground_owner[gr.plot] = gr.owner;
         }
     }
     state.stroke = stroke;
@@ -2025,7 +2164,7 @@ ZoneStats ComputeZoneStats(const ChasmWorld& w, const ZoneState& z){
     for (size_t c = 0; c < z.field.size(); c++){
         if (z.field[c]){
             s.field_cells++;
-            s.floor_area[ZONE_KIND_FIELD] += w.picker->CoarseArea((int)c);
+            s.floor_area[z.buildings[z.field[c]].kind] += w.picker->CoarseArea((int)c);      //a field's or a range's
         }
     }
     for (size_t v = 0; v < z.ground.size(); v++){
@@ -2057,8 +2196,9 @@ ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, ui
     info.f_priority = z.buildings[id].f_priority != 0;
     info.size = z.buildings[id].size;
     info.next_crop = z.buildings[id].next_crop;
-    if (info.kind == ZONE_KIND_FIELD){
+    if (ZoneKindOnCells(info.kind)){
         //What it grows on is what is built of it; its cells still a site are its construction (fields_plan.md).
+        //A range's the same: its area is what is built of it (range_plan.md).
         for (size_t c = 0; c < z.field.size(); c++){
             if (z.field[c] == id){
                 if (z.field_built[c]){
@@ -2169,7 +2309,7 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
     int broken = 0;
     for (size_t v = 0; v < z.building.size(); v++){
         uint32_t id = z.building[v];
-        if (id >= z.buildings.size() || (id && z.buildings[id].kind == ZONE_KIND_FIELD)){
+        if (id >= z.buildings.size() || (id && ZoneKindOnCells(z.buildings[id].kind))){
             broken++;
             issue("zone building",(int)v,w.grid->fine.pos[v]);
         }else if (id){
@@ -2178,7 +2318,7 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
     }
     for (size_t c = 0; c < z.field.size(); c++){
         uint32_t id = z.field[c];
-        if (id >= z.buildings.size() || (id && z.buildings[id].kind != ZONE_KIND_FIELD)){
+        if (id >= z.buildings.size() || (id && !ZoneKindOnCells(z.buildings[id].kind))){
             broken++;
             issue("zone field",(int)c,w.grid->FineQuadCentre((int)c * 4 + 2));
         }else if (id){
@@ -2203,7 +2343,7 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
             big_houses++;
         }
         //One piece: a flood from its first element reaches all of it.
-        bool f_field = (b.kind == ZONE_KIND_FIELD);
+        bool f_field = ZoneKindOnCells(b.kind);
         const std::vector<uint32_t>& owner = f_field ? z.field : z.building;
         int first = -1;
         for (size_t i = 0; i < owner.size() && first < 0; i++){

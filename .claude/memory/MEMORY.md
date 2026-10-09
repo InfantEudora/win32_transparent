@@ -89,7 +89,9 @@
 - [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets
 - [Line works plan](line_works_plan.md) — AGREED 2026-10-06: chasm roads/walls drag-previewed, built by idle villagers felling trees; waits on window 39
 - [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants); difficulty may retune later
-- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: orders/posts, pack, provisions, guard tower, gate doors; steps 1-2 (orders, pack) built; gate doors next
+- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: orders/posts, pack, provisions, guard tower, gate doors; steps 1-4 (orders, pack, gate doors, site costs per good) built; provisions next
 - [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop defaults to AUTO after a day; add rows in ChasmIssues
 - [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes; figures are constant names
-- [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09: dropped loads as give-only stores, caretakers move them, a few seeded finds; crate_a prop modelled, not exported
+- [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; step 1 BUILT (crate list, posted drop, debug spawn, drawn); step 2 (take/move) next
+- [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; hut buildable without a lot
+- [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, full-time archers by precision, per-person archery; props in chasm_props.glb
