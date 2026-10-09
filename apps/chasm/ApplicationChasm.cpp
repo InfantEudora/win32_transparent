@@ -746,7 +746,7 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
     PublishZones();
     walkers.Reset(w);
     //After the zones: the stocks and workers name their buildings.
-    economy.Restore(w,save.economy,zones.State());
+    economy.Restore(w,save.economy,zones.State(),save.calendar_tick);
     //What had been seen; a save from before exploration existed has seen everything.
     ResetExploration();
     if (save.explored.empty() || !exploration.FromString(save.explored)){

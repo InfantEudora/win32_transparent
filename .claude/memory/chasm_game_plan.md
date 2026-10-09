@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9ee540f3-21fa-4533-a07c-ca156fde207e
-  modified: 2026-10-08T15:26:54.932Z
+  modified: 2026-10-09T09:49:02.501Z
 ---
 
 apps/chasm (empty as of 2026-10-04) is a planned top-down colony sim, Anno-like but low poly. One
@@ -157,7 +157,19 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   AUTUMN (and spring while snowed) from stores/empty camp, fair share = firewood AT HOMES only (user) + 1 day;
   no reserve for sites. Every house ONE chimney (roof or side stack, HouseChimney); smoke = LIFE puffs + unlit
   orange panes (ApplicationChasmHearth.cpp, BuildHouseCell fixtures). Bug found: WORKER_GETTING mapped wood to
-  food. RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
+  food. LIFELINES (docs/lifeline_plan.md, user 2026-10-09, NOT built): ONE year of age per GAME year (birthday
+  on a day of the year; per-season turned down); baby 1 yr - MOTHER's job is CARING, her place refilled;
+  child 1.5 yr, job PLAYING (walks round the house); young adult 2 yr (works, skills growing); adult at 4.5.
+  Settlers = families (couple + grown children) + 2 kids = 12; mother/father ids on everyone and the dead;
+  couples form moving into a FREE HOUSE together (new family) - user loved it. Then (same day): EXPECTING
+  half a year, one settler couple expecting at start; old age AROUND 40 (20 h life); old stop work, wander,
+  still fetch; caring mother still fetches; birth needs warm house + fed parents; a mother's MOST CHILDREN cap
+  (settler mothers' kids count). NO orphan mechanic (user: too complex, no use yet - they grow up in the house);
+  expecting mother works till birth. User wants each feature SEPARATE AND SMALL; build order step 1 = families
+  + ageing + children playing (no births, no old age, skills random). STEP 1 BUILT 2026-10-09: born/mother/
+  father (age derived, EconomyState::tick, Restore takes calendar tick); PLAYING is a JOB (-2, below NONE) so
+  idle-adult code skips kids for free; grow-up in Tick re-runs AssignJobs; play spots incl. camp tents;
+  12 settlers, seeds 1-30 all camp. Old saves dropped, not converted (user). RIVERS REWORKED 2026-10-08 (docs/rivers_plan.md, built):
   every map has a home river (approach bug fixed; small-river and off-the-east-edge fallbacks; `rivers`
   check fails none), 2-3 BRANCHES per river (GRID_RIVER_JOIN, inland heads), far-side scenic SPRINGS and
   home SWALLOW-HOLE streams (GRID_RIVER_SINK) whose spring pours from a dark mouth in the wall

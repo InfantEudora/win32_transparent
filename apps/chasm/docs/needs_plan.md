@@ -154,7 +154,7 @@ be redone for another tuning or difficulty.
 
 - **Spoilage** (`economy_plan.md` put it with eating): the foods already differ in worth and growing time.
   Greens rotting when winter comes is the first piece of it, once eating runs.
-- **Crowding** (`people_plan.md`): nothing fills a house past its room until there are births.
+- **Crowding** (`people_plan.md`): nothing fills a house past its room until there are births (`lifeline_plan.md`).
 - **Working slower when hungry**, a warning before death: not asked for; a candidate when tuning.
 - **Early gathering** (the user): food from the wild for the first days.
 
@@ -370,4 +370,4 @@ Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `W
     a test: no camp was lived in under the snow.
 - **The side stack, fixed** (the user's, same day): first built as slabs against the wall, the flue and its
   cap showed their open backs above the eaves, where the roof slopes away, and the cap's top fought the
-  flue's; they are closed blocks now, the cap's top above the flue's.
+  flue's; they are closed blocks now, the cap's top above the flue's.

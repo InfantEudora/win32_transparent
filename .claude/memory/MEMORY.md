@@ -89,3 +89,4 @@
 - [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets
 - [Line works plan](line_works_plan.md) — AGREED 2026-10-06: chasm roads/walls drag-previewed, built by idle villagers felling trees; waits on window 39
 - [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants); difficulty may retune later
+- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: orders/posts, pack, provisions, guard tower, gate doors; apps/chasm/docs/defence_plan.md, nothing built

@@ -5,7 +5,7 @@ people who live in houses and walk to work. Talked through and BUILT 2026-10-06.
 
 ## Decided (the user, 2026-10-06)
 
-- **Starting settlers only**: the colony is the group it starts with; it grows only once births come.
+- **Starting settlers only**: the colony is the group it starts with; it grows only once births come (`lifeline_plan.md`).
 - **Every round starts and ends at the worker's house** - house, tree, store, house - so a house beside the
   hut and its store is what makes a woodcutter quick. His going home between trees is deliberate.
 - **Jobs are given out automatically**, by skill and by the walk from home; the player steers it by where
@@ -82,7 +82,7 @@ Files: `Economy.*` (the people are `EconomyState::workers`, one `EconomyWorker` 
   figure's 0.86, about a tent's height), as modelled: their clothes are their own, so the job tunics
   are gone (the card says the job). A person now has a SEX (`EconomyWorker::f_female`, from the seed for
   the settlers; saved, hashed; an older save takes it from the id), which picks the figure and a first
-  name from a woman's or a man's list. The children's figures are loaded and wait for births.
+  name from a woman's or a man's list. The children's figures draw the settlers' children since 2026-10-09 (`lifeline_plan.md`).
   What he carries goes by the GOOD, not the job - a log for wood, a sack for food, a pail for water -
   so an idle carrier taking wood to a site carries a log (it used to be a pail).
 
@@ -91,5 +91,7 @@ Files: `Economy.*` (the people are `EconomyState::workers`, one `EconomyWorker` 
 - No day and night - none of the games this takes after has one, and it would change too often (the
   user, 2026-10-06). People work all the time. Perhaps, later, a darker winter, coming on gradually.
   Eating and fetching food come with P5.
-- Children, ageing, births and skills passed on are after the prototype.
+- Children, ageing, births and skills passed on: planned in `lifeline_plan.md` (2026-10-09). Its step 1 is
+  built: the settlers are three families with two children, everyone ages, and children play until they
+  are young adults. Births and the rest are not.
 - Nobody carries between stores yet (the carriers of the plan): each worker still delivers his own goods.

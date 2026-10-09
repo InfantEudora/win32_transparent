@@ -158,6 +158,8 @@ line number.
 | `builders_plan.md` | the builders' hut - builders as a job, staffed before the other workplaces - and the job overview (built) |
 | `land_plan.md` | family land: fields belong to a house (the camp's at first), farmed by its family at 6 cells a farmer, harvest home first (built) |
 | `seasons_plan.md` | the year drawn: seasonal palette rows the grass fades through, flowers in season, oaks and bushes turning, thinning, bare and budding plant by plant, bare oaks modelled (built) |
+| `lifeline_plan.md` | a person's whole life: a baby's year in its mother's care, playing, young adult, adult; parents and couples, births, skills passed on, old age (talked through 2026-10-09; step 1, families and ageing, built) |
+| `defence_plan.md` | toward P6: posts as a job, direct orders, a soldier's pack, provisions (a food made from wheat and beans by the builders as caretakers), the guard tower stocked with them and water, gate doors that shut (agreed 2026-10-09, not built) |
 
 ### Later, agreed but not yet planned
 

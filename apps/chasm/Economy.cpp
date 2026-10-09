@@ -47,6 +47,8 @@ const char* EconomyWorkerStateName(int state){
         case WORKER_SUPPLYING:  return "supplying";
         case WORKER_TO_SOW:     return "to_sow";
         case WORKER_SOWING:     return "sowing";
+        case WORKER_TO_PLAY:    return "to_play";
+        case WORKER_PLAYING:    return "playing";
         case WORKER_TO_GET:     return "to_get";
         case WORKER_GETTING:    return "getting";
         case WORKER_TO_LARDER:  return "to_larder";
@@ -61,6 +63,7 @@ const char* EconomyJobName(int job){
         case WORKER_JOB_WATER:      return "water_carrier";
         case WORKER_JOB_BUILDER:    return "builder";
         case WORKER_JOB_NONE:       return "none";
+        case WORKER_JOB_PLAYING:    return "playing";
         default:                    return "?";
     }
 }
@@ -101,8 +104,8 @@ void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount
     for (const EconomyWorker& k : e.workers){
         if (k.job >= 0 && k.job < WORKER_JOB_COUNT){
             out[k.job].working++;
-        }else{
-            none++;
+        }else if (k.job == WORKER_JOB_NONE){
+            none++;         //a child playing is not jobless
         }
     }
     if (jobless){
@@ -123,23 +126,63 @@ float EconomySkillFactor(int skill){
     return 0.6f + 0.08f * (float)std::max(1,std::min(10,skill));
 }
 
+//--- Lifelines (docs/lifeline_plan.md) -------------------------------------------------------------
+
+int EconomyAgeAt(int64_t born, uint64_t tick){
+    int64_t lived = (int64_t)tick - born;
+    return (lived > 0) ? (int)(lived / CALENDAR_YEAR_TICKS) : 0;
+}
+
+int EconomyStageAt(int64_t born, uint64_t tick){
+    int64_t lived = (int64_t)tick - born;
+    return (lived < LIFE_BABY_TICKS) ? LIFE_BABY : (lived < LIFE_CHILD_TICKS) ? LIFE_CHILD
+         : (lived < LIFE_YOUNG_TICKS) ? LIFE_YOUNG : LIFE_ADULT;
+}
+
+const char* EconomyStageName(int stage){
+    switch (stage){
+        case LIFE_BABY:     return "baby";
+        case LIFE_CHILD:    return "child";
+        case LIFE_YOUNG:    return "young adult";
+        case LIFE_ADULT:    return "adult";
+        default:            return "?";
+    }
+}
+
+int EconomyBirthday(int64_t born){
+    int64_t in_year = ((born % CALENDAR_YEAR_TICKS) + CALENDAR_YEAR_TICKS) % CALENDAR_YEAR_TICKS;
+    return (int)(in_year / CALENDAR_DAY_TICKS);
+}
+
+std::string EconomyBirthdayName(int64_t born){
+    int day = EconomyBirthday(born);
+    return std::string(CalendarSeasonName(day / CALENDAR_DAYS_PER_SEASON)) + " "
+           + std::to_string(day % CALENDAR_DAYS_PER_SEASON + 1);
+}
+
 /*
     Names by id, from short lists: a first name by the person - a woman's or a man's - and a family name
     by the family, so a family shares its name. Placeholders with the feel of a frontier village;
-    nothing in the rules reads them.
+    nothing in the rules reads them. The lists are stepped through by a stride that shares no factor with
+    their length, so the first NAME_COUNT people - and families - never share a name (two Catos on seed
+    12 had, when it was a hash).
 */
+#define NAME_COUNT      30      //each first-name list's length
+#define SURNAME_COUNT   28
 std::string EconomyPersonName(const EconomyWorker& k){
-    static const char* women[] = {"Ada","Cato","Elin","Fenna","Hanne","Kaat","Lieve","Nora","Roos","Tess",
-                                  "Anouk","Femke","Lotte","Mila","Sanne"};
-    static const char* men[] = {"Bram","Dirk","Gijs","Ivo","Joris","Maas","Otto","Pim","Sem","Wout",
-                                "Bas","Daan","Jesse","Noud","Teun"};
-    static const char* family[] = {"Aldering","Brink","Dekker","Hoeve","Kamp","Molen","Rietveld","Smit",
-                                   "Ter Horst","Veen","Visser","Wolters"};
-    uint32_t a = (k.id * 2654435761u) >> 7;
-    uint32_t b = (k.family * 2246822519u) >> 9;
-    const char* first = k.f_female ? women[a % (sizeof(women) / sizeof(women[0]))]
-                                   : men[a % (sizeof(men) / sizeof(men[0]))];
-    return std::string(first) + " " + family[b % (sizeof(family) / sizeof(family[0]))];
+    static const char* women[NAME_COUNT] = {"Ada","Cato","Elin","Fenna","Hanne","Kaat","Lieve","Nora","Roos","Tess",
+                                            "Anouk","Femke","Lotte","Mila","Sanne","Bente","Evi","Floor","Griet","Ilse",
+                                            "Isa","Jet","Liv","Marit","Maud","Merel","Pien","Saar","Veerle","Wies"};
+    static const char* men[NAME_COUNT] = {"Bram","Dirk","Gijs","Ivo","Joris","Maas","Otto","Pim","Sem","Wout",
+                                          "Bas","Daan","Jesse","Noud","Teun","Aart","Bart","Cas","Dolf","Floris",
+                                          "Gerrit","Hidde","Jelle","Kees","Luuk","Mees","Rik","Siem","Thijs","Wessel"};
+    static const char* family[SURNAME_COUNT] = {"Aldering","Brink","Dekker","Hoeve","Kamp","Molen","Rietveld","Smit",
+                                                "Ter Horst","Veen","Visser","Wolters","Bakker","Boer","Bosch","De Wit",
+                                                "Haverkamp","Hulst","Kuiper","Mulder","Postma","Schaap","Timmer",
+                                                "Van Dijk","Verhoef","Vos","Wever","Zijlstra"};
+    uint32_t a = (k.id * 13u + 9u) % NAME_COUNT;
+    uint32_t b = (k.family * 11u + 4u) % SURNAME_COUNT;
+    return std::string(k.f_female ? women[a] : men[a]) + " " + family[b];
 }
 
 namespace {
@@ -185,10 +228,22 @@ uint32_t Mix(uint32_t a, uint32_t b){
 }
 
 /*
-    The settlers: three families, all adults - children come with births. Small enough that the first
-    houses are a real choice (a family of four does not fit a one-plot, one-storey house).
+    The settlers (lifeline_plan.md): three families, each a couple with their grown children, two of them with
+    a child too - twelve people. Sizes 5, 4 and 3, so the first houses are a real choice: a family of three
+    fits a one-plot, one-storey house, the larger two do not.
 */
-const int settler_families[] = {4,3,3};
+struct SettlerFamily{
+    int grown;          //grown children, besides the couple
+    int children;       //children, playing
+};
+const SettlerFamily settler_families[] = {{2,1},{1,1},{1,0}};
+//Their ages, from the seed: the couples', the grown children's, and the children's days short of growing up -
+//so every child does in the colony's first year.
+#define SETTLER_COUPLE_AGE      24      //to 32
+#define SETTLER_COUPLE_SPAN     9
+#define SETTLER_GROWN_AGE       5       //to 12
+#define SETTLER_GROWN_SPAN      8
+#define SETTLER_CHILD_DAYS      36
 
 bool IsTree(int kind){
     return kind <= PROP_SNOW_PINE;
@@ -372,6 +427,7 @@ vec2 EconomyWorkerFacing(const EconomyWorker& k){
 void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
     state = EconomyState();
     state.world = world;
+    now = 0;
     home_plot.clear();
     plots_of.clear();
     if (world && world->forest){
@@ -402,12 +458,15 @@ void Economy::FindCamp(){
 int EconomySettlerCount(){
     int n = 0;
     for (size_t f = 0; f < sizeof(settler_families) / sizeof(settler_families[0]); f++){
-        n += settler_families[f];
+        n += 2 + settler_families[f].grown + settler_families[f].children;
     }
     return n;
 }
 
-//The colony's first people, standing round the camp. Their ages and skills come from the world's seed.
+/*
+    The colony's first people, standing round the camp: each family its father, its mother, its grown children
+    and its child. Their ages, birthdays, the children's sexes and everyone's skills come from the world's seed.
+*/
 void Economy::MakeSettlers(){
     state.workers.clear();
     state.next_person = 1;
@@ -417,14 +476,37 @@ void Economy::MakeSettlers(){
     const ChasmWorld& w = *state.world;
     uint32_t seed = w.grid->settings.seed;
     vec2 camp = w.grid->fine.pos[state.camp_plot];
+    //Born `years` and a day of the year (the seed's) before the colony's first dawn.
+    auto born_ago = [&](uint32_t id, int years){
+        int day = (int)(Mix(seed,id * 8 + 6) % (CALENDAR_SEASONS * CALENDAR_DAYS_PER_SEASON));
+        return -((int64_t)years * CALENDAR_YEAR_TICKS + (int64_t)day * CALENDAR_DAY_TICKS);
+    };
+    std::vector<size_t> grown;      //the grown children, by index
     int n = 0;
     for (size_t f = 0; f < sizeof(settler_families) / sizeof(settler_families[0]); f++){
-        for (int m = 0; m < settler_families[f]; m++){
+        const SettlerFamily& sf = settler_families[f];
+        uint32_t parent[2] = {0,0};     //father, mother
+        for (int m = 0; m < 2 + sf.grown + sf.children; m++){
             EconomyWorker k;
             k.id = state.next_person++;
             k.family = (uint32_t)f + 1;
-            k.age = 18 + (int)(Mix(seed,k.id * 8 + 0) % 28);
-            k.f_female = (Mix(seed,k.id * 8 + 5) & 1) != 0;
+            if (m < 2){
+                k.f_female = (m == 1);
+                k.born = born_ago(k.id,SETTLER_COUPLE_AGE + (int)(Mix(seed,k.id * 8 + 0) % SETTLER_COUPLE_SPAN));
+                parent[m] = k.id;
+            }else{
+                k.father = parent[0];
+                k.mother = parent[1];
+                k.f_female = (Mix(seed,k.id * 8 + 5) & 1) != 0;
+                if (m < 2 + sf.grown){
+                    k.born = born_ago(k.id,SETTLER_GROWN_AGE + (int)(Mix(seed,k.id * 8 + 0) % SETTLER_GROWN_SPAN));
+                    grown.push_back(state.workers.size());
+                }else{
+                    int days = 1 + (int)(Mix(seed,k.id * 8 + 0) % SETTLER_CHILD_DAYS);
+                    k.born = -((int64_t)LIFE_CHILD_TICKS - (int64_t)days * CALENDAR_DAY_TICKS);
+                    k.job = WORKER_JOB_PLAYING;
+                }
+            }
             for (int sk = 0; sk < SKILL_COUNT; sk++){
                 k.skills[sk] = (uint8_t)(1 + Mix(seed,k.id * 8 + 1 + sk) % 10);
             }
@@ -437,6 +519,55 @@ void Economy::MakeSettlers(){
             n++;
         }
     }
+    //A son and a daughter of different families among the grown children, so that a couple can form
+    //(lifeline_plan.md): where the seed gave none, the last grown child is made the first one's other sex.
+    bool f_pair = false;
+    for (size_t a : grown){
+        for (size_t b : grown){
+            const EconomyWorker& ka = state.workers[a];
+            const EconomyWorker& kb = state.workers[b];
+            f_pair = f_pair || (ka.family != kb.family && ka.f_female && !kb.f_female);
+        }
+    }
+    if (!f_pair && grown.size() >= 2){
+        state.workers[grown.back()].f_female = !state.workers[grown.front()].f_female;
+    }
+}
+
+/*
+    PLAYING (lifeline_plan.md): a child at home goes out now and then - on one look in LIFE_PLAY_LOOKS, from a
+    hash of him and the look - to a plot a step or two from home that nothing stands on, or among a camp's
+    tents (open ground, as the walkers have it), plays there a while (WORKER_PLAYING) and comes home. Only
+    where he can walk to; otherwise he stays in.
+*/
+bool Economy::GoPlay(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t tick){
+    uint32_t look = (uint32_t)(tick / ECONOMY_LOOK_TICKS);
+    if (Mix(k.id * 2 + 1,look) % LIFE_PLAY_LOOKS != 0){
+        return false;
+    }
+    const ChasmWorld& w = *state.world;
+    int v = HomePlot(k);
+    for (int step = 0; step < 2 && v >= 0; step++){
+        int nb[8];
+        int count = ZonePlotNeighbours(w,v,nb,8);
+        int open[8];
+        int n = 0;
+        for (int j = 0; j < count; j++){
+            int kind = z.KindOf(nb[j]);
+            if ((z.storeys[nb[j]] == 0 && kind == ZONE_KIND_NONE) || kind == ZONE_KIND_CAMP){
+                open[n++] = nb[j];
+            }
+        }
+        if (n == 0){
+            break;
+        }
+        v = open[Mix(look,k.id * 4 + (uint32_t)step) % (uint32_t)n];
+    }
+    if (v < 0 || v == HomePlot(k) || !RouteTo(k,z,walkers,v,w.grid->fine.pos[v])){
+        return false;
+    }
+    k.state = WORKER_TO_PLAY;
+    return true;
 }
 
 //Can someone standing at `from` walk to plot `to`? The route a worker would take, thrown away.
@@ -636,8 +767,9 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             }
         }
     }
+    //Housed, and of an age to work: a child playing is no place's (LIFELINES).
     auto employable = [&](const EconomyWorker& k){
-        return k.house && HomePlot(k) >= 0;
+        return k.house && HomePlot(k) >= 0 && k.job != WORKER_JOB_PLAYING;
     };
     auto is_land = [&](uint32_t id){
         return z.buildings[id].kind == ZONE_KIND_HOUSE || z.buildings[id].kind == ZONE_KIND_CAMP;
@@ -709,7 +841,7 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
     }
     for (size_t i = 0; i < state.workers.size(); i++){
         EconomyWorker& k = state.workers[i];
-        if (k.job == WORKER_JOB_NONE || kept[i]){
+        if (k.job == WORKER_JOB_NONE || k.job == WORKER_JOB_PLAYING || kept[i]){
             continue;
         }
         bool f_there = k.building && k.building < n && employable(k) && z.buildings[k.building].size > 0
@@ -1363,6 +1495,11 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
             GoHome(k,z,walkers);
             continue;
         }
+        //A child on his way out to play: home instead, the play given up.
+        if (k.state == WORKER_TO_PLAY){
+            GoHome(k,z,walkers);
+            continue;
+        }
         if (k.state != WORKER_TO_WORK && k.state != WORKER_TO_STORE && k.state != WORKER_TO_HOME
             && k.state != WORKER_TO_FETCH && k.state != WORKER_TO_SITE && k.state != WORKER_TO_ROAD
             && k.state != WORKER_TO_SUPPLY && k.state != WORKER_TO_GET && k.state != WORKER_TO_LARDER
@@ -1610,6 +1747,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (SeekSupply(k,z,walkers)){
                 break;
             }
+            //A child: no work, no errands, no building - out to play now and then (LIFELINES).
+            if (k.job == WORKER_JOB_PLAYING){
+                GoPlay(k,z,walkers,tick);
+                break;
+            }
             //Then his house's larder, running low, if he is the one to go (step 2) - before wood for a site, and
             //before his own round.
             if (FetchHome(k,z,walkers)){
@@ -1779,6 +1921,20 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 //In at his door - but never into a tent: a camp's people stay where they can be seen.
                 k.f_indoors = k.house != 0 && k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_HOUSE;
             }
+            break;
+        //--- Playing (LIFELINES) ---
+        case WORKER_TO_PLAY:
+            Walk(k,dt);
+            if (Arrived(k)){
+                k.state = WORKER_PLAYING;
+                k.timer = SecondsToTicks(LIFE_PLAY_SECONDS);
+            }
+            break;
+        case WORKER_PLAYING:
+            if (--k.timer > 0){
+                break;
+            }
+            GoHome(k,z,walkers);
             break;
         case WORKER_HOLDING:
             //Holding a load: a store that takes it, or room on his pile, whichever comes first; else, for food,
@@ -1968,7 +2124,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 */
                 uint8_t first = 0;
                 uint8_t short_of = HomeShort(k,z,&first);
-                bool f_store = from < z.buildings.size()
+                //...but not a child: errands are for the grown (LIFELINES).
+                bool f_store = from < z.buildings.size() && k.job != WORKER_JOB_PLAYING
                                && (z.buildings[from].kind == ZONE_KIND_STORE || z.buildings[from].kind == ZONE_KIND_CAMP);
                 if (f_store && short_of && (TakeHome(k,z,walkers,from,first)
                                             || TakeHome(k,z,walkers,from,(uint8_t)(short_of & ~first)))){
@@ -2261,6 +2418,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     }
     const ChasmWorld& w = *state.world;
     now = tick;
+    state.tick = tick;
     raises.clear();
     ground_raises.clear();
     field_raises.clear();
@@ -2291,6 +2449,19 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         HouseFamilies(z,walkers);
         AssignJobs(z,walkers);
         Replan(z,walkers);
+        state.version++;
+    }
+    //LIFELINES: a child grown into a young adult today stops playing and is free for a place at once, not at
+    //the zones' next change. Out playing, he finishes and comes home first.
+    bool f_grew = false;
+    for (EconomyWorker& k : state.workers){
+        if (k.job == WORKER_JOB_PLAYING && EconomyStageAt(k.born,tick) >= LIFE_YOUNG){
+            k.job = WORKER_JOB_NONE;
+            f_grew = true;
+        }
+    }
+    if (f_grew){
+        AssignJobs(z,walkers);
         state.version++;
     }
     //Who works where, by workplace id: a collector fills only while somebody works it (a field: field_pace).
@@ -2840,7 +3011,9 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         d.id = k.id;
         d.family = k.family;
         d.f_female = k.f_female;
-        d.age = k.age;
+        d.born = k.born;
+        d.mother = k.mother;
+        d.father = k.father;
         d.tick = tick;
         d.cause = EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD : NEEDS_DIED_HUNGER;
         state.dead.push_back(d);
@@ -3515,8 +3688,11 @@ EconomySaved EconomySaveState(const EconomyState& state){
     another route of the same cost, and a replay has to be the same walk). Then what follows from the
     zones is worked out, with no stock shared out: the save's already is.
 */
-void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySaved& saved, const ZoneState& z){
+void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySaved& saved, const ZoneState& z,
+                      uint64_t calendar_tick){
     Reset(world);
+    state.tick = calendar_tick;
+    now = calendar_tick;
     if (!world || z.world != world){
         return;
     }

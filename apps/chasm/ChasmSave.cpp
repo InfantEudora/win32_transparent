@@ -102,17 +102,18 @@ json ChasmSaveToJson(const ChasmSave& s){
             for (int sk = 0; sk < SKILL_COUNT; sk++){
                 skills.push_back((int)k.skills[sk]);
             }
-            workers.push_back(json{{"id",k.id},{"family",k.family},{"house",k.house},{"age",k.age},{"female",k.f_female},
+            workers.push_back(json{{"id",k.id},{"family",k.family},{"house",k.house},{"born",k.born},{"mother",k.mother},
+                                   {"father",k.father},{"female",k.f_female},
                                    {"skills",skills},{"building",k.building},{"job",k.job},{"state",k.state},{"prop",k.prop},
                                    {"store",k.store},{"site",k.site},{"carry_good",k.carry_good},{"carry",k.carry},
                                    {"timer",k.timer},{"stint",k.stint},{"route",route},{"speed",k.speed},{"seg",k.seg},
                                    {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors},
                                    {"health",k.health},{"water",k.water}});
         }
-        //The colony's dead (needs_plan.md): id, family, female, age, the tick they died on, of what.
+        //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father.
         json dead = json::array();
         for (const EconomyDeath& d : e.dead){
-            dead.push_back(json::array({d.id,d.family,d.f_female,d.age,d.tick,d.cause}));
+            dead.push_back(json::array({d.id,d.family,d.f_female,d.born,d.tick,d.cause,d.mother,d.father}));
         }
         json fields = json::array();
         //[building, crop growing, grown, sown, yield %, last crop harvested (fields_plan.md), owner (land_plan.md),
@@ -260,7 +261,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.id = wk.value("id",0u);
             k.family = wk.value("family",0u);
             k.house = wk.value("house",0u);
-            k.age = wk.value("age",0);
+            //LIFELINES (lifeline_plan.md): saves from before them were dropped, not converted (the user's).
+            k.born = wk.value("born",(int64_t)0);
+            k.mother = wk.value("mother",0u);
+            k.father = wk.value("father",0u);
             //A save from before people had a sex: one by the id, so a load always gives the same.
             k.f_female = wk.contains("female") ? wk["female"].get<bool>() : (k.id % 2) == 0;
             std::vector<int> skills = wk.value("skills",std::vector<int>());
@@ -297,16 +301,18 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         }
         out.economy.next_person = e.value("next_person",1u);
         for (const json& dj : e.value("dead",json::array())){
-            if (!dj.is_array() || dj.size() < 6){
+            if (!dj.is_array() || dj.size() < 8){
                 continue;
             }
             EconomyDeath d;
             d.id = dj[0].get<uint32_t>();
             d.family = dj[1].get<uint32_t>();
             d.f_female = dj[2].get<bool>();
-            d.age = dj[3].get<int>();
+            d.born = dj[3].get<int64_t>();
             d.tick = dj[4].get<uint64_t>();
             d.cause = dj[5].get<int>();
+            d.mother = dj[6].get<uint32_t>();
+            d.father = dj[7].get<uint32_t>();
             out.economy.dead.push_back(d);
         }
         for (const json& st : e.value("sites",json::array())){

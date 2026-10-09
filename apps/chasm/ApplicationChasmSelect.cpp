@@ -92,6 +92,7 @@ bool ScreenOf(Camera* cam, float width, float height, const vec3& p, vec2& out){
 #define ICON_WOOD_END   UIColor(234,200,150,255)    //a log's cut end
 #define ICON_STEEL      UIColor(214,220,224,255)    //an axe's head, a hammer's, a bucket's handle
 #define ICON_WHEAT      UIColor(236,200,100,255)
+#define ICON_BALL       UIColor(214,92,70,255)      //a child's ball
 
 /*
     THE BADGES' ICONS: a few opaque strokes each, so where they overlap does not show (AddLine's note), on
@@ -171,6 +172,13 @@ void DrawLogIcon(UIOverlay* o, const vec2& c, float s){
     o->AddLine(end,end,1.4f * s,ICON_WOOD);
 }
 
+//A child's ball (lifeline_plan.md), with a pale band round it.
+void DrawBallIcon(UIOverlay* o, const vec2& c, float s){
+    float r = 4.6f * s;
+    o->AddRect(c - vec2(r,r),c + vec2(r,r),r,ICON_BALL);
+    o->AddArc(c,r * 0.62f,-0.6f,1.3f,1.5f * s,ICON_WOOD_END);
+}
+
 /*
     A PERSON'S BADGE (the user's, 2026-10-07): one over everyone out of doors - his job on a dark disc, and
     round it a ring that is his health, full at full and running back to twelve o'clock as it goes. While he
@@ -203,6 +211,7 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
         case WORKER_JOB_FARMER:     DrawWheatIcon(o,c,is); break;
         case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
         case WORKER_JOB_BUILDER:    DrawHammerIcon(o,c,is); break;
+        case WORKER_JOB_PLAYING:    DrawBallIcon(o,c,is); break;
         default:                    DrawLogIcon(o,c,is); break;
     }
 }
@@ -277,6 +286,8 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_TO_LARDER:  return "taking it home";
         case WORKER_TO_SOW:     return "going to sow";
         case WORKER_SOWING:     return "sowing";
+        case WORKER_TO_PLAY:    return "going out to play";
+        case WORKER_PLAYING:    return "playing";
         default:                return "";
     }
 }
@@ -302,6 +313,7 @@ const char* JobTitle(int job){
         case WORKER_JOB_FARMER:     return "Farmer";
         case WORKER_JOB_WATER:      return "Water carrier";
         case WORKER_JOB_BUILDER:    return "Builder";
+        case WORKER_JOB_PLAYING:    return "Child";
         default:                    return "No job";
     }
 }
@@ -513,10 +525,64 @@ std::string LandName(const ZoneState& z, const EconomyState& e, uint32_t owner){
     return family.empty() ? Format("house %u's",owner) : "the " + family + " family's";
 }
 
+//A person's first name by id - "the late Ada" for one of the dead - empty for nobody (a settler couple's parents).
+std::string FirstNameOf(const EconomyState& e, uint32_t id){
+    auto first = [](const std::string& name){
+        size_t at = name.find(' ');
+        return (at == std::string::npos) ? name : name.substr(0,at);
+    };
+    if (!id){
+        return std::string();
+    }
+    for (const EconomyWorker& k : e.workers){
+        if (k.id == id){
+            return first(EconomyPersonName(k));
+        }
+    }
+    for (const EconomyDeath& d : e.dead){
+        if (d.id == id){
+            return "the late " + first(EconomyDeathName(d));
+        }
+    }
+    return std::string();
+}
+
 void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, const EconomyWorker& k, Card& c){
     (void)w;
     c.title = EconomyPersonName(k);
-    c.Text(Format("Age %i",k.age),HUD_TEXT_DIM);
+    /*
+        LIFELINES (lifeline_plan.md): age and stage, the birthday, whose child, and the children - living, then
+        the dead.
+    */
+    int stage = EconomyStageAt(k.born,e.tick);
+    c.Text(Format("Age %i, %s - birthday %s",EconomyAgeAt(k.born,e.tick),EconomyStageName(stage),
+                  EconomyBirthdayName(k.born).c_str()),HUD_TEXT_DIM);
+    std::string mother = FirstNameOf(e,k.mother);
+    std::string father = FirstNameOf(e,k.father);
+    if (!mother.empty() || !father.empty()){
+        std::string both = (!mother.empty() && !father.empty()) ? father + " and " + mother : mother + father;
+        c.Text(Format("%s of %s",k.f_female ? "Daughter" : "Son",both.c_str()),HUD_TEXT_DIM);
+    }
+    std::string children;
+    for (int f_dead = 0; f_dead < 2; f_dead++){
+        auto add = [&](uint32_t id, uint32_t mother_id, uint32_t father_id){
+            if (mother_id == k.id || father_id == k.id){
+                children += (children.empty() ? "" : ", ") + FirstNameOf(e,id);
+            }
+        };
+        if (!f_dead){
+            for (const EconomyWorker& o : e.workers){
+                add(o.id,o.mother,o.father);
+            }
+        }else{
+            for (const EconomyDeath& d : e.dead){
+                add(d.id,d.mother,d.father);
+            }
+        }
+    }
+    if (!children.empty()){
+        c.Text("Children: " + children,HUD_TEXT_DIM);
+    }
     if (k.house == 0){
         c.Text("Nowhere to live",HUD_AMBER);
     }else if (k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_CAMP){
@@ -524,7 +590,12 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     }else{
         c.Text(Format("Lives in house %u",k.house));
     }
-    if (k.job == WORKER_JOB_NONE){
+    if (k.job == WORKER_JOB_PLAYING){
+        //When he grows up and takes a job: the day his childhood ends.
+        int64_t left = k.born + LIFE_CHILD_TICKS - (int64_t)e.tick;
+        int days = (int)std::max<int64_t>(0,(left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
+        c.Text(Format("Plays near home - grows up in %i day%s",days,days == 1 ? "" : "s"));
+    }else if (k.job == WORKER_JOB_NONE){
         c.Text("No job: carries wood for the builders");
     }else if (k.job == WORKER_JOB_BUILDER){
         c.Text(Format("Builder at the builders' hut %u: carries wood to sites and builds",k.building));
@@ -639,7 +710,8 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         }
         for (const EconomyWorker& k : e->workers){
             if (k.house == id){
-                c.Text(Format("  %s, %i - %s, %s",EconomyPersonName(k).c_str(),k.age,JobTitle(k.job),Doing(k,&z)),
+                c.Text(Format("  %s, %i - %s, %s",EconomyPersonName(k).c_str(),EconomyAgeAt(k.born,e->tick),JobTitle(k.job),
+                              Doing(k,&z)),
                        EconomyIndoors(k) ? HUD_TEXT_DIM : HUD_TEXT);
             }
         }

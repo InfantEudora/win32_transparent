@@ -138,6 +138,8 @@ lets a house be painted right against anything.
   - **Until then the house is crowded**, and a crowded house costs **productivity for everyone
     living in it**, not just the newcomer (agreed 2026-10-05). Ignoring it is possible but never
     free.
+  - **Worked out in `lifeline_plan.md`** (2026-10-09): the stages of a life (a baby's year with its
+    mother, playing, young adult, adult), parents and couples, births, and the skills passed on.
 - **Time is split.** A worker's time can be divided between professions - a woodcutter who trains
   as an archer for 50% of his time becomes a bit good at both, and does half as much of each.
   Training archers is therefore paid for in work time, not in a separate pool of soldiers.
@@ -182,7 +184,9 @@ are bigger. A speed control (P1) lets a player who finds it slow move it along.
 hours of play, and their skills settle later still. That is probably right for the game's scale -
 a generation is a long-game event, not a moment-to-moment one - but it means **the first
 generation does most of the work of a whole game**. The numbers of growing up should be chosen
-with this in mind, not in years alone.
+with this in mind, not in years alone. (Chosen 2026-10-09, `lifeline_plan.md`: a child works from
+2½ years, as a young adult, which is 1 h 15 of play; old age comes around 40, a life of about 20
+hours, so the settlers grow old within a game.)
 
 ### The goal: the pyramid
 
@@ -278,7 +282,8 @@ season.
   islands, and whether a seed must guarantee a balcony on each side.
 - **The base skills**: the four proposed above, or others.
 - **The numbers of growing up**: how many years (at 30 minutes each) until a child works and
-  until their skills are set; and the chances of taking after the parents.
+  until their skills are set; and the chances of taking after the parents. Stages decided and
+  chances proposed in `lifeline_plan.md` (2026-10-09), with old age around 40.
 - **Waves per year**, and whether they grow over the years.
 - **How steep the crowding cost is** - a flat penalty, or worse per extra person - and whether a
   badly crowded house eventually loses someone (they leave the colony).
@@ -308,13 +313,13 @@ the zones and walkers already are. Each part adds its own state-hash part.
 | P4 (people BUILT 2026-10-06, `people_plan.md`) | **People and carriers** | Houses hold families. Every person has the base skills, random at the start. A worker walks from home to a workplace (an attached house means no walk); someone from the house fetches food from the town centre; a carrier takes goods to the nearest store. All by A*, so walls and roads change how long it takes. | `Walkers` |
 | Construction (BUILT 2026-10-06, `construction_plan.md`) | **Building costs wood** | In play mode a building is a site until built: wood, carried and built in by idle people, from the stores, the camp's supplies (the settlers bring 40) or a woodcutter's pile. Debug placements still stand at once. | `Zones` (`standing`), the economy |
 | P5 (agreed 2026-10-07, `needs_plan.md`; step 1 BUILT) | **Needs and winter** | People eat food and drink water daily and burn wood for heat in winter. Health is the food meter; thirst and cold make it fall faster. A shortage starves them - nobody leaves or arrives. That is the first way to lose. | P1-P4 |
-| P6 | **Zombies** | A small wave from the swamp in summer, none while it is frozen: walkers with their own costs (walls closed, breakable). Stopped by a ballista tower and by archers: workers who give a share of their time to training. | `Walkers`, boundaries, gates |
+| P6 (first steps planned 2026-10-09, `defence_plan.md`) | **Zombies** | A small wave from the swamp in summer, none while it is frozen: walkers with their own costs (walls closed, breakable). Stopped by a ballista tower and by archers: workers who give a share of their time to training. | `Walkers`, boundaries, gates |
 
 **P1-P5 is the first test**: can you get a village through its first winter, and does building it
 still feel like Townscaper while it runs? P6 comes straight after, because it is what gives walls a
 cost and a purpose, and the trade-off needs carriers (P4) to exist.
 
-**Left for after the prototype**, in rough order: births and skills passed on, crop
+**Left for after the prototype**, in rough order: births and skills passed on (`lifeline_plan.md`), crop
 rotation, a winch to a balcony and floatstone, the chasm collector and a first zeppelin, the shards, the second
 village, coal and the mountain pockets, the desert and the pyramid.
 

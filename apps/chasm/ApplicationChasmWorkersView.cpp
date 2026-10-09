@@ -10,7 +10,8 @@ static Debugger* debug = new Debugger("ChasmPeople",DEBUG_ALL);
 
 /*
     THE PEOPLE, DRAWN (docs/people_plan.md). Each person is the user's figure from chasm_props.glb - a man
-    or a woman, by the person's sex - with what he carries on him while he carries it, by the GOOD: wood
+    or a woman, or a boy or a girl until they are young adults (lifeline_plan.md) - with what he carries on
+    him while he carries it, by the GOOD: wood
     as a log along the right shoulder, food as a sack on the back, water as a pail in the right hand. (By
     the good, not the job: an idle carrier taking wood to a site carries a log, not a pail.) A woodcutter
     at work, and a builder, bob as they swing.
@@ -84,19 +85,32 @@ void AddLoad(std::vector<vertex>& out, int load){
 }
 
 /*
-    RENDER THREAD, at Init once the props are loaded (LoadProps): a mesh per sex and load - the figure's
-    vertices copied and scaled, the load added. Without a figure in the props file, the walker's.
+    RENDER THREAD, at Init once the props are loaded (LoadProps): a mesh per figure and load - the figure's
+    vertices copied and scaled, the load added, fitted to the figure's height (a load sits on a man's
+    shoulder, so on a child's it is brought down with him). Without a figure in the props file, the walker's.
 */
 void ApplicationChasm::BuildWorkerScene(){
-    std::vector<vertex> verts;
-    for (int sex = 0; sex < 2; sex++){
-        Mesh* figure = assetmanager->GetMeshFromAsset(person_asset_names[sex == 0 ? PERSON_ADULT_MALE : PERSON_ADULT_FEMALE]);
-        if (!figure || figure->GetVertices().empty()){
-            debug->Warn("Person figure '%s' not in chasm_props.glb - the walker's figure stands in\n",
-                        person_asset_names[sex == 0 ? PERSON_ADULT_MALE : PERSON_ADULT_FEMALE]);
+    auto height = [](Mesh* m){
+        float top = 0.0f;
+        if (m){
+            for (const vertex& v : m->GetVertices()){
+                top = fmaxf(top,v.pos.y);
+            }
         }
+        return top;
+    };
+    float man = height(assetmanager->GetMeshFromAsset(person_asset_names[PERSON_ADULT_MALE]));
+    std::vector<vertex> verts;
+    std::vector<vertex> load_verts;
+    for (int f = 0; f < PERSON_FIGURES; f++){
+        Mesh* figure = assetmanager->GetMeshFromAsset(person_asset_names[f]);
+        bool f_found = figure && !figure->GetVertices().empty();
+        if (!f_found){
+            debug->Warn("Person figure '%s' not in chasm_props.glb - the walker's figure stands in\n",person_asset_names[f]);
+        }
+        float fit = (f_found && man > 0.0f) ? height(figure) / man : 1.0f;
         for (int load = 0; load < WORKER_LOADS; load++){
-            if (figure && !figure->GetVertices().empty()){
+            if (f_found){
                 verts = figure->GetVertices();
                 for (vertex& v : verts){
                     v.pos = v.pos * PERSON_MODEL_SCALE;
@@ -104,7 +118,12 @@ void ApplicationChasm::BuildWorkerScene(){
             }else{
                 BuildWalkerFigure(verts,PAL_WALL);
             }
-            AddLoad(verts,load);
+            load_verts.clear();
+            AddLoad(load_verts,load);
+            for (vertex& v : load_verts){
+                v.pos = v.pos * fit;
+            }
+            verts.insert(verts.end(),load_verts.begin(),load_verts.end());
             Mesh* mesh = new Mesh();
             mesh->SetMeshData(verts.data(),(int)verts.size());
             /*
@@ -114,7 +133,7 @@ void ApplicationChasm::BuildWorkerScene(){
                 down was drawn from a deleted mesh (GL errors, then a crash).
             */
             mesh->Retain();
-            worker_meshes[sex * WORKER_LOADS + load] = mesh;
+            worker_meshes[f * WORKER_LOADS + load] = mesh;
         }
     }
 }
@@ -149,7 +168,8 @@ void ApplicationChasm::UploadWorkers(){
     bool f_swap = false;
     for (size_t i = 0; i < n; i++){
         const EconomyWorker& k = e->workers[i];
-        want[i] = (k.f_female ? WORKER_LOADS : 0) + (k.carry > 0 ? LoadOf(k.carry_good) : LOAD_NONE);
+        int figure = (EconomyStageAt(k.born,e->tick) < LIFE_YOUNG ? PERSON_KID_MALE : PERSON_ADULT_MALE) + (k.f_female ? 1 : 0);
+        want[i] = figure * WORKER_LOADS + (k.carry > 0 ? LoadOf(k.carry_good) : LOAD_NONE);
         f_swap = f_swap || want[i] != worker_object_mesh[i];
     }
     if (f_swap){

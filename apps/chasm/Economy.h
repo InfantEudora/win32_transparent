@@ -39,8 +39,9 @@ class Walkers;
     family fetches (needs_plan.md, step 2).
 
     --- PEOPLE (docs/people_plan.md, P4) ---------------------------------------------------------------
-    The colony is the SETTLERS it starts with - families of adults, each with base skills (SKILL_*,
-    1-10, random at the start) - and nobody else until births come. They start in the CAMP, a building
+    The colony is the SETTLERS it starts with - three families, each a couple with grown children and some
+    with a child (LIFELINES, below), each person with base skills (SKILL_*, 1-10, random at the start) - and
+    nobody else until births come. They start in the CAMP, a building
     of tents the zones place on a new map (Zones.h, THE CAMP), a person to a tent, any families together,
     and move out as soon as a house has room for a whole family: a house holds one family, as many as its
     floor area allows (ECONOMY_PERSON_AREA each, at most ECONOMY_HOUSE_MOST). A home pulled down sends its
@@ -260,6 +261,8 @@ const char* SkillName(int skill);
 #define WORKER_JOB_WATER        2
 #define WORKER_JOB_BUILDER      3       //at a builders' hut: carries wood to sites and builds, lays roads
 #define WORKER_JOB_COUNT        4
+//Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
+#define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 
 //Where a worker is in his round. Never renumber.
 #define WORKER_AT_HOME          0       //at his house (or the camp), waiting for something to do
@@ -283,17 +286,46 @@ const char* SkillName(int skill);
 #define WORKER_TO_LARDER        18      //carrying it home, into his house's own stock
 #define WORKER_TO_SOW           19      //a farmer walking out to sow his field (fields_plan.md)
 #define WORKER_SOWING           20      //sowing it (timer)
+#define WORKER_TO_PLAY          21      //a child walking out to play, a plot or two from home
+#define WORKER_PLAYING          22      //playing there (timer), then home
+
+/*
+    LIFELINES (docs/lifeline_plan.md, step 1). A person is BORN on a calendar tick - a settler before the
+    colony's first, so `born` is signed - and is a year older on that day every year: his AGE, in game years.
+    How long ago decides his STAGE: a BABY for a year, then a CHILD whose job is PLAYING (WORKER_JOB_PLAYING),
+    then a YOUNG ADULT, who works like anyone, then an ADULT. A child is free for a job's place the tick he
+    grows up (Economy::Tick). Everyone keeps a MOTHER and a FATHER, and so do the dead, so the tree outlives
+    the people in it. The stages' lengths are the user's; tuning like the rest (lifeline_plan.md).
+*/
+#define LIFE_BABY_TICKS         (CALENDAR_YEAR_TICKS)              //a baby for a year
+#define LIFE_CHILD_TICKS        (CALENDAR_YEAR_TICKS * 5 / 2)      //a child until 2 1/2: a year and a half of playing
+#define LIFE_YOUNG_TICKS        (CALENDAR_YEAR_TICKS * 9 / 2)      //a young adult two years more, then an adult
+#define LIFE_PLAY_LOOKS         60      //a child at home goes out to play on one look in this many: every 30 s or so
+#define LIFE_PLAY_SECONDS       4.0f    //and plays there this long before going home
+//The stages, worked out from `born` and never saved.
+#define LIFE_BABY               0
+#define LIFE_CHILD              1
+#define LIFE_YOUNG              2       //a young adult
+#define LIFE_ADULT              3
+//Age in whole years at `tick` (0 before birth), the stage then and its name, and the birthday's day of the year.
+int EconomyAgeAt(int64_t born, uint64_t tick);
+int EconomyStageAt(int64_t born, uint64_t tick);
+const char* EconomyStageName(int stage);
+int EconomyBirthday(int64_t born);
+std::string EconomyBirthdayName(int64_t born);      //"summer 4"
 
 /*
     A PERSON, and what he is doing. Who he is: an id (from 1, never reused), a family, the house the
-    family lives in (0: at the camp), an age, his base skills. What he does: his job and its workplace,
-    and where he is in his round.
+    family lives in (0: at the camp), when he was born and to whom, his base skills. What he does: his job
+    and its workplace, and where he is in his round.
 */
 struct EconomyWorker{
     uint32_t id = 0;
     uint32_t family = 0;
     uint32_t house = 0;         //a building id, 0 at the camp
-    int age = 0;                //years
+    int64_t born = 0;           //the calendar tick he was born on (LIFELINES)
+    uint32_t mother = 0;        //person ids - 0 for a settler couple's own parents, who never came
+    uint32_t father = 0;
     bool f_female = false;      //picks his - or her - figure and first name; births will want it too
     uint8_t skills[SKILL_COUNT] = {};
     uint32_t building = 0;      //his workplace, 0 none - a farmer's is his house (or camp), whose land he farms
@@ -344,7 +376,9 @@ struct EconomyDeath{
     uint32_t id = 0;
     uint32_t family = 0;
     bool f_female = false;      //with the id and family, his name (EconomyDeathName)
-    int age = 0;
+    int64_t born = 0;           //his age at death is from this and `tick`
+    uint32_t mother = 0;
+    uint32_t father = 0;
     uint64_t tick = 0;          //the calendar's
     int cause = NEEDS_DIED_HUNGER;
 };
@@ -388,6 +422,7 @@ struct EconomyState{
     std::vector<int> woodshed;                          //a house's room for firewood
     std::vector<uint8_t> snowed;                        //a house the full winter's snow reaches: it fetches firewood
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
+    uint64_t tick = 0;                                  //the calendar's at its last tick or load: what ages are read at
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
     uint32_t felled_version = 0;                        //bumped when a prop's state changes - the view
     uint32_t version = 0;                               //bumped on any change
@@ -425,7 +460,9 @@ public:
     //share their stock), grow and fill, and move every worker one tick on. `walkers` plans the routes.
     void Tick(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick, float dt);
 
-    void Restore(std::shared_ptr<const ChasmWorld> world, const EconomySaved& saved, const ZoneState& z);
+    //`calendar_tick` the save's, which its people's ages are read against.
+    void Restore(std::shared_ptr<const ChasmWorld> world, const EconomySaved& saved, const ZoneState& z,
+                 uint64_t calendar_tick);
     //A debug edit (the panel's villager list, CHASM_CMD_NEEDS): a person's health and water in ticks, each
     //held to its bar; -1 leaves one as it is. Applied before the tick's needs, so someone at home with food
     //and water eats and drinks straight back up; health 0 kills only someone who cannot. False with no such person.
@@ -490,6 +527,8 @@ private:
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
     void MakeSettlers();
+    //A child at home: out to a plot or two away to play, now and then. True if he set off.
+    bool GoPlay(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t tick);
     void HouseFamilies(const ZoneState& z, Walkers& walkers);
     void AssignJobs(const ZoneState& z, Walkers& walkers);
     int HomePlot(const EconomyWorker& k) const;

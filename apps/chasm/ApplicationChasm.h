@@ -37,7 +37,7 @@ struct PlayPick{
     bool operator!=(const PlayPick& o) const { return !(*this == o); }
 };
 
-//The people's figures in chasm_props.glb, by sex: the adults, then the children (who wait for births).
+//The people's figures in chasm_props.glb, by sex: the adults, then the children (lifeline_plan.md).
 #define PERSON_FIGURES          4
 #define PERSON_ADULT_MALE       0
 #define PERSON_ADULT_FEMALE     1
@@ -441,7 +441,7 @@ private:
         Each worker a walker's figure in his job's tunic, with what he carries on him; one object per
         worker, reused, placed every frame from the published state. Render thread.
     */
-    Mesh* worker_meshes[2 * 4] = {};                //sex * 4 + load (ApplicationChasmWorkersView.cpp)
+    Mesh* worker_meshes[PERSON_FIGURES * 4] = {};   //figure (PERSON_*) * 4 + load (ApplicationChasmWorkersView.cpp)
     std::vector<Object*> worker_objects;
     std::vector<int> worker_object_mesh;            //per object: which of worker_meshes it has, -1 none
     void BuildWorkerScene();                        //from BuildScene

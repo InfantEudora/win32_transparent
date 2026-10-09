@@ -76,8 +76,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     h.Bytes(&n,sizeof(n));
     h.Bytes(&e.next_person,sizeof(e.next_person));
     for (const EconomyWorker& k : e.workers){
-        int32_t who[6] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,k.age,(int32_t)k.f_indoors,(int32_t)k.f_female};
+        int32_t who[7] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,(int32_t)k.mother,(int32_t)k.father,
+                          (int32_t)k.f_indoors,(int32_t)k.f_female};
         h.Bytes(who,sizeof(who));
+        h.Bytes(&k.born,sizeof(k.born));
         h.Bytes(k.skills,sizeof(k.skills));
         int32_t head[11] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
                             (int32_t)k.site,k.stint};
@@ -95,7 +97,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     n = (uint32_t)e.dead.size();
     h.Bytes(&n,sizeof(n));
     for (const EconomyDeath& d : e.dead){
-        uint64_t death[3] = {d.id,d.tick,(uint64_t)d.cause};
+        uint64_t death[6] = {d.id,d.tick,(uint64_t)d.cause,(uint64_t)d.born,d.mother,d.father};
         h.Bytes(death,sizeof(death));
     }
     for (const EconomyField& f : e.fields){
@@ -166,7 +168,11 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     for (int sk = 0; sk < SKILL_COUNT; sk++){
         skills[SkillName(sk)] = (int)k.skills[sk];
     }
-    json j{{"id",k.id},{"name",EconomyPersonName(k)},{"family",k.family},{"house",k.house},{"age",k.age},
+    //LIFELINES (lifeline_plan.md): his age and stage at the state's tick, his birthday, his parents (0: none here).
+    uint64_t tick = e ? e->tick : 0;
+    json j{{"id",k.id},{"name",EconomyPersonName(k)},{"family",k.family},{"house",k.house},
+           {"age",EconomyAgeAt(k.born,tick)},{"stage",EconomyStageName(EconomyStageAt(k.born,tick))},
+           {"birthday",EconomyBirthdayName(k.born)},{"born",k.born},{"mother",k.mother},{"father",k.father},
            {"female",k.f_female},
            {"skills",skills},{"indoors",EconomyIndoors(k)},
            {"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
@@ -361,7 +367,8 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
         ImGui::Text("  holds %i; %i live here",holds,living);
         for (const EconomyWorker& k : e->workers){
             if (k.house == id){
-                ImGui::Text("    %s, %i - %s%s, health %i%%, water %i%%",EconomyPersonName(k).c_str(),k.age,
+                ImGui::Text("    %s, %i - %s%s, health %i%%, water %i%%",EconomyPersonName(k).c_str(),
+                            EconomyAgeAt(k.born,e->tick),
                             EconomyJobName(k.job),EconomyIndoors(k) ? ", at home" : "",
                             k.health * 100 / NEEDS_HEALTH_FULL,k.water * 100 / NEEDS_WATER_FULL);
             }
@@ -500,7 +507,7 @@ void ApplicationChasm::RenderPeoplePanel(){
                           : pressing ? ImVec4(1.0f,0.75f,0.35f,1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
             ImGui::TextColored(colour,"%u %s",k.id,EconomyPersonName(k).c_str());
             ImGui::TableNextColumn();
-            ImGui::Text("%i",k.age);
+            ImGui::Text("%i",EconomyAgeAt(k.born,e->tick));
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(EconomyJobName(k.job));
             ImGui::TableNextColumn();
@@ -515,7 +522,8 @@ void ApplicationChasm::RenderPeoplePanel(){
     }
     if (!e->dead.empty() && ImGui::TreeNode("people_dead","The dead (%i)",(int)e->dead.size())){
         for (const EconomyDeath& d : e->dead){
-            ImGui::Text("%s, %i - day %.2f, of %s",EconomyDeathName(d).c_str(),d.age,(double)d.tick / CALENDAR_DAY_TICKS,
+            ImGui::Text("%s, %i - day %.2f, of %s",EconomyDeathName(d).c_str(),EconomyAgeAt(d.born,d.tick),
+                        (double)d.tick / CALENDAR_DAY_TICKS,
                         EconomyDeathCause(d.cause));
         }
         ImGui::TreePop();
@@ -773,12 +781,14 @@ void ApplicationChasm::RegisterEconomyTools(){
                                    {"wood_per_plot",ECONOMY_WALL_WOOD},{"people_on_them",on_walls}};
             int housed = 0;
             int employed = 0;
+            int playing = 0;
             for (const EconomyWorker& k : e->workers){
                 housed += k.house ? 1 : 0;
-                employed += (k.job != WORKER_JOB_NONE) ? 1 : 0;
+                employed += (k.job >= 0) ? 1 : 0;
+                playing += (k.job == WORKER_JOB_PLAYING) ? 1 : 0;
             }
             result["people"] = json{{"total",e->workers.size()},{"housed",housed},{"working",employed},
-                                    {"camp_plot",e->camp_plot}};
+                                    {"children",playing},{"camp_plot",e->camp_plot}};
             //Per job, who works it and its places - the overview's figures (builders_plan.md).
             EconomyJobCount counts[WORKER_JOB_COUNT];
             int jobless = 0;
@@ -792,7 +802,8 @@ void ApplicationChasm::RegisterEconomyTools(){
             //The dead (needs_plan.md), in the order they died, with the day of the colony each died on.
             json dead = json::array();
             for (const EconomyDeath& d : e->dead){
-                dead.push_back(json{{"id",d.id},{"name",EconomyDeathName(d)},{"age",d.age},
+                dead.push_back(json{{"id",d.id},{"name",EconomyDeathName(d)},{"age",EconomyAgeAt(d.born,d.tick)},
+                                    {"mother",d.mother},{"father",d.father},
                                     {"day",(double)d.tick / CALENDAR_DAY_TICKS},{"cause",EconomyDeathCause(d.cause)}});
             }
             result["dead"] = dead;
