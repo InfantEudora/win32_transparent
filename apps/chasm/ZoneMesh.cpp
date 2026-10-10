@@ -4,6 +4,7 @@
 #include "BuildingMesh.h"
 #include "BoundaryMesh.h"
 #include "RoadMesh.h"
+#include "CastleMesh.h"
 
 #include <algorithm>
 
@@ -71,6 +72,13 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
         }
         if (f_house || f_ground || z.field[quad.parent]){
             BuildBoundaryCell(w,z,q,out);
+        }
+        //The debug castle's stone (ramparts_plan.md).
+        for (int k = 0; k < 4; k++){
+            if (ZoneCastleShape(z,quad.v[k]) != ZONE_CASTLE_NONE){
+                BuildCastleCell(w,z,q,out);
+                break;
+            }
         }
     }
 }

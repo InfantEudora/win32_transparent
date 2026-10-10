@@ -137,6 +137,11 @@ json ChasmSaveToJson(const ChasmSave& s){
                                    {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors},
                                    {"health",k.health},{"water",k.water},{"post",k.post},{"pack",pack},
                                    {"archery",k.archery},{"chosen",k.f_chosen}});
+            //His route's layers (ramparts_plan.md) - only off the ground, so a colony that never climbs saves as before.
+            if (!k.route_layer.empty()){
+                std::vector<int> layers(k.route_layer.begin(),k.route_layer.end());
+                workers.back()["route_layer"] = layers;
+            }
         }
         //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father,
         //surname.
@@ -200,7 +205,12 @@ json ChasmSaveToJson(const ChasmSave& s){
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
                        {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards}};
     }
-    return json{
+    //The debug castle (ramparts_plan.md): plot and piece - only with some, so a save without one is as before.
+    json castle = json::array();
+    for (const auto& pc : s.castle){
+        castle.push_back(json::array({pc.first,pc.second}));
+    }
+    json out = json{
         {"chasm_save",CHASM_SAVE_VERSION},
         {"grid",{
             {"seed",g.seed},
@@ -220,6 +230,10 @@ json ChasmSaveToJson(const ChasmSave& s){
         {"explored",s.explored},
         {"economy",economy}
     };
+    if (!castle.empty()){
+        out["castle"] = castle;
+    }
+    return out;
 }
 
 bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
@@ -376,6 +390,11 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             if (k.route.empty()){
                 k.route.push_back(k.pos);
             }
+            //Layers one a point, or none - a save from before them, or of a route on the ground.
+            std::vector<int> layers = wk.value("route_layer",std::vector<int>());
+            if (layers.size() == k.route.size()){
+                k.route_layer.assign(layers.begin(),layers.end());
+            }
             out.economy.workers.push_back(k);
         }
         out.economy.next_person = e.value("next_person",1u);
@@ -468,6 +487,11 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         g.owner = (gr.size() >= 4) ? gr[3].get<uint32_t>() : 0;
         g.arch = (gr.size() >= 5) ? gr[4].get<int>() : 0;
         out.grounds.push_back(g);
+    }
+    for (const json& pc : j.value("castle",json::array())){
+        if (pc.is_array() && pc.size() >= 2){
+            out.castle.push_back(std::make_pair(pc[0].get<int>(),pc[1].get<int>()));
+        }
     }
     //An older save's "walkers" - the debug walker, retired 2026-10-07 - are let go unread.
     return true;

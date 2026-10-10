@@ -754,6 +754,15 @@ ChasmSave ApplicationChasm::MakeSave(){
                 s.grounds.push_back(g);
             }
         }
+        //The debug castle's pieces (ramparts_plan.md), as they are painted: an arch over a piece after it, on the same plot.
+        for (size_t v = 0; v < z->castle.size(); v++){
+            if (z->castle[v]){
+                s.castle.push_back(std::make_pair((int)v,(int)z->castle[v]));
+            }
+            if (ZoneCastleOver(*z,(int)v)){
+                s.castle.push_back(std::make_pair((int)v,(int)ZoneCastlePiece(ZONE_CASTLE_ARCH,ZoneCastleOver(*z,(int)v))));
+            }
+        }
     }
     s.calendar_tick = calendar_shown;
     std::shared_ptr<const Exploration> ex = GetExploration();
@@ -788,6 +797,7 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
                     save.world_hash.c_str(),hash);
     }
     int refused = zones.Restore(w,save.buildings,save.next_building,save.grounds,save.stroke,save.stroke_building);
+    refused += zones.RestoreCastle(save.castle);
     paint_stroke = save.stroke;
     PublishZones();
     walkers.Reset(w);
@@ -853,6 +863,15 @@ void ApplicationChasm::HashSimState(StateHash& h){
     for (size_t v = 0; v < z.arch_built.size(); v++){
         if (z.arch_built[v]){
             h.Add(((uint64_t)v << 32) | z.arch_built[v]);
+        }
+    }
+    //The debug castle's pieces (ramparts_plan.md) - likewise only where there are some.
+    for (size_t v = 0; v < z.castle.size(); v++){
+        if (z.castle[v]){
+            h.Add(((uint64_t)v << 32) | 0xCA500u | z.castle[v]);
+        }
+        if (ZoneCastleOver(z,(int)v)){
+            h.Add(((uint64_t)v << 32) | 0x0E000u | (uint32_t)ZoneCastleOver(z,(int)v));
         }
     }
     //The buildings (docs/buildings_plan.md): which each plot is part of, the table, the drag in progress.
@@ -968,9 +987,16 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_FIELD_PAINT;
     }else if (tool == CHASM_TOOL_RANGE){
         op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_RANGE_PAINT;      //erased as a field is (range_plan.md)
+    }else if (tool == CHASM_TOOL_CASTLE){
+        //The debug castle (ramparts_plan.md): the panel's piece on every plot the drag reaches; shift takes one off.
+        op = ZONE_OP_CASTLE;
+        ground = f_shift ? 0 : ZoneCastlePiece(castle_shape,castle_storeys);
     }else if (tool == CHASM_TOOL_ERASE){
         std::shared_ptr<const ZoneState> z = GetZones();
-        if (z && !z->storeys.empty() && z->storeys[hover.plot]){
+        if (z && ZoneCastleShape(*z,hover.plot) != ZONE_CASTLE_NONE){
+            op = ZONE_OP_CASTLE;    //the castle's stone first: an arch stands over the road under it
+            ground = 0;
+        }else if (z && !z->storeys.empty() && z->storeys[hover.plot]){
             op = ZONE_OP_BUILD_ERASE;
         }else if (z && !z->ground.empty() && z->ground[hover.plot]){
             op = ZONE_OP_GROUND_ERASE;
@@ -1146,6 +1172,9 @@ bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z, boo
     }
     if (!z->ground.empty() && ZoneEnclosesGround(z->ground[p.plot])){
         return true;
+    }
+    if (ZoneCastleShape(*z,p.plot) != ZONE_CASTLE_NONE){
+        return true;    //the debug castle's stone (ramparts_plan.md)
     }
     if (p.coarse >= 0 && !z->field.empty() && z->field[p.coarse]){
         return true;
@@ -1666,6 +1695,9 @@ void ApplicationChasm::UpdatePickView(){
             coarse_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || ChasmLineTool(tool)){
             bool f_ok = ZoneCanGround(*w,z,hover.plot,NULL,ChasmLineTool(tool) ? ChasmLineGround(tool) : ZONE_GROUND_GARDEN);
+            plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
+        }else if (tool == CHASM_TOOL_CASTLE && !z.castle.empty()){
+            bool f_ok = ZoneCanCastle(*w,z,hover.plot,castle_shape,castle_storeys,NULL);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }
         //Dragging a bridge: its whole chain, green where it may stand, red where it may not.
@@ -2751,6 +2783,28 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Bridge (J)##tool",tool == CHASM_TOOL_BRIDGE)) tool = CHASM_TOOL_BRIDGE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Builders (G)##tool",tool == CHASM_TOOL_BUILDERS)) tool = CHASM_TOOL_BUILDERS;
+        //The debug castle (ramparts_plan.md): a prototype, so the panel's only - no key, no build bar.
+        if (ImGui::RadioButton("Castle (prototype)##tool",tool == CHASM_TOOL_CASTLE)) tool = CHASM_TOOL_CASTLE;
+        if (tool == CHASM_TOOL_CASTLE){
+            int shape = castle_shape;
+            int storeys = castle_storeys;
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Block##castle",shape == ZONE_CASTLE_BLOCK)) shape = ZONE_CASTLE_BLOCK;
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Arch##castle",shape == ZONE_CASTLE_ARCH)) shape = ZONE_CASTLE_ARCH;
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Stair##castle",shape == ZONE_CASTLE_STAIR)) shape = ZONE_CASTLE_STAIR;
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderInt("storeys##castle",&storeys,1,ZONE_CASTLE_MAX_STOREYS);
+            ImGui::SameLine();
+            ImGui::TextDisabled("a stair rises its last storey; an arch is 2 at least, and over a piece 2 above its top "
+                                "goes on it; shift takes the top piece off");
+            if (shape != castle_shape || storeys != castle_storeys){
+                castle_shape = shape;
+                castle_storeys = storeys;
+                pick_version++;
+            }
+        }
         if (tool != paint_tool){
             paint_tool = tool;
             pick_version++;
@@ -3059,6 +3113,8 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"sight",{{"type","boolean"},{"description","what a person standing here would see (play_mode_plan.md, sight): the eye's ground, how many cells, and the cells as a save's explored run lengths - read only"}}},
                 {"to_x",{{"type","number"},{"description","with to_z: the walk from x/z to here"}}},
                 {"to_z",{{"type","number"}}},
+                {"posted",{{"type","boolean"},{"description","that walk as a guard or someone under an order takes it - a castle's decks too (ramparts_plan.md)"}}},
+                {"from_layer",{{"type","integer"},{"description","that walk from this layer of x/z's plot, in half storeys - 0 its ground"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
@@ -3096,6 +3152,13 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["zone_ground_built"] = (bool)z->ground_built[pick.plot];
                     result["zone_line"] = z->line[pick.plot];
                     result["zone_gate"] = (bool)z->gate[pick.plot];
+                    //The debug castle's piece on it (ramparts_plan.md).
+                    if (ZoneCastleShape(*z,pick.plot) != ZONE_CASTLE_NONE){
+                        result["zone_castle"] = json{{"shape",ZoneCastleShapeName(ZoneCastleShape(*z,pick.plot))},
+                                                     {"storeys",ZoneCastleStoreys(*z,pick.plot)},
+                                                     {"layer",ZoneCastleLayer(*z,pick.plot)},
+                                                     {"arch_over",ZoneCastleOver(*z,pick.plot)}};
+                    }
                     //An arch over it (arches_plan.md): its storeys and the building it is part of.
                     if (z->ArchOf(pick.plot) > 0){
                         result["zone_arch"] = json{{"storeys",z->ArchOf(pick.plot)},{"owner",z->ArchOwnerOf(pick.plot)},
@@ -3123,19 +3186,30 @@ void ApplicationChasm::RegisterMCPTools(){
                     vec2 to_at(args["to_x"].get<float>(),args["to_z"].get<float>());
                     GridPick to = p->Pick(to_at);
                     if (to.f_hit){
-                        std::vector<int> plots;
+                        std::vector<WalkPlace> places;
                         std::vector<float> speeds;
                         bool f_route = false, f_straight = false;
+                        //Posted (ramparts_plan.md): as a guard or someone under an order walks, decks and all.
+                        int who = args.value("posted",false) ? WALK_WHO_POSTED : WALK_WHO_VILLAGER;
+                        WalkPlace from;
+                        from.plot = pick.plot;
+                        from.layer = (uint8_t)std::max(0,std::min(255,args.value("from_layer",0)));
                         //The walkers are the physics thread's; plan between ticks.
                         main_scene->AtTickBoundary([&](){
                             const ZoneState& zs = zones.State();
                             std::shared_ptr<const ChasmWorld> wz = zones.GetWorld();
                             if (wz){
-                                f_route = walkers.PlanRoute(zs,pick.plot,to.plot,plots,speeds);
+                                f_route = walkers.PlanRoute(zs,from,to.plot,who,places,speeds);
                                 f_straight = EconomyStraightClear(*wz,zs,pick.at,to.at,pick.plot,to.plot);
                             }
                         });
-                        result["route"] = json{{"found",f_route},{"plots",plots},{"straight_clear",f_straight}};
+                        json plots = json::array();
+                        json layers = json::array();
+                        for (const WalkPlace& wp : places){
+                            plots.push_back(wp.plot);
+                            layers.push_back((int)wp.layer);
+                        }
+                        result["route"] = json{{"found",f_route},{"plots",plots},{"layers",layers},{"straight_clear",f_straight}};
                     }
                 }
                 //The trees round the point, nearest first, with what the economy has done to them.
@@ -3194,14 +3268,24 @@ void ApplicationChasm::RegisterMCPTools(){
         "shuts the door of the gate at the place (`on`, default true; false opens it), the gate plots joined to "
         "it too - shut, nobody walks through, the colony's own people neither. The result names the building at "
         "the place, and `gate_here` says none, open or shut. TOWERS: tower_ladder moves a guard tower's ladder - its "
-        "door - toward the neighbour at to_x/to_z or `toward` (a plot), or with neither to its next open side.",
+        "door - toward the neighbour at to_x/to_z or `toward` (a plot), or with neither to its next open side. "
+        "THE DEBUG CASTLE (docs/ramparts_plan.md): castle puts a grey stone piece on the plot - `shape` block (solid, a "
+        "deck on top), arch (a deck over an open passage, a road may run under it) or stair (rises its last storey), "
+        "`storeys` high - or with shape none takes it off, the top one first. An arch painted where a piece stands goes "
+        "OVER it when it is two storeys or more over the piece's top, with its pillars on it (`arch_over`), and takes "
+        "its place otherwise. Debug only (refused with play). Its decks are walked only by the posted: an order onto a "
+        "piece stands him on its top deck. `castle_here` reports the plot's piece.",
         json{
             {"type","object"},
             {"properties",{
                 {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
                                                   "build_erase","field_crop","field_next","field_land","field_priority",
-                                                  "gate_shut","range_paint"}}}},
+                                                  "gate_shut","range_paint","tower_ladder","castle"}}}},
+                {"shape",{{"type","string"},{"enum",{"block","arch","stair","none"}},
+                          {"description","for castle: the debug castle's piece (ramparts_plan.md) - none takes it off"}}},
+                {"storeys",{{"type","integer"},{"description","for castle: its height, 1 to 4 (an arch 2 at least; a stair rises "
+                                                             "its last storey); default 2"}}},
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open"}}},
                 {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk"}},{"description","for build_* (default house)"}}},
@@ -3288,6 +3372,15 @@ void ApplicationChasm::RegisterMCPTools(){
                     toward = to.f_hit ? to.plot : -1;
                 }
                 cmd.value[1] = (float)toward;
+            }else if (op == ZONE_OP_CASTLE){
+                //The debug castle (ramparts_plan.md): a shape and its storeys, or shape "none" to take it off.
+                std::string shape_name = args.value("shape",std::string("block"));
+                int shape = (shape_name == "none") ? ZONE_CASTLE_NONE : ZoneCastleShapeByName(shape_name);
+                if (shape < 0){
+                    return json{{"error","no such castle shape - block, arch, stair or none"}};
+                }
+                cmd.value[1] = (shape == ZONE_CASTLE_NONE) ? 0.0f
+                                                           : (float)ZoneCastlePiece(shape,args.value("storeys",2));
             }
             //A tool's strokes in a range of their own, clear of the mouse's (UpdatePaint).
             if (args.contains("stroke")){
@@ -3328,6 +3421,9 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["ground_owner_here"] = ZoneGroundOwner(*z,index);    //whose yard, 0 nobody's (yards_plan.md)
                     result["line_here"] = z->line[index];
                     result["gate_here"] = !z->gate[index] ? "none" : ZoneGateShut(*z,index) ? "shut" : "open";
+                    result["castle_here"] = json{{"shape",ZoneCastleShapeName(ZoneCastleShape(*z,index))},
+                                                 {"storeys",ZoneCastleStoreys(*z,index)},{"layer",ZoneCastleLayer(*z,index)},
+                                                 {"arch_over",ZoneCastleOver(*z,index)}};
                     result["building_here"] = BuildingJson(*w,*z,z->building[index]);
                 }else{
                     result["field_here"] = (bool)z->field[index];
@@ -3405,7 +3501,7 @@ void ApplicationChasm::RegisterMCPTools(){
             {"properties",{
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                                    "range","tower","ropewalk"}}}},
+                                                    "range","tower","ropewalk","castle"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -3421,7 +3517,7 @@ void ApplicationChasm::RegisterMCPTools(){
             //2026-10-09) left a NULL at the end that every name was compared against: any call crashed.
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                   "range","tower","ropewalk"};
+                                   "range","tower","ropewalk","castle"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             std::string t = args.value("tool",std::string());
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){

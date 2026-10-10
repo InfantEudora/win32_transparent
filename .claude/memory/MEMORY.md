@@ -99,3 +99,4 @@
 - [Chasm goods plan](chasm_goods_plan.md) — AGREED 2026-10-10: food/water/materials/inputs categories, hemp crop, ropewalk (2-4 plots) makes rope; no starting rope; steps 1-4 (goods, hemp, ropewalk + props, winch's rope cost) built, view by category next
 - [Chasm villager animation](chasm_villager_animation.md) — going skinned (shared mesh, 7-bone rig); crowd bench: ~2.3 us/tick + ~7 us/frame per figure, static free; .blend exporter drops skins
 - [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" open questions
+- [Ramparts plan](ramparts_plan.md) — Chasm walk nodes are plot+layer; tower decks + debug castle built 2026-10-10; route_layer drives height; WalkJoin is the shared rule

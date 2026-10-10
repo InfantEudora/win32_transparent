@@ -281,6 +281,7 @@ enum ZoneOp{
     ZONE_OP_GATE_SHUT,      //plot: its gate's door shut (value[1] 1) or open (0), and the gate plots joined to it (defence_plan.md)
     ZONE_OP_RANGE_PAINT,    //coarse cell: join the stroke's range, or start one (range_plan.md) - erased, raised, put first as a field
     ZONE_OP_TOWER_LADDER,   //plot: its guard tower's ladder toward the neighbour plot in value[1], -1 the next open side round (defence_plan.md)
+    ZONE_OP_CASTLE,         //plot: the debug castle's piece in value[1] (ZoneCastlePiece), 0 to take it off (ramparts_plan.md)
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's or a range's) rather than a plot.
@@ -357,6 +358,8 @@ struct ZoneState{
     std::vector<uint8_t> arch;
     std::vector<uint32_t> arch_owner;
     std::vector<uint8_t> arch_built;
+    std::vector<uint8_t> castle;                //per fine vertex: the DEBUG CASTLE's piece on it (ZoneCastlePiece), 0 none
+    std::vector<uint8_t> castle_over;           //...and the storeys of an arch over that piece, 0 none
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
     uint32_t stroke_building = 0;
@@ -442,6 +445,9 @@ public:
     int Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<ZoneSavedBuilding>& buildings,
                 uint32_t next_id, const std::vector<ZoneSavedGround>& grounds,
                 uint32_t stroke, uint32_t stroke_building);
+    //The debug castle's pieces back (ramparts_plan.md), as (plot, piece) painted in order - an arch over a piece
+    //after it - through the rules; after Restore. Returns how many were refused.
+    int RestoreCastle(const std::vector<std::pair<int,int>>& pieces);
     std::string last_refusal;
     //The arch floors that came down with the last command (arches_plan.md step 4): a player's is told so.
     int last_arch_lost = 0;
@@ -653,10 +659,74 @@ inline bool ZoneWallPlanned(const ZoneState& z, int v){
 inline bool ZoneGateShut(const ZoneState& z, int v){
     return z.gate[v] == ZONE_GATE_SHUT;
 }
-//Closed to walkers - never walked onto, nor through: a standing wall plot, or a shut gate (Walkers, the
-//economy's straight walks).
+
+/*
+    THE DEBUG CASTLE (docs/ramparts_plan.md, step 2): a PROTOTYPE, to find out whether walls people walk on read from
+    the game's camera. Grey stone pieces painted in debug - refused in play - one a plot, each a SHAPE and a height in
+    storeys, kept apart from the buildings and the ground: nothing builds one or pays for it, and nothing but the
+    walkers and the drawing reads it.
+      - BLOCK: solid stone, a deck on top. Its ground shut.
+      - ARCH: a deck on pillars over an open passage - a road runs on under it. Two storeys at least, so it clears a
+        gate's posts.
+      - STAIR: rises a storey to its height, from the one below - from the ground, for a first storey. Its ground
+        shut: the stair is the way.
+    And an ARCH OVER a piece (`castle_over`, the user's, 2026-10-10): a second deck on the same plot, at least
+    ZONE_CASTLE_HEADROOM storeys over the piece's top, its pillars standing on it - so a wall-walk passes under
+    another. An arch painted where a piece stands goes over it when it is that high, and takes its place when not;
+    a piece under an arch is only ever swapped for one the arch still clears. Taken off from the top down.
+    Their decks are walked by the posted only (Walkers.h, LAYERS).
+*/
+#define ZONE_CASTLE_NONE        0
+#define ZONE_CASTLE_BLOCK       1
+#define ZONE_CASTLE_ARCH        2
+#define ZONE_CASTLE_STAIR       3
+#define ZONE_CASTLE_SHAPES      4
+#define ZONE_CASTLE_MAX_STOREYS 4
+#define ZONE_CASTLE_ARCH_LOWEST 2
+#define ZONE_CASTLE_HEADROOM    2       //storeys from a piece's top to an arch over it: a walker under it clears its slab
+//A piece as `castle` holds it, and a ZONE_OP_CASTLE's value[1]: its shape and storeys.
+inline uint8_t ZoneCastlePiece(int shape, int storeys){
+    return (uint8_t)((shape << 4) | (storeys & 15));
+}
+inline int ZoneCastleShape(const ZoneState& z, int v){
+    return (v >= 0 && v < (int)z.castle.size()) ? z.castle[v] >> 4 : ZONE_CASTLE_NONE;
+}
+inline int ZoneCastleStoreys(const ZoneState& z, int v){
+    return (v >= 0 && v < (int)z.castle.size()) ? z.castle[v] & 15 : 0;
+}
+//Its deck's layer (Walkers.h, LAYERS): a block's or an arch's top, a stair's middle - 0 with none.
+inline int ZoneCastleLayer(const ZoneState& z, int v){
+    int shape = ZoneCastleShape(z,v);
+    int storeys = ZoneCastleStoreys(z,v);
+    return (shape == ZONE_CASTLE_NONE) ? 0 : (shape == ZONE_CASTLE_STAIR) ? 2 * storeys - 1 : 2 * storeys;
+}
+//Whether its ground is shut to walkers: a block's or a stair's.
+inline bool ZoneCastleShuts(const ZoneState& z, int v){
+    int shape = ZoneCastleShape(z,v);
+    return shape == ZONE_CASTLE_BLOCK || shape == ZONE_CASTLE_STAIR;
+}
+//The storeys of the arch over its piece, 0 none - and that arch's deck's layer.
+inline int ZoneCastleOver(const ZoneState& z, int v){
+    return (v >= 0 && v < (int)z.castle_over.size()) ? z.castle_over[v] : 0;
+}
+inline int ZoneCastleOverLayer(const ZoneState& z, int v){
+    return 2 * ZoneCastleOver(z,v);
+}
+const char* ZoneCastleShapeName(int shape);
+int ZoneCastleShapeByName(const std::string& name);    //-1 for none
+//Whether painting a piece on `plot` puts it OVER the one there - an arch with headroom over it - rather than in its place.
+bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys);
+/*
+    Whether a piece may be painted on `plot`: a plot of the debug's rules for a road, nothing built on it, and no ground
+    but a road under an arch; not a tower's ladder. Over a piece, the headroom; in its place, one an arch over it still
+    clears. `why` says why not.
+*/
+bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, const char** why);
+
+//Closed to walkers - never walked onto, nor through: a standing wall plot, a shut gate, or a castle's solid stone
+//(Walkers, the economy's straight walks).
 inline bool ZoneShutToWalkers(const ZoneState& z, int v){
-    return ZoneWallStands(z,v) || ZoneGateShut(z,v);
+    return ZoneWallStands(z,v) || ZoneGateShut(z,v) || ZoneCastleShuts(z,v);
 }
 
 //Plot v's neighbours along fine edges, each once, in a fixed order. Returns how many (at most `max`).

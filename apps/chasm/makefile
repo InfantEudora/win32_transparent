@@ -37,6 +37,7 @@ APP_SRCS += ChasmSave.cpp
 APP_SRCS += Forest.cpp
 APP_SRCS += CropMesh.cpp
 APP_SRCS += BuildingMesh.cpp
+APP_SRCS += CastleMesh.cpp
 APP_SRCS += BoundaryMesh.cpp
 APP_SRCS += Mist.cpp
 APP_SRCS += WaterMesh.cpp

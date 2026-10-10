@@ -112,6 +112,81 @@ void AddLoad(std::vector<vertex>& out, int load){
     }
 }
 
+//Layer `layer` of plot `plot` (Walkers.h, LAYERS): a guard tower's platform, or so many half storeys over the ground.
+float LayerHeight(const ChasmWorld& w, const ZoneState& z, int plot, int layer){
+    if (z.KindOf(plot) == ZONE_KIND_TOWER && layer == 2 * z.standing[plot]){
+        return BuildingTowerDeck(w,z,plot);
+    }
+    return w.terrain->ground[plot] + (float)layer * 0.5f * ZONE_STOREY_HEIGHT;
+}
+
+/*
+    How high he stands (ramparts_plan.md): his route says which layer each of its points is on. On the ground, the
+    ground's relief under him; on a deck, its height. Between two plots, from the one's height straight to where
+    their layers meet - at the edge between them - and on to the other's, so a stair is walked as a ramp and a deck
+    to a deck stays level. Up a tower's ladder, whose layers meet nowhere, he steps onto the platform at its wall,
+    as he always did.
+*/
+float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+    const Terrain& t = *w.terrain;
+    auto plot_at = [&](const vec2& at){
+        GridPick pick = w.picker->Pick(at);
+        return pick.f_hit ? pick.plot : -1;
+    };
+    auto ground_at = [&](const vec2& at){
+        int v = plot_at(at);
+        return (v >= 0) ? t.GroundHeight(at,t.Height(v)) : 0.0f;
+    };
+    if (!z || z->world.get() != &w || k.route_layer.empty() || k.route.empty()){
+        return ground_at(k.pos);
+    }
+    auto at_point = [&](const vec2& at, int v, int layer){
+        return (layer == WALK_GROUND) ? ground_at(at) : LayerHeight(w,*z,v,layer);
+    };
+    int s = std::min(k.seg,(int)k.route.size() - 1);
+    int la = EconomyRouteLayer(k,s);
+    if (s + 1 >= (int)k.route.size()){
+        int v = plot_at(k.pos);
+        return (v >= 0) ? at_point(k.pos,v,la) : ground_at(k.pos);
+    }
+    int lb = EconomyRouteLayer(k,s + 1);
+    if (la == WALK_GROUND && lb == WALK_GROUND){
+        return ground_at(k.pos);
+    }
+    vec2 a = k.route[s];
+    vec2 b = k.route[s + 1];
+    int pa = plot_at(a);
+    int pb = plot_at(b);
+    if (pa < 0 || pb < 0){
+        return ground_at(k.pos);
+    }
+    float len = (b - a).length();
+    float f = (len > 1e-4f) ? std::min(1.0f,k.along / len) : 1.0f;
+    //On one plot - a step to or from his place on it - he is on its layer.
+    if (pa == pb){
+        return at_point(k.pos,pa,(f < 0.5f) ? la : lb);
+    }
+    int meet = WalkLayersMeet(la,lb);
+    if (meet < 0){
+        bool f_on_b = f >= 0.5f;
+        if (lb != WALK_GROUND && z->KindOf(pb) == ZONE_KIND_TOWER){
+            f_on_b = BuildingOnTower(w,pb,k.pos);
+        }else if (la != WALK_GROUND && z->KindOf(pa) == ZONE_KIND_TOWER){
+            f_on_b = !BuildingOnTower(w,pa,k.pos);
+        }
+        return f_on_b ? at_point(k.pos,pb,lb) : at_point(k.pos,pa,la);
+    }
+    vec2 mid = (a + b) * 0.5f;
+    float hm = (meet == WALK_GROUND) ? ground_at(mid)
+                                     : (t.ground[pa] + t.ground[pb]) * 0.5f + (float)meet * 0.5f * ZONE_STOREY_HEIGHT;
+    if (f < 0.5f){
+        float ha = at_point(a,pa,la);
+        return ha + (hm - ha) * (f * 2.0f);
+    }
+    float hb = at_point(b,pb,lb);
+    return hm + (hb - hm) * ((f - 0.5f) * 2.0f);
+}
+
 }
 
 /*
@@ -391,15 +466,8 @@ void ApplicationChasm::UploadWorkers(){
             }
             continue;
         }
-        //On the ground of the plot he stands on.
-        GridPick pick = w->picker->Pick(k.pos);
-        float y = pick.f_hit ? w->terrain->GroundHeight(k.pos,w->terrain->Height(pick.plot)) : 0.0f;
-        //Up on a guard tower's platform (defence_plan.md): anyone standing within its walls is on top of it.
-        if (pick.f_hit && z && z->world == w && z->KindOf(pick.plot) == ZONE_KIND_TOWER && z->standing[pick.plot] > 0
-            && z->standing[pick.plot] >= z->storeys[pick.plot]
-            && BuildingOnTower(*w,pick.plot,k.pos)){
-            y = BuildingTowerDeck(*w,*z,pick.plot);
-        }
+        //On the ground of the plot he stands on, or on the deck his route says - a guard tower's platform.
+        float y = WorkerHeight(*w,z.get(),k);
         //Felling, building, and on a road (line_works_plan.md) felling its trees or laying it.
         if ((k.job == WORKER_JOB_WOODCUTTER && k.state == WORKER_WORKING) || k.state == WORKER_BUILDING
             || k.state == WORKER_CLEARING || k.state == WORKER_LAYING || k.state == WORKER_SOWING){

@@ -106,6 +106,11 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(&len,sizeof(len));
         h.Bytes(k.route.data(),k.route.size() * sizeof(vec2));
         h.Bytes(k.speed.data(),k.speed.size() * sizeof(float));
+        //His route's layers (ramparts_plan.md) - only once he leaves the ground, so a colony that never does hashes as before.
+        if (!k.route_layer.empty()){
+            h.Add(((uint64_t)k.id << 32) | 0x1A7Eu);
+            h.Bytes(k.route_layer.data(),k.route_layer.size());
+        }
         int32_t needs[2] = {k.health,k.water};
         h.Bytes(needs,sizeof(needs));
         h.Bytes(k.pack.data(),sizeof(int) * GOOD_COUNT);     //his pack (defence_plan.md)
@@ -332,6 +337,7 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
            {"skills",skills},{"indoors",EconomyIndoors(k)},
            {"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
            {"x",k.pos.x},{"z",k.pos.y},{"legs_to_go",std::max(0,(int)k.route.size() - 1 - k.seg)},
+           {"layer",EconomyWorkerLayer(k)},    //ramparts_plan.md: 0 the ground, else half storeys up
            //Needs (needs_plan.md) in days of life left - the unit the plan's numbers are in.
            {"health_days",std::round(k.health * 100.0 / CALENDAR_DAY_TICKS) / 100.0},
            {"water_days",std::round(k.water * 100.0 / CALENDAR_DAY_TICKS) / 100.0}};

@@ -515,6 +515,7 @@ struct EconomyWorker{
     */
     std::vector<vec2> route;
     std::vector<float> speed;   //per leg
+    std::vector<uint8_t> route_layer;   //per point, the layer it is on (Walkers.h, LAYERS) - empty: all of it the ground
     int seg = 0;
     float along = 0.0f;
     vec2 pos;                   //where he stands now - kept, so a re-plan starts from exactly here
@@ -877,6 +878,8 @@ private:
     int HomePlot(const EconomyWorker& k) const;
     bool AtHome(const EconomyWorker& k) const;
     bool CanWalk(const ZoneState& z, Walkers& walkers, const vec2& from, int to);
+    //Can he get to plot `to` from where he stands - on a deck, perhaps - as one posted there would go (ramparts_plan.md).
+    bool CanWalkPosted(const ZoneState& z, Walkers& walkers, const EconomyWorker& k, int to);
     bool FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //A field of his land built, empty, its crop decided and its share farmed: out to sow it (fields_plan.md,
     //land_plan.md). True if he set off.
@@ -993,6 +996,10 @@ bool EconomyStraightClear(const ChasmWorld& w, const ZoneState& z, const vec2& a
 
 //Which way a worker faces, from his route. His position is EconomyWorker::pos.
 vec2 EconomyWorkerFacing(const EconomyWorker& k);
+//The layer of point i of his route (ramparts_plan.md), and the one he is on now: the leg's start's until half way
+//along it - the edge between two plots - and its end's after.
+int EconomyRouteLayer(const EconomyWorker& k, int i);
+int EconomyWorkerLayer(const EconomyWorker& k);
 
 const char* EconomyWorkerStateName(int state);
 const char* EconomyJobName(int job);

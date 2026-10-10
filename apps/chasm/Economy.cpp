@@ -734,6 +734,29 @@ vec2 EconomyWorkerFacing(const EconomyWorker& k){
     return vec2(0.0f,1.0f);
 }
 
+int EconomyRouteLayer(const EconomyWorker& k, int i){
+    return (i >= 0 && i < (int)k.route_layer.size()) ? k.route_layer[i] : WALK_GROUND;
+}
+
+int EconomyWorkerLayer(const EconomyWorker& k){
+    int s = k.seg;
+    if (s + 1 < (int)k.route.size()){
+        float len = (k.route[s + 1] - k.route[s]).length();
+        return EconomyRouteLayer(k,(k.along * 2.0f < len) ? s : s + 1);
+    }
+    return EconomyRouteLayer(k,std::min(s,(int)k.route.size() - 1));
+}
+
+//He stops where he is: a route of the one point he stands on, on the layer he is on.
+static void StopWhereHeIs(EconomyWorker& k){
+    int layer = EconomyWorkerLayer(k);
+    k.route.assign(1,k.pos);
+    k.speed.clear();
+    k.route_layer.assign((layer != WALK_GROUND) ? 1 : 0,(uint8_t)layer);
+    k.seg = 0;
+    k.along = 0.0f;
+}
+
 //--- The state -------------------------------------------------------------------------------------
 
 void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
@@ -1020,6 +1043,15 @@ bool Economy::CanWalk(const ZoneState& z, Walkers& walkers, const vec2& from, in
     }
     EconomyWorker probe;
     probe.pos = from;
+    return RouteTo(probe,z,walkers,to,state.world->grid->fine.pos[to]);
+}
+
+bool Economy::CanWalkPosted(const ZoneState& z, Walkers& walkers, const EconomyWorker& k, int to){
+    if (to < 0){
+        return false;
+    }
+    EconomyWorker probe = k;
+    probe.post = to;
     return RouteTo(probe,z,walkers,to,state.world->grid->fine.pos[to]);
 }
 
@@ -2045,25 +2077,37 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     A route from where the worker stands to `to_point`, on or beside plot `to_plot`: straight where the
     line is clear, otherwise the grid's A* from the plot he is on, with a straight step at either end
     between the plot and where he actually is. False, and the route left as it was, if there is no way.
+    He sets out from the layer he is on, and ends on the one the walkers give `to_plot` for him - a tower's
+    deck, a castle's for the posted (ramparts_plan.md); only from the ground to the ground does he go straight.
 */
 bool Economy::RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, int to_plot, const vec2& to_point){
     const ChasmWorld& w = *state.world;
     GridPick here = w.picker->Pick(k.pos);
-    int from_plot = here.f_hit ? here.plot : -1;
-    if (from_plot < 0 || to_plot < 0){
+    WalkPlace from;
+    from.plot = here.f_hit ? here.plot : -1;
+    from.layer = (uint8_t)EconomyWorkerLayer(k);
+    if (from.plot < 0 || to_plot < 0){
         return false;
     }
+    int from_plot = from.plot;
+    int who = EconomyPosted(k) ? WALK_WHO_POSTED : WALK_WHO_VILLAGER;
     std::vector<vec2> route;
     std::vector<float> speed;
-    if (EconomyStraightClear(w,z,k.pos,to_point,from_plot,to_plot)){
+    std::vector<uint8_t> layer;
+    if (from.layer == WALK_GROUND && walkers.GoalPlace(z,to_plot,who).layer == WALK_GROUND
+        && EconomyStraightClear(w,z,k.pos,to_point,from_plot,to_plot)){
         route.push_back(k.pos);
         route.push_back(to_point);
         speed.push_back(ECONOMY_WORKER_SPEED);
     }else{
-        std::vector<int> plots;
+        std::vector<WalkPlace> places;
         std::vector<float> edge_speed;
-        if (!walkers.PlanRoute(z,from_plot,to_plot,plots,edge_speed)){
+        if (!walkers.PlanRoute(z,from,to_plot,who,places,edge_speed)){
             return false;
+        }
+        std::vector<int> plots;
+        for (const WalkPlace& p : places){
+            plots.push_back(p.plot);
         }
         /*
             Part way along an edge, the plot under him can be the one he has just left: a re-plan when the
@@ -2073,7 +2117,7 @@ bool Economy::RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, in
             walked to straight, he goes on to the second.
         */
         size_t first = 0;
-        if (plots.size() >= 2){
+        if (plots.size() >= 2 && places[0].layer == WALK_GROUND && places[1].layer == WALK_GROUND){
             vec2 p0 = w.grid->fine.pos[plots[0]];
             vec2 p1 = w.grid->fine.pos[plots[1]];
             if ((p0 - k.pos).dot(p1 - p0) < 0.0f && EconomyStraightClear(w,z,k.pos,p1,from_plot,plots[1])){
@@ -2081,6 +2125,7 @@ bool Economy::RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, in
             }
         }
         route.push_back(k.pos);
+        layer.push_back(places[0].layer);
         for (size_t i = first; i < plots.size(); i++){
             vec2 pt = w.grid->fine.pos[plots[i]];
             if ((pt - route.back()).length() > 1e-4f){
@@ -2088,15 +2133,24 @@ bool Economy::RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, in
                 //and on to the second, the first edge's, which he is on.
                 speed.push_back((i == 0) ? ECONOMY_WORKER_SPEED : edge_speed[i - 1]);
                 route.push_back(pt);
+                layer.push_back(places[i].layer);
+            }else if (i > 0){
+                layer.back() = places[i].layer;     //where he stands is the plot's point: on its layer
             }
         }
         if ((to_point - route.back()).length() > 1e-4f){
             speed.push_back(ECONOMY_WORKER_SPEED);
             route.push_back(to_point);
+            layer.push_back(places.back().layer);
+        }
+        //All of it on the ground: nothing to keep.
+        if (std::all_of(layer.begin(),layer.end(),[](uint8_t l){ return l == WALK_GROUND; })){
+            layer.clear();
         }
     }
     k.route.swap(route);
     k.speed.swap(speed);
+    k.route_layer.swap(layer);
     k.seg = 0;
     k.along = 0.0f;
     k.f_indoors = false;     //setting out
@@ -2147,6 +2201,7 @@ void Economy::KeepAtDoors(){
             k.pos = door;
             k.route.assign(1,door);
             k.speed.clear();
+            k.route_layer.clear();      //a door is on the ground
             k.seg = 0;
             k.along = 0.0f;
             state.version++;
@@ -2198,10 +2253,7 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
         bool f_home = (k.state == WORKER_TO_HOME || k.state == WORKER_TO_PANTRY);
         if (!(f_home ? RouteHome(k,z,walkers) : RouteTo(k,z,walkers,goal_plot,goal))){
             //No way now: stop where he is and think again at the next look - posted, as one cut off from his post.
-            k.route.assign(1,k.pos);
-            k.speed.clear();
-            k.seg = 0;
-            k.along = 0.0f;
+            StopWhereHeIs(k);
             k.state = (EconomyPosted(k) && k.carry <= 0) ? WORKER_ON_POST : (k.carry > 0) ? WORKER_HOLDING : WORKER_AT_HOME;
             k.prop = -1;
             k.site = 0;         //a carrier cut off from his site gives it up; what he holds goes to a store
@@ -2367,10 +2419,7 @@ void Economy::GoHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         k.state = WORKER_TO_HOME;
     }else{
         //No way back: he waits where he is, and is home in the sense that he is free.
-        k.route.assign(1,k.pos);
-        k.speed.clear();
-        k.seg = 0;
-        k.along = 0.0f;
+        StopWhereHeIs(k);
         k.state = WORKER_AT_HOME;
     }
 }
@@ -2417,10 +2466,7 @@ void Economy::GoToPost(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         k.state = WORKER_TO_POST;
         return;
     }
-    k.route.assign(1,k.pos);
-    k.speed.clear();
-    k.seg = 0;
-    k.along = 0.0f;
+    StopWhereHeIs(k);
     k.state = WORKER_ON_POST;
 }
 
@@ -3361,6 +3407,9 @@ bool Economy::GoTrain(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     }
     k.route.push_back(k.route.back() + r.dir * 0.02f);
     k.speed.push_back(k.speed.empty() ? ECONOMY_WORKER_SPEED : k.speed.back());
+    if (!k.route_layer.empty()){
+        k.route_layer.push_back(k.route_layer.back());
+    }
     k.prop = -1;
     k.store = 0;
     k.state = WORKER_TO_RANGE;
@@ -3824,7 +3873,8 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
         || (kind != ZONE_KIND_NONE && kind != ZONE_KIND_CAMP && !ZoneBridgeWalkable(z,plot))){
         return refuse("something stands there");
     }
-    if (!CanWalk(z,walkers,k->pos,plot)){
+    //On the debug castle (ramparts_plan.md) he stands on top - its deck, which only the posted walk.
+    if (!CanWalkPosted(z,walkers,*k,plot)){
         return refuse("no way there");
     }
     bool f_new = k->post < 0;
@@ -3915,7 +3965,7 @@ bool Economy::PostGuard(uint32_t person, uint32_t tower, const ZoneState& z, Wal
         return refuse("no house to go out from");
     }
     int plot = plots_of[tower].front();
-    if (!CanWalk(z,walkers,k->pos,plot)){
+    if (!CanWalkPosted(z,walkers,*k,plot)){
         return refuse("no way there");
     }
     if (k->job == WORKER_JOB_GUARD && k->building == tower){
@@ -5153,6 +5203,9 @@ float SegmentDistance2D(const vec2& p, const vec2& a, const vec2& b){
 bool EconomyPropCovered(const ZoneState& z, int plot, int coarse){
     if (plot >= 0 && plot < (int)z.storeys.size() && (z.storeys[plot] > 0 || ZoneEnclosesGround(z.ground[plot]))){
         return true;
+    }
+    if (ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
+        return true;    //under the debug castle's stone (ramparts_plan.md)
     }
     return coarse >= 0 && coarse < (int)z.field.size() && z.field[coarse];
 }

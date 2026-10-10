@@ -31,6 +31,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_GATE_SHUT:     return "gate_shut";
         case ZONE_OP_RANGE_PAINT:   return "range_paint";
         case ZONE_OP_TOWER_LADDER:  return "tower_ladder";
+        case ZONE_OP_CASTLE:        return "castle";
         default:                   return "none";
     }
 }
@@ -519,7 +520,8 @@ bool ZoneTowerLadderOk(const ChasmWorld& w, const ZoneState& z, int tower, int t
         || std::fabs(t.ground[to] - t.ground[tower]) > WALKER_STEEPEST * run){
         return false;
     }
-    return z.storeys[to] == 0 && (z.ground.empty() || z.ground[to] != ZONE_GROUND_WALL) && (z.gate.empty() || !z.gate[to]);
+    return z.storeys[to] == 0 && (z.ground.empty() || z.ground[to] != ZONE_GROUND_WALL) && (z.gate.empty() || !z.gate[to])
+           && !ZoneCastleShuts(z,to);
 }
 
 int ZoneTowerDefaultLadder(const ChasmWorld& w, const ZoneState& z, int tower){
@@ -833,6 +835,9 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (ZoneIsLadderPlot(w,z,plot)){
         return refuse("a tower's ladder stands there");
     }
+    if (ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
+        return refuse("a castle piece stands there");    //the debug castle's (ramparts_plan.md)
+    }
     if (!f_line_ok && !z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && ZoneLineGround(z.ground[plot])){
         return refuse((z.ground[plot] == ZONE_GROUND_WALL) ? "a wall is there" : "a road is there");
     }
@@ -1061,6 +1066,78 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
             *why = "a garden or lot is there";
         }
         return false;
+    }
+    //The debug castle (ramparts_plan.md): a road runs on under an arch, nothing goes under anything else of it.
+    int castle = ZoneCastleShape(z,plot);
+    if (castle != ZONE_CASTLE_NONE && !(castle == ZONE_CASTLE_ARCH && kind == ZONE_GROUND_ROAD)){
+        if (why){
+            *why = "a castle piece stands there";
+        }
+        return false;
+    }
+    return true;
+}
+
+const char* ZoneCastleShapeName(int shape){
+    switch (shape){
+        case ZONE_CASTLE_BLOCK: return "block";
+        case ZONE_CASTLE_ARCH:  return "arch";
+        case ZONE_CASTLE_STAIR: return "stair";
+        default:                return "none";
+    }
+}
+
+int ZoneCastleShapeByName(const std::string& name){
+    for (int s = ZONE_CASTLE_BLOCK; s < ZONE_CASTLE_SHAPES; s++){
+        if (name == ZoneCastleShapeName(s)){
+            return s;
+        }
+    }
+    return -1;
+}
+
+bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys){
+    return shape == ZONE_CASTLE_ARCH && ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE
+           && storeys >= ZoneCastleStoreys(z,plot) + ZONE_CASTLE_HEADROOM;
+}
+
+bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, const char** why){
+    auto refuse = [why](const char* reason){
+        if (why){
+            *why = reason;
+        }
+        return false;
+    };
+    if (shape <= ZONE_CASTLE_NONE || shape >= ZONE_CASTLE_SHAPES){
+        return refuse("no such castle piece");
+    }
+    if (storeys < 1 || storeys > ZONE_CASTLE_MAX_STOREYS){
+        return refuse("a castle piece is one to four storeys");
+    }
+    //Over the piece there: its plot passed the rules when it was put down.
+    if (ZoneCastleGoesOver(z,plot,shape,storeys)){
+        return true;
+    }
+    if (ZoneCastleOver(z,plot) && ZoneCastleOver(z,plot) < storeys + ZONE_CASTLE_HEADROOM){
+        return refuse("an arch stands over it - two storeys over what is under it, at least");
+    }
+    if (shape == ZONE_CASTLE_ARCH && storeys < ZONE_CASTLE_ARCH_LOWEST){
+        return refuse("an arch is two storeys at least - its passage clears a gate");
+    }
+    //A road's rules: it may stand beside the wet, on a road's slope - an arch is where a road goes.
+    if (!PlotIsBuildable(w,z,plot,why,ZONE_RISE_ROAD,false,true)){
+        return false;
+    }
+    if (z.storeys[plot] > 0){
+        return refuse("a building is there");
+    }
+    if (ZoneIsLadderPlot(w,z,plot)){
+        return refuse("a tower's ladder stands there");
+    }
+    int ground = z.ground[plot];
+    if (ground != ZONE_GROUND_NONE && !(shape == ZONE_CASTLE_ARCH && ground == ZONE_GROUND_ROAD)){
+        return refuse((shape == ZONE_CASTLE_ARCH) ? "an arch goes over open ground or a road"
+                                                  : "a block or a stair goes on open ground");
     }
     return true;
 }
@@ -1473,6 +1550,8 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state.line.assign(g.fine.pos.size(),0);
     state.gate.assign(g.fine.pos.size(),0);
     state.ground_owner.assign(g.fine.pos.size(),0);
+    state.castle.assign(g.fine.pos.size(),0);
+    state.castle_over.assign(g.fine.pos.size(),0);
     state.field.assign(g.coarse.quads.size(),0);
     state.field_built.assign(g.coarse.quads.size(),0);
     state.chunk_version.assign(world->mesh->chunks.size(),0);
@@ -2310,6 +2389,48 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             touch_road(plot);       //the tower drawn again, and the plots round it
             break;
         }
+        case ZONE_OP_CASTLE:{
+            //The debug castle (ramparts_plan.md): a prototype, so never a player's.
+            if (f_play){
+                last_refusal = "the castle is a debug prototype - not in play";
+                return false;
+            }
+            if (plot < 0 || plot >= (int)state.castle.size()){
+                last_refusal = "no such plot";
+                return false;
+            }
+            int piece = std::max(0,kind) & 0xFF;
+            if (piece == 0){
+                //From the top down: an arch over a piece first.
+                if (state.castle_over[plot]){
+                    state.castle_over[plot] = 0;
+                }else if (state.castle[plot]){
+                    state.castle[plot] = 0;
+                }else{
+                    last_refusal = "no castle piece there";
+                    return false;
+                }
+            }else{
+                int shape = piece >> 4;
+                int storeys = piece & 15;
+                bool f_over = ZoneCastleGoesOver(state,plot,shape,storeys);
+                if (f_over ? state.castle_over[plot] == storeys : state.castle[plot] == piece){
+                    return false;   //the same piece again: nothing to do, as a drag over its own plots
+                }
+                //Over the piece there, or in its place - swapped for it as an arch over it allows.
+                if (!ZoneCanCastle(w,state,plot,shape,storeys,&why)){
+                    last_refusal = why;
+                    return false;
+                }
+                if (f_over){
+                    state.castle_over[plot] = (uint8_t)storeys;
+                }else{
+                    state.castle[plot] = (uint8_t)piece;
+                }
+            }
+            touch_ring(plot);       //a stair's slope meets its neighbours, so they are drawn again too
+            break;
+        }
         default:
             last_refusal = "unknown zone op";
             return false;
@@ -2359,6 +2480,16 @@ void Zones::SettlePriorities(){
             state.buildings[id].f_priority = 0;
         }
     }
+}
+
+int Zones::RestoreCastle(const std::vector<std::pair<int,int>>& pieces){
+    int refused = 0;
+    for (const auto& pc : pieces){
+        if (!Apply(ZONE_OP_CASTLE,(uint32_t)pc.first,pc.second,0,false)){
+            refused++;
+        }
+    }
+    return refused;
 }
 
 int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<ZoneSavedBuilding>& buildings,

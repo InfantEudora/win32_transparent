@@ -4,8 +4,8 @@ aliases: tower, towers, guard towers, guard, guards, ladder
 kind: buildings
 status: partial
 summary: A two-storey tower of logs in its junction's shape, a guard for each edge past two, built with water and provisions that become its stock - its guards' pantry, entered only by its ladder.
-plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: the tower tuned; defence_plan.md > As built: step 7, the towers kept; defence_plan.md > Guards by hand (step 8); defence_plan.md > Build order
-code: Zones.cpp: ZoneCanBuild ZoneTowerGuards ZoneTowerCorners ZoneTowerLadderOk ZoneTowerDefaultLadder ZoneIsLadderPlot; Walkers.cpp: EdgeOpen; Economy.cpp: AssignJobs Needs SeekSupplyOf TowerStoreyCost StoreyKept EconomyPostPoint EconomyOnTower KeepTowers TowerLeft EconomyTowerShort PostGuard SetGuards; Economy.h: ECONOMY_TOWER_WOOD ECONOMY_TOWER_WATER ECONOMY_TOWER_PROVISIONS ECONOMY_TOWER_GUARDS_PLACED WORKER_JOB_GUARD
+plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: the tower tuned; defence_plan.md > As built: step 7, the towers kept; defence_plan.md > Guards by hand (step 8); defence_plan.md > Build order; ramparts_plan.md > Step 1: the tower's deck, a real node
+code: Zones.cpp: ZoneCanBuild ZoneTowerGuards ZoneTowerCorners ZoneTowerLadderOk ZoneTowerDefaultLadder ZoneIsLadderPlot; Walkers.cpp: EdgeOpen EnsureDecks WalkDeckLayers; Economy.cpp: AssignJobs Needs SeekSupplyOf TowerStoreyCost StoreyKept EconomyPostPoint EconomyOnTower KeepTowers TowerLeft EconomyTowerShort PostGuard SetGuards; Economy.h: ECONOMY_TOWER_WOOD ECONOMY_TOWER_WATER ECONOMY_TOWER_PROVISIONS ECONOMY_TOWER_GUARDS_PLACED WORKER_JOB_GUARD
 verified: 2026-10-10
 ---
 
@@ -30,7 +30,8 @@ builders, so no builders' hut, no tower. Placed in debug, it stands full.
 
 Walkers get on and off a tower only by the plot its ladder stands toward: placed, the open side nearest the
 camp - a wall's inside, usually; with none open, refused. **Move ladder** on its card turns it to the next open
-side. Nothing is built, and no wall drawn, on the ladder's plot.
+side. Nothing is built, and no wall drawn, on the ladder's plot. Once it stands whole, its platform is a place
+of its own in the walk - a deck over its plot, up the ladder - so a walk to the tower ends on top of it.
 
 ## Its guards
 

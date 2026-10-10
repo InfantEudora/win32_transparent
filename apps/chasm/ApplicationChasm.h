@@ -193,6 +193,7 @@ enum ChasmTool{
     CHASM_TOOL_RANGE,       //range_plan.md: an archery range, painted on coarse cells as a field is
     CHASM_TOOL_TOWER,       //defence_plan.md: a guard tower, a plot each - on a wall's plot too
     CHASM_TOOL_ROPEWALK,    //goods_plan.md: a ropewalk, a drag of up to four plots
+    CHASM_TOOL_CASTLE,      //ramparts_plan.md: the debug castle's pieces, from the panel only - no key, never in play
     CHASM_TOOL_COUNT
 };
 
@@ -346,6 +347,8 @@ private:
     void RegisterCommandHandlers();
 
     std::atomic<int> paint_tool{CHASM_TOOL_SELECT};
+    std::atomic<int> castle_shape{ZONE_CASTLE_BLOCK};   //the castle tool's piece (ramparts_plan.md), set in the panel
+    std::atomic<int> castle_storeys{2};
     int paint_last_index = -1;                  //physics thread: what a drag last painted
     std::atomic<int> bridge_from{-1};           //the bridge tool's press: the bank it starts from, -1 none
     std::atomic<uint32_t> zone_refusals{0};     //bumped on each refused zone command - the play overlay shows why
