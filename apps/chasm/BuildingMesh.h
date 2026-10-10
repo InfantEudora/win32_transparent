@@ -48,12 +48,15 @@ struct BuildingFixtures{
 };
 
 /*
-    A GUARD TOWER (defence_plan.md): a square of upright logs BUILDING_TOWER_HALF either way of its plot's point,
-    a storey of them for each that stands, and on the whole of it a platform with a parapet of sharpened stakes, as
-    the palisade's. Its guards stand on the platform (ApplicationChasmWorkersView.cpp) - at this height.
+    A GUARD TOWER (defence_plan.md): upright logs round its junction's polygon (ZoneTowerCorners), a storey of them for
+    each that stands, and on the whole of it a platform with a parapet of sharpened stakes, as the palisade's. Its
+    guards stand on the platform (ApplicationChasmWorkersView.cpp) - at BuildingTowerDeck's height.
 */
-#define BUILDING_TOWER_HALF     0.62f
 float BuildingTowerDeck(const ChasmWorld& w, const ZoneState& z, int plot);
+//How far its walls are from its plot's point, along `toward` - where a palisade beside it meets it (RoadMesh).
+float BuildingTowerReach(const ChasmWorld& w, int plot, const vec2& toward);
+//Whether `at` is on its platform.
+bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at);
 
 //`fixtures`, if given, gets the houses' chimneys and panes this cell builds.
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,

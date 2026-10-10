@@ -21,3 +21,9 @@ A winch is the only way between the plateau and a [[Terrain|balcony]] on the cha
 - It is built like any [[Construction|site]], and takes more wood than a house's storey of the same size.
 
 Balconies can hold anything but fields, so whoever lives down there eats what comes down from the rim.
+
+## Planned
+
+- [planned] Built with **rope** as well as wood, from the [[Ropewalk]]. The colony starts with none, so the
+  first winch waits for a hemp field and a ropewalk.
+- [idea] Its rope wears as it hauls and is replaced now and then - rope as an upkeep input.

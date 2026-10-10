@@ -758,7 +758,7 @@ void ApplicationChasm::RegisterEconomyTools(){
         "every field's growth toward its harvest, every construction site (wood needed, brought, its "
         "carriers), how many trees are felled, and the dead (who, the colony's day they died on - a "
         "fraction, from 0 at its first dawn - and of what). op store_allow: "
-        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions) - "
+        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
         "plot) goes first (`on`, default true) or back in the queue - recorded the same way; a site's "

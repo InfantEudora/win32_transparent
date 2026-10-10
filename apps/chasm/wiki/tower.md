@@ -1,44 +1,55 @@
 ---
 title: Guard tower
-aliases: tower, towers, guard towers, guard, guards
+aliases: tower, towers, guard towers, guard, guards, ladder
 kind: buildings
 status: partial
-summary: A two-storey tower of logs for two guards, built with water and provisions that become its stock - its guards' pantry, and nobody else's.
-plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order
-code: Economy.cpp: AssignJobs Needs SeekSupplyOf StoreyGoods StoreyKept EconomyPostPoint EconomyOnTower; Economy.h: ECONOMY_TOWER_GUARDS ECONOMY_TOWER_WATER ECONOMY_TOWER_PROVISIONS WORKER_JOB_GUARD; Zones.cpp: ZoneCanBuild
+summary: A two-storey tower of logs in its junction's shape, a guard for each edge past two, built with water and provisions that become its stock - its guards' pantry, entered only by its ladder.
+plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: the tower tuned; defence_plan.md > Build order
+code: Zones.cpp: ZoneCanBuild ZoneTowerGuards ZoneTowerCorners ZoneTowerLadderOk ZoneTowerDefaultLadder ZoneIsLadderPlot; Walkers.cpp: EdgeOpen; Economy.cpp: AssignJobs Needs SeekSupplyOf TowerStoreyCost StoreyKept EconomyPostPoint EconomyOnTower; Economy.h: ECONOMY_TOWER_WOOD ECONOMY_TOWER_WATER ECONOMY_TOWER_PROVISIONS WORKER_JOB_GUARD
 verified: 2026-10-10
 ---
 
 Tool **T**. One plot, always both storeys: it is painted whole, and taking a storey off takes it all. It
 stands by a building's rules, and also **in a wall's line**: painted on a [[Roads and walls|wall]] plot,
-planned or standing, it takes that plot over, and the palisade runs up to its sides. A building stops
-walkers, so the wall stays shut. Never on a road, so never on a gate.
+planned or standing, it takes that plot over, and the palisade runs up to its sides. Never on a road.
+
+## Its junction
+
+It takes its **junction's shape**: a triangle, a square, a pentagon or a hexagon, its size its plot's. The
+junction decides its **guards**, its edges less two: 1 on a 3-junction, 2 on a 4, 3 on a 5, 4 on a 6. Nearly
+every plot is a 4; the ghost's shape shows the rarer ones.
 
 ## Building it
 
-Besides its wood, it takes {ECONOMY_TOWER_WATER} water and {ECONOMY_TOWER_PROVISIONS}
-[[Provisions|provisions]], half with each storey. What a storey takes of those it **keeps** as its stock
-instead of using it up, so a finished tower holds them all. Provisions come only from builders, so no
-builders' hut, no tower. Placed in debug, it stands full.
+So much a guard place: {ECONOMY_TOWER_WOOD} wood, {ECONOMY_TOWER_WATER} water and
+{ECONOMY_TOWER_PROVISIONS} [[Provisions|provisions]], half with each storey - so no shape is cheaper for what
+it holds. What a storey takes of water and provisions it **keeps** as its stock. Provisions come only from
+builders, so no builders' hut, no tower. Placed in debug, it stands full.
+
+## Its ladder is its door
+
+Walkers get onto a tower only from the plot its ladder stands toward, and off only to it. Placed, the ladder
+takes the open side nearest the camp - usually a wall's inside; with no open side the tower is refused. The
+card's **Move ladder** turns it to the next open side. Nothing is built, and no wall drawn, on the ladder's
+plot.
 
 ## Its guards
 
-- {ECONOMY_TOWER_GUARDS} places once it stands whole, filled like any workplace's - by **archery** first,
-  what the archery range trained, and then by [[Skills|precision]].
-- A guard lives as someone [[Posts|posted]] does: out to the tower from home with his pack, and never home
-  while he has the job. Each stands at his own place on the platform.
-- **The tower is his pantry**: on it he eats and drinks from its stock as at home, a whole unit whenever it
-  fits. His pack is only for a kind the tower has none of, so it waits while the tower has any.
-- With the tower empty and his pack gone, a pressing need sends him to the nearest supply and back up.
+- Filled like any workplace's - by **archery** first, what the archery range trained, then by
+  [[Skills|precision]].
+- A guard lives as someone [[Posts|posted]] does: up the tower from home with his pack, never home while he has
+  the job, at a place of his own on the platform.
+- **The tower is his pantry**: he eats and drinks from its stock as at home; his pack is only for a kind the
+  tower has none of. Both empty, a pressing need sends him to the nearest supply and back up.
 - The tower pulled down, its guards lose the job and go home.
 
-## Nobody else's
-
-Only posted people draw on it. A villager in need passes towers by, even with no other water anywhere, and
-no carrier, family or builder takes from one. Nobody delivers to one yet either.
+Only posted people draw on it: villagers pass towers by, and no carrier, family or builder takes from one.
 
 ## Planned
 
 - [planned] Builders keeping towers full, ahead of their building: a tower below its full stock is to them a
   site that wants water and provisions.
 - [planned] A right click on a tower posts the selected person there, if it has a free place.
+- [planned] A **gatehouse**: two towers either side of a palisade gate joined by a walkway between their decks,
+  with guard places of its own, reached by the towers' ladders. Towers are never arched over a road
+  ([[Roads and walls|arches]]); this is what a tower pair over a gate becomes instead.

@@ -67,6 +67,7 @@ float CrateYaw(uint32_t id);
 #define OVERLAY_HIT_TAKE_TOOL   12      //NEEDS ATTENTION's hint: take up tool `value` - and keep it up, unlike the grid
 #define OVERLAY_HIT_BUILDING    13      //NEEDS ATTENTION's place: select building `value`, and the view goes to it
 #define OVERLAY_HIT_GATE        14      //a gate's card: its door shut, or opened (defence_plan.md)
+#define OVERLAY_HIT_LADDER      15      //a guard tower's card: its ladder, its door, to the next open side
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;

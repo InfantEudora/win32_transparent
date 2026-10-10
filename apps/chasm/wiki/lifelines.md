@@ -4,8 +4,8 @@ aliases: age, ages, birth, births, baby, babies, child, children, couple, couple
 kind: people
 status: partial
 summary: People are born, grow up a stage at a time, and couples have children, with one chance a year each.
-plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births; lifeline_plan.md > As built: step 3, couples
-code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING LIFE_COUPLE_ROOM; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers HouseFamilies EconomyRelated EconomyCoupleSurname
+plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: shares; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births; lifeline_plan.md > As built: step 3, couples
+code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING LIFE_COUPLE_ROOM EconomyShare; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers HouseFamilies EconomyRelated EconomyCoupleSurname
 verified: 2026-10-10
 ---
 
@@ -15,12 +15,15 @@ mother is already expecting.
 
 ## Stages
 
-| Stage | Until age | What they do |
-|---|---|---|
-| Baby | {LIFE_BABY_TICKS:years} | Indoors in its mother's care. Does nothing, and never goes for food or water itself: its family's [[Fetching home|fetching]] feeds it |
-| Child | {LIFE_CHILD_TICKS:years} | Goes out to play near home now and then. No job, no errands, no building |
-| Young adult | {LIFE_YOUNG_TICKS:years} | Works like anyone |
-| Adult | | Works, and may have children |
+| Stage | Until age | Eats and drinks | What they do |
+|---|---|---|---|
+| Baby | {LIFE_BABY_TICKS:years} | {LIFE_SHARE_BABY} quarters of an adult's | Indoors in its mother's care. Does nothing, and never goes for food or water itself: its family's [[Fetching home|fetching]] feeds it |
+| Child | {LIFE_CHILD_TICKS:years} | {LIFE_SHARE_CHILD} quarters | Goes out to play near home now and then. No job, no errands, no building |
+| Young adult | {LIFE_YOUNG_TICKS:years} | a whole share | Works like anyone |
+| Adult | | a whole share | Works, and may have children |
+
+A house's fetching and its fair share of food count each mouth at its share, so a family with a baby fetches
+for half a person more, not a whole one. Its room counts heads: a baby still takes a place.
 
 When a child grows up, jobs are handed out again on that tick, so a free place is taken at once.
 

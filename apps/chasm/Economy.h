@@ -206,15 +206,15 @@ class Walkers;
     round); with too few on hand and on their way for what is wanted, fetches a load of the scarcer from a
     store, the camp or a crate. The sites' carriers take them from the hut as from a store. What the hut holds
     that nobody wants any more goes to a store that takes it. A hut's stock is for this alone: nobody eats from it.
-    A GUARD TOWER (ZONE_KIND_TOWER, step 6) is a post as a workplace: ECONOMY_TOWER_GUARDS places once it stands
-    whole, filled like any other - by ARCHERY first, the range's training, then precision (range_plan.md). A
-    GUARD (WORKER_JOB_GUARD) lives as the posted do - out to his tower from home with his pack, never home
-    again while he has the job - and his post is a place on its platform (EconomyPostPoint). THE TOWER IS HIS
-    PANTRY: on it he eats and drinks from its stock as at home, so his pack waits while it has any. Its stock
-    is water and provisions, and it is BUILT WITH THEM (ECONOMY_TOWER_WATER, ECONOMY_TOWER_PROVISIONS, a share
-    a storey): what a storey takes of them it keeps, as its stock, not used up - and one placed in debug stands
-    full. Only posted people draw on it: SeekSupply passes towers by for villagers, and no carrier, family or
-    caretaker takes from one.
+    A GUARD TOWER (ZONE_KIND_TOWER, step 6) is a post as a workplace: its junction's places (ZoneTowerGuards, 1 to
+    4) once it stands whole, filled like any other - by ARCHERY first, the range's training, then precision
+    (range_plan.md). A GUARD (WORKER_JOB_GUARD) lives as the posted do - out to his tower from home with his pack,
+    never home again while he has the job - and his post is his place on its platform (EconomyPostPoint). THE
+    TOWER IS HIS PANTRY: on it he eats and drinks from its stock as at home, so his pack waits while it has any.
+    Its stock is water and provisions, and it is BUILT WITH THEM: it costs so much a GUARD PLACE (ECONOMY_TOWER_*,
+    a share a storey), whatever its shape, and what a storey takes of water and provisions it keeps, as its stock,
+    not used up - one placed in debug stands full. Only posted people draw on it: SeekSupply passes towers by for
+    villagers, and no carrier, family or caretaker takes from one.
 
     --- CRATES (docs/crates_plan.md) -------------------------------------------------------------------
     A CRATE is goods lying on the ground: a store villagers only take from, gone when empty. A posted
@@ -276,10 +276,9 @@ class Walkers;
 #define ECONOMY_ROAD_STINT          8       //pieces of road work - a tree felled, a plot laid - a trip
 #define ECONOMY_ROAD_REACH          10.0f   //how far from him the next piece of a stint may be
 #define ECONOMY_POST_REACH          0.5f    //within this of his post's point he stands on it (defence_plan.md)
-#define ECONOMY_TOWER_GUARDS        2       //a guard tower's places (POSTS)
-#define ECONOMY_TOWER_WATER         12      //...its stock full, and what it is built with: 12 days for its two guards
-#define ECONOMY_TOWER_PROVISIONS    8       //...and its provisions, at 3 water to 2 provisions so both run out together
-#define ECONOMY_TOWER_STAND         0.28f   //a guard's place on its platform: this far either side of its middle
+#define ECONOMY_TOWER_WOOD          10      //a guard tower, a GUARD PLACE (POSTS): its wood...
+#define ECONOMY_TOWER_WATER         6       //...its water - its stock full, and what it is built with: 12 days for the guard
+#define ECONOMY_TOWER_PROVISIONS    4       //...and its provisions, at 3 water to 2 provisions so both run out together
 //A worker's `site` naming a garden or lot plot rather than a building (the plot in the low bits).
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
@@ -291,7 +290,7 @@ inline uint32_t EconomyCrateOfStore(uint32_t store){ return store & ~ECONOMY_STO
 //What the settlers bring (in the camp): wood for the first few buildings, food and water for the first days.
 //Tuning, like the needs below.
 #define ECONOMY_START_WOOD          40
-#define ECONOMY_START_WHEAT         40
+#define ECONOMY_START_WHEAT         50
 #define ECONOMY_START_BEANS         30
 #define ECONOMY_START_WATER         40
 
@@ -411,6 +410,17 @@ int EconomyStageAt(int64_t born, uint64_t tick);
 const char* EconomyStageName(int stage);
 int EconomyBirthday(int64_t born);
 std::string EconomyBirthdayName(int64_t born);      //"summer 4"
+
+/*
+    A SHARE (the user's, 2026-10-10): what someone eats and drinks, in quarters of an adult's - a baby half, a
+    child three quarters, a young adult on a whole. His bars fall on only that many ticks in four (Needs), so he
+    eats and drinks that much less of his home's stock; and what a home fetches, keeps and counts as its fair
+    share is by its mouths at their shares, not its heads. Its room is by heads: a baby still takes a place.
+*/
+#define LIFE_SHARE_BABY         2       //quarters of an adult's
+#define LIFE_SHARE_CHILD        3
+#define LIFE_SHARE_FULL         4
+int EconomyShare(int64_t born, uint64_t tick);
 
 /*
     BIRTHS (step 2). A COUPLE (`partner`; the settlers' couples from the start) has one chance a year of a
@@ -612,9 +622,11 @@ inline bool EconomyCold(const EconomyState& e, const EconomyWorker& k){
 
 //The plot of his post (POSTS): an order's, else a guard's tower - -1 for neither.
 int EconomyPostPlot(const EconomyState& e, const EconomyWorker& k);
-//Where on it he stands: an order's plot's point; on a tower, his place on its platform, one either side of its
-//middle by his rank among its guards (ECONOMY_TOWER_STAND).
+//Where on it he stands: an order's plot's point; on a tower, his place on its platform by his rank among its guards
+//(ZoneTowerPlace).
 vec2 EconomyPostPoint(const EconomyState& e, const EconomyWorker& k);
+//A guard tower's full stock of `good` - what it is built with and keeps: so much a guard place (ECONOMY_TOWER_*).
+int EconomyTowerStock(const ChasmWorld& w, int plot, int good);
 //Standing on his post (ECONOMY_POST_REACH), rather than on his way to it or cut off from it.
 bool EconomyAtPost(const EconomyState& e, const EconomyWorker& k);
 //The tower whose platform he stands on as its guard, 0 none - where he lives on its stock (POSTS).

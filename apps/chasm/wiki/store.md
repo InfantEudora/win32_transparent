@@ -46,3 +46,6 @@ goods here.
 
 A load that no store will take is to be put down as a [[Crate|crate]], instead of being carried around
 until a store will take it - on the crate's page.
+
+- [planned] Goods in four categories - food, water, materials, inputs - and a store's card grouped by them:
+  a stock strip per category, and its "Takes" chips a line per category. Only food is ever summed.

@@ -390,15 +390,11 @@ struct ChimneyPlace{
     int edge = -1;
 };
 
-//Whether corner v stands as a house body in BuildHouseCell: its storeys or an arch's, and not a winch,
-//camp or bridge, which are drawn apart from the bodies.
+//Whether corner v stands as a house body in BuildHouseCell: its storeys, of a kind with a body (ZoneKindHasBody -
+//not a winch, camp, bridge or guard tower, which are drawn apart), or an arch's.
 bool CornerSolid(const ChasmWorld& w, const ZoneState& z, int v){
-    int s = z.standing[v];
-    if (s == 0){
-        s = ZoneArchStoreys(w,z,v);
-    }
-    int kind = z.KindOf(v);
-    return s > 0 && kind != ZONE_KIND_WINCH && kind != ZONE_KIND_CAMP && kind != ZONE_KIND_BRIDGE;
+    (void)w;
+    return (z.standing[v] > 0 && ZoneKindHasBody(z.KindOf(v))) || z.ArchOf(v) > 0;
 }
 
 bool HouseChimney(const ChasmWorld& w, const ZoneState& z, int plot, ChimneyPlace& at){
@@ -539,64 +535,89 @@ void Stake(std::vector<vertex>& out, const vec2& p, float y0, float height, floa
     }
 }
 
+//The outward normal of the side a - b of a polygon round p.
+vec2 SideOut(const vec2& p, const vec2& a, const vec2& b){
+    vec2 d = b - a;
+    float l = d.length();
+    if (l < 1e-6f){
+        return vec2(0.0f,0.0f);
+    }
+    vec2 n(d.y / l,-d.x / l);
+    return (n.dot((a + b) * 0.5f - p) < 0.0f) ? n * -1.0f : n;
+}
+
 /*
-    A GUARD TOWER (defence_plan.md): the palisade's look stood on end. A square of upright logs round the plot's
-    point, a storey of them for each storey that stands, with a band of lashing at each storey's top and a thick
-    post at each corner. Whole, a platform of planks on top, a little wider than the walls, ringed by a PARAPET of
-    sharpened stakes as the palisade's, the corner posts running up through it - and a LADDER up one side, the
-    first of south, east, west, north with no wall running off that way (the palisade ends against the tower,
-    RoadMesh). No roof (open, defence_plan.md). Square to the world, as its guards' places on it are (Economy.h).
+    A GUARD TOWER (defence_plan.md): the palisade's look stood on end, in its JUNCTION's shape (ZoneTowerCorners) -
+    a triangle, a square, a pentagon - as a house takes its plot's. Upright logs along each side, a storey of them
+    for each storey that stands, with a band of lashing at each storey's top and a thick post at each corner. Whole,
+    a platform of planks on top, a little wider than the walls, ringed by a PARAPET of sharpened stakes as the
+    palisade's, the corner posts running up through it - and its LADDER, its door, up the side facing the plot it
+    stands toward (ZoneBuilding::ladder). A wall beside it runs up to the side facing it (RoadMesh). No roof.
 */
 void BuildTower(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
     const Terrain& t = *w.terrain;
     vec2 p = w.grid->fine.pos[plot];
     float level = t.Height(plot);
     int standing = z.standing[plot];
-    if (standing <= 0){
+    std::vector<vec2> corner;
+    ZoneTowerCorners(w,plot,corner);
+    int n = (int)corner.size();
+    if (standing <= 0 || n < 3){
         return;
     }
     bool f_whole = standing >= z.storeys[plot];
     float foot = t.ground[plot];
     float top = foot + standing * ZONE_STOREY_HEIGHT;
-    const float H = BUILDING_TOWER_HALF;
-    const vec2 corner[4] = {p + vec2(-H,-H),p + vec2(H,-H),p + vec2(H,H),p + vec2(-H,H)};
     //The walls: logs along each side between the corner posts.
-    for (int side = 0; side < 4; side++){
+    for (int side = 0; side < n; side++){
         vec2 a = corner[side];
-        vec2 b = corner[(side + 1) % 4];
+        vec2 b = corner[(side + 1) % n];
         float len = (b - a).length();
         int logs = std::max(1,(int)std::lround((len - TOWER_CORNER_W) / TOWER_LOG_SPACING));
         for (int i = 0; i < logs; i++){
-            float f = (TOWER_CORNER_W * 0.5f + (len - TOWER_CORNER_W) * ((float)i + 0.5f) / logs) / len;
+            float f = (TOWER_CORNER_W * 0.5f + (len - TOWER_CORNER_W) * ((float)i + 0.5f) / logs) / std::max(1e-4f,len);
             vec2 at = a + (b - a) * f;
             float y0 = t.GroundHeight(at,level) - TOWER_LOG_SINK;
             float jitter = (float)(MeshHash((uint32_t)plot,(uint32_t)side,(uint32_t)i) % 100) / 100.0f * 0.06f;
             Upright(out,at,TOWER_LOG_W,y0,top - jitter,PAL_BARK);
         }
         //The lashing round each storey's top, just proud of the logs.
-        vec2 out_dir = ((a + b) * 0.5f - p) * (1.0f / H);
+        vec2 out_dir = SideOut(p,a,b);
         for (int s = 1; s <= standing; s++){
             float y = foot + s * ZONE_STOREY_HEIGHT - 0.28f;
             Beam(out,a + out_dir * (TOWER_LOG_W * 0.5f),b + out_dir * (TOWER_LOG_W * 0.5f),y,TOWER_BAND,0.04f,PAL_BARK_DARK);
         }
     }
     float post_top = f_whole ? top + TOWER_DECK + TOWER_PARAPET + 0.08f : top + 0.05f;
-    for (int i = 0; i < 4; i++){
+    for (int i = 0; i < n; i++){
         Upright(out,corner[i],TOWER_CORNER_W,t.GroundHeight(corner[i],level) - TOWER_LOG_SINK,post_top,PAL_BARK_DARK);
     }
     if (!f_whole){
         return;     //the rest is a site: its scaffold stands over what is built (BuildSite)
     }
-    //The platform, a little wider than the walls.
-    const float D = H + TOWER_DECK_OUT;
-    Beam(out,p - vec2(D,0.0f),p + vec2(D,0.0f),top,TOWER_DECK,2.0f * D,PAL_TIMBER);
-    //The parapet: stakes round the platform's edge, between the corner posts.
-    const vec2 rim[4] = {p + vec2(-D,-D),p + vec2(D,-D),p + vec2(D,D),p + vec2(-D,D)};
+    //The platform, a little wider than the walls: its corners pushed out from the middle.
+    std::vector<vec2> rim(n);
+    for (int i = 0; i < n; i++){
+        vec2 d = corner[i] - p;
+        float l = std::max(1e-4f,d.length());
+        rim[i] = p + d * ((l + TOWER_DECK_OUT) / l);
+    }
     float deck = top + TOWER_DECK;
-    for (int side = 0; side < 4; side++){
-        vec2 in = (p - (rim[side] + rim[(side + 1) % 4]) * 0.5f) * (1.0f / D);
+    vec3 middle_top(p.x,deck,p.y);
+    vec3 middle_bottom(p.x,top,p.y);
+    for (int i = 0; i < n; i++){
+        const vec2& a = rim[i];
+        const vec2& b = rim[(i + 1) % n];
+        MeshTri(out,middle_top,vec3(a.x,deck,a.y),vec3(b.x,deck,b.y),vec3(0,1,0),PAL_TIMBER);
+        MeshTri(out,middle_bottom,vec3(a.x,top,a.y),vec3(b.x,top,b.y),vec3(0,-1,0),PAL_TIMBER);
+        vec2 o = SideOut(p,a,b);
+        MeshQuad(out,vec3(a.x,top,a.y),vec3(b.x,top,b.y),vec3(b.x,deck,b.y),vec3(a.x,deck,a.y),vec3(o.x,0.0f,o.y),PAL_TIMBER);
+    }
+    //The parapet: stakes round the platform's edge.
+    for (int side = 0; side < n; side++){
+        vec2 in = SideOut(p,rim[side],rim[(side + 1) % n]) * -1.0f;
         vec2 a = rim[side] + in * (TOWER_STAKE_W * 0.5f);
-        vec2 b = rim[(side + 1) % 4] + in * (TOWER_STAKE_W * 0.5f);
+        vec2 b = rim[(side + 1) % n] + in * (TOWER_STAKE_W * 0.5f);
         float len = (b - a).length();
         int stakes = std::max(1,(int)std::lround(len / (TOWER_STAKE_W * 1.15f)));
         for (int i = 0; i < stakes; i++){
@@ -605,42 +626,33 @@ void BuildTower(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<v
             Stake(out,at,deck - 0.02f,TOWER_PARAPET + jitter,TOWER_STAKE_W,TOWER_STAKE_TIP,PAL_BARK);
         }
     }
-    //The ladder, up the first side no wall runs off from. A zones copy drawn for an outline or a ghost may carry
-    //no ground or gates (ApplicationChasmSelect.cpp, ApplicationChasmGhost.cpp): then no wall is in the way.
-    const vec2 sides[4] = {vec2(0.0f,1.0f),vec2(1.0f,0.0f),vec2(-1.0f,0.0f),vec2(0.0f,-1.0f)};
-    int nb[8];
-    int n = ZonePlotNeighbours(w,plot,nb,8);
-    auto wall_at = [&](int v){
-        return (v < (int)z.ground.size() && z.ground[v] == ZONE_GROUND_WALL) || (v < (int)z.gate.size() && z.gate[v]);
-    };
-    vec2 dir = sides[0];
-    for (const vec2& d : sides){
-        bool f_wall = false;
-        for (int i = 0; i < n; i++){
-            vec2 to = w.grid->fine.pos[nb[i]] - p;
-            float l = to.length();
-            if (wall_at(nb[i]) && l > 1e-4f && to.dot(d) / l > 0.6f){
-                f_wall = true;
-            }
-        }
-        if (!f_wall){
-            dir = d;
-            break;
+    //The ladder, its door: up the side that faces the plot it stands toward.
+    int ladder = ZoneTowerLadder(z,plot);
+    vec2 toward = (ladder >= 0 && ladder < (int)w.grid->fine.pos.size()) ? w.grid->fine.pos[ladder] - p : vec2(0.0f,1.0f);
+    int best = 0;
+    float best_dot = -1e30f;
+    for (int side = 0; side < n; side++){
+        float d = SideOut(p,rim[side],rim[(side + 1) % n]).dot(toward);
+        if (d > best_dot){
+            best_dot = d;
+            best = side;
         }
     }
-    vec2 side(-dir.y,dir.x);
-    vec2 at = p + dir * (D + 0.02f);
+    vec2 dir = SideOut(p,rim[best],rim[(best + 1) % n]);
+    vec2 along = rim[(best + 1) % n] - rim[best];
+    along = along * (1.0f / std::max(1e-4f,along.length()));
+    vec2 at = (rim[best] + rim[(best + 1) % n]) * 0.5f + dir * 0.02f;
     vec2 ladder_foot = at + dir * LADDER_LEAN;
     float y0 = t.GroundHeight(ladder_foot,level);
     float y1 = deck + 0.25f;
     for (int r = -1; r <= 1; r += 2){
-        vec2 o = side * (r * LADDER_W * 0.5f);
+        vec2 o = along * (r * LADDER_W * 0.5f);
         SlopedBeam(out,ladder_foot + o,y0,at + o,y1,LADDER_RAIL,PAL_BARK_DARK);
     }
     for (float y = y0 + LADDER_RUNG_EVERY; y < y1 - 0.15f; y += LADDER_RUNG_EVERY){
         float f = (y - y0) / std::max(0.1f,y1 - y0);
         vec2 q = ladder_foot + (at - ladder_foot) * f;
-        Beam(out,q - side * (LADDER_W * 0.5f),q + side * (LADDER_W * 0.5f),y - 0.02f,0.04f,0.04f,PAL_BARK_DARK);
+        Beam(out,q - along * (LADDER_W * 0.5f),q + along * (LADDER_W * 0.5f),y - 0.02f,0.04f,0.04f,PAL_BARK_DARK);
     }
 }
 
@@ -844,11 +856,12 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     int s[4];
     /*
         Which building each corner is: a roof only runs on toward a corner of the SAME building (and
-        as tall), so two buildings side by side meet in a valley and each reads as its own. An arch
-        belongs to whichever it bridges between - it matches either side.
+        as tall), so two buildings side by side meet in a valley and each reads as its own. An arch is
+        its OWNER's (ZoneArchOwner, arches_plan.md): its roof runs on into that building and meets any
+        other in a valley, and it is drawn in that building's look.
     */
-    const uint32_t ARCH = 0xFFFFFFFFu;
     uint32_t bid[4];
+    bool f_arch[4];
     int lo[4];      //the solid's bottom, half-storeys
     int hi[4];      //its top: the eave
     int foot[4];    //the ground it stands on
@@ -862,13 +875,11 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             BuildSite(w,z,v,out);
         }
         int base = 0;
-        if (s[k] == 0){
-            int arch = ZoneArchStoreys(w,z,v);
-            if (arch > 0){
-                s[k] = arch;
-                base = 1;
-            }
+        if (s[k] == 0 && z.ArchOf(v) > 0){
+            s[k] = z.ArchOf(v);
+            base = 1;
         }
+        f_arch[k] = base > 0;
         /*
             A winch is not a house body: it is drawn on its own (BuildWinch), by the first cell round
             its plot - and its corner counts as empty here, so the buildings beside it close their walls.
@@ -907,7 +918,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             BuildBuildersYard(w,z,v,out);
         }
         solid[k] = s[k] > 0;
-        bid[k] = (base > 0) ? ARCH : z.building[v];
+        bid[k] = f_arch[k] ? z.ArchOwnerOf(v) : z.building[v];
         foot[k] = (int)std::lround(t.ground[v] / HALF);
         lo[k] = foot[k] + 2 * base;
         hi[k] = foot[k] + 2 * s[k];
@@ -918,7 +929,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         m[k] = (p[k] + p[(k + 1) % 4]) * 0.5f;
     }
     auto same = [&](int a, int b){
-        return solid[a] && solid[b] && hi[a] == hi[b] && (bid[a] == bid[b] || bid[a] == ARCH || bid[b] == ARCH);
+        return solid[a] && solid[b] && hi[a] == hi[b] && bid[a] == bid[b];
     };
     bool f_all_same = same(0,1) && same(1,2) && same(2,3) && same(3,0);
 
@@ -931,27 +942,22 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         int next = (k + 1) % 4;
         int prev = (k + 3) % 4;
         uint32_t look = MeshHash((uint32_t)plot,0x40115Eu);
-        //An arch takes the look of the building beside it it is bridging from: the first solid
-        //corner of this cell that is a building.
+        //The building this corner is - an arch its owner's - and so its look and roof colour. (An arch's look
+        //was the first building among the cell's corners: a diagonal one it does not bridge, found 2026-10-10.)
         uint32_t owner = bid[k];
-        for (int j = 0; j < 4 && owner == ARCH; j++){
-            if (solid[j] && bid[j] != ARCH){
-                owner = bid[j];
-            }
-        }
-        int kind = (owner != ARCH && owner < z.buildings.size()) ? z.buildings[owner].kind : ZONE_KIND_HOUSE;
+        int kind = (owner && owner < z.buildings.size()) ? z.buildings[owner].kind : ZONE_KIND_HOUSE;
         const KindLook& kl = kind_looks[kind];
         //Where this corner's chimney goes, if this cell builds it: a house's one (HouseChimney), or by
         //chance on a plot of another kind that has them - through the roof.
         ChimneyPlace chimney;
         bool f_chimney = false;
-        if (lo[k] == foot[k] && bid[k] != ARCH && kind == ZONE_KIND_HOUSE){
+        if (lo[k] == foot[k] && !f_arch[k] && kind == ZONE_KIND_HOUSE){
             f_chimney = HouseChimney(w,z,plot,chimney) && chimney.quad == fine_quad;
         }else if (lo[k] == foot[k] && kind != ZONE_KIND_HOUSE && (look >> 8) % 100 < (uint32_t)kl.chimney_chance){
             int n = picker.PlotQuadCount(plot);
             f_chimney = picker.PlotQuadCorner(plot,(int)((look >> 16) % (uint32_t)n)) / 4 == fine_quad;
         }
-        bool f_reports = fixtures && kind == ZONE_KIND_HOUSE && bid[k] != ARCH;
+        bool f_reports = fixtures && kind == ZONE_KIND_HOUSE && !f_arch[k];
         //One roof colour for a whole building, by its id.
         uint32_t building_look = MeshHash(owner,0xB017D1u);
         int roof_column = ((building_look % 10) < 7) ? kl.roof[0] : kl.roof[1];
@@ -1118,4 +1124,37 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
 
 float BuildingTowerDeck(const ChasmWorld& w, const ZoneState& z, int plot){
     return w.terrain->ground[plot] + z.standing[plot] * ZONE_STOREY_HEIGHT + TOWER_DECK;
+}
+
+float BuildingTowerReach(const ChasmWorld& w, int plot, const vec2& toward){
+    std::vector<vec2> corner;
+    ZoneTowerCorners(w,plot,corner);
+    vec2 p = w.grid->fine.pos[plot];
+    float l = toward.length();
+    if (corner.size() < 3 || l < 1e-6f){
+        return 0.0f;
+    }
+    vec2 d = toward * (1.0f / l);
+    //The ray from its point along `toward`, against each side: the nearest crossing ahead.
+    float best = 0.0f;
+    for (size_t i = 0; i < corner.size(); i++){
+        vec2 a = corner[i] - p;
+        vec2 e = corner[(i + 1) % corner.size()] - corner[i];
+        float den = d.x * e.y - d.y * e.x;
+        if (std::fabs(den) < 1e-6f){
+            continue;
+        }
+        float s = (a.x * e.y - a.y * e.x) / den;      //along the ray
+        float u = (a.x * d.y - a.y * d.x) / den;      //along the side
+        if (s > 0.0f && u >= 0.0f && u <= 1.0f && (best == 0.0f || s < best)){
+            best = s;
+        }
+    }
+    return best;
+}
+
+bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at){
+    vec2 d = at - w.grid->fine.pos[plot];
+    float l = d.length();
+    return l < 1e-4f || l < BuildingTowerReach(w,plot,d) + TOWER_DECK_OUT;
 }

@@ -96,3 +96,4 @@
 - [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; hut buildable without a lot; house Extend chip works the same way
 - [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, full-time archers by precision, per-person archery; props in chasm_props.glb
 - [Chasm goods strip](chasm_goods_strip.md) — cards show stocks as strips: solid anyone's, hollow kept, striped reserved; HudGoodColour per good
+- [Chasm goods plan](chasm_goods_plan.md) — AGREED 2026-10-10: food/water/materials/inputs categories, hemp crop, ropewalk (2-4 plots) makes rope; no starting rope; steps 1-2 (goods, hemp crop) built, ropewalk next

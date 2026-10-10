@@ -108,6 +108,14 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
     if (z.storeys[a] > 0 && a != from && !passage(a)){
         return false;
     }
+    //A guard tower is got onto and off only by its LADDER, its door (defence_plan.md): from the plot the ladder
+    //stands toward, and back to it - its site's builders too. One left with none (loaded with no side open) is
+    //entered as a house is.
+    int ladder_b = ZoneTowerLadder(z,b);
+    int ladder_a = ZoneTowerLadder(z,a);
+    if ((ladder_b >= 0 && a != ladder_b) || (ladder_a >= 0 && b != ladder_a)){
+        return false;
+    }
     //A standing palisade is never walked onto, nor through; off one only by someone the builders raised
     //it round, where his walk starts (Zones.h, WALLS). A gate is road, and open - unless its door is shut
     //(defence_plan.md), when it is the palisade's: off it only for someone it was shut on.

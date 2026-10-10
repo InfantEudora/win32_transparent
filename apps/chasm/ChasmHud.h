@@ -28,8 +28,8 @@ inline uint32_t HudFaded(uint32_t c, uint8_t alpha){
 /*
     THE GOODS' COLOURS (the user's, 2026-10-09): the top bar's wood, food and water, with the food's gold
     for wheat and a colour of its own for every other food, so a card tells them apart. Anything not named
-    here - a good added later - is a plain grey until it is given one. Strips and keys show the goods in
-    the top bar's order (HudGoodsOrder): wood, the foods, water, then the rest.
+    here - a good added later - is a plain grey until it is given one. Strips and keys show the goods by
+    category (HudGoodsOrder, goods_plan.md): the materials - wood first - then the foods, water, the inputs.
 */
 uint32_t HudGoodColour(int good);
 std::array<int,GOOD_COUNT> HudGoodsOrder();

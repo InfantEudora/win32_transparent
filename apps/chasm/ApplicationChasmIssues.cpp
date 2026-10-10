@@ -36,7 +36,12 @@ void DaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& fo
             food_ticks += (int64_t)e.stock[id][g] * EconomyFoodWorth(g);
         }
     }
-    float people_days = (float)std::max<size_t>(1,e.workers.size()) * CALENDAR_DAY_TICKS;
+    //Everyone at their SHARE (Economy.h): a baby drinks half what an adult does.
+    int mouths = 0;
+    for (const EconomyWorker& k : e.workers){
+        mouths += EconomyShare(k.born,e.tick);
+    }
+    float people_days = (float)std::max(1,mouths) / LIFE_SHARE_FULL * CALENDAR_DAY_TICKS;
     water = (float)water_ticks / people_days;
     food = (float)food_ticks / people_days;
 }

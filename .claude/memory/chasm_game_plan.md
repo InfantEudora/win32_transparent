@@ -265,3 +265,9 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
 
 **How to apply:** prototype stepwise, step 1 = app + grid generator + grid debug view together; see [[archer-app]] for the replay/state-hash pattern and
 [[replay-determinism-plan]].
+  ARCHES (docs/arches_plan.md, user 2026-10-10): same kind only, one owner (both sides one building, else most
+  plots beside, lower id), towers NEVER arched (for now), no arch over a gate, gatehouse later (defence plan).
+  STEP 1 BUILT: ZoneState::arch/arch_owner derived by Zones::RefreshArches (not saved/hashed); mesh/pick/outline use
+  owner; ZoneKindHasBody. NEXT step 2: arch storeys as SAVED state kept APART from road plot's storeys/building
+  (walkers/straight-walk/ladder read storeys as ground-built), arch plots NOT in plots_of; then built as a site with
+  scaffolding over the road, cost = owner kind's storey cost; losing it -> crowding.

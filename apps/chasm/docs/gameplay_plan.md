@@ -102,9 +102,12 @@ Every seed has one or two balconies at home and none to two on the far side (bui
 
   | Kind | Today's crop | Food value | Keeps | Also |
   |---|---|---|---|---|
-  | Medium | wheat | average | medium | a resource besides food - rope, for one |
+  | Medium | wheat | average | medium | ~~a resource besides food - rope, for one~~ |
   | Short | greens | | not over winter | grows fast |
   | Long | beans | high | long | |
+
+  Rope from wheat's straw is scrapped (the user, 2026-10-10): hemp is a crop of its own, made into rope in a
+  ropewalk - `goods_plan.md`.
 
 - **Later gathering fits the same three**: long-keeping stores, short-keeping food like fruit, and
   animals as the medium kind - meat that keeps medium-long, plus a resource of their own, leather.

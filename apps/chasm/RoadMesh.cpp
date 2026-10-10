@@ -395,7 +395,7 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
         vec2 end = f_front ? pts.front() : pts.back();
         vec2 d = end - (f_front ? pts[1] : pts[pts.size() - 2]);
         float l = d.length();
-        float reach = (pos[tower] - end).length() - BUILDING_TOWER_HALF + WALL_LOG_W;
+        float reach = (pos[tower] - end).length() - BuildingTowerReach(w,tower,end - pos[tower]) + WALL_LOG_W;
         if (l < 1e-5f || reach <= 0.0f){
             return;
         }

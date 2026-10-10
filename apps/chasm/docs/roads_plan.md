@@ -64,7 +64,8 @@ all a debug walker needs and keeps one on screen while roads are painted under i
   neighbour and the enclosed plot lies ahead of it - the wall opens. The walker's graph opens that
   edge too, so a gate is the only way into a walled garden.
 - **Under houses** (Townscaper's arch): a road plot between tall houses is bridged by their upper
-  storeys, over a passage.
+  storeys, over a passage. Since 2026-10-10 an arch is to be a real part of one building, built and counted
+  as its floor: `arches_plan.md`.
 
 ---
 
@@ -114,7 +115,8 @@ walker's rules), `BuildingMesh.cpp` (arches), `BoundaryMesh.cpp` (gates), `Appli
   midpoint on both cells' sides; a garden gate has two stone pillars, a palisade gate two tall posts
   and a crossbeam. The road runs on into the gateway (the gate counts as one of its edges, so it
   curves in) and one plot inside as a path. A walker crosses a wall at its gate and nowhere else.
-- **Arches**: `ZoneArchStoreys` - a road plot with two road neighbours and every other neighbour a
+- **Arches** (since 2026-10-10 same kind only, owned and drawn as part of one building: `arches_plan.md`):
+  `ZoneArchStoreys` - a road plot with two road neighbours and every other neighbour a
   house of two storeys or more is a candidate; it is built over when the run of candidates it is in
   is at most THREE long. Two would have been Townscaper's hole through a row, but a road crossing a
   row steps along the grid's edges, so even a row two houses deep takes three plots; a longer run

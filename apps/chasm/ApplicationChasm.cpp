@@ -850,6 +850,10 @@ void ApplicationChasm::HashSimState(StateHash& h){
         if (b.land_of){
             h.Add(((uint64_t)id << 32) | b.land_of);
         }
+        //A guard tower's ladder, its door (defence_plan.md) - towers only, likewise.
+        if (b.kind == ZONE_KIND_TOWER){
+            h.Add(((uint64_t)id << 32) | (uint32_t)b.ladder);
+        }
     }
     h.Add(((uint64_t)z.stroke << 32) | z.stroke_building);
     HashEconomy(h);
@@ -1410,6 +1414,19 @@ json ApplicationChasm::BuildingJson(const ChasmWorld& w, const ZoneState& z, uin
         j["site_cells"] = b.site_cells;             //range_plan.md: cells still a site
     }else{
         j["storeys"] = b.storeys;
+    }
+    //A guard tower (defence_plan.md): its junction, the guards that gives it, and its ladder - its door.
+    if (b.kind == ZONE_KIND_TOWER){
+        for (size_t v = 0; v < z.building.size(); v++){
+            if (z.building[v] == id){
+                int ladder = ZoneTowerLadder(z,(int)v);
+                j["junction"] = w.picker->PlotQuadCount((int)v);
+                j["guards"] = ZoneTowerGuards(w,(int)v);
+                j["ladder"] = (ladder >= 0) ? json{{"plot",ladder},{"x",w.grid->fine.pos[ladder].x},{"z",w.grid->fine.pos[ladder].y}}
+                                            : json(nullptr);
+                break;
+            }
+        }
     }
     //Its yard (yards_plan.md): the gardens and lots it owns, by kind.
     if (ZoneKindHasYard(b.kind)){
@@ -3054,6 +3071,10 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["zone_ground_built"] = (bool)z->ground_built[pick.plot];
                     result["zone_line"] = z->line[pick.plot];
                     result["zone_gate"] = (bool)z->gate[pick.plot];
+                    //An arch over it (arches_plan.md): its storeys and the building it is part of.
+                    if (z->ArchOf(pick.plot) > 0){
+                        result["zone_arch"] = json{{"storeys",z->ArchOf(pick.plot)},{"owner",z->ArchOwnerOf(pick.plot)}};
+                    }
                 }
                 //What a person standing here would see (Exploration.h, SIGHT), on a blank raster of its
                 //own: the game's exploration is not touched, so a script may ask anywhere at any time.
@@ -3137,14 +3158,16 @@ void ApplicationChasm::RegisterMCPTools(){
         "kind (house, store, woodcutter, water); calls with the same `stroke` are one drag and so one "
         "building - without one, each call starts its own. FIELDS (docs/fields_plan.md): a field painted "
         "with play:true is a site (2 wood a cell), by debug there at once - empty either way; field_crop sets "
-        "its STARTING crop (wheat, greens, beans), which its farmer then sows; field_next its NEXT crop for "
-        "every sowing after (a crop, or auto: the most food); field_land gives it to `house` (a house's "
+        "its STARTING crop (wheat, greens, beans, or hemp - not food, for rope: docs/goods_plan.md), which its "
+        "farmer then sows; field_next its NEXT crop for "
+        "every sowing after (a crop, or auto: the most food, never hemp); field_land gives it to `house` (a house's "
         "building id, 0 automatic - docs/land_plan.md); field_priority puts a field still being built first "
         "(`on`, default true; false puts it back) - a building's is chasm_economy site_priority. A field's "
         "starting crop may be set while it is still a site. GATES (docs/defence_plan.md, step 3): gate_shut "
         "shuts the door of the gate at the place (`on`, default true; false opens it), the gate plots joined to "
         "it too - shut, nobody walks through, the colony's own people neither. The result names the building at "
-        "the place, and `gate_here` says none, open or shut.",
+        "the place, and `gate_here` says none, open or shut. TOWERS: tower_ladder moves a guard tower's ladder - its "
+        "door - toward the neighbour at to_x/to_z or `toward` (a plot), or with neither to its next open side.",
         json{
             {"type","object"},
             {"properties",{
@@ -3155,7 +3178,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open"}}},
                 {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower"}},{"description","for build_* (default house)"}}},
-                {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
+                {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","hemp","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
                 {"owner",{{"type","integer"},{"description","for ground_paint of a garden or lot: the house or woodcutter whose "
@@ -3230,6 +3253,14 @@ void ApplicationChasm::RegisterMCPTools(){
                 cmd.value[1] = (float)args.value("house",0u);
             }else if (op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_GATE_SHUT){
                 cmd.value[1] = args.value("on",true) ? 1.0f : 0.0f;
+            }else if (op == ZONE_OP_TOWER_LADDER){
+                //Toward the neighbour at to_x/to_z, or `toward` (a plot) - without either, the next open side.
+                int toward = args.value("toward",-1);
+                if (args.contains("to_x") && args.contains("to_z")){
+                    GridPick to = w->picker->Pick(vec2(args["to_x"].get<float>(),args["to_z"].get<float>()));
+                    toward = to.f_hit ? to.plot : -1;
+                }
+                cmd.value[1] = (float)toward;
             }
             //A tool's strokes in a range of their own, clear of the mouse's (UpdatePaint).
             if (args.contains("stroke")){

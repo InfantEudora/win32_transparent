@@ -354,9 +354,9 @@ void ApplicationChasm::RegisterRoadTools(){
                     if (!line && z->ground[plot] == ground){
                         line = z->line[plot];
                     }
-                    int arch = ZoneArchStoreys(*w,*z,plot);
-                    if (arch > 0){
-                        arches.push_back(json{{"plot",plot},{"storeys",arch}});
+                    //As the zones worked it out (Zones::RefreshArches), and the building it is part of.
+                    if (z->ArchOf(plot) > 0){
+                        arches.push_back(json{{"plot",plot},{"storeys",z->ArchOf(plot)},{"owner",z->ArchOwnerOf(plot)}});
                     }
                     int gate = ZoneGateOf(*w,*z,plot);
                     if (gate >= 0){

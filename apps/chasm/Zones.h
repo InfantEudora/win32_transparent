@@ -70,7 +70,9 @@
       - A GUARD TOWER (docs/defence_plan.md) is one plot, painted whole - both its storeys at once - by a
         building's rules, and also IN A WALL'S LINE: painted on a wall plot, planned or standing, it takes
         that plot over (the wall's ground goes), the palisade ending against it as against a gate's post.
-        A building stops walkers, so the wall stays shut. Never on a road, so never on a gate.
+        A building stops walkers, so the wall stays shut. Never on a road, so never on a gate. It needs a
+        side its LADDER can stand on (ZoneTowerLadderOk), and nothing is built, nor a wall drawn, on the plot
+        a tower's ladder stands toward - as on a winch's landing.
 
     CONSTRUCTION (docs/construction_plan.md): of a plot's storeys, `standing[v]` are built; the rest
     are a CONSTRUCTION SITE. A debug command builds what it paints at once - standing = storeys on the
@@ -134,6 +136,12 @@ int ZoneKindByName(const std::string& name);    //-1 if none
 inline bool ZoneKindOnCells(int kind){
     return kind == ZONE_KIND_FIELD || kind == ZONE_KIND_RANGE;
 }
+//A kind drawn as a HOUSE BODY (BuildingMesh.cpp, BuildHouseCell): walls and a roof, storeys high - not a winch, a
+//camp, a bridge or a guard tower, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
+inline bool ZoneKindHasBody(int kind){
+    return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER
+           || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS;
+}
 int ZoneKindMaxStoreys(int kind);
 //The storeys a plot of `kind` is painted with: one, a click adding more - but a GUARD TOWER whole, all its storeys
 //at once, since it is only ever that high (defence_plan.md).
@@ -141,14 +149,15 @@ inline int ZoneKindPaintStoreys(int kind){
     return (kind == ZONE_KIND_TOWER) ? ZoneKindMaxStoreys(kind) : 1;
 }
 
-//What grows on a field. Never renumber.
+//What grows on a field. Never renumber. Its good is GoodOfCrop's (Goods.h).
 #define ZONE_CROP_WHEAT         0
 #define ZONE_CROP_GREENS        1
 #define ZONE_CROP_BEANS         2
-#define ZONE_CROP_COUNT         3
+#define ZONE_CROP_HEMP          3       //not food: spun into rope (goods_plan.md) - never AUTO's pick
+#define ZONE_CROP_COUNT         4
 //Not crops, but what a field's choices may be instead (fields_plan.md): its starting crop not chosen yet,
-//and a crop left to the field - the most food of what still ripens - for what follows a harvest, or for the
-//start too, the player's or after a field has waited a day for one (issues_plan.md).
+//and a crop left to the field - the most food of what still ripens, so never hemp - for what follows a
+//harvest, or for the start too, the player's or after a field has waited a day for one (issues_plan.md).
 #define ZONE_CROP_NONE          255
 #define ZONE_CROP_AUTO          254
 const char* ZoneCropName(int crop);
@@ -214,14 +223,20 @@ bool ZoneGateBetween(const ChasmWorld& w, const ZoneState& z, int a, int b);
 int ZoneGateOf(const ChasmWorld& w, const ZoneState& z, int road);
 
 /*
-    ARCHES (docs/roads_plan.md, Townscaper's): a road plot running between buildings of two storeys or
-    more - two road neighbours, and every other neighbour such a building - is built over: their
-    upper storeys bridge it, up to the lower of them, over a passage one storey high - where such
-    plots run at most three in a row, a hole through a row of houses rather than a covered street.
-    A matter of how a building is DRAWN only: the plot stays a road, walked like any other. 0 if
-    `plot` is no arch.
+    ARCHES (docs/roads_plan.md, Townscaper's; docs/arches_plan.md): a road plot running between buildings of two
+    storeys or more - two road neighbours, and every other neighbour such a building, ALL OF ONE KIND and a kind with
+    a house body (ZoneKindHasBody: never a guard tower) - is built over: their upper storeys bridge it, up to the
+    lower of them, over a passage one storey high - where such plots run at most three in a row, a hole through a
+    row of houses rather than a covered street. Never over a gate: its posts and door are taller than the passage.
+    The plot stays a road, walked like any other. 0 if `plot` is no arch.
 */
 int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot);
+/*
+    The building an arch is PART OF (arches_plan.md, the user's): the one beside it on both sides if it is one;
+    otherwise the one with the most plots beside it, the older (lower id) on a tie. Drawn in its look, picked and
+    outlined with it. 0 if `plot` is no arch.
+*/
+uint32_t ZoneArchOwner(const ChasmWorld& w, const ZoneState& z, int plot);
 
 /*
     What a command asks for. Travels in SimCommand::value[0]; the plot or cell index in subtype,
@@ -252,6 +267,7 @@ enum ZoneOp{
     ZONE_OP_FIELD_PRIORITY, //coarse cell: its field's site goes first (value[1] 1) or back in the queue (0)
     ZONE_OP_GATE_SHUT,      //plot: its gate's door shut (value[1] 1) or open (0), and the gate plots joined to it (defence_plan.md)
     ZONE_OP_RANGE_PAINT,    //coarse cell: join the stroke's range, or start one (range_plan.md) - erased, raised, put first as a field
+    ZONE_OP_TOWER_LADDER,   //plot: its guard tower's ladder toward the neighbour plot in value[1], -1 the next open side round (defence_plan.md)
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's or a range's) rather than a plot.
@@ -297,6 +313,7 @@ struct ZoneBuilding{
     int size = 0;
     uint32_t split_from = 0;
     uint32_t land_of = 0;                       //a field: the house the player gave it to, 0 automatic
+    int ladder = -1;                            //a guard tower: the neighbour plot its ladder stands toward, its door
 };
 
 struct ZoneState{
@@ -316,6 +333,11 @@ struct ZoneState{
     std::vector<uint32_t> ground_owner;         //per fine vertex: the building a garden or lot is the yard of, 0 nobody (ZoneGroundOwner)
     std::vector<uint32_t> field;                //per coarse quad: the field - or range (ZoneKindOnCells) - it is part of, 0 none
     std::vector<uint8_t> field_built;           //per coarse quad: 0 for a field's cell still a site
+    //ARCHES, worked out from the above after every change (Zones::RefreshArches) and never saved: per fine vertex,
+    //an arch's storeys (ZoneArchStoreys, 0 none) and the building it is part of (ZoneArchOwner). Empty in a
+    //state made for drawing one building alone - no arches there but what it is given.
+    std::vector<uint8_t> arch;
+    std::vector<uint32_t> arch_owner;
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
     uint32_t stroke_building = 0;
@@ -339,6 +361,13 @@ struct ZoneState{
         const ZoneBuilding* b = BuildingOf(plot);
         return b ? b->kind : ZONE_KIND_NONE;
     }
+    //An arch's storeys over `plot`, and the building it is part of: 0 for none, or with no arches worked out.
+    int ArchOf(int plot) const{
+        return (plot >= 0 && plot < (int)arch.size()) ? arch[plot] : 0;
+    }
+    uint32_t ArchOwnerOf(int plot) const{
+        return (plot >= 0 && plot < (int)arch_owner.size()) ? arch_owner[plot] : 0;
+    }
 };
 
 //A building as a save holds it: everything Zones::Restore needs to put it back as it was.
@@ -350,6 +379,7 @@ struct ZoneSavedBuilding{
     bool f_priority = false;                    //a site the player put first
     int next_crop = ZONE_CROP_AUTO;             //a field's (fields_plan.md)
     uint32_t land_of = 0;                       //a field's, given to a house (land_plan.md)
+    int ladder = -1;                            //a guard tower's (defence_plan.md); -1 for one from before: its default
     std::vector<std::pair<int,int>> plots;      //plot, storeys
     std::vector<int> standing;                  //per plot above, what of it stands - empty: all of it
     std::vector<int> cells;                     //a field's coarse cells
@@ -404,6 +434,8 @@ private:
     uint32_t NewBuilding(int kind);
     void SplitAfterRemoval(uint32_t id, int removed, bool f_field);
     void SettlePriorities();
+    //ZoneState::arch and arch_owner worked out again over every road plot - after a command, a load, a new map.
+    void RefreshArches();
 };
 
 //A state's buildings as a save holds them - the inverse of Zones::Restore. Any thread, on a published copy.
@@ -469,6 +501,36 @@ struct ZoneRangeCell{
     int middle = -1;
 };
 ZoneRangeCell ZoneRangeCellAt(const ChasmWorld& w, int cell);
+
+/*
+    A GUARD TOWER (docs/defence_plan.md, tuned 2026-10-10) takes its JUNCTION's shape, as any building takes its
+    plot's: a polygon through the middles of the cells round its plot's point, pulled in toward it
+    (ZONE_TOWER_INSET), a side facing each neighbour along a fine edge. The junction decides its GUARDS - its edges
+    less two: one on a 3-junction, two on the 4s that are nearly all of the grid, three on a 5, four on a 6. Each
+    has a PLACE on its platform toward a corner, spread round it (ZONE_TOWER_STAND of the way). Its LADDER is its
+    DOOR (ZoneBuilding::ladder): walked onto and off only from the neighbour it stands toward (Walkers, the
+    straight walks) - when placed, the open side nearest the camp, which is usually a wall's inside; moved by
+    ZONE_OP_TOWER_LADDER. One rule for the walkers, the economy and the look.
+*/
+#define ZONE_TOWER_INSET        0.6f    //its walls' corners, this much of the way to the cells' middles
+#define ZONE_TOWER_STAND        0.5f    //a guard's place, this much of the way from its middle to a corner
+int ZoneTowerGuards(const ChasmWorld& w, int plot);
+//Its walls' corners round `plot`, by angle.
+void ZoneTowerCorners(const ChasmWorld& w, int plot, std::vector<vec2>& out);
+//Where the guard of `rank` (from 0, in id order) stands on it: the middle for a lone one.
+vec2 ZoneTowerPlace(const ChasmWorld& w, int plot, int rank);
+//Whether its ladder may stand toward neighbour `to`: walkable from the tower - one ground, dry, not too steep - and
+//with nothing on it a walker cannot cross or that could shut: no building, wall or gate.
+bool ZoneTowerLadderOk(const ChasmWorld& w, const ZoneState& z, int tower, int to);
+//Where its ladder goes when placed: the open neighbour nearest the camp - with none, the lowest. -1 none open.
+int ZoneTowerDefaultLadder(const ChasmWorld& w, const ZoneState& z, int tower);
+//The plot the ladder of a tower on `plot` stands toward, -1 for no tower.
+inline int ZoneTowerLadder(const ZoneState& z, int plot){
+    const ZoneBuilding* b = z.BuildingOf(plot);
+    return (b && b->kind == ZONE_KIND_TOWER) ? b->ladder : -1;
+}
+//A tower's ladder stands toward `plot`: nothing is built or walled there.
+bool ZoneIsLadderPlot(const ChasmWorld& w, const ZoneState& z, int plot);
 inline vec2 ZoneRangeLine(const ZoneRangeCell& r){
     return r.centre - r.dir * (r.size * ZONE_RANGE_LINE);
 }

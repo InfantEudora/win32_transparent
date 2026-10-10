@@ -29,12 +29,30 @@
 #define FIELD_FLAG_POLE     1.3f    //a field put first: its pennant's pole over the stake (BuildingMesh's SITE_FLAG_*)
 #define FIELD_FLAG_W        0.55f
 #define FIELD_FLAG_H        0.34f
+/*
+    HEMP (goods_plan.md, the user's: a look of its own): from green on, not a low ridge but a row of tall
+    plants standing about to a person's shoulder (PERSON_MODEL_SCALE draws one 0.86 tall) - each a narrow
+    stalk widening to a crown of fan leaves under a four-sided point, low-poly like the bushes, so its faces
+    catch the sun unevenly. Flat-topped, as first built, from above they read as a grid of tiles - hay bales
+    once ripe. Every other row is set half a plant along, and each is a little off its row and a little
+    taller or shorter than the next, so the field reads as plants rather than a grid.
+*/
+#define HEMP_CLUMPS         12      //along a row, across the whole cell
+#define HEMP_STALK          0.45f   //a plant's foot, of its crown's width
+#define HEMP_CROWN          1.15f   //its crown's width, of a ridge's (within the row's: CROP_FILL x this < 1)
+#define HEMP_CROWN_BASE     0.6f    //of its height, where the crown is widest
+#define HEMP_GREEN_HEIGHT   0.45f
+#define HEMP_RIPE_HEIGHT    0.75f
+#define HEMP_JITTER         0.12f   //a plant's height, up or down, of its stage's
+#define HEMP_WANDER         0.12f   //off its row's middle, either way, of a row's width
 
 namespace {
 
-//The ridges' palette column by crop (ZONE_CROP_*) when ripe; the base is always earth. Ripe wheat
-//and two greens - a patchwork, as in A Little Age, now of the player's choosing.
-const int crop_columns[ZONE_CROP_COUNT] = {PAL_FIELD,PAL_LEAF_LIGHT,PAL_LEAF};
+//The ridges' palette cell by crop (ZONE_CROP_*) when ripe; the base is always earth. Ripe wheat
+//and two greens - a patchwork, as in A Little Age, now of the player's choosing - and hemp, whose
+//colours are in the crops row (Palette.h), the same all year.
+const int crop_columns[ZONE_CROP_COUNT] = {PAL_FIELD,PAL_LEAF_LIGHT,PAL_LEAF,PAL_HEMP};
+const int crop_rows[ZONE_CROP_COUNT] = {PAL_TEMPERATE,PAL_TEMPERATE,PAL_TEMPERATE,PAL_CROPS};
 
 /*
     The ridges at each stage (FIELD_STAGE_*): how much of a row's width they cover, how high their
@@ -201,9 +219,11 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
         crop = (id && id < z.buildings.size() && z.buildings[id].crop < ZONE_CROP_COUNT) ? z.buildings[id].crop : ZONE_CROP_WHEAT;
     }
     stage = std::max(0,std::min(FIELD_STAGE_RIPE,stage));
-    int column = (stage == FIELD_STAGE_RIPE) ? crop_columns[std::max(0,std::min(ZONE_CROP_COUNT - 1,crop))]
-                                             : stage_columns[stage];
+    crop = std::max(0,std::min(ZONE_CROP_COUNT - 1,crop));
+    int column = (stage == FIELD_STAGE_RIPE) ? crop_columns[crop] : stage_columns[stage];
+    int row = (stage == FIELD_STAGE_RIPE) ? crop_rows[crop] : PAL_TEMPERATE;
     bool f_along_v = ((hash >> 16) & 1) != 0;
+    bool f_clumps = crop == ZONE_CROP_HEMP && stage >= FIELD_STAGE_GREEN;
 
     ChildMap map(p,h,k);
     float u0, u1, v0, v1;
@@ -233,6 +253,48 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
         }
         float lo = mid - half_ridge;
         float hi = mid + half_ridge;
+        if (f_clumps){
+            /*
+                Hemp's plants, laid out along the whole cell so they carry on from one child into the next; a
+                child draws those whose middle is in its quarter - one on the line between two, in a row set half
+                a plant along, reaches a little past it, where the child's map carries straight on. Each a stalk
+                widening to its crown, then a point: four sides and four faces of the point, which from the
+                game's camera are most of what is seen.
+            */
+            const float slot = (1.0f - 2.0f * CROP_MARGIN) / HEMP_CLUMPS;
+            const float full = (stage == FIELD_STAGE_RIPE) ? HEMP_RIPE_HEIGHT : HEMP_GREEN_HEIGHT;
+            const int crown_column = (stage == FIELD_STAGE_RIPE) ? PAL_HEMP_HEADS : PAL_BUSH;
+            const float crown_w = half_ridge * HEMP_CROWN;
+            const float crown_l = slot * 0.45f;
+            const float stagger = (r & 1) ? 0.5f : 0.0f;
+            const int plants = HEMP_CLUMPS - ((r & 1) ? 1 : 0);
+            static const float side_a[4] = {-1.0f,1.0f,1.0f,-1.0f};    //the corners in order round a plant
+            static const float side_c[4] = {-1.0f,-1.0f,1.0f,1.0f};
+            for (int i = 0; i < plants; i++){
+                float centre = CROP_MARGIN + (i + 0.5f + stagger) * slot;
+                if (centre < along0 || centre >= along1){
+                    continue;
+                }
+                uint32_t jitter = MeshHash((uint32_t)cell,(uint32_t)(r * HEMP_CLUMPS + i) + 0xC1u);
+                float height = full * (1.0f + HEMP_JITTER * ((float)(jitter & 0xFF) / 127.5f - 1.0f));
+                float across = mid + row_width * HEMP_WANDER * ((float)((jitter >> 8) & 0xFF) / 127.5f - 1.0f);
+                vec3 foot[4], crown[4];
+                for (int c = 0; c < 4; c++){
+                    foot[c] = map.At(uv(centre + side_a[c] * crown_l * HEMP_STALK,across + side_c[c] * crown_w * HEMP_STALK),
+                                     CROP_RIDGE_LIFT);
+                    crown[c] = map.At(uv(centre + side_a[c] * crown_l,across + side_c[c] * crown_w),height * HEMP_CROWN_BASE);
+                }
+                vec3 apex = map.At(uv(centre,across),height);
+                vec3 middle = (foot[0] + foot[1] + foot[2] + foot[3]) * 0.25f;
+                for (int c = 0; c < 4; c++){
+                    int n = (c + 1) % 4;
+                    vec3 outward = (foot[c] + foot[n]) * 0.5f - middle;
+                    MeshQuad(out,foot[c],foot[n],crown[n],crown[c],outward,column,row);
+                    MeshTri(out,crown[c],crown[n],apex,outward + up,crown_column,row);
+                }
+            }
+            continue;
+        }
         vec3 foot_lo0 = map.At(uv(a0,lo),CROP_RIDGE_LIFT);
         vec3 foot_lo1 = map.At(uv(a1,lo),CROP_RIDGE_LIFT);
         vec3 foot_hi0 = map.At(uv(a0,hi),CROP_RIDGE_LIFT);
@@ -241,15 +303,15 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
         vec3 crest1 = map.At(uv(a1,mid),ridge_height);
         //The two faces lean away from the crest: each wants the normal pointing out of the ridge and up.
         vec3 across_dir = foot_hi0 - foot_lo0;
-        MeshQuad(out,foot_lo0,foot_lo1,crest1,crest0,up - across_dir,column);
-        MeshQuad(out,crest0,crest1,foot_hi1,foot_hi0,up + across_dir,column);
+        MeshQuad(out,foot_lo0,foot_lo1,crest1,crest0,up - across_dir,column,row);
+        MeshQuad(out,crest0,crest1,foot_hi1,foot_hi0,up + across_dir,column,row);
         //A ridge's end, where the field's margin cuts it - only in the child that holds that end.
         vec3 along_dir = crest1 - crest0;
         if (a0 == CROP_MARGIN){
-            MeshTri(out,foot_lo0,crest0,foot_hi0,along_dir * -1.0f,column);
+            MeshTri(out,foot_lo0,crest0,foot_hi0,along_dir * -1.0f,column,row);
         }
         if (a1 == 1.0f - CROP_MARGIN){
-            MeshTri(out,foot_lo1,crest1,foot_hi1,along_dir,column);
+            MeshTri(out,foot_lo1,crest1,foot_hi1,along_dir,column,row);
         }
     }
 }

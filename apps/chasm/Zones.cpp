@@ -30,6 +30,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_FIELD_PRIORITY: return "field_priority";
         case ZONE_OP_GATE_SHUT:     return "gate_shut";
         case ZONE_OP_RANGE_PAINT:   return "range_paint";
+        case ZONE_OP_TOWER_LADDER:  return "tower_ladder";
         default:                   return "none";
     }
 }
@@ -98,6 +99,7 @@ const char* ZoneCropName(int crop){
         case ZONE_CROP_WHEAT:       return "wheat";
         case ZONE_CROP_GREENS:      return "greens";
         case ZONE_CROP_BEANS:       return "beans";
+        case ZONE_CROP_HEMP:        return "hemp";
         case ZONE_CROP_AUTO:        return "auto";
         default:                    return "none";
     }
@@ -210,16 +212,22 @@ bool ZoneGateBetween(const ChasmWorld& w, const ZoneState& z, int a, int b){
 
 namespace {
 
-//A road plot with two road neighbours and every other neighbour a building of two storeys or more: what
-//could be bridged. The storeys it would be bridged to, or 0. Its road neighbours in `roads_out`.
+//A road plot with two road neighbours and every other neighbour a building of two storeys or more, all of one
+//kind with a house body: what could be bridged. The storeys it would be bridged to, or 0. Its road neighbours
+//in `roads_out`.
 int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_out){
     if (!ZoneRoadLaid(z,plot)){
         return 0;       //a planned road is bridged once it is laid
+    }
+    //Never over a gate (arches_plan.md): its posts and door stand taller than the passage. A gatehouse is its own.
+    if (plot < (int)z.gate.size() && z.gate[plot] != ZONE_GATE_NONE){
+        return 0;
     }
     int nb[8];
     int n = ZonePlotNeighbours(w,plot,nb,8);
     int roads = 0;
     int top = ZONE_MAX_STOREYS;
+    int kind = ZONE_KIND_NONE;
     for (int i = 0; i < n; i++){
         int u = nb[i];
         if (ZoneRoadLaid(z,u)){
@@ -227,9 +235,11 @@ int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_
                 roads_out[roads] = u;
             }
             roads++;
-        }else if (z.standing[u] >= 2){
-            //What stands: a site's storeys bridge nothing yet.
+        }else if (z.standing[u] >= 2 && ZoneKindHasBody(z.KindOf(u)) && (kind == ZONE_KIND_NONE || z.KindOf(u) == kind)){
+            //What stands: a site's storeys bridge nothing yet. SAME KIND only (the user's): a house never bridges
+            //into a store, and a guard tower - drawn apart, with no body to carry a floor - never at all.
             top = std::min(top,(int)z.standing[u]);
+            kind = z.KindOf(u);
         }else{
             return 0;           //an open side: nothing to bridge from
         }
@@ -272,6 +282,52 @@ int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot){
         }
     }
     return (run <= ZONE_ARCH_MAX_RUN) ? top : 0;
+}
+
+uint32_t ZoneArchOwner(const ChasmWorld& w, const ZoneState& z, int plot){
+    if (ZoneArchStoreys(w,z,plot) == 0){
+        return 0;
+    }
+    //Its plots beside it by building: the most, the lower id on a tie - one on both sides wins with all of them.
+    int nb[8];
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    uint32_t best = 0;
+    int best_count = 0;
+    for (int i = 0; i < n; i++){
+        uint32_t id = z.building[nb[i]];
+        if (!id){
+            continue;
+        }
+        int count = 0;
+        for (int j = 0; j < n; j++){
+            count += (z.building[nb[j]] == id) ? 1 : 0;
+        }
+        if (count > best_count || (count == best_count && id < best)){
+            best = id;
+            best_count = count;
+        }
+    }
+    return best;
+}
+
+void Zones::RefreshArches(){
+    size_t n = state.building.size();
+    state.arch.assign(n,0);
+    state.arch_owner.assign(n,0);
+    if (!state.world || state.ground.size() < n){
+        return;
+    }
+    const ChasmWorld& w = *state.world;
+    for (size_t v = 0; v < n; v++){
+        if (state.ground[v] != ZONE_GROUND_ROAD){
+            continue;
+        }
+        int s = ZoneArchStoreys(w,state,(int)v);
+        if (s > 0){
+            state.arch[v] = (uint8_t)s;
+            state.arch_owner[v] = ZoneArchOwner(w,state,(int)v);
+        }
+    }
 }
 
 /*
@@ -380,6 +436,106 @@ ZoneRangeCell ZoneRangeCellAt(const ChasmWorld& w, int cell){
     r.dir = vec2(0.0f,-1.0f);
     r.size = std::sqrt(std::max(0.0f,w.picker->CoarseArea(cell)));
     return r;
+}
+
+int ZoneTowerGuards(const ChasmWorld& w, int plot){
+    if (plot < 0 || plot >= (int)w.grid->fine.pos.size()){
+        return 0;
+    }
+    return std::max(1,std::min(4,w.picker->PlotQuadCount(plot) - 2));
+}
+
+void ZoneTowerCorners(const ChasmWorld& w, int plot, std::vector<vec2>& out){
+    out.clear();
+    if (plot < 0 || plot >= (int)w.grid->fine.pos.size()){
+        return;
+    }
+    vec2 p = w.grid->fine.pos[plot];
+    std::vector<std::pair<float,vec2>> round;
+    for (int i = 0; i < w.picker->PlotQuadCount(plot); i++){
+        vec2 c = w.grid->FineQuadCentre(w.picker->PlotQuadCorner(plot,i) / 4);
+        vec2 at = p + (c - p) * ZONE_TOWER_INSET;
+        round.push_back(std::make_pair(std::atan2(at.y - p.y,at.x - p.x),at));
+    }
+    std::sort(round.begin(),round.end(),[](const std::pair<float,vec2>& a, const std::pair<float,vec2>& b){
+        return a.first < b.first;
+    });
+    for (const auto& r : round){
+        out.push_back(r.second);
+    }
+}
+
+vec2 ZoneTowerPlace(const ChasmWorld& w, int plot, int rank){
+    vec2 p = (plot >= 0 && plot < (int)w.grid->fine.pos.size()) ? w.grid->fine.pos[plot] : vec2();
+    int guards = ZoneTowerGuards(w,plot);
+    std::vector<vec2> corners;
+    ZoneTowerCorners(w,plot,corners);
+    if (guards <= 1 || corners.empty()){
+        return p;
+    }
+    //Spread round it: of n corners, every n/guards-th - so on a square the two stand across it from each other.
+    int n = (int)corners.size();
+    int corner = ((rank % guards) * n) / guards;
+    return p + (corners[corner] - p) * ZONE_TOWER_STAND;
+}
+
+bool ZoneTowerLadderOk(const ChasmWorld& w, const ZoneState& z, int tower, int to){
+    const Terrain& t = *w.terrain;
+    int n_plots = (int)w.grid->fine.pos.size();
+    if (tower < 0 || to < 0 || tower >= n_plots || to >= n_plots || to >= (int)z.storeys.size()){
+        return false;
+    }
+    int nb[8];
+    int n = ZonePlotNeighbours(w,tower,nb,8);
+    if (std::find(nb,nb + n,to) == nb + n){
+        return false;
+    }
+    float run = std::max(1e-3f,(w.grid->fine.pos[to] - w.grid->fine.pos[tower]).length());
+    if (!t.SameGround(tower,to) || t.wet[to] || t.Mountain(to) || w.grid->fine.f_boundary[to]
+        || std::fabs(t.ground[to] - t.ground[tower]) > WALKER_STEEPEST * run){
+        return false;
+    }
+    return z.storeys[to] == 0 && (z.ground.empty() || z.ground[to] != ZONE_GROUND_WALL) && (z.gate.empty() || !z.gate[to]);
+}
+
+int ZoneTowerDefaultLadder(const ChasmWorld& w, const ZoneState& z, int tower){
+    //The camp's first plot: the colony's side of a wall, as near as the zones can say.
+    int camp = -1;
+    for (size_t v = 0; v < z.building.size() && camp < 0; v++){
+        uint32_t b = z.building[v];
+        if (b && b < z.buildings.size() && z.buildings[b].kind == ZONE_KIND_CAMP){
+            camp = (int)v;
+        }
+    }
+    int nb[8];
+    int n = ZonePlotNeighbours(w,tower,nb,8);
+    int best = -1;
+    float best_d = 0.0f;
+    for (int i = 0; i < n; i++){
+        if (!ZoneTowerLadderOk(w,z,tower,nb[i])){
+            continue;
+        }
+        float d = (camp >= 0) ? (w.grid->fine.pos[nb[i]] - w.grid->fine.pos[camp]).length() : 0.0f;
+        if (best < 0 || d < best_d || (d == best_d && nb[i] < best)){
+            best = nb[i];
+            best_d = d;
+        }
+    }
+    return best;
+}
+
+bool ZoneIsLadderPlot(const ChasmWorld& w, const ZoneState& z, int plot){
+    if (plot < 0 || plot >= (int)w.grid->fine.pos.size() || z.building.empty()){
+        return false;
+    }
+    int nb[8];
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    for (int i = 0; i < n; i++){
+        if (ZoneTowerLadder(z,nb[i]) == plot){
+            return true;
+        }
+    }
+    return false;
 }
 
 int ZoneWinchLanding(const ChasmWorld& w, int plot){
@@ -643,6 +799,10 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (kind == ZONE_KIND_TOWER && joining){
         return refuse("a tower is one plot");
     }
+    //A tower's ladder is its door (defence_plan.md): nothing goes where it stands.
+    if (ZoneIsLadderPlot(w,z,plot)){
+        return refuse("a tower's ladder stands there");
+    }
     if (!f_line_ok && !z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && ZoneLineGround(z.ground[plot])){
         return refuse((z.ground[plot] == ZONE_GROUND_WALL) ? "a wall is there" : "a road is there");
     }
@@ -668,6 +828,18 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (joining && kind == ZONE_KIND_HOUSE && joining < z.buildings.size() &&
         z.buildings[joining].size >= ZONE_HOUSE_MAX_PLOTS){
         return refuse("a house is at most four plots - one family");
+    }
+    //A guard tower needs a side for its ladder, its only way up.
+    if (kind == ZONE_KIND_TOWER){
+        int nb[8];
+        int n = ZonePlotNeighbours(w,plot,nb,8);
+        bool f_open = false;
+        for (int i = 0; i < n && !f_open; i++){
+            f_open = ZoneTowerLadderOk(w,z,plot,nb[i]);
+        }
+        if (!f_open){
+            return refuse("no open side for its ladder");
+        }
     }
     //A woodcutter needs no lot to be built (yards_plan.md, the user's 2026-10-09): without one of his own he
     //fells nothing, and his card and NEEDS ATTENTION say so - as a house shut in on every side does.
@@ -840,6 +1012,12 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
     if (f_line && !z.storeys.empty() && z.storeys[plot] > 0){
         if (why){
             *why = "a building is there";
+        }
+        return false;
+    }
+    if (kind == ZONE_GROUND_WALL && ZoneIsLadderPlot(w,z,plot)){
+        if (why){
+            *why = "a tower's ladder stands there";
         }
         return false;
     }
@@ -1291,6 +1469,7 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
             coarse_across[edges[i + 1].second] = edges[i].second / 4;
         }
     }
+    RefreshArches();
 }
 
 //A fine quad's look changed: its chunk has to be rebuilt.
@@ -1596,6 +1775,10 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             state.standing[plot] = f_play ? 0 : state.storeys[plot];   //a player's: a site, until the builders raise it
             state.buildings[joining].size++;
             state.built_plots++;
+            //A guard tower's ladder, its door: the open side nearest the camp (ZoneCanBuild saw there is one).
+            if (kind == ZONE_KIND_TOWER){
+                state.buildings[joining].ladder = ZoneTowerDefaultLadder(w,state,plot);
+            }
             touch_road(plot);
             claim_yard(plot,joining);
             break;
@@ -1872,6 +2055,11 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = "no such plot";
                 return false;
             }
+            //Not where a tower's ladder stands - a gate there could be shut on it (defence_plan.md).
+            if (kind == ZONE_GROUND_WALL && ZoneIsLadderPlot(w,state,plot)){
+                last_refusal = "a tower's ladder stands there";
+                return false;
+            }
             //Where a wall and a road cross the plot stays road, the wall's gate (Zones.h, WALLS): a wall
             //drawn over a road leaves it, and gates it.
             if (kind == ZONE_GROUND_WALL && state.ground[plot] == ZONE_GROUND_ROAD){
@@ -2029,6 +2217,52 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             break;
         }
+        case ZONE_OP_TOWER_LADDER:{
+            /*
+                A guard tower's LADDER moved (defence_plan.md) - the player's, from its card: toward the neighbour
+                named, or with -1 to the next open side round it, counter-clockwise from where it stands. It is the
+                tower's door, so the walkers' way on and off moves with it.
+            */
+            uint32_t id = (plot >= 0 && plot < (int)state.building.size()) ? state.building[plot] : 0;
+            if (!id || state.buildings[id].kind != ZONE_KIND_TOWER){
+                last_refusal = "no tower there";
+                return false;
+            }
+            ZoneBuilding& b = state.buildings[id];
+            int to = kind;
+            if (to < 0){
+                std::vector<std::pair<float,int>> open;
+                int nb[8];
+                int n = ZonePlotNeighbours(w,plot,nb,8);
+                vec2 p = w.grid->fine.pos[plot];
+                for (int i = 0; i < n; i++){
+                    if (ZoneTowerLadderOk(w,state,plot,nb[i])){
+                        vec2 d = w.grid->fine.pos[nb[i]] - p;
+                        open.push_back(std::make_pair(std::atan2(d.y,d.x),nb[i]));
+                    }
+                }
+                std::sort(open.begin(),open.end());
+                for (size_t i = 0; i < open.size() && to < 0; i++){
+                    if (open[i].second == b.ladder){
+                        to = open[(i + 1) % open.size()].second;
+                    }
+                }
+                if (to < 0 && !open.empty()){
+                    to = open.front().second;
+                }
+            }
+            if (to == b.ladder){
+                last_refusal = "no other open side for its ladder";
+                return false;
+            }
+            if (!ZoneTowerLadderOk(w,state,plot,to)){
+                last_refusal = "its ladder cannot stand there";
+                return false;
+            }
+            b.ladder = to;
+            touch_road(plot);       //the tower drawn again, and the plots round it
+            break;
+        }
         default:
             last_refusal = "unknown zone op";
             return false;
@@ -2037,6 +2271,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
         || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_RAISE){
         SettlePriorities();
     }
+    RefreshArches();
     state.version++;
     return true;
 }
@@ -2159,6 +2394,15 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
             b.kind = ZONE_KIND_NONE;
         }
     }
+    //A guard tower's ladder as saved, once everything round it is back; one from before ladders, or one that can no
+    //longer stand where it was, takes its default.
+    for (const ZoneSavedBuilding& b : buildings){
+        if (b.kind != ZONE_KIND_TOWER || b.id == 0 || state.buildings[b.id].kind != ZONE_KIND_TOWER || b.plots.empty()){
+            continue;
+        }
+        int v = b.plots[0].first;
+        state.buildings[b.id].ladder = ZoneTowerLadderOk(w,state,v,b.ladder) ? b.ladder : ZoneTowerDefaultLadder(w,state,v);
+    }
     //Every yard to its owner as saved (yards_plan.md) - not as the rules would give it now: the ground went back
     //before the buildings, with nobody beside it. A save from before yards has none: every yard nobody's.
     std::fill(state.ground_owner.begin(),state.ground_owner.end(),0u);
@@ -2175,6 +2419,7 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
     for (uint32_t& v : state.chunk_version){
         v++;
     }
+    RefreshArches();
     state.version++;
     last_refusal.clear();
     return refused;
@@ -2194,6 +2439,7 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& state){
             b.f_priority = state.buildings[id].f_priority != 0;
             b.next_crop = state.buildings[id].next_crop;
             b.land_of = state.buildings[id].land_of;
+            b.ladder = state.buildings[id].ladder;
             out.push_back(b);
         }
     }

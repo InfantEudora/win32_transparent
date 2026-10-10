@@ -4,9 +4,9 @@ aliases: road, roads, wall, walls, palisade, gate, gates, gate door
 kind: buildings
 status: built
 summary: Drawn as lines and built by people without a job. Roads cost only work and double walking speed; walls cost wood too; a road through a wall is a gate whose door can be shut.
-plans: line_works_plan.md > As built; defence_plan.md > As built: step 3, gate doors
-code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers
-verified: 2026-10-09
+plans: line_works_plan.md > As built; defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner
+code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody
+verified: 2026-10-10
 ---
 
 Roads and walls are drawn as a line in play, and each plot of the line is a site until it's built. A
@@ -40,3 +40,15 @@ clear they walk straight; otherwise they follow the grid, choosing the quickest 
 - A gate's door can be **shut** from its card. Then nobody walks through, the colony's own people
   included. Everyone walking re-plans, and whoever is cut off waits until it opens. Nobody can be ordered
   onto a shut gate ([[Posts]]).
+
+## Arches
+
+A road running between two-storey buildings of the **same kind** is built over: their upper storeys bridge
+it, over a passage one storey high, where at most three such road plots run in a row. The arch is part of
+one of them: the building on both sides if it is one, otherwise the one with the most plots beside it (the
+older on a tie). It is drawn in that building's look, and clicking it selects that building. A house never
+bridges into a store, nothing bridges to a guard tower, and no arch goes over a gate.
+
+- [planned] The arch's storeys counted as its building's floor, and built as a site with scaffolding over the
+  road (`arches_plan.md`).
+- [planned] A gatehouse between two [[Tower|guard towers]] over a gate.

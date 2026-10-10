@@ -72,7 +72,8 @@ how the first generation leaves.
 
 - **Born at home**, into the couple's house, and **indoors all year**: not drawn, so no baby figure is
   needed.
-- **Lives on the house's stock**, eating and drinking like anyone (a full share for now; tuning).
+- **Lives on the house's stock**, eating and drinking half an adult's share (`LIFE_SHARE_BABY`; the user's,
+  2026-10-10 - a child three quarters). See "As built: shares".
 - **The mother's job becomes CARING** for the year. Her place at her workplace is free at once, and the
   usual handing out of jobs fills it (`Economy::AssignJobs`): the free housed adult with the best score,
   or, with fewer people than places, the newest workplace loses its worker instead. A caring mother is
@@ -233,7 +234,7 @@ First guesses, except where marked. Tuning, not rules: each becomes a named cons
 | Growing towards the house's trade | a point a birthday, as child and young adult |
 | A calling | 1 child in 5 |
 | Playing, and the old: a walk round the house | on one look in 60 at home, about every 30 seconds at normal speed; a plot or two away, 4 seconds there (`LIFE_PLAY_*`) |
-| A baby's and a child's food and water | a full share |
+| A baby's and a child's food and water | half an adult's, three quarters (`LIFE_SHARE_BABY`, `LIFE_SHARE_CHILD`) |
 
 With one chance a year, half a year expecting and a year of caring, a couple has a child every two years
 or so; four children take a mother about eight years.
@@ -427,3 +428,22 @@ dead record's ninth number), `ApplicationChasmEconomy.cpp` (the hash, `chasm_eco
   as their son Thijs Wever is; anyone else, their own.
 - **Not checked by a run**: cousins refused (no settler has grandparents in the colony yet - the rule's test is
   the code), a widow staying single, and two houses freed on one tick.
+
+## As built: shares (2026-10-10)
+
+The user's: a baby eats and drinks half an adult's share, a child three quarters; a young adult on, a whole.
+Files: `Economy.*` (A SHARE in `Economy.h`, `LIFE_SHARE_*`, `EconomyShare`; `Mouths` beside `Living`; `Needs`,
+`HomeShort`, `TakeHome`, `FairShare`, `HomeAhead`), `ApplicationChasmIssues.cpp` (`DaysHeld`).
+
+- **The drain**: a person's water and health fall on only their share of ticks in four - which ticks by
+  `(tick + id) % 4`, so a house's babies do not all fall together. Eating and drinking are untouched: a unit when
+  a whole one fits, so a baby simply needs one half as often. Being dry or cold still drains faster, on those ticks.
+- **The sums count mouths at their shares, not heads**: what a house counts as short (`HomeShort`, and which kind
+  is scarcest), what one trip brings home (`TakeHome`), the colony's FAIR SHARE (per adult's share) and a house
+  being ahead of it, and the issues panel's FOOD and WATER days.
+- **Heads, still**: a house's room and crowding, the birth chance's place to spare, and every "anyone living
+  there" check - a baby still takes a place.
+- **Checked** (a copied exe on 8772, paused and stepped; seed 12, the calendar moved past the settler baby's due
+  day): an adult, a child and the baby set to 3 days of water - above where anyone drinks - and 900 ticks on, their
+  bars fell 0.40, 0.30 and 0.20 days. A 400-tick recording with the baby and the children in it: two replays
+  identical.

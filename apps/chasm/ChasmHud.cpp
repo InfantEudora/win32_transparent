@@ -18,23 +18,26 @@ uint32_t HudGoodColour(int good){
         case GOOD_GREENS:       return UIColor(150,206,104);
         case GOOD_BEANS:        return UIColor(200,132,168);
         case GOOD_PROVISIONS:   return UIColor(226,212,166);    //hardtack: paler than wheat, lighter than wood
+        //Materials browns and greys, inputs a family of their own (goods_plan.md): rope a greyer tan than wood,
+        //hemp a sage green, apart from the greens' yellow-green.
+        case GOOD_ROPE:         return UIColor(176,160,128);
+        case GOOD_HEMP:         return UIColor(108,170,150);
         default:                return UIColor(170,170,164);
     }
 }
 
 std::array<int,GOOD_COUNT> HudGoodsOrder(){
+    //By category (goods_plan.md) - materials, the foods, water, inputs - each in the goods' own order: wood
+    //first as ever, and rope beside it.
+    static const int categories[GOOD_CATEGORY_COUNT] = {GOOD_CATEGORY_MATERIALS,GOOD_CATEGORY_FOOD,GOOD_CATEGORY_WATER,
+                                                        GOOD_CATEGORY_INPUTS};
     std::array<int,GOOD_COUNT> order = {};
     int n = 0;
-    order[n++] = GOOD_WOOD;
-    for (int g = 0; g < GOOD_COUNT; g++){
-        if (GoodIsFood(g)){
-            order[n++] = g;
-        }
-    }
-    order[n++] = GOOD_WATER;
-    for (int g = 0; g < GOOD_COUNT; g++){
-        if (g != GOOD_WOOD && g != GOOD_WATER && !GoodIsFood(g)){
-            order[n++] = g;
+    for (int c : categories){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (GoodCategory(g) == c){
+                order[n++] = g;
+            }
         }
     }
     return order;

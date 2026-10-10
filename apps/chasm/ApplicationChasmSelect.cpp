@@ -295,6 +295,24 @@ const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
     return NULL;
 }
 
+/*
+    An errand for a site, by the good it is for - `phase` 0 going for it, 1 picking it up, 2 taking it to the
+    site: food by its category, any other good by name ("fetching rope for a site"). Made once a good, since
+    Doing hands back a const char*.
+*/
+const char* SiteErrand(int phase, int good){
+    static const std::vector<std::array<std::string,3>> phrases = []{
+        std::vector<std::array<std::string,3>> p(GOOD_COUNT + 1);
+        for (int g = -1; g < GOOD_COUNT; g++){
+            std::string what = (g < 0) ? "goods" : GoodIsFood(g) ? "food" : GoodName(g);
+            p[g + 1] = {"fetching " + what + " for a site","picking up " + what,"carrying " + what + " to a site"};
+        }
+        return p;
+    }();
+    int i = (good >= 0 && good < GOOD_COUNT) ? good + 1 : 0;
+    return phrases[i][std::max(0,std::min(2,phase))].c_str();
+}
+
 //What he is doing, as a sentence's end - the card's and the house's list's. With the zones, a wall's way
 //cleared is told from a road's (line_works_plan.md, step 3): the same errand on another line. With the economy,
 //a post he is kept from is told from one he stands on.
@@ -321,13 +339,10 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         case WORKER_UNLOADING:  return "unloading";
         case WORKER_TO_HOME:    return "going home";
         case WORKER_HOLDING:    return "waiting with a load";
-        //For a site: whatever good it wants (defence_plan.md step 4).
-        case WORKER_TO_FETCH:   return (k.carry_good == GOOD_WATER) ? "fetching water for a site"
-                                     : GoodIsFood(k.carry_good) ? "fetching food for a site" : "fetching wood";
-        case WORKER_FETCHING:   return (k.carry_good == GOOD_WATER) ? "picking up water"
-                                     : GoodIsFood(k.carry_good) ? "picking up food" : "picking up wood";
-        case WORKER_TO_SITE:    return (k.carry_good == GOOD_WATER) ? "carrying water to a site"
-                                     : GoodIsFood(k.carry_good) ? "carrying food to a site" : "carrying wood to a site";
+        //For a site: whatever good it wants (defence_plan.md step 4) - rope too (goods_plan.md).
+        case WORKER_TO_FETCH:   return SiteErrand(0,k.carry_good);
+        case WORKER_FETCHING:   return SiteErrand(1,k.carry_good);
+        case WORKER_TO_SITE:    return SiteErrand(2,k.carry_good);
         case WORKER_BUILDING:   return "building";
         case WORKER_TO_ROAD:    return (k.prop >= 0) ? "going to clear a road" : "going to lay a road";
         case WORKER_CLEARING:   return "clearing a road";
@@ -1315,11 +1330,21 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         if (places > 0 && working < places){
             c.Text("A guard needs a free adult with a house - the best archer first",HUD_TEXT_DIM);
         }
+        int plot = FirstPlotOf(z,id);
         if (id < e->stock.size() && (info.storeys > 0 || AnyGoods(e->stock[id]))){
-            c.Stock("Holds","its guards'",e->stock[id],ECONOMY_TOWER_WATER + ECONOMY_TOWER_PROVISIONS,true,
-                    EconomyReserved(*e,id));
+            int room = EconomyTowerStock(w,plot,GOOD_WATER) + EconomyTowerStock(w,plot,GOOD_PROVISIONS);
+            c.Stock("Holds","its guards'",e->stock[id],room,true,EconomyReserved(*e,id));
             c.Text("Its guards eat and drink from it, and nobody else",HUD_TEXT_DIM);
         }
+        //Its LADDER is its door: guards climb it only from that side. Moved round to the next open side by its chip,
+        //a recorded zone command (OVERLAY_HIT_LADDER).
+        c.Text(Format("A %i-sided tower: %i guard%s. Its ladder is its door",w.picker->PlotQuadCount(plot),
+                      ZoneTowerGuards(w,plot),ZoneTowerGuards(w,plot) == 1 ? "" : "s"),HUD_TEXT_DIM);
+        CardLine ladder;
+        ladder.type = CARD_TOGGLE;
+        ladder.text = "Move ladder";
+        ladder.choice_action = OVERLAY_HIT_LADDER;
+        c.lines.push_back(ladder);
     }
 }
 
@@ -1449,14 +1474,24 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
     only.ground_built = z.ground_built;
     only.gate = z.gate;     //a guard tower's ladder goes on a side no wall or gate runs off (BuildTower)
     only.field.assign(z.field.size(),0);
+    //Its ARCHES too (arches_plan.md): part of it, outlined with it - given here, since with its neighbours gone
+    //this state could not work them out.
+    only.arch.assign(z.arch.size(),0);
+    only.arch_owner.assign(z.arch_owner.size(),0);
     std::vector<int> quads;
     for (size_t v = 0; v < z.building.size(); v++){
-        if (z.building[v] != id){
+        bool f_arch = z.ArchOwnerOf((int)v) == id;
+        if (z.building[v] != id && !f_arch){
             continue;
         }
-        only.building[v] = id;
-        only.storeys[v] = z.storeys[v];
-        only.standing[v] = z.standing[v];
+        if (f_arch){
+            only.arch[v] = z.arch[v];
+            only.arch_owner[v] = id;
+        }else{
+            only.building[v] = id;
+            only.storeys[v] = z.storeys[v];
+            only.standing[v] = z.standing[v];
+        }
         for (int i = 0; i < picker.PlotQuadCount((int)v); i++){
             quads.push_back(picker.PlotQuadCorner((int)v,i) / 4);
         }
@@ -1475,6 +1510,11 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
 */
 float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
     if (!z.building[plot]){
+        //An ARCH (arches_plan.md): its owner's, picked by its body above the passage (ArchUnder).
+        if (z.ArchOf(plot) > 0){
+            const float half = ZONE_STOREY_HEIGHT * 0.5f;
+            return (float)std::lround(w.terrain->ground[plot] / half) * half + z.ArchOf(plot) * ZONE_STOREY_HEIGHT + SHAPE_ROOF;
+        }
         return -1e30f;
     }
     float ground = w.terrain->ground[plot];
@@ -1521,6 +1561,15 @@ uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r,
             top = ShapeTop(w,z,at.plot);
         }
         if (p.y <= top){
+            //An arch is its owner's above its passage; through the passage the ray goes on, as a walker does.
+            if (!z.building[at.plot]){
+                const float half = ZONE_STOREY_HEIGHT * 0.5f;
+                if (p.y < (float)std::lround(w.terrain->ground[at.plot] / half) * half + ZONE_STOREY_HEIGHT){
+                    continue;
+                }
+                *plot_out = at.plot;
+                return z.ArchOwnerOf(at.plot);
+            }
             *plot_out = at.plot;
             return z.building[at.plot];
         }
@@ -1715,6 +1764,18 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 }
                 if (sel.kind == PLAY_PICK_GATE && sel.plot >= 0){
                     SubmitZone(ZONE_OP_GATE_SHUT,sel.plot,hit.value);
+                }
+            }else if (hit.action == OVERLAY_HIT_LADDER){
+                //A guard tower's card: its ladder round to the next open side - a recorded zone command.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const ZoneState> z = GetZones();
+                if (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size()
+                    && z->buildings[sel.id].kind == ZONE_KIND_TOWER){
+                    SubmitZone(ZONE_OP_TOWER_LADDER,FirstPlotOf(*z,sel.id),-1);
                 }
             }else if (hit.action == OVERLAY_HIT_RELEASE){
                 //A posted person's card: back to his work (defence_plan.md) - a recorded order.
@@ -2419,6 +2480,10 @@ void ApplicationChasm::RegisterSelectTools(){
             std::string op = args.value("op",std::string("status"));
             //What the cursor would pick at a pixel - a person, a building by its shape, the ground's -
             //so picking can be checked without a mouse.
+            static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
+                                                  "field_next","pause","speed","field_land","person","release",
+                                                  "take_tool","building","gate","ladder"};
+            const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             if (op == "under" && args.contains("px") && args.contains("py") && args["px"].is_number() && args["py"].is_number()){
                 int2 px(args["px"].get<int>(),args["py"].get<int>());
                 json out;
@@ -2430,6 +2495,9 @@ void ApplicationChasm::RegisterSelectTools(){
                                {"ground_plot",ground.f_hit ? ground.plot : -1},
                                {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0}};
                 });
+                //...and what of the overlay is drawn there, which a press there would press - nothing pressed.
+                OverlayHit hit;
+                out["overlay"] = OverlayHitAt(px,&hit) ? json(actions[std::max(0,std::min(last,hit.action))]) : json(nullptr);
                 return json{{"under",out}};
             }
             /*
@@ -2447,10 +2515,6 @@ void ApplicationChasm::RegisterSelectTools(){
                 }
                 int2 px(args["px"].get<int>(),args["py"].get<int>());
                 OverlayHit hit;
-                static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
-                                                      "field_next","pause","speed","field_land","person","release",
-                                                      "take_tool","building","gate"};
-                const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
                 if (OverlayHitAt(px,&hit)){
                     pressed = json{{"overlay",actions[std::max(0,std::min(last,hit.action))]},{"value",hit.value}};
                 }else{

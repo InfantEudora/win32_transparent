@@ -40,6 +40,13 @@ recorded commands and the tick.
 - **Water**, worked through after: the pack is **3 water and 1 provision**, a tower **12 water and 8
   provisions**, and **a guard on his tower eats and drinks from it as at home**.
 - **Masks of goods become 16 bits.**
+- **The tower tuned** (the user's, 2026-10-10, after step 6): it was always square, which made it stand out on
+  this grid. Now it takes its JUNCTION's shape, as every building takes its plot's, and the junction decides
+  its GUARDS: a 3-junction 1, a 4-junction 2, a 5-junction 3, a 6-junction 4. Its COST is so much a guard place,
+  fixed, so no shape is cheaper than another for what it holds. Its LADDER IS ITS DOOR: walkers get on and off
+  it only from the ladder's side - by default the open side nearest the camp, which is usually the inside of a
+  wall - and the player can move it from the tower's card. Nothing is built or walled on the ladder's plot. The
+  ghost shows the shape, which is how the player finds the rarer junctions (and the terrain shows them too).
 
 The reference here is Knights and Merchants, the one game the user remembers with soldiers who need food:
 an annoying mechanic, but it worked. The aim is to keep what worked and leave out the chore. Nobody is
@@ -159,8 +166,9 @@ These are sums from tuning, and change with it.
   it takes that plot over. Buildings already stop walkers (`Walkers.cpp`: only a winch, a camp and a
   standing bridge can be walked through), so the wall stays sealed, and the palisade ends against the
   tower as it does against a gate's post.
-- **Its guards**: places like any workplace (2, tuning), filled in order like the others, by
-  **precision** (the archer's skill). A new job, `WORKER_JOB_GUARD`. A guard's home stays his house.
+- **Its guards**: places like any workplace - its junction's edges less two, so 1 to 4 (tuned, above) -
+  filled in order like the others, by **archery**, then **precision** (the archer's skill). A new job,
+  `WORKER_JOB_GUARD`. A guard's home stays his house.
 - **Its stock**: it keeps provisions and water - provisions are its food, and a guard still drinks.
   **Only posted people draw on it** - its guards, as their pantry, and anyone under an order nearby, as a
   supply. `SeekSupply` skips it for villagers, the way it skips other families' houses, or the village
@@ -234,6 +242,14 @@ Each step tested before the next, by the tool and a replay.
   figures for playtesting to move (`needs_plan.md`, "The numbers are tuning, not rules").
 - **The tower's roof** - none for now: an open platform behind a parapet (step 6). Its key is T, after RANGE
   on the build grid, which leaves ERASE on a row of its own.
+- **The gatehouse** - WANTED (the user, 2026-10-10, out of `arches_plan.md`): two guard towers flanking a
+  palisade gate, joined by a WALKWAY between their decks over the gate. At the decks' height (two storeys and
+  `TOWER_DECK`) it clears the gate's posts and beam (`WALL_GATE_HEIGHT`), where a house's arch, its passage a
+  storey high, would not. Guard places of its own on the walkway, reached by the towers' ladders - no way up of
+  its own - and paid so much a guard place, as the tower is. It is not an arch: towers are never arched (for
+  now), and nothing is arched over a gate - the gatehouse is what that case becomes (`arches_plan.md`). Not
+  in the build order yet. Open: how it comes (painted on the gate plot between two towers, or of itself once
+  both stand), whether its guards share the towers' stock, and its look.
 - **Releasing a tower's guard** by an order: the order would suspend the tower job like any other.
 - **Sites take food and water people need** (step 4): a site's water and provisions come out of the same
   stores and camp people drink and eat from, with nothing kept back. For a tower's 12 water that is a day of
@@ -485,23 +501,24 @@ in the jobs corner, the cards, the ghost, guards drawn on the platform, NOBODY A
 - **The kind**: `ZONE_KIND_TOWER` (11), one plot, painted WHOLE - both storeys at once (`ZoneKindPaintStoreys`); a
   click on one adds nothing, and taking a storey off takes it all. A building's rules, and IN A WALL'S LINE: on a wall
   plot, planned or standing, it takes the plot (its ground goes). Never on a road. A building stops walkers, so the
-  wall stays shut; a guard walks in from either side, as anyone walks into his own house.
-- **The look** (`BuildTower`, drawn apart from the house bodies like the winch): a square of upright logs round the
+  wall stays shut; a guard walks in from either side, as anyone walks into his own house (since tuned: only by its
+  ladder, below).
+- **The look** (since tuned, below: its junction's shape) (`BuildTower`, drawn apart from the house bodies like the winch): a square of upright logs round the
   plot's point, a band of dark lashing at each storey's top, a thick post at each corner; whole, a platform of planks a
   little wider than the walls, a parapet of sharpened stakes round it - the palisade's - and a ladder up the first of
   its south, east, west and north sides with no wall running off that way. No roof. Square to the world. A wall beside
   it runs on past its half-way point up to the tower's side (`RoadMesh`), and a gate beside it hangs its leaf from it.
-- **Built with** wood by its floor area (as any building) and `ECONOMY_TOWER_WATER` water and `ECONOMY_TOWER_PROVISIONS`
-  provisions, half a storey (`StoreyGoods`) - the provisions the first thing that makes caretakers make them. What a
+- **Built with** (since tuned, below: so much a guard place) wood by its floor area (as any building) and 12 water and
+  8 provisions, half a storey (`StoreyGoods`) - the provisions the first thing that makes caretakers make them. What a
   storey takes of those it KEEPS as its stock (`StoreyKept`), so a built tower holds all of it. Placed in debug it
   stands full (`Tick`, for a tower new to the economy that stands whole).
-- **Its places**: `ECONOMY_TOWER_GUARDS`, once it stands whole. Staffed in the one order like any workplace, from the
+- **Its places**: 2 (since tuned, below: by its junction), once it stands whole. Staffed in the one order like any workplace, from the
   free: by ARCHERY first - what the range trained (`range_plan.md`) - then by precision against the walk, as any
   place. `WORKER_JOB_GUARD` (5).
 - **A guard** is POSTED by his job (`EconomyPosted`): from home he packs and goes up (`TakePost`), at the end of any
   errand he goes back up instead of home (`GoHome`), and he runs no errands. His post is the tower's plot
-  (`EconomyPostPlot`, via `EconomyState::door`); his place on it one of two, west and east of its middle by his rank
-  among its guards (`EconomyPostPoint`). An order to him comes first and suspends the job like any other.
+  (`EconomyPostPlot`, via `EconomyState::door`); his place on it by his rank among its guards (`EconomyPostPoint`) -
+  first west and east of its middle, since tuned toward its corners (`ZoneTowerPlace`). An order to him comes first and suspends the job like any other.
 - **The tower is his pantry** (`Needs`): standing on it he eats and drinks from its stock as at home - a whole unit
   whenever it fits - and from his pack only a kind the tower has none of. (First built eating the pack after the
   tower, a bean fitted where a provision did not and came out of the pack.) Tower and pack empty, a pressing need
@@ -532,6 +549,46 @@ in the jobs corner, the cards, the ghost, guards drawn on the platform, NOBODY A
     every tick.
   - Seen in the game: the palisade running up to the tower's sides, the ladder on a side clear of the wall, guards on
     the platform behind the parapet.
+
+## As built: the tower tuned (2026-10-10)
+
+The user's, after step 6 (Decided, above): it stood out on this grid by always being square. Files: `Zones.*`
+(`ZoneTowerGuards`, `ZoneTowerCorners`, `ZoneTowerPlace`, `ZoneTowerLadderOk`, `ZoneTowerDefaultLadder`,
+`ZoneTowerLadder`, `ZoneIsLadderPlot`, `ZoneBuilding::ladder`, `ZONE_OP_TOWER_LADDER`, the rules), `Walkers.cpp` and
+`EconomyStraightClear` (the door), `Economy.*` (`ECONOMY_TOWER_*` a guard place, `TowerStoreyCost`, `EconomyTowerStock`,
+the places), `BuildingMesh.*` (`BuildTower`, `BuildingTowerReach`, `BuildingOnTower`), `RoadMesh.cpp`, `ChasmSave.cpp`
+(`"ladder"`), `ApplicationChasm*` (the hash, the tool, the card's chip, the ghost).
+
+- **Its shape is its junction's** (`ZoneTowerCorners`): a polygon through the middles of the cells round its plot's
+  point, `ZONE_TOWER_INSET` of the way - a triangle, a square (skewed as the grid is), a pentagon, a hexagon - a side
+  facing each neighbour, so a wall running off meets a side (`BuildingTowerReach`). Its size is its plot's: the 3s are
+  often small plots (one by the seed-12 camp is 1.0 against a 4's 3.8 and a 5's 6.9), so a one-guard tower is slim.
+- **Its guards are its junction's edges less two** (`ZoneTowerGuards`): 1, 2, 3 - and 4 on a 6, the user's. About 96%
+  of plots are 4s, 2% each 3s and 5s, 0.2% 6s; the ghost's shape is how the player finds them. Guards stand toward
+  its corners, spread round it (`ZoneTowerPlace`, `ZONE_TOWER_STAND`) - one alone in the middle.
+- **Its cost is so much a guard place** (`TowerStoreyCost`): `ECONOMY_TOWER_WOOD` wood, `ECONOMY_TOWER_WATER` water,
+  `ECONOMY_TOWER_PROVISIONS` provisions, half a storey - wood too, not by floor area - so no junction is cheaper for
+  what it holds. Its water and provisions are its stock (`EconomyTowerStock`): 12 days for each guard, whatever its
+  shape.
+- **Its ladder is its door** (`ZoneBuilding::ladder`, the neighbour plot it stands toward): walkers get onto the tower
+  only from that plot and off only to it (`Walkers::EdgeOpen`, `EconomyStraightClear`) - its site's builders too. Placed,
+  it takes the open side nearest the camp (`ZoneTowerDefaultLadder`) - one ground, dry, not too steep, no building, wall
+  or gate (`ZoneTowerLadderOk`); a tower with no such side is refused, "no open side for its ladder". MOVED from the
+  tower's card (`OVERLAY_HIT_LADDER`, "Move ladder") - a recorded zone command, `ZONE_OP_TOWER_LADDER`, to the next open
+  side round it, or `chasm_paint` op `tower_ladder` toward a neighbour. Saved (`"ladder"`), hashed (towers only).
+- **Kept clear**: nothing built, and no wall drawn (a gate there could be shut), on a ladder's plot - "a tower's ladder
+  stands there" (`ZoneIsLadderPlot`), as on a winch's landing. The ghost shows the ladder where placing would put it,
+  and a wall's ghost goes red on a ladder's plot.
+- **Tested** (seed 12, debug placements round the camp):
+  - Towers found on 3-, 4-, 5- and 6-junctions: 1, 2, 3 and 4 guards; each stood full at 6 water and 4 provisions a
+    place. A play site on a 4-junction wanted 20 wood, 12 water, 8 provisions.
+  - Every ladder stood toward a neighbour on the camp's side. A route onto a tower from its far side came off its
+    ladder's plot; the ladder moved (by the op, and by its chip pressed through the overlay), the route came off the
+    new one. A house and a wall on the ladder's plot: refused.
+  - The 5-junction tower's three guards up at three places of their own. A save and load kept every ladder; the
+    recording's two replays equal on every tick.
+  - Seen in the game: the square, pentagon and hexagon in the grid's shape, guards on them, ladders on the camp side;
+    the triangle slim on its small plot.
 
 ## Later: agreed in the gameplay plan, not planned yet
 

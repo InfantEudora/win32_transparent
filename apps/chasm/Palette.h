@@ -37,6 +37,11 @@
 //Summer KEPT: the temperate row as loaded, written here by the app (the PNG's row is spare) and never
 //faded - the broadleaves' green stage (Seasons.h), which changes only on each tree's own day.
 #define PAL_SUMMER          8
+//Not a biome either: crops' own colours, the same all year - no season fades them and no snow lies on them
+//(chasm_ground.frag), since a field is empty by winter. The first are hemp's (goods_plan.md).
+#define PAL_CROPS           9
+#define PAL_HEMP            0       //columns in the crops row: ripe hemp's stalks, an olive green
+#define PAL_HEMP_HEADS      1       //and its crown, fan leaves and seed heads - a yellow-green, not wheat's gold
 //Not a biome: colours that are the same in every one - the chasm's mist and the falls' foam (Mist.h).
 #define PAL_EFFECTS         15
 #define PAL_MIST_LIGHT      0       //columns in the effects row

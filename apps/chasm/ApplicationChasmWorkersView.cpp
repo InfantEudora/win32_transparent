@@ -203,7 +203,7 @@ void ApplicationChasm::UploadWorkers(){
         //Up on a guard tower's platform (defence_plan.md): anyone standing within its walls is on top of it.
         if (pick.f_hit && z && z->world == w && z->KindOf(pick.plot) == ZONE_KIND_TOWER && z->standing[pick.plot] > 0
             && z->standing[pick.plot] >= z->storeys[pick.plot]
-            && (k.pos - w->grid->fine.pos[pick.plot]).length() < BUILDING_TOWER_HALF){
+            && BuildingOnTower(*w,pick.plot,k.pos)){
             y = BuildingTowerDeck(*w,*z,pick.plot);
         }
         //Felling, building, and on a road (line_works_plan.md) felling its trees or laying it.

@@ -18,6 +18,10 @@ json ChasmSaveToJson(const ChasmSave& s){
     json buildings = json::array();
     for (const ZoneSavedBuilding& b : s.buildings){
         json jb{{"id",b.id},{"kind",ZoneKindName(b.kind)}};
+        //A guard tower's ladder (defence_plan.md): the plot it stands toward, its door.
+        if (b.kind == ZONE_KIND_TOWER && b.ladder >= 0){
+            jb["ladder"] = b.ladder;
+        }
         if (ZoneKindOnCells(b.kind)){
             //A field's cells - or a range's (range_plan.md), which has no crop or land.
             jb["cells"] = b.cells;
@@ -242,6 +246,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         b.next_crop = (next < 0 || next == ZONE_CROP_NONE) ? ZONE_CROP_AUTO : next;
         b.cells_built = jb.value("cells_built",std::vector<int>());
         b.land_of = jb.value("land",0u);
+        b.ladder = jb.value("ladder",-1);      //none from before ladders: the zones give it its default
         for (const json& pl : jb.value("plots",json::array())){
             b.plots.push_back(std::make_pair(pl[0].get<int>(),pl[1].get<int>()));
             b.standing.push_back((pl.size() >= 3) ? pl[2].get<int>() : pl[1].get<int>());
