@@ -89,7 +89,7 @@
 - [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets
 - [Line works plan](line_works_plan.md) — AGREED 2026-10-06: chasm roads/walls drag-previewed, built by idle villagers felling trees; waits on window 39
 - [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants); difficulty may retune later
-- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: all 8 steps built (orders … guard tower, towers kept full, guards by hand + count); gatehouse wanted; chasm_select op hits finds chips
+- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: all 8 steps built (orders … guard tower, towers kept full, guards by hand + count); gatehouse wanted; chasm_select op hits finds chips; scouting steps 1-2 built 2026-10-11, messages next
 - [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop defaults to AUTO after a day; add rows in ChasmIssues
 - [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes; figures are constant names
 - [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-3 BUILT (drop, take via SourceStock, builders move, card); finds and holding->dropping next

@@ -5,8 +5,8 @@ kind: people
 status: partial
 summary: The player can order a grown-up to stand on a plot. It becomes their job while it lasts, and they live off a pack they take along.
 plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order; defence_plan.md > Scouting, provisioned first
-code: Economy.cpp: Order TakePost GoToPost FillPack Unpack; Economy.h: EconomyCanOrder NEEDS_PACK_WATER
-verified: 2026-10-10
+code: Economy.cpp: Order TakePost GoToPost FillPack Unpack Needs Gather GatherSupplies; Economy.h: EconomyCanOrder NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS
+verified: 2026-10-11
 ---
 
 ## Ordering
@@ -36,13 +36,29 @@ tower]] instead makes them one of its guards, by hand.
 They take water ({NEEDS_PACK_WATER} units) and food (worth {NEEDS_PACK_FOOD:days} of
 [[Health|health]]) with them, filled from home when they set out and topped up at every supply trip -
 provisions first where there are any, since one is the whole pack's food. They eat from it as at home, so a
-pressing need only comes once it's empty. Back home after release, what is left goes into the pantry, but
-provisions, which stay packed: no home holds them.
+pressing need only comes once it's empty. Released, they live on it on the way home too - a scout called back
+from far out walks home on what he carried. Home, what is left goes into the pantry, but provisions, which stay
+packed: no home holds them.
+
+## Scouting: gathering supplies first
+
+A posted person's card has a **Gather supplies first** chip under Release. Pressed, they first fill their pack as
+full as they can carry - {NEEDS_SCOUT_WATER} water and food worth {NEEDS_SCOUT_FOOD:days} of health, about two weeks
+out - and then go on to the post. Whether just ordered, on the way or standing there.
+
+- **From wherever a pressing need would send them**: their home, a [[Store|store]], the [[Camp|camp's]] supplies, a
+  [[Water collector|collector]], a [[Field|field's]] harvest or a [[Crate|crate]] - the nearest first, and
+  [[Provisions|provisions]] first where there are any. Someone setting out from home fills it there.
+- **A second stop** ({ECONOMY_GATHER_STOPS} places in all) for what the first lacked - water at the camp, say, then
+  provisions at a store. With something but not everything to be had, they take what there is.
+- **With nothing to be had**, they go on to the post as they were.
+- The chip is lit while they are at it, and their card says "gathering supplies". Pressed again, they go straight
+  on - turning for the post at once, unless a pressing need takes them to the supply anyway.
+
+Provisions are in the stores only if the colony keeps some: see [[Provisions|provisions]].
 
 ## Planned
 
-- [planned] **Scouting, provisioned first** (the user's): a chip on a posted person's card sends them to
-  fill up with as much food and water as they can carry - from home or a [[Store|store]], wherever they
-  would get it - before going on to the post, often deep under the [[Exploration|clouds]]. With nothing to
-  take, nothing happens and a message says so. When it is eaten, another message; they stay until released
-  or until a need is pressing, as now. A mission is just a post, usually given to an [[Archery range|archer]].
+- [planned] **Scouting's messages** (the user's): with nothing to take when told to gather, a message says so;
+  when a scout's supplies run out, another - they stay until released or until a need is pressing, as now. A
+  mission is just a post, usually given to an [[Archery range|archer]].

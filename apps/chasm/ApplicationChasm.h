@@ -79,6 +79,7 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_STORE_ALLOW_GROUP 18 //a store's card: let it take all of group `value` (HudGoodsGroup), or none
 #define OVERLAY_HIT_KEEP        19      //a builders' hut's or ropewalk's card: the colony keeps `value` of what it makes
 #define OVERLAY_HIT_MAKE_MORE   20      //...an order for `value` more of it - 0 cancels the one running (goods_plan.md)
+#define OVERLAY_HIT_GATHER      21      //a posted person's card: gather a scout's pack first, or stop (defence_plan.md)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -185,6 +186,8 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define CHASM_CMD_KEEP              SIM_CMD_LAST+9      //a made good's kept number (docs/goods_plan.md): subtype the good;
                                                         //value[0] the count; value[1] 1 for an order of that many more
                                                         //instead, a count of 0 cancelling it
+#define CHASM_CMD_GATHER            SIM_CMD_LAST+10     //a scout's pack gathered first (docs/defence_plan.md, "Scouting"):
+                                                        //subtype the person; value[0] 1 to gather, 0 straight on
 
 //What a left click does.
 enum ChasmTool{
@@ -477,6 +480,7 @@ private:
     void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
     void SubmitGuards(uint32_t tower, int count);               //any thread
     void SubmitKeep(int good, int count, bool f_order);         //any thread; f_order: `count` more, 0 cancelling
+    void SubmitGather(uint32_t person, bool f_on);              //any thread; refused as an order is
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP

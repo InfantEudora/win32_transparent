@@ -779,3 +779,41 @@ the player sees how long a scout can stay out.
 **Build order** (2026-10-10): first, something for a scout to take - provisions kept in the stores, made to a number
 the player sets or to an order (`goods_plan.md`, "Kept in stock, and made to order"; rope from the ropewalk the same
 way) - **built and checked the same day**. Then the chip, the bigger pack and the second stop; then the two messages.
+
+### As built (2026-10-11): the chip, the scout's pack, the second stop - and the pack on the way home
+
+**First, a fix the user found** testing it: someone RELEASED did not drink from his pack. The pack was eaten from only
+while posted (`Needs`), so a scout called back walked home with water on his back and got thirsty - and a pressing
+need then sent him to the nearest supply instead. Now anyone with something packed lives on it, after his pantry if
+he is home, until `Unpack` puts it there. It had nothing to do with having no job. Checked: released 100 units out
+with 1 day of water, he drank from the pack at once and again on the way, ate a bean, and was home with his bars up.
+
+The details left to settle, as settled:
+
+- **The chip**: "Gather supplies first", a toggle under Release on a posted person's card (`OVERLAY_HIT_GATHER`),
+  lit while he is at it; his line says "gathering supplies", then "packing supplies". Pressed again he goes
+  straight on - turning for the post at once if he is on his way to a place for it, unless a pressing need takes
+  him there anyway. Only for someone ordered out (`post`), not a tower's guard.
+- **As much as he can carry**: `NEEDS_SCOUT_WATER` 6 and `NEEDS_SCOUT_FOOD` 9 days - three provisions - at the
+  pack's balance: about 14.7 days before water presses and 14.25 before food does, against 8.7 for the usual pack.
+  `FillPack` fills to it while gathering.
+- **Where from**: `SeekSupplyOf` as for a posted person's pressing need - his home, a store, the camp's supplies, a
+  collector, a field's harvest, a crate - the nearest with some of what he lacks, provisions first there.
+- **The second stop**: `ECONOMY_GATHER_STOPS` 2 places in all; at the second, what the first lacked.
+- **With nothing to be had**, or nowhere he can reach, his gathering is dropped and he goes on as he was - silent
+  until the messages (next).
+
+Code: `EconomyWorker::gather` (places still to go to; saved, hashed only while above 0), `Economy::Gather`,
+`GatherSupplies`, the hook in `TickWorker` (on his way or on his post) and the second stop at `WORKER_SUPPLYING`;
+`Order` releasing clears it. `CHASM_CMD_GATHER`, refused as an order is; `chasm_economy` op `gather`, and `gather`
+on a worker.
+
+**Checked** (debug, a copied exe on 8774, the default seed): ordered out with the usual pack (3 water, 2 beans), told
+to gather - back to the camp, the nearest with both, and on with 6 water and 5 beans. With the camp's food gone and
+a store holding only provisions: 6 water at the camp, then 3 provisions at the store, then the post. Refused for
+someone not sent out; nothing done for a scout already full; with no water or food anywhere, on to the post. The
+chip pressed on the card (`chasm_select` op press): lit, "gathering supplies"; pressed again on the way - turned for
+the post at once. A 3,513-tick recording of the turn-off, a full gather and a release, replayed twice: every tick
+equal.
+
+**Next**: the two messages - nothing to take, and a scout's supplies run out.

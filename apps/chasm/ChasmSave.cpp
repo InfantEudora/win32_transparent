@@ -141,6 +141,10 @@ json ChasmSaveToJson(const ChasmSave& s){
             if (k.post_layer >= 0){
                 workers.back()["post_layer"] = k.post_layer;
             }
+            //Places still to go to for a scout's pack (defence_plan.md, "Scouting") - only while gathering.
+            if (k.gather > 0){
+                workers.back()["gather"] = k.gather;
+            }
             //His route's layers (ramparts_plan.md) - only off the ground, so a colony that never climbs saves as before.
             if (!k.route_layer.empty()){
                 std::vector<int> layers(k.route_layer.begin(),k.route_layer.end());
@@ -392,6 +396,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.water = wk.value("water",(int)NEEDS_WATER_FULL);
             k.post = wk.value("post",-1);       //defence_plan.md: nobody was posted before orders
             k.post_layer = wk.value("post_layer",-1);   //ramparts_plan.md: an order to a layer; none before, his post's top
+            k.gather = wk.value("gather",0);    //defence_plan.md, "Scouting": not gathering
             k.archery = wk.value("archery",0);  //range_plan.md: nobody had trained before ranges
             k.f_chosen = wk.value("chosen",false);      //defence_plan.md step 8: no guard was posted by hand before
             if (wk.contains("pack") && wk["pack"].is_object()){

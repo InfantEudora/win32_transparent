@@ -195,7 +195,14 @@ class Walkers;
     His PACK is what he takes along to live on: water and food, apart from any load (NEEDS_PACK_*). Filled
     from his home's pantry when he sets out from home, and topped up at every supply trip; eaten from as he
     would eat at home, a whole unit whenever it fits, so his bars stay up while it lasts and a pressing need
-    comes only once it is empty. Home again after he is released, it goes back into the pantry.
+    comes only once it is empty. Released, he lives on it on his way home too, and home again it goes back into
+    the pantry.
+    GATHERING (the scout's, defence_plan.md "Scouting, provisioned first"): someone ordered out may be told first to
+    fill his pack as full as he can carry (NEEDS_SCOUT_*) - from the places a pressing need sends the posted to,
+    his home, a store, the camp's supplies, a collector, a field's harvest, a crate (SeekSupplyOf), the nearest
+    first and provisions first where there are any; a second place for what the first lacks (ECONOMY_GATHER_STOPS);
+    then on to his post. With nothing to be had, or nowhere he can get to, he goes on as he was (Gather,
+    GatherSupplies).
     PROVISIONS (GOOD_PROVISIONS, step 5) are a soldier's food, worth a wheat and a beans together, and OUTSIDE
     GOODS_FOOD (Goods.h): nobody fetches them home and no home holds them. A posted person's food is any food,
     provisions too - the nearest place first, provisions first into his pack. A villager's is the crops; with
@@ -357,6 +364,11 @@ inline uint32_t EconomyCrateOfStore(uint32_t store){ return store & ~ECONOMY_STO
 #define NEEDS_COLD_DRAIN            1                           //health lost a tick more while cold
 #define NEEDS_PACK_WATER            3                           //a posted person's PACK (POSTS): units of water
 #define NEEDS_PACK_FOOD             (3 * CALENDAR_DAY_TICKS)    //...and food, by the health it gives: a provision's worth
+//A SCOUT's pack (GATHERING): as much as he carries - at the pack's balance, so both run out together: 2 days a unit
+//of water, and the bars' own reserve (2.7 days of water before it presses, 5.25 of food) - about 14.5 days out.
+#define NEEDS_SCOUT_WATER           6
+#define NEEDS_SCOUT_FOOD            (9 * CALENDAR_DAY_TICKS)    //three provisions' worth
+#define ECONOMY_GATHER_STOPS        2                           //places he goes to fill it: a second for what the first lacks
 //The health a unit of food gives - beans most, then wheat, greens least (the user's order; the amounts are
 //tuning); 0 for no food.
 int EconomyFoodWorth(int good);
@@ -541,6 +553,7 @@ struct EconomyWorker{
     int post = -1;                      //his POST (above): the plot he was sent to stand on, -1 none
     int post_layer = -1;                //...and its layer he was sent to (ramparts_plan.md): -1 its top, 0 its ground
     std::array<int,GOOD_COUNT> pack = {};   //his PACK (POSTS): water and food he carries for himself, by good
+    int gather = 0;                     //GATHERING (POSTS): places still to go to for a scout's pack first, 0 none
     int archery = 0;                    //ARCHERY (TRAINING, above): experience, of ARCHERY_FULL - kept when he stops
     bool f_chosen = false;              //a guard posted BY HAND (POSTS, step 8): kept ahead of the auto-fill
 };
@@ -796,6 +809,12 @@ public:
     */
     bool Order(uint32_t person, int plot, const ZoneState& z, Walkers& walkers, std::string* why, int layer = -1);
     /*
+        GATHERING (POSTS, CHASM_CMD_GATHER): person `person`, ordered out, fills a scout's pack before his post - or with
+        f_on false goes straight on. He sets out on the tick that follows, as for an order. False, and `why` says it,
+        if refused: nobody by that id, not ordered out.
+    */
+    bool Gather(uint32_t person, bool f_on, const ZoneState& z, Walkers& walkers, std::string* why);
+    /*
         GUARDS BY HAND (POSTS, step 8; CHASM_CMD_GUARD): person `person` made a guard of tower `tower` by the
         player - a right click - over an automatic pick; or with `tower` 0 released from his tower, its count
         dropping so nobody takes his place. Applied between ticks; he goes on the tick that follows, as for an
@@ -876,8 +895,11 @@ private:
     //POSTS: what he was doing dropped for his post; and the way there - with none, waiting where he is.
     void TakePost(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void GoToPost(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
-    //His pack filled from a stock, up to NEEDS_PACK_*; and, home again, emptied back into his pantry.
+    //His pack filled from a stock, up to NEEDS_PACK_* - a scout's, gathering, up to NEEDS_SCOUT_*; and, home again,
+    //emptied back into his pantry.
     void FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
+    //GATHERING: off to the nearest place with what his pack lacks of a scout's. False, his gathering over, if none.
+    bool GatherSupplies(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Unpack(EconomyWorker& k, const ZoneState& z);
     //CRATES: his load put down - into a store he stands at that takes it, else as a crate where he stands or on
     //open ground near it; `amount` of `good` into the crate on `plot` (a new one at `at` if none lies there); and

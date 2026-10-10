@@ -2489,10 +2489,13 @@ void Economy::GoToPost(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
 /*
     His PACK filled from a stock (POSTS): water up to NEEDS_PACK_WATER units, food up to NEEDS_PACK_FOOD of the
     health it gives - the kind that keeps best first, since it is what he lives on away from home, and a bean is
-    two days in one. A whole unit more while still short, so beans can take it a day past the mark.
+    two days in one. A whole unit more while still short, so beans can take it a day past the mark. GATHERING, a
+    scout's pack: as much as he carries (NEEDS_SCOUT_*).
 */
 void Economy::FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
-    while (from[GOOD_WATER] > 0 && k.pack[GOOD_WATER] < NEEDS_PACK_WATER){
+    int water_to = (k.gather > 0) ? NEEDS_SCOUT_WATER : NEEDS_PACK_WATER;
+    int food_to = (k.gather > 0) ? NEEDS_SCOUT_FOOD : NEEDS_PACK_FOOD;
+    while (from[GOOD_WATER] > 0 && k.pack[GOOD_WATER] < water_to){
         from[GOOD_WATER]--;
         k.pack[GOOD_WATER]++;
         state.version++;
@@ -2500,12 +2503,29 @@ void Economy::FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
     //Provisions first where there are any - a soldier's food, one is the whole pack's (defence_plan.md).
     static const int keeps_best_first[] = {GOOD_PROVISIONS,GOOD_BEANS,GOOD_WHEAT,GOOD_GREENS};
     for (int good : keeps_best_first){
-        while (from[good] > 0 && EconomyPackFood(k) < NEEDS_PACK_FOOD){
+        while (from[good] > 0 && EconomyPackFood(k) < food_to){
             from[good]--;
             k.pack[good]++;
             state.version++;
         }
     }
+}
+
+/*
+    GATHERING (defence_plan.md, "Scouting, provisioned first"): what his pack lacks of a scout's - water, food or both -
+    from the nearest place a pressing need would send him to, posted, where some is to be had (SeekSupplyOf). There he
+    eats and drinks, fills his pack (FillPack) and, with something still lacking, tries the next place
+    (TickWorker, WORKER_SUPPLYING) - ECONOMY_GATHER_STOPS in all.
+*/
+bool Economy::GatherSupplies(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    GoodsMask want = 0;
+    if (k.pack[GOOD_WATER] < NEEDS_SCOUT_WATER){
+        want |= GOOD_BIT(GOOD_WATER);
+    }
+    if (EconomyPackFood(k) < NEEDS_SCOUT_FOOD){
+        want |= GOODS_EATEN;
+    }
+    return want && SeekSupplyOf(k,z,walkers,false,want);
 }
 
 //Home again, released: his pack back into the pantry, as far as it keeps each good and has room - a camp's
@@ -2567,6 +2587,12 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     if ((k.post >= 0 || (k.f_chosen && k.job == WORKER_JOB_GUARD)) && k.state != WORKER_TO_POST && k.state != WORKER_ON_POST
         && k.state != WORKER_TO_SUPPLY && k.state != WORKER_SUPPLYING){
         TakePost(k,z,walkers);
+    }
+    //GATHERING: told to fill a scout's pack first - on his way to his post, or standing on it - off for it; with
+    //nothing to be had, or nowhere he can get to, on as he was.
+    if (k.gather > 0 && k.post >= 0 && (k.state == WORKER_TO_POST || k.state == WORKER_ON_POST) && !GatherSupplies(k,z,walkers)){
+        k.gather = 0;
+        state.version++;
     }
     switch (k.state){
         case WORKER_AT_HOME:
@@ -3210,6 +3236,16 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                         }
                         FillPack(k,*src);
                         CrateTouched(from);
+                    }
+                    //GATHERING: a place fewer to go to - and with something still lacking, the next one.
+                    if (k.gather > 0){
+                        k.gather--;
+                        if (k.gather > 0 && GatherSupplies(k,z,walkers)){
+                            state.version++;
+                            break;
+                        }
+                        k.gather = 0;
+                        state.version++;
                     }
                     GoHome(k,z,walkers);
                     break;
@@ -3884,6 +3920,7 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
         }
         k->post = -1;
         k->post_layer = -1;
+        k->gather = 0;
         if (k->state == WORKER_TO_POST || k->state == WORKER_ON_POST){
             GoHome(*k,z,walkers);
         }
@@ -3918,6 +3955,37 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
     f_restaff = f_restaff || f_new;
     state.version++;
     return true;
+}
+
+/*
+    GATHERING (defence_plan.md, "Scouting, provisioned first"): someone ordered out told to fill a scout's pack first,
+    ECONOMY_GATHER_STOPS places at most - or, turned off, to go straight on: on his way to a place for it, he turns
+    for his post at once, unless a pressing need takes him there anyway. Set here; he goes on the tick that follows
+    (TickWorker), wherever he is on his way or on his post; one setting out from home fills it there first (TakePost).
+*/
+bool Economy::Gather(uint32_t person, bool f_on, const ZoneState& z, Walkers& walkers, std::string* why){
+    for (EconomyWorker& k : state.workers){
+        if (k.id != person){
+            continue;
+        }
+        if (f_on && k.post < 0){
+            if (why){
+                *why = "not sent out";
+            }
+            return false;
+        }
+        if (!f_on && k.gather > 0 && k.state == WORKER_TO_SUPPLY && !EconomyPressing(k) && state.world && z.world == state.world){
+            k.store = 0;
+            GoToPost(k,z,walkers);
+        }
+        k.gather = f_on ? ECONOMY_GATHER_STOPS : 0;
+        state.version++;
+        return true;
+    }
+    if (why){
+        *why = "nobody by that id";
+    }
+    return false;
 }
 
 /*
@@ -4545,7 +4613,7 @@ int Economy::FirewoodFair(const ZoneState& z, uint32_t h) const{
 
 /*
     Every person, every tick, after his round has moved on: a tick of water gone, and of health - three
-    while dry - then a meal and a drink if he stands at home, or from his pack while he is posted. Health at
+    while dry - then a meal and a drink if he stands at home, and from his pack while he has one. Health at
     nothing: he dies. He is struck from the colony with whatever he carried, his pack too; his family stays in
     its house, and on this same tick his job is given out again, and a house left empty taken by a family
     waiting for one.
@@ -4589,6 +4657,11 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
             }else{
                 Consume(k,k.pack);
             }
+        }else{
+            //Not posted, and something packed: RELEASED, and on his way home - from deep in the clouds, maybe - he lives
+            //on it still, after his pantry if he is home, until it goes back into the pantry there (Unpack). He walked
+            //home thirsty with water on his back, and a pressing need sent him past his home for it.
+            Consume(k,k.pack);
         }
         f_died = f_died || k.health <= 0;
     }

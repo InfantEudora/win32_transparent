@@ -110,6 +110,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         if (k.post_layer >= 0){
             h.Add(((uint64_t)k.id << 32) | 0x9057000u | (uint32_t)k.post_layer);
         }
+        //Gathering a scout's pack (defence_plan.md, "Scouting") - only while he is, likewise.
+        if (k.gather > 0){
+            h.Add(((uint64_t)k.id << 32) | 0x6A7000u | (uint32_t)k.gather);
+        }
         //His route's layers (ramparts_plan.md) - only once he leaves the ground, so a colony that never does hashes as before.
         if (!k.route_layer.empty()){
             h.Add(((uint64_t)k.id << 32) | 0x1A7Eu);
@@ -180,6 +184,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         click's and the tower card's; refused as an order is;
       - what the colony KEEPS of a made good, and an order for more (goods_plan.md) - a builders' hut's or a
         ropewalk's card;
+      - someone ordered out told to GATHER a scout's pack first, or not (defence_plan.md, "Scouting") - his card's
+        chip; refused as an order is;
       - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
@@ -237,6 +243,22 @@ void ApplicationChasm::RegisterEconomyCommands(){
                 PublishEconomy();
             }
             guards_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    //A scout's pack gathered first (defence_plan.md, "Scouting"): his card's chip - refused as an order is.
+    main_scene->RegisterCommandHandler(CHASM_CMD_GATHER,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.Gather(cmd.subtype,cmd.value[0] != 0.0f,zones.State(),walkers,&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
             return OBJECTID_INVALID;
         });
     main_scene->RegisterCommandHandler(CHASM_CMD_KEEP,
@@ -302,6 +324,15 @@ void ApplicationChasm::SubmitGuards(uint32_t tower, int count){
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = tower;
     cmd.value[0] = (float)count;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitGather(uint32_t person, bool f_on){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_GATHER;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    cmd.value[0] = f_on ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -422,6 +453,9 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (post >= 0 && e->world && post < (int)e->world->grid->fine.pos.size()){
         vec2 p = EconomyPostPoint(*e,k);
         j["post"] = json{{"plot",post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e,k)},{"ordered",k.post >= 0},{"layer",k.post_layer}};
+    }
+    if (k.gather > 0){
+        j["gather"] = k.gather;     //places still to go to for a scout's pack (defence_plan.md, "Scouting")
     }
     if (k.f_chosen){
         j["chosen"] = true;         //a guard posted by hand (step 8)
@@ -885,7 +919,9 @@ void ApplicationChasm::RegisterEconomyTools(){
         "are still lacking beyond what is made, and what each builders' hut holds. STOCK KEPT (docs/goods_plan.md): op keep - "
         "the colony keeps `count` of made good `good` (provisions, rope) in its stores; op order_more - an order for `count` "
         "more of it, 0 cancelling the one running. Both RECORDED (CHASM_CMD_KEEP). `kept` reports each made good's kept "
-        "number, its order's level (0 none), the level they make, and what the stores hold. "
+        "number, its order's level (0 none), the level they make, and what the stores hold. SCOUTING (docs/defence_plan.md): "
+        "op gather - person `person`, ordered out, first fills a scout's pack (`on`, default true), or goes straight on - "
+        "RECORDED (CHASM_CMD_GATHER), `refusal` as for an order; a worker shows `gather`, the places still to go to. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -899,7 +935,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"building",{{"type","integer"},{"description","set_stock, guard, guards: the building's id"}}},
                 {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
                 {"on",{{"type","boolean"}}},
-                {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard: the person's id"}}},
+                {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard, gather: the person's id"}}},
                 {"layer",{{"type","integer"},{"description","order: the layer of the plot he stands on, in half storeys - 0 its ground, "
                                                            "a castle deck's (ramparts_plan.md); default its top"}}},
                 {"count",{{"type","integer"},{"description","guards: how many guards the tower takes; keep, order_more: how many"}}},
@@ -1075,6 +1111,23 @@ void ApplicationChasm::RegisterEconomyTools(){
                     result["refusal"] = refusal;
                 }
                 result["building"] = tower;
+            }else if (op == "gather"){
+                //A scout's pack gathered first (defence_plan.md, "Scouting").
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_GATHER;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)args.value("person",0);
+                cmd.value[0] = args.value("on",true) ? 1.0f : 0.0f;
+                uint32_t before = order_commands_done.load();
+                uint32_t refused = order_refusals.load();
+                SubmitCommandAndWait(cmd);
+                result["ran"] = order_commands_done.load() != before;
+                std::string refusal;
+                if (order_refusals.load() != refused){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = order_last_refusal;
+                }
+                result["refusal"] = refusal;
             }else if (op == "keep" || op == "order_more"){
                 //STOCK KEPT (goods_plan.md): a made good's kept number, or an order for more of it.
                 int good = GoodByName(args.value("good",std::string()));

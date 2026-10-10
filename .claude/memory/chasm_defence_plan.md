@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 81514510-853a-4457-94ca-3d840e8ed249
-  modified: 2026-10-10T13:15:46.230Z
+  modified: 2026-10-10T22:04:55.211Z
 ---
 
 Chasm's defence groundwork was talked through and agreed with the user on 2026-10-09, written up as
@@ -47,6 +47,12 @@ All 8 steps of the defence plan are built; the gatehouse is wanted (Open), not s
 
 Open from step 4: sites take food/water from the same stocks people live on, nothing kept back - raised with
 the user, not decided.
+
+SCOUTING ("Scouting, provisioned first", the user's, agreed 2026-10-10): step 1 kept provisions (goods_plan.md)
+and step 2 built 2026-10-11 - "Gather supplies first" toggle on a posted card (EconomyWorker::gather = stops left,
+CHASM_CMD_GATHER), NEEDS_SCOUT_WATER 6 / FOOD 9 days, second stop, nothing to be had -> on as before. Fixed at the
+same time: a RELEASED person now eats from his pack (Needs ate from it only while posted). NEXT: the two messages
+(nothing to take; supplies run out) - they need sim-side events, as deaths are read from `dead`.
 
 Testing traps: a test colony with no fields runs out of wheat and beans in about 8 days (give the camp food);
 chasm_paint's ground kind is `ground`, not `kind`; its `ran` is true even when refused - read `refusal`. Run a

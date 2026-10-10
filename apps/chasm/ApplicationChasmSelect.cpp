@@ -427,12 +427,15 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         case WORKER_CLEARING:   return "clearing a road";
         case WORKER_LAYING:     return "laying a road";
         case WORKER_TO_SUPPLY:{
+            if (k.gather > 0){
+                return "gathering supplies";        //a scout's pack, before his post (defence_plan.md)
+            }
             GoodsMask want = EconomyPressing(k);
             bool f_water = (want & GOOD_BIT(GOOD_WATER)) != 0;
             bool f_food = (want & GOODS_FOOD) != 0;
             return (f_water && f_food) ? "going for food and water" : f_water ? "going for water" : "going for food";
         }
-        case WORKER_SUPPLYING:  return "eating and drinking";
+        case WORKER_SUPPLYING:  return (k.gather > 0) ? "packing supplies" : "eating and drinking";
         case WORKER_TO_GET:     return (k.carry_good == GOOD_WATER) ? "fetching water for home" : "fetching food for home";
         case WORKER_GETTING:    return "picking up for home";
         case WORKER_TO_PANTRY:  return "taking it home";
@@ -654,7 +657,7 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
 #define CARD_TEXT   0
 #define CARD_BAR    1
 #define CARD_CHIPS  2
-#define CARD_TOGGLE 3       //a site's "Build first"; a posted person's "Release" (its own choice_action)
+#define CARD_TOGGLE 3       //a site's "Build first"; a posted person's "Release", "Gather supplies first" (own choice_action)
 #define CARD_CHOICE 4       //a row of chips, one of them lit: a field's crops (fields_plan.md)
 #define CARD_STOCK  5       //a goods strip (the user's, 2026-10-09)
 struct CardLine{
@@ -928,6 +931,14 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         release.text = "Release";
         release.choice_action = OVERLAY_HIT_RELEASE;
         c.lines.push_back(release);
+        //SCOUTING (defence_plan.md): his pack filled as full as he can carry first, lit while he is at it - a recorded
+        //command, pressed again to go straight on (OVERLAY_HIT_GATHER).
+        CardLine gather;
+        gather.type = CARD_TOGGLE;
+        gather.text = "Gather supplies first";
+        gather.chips_on = (k.gather > 0) ? 1 : 0;
+        gather.choice_action = OVERLAY_HIT_GATHER;
+        c.lines.push_back(gather);
     }
     //His pack (defence_plan.md): what he carries to live on - posted, or home again with what the pantry had no room for.
     std::string pack;
@@ -2070,6 +2081,21 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 if (sel.kind == PLAY_PICK_BUILDING){
                     SubmitGuards(sel.id,hit.value);
                 }
+            }else if (hit.action == OVERLAY_HIT_GATHER){
+                //A posted person's card: gather a scout's pack first, or - lit - go straight on (defence_plan.md).
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const EconomyState> e = GetEconomy();
+                if (e && sel.kind == PLAY_PICK_PERSON){
+                    for (const EconomyWorker& k : e->workers){
+                        if (k.id == sel.id){
+                            SubmitGather(k.id,k.gather <= 0);
+                        }
+                    }
+                }
             }else if (hit.action == OVERLAY_HIT_KEEP || hit.action == OVERLAY_HIT_MAKE_MORE){
                 //A builders' hut's or ropewalk's card: what the colony keeps of what it makes, or an order for more
                 //(goods_plan.md) - a recorded economy command.
@@ -2907,7 +2933,7 @@ void ApplicationChasm::RegisterSelectTools(){
             static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
                                                   "field_next","pause","speed","field_land","person","release",
                                                   "take_tool","building","gate","ladder","tower_guards","guard_release",
-                                                  "store_allow_group","keep","make_more"};
+                                                  "store_allow_group","keep","make_more","gather"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             //The overlay's hover pinned at a pixel in place of the mouse's, until op hover with none (goods_plan.md:
             //the top bar's FOOD lists its foods while hovered) - for a screenshot of what is drawn for it.
