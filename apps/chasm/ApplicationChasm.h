@@ -68,6 +68,8 @@ float CrateYaw(uint32_t id);
 #define OVERLAY_HIT_BUILDING    13      //NEEDS ATTENTION's place: select building `value`, and the view goes to it
 #define OVERLAY_HIT_GATE        14      //a gate's card: its door shut, or opened (defence_plan.md)
 #define OVERLAY_HIT_LADDER      15      //a guard tower's card: its ladder, its door, to the next open side
+#define OVERLAY_HIT_TOWER_GUARDS 16     //a guard tower's card: it takes `value` guards (defence_plan.md, step 8)
+#define OVERLAY_HIT_GUARD_RELEASE 17    //a guard released from his tower: person `value`, 0 the one selected
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -151,6 +153,7 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define INPUT_CHASM_TOOL_WALL      INPUT_LAST+24     //7, beside the road: the debug walker's key, free since it went
 #define INPUT_CHASM_TOOL_RANGE     INPUT_LAST+25     //R: the archery range (range_plan.md)
 #define INPUT_CHASM_TOOL_TOWER     INPUT_LAST+26     //T: the guard tower (defence_plan.md)
+#define INPUT_CHASM_TOOL_ROPEWALK  INPUT_LAST+27     //K, for knot: the ropewalk (goods_plan.md)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -166,6 +169,9 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define CHASM_CMD_STOCK             SIM_CMD_LAST+6      //a building's stock of a good set (a debug edit): subtype
                                                         //the building; value[0] the good, value[1] how many;
                                                         //value[2] 1 for a camp's pantry, not its supplies
+#define CHASM_CMD_GUARD             SIM_CMD_LAST+7      //a guard posted by hand (docs/defence_plan.md, step 8): subtype
+                                                        //the person; value[0] the tower, 0 released from his
+#define CHASM_CMD_GUARDS            SIM_CMD_LAST+8      //a tower's guard count: subtype the tower; value[0] the count
 
 //What a left click does.
 enum ChasmTool{
@@ -186,6 +192,7 @@ enum ChasmTool{
     CHASM_TOOL_WALL,        //line_works_plan.md step 3: a palisade, drawn as a line like a road
     CHASM_TOOL_RANGE,       //range_plan.md: an archery range, painted on coarse cells as a field is
     CHASM_TOOL_TOWER,       //defence_plan.md: a guard tower, a plot each - on a wall's plot too
+    CHASM_TOOL_ROPEWALK,    //goods_plan.md: a ropewalk, a drag of up to four plots
     CHASM_TOOL_COUNT
 };
 
@@ -324,6 +331,7 @@ private:
     Zones zones;
     std::shared_ptr<const ZoneState> zone_snapshot;
     std::string zone_last_refusal;              //under grid_mutex
+    int zone_last_arch_lost = 0;                //under grid_mutex: the arch floors the last zone command took down
     std::atomic<uint32_t> zone_commands_done{0};
     void EnsureZonesWorld();                    //physics thread: a new map empties the zones
     void PublishZones();                        //physics thread
@@ -398,13 +406,15 @@ private:
         published after every tick that changed it (economy_snapshot, under grid_mutex) - the zones'
         pattern again. The view reads the copy: felled trees and stumps, the workers, the fields' growth.
         Its commands are CHASM_CMD_NEEDS, a debug edit of a person's health and water, CHASM_CMD_ORDER,
-        a person sent to a post or released (defence_plan.md), and CHASM_CMD_CRATE, a debug crate put down
-        (crates_plan.md) - recorded, so a replay makes the same edit on the same tick.
+        a person sent to a post or released (defence_plan.md), CHASM_CMD_GUARD and CHASM_CMD_GUARDS, a guard
+        posted by hand or released and a tower's guard count (step 8), and CHASM_CMD_CRATE, a debug crate put
+        down (crates_plan.md) - recorded, so a replay makes the same edit on the same tick.
     */
     Economy economy;
     std::shared_ptr<const EconomyState> economy_snapshot;
     std::atomic<uint32_t> needs_commands_done{0};
-    std::atomic<uint32_t> order_commands_done{0};
+    std::atomic<uint32_t> order_commands_done{0};      //CHASM_CMD_GUARD's too: a right click either way, refused alike
+    std::atomic<uint32_t> guards_commands_done{0};
     std::atomic<uint32_t> crate_commands_done{0};
     std::atomic<uint32_t> stock_commands_done{0};
     std::atomic<uint32_t> crate_refusals{0};
@@ -414,7 +424,11 @@ private:
     std::atomic<uint32_t> order_refusals{0};
     std::string order_last_refusal;
     uint32_t order_refusal_seen = 0;            //render thread: the last one shown
+    //A player's command that took an arch's floors down (arches_plan.md step 4): told in the refusal's place, in amber.
+    std::atomic<uint32_t> arch_notices{0};
+    uint32_t arch_notice_seen = 0;              //render thread: the last one shown
     std::string refusal_shown;                  //render thread: the refusal on screen, either kind, whole
+    bool f_refusal_notice = false;              //render thread: ...or the arch's notice, which is no refusal
     //A DEATH told on the play overlay (needs_plan.md step 5) - render thread.
     size_t deaths_seen = 0;                     //the dead already told of
     const ChasmWorld* deaths_world = nullptr;   //the map they were counted on: a new map's dead are old news
@@ -427,6 +441,8 @@ private:
     void RegisterEconomyCommands();
     void SubmitNeeds(uint32_t person, int health, int water);  //any thread; -1 leaves one as it is
     void SubmitOrder(uint32_t person, int plot);                //any thread; plot -1 releases him
+    void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
+    void SubmitGuards(uint32_t tower, int count);               //any thread
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
@@ -534,8 +550,43 @@ private:
     Mesh* worker_meshes[PERSON_FIGURES * 4] = {};   //figure (PERSON_*) * 4 + load (ApplicationChasmWorkersView.cpp)
     std::vector<Object*> worker_objects;
     std::vector<int> worker_object_mesh;            //per object: which of worker_meshes it has, -1 none
+    /*
+        A RIGGED figure - one whose node in chasm_props.glb has a skin - is drawn skinned instead: per
+        worker a Skeleton sharing the figure's one skinned mesh, playing the file's clips, with each load
+        a child of the bone that carries it. The others stay static until they are rigged.
+    */
+    std::string worker_skin_name[PERSON_FIGURES];   //its skin, "" while the figure is not rigged
+    Mesh* worker_skin_mesh[PERSON_FIGURES] = {};
+    Mesh* worker_skin_load[PERSON_FIGURES * 4] = {};    //figure * 4 + load: the load in its bone's space
+    float worker_figure_fit[PERSON_FIGURES] = {};   //its height over the man's (the loads and the stride follow it)
+    bool f_worker_idle_clip = false;                //the file has an idle clip to stand in
+    struct WorkerSkin{
+        Object* figure = NULL;                      //the Skeleton, built the first time he is this figure
+        Object* load[4] = {};                       //indexed by load; [0], carrying nothing, is never built
+        int clip = 0;                               //WORKER_CLIP_*, as last set
+        float rate = 1.0f;
+    };
+    std::vector<std::array<WorkerSkin,PERSON_FIGURES>> worker_skins;    //per worker, per figure
     void BuildWorkerScene();                        //from BuildScene
     void UploadWorkers();                           //from PreRender
+    /*
+        THE CROWD BENCH (ApplicationChasmCrowdBench.cpp): a measurement, not a feature - skinned
+        adult_male figures walking in place around the camera target, sharing one mesh, to find what
+        skinned villagers cost at 100-200. MCP tool chasm_crowd_bench. Render thread, except the request.
+    */
+    Mesh* crowd_mesh = NULL;                        //chasm_props.glb's adult_male, skinned; shared by every figure
+    std::vector<Object*> crowd_objects;             //Skeletons, built as asked for, hidden and frozen beyond crowd_shown
+    std::vector<Object*> crowd_plain;               //the comparison: plain Objects with the static figure
+    int crowd_shown = 0;
+    std::mutex crowd_mutex;                         //the request: count, centre and kind, from the MCP thread
+    int crowd_want = 0;
+    vec3 crowd_centre;
+    bool f_crowd_static = false;
+    int crowd_request = 0;                          //bumped with each request...
+    int crowd_applied = 0;                          //...and the last one the render thread laid out
+    void BuildCrowdBench();                         //from LoadProps
+    void UploadCrowdBench();                        //from PreRender
+    void RegisterCrowdBenchTool();                  //from RegisterMCPTools
     //The woodcutters' log piles outside their huts (ApplicationChasmPiles.cpp). Render thread.
     Object* pile_set = NULL;
     std::shared_ptr<const ChasmWorld> pile_built_world;
@@ -565,6 +616,12 @@ private:
     void BuildRangeScene();                         //from LoadProps
     void UploadRange();                             //from PreRender
     void BuildRangeProps(const ChasmWorld& w, const ZoneState* z);  //from UploadRange, when the zones change
+    //The ropewalks' walks, wheels, coils and sheaves (ApplicationChasmRopewalk.cpp, goods_plan.md): one mesh for all.
+    Object* ropewalk_object = NULL;
+    std::shared_ptr<const ChasmWorld> ropewalk_built_world;
+    uint32_t ropewalk_built_zones = 0xFFFFFFFFu;    //the zones' version, as last drawn
+    std::vector<std::array<uint32_t,3>> ropewalk_built;     //ropewalk, coils, sheaves - as last drawn
+    void UploadRopewalks();                         //from PreRender
 
     /*
         --- The calendar and the speed (gameplay_plan.md P1, ApplicationChasmTime.cpp) ---------------

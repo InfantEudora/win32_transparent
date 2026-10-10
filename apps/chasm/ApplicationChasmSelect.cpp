@@ -297,20 +297,22 @@ const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
 
 /*
     An errand for a site, by the good it is for - `phase` 0 going for it, 1 picking it up, 2 taking it to the
-    site: food by its category, any other good by name ("fetching rope for a site"). Made once a good, since
-    Doing hands back a const char*.
+    site: food by its category, any other good by name ("fetching rope for a site"). For a guard tower, its site
+    or its stock kept full (defence_plan.md, step 7), "for a tower". Made once a good, since Doing hands back a
+    const char*.
 */
-const char* SiteErrand(int phase, int good){
-    static const std::vector<std::array<std::string,3>> phrases = []{
-        std::vector<std::array<std::string,3>> p(GOOD_COUNT + 1);
+const char* SiteErrand(int phase, int good, bool f_tower = false){
+    static const std::vector<std::array<std::string,6>> phrases = []{
+        std::vector<std::array<std::string,6>> p(GOOD_COUNT + 1);
         for (int g = -1; g < GOOD_COUNT; g++){
             std::string what = (g < 0) ? "goods" : GoodIsFood(g) ? "food" : GoodName(g);
-            p[g + 1] = {"fetching " + what + " for a site","picking up " + what,"carrying " + what + " to a site"};
+            p[g + 1] = {"fetching " + what + " for a site","picking up " + what,"carrying " + what + " to a site",
+                        "fetching " + what + " for a tower","picking up " + what,"carrying " + what + " to a tower"};
         }
         return p;
     }();
     int i = (good >= 0 && good < GOOD_COUNT) ? good + 1 : 0;
-    return phrases[i][std::max(0,std::min(2,phase))].c_str();
+    return phrases[i][std::max(0,std::min(2,phase)) + (f_tower ? 3 : 0)].c_str();
 }
 
 //What he is doing, as a sentence's end - the card's and the house's list's. With the zones, a wall's way
@@ -320,6 +322,9 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
     //A guard's post is his tower (defence_plan.md) - unless an order has him elsewhere.
     bool f_tower = k.job == WORKER_JOB_GUARD && k.post < 0;
     int line_plot = (z && k.site && EconomyIsGroundSite(k.site)) ? EconomyGroundSitePlot(k.site) : -1;
+    //Carrying for a guard tower - its site's goods, or its stock kept full (step 7).
+    bool f_for_tower = z && k.site && !EconomyIsGroundSite(k.site) && k.site < z->buildings.size()
+                       && z->buildings[k.site].kind == ZONE_KIND_TOWER;
     if (line_plot >= 0 && line_plot < (int)z->ground.size() && z->ground[line_plot] == ZONE_GROUND_WALL){
         if (k.state == WORKER_TO_ROAD){
             return "going to clear a wall's way";
@@ -340,9 +345,9 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         case WORKER_TO_HOME:    return "going home";
         case WORKER_HOLDING:    return "waiting with a load";
         //For a site: whatever good it wants (defence_plan.md step 4) - rope too (goods_plan.md).
-        case WORKER_TO_FETCH:   return SiteErrand(0,k.carry_good);
-        case WORKER_FETCHING:   return SiteErrand(1,k.carry_good);
-        case WORKER_TO_SITE:    return SiteErrand(2,k.carry_good);
+        case WORKER_TO_FETCH:   return SiteErrand(0,k.carry_good,f_for_tower);
+        case WORKER_FETCHING:   return SiteErrand(1,k.carry_good,f_for_tower);
+        case WORKER_TO_SITE:    return SiteErrand(2,k.carry_good,f_for_tower);
         case WORKER_BUILDING:   return "building";
         case WORKER_TO_ROAD:    return (k.prop >= 0) ? "going to clear a road" : "going to lay a road";
         case WORKER_CLEARING:   return "clearing a road";
@@ -367,12 +372,16 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
                                      : f_tower ? "on watch on the tower" : "standing guard";
         case WORKER_TO_RANGE:   return "going to the range";
         case WORKER_TRAINING:   return "training";
-        //A builder as a caretaker: provisions for the sites (defence_plan.md, step 5).
-        case WORKER_TO_INPUT:   return (k.carry_good == GOOD_BEANS) ? "fetching beans for provisions" : "fetching wheat for provisions";
-        case WORKER_TAKING_INPUT: return (k.carry_good == GOOD_BEANS) ? "picking up beans" : "picking up wheat";
-        case WORKER_TO_WORKSHOP: return (k.carry <= 0) ? "going to make provisions"
+        //A builder as a caretaker: provisions for the sites (defence_plan.md, step 5) - or a ropemaker, the same
+        //errand with hemp, at his ropewalk (goods_plan.md).
+        case WORKER_TO_INPUT:   return (k.carry_good == GOOD_HEMP) ? "fetching hemp for rope"
+                                     : (k.carry_good == GOOD_BEANS) ? "fetching beans for provisions" : "fetching wheat for provisions";
+        case WORKER_TAKING_INPUT: return (k.carry_good == GOOD_HEMP) ? "picking up hemp"
+                                       : (k.carry_good == GOOD_BEANS) ? "picking up beans" : "picking up wheat";
+        case WORKER_TO_WORKSHOP: return (k.job == WORKER_JOB_ROPEMAKER) ? ((k.carry > 0) ? "taking hemp to the ropewalk" : "going to make rope")
+                                      : (k.carry <= 0) ? "going to make provisions"
                                       : (k.carry_good == GOOD_BEANS) ? "taking beans to the hut" : "taking wheat to the hut";
-        case WORKER_MAKING:     return "making provisions";
+        case WORKER_MAKING:     return (k.carry_good == GOOD_ROPE) ? "making rope" : "making provisions";
         //A caretaker taking a crate's goods to a store (crates_plan.md).
         case WORKER_TO_CRATE:   return "going to move a crate";
         case WORKER_LIFTING:    return "lifting from a crate";
@@ -393,6 +402,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_BUILDERS:    return "Builders' hut";
         case ZONE_KIND_RANGE:       return "Archery range";
         case ZONE_KIND_TOWER:       return "Guard tower";
+        case ZONE_KIND_ROPEWALK:    return "Ropewalk";
         default:                    return "?";
     }
 }
@@ -779,7 +789,13 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     }else if (k.job == WORKER_JOB_ARCHER){
         c.Text(Format("Trains at the archery range %u",k.building));
     }else if (k.job == WORKER_JOB_GUARD){
-        c.Text(Format("Guard on the tower %u: lives on its stock",k.building));
+        c.Text(Format("Guard on the tower %u%s: lives on its stock",k.building,k.f_chosen ? ", posted by hand" : ""));
+        //Released (step 8): home, and the tower takes one fewer, so nobody goes up for him.
+        CardLine release;
+        release.type = CARD_TOGGLE;
+        release.text = "Release from the tower";
+        release.choice_action = OVERLAY_HIT_GUARD_RELEASE;
+        c.lines.push_back(release);
     }else if (k.job == WORKER_JOB_FARMER){
         //His share of his family's land (land_plan.md).
         int fields = 0;
@@ -915,6 +931,19 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         }
         c.Stock("Brought","for this building",brought,cost,true);
         c.Text("It takes " + takes,HUD_TEXT_DIM);
+        //Short of ROPE, with too little of it anywhere (goods_plan.md): the colony starts with none, so what it still
+        //lacks to make some - as NEEDS ATTENTION's row says.
+        if (e && site_cost[GOOD_ROPE] > brought[GOOD_ROPE]
+            && EconomyGoodHeld(*e,GOOD_ROPE) < site_cost[GOOD_ROPE] - brought[GOOD_ROPE]){
+            int chain = EconomyRopeChain(*e,z);
+            if (chain == ECONOMY_ROPE_NO_HEMP){
+                c.Text("No rope to be had: grow hemp on a field, and make it at a ropewalk",HUD_AMBER);
+            }else if (chain == ECONOMY_ROPE_NO_ROPEWALK){
+                c.Text("No rope to be had: build a ropewalk to make it of hemp",HUD_AMBER);
+            }else{
+                c.Text("Waiting for rope from the ropewalk",HUD_TEXT_DIM);
+            }
+        }
         if (f_field){
             //A field site (fields_plan.md): staked out, all its cells built at once.
             c.Text(Format("%i cell%s to build - then empty, to be sown",info.site_cells,info.site_cells == 1 ? "" : "s"),
@@ -1077,7 +1106,8 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         c.Text(f_attached ? "Takes (next to a workplace: its goods only):" : "Takes:",HUD_TEXT_DIM);
         c.lines.push_back(chips);
     }
-    if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_FIELD || b.kind == ZONE_KIND_RANGE){
+    if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_FIELD || b.kind == ZONE_KIND_RANGE
+        || b.kind == ZONE_KIND_ROPEWALK){
         /*
             A FIELD (fields_plan.md), once it stands: what grows on it, at what yield and how far; or, empty,
             what its farmer will sow. Then its choices - its starting crop until it has been sown once, then
@@ -1224,6 +1254,26 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             if (b.kind == ZONE_KIND_WATER && info.storeys > 0 && EconomyFrozen(w,z,id,tick)){
                 c.Text("Frozen: no water can be collected until the thaw",HUD_AMBER);
             }
+            /*
+                A ROPEWALK (goods_plan.md): too short to work below ECONOMY_ROPEWALK_MIN_PLOTS - painted, so not while
+                its second plot is still being built - and it takes no ropemaker until that many stand; longer,
+                faster; and no rope without hemp, which only a field grows.
+            */
+            bool f_short = false;
+            if (b.kind == ZONE_KIND_ROPEWALK && info.storeys > 0){
+                int plots = EconomyRopewalkPlots(z,id);
+                f_short = b.size < ECONOMY_ROPEWALK_MIN_PLOTS;
+                if (f_short){
+                    c.Text(Format("Too short: a ropewalk works from %i plots - paint another beside it",ECONOMY_ROPEWALK_MIN_PLOTS),
+                           HUD_AMBER);
+                }else if (plots >= ECONOMY_ROPEWALK_MIN_PLOTS){
+                    c.Text(Format("%i plots long: makes rope at x%.1f",plots,EconomyRopewalkPace(z,id)),HUD_TEXT_DIM);
+                    std::array<int,GOOD_COUNT> stored = EconomyStoredTotals(*e,z);
+                    if (stored[GOOD_HEMP] + ((id < e->stock.size()) ? e->stock[id][GOOD_HEMP] : 0) < ECONOMY_ROPE_HEMP){
+                        c.Text("No hemp to make rope of - grow some on a field",HUD_AMBER);
+                    }
+                }
+            }
             bool f_worked = false;
             for (const EconomyWorker& k : e->workers){
                 if (k.building == id){
@@ -1239,7 +1289,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             }
             //Something of it standing: a building's storey, or a range's built cell (range_plan.md).
             bool f_stands = info.storeys > 0 || (b.kind == ZONE_KIND_RANGE && info.floor_area > 0.0f);
-            if (!f_worked && f_stands){
+            if (!f_worked && f_stands && !f_short){
                 c.Text(b.kind == ZONE_KIND_RANGE ? "Nobody trains here - it needs a free adult with a house"
                                                  : "Nobody works here - it needs a free adult with a house",HUD_AMBER);
             }
@@ -1263,6 +1313,16 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Stock("Woodpile","anyone's",held,ECONOMY_HUT_PILE,false,EconomyReserved(*e,id));
         }else if (b.kind == ZONE_KIND_WATER && (info.storeys > 0 || AnyGoods(held))){
             c.Stock("Collected","anyone's",held,ECONOMY_WATER_HOLD,false,EconomyReserved(*e,id));
+        }else if (b.kind == ZONE_KIND_ROPEWALK && (info.storeys > 0 || AnyGoods(held))){
+            //Its rope, anyone's against the pile it stops at, and the hemp it is to be made of - its ropemaker's alone.
+            std::array<int,GOOD_COUNT> rope{};
+            std::array<int,GOOD_COUNT> hemp{};
+            rope[GOOD_ROPE] = held[GOOD_ROPE];
+            hemp[GOOD_HEMP] = held[GOOD_HEMP];
+            c.Stock("Rope","anyone's",rope,ECONOMY_ROPEWALK_PILE,false,EconomyReserved(*e,id));
+            if (hemp[GOOD_HEMP] > 0){
+                c.Stock("Hemp","to make rope of",hemp,0,true);
+            }
         }else if (f_field && AnyGoods(held)){
             const EconomyField* land = EconomyFieldOf(*e,id);
             uint32_t owner = land ? land->owner : 0;
@@ -1314,27 +1374,85 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     */
     if (b.kind == ZONE_KIND_TOWER){
         int places = (id < e->places.size()) ? e->places[id] : 0;
+        int plot = FirstPlotOf(z,id);
+        bool f_up = EconomyTowerUp(z,plot);
         int working = 0;
         for (const EconomyWorker& k : e->workers){
             working += (k.job == WORKER_JOB_GUARD && k.building == id) ? 1 : 0;
         }
         if (places > 0){
             c.Text(Format("%i of %i guard%s",working,places,places == 1 ? "" : "s"),(working < places) ? HUD_AMBER : HUD_TEXT);
+        }else if (f_up){
+            c.Text("Unmanned: it takes no guards");
         }
         for (const EconomyWorker& k : e->workers){
             if (k.job == WORKER_JOB_GUARD && k.building == id){
-                c.Text(Format("  %s (archery %i%%, precision %i) - %s",EconomyPersonName(k).c_str(),
-                              (int)(k.archery * 100LL / ARCHERY_FULL),(int)k.skills[SKILL_PRECISION],Doing(k,&z,e)));
+                c.Text(Format("  %s (archery %i%%, precision %i)%s - %s",EconomyPersonName(k).c_str(),
+                              (int)(k.archery * 100LL / ARCHERY_FULL),(int)k.skills[SKILL_PRECISION],
+                              k.f_chosen ? ", by hand" : "",Doing(k,&z,e)));
             }
         }
         if (places > 0 && working < places){
             c.Text("A guard needs a free adult with a house - the best archer first",HUD_TEXT_DIM);
         }
-        int plot = FirstPlotOf(z,id);
+        /*
+            GUARDS BY HAND (step 8): how many it takes, 0 up to its junction's places - chips, a recorded command
+            (OVERLAY_HIT_TOWER_GUARDS) - and a Release chip for each guard it has (OVERLAY_HIT_GUARD_RELEASE, his id).
+        */
+        if (f_up && id < e->guards.size() && e->guards[id] >= 0){
+            c.Text("Guards it takes",HUD_TEXT_DIM);
+            CardLine count;
+            count.type = CARD_CHOICE;
+            for (int n = 0; n <= ZoneTowerGuards(w,plot); n++){
+                count.choices.push_back(std::make_pair(std::to_string(n),n));
+            }
+            count.choice_on = e->guards[id];
+            count.choice_action = OVERLAY_HIT_TOWER_GUARDS;
+            c.lines.push_back(count);
+            CardLine release;
+            release.type = CARD_CHOICE;
+            for (const EconomyWorker& k : e->workers){
+                if (k.job == WORKER_JOB_GUARD && k.building == id){
+                    release.choices.push_back(std::make_pair(FirstNameOf(*e,k.id),(int)k.id));
+                }
+            }
+            release.choice_action = OVERLAY_HIT_GUARD_RELEASE;
+            if (!release.choices.empty()){
+                c.Text("Release a guard - the tower takes one fewer",HUD_TEXT_DIM);
+                c.lines.push_back(release);
+            }
+            c.Text("Right click it with someone selected to post him here",HUD_TEXT_DIM);
+        }
         if (id < e->stock.size() && (info.storeys > 0 || AnyGoods(e->stock[id]))){
             int room = EconomyTowerStock(w,plot,GOOD_WATER) + EconomyTowerStock(w,plot,GOOD_PROVISIONS);
             c.Stock("Holds","its guards'",e->stock[id],room,true,EconomyReserved(*e,id));
             c.Text("Its guards eat and drink from it, and nobody else",HUD_TEXT_DIM);
+        }
+        //KEPT FULL by the builders, ahead of their building (step 7): what it lacks, what is on its way, and
+        //whether there is anyone to bring it - the jobless never do.
+        if (f_up && id < e->stock.size()){
+            std::array<int,GOOD_COUNT> lack = EconomyTowerShort(*e,w,id,plot);
+            std::array<int,GOOD_COUNT> coming = EconomyComing(*e,id);
+            int builders = 0;
+            for (const EconomyWorker& k : e->workers){
+                builders += (k.job == WORKER_JOB_BUILDER) ? 1 : 0;
+            }
+            std::string what;
+            for (int g : {GOOD_WATER,GOOD_PROVISIONS}){
+                if (lack[g] > 0){
+                    what += Format("%s%i %s",what.empty() ? "" : " and ",lack[g],GoodName(g));
+                }
+            }
+            int on_way = coming[GOOD_WATER] + coming[GOOD_PROVISIONS];
+            if (what.empty()){
+                c.Text("Full - the builders keep it so, before their building",HUD_TEXT_DIM);
+            }else if (builders == 0){
+                c.Text("Short of " + what + ", and no builders to keep it full",HUD_AMBER);
+            }else if (on_way > 0){
+                c.Text("Short of " + what + ": the builders are bringing it",HUD_TEXT);
+            }else{
+                c.Text("Short of " + what + ": the builders will bring it",HUD_TEXT);
+            }
         }
         //Its LADDER is its door: guards climb it only from that side. Moved round to the next open side by its chip,
         //a recorded zone command (OVERLAY_HIT_LADDER).
@@ -1478,6 +1596,7 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
     //this state could not work them out.
     only.arch.assign(z.arch.size(),0);
     only.arch_owner.assign(z.arch_owner.size(),0);
+    only.arch_built.assign(z.arch_built.size(),0);
     std::vector<int> quads;
     for (size_t v = 0; v < z.building.size(); v++){
         bool f_arch = z.ArchOwnerOf((int)v) == id;
@@ -1487,6 +1606,7 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
         if (f_arch){
             only.arch[v] = z.arch[v];
             only.arch_owner[v] = id;
+            only.arch_built[v] = z.arch_built[v];
         }else{
             only.building[v] = id;
             only.storeys[v] = z.storeys[v];
@@ -1777,6 +1897,27 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     && z->buildings[sel.id].kind == ZONE_KIND_TOWER){
                     SubmitZone(ZONE_OP_TOWER_LADDER,FirstPlotOf(*z,sel.id),-1);
                 }
+            }else if (hit.action == OVERLAY_HIT_TOWER_GUARDS){
+                //A guard tower's card: how many guards it takes (step 8) - a recorded economy command.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                if (sel.kind == PLAY_PICK_BUILDING){
+                    SubmitGuards(sel.id,hit.value);
+                }
+            }else if (hit.action == OVERLAY_HIT_GUARD_RELEASE){
+                //A guard released from his tower: the tower card's chip names him, his own card's is him (step 8).
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                uint32_t person = hit.value ? (uint32_t)hit.value : (sel.kind == PLAY_PICK_PERSON) ? sel.id : 0;
+                if (person){
+                    SubmitGuard(person,0);
+                }
             }else if (hit.action == OVERLAY_HIT_RELEASE){
                 //A posted person's card: back to his work (defence_plan.md) - a recorded order.
                 PlayPick sel;
@@ -1850,9 +1991,24 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             paint_tool = CHASM_TOOL_SELECT;
             pick_version++;
         }else if (sel.kind == PLAY_PICK_PERSON && hover.f_hit && hover.plot >= 0){
-            //An ORDER: the selected person goes to the plot under the cursor and stands there. The economy
-            //decides whether he can, and the overlay says why not (CHASM_CMD_ORDER).
-            SubmitOrder(sel.id,hover.plot);
+            /*
+                An ORDER: the selected person goes to the plot under the cursor and stands there. The economy
+                decides whether he can, and the overlay says why not (CHASM_CMD_ORDER). On a GUARD TOWER - the one
+                the cursor picks, or on the plot - he is posted there as its guard by hand instead (step 8).
+            */
+            PlayPick on = PlayPickUnder(px,hover);
+            std::shared_ptr<const ZoneState> z = GetZones();
+            uint32_t tower = 0;
+            if (z && on.kind == PLAY_PICK_BUILDING && on.id < z->buildings.size() && z->buildings[on.id].kind == ZONE_KIND_TOWER){
+                tower = on.id;
+            }else if (z && hover.plot < (int)z->building.size() && z->KindOf(hover.plot) == ZONE_KIND_TOWER){
+                tower = z->building[hover.plot];
+            }
+            if (tower){
+                SubmitGuard(sel.id,tower);
+            }else{
+                SubmitOrder(sel.id,hover.plot);
+            }
         }else{
             std::lock_guard<std::mutex> lock(pick_mutex);
             if (play_selected.kind != PLAY_PICK_NONE){
@@ -2445,11 +2601,11 @@ void ApplicationChasm::RegisterSelectTools(){
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
         "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md) - or a person by `person` id, "
         "or a crate by `crate` id (docs/crates_plan.md); op clear; op under "
-        "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives); op "
+        "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives, and the overlay's chip there with its value); op hits: every chip and button on the overlay, its action, value and centre x,y; op "
         "press px,py: a left click there, as the player's - on the HUD it presses what is drawn there (a tool of the "
         "grid, a card's chip, pause, speed, a row of the neediest list or of NEEDS ATTENTION), on the scene it selects; `pressed` says what "
         "the HUD had there and the tool in hand after. With `button` right it is a right click: a tool put down, a "
-        "selected person sent to the plot there (an order, docs/defence_plan.md), or the selection cleared; op "
+        "selected person sent to the plot there (an order, docs/defence_plan.md) - on a guard tower, posted as its guard by hand (step 8) - or the selection cleared; op "
         "status (default): the selection and hover, the card as text lines, and the people pinned with it. "
         "View state only - nothing recorded but what a press sends: a chip's setting, an order, a Release. The card "
         "and outlines show in play mode (chasm_view play). "
@@ -2482,7 +2638,7 @@ void ApplicationChasm::RegisterSelectTools(){
             //so picking can be checked without a mouse.
             static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
                                                   "field_next","pause","speed","field_land","person","release",
-                                                  "take_tool","building","gate","ladder"};
+                                                  "take_tool","building","gate","ladder","tower_guards","guard_release"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             if (op == "under" && args.contains("px") && args.contains("py") && args["px"].is_number() && args["py"].is_number()){
                 int2 px(args["px"].get<int>(),args["py"].get<int>());
@@ -2497,8 +2653,26 @@ void ApplicationChasm::RegisterSelectTools(){
                 });
                 //...and what of the overlay is drawn there, which a press there would press - nothing pressed.
                 OverlayHit hit;
-                out["overlay"] = OverlayHitAt(px,&hit) ? json(actions[std::max(0,std::min(last,hit.action))]) : json(nullptr);
+                bool f_hit = OverlayHitAt(px,&hit);
+                out["overlay"] = f_hit ? json(actions[std::max(0,std::min(last,hit.action))]) : json(nullptr);
+                if (f_hit){
+                    out["overlay_value"] = hit.value;      //a chip's: a good, a crop, a count, a person
+                }
                 return json{{"under",out}};
+            }
+            //Every place on the overlay a press would press, as drawn last frame - so a chip is found without
+            //scanning pixels with `under`. Panels left out.
+            if (op == "hits"){
+                json list = json::array();
+                std::lock_guard<std::mutex> lock(pick_mutex);
+                for (const OverlayHit& h : overlay_hits){
+                    if (h.action != OVERLAY_HIT_BLOCK){
+                        list.push_back(json{{"action",actions[std::max(0,std::min(last,h.action))]},{"value",h.value},
+                                            {"x",(h.a.x + h.b.x) * 0.5f},{"y",(h.a.y + h.b.y) * 0.5f},
+                                            {"w",h.b.x - h.a.x},{"h",h.b.y - h.a.y}});
+                    }
+                }
+                return json{{"hits",list}};
             }
             /*
                 A left click at a pixel, as the player's (UpdatePlayPick): on the overlay it presses what is

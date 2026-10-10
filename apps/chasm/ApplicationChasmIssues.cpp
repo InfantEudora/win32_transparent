@@ -6,6 +6,7 @@
 #include "MCPServer.h"
 #endif
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <stdio.h>
 
@@ -64,6 +65,7 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_BUILDERS:    return "THE BUILDERS' HUT";
         case ZONE_KIND_RANGE:       return "THE RANGE";
         case ZONE_KIND_TOWER:       return "THE TOWER";
+        case ZONE_KIND_ROPEWALK:    return "THE ROPEWALK";
         default:                    return "A WORKPLACE";
     }
 }
@@ -89,9 +91,17 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     size_t n = z.buildings.size();
     //One pass over the plots and one over the cells: what of each building stands, and a field still a site.
     std::vector<uint8_t> stands(n,0);
+    std::vector<int> first_plot(n,-1);
+    std::vector<int> rope_cost(n,0);    //a site's rope still to build with (goods_plan.md): a winch's
     for (size_t v = 0; v < z.building.size(); v++){
         if (z.building[v] && z.standing[v] > 0){
             stands[z.building[v]] = 1;
+        }
+        if (z.building[v] && z.building[v] < n && z.storeys[v] > z.standing[v]){
+            rope_cost[z.building[v]] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*e.world,z,(int)v,GOOD_ROPE);
+        }
+        if (z.building[v] && z.building[v] < n && first_plot[z.building[v]] < 0){
+            first_plot[z.building[v]] = (int)v;
         }
     }
     std::vector<uint8_t> field_site(n,0);
@@ -174,10 +184,12 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     //7-8. What stands and cannot work as it is: a place nobody fills, a woodcutter with nowhere to pile.
     std::vector<int> working(n,0);
     std::vector<int> living(n,0);
+    int builders = 0;
     for (const EconomyWorker& k : e.workers){
         if (k.building && k.building < n){
             working[k.building]++;
         }
+        builders += (k.job == WORKER_JOB_BUILDER) ? 1 : 0;
         if (k.house && k.house < n){
             living[k.house]++;
         }
@@ -188,7 +200,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             continue;
         }
         bool f_workplace = b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS
-                           || b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_TOWER;
+                           || b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_TOWER || b.kind == ZONE_KIND_ROPEWALK;
         if (f_workplace && stands[id] && id < e.places.size() && e.places[id] > 0 && working[id] == 0){
             ChasmIssue i;
             i.kind = "nobody_at";
@@ -198,12 +210,36 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             i.building = (uint32_t)id;
             out.push_back(i);
         }
+        //A guard tower short of its stock with no builders to keep it full (defence_plan.md, step 7): only they do.
+        if (b.kind == ZONE_KIND_TOWER && builders == 0 && EconomyTowerUp(z,first_plot[id])){
+            std::array<int,GOOD_COUNT> lack = EconomyTowerShort(e,*e.world,(uint32_t)id,first_plot[id]);
+            if (lack[GOOD_WATER] > 0 || lack[GOOD_PROVISIONS] > 0){
+                ChasmIssue i;
+                i.kind = "tower_unkept";
+                i.tier = ISSUE_STUCK;
+                i.order = (float)id;
+                i.text = "TOWER: NO BUILDERS TO KEEP IT";
+                i.value = "RUNNING DOWN";
+                i.building = (uint32_t)id;
+                out.push_back(i);
+            }
+        }
         if (b.kind == ZONE_KIND_WOODCUTTER && (id >= e.pile_plot.size() || e.pile_plot[id] < 0)){
             ChasmIssue i;
             i.kind = "no_lot";
             i.tier = ISSUE_STUCK;
             i.order = (float)id;
             i.text = "WOODCUTTER: NO LOT TO PILE ON";
+            i.building = (uint32_t)id;
+            out.push_back(i);
+        }
+        //A ropewalk painted too short to work (goods_plan.md) - placed, as a drag lays a plot at a time, but idle.
+        if (b.kind == ZONE_KIND_ROPEWALK && stands[id] && b.size < ECONOMY_ROPEWALK_MIN_PLOTS){
+            ChasmIssue i;
+            i.kind = "ropewalk_short";
+            i.tier = ISSUE_STUCK;
+            i.order = (float)id;
+            i.text = "ROPEWALK: TOO SHORT TO WORK";
             i.building = (uint32_t)id;
             out.push_back(i);
         }
@@ -235,6 +271,51 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
                 out.push_back(i);
             }
         }
+    }
+
+    /*
+        11. A site that takes ROPE when the colony has too little and makes none (goods_plan.md; the user's: no
+        first rope - "you have to set up production for it"): pointed at the first link missing, hemp - a field to
+        choose it on, or the field tool with none - then a ropewalk. Once both are there the rope is coming, and
+        the ropewalk's own rows say if it cannot work. One row for every such site: the advice is the same.
+    */
+    int rope_wanted = 0;
+    uint32_t rope_site = 0;
+    for (size_t id = 1; id < n; id++){
+        int left = rope_cost[id] - EconomySiteBrought(e,(uint32_t)id,GOOD_ROPE);
+        if (left > 0){
+            rope_wanted += left;
+            rope_site = rope_site ? rope_site : (uint32_t)id;
+        }
+    }
+    int chain = rope_wanted > 0 ? EconomyRopeChain(e,z) : ECONOMY_ROPE_MAKING;
+    if (chain != ECONOMY_ROPE_MAKING && EconomyGoodHeld(e,GOOD_ROPE) < rope_wanted){
+        ChasmIssue i;
+        i.kind = "site_needs_rope";
+        i.tier = ISSUE_STUCK;
+        i.order = (float)rope_site;
+        std::string kind = ZoneKindName(z.buildings[rope_site].kind);
+        std::transform(kind.begin(),kind.end(),kind.begin(),::toupper);
+        i.text = kind + ": NEEDS ROPE";
+        if (chain == ECONOMY_ROPE_NO_HEMP){
+            i.value = "GROW HEMP";
+            uint32_t field = 0;
+            for (size_t id = 1; id < n; id++){
+                const ZoneBuilding& b = z.buildings[id];
+                if (b.kind == ZONE_KIND_FIELD && b.size > 0 && (!field || (stands[id] && !stands[field]))){
+                    field = (uint32_t)id;
+                }
+            }
+            if (field){
+                i.building = field;     //its card has the crop to choose
+            }else{
+                i.tool = CHASM_TOOL_FIELD;
+            }
+        }else{
+            i.value = "BUILD A ROPEWALK";
+            i.tool = CHASM_TOOL_ROPEWALK;
+        }
+        out.push_back(i);
     }
 
     std::stable_sort(out.begin(),out.end(),[](const ChasmIssue& a, const ChasmIssue& b){
@@ -364,7 +445,7 @@ void ApplicationChasm::RegisterIssueTools(){
     MCPServer::Get()->RegisterTool("chasm_issues",
         "NEEDS ATTENTION (docs/issues_plan.md): everything the panel over the tools' grid would list, in its order - "
         "the panel shows the first five, in play mode. Each: kind (choose_crop, build_water, build_field, "
-        "build_woodcutter, build_houses, build_store, nobody_at, no_lot), tier (danger: a deadline under two days; "
+        "build_woodcutter, build_houses, build_store, nobody_at, no_lot, ropewalk_short, house_shut_in, house_crowded, tower_unkept, site_needs_rope), tier (danger: a deadline under two days; "
         "countdown: a choice the game makes when it runs out; stuck; next: a next step), text and value as drawn, "
         "left (a countdown's share still to run, 1 to 0) and wait/grace ticks for a field, building (what a click "
         "selects) or tool (what it takes up). View only. include_screenshot as elsewhere.",

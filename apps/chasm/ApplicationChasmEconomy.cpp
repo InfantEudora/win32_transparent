@@ -96,6 +96,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         int32_t head[12] = {(int32_t)k.building,k.job,k.state,k.prop,(int32_t)k.store,k.carry_good,k.carry,k.timer,k.seg,
                             (int32_t)k.site,k.stint,k.post};
         h.Bytes(head,sizeof(head));
+        //Posted by hand (defence_plan.md, step 8) - only one who is, so a colony without hashes as before.
+        if (k.f_chosen){
+            h.Add(((uint64_t)k.id << 32) | 0xC405u);
+        }
         h.Bytes(&k.along,sizeof(k.along));
         h.Bytes(&k.pos,sizeof(k.pos));
         uint32_t len = (uint32_t)k.route.size();
@@ -140,6 +144,12 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(&c.pos,sizeof(c.pos));
         h.Bytes(c.stock.data(),sizeof(int) * GOOD_COUNT);
     }
+    //The towers' guard counts (defence_plan.md, step 8), the player's: only towers', by id.
+    for (size_t id = 1; id < e.guards.size(); id++){
+        if (e.guards[id] >= 0){
+            h.Add(((uint64_t)id << 32) | (uint32_t)e.guards[id]);
+        }
+    }
 }
 
 /*
@@ -149,6 +159,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         putting a colony on the edge without waiting days for it;
       - an ORDER (defence_plan.md): a person sent to stand on a plot - his post, which is then his job - or
         released from it. A refused one says why on the play overlay, as a refused placement does;
+      - a GUARD posted by hand on a tower, or released from it, and a tower's guard count (step 8) - the right
+        click's and the tower card's; refused as an order is;
       - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
@@ -181,6 +193,30 @@ void ApplicationChasm::RegisterEconomyCommands(){
                 order_refusals++;
             }
             order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    //Guards by hand (defence_plan.md, step 8): a right click on a tower, refused as an order is, and its count.
+    main_scene->RegisterCommandHandler(CHASM_CMD_GUARD,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.PostGuard(cmd.subtype,(uint32_t)cmd.value[0],zones.State(),walkers,&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    main_scene->RegisterCommandHandler(CHASM_CMD_GUARDS,
+        [this](const SimCommand& cmd) -> objectid_t {
+            if (economy.SetGuards(cmd.subtype,(int)cmd.value[0],zones.State())){
+                PublishEconomy();
+            }
+            guards_commands_done++;
             return OBJECTID_INVALID;
         });
     main_scene->RegisterCommandHandler(CHASM_CMD_CRATE,
@@ -216,6 +252,24 @@ void ApplicationChasm::SubmitOrder(uint32_t person, int plot){
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
     cmd.value[0] = (float)plot;     //a plot index, well inside a float's exact integers
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitGuard(uint32_t person, uint32_t tower){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_GUARD;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    cmd.value[0] = (float)tower;    //a building id, well inside a float's exact integers
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitGuards(uint32_t tower, int count){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_GUARDS;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = tower;
+    cmd.value[0] = (float)count;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -325,6 +379,9 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (post >= 0 && e->world && post < (int)e->world->grid->fine.pos.size()){
         vec2 p = EconomyPostPoint(*e,k);
         j["post"] = json{{"plot",post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e,k)},{"ordered",k.post >= 0}};
+    }
+    if (k.f_chosen){
+        j["chosen"] = true;         //a guard posted by hand (step 8)
     }
     //His pack: what he carries to live on, by good, and its food in days.
     json pack = json::object();
@@ -769,7 +826,11 @@ void ApplicationChasm::RegisterEconomyTools(){
         "`plot`) and stands there - his post, now his job (docs/defence_plan.md); op release: he leaves it "
         "and goes back to his work. Both RECORDED (CHASM_CMD_ORDER), the right click's and the card's; "
         "`refusal` says why one was refused (a child, nowhere open to stand, no way there). A worker's "
-        "`post` shows where and whether he is there; a load he carried is put down as a crate. op crate: a "
+        "`post` shows where and whether he is there; a load he carried is put down as a crate. GUARDS BY HAND "
+        "(step 8): op guard - person `person` made a guard of the tower `building` (or at x,z) by hand, over an "
+        "automatic pick, as a right click on it does; op release_guard - he goes home and the tower takes one "
+        "fewer; op guards - the tower takes `count` guards, 0 up to its places. All RECORDED (CHASM_CMD_GUARD, "
+        "CHASM_CMD_GUARDS); `refusal` as for an order; a hand-picked worker shows `chosen`, a tower its `count`. op crate: a "
         "crate put down at x,z (or `plot`) holding `contents` (goods by name and amount, e.g. {\"wood\":8,"
         "\"beans\":4}) - RECORDED debug edits (CHASM_CMD_CRATE), a good at a time, into the crate already "
         "there if one is; refused off open ground (docs/crates_plan.md). `crates` lists every crate lying "
@@ -789,10 +850,11 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"plot",{{"type","integer"}}},
                 {"goods",{{"type","array"},{"items",{{"type","string"}}}}},
                 {"contents",{{"type","object"},{"description","crate, set_stock: goods by name and amount"}}},
-                {"building",{{"type","integer"},{"description","set_stock: the building's id"}}},
+                {"building",{{"type","integer"},{"description","set_stock, guard, guards: the building's id"}}},
                 {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
                 {"on",{{"type","boolean"}}},
-                {"person",{{"type","integer"},{"description","set_needs, order, release: the person's id"}}},
+                {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard: the person's id"}}},
+                {"count",{{"type","integer"},{"description","guards: how many guards the tower takes"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
                 {"include_screenshot",{{"type","boolean"}}},
@@ -927,6 +989,42 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 result["refusal"] = refusal;
                 result["plot"] = plot;
+            }else if (op == "guard" || op == "release_guard" || op == "guards"){
+                //Guards by hand (defence_plan.md, step 8): the tower by `building` id or at x,z.
+                uint32_t tower = (uint32_t)args.value("building",0);
+                if (op != "release_guard" && !tower && args.contains("x") && args.contains("z")){
+                    GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
+                    std::shared_ptr<const ZoneState> zs = GetZones();
+                    tower = (p.f_hit && zs && p.plot < (int)zs->building.size()) ? zs->building[p.plot] : 0;
+                }
+                if (op != "release_guard" && !tower){
+                    return json{{"error",op + ": no tower - give `building`, or x,z on one"}};
+                }
+                SimCommand cmd;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                if (op == "guards"){
+                    cmd.type = CHASM_CMD_GUARDS;
+                    cmd.subtype = tower;
+                    cmd.value[0] = (float)args.value("count",ECONOMY_TOWER_GUARDS_PLACED);
+                    uint32_t before = guards_commands_done.load();
+                    SubmitCommandAndWait(cmd);
+                    result["ran"] = guards_commands_done.load() != before;
+                }else{
+                    cmd.type = CHASM_CMD_GUARD;
+                    cmd.subtype = (uint32_t)args.value("person",0);
+                    cmd.value[0] = (float)((op == "guard") ? tower : 0);
+                    uint32_t before = order_commands_done.load();
+                    uint32_t refused = order_refusals.load();
+                    SubmitCommandAndWait(cmd);
+                    result["ran"] = order_commands_done.load() != before;
+                    std::string refusal;
+                    if (order_refusals.load() != refused){
+                        std::lock_guard<std::mutex> lock(grid_mutex);
+                        refusal = order_last_refusal;
+                    }
+                    result["refusal"] = refusal;
+                }
+                result["building"] = tower;
             }else if (op == "crate"){
                 int plot = args.value("plot",-1);
                 if (plot < 0 && args.contains("x") && args.contains("z")){
@@ -1067,7 +1165,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             result["provisions"] = json{{"lacking",lacking},{"huts",huts}};
-            //GUARD TOWERS (defence_plan.md): each one's places, its guards, and its stock - theirs to live on.
+            //GUARD TOWERS (defence_plan.md): each one's places - its guard count once it stands (step 8) - its
+            //junction's, its guards and its stock - theirs to live on; once it stands whole, what it lacks of full and
+            //what is on its way to it (the caretakers', step 7).
             json towers = json::array();
             for (size_t id = 1; id < z->buildings.size(); id++){
                 if (z->buildings[id].size > 0 && z->buildings[id].kind == ZONE_KIND_TOWER){
@@ -1077,8 +1177,21 @@ void ApplicationChasm::RegisterEconomyTools(){
                             guards.push_back(k.id);
                         }
                     }
-                    towers.push_back(json{{"id",id},{"places",(id < e->places.size()) ? e->places[id] : 0},
-                                          {"guards",guards},{"stock",StockJson(*e,(uint32_t)id)}});
+                    int plot = -1;
+                    for (size_t v = 0; v < z->building.size() && plot < 0; v++){
+                        plot = (z->building[v] == id) ? (int)v : -1;
+                    }
+                    json t{{"id",id},{"places",(id < e->places.size()) ? e->places[id] : 0},
+                           {"count",(id < e->guards.size()) ? e->guards[id] : -1},
+                           {"junction_places",(plot >= 0) ? ZoneTowerGuards(*e->world,plot) : 0},
+                           {"guards",guards},{"stock",StockJson(*e,(uint32_t)id)}};
+                    if (EconomyTowerUp(*z,plot)){
+                        std::array<int,GOOD_COUNT> lack = EconomyTowerShort(*e,*e->world,(uint32_t)id,plot);
+                        std::array<int,GOOD_COUNT> coming = EconomyComing(*e,(uint32_t)id);
+                        t["short"] = json{{"water",lack[GOOD_WATER]},{"provisions",lack[GOOD_PROVISIONS]}};
+                        t["coming"] = json{{"water",coming[GOOD_WATER]},{"provisions",coming[GOOD_PROVISIONS]}};
+                    }
+                    towers.push_back(t);
                 }
             }
             result["towers"] = towers;

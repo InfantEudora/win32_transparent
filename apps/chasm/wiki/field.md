@@ -4,8 +4,8 @@ aliases: fields, farmer, farmers, land, harvest, sowing, fallow
 kind: buildings
 status: built
 summary: Painted on coarse cells and farmed by the family whose land it is. Sown with a crop, grown through the warm seasons, harvested home first.
-plans: fields_plan.md > Decided; fields_plan.md > The frost; land_plan.md > As built; land_plan.md > Fair shares; goods_plan.md > Hemp
-code: Economy.cpp: SettleLand LandPlaces GoSow FetchHarvest PickHarvest EconomyFieldSowNow CropIsFood; Economy.h: EconomyField ECONOMY_CROP_GRACE; Zones.h: ZONE_CROP_HEMP
+plans: fields_plan.md > Decided; fields_plan.md > The frost; land_plan.md > As built; land_plan.md > Fair shares
+code: Economy.cpp: SettleLand LandPlaces GoSow FetchHarvest PickHarvest EconomyFieldSowNow; Economy.h: EconomyField ECONOMY_CROP_GRACE
 verified: 2026-10-10
 ---
 
@@ -28,7 +28,8 @@ no farmer lies **fallow**: nothing is sown and nothing grows.
    ([[Skills|husbandry]]). Sowing comes before anything else the farmer does, and uses no seed.
 2. **The crop** is the player's starting crop, then the field's *next crop*, which is AUTO (the most food)
    unless the player picks one ([[Food]]). A field left without a starting crop waits
-   {ECONOMY_CROP_GRACE:days} for the player, then starts with AUTO.
+   {ECONOMY_CROP_GRACE:days} for the player, then starts with AUTO. The fourth crop, [[Hemp|hemp]], is
+   grown for rope, not food: AUTO never sows it, and its harvest never goes home.
 3. **Grow** for the crop's days, faster with a better farmer, but only while it has one, and never in
    winter or under snow ([[Seasons]]).
 4. **The frost.** Whatever still grows on winter's first day is lost. So a farmer only sows a crop that
@@ -42,13 +43,3 @@ The land's farmers carry it in, {ECONOMY_LOAD} at a time, **home first**: into t
 is short of food and not ahead of the colony (fair shares, [[Fetching home]]). The camp's land goes
 into the camp's supplies. The rest goes to a [[Store]] that takes food (a store beside a field takes every
 crop's good), where other houses fetch it. Anyone with pressing hunger may eat straight from a harvest ([[Health]]).
-
-## Hemp
-
-The fourth crop, and **not a food**: it is grown for rope, made at a [[Ropewalk]]. It is chosen on the card
-like any crop, but **AUTO never picks it**, not even when it is the only crop that would still ripen. It
-grows in {crop_days[ZONE_CROP_HEMP]:#days} like wheat, and in the rotation what follows it does well
-({crop_after[ZONE_CROP_HEMP][ZONE_CROP_WHEAT]}% for wheat), while hemp after hemp drops to
-{crop_after[ZONE_CROP_HEMP][ZONE_CROP_HEMP]}%. It is drawn as rows of tall plants rather than ridges.
-Its harvest **never goes home**: the farmer fetches it once no food lies on the field, and carries it to
-the camp's supplies or to a store that takes hemp.

@@ -257,7 +257,8 @@ void Animation::SetPositionUpdates(ObjectAnimation* object_animation, bool flag)
     if (!object_animation){
         return;
     }
-    debug->Info("Animation: Setting f_position on %s to %hhu\n",object_animation->target_name.c_str(),flag);
+    //Trace, not Info: a crowd copies a clip per figure and sets this per track (apps/chasm's villagers).
+    debug->Trace("Animation: Setting f_position on %s to %hhu\n",object_animation->target_name.c_str(),flag);
     for (ObjectAnimationKeyFrame* keyframe : object_animation->keyframes){
         keyframe->f_position = flag;
     }

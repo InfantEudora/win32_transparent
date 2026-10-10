@@ -55,7 +55,8 @@
         (Economy): with none he fells nothing - he may still be built, as he could not before.
       - Not too steep (biomes_plan.md step 2): the ground may rise only so much across a plot (a road's
         limit is twice a house's) or a field's cell - ZONE_RISE_* in Zones.cpp. Not on the mountain.
-      - A house is at most ZONE_HOUSE_MAX_PLOTS plots, since it holds one family.
+      - A house is at most ZONE_HOUSE_MAX_PLOTS plots, since it holds one family; a ropewalk at most
+        ZONE_ROPEWALK_MAX_PLOTS, past which a longer one makes no more rope (ZoneKindMaxPlots).
       - At most a kind's own number of storeys (ZoneKindMaxStoreys).
       - A WATER COLLECTOR stands on the DRY plot at the edge of a river's wet bank (or a pool's): its own
         vertex dry, a corner of its cells wet. Its pipe reaches over the stones to the water (BuildingMesh),
@@ -115,6 +116,7 @@
 
 #define ZONE_MAX_STOREYS        4       //the most of any kind - a house's
 #define ZONE_HOUSE_MAX_PLOTS    4
+#define ZONE_ROPEWALK_MAX_PLOTS 4       //goods_plan.md: it works from 2, and a 3rd and a 4th make more rope
 
 //What a building is. Never renumber - saves and recordings name these by value.
 #define ZONE_KIND_NONE          0       //an id no longer in use
@@ -129,9 +131,14 @@
 #define ZONE_KIND_BUILDERS      9       //a builders' hut: employs builders, staffed first (docs/builders_plan.md)
 #define ZONE_KIND_RANGE         10      //an archery range, on coarse cells like a field: archers train there (docs/range_plan.md)
 #define ZONE_KIND_TOWER         11      //a guard tower: one plot, two storeys, its guards on top (docs/defence_plan.md)
-#define ZONE_KIND_COUNT         12
+#define ZONE_KIND_ROPEWALK      12      //a long low shed: a ropemaker makes rope from hemp (docs/goods_plan.md)
+#define ZONE_KIND_COUNT         13
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
+//The most plots a building of `kind` may have, 0 for no limit: a house's one family, a ropewalk's length.
+inline int ZoneKindMaxPlots(int kind){
+    return (kind == ZONE_KIND_HOUSE) ? ZONE_HOUSE_MAX_PLOTS : (kind == ZONE_KIND_ROPEWALK) ? ZONE_ROPEWALK_MAX_PLOTS : 0;
+}
 //A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range painted like one.
 inline bool ZoneKindOnCells(int kind){
     return kind == ZONE_KIND_FIELD || kind == ZONE_KIND_RANGE;
@@ -140,7 +147,7 @@ inline bool ZoneKindOnCells(int kind){
 //camp, a bridge or a guard tower, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
 inline bool ZoneKindHasBody(int kind){
     return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER
-           || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS;
+           || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_ROPEWALK;
 }
 int ZoneKindMaxStoreys(int kind);
 //The storeys a plot of `kind` is painted with: one, a click adding more - but a GUARD TOWER whole, all its storeys
@@ -227,7 +234,8 @@ int ZoneGateOf(const ChasmWorld& w, const ZoneState& z, int road);
     storeys or more - two road neighbours, and every other neighbour such a building, ALL OF ONE KIND and a kind with
     a house body (ZoneKindHasBody: never a guard tower) - is built over: their upper storeys bridge it, up to the
     lower of them, over a passage one storey high - where such plots run at most three in a row, a hole through a
-    row of houses rather than a covered street. Never over a gate: its posts and door are taller than the passage.
+    row of houses rather than a covered street; an arch with a floor built (ZoneState::arch_built) stays whatever its
+    run grows to (step 4). Never over a gate: its posts and door are taller than the passage.
     The plot stays a road, walked like any other. 0 if `plot` is no arch.
 */
 int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot);
@@ -237,6 +245,11 @@ int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot);
     outlined with it. 0 if `plot` is no arch.
 */
 uint32_t ZoneArchOwner(const ChasmWorld& w, const ZoneState& z, int plot);
+//An arch's FLOOR (arches_plan.md step 2): its storeys over the passage, one less than it rises to - its owner's,
+//counted in with its own (ZoneBuildingFigures; the economy's plot-storeys).
+inline int ZoneArchFloors(int arch_storeys){
+    return (arch_storeys > 1) ? arch_storeys - 1 : 0;
+}
 
 /*
     What a command asks for. Travels in SimCommand::value[0]; the plot or cell index in subtype,
@@ -333,11 +346,17 @@ struct ZoneState{
     std::vector<uint32_t> ground_owner;         //per fine vertex: the building a garden or lot is the yard of, 0 nobody (ZoneGroundOwner)
     std::vector<uint32_t> field;                //per coarse quad: the field - or range (ZoneKindOnCells) - it is part of, 0 none
     std::vector<uint8_t> field_built;           //per coarse quad: 0 for a field's cell still a site
-    //ARCHES, worked out from the above after every change (Zones::RefreshArches) and never saved: per fine vertex,
-    //an arch's storeys (ZoneArchStoreys, 0 none) and the building it is part of (ZoneArchOwner). Empty in a
-    //state made for drawing one building alone - no arches there but what it is given.
+    /*
+        ARCHES (arches_plan.md), per fine vertex. Worked out from the above after every change (Zones::RefreshArches),
+        never saved: the storeys an arch may rise to (ZoneArchStoreys, 0 none) and the building it is part of
+        (ZoneArchOwner). Kept, saved and hashed (step 3): its floors BUILT over the passage - up to one less than it
+        may rise to; what is planned and not built is its owner's site, with scaffolding over the road. Apart from
+        `storeys` and `standing`, which say what is built on the ground. Empty in a state made for drawing one
+        building alone - no arches there but what it is given.
+    */
     std::vector<uint8_t> arch;
     std::vector<uint32_t> arch_owner;
+    std::vector<uint8_t> arch_built;
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
     uint32_t stroke_building = 0;
@@ -368,6 +387,13 @@ struct ZoneState{
     uint32_t ArchOwnerOf(int plot) const{
         return (plot >= 0 && plot < (int)arch_owner.size()) ? arch_owner[plot] : 0;
     }
+    //Its floors built, and the storeys that built part rises to - the passage and those floors, 0 with none built.
+    int ArchBuiltOf(int plot) const{
+        return (plot >= 0 && plot < (int)arch_built.size()) ? arch_built[plot] : 0;
+    }
+    int ArchStandingOf(int plot) const{
+        return ArchBuiltOf(plot) ? 1 + ArchBuiltOf(plot) : 0;
+    }
 };
 
 //A building as a save holds it: everything Zones::Restore needs to put it back as it was.
@@ -393,6 +419,7 @@ struct ZoneSavedGround{
     int kind = ZONE_GROUND_NONE;
     uint32_t line = 0;
     uint32_t owner = 0;
+    int arch = 0;                               //a road plot's arch: its floors built (arches_plan.md step 3)
 };
 
 class Zones{
@@ -416,6 +443,8 @@ public:
                 uint32_t next_id, const std::vector<ZoneSavedGround>& grounds,
                 uint32_t stroke, uint32_t stroke_building);
     std::string last_refusal;
+    //The arch floors that came down with the last command (arches_plan.md step 4): a player's is told so.
+    int last_arch_lost = 0;
 
     /*
         A new colony's camp: from ZoneStartCampPlot outward, plot by plot in the order a flood reaches
@@ -434,8 +463,12 @@ private:
     uint32_t NewBuilding(int kind);
     void SplitAfterRemoval(uint32_t id, int removed, bool f_field);
     void SettlePriorities();
-    //ZoneState::arch and arch_owner worked out again over every road plot - after a command, a load, a new map.
-    void RefreshArches();
+    /*
+        ZoneState::arch and arch_owner worked out again over every road plot - after a command, a load, a new map -
+        and arch_built kept to what may stand. `f_stand`: a debug placement's, where what it makes stands at once -
+        an arch's new floors with it; otherwise they are its owner's site. Returns the built floors that came down.
+    */
+    int RefreshArches(bool f_stand);
 };
 
 //A state's buildings as a save holds them - the inverse of Zones::Restore. Any thread, on a published copy.

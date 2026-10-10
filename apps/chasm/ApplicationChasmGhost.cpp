@@ -269,8 +269,10 @@ void ApplicationChasm::UpdateGhost(){
         //touch it, and not be another's (yards_plan.md) - over its own ground too, which it would take.
         f_ok = z.ground[plot] == ground || (ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)
                || ZoneCanGround(cw,z,plot,NULL,ground);
-        //...but no wall where a tower's ladder stands (defence_plan.md).
+        //...but no wall where a tower's ladder stands (defence_plan.md), nor under a built arch (arches_plan.md step 4).
         f_ok = f_ok && !(ground == ZONE_GROUND_WALL && ZoneIsLadderPlot(cw,z,plot));
+        f_ok = f_ok && !(PlayMode() && ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD
+                         && z.ArchBuiltOf(plot) > 0);
         bool f_own = z.ground[plot] == ground && ZoneGroundOwner(z,plot) == key.owner;
         f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL))
                && !crate_in_way(ZONE_OP_GROUND_PAINT,plot,ground);

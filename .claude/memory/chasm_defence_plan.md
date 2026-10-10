@@ -1,11 +1,11 @@
 ---
 name: chasm-defence-plan
-description: "AGREED 2026-10-09 apps/chasm/docs/defence_plan.md - posts/orders, pack, provisions, guard tower, gate doors; 8-step build order, steps 1-6 BUILT (tower 2026-10-10); step 7 caretakers' resupply next"
+description: "AGREED 2026-10-09 apps/chasm/docs/defence_plan.md - posts/orders, pack, provisions, guard tower, gate doors; 8-step build order, all 8 steps BUILT (2026-10-10, step 8 extended: guard count, guards by hand, release); gatehouse wanted"
 metadata:
   node_type: memory
   type: project
   originSessionId: 81514510-853a-4457-94ca-3d840e8ed249
-  modified: 2026-10-10T11:40:41.268Z
+  modified: 2026-10-10T13:15:46.230Z
 ---
 
 Chasm's defence groundwork was talked through and agreed with the user on 2026-10-09, written up as
@@ -31,9 +31,19 @@ and Restore re-checks a ladder with z.storeys[to] == 0). The GATEHOUSE is WANTED
 between two towers' decks over a palisade gate, own guard places, reached by the ladders, paid per guard place -
 not in the build order yet.
 
-For step 7: a tower below full is to builders "a site that wants water and provisions"; it must also join
-ProvisionsLacking, and window 28's SiteReservation / HomeReservation helpers (GoodFree, card stripes) need the
-new reservation kind. Towers take no deliveries yet (accepts 0, keeps water+provisions, room = full).
+Step 7 BUILT 2026-10-10: KeepTowers (builder's first errand, before MakeProvisions) sends him as for a site
+(k.site = the tower, TO_FETCH/FETCHING/TO_SITE), so reservations/replan/save needed nothing new; TowerWhole /
+TowerLeft / EconomyTowerShort / EconomyComing; ProvisionsLacking counts towers; delivery into stock never past full;
+issues row tower_unkept; card line. An empty 2-guard tower took one builder ~10,000 ticks (4.4 days) to refill,
+mostly making provisions. Kept FULL = a trip per unit drunk - a threshold is the plan's tuning answer.
+
+Step 8 EXTENDED by the user and BUILT 2026-10-10 ("Guards by hand"): EconomyState::guards (tower guard count, 1
+when placed = ECONOMY_TOWER_GUARDS_PLACED; a tower's places ARE its count, so use EconomyTowerUp, not places > 0, to
+ask "stands whole"); EconomyWorker::f_chosen (hand-picked, kept like the posted in AssignJobs); PostGuard /
+SetGuards via CHASM_CMD_GUARD / CHASM_CMD_GUARDS; right click on a tower = post by hand, overriding an automatic
+guard only when every place is taken; release drops the count. chasm_select op `hits` lists every overlay chip
+with its place - use it instead of scanning pixels with `under` (a long card moves left of the tools' grid).
+All 8 steps of the defence plan are built; the gatehouse is wanted (Open), not scheduled.
 
 Open from step 4: sites take food/water from the same stocks people live on, nothing kept back - raised with
 the user, not decided.

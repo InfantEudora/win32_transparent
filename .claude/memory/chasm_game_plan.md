@@ -268,6 +268,13 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   ARCHES (docs/arches_plan.md, user 2026-10-10): same kind only, one owner (both sides one building, else most
   plots beside, lower id), towers NEVER arched (for now), no arch over a gate, gatehouse later (defence plan).
   STEP 1 BUILT: ZoneState::arch/arch_owner derived by Zones::RefreshArches (not saved/hashed); mesh/pick/outline use
-  owner; ZoneKindHasBody. NEXT step 2: arch storeys as SAVED state kept APART from road plot's storeys/building
+  owner; ZoneKindHasBody. STEP 2 BUILT: arch floor (ZoneArchFloors = storeys-1) in ZoneBuildingFigures + Derive's
+  arch_floors (builders places, house burn). STEP 3 BUILT: ZoneState::arch_built (saved as ground's 5th number,
+  hashed), planned from STANDING sides (always buildable), owner's site via arches_of/EconomyStoreyCost by owner kind,
+  BUILD_RAISE arch branch, BuildArchSite scaffold, RefreshArches(f_stand) debug-stands. STEP 4 BUILT (all 4 steps
+  done): run limit holds NEW arches only (built ones stay); play wall over a built arch refused; amber notice
+  "THE ARCH OVER THE ROAD CAME DOWN WITH IT" (arch_notices); goods stay (user: as part-erase does); crowding = lifelines 7.
+  Plots are mostly < 3.9 area (median 3.45), so an arch's floor often decides a 2-storey house's places.
+  Old plan text for 3: arch storeys as SAVED state kept APART from road plot's storeys/building
   (walkers/straight-walk/ladder read storeys as ground-built), arch plots NOT in plots_of; then built as a site with
   scaffolding over the road, cost = owner kind's storey cost; losing it -> crowding.

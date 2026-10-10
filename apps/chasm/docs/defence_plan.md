@@ -47,6 +47,10 @@ recorded commands and the tick.
   it only from the ladder's side - by default the open side nearest the camp, which is usually the inside of a
   wall - and the player can move it from the tower's card. Nothing is built or walled on the ladder's plot. The
   ghost shows the shape, which is how the player finds the rarer junctions (and the terrain shows them too).
+- **Step 8 extended** (the user's, 2026-10-10, after step 7): auto-filling the posts is fine, but guards must be
+  RELEASABLE, and the player will often want ONE guard on a tower that could hold two or three. So a tower has a
+  GUARD COUNT, 1 when placed; a right click posts the selected person there BY HAND, over an automatic pick; and a
+  guard can be released. See "Guards by hand" below.
 
 The reference here is Knights and Merchants, the one game the user remembers with soldiers who need food:
 an annoying mechanic, but it worked. The aim is to keep what worked and leave out the chore. Nobody is
@@ -196,6 +200,28 @@ These are sums from tuning, and change with it.
 - **Builders only** (the user's): the jobless still carry to sites, but never to towers, and never make
   provisions. A colony with towers and no hut has towers nobody keeps.
 
+### Guards by hand (step 8)
+
+Agreed with the user 2026-10-10. Releasing a guard on its own would mean nothing - the auto-fill would send the
+next free adult up at once - so it comes with a count the player sets.
+
+- **The guard count**: each tower has one, 0 up to its places (its junction's guards), set by chips on its card -
+  a recorded command, saved and hashed. **1 when placed** (the user's). Its places to fill are the count, not its
+  junction's: the auto-fill (archery first) fills up to it; lowering it sends the extra guards home, the automatic
+  ones first; raising it fills from the free again. At 0 the tower is unmanned - the builders still keep it full,
+  and nobody is missed at it. Its stock and cost stay the whole tower's, so one guard on a three-place tower lives
+  on it three times as long.
+- **A right click** with a person selected, on a tower, makes him one of its guards BY HAND:
+  - he leaves his job, or his order, for it, and goes up at once, his load put down as a crate as for an order;
+    a child is refused, as for orders, and so is anyone with no house or no way there, or a tower not built yet;
+  - a hand-picked guard is never swapped out by the auto-fill, nor taken by a shortage of people - kept like the
+    posted;
+  - with the count reached and a place to spare, the count goes up by one;
+  - every place taken, he takes an AUTOMATIC guard's (the user's: the player's pick overrides the game's) - the
+    weakest archer, who goes home; all of them hand-picked: refused, "every place is taken".
+- **Release**: a chip on a guard's card and on his line in the tower's card. He goes home jobless, and the count
+  drops to the guards it has less him, so nobody takes his place. Raising the count brings the auto-fill back.
+
 ### Gate doors
 
 - **A gate** - a road plot a wall runs through (`ZoneState::gate`) - **gets a door**: two leaves of
@@ -231,8 +257,9 @@ Each step tested before the next, by the tool and a replay.
    any yet: the tower (step 6) is the first.
 6. **The guard tower** - BUILT 2026-10-10, below: the kind, its mesh, placement including the wall's line, its
    places and the guard job (archery first), its stock for posted people only, built with provisions and water.
-7. **The caretakers' resupply**: builders keep towers full, ahead of building.
-8. **A right-click on a tower** posts the selected person there, if it has a free place.
+7. **The caretakers' resupply** - BUILT 2026-10-10, below: builders keep towers full, ahead of building.
+8. **Guards by hand** - BUILT 2026-10-10, below (extended, above): the tower's guard count (1 when placed), a right click on a tower posting
+   the selected person there over an automatic pick, and releasing a guard.
 
 ## Open
 
@@ -247,9 +274,12 @@ Each step tested before the next, by the tool and a replay.
   `TOWER_DECK`) it clears the gate's posts and beam (`WALL_GATE_HEIGHT`), where a house's arch, its passage a
   storey high, would not. Guard places of its own on the walkway, reached by the towers' ladders - no way up of
   its own - and paid so much a guard place, as the tower is. It is not an arch: towers are never arched (for
-  now), and nothing is arched over a gate - the gatehouse is what that case becomes (`arches_plan.md`). Not
-  in the build order yet. Open: how it comes (painted on the gate plot between two towers, or of itself once
-  both stand), whether its guards share the towers' stock, and its look.
+  now), and nothing is arched over a gate - the gatehouse is what that case becomes (`arches_plan.md`). Left
+  for later (the user, 2026-10-10); not in the build order. Until it comes, a wall drawn in play across a road
+  with a BUILT arch over it is refused, "an arch stands over the road" (`arches_plan.md`, "As built: step 4") - a
+  gap in the wall the player closes by taking the arch down first, which the gatehouse is to close for him. Open:
+  how it comes (painted on the gate plot between two towers, or of itself once both stand), whether its guards
+  share the towers' stock, its look, and whether it closes that gap - a house's arch over a wall's gate.
 - **Releasing a tower's guard** by an order: the order would suspend the tower job like any other.
 - **Sites take food and water people need** (step 4): a site's water and provisions come out of the same
   stores and camp people drink and eat from, with nothing kept back. For a tower's 12 water that is a day of
@@ -451,7 +481,7 @@ tool), `ApplicationChasmSelect.cpp` (what a builder is doing, the hut's card, th
   row instead of running off the card.
 - **How many are wanted** (`ProvisionsLacking`): what the sites still lack of them (less what is on its way),
   less what lies made in a store, the camp's supplies, a house nobody lives in, a builders' hut or a crate, and
-  less what is being made. Towers short of them join this in step 7. Wheat and beans at the huts are not
+  less what is being made. Towers short of them join this in step 7 (since built). Wheat and beans at the huts are not
   counted: they become provisions only while this is above 0.
 - **Making** (`MakeProvisions`, a builder's errand from home, before his building - so ahead of carrying and
   line work, and of crates, the caretakers' last): with some wanted -
@@ -524,7 +554,8 @@ in the jobs corner, the cards, the ghost, guards drawn on the platform, NOBODY A
   tower, a bean fitted where a provision did not and came out of the pack.) Tower and pack empty, a pressing need
   sends him to the nearest supply - towers count, for the posted - and back up.
 - **Nobody else's**: `SeekSupplyOf` passes towers by for anyone not posted; no carrier, family or caretaker takes
-  from one (they take only from the kinds they name); a tower takes no deliveries yet (step 7). The top bar's
+  from one (they take only from the kinds they name); a tower takes no deliveries yet (since step 7: from the
+  caretakers, below). The top bar's
   stored goods leave towers out.
 - **Losing the job** - the tower pulled down, its places gone: off the tower and home, on the next tick.
 - **Shown**: the tower card - its guards with their archery and precision, "1 of 2 guards" amber while short, its
@@ -589,6 +620,102 @@ the places), `BuildingMesh.*` (`BuildTower`, `BuildingTowerReach`, `BuildingOnTo
     recording's two replays equal on every tick.
   - Seen in the game: the square, pentagon and hexagon in the grid's shape, guards on them, ladders on the camp side;
     the triangle slim on its small plot.
+
+## As built: step 7, the towers kept (2026-10-10)
+
+Files: `Economy.*` (`KeepTowers`, `TowerWhole`, `TowerLeft`, `EconomyTowerShort`, `EconomyComing`; `ProvisionsLacking`,
+the fetch and the delivery in `TickWorker`), `ApplicationChasmSelect.cpp` (what a carrier is doing, the tower card),
+`ApplicationChasmIssues.cpp` (the row), `ApplicationChasmEconomy.cpp` (`towers`' `short` and `coming`).
+
+- **Short** is below FULL - what it is built with (`EconomyTowerStock`), so much a guard place - for a tower that stands
+  whole (`TowerWhole`); a tower still a site wants its storeys' goods as any site. What it still wants brought
+  (`TowerLeft`) is what it lacks less what is on its way, reckoned as a site's: a load for each carrier going to fetch
+  for it, what each carries there (`EconomyComing`, which `SiteLeft` now uses too).
+- **The caretaker's first errand** (`KeepTowers`, from home, before `MakeProvisions` and building): of every tower short
+  and every place with water or provisions to spare - a store, the camp's supplies, a house nobody lives in, a builders'
+  hut's provisions, a crate - the pair with the shortest walk by the straight line, him to the good to the tower; the
+  first of the nearest four he can walk. He goes AS FOR A SITE: `site` the tower, `WORKER_TO_FETCH`, `FETCHING`,
+  `WORKER_TO_SITE` - so the reservations (`SiteReservation`, `GoodFree`, the cards' stripes) and re-planning hold as
+  they are, and nothing new is saved. At the tower the load goes into its STOCK, never past full; what it no longer
+  lacks goes to a store; and he goes home - no building time. Up the ladder, like anyone onto a tower.
+- **Provisions nobody has are made for it**: `ProvisionsLacking` counts a tower short of them, so `MakeProvisions`
+  makes them at the hut, and `KeepTowers` carries them from there once made - the plan's "from a store, or made for it".
+- **Builders only**: `FindSiteWork` never lists a tower that stands, and at the fetch a tower that stands wants nothing
+  from anyone else - a jobless carrier whose tower site was finished on his way takes nothing. A load already carried
+  for it goes in, whoever brings it.
+- **Shown**: a carrier is "fetching water for a tower", "carrying food to a tower" - its site or its stock. The tower
+  card under its stock: "Full - the builders keep it so", "Short of 12 water and 8 provisions: the builders are
+  bringing it", or amber "..., and no builders to keep it full". NEEDS ATTENTION: TOWER: NO BUILDERS TO KEEP IT
+  (`tower_unkept`), for a whole tower short with no builder in the colony. `chasm_economy`'s `towers` give `short` and
+  `coming` once one stands whole.
+- **Tested** (seed 12, a builders' hut - one builder - and a store placed standing by the camp, the camp given food;
+  a 2-guard tower placed in debug, its guards up on it):
+  - Emptied (12 water and 8 provisions to 0): 8 provisions wanted at once. The builder carried the water, made all 8
+    provisions at the hut from the camp's wheat and beans, and carried them up: full again after 10,000 ticks, about
+    4.4 days, most of it the making. Never past full; nobody but the builder carried for it.
+  - Its water emptied again as a house site was painted in play: the builder went for the tower first, the jobless
+    for the house, none to the tower; full of water again.
+  - A save and load with the builder on his way up with 5 water: still on his way, carrying it, and it went in.
+  - The hut erased, no builders: an emptied tower left empty, nobody carrying to it; NEEDS ATTENTION listed it.
+  - The recording, 12,820 ticks: two replays equal on every tick.
+  - Seen in the game: the card's amber "Short of 12 water and 8 provisions, and no builders to keep it full", and
+    the row at the top of NEEDS ATTENTION.
+- **Open, tuning**: kept FULL means a trip for whatever is short, even a unit its guards drank; a threshold below full
+  is the plan's answer if builders spend too long on it (above). A single builder filling an empty tower from nothing
+  takes days, most of it the provisions - another reason a colony with towers wants a second hut.
+
+## As built: step 8, guards by hand (2026-10-10)
+
+Files: `Economy.*` (`EconomyState::guards`, `EconomyWorker::f_chosen`, `ECONOMY_TOWER_GUARDS_PLACED`, `PostGuard`,
+`SetGuards`, `EconomyTowerUp`; `Derive`, `AssignJobs`, `TickWorker`, the save and `Restore`), `ChasmSave.cpp` (`"guards"`,
+`"chosen"`), `ApplicationChasm.h` (`CHASM_CMD_GUARD`, `CHASM_CMD_GUARDS`, `OVERLAY_HIT_TOWER_GUARDS`,
+`OVERLAY_HIT_GUARD_RELEASE`), `ApplicationChasmEconomy.cpp` (the commands, the hash, the tool's ops),
+`ApplicationChasmSelect.cpp` (the right click, the cards, the chips), `ApplicationChasmIssues.cpp`.
+
+- **The count** is the economy's, by building id (`EconomyState::guards`, -1 for anything not a tower): saved as
+  `"guards"`, hashed. `Derive` gives a new tower `ECONOMY_TOWER_GUARDS_PLACED` (1) and holds every count to its
+  junction's places; a tower's `places` ARE its count once it stands whole, so the staffing, the jobs corner's GUARDS
+  and NOBODY AT THE TOWER follow it with no change of their own. A save from before the counts gives its towers every
+  place, as they had (Restore's -2). Set by `CHASM_CMD_GUARDS` (`SetGuards`), its places at once.
+- **A tower standing whole** is now asked of the zones (`EconomyTowerUp`) wherever `places > 0` used to say it - the
+  card's kept-full line, the issues row, the tool's `short` - since a count of 0 makes places 0 on a tower that stands.
+- **Hand-picked**: `EconomyWorker::f_chosen`, saved as `"chosen"`, hashed only when set. `AssignJobs` keeps him with
+  the posted, ahead of the auto-fill - his place reserved, counted out of the free - so the auto-fill never moves him
+  and a shortage of people takes the automatic guards first. He loses it only with his tower, or its count lowered
+  past the hand-picked (the lower person ids kept). On the tick after, `TickWorker` sends him up as it sends someone
+  ordered (`TakePost`): what he was doing he drops; an automatic guard still finishes his errand first, as before.
+- **`PostGuard`** (`CHASM_CMD_GUARD`, value 0 the tower): refused - "too young", "caring for her baby", "no tower
+  there", "the tower is not built yet" (a site, or one placed this tick), "no house to go out from", "no way there",
+  "every place is taken" (all hand-picked) - refusals shown as an order's, CAN'T SEND: ... His order, if he had one,
+  gives way; a load on him is put down as a crate. Already its guard: only marked his pick. A free place under the
+  count: his. None: the count up by one while it has places to spare; every place taken: the automatic guard with
+  the least archery, then precision, loses the job and goes home for him. RELEASED (value 0): the count drops to the
+  guards it has less him, so nobody follows him up; he goes home jobless, free for any other work.
+- **Shown**: the tower card, once it stands - "Guards it takes" and a chip for each count from 0 to its places, a
+  "Release a guard" row with a chip for each guard by first name (his id the chip's value), "by hand" by a hand-picked
+  guard, "Unmanned: it takes no guards" at 0, and "Right click it with someone selected to post him here". A guard's
+  own card: "posted by hand", and a "Release from the tower" chip. The right click with a person selected: on a tower
+  - the one the cursor picks, or on its plot - a `CHASM_CMD_GUARD`, else an order as before. `chasm_economy` ops
+  `guard`, `release_guard`, `guards`; a tower's `count` and `junction_places`, a worker's `chosen`. `chasm_select`'s
+  `under` gives a chip's `overlay_value`.
+- **Tested** (seed 12, a builders' hut and a store placed standing, the camp given food; a 4-junction tower, 2 places,
+  placed in debug):
+  - Placed: count 1, places 1 of 2; one guard went up. Count 2: two guards; 0: both off home, no NOBODY AT row; 1
+    again: one guard.
+  - By hand with a place to spare: the count rose to 2, he was marked hand-picked and went up, the automatic guard
+    stayed. The count lowered to 1: the automatic guard went, the hand-picked one stayed.
+  - Full, one of each: by hand, the automatic guard went home and the count stayed 2. Full of hand-picked: refused,
+    "every place is taken". A child: "too young".
+  - Released by the tool: jobless, home, the count down to 1, nobody up in his place. A tower site: "the tower is not
+    built yet" (first "no tower there" for one placed that tick - fixed, it asks the zones first).
+  - Through the overlay, as clicks would (found by `chasm_select`'s new op `hits`, every chip with its place): the card's
+    count chip 2 pressed, two guards again; a guard's Release chip pressed, he went and the count fell to 1; a right
+    click on the tower with a person selected, he was its guard by hand and the count rose to 2. The long card stands
+    left of the tools' grid, over the scene's middle (the card rule for long cards).
+  - A save and load kept the count, the guards and who was hand-picked. The recording, 785 ticks: two replays equal on
+    every tick.
+  - Seen: "Guards it takes 0 1 2", "Release a guard - Marit", the refusal on the overlay, CAN'T SEND: THE TOWER IS NOT
+    BUILT YET.
 
 ## Later: agreed in the gameplay plan, not planned yet
 

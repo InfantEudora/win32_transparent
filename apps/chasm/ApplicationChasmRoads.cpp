@@ -109,6 +109,13 @@ bool ApplicationChasm::LinePlotAllowed(const ChasmWorld& w, const ZoneState& z, 
         }
         return false;
     }
+    //...nor a wall under an arch with a floor built, which its gate would take down (arches_plan.md step 4).
+    if (PlayMode() && ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD && z.ArchBuiltOf(plot) > 0){
+        if (why){
+            *why = "an arch stands over the road";
+        }
+        return false;
+    }
     //Already the line's ground - or a wall over a road, which leaves the road and gates it.
     if (z.ground[plot] == ground || (ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)){
         return true;
@@ -356,7 +363,8 @@ void ApplicationChasm::RegisterRoadTools(){
                     }
                     //As the zones worked it out (Zones::RefreshArches), and the building it is part of.
                     if (z->ArchOf(plot) > 0){
-                        arches.push_back(json{{"plot",plot},{"storeys",z->ArchOf(plot)},{"owner",z->ArchOwnerOf(plot)}});
+                        arches.push_back(json{{"plot",plot},{"storeys",z->ArchOf(plot)},{"owner",z->ArchOwnerOf(plot)},
+                                              {"built",z->ArchBuiltOf(plot)}});
                     }
                     int gate = ZoneGateOf(*w,*z,plot);
                     if (gate >= 0){

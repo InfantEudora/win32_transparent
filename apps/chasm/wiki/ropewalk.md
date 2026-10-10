@@ -1,22 +1,53 @@
 ---
 title: Ropewalk
-aliases: ropewalks, rope, ropemaker, ropemakers
+aliases: ropewalks, ropemaker, ropemakers
 kind: buildings
-status: planned
+status: built
 summary: A long low shed where a ropemaker makes rope from hemp. It works from 2 plots, and a 3rd and 4th make it faster.
-plans: goods_plan.md > Decided; goods_plan.md > The ropewalk; goods_plan.md > Rope as a cost
+plans: goods_plan.md > Decided; goods_plan.md > The ropewalk; goods_plan.md > Step 3: the ropewalk; goods_plan.md > The ropewalk's props
+code: Zones.h: ZONE_KIND_ROPEWALK ZONE_ROPEWALK_MAX_PLOTS ZoneKindMaxPlots; Economy.h: ECONOMY_ROPE_HEMP ECONOMY_ROPE_SECONDS ECONOMY_ROPEWALK_MIN_PLOTS ECONOMY_ROPEWALK_PILE; Economy.cpp: MakeRope AtRopewalk EconomyRopewalkPace WorkplaceMakes; BuildingMesh.cpp: BuildRopewalkYard
 verified: 2026-10-10
 ---
 
-Not built yet. **Rope** is a building material made from hemp, grown on a [[Field]]: the [[Winch]] is
-built with it, and the zeppelin will be.
+Where [[Rope|rope]] is made, from [[Hemp|hemp]]. It is painted over plots like any building (key K), one
+storey high, at most {ZONE_ROPEWALK_MAX_PLOTS:#plots}, and built as a [[Construction|site]].
 
-## Planned
+## Its length
 
-- [planned] A building of its own, painted over plots, one storey and at most 4 plots. It works from 2
-  plots - one plot is placed but stands idle, and its card says so - and a 3rd and a 4th plot make more
-  rope for the same one ropemaker.
-- [planned] The ropemaker fetches hemp from a [[Store]], makes rope from it at the ropewalk, and the rope
-  waits there to be carried off, like a [[Woodcutter|woodpile]]. Hemp has no other use, so he works while
-  there is hemp.
-- [planned] The ropemaker's skill is precision.
+- **It works from {ECONOMY_ROPEWALK_MIN_PLOTS:#plots}.** A drag lays one plot at a time, so a one-plot
+  ropewalk can be placed, but it takes no ropemaker: its card says it is too short, and NEEDS ATTENTION
+  lists it. A ropewalk still being built is not too short, only unfinished.
+- **Longer is faster**, for the same one ropemaker: rope is made at x1 on 2 plots, x1.5 on 3 and x2 on 4.
+  Only plots that stand count.
+
+## The ropemaker
+
+One place, filled like any workplace, by **precision** ([[Skills]]). From home, in this order:
+
+1. With at least {ECONOMY_LOAD} rope waiting at the ropewalk and a [[Store|store]] that takes it, he
+   carries a load there.
+2. With {ECONOMY_ROPE_HEMP} hemp at the ropewalk, he goes there and makes rope:
+   {ECONOMY_ROPE_SECONDS:#seconds} a rope at an average pace and on 2 plots, up to {ECONOMY_LOAD} a round.
+3. Otherwise he fetches a load of hemp from a store, the [[Camp|camp's]] supplies, an empty house or a
+   [[Crate|crate]].
+
+He makes none past {ECONOMY_ROPEWALK_PILE} waiting there. There is **no count of what is wanted**, unlike
+[[Provisions|provisions]]: hemp has no other use, so he works whenever there is hemp, and how much rope the
+colony makes is how much hemp it grows.
+
+## Its stock
+
+The rope waiting there is **anyone's**: carriers for a building site take it as from a woodcutter's
+[[Woodcutter|woodpile]]. The hemp there is the ropemaker's alone. A store beside a ropewalk takes hemp and
+rope, so a farmer's hemp ends up next to it.
+
+## How it looks
+
+Plaster under thatch, and beside it what makes it a ropewalk, all on open ground:
+
+- **The walk**: three strands of rope on T-posts, waist-high, along each two of its plots side by side - so
+  a longer ropewalk has a longer walk, and a one-plot one has none. It runs on the side toward the camera
+  where both sides are open.
+- **The yard**, on the open side most toward the camera: a big spinning wheel, a **coil** of rope for every
+  2 rope waiting there, stacked, and a **sheaf** of hemp leant on the wall for every rope's worth of hemp on
+  hand. So a full pile and a ropewalk out of hemp both show from afar.

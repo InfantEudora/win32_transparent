@@ -19,6 +19,8 @@ garden and lot, a woodcutter's lot. Talked through the same day; proposed and ag
 
 ### Who owns what
 
+Changed 2026-10-10: a yard's plot is to touch its building itself, never only its yard - "Noted", below.
+
 - **Owners**: a HOUSE owns gardens and lots; a WOODCUTTER owns lots. No other kind owns ground, and roads and
   walls are never owned. A plot has one owner, or none.
 - **Painted with a building selected**: each plot must touch the building, or ground of its yard - so a yard
@@ -76,7 +78,7 @@ garden and lot, a woodcutter's lot. Talked through the same day; proposed and ag
 
 ## Later
 
-- A house's lots extend its storage (the user's idea, 2026-10-09).
+- A house's lots extend its storage (the user's idea, 2026-10-09) - as firewood: "Noted", below.
 - What a garden does (food for its family, or comfort) - nothing yet.
 - Other kinds with a yard: a store's lot as outdoor storage, a builders' hut's timber yard.
 
@@ -163,3 +165,57 @@ selected."
 - Filled to four plots by `chasm_paint owner`: the card's row lost Extend; a fifth plot refused. After `ZoneCanExtend`
   was made to ask "full" first (rebuilt 2026-10-10, with defence step 6 in the tree): a plot away from a full house is
   refused "a house is at most four plots", one away from a one-plot house still "an extension goes beside its building".
+
+## Noted: a yard's room, and a lot site (the user, 2026-10-10)
+
+Three of the user's, noted to be built. None is worked out yet; what is open is listed under each.
+
+### Decided (the user, 2026-10-10)
+
+From a screenshot of a hut with a three-plot lot ("Yard: 3 lot plots", "Woodpile 8 of 24"): every lot painted
+on already joins the hut's yard, and the fenced lot looks as if the hut opens onto all of it.
+
+- **A yard's plots touch the building itself**, never only ground of its yard. A yard no longer grows out
+  from its own ground a plot at a time: it is at most the plots round its building, and the building is the
+  door to every one of them. In code: `ZoneCanYard` asks for the building alone (its `TouchesYard` takes the
+  yard too today), `ZoneAutoOwner` loses its second pass (the owner of yard ground it touches), a building
+  put down takes only the ground nobody owns beside it (`claim_yard` floods on through all of it joined to
+  that today), and the refusals lose their "or its yard". One rule for lots and gardens.
+- **Gardens get the same as lots while a site**: selectable, and staked out.
+- **Saves are let go**, not converted: they are not meant to work across a change like this (the user).
+- Open: the fence. `ZoneBoundaryBetween` puts none between two standing garden or lot plots, whoever owns
+  them, so a lot that is nobody's, or another building's yard, beside a yard is drawn inside the same fence.
+
+### A woodpile that grows with the yard
+
+- **Today** the woodpile is ONE plot of the hut's yard, its lowest-numbered lot plot beside the hut
+  (`pile_plot`), and holds `ECONOMY_HUT_PILE` whatever else the yard holds: a second lot, or a bigger one,
+  adds nothing.
+- **The user's: a woodcutter with more than one lot, or larger lots, stacks more wood.**
+- Reached as the pile is now: wood goes on and off it from the hut plot beside it (`pile_door`), and
+  nobody walks into a yard. With every lot plot beside the hut (Decided, above), the hut is the door to
+  each of them.
+- Open: room by the yard's lot area, as a store's goes by floor area (`ECONOMY_STORE_ROOM`), or by its plots.
+
+### A house's lot keeps firewood
+
+- **Today** a house keeps firewood in its woodshed, `ECONOMY_WOODSHED_DAYS` of its burning, apart from its
+  food and water. A house can own lots (step 1), but they do nothing.
+- **The user's: a house with a lot stores wood there, extending its store for the winter.** This is what
+  "a house's lots extend its storage" (Later, 2026-10-09) has become: wood, for the winter.
+- The house is its door, as the hut is the woodpile's: its lot plots all touch it (Decided, above).
+- Open: how much a lot holds (by area, as above); and whether the family fetches for it as for the
+  woodshed, below `ECONOMY_HOME_DAYS` and by fair shares (`FirewoodFair`), so a lot fills in autumn.
+
+### A lot or garden site selected like a field site
+
+- **Today** a garden or lot painted in play is a site a plot at a time (`ground_built` 0, a worker's
+  `ECONOMY_SITE_GROUND | plot`), and a click on one selects nothing (selection_plan.md: "a lot plot itself
+  cannot be selected"). It is drawn as a finished lot with only its fence missing - the ground mesh does
+  not look at `ground_built` - so a lot waiting for its wood looks like a lot.
+- **The user's: a lot is selectable while it is being built, like a field, and looks like a site.** Its
+  card as a field site's: the wood brought and still wanted, and who is carrying it. Its look: staked out
+  as a field site is (`CropMesh.h`: a stake at each corner, a cord along its edges) until it stands.
+- **Gardens the same** (Decided, above): the same kind of site, selected and staked out alike.
+- Open: a ground site has no id, so what a click selects - the one plot, or every plot of that lot still
+  to build; and whether Build first comes with it.

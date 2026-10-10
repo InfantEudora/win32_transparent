@@ -62,6 +62,9 @@ public:
     std::vector<std::string>    GetSkeletonNames();
     std::vector<std::string>    GetAnimationNames();
     std::vector<std::string>    GetSkinnedMeshNames();
+    //The name of the skin a mesh node is bound to - what GetSkeleton takes - or "" when the node is
+    //missing or not skinned. So an app can ask a model which rig it has rather than naming the rig.
+    std::string                 GetNodeSkinName(const char* node_name);
 
     /*
         WHAT THE APP DOES NOT USE. Every lookup of a node by name - its mesh, its transform, its

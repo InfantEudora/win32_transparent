@@ -200,8 +200,8 @@ class Walkers;
     provisions too - the nearest place first, provisions first into his pack. A villager's is the crops; with
     none in any place he can reach he looks again with provisions, his LAST RESORT; and wherever anyone eats,
     provisions go last. MADE by the CARETAKERS - the builders - and only as many as are WANTED: what sites
-    still lack of them (towers short of them, step 7), less what lies made in stores, the camp, crates and the
-    builders' huts, and what is being made (ProvisionsLacking). A builder, before his building work: with
+    and towers still lack of them, less what lies made in stores, the camp, crates and the builders' huts, and
+    what is being made (ProvisionsLacking). A builder, before his building work: with
     wheat and beans at his hut, makes them there (ECONOMY_PROVISION_SECONDS each at his pace, up to a load a
     round); with too few on hand and on their way for what is wanted, fetches a load of the scarcer from a
     store, the camp or a crate. The sites' carriers take them from the hut as from a store. What the hut holds
@@ -215,6 +215,17 @@ class Walkers;
     a share a storey), whatever its shape, and what a storey takes of water and provisions it keeps, as its stock,
     not used up - one placed in debug stands full. Only posted people draw on it: SeekSupply passes towers by for
     villagers, and no carrier, family or caretaker takes from one.
+    KEPT FULL by the caretakers (step 7), the FIRST of a builder's errands, ahead of provisions and building
+    (KeepTowers): a tower that stands whole and holds less than its full stock is to him a site that wants water
+    and provisions - fetched as for a site from wherever is nearest, put into its stock, never more than it
+    lacks less what is on its way (TowerLeft). Provisions nobody has are made for it (ProvisionsLacking counts
+    it). Builders only: the jobless never carry to a tower that stands, so a colony with no builders' hut has
+    towers nobody keeps.
+    GUARDS BY HAND (step 8): a tower takes as many guards as its GUARD COUNT (EconomyState::guards, the player's,
+    ECONOMY_TOWER_GUARDS_PLACED when placed), never more than its junction's places - its `places` are the count.
+    A right click posts someone there BY HAND (PostGuard, EconomyWorker::f_chosen): kept like the posted, never
+    swapped out by the auto-fill nor taken by a shortage of people; with every place taken he displaces an
+    automatic guard. Released (PostGuard to 0), he goes home jobless and the count drops, so nobody follows him up.
 
     --- CRATES (docs/crates_plan.md) -------------------------------------------------------------------
     A CRATE is goods lying on the ground: a store villagers only take from, gone when empty. A posted
@@ -226,6 +237,18 @@ class Walkers;
     a worker's `store` then names the crate (ECONOMY_STORE_CRATE), and he stands beside it to take. Nothing is
     ever delivered to one. MOVED by the caretakers - the builders, never the jobless - as the LAST of their
     errands, a load at a time, to a store that takes it whole (MoveCrate).
+
+    --- ROPE (docs/goods_plan.md) -------------------------------------------------------------------
+    A ROPEWALK (ZONE_KIND_ROPEWALK) works from ECONOMY_ROPEWALK_MIN_PLOTS standing plots: its one place, a
+    ROPEMAKER (WORKER_JOB_ROPEMAKER, by precision). From home he takes a load of rope waiting there to a store
+    that takes it (FetchFromWorkplace, rope only); else, with hemp at the ropewalk, makes rope of it there -
+    ECONOMY_ROPE_HEMP a rope, ECONOMY_ROPE_SECONDS each at his pace, faster on a longer ropewalk
+    (EconomyRopewalkPace), up to a load a round; else fetches hemp from a store, the camp or a crate (MakeRope,
+    AtRopewalk - the builders' provisions errand's states). He makes none past ECONOMY_ROPEWALK_PILE waiting
+    there. No count of what is wanted, unlike provisions: hemp has no other use. The rope there is anyone's -
+    sites' carriers take it as from a woodpile - and its hemp the ropemaker's alone.
+    A WINCH is built with it, ECONOMY_WINCH_ROPE a storey (StoreyGoods), and the colony starts with none: a winch
+    site stands staked out, its wood brought, until a hemp field and a ropewalk have made its rope.
 
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
@@ -268,6 +291,11 @@ class Walkers;
 #define ARCHERY_PER_TICK            36      //what a tick of training adds, at pace 1
 #define ECONOMY_SOW_SECONDS         3.0f    //sowing a cell of a field, at the farmer's pace
 #define ECONOMY_PROVISION_SECONDS   3.0f    //making a provision at the builders' hut, at the builder's pace (defence_plan.md)
+#define ECONOMY_ROPE_HEMP           2       //hemp a rope takes (goods_plan.md)
+#define ECONOMY_ROPE_SECONDS        8.0f    //making one on a ropewalk of ECONOMY_ROPEWALK_MIN_PLOTS, at the ropemaker's pace
+#define ECONOMY_ROPEWALK_MIN_PLOTS  2       //standing plots a ropewalk works from: with one it is placed, and idle
+#define ECONOMY_ROPEWALK_PILE       12      //rope waiting at the ropewalk at most: he makes no more past it
+#define ECONOMY_WINCH_ROPE          4       //rope a winch's storey takes, with its wood (goods_plan.md): the colony starts with none
 #define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
 #define ECONOMY_CROP_GRACE          (CALENDAR_DAY_TICKS)    //a field built with no crop waits this long for one, then starts with AUTO (issues_plan.md)
 #define ECONOMY_FAIR_DAYS           1       //a house keeps its land's food only while less than this a head ahead of the colony's average
@@ -279,6 +307,7 @@ class Walkers;
 #define ECONOMY_TOWER_WOOD          10      //a guard tower, a GUARD PLACE (POSTS): its wood...
 #define ECONOMY_TOWER_WATER         6       //...its water - its stock full, and what it is built with: 12 days for the guard
 #define ECONOMY_TOWER_PROVISIONS    4       //...and its provisions, at 3 water to 2 provisions so both run out together
+#define ECONOMY_TOWER_GUARDS_PLACED 1       //a new tower's guard count (step 8, the user's): the player adds more
 //A worker's `site` naming a garden or lot plot rather than a building (the plot in the low bits).
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
@@ -342,7 +371,8 @@ const char* SkillName(int skill);
 #define WORKER_JOB_BUILDER      3       //at a builders' hut: carries wood to sites and builds, lays roads
 #define WORKER_JOB_ARCHER       4       //a trainee at an archery range: trains there, full time (range_plan.md)
 #define WORKER_JOB_GUARD        5       //on a guard tower: posted there, living on its stock (defence_plan.md)
-#define WORKER_JOB_COUNT        6
+#define WORKER_JOB_ROPEMAKER    6       //at a ropewalk: rope from hemp (goods_plan.md)
+#define WORKER_JOB_COUNT        7
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
@@ -494,6 +524,7 @@ struct EconomyWorker{
     int post = -1;                      //his POST (above): the plot he was sent to stand on, -1 none
     std::array<int,GOOD_COUNT> pack = {};   //his PACK (POSTS): water and food he carries for himself, by good
     int archery = 0;                    //ARCHERY (TRAINING, above): experience, of ARCHERY_FULL - kept when he stops
+    bool f_chosen = false;              //a guard posted BY HAND (POSTS, step 8): kept ahead of the auto-fill
 };
 
 //The most archery he can reach: a tenth of ARCHERY_FULL a point of precision (range_plan.md).
@@ -589,6 +620,7 @@ struct EconomyState{
     std::vector<uint8_t> heat;                          //by building id: a home's HEAT_* since dawn; [0] the homeless
     std::vector<EconomyCrate> crates;                   //CRATES, in id order
     uint32_t next_crate = 1;
+    std::vector<int> guards;                            //by building id: a tower's GUARD COUNT (POSTS, step 8), -1 not a tower
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<GoodsMask> accepts;
     std::vector<GoodsMask> attached;                      //the goods of the workplaces a store is next to
@@ -627,6 +659,17 @@ int EconomyPostPlot(const EconomyState& e, const EconomyWorker& k);
 vec2 EconomyPostPoint(const EconomyState& e, const EconomyWorker& k);
 //A guard tower's full stock of `good` - what it is built with and keeps: so much a guard place (ECONOMY_TOWER_*).
 int EconomyTowerStock(const ChasmWorld& w, int plot, int good);
+//A guard tower standing whole on `plot` - its platform up: what takes guards and is kept full. Its `places` cannot
+//say it, as they are its guard count (step 8), which may be 0.
+inline bool EconomyTowerUp(const ZoneState& z, int plot){
+    return plot >= 0 && plot < (int)z.storeys.size() && z.KindOf(plot) == ZONE_KIND_TOWER && z.standing[plot] > 0
+           && z.standing[plot] == z.storeys[plot];
+}
+//What tower `id` on `plot` lacks of its full stock, by good - water and provisions; nothing on the way counted.
+std::array<int,GOOD_COUNT> EconomyTowerShort(const EconomyState& e, const ChasmWorld& w, uint32_t id, int plot);
+//What is on its way to site or tower `id`, by good: a load for each carrier going to fetch for it, what each
+//carries there. `except` is left out.
+std::array<int,GOOD_COUNT> EconomyComing(const EconomyState& e, uint32_t id, const EconomyWorker* except = NULL);
 //Standing on his post (ECONOMY_POST_REACH), rather than on his way to it or cut off from it.
 bool EconomyAtPost(const EconomyState& e, const EconomyWorker& k);
 //The tower whose platform he stands on as its guard, 0 none - where he lives on its stock (POSTS).
@@ -674,6 +717,7 @@ struct EconomySaved{
     std::vector<std::pair<uint32_t,int>> heats;         //homes not HEAT_NONE: building (0 the homeless), heat
     std::vector<EconomyCrate> crates;
     uint32_t next_crate = 1;
+    std::vector<std::pair<uint32_t,int>> guards;        //towers' guard counts: building, count
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;
     bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
@@ -708,6 +752,15 @@ public:
         and `why` says it, if refused: nobody by that id, a child, nothing open to stand on, no way there.
     */
     bool Order(uint32_t person, int plot, const ZoneState& z, Walkers& walkers, std::string* why);
+    /*
+        GUARDS BY HAND (POSTS, step 8; CHASM_CMD_GUARD): person `person` made a guard of tower `tower` by the
+        player - a right click - over an automatic pick; or with `tower` 0 released from his tower, its count
+        dropping so nobody takes his place. Applied between ticks; he goes on the tick that follows, as for an
+        order. False, and `why` says it, if refused.
+    */
+    bool PostGuard(uint32_t person, uint32_t tower, const ZoneState& z, Walkers& walkers, std::string* why);
+    //A tower's GUARD COUNT (CHASM_CMD_GUARDS): how many guards it takes, 0 up to its places. False if no tower.
+    bool SetGuards(uint32_t tower, int count, const ZoneState& z);
     /*
         A CRATE put down by the debug tools (CHASM_CMD_CRATE): `amount` of `good` on `plot` - into the crate lying
         there if there is one, so a crate of several goods is several of these. A find (CRATE_FOUND). Applied
@@ -746,6 +799,7 @@ private:
     //Derived, not saved - from the world (the trees) or the zones (the rest), worked out again on load.
     std::vector<int> home_plot;                 //by building id: where its worker waits, -1 none
     std::vector<std::vector<int>> plots_of;     //by building id: a plot building's plots, in index order
+    std::vector<std::vector<int>> arches_of;    //by building id: the road plots its ARCHES stand over (arches_plan.md), in index order
     std::vector<std::vector<int>> tents_of;     //by building id: a camp's tent plots
     std::vector<int> share_of;                  //by building id: a field's share of its owner's land, -1 none (LandPlaces)
     std::vector<float> field_pace;              //by building id: its farmer's pace, 0 fallow (Tending)
@@ -799,9 +853,14 @@ private:
     vec2 SourcePoint(uint32_t id, int plot, const vec2& from) const;
     //A caretaker's last errand: a crate's goods off to a storehouse. True if he set off.
     bool MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //A caretaker's first errand (POSTS, step 7): water or provisions to a guard tower short of them. True if he set off.
+    bool KeepTowers(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //PROVISIONS (POSTS): a builder's errand for them, from home (true if he set off); what he does at his hut.
     bool MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace);
+    //ROPE (goods_plan.md): a ropemaker's errand, from home (true if he set off); what he does at his ropewalk.
+    bool MakeRope(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    void AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace);
     void Walk(EconomyWorker& k, float dt);
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
@@ -881,6 +940,9 @@ private:
     //Where a builder stands to build a garden or lot plot: an open plot beside it, else the plot itself.
     int GroundSiteApproach(const ZoneState& z, int v) const;
     std::array<int,GOOD_COUNT> SiteLeft(const ZoneState& z, uint32_t id, const EconomyWorker* except) const;
+    //A guard tower that stands whole - kept full, no longer a site - and what it still wants brought to be full.
+    bool TowerWhole(const ZoneState& z, uint32_t id) const;
+    std::array<int,GOOD_COUNT> TowerLeft(const ZoneState& z, uint32_t id, const EconomyWorker* except) const;
     int GoodFree(uint32_t id, int good) const;
     int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
@@ -937,6 +999,22 @@ const char* EconomyJobName(int job);
 //The job a kind of building employs, WORKER_JOB_NONE for one that employs nobody. A house and the camp employ
 //their land's farmers; a field nobody (land_plan.md).
 int EconomyJobOf(int kind);
+//A ROPEWALK (goods_plan.md): its plots that stand - it works from ECONOMY_ROPEWALK_MIN_PLOTS - and how fast it
+//makes rope against one that short: 1 at 2 plots, 1.5 at 3, 2 at 4. 0 for anything but a ropewalk that works.
+int EconomyRopewalkPlots(const ZoneState& z, uint32_t id);
+float EconomyRopewalkPace(const ZoneState& z, uint32_t id);
+//All of a good the colony has, wherever it lies - stores, the camp, houses, workplaces, fields, crates - and what is
+//being carried; not what sites have been brought. What a site short of it could still be brought.
+int EconomyGoodHeld(const EconomyState& e, int good);
+/*
+    What the colony still lacks to MAKE ROPE (goods_plan.md), the first missing first: HEMP - none grown, sown, chosen
+    for a field or held - then a ROPEWALK, placed; ECONOMY_ROPE_MAKING when both are there. For the card of a site
+    short of rope and NEEDS ATTENTION, which point at what to do.
+*/
+#define ECONOMY_ROPE_NO_HEMP        0
+#define ECONOMY_ROPE_NO_ROPEWALK    1
+#define ECONOMY_ROPE_MAKING         2
+int EconomyRopeChain(const EconomyState& e, const ZoneState& z);
 //The colony's jobs at a glance - the overview's and the tool's: per job, who works it and its places.
 struct EconomyJobCount{
     int working = 0;

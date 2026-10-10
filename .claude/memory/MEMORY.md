@@ -89,11 +89,13 @@
 - [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets
 - [Line works plan](line_works_plan.md) — AGREED 2026-10-06: chasm roads/walls drag-previewed, built by idle villagers felling trees; waits on window 39
 - [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants); difficulty may retune later
-- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: orders, pack, gate doors, site costs, provisions, guard tower (steps 1-6) built; caretakers resupply towers next
+- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: all 8 steps built (orders … guard tower, towers kept full, guards by hand + count); gatehouse wanted; chasm_select op hits finds chips
 - [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop defaults to AUTO after a day; add rows in ChasmIssues
 - [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes; figures are constant names
 - [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-3 BUILT (drop, take via SourceStock, builders move, card); finds and holding->dropping next
 - [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; hut buildable without a lot; house Extend chip works the same way
 - [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, full-time archers by precision, per-person archery; props in chasm_props.glb
 - [Chasm goods strip](chasm_goods_strip.md) — cards show stocks as strips: solid anyone's, hollow kept, striped reserved; HudGoodColour per good
-- [Chasm goods plan](chasm_goods_plan.md) — AGREED 2026-10-10: food/water/materials/inputs categories, hemp crop, ropewalk (2-4 plots) makes rope; no starting rope; steps 1-2 (goods, hemp crop) built, ropewalk next
+- [Chasm goods plan](chasm_goods_plan.md) — AGREED 2026-10-10: food/water/materials/inputs categories, hemp crop, ropewalk (2-4 plots) makes rope; no starting rope; steps 1-4 (goods, hemp, ropewalk + props, winch's rope cost) built, view by category next
+- [Chasm villager animation](chasm_villager_animation.md) — going skinned (shared mesh, 7-bone rig); crowd bench: ~2.3 us/tick + ~7 us/frame per figure, static free; .blend exporter drops skins
+- [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" open questions

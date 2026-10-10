@@ -4,7 +4,7 @@ aliases: provision, ration, rations
 kind: goods
 status: partial
 summary: A soldier's food, made by builders from a wheat and a beans, and only as many as something wants; villagers eat it only when nothing else is in reach.
-plans: defence_plan.md > Provisions; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower
+plans: defence_plan.md > Provisions; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: step 7, the towers kept
 code: Economy.cpp: EconomyFoodWorth ProvisionsLacking MakeProvisions AtWorkshop SeekSupply FillPack Consume; Economy.h: ECONOMY_PROVISION_SECONDS; Goods.h: GOODS_EATEN
 verified: 2026-10-10
 ---
@@ -24,8 +24,8 @@ and no house keeps it.
 
 ## Making them
 
-Only **builders** make them, and only as many as are **wanted**: what building sites still lack of them,
-less what lies made in a [[Store|store]], the [[Camp|camp's]] supplies, an empty house, a builders' hut or
+Only **builders** make them, and only as many as are **wanted**: what building sites and guard towers still
+lack of them, less what lies made in a [[Store|store]], the [[Camp|camp's]] supplies, an empty house, a builders' hut or
 a [[Crate|crate]], and what is being made. Before his building work, a builder with some wanted:
 
 1. with a wheat and a beans at his hut, goes there and makes them, {ECONOMY_PROVISION_SECONDS:#seconds}
@@ -37,10 +37,10 @@ Sites' carriers take finished provisions from the hut as from a store. When noth
 any more, a builder takes it to a store that takes it. Stores take provisions by default; their card has a
 chip for it.
 
-What wants them today is a [[Guard tower|guard tower]]'s site: it is built with them, and keeps them as
-its guards' food. Nobody but someone posted eats from a tower.
+What wants them today is the [[Guard tower|guard tower]]: its site is built with them and keeps them as
+its guards' food, and a tower that stands is kept full of them by the builders. Nobody but someone posted
+eats from a tower.
 
 ## Planned
 
-- Builders keeping the towers full: see [[Guard tower]].
 - [planned] Keeping long, when spoilage comes.

@@ -877,8 +877,10 @@ EXPORT_SETTINGS = dict(
     export_materials="EXPORT",
     export_image_format="NONE",         #the game draws props with its own palette material
     export_vertex_color="NONE",
-    export_animations=False,
-    export_skins=False,
+    #The villagers' rig (character_armature) and its clips. export_apply above leaves the Armature
+    #modifier out and applies the rest - a figure's Mirror - so the skin survives it.
+    export_animations=True,
+    export_skins=True,
     export_morph=False,
     export_cameras=False,
     export_lights=False,

@@ -201,6 +201,95 @@ eaten and WATER drunk - the needs, which are inputs of their own kind, kept apar
 - **Not checked by a run**: a house's land harvesting hemp into a store (the same `FindStore` every harvest load takes
   when it is not going home).
 
+### Step 3: the ropewalk (2026-10-10)
+
+- **`Zones.*`**: `ZONE_KIND_ROPEWALK` 12 (`ZONE_KIND_COUNT` 13), "ropewalk", one storey, a house body (so arches
+  bridge it like the other bodies, the same kind only). **`ZoneKindMaxPlots`** replaces the house-only limit in the
+  three places that had it (`ZoneCanBuild`, `ZoneCanExtend`, a stroke going on with a new building) - a house 4, a
+  ropewalk `ZONE_ROPEWALK_MAX_PLOTS` 4 - each refused with its own reason ("a ropewalk is at most four plots - longer
+  makes no more rope"). The house's numbers are unchanged.
+- **The look** (`BuildingMesh.cpp`, `kind_looks`): plaster under thatch, a combination no other kind has; now
+  `static_assert`ed to have a look for every kind. Its props came after, below.
+- **The tool**: `CHASM_TOOL_ROPEWALK`, key **K** (for knot - K, P, L and M were free), on the build grid on a row of
+  its own, the WORKSHOPS row, with room for those to come (the grid's cells may now be left empty); the debug panel's
+  radio and `chasm_tool` / `chasm_paint` take "ropewalk".
+- **The economy**: `WORKER_JOB_ROPEMAKER` 6 (`WORKER_JOB_COUNT` 7), "ropemaker", by precision; one place once
+  `ECONOMY_ROPEWALK_MIN_PLOTS` (2) stand. His round from home (`Economy.h`, ROPE): a load of rope waiting there to a
+  store (`FetchFromWorkplace`, now limited to what the workplace makes by `WorkplaceMakes` - rope, never the hemp
+  there - and only by the load, as water is); else `MakeRope`: to the ropewalk with `ECONOMY_ROPE_HEMP` (2) hemp there,
+  or for a load of hemp from a store, the camp, an empty house or a crate. At the ropewalk, `AtRopewalk`: a rope at a
+  time, `ECONOMY_ROPE_SECONDS` (8) over his pace and `EconomyRopewalkPace` (plots / 2), up to a load a round, none past
+  `ECONOMY_ROPEWALK_PILE` (12) waiting. All current tuning. He walks the builders' provisions errand's states
+  (`WORKER_TO_INPUT` ... `WORKER_MAKING`), branched by his job where a builder's hut was; while making rope his
+  `carry_good` is `GOOD_ROPE` with nothing carried, so `ProvisionsLacking` counts no rope as a provision and builders
+  run exactly as before. A store beside a ropewalk takes hemp and rope; sites' carriers take its rope, never its hemp.
+- **The view**: its card - "Too short: a ropewalk works from 2 plots" while fewer are painted (not while the second is
+  still a site), else its length and pace, "No hemp to make rope of" when none is to be had, its ropemaker, its rope
+  against the pile and the hemp on hand; NEEDS ATTENTION's `ropewalk_short` row; ROPEMAKERS in the jobs overview; the
+  ropemaker's lines ("fetching hemp for rope", "making rope").
+- **Checked** (debug, a copied exe on 8774, paused and stepped, the default seed): a one-plot ropewalk - "Too short",
+  no ropemaker, `ropewalk_short` at the top of NEEDS ATTENTION; painted on (a diagonal step, so 3 plots) - "3 plots long:
+  makes rope at x1.5", "No hemp to make rope of", the row gone, and a ropemaker: the colony's most precise (9). 20 hemp
+  set in the camp's supplies and a store painted: he fetched 5, made 2 ropes (a rope about every 200 ticks - 8 s over
+  pace 1.32 x 1.5), went home with 1 hemp left, fetched 5 more, made 3, and at 5 rope carried the load to the store.
+  At 4 plots "x2.0"; a fifth refused with the ropewalk's reason. The grid's K ROPEWALK on its own row, ROPEMAKERS 1 / 1.
+- **Not checked by a run**: a 2-plot ropewalk's x1 (the same formula), a site's carriers taking rope from the ropewalk
+  (nothing is built with rope until step 4), saving and loading a ropemaker mid-round (his state is all existing fields).
+
+### Step 4: rope as a cost (2026-10-10)
+
+- **The cost**: `StoreyGoods` (until now a stub giving nothing) gives a winch's storey `ECONOMY_WINCH_ROPE` (4) rope,
+  with its wood - current tuning. Nothing else changed for it to work: site carriers already took rope from stores,
+  the camp, crates and a ropewalk's pile (step 3), and a storey already went up only with all of every good there, so
+  a winch site gets its wood and then stands staked out until its rope comes. No first rope: the camp's supplies
+  hold none.
+- **What the colony lacks to make rope**, in one place for the card and NEEDS ATTENTION: `EconomyRopeChain` - hemp
+  first (none held anywhere, none growing, no field with it chosen as its first crop before it is ever sown or as
+  its next), then a ropewalk placed - and `EconomyGoodHeld`, all of a good wherever it lies or is carried, not what
+  sites have been brought.
+- **NEEDS ATTENTION**: `site_needs_rope`, "WINCH: NEEDS ROPE" (the site's kind, so the zeppelin's will read the same),
+  stuck tier, once for all sites, while they want more rope than the colony holds and the chain is not complete. Its
+  value is the first missing link: GROW HEMP - a click opens a field's card (a built one first), where hemp is chosen,
+  or takes up the field tool with no field - then BUILD A ROPEWALK, the ropewalk tool. With both, it goes: the rope
+  is coming, and the ropewalk's own rows (too short, nobody at it) say if it cannot work.
+- **The site's card**, under "It takes ...": "No rope to be had: grow hemp on a field, and make it at a ropewalk",
+  then "...: build a ropewalk to make it of hemp" (amber), then "Waiting for rope from the ropewalk" (dim). The
+  sites line over the grid already counted rope: "BUILDING 1 - WOOD 0/8, ROPE 0/4".
+- **Checked** (debug, a copied exe on 8774, the default seed): no balcony lies near the camp, so a villager was
+  ordered to the nearest reachable rim (about 100 units off) to explore it, and a winch placed there as a play
+  command. Its card: "It takes 13 wood, 4 rope", "No rope to be had: grow hemp ..."; the row GROW HEMP with the field
+  tool. A field painted: the row pointed at it, its card offering hemp; hemp chosen as its first crop: BUILD A
+  ROPEWALK with the ropewalk tool, and the card's second line. A ropewalk painted: the row gone, "Waiting for rope
+  from the ropewalk". 4 rope put at the ropewalk: carriers brought the 13 wood, the site waited, one fetched the
+  rope from the ropewalk, and the winch stood. A second winch site with the ropewalk erased: the row back, drawn at
+  the top of NEEDS ATTENTION.
+- **Not checked by a run**: rope made from a real hemp harvest reaching a winch (the parts were each run in steps
+  2-4), and a save or replay with a winch site (its cost is worked out, not stored).
+
+### The ropewalk's props (2026-10-10)
+
+The user: "give it a few props to make it clear it's a ropewalk" - plaster under thatch alone read as a house.
+
+- **What it has** (`BuildRopewalkYard`, `BuildingMesh.cpp`): its WALK - three strands of rope over T-posts,
+  waist-high, along each two of its plots side by side, so a longer ropewalk has a longer walk and a one-plot one none;
+  and its YARD - a SPINNING WHEEL on two A-frames, a COIL of rope for every 2 waiting there (stacks of 3, six for a full
+  pile) and a SHEAF of hemp, leant on the wall, for every rope's worth on hand. Rope has its own palette cell,
+  `PAL_ROPE` in the crops row (no season fade, no snow).
+- **Where**: only on open ground - no building, road, garden, field or water - in the cells of the open plots beside
+  it, which nothing else draws in. A stretch of walk goes in the cell beyond the two plots' edge whose other two plots
+  are open, the one toward the camera (south) of two; the yard by the open plot most toward the camera, since a yard
+  behind the building is behind its roof. An inside corner counts for less (the wheel barely fits), and ground another
+  ropewalk or a builders' hut touches - they draw on open ground too - only if nothing else is open. The wheel always
+  faces the camera: an upright wheel is foreshortened from above, so it is big (`ROPEWALK_WHEEL_R` 0.48).
+- **Drawn** by `ApplicationChasmRopewalk.cpp`: one mesh for every ropewalk, rebuilt when the zones change or a
+  ropewalk's coils or sheaves would - not in the zone mesh, since the coils and sheaves are the economy's. View only.
+- **Checked** (debug, a copied exe on 8774): two L-shaped ropewalks, a 4-plot one and a one-plot one, from close and at
+  play distance - walks along the sides toward the camera (an L whose open sides all face away has its walk behind
+  the roof, the only place there is room), the yards in front, the one-plot one's yard with no walk and close to its
+  wall; 12 rope and 5 hemp drew 6 coils and 3 sheaves, 0 and 0 none.
+- **Not done**: the ropemaker is still drawn at the ropewalk's plot, under its roof, while he makes rope - walking
+  the walk backward, as ropemakers did, would show him at it.
+
 ## Later
 
 - **Rope wearing out** (the user's: later, kept as an idea): a winch's rope is used up as it hauls and has to be

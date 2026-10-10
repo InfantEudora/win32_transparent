@@ -52,7 +52,9 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_TIMBER,{PAL_ROOF,PAL_ROOF},2,DOOR_W * 1.6f,2,0},                 //builders' hut: planks under tile, beams and a ladder by it
     {PAL_TIMBER,{PAL_FIELD,PAL_FIELD},2,DOOR_W,2,0},                      //range: on cells, drawn by CropMesh
     {PAL_BARK,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                      //guard tower: drawn by BuildTower instead
+    {PAL_WALL,{PAL_FIELD,PAL_FIELD},2,DOOR_W * 1.4f,1,0},                 //ropewalk: plaster under thatch, a window every wall
 };
+static_assert(sizeof(kind_looks) / sizeof(kind_looks[0]) == ZONE_KIND_COUNT,"a look for every kind");
 
 /*
     A beam from a to b on the ground plane, `thick` across, from y0 up by `height`: its two long sides,
@@ -394,7 +396,7 @@ struct ChimneyPlace{
 //not a winch, camp, bridge or guard tower, which are drawn apart), or an arch's.
 bool CornerSolid(const ChasmWorld& w, const ZoneState& z, int v){
     (void)w;
-    return (z.standing[v] > 0 && ZoneKindHasBody(z.KindOf(v))) || z.ArchOf(v) > 0;
+    return (z.standing[v] > 0 && ZoneKindHasBody(z.KindOf(v))) || z.ArchBuiltOf(v) > 0;
 }
 
 bool HouseChimney(const ChasmWorld& w, const ZoneState& z, int plot, ChimneyPlace& at){
@@ -831,6 +833,57 @@ void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<ve
     }
 }
 
+/*
+    An ARCH's floors still to build (arches_plan.md step 3): SCAFFOLDING OVER THE ROAD - poles up from the road at
+    the footprint's corners, as a site's, and its planks from the passage's ceiling (or what of the arch stands) up
+    to the storey it is to rise to. The road stays open under it: the poles stand at the corners, the walk goes
+    between.
+*/
+void BuildArchSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
+    const GridPicker& picker = *w.picker;
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    vec2 p = w.grid->fine.pos[plot];
+    float ground = w.terrain->ground[plot];
+    std::vector<std::pair<float,vec2>> corners;
+    for (int i = 0; i < picker.PlotQuadCount(plot); i++){
+        int q = picker.PlotQuadCorner(plot,i) / 4;
+        vec2 c = w.grid->FineQuadCentre(q);
+        vec2 at = p + (c - p) * SITE_INSET;
+        corners.push_back(std::make_pair(std::atan2(at.y - p.y,at.x - p.x),at));
+    }
+    std::sort(corners.begin(),corners.end(),[](const std::pair<float,vec2>& a, const std::pair<float,vec2>& b){
+        return a.first < b.first;
+    });
+    int n = (int)corners.size();
+    if (n < 3){
+        return;
+    }
+    float foot = (float)std::lround(ground / HALF) * HALF;
+    int standing = std::max(1,z.ArchStandingOf(plot));     //the passage, at least: nothing is built below it
+    int planned = z.ArchOf(plot);
+    float base = foot + standing * ZONE_STOREY_HEIGHT;
+    float top = foot + planned * ZONE_STOREY_HEIGHT + 0.25f;
+    for (int i = 0; i < n; i++){
+        Upright(out,corners[i].second,SITE_POLE,ground - 0.3f,top,PAL_BARK);
+    }
+    for (int i = 0; i < n; i++){
+        const vec2& a = corners[i].second;
+        const vec2& b = corners[(i + 1) % n].second;
+        //With nothing of it built, a frame at the passage's ceiling: where its first floor will go.
+        if (z.ArchBuiltOf(plot) == 0){
+            Beam(out,a,b,base - 0.12f,0.16f,0.14f,PAL_TIMBER);
+        }
+        for (int s = standing + 1; s <= planned; s++){
+            float y = foot + s * ZONE_STOREY_HEIGHT - 0.2f;
+            Beam(out,a,b,y,SITE_PLANK,SITE_PLANK * 2.0f,PAL_TIMBER);
+        }
+        if (i % 2 == 0){
+            vec2 mid = (a + b) * 0.5f;
+            Beam(out,a + (mid - a) * 0.1f,b,base + 0.3f,SITE_PLANK,SITE_PLANK,PAL_BARK_DARK);
+        }
+    }
+}
+
 }
 
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
@@ -875,11 +928,17 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             BuildSite(w,z,v,out);
         }
         int base = 0;
-        if (s[k] == 0 && z.ArchOf(v) > 0){
-            s[k] = z.ArchOf(v);
+        if (s[k] == 0 && z.ArchBuiltOf(v) > 0){
+            s[k] = z.ArchStandingOf(v);     //as far as it is built (arches_plan.md step 3)
             base = 1;
         }
         f_arch[k] = base > 0;
+        //Its floors still to build: scaffolding over the road, drawn once, by the first cell round its plot.
+        if (s[k] == 0 || f_arch[k]){
+            if (z.ArchBuiltOf(v) < ZoneArchFloors(z.ArchOf(v)) && picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+                BuildArchSite(w,z,v,out);
+            }
+        }
         /*
             A winch is not a house body: it is drawn on its own (BuildWinch), by the first cell round
             its plot - and its corner counts as empty here, so the buildings beside it close their walls.
@@ -1157,4 +1216,357 @@ bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at){
     vec2 d = at - w.grid->fine.pos[plot];
     float l = d.length();
     return l < 1e-4f || l < BuildingTowerReach(w,plot,d) + TOWER_DECK_OUT;
+}
+
+/*
+    A ROPEWALK's dressing (BuildingMesh.h). Everything stands in the cells of the open plots beside it - out from
+    the wall to past the walk, and to a plot's width either way along it - which no other building, road, garden
+    or field draws in.
+*/
+#define ROPEWALK_OUT            0.72f   //the walk's line, of the way from a ropewalk plot to the open one beside it: past the wall at half
+#define ROPEWALK_HEIGHT         0.58f   //the strands, above the ground: waist-high on a villager (0.86)
+#define ROPEWALK_POST           0.07f   //the posts, square
+#define ROPEWALK_POST_EVERY     1.1f    //the longest stretch of strand between two
+#define ROPEWALK_BAR            0.30f   //each post's crossbar, which the strands lie over
+#define ROPEWALK_BAR_THICK      0.05f
+#define ROPEWALK_STRANDS        3
+#define ROPEWALK_STRAND_GAP     0.08f
+#define ROPEWALK_STRAND         0.035f  //thicker than a rope would be, to be seen at all
+#define ROPEWALK_WHEEL_R        0.48f   //the spinning wheel in the yard: big, since the camera sees it foreshortened
+#define ROPEWALK_WHEEL_ASIDE    0.45f   //...its middle this far west of the yard's middle, the coils east
+#define ROPEWALK_WHEEL_SIDES    12
+#define ROPEWALK_WHEEL_FOOT     0.38f   //its stand's legs, splayed this far along the wheel either way
+#define ROPEWALK_COIL_R         0.15f   //a coil of rope lying flat: its turns' radius...
+#define ROPEWALK_COIL_TUBE      0.045f  //...and thickness - two turns a coil
+#define ROPEWALK_COIL_SIDES     8
+#define ROPEWALK_COIL_SPACING   0.36f   //between the coils' two stacks
+#define ROPEWALK_COIL_STACK     3       //coils a stack
+#define ROPEWALK_SHEAF_H        0.62f   //a sheaf of hemp stood against the wall
+#define ROPEWALK_SHEAF_SPACING  0.19f
+#define ROPEWALK_SHEAVES        4       //the most drawn
+
+namespace {
+
+//A bar of square section `thick` across from a to b, any way up: the wheel's rim and spokes, a coil's turns.
+void Rod(std::vector<vertex>& out, const vec3& a, const vec3& b, float thick, int column, int row = PAL_TEMPERATE){
+    vec3 d = b - a;
+    float l = d.length();
+    if (l < 1e-5f){
+        return;
+    }
+    d = d * (1.0f / l);
+    vec3 s = d.cross(std::fabs(d.y) < 0.9f ? vec3(0.0f,1.0f,0.0f) : vec3(1.0f,0.0f,0.0f));
+    s.normalize();
+    vec3 r = s.cross(d);
+    s = s * (thick * 0.5f);
+    r = r * (thick * 0.5f);
+    vec3 c[4] = {s + r,r - s,(s + r) * -1.0f,s - r};
+    for (int i = 0; i < 4; i++){
+        const vec3& c0 = c[i];
+        const vec3& c1 = c[(i + 1) % 4];
+        MeshQuad(out,a + c0,a + c1,b + c1,b + c0,c0 + c1,column,row);
+    }
+    MeshQuad(out,a + c[0],a + c[1],a + c[2],a + c[3],d * -1.0f,column,row);
+    MeshQuad(out,b + c[0],b + c[1],b + c[2],b + c[3],d,column,row);
+}
+
+//Open ground a ropewalk's walk and yard may stand on: nothing built, laid or planted there or in a field round it,
+//and dry.
+bool RopewalkOpen(const ChasmWorld& w, const ZoneState& z, int v){
+    if (z.building[v] != 0 || (!z.ground.empty() && z.ground[v] != ZONE_GROUND_NONE) || w.terrain->wet[v]
+        || w.grid->fine.f_boundary[v]){
+        return false;
+    }
+    for (int i = 0; i < w.picker->PlotQuadCount(v) && !z.field.empty(); i++){
+        if (z.field[w.grid->fine.quads[w.picker->PlotQuadCorner(v,i) / 4].parent]){
+            return false;
+        }
+    }
+    return true;
+}
+
+//Whether another building that draws on the open ground beside it - a ropewalk, a builders' hut - stands next to
+//open plot v, so that a yard there could land on what it draws.
+bool OpenGroundShared(const ChasmWorld& w, const ZoneState& z, int v, uint32_t id){
+    int nb[8];
+    int n = ZonePlotNeighbours(w,v,nb,8);
+    for (int j = 0; j < n; j++){
+        uint32_t b = z.building[nb[j]];
+        if (b && b != id && b < z.buildings.size()
+            && (z.buildings[b].kind == ZONE_KIND_ROPEWALK || z.buildings[b].kind == ZONE_KIND_BUILDERS)){
+            return true;
+        }
+    }
+    return false;
+}
+
+//An end of a stretch of the walk: out from a ropewalk plot toward the open plot beside it.
+struct WalkEnd{
+    int plot = -1;
+    int open = -1;
+    vec2 at;
+    float y = 0.0f;             //the ground under it
+    vec2 along;                 //the stretches meeting here, summed, each pointing away from it
+    int stretches = 0;
+};
+
+//A T-post at p on the ground y, its crossbar across `along`, under the strands.
+void WalkPost(std::vector<vertex>& out, const vec2& p, float y, const vec2& along){
+    vec2 across(-along.y,along.x);
+    float bar_top = y + ROPEWALK_HEIGHT - ROPEWALK_STRAND * 0.5f;
+    Upright(out,p,ROPEWALK_POST,y - 0.1f,bar_top - ROPEWALK_BAR_THICK,PAL_TIMBER);
+    Beam(out,p - across * (ROPEWALK_BAR * 0.5f),p + across * (ROPEWALK_BAR * 0.5f),bar_top - ROPEWALK_BAR_THICK,
+         ROPEWALK_BAR_THICK,ROPEWALK_BAR_THICK,PAL_TIMBER);
+}
+
+/*
+    The spinning wheel at c, its middle ROPEWALK_WHEEL_R over the ground y, in the upright plane through `in`:
+    a rim, three spokes across it, a hub on an axle between two A-frames, a crank on the side `crank` faces.
+*/
+void SpinningWheel(std::vector<vertex>& out, const vec2& c, float y, const vec2& in, const vec2& crank){
+    const vec3 up(0.0f,1.0f,0.0f);
+    vec3 w(in.x,0.0f,in.y);
+    vec3 n(crank.x,0.0f,crank.y);
+    vec3 mid(c.x,y + 0.1f + ROPEWALK_WHEEL_R,c.y);
+    auto rim = [&](float a){ return mid + (w * std::cos(a) + up * std::sin(a)) * ROPEWALK_WHEEL_R; };
+    const float turn = 6.2831853f / ROPEWALK_WHEEL_SIDES;
+    for (int i = 0; i < ROPEWALK_WHEEL_SIDES; i++){
+        Rod(out,rim(turn * i),rim(turn * (i + 1)),0.06f,PAL_TIMBER);
+    }
+    for (int i = 0; i < 3; i++){
+        float a = 3.1415927f / 3.0f * i + 0.3f;
+        Rod(out,rim(a),rim(a + 3.1415927f),0.03f,PAL_BARK_DARK);
+    }
+    Rod(out,mid - n * 0.06f,mid + n * 0.06f,0.09f,PAL_BARK_DARK);
+    Rod(out,mid - n * 0.13f,mid + n * 0.13f,0.035f,PAL_TIMBER);
+    for (int side = -1; side <= 1; side += 2){
+        vec3 top = mid + n * (0.11f * side);
+        for (int leg = -1; leg <= 1; leg += 2){
+            vec3 foot = top + w * (ROPEWALK_WHEEL_FOOT * leg);
+            foot.y = y - 0.05f;
+            Rod(out,top,foot,0.045f,PAL_BARK);
+        }
+    }
+    vec3 arm = mid + n * 0.13f;
+    Rod(out,arm,arm + up * 0.16f,0.03f,PAL_TIMBER);
+    Rod(out,arm + up * 0.16f,arm + up * 0.16f + n * 0.09f,0.03f,PAL_BARK_DARK);
+}
+
+//A coil of rope lying flat at p on the ground y: two turns of it, one on the other, turned by `spin`.
+void RopeCoil(std::vector<vertex>& out, const vec2& p, float y, float spin){
+    const float turn = 6.2831853f / ROPEWALK_COIL_SIDES;
+    const float reach = ROPEWALK_COIL_TUBE * 0.4f;     //each piece a little past its corner, so none gap
+    for (int t = 0; t < 2; t++){
+        float h = y + ROPEWALK_COIL_TUBE * (0.5f + t);
+        float r = ROPEWALK_COIL_R - 0.012f * t;
+        for (int i = 0; i < ROPEWALK_COIL_SIDES; i++){
+            float a0 = spin + turn * i, a1 = a0 + turn;
+            vec3 a(p.x + r * std::cos(a0),h,p.y + r * std::sin(a0));
+            vec3 b(p.x + r * std::cos(a1),h,p.y + r * std::sin(a1));
+            vec3 d = b - a;
+            d.normalize();
+            Rod(out,a - d * reach,b + d * reach,ROPEWALK_COIL_TUBE,PAL_ROPE,PAL_CROPS);
+        }
+    }
+}
+
+//A sheaf of hemp stood at p on the ground y, leant back toward `wall` on it: stalks, a band, the heads.
+void HempSheaf(std::vector<vertex>& out, const vec2& p, float y, const vec2& wall){
+    vec3 foot(p.x,y - 0.05f,p.y);
+    vec3 lean(wall.x * 0.12f,ROPEWALK_SHEAF_H,wall.y * 0.12f);
+    Rod(out,foot,foot + lean * 0.68f,0.11f,PAL_HEMP,PAL_CROPS);
+    Rod(out,foot + lean * 0.66f,foot + lean,0.15f,PAL_HEMP_HEADS,PAL_CROPS);
+    Rod(out,foot + lean * 0.30f,foot + lean * 0.37f,0.125f,PAL_ROPE,PAL_CROPS);
+}
+
+}
+
+void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int coils, int sheaves,
+                       std::vector<vertex>& out){
+    const Grid& g = *w.grid;
+    const Terrain& t = *w.terrain;
+    const GridPicker& picker = *w.picker;
+    if (id == 0 || id >= z.buildings.size() || z.buildings[id].kind != ZONE_KIND_ROPEWALK){
+        return;
+    }
+    std::vector<int> plots;     //what of it stands, in order
+    for (size_t v = 0; v < z.building.size(); v++){
+        if (z.building[v] == id && z.standing[v] > 0){
+            plots.push_back((int)v);
+        }
+    }
+    if (plots.empty()){
+        return;
+    }
+    auto ours = [&](int v){ return std::binary_search(plots.begin(),plots.end(),v); };
+    std::vector<WalkEnd> ends;
+    auto end_of = [&](int plot, int open){
+        for (size_t i = 0; i < ends.size(); i++){
+            if (ends[i].plot == plot && ends[i].open == open){
+                return (int)i;
+            }
+        }
+        WalkEnd e;
+        e.plot = plot;
+        e.open = open;
+        e.at = g.fine.pos[plot] + (g.fine.pos[open] - g.fine.pos[plot]) * ROPEWALK_OUT;
+        e.y = t.GroundHeight(e.at,t.Height(open));
+        ends.push_back(e);
+        return (int)ends.size() - 1;
+    };
+    /*
+        THE STRETCHES: one for each two plots of it side by side, in the cell beyond their edge whose other two
+        plots are open - the strands from out by one plot to out by the other, the wall behind them. Of two such
+        cells, the one toward the camera (south, +z), so the building does not hide its walk. Each cell's far
+        half is those two open plots' own ground, which nothing else draws on.
+    */
+    struct Stretch{
+        int a, b, c, d;
+        float south;
+    };
+    std::vector<Stretch> found;
+    for (int a : plots){
+        for (int i = 0; i < picker.PlotQuadCount(a); i++){
+            int qc = picker.PlotQuadCorner(a,i);
+            const GridQuad& q = g.fine.quads[qc / 4];
+            int k = qc % 4;
+            for (int turn = 1; turn <= 3; turn += 2){
+                Stretch s;
+                s.a = a;
+                s.b = q.v[(k + turn) % 4];
+                s.d = q.v[(k + 2) % 4];
+                s.c = q.v[(k + 4 - turn) % 4];
+                if (s.b > a && ours(s.b) && RopewalkOpen(w,z,s.c) && RopewalkOpen(w,z,s.d)){
+                    s.south = (g.fine.pos[s.c].y + g.fine.pos[s.d].y) - (g.fine.pos[s.a].y + g.fine.pos[s.b].y);
+                    found.push_back(s);
+                }
+            }
+        }
+    }
+    std::sort(found.begin(),found.end(),[](const Stretch& l, const Stretch& r){
+        return (l.a != r.a) ? l.a < r.a : (l.b != r.b) ? l.b < r.b : l.south > r.south;
+    });
+    std::vector<std::pair<int,int>> stretches;
+    for (size_t i = 0; i < found.size(); i++){
+        if (i > 0 && found[i].a == found[i - 1].a && found[i].b == found[i - 1].b){
+            continue;       //the pair's other cell, further from the camera
+        }
+        int e0 = end_of(found[i].a,found[i].c);
+        int e1 = end_of(found[i].b,found[i].d);
+        vec2 d = ends[e1].at - ends[e0].at;
+        float l = d.length();
+        if (l < 1e-3f){
+            continue;
+        }
+        d = d * (1.0f / l);
+        ends[e0].along = ends[e0].along + d;
+        ends[e1].along = ends[e1].along + d * -1.0f;
+        ends[e0].stretches++;
+        ends[e1].stretches++;
+        stretches.push_back(std::make_pair(e0,e1));
+    }
+    //--- The walk: the strands along each stretch, a post at each end and as often as they need between ---
+    for (const std::pair<int,int>& s : stretches){
+        const WalkEnd& e0 = ends[s.first];
+        const WalkEnd& e1 = ends[s.second];
+        vec2 d = e1.at - e0.at;
+        float l = d.length();
+        vec2 along = d * (1.0f / l);
+        vec2 across(-along.y,along.x);
+        for (int i = 0; i < ROPEWALK_STRANDS; i++){
+            vec2 off = across * (ROPEWALK_STRAND_GAP * (i - (ROPEWALK_STRANDS - 1) * 0.5f));
+            Rod(out,vec3(e0.at.x + off.x,e0.y + ROPEWALK_HEIGHT,e0.at.y + off.y),
+                vec3(e1.at.x + off.x,e1.y + ROPEWALK_HEIGHT,e1.at.y + off.y),ROPEWALK_STRAND,PAL_ROPE,PAL_CROPS);
+        }
+        int between = (int)std::ceil(l / ROPEWALK_POST_EVERY);
+        for (int j = 1; j < between; j++){
+            float f = (float)j / between;
+            vec2 p = e0.at + d * f;
+            float line = e0.y + (e1.y - e0.y) * f;      //the ground the strands keep their height over
+            float ground = t.GroundHeight(p,t.Height(e0.open));
+            if (ground < line){
+                Upright(out,p,ROPEWALK_POST,ground - 0.1f,line,PAL_TIMBER);     //down into a dip
+            }
+            WalkPost(out,p,line,along);
+        }
+    }
+    for (const WalkEnd& e : ends){
+        if (e.stretches > 0){
+            vec2 along = e.along;
+            along.normalize();
+            WalkPost(out,e.at,e.y,along);
+        }
+    }
+
+    /*
+        --- THE YARD: the wheel, the coils and the sheaves, out from the ropewalk toward the open plot most toward
+        the camera (south) - the first of equals - since a yard behind the building is behind its roof too; an
+        inside corner less readily, and ground another ropewalk or a builders' hut touches only if there is no
+        other. The sheaves against the wall, inside the walk; the wheel and the coils beyond it, clear of its
+        crossbars.
+    */
+    int yard_plot = -1, yard_open = -1;
+    float yard_score = 0.0f;
+    for (int p : plots){
+        int nb[8];
+        int n = ZonePlotNeighbours(w,p,nb,8);
+        for (int j = 0; j < n; j++){
+            vec2 d = g.fine.pos[nb[j]] - g.fine.pos[p];
+            float l = d.length();
+            if (l < 1e-4f || !RopewalkOpen(w,z,nb[j])){
+                continue;
+            }
+            //Shared ground last: another's walk or yard may be there. And an inside corner, walled on two sides,
+            //only well toward the camera: the wheel and coils barely fit in one.
+            int walls = 0;
+            int around[8];
+            int m = ZonePlotNeighbours(w,nb[j],around,8);
+            for (int q = 0; q < m; q++){
+                walls += ours(around[q]) ? 1 : 0;
+            }
+            float score = d.y / l - (OpenGroundShared(w,z,nb[j],id) ? 10.0f : 0.0f) - (walls > 1 ? 0.6f : 0.0f);
+            if (yard_plot < 0 || score > yard_score + 1e-4f){
+                yard_plot = p;
+                yard_open = nb[j];
+                yard_score = score;
+            }
+        }
+    }
+    if (yard_plot < 0){
+        return;     //built in on every side
+    }
+    vec2 o = g.fine.pos[yard_open] - g.fine.pos[yard_plot];
+    float reach = o.length();
+    o = o * (1.0f / reach);
+    vec2 u(-o.y,o.x);           //along the wall, eastward
+    if (u.x < 0.0f){
+        u = u * -1.0f;
+    }
+    vec2 wall = g.fine.pos[yard_plot] + o * (reach * 0.5f);
+    //The walk's far side, out from the wall - or with no walk past the yard, just clear of the sheaves.
+    bool f_walk_here = false;
+    for (const WalkEnd& e : ends){
+        f_walk_here = f_walk_here || (e.plot == yard_plot && e.open == yard_open);
+    }
+    float walk = f_walk_here ? reach * (ROPEWALK_OUT - 0.5f) + ROPEWALK_BAR * 0.5f : 0.2f;
+    float level = t.Height(yard_open);
+    for (int i = 0; i < std::min(sheaves,ROPEWALK_SHEAVES); i++){
+        vec2 p = wall + o * 0.1f + u * (ROPEWALK_SHEAF_SPACING * (i - (ROPEWALK_SHEAVES - 1) * 0.5f));
+        HempSheaf(out,p,t.GroundHeight(p,level),o * -1.0f);
+    }
+    //The wheel always faces the camera, across or along the walk as that runs: out past the walk by as much of
+    //it as reaches that way.
+    const vec2 in(1.0f,0.0f), crank(0.0f,1.0f);
+    float depth = std::fabs(in.dot(o)) * ROPEWALK_WHEEL_R + std::fabs(crank.dot(o)) * 0.15f;
+    vec2 wheel = wall + o * (walk + 0.05f + depth) - u * ROPEWALK_WHEEL_ASIDE;
+    SpinningWheel(out,wheel,t.GroundHeight(wheel,level),in,crank);
+    uint32_t hash = MeshHash(id,0x726f7065u);
+    for (int i = 0; i < std::min(coils,2 * ROPEWALK_COIL_STACK); i++){
+        int stack = i / ROPEWALK_COIL_STACK;
+        int layer = i % ROPEWALK_COIL_STACK;
+        vec2 base = wall + o * (walk + 0.05f + ROPEWALK_COIL_R) + u * (0.15f + ROPEWALK_COIL_SPACING * stack);
+        uint32_t lie = MeshHash(hash,(uint32_t)i);
+        vec2 p = base + vec2((lie % 100) / 100.0f - 0.5f,((lie >> 8) % 100) / 100.0f - 0.5f) * 0.04f;
+        RopeCoil(out,p,t.GroundHeight(base,level) + layer * 2.0f * ROPEWALK_COIL_TUBE,((lie >> 16) % 100) / 100.0f);
+    }
 }

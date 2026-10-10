@@ -12,9 +12,10 @@ verified: 2026-10-09
 ## What it takes
 
 - **Beside a workplace**, a store takes only that workplace's goods: [[Wood|wood]] beside a
-  [[Woodcutter|woodcutter's hut]], [[Water|water]] beside a [[Water collector]], and every
-  [[Food|food]] beside a [[Field]] (one plot away from the field is as close as a store can get). This
-  holds for as long as they touch, and the player can't change it.
+  [[Woodcutter|woodcutter's hut]], [[Water|water]] beside a [[Water collector]], every [[Food|food]] and
+  [[Hemp|hemp]] beside a [[Field]] (one plot away from the field is as close as a store can get), and hemp
+  and [[Rope|rope]] beside a [[Ropewalk]]. This holds for as long as they touch, and the player can't
+  change it.
 - **On its own**, a store takes whatever the player allows on its card, which is every good to start with,
   [[Provisions|provisions]] included.
 

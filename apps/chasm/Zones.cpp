@@ -62,6 +62,7 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_BUILDERS:    return "builders";
         case ZONE_KIND_RANGE:       return "range";
         case ZONE_KIND_TOWER:       return "tower";
+        case ZONE_KIND_ROPEWALK:    return "ropewalk";
         default:                    return "none";
     }
 }
@@ -90,6 +91,7 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_BRIDGE:      return 1;
         case ZONE_KIND_BUILDERS:    return 2;       //a workshop, like the woodcutter's
         case ZONE_KIND_TOWER:       return 2;       //and never less: painted whole (ZoneKindPaintStoreys)
+        case ZONE_KIND_ROPEWALK:    return 1;       //a long LOW shed (goods_plan.md): length is what it grows by
         default:                    return 0;
     }
 }
@@ -265,7 +267,13 @@ int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot){
         Only a SHORT run is bridged. A street lined both sides with tall houses makes every plot down it
         a candidate, and covering it would make a tunnel; a hole through a row of houses is a run of one
         or two. So walk the run both ways from here and give up past the most it may be.
+        ...for a NEW arch only (arches_plan.md step 4, the user's): one with a floor built stays while its own sides
+        stand, so tall buildings going up beside the next road plot along never take down floors already paid
+        for. The run still caps what is planned, so no passage grows past ZONE_ARCH_MAX_RUN.
     */
+    if (z.ArchBuiltOf(plot) > 0){
+        return top;
+    }
     int run = 1;
     for (int side = 0; side < 2 && run <= ZONE_ARCH_MAX_RUN; side++){
         int prev = plot;
@@ -310,24 +318,40 @@ uint32_t ZoneArchOwner(const ChasmWorld& w, const ZoneState& z, int plot){
     return best;
 }
 
-void Zones::RefreshArches(){
+int Zones::RefreshArches(bool f_stand){
     size_t n = state.building.size();
+    std::vector<uint8_t> was = state.arch;
+    was.resize(n,0);
     state.arch.assign(n,0);
     state.arch_owner.assign(n,0);
+    state.arch_built.resize(n,0);
     if (!state.world || state.ground.size() < n){
-        return;
+        std::fill(state.arch_built.begin(),state.arch_built.end(),0);
+        return 0;
     }
     const ChasmWorld& w = *state.world;
+    int lost = 0;
     for (size_t v = 0; v < n; v++){
-        if (state.ground[v] != ZONE_GROUND_ROAD){
-            continue;
-        }
-        int s = ZoneArchStoreys(w,state,(int)v);
+        int s = (state.ground[v] == ZONE_GROUND_ROAD) ? ZoneArchStoreys(w,state,(int)v) : 0;
         if (s > 0){
             state.arch[v] = (uint8_t)s;
             state.arch_owner[v] = ZoneArchOwner(w,state,(int)v);
         }
+        /*
+            Its floors built: a debug placement's new ones stand at once, as the building does; and none past what
+            it may rise to now - a side lowered, the road gone, a building of another kind beside it, and what no
+            longer qualifies comes down, as a storey taken off does.
+        */
+        int floors = ZoneArchFloors(s);
+        int built = state.arch_built[v];
+        if (f_stand && s > was[v]){
+            built += floors - ZoneArchFloors(was[v]);
+        }
+        built = std::max(0,std::min(built,floors));
+        lost += std::max(0,(int)state.arch_built[v] - built);
+        state.arch_built[v] = (uint8_t)built;
     }
+    return lost;
 }
 
 /*
@@ -783,6 +807,12 @@ bool ZoneBridgeChain(const ChasmWorld& w, const ZoneState& z, int from, int to, 
     return true;
 }
 
+//Why a building of `kind` takes no more plots (ZoneKindMaxPlots).
+static const char* FullRefusal(int kind){
+    return (kind == ZONE_KIND_ROPEWALK) ? "a ropewalk is at most four plots - longer makes no more rope"
+                                        : "a house is at most four plots - one family";
+}
+
 bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining, const char** why){
     auto refuse = [why](const char* reason){
         if (why){
@@ -825,9 +855,9 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (!f_line_ok && !z.ground.empty() && ZoneLineGround(z.ground[plot])){
         return refuse((z.ground[plot] == ZONE_GROUND_WALL) ? "a wall is there" : "a road is there");
     }
-    if (joining && kind == ZONE_KIND_HOUSE && joining < z.buildings.size() &&
-        z.buildings[joining].size >= ZONE_HOUSE_MAX_PLOTS){
-        return refuse("a house is at most four plots - one family");
+    if (joining && ZoneKindMaxPlots(kind) && joining < z.buildings.size() &&
+        z.buildings[joining].size >= ZoneKindMaxPlots(kind)){
+        return refuse(FullRefusal(kind));
     }
     //A guard tower needs a side for its ladder, its only way up.
     if (kind == ZONE_KIND_TOWER){
@@ -891,9 +921,9 @@ bool ZoneCanExtend(const ChasmWorld& w, const ZoneState& z, int plot, int kind, 
     }
     //Full is a refusal here, where a stroke of its own would go on with a new house - and the reason that
     //matters wherever the plot is.
-    int most = (kind == ZONE_KIND_HOUSE) ? ZONE_HOUSE_MAX_PLOTS : INT_MAX;
+    int most = ZoneKindMaxPlots(kind) ? ZoneKindMaxPlots(kind) : INT_MAX;
     if (z.buildings[owner].size >= most){
-        return refuse("a house is at most four plots - one family");
+        return refuse(FullRefusal(kind));
     }
     int nb[8];
     int n = ZonePlotNeighbours(w,plot,nb,8);
@@ -907,7 +937,7 @@ bool ZoneCanExtend(const ChasmWorld& w, const ZoneState& z, int plot, int kind, 
         }
         //The corner plot between comes with it: two more.
         if (z.buildings[owner].size + 2 > most){
-            return refuse("a house is at most four plots - one family");
+            return refuse(FullRefusal(kind));
         }
     }
     return true;
@@ -1469,7 +1499,7 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
             coarse_across[edges[i + 1].second] = edges[i].second / 4;
         }
     }
-    RefreshArches();
+    RefreshArches(false);
 }
 
 //A fine quad's look changed: its chunk has to be rebuilt.
@@ -1584,6 +1614,7 @@ void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
 
 bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play, uint32_t owner){
     last_refusal.clear();
+    last_arch_lost = 0;
     if (!state.world){
         last_refusal = "no world";
         return false;
@@ -1741,7 +1772,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             int bridge = (joining && !plot_touches(plot,joining)) ? ZoneJoinCorner(w,state,plot,kind,joining) : -1;
             int room = (bridge >= 0) ? 2 : 1;
             if (!owner && joining && ((!plot_touches(plot,joining) && bridge < 0) ||
-                            (kind == ZONE_KIND_HOUSE && state.buildings[joining].size + room > ZONE_HOUSE_MAX_PLOTS))){
+                            (ZoneKindMaxPlots(kind) && state.buildings[joining].size + room > ZoneKindMaxPlots(kind)))){
                 joining = 0;
                 bridge = -1;
             }
@@ -2014,6 +2045,13 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             break;
         }
         case ZONE_OP_BUILD_RAISE:{
+            //An ARCH's next floor over its road (arches_plan.md step 3): its owner's builders' too.
+            if (plot >= 0 && plot < (int)state.building.size() && !state.building[plot]
+                && state.ArchBuiltOf(plot) < ZoneArchFloors(state.ArchOf(plot))){
+                state.arch_built[plot]++;
+                touch_road(plot);
+                break;
+            }
             //The builders' work: the next storey of a site stands. Only what was planned.
             if (plot < 0 || plot >= (int)state.storeys.size() || state.standing[plot] >= state.storeys[plot]){
                 last_refusal = "nothing to build there";
@@ -2064,6 +2102,15 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             //drawn over a road leaves it, and gates it.
             if (kind == ZONE_GROUND_WALL && state.ground[plot] == ZONE_GROUND_ROAD){
                 if (state.gate[plot]){
+                    return false;
+                }
+                /*
+                    ...but a player's never under an arch with a floor built (arches_plan.md step 4, the user's): no arch
+                    stands over a gate, so the gate would take it down - floors paid for, and a house's places. The wall
+                    has a gap there until a gatehouse; taking the arch down first (a storey off a side) closes it.
+                */
+                if (f_play && state.ArchBuiltOf(plot) > 0){
+                    last_refusal = "an arch stands over the road";
                     return false;
                 }
                 state.gate[plot] = 1;
@@ -2267,11 +2314,13 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             last_refusal = "unknown zone op";
             return false;
     }
+    //The builders' raises are no placement: an arch they bring about is a site, as a storey a player adds is.
+    last_arch_lost = RefreshArches(!f_play && op != ZONE_OP_BUILD_RAISE && op != ZONE_OP_GROUND_RAISE
+                                   && op != ZONE_OP_FIELD_RAISE);
     if (op == ZONE_OP_BUILD_ADD || op == ZONE_OP_BUILD_REMOVE || op == ZONE_OP_BUILD_ERASE || op == ZONE_OP_BUILD_RAISE
         || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_RAISE){
         SettlePriorities();
     }
-    RefreshArches();
     state.version++;
     return true;
 }
@@ -2294,6 +2343,10 @@ void Zones::SettlePriorities(){
     for (size_t v = 0; v < state.building.size(); v++){
         if (state.standing[v] < state.storeys[v]){
             open[state.building[v]] = 1;
+        }
+        //An arch's floors still to build are its owner's (arches_plan.md step 3).
+        if (state.ArchOwnerOf((int)v) && state.ArchBuiltOf((int)v) < ZoneArchFloors(state.ArchOf((int)v))){
+            open[state.ArchOwnerOf((int)v)] = 1;
         }
     }
     for (size_t c = 0; c < state.field.size(); c++){
@@ -2415,11 +2468,18 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
     state.stroke = stroke;
     state.stroke_building = (stroke_building < state.buildings.size() && state.buildings[stroke_building].size > 0)
                             ? stroke_building : 0;
+    //Every arch's floors as built (arches_plan.md step 3), on its road plot - kept to what may stand now.
+    state.arch_built.resize(state.building.size(),0);
+    for (const ZoneSavedGround& gr : grounds){
+        if (gr.arch > 0 && gr.plot >= 0 && gr.plot < (int)state.arch_built.size()){
+            state.arch_built[gr.plot] = (uint8_t)std::min(gr.arch,255);
+        }
+    }
     //Everything is new: every chunk is drawn again.
     for (uint32_t& v : state.chunk_version){
         v++;
     }
-    RefreshArches();
+    RefreshArches(false);
     state.version++;
     last_refusal.clear();
     return refused;
@@ -2529,6 +2589,15 @@ ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, ui
             int site = z.storeys[v] - z.standing[v];
             info.storeys += z.standing[v];
             info.floor_area += w.picker->PlotArea((int)v) * z.standing[v];
+            info.site_storeys += site;
+            info.site_area += w.picker->PlotArea((int)v) * site;
+        }else if (z.ArchOwnerOf((int)v) == id){
+            //Its ARCHES' floors over their passages (arches_plan.md): its room and its places, as its own storeys -
+            //those built; the rest its site's.
+            int built = z.ArchBuiltOf((int)v);
+            int site = ZoneArchFloors(z.ArchOf((int)v)) - built;
+            info.storeys += built;
+            info.floor_area += w.picker->PlotArea((int)v) * built;
             info.site_storeys += site;
             info.site_area += w.picker->PlotArea((int)v) * site;
         }

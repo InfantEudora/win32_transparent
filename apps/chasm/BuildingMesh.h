@@ -58,6 +58,17 @@ float BuildingTowerReach(const ChasmWorld& w, int plot, const vec2& toward);
 //Whether `at` is on its platform.
 bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at);
 
+/*
+    A ROPEWALK's dressing (goods_plan.md), which tells it from a house: its WALK - strands of rope over T-posts,
+    waist-high, along each two of its plots side by side, so a longer ropewalk has a longer walk - out past the
+    wall on open ground, the side toward the camera where both are open; and its YARD on the open side most toward
+    the camera: a SPINNING WHEEL, `coils` coils of rope stacked beside it and `sheaves` sheaves of hemp leant on the
+    wall. One plot: the yard and no walk. Built in on every side: nothing. Not part of the zone mesh, because the
+    coils and sheaves are the economy's (ApplicationChasmRopewalk.cpp).
+*/
+void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int coils, int sheaves,
+                       std::vector<vertex>& out);
+
 //`fixtures`, if given, gets the houses' chimneys and panes this cell builds.
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
                     BuildingFixtures* fixtures = NULL);

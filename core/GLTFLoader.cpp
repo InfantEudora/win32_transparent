@@ -514,6 +514,14 @@ std::vector<std::string> GLTFLoader::GetSkinnedMeshNames(){
     return names;
 }
 
+std::string GLTFLoader::GetNodeSkinName(const char* node_name){
+    tinygltf::Node* node = FindNode(node_name);
+    if (!node || node->skin < 0 || node->skin >= (int)model.skins.size()){
+        return "";
+    }
+    return model.skins[node->skin].name;
+}
+
 //Returns a pointer to node if found, or NULL
 tinygltf::Animation*  GLTFLoader::FindAnimation(std::string animation_name){
     for (int animation_index=0;animation_index<model.animations.size();animation_index++){

@@ -362,8 +362,9 @@ void ApplicationChasm::DrawOverlay(void){
     is being built, how far along it is; at the bottom in the middle, why a placement was just refused.
 
     A row a group: a house and the ground round it; where goods are kept and got; the field, the builders
-    and the camp; the lines; the winch and the defences - the range, the tower - and ERASE last, on a row of
-    its own. Returns the top of the grid, or of the BUILDING line
+    and the camp; the lines; the winch and the defences - the range, the tower; the workshops that make one
+    good of another - the ropewalk (goods_plan.md), with room for those to come - and ERASE last, on a row of
+    its own. A cell with no name is left empty. Returns the top of the grid, or of the BUILDING line
     over it: what stacks over them (DrawIssues) goes above that.
 */
 float ApplicationChasm::DrawBuildBar(float s){
@@ -374,6 +375,7 @@ float ApplicationChasm::DrawBuildBar(float s){
         {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
         {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
         {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
+        {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{NULL,NULL,-1},{NULL,NULL,-1},
         {"3","ERASE",CHASM_TOOL_ERASE}};
     const int count = (int)(sizeof(bar) / sizeof(bar[0]));
     const int columns = 3;
@@ -388,6 +390,9 @@ float ApplicationChasm::DrawBuildBar(float s){
     //Every cell as wide as the widest, so the columns line up.
     float cell_w = 0.0f;
     for (int i = 0; i < count; i++){
+        if (!bar[i].name){
+            continue;
+        }
         float w = overlay->MeasureText(bar[i].key,key_size).x + key_gap + overlay->MeasureText(bar[i].name,size).x;
         cell_w = std::max(cell_w,w + inner * 2.0f);
     }
@@ -401,6 +406,9 @@ float ApplicationChasm::DrawBuildBar(float s){
     build_bar_max = q1;
     int tool = paint_tool.load();
     for (int i = 0; i < count; i++){
+        if (!bar[i].name){
+            continue;
+        }
         vec2 c0(q0.x + pad + (i % columns) * (cell_w + gap),q0.y + pad + (i / columns) * (cell_h + gap));
         vec2 c1(c0.x + cell_w,c0.y + cell_h);
         bool f_on = (tool == bar[i].tool);
@@ -416,13 +424,22 @@ float ApplicationChasm::DrawBuildBar(float s){
     /*
         Why the last placement was refused, for a moment at the bottom in the middle - play mode has no panel
         to say it (under the clouds, too close to water, too wide to bridge) - or the last order (no way there:
-        defence_plan.md), whichever came last.
+        defence_plan.md), whichever came last. In the same place, in amber, an ARCH taken down by the player's last
+        command (arches_plan.md step 4) - floors paid for, and maybe a house's places, gone without a word otherwise.
     */
     {
         auto now = std::chrono::steady_clock::now();
         uint32_t refusals = zone_refusals.load();
         uint32_t orders = order_refusals.load();
-        if (refusals != refusal_seen || orders != order_refusal_seen){
+        uint32_t notices = arch_notices.load();
+        if (notices != arch_notice_seen){
+            arch_notice_seen = notices;
+            refusal_seen = refusals;
+            order_refusal_seen = orders;
+            refusal_since = now;
+            refusal_shown = "the arch over the road came down with it";
+            f_refusal_notice = true;
+        }else if (refusals != refusal_seen || orders != order_refusal_seen){
             bool f_order = orders != order_refusal_seen;
             refusal_seen = refusals;
             order_refusal_seen = orders;
@@ -430,6 +447,7 @@ float ApplicationChasm::DrawBuildBar(float s){
             std::lock_guard<std::mutex> lock(grid_mutex);
             const std::string& why = f_order ? order_last_refusal : zone_last_refusal;
             refusal_shown = why.empty() ? std::string() : (f_order ? "CAN'T SEND: " : "CAN'T BUILD: ") + why;
+            f_refusal_notice = false;
         }
         float age = std::chrono::duration<float>(now - refusal_since).count();
         if (age < 3.0f && !refusal_shown.empty()){
@@ -441,7 +459,8 @@ float ApplicationChasm::DrawBuildBar(float s){
             vec2 r0(cx - m.x * 0.5f - side,bottom - 30.0f * s);
             vec2 r1(cx + m.x * 0.5f + side,bottom);
             overlay->AddRect(r0,r1,9.0f * s,HudFaded(HUD_PANEL,(uint8_t)(alpha * 0.7f)));
-            overlay->AddText(text.c_str(),vec2(cx,r0.y + 21.0f * s),size,HudFaded(UIColor(236,140,110),alpha),UI_ALIGN_CENTER);
+            uint32_t colour = f_refusal_notice ? HUD_AMBER : UIColor(236,140,110);
+            overlay->AddText(text.c_str(),vec2(cx,r0.y + 21.0f * s),size,HudFaded(colour,alpha),UI_ALIGN_CENTER);
         }
     }
     /*
@@ -581,8 +600,9 @@ float ApplicationChasm::DrawJobsOverview(float s){
     struct Row{ const char* name; int working; int places; bool f_places; };
     std::vector<Row> rows;
     static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER,
-                                WORKER_JOB_ARCHER,WORKER_JOB_GUARD};
-    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","ARCHERS","GUARDS"};
+                                WORKER_JOB_ARCHER,WORKER_JOB_GUARD,WORKER_JOB_ROPEMAKER};
+    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","ARCHERS","GUARDS","ROPEMAKERS"};
+    static_assert(sizeof(shown) / sizeof(shown[0]) == sizeof(names) / sizeof(names[0]),"a name for every job shown");
     for (int i = 0; i < (int)(sizeof(shown) / sizeof(shown[0])); i++){
         const EconomyJobCount& c = counts[shown[i]];
         if (c.places > 0 || c.working > 0){

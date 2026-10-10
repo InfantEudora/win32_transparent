@@ -4,7 +4,7 @@ aliases: home, homes
 kind: buildings
 status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
-plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend
+plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted
 code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn
 verified: 2026-10-10
 ---
@@ -48,3 +48,9 @@ from it. Once nobody lives there, its stock is anyone's, like a [[Store|store's]
 A house needs a way in: one of its plots has to be reachable from open ground. A house closed in on every
 side by other buildings, walls or water is **shut in**. No family moves into it, and a family already
 living there can't get out until the player clears a plot beside it. Its card warns about it.
+
+## Planned
+
+- [planned] Firewood on its [[Yard|lot]]: a house with a lot of its own stores wood there as well as in
+  its woodshed's {ECONOMY_WOODSHED_DAYS:#days}, so it holds more for the winter ([[Cold]]). Its lot plots
+  will all touch the house, which is their door (on the yard's page).

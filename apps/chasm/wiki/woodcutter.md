@@ -4,7 +4,7 @@ aliases: woodcutter's hut, woodcutters' huts, hut, woodpile
 kind: people
 status: built
 summary: Fetches logs and fells trees around the hut, and carries the wood to a store, or onto the hut's woodpile.
-plans: economy_plan.md > The woodcutter: logs first; economy_plan.md > As built: house storage and the woodpile
+plans: economy_plan.md > The woodcutter: logs first; economy_plan.md > As built: house storage and the woodpile; yards_plan.md > Noted
 code: Economy.cpp: TickWorker FindTree WoodNear FetchFromWorkplace FindStore; Economy.h: WORKER_JOB_WOODCUTTER
 tuning: ECONOMY_PICK_SECONDS
 verified: 2026-10-09
@@ -40,3 +40,9 @@ woodcutter works until the pile is full, then waits at home.
 At home, before any of this, the woodcutter sees to a pressing [[Thirst|thirst]] or [[Health|hunger]]
 that the house can't meet. They may also be the one sent to [[Fetching home|fetch]] for the house, but
 only if no jobless family member is home to go instead.
+
+## Planned
+
+- [planned] A woodpile that grows with the [[Yard|yard]]: a hut with more than one lot, or larger lots,
+  stacks more wood. Today the pile is one lot plot beside the hut, and holds {ECONOMY_HUT_PILE} however
+  much lot the hut has. Every lot plot will touch the hut, its door (on the yard's page).

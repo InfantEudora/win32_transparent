@@ -92,6 +92,9 @@ void ApplicationChasm::Init(void){
     renderer->ssao.blur_radius = 4;
 
     default_shader = new Shader(shader_vert_name,shader_lit_frag_name);
+    //The colour and depth passes' program for skinned meshes (the crowd bench's figures). NULL by
+    //default, and a skinned mesh without it draws nothing and says nothing - see apps/bomber.
+    renderer->skinned_shader = new Shader(shader_skinned_vert_name,shader_lit_frag_name);
 
     main_window->Resize(1440,810);
 
@@ -274,6 +277,7 @@ void ApplicationChasm::SetupInput(){
     view_key('G',INPUT_CHASM_TOOL_BUILDERS);
     view_key('R',INPUT_CHASM_TOOL_RANGE);
     view_key('T',INPUT_CHASM_TOOL_TOWER);
+    view_key('K',INPUT_CHASM_TOOL_ROPEWALK);
     view_key('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     view_key(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -678,6 +682,7 @@ void ApplicationChasm::RegisterCommandHandlers(){
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
                     zone_last_refusal = f_clouded ? "under the clouds" : "a crate lies there";
+                    zone_last_arch_lost = 0;
                 }
                 zone_refusals++;
                 zone_commands_done++;
@@ -688,9 +693,15 @@ void ApplicationChasm::RegisterCommandHandlers(){
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 zone_last_refusal = zones.last_refusal;
+                zone_last_arch_lost = zones.last_arch_lost;
             }
             if (!f_changed && !zones.last_refusal.empty()){
                 zone_refusals++;
+            }
+            //A player's command that took an arch's floors down with it says so (arches_plan.md step 4); a debug
+            //placement's, and the builders', say nothing.
+            if (f_changed && f_play && zones.last_arch_lost > 0){
+                arch_notices++;
             }
             if (f_changed){
                 PublishZones();
@@ -739,6 +750,7 @@ ChasmSave ApplicationChasm::MakeSave(){
                          | (z->gate[v] ? ZONE_GROUND_SAVED_GATE : 0) | (ZoneGateShut(*z,(int)v) ? ZONE_GROUND_SAVED_SHUT : 0);
                 g.line = z->line[v];
                 g.owner = ZoneGroundOwner(*z,(int)v);      //whose yard (yards_plan.md), 0 nobody's
+                g.arch = z->ArchBuiltOf((int)v);            //an arch's floors built over it (arches_plan.md)
                 s.grounds.push_back(g);
             }
         }
@@ -837,6 +849,12 @@ void ApplicationChasm::HashSimState(StateHash& h){
     }
     //Which of a field's cells are built (fields_plan.md).
     h.Bytes(z.field_built.data(),z.field_built.size());
+    //Arches' floors built (arches_plan.md step 3) - only where there are some, so zones with none hash as before.
+    for (size_t v = 0; v < z.arch_built.size(); v++){
+        if (z.arch_built[v]){
+            h.Add(((uint64_t)v << 32) | z.arch_built[v]);
+        }
+    }
     //The buildings (docs/buildings_plan.md): which each plot is part of, the table, the drag in progress.
     h.Begin("buildings");
     h.Bytes(z.building.data(),z.building.size() * sizeof(uint32_t));
@@ -1107,6 +1125,7 @@ void ApplicationChasm::LoadProps(){
     BuildSeasonLooks();
     //The people's figures are in the same file (ApplicationChasmWorkersView.cpp), so they are made here.
     BuildWorkerScene();
+    BuildCrowdBench();
 }
 
 /*
@@ -1520,6 +1539,7 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_BRIDGE:     return ZONE_KIND_BRIDGE;
         case CHASM_TOOL_BUILDERS:   return ZONE_KIND_BUILDERS;
         case CHASM_TOOL_TOWER:      return ZONE_KIND_TOWER;
+        case CHASM_TOOL_ROPEWALK:   return ZONE_KIND_ROPEWALK;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -2103,17 +2123,17 @@ void ApplicationChasm::UpdateView(void){
     const bool f_debug_keys = !PlayMode();
     //The tool keys toggle: the active tool's key again puts it down.
     if (input->IsInputLive()){
-        const int keys[16] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+        const int keys[17] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
                               INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
                               INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS,INPUT_CHASM_TOOL_WALL,
-                              INPUT_CHASM_TOOL_RANGE,INPUT_CHASM_TOOL_TOWER};
-        const int tools[16] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                              INPUT_CHASM_TOOL_RANGE,INPUT_CHASM_TOOL_TOWER,INPUT_CHASM_TOOL_ROPEWALK};
+        const int tools[17] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
                                CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
                                CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
-                               CHASM_TOOL_RANGE,CHASM_TOOL_TOWER};
+                               CHASM_TOOL_RANGE,CHASM_TOOL_TOWER,CHASM_TOOL_ROPEWALK};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
             if (input->WasKeyPressed(keys[i])){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
@@ -2162,9 +2182,11 @@ void ApplicationChasm::PreRender(void){
     UploadWater();
     UpdateMist();
     UploadWorkers();
+    UploadCrowdBench();
     UploadPiles();
     UploadCrates();
     UploadRange();
+    UploadRopewalks();
     UploadClouds();
     UploadHearth();
     UpdatePickView();
@@ -2714,6 +2736,8 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Range (R)##tool",tool == CHASM_TOOL_RANGE)) tool = CHASM_TOOL_RANGE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Tower (T)##tool",tool == CHASM_TOOL_TOWER)) tool = CHASM_TOOL_TOWER;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Ropewalk (K)##tool",tool == CHASM_TOOL_ROPEWALK)) tool = CHASM_TOOL_ROPEWALK;
         if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Woodcutter (9)##tool",tool == CHASM_TOOL_WOODCUTTER)) tool = CHASM_TOOL_WOODCUTTER;
@@ -2831,6 +2855,7 @@ void ApplicationChasm::RenderChasmPanel(){
 
 #ifdef USE_MCP
 void ApplicationChasm::RegisterMCPTools(){
+    RegisterCrowdBenchTool();
     MCPServer::Get()->RegisterTool("chasm_grid",
         "The current grid: its settings, vertex/quad/edge counts at both levels (coarse and fine), "
         "how many lattice triangles were left unmerged, its extent in world units (x and z; the grid "
@@ -3073,7 +3098,9 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["zone_gate"] = (bool)z->gate[pick.plot];
                     //An arch over it (arches_plan.md): its storeys and the building it is part of.
                     if (z->ArchOf(pick.plot) > 0){
-                        result["zone_arch"] = json{{"storeys",z->ArchOf(pick.plot)},{"owner",z->ArchOwnerOf(pick.plot)}};
+                        result["zone_arch"] = json{{"storeys",z->ArchOf(pick.plot)},{"owner",z->ArchOwnerOf(pick.plot)},
+                                                   {"floors",ZoneArchFloors(z->ArchOf(pick.plot))},
+                                                   {"built",z->ArchBuiltOf(pick.plot)}};
                     }
                 }
                 //What a person standing here would see (Exploration.h, SIGHT), on a blank raster of its
@@ -3152,8 +3179,8 @@ void ApplicationChasm::RegisterMCPTools(){
         "house_erase, field_paint, field_erase. Name the place as world x/z, or directly as plot "
         "(a fine vertex, for house ops) or cell (a coarse quad, for field ops). Returns whether it "
         "changed anything, the refusal if not (the rules: a house needs flat ground all round its "
-        "plot and no field; a field needs a flat coarse cell and no house; at most 4 storeys), and "
-        "the zone totals. Needs the simulation running (not paused) to be applied. "
+        "plot and no field; a field needs a flat coarse cell and no house; at most 4 storeys), "
+        "arch_floors_lost (an arch's built floors it took down), and the zone totals. Needs the simulation running (not paused) to be applied. "
         "BUILDINGS (docs/buildings_plan.md): the house_* ops are build_paint/add/remove/erase, for any "
         "kind (house, store, woodcutter, water); calls with the same `stroke` are one drag and so one "
         "building - without one, each call starts its own. FIELDS (docs/fields_plan.md): a field painted "
@@ -3177,7 +3204,7 @@ void ApplicationChasm::RegisterMCPTools(){
                                                   "gate_shut","range_paint"}}}},
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open"}}},
-                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower"}},{"description","for build_* (default house)"}}},
+                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","hemp","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
@@ -3273,11 +3300,14 @@ void ApplicationChasm::RegisterMCPTools(){
             bool f_ran = zone_commands_done.load() != before;
             std::shared_ptr<const ZoneState> z = GetZones();
             std::string refusal;
+            int arch_lost = 0;
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 refusal = zone_last_refusal;
+                arch_lost = zone_last_arch_lost;
             }
-            json result{{"op",name},{f_field ? "cell" : "plot",index},{"ran",f_ran},{"refusal",refusal}};
+            json result{{"op",name},{f_field ? "cell" : "plot",index},{"ran",f_ran},{"refusal",refusal},
+                        {"arch_floors_lost",arch_lost}};
             if (z && z->world == w){
                 ZoneStats st = ComputeZoneStats(*w,*z);
                 result["totals"] = json{{"houses",st.buildings[ZONE_KIND_HOUSE]},{"stores",st.buildings[ZONE_KIND_STORE]},
@@ -3366,8 +3396,8 @@ void ApplicationChasm::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("chasm_tool",
-        "Pick the mouse's tool, as keys 1-0, H, C, J, G, R and T do: select, house, field, erase, garden, lot, road, store, "
-        "woodcutter, water, winch, camp, bridge, builders, wall, range, tower. With a paint tool the hover outline goes green where a click would "
+        "Pick the mouse's tool, as keys 1-0, H, C, J, G, R, T and K do: select, house, field, erase, garden, lot, road, store, "
+        "woodcutter, water, winch, camp, bridge, builders, wall, range, tower, ropewalk. With a paint tool the hover outline goes green where a click would "
         "paint and red where the rules refuse - in play mode, the ghost of what it would place. hover_x/hover_z pin "
         "the hover to that point (a script has no mouse), until a call with hover_release.",
         json{
@@ -3375,7 +3405,7 @@ void ApplicationChasm::RegisterMCPTools(){
             {"properties",{
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                                    "range","tower"}}}},
+                                                    "range","tower","ropewalk"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -3391,7 +3421,7 @@ void ApplicationChasm::RegisterMCPTools(){
             //2026-10-09) left a NULL at the end that every name was compared against: any call crashed.
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                   "range","tower"};
+                                   "range","tower","ropewalk"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             std::string t = args.value("tool",std::string());
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){

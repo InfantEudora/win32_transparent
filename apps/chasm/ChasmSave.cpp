@@ -69,10 +69,13 @@ json ChasmSaveToJson(const ChasmSave& s){
         buildings.push_back(jb);
     }
     //[plot, kind] - the kind with its site and gate flags - and a road's or wall's line as a third; a garden's
-    //or lot's owner as a fourth, its yard's building (yards_plan.md), the line 0 before it.
+    //or lot's owner as a fourth, its yard's building (yards_plan.md), the line 0 before it; a road's arch's floors
+    //built as a fifth (arches_plan.md), the owner 0 before it.
     json grounds = json::array();
     for (const ZoneSavedGround& gr : s.grounds){
-        if (gr.owner){
+        if (gr.arch){
+            grounds.push_back(json::array({gr.plot,gr.kind,gr.line,gr.owner,gr.arch}));
+        }else if (gr.owner){
             grounds.push_back(json::array({gr.plot,gr.kind,gr.line,gr.owner}));
         }else if (gr.line){
             grounds.push_back(json::array({gr.plot,gr.kind,gr.line}));
@@ -133,7 +136,7 @@ json ChasmSaveToJson(const ChasmSave& s){
                                    {"timer",k.timer},{"stint",k.stint},{"route",route},{"speed",k.speed},{"seg",k.seg},
                                    {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors},
                                    {"health",k.health},{"water",k.water},{"post",k.post},{"pack",pack},
-                                   {"archery",k.archery}});
+                                   {"archery",k.archery},{"chosen",k.f_chosen}});
         }
         //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father,
         //surname.
@@ -188,9 +191,14 @@ json ChasmSaveToJson(const ChasmSave& s){
             crates.push_back(json{{"id",c.id},{"plot",c.plot},{"pos",json::array({c.pos.x,c.pos.y})},{"goods",goods},
                                   {"origin",c.origin},{"by",c.by},{"tick",c.tick}});
         }
+        //The towers' guard counts (defence_plan.md, step 8): [building, count].
+        json guards = json::array();
+        for (const auto& gc : e.guards){
+            guards.push_back(json::array({gc.first,gc.second}));
+        }
         economy = json{{"stocks",stocks},{"pantries",pantries},{"felled",props},{"people",workers},{"fields",fields},
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
-                       {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead}};
+                       {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards}};
     }
     return json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -356,6 +364,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.water = wk.value("water",(int)NEEDS_WATER_FULL);
             k.post = wk.value("post",-1);       //defence_plan.md: nobody was posted before orders
             k.archery = wk.value("archery",0);  //range_plan.md: nobody had trained before ranges
+            k.f_chosen = wk.value("chosen",false);      //defence_plan.md step 8: no guard was posted by hand before
             if (wk.contains("pack") && wk["pack"].is_object()){
                 for (auto it = wk["pack"].begin(); it != wk["pack"].end(); ++it){
                     int g = GoodByName(it.key());
@@ -430,6 +439,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             out.economy.crates.push_back(c);
         }
         out.economy.next_crate = e.value("next_crate",1u);
+        //A save from before the guard counts has none: its towers keep every place (Economy::Restore).
+        for (const json& gc : e.value("guards",json::array())){
+            out.economy.guards.push_back(std::make_pair(gc[0].get<uint32_t>(),gc[1].get<int>()));
+        }
         for (const json& f : e.value("fields",json::array())){
             EconomyField fd;
             fd.building = f[0].get<uint32_t>();
@@ -453,6 +466,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         g.kind = gr[1].get<int>();
         g.line = (gr.size() >= 3) ? gr[2].get<uint32_t>() : 0;
         g.owner = (gr.size() >= 4) ? gr[3].get<uint32_t>() : 0;
+        g.arch = (gr.size() >= 5) ? gr[4].get<int>() : 0;
         out.grounds.push_back(g);
     }
     //An older save's "walkers" - the debug walker, retired 2026-10-07 - are let go unread.

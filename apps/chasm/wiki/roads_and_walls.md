@@ -4,7 +4,7 @@ aliases: road, roads, wall, walls, palisade, gate, gates, gate door
 kind: buildings
 status: built
 summary: Drawn as lines and built by people without a job. Roads cost only work and double walking speed; walls cost wood too; a road through a wall is a gate whose door can be shut.
-plans: line_works_plan.md > As built; defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner
+plans: line_works_plan.md > As built; defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner; arches_plan.md > As built: step 2, the floor; arches_plan.md > As built: step 3, built as a site; arches_plan.md > As built: step 4, losing it
 code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody
 verified: 2026-10-10
 ---
@@ -36,7 +36,7 @@ clear they walk straight; otherwise they follow the grid, choosing the quickest 
 ## Walls and gates
 
 - Nobody walks onto or through a standing wall plot.
-- A road crossing a wall makes a **gate**, the only way through.
+- A road crossing a wall makes a **gate**, the only way through. Never under a built arch (see Arches).
 - A gate's door can be **shut** from its card. Then nobody walks through, the colony's own people
   included. Everyone walking re-plans, and whoever is cut off waits until it opens. Nobody can be ordered
   onto a shut gate ([[Posts]]).
@@ -49,6 +49,16 @@ one of them: the building on both sides if it is one, otherwise the one with the
 older on a tie). It is drawn in that building's look, and clicking it selects that building. A house never
 bridges into a store, nothing bridges to a guard tower, and no arch goes over a gate.
 
-- [planned] The arch's storeys counted as its building's floor, and built as a site with scaffolding over the
-  road (`arches_plan.md`).
+Its storeys over the passage are that building's **floor**: a [[House|house]]'s places, pantry room and
+firewood, a [[Store|store]]'s room, a builders' hut's builders. They are **built** like the building's own
+storeys ([[Construction]]): once both sides stand to its height, its floor is part of the building's site, at
+what a storey of that building costs there, with **scaffolding over the road** until it stands. The road stays
+open under it. So a storey added beside a road can bring an arch's floor after it.
+
+**Losing it.** If a side loses a storey, or the road under it is erased, the arch's floor comes down with it at
+once, and its wood is lost, as with any storey taken off. The building keeps its goods, even if it now holds more
+than its room. A house can be left [[House|crowded]]. In play the message line says "THE ARCH OVER THE ROAD CAME
+DOWN WITH IT". Building more never takes an arch down: an arch with a floor built stays even when tall buildings
+make its row longer than three, and only new arches are held to that. A wall can't be drawn across a road with an
+arch standing over it, so the wall has a gap there until the arch is taken down first.
 - [planned] A gatehouse between two [[Tower|guard towers]] over a gate.

@@ -16,7 +16,8 @@ with the tower as his pantry. An order to him comes first and suspends the job l
 
 With a person selected, a right click on a plot sends them there; their card releases them. An order is
 refused for a child, onto a plot with a building, a wall or a shut gate on it (a camp and a standing
-bridge count as open ground), and onto a plot they can't walk to.
+bridge count as open ground), and onto a plot they can't walk to. A right click on a [[Guard tower|guard
+tower]] instead makes them one of its guards, by hand.
 
 ## On the post
 
@@ -37,7 +38,3 @@ They take water ({NEEDS_PACK_WATER} units) and food (worth {NEEDS_PACK_FOOD:days
 provisions first where there are any, since one is the whole pack's food. They eat from it as at home, so a
 pressing need only comes once it's empty. Back home after release, what is left goes into the pantry, but
 provisions, which stay packed: no home holds them.
-
-## Planned
-
-- A right click on a tower, and builders keeping towers full: see [[Guard tower]].
