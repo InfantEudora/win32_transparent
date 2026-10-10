@@ -221,8 +221,8 @@ Each step tested before the next, by the tool and a replay.
    food; villagers: last resort), the store chip, and caretakers making them at the hut. Tested: made only
    when wanted; villagers eat them only with nothing else in reach and never fetch them home. Nothing wants
    any yet: the tower (step 6) is the first.
-6. **The guard tower**: the kind, its mesh, placement including the wall's line, its places and the guard
-   job, its stock for posted people only, built with provisions and water.
+6. **The guard tower** - BUILT 2026-10-10, below: the kind, its mesh, placement including the wall's line, its
+   places and the guard job (archery first), its stock for posted people only, built with provisions and water.
 7. **The caretakers' resupply**: builders keep towers full, ahead of building.
 8. **A right-click on a tower** posts the selected person there, if it has a free place.
 
@@ -232,7 +232,8 @@ Each step tested before the next, by the tool and a replay.
   zombies come in winter.
 - **How long a provision takes to make** - tuning, like every other number here, which are first
   figures for playtesting to move (`needs_plan.md`, "The numbers are tuning, not rules").
-- **The tower's roof**, and its key on the build grid.
+- **The tower's roof** - none for now: an open platform behind a parapet (step 6). Its key is T, after RANGE
+  on the build grid, which leaves ERASE on a row of its own.
 - **Releasing a tower's guard** by an order: the order would suspend the tower job like any other.
 - **Sites take food and water people need** (step 4): a site's water and provisions come out of the same
   stores and camp people drink and eat from, with nothing kept back. For a tower's 12 water that is a day of
@@ -470,6 +471,67 @@ tool), `ApplicationChasmSelect.cpp` (what a builder is doing, the hut's card, th
     - a save and load kept the stores' provisions and his pack. The recording, 5,613 ticks: two replays equal
       on every tick.
   - The store card's chips: six, on two rows; the provisions chip pressed off and on through the overlay.
+
+## As built: step 6, the guard tower (2026-10-10)
+
+Files: `Zones.*` (`ZONE_KIND_TOWER`, `ZoneKindPaintStoreys`, the wall's plot taken, a storey less taking it whole),
+`Economy.*` (`WORKER_JOB_GUARD`, `ECONOMY_TOWER_*`, `EconomyPosted`, `EconomyPostPlot`, `EconomyPostPoint`,
+`EconomyAtPost`, `EconomyOnTower`, `EconomyState::door`; `AssignJobs`, `Derive`, `Tick`, `StoreyGoods`, `StoreyKept`,
+`Build`, `Needs`, `SeekSupplyOf`, `GoHome`, `GoToPost`, `Replan`, `TickWorker`), `BuildingMesh.*` (`BuildTower`,
+`BuildingTowerDeck`), `RoadMesh.cpp` (the palisade against a tower), `ApplicationChasm*` (tool T, the build bar, GUARDS
+in the jobs corner, the cards, the ghost, guards drawn on the platform, NOBODY AT THE TOWER, `chasm_economy`'s
+`towers`).
+
+- **The kind**: `ZONE_KIND_TOWER` (11), one plot, painted WHOLE - both storeys at once (`ZoneKindPaintStoreys`); a
+  click on one adds nothing, and taking a storey off takes it all. A building's rules, and IN A WALL'S LINE: on a wall
+  plot, planned or standing, it takes the plot (its ground goes). Never on a road. A building stops walkers, so the
+  wall stays shut; a guard walks in from either side, as anyone walks into his own house.
+- **The look** (`BuildTower`, drawn apart from the house bodies like the winch): a square of upright logs round the
+  plot's point, a band of dark lashing at each storey's top, a thick post at each corner; whole, a platform of planks a
+  little wider than the walls, a parapet of sharpened stakes round it - the palisade's - and a ladder up the first of
+  its south, east, west and north sides with no wall running off that way. No roof. Square to the world. A wall beside
+  it runs on past its half-way point up to the tower's side (`RoadMesh`), and a gate beside it hangs its leaf from it.
+- **Built with** wood by its floor area (as any building) and `ECONOMY_TOWER_WATER` water and `ECONOMY_TOWER_PROVISIONS`
+  provisions, half a storey (`StoreyGoods`) - the provisions the first thing that makes caretakers make them. What a
+  storey takes of those it KEEPS as its stock (`StoreyKept`), so a built tower holds all of it. Placed in debug it
+  stands full (`Tick`, for a tower new to the economy that stands whole).
+- **Its places**: `ECONOMY_TOWER_GUARDS`, once it stands whole. Staffed in the one order like any workplace, from the
+  free: by ARCHERY first - what the range trained (`range_plan.md`) - then by precision against the walk, as any
+  place. `WORKER_JOB_GUARD` (5).
+- **A guard** is POSTED by his job (`EconomyPosted`): from home he packs and goes up (`TakePost`), at the end of any
+  errand he goes back up instead of home (`GoHome`), and he runs no errands. His post is the tower's plot
+  (`EconomyPostPlot`, via `EconomyState::door`); his place on it one of two, west and east of its middle by his rank
+  among its guards (`EconomyPostPoint`). An order to him comes first and suspends the job like any other.
+- **The tower is his pantry** (`Needs`): standing on it he eats and drinks from its stock as at home - a whole unit
+  whenever it fits - and from his pack only a kind the tower has none of. (First built eating the pack after the
+  tower, a bean fitted where a provision did not and came out of the pack.) Tower and pack empty, a pressing need
+  sends him to the nearest supply - towers count, for the posted - and back up.
+- **Nobody else's**: `SeekSupplyOf` passes towers by for anyone not posted; no carrier, family or caretaker takes
+  from one (they take only from the kinds they name); a tower takes no deliveries yet (step 7). The top bar's
+  stored goods leave towers out.
+- **Losing the job** - the tower pulled down, its places gone: off the tower and home, on the next tick.
+- **Shown**: the tower card - its guards with their archery and precision, "1 of 2 guards" amber while short, its
+  stock as a kept strip ("its guards'"); a guard's badge is the spear, his card "Guard on the tower 5: lives on its
+  stock", what he does "going up the tower", "on watch on the tower", "cut off from the tower"; guards drawn standing
+  on the platform; NOBODY AT THE TOWER in NEEDS ATTENTION; GUARDS in the jobs corner. `chasm_economy` gives `towers`
+  (places, guards, stock) and a worker's `post` with `ordered`.
+- **Tested** (seed 12, a builders' hut and a store placed standing by the camp, the camp given food for the run):
+  - Archery first: the two best by precision (9, 8) posted out of the way, the next (precision 6) trained at a
+    one-cell range to 7.8% archery, the range erased, the two released - a tower placed in debug took the trainee
+    and the 8.
+  - Placed in debug: 12 water and 8 provisions, 2 places. Both guards went up and stood at their two places; with
+    their bars set low they ate and drank from the tower on that tick, their packs untouched, and never left it.
+  - With every other water emptied, a thirsty villager never went to the tower. The tower emptied, a guard drank his
+    pack down, went to the store for water and came back up.
+  - On a standing wall plot: taken, the wall beside it standing; on a road: refused, "a road is there".
+  - Built in play: wood 20, water 12, provisions 8 wanted; the first storey stood keeping 6 water and 4 provisions,
+    the whole at tick 6,000 with 12 and 8 - the caretaker made all 8 - and took two guards. (A first run without
+    the extra food stalled after the first storey: a colony with no fields ate the last wheat and beans first.)
+  - Erased with its guards on it: both jobless and on their way home on the next ticks.
+  - A save and load kept the towers' stock and their guards. The recording, 13,437 ticks: two replays equal on
+    every tick.
+  - Seen in the game: the palisade running up to the tower's sides, the ladder on a side clear of the wall, guards on
+    the platform behind the parapet.
 
 ## Later: agreed in the gameplay plan, not planned yet
 

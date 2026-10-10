@@ -1,15 +1,18 @@
 ---
 title: Posts
-aliases: post, order, orders, pack, posted, guard
+aliases: post, order, orders, pack, posted
 kind: people
 status: partial
 summary: The player can order a grown-up to stand on a plot. It becomes their job while it lasts, and they live off a pack they take along.
-plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > Build order
+plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order
 code: Economy.cpp: Order TakePost GoToPost FillPack Unpack; Economy.h: EconomyCanOrder NEEDS_PACK_WATER
-verified: 2026-10-09
+verified: 2026-10-10
 ---
 
 ## Ordering
+
+A [[Guard tower|guard]] is posted by his job instead: his post is his tower, and he lives on it as below,
+with the tower as his pantry. An order to him comes first and suspends the job like any other.
 
 With a person selected, a right click on a plot sends them there; their card releases them. An order is
 refused for a child, onto a plot with a building, a wall or a shut gate on it (a camp and a standing
@@ -37,6 +40,4 @@ provisions, which stay packed: no home holds them.
 
 ## Planned
 
-- [planned] Guard towers, stocked with provisions and water for posted people; a right click on a tower
-  posts the selected person there.
-- [planned] Builders as caretakers keeping the towers full (they already make [[Provisions|provisions]]).
+- A right click on a tower, and builders keeping towers full: see [[Guard tower]].

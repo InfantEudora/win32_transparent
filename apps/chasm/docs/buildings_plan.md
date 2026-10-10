@@ -20,6 +20,10 @@ and later the winch to a balcony. This is the step that comes first.
   plots joined to the building it is making - one that jumps across a gap starts another; a diagonal
   step across a cell brings the corner plot between, since a drag on this grid steps diagonally as
   often as not.
+  *Since 2026-10-10 (the user's):* the click's storey is sent on the release, so a drag that starts on a
+  building no longer adds a floor to the plot it started from. And a building is also extended the way
+  a yard is painted (`yards_plan.md`, "Extend"): select it, its card's **Extend** takes up its tool, and
+  every plot painted must join it or is refused - never a new building beside it.
 - **Erasing through a building** can leave it in pieces: the largest keeps its identity (and later
   its people and goods); each other piece becomes a building of its own (later with its share of the
   stock, by floor area). Deterministic, so a replay stays exact.

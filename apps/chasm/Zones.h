@@ -28,9 +28,11 @@
     that starts on a building of the same kind extends that one, and the stroke goes on adding to
     its building - plots joined to it only (a diagonal step across a cell brings the corner plot
     between, so the building stays one piece); a stroke that jumps a gap, or fills a house, goes on
-    with a new one. Separate strokes stay separate buildings even where they touch. Erasing a plot can
-    leave a building in pieces: the largest keeps its id, each other piece becomes a building of its
-    own (Zones::Apply).
+    with a new one. Separate strokes stay separate buildings even where they touch. A building NAMED in
+    the command (the selected one - its card's Extend, the user's 2026-10-10) is extended the way a yard
+    is painted: each plot must join it (ZoneCanExtend), or is refused, never a new building. Erasing a
+    plot can leave a building in pieces: the largest keeps its id, each other piece becomes a building of
+    its own (Zones::Apply).
 
     THE RULES, all checked when a command arrives, so the state is always valid:
       - A building needs its plot flat: every corner of every fine cell around it on the plot's
@@ -65,6 +67,10 @@
       - A WINCH is one plot, on the rim right above a balcony: its plot on the plateau, balcony ground
         among its cells' corners and no open chasm - the one exception to "too close to a cliff". It
         lowers to its LANDING (ZoneWinchLanding), a balcony plot nothing may be built on.
+      - A GUARD TOWER (docs/defence_plan.md) is one plot, painted whole - both its storeys at once - by a
+        building's rules, and also IN A WALL'S LINE: painted on a wall plot, planned or standing, it takes
+        that plot over (the wall's ground goes), the palisade ending against it as against a gate's post.
+        A building stops walkers, so the wall stays shut. Never on a road, so never on a gate.
 
     CONSTRUCTION (docs/construction_plan.md): of a plot's storeys, `standing[v]` are built; the rest
     are a CONSTRUCTION SITE. A debug command builds what it paints at once - standing = storeys on the
@@ -120,7 +126,8 @@
 #define ZONE_KIND_BRIDGE        8       //across a river, bank to bank (docs/bridge_plan.md)
 #define ZONE_KIND_BUILDERS      9       //a builders' hut: employs builders, staffed first (docs/builders_plan.md)
 #define ZONE_KIND_RANGE         10      //an archery range, on coarse cells like a field: archers train there (docs/range_plan.md)
-#define ZONE_KIND_COUNT         11
+#define ZONE_KIND_TOWER         11      //a guard tower: one plot, two storeys, its guards on top (docs/defence_plan.md)
+#define ZONE_KIND_COUNT         12
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 //A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range painted like one.
@@ -128,6 +135,11 @@ inline bool ZoneKindOnCells(int kind){
     return kind == ZONE_KIND_FIELD || kind == ZONE_KIND_RANGE;
 }
 int ZoneKindMaxStoreys(int kind);
+//The storeys a plot of `kind` is painted with: one, a click adding more - but a GUARD TOWER whole, all its storeys
+//at once, since it is only ever that high (defence_plan.md).
+inline int ZoneKindPaintStoreys(int kind){
+    return (kind == ZONE_KIND_TOWER) ? ZoneKindMaxStoreys(kind) : 1;
+}
 
 //What grows on a field. Never renumber.
 #define ZONE_CROP_WHEAT         0
@@ -362,7 +374,7 @@ public:
     //Applies one command. True if anything changed; otherwise `last_refusal` says why not.
     //`kind` is the ground, building or crop the op takes (ZoneOp); `stroke` the drag it is part of.
     //`f_play`: a player's command, whose building is a construction site until it is raised. `owner`: the
-    //building a garden or lot is painted for (yards_plan.md), 0 for whatever it touches.
+    //building a garden or lot is painted for (yards_plan.md), or a building painted to extend; 0 for neither.
     bool Apply(int op, uint32_t index, int kind = 0, uint32_t stroke = 0, bool f_play = false, uint32_t owner = 0);
 
     /*
@@ -400,6 +412,13 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& z);
 //The rules as questions, for the commands and for the view's hover (red when it would be refused).
 //`why` may be NULL. A building of `kind` on `plot`; it joins `joining` (an id, or 0 for a new one).
 bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining, const char** why);
+//The plot at a cell's corner between `plot` and building `joining` across that cell, free and buildable for
+//it - brought in first so a diagonal step keeps the building one piece. -1 if there is none.
+int ZoneJoinCorner(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining);
+//A building of `kind` painted on `plot` to extend building `owner`: it stands and is of `kind`, `plot` joins it
+//(beside it, or through ZoneJoinCorner) and a house has room for what that adds. True for owner 0, and on a
+//built plot: a click there is a storey of whatever stands on it.
+bool ZoneCanExtend(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t owner, const char** why);
 /*
     YARDS (docs/yards_plan.md): the gardens and lots a building owns. A house owns gardens and lots, a
     woodcutter lots - his woodpile's; no other kind, and no road or wall, is ever owned.

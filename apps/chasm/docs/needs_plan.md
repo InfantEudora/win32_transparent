@@ -170,7 +170,7 @@ be redone for another tuning or difficulty.
    the settlers' supplies were retuned in 2b40394). Measured: a new colony with nothing built (when the
    first dies), the same with a collector and a greens field (it lives), and a first winter with and
    without firewood. Not the last pass - see "The numbers are tuning, not rules".
-5. The overlay: a death says so, as a refusal does; a lost colony says so.
+5. The overlay: a death says so, as a refusal does; a lost colony says so. BUILT 2026-10-10, below.
 
 After each step, `tools/chasm_replay_test.py` must still pass. (Retired 2026-10-08 - see `README.md`; a new
 replay comes after the mapping work.)
@@ -393,3 +393,22 @@ Files: `Economy.*` (`HomeShort`, `FetchHome`, `TakeHome`, `RouteHome`; states `W
 - **The side stack, fixed** (the user's, same day): first built as slabs against the wall, the flue and its
   cap showed their open backs above the eaves, where the roof slopes away, and the cap's top fought the
   flue's; they are closed blocks now, the cap's top above the flue's.
+
+## As built: step 5, deaths told (2026-10-10)
+
+Files: `ApplicationChasmTime.cpp` (beside the refusal, in `DrawBuildBar`), `ApplicationChasm.h` (`deaths_seen`,
+`deaths_world`, `death_shown`, `death_since`, render thread only).
+
+- **A death** shows in red at the bottom in the middle, on the line above a refusal's, for 5 seconds (a refusal has
+  3): "JELLE DE WIT DIED OF THIRST" - or of hunger, or of cold - with "(AND 5 MORE)" when several died between two
+  frames. It is the view's: the render thread counts the colony's dead against the ones already told.
+- **Only fresh deaths**: one more than half a day old is not told, and a new map or a different world resets the
+  count without telling - so a load, or switching into play mode after deaths in debug, brings no message for
+  the dead it already had.
+- **A lost colony** - nobody alive and somebody dead - shows "THE COLONY IS LOST - NOBODY IS LEFT" above that,
+  for as long as it is so.
+- **Play mode only**, like the refusals: debug mode has the panel.
+- **Checked** (a copied exe on 8772, the window restored for its UI): seed 12 in play mode; a man out walking run
+  dry: his line showed. Then the speed at 10x with nothing built: everyone dead of thirst by summer 4, and both
+  lines on screen - the lost colony, and "MARIT WEVER DIED OF THIRST (AND 5 MORE)" below it.
+- **Not done**: a click on the line taking the view to where it happened - the dead keep no place.

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 9d71f293-16f6-4781-a640-5c4b9931508c
-  modified: 2026-09-29T19:43:10.202Z
+  modified: 2026-10-09T22:31:04.061Z
 ---
 
 Stopping a running app instance (taskkill //F //IM <app>.exe) to relink or free port 8765 is fine without asking - said 2026-09-23 while iterating on archer.
@@ -15,6 +15,10 @@ Stopping a running app instance (taskkill //F //IM <app>.exe) to relink or free 
 **How to apply:** kill the instance, rebuild, mention in the reply that you did. Still ask before stopping OTHER tools that are not a game app (lockd, another agent's build). See [[running-app-is-user-driven]].
 
 Refinement (2026-09-29): when driving your OWN test instance on another port (e.g. --mcp-port 8768) while the user plays theirs on 8765, stop yours by PID (`netstat -ano | grep 8768` names it, then `taskkill //F //PID <pid>`), not by image name - `//IM archer.exe` would also close the game they are playing. Killing by name is for when the exe must go to relink.
+
+Gentler than killing (2026-10-10, chasm): RENAME the running exe aside (`mv build/x.exe build/x_was_running.exe` -
+Windows allows it), build, and the user's game keeps running from the renamed file; delete it once it has closed.
+engine.mk refuses an `EXE=` override ("not a build setting"), so a different output name is not an option.
 
 And (2026-09-29): an instance ANOTHER AGENT left running (e.g. on 8768 after it released the port
 lock) is not yours to stop - the user rejected the taskkill and closed it themselves. Say it is

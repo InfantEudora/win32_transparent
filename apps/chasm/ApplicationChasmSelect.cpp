@@ -259,6 +259,7 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
         case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
         case WORKER_JOB_BUILDER:    DrawHammerIcon(o,c,is); break;
         case WORKER_JOB_ARCHER:     DrawBowIcon(o,c,is); break;
+        case WORKER_JOB_GUARD:      DrawSpearIcon(o,c,is); break;      //a tower's: posted there (defence_plan.md)
         case WORKER_JOB_PLAYING:    DrawBallIcon(o,c,is); break;
         case WORKER_JOB_BABY:
         case WORKER_JOB_CARING:     DrawBabyIcon(o,c,is); break;
@@ -295,8 +296,11 @@ const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
 }
 
 //What he is doing, as a sentence's end - the card's and the house's list's. With the zones, a wall's way
-//cleared is told from a road's (line_works_plan.md, step 3): the same errand on another line.
-const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
+//cleared is told from a road's (line_works_plan.md, step 3): the same errand on another line. With the economy,
+//a post he is kept from is told from one he stands on.
+const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const EconomyState* e = NULL){
+    //A guard's post is his tower (defence_plan.md) - unless an order has him elsewhere.
+    bool f_tower = k.job == WORKER_JOB_GUARD && k.post < 0;
     int line_plot = (z && k.site && EconomyIsGroundSite(k.site)) ? EconomyGroundSitePlot(k.site) : -1;
     if (line_plot >= 0 && line_plot < (int)z->ground.size() && z->ground[line_plot] == ZONE_GROUND_WALL){
         if (k.state == WORKER_TO_ROAD){
@@ -343,8 +347,9 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL){
         case WORKER_TO_PLAY:    return "going out to play";
         case WORKER_PLAYING:    return "playing";
         //Posted (defence_plan.md): standing there, or kept from it - a wall, a gate - and waiting for a way.
-        case WORKER_TO_POST:    return "going to the post";
-        case WORKER_ON_POST:    return (z && z->world && !EconomyAtPost(*z->world,k)) ? "cut off from the post" : "standing guard";
+        case WORKER_TO_POST:    return f_tower ? "going up the tower" : "going to the post";
+        case WORKER_ON_POST:    return (e && !EconomyAtPost(*e,k)) ? (f_tower ? "cut off from the tower" : "cut off from the post")
+                                     : f_tower ? "on watch on the tower" : "standing guard";
         case WORKER_TO_RANGE:   return "going to the range";
         case WORKER_TRAINING:   return "training";
         //A builder as a caretaker: provisions for the sites (defence_plan.md, step 5).
@@ -372,6 +377,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_BRIDGE:      return "Bridge";
         case ZONE_KIND_BUILDERS:    return "Builders' hut";
         case ZONE_KIND_RANGE:       return "Archery range";
+        case ZONE_KIND_TOWER:       return "Guard tower";
         default:                    return "?";
     }
 }
@@ -383,6 +389,7 @@ const char* JobTitle(int job){
         case WORKER_JOB_WATER:      return "Water carrier";
         case WORKER_JOB_BUILDER:    return "Builder";
         case WORKER_JOB_ARCHER:     return "Archer";
+        case WORKER_JOB_GUARD:      return "Guard";
         case WORKER_JOB_PLAYING:    return "Child";
         case WORKER_JOB_BABY:       return "Baby";
         case WORKER_JOB_CARING:     return "Caring";
@@ -627,18 +634,17 @@ std::string GoodsList(const EconomyState& e, uint32_t id){
 }
 
 //A family's name, from any of them: a person's name less the first name.
-std::string FamilyName(const EconomyWorker& k){
-    std::string s = EconomyPersonName(k);
-    size_t at = s.find(' ');
-    return (at == std::string::npos) ? s : s.substr(at + 1);
-}
-
-//The family living in house `id`, by name - empty with nobody there.
+//The family living in house `id`, by name - empty with nobody there. A couple's family goes by the surname their
+//children take (COUPLES, Economy.h): a new couple keeps two, and the one the house is known by is the children's.
 std::string HouseFamily(const EconomyState& e, uint32_t id){
     for (const EconomyWorker& k : e.workers){
-        if (k.house == id){
-            return FamilyName(k);
+        if (k.house != id){
+            continue;
         }
+        bool f_couple = std::any_of(e.workers.begin(),e.workers.end(),[&](const EconomyWorker& o){
+            return o.id == k.partner && o.house == id;
+        });
+        return EconomySurnameName(f_couple ? EconomyCoupleSurname(e,k.id,k.partner) : k.surname);
     }
     return std::string();
 }
@@ -757,6 +763,8 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         c.Text(Format("Builder at the builders' hut %u: carries wood to sites and builds",k.building));
     }else if (k.job == WORKER_JOB_ARCHER){
         c.Text(Format("Trains at the archery range %u",k.building));
+    }else if (k.job == WORKER_JOB_GUARD){
+        c.Text(Format("Guard on the tower %u: lives on its stock",k.building));
     }else if (k.job == WORKER_JOB_FARMER){
         //His share of his family's land (land_plan.md).
         int fields = 0;
@@ -793,7 +801,7 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     if (!pack.empty()){
         c.Text("Pack: " + pack,HUD_TEXT_DIM);
     }
-    std::string doing = Doing(k,&z);
+    std::string doing = Doing(k,&z,&e);
     if (k.carry > 0){
         doing += Format(", with %i %s",k.carry,GoodName(k.carry_good));
     }
@@ -831,7 +839,8 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
 
 /*
     A house's or a hut's YARD (yards_plan.md): what it owns, and the chips that take up the tool to add to it -
-    the building staying selected, so what is painted is its own.
+    the building staying selected, so what is painted is its own. A house's EXTEND (the user's, 2026-10-10) is
+    the same for its plots: the house tool up, painting on from the house - while it has room for one more.
 */
 void YardLines(const ZoneState& z, uint32_t id, Card& c){
     int kind = z.buildings[id].kind;
@@ -850,6 +859,9 @@ void YardLines(const ZoneState& z, uint32_t id, Card& c){
     CardLine add;
     add.type = CARD_CHOICE;
     add.choice_action = OVERLAY_HIT_TAKE_TOOL;
+    if (kind == ZONE_KIND_HOUSE && z.buildings[id].size < ZONE_HOUSE_MAX_PLOTS){
+        add.choices.push_back(std::make_pair(std::string("Extend"),(int)CHASM_TOOL_HOUSE));
+    }
     add.choices.push_back(std::make_pair(std::string("Add lot"),(int)CHASM_TOOL_LOT));
     if (ZoneOwnsGround(kind,ZONE_GROUND_GARDEN)){
         add.choices.push_back(std::make_pair(std::string("Add garden"),(int)CHASM_TOOL_GARDEN));
@@ -963,7 +975,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         for (const EconomyWorker& k : e->workers){
             if (k.house == id){
                 c.Text(Format("  %s, %i - %s, %s",EconomyPersonName(k).c_str(),EconomyAgeAt(k.born,e->tick),JobTitle(k.job),
-                              Doing(k,&z)),
+                              Doing(k,&z,e)),
                        EconomyIndoors(k) ? HUD_TEXT_DIM : HUD_TEXT);
             }
         }
@@ -1203,7 +1215,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                     f_worked = true;
                     int skill = EconomyJobSkill(k.job);
                     std::string line = Format("%s (%s %i) - %s",EconomyPersonName(k).c_str(),SkillName(skill),(int)k.skills[skill],
-                                              Doing(k,&z));
+                                              Doing(k,&z,e));
                     if (k.job == WORKER_JOB_ARCHER){
                         line += Format(", archery %i%%",(int)(k.archery * 100LL / ARCHERY_FULL));     //range_plan.md
                     }
@@ -1279,6 +1291,34 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         if (id < e->stock.size() && AnyGoods(e->stock[id])){
             c.Stock("Holds","for provisions",e->stock[id],0,true,EconomyReserved(*e,id));
             c.Text("Wheat and beans are made into provisions here, for the sites",HUD_TEXT_DIM);
+        }
+    }
+    /*
+        A GUARD TOWER (defence_plan.md): its guards, staffed by archery and then precision, and its stock - water and
+        provisions, KEPT: what its guards live on, and nobody else may take.
+    */
+    if (b.kind == ZONE_KIND_TOWER){
+        int places = (id < e->places.size()) ? e->places[id] : 0;
+        int working = 0;
+        for (const EconomyWorker& k : e->workers){
+            working += (k.job == WORKER_JOB_GUARD && k.building == id) ? 1 : 0;
+        }
+        if (places > 0){
+            c.Text(Format("%i of %i guard%s",working,places,places == 1 ? "" : "s"),(working < places) ? HUD_AMBER : HUD_TEXT);
+        }
+        for (const EconomyWorker& k : e->workers){
+            if (k.job == WORKER_JOB_GUARD && k.building == id){
+                c.Text(Format("  %s (archery %i%%, precision %i) - %s",EconomyPersonName(k).c_str(),
+                              (int)(k.archery * 100LL / ARCHERY_FULL),(int)k.skills[SKILL_PRECISION],Doing(k,&z,e)));
+            }
+        }
+        if (places > 0 && working < places){
+            c.Text("A guard needs a free adult with a house - the best archer first",HUD_TEXT_DIM);
+        }
+        if (id < e->stock.size() && (info.storeys > 0 || AnyGoods(e->stock[id]))){
+            c.Stock("Holds","its guards'",e->stock[id],ECONOMY_TOWER_WATER + ECONOMY_TOWER_PROVISIONS,true,
+                    EconomyReserved(*e,id));
+            c.Text("Its guards eat and drink from it, and nobody else",HUD_TEXT_DIM);
         }
     }
 }
@@ -1407,6 +1447,7 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
     only.standing.assign(z.standing.size(),0);
     only.ground = z.ground;
     only.ground_built = z.ground_built;
+    only.gate = z.gate;     //a guard tower's ladder goes on a side no wall or gate runs off (BuildTower)
     only.field.assign(z.field.size(),0);
     std::vector<int> quads;
     for (size_t v = 0; v < z.building.size(); v++){

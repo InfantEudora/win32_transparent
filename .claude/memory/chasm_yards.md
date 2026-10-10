@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 962d00b9-0f7e-485d-b7ba-0758261e2ced
-  modified: 2026-10-09T13:47:46.143Z
+  modified: 2026-10-09T22:31:02.831Z
 ---
 
 Built 2026-10-09 with the user's agreement (docs/yards_plan.md). Gardens and lots belong to a building:
@@ -25,6 +25,12 @@ he fells nothing (card warning + issues row 8). The owner travels in CHASM_CMD_Z
 (see ZoneCommandPlay/ZoneCommandOwner). Any new writer of value[3] must go through ZoneCommandValue3.
 
 Postponed by the user: a house's lots extending its storage (their idea), and what gardens do.
+
+EXTEND (the user's, 2026-10-10; yards_plan.md "Extend"): the house card's "Extend" chip takes up the house tool
+with the house selected; any building tool with a same-kind building selected sends it as the command's owner and
+Zones::Apply extends that one or refuses (ZoneCanExtend, ZoneJoinCorner). A building tool's click storey is sent on
+the RELEASE (paint_press_plot), so a drag from a building no longer adds a floor. The old drag-from-a-building way
+was kept; the user may want it gone - ask, don't assume.
 
 **Why:** the user wanted ownership to work like fields' land, and the woodcutter to behave like a shut-in
 house (buildable, just not working).

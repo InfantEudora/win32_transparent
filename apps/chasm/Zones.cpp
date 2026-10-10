@@ -3,6 +3,7 @@
 #include "Walkers.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -59,6 +60,7 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_BRIDGE:      return "bridge";
         case ZONE_KIND_BUILDERS:    return "builders";
         case ZONE_KIND_RANGE:       return "range";
+        case ZONE_KIND_TOWER:       return "tower";
         default:                    return "none";
     }
 }
@@ -86,6 +88,7 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_CAMP:        return 1;
         case ZONE_KIND_BRIDGE:      return 1;
         case ZONE_KIND_BUILDERS:    return 2;       //a workshop, like the woodcutter's
+        case ZONE_KIND_TOWER:       return 2;       //and never less: painted whole (ZoneKindPaintStoreys)
         default:                    return 0;
     }
 }
@@ -634,7 +637,13 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (kind <= ZONE_KIND_NONE || kind >= ZONE_KIND_COUNT || ZoneKindOnCells(kind)){
         return refuse("no such building");
     }
-    if (!z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && ZoneLineGround(z.ground[plot])){
+    //A guard tower may take a wall's plot (defence_plan.md): it stands in the wall's line.
+    bool f_line_ok = kind == ZONE_KIND_TOWER && !z.ground.empty() && plot >= 0 && plot < (int)z.ground.size()
+                     && z.ground[plot] == ZONE_GROUND_WALL;
+    if (kind == ZONE_KIND_TOWER && joining){
+        return refuse("a tower is one plot");
+    }
+    if (!f_line_ok && !z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && ZoneLineGround(z.ground[plot])){
         return refuse((z.ground[plot] == ZONE_GROUND_WALL) ? "a wall is there" : "a road is there");
     }
     if (kind == ZONE_KIND_WINCH){
@@ -653,7 +662,7 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     if (!PlotIsBuildable(w,z,plot,why,f_water ? ZONE_RISE_ROAD : ZONE_RISE_HOUSE,f_water)){
         return false;
     }
-    if (!z.ground.empty() && ZoneLineGround(z.ground[plot])){
+    if (!f_line_ok && !z.ground.empty() && ZoneLineGround(z.ground[plot])){
         return refuse((z.ground[plot] == ZONE_GROUND_WALL) ? "a wall is there" : "a road is there");
     }
     if (joining && kind == ZONE_KIND_HOUSE && joining < z.buildings.size() &&
@@ -662,6 +671,73 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     }
     //A woodcutter needs no lot to be built (yards_plan.md, the user's 2026-10-09): without one of his own he
     //fells nothing, and his card and NEEDS ATTENTION say so - as a house shut in on every side does.
+    return true;
+}
+
+int ZoneJoinCorner(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining){
+    //A drag across this grid steps diagonally as often as not - from a plot to the one across a cell, which
+    //shares no edge with it. Of the cell's two other corners, the first that can be built.
+    const GridPicker& p = *w.picker;
+    int bridge = -1;
+    for (int i = 0; i < p.PlotQuadCount(plot) && bridge < 0; i++){
+        int qc = p.PlotQuadCorner(plot,i);
+        const GridQuad& q = w.grid->fine.quads[qc / 4];
+        int k = qc % 4;
+        if (z.building[q.v[(k + 2) % 4]] != joining){
+            continue;
+        }
+        int a = q.v[(k + 1) % 4];
+        int b = q.v[(k + 3) % 4];
+        int order[2] = {std::min(a,b),std::max(a,b)};
+        for (int c : order){
+            if (bridge < 0 && z.building[c] == 0 && ZoneCanBuild(w,z,c,kind,joining,NULL)){
+                bridge = c;
+            }
+        }
+    }
+    return bridge;
+}
+
+bool ZoneCanExtend(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t owner, const char** why){
+    auto refuse = [&](const char* reason){
+        if (why){
+            *why = reason;
+        }
+        return false;
+    };
+    if (plot < 0 || plot >= (int)z.building.size()){
+        return refuse("no such plot");
+    }
+    if (!owner || z.building[plot]){
+        return true;
+    }
+    if (owner >= z.buildings.size() || z.buildings[owner].size <= 0){
+        return refuse("that building is gone");
+    }
+    if (z.buildings[owner].kind != kind){
+        return refuse("that building is of another kind");
+    }
+    //Full is a refusal here, where a stroke of its own would go on with a new house - and the reason that
+    //matters wherever the plot is.
+    int most = (kind == ZONE_KIND_HOUSE) ? ZONE_HOUSE_MAX_PLOTS : INT_MAX;
+    if (z.buildings[owner].size >= most){
+        return refuse("a house is at most four plots - one family");
+    }
+    int nb[8];
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    bool f_beside = false;
+    for (int i = 0; i < n; i++){
+        f_beside = f_beside || z.building[nb[i]] == owner;
+    }
+    if (!f_beside){
+        if (ZoneJoinCorner(w,z,plot,kind,owner) < 0){
+            return refuse("an extension goes beside its building");
+        }
+        //The corner plot between comes with it: two more.
+        if (z.buildings[owner].size + 2 > most){
+            return refuse("a house is at most four plots - one family");
+        }
+    }
     return true;
 }
 
@@ -1476,33 +1552,16 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             //An empty plot: on with the stroke's building where it is joined to it and has room, or a
             //new one - a stroke that jumps a gap, or has filled a house, goes on with the next.
             //A winch is a plot of its own: a stroke of them makes one each.
-            uint32_t joining = (kind == ZONE_KIND_WINCH) ? 0 : stroke_target(kind);
-            /*
-                A drag across this grid steps diagonally as often as not - from a plot to the one across
-                a cell, which shares no edge with it. Then the plot at the cell's corner between them
-                joins first, so the building stays one piece: the first of the two that can be built.
-            */
-            int bridge = -1;
-            if (joining && !plot_touches(plot,joining)){
-                for (int i = 0; i < p.PlotQuadCount(plot) && bridge < 0; i++){
-                    int qc = p.PlotQuadCorner(plot,i);
-                    const GridQuad& q = w.grid->fine.quads[qc / 4];
-                    int k = qc % 4;
-                    if (state.building[q.v[(k + 2) % 4]] != joining){
-                        continue;
-                    }
-                    int a = q.v[(k + 1) % 4];
-                    int b = q.v[(k + 3) % 4];
-                    int order[2] = {std::min(a,b),std::max(a,b)};
-                    for (int c : order){
-                        if (bridge < 0 && state.building[c] == 0 && ZoneCanBuild(w,state,c,kind,joining,NULL)){
-                            bridge = c;
-                        }
-                    }
-                }
+            //A building named in the command is extended or nothing: a plot that cannot join it is refused.
+            if (owner && !ZoneCanExtend(w,state,plot,kind,owner,&why)){
+                last_refusal = why;
+                return false;
             }
+            uint32_t joining = owner ? owner : (kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER) ? 0 : stroke_target(kind);
+            //A diagonal step brings the plot at the cell's corner between first, so the building stays one piece.
+            int bridge = (joining && !plot_touches(plot,joining)) ? ZoneJoinCorner(w,state,plot,kind,joining) : -1;
             int room = (bridge >= 0) ? 2 : 1;
-            if (joining && ((!plot_touches(plot,joining) && bridge < 0) ||
+            if (!owner && joining && ((!plot_touches(plot,joining) && bridge < 0) ||
                             (kind == ZONE_KIND_HOUSE && state.buildings[joining].size + room > ZONE_HOUSE_MAX_PLOTS))){
                 joining = 0;
                 bridge = -1;
@@ -1523,11 +1582,18 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             if (!joining){
                 joining = NewBuilding(kind);
             }
+            //A guard tower in a wall's line takes the wall's plot (defence_plan.md): the palisade ends against it.
+            if (kind == ZONE_KIND_TOWER && state.ground[plot] == ZONE_GROUND_WALL){
+                state.ground[plot] = ZONE_GROUND_NONE;
+                state.ground_built[plot] = 0;
+                state.line[plot] = 0;
+                state.grounds--;
+            }
             state.stroke = stroke;
             state.stroke_building = joining;
             state.building[plot] = joining;
-            state.storeys[plot] = 1;
-            state.standing[plot] = f_play ? 0 : 1;      //a player's: a site, until the builders raise it
+            state.storeys[plot] = (uint8_t)ZoneKindPaintStoreys(kind);
+            state.standing[plot] = f_play ? 0 : state.storeys[plot];   //a player's: a site, until the builders raise it
             state.buildings[joining].size++;
             state.built_plots++;
             touch_road(plot);
@@ -1542,7 +1608,8 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             uint32_t id = state.building[plot];
             uint8_t& s = state.storeys[plot];
-            if (op == ZONE_OP_BUILD_REMOVE && s > 1){
+            //A guard tower is only ever whole (ZoneKindPaintStoreys): a storey less takes it all.
+            if (op == ZONE_OP_BUILD_REMOVE && s > 1 && state.buildings[id].kind != ZONE_KIND_TOWER){
                 s--;
                 state.standing[plot] = std::min(state.standing[plot],s);    //the top comes off, built or not
                 touch_road(plot);

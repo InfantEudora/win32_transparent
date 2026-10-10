@@ -86,8 +86,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     h.Bytes(&n,sizeof(n));
     h.Bytes(&e.next_person,sizeof(e.next_person));
     for (const EconomyWorker& k : e.workers){
-        int32_t who[7] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,(int32_t)k.mother,(int32_t)k.father,
-                          (int32_t)k.f_indoors,(int32_t)k.f_female};
+        int32_t who[8] = {(int32_t)k.id,(int32_t)k.family,(int32_t)k.house,(int32_t)k.mother,(int32_t)k.father,
+                          (int32_t)k.f_indoors,(int32_t)k.f_female,(int32_t)k.surname};
         h.Bytes(who,sizeof(who));
         h.Bytes(&k.born,sizeof(k.born));
         h.Bytes(&k.partner,sizeof(k.partner));
@@ -114,7 +114,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     n = (uint32_t)e.dead.size();
     h.Bytes(&n,sizeof(n));
     for (const EconomyDeath& d : e.dead){
-        uint64_t death[6] = {d.id,d.tick,(uint64_t)d.cause,(uint64_t)d.born,d.mother,d.father};
+        uint64_t death[7] = {d.id,d.tick,(uint64_t)d.cause,(uint64_t)d.born,d.mother,d.father,d.surname};
         h.Bytes(death,sizeof(death));
     }
     for (const EconomyField& f : e.fields){
@@ -273,7 +273,7 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     json j{{"id",k.id},{"name",EconomyPersonName(k)},{"family",k.family},{"house",k.house},
            {"age",EconomyAgeAt(k.born,tick)},{"stage",EconomyStageName(EconomyStageAt(k.born,tick))},
            {"birthday",EconomyBirthdayName(k.born)},{"born",k.born},{"mother",k.mother},{"father",k.father},
-           {"partner",k.partner},
+           {"partner",k.partner},{"surname",EconomySurnameName(k.surname)},
            {"female",k.f_female},
            {"skills",skills},{"indoors",EconomyIndoors(k)},
            {"building",k.building},{"job",EconomyJobName(k.job)},{"state",EconomyWorkerStateName(k.state)},
@@ -319,10 +319,12 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     }else if (k.site){
         j["site"] = k.site;
     }
-    //His post (defence_plan.md): the plot he was sent to, where it is, and whether he stands there now.
-    if (k.post >= 0 && e && e->world && k.post < (int)e->world->grid->fine.pos.size()){
-        vec2 p = e->world->grid->fine.pos[k.post];
-        j["post"] = json{{"plot",k.post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e->world,k)}};
+    //His post (defence_plan.md): the plot he was sent to - or a guard's tower - where on it he stands, and whether
+    //he stands there now.
+    int post = e ? EconomyPostPlot(*e,k) : -1;
+    if (post >= 0 && e->world && post < (int)e->world->grid->fine.pos.size()){
+        vec2 p = EconomyPostPoint(*e,k);
+        j["post"] = json{{"plot",post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e,k)},{"ordered",k.post >= 0}};
     }
     //His pack: what he carries to live on, by good, and its food in days.
     json pack = json::object();
@@ -1065,6 +1067,21 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             result["provisions"] = json{{"lacking",lacking},{"huts",huts}};
+            //GUARD TOWERS (defence_plan.md): each one's places, its guards, and its stock - theirs to live on.
+            json towers = json::array();
+            for (size_t id = 1; id < z->buildings.size(); id++){
+                if (z->buildings[id].size > 0 && z->buildings[id].kind == ZONE_KIND_TOWER){
+                    json guards = json::array();
+                    for (const EconomyWorker& k : e->workers){
+                        if (k.job == WORKER_JOB_GUARD && k.building == id){
+                            guards.push_back(k.id);
+                        }
+                    }
+                    towers.push_back(json{{"id",id},{"places",(id < e->places.size()) ? e->places[id] : 0},
+                                          {"guards",guards},{"stock",StockJson(*e,(uint32_t)id)}});
+                }
+            }
+            result["towers"] = towers;
             //The road works (line_works_plan.md): plots still to lay, the people out on them, trees felled.
             int planned = 0;
             int laid = 0;

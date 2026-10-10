@@ -206,6 +206,15 @@ class Walkers;
     round); with too few on hand and on their way for what is wanted, fetches a load of the scarcer from a
     store, the camp or a crate. The sites' carriers take them from the hut as from a store. What the hut holds
     that nobody wants any more goes to a store that takes it. A hut's stock is for this alone: nobody eats from it.
+    A GUARD TOWER (ZONE_KIND_TOWER, step 6) is a post as a workplace: ECONOMY_TOWER_GUARDS places once it stands
+    whole, filled like any other - by ARCHERY first, the range's training, then precision (range_plan.md). A
+    GUARD (WORKER_JOB_GUARD) lives as the posted do - out to his tower from home with his pack, never home
+    again while he has the job - and his post is a place on its platform (EconomyPostPoint). THE TOWER IS HIS
+    PANTRY: on it he eats and drinks from its stock as at home, so his pack waits while it has any. Its stock
+    is water and provisions, and it is BUILT WITH THEM (ECONOMY_TOWER_WATER, ECONOMY_TOWER_PROVISIONS, a share
+    a storey): what a storey takes of them it keeps, as its stock, not used up - and one placed in debug stands
+    full. Only posted people draw on it: SeekSupply passes towers by for villagers, and no carrier, family or
+    caretaker takes from one.
 
     --- CRATES (docs/crates_plan.md) -------------------------------------------------------------------
     A CRATE is goods lying on the ground: a store villagers only take from, gone when empty. A posted
@@ -267,6 +276,10 @@ class Walkers;
 #define ECONOMY_ROAD_STINT          8       //pieces of road work - a tree felled, a plot laid - a trip
 #define ECONOMY_ROAD_REACH          10.0f   //how far from him the next piece of a stint may be
 #define ECONOMY_POST_REACH          0.5f    //within this of his post's point he stands on it (defence_plan.md)
+#define ECONOMY_TOWER_GUARDS        2       //a guard tower's places (POSTS)
+#define ECONOMY_TOWER_WATER         12      //...its stock full, and what it is built with: 12 days for its two guards
+#define ECONOMY_TOWER_PROVISIONS    8       //...and its provisions, at 3 water to 2 provisions so both run out together
+#define ECONOMY_TOWER_STAND         0.28f   //a guard's place on its platform: this far either side of its middle
 //A worker's `site` naming a garden or lot plot rather than a building (the plot in the low bits).
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
@@ -329,7 +342,8 @@ const char* SkillName(int skill);
 #define WORKER_JOB_WATER        2
 #define WORKER_JOB_BUILDER      3       //at a builders' hut: carries wood to sites and builds, lays roads
 #define WORKER_JOB_ARCHER       4       //a trainee at an archery range: trains there, full time (range_plan.md)
-#define WORKER_JOB_COUNT        5
+#define WORKER_JOB_GUARD        5       //on a guard tower: posted there, living on its stock (defence_plan.md)
+#define WORKER_JOB_COUNT        6
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
@@ -418,6 +432,16 @@ std::string EconomyBirthdayName(int64_t born);      //"summer 4"
 int EconomyCoupleDay(uint32_t a, uint32_t b);
 
 /*
+    COUPLES (step 3). A couple forms when two grown people move into a free house together (HouseFamilies): an
+    adult man and an adult woman, of different families, not related (EconomyRelated), neither in a couple - a
+    widow stays single, her husband still hers. They found a NEW FAMILY there, each keeping their own SURNAME
+    (`surname`, given at birth), and their children take one of the two (EconomyCoupleSurname). The families
+    that need a house take theirs first; the couples what is still free - the eldest unpaired adult first, with
+    the eldest who can pair with them. So a new house is a new couple, and a new couple brings children.
+*/
+#define LIFE_COUPLE_ROOM        2       //what a house must hold for a couple to move in
+
+/*
     A PERSON, and what he is doing. Who he is: an id (from 1, never reused), a family, the house the
     family lives in (0: at the camp), when he was born and to whom, his base skills. What he does: his job
     and its workplace, and where he is in his round.
@@ -431,6 +455,7 @@ struct EconomyWorker{
     uint32_t father = 0;
     uint32_t partner = 0;       //his wife or her husband (BIRTHS), 0 none
     uint64_t due = 0;           //expecting: the tick her child is due, 0 not
+    uint8_t surname = 0;        //his family name, given at birth and kept, in a couple too (COUPLES)
     bool f_female = false;      //picks his - or her - figure and first name, and which of a couple has the child
     uint8_t skills[SKILL_COUNT] = {};
     uint32_t building = 0;      //his workplace, 0 none - a farmer's is his house (or camp), whose land he farms
@@ -466,8 +491,11 @@ inline int EconomyArcheryCap(const EconomyWorker& k){
     return (int)k.skills[SKILL_PRECISION] * (ARCHERY_FULL / 10);
 }
 
-//Standing on his post (ECONOMY_POST_REACH), rather than on his way to it or cut off from it.
-bool EconomyAtPost(const ChasmWorld& w, const EconomyWorker& k);
+//POSTED (POSTS): living on a post rather than at home - under an order, or a GUARD while he has the job. An order
+//comes first: it suspends the guard's job like any other (EconomyPostPlot).
+inline bool EconomyPosted(const EconomyWorker& k){
+    return k.post >= 0 || k.job == WORKER_JOB_GUARD;
+}
 //Old enough to be sent to a post: a young adult or older (LIFELINES).
 bool EconomyCanOrder(const EconomyWorker& k, uint64_t tick);
 //The food in his pack, by the health it gives (ticks).
@@ -495,7 +523,8 @@ inline GoodsMask EconomyPressing(const EconomyWorker& k){
 struct EconomyDeath{
     uint32_t id = 0;
     uint32_t family = 0;
-    bool f_female = false;      //with the id and family, his name (EconomyDeathName)
+    bool f_female = false;      //with the id and surname, his name (EconomyDeathName)
+    uint8_t surname = 0;
     int64_t born = 0;           //his age at death is from this and `tick`
     uint32_t mother = 0;
     uint32_t father = 0;
@@ -563,6 +592,7 @@ struct EconomyState{
     std::vector<int> woodshed;                          //a house's room for firewood
     std::vector<uint8_t> snowed;                        //a house the full winter's snow reaches: it fetches firewood
     std::vector<uint8_t> shut;                          //by building id: SHUT IN, no door (EconomyShutIn)
+    std::vector<int> door;                              //by building id: the plot a walk to it ends on, -1 none
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
     uint64_t tick = 0;                                  //the calendar's at its last tick or load: what ages are read at
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
@@ -580,6 +610,16 @@ inline bool EconomyCold(const EconomyState& e, const EconomyWorker& k){
     return k.house < e.heat.size() && e.heat[k.house] == HEAT_COLD;
 }
 
+//The plot of his post (POSTS): an order's, else a guard's tower - -1 for neither.
+int EconomyPostPlot(const EconomyState& e, const EconomyWorker& k);
+//Where on it he stands: an order's plot's point; on a tower, his place on its platform, one either side of its
+//middle by his rank among its guards (ECONOMY_TOWER_STAND).
+vec2 EconomyPostPoint(const EconomyState& e, const EconomyWorker& k);
+//Standing on his post (ECONOMY_POST_REACH), rather than on his way to it or cut off from it.
+bool EconomyAtPost(const EconomyState& e, const EconomyWorker& k);
+//The tower whose platform he stands on as its guard, 0 none - where he lives on its stock (POSTS).
+uint32_t EconomyOnTower(const EconomyState& e, const ZoneState& z, const EconomyWorker& k);
+
 /*
     SHUT IN: none of a building's plots can be walked onto from open ground - it is closed in on every side by
     other buildings, walls or water - so it has no door (Economy::Derive, Walkers::OpenFromOutside). A house
@@ -593,6 +633,10 @@ inline bool EconomyShutIn(const EconomyState& e, uint32_t id){
 
 //A mother's children so far (BIRTHS), the living and the dead.
 int EconomyChildrenOf(const EconomyState& e, uint32_t mother);
+//Too close kin for a couple (COUPLES): one the other's parent or grandparent, or a parent or grandparent shared.
+bool EconomyRelated(const EconomyState& e, const EconomyWorker& a, const EconomyWorker& b);
+//The surname a couple's children take: the mother's or the father's, by a hash of the two - the dead's kept too.
+int EconomyCoupleSurname(const EconomyState& e, uint32_t mother, uint32_t father);
 
 //OPEN GROUND a crate may lie on (CRATES): dry, off the mountain, nothing built on the plot - no building (a
 //camp's tents and a bridge count), garden, lot or wall, planned or standing - and no field over the cell at `at`.
@@ -752,8 +796,9 @@ private:
     void MakeSettlers();
     //A child at home: out to a plot or two away to play, now and then. True if he set off.
     bool GoPlay(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t tick);
-    //LIFELINES, a tick of them: the stages moving on and the births. True when the places want sharing out again.
-    bool Lifelines(uint64_t tick);
+    //LIFELINES, a tick of them: the stages moving on and the births. True when the places want sharing out again;
+    //`f_house` when someone came of age to pair (COUPLES), so the free houses want sharing out too.
+    bool Lifelines(uint64_t tick, bool& f_house);
     //BIRTHS, at dawn after the fires are lit: the couples whose day it is, and their chance of a child.
     void ChancesOfChildren(const ZoneState& z, uint64_t tick);
     void HouseFamilies(const ZoneState& z, Walkers& walkers);
@@ -891,9 +936,13 @@ int EconomyJobSkill(int job);
 float EconomySkillFactor(int skill);
 //How many settlers a new colony starts with - its camp has a tent for each.
 int EconomySettlerCount();
-//A person's name, from his id and his family's: for the panel and the tools.
+//A person's name, from his id and his surname: for the panel and the tools.
 std::string EconomyPersonName(const EconomyWorker& k);
 std::string EconomyDeathName(const EconomyDeath& d);
+//A settler family's surname (COUPLES): theirs from the start - and a save from before surnames were kept.
+int EconomySettlerSurname(uint32_t family);
+//A surname by its number, alone ("Veen").
+std::string EconomySurnameName(int surname);
 //Inside his house or tent, so not drawn.
 inline bool EconomyIndoors(const EconomyWorker& k){
     return k.f_indoors && k.house != 0 && k.state == WORKER_AT_HOME;

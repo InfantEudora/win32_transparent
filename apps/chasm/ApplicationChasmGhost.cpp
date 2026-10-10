@@ -81,6 +81,7 @@ void GhostBuildingPlot(const ChasmWorld& w, const ZoneState& z, int plot, int ki
     only.standing.assign(z.standing.size(),0);
     only.ground = z.ground;
     only.ground_built = z.ground_built;
+    only.gate = z.gate;     //a guard tower's ladder goes on a side no wall or gate runs off (BuildTower)
     only.field.assign(z.field.size(),0);
     only.building[plot] = id;
     only.storeys[plot] = (uint8_t)storeys;
@@ -245,8 +246,10 @@ void ApplicationChasm::UpdateGhost(){
             f_ok = z.storeys[plot] < top;
             GhostBuildingPlot(cw,z,plot,shown,std::min(top,z.storeys[plot] + 1),on,verts);
         }else{
-            f_ok = ZoneCanBuild(cw,z,plot,kind,0,NULL) && !crate_in_way(ZONE_OP_BUILD_ADD,plot,0);
-            GhostBuildingPlot(cw,z,plot,kind,1,0,verts);
+            //With one of its kind selected, extending it: red where the plot would not join it.
+            f_ok = ZoneCanBuild(cw,z,plot,kind,key.owner,NULL) && ZoneCanExtend(cw,z,plot,kind,key.owner,NULL)
+                   && !crate_in_way(ZONE_OP_BUILD_ADD,plot,0);
+            GhostBuildingPlot(cw,z,plot,kind,ZoneKindPaintStoreys(kind),0,verts);
         }
         if (shown == ZONE_KIND_WINCH){
             GhostPlotTile(cw,plot,verts);

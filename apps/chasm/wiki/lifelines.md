@@ -4,9 +4,9 @@ aliases: age, ages, birth, births, baby, babies, child, children, couple, couple
 kind: people
 status: partial
 summary: People are born, grow up a stage at a time, and couples have children, with one chance a year each.
-plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births
-code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers
-verified: 2026-10-09
+plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births; lifeline_plan.md > As built: step 3, couples
+code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING LIFE_COUPLE_ROOM; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers HouseFamilies EconomyRelated EconomyCoupleSurname
+verified: 2026-10-10
 ---
 
 Every [[Person|person]] has a birthday and is a year older on it each game year ([[Seasons]]). The
@@ -23,6 +23,22 @@ mother is already expecting.
 | Adult | | Works, and may have children |
 
 When a child grows up, jobs are handed out again on that tick, so a free place is taken at once.
+
+## Couples
+
+A **couple** forms when two grown people move into a free [[House|house]] together and start a new family
+there. Families that need a house get first pick; any house still empty that holds {LIFE_COUPLE_ROOM} goes
+to a couple:
+
+- an adult man and an adult woman, both single, from different families;
+- not related: neither is the other's parent or grandparent, and they share no parent or grandparent;
+- the eldest single adult first, with the eldest who fits, into the smallest empty house both can walk to.
+
+This is checked whenever a house is finished, someone dies, or someone turns adult, so an empty house is
+taken the moment a pair exists. Everyone keeps their own surname. A couple's children take one of the two,
+and the house goes by that name ("the Wever family's"). Someone whose partner has died stays single.
+
+So a new house is a new couple, and a new couple brings children.
 
 ## Births
 
@@ -43,7 +59,6 @@ dies, she is free for a job again.
 
 ## Planned
 
-- [planned] Couples: grown people of two families pairing up and moving into a free house as a new family.
 - [planned] Old age: stopping work, going for walks, still running errands, and dying of it.
 - [planned] Crowding: a house holding more than its room costs everyone in it. Births are what cause it.
 - Skills passed on from the parents, and growing with work, are on [[Skills]].

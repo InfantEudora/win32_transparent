@@ -1,4 +1,5 @@
 #include "RoadMesh.h"
+#include "BuildingMesh.h"
 #include "MeshBuild.h"
 
 #include <algorithm>
@@ -118,9 +119,10 @@ int RoadCentreLine(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
     return n;
 }
 
-//A plot a wall's line runs through: a wall plot, planned or standing, or a gate - a road plot it crosses.
+//A plot a wall's line runs through: a wall plot, planned or standing, or a gate - a road plot it crosses - or a
+//guard tower standing in it (defence_plan.md), which the palisade ends against.
 bool WallLine(const ZoneState& z, int v){
-    return z.ground[v] == ZONE_GROUND_WALL || z.gate[v];
+    return z.ground[v] == ZONE_GROUND_WALL || z.gate[v] || z.KindOf(v) == ZONE_KIND_TOWER;
 }
 
 //Every plot beside v, by a fine edge, that a wall's line runs through - in the plot quads' fixed order.
@@ -382,6 +384,32 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
         }
         Log(out,pos[v],ground(pos[v]),WALL_LOG_HEIGHT + WALL_LOG_JITTER,WALL_LOG_W * 1.4f,PAL_BARK);
     }
+    /*
+        Against a GUARD TOWER (defence_plan.md) the piece runs on past the midpoint to the tower's wall, which stands
+        well back from it: the tower draws no palisade of its own.
+    */
+    auto on_to_tower = [&](std::vector<vec2>& pts, bool f_front, int tower){
+        if (tower < 0 || z.KindOf(tower) != ZONE_KIND_TOWER || pts.size() < 2){
+            return;
+        }
+        vec2 end = f_front ? pts.front() : pts.back();
+        vec2 d = end - (f_front ? pts[1] : pts[pts.size() - 2]);
+        float l = d.length();
+        float reach = (pos[tower] - end).length() - BUILDING_TOWER_HALF + WALL_LOG_W;
+        if (l < 1e-5f || reach <= 0.0f){
+            return;
+        }
+        vec2 past = end + d * (reach / l);
+        if (f_front){
+            pts.insert(pts.begin(),past);
+        }else{
+            pts.push_back(past);
+        }
+    };
+    for (Piece& p : pieces){
+        on_to_tower(p.pts,true,p.at_start);
+        on_to_tower(p.pts,false,p.at_end);
+    }
     for (size_t pi = 0; pi < pieces.size(); pi++){
         const Piece& p = pieces[pi];
         std::vector<float> along(1,0.0f);
@@ -487,7 +515,7 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
             continue;
         }
         in = in * (1.0f / half);
-        bool f_jamb = z.ground[nb[i]] == ZONE_GROUND_WALL;
+        bool f_jamb = z.ground[nb[i]] == ZONE_GROUND_WALL || z.KindOf(nb[i]) == ZONE_KIND_TOWER;
         //From the jamb's inner face - or, with no jamb, from the meeting with the next plot's leaf.
         vec2 hinge = mid + in * (f_jamb ? WALL_GATE_POST_W * 0.5f : 0.0f);
         float reach = half - (f_jamb ? WALL_GATE_POST_W * 0.5f : 0.0f) - WALL_DOOR_GAP * 0.5f;

@@ -58,6 +58,7 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_WATER:       return "THE WATER COLLECTOR";
         case ZONE_KIND_BUILDERS:    return "THE BUILDERS' HUT";
         case ZONE_KIND_RANGE:       return "THE RANGE";
+        case ZONE_KIND_TOWER:       return "THE TOWER";
         default:                    return "A WORKPLACE";
     }
 }
@@ -182,7 +183,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             continue;
         }
         bool f_workplace = b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS
-                           || b.kind == ZONE_KIND_RANGE;
+                           || b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_TOWER;
         if (f_workplace && stands[id] && id < e.places.size() && e.places[id] > 0 && working[id] == 0){
             ChasmIssue i;
             i.kind = "nobody_at";

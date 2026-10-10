@@ -149,6 +149,7 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define INPUT_CHASM_TOOL_BUILDERS  INPUT_LAST+23     //G, for guild: B again
 #define INPUT_CHASM_TOOL_WALL      INPUT_LAST+24     //7, beside the road: the debug walker's key, free since it went
 #define INPUT_CHASM_TOOL_RANGE     INPUT_LAST+25     //R: the archery range (range_plan.md)
+#define INPUT_CHASM_TOOL_TOWER     INPUT_LAST+26     //T: the guard tower (defence_plan.md)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -183,6 +184,7 @@ enum ChasmTool{
     CHASM_TOOL_BUILDERS,    //docs/builders_plan.md: a builders' hut, a drag
     CHASM_TOOL_WALL,        //line_works_plan.md step 3: a palisade, drawn as a line like a road
     CHASM_TOOL_RANGE,       //range_plan.md: an archery range, painted on coarse cells as a field is
+    CHASM_TOOL_TOWER,       //defence_plan.md: a guard tower, a plot each - on a wall's plot too
     CHASM_TOOL_COUNT
 };
 
@@ -325,10 +327,12 @@ private:
     void EnsureZonesWorld();                    //physics thread: a new map empties the zones
     void PublishZones();                        //physics thread
     std::shared_ptr<const ZoneState> GetZones();
-    //Any thread; queued for the next tick. `owner`: the building a garden or lot is painted for (yards_plan.md).
+    //Any thread; queued for the next tick. `owner`: the building a garden or lot is painted for (yards_plan.md),
+    //or the one a building tool extends.
     void SubmitZone(int op, int index, int kind = 0, uint32_t stroke = 0, uint32_t owner = 0);
     //Whose yard the GARDEN or LOT tool paints for: the building selected in play, if it has a yard; else 0,
-    //whatever the plot touches (yards_plan.md). Any thread.
+    //whatever the plot touches (yards_plan.md). A building tool's: the selected building of its kind, which it
+    //extends (its card's Extend); else 0, a stroke of its own. Any thread.
     uint32_t PaintOwner(int tool);
     void RegisterCommandHandlers();
 
@@ -344,6 +348,14 @@ private:
         stroke after it is never mistaken for the one the save was in the middle of.
     */
     uint32_t paint_stroke = 0;
+    /*
+        A building tool pressed on a building: its storey waits for the release, since only then is it known
+        to be a click and not the start of a drag - which used to add a floor to the plot it started on. -1
+        none. Physics thread.
+    */
+    int paint_press_plot = -1;
+    int paint_press_kind = 0;
+    uint32_t paint_press_owner = 0;
     void UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
 
     /*
@@ -402,6 +414,11 @@ private:
     std::string order_last_refusal;
     uint32_t order_refusal_seen = 0;            //render thread: the last one shown
     std::string refusal_shown;                  //render thread: the refusal on screen, either kind, whole
+    //A DEATH told on the play overlay (needs_plan.md step 5) - render thread.
+    size_t deaths_seen = 0;                     //the dead already told of
+    const ChasmWorld* deaths_world = nullptr;   //the map they were counted on: a new map's dead are old news
+    std::string death_shown;
+    std::chrono::steady_clock::time_point death_since;
     void TickEconomy();                         //physics thread, from RunSimulationTick
     void PublishEconomy();                      //physics thread
     std::shared_ptr<const EconomyState> GetEconomy();

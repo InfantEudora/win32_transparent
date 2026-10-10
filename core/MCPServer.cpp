@@ -60,6 +60,19 @@ void MCPServer::Start() {
     if (m_running) {
         return;
     }
+    /*
+        A CONSOLE IS NOT A CLIENT. stdio is for a process spawned with pipes - `claude mcp add`, a coproc
+        (docs/mcp_server.md), tools/vehicle_mcp.py - and a pipe or a file is read as before. A console has
+        someone else reading it: the reader thread's ReadFile took gdb's own input events when an app ran
+        under it (2026-10-10: "Exception condition detected on fd 0", "error detected on stdin", and gdb
+        quits), and anything typed at a terminal came here as an unparsable line. So a console, or no stdin
+        at all (the NUL device is a character device too), is left alone; HTTP is unaffected.
+    */
+    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+    if (input == NULL || input == INVALID_HANDLE_VALUE || GetFileType(input) == FILE_TYPE_CHAR) {
+        debug->Info("MCP: stdin is a console or none, not a client - stdio transport off\n");
+        return;
+    }
     m_running = true;
     m_thread = CreateThread(NULL, 0, ReaderThreadFunc, this, 0, NULL);
     if (!m_thread) {

@@ -273,6 +273,7 @@ void ApplicationChasm::SetupInput(){
     view_key('J',INPUT_CHASM_TOOL_BRIDGE);
     view_key('G',INPUT_CHASM_TOOL_BUILDERS);
     view_key('R',INPUT_CHASM_TOOL_RANGE);
+    view_key('T',INPUT_CHASM_TOOL_TOWER);
     view_key('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     view_key(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -603,7 +604,11 @@ void ApplicationChasm::PublishZones(){
 }
 
 uint32_t ApplicationChasm::PaintOwner(int tool){
-    if ((tool != CHASM_TOOL_GARDEN && tool != CHASM_TOOL_LOT) || !PlayMode()){
+    bool f_yard = tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT;
+    //A winch is one plot and a bridge is placed whole: with one selected, the tool still makes a new one.
+    int kind = ToolKind(tool);
+    bool f_extend = kind != ZONE_KIND_NONE && kind != ZONE_KIND_WINCH && kind != ZONE_KIND_BRIDGE;
+    if ((!f_yard && !f_extend) || !PlayMode()){
         return 0;
     }
     PlayPick sel;
@@ -614,6 +619,10 @@ uint32_t ApplicationChasm::PaintOwner(int tool){
     std::shared_ptr<const ZoneState> z = GetZones();
     if (sel.kind != PLAY_PICK_BUILDING || !z || sel.id >= z->buildings.size() || z->buildings[sel.id].size <= 0){
         return 0;
+    }
+    if (f_extend){
+        //Extended as a yard is painted (the user's, 2026-10-10): with another kind selected, a building of its own.
+        return (z->buildings[sel.id].kind == kind) ? sel.id : 0;
     }
     //A house or a hut: named, so a garden for a hut is refused with a reason rather than given to whatever is near.
     return ZoneKindHasYard(z->buildings[sel.id].kind) ? sel.id : 0;
@@ -853,15 +862,26 @@ void ApplicationChasm::HashSimState(StateHash& h){
 /*
     PHYSICS THREAD, from UpdatePick, with a paint tool in hand: the mouse made into zone commands.
 
-    A press paints what is under it - and on a house adds a storey; with shift it takes one off
-    instead. Held and dragged, it paints each NEW plot or cell the cursor reaches, once: a drag
-    never stacks storeys, so sweeping across a street lays one floor and clicking raises it.
+    A press paints what is under it; with shift it takes a storey off instead. A CLICK on a building -
+    let go on the plot it was pressed on - adds a storey, sent on the release, so a drag that starts on
+    a building adds none (paint_press_plot). Held and dragged, it paints each NEW plot or cell the cursor
+    reaches, once: a drag never stacks storeys, so sweeping across a street lays one floor and clicking
+    raises it. With a building of the tool's kind selected, what it paints extends that one (PaintOwner).
     Erase takes the house off a plot if there is one, otherwise the field off its cell. The road and wall
     tools draw a line instead and place it on release (UpdateLineDrag). `f_held` is the left button's, the
     mouse's or a script's (UpdatePick).
 */
 void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held){
     InputController* input = main_scene->inputcontroller;
+    //A press on a building, waiting: held off its plot it was a drag, starting there with no storey (a paint on a
+    //built plot only picks the stroke's building); let go on it, a click - one storey more.
+    if (paint_press_plot >= 0 && f_held && (!f_over_scene || !hover.f_hit || hover.plot != paint_press_plot)){
+        SubmitZone(ZONE_OP_BUILD_PAINT,paint_press_plot,paint_press_kind,paint_stroke,paint_press_owner);
+        paint_press_plot = -1;
+    }else if (paint_press_plot >= 0 && !f_held){
+        SubmitZone(ZONE_OP_BUILD_ADD,paint_press_plot,paint_press_kind,paint_stroke,paint_press_owner);
+        paint_press_plot = -1;
+    }
     if (ChasmLineTool(paint_tool)){
         UpdateLineDrag(hover,f_over_scene,f_clicked,f_held);
         return;
@@ -908,8 +928,16 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT;
         op = f_shift ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT;
     }else if (ToolKind(tool) != ZONE_KIND_NONE){
+        std::shared_ptr<const ZoneState> z = GetZones();
+        bool f_on_building = z && !z->storeys.empty() && z->storeys[hover.plot];
         if (f_shift){
             op = f_clicked ? ZONE_OP_BUILD_REMOVE : ZONE_OP_BUILD_ERASE;
+        }else if (f_clicked && f_on_building){
+            //A click or a drag's start - the release says which (the top of this function).
+            paint_press_plot = index;
+            paint_press_kind = ToolKind(tool);
+            paint_press_owner = PaintOwner(tool);
+            return;
         }else{
             op = f_clicked ? ZONE_OP_BUILD_ADD : ZONE_OP_BUILD_PAINT;
         }
@@ -930,8 +958,10 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         }
     }
     if (op != ZONE_OP_NONE){
-        //A garden or lot painted with a house or hut selected is its yard (yards_plan.md).
-        SubmitZone(op,index,ground,paint_stroke,(op == ZONE_OP_GROUND_PAINT) ? PaintOwner(tool) : 0);
+        //A garden or lot painted with a house or hut selected is its yard (yards_plan.md); a building painted
+        //with one of its kind selected extends it.
+        bool f_owned = op == ZONE_OP_GROUND_PAINT || op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD;
+        SubmitZone(op,index,ground,paint_stroke,f_owned ? PaintOwner(tool) : 0);
     }
 }
 
@@ -1472,6 +1502,7 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_CAMP:       return ZONE_KIND_CAMP;
         case CHASM_TOOL_BRIDGE:     return ZONE_KIND_BRIDGE;
         case CHASM_TOOL_BUILDERS:   return ZONE_KIND_BUILDERS;
+        case CHASM_TOOL_TOWER:      return ZONE_KIND_TOWER;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -2055,17 +2086,17 @@ void ApplicationChasm::UpdateView(void){
     const bool f_debug_keys = !PlayMode();
     //The tool keys toggle: the active tool's key again puts it down.
     if (input->IsInputLive()){
-        const int keys[15] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+        const int keys[16] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
                               INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
                               INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS,INPUT_CHASM_TOOL_WALL,
-                              INPUT_CHASM_TOOL_RANGE};
-        const int tools[15] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                              INPUT_CHASM_TOOL_RANGE,INPUT_CHASM_TOOL_TOWER};
+        const int tools[16] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
                                CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
                                CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
-                               CHASM_TOOL_RANGE};
+                               CHASM_TOOL_RANGE,CHASM_TOOL_TOWER};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
             if (input->WasKeyPressed(keys[i])){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
@@ -2664,6 +2695,8 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Wall (7)##tool",tool == CHASM_TOOL_WALL)) tool = CHASM_TOOL_WALL;
         ImGui::SameLine();
         if (ImGui::RadioButton("Range (R)##tool",tool == CHASM_TOOL_RANGE)) tool = CHASM_TOOL_RANGE;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Tower (T)##tool",tool == CHASM_TOOL_TOWER)) tool = CHASM_TOOL_TOWER;
         if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Woodcutter (9)##tool",tool == CHASM_TOOL_WOODCUTTER)) tool = CHASM_TOOL_WOODCUTTER;
@@ -3121,13 +3154,15 @@ void ApplicationChasm::RegisterMCPTools(){
                                                   "gate_shut","range_paint"}}}},
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open"}}},
-                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders"}},{"description","for build_* (default house)"}}},
+                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
                 {"owner",{{"type","integer"},{"description","for ground_paint of a garden or lot: the house or woodcutter whose "
                                                             "yard it is - it must touch it or its yard (docs/yards_plan.md); 0 "
-                                                            "(default) whatever it touches"}}},
+                                                            "(default) whatever it touches. For build_paint/build_add: the "
+                                                            "building of `kind` to extend - the plot must join it, or is refused "
+                                                            "(what painting with it selected does); 0 (default) the stroke's"}}},
                 {"ground",{{"type","string"},{"enum",{"garden","lot","road","wall"}},
                            {"description","for ground_paint; for ground_erase, wall takes a wall off (or a gate off its road) and nothing else"}}},
                 {"x",{{"type","number"}}},
@@ -3166,7 +3201,8 @@ void ApplicationChasm::RegisterMCPTools(){
             SimCommand cmd;
             cmd.type = CHASM_CMD_ZONE;
             cmd.flags = SIM_CMD_FLAG_RECORD;     //a tool painting is a player too - see SubmitZone
-            cmd.value[3] = ZoneCommandValue3(args.value("play",false),(op == ZONE_OP_GROUND_PAINT) ? args.value("owner",0u) : 0u);
+            bool f_owned = op == ZONE_OP_GROUND_PAINT || op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD;
+            cmd.value[3] = ZoneCommandValue3(args.value("play",false),f_owned ? args.value("owner",0u) : 0u);
             cmd.subtype = (uint32_t)index;
             cmd.value[0] = (float)op;
             std::string ground_name = args.value("ground",std::string("garden"));
@@ -3219,6 +3255,7 @@ void ApplicationChasm::RegisterMCPTools(){
                                         {"winches",st.buildings[ZONE_KIND_WINCH]},
                                         {"builders_huts",st.buildings[ZONE_KIND_BUILDERS]},
                                         {"fields",st.buildings[ZONE_KIND_FIELD]},{"ranges",st.buildings[ZONE_KIND_RANGE]},
+                                        {"towers",st.buildings[ZONE_KIND_TOWER]},
                                         {"built_plots",st.built_plots},
                                         {"storeys",st.storeys},{"field_cells",st.field_cells},
                                         {"floor_area",st.floor_area[ZONE_KIND_HOUSE]},{"field_area",st.floor_area[ZONE_KIND_FIELD]}};
@@ -3298,8 +3335,8 @@ void ApplicationChasm::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("chasm_tool",
-        "Pick the mouse's tool, as keys 1-0, H, C, J and G do: select, house, field, erase, garden, lot, road, store, "
-        "woodcutter, water, winch, camp, bridge, builders, wall. With a paint tool the hover outline goes green where a click would "
+        "Pick the mouse's tool, as keys 1-0, H, C, J, G, R and T do: select, house, field, erase, garden, lot, road, store, "
+        "woodcutter, water, winch, camp, bridge, builders, wall, range, tower. With a paint tool the hover outline goes green where a click would "
         "paint and red where the rules refuse - in play mode, the ghost of what it would place. hover_x/hover_z pin "
         "the hover to that point (a script has no mouse), until a call with hover_release.",
         json{
@@ -3307,7 +3344,7 @@ void ApplicationChasm::RegisterMCPTools(){
             {"properties",{
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                                    "range"}}}},
+                                                    "range","tower"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -3323,7 +3360,7 @@ void ApplicationChasm::RegisterMCPTools(){
             //2026-10-09) left a NULL at the end that every name was compared against: any call crashed.
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                   "range"};
+                                   "range","tower"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             std::string t = args.value("tool",std::string());
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){

@@ -362,7 +362,8 @@ void ApplicationChasm::DrawOverlay(void){
     is being built, how far along it is; at the bottom in the middle, why a placement was just refused.
 
     A row a group: a house and the ground round it; where goods are kept and got; the field, the builders
-    and the camp; the lines; the winch, and ERASE last. Returns the top of the grid, or of the BUILDING line
+    and the camp; the lines; the winch and the defences - the range, the tower - and ERASE last, on a row of
+    its own. Returns the top of the grid, or of the BUILDING line
     over it: what stacks over them (DrawIssues) goes above that.
 */
 float ApplicationChasm::DrawBuildBar(float s){
@@ -372,7 +373,8 @@ float ApplicationChasm::DrawBuildBar(float s){
         {"8","STORE",CHASM_TOOL_STORE},{"0","WATER",CHASM_TOOL_WATER},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
         {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
         {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
-        {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"3","ERASE",CHASM_TOOL_ERASE}};
+        {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
+        {"3","ERASE",CHASM_TOOL_ERASE}};
     const int count = (int)(sizeof(bar) / sizeof(bar[0]));
     const int columns = 3;
     const int rows = (count + columns - 1) / columns;
@@ -440,6 +442,49 @@ float ApplicationChasm::DrawBuildBar(float s){
             vec2 r1(cx + m.x * 0.5f + side,bottom);
             overlay->AddRect(r0,r1,9.0f * s,HudFaded(HUD_PANEL,(uint8_t)(alpha * 0.7f)));
             overlay->AddText(text.c_str(),vec2(cx,r0.y + 21.0f * s),size,HudFaded(UIColor(236,140,110),alpha),UI_ALIGN_CENTER);
+        }
+    }
+    /*
+        A DEATH says so (needs_plan.md, step 5), as a refusal does but in red and for longer, on the line above it -
+        "BENTE VEEN DIED OF THIRST", and how many more since the last one told. Only a death of the last half day:
+        a load or a new map brings its dead along, and they are old news. And a LOST colony - nobody left alive,
+        somebody dead - says so above that, for as long as it is so.
+    */
+    {
+        const float death_seconds = 5.0f;       //on screen this long, where a refusal has 3
+        auto now = std::chrono::steady_clock::now();
+        std::shared_ptr<const EconomyState> de = GetEconomy();
+        size_t n = de ? de->dead.size() : 0;
+        if (!de || de->world.get() != deaths_world || n < deaths_seen){
+            deaths_world = de ? de->world.get() : nullptr;
+            deaths_seen = n;
+        }
+        if (n > deaths_seen){
+            const EconomyDeath& d = de->dead.back();
+            if (de->tick < d.tick + CALENDAR_DAY_TICKS / 2){
+                const char* of = (d.cause == NEEDS_DIED_THIRST) ? "thirst" : (d.cause == NEEDS_DIED_COLD) ? "cold" : "hunger";
+                int more = (int)(n - deaths_seen) - 1;
+                death_shown = EconomyDeathName(d) + " died of " + of
+                              + (more > 0 ? " (and " + std::to_string(more) + " more)" : std::string());
+                std::transform(death_shown.begin(),death_shown.end(),death_shown.begin(),::toupper);
+                death_since = now;
+            }
+            deaths_seen = n;
+        }
+        auto line = [&](const std::string& text, float y, uint8_t alpha){
+            vec2 m = overlay->MeasureText(text.c_str(),size);
+            const float side = 14.0f * s;
+            vec2 r0(cx - m.x * 0.5f - side,y - 30.0f * s);
+            vec2 r1(cx + m.x * 0.5f + side,y);
+            overlay->AddRect(r0,r1,9.0f * s,HudFaded(HUD_PANEL,(uint8_t)(alpha * 0.8f)));
+            overlay->AddText(text.c_str(),vec2(cx,r0.y + 21.0f * s),size,HudFaded(HUD_DANGER,alpha),UI_ALIGN_CENTER);
+        };
+        float age = std::chrono::duration<float>(now - death_since).count();
+        if (age < death_seconds && !death_shown.empty()){
+            line(death_shown,bottom - 36.0f * s,(uint8_t)(255.0f * std::min(1.0f,(death_seconds - age) * 2.0f)));
+        }
+        if (de && de->workers.empty() && !de->dead.empty()){
+            line("THE COLONY IS LOST - NOBODY IS LEFT",bottom - 72.0f * s,255);
         }
     }
     //What is being built: the sites, and what they have had of what they need, by good (defence_plan.md step 4).
@@ -536,8 +581,8 @@ float ApplicationChasm::DrawJobsOverview(float s){
     struct Row{ const char* name; int working; int places; bool f_places; };
     std::vector<Row> rows;
     static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER,
-                                WORKER_JOB_ARCHER};
-    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","ARCHERS"};
+                                WORKER_JOB_ARCHER,WORKER_JOB_GUARD};
+    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","ARCHERS","GUARDS"};
     for (int i = 0; i < (int)(sizeof(shown) / sizeof(shown[0])); i++){
         const EconomyJobCount& c = counts[shown[i]];
         if (c.places > 0 || c.working > 0){

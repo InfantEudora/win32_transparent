@@ -123,3 +123,43 @@ The fix is in the walking rule (`Walkers::EdgeOpen`): **someone whose walk start
 over its fence, never in.** Entering is still closed, so the walk can only reach that fence from inside the yard it
 started in. Checked by replaying the recording: within 25 ticks he was over the fence onto the road, drank at the
 collector and walked home to his tent.
+
+## Extend: a house's own plots, the same way (2026-10-10)
+
+The user's: a house was extended by starting a drag on it, and that drag's press - a click, as far as the
+house tool knew - also put a storey on the plot it started from. "That mechanic can simply be the same as placing
+the lots, with an extend option that selects the house tool automatically and extends a house when one is
+selected."
+
+### As built
+
+- **The card's Extend chip** (`YardLines`), first in the row with Add lot / Add garden: takes up the HOUSE tool
+  (`OVERLAY_HIT_TAKE_TOOL`) with the house still selected. Left out once the house has `ZONE_HOUSE_MAX_PLOTS`.
+- **A building tool with a building of its kind selected extends that one** (`PaintOwner`), whether the tool came
+  from the chip or the grid: the selected id travels as the command's owner, as a yard's does. In
+  `Zones::Apply` an owner on `build_paint`/`build_add` means that building or nothing: every plot must join it -
+  beside it, or across a cell with the corner plot between brought in (`ZoneJoinCorner`, the old stroke code
+  pulled out) - and a house must have room (`ZoneCanExtend`). Refused, with a reason, never a new building: "an
+  extension goes beside its building", "a house is at most four plots". With another kind selected, or nothing,
+  the tool makes its own building as before. Not for a winch or a bridge, which are placed whole.
+- **A click's storey waits for the release** (`paint_press_plot`), for every building tool, selected or not: let
+  go on the plot it was pressed on, it is a click and adds a storey; moved off it first, it was a drag, which
+  starts on that building with no storey. So the old way - a drag started on the house, nothing selected - still
+  extends it, now without the floor. Shift (a storey off) is unchanged.
+- **The ghost** goes red where `ZoneCanExtend` refuses. **`chasm_paint`** takes `owner` for `build_paint` and
+  `build_add` too.
+- **Replays**: every recording so far has no owner on a building command, so `Apply` does what it did; the press
+  change is the view's, which a replay does not run (it replays the commands).
+
+### Checked (debug, a copied exe on 8774, paused and stepped, the default seed, scripted drags by `chasm_tool`)
+
+- A one-plot house selected: its card read "Extend, Add lot, Add garden"; a press on Extend took up the house tool
+  with the house still selected.
+- A drag from the house onto a plot across a cell: the house took that plot and the corner between, "2 storeys to
+  build, 1 standing" - no storey on the plot the drag started from.
+- A click on the house, the same tool and selection: "3 storeys to build" - one storey more.
+- A plot away from it: red ghost, "can't build: an extension goes beside its building".
+- Nothing selected, a drag from a fresh one-plot house: extended to three plots, no storey on the first.
+- Filled to four plots by `chasm_paint owner`: the card's row lost Extend; a fifth plot refused. After `ZoneCanExtend`
+  was made to ask "full" first (rebuilt 2026-10-10, with defence step 6 in the tree): a plot away from a full house is
+  refused "a house is at most four plots", one away from a one-plot house still "an extension goes beside its building".

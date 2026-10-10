@@ -63,4 +63,13 @@ USE_PHYSICS := 0
 #The same two roots main.cpp declares, in the same order: this app's own (the palette) first.
 ASSET_ROOTS := assets $(ROOT)/shared_assets
 
+ASSET_PACK_FLAGS += --exclude "fonts/CascadiaMono.ttf"
+ASSET_PACK_FLAGS += --exclude "fonts/mono_sdf.png"
+ASSET_PACK_FLAGS += --exclude "sound/bleep.wav"
+ASSET_PACK_FLAGS += --exclude "sound/click.wav"
+ASSET_PACK_FLAGS += --exclude "sound/floop.wav"
+ASSET_PACK_FLAGS += --exclude "sound/hax.wav"
+ASSET_PACK_FLAGS += --exclude "meshes/glyphs_unispace.glb"
+
+
 include $(ROOT)/engine.mk

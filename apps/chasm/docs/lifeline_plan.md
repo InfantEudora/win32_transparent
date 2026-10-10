@@ -254,7 +254,7 @@ Each step is its own small feature, playable and checked before the next.
 2. **(BUILT 2026-10-09)** **Births**: the settler couples, the yearly chance and its conditions, expecting, the baby indoors, the
    mother's CARING year (her place filled, her errands kept), a mother's most children; the settler couple
    that starts out expecting. Babies' skills random until step 5.
-3. **Couples**: grown people of two families pairing into a free house, a new family; surnames kept per
+3. **(BUILT 2026-10-10)** **Couples**: grown people of two families pairing into a free house, a new family; surnames kept per
    person.
 4. **Old age**: stopping work at 36, the walks, still running errands, dying of it.
 5. **Skills passed on**: taking after the parents, at birth and for the settlers' grown children.
@@ -386,3 +386,44 @@ couples and the expecting one in `MakeSettlers`), `ChasmSave.cpp`, `ApplicationC
   the camp on day 8 always had two to four days of water.
 - **Not checked by a run**: a mother dying while caring (the rule is in the same pass as the birthday), and the
   4-children limit reached.
+
+## As built: step 3, couples (2026-10-10)
+
+Files: `Economy.*` (COUPLES in `Economy.h`, `LIFE_COUPLE_ROOM`; `EconomyWorker::surname` and `EconomyDeath::surname`;
+`EconomyRelated`, `EconomyCoupleSurname`, `EconomySettlerSurname`, `EconomySurnameName`; the couples pass at the
+end of `HouseFamilies`; `Lifelines` flagging someone turning adult), `ChasmSave.cpp` (a person's `"surname"`, the
+dead record's ninth number), `ApplicationChasmEconomy.cpp` (the hash, `chasm_economy`'s `surname`).
+
+- **Where it happens**: in `HouseFamilies`, which runs when the zones change (a house built or grown, a building
+  pulled down), when someone dies, and now also on the tick someone turns ADULT while single - so a house
+  standing empty is taken then, not at the next change. The families that need a house go first, as before
+  (including the swap: a small family moves to a smaller house to let a bigger one in); then every house still
+  empty that holds `LIFE_COUPLE_ROOM` (2) goes to a couple.
+- **Who**: an adult man and an adult woman, both single (`partner` 0 - a widow keeps her late husband as
+  partner, so stays single, as decided), of different families, and not related: `EconomyRelated` lists each
+  person with their parents and grandparents - the dead looked up too - and any id the two lists share is kin.
+  Each list starts with the person, so a parent or grandparent is caught by the same test.
+- **The order**: the eldest single adult first (the lower id on a tie), with the eldest who fits, into the
+  smallest empty house both can walk to.
+- **A new family**: the next family number, never one of the dead's. Each keeps their surname - the surname is
+  now the person's own (`surname`), a settler's from the family number as before, so every name is unchanged.
+  A child of theirs takes the mother's or the father's, by a hash of the two ids (`EconomyCoupleSurname`).
+- **Saves**: a person's `"surname"`; the dead record gains a ninth number. A save without them takes the
+  family's, as a settler's - so the user's `chasm_dirk_dewit.rec` loads with the same names.
+- **Checked** (debug, a copied exe on 8772, paused and stepped; seed 12):
+  - Five one-plot houses painted one at a time by the camp. The first (holds 3): the Veens, 3, moved in. The
+    second: Dirk De Wit (12, the eldest single adult) with Bente Veen (8, the eldest woman who fits; Marit Wever is
+    6) - a new family, names kept. The third: Dolf De Wit and Marit Wever. The fourth and fifth (holding 2): the
+    swap moved the Veens, now 2, and then Dirk and Bente into them, letting the De Wits and the Wevers, now 3
+    each, into the houses for three.
+  - A birth to a new couple: Marit and Dolf's chance came up in the first year tried; their son is Thijs Wever,
+    in their house, of their family.
+  - Coming of age: a house left empty with nobody single; the calendar set just before Lieve Wever turned adult -
+    she and Teun De Wit (not related: different parents, no grandparents) paired into it on that tick.
+  - A save and load: all 14 people back with the same partners, families and houses.
+  - A recording across Lieve coming of age (single before, paired after): two replays identical, 121 ticks.
+- **The house's name** on cards and in "Give to:" (`HouseFamily`, `ApplicationChasmSelect.cpp`): a couple living
+  there gives it the surname their children take - Dolf De Wit and Marit Wever's house reads "the Wever family's",
+  as their son Thijs Wever is; anyone else, their own.
+- **Not checked by a run**: cousins refused (no settler has grandparents in the colony yet - the rule's test is
+  the code), a widow staying single, and two houses freed on one tick.

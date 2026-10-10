@@ -4,9 +4,9 @@ aliases: provision, ration, rations
 kind: goods
 status: partial
 summary: A soldier's food, made by builders from a wheat and a beans, and only as many as something wants; villagers eat it only when nothing else is in reach.
-plans: defence_plan.md > Provisions; defence_plan.md > As built: step 5, provisions
+plans: defence_plan.md > Provisions; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower
 code: Economy.cpp: EconomyFoodWorth ProvisionsLacking MakeProvisions AtWorkshop SeekSupply FillPack Consume; Economy.h: ECONOMY_PROVISION_SECONDS; Goods.h: GOODS_EATEN
-verified: 2026-10-09
+verified: 2026-10-10
 ---
 
 A [[Food|food]] of its own: one is made from a wheat and a beans and is worth the two together in
@@ -37,11 +37,10 @@ Sites' carriers take finished provisions from the hut as from a store. When noth
 any more, a builder takes it to a store that takes it. Stores take provisions by default; their card has a
 chip for it.
 
-No building wants provisions yet, so none are made in play today.
+What wants them today is a [[Guard tower|guard tower]]'s site: it is built with them, and keeps them as
+its guards' food. Nobody but someone posted eats from a tower.
 
 ## Planned
 
-- [planned] The guard tower, built with provisions and water and stocked with them for its guards
-  ([[Posts]]).
-- [planned] Builders keeping the towers full, ahead of making provisions for sites.
+- Builders keeping the towers full: see [[Guard tower]].
 - [planned] Keeping long, when spoilage comes.

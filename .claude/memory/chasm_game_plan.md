@@ -179,6 +179,13 @@ Decided with the user 2026-10-04 (exploratory phase, no code yet):
   jobs BABY -3 / CARING -4 (EconomyStageJob = below NONE); chance at dawn after Heat on EconomyCoupleDay (room
   50% / full 25%, user: room likelier, house APPEAL later via gardens); birth when mother next home after due;
   issues rows HOUSE CROWDED / HOUSE SHUT IN (issues_plan 9-10). User sometimes plays in my test copy.
+  LIFELINES STEP 3 COUPLES BUILT 2026-10-10: per-person `surname` (settlers EconomySettlerSurname(family), kids
+  EconomyCoupleSurname hash of the two ids); couples pass at END of HouseFamilies (eldest single adult first,
+  EconomyRelated = shared id among self+parents+grandparents, smallest empty house >= LIFE_COUPLE_ROOM 2, new
+  family number); Lifelines(tick,f_house) re-runs housing when someone turns adult. HouseFamily() names a couple's
+  house by the children's surname. NEEDS STEP 5 BUILT 2026-10-10: death line (red, 5 s, fresh deaths only) + THE
+  COLONY IS LOST, in DrawBuildBar = PLAY MODE ONLY (chasm_view play:true to test; restore window for UI shots).
+  A person AT HOME eats/drinks the same tick, so set_needs to kill only works on someone out walking.
   CAMP FAMILIES NOW FETCH (user reversed own rule 2026-10-09 after a camp baby went dry): camp has room+woodshed,
   never fetches from itself. FETCH FROM ANYTHING (user, same day): Economy::FetchFrom = store, camp supplies, empty
   house, collector, woodcutter pile, own field (fair share); pressing trip brings a load home via FetchFrom +

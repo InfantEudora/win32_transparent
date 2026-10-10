@@ -1,4 +1,5 @@
 #include "ApplicationChasm.h"
+#include "BuildingMesh.h"
 #include "MeshBuild.h"
 #include "Palette.h"
 #include "AssetManager.h"
@@ -147,6 +148,7 @@ void ApplicationChasm::BuildWorkerScene(){
 void ApplicationChasm::UploadWorkers(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
     size_t n = (w && e && e->world == w) ? e->workers.size() : 0;
     if (worker_objects.size() < n){
         main_scene->AtTickBoundary([&](){
@@ -198,6 +200,12 @@ void ApplicationChasm::UploadWorkers(){
         //On the ground of the plot he stands on.
         GridPick pick = w->picker->Pick(k.pos);
         float y = pick.f_hit ? w->terrain->GroundHeight(k.pos,w->terrain->Height(pick.plot)) : 0.0f;
+        //Up on a guard tower's platform (defence_plan.md): anyone standing within its walls is on top of it.
+        if (pick.f_hit && z && z->world == w && z->KindOf(pick.plot) == ZONE_KIND_TOWER && z->standing[pick.plot] > 0
+            && z->standing[pick.plot] >= z->storeys[pick.plot]
+            && (k.pos - w->grid->fine.pos[pick.plot]).length() < BUILDING_TOWER_HALF){
+            y = BuildingTowerDeck(*w,*z,pick.plot);
+        }
         //Felling, building, and on a road (line_works_plan.md) felling its trees or laying it.
         if ((k.job == WORKER_JOB_WOODCUTTER && k.state == WORKER_WORKING) || k.state == WORKER_BUILDING
             || k.state == WORKER_CLEARING || k.state == WORKER_LAYING || k.state == WORKER_SOWING){

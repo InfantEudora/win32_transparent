@@ -4,14 +4,18 @@ aliases: home, homes
 kind: buildings
 status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
-plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3
-code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys; Economy.h: EconomyShutIn
-verified: 2026-10-09
+plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend
+code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn
+verified: 2026-10-10
 ---
 
 The player paints a house over at most {ZONE_HOUSE_MAX_PLOTS:#plots} and gives it storeys
-(`ZoneKindMaxStoreys`). It starts as a [[Construction|building site]] and is built a storey at a time,
-and a storey does nothing until it stands.
+(`ZoneKindMaxStoreys`): a click on a house is a storey more, a drag never is. It starts as a
+[[Construction|building site]] and is built a storey at a time, and a storey does nothing until it stands.
+
+**To make it bigger**, select it and press **Extend** on its card, which takes up the house tool. Every
+plot painted then joins that house, and one that doesn't touch it is refused. A drag started on the house
+does the same with nothing selected.
 
 ## Who lives there
 

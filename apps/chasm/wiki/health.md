@@ -4,9 +4,9 @@ aliases: hunger, food bar
 kind: needs
 status: built
 summary: Health is the food meter. It lasts {NEEDS_HEALTH_FULL:days} from full, food puts it back, and at zero the person dies.
-plans: needs_plan.md > Decided; needs_plan.md > The model; needs_plan.md > Current tuning
+plans: needs_plan.md > Decided; needs_plan.md > The model; needs_plan.md > Current tuning; needs_plan.md > As built: step 5, deaths told
 code: Economy.h: NEEDS_HEALTH_FULL EconomyFoodWorth EconomyPressing; Economy.cpp: Needs Consume EatAndDrink SeekSupply; ApplicationChasmSelect.cpp: BADGE_LOW_HEALTH
-verified: 2026-10-09
+verified: 2026-10-10
 ---
 
 Every [[Person|person]] has a health bar, and there is no separate hunger bar. Health drops by one every
@@ -37,6 +37,9 @@ is wasted. Of the foods that fit, the one that keeps worst goes first: greens, t
 At zero health a person dies. The colony records the cause: **thirst** if they were dry, **cold** if they
 were cold, and **hunger** otherwise. Their family keeps the house, and their job is given out again on
 the same tick. Nobody arrives to replace them, so starving is the first way to lose.
+
+In play, a death is told in red at the bottom of the screen for a few seconds, for example "JELLE DE WIT
+DIED OF THIRST". When nobody is left, "THE COLONY IS LOST" stays on screen.
 
 ## On screen
 
