@@ -53,6 +53,9 @@ struct BuildingFixtures{
     guards stand on the platform (ApplicationChasmWorkersView.cpp) - at BuildingTowerDeck's height.
 */
 float BuildingTowerDeck(const ChasmWorld& w, const ZoneState& z, int plot);
+//How high a walker stands on layer `layer` of plot `plot` (Walkers.h, LAYERS) at its point: a guard tower's platform,
+//or so many half storeys over the plot's ground - a castle piece's top (CastleMesh.h), a stair's middle.
+float BuildingLayerHeight(const ChasmWorld& w, const ZoneState& z, int plot, int layer);
 //How far its walls are from its plot's point, along `toward` - where a palisade beside it meets it (RoadMesh).
 float BuildingTowerReach(const ChasmWorld& w, int plot, const vec2& toward);
 //Whether `at` is on its platform.

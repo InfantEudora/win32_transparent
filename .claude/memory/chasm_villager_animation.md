@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 0d964184-f477-47d6-845e-a14ed3a2d9dd
-  modified: 2026-10-10T15:09:51.247Z
+  modified: 2026-10-10T21:05:15.339Z
 ---
 
 2026-10-10: aiming at 100-200 villagers + zombie waves on screen. Shape keys (the spider way) were
@@ -35,6 +35,18 @@ get their own armature (copy of the man's, joints moved, same bone names), and t
 the man's rig only. Loads are child Objects of bones (log/sack on Spine, pail on Arm.R), their verts
 pre-moved by the bone's inverse bind. Walk rate = leg speed / (0.71 * fit); standing = bind pose
 unless the file has an `Idle` clip; hidden people get no clip. Checked in game: walk, log on shoulder.
+
+**Re-rig 2026-10-10 evening:** 15-bone rigs `male_armature` + `female_armature` (Arm.Upper/Lower,
+Hand, Leg.Upper/Lower, Foot, .L/.R), `Walking` 0.625 s with a 3 cm hip bob, the action on BOTH rigs
+(90 channels, copies differ up to 12 deg). Core fixes made: tracks grouped per glTF NODE
+(`ObjectAnimation::target_node`; by-name grouping merged both rigs' keys into one track), LinkObjects
+binds own-node tracks first then by name to unclaimed bones, GetSkinnedVertex renormalizes the 3 kept
+weights (the dropped 4th pulled verts toward the origin, up to 0.18 model units; archer too). Chasm:
+pail on Hand.R, borrowed tracks only are rotation-only, walk speed measured from Foot.L/R at Init
+(~0.81 u/s at rate 1). adult_female has 52 verts weighted to nothing (front-left hip) - art fix.
+Also fixed: Object::ApplyAnimation tested `!current_animation` before LOAD_DEFAULT_POSE, so
+SwitchToAnimation(NULL) never loaded the reference pose - stopped villagers froze mid-stride (verified:
+standing Hips back to 0.763). Checked in game: man + woman walk side-on, hip bob 0.729-0.758.
 
 **Trap:** the Export collection's exporter saved in `chasm_props.blend` had `export_skins` and
 `export_animations` OFF (seen 15:59); a one-click export or `blender_chasm_props.py --add` drops the

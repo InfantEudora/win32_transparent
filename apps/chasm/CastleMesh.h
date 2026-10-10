@@ -19,6 +19,8 @@
       - BLOCK: solid from the ground to its top.
       - ARCH: a slab at its top on a pillar at each corner of its plot, the passage under it open.
       - STAIR: solid, its top the ramp.
+    A piece over a piece stands on its top: an arch's pillars on it, a stair's sides on the arch it climbs from - an
+    arch a stair sits on draws neither its top nor its parapets.
 */
 void BuildCastleCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out);
 

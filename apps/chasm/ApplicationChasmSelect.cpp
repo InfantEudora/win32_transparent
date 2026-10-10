@@ -280,10 +280,84 @@ void DrawRoofThirst(UIOverlay* o, const vec2& c, float s, bool f_dry){
 }
 
 //Where a person's feet are: on the ground of the plot he stands on, as the workers' view puts him.
-vec3 FeetOf(const ChasmWorld& w, const EconomyWorker& k){
-    GridPick pick = w.picker->Pick(k.pos);
-    float y = pick.f_hit ? w.terrain->GroundHeight(k.pos,w.terrain->Height(pick.plot)) : 0.0f;
-    return vec3(k.pos.x,y,k.pos.y);
+/*
+    WHERE HE IS GOING (the user's, 2026-10-10): the rest of a person's route as small dots, PATH_DOT_EVERY apart along
+    it - counted from its start, so they stay put as he walks and go out one by one as he passes them - and a ring
+    where it ends. At the route's own height (RouteHeight), so they climb the stairs and run along the walls with him.
+    Returns a key that changes when the marks would: the route, and how many dots he has passed.
+*/
+#define PATH_DOT_EVERY      0.75f
+#define PATH_DOT_R          0.075f
+#define PATH_RING_IN        0.22f
+#define PATH_RING_OUT       0.34f
+#define PATH_LIFT           0.06f   //over what he walks on, clear of its facets
+#define PATH_SIDES          10
+
+uint64_t PathMarksKey(const EconomyWorker& k){
+    float done = k.along;
+    for (int s = 0; s < k.seg && s + 1 < (int)k.route.size(); s++){
+        done += (k.route[s + 1] - k.route[s]).length();
+    }
+    uint64_t h = ((uint64_t)k.id << 40) ^ ((uint64_t)k.route.size() << 24) ^ (uint64_t)(int64_t)(done / PATH_DOT_EVERY);
+    const vec2& end = k.route.back();
+    h ^= ((uint64_t)(uint32_t)(int32_t)(end.x * 64.0f) << 20) ^ ((uint64_t)(uint32_t)(int32_t)(end.y * 64.0f) << 4);
+    return h ? h : 1;
+}
+
+void BuildPathMarks(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k, std::vector<vertex>& out){
+    out.clear();
+    if (k.route.size() < 2 || k.seg + 1 >= (int)k.route.size()){
+        return;
+    }
+    const vec3 up(0.0f,1.0f,0.0f);
+    auto disc = [&](const vec2& c, float y, float r_in, float r_out){
+        for (int i = 0; i < PATH_SIDES; i++){
+            float a0 = 6.2831853f * (float)i / PATH_SIDES;
+            float a1 = 6.2831853f * (float)(i + 1) / PATH_SIDES;
+            vec2 d0(std::cos(a0),std::sin(a0));
+            vec2 d1(std::cos(a1),std::sin(a1));
+            vec3 o0(c.x + d0.x * r_out,y,c.y + d0.y * r_out);
+            vec3 o1(c.x + d1.x * r_out,y,c.y + d1.y * r_out);
+            if (r_in <= 0.0f){
+                MeshTri(out,vec3(c.x,y,c.y),o0,o1,up,PAL_WINDOW_LIT,PAL_EFFECTS);
+            }else{
+                vec3 i0(c.x + d0.x * r_in,y,c.y + d0.y * r_in);
+                vec3 i1(c.x + d1.x * r_in,y,c.y + d1.y * r_in);
+                MeshQuad(out,i0,o0,o1,i1,up,PAL_WINDOW_LIT,PAL_EFFECTS);
+            }
+        }
+    };
+    //How far along the route he is, and how long it is.
+    float done = k.along;
+    float total = 0.0f;
+    for (int s = 0; s + 1 < (int)k.route.size(); s++){
+        float len = (k.route[s + 1] - k.route[s]).length();
+        done += (s < k.seg) ? len : 0.0f;
+        total += len;
+    }
+    //Every dot past him, up to the ring.
+    int s = 0;
+    float leg_start = 0.0f;
+    for (float d = (std::floor(done / PATH_DOT_EVERY) + 1.0f) * PATH_DOT_EVERY; d < total - PATH_RING_OUT; d += PATH_DOT_EVERY){
+        while (s + 1 < (int)k.route.size() - 1 && d > leg_start + (k.route[s + 1] - k.route[s]).length()){
+            leg_start += (k.route[s + 1] - k.route[s]).length();
+            s++;
+        }
+        vec2 dir = k.route[s + 1] - k.route[s];
+        float len = dir.length();
+        float along = d - leg_start;
+        vec2 at = k.route[s] + ((len > 1e-5f) ? dir * (along / len) : vec2(0.0f,0.0f));
+        disc(at,RouteHeight(w,z,k,s,along) + PATH_LIFT,0.0f,PATH_DOT_R);
+    }
+    int last = (int)k.route.size() - 1;
+    float y_end = RouteHeight(w,z,k,last,0.0f) + PATH_LIFT;
+    disc(k.route[last],y_end,PATH_RING_IN,PATH_RING_OUT);
+    disc(k.route[last],y_end,0.0f,PATH_DOT_R);
+}
+
+vec3 FeetOf(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+    //Up on a deck where his route has him (ramparts_plan.md), as he is drawn.
+    return vec3(k.pos.x,WorkerHeight(w,z,k),k.pos.y);
 }
 
 const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
@@ -631,6 +705,39 @@ struct Card{
         l.stock.f_kept = f_kept;
         lines.push_back(l);
     }
+    /*
+        A shared stock BY GROUP (goods_plan.md, "The view"): holding goods of more than one group - materials, food
+        and water, inputs (HudGoodsGroup) - its total on a line, then a strip for each group it holds any of, each
+        against the whole room (or, with none, the whole stock), so together they fill as one strip over it would.
+        Of one group, or empty, the one strip as ever.
+    */
+    void StockByGroup(const std::string& label, const std::string& whose, const std::array<int,GOOD_COUNT>& goods,
+                      int room, bool f_kept, const std::array<int,GOOD_COUNT>& reserved = {}){
+        std::array<std::array<int,GOOD_COUNT>,HUD_GROUP_COUNT> part{};
+        std::array<std::array<int,GOOD_COUNT>,HUD_GROUP_COUNT> part_reserved{};
+        std::array<int,HUD_GROUP_COUNT> count{};
+        int total = 0;
+        for (int g = 0; g < GOOD_COUNT; g++){
+            int k = HudGoodsGroup(g);
+            part[k][g] = goods[g];
+            part_reserved[k][g] = reserved[g];
+            count[k] += std::max(0,goods[g]);
+            total += std::max(0,goods[g]);
+        }
+        int groups = (int)std::count_if(count.begin(),count.end(),[](int n){ return n > 0; });
+        if (groups <= 1){
+            Stock(label,whose,goods,room,f_kept,reserved);
+            return;
+        }
+        Text((whose.empty() ? label : label + " - " + whose) + ": " + std::to_string(total)
+             + (room > 0 ? " of " + std::to_string(room) : ""));
+        for (int k = 0; k < HUD_GROUP_COUNT; k++){
+            if (count[k] > 0){
+                Stock(HudGoodsGroupName(k),"",part[k],room > 0 ? room : total,f_kept,part_reserved[k]);
+                lines.back().stock.figure = std::to_string(count[k]);
+            }
+        }
+    }
 };
 
 bool AnyGoods(const std::array<int,GOOD_COUNT>& goods){
@@ -900,6 +1007,56 @@ void YardLines(const ZoneState& z, uint32_t id, Card& c){
     c.lines.push_back(add);
 }
 
+/*
+    STOCK KEPT (goods_plan.md): what the colony keeps of the good a builders' hut or a ropewalk makes - the colony's
+    number, so every one of them shows the same - against what the stores hold; the chips that set it
+    (OVERLAY_HIT_KEEP); and an order for more (OVERLAY_HIT_MAKE_MORE), how far it has got and Cancel while it runs.
+*/
+void KeptLines(const EconomyState& e, const ZoneState& z, int good, Card& c){
+    static const int steps[] = {0,5,10,20,40};
+    static const int more[] = {5,10};
+    int stored = EconomyStoredTotals(e,z)[good];
+    int kept = e.kept[good];
+    const char* name = GoodName(good);
+    if (kept > 0){
+        c.Text(Format("The colony keeps %i %s in its stores - %i there now",kept,name,stored));
+    }else{
+        c.Text(Format("The colony keeps no %s in its stores: %s",name,
+                      (good == GOOD_ROPE) ? "it waits here, for the sites" : "they are made for the sites and towers"),HUD_TEXT_DIM);
+    }
+    CardLine keep;
+    keep.type = CARD_CHOICE;
+    for (int n : steps){
+        keep.choices.push_back(std::make_pair(std::to_string(n),n));
+    }
+    keep.choice_on = kept;
+    keep.choice_action = OVERLAY_HIT_KEEP;
+    c.lines.push_back(keep);
+    if (e.ordered[good] > 0){
+        c.Text(Format("Making more: %i of %i in the stores",stored,e.ordered[good]));
+    }else{
+        c.Text("Make more, once",HUD_TEXT_DIM);
+    }
+    CardLine order;
+    order.type = CARD_CHOICE;
+    for (int n : more){
+        order.choices.push_back(std::make_pair(Format("%i more",n),n));
+    }
+    if (e.ordered[good] > 0){
+        order.choices.push_back(std::make_pair(std::string("Cancel"),0));
+    }
+    order.choice_action = OVERLAY_HIT_MAKE_MORE;
+    c.lines.push_back(order);
+    //Kept in stores no store takes it into: it can only wait at the workplace.
+    bool f_taken = false;
+    for (size_t s = 1; s < e.accepts.size() && !f_taken; s++){
+        f_taken = (e.accepts[s] & GOOD_BIT(good)) != 0;
+    }
+    if (EconomyKeptLevel(e,good) > 0 && !f_taken){
+        c.Text(Format("No store takes %s: none can be kept",name),HUD_AMBER);
+    }
+}
+
 void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint32_t id, uint64_t tick, Card& c){
     const ZoneBuilding& b = z.buildings[id];
     ZoneBuildingInfo info = ZoneBuildingFigures(w,z,id);
@@ -1096,7 +1253,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     if (b.kind == ZONE_KIND_STORE && info.storeys > 0){
         int room = (id < e->room.size()) ? e->room[id] : 0;
         if (id < e->stock.size()){
-            c.Stock("Holds","anyone's",e->stock[id],room,false,EconomyReserved(*e,id));
+            c.StockByGroup("Holds","anyone's",e->stock[id],room,false,EconomyReserved(*e,id));
         }
         bool f_attached = id < e->attached.size() && e->attached[id] != 0;
         CardLine chips;
@@ -1323,6 +1480,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             if (hemp[GOOD_HEMP] > 0){
                 c.Stock("Hemp","to make rope of",hemp,0,true);
             }
+            if (info.storeys > 0){
+                KeptLines(*e,z,GOOD_ROPE,c);
+            }
         }else if (f_field && AnyGoods(held)){
             const EconomyField* land = EconomyFieldOf(*e,id);
             uint32_t owner = land ? land->owner : 0;
@@ -1337,7 +1497,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     }
     //A camp's SUPPLIES (STORES): the settlers' and the colony's, anyone's, under its families' own pantry above.
     if (b.kind == ZONE_KIND_CAMP && id < e->stock.size() && AnyGoods(e->stock[id])){
-        c.Stock("Supplies","anyone's",e->stock[id],0,false,EconomyReserved(*e,id));
+        c.StockByGroup("Supplies","anyone's",e->stock[id],0,false,EconomyReserved(*e,id));
     }
     if (b.kind == ZONE_KIND_WINCH && info.storeys > 0){
         c.Text("Lowers to the balcony below",HUD_TEXT_DIM);
@@ -1362,10 +1522,13 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Text("Too few people: every place here is filled before any other workplace's",HUD_TEXT_DIM);
         }
         //PROVISIONS (defence_plan.md): the wheat and beans to make them, and those made - kept: for the sites'
-        //carriers, and nobody eats from it.
+        //carriers, and nobody eats from it. Then what the colony keeps of them (goods_plan.md).
         if (id < e->stock.size() && AnyGoods(e->stock[id])){
             c.Stock("Holds","for provisions",e->stock[id],0,true,EconomyReserved(*e,id));
-            c.Text("Wheat and beans are made into provisions here, for the sites",HUD_TEXT_DIM);
+            c.Text("Wheat and beans are made into provisions here, for the sites and the stores",HUD_TEXT_DIM);
+        }
+        if (info.storeys > 0){
+            KeptLines(*e,z,GOOD_PROVISIONS,c);
         }
     }
     /*
@@ -1503,7 +1666,7 @@ void GateCard(const ChasmWorld& w, const ZoneState& z, int plot, Card& c){
 void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& crate, uint64_t tick, Card& c){
     uint32_t id = ECONOMY_STORE_CRATE | crate.id;
     c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : "Crate";
-    c.Stock("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
+    c.StockByGroup("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
     CalendarDate when = CalendarDateOf(crate.tick);
     std::string date = std::string(CalendarSeasonName(when.season)) + " " + std::to_string(when.day)
                        + ((when.year != CalendarDateOf(tick).year) ? Format(", year %i",when.year) : std::string());
@@ -1725,7 +1888,7 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
             }
             vec2 sp;
             if (ScreenOf(main_scene->camera,(float)main_window->width,(float)main_window->height,
-                         FeetOf(*w,k) + vec3(0.0f,PERSON_MIDDLE,0.0f),sp)){
+                         FeetOf(*w,z.get(),k) + vec3(0.0f,PERSON_MIDDLE,0.0f),sp)){
                 float d = (sp - at).length();
                 if (d < best){
                     best = d;
@@ -1907,6 +2070,20 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 if (sel.kind == PLAY_PICK_BUILDING){
                     SubmitGuards(sel.id,hit.value);
                 }
+            }else if (hit.action == OVERLAY_HIT_KEEP || hit.action == OVERLAY_HIT_MAKE_MORE){
+                //A builders' hut's or ropewalk's card: what the colony keeps of what it makes, or an order for more
+                //(goods_plan.md) - a recorded economy command.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const ZoneState> z = GetZones();
+                int good = (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size())
+                           ? EconomyMadeAt(z->buildings[sel.id].kind) : -1;
+                if (good >= 0){
+                    SubmitKeep(good,hit.value,hit.action == OVERLAY_HIT_MAKE_MORE);
+                }
             }else if (hit.action == OVERLAY_HIT_GUARD_RELEASE){
                 //A guard released from his tower: the tower card's chip names him, his own card's is him (step 8).
                 PlayPick sel;
@@ -1928,7 +2105,8 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 if (sel.kind == PLAY_PICK_PERSON){
                     SubmitOrder(sel.id,-1);
                 }
-            }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_SITE_FIRST){
+            }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_STORE_ALLOW_GROUP
+                      || hit.action == OVERLAY_HIT_SITE_FIRST){
                 PlayPick sel;
                 {
                     std::lock_guard<std::mutex> lock(pick_mutex);
@@ -1943,6 +2121,12 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     if (hit.action == OVERLAY_HIT_STORE_ALLOW){
                         GoodsMask mask = z->buildings[sel.id].allow ^ (GoodsMask)GOOD_BIT(hit.value);
                         SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
+                    }else if (hit.action == OVERLAY_HIT_STORE_ALLOW_GROUP){
+                        //A group's chip (goods_plan.md): all of the group, or - taking all of it already - none.
+                        GoodsMask group = HudGoodsGroupMask(hit.value);
+                        GoodsMask allow = z->buildings[sel.id].allow;
+                        SubmitZone(ZONE_OP_STORE_ALLOW,plot,((allow & group) == group) ? (GoodsMask)(allow & ~group)
+                                                                                        : (GoodsMask)(allow | group));
                     }else if (ZoneKindOnCells(z->buildings[sel.id].kind) && cell != z->field.end()){
                         SubmitZone(ZONE_OP_FIELD_PRIORITY,(int)(cell - z->field.begin()),want);     //a field or range: by a cell
                     }else{
@@ -2007,7 +2191,9 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             if (tower){
                 SubmitGuard(sel.id,tower);
             }else{
-                SubmitOrder(sel.id,hover.plot);
+                //On the layer the mouse is on - the wall-walk under an arch, the road under it (ramparts_plan.md);
+                //picked by the ray alone, there is none to tell: its top.
+                SubmitOrder(sel.id,hover.plot,hover.f_surface ? hover.layer : -1);
             }
         }else{
             std::lock_guard<std::mutex> lock(pick_mutex);
@@ -2117,8 +2303,17 @@ void ApplicationChasm::UploadSelection(){
             verts.clear();
             if (f_ground){
                 select_related_plots = related_places.plots;
+                //A selected person's post up on a deck (ramparts_plan.md) is marked there, not on the ground under it.
+                const EconomyWorker* posted = (sel.kind == PLAY_PICK_PERSON && e && e->world == w) ? PersonById(*e,sel.id) : NULL;
                 for (int v : related_places.plots){
-                    BuildPlotTile(*w,v,FIELD_OUTLINE_LIFT,verts);
+                    float floor = -INFINITY;
+                    if (posted && posted->post == v){
+                        int ls[WALK_MOST_DECKS];
+                        int n = WalkDeckLayers(*z,v,ls);
+                        int layer = (posted->post_layer >= 0) ? posted->post_layer : (n > 0) ? ls[n - 1] : WALK_GROUND;
+                        floor = (layer > 0) ? BuildingLayerHeight(*w,*z,v,layer) + FIELD_OUTLINE_LIFT : floor;
+                    }
+                    BuildPlotTile(*w,v,FIELD_OUTLINE_LIFT,verts,floor);
                 }
             }else{
                 select_related_buildings = related_places.buildings;
@@ -2225,6 +2420,40 @@ void ApplicationChasm::UploadSelection(){
         o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),CrateYaw(c->id)),false);
         SetOutlineOf(o,(i == 0) ? SELECT_COLOUR : HOVER_COLOUR);
         o->SetVisibility(CHASM_OUTLINE_READY != 0);
+    }
+    //Where the selected person is going (BuildPathMarks): out of doors and on his way.
+    if (!path_marks){
+        main_scene->AtTickBoundary([&](){
+            Object* o = new Object();
+            o->name = "Selected person's way";
+            o->SetMesh(new Mesh());
+            o->SetMaterialSlot(0,palette_material);
+            o->SetPickability(false);
+            o->SetVisualOnly(true);
+            o->SetCastsShadow(false);
+            o->SetVisibility(false);
+            main_scene->AddObject(o);
+            path_marks = o;
+        });
+    }
+    const EconomyWorker* walking = (f_play && f_ready && e && e->world == w && sel.kind == PLAY_PICK_PERSON)
+                                   ? PersonById(*e,sel.id) : NULL;
+    if (walking && (EconomyIndoors(*walking) || walking->seg + 1 >= (int)walking->route.size())){
+        walking = NULL;
+    }
+    if (!walking){
+        path_marks->SetVisibility(false);
+        path_marks_key = 0;
+    }else{
+        uint64_t key = PathMarksKey(*walking);
+        if (key != path_marks_key){
+            path_marks_key = key;
+            BuildPathMarks(*w,z.get(),*walking,verts);
+            if (!verts.empty()){
+                path_marks->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
+            }
+        }
+        path_marks->SetVisibility(true);
     }
 }
 
@@ -2364,7 +2593,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
         return true;
     };
     auto person_spot = [&](const EconomyWorker& k, vec2& head, vec2& dot, bool& f_off){
-        vec3 feet = FeetOf(*w,k);
+        vec3 feet = FeetOf(*w,z.get(),k);
         return pin_spot(feet + vec3(0.0f,PERSON_PIN * 0.75f,0.0f),feet + vec3(0.0f,PERSON_PIN,0.0f),16.0f,head,dot,f_off);
     };
 
@@ -2395,7 +2624,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             //He is at his door, on the house's first plot (Economy::HomePlot) - its roof is over him.
             GridPick pick = w->picker->Pick(k.pos);
             float top = (pick.f_hit && z->building[pick.plot] == k.house) ? ShapeTop(*w,*z,pick.plot)
-                                                                          : FeetOf(*w,k).y + PERSON_PIN;
+                                                                          : FeetOf(*w,z.get(),k).y + PERSON_PIN;
             roofs.push_back(Roof{k.house,vec3(k.pos.x,top + THIRST_MARK_ROOF,k.pos.y),f_dry});
         }
         for (const Roof& r : roofs){
@@ -2465,9 +2694,11 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     }
     card_w = std::min(card_w,width * 0.45f);
     /*
-        A store's goods chips WRAP onto as many rows as the card's width needs, rather than widening it: with
-        provisions (defence_plan.md) the six ran off its edge, and more goods are coming. Where each chip goes,
-        for the height here and the drawing below.
+        A store's goods chips go a row a GROUP of goods (HudGoodsGroup, goods_plan.md): the group's own chip, then
+        its goods' from one indent, past the widest group chip, so they line up - and WRAP onto another row, at that
+        indent, where the next would run off the card: with provisions (defence_plan.md) six in a row ran off its
+        edge, and more goods are coming. The card widens to fit three goods a row past the indent, and no more.
+        Where each chip goes, for the height here and the drawing below.
     */
     const float chip_gap = 6.0f * s;
     const float swatch_w = 13.0f * s;      //a good's chip: its colour's swatch before its name (HudGoodColour)
@@ -2477,18 +2708,48 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     auto good_chip_w = [&](int g){
         return chip_w(GoodName(g)) + swatch_w;
     };
-    auto goods_rows = [&](){
-        int rows = 1;
-        float x = 0.0f;
+    float indent = 0.0f;
+    float three = 0.0f;     //the widest group's first three goods, a row of them
+    for (int k = 0; k < HUD_GROUP_COUNT; k++){
+        indent = std::max(indent,chip_w(HudGoodsGroupName(k)) + chip_gap);
+        float row = 0.0f;
+        int n = 0;
         for (int g : HudGoodsOrder()){
-            float w = good_chip_w(g);
-            if (x > 0.0f && x + w > card_w - pad * 2.0f){
-                rows++;
-                x = 0.0f;
+            if (HudGoodsGroup(g) == k && n++ < 3){
+                row += good_chip_w(g) + chip_gap;
             }
-            x += w + chip_gap;
         }
-        return rows;
+        three = std::max(three,row);
+    }
+    for (const CardLine& l : card.lines){
+        if (l.type == CARD_CHIPS){
+            card_w = std::max(card_w,std::min(pad * 2.0f + indent + three,width * 0.45f));
+        }
+    }
+    //Calls place(group, good, x, row) for each chip at `width` - good -1 for the group's own - and returns the rows.
+    auto chip_rows = [&](float width, auto&& place) -> int {
+        int row = 0;
+        for (int k = 0; k < HUD_GROUP_COUNT; k++){
+            place(k,-1,0.0f,row);
+            float x = indent;
+            for (int g : HudGoodsOrder()){
+                if (HudGoodsGroup(g) != k){
+                    continue;
+                }
+                float w = good_chip_w(g);
+                if (x > indent && x + w > width){
+                    row++;
+                    x = indent;
+                }
+                place(k,g,x,row);
+                x += w + chip_gap;
+            }
+            row++;
+        }
+        return row;
+    };
+    auto goods_rows = [&](){
+        return chip_rows(card_w - pad * 2.0f,[](int,int,float,int){});
     };
     float h = pad + 26.0f * s;
     for (const CardLine& l : card.lines){
@@ -2579,16 +2840,21 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
         }else if (l.type == CARD_STOCK){
             y += DrawHudStock(overlay,l.stock,c0.x + pad,y,c1.x - c0.x - pad * 2.0f,s);
         }else{
-            //A chip per good: lit if the store takes it - on a new row where the next would run off the card.
-            y += chips_h;
-            float x = c0.x + pad;
-            for (int g : HudGoodsOrder()){
-                if (x > c0.x + pad && x + good_chip_w(g) > c1.x - pad){
-                    y += chips_h;
-                    x = c0.x + pad;
+            //A row a group: its chip - lit while the store takes all of the group, a click all or none of it - then a
+            //chip per good, lit if the store takes it.
+            float top = y;
+            int rows = chip_rows(c1.x - c0.x - pad * 2.0f,[&](int k, int g, float x, int row){
+                y = top + chips_h * (row + 1);
+                if (g < 0){
+                    GoodsMask group = HudGoodsGroupMask(k);
+                    chip(c0.x + pad + x,HudGoodsGroupName(k),(l.chips_on & group) == group,l.f_locked,
+                         OVERLAY_HIT_STORE_ALLOW_GROUP,k);
+                }else{
+                    chip(c0.x + pad + x,GoodName(g),(l.chips_on & GOOD_BIT(g)) != 0,l.f_locked,OVERLAY_HIT_STORE_ALLOW,g,
+                         HudGoodColour(g));
                 }
-                x = chip(x,GoodName(g),(l.chips_on & GOOD_BIT(g)) != 0,l.f_locked,OVERLAY_HIT_STORE_ALLOW,g,HudGoodColour(g));
-            }
+            });
+            y = top + chips_h * rows;
         }
     }
 }
@@ -2600,7 +2866,9 @@ void ApplicationChasm::RegisterSelectTools(){
     MCPServer::Get()->RegisterTool("chasm_select",
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
         "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md) - or a person by `person` id, "
-        "or a crate by `crate` id (docs/crates_plan.md); op clear; op under "
+        "or a crate by `crate` id (docs/crates_plan.md); op clear; op hover px,py: the overlay's hover pinned at that "
+        "pixel in place of the mouse's, so what it shows is in the next screenshot (the top bar's FOOD lists its foods) - "
+        "op hover with no pixel gives it back; op under "
         "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives, and the overlay's chip there with its value); op hits: every chip and button on the overlay, its action, value and centre x,y; op "
         "press px,py: a left click there, as the player's - on the HUD it presses what is drawn there (a tool of the "
         "grid, a card's chip, pause, speed, a row of the neediest list or of NEEDS ATTENTION), on the scene it selects; `pressed` says what "
@@ -2638,8 +2906,21 @@ void ApplicationChasm::RegisterSelectTools(){
             //so picking can be checked without a mouse.
             static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
                                                   "field_next","pause","speed","field_land","person","release",
-                                                  "take_tool","building","gate","ladder","tower_guards","guard_release"};
+                                                  "take_tool","building","gate","ladder","tower_guards","guard_release",
+                                                  "store_allow_group","keep","make_more"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
+            //The overlay's hover pinned at a pixel in place of the mouse's, until op hover with none (goods_plan.md:
+            //the top bar's FOOD lists its foods while hovered) - for a screenshot of what is drawn for it.
+            if (op == "hover"){
+                bool f_pin = args.contains("px") && args.contains("py") && args["px"].is_number() && args["py"].is_number();
+                if (f_pin){
+                    f_overlay_mouse_pinned = true;
+                    overlay_mouse_x = args["px"].get<int>();
+                    overlay_mouse_y = args["py"].get<int>();
+                }
+                f_overlay_mouse_pinned = f_pin;
+                return json{{"hover_pinned",f_pin}};
+            }
             if (op == "under" && args.contains("px") && args.contains("py") && args["px"].is_number() && args["py"].is_number()){
                 int2 px(args["px"].get<int>(),args["py"].get<int>());
                 json out;

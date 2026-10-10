@@ -21,8 +21,8 @@ static Debugger* debug = new Debugger("ChasmPeople",DEBUG_ALL);
     View only: one object per person, reused, placed every frame from the published
     EconomyState. The state moves on ticks, so a person steps at the tick rate.
 
-    A RIGGED FIGURE - one whose node in the props file is bound to a skin (the user's 7-bone rig on the man
-    first) - is drawn SKINNED instead: per person a Skeleton of that rig sharing the figure's one skinned mesh,
+    A RIGGED FIGURE - one whose node in the props file is bound to a skin (the man and the woman, as of
+    2026-10-10) - is drawn SKINNED instead: per person a Skeleton of that rig sharing the figure's one skinned mesh,
     so they still draw in one instanced call per pass, walking while his route has a leg left and standing
     otherwise. What he carries is a child of the bone that carries it, so a pail swings with his arm. A
     figure without a rig stays static, as above, until it gets one; nothing here names the rig.
@@ -54,18 +54,60 @@ const char* person_asset_names[PERSON_FIGURES] = {"adult_male","adult_female","k
 #define WORKER_WALK_CLIP    "Walking"
 #define WORKER_IDLE_CLIP    "Idle"  //stood in when the file has one; the bind pose otherwise
 /*
-    How far one cycle of the walk carries a man, so the clip runs at his speed with his feet planted: the
-    legs swing about 31-35 degrees either way and are 0.77 long, so two steps cover 1.55 of the model's
-    units, 0.71 at PERSON_MODEL_SCALE. A child's is shorter by his height (worker_figure_fit). On a road
-    that is 4.5 cycles a second - quick feet, at the game's quick walking speeds.
+    THE WALK'S PACE is measured from each rig's own feet at Init (MeasureWalkSpeed), so the clip runs at
+    a person's speed with his feet planted however the walk is re-animated. The rig of 2026-10-10 walks
+    0.81 world units a second at rate 1 (a 0.625 s cycle of two 0.25 steps), so 2 on open ground and 4
+    on a road. A rig without feet of these names gets WORKER_WALK_SPEED, that rig's figure.
 */
-#define WORKER_WALK_STRIDE  0.71f
+#define WORKER_FOOT_L       "Foot.L"
+#define WORKER_FOOT_R       "Foot.R"
+#define WORKER_WALK_SPEED   0.81f
 
 namespace {
 
 //The bone each load rides on: the log and the sack on the spine, which the shoulders and back move with;
 //the pail in the right hand. A rig without the bone carries the load on its root, still.
-const char* load_bone_names[WORKER_LOADS] = {NULL,"Spine","Spine","Arm.R"};
+const char* load_bone_names[WORKER_LOADS] = {NULL,"Spine","Spine","Hand.R"};
+
+/*
+    After Object::AddAnimation: a track this rig BORROWED - bound by name to a bone of a node it was not
+    made for (Animation::LinkObjects), another rig's channel - is played as turns only, since its positions
+    are that rig's bone offsets and would stretch this one to its proportions. A rig's own channels keep
+    theirs, the hips' bob with them.
+*/
+void KeepOwnPositions(Animation* clip){
+    for (ObjectAnimation* track : clip->object_animations){
+        Bone* bone = dynamic_cast<Bone*>(track->target);
+        if (bone && bone->node_index != track->target_node){
+            clip->SetPositionUpdates(track,false);
+        }
+    }
+}
+
+/*
+    World units a second `walk` carries this rig at rate 1, posed on a skeleton that is in no scene: each
+    foot swings fore and aft about one step, and a cycle is two - so the two feet's ranges, at the drawn
+    scale, over the clip's length. 0 when the rig has no feet by those names.
+*/
+float MeasureWalkSpeed(Skeleton* probe, Animation* walk){
+    Bone* feet[2] = {probe->FindBone(WORKER_FOOT_L),probe->FindBone(WORKER_FOOT_R)};
+    if (!feet[0] || !feet[1] || walk->duration <= 0.0f){
+        return 0.0f;
+    }
+    probe->SwitchToAnimation(walk);
+    float lo[2] = {1e9f,1e9f};
+    float hi[2] = {-1e9f,-1e9f};
+    const int steps = 48;
+    for (int s = 0; s <= steps; s++){
+        probe->ApplyAnimation(walk->duration / (float)steps);
+        for (int k = 0; k < 2; k++){
+            float z = feet[k]->GetHeadWorldPosition().z;
+            lo[k] = fminf(lo[k],z);
+            hi[k] = fmaxf(hi[k],z);
+        }
+    }
+    return ((hi[0] - lo[0]) + (hi[1] - lo[1])) * PERSON_MODEL_SCALE / walk->duration;
+}
 
 //An axis-aligned box from lo to hi, flat-shaded.
 void Box(std::vector<vertex>& out, const vec3& lo, const vec3& hi, int column){
@@ -112,22 +154,16 @@ void AddLoad(std::vector<vertex>& out, int load){
     }
 }
 
-//Layer `layer` of plot `plot` (Walkers.h, LAYERS): a guard tower's platform, or so many half storeys over the ground.
-float LayerHeight(const ChasmWorld& w, const ZoneState& z, int plot, int layer){
-    if (z.KindOf(plot) == ZONE_KIND_TOWER && layer == 2 * z.standing[plot]){
-        return BuildingTowerDeck(w,z,plot);
-    }
-    return w.terrain->ground[plot] + (float)layer * 0.5f * ZONE_STOREY_HEIGHT;
 }
 
 /*
-    How high he stands (ramparts_plan.md): his route says which layer each of its points is on. On the ground, the
-    ground's relief under him; on a deck, its height. Between two plots, from the one's height straight to where
-    their layers meet - at the edge between them - and on to the other's, so a stair is walked as a ramp and a deck
-    to a deck stays level. Up a tower's ladder, whose layers meet nowhere, he steps onto the platform at its wall,
+    How high his route is (ramparts_plan.md) at `along` down leg `seg`: each of its points says which layer it is on.
+    On the ground, the ground's relief there; on a deck, its height. Between two plots, from the one's height straight
+    to where their layers meet - at the edge between them - and on to the other's, so a stair is walked as a ramp and a
+    deck to a deck stays level. Up a tower's ladder, whose layers meet nowhere, he steps onto the platform at its wall,
     as he always did.
 */
-float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k, int seg, float along){
     const Terrain& t = *w.terrain;
     auto plot_at = [&](const vec2& at){
         GridPick pick = w.picker->Pick(at);
@@ -137,44 +173,54 @@ float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker&
         int v = plot_at(at);
         return (v >= 0) ? t.GroundHeight(at,t.Height(v)) : 0.0f;
     };
-    if (!z || z->world.get() != &w || k.route_layer.empty() || k.route.empty()){
+    if (k.route.empty()){
         return ground_at(k.pos);
     }
+    int s = std::max(0,std::min(seg,(int)k.route.size() - 1));
+    //The point itself: on the leg, or at the route's last point once past it.
+    vec2 pos = k.route[s];
+    float f = 1.0f;
+    if (s + 1 < (int)k.route.size()){
+        vec2 d = k.route[s + 1] - k.route[s];
+        float len = d.length();
+        f = (len > 1e-4f) ? std::max(0.0f,std::min(1.0f,along / len)) : 1.0f;
+        pos = k.route[s] + d * f;
+    }
+    if (!z || z->world.get() != &w || k.route_layer.empty()){
+        return ground_at(pos);
+    }
     auto at_point = [&](const vec2& at, int v, int layer){
-        return (layer == WALK_GROUND) ? ground_at(at) : LayerHeight(w,*z,v,layer);
+        return (layer == WALK_GROUND) ? ground_at(at) : BuildingLayerHeight(w,*z,v,layer);
     };
-    int s = std::min(k.seg,(int)k.route.size() - 1);
     int la = EconomyRouteLayer(k,s);
     if (s + 1 >= (int)k.route.size()){
-        int v = plot_at(k.pos);
-        return (v >= 0) ? at_point(k.pos,v,la) : ground_at(k.pos);
+        int v = plot_at(pos);
+        return (v >= 0) ? at_point(pos,v,la) : ground_at(pos);
     }
     int lb = EconomyRouteLayer(k,s + 1);
     if (la == WALK_GROUND && lb == WALK_GROUND){
-        return ground_at(k.pos);
+        return ground_at(pos);
     }
     vec2 a = k.route[s];
     vec2 b = k.route[s + 1];
     int pa = plot_at(a);
     int pb = plot_at(b);
     if (pa < 0 || pb < 0){
-        return ground_at(k.pos);
+        return ground_at(pos);
     }
-    float len = (b - a).length();
-    float f = (len > 1e-4f) ? std::min(1.0f,k.along / len) : 1.0f;
     //On one plot - a step to or from his place on it - he is on its layer.
     if (pa == pb){
-        return at_point(k.pos,pa,(f < 0.5f) ? la : lb);
+        return at_point(pos,pa,(f < 0.5f) ? la : lb);
     }
     int meet = WalkLayersMeet(la,lb);
     if (meet < 0){
         bool f_on_b = f >= 0.5f;
         if (lb != WALK_GROUND && z->KindOf(pb) == ZONE_KIND_TOWER){
-            f_on_b = BuildingOnTower(w,pb,k.pos);
+            f_on_b = BuildingOnTower(w,pb,pos);
         }else if (la != WALK_GROUND && z->KindOf(pa) == ZONE_KIND_TOWER){
-            f_on_b = !BuildingOnTower(w,pa,k.pos);
+            f_on_b = !BuildingOnTower(w,pa,pos);
         }
-        return f_on_b ? at_point(k.pos,pb,lb) : at_point(k.pos,pa,la);
+        return f_on_b ? at_point(pos,pb,lb) : at_point(pos,pa,la);
     }
     vec2 mid = (a + b) * 0.5f;
     float hm = (meet == WALK_GROUND) ? ground_at(mid)
@@ -187,6 +233,8 @@ float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker&
     return hm + (hb - hm) * ((f - 0.5f) * 2.0f);
 }
 
+float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+    return RouteHeight(w,z,k,k.seg,k.along);
 }
 
 /*
@@ -286,9 +334,21 @@ void ApplicationChasm::BuildWorkerScene(){
             m->Retain();    //held for good, as the static figures are
             worker_skin_load[f * WORKER_LOADS + load] = m;
         }
-        debug->Info("Person figure '%s' is rigged (%s, %i bones): drawn skinned%s\n",person_asset_names[f],skin.c_str(),
-                    probe->num_bones,f_worker_idle_clip ? ", standing in its idle clip" : "");
-        delete probe;   //bones carry no mesh, and the skeleton was never in the scene
+        //The walk's pace, from this rig's own feet with the clip as a person of it will play it.
+        Animation* walk = gltfloader.LoadAnimation(WORKER_WALK_CLIP);
+        float measured = 0.0f;
+        if (walk){
+            walk->looped = true;
+            probe->AddAnimation(walk);
+            KeepOwnPositions(walk);
+            measured = MeasureWalkSpeed(probe,walk);
+        }
+        worker_walk_speed[f] = measured > 0.01f ? measured : WORKER_WALK_SPEED;
+        debug->Info("Person figure '%s' is rigged (%s, %i bones): drawn skinned, walking %.2f units a second at rate 1%s%s\n",
+                    person_asset_names[f],skin.c_str(),probe->num_bones,worker_walk_speed[f],
+                    measured > 0.01f ? "" : " (not measured: no feet named " WORKER_FOOT_L "/" WORKER_FOOT_R ")",
+                    f_worker_idle_clip ? ", standing in its idle clip" : "");
+        delete probe;   //bones carry no mesh, and the skeleton was never in the scene (its one clip is left, a one-off)
     }
 }
 
@@ -370,15 +430,9 @@ void ApplicationChasm::UploadWorkers(){
                 continue;
             }
             clip->looped = true;
-            /*
-                Turns only. A clip's positions are the offsets of the bones of the rig it was made on - the
-                man's - and would stretch any other rig to his proportions; played as rotations alone, one
-                clip serves every rig with the same bone names. (Walking's positions are constant anyway.)
-            */
-            for (ObjectAnimation* track : clip->object_animations){
-                clip->SetPositionUpdates(track,false);
-            }
+            //Each rig binds its own channels where the clip has them, and borrows another's by name.
             s->AddAnimation(clip);
+            KeepOwnPositions(clip);
         }
         for (int l = 1; l < WORKER_LOADS; l++){
             Mesh* m = worker_skin_load[f * WORKER_LOADS + l];
@@ -494,7 +548,7 @@ void ApplicationChasm::UploadWorkers(){
         //Walking while his route has a leg left, at that leg's speed; standing otherwise. Each on his own step.
         float phase = fmodf((float)k.id * 0.618034f,1.0f);
         if (k.seg + 1 < (int)k.route.size() && k.seg < (int)k.speed.size()){
-            set_clip(*ws,WORKER_CLIP_WALK,k.speed[k.seg] / (WORKER_WALK_STRIDE * worker_figure_fit[f]),phase);
+            set_clip(*ws,WORKER_CLIP_WALK,k.speed[k.seg] / worker_walk_speed[f],phase);
         }else{
             set_clip(*ws,f_worker_idle_clip ? WORKER_CLIP_IDLE : WORKER_CLIP_NONE,1.0f,phase);
         }

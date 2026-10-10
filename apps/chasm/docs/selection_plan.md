@@ -147,11 +147,49 @@ naming each good and how many (`ChasmHud.h` / `ChasmHud.cpp`: `HudStock`, `DrawH
   every card above, a camp's 5 wheat reserved by a girl fetching home drawn striped.
 
 **Open:**
-- A person's pack, and a crate once it can be selected, are still text: the same strip fits both.
+- A person's pack and load are still text; the user wants them as strips - see the next heading. (A crate's
+  card has had its strip since crates step 3.)
 - The right click was checked by reading the code, not by a click (`press` is the left button).
 - The mouse wheel over the card still zooms the camera.
-- A family at home is only on the card - indoors, they have no pin.
+- A family at home is only on the card - indoors, they have no pin. The user wants them selectable from
+  the card: "Selecting someone indoors, from their house's card", below.
 - A pin kept at the bottom edge can sit under a corner panel; the badges draw over the panels.
+
+### What a person carries, as a strip (the user's, 2026-10-10)
+
+The user: selecting a person should show what they are carrying **the same way a store shows what it
+holds**. Today their card says it in words - "Pack: 3 water, 2 beans" on a line of its own, and a load as
+", with 4 wood" after what they are doing. Wanted, not built:
+
+- **Their LOAD**, what they carry for someone else - a woodcutter's logs, a farmer's harvest, wood for a
+  site, food fetched home - as a goods line (`HudStock`) against what they can carry. One good at a time
+  today (`EconomyWorker::carry`, `carry_good`).
+- **Their PACK**, what a posted person carries to live on (`defence_plan.md`, "The pack"), as a second
+  line against the pack's size. On a scout it says at a glance how long they can stay out.
+- **Each only when it holds something**, as a store's category lines are.
+- **The fill means what it means everywhere** (proposed): the pack HOLLOW, their own; a load HOLLOW while
+  it is a site's or a house's, SOLID on its way to a store.
+
+To settle when it is built: what a load is measured against, since loads differ by errand; and how the
+pack shows two measures in one strip - water in units, food by the days of health it gives
+(`NEEDS_PACK_WATER`, `NEEDS_PACK_FOOD`) - for instance without a room, with the days in the header.
+
+### Selecting someone indoors, from their house's card (the user's, 2026-10-10)
+
+The user: a house's card shows who lives there, but to select one of them the player has to wait for them
+to come outside. Today the card lists the family a line each - "name, age - job, what they are doing",
+dimmed while they are indoors - and a person can be selected only by their figure or pin on the map, which
+someone indoors does not have. Wanted, not built:
+
+- **A family line on the card selects that person**, indoors or out, exactly as clicking them on the map
+  does: their card, and the outlines of what belongs with them.
+- **Everything a selection allows then works for someone indoors**: a right click orders them, their card's
+  chips work - the scout's "gather supplies" among them (`defence_plan.md`, "Scouting, provisioned first").
+- **The camp's card the same**: it lists the settlers waiting for a house.
+
+To settle when it is built: how the map shows that someone inside a house is selected, with no figure to
+outline - for instance the house drawn in the selection's colour, or a pin over its roof while selected;
+and what a camp's card does with a long list (it already moves left of the bottom-right stack).
 
 ## Who builds what
 

@@ -1,11 +1,11 @@
 ---
 name: chasm-goods-plan
-description: "chasm goods plan (docs/goods_plan.md) - four goods categories, hemp crop, ropewalk making rope; AGREED 2026-10-10; steps 1-4 BUILT, step 5 (view by category) next"
+description: "chasm goods plan (docs/goods_plan.md) - four goods categories, hemp crop, ropewalk making rope; all six steps BUILT and checked 2026-10-10; kept stock + make-more orders for provisions/rope built too"
 metadata:
   node_type: memory
   type: project
   originSessionId: 5bac1302-f1b1-4435-8b32-339b4416d1b9
-  modified: 2026-10-10T13:36:43.076Z
+  modified: 2026-10-10T21:36:44.279Z
 ---
 
 Agreed with the user 2026-10-10 (apps/chasm/docs/goods_plan.md; wiki ropewalk.md is a `planned` page).
@@ -39,8 +39,19 @@ always prefer the camera side. PAL_ROPE is palette row 9 col 2. Ropemaker walkin
 Step 4 BUILT 2026-10-10: StoreyGoods gives a winch ECONOMY_WINCH_ROPE 4; EconomyRopeChain (hemp, then ropewalk) +
 EconomyGoodHeld drive the site card line and NEEDS ATTENTION `site_needs_rope` (GROW HEMP -> field card / field tool,
 then BUILD A ROPEWALK). Testing a winch needs a balcony: none near the default seed's camp - order a villager to the
-nearest reachable rim (~100 units) to explore it, then paint with play:true (debug paint builds at once). Next: step 5,
-the view by category.
+nearest reachable rim (~100 units) to explore it, then paint with play:true (debug paint builds at once).
+Step 5 BUILT 2026-10-10: top bar shows extra goods only when held or a site wants them; FOOD hover via
+overlay_mouse_x/_y (chasm_select op hover pins it); HudGoodsGroup (materials / food+water / inputs) drives
+Card::StockByGroup and the store chips (group chip = OVERLAY_HIT_STORE_ALLOW_GROUP, goods at one indent). 
+Step 6 CHECKED 2026-10-10: one run hemp sown -> harvested (12 from a 20-area cell) -> 5 rope -> winch stood;
+a 4,500-tick recording of it replayed twice, every tick's hash equal. The plan's build order is DONE. Open: rope
+wear/upkeep (later), the ropemaker walking the walk (user doing animations - left open).
+KEPT STOCK built + checked 2026-10-10 (goods_plan.md "Kept in stock, and made to order"; first step of the
+scouting plan in defence_plan.md). User's answers: BOTH a standing kept number AND a one-off "make N more" order;
+one number per good for the COLONY (set from any hut/ropewalk card); rope KEEPS being made to the pile (12) - the
+kept number only decides how much goes to stores (default 0 = none); woodcutter later. Counted against
+EconomyStoredTotals (top bar's stores+camp). Order = a level max(kept, stored)+N, cleared when stores reach it.
+Next in that line: the scout's "gather supplies" chip, bigger pack, messages (defence_plan.md "Scouting").
 
 **Why:** rope is the winch's and zeppelin's material; the user wants the cards to stay readable as goods grow
 toward ~15 (GoodsMask is 16 bits).

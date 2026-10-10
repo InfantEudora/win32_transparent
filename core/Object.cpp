@@ -1300,17 +1300,17 @@ void Object::ApplyAnimation(float time_delta){
         }
     }
 
-    if (!current_animation){
-        animation_state = ANIMATION_STATE_INVALID;
-    }
+    //The reference pose first: SwitchToAnimation(NULL) asks for it with current_animation already NULL,
+    //and testing that first marked the state invalid before the request was seen - the bones froze in
+    //whatever pose the last clip left them (chasm's villagers stood mid-stride when they stopped).
     if (animation_state == ANIMATION_STATE_LOAD_DEFAULT_POSE){
         LoadDefaultPose();
         animation_state = ANIMATION_STATE_INVALID;
         current_animation = NULL;
         previous_animation = NULL;
     }
-
     if (!current_animation){
+        animation_state = ANIMATION_STATE_INVALID;
         return;
     }
 

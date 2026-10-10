@@ -17,6 +17,7 @@
 #include "Palette.h"
 #include "RoadMesh.h"
 #include "CropMesh.h"
+#include "BuildingMesh.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -468,6 +469,62 @@ GridPick ApplicationChasm::PickUnderPixel(int2 px){
 }
 
 /*
+    What is under the MOUSE (ramparts_plan.md). The engine reads the surface there every frame - its position and
+    normal, from the G-buffer (Renderer::ReadPickingAsync) - wherever a pickable object is drawn, which the terrain's
+    and the zones' chunks are (surface_ids). Stepped a little back into what it hit, that names the plot whose ground,
+    building or castle piece it is - the top of a tall wall its own plot, where the ray against the ground would reach
+    the plot behind it - and its height names the LAYER: the plot's place, ground or deck, nearest it. A frame old, as
+    the engine's answer always is. Over anything else - a person, a tree, water, the sky - the ray, as before.
+*/
+#define PICK_SURFACE_INSET      0.06f   //back into the surface hit, along its normal: inside what was hit
+
+GridPick ApplicationChasm::PickUnderMouse(int2 px){
+    InputController* input = main_scene->inputcontroller;
+    objectid_t id = input->GetHoveredObjectID();
+    if (id != OBJECTID_INVALID && std::find(surface_ids.begin(),surface_ids.end(),id) != surface_ids.end()){
+        GridPick pick = PickSurface(input->GetHoveredPosition(),input->GetHoveredNormal());
+        if (pick.f_hit){
+            return pick;
+        }
+    }
+    return PickUnderPixel(px);
+}
+
+GridPick ApplicationChasm::PickSurface(const vec3& at, const vec3& normal){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w){
+        return GridPick();
+    }
+    vec3 in = at - normal * PICK_SURFACE_INSET;
+    GridPick pick = w->picker->Pick(vec2(in.x,in.z));
+    if (!pick.f_hit){
+        return pick;
+    }
+    pick.at = vec2(at.x,at.z);
+    pick.f_surface = true;
+    std::shared_ptr<const ZoneState> z = GetZones();
+    pick.layer = (z && z->world == w) ? SurfaceLayer(*w,*z,pick.plot,at) : WALK_GROUND;
+    return pick;
+}
+
+int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& at){
+    const Terrain& t = *w.terrain;
+    int best = WALK_GROUND;
+    //Its ground, if there is ground to stand on there - none under a block or a stair.
+    float best_d = ZoneCastleShuts(z,plot) ? INFINITY : std::fabs(at.y - t.GroundHeight(vec2(at.x,at.z),t.Height(plot)));
+    int ls[WALK_MOST_DECKS];
+    int n = WalkDeckLayers(z,plot,ls);
+    for (int i = 0; i < n; i++){
+        float d = std::fabs(at.y - BuildingLayerHeight(w,z,plot,ls[i]));
+        if (d < best_d){
+            best_d = d;
+            best = ls[i];
+        }
+    }
+    return best;
+}
+
+/*
     PHYSICS THREAD, every pass: what is under the cursor, and a left click selects it.
 
     The hover goes blank whenever the cursor is not over the scene - outside the window, over a
@@ -486,10 +543,16 @@ void ApplicationChasm::UpdatePick(){
     GridPick hover;
     bool f_over_scene = p && main_window->f_has_focus && !UIWantsMouse();
     int2 px = input->GetRelativeMousePosition();
+    //The overlay's hover (the top bar's FOOD lists its foods): the mouse over the window, unless a script pinned one.
+    if (!f_overlay_mouse_pinned){
+        bool f_in = main_window->f_has_focus && px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
+        overlay_mouse_x = f_in ? px.x : -1;
+        overlay_mouse_y = f_in ? px.y : -1;
+    }
     if (f_over_scene){
         f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
         if (f_over_scene){
-            hover = PickUnderPixel(px);
+            hover = PickUnderMouse(px);
         }
     }
     //A script's hover (chasm_tool hover_x/hover_z): the plot there, and the mouse paints nothing meanwhile.
@@ -754,13 +817,13 @@ ChasmSave ApplicationChasm::MakeSave(){
                 s.grounds.push_back(g);
             }
         }
-        //The debug castle's pieces (ramparts_plan.md), as they are painted: an arch over a piece after it, on the same plot.
+        //The debug castle's pieces (ramparts_plan.md), as they are painted: a piece over a piece after it, on the same plot.
         for (size_t v = 0; v < z->castle.size(); v++){
             if (z->castle[v]){
                 s.castle.push_back(std::make_pair((int)v,(int)z->castle[v]));
             }
-            if (ZoneCastleOver(*z,(int)v)){
-                s.castle.push_back(std::make_pair((int)v,(int)ZoneCastlePiece(ZONE_CASTLE_ARCH,ZoneCastleOver(*z,(int)v))));
+            if (z->castle_over[v]){
+                s.castle.push_back(std::make_pair((int)v,(int)z->castle_over[v]));
             }
         }
     }
@@ -832,6 +895,15 @@ void ApplicationChasm::RestoreRecordingState(const json& state){
     LoadSave(save,error);
 }
 
+//The debug castle's piece over a plot's piece (ramparts_plan.md), for the tools: null with none.
+static json CastleOverJson(const ZoneState& z, int plot){
+    if (ZoneCastleOverShape(z,plot) == ZONE_CASTLE_NONE){
+        return json();
+    }
+    return json{{"shape",ZoneCastleShapeName(ZoneCastleOverShape(z,plot))},{"storeys",ZoneCastleOverStoreys(z,plot)},
+                {"layer",ZoneCastleOverLayer(z,plot)}};
+}
+
 /*
     The state a tick ends in, as the replay trace sees it (Application::HashSimState): the world the
     simulation runs on and what is painted on it. The base class's per-object hash is deliberately
@@ -870,8 +942,8 @@ void ApplicationChasm::HashSimState(StateHash& h){
         if (z.castle[v]){
             h.Add(((uint64_t)v << 32) | 0xCA500u | z.castle[v]);
         }
-        if (ZoneCastleOver(z,(int)v)){
-            h.Add(((uint64_t)v << 32) | 0x0E000u | (uint32_t)ZoneCastleOver(z,(int)v));
+        if (z.castle_over[v]){
+            h.Add(((uint64_t)v << 32) | 0x0E000u | z.castle_over[v]);
         }
     }
     //The buildings (docs/buildings_plan.md): which each plot is part of, the table, the drag in progress.
@@ -1032,11 +1104,11 @@ void ApplicationChasm::UploadZones(){
                 chunk->name = "Zones " + std::to_string(zone_chunks.size());
                 chunk->SetMesh(new Mesh());
                 chunk->SetMaterialSlot(0,palette_material);
-                chunk->SetPickability(false);
                 chunk->SetVisualOnly(true);
                 chunk->SetVisibility(false);
                 main_scene->AddObject(chunk);
                 zone_chunks.push_back(chunk);
+                surface_ids.push_back(chunk->GetID());     //pickable: the engine reads its surface (PickUnderMouse)
             }
         });
     }
@@ -1618,11 +1690,14 @@ void ApplicationChasm::UpdatePickView(){
     */
     const Terrain& terrain = *w->terrain;
     float level_h = 0.0f;
-    auto emit = [&verts,&segs,&level_h,&terrain](uint32_t color){
+    //Up on a deck (ramparts_plan.md): flat at its height instead - the plot the cursor is on the castle's top of.
+    bool f_on_deck = false;
+    float deck_h = 0.0f;
+    auto emit = [&verts,&segs,&level_h,&terrain,&f_on_deck,&deck_h](uint32_t color){
         line_vertex v;
         v.color = color;
         auto put = [&](const vec2& p){
-            v.pos = vec3(p.x,terrain.GroundHeight(p,level_h),p.y);
+            v.pos = vec3(p.x,f_on_deck ? deck_h : terrain.GroundHeight(p,level_h),p.y);
             verts.push_back(v);
         };
         for (size_t i = 0; i + 1 < segs.size(); i += 2){
@@ -1720,8 +1795,12 @@ void ApplicationChasm::UpdatePickView(){
             segs.push_back(g.fine.pos[q.v[(k + 1) % 4]]);
         }
         emit(PICK_HOVER_CELL);
+        std::shared_ptr<const ZoneState> zd = GetZones();
+        f_on_deck = hover.layer > 0 && zd && zd->world == w;
+        deck_h = f_on_deck ? BuildingLayerHeight(*w,*zd,hover.plot,hover.layer) : 0.0f;
         p->PlotOutline(hover.plot,segs);
         emit(plot_colour);
+        f_on_deck = false;
     }
 
     if (verts.empty()){
@@ -1836,11 +1915,11 @@ void ApplicationChasm::UploadTerrain(){
             chunk->name = "Terrain " + std::to_string(terrain_chunks.size());
             chunk->SetMesh(new Mesh());
             chunk->SetMaterialSlot(0,palette_material);
-            chunk->SetPickability(false);
             chunk->SetVisualOnly(true);
             chunk->SetVisibility(false);
             main_scene->AddObject(chunk);
             terrain_chunks.push_back(chunk);
+            surface_ids.push_back(chunk->GetID());
         }
         for (size_t i = 0; i < terrain_chunks.size(); i++){
             bool f_has = i < m.chunks.size() && !m.chunks[i].verts.empty();
@@ -2797,8 +2876,8 @@ void ApplicationChasm::RenderChasmPanel(){
             ImGui::SetNextItemWidth(160.0f);
             ImGui::SliderInt("storeys##castle",&storeys,1,ZONE_CASTLE_MAX_STOREYS);
             ImGui::SameLine();
-            ImGui::TextDisabled("a stair rises its last storey; an arch is 2 at least, and over a piece 2 above its top "
-                                "goes on it; shift takes the top piece off");
+            ImGui::TextDisabled("a stair rises its last storey; an arch is 2 at least. On a piece: an arch 2 above its top, "
+                                "or a stair 1 above an arch, goes on it; shift takes the top piece off");
             if (shape != castle_shape || storeys != castle_storeys){
                 castle_shape = shape;
                 castle_storeys = storeys;
@@ -3115,6 +3194,10 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"to_z",{{"type","number"}}},
                 {"posted",{{"type","boolean"},{"description","that walk as a guard or someone under an order takes it - a castle's decks too (ramparts_plan.md)"}}},
                 {"from_layer",{{"type","integer"},{"description","that walk from this layer of x/z's plot, in half storeys - 0 its ground"}}},
+                {"surface",{{"type","array"},{"items",{{"type","number"}}},
+                            {"description","[x,y,z]: a surface point, as the engine reads one under the mouse - with `normal`, the plot "
+                                           "and layer the mouse there picks (PickSurface, ramparts_plan.md)"}}},
+                {"normal",{{"type","array"},{"items",{{"type","number"}}},{"description","[x,y,z]: that surface's normal"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
@@ -3125,6 +3208,17 @@ void ApplicationChasm::RegisterMCPTools(){
                 return json{{"error","no grid"}};
             }
             json result;
+            //A surface the mouse would read: what it picks, plot and layer (PickUnderMouse).
+            if (args.contains("surface") && args["surface"].is_array() && args["surface"].size() == 3){
+                const json& sv = args["surface"];
+                vec3 at(sv[0].get<float>(),sv[1].get<float>(),sv[2].get<float>());
+                vec3 n(0.0f,1.0f,0.0f);
+                if (args.contains("normal") && args["normal"].is_array() && args["normal"].size() == 3){
+                    n = vec3(args["normal"][0].get<float>(),args["normal"][1].get<float>(),args["normal"][2].get<float>());
+                }
+                GridPick sp = PickSurface(at,n);
+                result["surface_pick"] = json{{"hit",sp.f_hit},{"plot",sp.f_hit ? sp.plot : -1},{"layer",sp.layer}};
+            }
             bool f_point = false;
             GridPick pick;
             if (args.contains("px") && args.contains("py")){
@@ -3157,7 +3251,7 @@ void ApplicationChasm::RegisterMCPTools(){
                         result["zone_castle"] = json{{"shape",ZoneCastleShapeName(ZoneCastleShape(*z,pick.plot))},
                                                      {"storeys",ZoneCastleStoreys(*z,pick.plot)},
                                                      {"layer",ZoneCastleLayer(*z,pick.plot)},
-                                                     {"arch_over",ZoneCastleOver(*z,pick.plot)}};
+                                                     {"over",CastleOverJson(*z,pick.plot)}};
                     }
                     //An arch over it (arches_plan.md): its storeys and the building it is part of.
                     if (z->ArchOf(pick.plot) > 0){
@@ -3271,10 +3365,11 @@ void ApplicationChasm::RegisterMCPTools(){
         "door - toward the neighbour at to_x/to_z or `toward` (a plot), or with neither to its next open side. "
         "THE DEBUG CASTLE (docs/ramparts_plan.md): castle puts a grey stone piece on the plot - `shape` block (solid, a "
         "deck on top), arch (a deck over an open passage, a road may run under it) or stair (rises its last storey), "
-        "`storeys` high - or with shape none takes it off, the top one first. An arch painted where a piece stands goes "
-        "OVER it when it is two storeys or more over the piece's top, with its pillars on it (`arch_over`), and takes "
-        "its place otherwise. Debug only (refused with play). Its decks are walked only by the posted: an order onto a "
-        "piece stands him on its top deck. `castle_here` reports the plot's piece.",
+        "`storeys` high - or with shape none takes it off, the top one first. Painted where a piece stands, an arch "
+        "two storeys or more over the piece's top goes OVER it, its pillars on it, and a stair one storey over an arch "
+        "goes ON it, climbing over the passage (`over`); anything else takes the piece's place. Debug only (refused "
+        "with play). Its decks are walked only by the posted: an order onto a piece stands him on its top deck. "
+        "`castle_here` reports the plot's piece.",
         json{
             {"type","object"},
             {"properties",{
@@ -3423,7 +3518,7 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["gate_here"] = !z->gate[index] ? "none" : ZoneGateShut(*z,index) ? "shut" : "open";
                     result["castle_here"] = json{{"shape",ZoneCastleShapeName(ZoneCastleShape(*z,index))},
                                                  {"storeys",ZoneCastleStoreys(*z,index)},{"layer",ZoneCastleLayer(*z,index)},
-                                                 {"arch_over",ZoneCastleOver(*z,index)}};
+                                                 {"over",CastleOverJson(*z,index)}};
                     result["building_here"] = BuildingJson(*w,*z,z->building[index]);
                 }else{
                     result["field_here"] = (bool)z->field[index];

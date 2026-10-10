@@ -161,6 +161,13 @@ class ObjectAnimation{
     ObjectAnimation();
     Object* target = NULL;      // The object this is animating
     std::string target_name;    // The name of the target this was intended for.
+    /*
+        The glTF node the channels were aimed at, -1 when not loaded from one. Two rigs in one file
+        can share bone names, and an action on both exports a clip with a channel per rig for each -
+        so a track is one NODE, not one name, and LinkObjects binds a bone to its own node's track
+        before any other of the same name (Bone::node_index).
+    */
+    int target_node = -1;
 
 
     //The will be a list of keyframes, sorted by time

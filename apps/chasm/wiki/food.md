@@ -42,6 +42,12 @@ harvests waiting to be carried in. The settlers bring {ECONOMY_START_WHEAT} whea
 {ECONOMY_START_BEANS} beans. People eat the food that keeps worst first: greens, then wheat, then beans -
 and [[Provisions|provisions]] last of all, a food made from a wheat and a beans for people on posts.
 
+## In the top bar
+
+FOOD at the top is the foods summed - wheat, greens and beans - since any of them feeds someone; it counts
+what lies in [[Store|stores]] and the [[Camp|camp's]] supplies. Hovering it lists each food on its own, and
+[[Provisions|provisions]] beside them, which are the posted people's and not in the sum.
+
 ## Planned
 
 - [planned] Spoilage: greens rotting when winter comes, wheat a little each season, beans not at all.

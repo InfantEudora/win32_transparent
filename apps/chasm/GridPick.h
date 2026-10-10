@@ -25,9 +25,16 @@ struct GridPick{
     int coarse_quad = -1;
     int plot = -1;              //the fine vertex whose plot holds the point
     int corner = -1;            //which corner of fine_quad that vertex is
+    /*
+        Which of the plot's places the cursor is on (Walkers.h, LAYERS): 0 its ground, or a deck's layer. Known only
+        when the pick came from the surface the engine read under the mouse (f_surface, ApplicationChasm::
+        PickUnderMouse); a pick of a point on the ground has none to tell.
+    */
+    int layer = 0;
+    bool f_surface = false;
 
     bool operator==(const GridPick& o) const{
-        return f_hit == o.f_hit && fine_quad == o.fine_quad && plot == o.plot;
+        return f_hit == o.f_hit && fine_quad == o.fine_quad && plot == o.plot && layer == o.layer;
     }
     bool operator!=(const GridPick& o) const{ return !(*this == o); }
 };

@@ -4,7 +4,7 @@ aliases: people, settler, settlers, villager, villagers, worker, workers
 kind: people
 status: built
 summary: Everyone in the colony, each with a family, a home, four skills, a job, and two bars that must not run out.
-plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided
+plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries
 code: Economy.h: EconomyWorker EconomySkillFactor; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs
 verified: 2026-10-09
 ---
@@ -50,3 +50,5 @@ the colony records the cause: hunger, thirst or cold.
 ## Planned
 
 - [planned] Births, old age, and couples moving into a free house as a new family.
+- [planned] Their card shows what they carry the way a [[Store|store's]] shows what it holds: their load
+  and their [[Posts|pack]] as goods strips, in place of the "Pack:" and ", with 4 wood" text.

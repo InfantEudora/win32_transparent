@@ -863,6 +863,18 @@ skinned_vertex GLTFLoader::GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::
     v.weights.x = v_bone_weights.x;
     v.weights.y = v_bone_weights.y;
     v.weights.z = v_bone_weights.z;
+    /*
+        ...so the three kept are scaled back up to sum to 1. Dropping the fourth without this left the
+        skin matrix short by its weight, and the vertex pulled toward the model's origin by that much:
+        Blender gives up to 0.18 to a fourth bone, 0.18 model units on chasm's man and 0.16 on the
+        archer's body. Blender exports the influences heaviest first, so the fourth is the lightest.
+    */
+    float kept = v.weights.x + v.weights.y + v.weights.z;
+    if (kept > 1e-6f){
+        v.weights.x /= kept;
+        v.weights.y /= kept;
+        v.weights.z /= kept;
+    }
 
     v.matid = 0;
     return v;
@@ -1430,12 +1442,21 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
             debug->Fatal("Unknown animation target path %s\n",channel.target_path.c_str());
         }
 
-        //Find the ObjectAnimation that may already contain this node_name
-        ObjectAnimation* object_animation = animation->FindObjectAnimation(target_node.name);
+        //Find the ObjectAnimation that may already hold this NODE's other channels. By node, not by
+        //name: an action on two rigs that share bone names exports a channel per rig for each, and
+        //grouping by name merged both rigs' keys into one track (ObjectAnimation::target_node).
+        ObjectAnimation* object_animation = NULL;
+        for (ObjectAnimation* track : animation->object_animations){
+            if (track->target_node == channel.target_node){
+                object_animation = track;
+                break;
+            }
+        }
         if (!object_animation){
             debug->Trace("Creating new ObjectAnimation\n");
             object_animation = new ObjectAnimation();
             object_animation->target_name = target_node.name;
+            object_animation->target_node = channel.target_node;
             animation->AddObjectAnimation(object_animation);
         }else{
             debug->Trace("Updating Existing ObjectAnimation\n");

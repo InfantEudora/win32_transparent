@@ -106,6 +106,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(&len,sizeof(len));
         h.Bytes(k.route.data(),k.route.size() * sizeof(vec2));
         h.Bytes(k.speed.data(),k.speed.size() * sizeof(float));
+        //The layer of his post (ramparts_plan.md) - only when he was sent to one, likewise.
+        if (k.post_layer >= 0){
+            h.Add(((uint64_t)k.id << 32) | 0x9057000u | (uint32_t)k.post_layer);
+        }
         //His route's layers (ramparts_plan.md) - only once he leaves the ground, so a colony that never does hashes as before.
         if (!k.route_layer.empty()){
             h.Add(((uint64_t)k.id << 32) | 0x1A7Eu);
@@ -155,6 +159,14 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Add(((uint64_t)id << 32) | (uint32_t)e.guards[id]);
         }
     }
+    //What the colony keeps of its made goods, and the orders for more (goods_plan.md) - only once set, so a colony
+    //that never set one hashes as before.
+    for (int g = 0; g < GOOD_COUNT; g++){
+        if (e.kept[g] || e.ordered[g]){
+            int32_t kept[3] = {g,e.kept[g],e.ordered[g]};
+            h.Bytes(kept,sizeof(kept));
+        }
+    }
 }
 
 /*
@@ -166,6 +178,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         released from it. A refused one says why on the play overlay, as a refused placement does;
       - a GUARD posted by hand on a tower, or released from it, and a tower's guard count (step 8) - the right
         click's and the tower card's; refused as an order is;
+      - what the colony KEEPS of a made good, and an order for more (goods_plan.md) - a builders' hut's or a
+        ropewalk's card;
       - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
@@ -188,7 +202,8 @@ void ApplicationChasm::RegisterEconomyCommands(){
     main_scene->RegisterCommandHandler(CHASM_CMD_ORDER,
         [this](const SimCommand& cmd) -> objectid_t {
             std::string why;
-            if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why)){
+            //value[1]: the layer he is sent to, one up so a recording from before layers - 0 there - asks for the top.
+            if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why,(int)cmd.value[1] - 1)){
                 PublishEconomy();
             }else{
                 {
@@ -224,6 +239,17 @@ void ApplicationChasm::RegisterEconomyCommands(){
             guards_commands_done++;
             return OBJECTID_INVALID;
         });
+    main_scene->RegisterCommandHandler(CHASM_CMD_KEEP,
+        [this](const SimCommand& cmd) -> objectid_t {
+            int good = (int)cmd.subtype;
+            int count = (int)cmd.value[0];
+            bool f_done = (cmd.value[1] != 0.0f) ? economy.OrderMore(good,count,zones.State()) : economy.SetKept(good,count);
+            if (f_done){
+                PublishEconomy();
+            }
+            keep_commands_done++;
+            return OBJECTID_INVALID;
+        });
     main_scene->RegisterCommandHandler(CHASM_CMD_CRATE,
         [this](const SimCommand& cmd) -> objectid_t {
             std::string why;
@@ -251,12 +277,13 @@ void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
     main_scene->SubmitCommand(cmd);
 }
 
-void ApplicationChasm::SubmitOrder(uint32_t person, int plot){
+void ApplicationChasm::SubmitOrder(uint32_t person, int plot, int layer){
     SimCommand cmd;
     cmd.type = CHASM_CMD_ORDER;
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
     cmd.value[0] = (float)plot;     //a plot index, well inside a float's exact integers
+    cmd.value[1] = (float)(layer + 1);
     main_scene->SubmitCommand(cmd);
 }
 
@@ -275,6 +302,16 @@ void ApplicationChasm::SubmitGuards(uint32_t tower, int count){
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = tower;
     cmd.value[0] = (float)count;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitKeep(int good, int count, bool f_order){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_KEEP;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = (uint32_t)std::max(0,good);
+    cmd.value[0] = (float)std::max(0,count);
+    cmd.value[1] = f_order ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -384,7 +421,7 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     int post = e ? EconomyPostPlot(*e,k) : -1;
     if (post >= 0 && e->world && post < (int)e->world->grid->fine.pos.size()){
         vec2 p = EconomyPostPoint(*e,k);
-        j["post"] = json{{"plot",post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e,k)},{"ordered",k.post >= 0}};
+        j["post"] = json{{"plot",post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e,k)},{"ordered",k.post >= 0},{"layer",k.post_layer}};
     }
     if (k.f_chosen){
         j["chosen"] = true;         //a guard posted by hand (step 8)
@@ -845,7 +882,10 @@ void ApplicationChasm::RegisterEconomyTools(){
         "op set_stock: the stock of building `building` (or the one at x,z; a camp's supplies) set to "
         "`contents` (goods by name and amount, e.g. {\"provisions\":6,\"wheat\":0}) - RECORDED debug edits "
         "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead. `provisions` reports PROVISIONS (docs/defence_plan.md): how many "
-        "are still lacking beyond what is made, and what each builders' hut holds. "
+        "are still lacking beyond what is made, and what each builders' hut holds. STOCK KEPT (docs/goods_plan.md): op keep - "
+        "the colony keeps `count` of made good `good` (provisions, rope) in its stores; op order_more - an order for `count` "
+        "more of it, 0 cancelling the one running. Both RECORDED (CHASM_CMD_KEEP). `kept` reports each made good's kept "
+        "number, its order's level (0 none), the level they make, and what the stores hold. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -860,7 +900,10 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
                 {"on",{{"type","boolean"}}},
                 {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard: the person's id"}}},
-                {"count",{{"type","integer"},{"description","guards: how many guards the tower takes"}}},
+                {"layer",{{"type","integer"},{"description","order: the layer of the plot he stands on, in half storeys - 0 its ground, "
+                                                           "a castle deck's (ramparts_plan.md); default its top"}}},
+                {"count",{{"type","integer"},{"description","guards: how many guards the tower takes; keep, order_more: how many"}}},
+                {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions or rope"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
                 {"include_screenshot",{{"type","boolean"}}},
@@ -984,6 +1027,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.flags = SIM_CMD_FLAG_RECORD;
                 cmd.subtype = (uint32_t)args.value("person",0);
                 cmd.value[0] = (float)plot;
+                cmd.value[1] = (float)(args.value("layer",-1) + 1);    //ramparts_plan.md: its top by default
                 uint32_t before = order_commands_done.load();
                 uint32_t refused = order_refusals.load();
                 SubmitCommandAndWait(cmd);
@@ -1031,6 +1075,21 @@ void ApplicationChasm::RegisterEconomyTools(){
                     result["refusal"] = refusal;
                 }
                 result["building"] = tower;
+            }else if (op == "keep" || op == "order_more"){
+                //STOCK KEPT (goods_plan.md): a made good's kept number, or an order for more of it.
+                int good = GoodByName(args.value("good",std::string()));
+                if (good < 0 || !(GOODS_MADE & GOOD_BIT(good))){
+                    return json{{"error",op + ": give `good`, a made good - provisions or rope"}};
+                }
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_KEEP;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)good;
+                cmd.value[0] = (float)std::max(0,args.value("count",0));
+                cmd.value[1] = (op == "order_more") ? 1.0f : 0.0f;
+                uint32_t before = keep_commands_done.load();
+                SubmitCommandAndWait(cmd);
+                result["ran"] = keep_commands_done.load() != before;
             }else if (op == "crate"){
                 int plot = args.value("plot",-1);
                 if (plot < 0 && args.contains("x") && args.contains("z")){
@@ -1171,6 +1230,15 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             result["provisions"] = json{{"lacking",lacking},{"huts",huts}};
+            //STOCK KEPT (goods_plan.md): each made good's number, its order, the level of the two, and the stores' count.
+            json kept = json::object();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (GOODS_MADE & GOOD_BIT(g)){
+                    kept[GoodName(g)] = json{{"kept",e->kept[g]},{"ordered",e->ordered[g]},{"level",EconomyKeptLevel(*e,g)},
+                                             {"stored",totals[g]}};
+                }
+            }
+            result["kept"] = kept;
             //GUARD TOWERS (defence_plan.md): each one's places - its guard count once it stands (step 8) - its
             //junction's, its guards and its stock - theirs to live on; once it stands whole, what it lacks of full and
             //what is on its way to it (the caretakers', step 7).

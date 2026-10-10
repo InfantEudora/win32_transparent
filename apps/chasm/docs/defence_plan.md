@@ -726,3 +726,56 @@ Files: `Economy.*` (`EconomyState::guards`, `EconomyWorker::f_chosen`, `ECONOMY_
   gates, and another sends them home.
 - **Several people selected** and ordered at once.
 - **The zombies** (P6), fighting, the ballista tower, moats.
+
+## Scouting, provisioned first (the user's, agreed 2026-10-10, not built)
+
+The user: when you post someone and take them on a scouting mission, you can tell them to **first gather
+provisions and water**. They carry them along and eat while underway. Proposed and talked through the
+same day; the user's answers are under "Decided" below.
+
+**What it builds on, today:**
+
+- **An order can already go under the clouds.** `Economy::Order` does not refuse an unexplored plot, and
+  the person clears the clouds as they walk (`crates_plan.md`, "Random crates: finds": finds are the
+  reward for scouting).
+- **They already eat underway.** The pack is eaten every tick while posted (`Needs`, `EconomyPosted`) - on
+  the way out as well as at the post.
+- **But the pack is filled only from home**: their house's pantry or the camp's supplies, and only if the
+  order finds them at home (`TakePost`). An order given while they are out sends them with the pack as it
+  is. No home holds provisions, so a scout usually sets out with water and crops.
+- **And it is small**: 3 water and 3 days of food, about 8.7 days before the first pressing need ("Why the
+  pack and the tower" above). Then they walk to the NEAREST supply and back out - from deep in the clouds,
+  most of the way home and out again.
+
+**Decided** (the user, 2026-10-10):
+
+- **A mission is a post, as it is now**: a temporary assignment, given by the right click and ended by
+  Release. There is no separate scout. The player would normally pick an archer for it, but nothing
+  limits it to one.
+- **Asked for with a chip on the person's card.**
+- **They take as much as they can carry**, more than the usual pack (`NEEDS_PACK_*`), which stays what an
+  order without the chip packs.
+- **From wherever they would normally get it**: their home, a store - the places a pressing need sends a
+  posted person to (`SeekSupply`). Provisions first where there are any, as `FillPack` does now.
+- **With none to be had, they do nothing and a message pops up**: a line at the bottom in the middle, as
+  for a death or a refusal (`needs_plan.md`, "As built: step 5, deaths told").
+- **When the supplies run out, only a message appears.** They do not turn back by themselves. They leave
+  the post only when released, or as now, when a need gets pressing: to the nearest supply and back.
+
+**To settle when it is built** (the details, not the rules):
+
+- **Where the chip sits** (proposed): on a posted person's card, beside Release. Pressed, they go to fill up
+  first and then on to the post, wherever they were - just ordered, on the way or standing there.
+- **How much "as much as they can carry" is** in units: a named constant beside `NEEDS_PACK_*`, water and
+  food in the pack's balance so both run out together ("Why the pack and the tower").
+- **A second stop** when the first place has only water or only food. With something but not everything to
+  be had, they take what there is - the message is for nothing at all.
+- **The messages' wording**, for instance "NO FOOD OR WATER FOR JELLE DE WIT TO TAKE" and "JELLE DE WIT'S
+  SUPPLIES HAVE RUN OUT".
+
+The card shows the pack as a strip (`selection_plan.md`, "What a person carries, as a strip"), which is how
+the player sees how long a scout can stay out.
+
+**Build order** (2026-10-10): first, something for a scout to take - provisions kept in the stores, made to a number
+the player sets or to an order (`goods_plan.md`, "Kept in stock, and made to order"; rope from the ropewalk the same
+way) - **built and checked the same day**. Then the chip, the bigger pack and the second stop; then the two messages.

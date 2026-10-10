@@ -50,6 +50,12 @@ extern const char* person_asset_names[PERSON_FIGURES];
 extern const char* range_asset_names[];
 //How a crate is turned where it lies, from its id (ApplicationChasmCrates.cpp) - its outline turns the same.
 float CrateYaw(uint32_t id);
+//How high a person's route is at `along` down leg `seg` - on the ground or the deck his route says it is on
+//(ramparts_plan.md) - and how high he stands now (ApplicationChasmWorkersView.cpp).
+float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k, int seg, float along);
+float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k);
+//The layer of plot `plot` nearest the height of `at` - its ground, if it has ground to stand on, or a deck's.
+int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& at);
 
 //A place on the overlay the mouse can press, drawn this frame: what pressing it does.
 #define OVERLAY_HIT_BLOCK       0       //a panel: the click is the overlay's, nothing under it is picked
@@ -70,6 +76,9 @@ float CrateYaw(uint32_t id);
 #define OVERLAY_HIT_LADDER      15      //a guard tower's card: its ladder, its door, to the next open side
 #define OVERLAY_HIT_TOWER_GUARDS 16     //a guard tower's card: it takes `value` guards (defence_plan.md, step 8)
 #define OVERLAY_HIT_GUARD_RELEASE 17    //a guard released from his tower: person `value`, 0 the one selected
+#define OVERLAY_HIT_STORE_ALLOW_GROUP 18 //a store's card: let it take all of group `value` (HudGoodsGroup), or none
+#define OVERLAY_HIT_KEEP        19      //a builders' hut's or ropewalk's card: the colony keeps `value` of what it makes
+#define OVERLAY_HIT_MAKE_MORE   20      //...an order for `value` more of it - 0 cancels the one running (goods_plan.md)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -163,7 +172,8 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define CHASM_CMD_NEEDS             SIM_CMD_LAST+3      //a person's needs set (a debug edit): subtype his id;
                                                         //value[0] health, value[1] water, in ticks - -1 leaves it
 #define CHASM_CMD_ORDER             SIM_CMD_LAST+4      //a person posted (docs/defence_plan.md): subtype his id;
-                                                        //value[0] the plot he is sent to, -1 released
+                                                        //value[0] the plot he is sent to, -1 released; value[1]
+                                                        //its layer + 1, 0 its top (ramparts_plan.md)
 #define CHASM_CMD_CRATE             SIM_CMD_LAST+5      //a crate put down (a debug edit, docs/crates_plan.md):
                                                         //subtype the plot; value[0] the good, value[1] how many
 #define CHASM_CMD_STOCK             SIM_CMD_LAST+6      //a building's stock of a good set (a debug edit): subtype
@@ -172,6 +182,9 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define CHASM_CMD_GUARD             SIM_CMD_LAST+7      //a guard posted by hand (docs/defence_plan.md, step 8): subtype
                                                         //the person; value[0] the tower, 0 released from his
 #define CHASM_CMD_GUARDS            SIM_CMD_LAST+8      //a tower's guard count: subtype the tower; value[0] the count
+#define CHASM_CMD_KEEP              SIM_CMD_LAST+9      //a made good's kept number (docs/goods_plan.md): subtype the good;
+                                                        //value[0] the count; value[1] 1 for an order of that many more
+                                                        //instead, a count of 0 cancelling it
 
 //What a left click does.
 enum ChasmTool{
@@ -256,6 +269,14 @@ public:
     //What is under a window pixel, through the camera, on whichever level the ray meets first.
     //A miss (sky, or off the map) comes back with f_hit false.
     GridPick PickUnderPixel(int2 px);
+    /*
+        What is under the MOUSE: the surface the engine read there, if it is the ground's or the zones' (surface_ids) -
+        its plot and its layer (PickSurface) - else the ray, PickUnderPixel. Physics thread.
+    */
+    GridPick PickUnderMouse(int2 px);
+    //The plot a surface at `at` facing `normal` belongs to, and the layer of it nearest that height (ramparts_plan.md).
+    GridPick PickSurface(const vec3& at, const vec3& normal);
+    std::vector<objectid_t> surface_ids;        //the terrain's and the zones' chunks: pickable, read by PickUnderMouse
 
     //--- The camera: an orbit around a point on the ground ----------------------------------------
     vec3 camera_target;
@@ -312,6 +333,14 @@ private:
     std::atomic<bool> f_script_press{false};
     std::atomic<bool> f_script_press_right{false};  //...made with the right button: an order (defence_plan.md)
     int2 script_press_px;
+    /*
+        Where the mouse is over the window, for what the overlay shows on hover - the top bar's FOOD, its foods
+        (goods_plan.md). Set every pass (physics thread), read by the drawing (render thread); -1 off the window.
+        A script's pixel in its place while pinned (chasm_select op hover), so it can be looked at with no mouse.
+    */
+    std::atomic<int> overlay_mouse_x{-1};
+    std::atomic<int> overlay_mouse_y{-1};
+    std::atomic<bool> f_overlay_mouse_pinned{false};
     GridPick hover_pick;
     GridPick selected_pick;
     std::atomic<int> pick_version{0};
@@ -418,6 +447,7 @@ private:
     std::atomic<uint32_t> needs_commands_done{0};
     std::atomic<uint32_t> order_commands_done{0};      //CHASM_CMD_GUARD's too: a right click either way, refused alike
     std::atomic<uint32_t> guards_commands_done{0};
+    std::atomic<uint32_t> keep_commands_done{0};
     std::atomic<uint32_t> crate_commands_done{0};
     std::atomic<uint32_t> stock_commands_done{0};
     std::atomic<uint32_t> crate_refusals{0};
@@ -443,9 +473,10 @@ private:
     void HashEconomy(StateHash& h);
     void RegisterEconomyCommands();
     void SubmitNeeds(uint32_t person, int health, int water);  //any thread; -1 leaves one as it is
-    void SubmitOrder(uint32_t person, int plot);                //any thread; plot -1 releases him
+    void SubmitOrder(uint32_t person, int plot, int layer = -1);    //any thread; plot -1 releases him, layer -1 its top
     void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
     void SubmitGuards(uint32_t tower, int count);               //any thread
+    void SubmitKeep(int good, int count, bool f_order);         //any thread; f_order: `count` more, 0 cancelling
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
@@ -561,7 +592,8 @@ private:
     std::string worker_skin_name[PERSON_FIGURES];   //its skin, "" while the figure is not rigged
     Mesh* worker_skin_mesh[PERSON_FIGURES] = {};
     Mesh* worker_skin_load[PERSON_FIGURES * 4] = {};    //figure * 4 + load: the load in its bone's space
-    float worker_figure_fit[PERSON_FIGURES] = {};   //its height over the man's (the loads and the stride follow it)
+    float worker_figure_fit[PERSON_FIGURES] = {};   //its height over the man's (the loads follow it)
+    float worker_walk_speed[PERSON_FIGURES] = {};   //world units a second its walk clip carries it at rate 1
     bool f_worker_idle_clip = false;                //the file has an idle clip to stand in
     struct WorkerSkin{
         Object* figure = NULL;                      //the Skeleton, built the first time he is this figure
@@ -798,6 +830,9 @@ private:
     std::vector<int> select_related_plots;                  //...and slot 3
     //A crate's outlines (crates_plan.md): the selected one, the hovered one - outline-only copies of the crate.
     Object* crate_outline[2] = {};
+    //Where the selected person is going: dots along his route and a ring at its end. Render thread; rebuilt when its key moves.
+    Object* path_marks = NULL;
+    uint64_t path_marks_key = 0;
     PlayPick PlayPickUnder(int2 px, const GridPick& hover);
     void UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked);   //physics thread
     bool OverlayHitAt(int2 px, OverlayHit* hit);

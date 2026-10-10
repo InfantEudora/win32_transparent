@@ -1097,8 +1097,11 @@ int ZoneCastleShapeByName(const std::string& name){
 }
 
 bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys){
-    return shape == ZONE_CASTLE_ARCH && ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE
-           && storeys >= ZoneCastleStoreys(z,plot) + ZONE_CASTLE_HEADROOM;
+    int under = ZoneCastleShape(z,plot);
+    if (shape == ZONE_CASTLE_ARCH){
+        return under != ZONE_CASTLE_NONE && storeys >= ZoneCastleStoreys(z,plot) + ZONE_CASTLE_HEADROOM;
+    }
+    return shape == ZONE_CASTLE_STAIR && under == ZONE_CASTLE_ARCH && storeys == ZoneCastleStoreys(z,plot) + 1;
 }
 
 bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, const char** why){
@@ -1118,8 +1121,13 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
     if (ZoneCastleGoesOver(z,plot,shape,storeys)){
         return true;
     }
-    if (ZoneCastleOver(z,plot) && ZoneCastleOver(z,plot) < storeys + ZONE_CASTLE_HEADROOM){
+    //In its place, under a piece over it: only one that still carries that.
+    int over = ZoneCastleOverStoreys(z,plot);
+    if (ZoneCastleOverShape(z,plot) == ZONE_CASTLE_ARCH && over < storeys + ZONE_CASTLE_HEADROOM){
         return refuse("an arch stands over it - two storeys over what is under it, at least");
+    }
+    if (ZoneCastleOverSits(z,plot) && !(shape == ZONE_CASTLE_ARCH && storeys + 1 == over)){
+        return refuse("a stair stands on it - an arch a storey under it carries it");
     }
     if (shape == ZONE_CASTLE_ARCH && storeys < ZONE_CASTLE_ARCH_LOWEST){
         return refuse("an arch is two storeys at least - its passage clears a gate");
@@ -2401,7 +2409,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             int piece = std::max(0,kind) & 0xFF;
             if (piece == 0){
-                //From the top down: an arch over a piece first.
+                //From the top down: a piece over a piece first.
                 if (state.castle_over[plot]){
                     state.castle_over[plot] = 0;
                 }else if (state.castle[plot]){
@@ -2414,16 +2422,16 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 int shape = piece >> 4;
                 int storeys = piece & 15;
                 bool f_over = ZoneCastleGoesOver(state,plot,shape,storeys);
-                if (f_over ? state.castle_over[plot] == storeys : state.castle[plot] == piece){
+                if ((f_over ? state.castle_over[plot] : state.castle[plot]) == piece){
                     return false;   //the same piece again: nothing to do, as a drag over its own plots
                 }
-                //Over the piece there, or in its place - swapped for it as an arch over it allows.
+                //Over the piece there, or in its place - swapped for it as the piece over it allows.
                 if (!ZoneCanCastle(w,state,plot,shape,storeys,&why)){
                     last_refusal = why;
                     return false;
                 }
                 if (f_over){
-                    state.castle_over[plot] = (uint8_t)storeys;
+                    state.castle_over[plot] = (uint8_t)piece;
                 }else{
                     state.castle[plot] = (uint8_t)piece;
                 }

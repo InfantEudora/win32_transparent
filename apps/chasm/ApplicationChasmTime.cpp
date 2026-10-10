@@ -26,6 +26,27 @@
 
 namespace {
 
+//What every site takes, by building id and good - its storeys still to build, a field's cells still staked out
+//(fields_plan.md) - whatever has been brought. One pass over the plots, not one a building: this is every frame.
+std::vector<std::array<int,GOOD_COUNT>> SiteCosts(const ZoneState& z){
+    std::vector<std::array<int,GOOD_COUNT>> cost(z.buildings.size(),std::array<int,GOOD_COUNT>{});
+    for (size_t v = 0; v < z.building.size(); v++){
+        if (z.storeys[v] > z.standing[v] && z.building[v] < cost.size()){
+            for (int g = 0; g < GOOD_COUNT; g++){
+                cost[z.building[v]][g] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*z.world,z,(int)v,g);
+            }
+        }
+    }
+    for (size_t c = 0; c < z.field.size(); c++){
+        if (z.field[c] && !z.field_built[c] && z.field[c] < cost.size()){
+            for (int g = 0; g < GOOD_COUNT; g++){
+                cost[z.field[c]][g] += EconomyCellCost(z.buildings[z.field[c]].kind,g);
+            }
+        }
+    }
+    return cost;
+}
+
 const float speeds[] = {1.0f,2.0f,4.0f};
 
 }
@@ -293,14 +314,29 @@ void ApplicationChasm::DrawOverlay(void){
     overlay->AddRect(vec2(mark - 1.5f * s,y0 - 3.0f * s),vec2(mark + 1.5f * s,y1 + 3.0f * s),1.5f * s,HUD_MARK);
 
     /*
-        The colony's stores, at the top in the middle (docs/economy_plan.md): wood, food (the three crops
-        summed) and water - what lies in stores, not what waits at a workplace or is being carried.
+        The colony's goods, at the top in the middle (docs/economy_plan.md; goods_plan.md, "The view"): PEOPLE, then
+        the goods by category - WOOD, FOOD and WATER always, and any other good while the colony holds some or a site
+        still wants it, so a colony that has never seen rope is shown no ROPE 0. FOOD is the foods summed, since any
+        of them feeds someone - provisions, the posted people's, apart - and hovering it lists them. What lies in
+        stores and the camp's supplies, not what waits at a workplace or is being carried.
     */
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
+    std::vector<std::pair<int,std::string>> food_tip;   //FOOD hovered: each food and its line, drawn over everything
+    vec2 food_tip_at;
     if (e && z && e->world == z->world){
         std::array<int,GOOD_COUNT> t = EconomyStoredTotals(*e,*z);
-        int food = t[GOOD_WHEAT] + t[GOOD_GREENS] + t[GOOD_BEANS];
+        int food = 0;
+        for (int g = 0; g < GOOD_COUNT; g++){
+            food += (GOODS_FOOD & GOOD_BIT(g)) ? t[g] : 0;
+        }
+        GoodsMask wanted = 0;
+        std::vector<std::array<int,GOOD_COUNT>> cost = SiteCosts(*z);
+        for (size_t id = 1; id < cost.size(); id++){
+            for (int g = 0; g < GOOD_COUNT; g++){
+                wanted |= (cost[id][g] > EconomySiteBrought(*e,(uint32_t)id,g)) ? GOOD_BIT(g) : (GoodsMask)0;
+            }
+        }
         int people = (int)e->workers.size();
         int housed = 0;
         for (const EconomyWorker& k : e->workers){
@@ -308,24 +344,43 @@ void ApplicationChasm::DrawOverlay(void){
         }
         //Each item's text, measured, so the bar is as wide as what it says - centred on the screen. The goods in
         //their colours on the cards' strips (HudGoodColour): food in wheat's, the gold the foods share here.
-        const uint32_t colours[4] = {HUD_TEXT,HudGoodColour(GOOD_WOOD),HudGoodColour(GOOD_WHEAT),HudGoodColour(GOOD_WATER)};
-        char items[4][32];
+        struct BarItem{
+            std::string text;
+            uint32_t colour;
+            bool f_food;
+        };
+        std::vector<BarItem> items;
+        char buf[48];
         if (housed < people){
-            snprintf(items[0],sizeof(items[0]),"PEOPLE %i/%i",housed,people);  //housed, of all of them
+            snprintf(buf,sizeof(buf),"PEOPLE %i/%i",housed,people);  //housed, of all of them
         }else{
-            snprintf(items[0],sizeof(items[0]),"PEOPLE %i",people);
+            snprintf(buf,sizeof(buf),"PEOPLE %i",people);
         }
-        snprintf(items[1],sizeof(items[1]),"WOOD %i",t[GOOD_WOOD]);
-        snprintf(items[2],sizeof(items[2]),"FOOD %i",food);
-        snprintf(items[3],sizeof(items[3]),"WATER %i",t[GOOD_WATER]);
+        items.push_back(BarItem{buf,HUD_TEXT,false});
+        for (int g : HudGoodsOrder()){
+            if (GoodCategory(g) == GOOD_CATEGORY_FOOD){
+                if (g == GOOD_WHEAT){
+                    snprintf(buf,sizeof(buf),"FOOD %i",food);
+                    items.push_back(BarItem{buf,HudGoodColour(GOOD_WHEAT),true});
+                }
+                continue;
+            }
+            if (g != GOOD_WOOD && g != GOOD_WATER && t[g] <= 0 && !(wanted & GOOD_BIT(g))){
+                continue;
+            }
+            std::string name = GoodName(g);
+            std::transform(name.begin(),name.end(),name.begin(),::toupper);
+            snprintf(buf,sizeof(buf),"%s %i",name.c_str(),t[g]);
+            items.push_back(BarItem{buf,HudGoodColour(g),false});
+        }
         const float size = 16.0f * s;
         const float gap = 22.0f * s;
         const float side = 14.0f * s;
-        float widths[4];
-        float total = side * 2.0f + gap * 3.0f;
-        for (int i = 0; i < 4; i++){
-            widths[i] = overlay->MeasureText(items[i],size).x;
-            total += widths[i];
+        std::vector<float> widths;
+        float total = side * 2.0f + gap * (float)(items.size() - 1);
+        for (const BarItem& it : items){
+            widths.push_back(overlay->MeasureText(it.text.c_str(),size).x);
+            total += widths.back();
         }
         float cx = (float)main_window->width * 0.5f;
         vec2 q0(cx - total * 0.5f,12.0f * s);
@@ -333,9 +388,27 @@ void ApplicationChasm::DrawOverlay(void){
         overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
         overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
         float x = q0.x + side;
-        for (int i = 0; i < 4; i++){
-            overlay->AddText(items[i],vec2(x,q0.y + 21.0f * s),size,colours[i],UI_ALIGN_LEFT);
+        float food_x = -1.0f;
+        float food_w = 0.0f;
+        for (size_t i = 0; i < items.size(); i++){
+            overlay->AddText(items[i].text.c_str(),vec2(x,q0.y + 21.0f * s),size,items[i].colour,UI_ALIGN_LEFT);
+            if (items[i].f_food){
+                food_x = x;
+                food_w = widths[i];
+            }
             x += widths[i] + gap;
+        }
+        //Hovering FOOD: its foods, each in its colour, under the bar - drawn last, over a card.
+        float mx = (float)overlay_mouse_x.load();
+        float my = (float)overlay_mouse_y.load();
+        if (food_x >= 0.0f && mx >= food_x - gap * 0.5f && mx <= food_x + food_w + gap * 0.5f && my >= q0.y && my <= q1.y){
+            for (int g : HudGoodsOrder()){
+                if (GoodCategory(g) == GOOD_CATEGORY_FOOD){
+                    snprintf(buf,sizeof(buf),"%i %s%s",t[g],GoodName(g),(GOODS_FOOD & GOOD_BIT(g)) ? "" : " - for posted people");
+                    food_tip.push_back(std::make_pair(g,std::string(buf)));
+                }
+            }
+            food_tip_at = vec2(food_x - side,q1.y + 6.0f * s);
         }
     }
 
@@ -348,6 +421,24 @@ void ApplicationChasm::DrawOverlay(void){
         float jobs_top = DrawJobsOverview(s);
         DrawNeediest(s,jobs_top - 8.0f * s);
         DrawSelectionOverlay(s);
+    }
+    if (!food_tip.empty()){
+        const float text_size = 14.0f * s;
+        const float line_h = 20.0f * s;
+        const float side = 14.0f * s;
+        float w = 0.0f;
+        for (const auto& line : food_tip){
+            w = std::max(w,overlay->MeasureText(line.second.c_str(),text_size).x);
+        }
+        vec2 t0 = food_tip_at;
+        vec2 t1(t0.x + side * 2.0f + 15.0f * s + w,t0.y + 10.0f * s + line_h * food_tip.size());
+        overlay->AddRect(t0,t1,9.0f * s,HudFaded(HUD_PANEL,235));
+        for (size_t i = 0; i < food_tip.size(); i++){
+            float base = t0.y + line_h * (i + 1);
+            vec2 sw(t0.x + side,base - 10.0f * s);
+            overlay->AddRect(sw,sw + vec2(9.0f * s,9.0f * s),1.5f * s,HudFaded(HudGoodColour(food_tip[i].first),235));
+            overlay->AddText(food_tip[i].second.c_str(),vec2(sw.x + 15.0f * s,base),text_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+        }
     }
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
@@ -511,23 +602,7 @@ float ApplicationChasm::DrawBuildBar(float s){
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
     if (e && z && e->world == z->world){
-        //One pass over the plots, not one a building: this is every frame.
-        std::vector<std::array<int,GOOD_COUNT>> cost(z->buildings.size(),std::array<int,GOOD_COUNT>{});
-        for (size_t v = 0; v < z->building.size(); v++){
-            if (z->storeys[v] > z->standing[v]){
-                for (int g = 0; g < GOOD_COUNT; g++){
-                    cost[z->building[v]][g] += (z->storeys[v] - z->standing[v]) * EconomyStoreyCost(*z->world,*z,(int)v,g);
-                }
-            }
-        }
-        //A field still staked out (fields_plan.md): a site by its id, so much a cell.
-        for (size_t c = 0; c < z->field.size(); c++){
-            if (z->field[c] && !z->field_built[c] && z->field[c] < cost.size()){
-                for (int g = 0; g < GOOD_COUNT; g++){
-                    cost[z->field[c]][g] += EconomyCellCost(z->buildings[z->field[c]].kind,g);
-                }
-            }
-        }
+        std::vector<std::array<int,GOOD_COUNT>> cost = SiteCosts(*z);
         int sites = 0;
         std::array<int,GOOD_COUNT> needed{};
         std::array<int,GOOD_COUNT> brought{};

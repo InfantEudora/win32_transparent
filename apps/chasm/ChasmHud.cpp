@@ -43,6 +43,31 @@ std::array<int,GOOD_COUNT> HudGoodsOrder(){
     return order;
 }
 
+int HudGoodsGroup(int good){
+    switch (GoodCategory(good)){
+        case GOOD_CATEGORY_MATERIALS:   return HUD_GROUP_MATERIALS;
+        case GOOD_CATEGORY_FOOD:
+        case GOOD_CATEGORY_WATER:       return HUD_GROUP_FOOD_WATER;
+        default:                        return HUD_GROUP_INPUTS;
+    }
+}
+
+const char* HudGoodsGroupName(int group){
+    switch (group){
+        case HUD_GROUP_MATERIALS:   return "Materials";
+        case HUD_GROUP_FOOD_WATER:  return "Food and water";
+        default:                    return "Inputs";
+    }
+}
+
+GoodsMask HudGoodsGroupMask(int group){
+    GoodsMask mask = 0;
+    for (int g = 0; g < GOOD_COUNT; g++){
+        mask |= (HudGoodsGroup(g) == group) ? (GoodsMask)GOOD_BIT(g) : (GoodsMask)0;
+    }
+    return mask;
+}
+
 namespace {
 
 const float TEXT_SIZE   = 14.0f;    //the card's text
@@ -66,6 +91,9 @@ std::string Header(const HudStock& st){
 }
 
 std::string Figure(const HudStock& st){
+    if (!st.figure.empty()){
+        return st.figure;
+    }
     int total = 0;
     for (int n : st.goods){
         total += n;

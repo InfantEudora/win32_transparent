@@ -1185,6 +1185,13 @@ float BuildingTowerDeck(const ChasmWorld& w, const ZoneState& z, int plot){
     return w.terrain->ground[plot] + z.standing[plot] * ZONE_STOREY_HEIGHT + TOWER_DECK;
 }
 
+float BuildingLayerHeight(const ChasmWorld& w, const ZoneState& z, int plot, int layer){
+    if (z.KindOf(plot) == ZONE_KIND_TOWER && layer == 2 * z.standing[plot]){
+        return BuildingTowerDeck(w,z,plot);
+    }
+    return w.terrain->ground[plot] + (float)layer * 0.5f * ZONE_STOREY_HEIGHT;
+}
+
 float BuildingTowerReach(const ChasmWorld& w, int plot, const vec2& toward){
     std::vector<vec2> corner;
     ZoneTowerCorners(w,plot,corner);

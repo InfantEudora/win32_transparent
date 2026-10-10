@@ -61,17 +61,47 @@ bool Animation::HasFinished(){
     return false;
 }
 
-//Animation contains object names. We look them up and store references.
+/*
+    Animation contains object names. We look them up and store references.
+
+    A bone takes the track aimed at its OWN node first - the same name, and ObjectAnimation::target_node
+    equal to Bone::node_index - so a clip carrying two rigs' channels under the same bone names binds each
+    rig to its own. Only then are the rest bound by name, each to an object no track has yet: how one rig
+    borrows another's clip, and all there ever was for a clip of one rig. A second track of a name whose
+    object is taken stays unbound, where it used to bind on top of the first and fight it every tick.
+*/
 void Animation::LinkObjects(Object* root){
     std::vector<Object*>objects;
     root->GetAllSubObjects(objects);
+    std::unordered_set<Object*> claimed;
     int count = 0;
     for (ObjectAnimation* object_animation:object_animations){
+        object_animation->target = NULL;
+        if (object_animation->target_node < 0){
+            continue;
+        }
+        for (Object* object:objects){
+            Bone* bone = dynamic_cast<Bone*>(object);
+            if (bone && bone->node_index == object_animation->target_node
+                && object->name.compare(object_animation->target_name) == 0 && !claimed.count(object)){
+                object_animation->target = object;
+                claimed.insert(object);
+                count++;
+                break;
+            }
+        }
+    }
+    for (ObjectAnimation* object_animation:object_animations){
+        if (object_animation->target){
+            continue;
+        }
         for (Object* object:objects){
             if (object->name.compare(object_animation->target_name) == 0){
-                //debug->Info("Animation: Linking target %s to animation %s\n",object->name.c_str(),name.c_str());
-                object_animation->target = object;
-                count++;
+                if (!claimed.count(object)){
+                    object_animation->target = object;
+                    claimed.insert(object);
+                    count++;
+                }
                 break;
             }
         }

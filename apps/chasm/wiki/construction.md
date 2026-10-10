@@ -43,7 +43,8 @@ hut, and one while it is still a site, who builds the hut first. When everyone h
 what keep building going. A builder is also the colony's **caretaker**, and his errands go in this order:
 
 1. a [[Guard tower|guard tower]] short of its water or provisions: he carries them there;
-2. [[Provisions|provisions]] something wants: he makes them at his hut;
+2. [[Provisions|provisions]] something wants, or the colony keeps: he makes them at his hut, and takes the
+   kept ones to a store;
 3. building, as above, and road work;
 4. a [[Crate|crate]]'s goods to a store.
 

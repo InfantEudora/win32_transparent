@@ -35,6 +35,19 @@ uint32_t HudGoodColour(int good);
 std::array<int,GOOD_COUNT> HudGoodsOrder();
 
 /*
+    THE GOODS' GROUPS on a card (goods_plan.md, "The view"): a stock strip each where a stock holds more than one,
+    and a row of a store's "Takes" chips each - MATERIALS, FOOD AND WATER together as a house's pantry holds them,
+    and INPUTS. In HudGoodsOrder's order.
+*/
+#define HUD_GROUP_MATERIALS     0
+#define HUD_GROUP_FOOD_WATER    1
+#define HUD_GROUP_INPUTS        2
+#define HUD_GROUP_COUNT         3
+int HudGoodsGroup(int good);
+const char* HudGoodsGroupName(int group);
+GoodsMask HudGoodsGroupMask(int group);
+
+/*
     A GOODS STRIP: one stock - what a building holds, or a part of it - as a line on a card. A header
     ("Pantry - the Veen family's", and "12 of 16" at the right), a strip over its room cut into a piece per
     good in the good's colour, and under it a key naming each good and how many.
@@ -52,6 +65,7 @@ struct HudStock{
     std::array<int,GOOD_COUNT> reserved = {};   //of `goods`, what is spoken for
     int room = 0;                               //0: none
     bool f_kept = false;
+    std::string figure;                         //at the header's right in place of "12 of 16": a group's part of a stock
 };
 //Its natural width, the key on one line; its height at `width`, the key wrapping to fit; drawn from `top`
 //(the top of its line, as a card counts them) at `width`, returning that height.

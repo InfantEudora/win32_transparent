@@ -107,13 +107,20 @@ void Box(std::vector<vertex>& out, const vec3& lo, const vec3& hi, int column){
     MeshQuad(out,c[4],c[5],c[7],c[6],vec3(0,0,1),column);
 }
 
+//A piece's top in a quarter: at its plot's point, at the middles of the two edges, and at the cell's middle.
+struct QuarterTop{
+    float v;
+    float m[2];
+    float c;
+};
+
 /*
-    One piece's quarter of a cell: its corner k. `shape` and `layer` are the piece's - the plot's own, or the arch over
-    it, whose pillar stands on the piece under it at `floor_c` (f_over) rather than on the ground. Returns the top's
-    height at the cell's middle, where an arch over it stands its pillar.
+    One piece's quarter of a cell: its corner k. `shape` and `layer` are the piece's - the plot's own, or the one over
+    it, which stands on `under`, the top of the piece under it, rather than on the ground: an arch its pillar, a stair
+    its sides. `f_covered`: a stair sits on it, so it draws no top and no parapet of its own. Returns its top.
 */
-float PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneState& z, const GridQuad& quad, const vec2* p,
-                   int k, int shape, int layer, bool f_over, float floor_c){
+QuarterTop PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneState& z, const GridQuad& quad,
+                        const vec2* p, int k, int shape, int layer, const QuarterTop* under, bool f_covered){
     const Terrain& t = *w.terrain;
     const vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
     const float half = 0.5f * ZONE_STOREY_HEIGHT;
@@ -147,7 +154,7 @@ float PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneStat
         RampPoint q[4] = {{p[k],top_v},{mid[0],top_m[0]},{centre,top_c},{mid[1],top_m[1]}};
         SteppedTri(out,q[0],q[1],q[2],PAL_STONE_LIGHT);
         SteppedTri(out,q[0],q[2],q[3],PAL_STONE_LIGHT);
-    }else{
+    }else if (!f_covered){
         MeshQuad(out,At(p[k],top_v),At(mid[0],top_m[0]),At(centre,top_c),At(mid[1],top_m[1]),vec3(0,1,0),
                  PAL_STONE_LIGHT);
     }
@@ -158,7 +165,7 @@ float PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneStat
         vec2 in = p[k] - centre;
         float l = in.length();
         vec2 pc = centre + ((l > 1e-4f) ? in * (CASTLE_PILLAR_IN / l) : vec2(0.0f,0.0f));
-        float foot = f_over ? floor_c : t.GroundHeight(pc,level) - CASTLE_SINK;
+        float foot = under ? under->c : t.GroundHeight(pc,level) - CASTLE_SINK;
         Box(out,vec3(pc.x - CASTLE_PILLAR,foot,pc.y - CASTLE_PILLAR),
             vec3(pc.x + CASTLE_PILLAR,top_c - CASTLE_SLAB,pc.y + CASTLE_PILLAR),PAL_STONE);
     }
@@ -179,11 +186,12 @@ float PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneStat
             n = n * -1.0f;      //out of the plot
         }
         vec3 want(n.x,0.0f,n.y);
-        float ba = f_arch ? ta - CASTLE_SLAB : t.GroundHeight(a,level) - CASTLE_SINK;
-        float bb = f_arch ? tb - CASTLE_SLAB : t.GroundHeight(b,level) - CASTLE_SINK;
+        //Down to the slab's underside, the piece it stands on, or the ground.
+        float ba = f_arch ? ta - CASTLE_SLAB : under ? under->m[i] : t.GroundHeight(a,level) - CASTLE_SINK;
+        float bb = f_arch ? tb - CASTLE_SLAB : under ? under->c : t.GroundHeight(b,level) - CASTLE_SINK;
         //A wall-walk's open edge: a low parapet, its outer face the wall's carried on up. A stair's sides stand half
         //a step over its ramp, as high as its treads go, but where it reaches the top it climbs to.
-        float rise = (f_open[i] && !f_stair) ? CASTLE_PARAPET : 0.0f;
+        float rise = (f_open[i] && !f_stair && !f_covered) ? CASTLE_PARAPET : 0.0f;
         if (f_stair && !f_climbs[i]){
             ta += 0.5f * CASTLE_STEP;
             tb += 0.5f * CASTLE_STEP;
@@ -196,7 +204,12 @@ float PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneStat
             MeshQuad(out,At(ai,ta),At(bi,tb),At(bi,tb + rise),At(ai,ta + rise),want * -1.0f,PAL_STONE);
         }
     }
-    return top_c;
+    QuarterTop top;
+    top.v = top_v;
+    top.m[0] = top_m[0];
+    top.m[1] = top_m[1];
+    top.c = top_c;
+    return top;
 }
 
 }
@@ -214,10 +227,10 @@ void BuildCastleCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std
         if (shape == ZONE_CASTLE_NONE){
             continue;
         }
-        float top_c = PieceQuarter(out,w,z,quad,p,k,shape,ZoneCastleLayer(z,v),false,0.0f);
-        //An arch over it, its pillars on its top.
-        if (ZoneCastleOver(z,v)){
-            PieceQuarter(out,w,z,quad,p,k,ZONE_CASTLE_ARCH,ZoneCastleOverLayer(z,v),true,top_c);
+        QuarterTop top = PieceQuarter(out,w,z,quad,p,k,shape,ZoneCastleLayer(z,v),NULL,ZoneCastleOverSits(z,v));
+        //The piece over it, standing on its top: an arch on its pillars, a stair on its sides.
+        if (ZoneCastleOverShape(z,v) != ZONE_CASTLE_NONE){
+            PieceQuarter(out,w,z,quad,p,k,ZoneCastleOverShape(z,v),ZoneCastleOverLayer(z,v),&top,false);
         }
     }
 }

@@ -4,9 +4,9 @@ aliases: storehouse
 kind: buildings
 status: built
 summary: Holds goods for the whole colony. Beside a workplace it takes only that workplace's goods; on its own, whatever the player allows.
-plans: economy_plan.md > As built: the simulation; economy_plan.md > Decided
-code: Economy.cpp: Derive FindStore; Zones.h: ZoneBuilding
-verified: 2026-10-09
+plans: economy_plan.md > As built: the simulation; economy_plan.md > Decided; goods_plan.md > Step 5: the view by category
+code: Economy.cpp: Derive FindStore; Zones.h: ZoneBuilding; ChasmHud.h: HudGoodsGroup HUD_GROUP_COUNT
+verified: 2026-10-10
 ---
 
 ## What it takes
@@ -21,6 +21,20 @@ verified: 2026-10-09
 
 Workers carry to the *nearest* store that takes their load and has room for all of it, so a store beside
 a workplace is in effect that workplace's own.
+
+## Its card
+
+- **What it holds**, as a strip over its room. Holding goods of more than one group - **materials** (wood,
+  rope), **food and water**, **inputs** (hemp) - its total comes first ("Holds - anyone's: 20 of 23"), then a
+  strip for each group it holds any of, each against the whole room, so together they fill as the one strip
+  would. Holding one group, or nothing, it is the one strip.
+- **What it takes**: a row of chips for each group - the group's own chip, then a chip for each of its goods,
+  wrapping onto another row beside the group's chip. A good's chip turns that good on or off; the group's chip
+  is lit while the store takes all of the group, and a click takes all of it - or, with all of it taken
+  already, none. Beside a workplace the chips are fixed.
+
+The [[Camp|camp's]] supplies and a [[Crate|crate]] show their goods the same way, each group's strip
+against everything they hold, since they have no room.
 
 ## Room
 
@@ -47,6 +61,3 @@ goods here.
 
 A load that no store will take is to be put down as a [[Crate|crate]], instead of being carried around
 until a store will take it - on the crate's page.
-
-- [planned] Goods in four categories - food, water, materials, inputs - and a store's card grouped by them:
-  a stock strip per category, and its "Takes" chips a line per category. Only food is ever summed.

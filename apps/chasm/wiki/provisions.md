@@ -3,9 +3,9 @@ title: Provisions
 aliases: provision, ration, rations
 kind: goods
 status: partial
-summary: A soldier's food, made by builders from a wheat and a beans, and only as many as something wants; villagers eat it only when nothing else is in reach.
-plans: defence_plan.md > Provisions; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: step 7, the towers kept
-code: Economy.cpp: EconomyFoodWorth ProvisionsLacking MakeProvisions AtWorkshop SeekSupply FillPack Consume; Economy.h: ECONOMY_PROVISION_SECONDS; Goods.h: GOODS_EATEN
+summary: A soldier's food, made by builders from a wheat and a beans - as many as something wants, and as many as the colony keeps; villagers eat it only when nothing else is in reach.
+plans: defence_plan.md > Provisions; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: step 7, the towers kept; goods_plan.md > Kept in stock, and made to order
+code: Economy.cpp: EconomyFoodWorth ProvisionsLacking MakeProvisions AtWorkshop SeekSupply FillPack Consume SetKept OrderMore; Economy.h: ECONOMY_PROVISION_SECONDS ECONOMY_KEPT_START GOODS_MADE EconomyKeptLevel; Goods.h: GOODS_EATEN
 verified: 2026-10-10
 ---
 
@@ -25,17 +25,29 @@ and no house keeps it.
 ## Making them
 
 Only **builders** make them, and only as many as are **wanted**: what building sites and guard towers still
-lack of them, less what lies made in a [[Store|store]], the [[Camp|camp's]] supplies, an empty house, a builders' hut or
-a [[Crate|crate]], and what is being made. Before his building work, a builder with some wanted:
+lack of them, and what the colony keeps (below), less what lies made in a [[Store|store]], the [[Camp|camp's]] supplies,
+an empty house, a builders' hut or a [[Crate|crate]], and what is being made. Before his building work, a builder
+with some wanted:
 
 1. with a wheat and a beans at his hut, goes there and makes them, {ECONOMY_PROVISION_SECONDS:#seconds}
    each at his pace ([[Skills|strength]]), up to a load a round;
 2. else fetches a load of the scarcer of wheat and beans to his hut, from a store, the camp or a crate -
    only as many as are still wanted, and none at all if the other half can't be had.
 
-Sites' carriers take finished provisions from the hut as from a store. When nothing wants what a hut holds
-any more, a builder takes it to a store that takes it. Stores take provisions by default; their card has a
-chip for it.
+Sites' carriers take finished provisions from the hut as from a store. What a hut holds beyond what the
+sites still lack - the kept ones - a builder takes to a store that takes it, and its wheat and beans too once
+nothing wants any. Stores take provisions by default; their card has a chip for it.
+
+## Kept in the stores
+
+A builders' hut's card sets **how many the colony keeps**: 0, 5, 10, 20 or 40 provisions in its stores and the
+camp's supplies - the colony's one number, so every hut shows the same. The builders make them whenever the
+stores hold fewer, so what a posted person takes along is made again. It starts at {ECONOMY_KEPT_START}: none
+are made unasked, since each costs a wheat and a beans.
+
+**Make more, once**: 5 or 10 more than the stores hold now, or than the kept number if that is higher. The card
+shows how far the order has got, with a Cancel chip; once the stores hold that many it is done, and the kept
+number counts again. A second order while one runs adds to it.
 
 What wants them today is the [[Guard tower|guard tower]]: its site is built with them and keeps them as
 its guards' food, and a tower that stands is kept full of them by the builders. Nobody but someone posted

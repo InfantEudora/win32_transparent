@@ -266,6 +266,54 @@ eaten and WATER drunk - the needs, which are inputs of their own kind, kept apar
 - **Not checked by a run**: rope made from a real hemp harvest reaching a winch (the parts were each run in steps
   2-4), and a save or replay with a winch site (its cost is worked out, not stored).
 
+### Step 5: the view by category (2026-10-10)
+
+- **The top bar** (`ApplicationChasmTime.cpp`): PEOPLE, then the goods in `HudGoodsOrder` - WOOD, FOOD and WATER
+  always, any other good while the stores and the camp hold some or a site still wants it (`SiteCosts`, now shared
+  with the sites line over the grid, less what was brought): ROPE beside WOOD, HEMP after WATER. FOOD stays wheat,
+  greens and beans (`GOODS_FOOD`); hovering it lists each food in its colour, provisions too, "for posted people",
+  not in the sum. The hover needed the mouse on the render thread: `overlay_mouse_x/_y`, set every pass, and
+  `chasm_select` op hover pins a pixel in its place so a script can look.
+- **The groups** (`ChasmHud.h`): `HudGoodsGroup` - MATERIALS, FOOD AND WATER together (as a house's pantry holds
+  them), INPUTS - with `HudGoodsGroupName` and `HudGoodsGroupMask`; four categories, three groups on a card.
+- **A stock strip per group** (`Card::StockByGroup`): a store's Holds, the camp's Supplies and a crate. Holding more
+  than one group, its total on a line ("Holds - anyone's: 20 of 23"), then a strip a group it holds any of, each
+  against the whole room - or, with no room, the whole stock - its own count at the right (`HudStock::figure`). One
+  group, or empty, the one strip as before. A house's pantry and woodshed, a tower's and a site's strips unchanged.
+- **A store's chips a row a group**: the group's chip (`OVERLAY_HIT_STORE_ALLOW_GROUP`) - lit while all of it is
+  taken, a click takes all of it or, all taken, none - then its goods' chips from one indent past the widest group
+  chip, wrapping at that indent. The card widens to three goods a row past the indent (capped as before). The
+  first try wrapped from the card's edge, and the food row broke into three ragged lines.
+- **Colours by family** were already so from step 1 (`HudGoodColour`): nothing changed.
+- **Checked** (debug, a copied exe on 8774): the bar at the start PEOPLE, WOOD, FOOD, WATER - no ROPE 0; rope and
+  hemp put in a store and the camp: ROPE 5 by WOOD, HEMP 9 last; with none held and a winch site placed: ROPE 0. The
+  FOOD hover over a card: 55 wheat, 4 greens, 30 beans (FOOD 89) and 3 provisions. A store with wood, rope, wheat,
+  water and hemp: the total line and three strips; the Materials chip took wood and rope off and on again, and with
+  wheat off the Food and water chip lit all of them. The camp's supplies and a crate in groups.
+
+### Step 6: checked in the game (2026-10-10)
+
+One run, debug, a copied exe on 8774, the default seed, nothing changed in the code for it:
+
+- **The ropewalk**: one plot - listed as `ropewalk_short`, no ropemaker; painted on (a diagonal step, so 3 plots) - the
+  row gone, Siem Wever (precision 9) its ropemaker.
+- **The hemp**: a field by the camp with hemp its starting crop, the camp's land; sown on day 4 of spring and
+  harvested 15 days on into the camp's supplies, 12 hemp from its one cell (area 20). Its next crop was AUTO's,
+  beans: AUTO never picks hemp.
+- **The winch**: a villager ordered to the nearest reachable rim, about 100 units off, to explore it, and a winch
+  site placed there in play. NEEDS ATTENTION had no rope row - hemp chosen and a ropewalk standing - and its wood
+  was brought by day 6 while it waited for rope.
+- **Rope from the harvest to the winch**: the ropemaker fetched 5 hemp from the camp and made rope; 5 were made in
+  all, 4 carried to the winch's site by its carriers, and the winch stood - wood first, the rope last, as the rule
+  is. 1 rope and 1 hemp were left at the ropewalk.
+- **Save and replay**: the last two days - the ropemaker mid-round home, 1 rope at the ropewalk, 1 hemp in the
+  camp, the site's 13 wood brought and none of its rope - recorded from the save that a recording starts from (4,500
+  ticks, with a recorded `field_next` hemp at tick 1,000), and replayed twice: every tick's hash equal in every
+  part (buildings, calendar, economy, explored, world, zones), nothing changed between ticks, both ending with the
+  winch standing and the ropewalk holding 1 rope and 1 hemp, as the run did.
+
+With that, every step of the build order is built and checked.
+
 ### The ropewalk's props (2026-10-10)
 
 The user: "give it a few props to make it clear it's a ropewalk" - plaster under thatch alone read as a house.
@@ -289,6 +337,79 @@ The user: "give it a few props to make it clear it's a ropewalk" - plaster under
   wall; 12 rope and 5 hemp drew 6 coils and 3 sheaves, 0 and 0 none.
 - **Not done**: the ropemaker is still drawn at the ropewalk's plot, under its roof, while he makes rope - walking
   the walk backward, as ropemakers did, would show him at it.
+
+## Kept in stock, and made to order (the user's, 2026-10-10)
+
+The user: a scout is to take provisions along (`defence_plan.md`, "Scouting, provisioned first"), but the builders
+make provisions only for the sites and towers that want them, so normally there are none. And rope is made whenever
+there is hemp, so it fills the stores unless they are told not to take it. **The builders should make an amount on
+demand, or stock up to a set limit - and the same mechanic then works for any building, the ropewalk too.**
+
+### Decided (the user, 2026-10-10, answering four questions)
+
+- **Both**: a standing **KEPT** number - made again whenever the colony holds fewer, so a scout's take is replaced -
+  and a one-off **"make N more"** order.
+- **For the colony, a number per good**: "the colony keeps 10 provisions". Set from the card of any building that
+  makes the good; two builders' huts work toward the one number.
+- **Rope keeps being made while there is hemp**, as now. The kept number decides how much of it goes to the stores;
+  the rest waits at the ropewalk, its pile full, and he stops.
+- **This round: the builders' hut and the ropewalk.** The woodcutter (wood kept to a number, the forest spared) later.
+
+### The rules (proposed)
+
+- **What counts is what the top bar counts**: the good in stores and the camp's supplies (`EconomyStoredTotals`),
+  plus what is on its way there from a workshop. Not what waits at the workshop, which is the sites'.
+- **The level**: the kept number, or an order's level if higher. An order of N sets its level to what the stores hold
+  then, or the kept number if that is higher, plus N - "N more" than the colony would otherwise keep. A second order
+  adds N more to it; Cancel clears it; it is done, and cleared, once the stores reach it.
+- **Provisions**: made for the sites and towers as now, and besides, until the stores hold the level - one sum,
+  what the sites lack plus the level, less everything made, wherever it lies, and being made (`ProvisionsLacking`).
+  What the hut holds beyond what the sites still lack goes to a store, so the kept ones lie where a scout or anyone
+  posted takes from. Nothing made past the level: they cost a wheat and a beans.
+- **Rope**: made to the ropewalk's pile as now (`ECONOMY_ROPEWALK_PILE`); carried off to a store only while the stores
+  hold less than the level. Sites' carriers take it from the pile as now. **So by default no rope goes to the stores
+  at all** - a change from step 3, where every load did.
+- **Both start at nothing** (`ECONOMY_KEPT_START`): no provisions made unasked, no rope carried to the stores unasked.
+- **Recorded** commands, saved and hashed, like the guard count: a replay sets them on the same tick.
+- **On the card** of a builders' hut and a ropewalk: "The colony keeps 10 provisions in its stores - 7 there now", a
+  row of chips for the number (0, 5, 10, 20, 40), chips to make 5 or 10 more, and while an order runs, how far it has
+  got and a Cancel chip.
+
+### Build order
+
+1. **The rules**: kept and ordered per good, the commands, save and hash, `chasm_economy` ops.
+2. **The cards**: the hut's and the ropewalk's lines and chips.
+3. **Checked in the game**: provisions kept and ordered, rope carried up to the number and no further, a replay.
+
+Then the scouting itself (`defence_plan.md`, "Scouting, provisioned first"), which takes from the stores this fills.
+
+### As built (2026-10-10): all three steps
+
+- **The rules** (`Economy.*`): `EconomyState::kept` and `ordered`, by good, for the made goods (`GOODS_MADE`);
+  `EconomyKeptLevel` the higher of the two; `SetKept`, `OrderMore`; an order cleared on the tick the stores
+  (`EconomyStoredTotals`) reach it. `ProvisionsLacking` counts the level, and what a builder carries to a store as
+  held, and with `spare` gives what lies made past the sites' share and the stores' part of the level - what
+  `MakeProvisions` and `AtWorkshop` now carry to a store whenever there is some, not only once nothing is wanted.
+  `KeptShort` is what the stores still lack, less what is on its way to one; `FetchFromWorkplace` and the pick-up
+  at a workplace carry a made good only up to it - and a ropemaker's last few for the level, not only by the load.
+  `ECONOMY_KEPT_START` (0) both.
+- **Recorded**: `CHASM_CMD_KEEP` (subtype the good; the count; an order or the kept number); saved as `kept` and
+  `ordered` by the good's name; hashed only once set. `chasm_economy` ops `keep` and `order_more`, and `kept` in
+  its report.
+- **The cards** (`KeptLines`): on a builders' hut and a ropewalk that stand - the line, the chips 0 5 10 20 40
+  (`OVERLAY_HIT_KEEP`), "Make more, once" or how far the order has got, and 5 more, 10 more and Cancel
+  (`OVERLAY_HIT_MAKE_MORE`); amber when no store takes the good. The good is the building's (`EconomyMadeAt`).
+- **Checked** (debug, a copied exe on 8774, the default seed, a store and a builders' hut beside the camp, one
+  builder): kept 10 provisions - he fetched wheat and beans, made them, carried them to the store, and stopped at
+  10; an order for 5 more - the level went to 15, the store reached it and the order cleared itself; the store set
+  down to 3 - made again up to 10, exactly. A 3-plot ropewalk with hemp in the camp: kept 0, the pile filled to 12
+  and stayed there, none to the store, the ropemaker idle with hemp still in the camp; kept 5 - one load of 5 to the
+  store; an order for 3 more - a load of 3, the order cleared at 8. The chips pressed as the player's
+  (`chasm_select` op press): 20 kept, 5 more from 20 to 25, Cancel. A 3,000-tick recording with a `keep` and an
+  `order_more` in it, from a save holding a running order, replayed twice: every tick equal, both ending as the live
+  run did.
+- **Seen in the test**: a colony keeping provisions turns wheat into them, so its food on the top bar drops by
+  what was made - they are still eaten, as a last resort.
 
 ## Later
 

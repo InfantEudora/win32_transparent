@@ -32,4 +32,6 @@ a [[Ropewalk]], whose ropemaker fetches it from the stores.
 A field's harvest is **food first**: its farmer fetches hemp only once no food lies on the field, so hemp
 never keeps a family's food waiting. It **never goes home**. The camp's land puts it in the camp's
 supplies; any other land's goes to a [[Store|store]] that takes hemp. A store beside a field takes it, as
-it takes the foods, and every store takes it by default; its card has a chip for it.
+it takes the foods, and every store takes it by default; its card has a chip for it, among the inputs.
+
+It shows in the top bar, HEMP after WATER, once the colony holds some in its stores.

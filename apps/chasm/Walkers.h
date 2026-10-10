@@ -87,9 +87,10 @@ inline int WalkLayersMeet(int a, int b){
     }
     return (lo == hi) ? lo : a;     //two stairs side by side, over the same storey: at their middle
 }
-#define WALK_MOST_DECKS         2       //decks over one plot: a castle piece and an arch over it
-//The layers of plot v's decks, lowest first, into `out`: a castle piece's top and an arch over it (Zones.h), or a
-//guard tower's platform once it stands whole with a ladder. Returns how many - 0, its ground its only node.
+#define WALK_MOST_DECKS         2       //decks over one plot: a castle piece and one over it
+//The layers of plot v's decks, lowest first, into `out`: a castle piece's top and an arch over it (Zones.h) - or for
+//a stair on an arch, the stair's alone - or a guard tower's platform once it stands whole with a ladder. Returns how
+//many - 0, its ground its only node.
 int WalkDeckLayers(const ZoneState& z, int v, int* out);
 /*
     Whether node (a, la) and node (b, lb) on neighbouring plots join - the layer they meet at, or -1. On one ground,
@@ -119,14 +120,18 @@ public:
 
     /*
         The grid's way from where a walk starts to plot `to` - the economy's people (Economy.h): the places in
-        order, both ends included, and each edge's speed. It ends on `to`'s top deck that `who` may walk, or on
-        its ground (GoalPlace). One starting on a deck only the posted walk gets off it whoever he is. False,
-        and both empty, when there is no way.
+        order, both ends included, and each edge's speed. It ends on `to`'s layer `to_layer` if he may walk it,
+        else on its top deck he may walk, or its ground (GoalPlace). One starting on a deck only the posted walk
+        gets off it whoever he is. False, and both empty, when there is no way.
     */
     bool PlanRoute(const ZoneState& z, WalkPlace from, int to, int who, std::vector<WalkPlace>& places,
-                   std::vector<float>& speeds);
-    //Where a walk by `who` to plot `to` ends: its top deck he may walk, or its ground.
-    WalkPlace GoalPlace(const ZoneState& z, int to, int who);
+                   std::vector<float>& speeds, int to_layer = -1);
+    /*
+        Where a walk by `who` to plot `to` ends: its layer `to_layer` when it has that place and he may walk it - the
+        ground under an arch, the deck a click was on (ramparts_plan.md) - else its top deck he may walk, or its ground.
+        -1 asks for the top.
+    */
+    WalkPlace GoalPlace(const ZoneState& z, int to, int who, int to_layer = -1);
     //The decks of zones `z`, in plot and layer order (LAYERS, above).
     const std::vector<WalkDeck>& Decks(const ZoneState& z);
     /*

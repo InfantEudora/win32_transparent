@@ -137,6 +137,10 @@ json ChasmSaveToJson(const ChasmSave& s){
                                    {"along",k.along},{"pos",json::array({k.pos.x,k.pos.y})},{"indoors",k.f_indoors},
                                    {"health",k.health},{"water",k.water},{"post",k.post},{"pack",pack},
                                    {"archery",k.archery},{"chosen",k.f_chosen}});
+            //The layer of his post he was sent to (ramparts_plan.md) - only when one was, so others save as before.
+            if (k.post_layer >= 0){
+                workers.back()["post_layer"] = k.post_layer;
+            }
             //His route's layers (ramparts_plan.md) - only off the ground, so a colony that never climbs saves as before.
             if (!k.route_layer.empty()){
                 std::vector<int> layers(k.route_layer.begin(),k.route_layer.end());
@@ -201,9 +205,19 @@ json ChasmSaveToJson(const ChasmSave& s){
         for (const auto& gc : e.guards){
             guards.push_back(json::array({gc.first,gc.second}));
         }
+        //What the colony keeps of its made goods, and the orders for more (goods_plan.md): by the good's name.
+        json kept = json::object();
+        for (const auto& kc : e.kept){
+            kept[GoodName(kc.first)] = kc.second;
+        }
+        json ordered = json::object();
+        for (const auto& oc : e.ordered){
+            ordered[GoodName(oc.first)] = oc.second;
+        }
         economy = json{{"stocks",stocks},{"pantries",pantries},{"felled",props},{"people",workers},{"fields",fields},
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
-                       {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards}};
+                       {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},
+                       {"kept",kept},{"ordered",ordered}};
     }
     //The debug castle (ramparts_plan.md): plot and piece - only with some, so a save without one is as before.
     json castle = json::array();
@@ -377,6 +391,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.health = wk.value("health",(int)NEEDS_HEALTH_FULL);
             k.water = wk.value("water",(int)NEEDS_WATER_FULL);
             k.post = wk.value("post",-1);       //defence_plan.md: nobody was posted before orders
+            k.post_layer = wk.value("post_layer",-1);   //ramparts_plan.md: an order to a layer; none before, his post's top
             k.archery = wk.value("archery",0);  //range_plan.md: nobody had trained before ranges
             k.f_chosen = wk.value("chosen",false);      //defence_plan.md step 8: no guard was posted by hand before
             if (wk.contains("pack") && wk["pack"].is_object()){
@@ -461,6 +476,18 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         //A save from before the guard counts has none: its towers keep every place (Economy::Restore).
         for (const json& gc : e.value("guards",json::array())){
             out.economy.guards.push_back(std::make_pair(gc[0].get<uint32_t>(),gc[1].get<int>()));
+        }
+        //A save from before the kept numbers has none: the start's (Economy::Restore).
+        std::pair<const char*,std::vector<std::pair<int,int>>*> kept_lists[] = {{"kept",&out.economy.kept},
+                                                                                {"ordered",&out.economy.ordered}};
+        for (const auto& kl : kept_lists){
+            const json& by_good = e.value(kl.first,json::object());
+            for (auto it = by_good.begin(); by_good.is_object() && it != by_good.end(); ++it){
+                int g = GoodByName(it.key());
+                if (g >= 0 && it.value().is_number_integer()){
+                    kl.second->push_back(std::make_pair(g,it.value().get<int>()));
+                }
+            }
         }
         for (const json& f : e.value("fields",json::array())){
             EconomyField fd;

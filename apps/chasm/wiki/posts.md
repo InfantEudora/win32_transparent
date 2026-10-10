@@ -4,7 +4,7 @@ aliases: post, order, orders, pack, posted
 kind: people
 status: partial
 summary: The player can order a grown-up to stand on a plot. It becomes their job while it lasts, and they live off a pack they take along.
-plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order
+plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order; defence_plan.md > Scouting, provisioned first
 code: Economy.cpp: Order TakePost GoToPost FillPack Unpack; Economy.h: EconomyCanOrder NEEDS_PACK_WATER
 verified: 2026-10-10
 ---
@@ -38,3 +38,11 @@ They take water ({NEEDS_PACK_WATER} units) and food (worth {NEEDS_PACK_FOOD:days
 provisions first where there are any, since one is the whole pack's food. They eat from it as at home, so a
 pressing need only comes once it's empty. Back home after release, what is left goes into the pantry, but
 provisions, which stay packed: no home holds them.
+
+## Planned
+
+- [planned] **Scouting, provisioned first** (the user's): a chip on a posted person's card sends them to
+  fill up with as much food and water as they can carry - from home or a [[Store|store]], wherever they
+  would get it - before going on to the post, often deep under the [[Exploration|clouds]]. With nothing to
+  take, nothing happens and a message says so. When it is eaten, another message; they stay until released
+  or until a need is pressing, as now. A mission is just a post, usually given to an [[Archery range|archer]].

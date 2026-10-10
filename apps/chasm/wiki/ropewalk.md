@@ -4,8 +4,8 @@ aliases: ropewalks, ropemaker, ropemakers
 kind: buildings
 status: built
 summary: A long low shed where a ropemaker makes rope from hemp. It works from 2 plots, and a 3rd and 4th make it faster.
-plans: goods_plan.md > Decided; goods_plan.md > The ropewalk; goods_plan.md > Step 3: the ropewalk; goods_plan.md > The ropewalk's props
-code: Zones.h: ZONE_KIND_ROPEWALK ZONE_ROPEWALK_MAX_PLOTS ZoneKindMaxPlots; Economy.h: ECONOMY_ROPE_HEMP ECONOMY_ROPE_SECONDS ECONOMY_ROPEWALK_MIN_PLOTS ECONOMY_ROPEWALK_PILE; Economy.cpp: MakeRope AtRopewalk EconomyRopewalkPace WorkplaceMakes; BuildingMesh.cpp: BuildRopewalkYard
+plans: goods_plan.md > Decided; goods_plan.md > The ropewalk; goods_plan.md > Step 3: the ropewalk; goods_plan.md > The ropewalk's props; goods_plan.md > Kept in stock, and made to order
+code: Zones.h: ZONE_KIND_ROPEWALK ZONE_ROPEWALK_MAX_PLOTS ZoneKindMaxPlots; Economy.h: ECONOMY_ROPE_HEMP ECONOMY_ROPE_SECONDS ECONOMY_ROPEWALK_MIN_PLOTS ECONOMY_ROPEWALK_PILE ECONOMY_KEPT_START; Economy.cpp: MakeRope AtRopewalk EconomyRopewalkPace WorkplaceMakes FetchFromWorkplace KeptShort; BuildingMesh.cpp: BuildRopewalkYard
 verified: 2026-10-10
 ---
 
@@ -24,16 +24,25 @@ storey high, at most {ZONE_ROPEWALK_MAX_PLOTS:#plots}, and built as a [[Construc
 
 One place, filled like any workplace, by **precision** ([[Skills]]). From home, in this order:
 
-1. With at least {ECONOMY_LOAD} rope waiting at the ropewalk and a [[Store|store]] that takes it, he
-   carries a load there.
+1. With rope waiting at the ropewalk while the stores hold less than the colony keeps (below), and a
+   [[Store|store]] that takes it, he carries what they lack there, up to {ECONOMY_LOAD} at a time.
 2. With {ECONOMY_ROPE_HEMP} hemp at the ropewalk, he goes there and makes rope:
    {ECONOMY_ROPE_SECONDS:#seconds} a rope at an average pace and on 2 plots, up to {ECONOMY_LOAD} a round.
 3. Otherwise he fetches a load of hemp from a store, the [[Camp|camp's]] supplies, an empty house or a
    [[Crate|crate]].
 
-He makes none past {ECONOMY_ROPEWALK_PILE} waiting there. There is **no count of what is wanted**, unlike
-[[Provisions|provisions]]: hemp has no other use, so he works whenever there is hemp, and how much rope the
-colony makes is how much hemp it grows.
+He makes none past {ECONOMY_ROPEWALK_PILE} waiting there. Unlike [[Provisions|provisions]], he makes rope
+whether or not anything wants it - hemp has no other use - so a ropewalk with hemp keeps its pile full.
+
+## Kept in the stores
+
+Its card sets **how much rope the colony keeps** in its stores and the camp's supplies: 0, 5, 10, 20 or 40 - the
+colony's one number, shown on every ropewalk. Only that much goes to the stores; the rest waits at the ropewalk,
+up to its pile, and then he stops. It starts at {ECONOMY_KEPT_START}, so by default no rope goes to a store and
+the stores never fill with it: sites take theirs from the pile.
+
+**Make more, once**: 5 or 10 more than the stores hold now, or than the kept number if that is higher, as for
+provisions - with how far it has got, and Cancel, on the card.
 
 ## Its stock
 

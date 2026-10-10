@@ -359,7 +359,7 @@ struct ZoneState{
     std::vector<uint32_t> arch_owner;
     std::vector<uint8_t> arch_built;
     std::vector<uint8_t> castle;                //per fine vertex: the DEBUG CASTLE's piece on it (ZoneCastlePiece), 0 none
-    std::vector<uint8_t> castle_over;           //...and the storeys of an arch over that piece, 0 none
+    std::vector<uint8_t> castle_over;           //...and the piece over that one (ZoneCastlePiece): an arch, or a stair on an arch
     //The drag in progress: its stroke number and the building it is making (0: none yet).
     uint32_t stroke = 0;
     uint32_t stroke_building = 0;
@@ -670,10 +670,13 @@ inline bool ZoneGateShut(const ZoneState& z, int v){
         gate's posts.
       - STAIR: rises a storey to its height, from the one below - from the ground, for a first storey. Its ground
         shut: the stair is the way.
-    And an ARCH OVER a piece (`castle_over`, the user's, 2026-10-10): a second deck on the same plot, at least
-    ZONE_CASTLE_HEADROOM storeys over the piece's top, its pillars standing on it - so a wall-walk passes under
-    another. An arch painted where a piece stands goes over it when it is that high, and takes its place when not;
-    a piece under an arch is only ever swapped for one the arch still clears. Taken off from the top down.
+    And a piece OVER the plot's piece (`castle_over`, the user's, 2026-10-10), painted on it:
+      - an ARCH at least ZONE_CASTLE_HEADROOM storeys over the piece's top, its pillars standing on it - a second
+        deck on the plot, so a wall-walk passes under another;
+      - a STAIR ON AN ARCH, a storey over it: it rises from the arch's top to its own, over the open passage, and
+        covers the arch's deck - so a stair climbs over a road that runs on under it.
+    A piece painted where one stands goes on it when it is one of those, and takes its place when not; a piece under
+    another is only ever swapped for one that still carries it. Taken off from the top down.
     Their decks are walked by the posted only (Walkers.h, LAYERS).
 */
 #define ZONE_CASTLE_NONE        0
@@ -705,21 +708,32 @@ inline bool ZoneCastleShuts(const ZoneState& z, int v){
     int shape = ZoneCastleShape(z,v);
     return shape == ZONE_CASTLE_BLOCK || shape == ZONE_CASTLE_STAIR;
 }
-//The storeys of the arch over its piece, 0 none - and that arch's deck's layer.
-inline int ZoneCastleOver(const ZoneState& z, int v){
-    return (v >= 0 && v < (int)z.castle_over.size()) ? z.castle_over[v] : 0;
+//The piece over its piece (`castle_over`): its shape and storeys, NONE and 0 with none.
+inline int ZoneCastleOverShape(const ZoneState& z, int v){
+    return (v >= 0 && v < (int)z.castle_over.size()) ? z.castle_over[v] >> 4 : ZONE_CASTLE_NONE;
 }
+inline int ZoneCastleOverStoreys(const ZoneState& z, int v){
+    return (v >= 0 && v < (int)z.castle_over.size()) ? z.castle_over[v] & 15 : 0;
+}
+//Its deck's layer: an arch's top, a stair's middle - 0 with none.
 inline int ZoneCastleOverLayer(const ZoneState& z, int v){
-    return 2 * ZoneCastleOver(z,v);
+    int shape = ZoneCastleOverShape(z,v);
+    int storeys = ZoneCastleOverStoreys(z,v);
+    return (shape == ZONE_CASTLE_NONE) ? 0 : (shape == ZONE_CASTLE_STAIR) ? 2 * storeys - 1 : 2 * storeys;
+}
+//Whether the piece over it SITS on it - a stair on an arch - and so covers its deck.
+inline bool ZoneCastleOverSits(const ZoneState& z, int v){
+    return ZoneCastleOverShape(z,v) == ZONE_CASTLE_STAIR;
 }
 const char* ZoneCastleShapeName(int shape);
 int ZoneCastleShapeByName(const std::string& name);    //-1 for none
-//Whether painting a piece on `plot` puts it OVER the one there - an arch with headroom over it - rather than in its place.
+//Whether painting a piece on `plot` puts it OVER the one there - an arch with headroom over it, or a stair a storey
+//over an arch - rather than in its place.
 bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys);
 /*
     Whether a piece may be painted on `plot`: a plot of the debug's rules for a road, nothing built on it, and no ground
-    but a road under an arch; not a tower's ladder. Over a piece, the headroom; in its place, one an arch over it still
-    clears. `why` says why not.
+    but a road under an arch; not a tower's ladder. Over a piece, as ZoneCastleGoesOver says; in its place, only one
+    that still carries the piece over it. `why` says why not.
 */
 bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, const char** why);
 

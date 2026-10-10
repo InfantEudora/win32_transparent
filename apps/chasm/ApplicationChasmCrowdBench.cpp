@@ -33,8 +33,7 @@ static Debugger* debug = new Debugger("ChasmCrowd",DEBUG_ALL);
     skinned costs - and what is left is what any object per villager costs.
 */
 
-#define CROWD_SKIN          "character_armature"
-#define CROWD_FIGURE        "adult_male"
+#define CROWD_FIGURE        "adult_male"        //and whatever skin it is bound to (GLTFLoader::GetNodeSkinName)
 #define CROWD_CLIP          "Walking"
 #define CROWD_SCALE         0.46f       //PERSON_MODEL_SCALE's: modelled 1.87 tall, drawn the walker's 0.86
 #define CROWD_SPACING       1.2f        //world units between neighbours in the grid
@@ -88,11 +87,12 @@ void ApplicationChasm::UploadCrowdBench(){
         o->SetVisibility(false);
         made_plain.push_back(o);
     }
+    std::string skin = gltfloader.GetNodeSkinName(CROWD_FIGURE);
     while (!f_static && (int)(crowd_objects.size() + made.size()) < want){
-        Skeleton* skeleton = gltfloader.GetSkeleton(CROWD_SKIN,assetmanager);
+        Skeleton* skeleton = skin.empty() ? NULL : gltfloader.GetSkeleton(skin.c_str(),assetmanager);
         Animation* walk = skeleton ? gltfloader.LoadAnimation(CROWD_CLIP) : NULL;
         if (!skeleton || !walk){
-            debug->Err("Crowd bench: no skin '%s' or clip '%s' in chasm_props.glb\n",CROWD_SKIN,CROWD_CLIP);
+            debug->Err("Crowd bench: no skin on '%s' or no clip '%s' in chasm_props.glb\n",CROWD_FIGURE,CROWD_CLIP);
             break;
         }
         skeleton->name = "Crowd " + std::to_string(crowd_objects.size() + made.size());

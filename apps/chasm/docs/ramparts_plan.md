@@ -161,9 +161,57 @@ once for the arch over it, its pillars on the piece's top), the save, hash and t
   (One gap in the test wall was the line sampled through a cell's corner - two plots touching only at a point, which
   rightly do not join.)
 
+## As built: a stair on an arch (2026-10-10)
+
+The user's next ask. A STAIR painted on an ARCH, one storey over it, goes ON it: it rises from the arch's top to its
+own over the open passage - a stair climbing over a road that runs on under it - and covers the arch's deck, which
+stops being a place to walk (`ZoneCastleOverSits`). `castle_over` holds a whole piece now (`ZoneCastleOverShape`,
+`...Storeys`, `...Layer`), an arch over a piece or a stair on an arch; the arch under a stair is only ever swapped for
+the same arch ("a stair stands on it"). Drawn as a stair whose sides stand on the arch's top (`PieceQuarter`'s
+`under`), the arch under it drawing no top and no parapet of its own. Saves unchanged: a piece over a piece is painted
+after it, so a save from the arch-over step loads as it was.
+
+- **Checked** (debug, seed 12, `saves/ramparts_stair_arch.json`): on the first wall's east arch over the road (plot
+  31093) a stair at 3, the wall beyond it raised to 3. Posted, the wall at layer 4, the west arch at 4, the stair on
+  the arch at 5, the wall beyond at 6; a villager walks the road under both arches at the ground. A block, or an arch
+  at 3, in the arch's place: refused. A guard walked from the top down over it, recorded (567 ticks): two replays
+  identical. The crossing save (`ramparts_crossing.json`) loads with its arches over its blocks.
+
+## As built: picking by the surface, orders to a layer, the way shown (2026-10-10)
+
+The user's: use the engine's position and normal under the mouse to pick, and the level with it; and show where the
+selected person is going.
+
+- **The engine reads the surface** under the mouse every frame (`Renderer::ReadPickingAsync`: the G-buffer's position,
+  normal and object id) - but only over a PICKABLE object, and chasm had made every chunk unpickable, so it never
+  answered. The terrain's and the zones' chunks are pickable now (their ids in `surface_ids`); props, people, water
+  and the clouds stay unpickable. Nothing in core changed. In debug, a click on the ground now also fills the engine's
+  inspector with the chunk under it, and its Input panel shows the position and normal at the mouse.
+- **`PickUnderMouse`**: over a chunk, the surface point stepped `PICK_SURFACE_INSET` back along its normal names the
+  plot - the top of a tall wall, a building's wall, its own plot, where the ray against the ground reached the plot
+  behind - and `SurfaceLayer` the place on it nearest that height: its ground (none under a block or a stair) or a
+  deck. A frame old, as the engine's answer is. Over anything else, the ray as before (`PickUnderPixel`), which
+  scripted picks (`chasm_select` press, `chasm_pick` px) still use.
+- **What reads the layer**: the hover outline, drawn flat at the deck's height; and a right-click ORDER, which posts
+  the person on that layer (`EconomyWorker::post_layer`, saved and hashed only when set; `CHASM_CMD_ORDER` value[1]
+  layer + 1, so a recording from before asks for the top). A layer it cannot have - a deck he may not walk, the ground
+  under a block - falls back to the top (`Walkers::GoalPlace`). Picked by the ray alone, the top, as before.
+- **The way shown**: with a person selected in play, dots along the rest of his route every `PATH_DOT_EVERY`, at
+  the route's own height (`RouteHeight`, the walker's height generalised), and a ring where it ends; rebuilt only as
+  he passes a dot. A posted person's post marker is laid on the deck he is posted to, not the ground under it.
+  `FeetOf` (badges, the person pick) reads his height on a deck too.
+- **Checked**: `chasm_pick surface + normal` (the mapping the mouse uses): the crossing plot gives layer 6 at the arch's
+  height and 2 at the block's under it; the road under an arch 0; a point on a wall's south face with its normal the
+  wall's own plot (31080, layer 4) where with no normal it is the plot in front (1444). Orders: person 3 to the crossing
+  at layer 2 ends under the arch at 2; person 1 to the same plot with none ends on top at 6. Recorded (1,124 ticks):
+  two replays identical. Screenshots in play: the dots along the lower wall, down its stair, over the grass and up the
+  first wall; the post marker at the deck's height.
+- **Not checked by a run**: the live mouse - the app ran minimised, with no cursor over it. The engine's readback is
+  the same one every app uses; what the mouse picks from it is what `chasm_pick surface` was checked with.
+
 **Open, for the user's judgement:**
 - **Does it read?** The point of the prototype - from the game's camera, in play, with people on it.
-- **Picking on top**: a click on a tall piece picks the ground the ray reaches, which can be the plot behind it -
+- **Picking on top** (improved since by the surface pick, below): a click on a tall piece picked the ground the ray reaches, the plot behind it -
   orders onto a wall are easiest from above.
 - **Steps are chevrons**: a ramp is drawn per quarter, so its treads bend at the plot's middle. Fine for a
   prototype; a real stair would want its own piece of geometry.

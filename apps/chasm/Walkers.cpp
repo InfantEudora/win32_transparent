@@ -84,8 +84,10 @@ bool StairTakes(const ChasmWorld& w, const ZoneState& z, int v, int layer, int o
 int WalkDeckLayers(const ZoneState& z, int v, int* out){
     int n = 0;
     if (ZoneCastleLayer(z,v) > 0){
-        out[n++] = ZoneCastleLayer(z,v);
-        if (ZoneCastleOver(z,v) > 0){
+        if (!ZoneCastleOverSits(z,v)){
+            out[n++] = ZoneCastleLayer(z,v);    //a stair on an arch covers its deck
+        }
+        if (ZoneCastleOverLayer(z,v) > 0){
             out[n++] = ZoneCastleOverLayer(z,v);
         }
     }else if (z.KindOf(v) == ZONE_KIND_TOWER && z.standing[v] > 0 && z.standing[v] >= z.storeys[v]
@@ -469,7 +471,7 @@ std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to, int who
     return path;
 }
 
-WalkPlace Walkers::GoalPlace(const ZoneState& z, int to, int who){
+WalkPlace Walkers::GoalPlace(const ZoneState& z, int to, int who, int to_layer){
     WalkPlace goal;
     goal.plot = to;
     if (!world || world != z.world){
@@ -477,9 +479,15 @@ WalkPlace Walkers::GoalPlace(const ZoneState& z, int to, int who){
     }
     EnsureGraph();
     EnsureDecks(z);
+    //The ground asked for, where there is ground to stand on: not under a block or a stair.
+    if (to_layer == WALK_GROUND && !ZoneCastleShuts(z,to)){
+        return goal;
+    }
+    bool f_asked = false;
     for (int i = FirstDeck(to); i < (int)decks.size() && decks[i].plot == to; i++){
-        if (!decks[i].f_posted || who == WALK_WHO_POSTED){
+        if ((!decks[i].f_posted || who == WALK_WHO_POSTED) && !f_asked){
             goal.layer = decks[i].layer;    //in layer order: the last he may walk is the top
+            f_asked = decks[i].layer == to_layer;
         }
     }
     return goal;
@@ -487,7 +495,7 @@ WalkPlace Walkers::GoalPlace(const ZoneState& z, int to, int who){
 
 //The economy's people (Economy.h) walk these: the same graph, rules and A* the debug walker had.
 bool Walkers::PlanRoute(const ZoneState& z, WalkPlace from, int to, int who, std::vector<WalkPlace>& places,
-                        std::vector<float>& speeds){
+                        std::vector<float>& speeds, int to_layer){
     places.clear();
     speeds.clear();
     if (!world || world != z.world){
@@ -509,7 +517,7 @@ bool Walkers::PlanRoute(const ZoneState& z, WalkPlace from, int to, int who, std
             who = WALK_WHO_POSTED;      //released on a wall: he still gets down off it
         }
     }
-    WalkPlace goal = GoalPlace(z,to,who);
+    WalkPlace goal = GoalPlace(z,to,who,to_layer);
     int end = (goal.layer != WALK_GROUND) ? DeckNode(goal.plot,goal.layer) : to;
     std::vector<int> path = FindPath(z,start,end,who);
     for (size_t i = 0; i < path.size(); i++){
