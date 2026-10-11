@@ -574,9 +574,15 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         j["burns"] = (id < e->burn.size()) ? e->burn[id] : 0;
         j["heat"] = heats[std::min(2,std::max(0,heat))];
     }
-    //A woodcutter's woodpile: the lot plot it is on, or -1 with no lot standing beside the hut.
-    if (z->buildings[id].kind == ZONE_KIND_WOODCUTTER){
-        j["pile_plot"] = (id < e->pile_plot.size()) ? e->pile_plot[id] : -1;
+    //A woodcutter's woodpile: the lot plot it is on, or -1 with no lot standing beside the hut; its room, indoors and in
+    //all, and what a log makes there (woodcutting_plan.md) - the camp's own woodcutter's too.
+    if (z->buildings[id].kind == ZONE_KIND_WOODCUTTER || z->buildings[id].kind == ZONE_KIND_CAMP){
+        if (z->buildings[id].kind == ZONE_KIND_WOODCUTTER){
+            j["pile_plot"] = (id < e->pile_plot.size()) ? e->pile_plot[id] : -1;
+            j["wood_indoors"] = (id < e->hut_room.size()) ? e->hut_room[id] : 0;
+        }
+        j["wood_room"] = (id < e->pile_room.size()) ? e->pile_room[id] : 0;
+        j["log_wood"] = (id < e->log_wood.size()) ? e->log_wood[id] : 0;
     }
     for (const EconomyWorker& k : e->workers){
         if (k.building == id){

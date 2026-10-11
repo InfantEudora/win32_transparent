@@ -4,9 +4,9 @@ aliases: yards, lot, lots, garden, gardens
 kind: buildings
 status: built
 summary: Gardens and lots, painted on plots and belonging to a house or a woodcutter's hut. A hut's woodpile is on its lot; a garden does nothing yet.
-plans: yards_plan.md > Proposed, and agreed; yards_plan.md > As built; yards_plan.md > Fix: shut in a yard; yards_plan.md > Noted
-code: Zones.h: ZoneOwnsGround ZoneKindHasYard ZoneGroundOwner ZoneCanYard ZoneAutoOwner ZoneYardPlots; Zones.cpp: claim_yard ZoneBoundaryBetween; Walkers.cpp: EdgeOpen; ApplicationChasmSelect.cpp: YardLines
-verified: 2026-10-10
+plans: yards_plan.md > Proposed, and agreed; yards_plan.md > As built; yards_plan.md > Fix: shut in a yard; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11)
+code: Zones.h: ZoneOwnsGround ZoneKindHasYard ZoneGroundOwner ZoneCanYard ZoneAutoOwner ZoneYardPlots; Zones.cpp: claim_yard ZoneBoundaryBetween; Walkers.cpp: EdgeOpen; ApplicationChasmSelect.cpp: YardLines GroundPatch GroundSiteCard; ZoneMesh.cpp: GroundSiteCell
+verified: 2026-10-11
 ---
 
 A yard is ground painted on plots that belongs to a building: **gardens**, green and walled, and **lots**,
@@ -29,8 +29,11 @@ A selected house or hut lists its yard on its card ("Yard: 1 garden plot, 2 lot 
 ## Building it
 
 Placed in play, each plot is a [[Construction|site]] of its own, at {ECONOMY_GROUND_WOOD_PER_AREA}
-[[Wood|wood]] per unit of its area, built from a plot beside it. Until its wood is in it has no wall or
-fence, and is open ground.
+[[Wood|wood]] per unit of its area, built from a plot beside it. Until its wood is in it is open ground,
+staked out as a [[Field|field]] site is: a cord round the site, unbroken where plots of the same ground
+and owner meet. A click on it selects the whole joined patch of that ground and owner, standing plots
+too, while any of it is a site. Its card shows the wood brought and still wanted, the plots to build,
+whose yard it is and who is carrying for it. Ground cannot be put first.
 
 ## Walls, fences and gates
 
@@ -41,16 +44,14 @@ nobody climbs in. Two yard plots side by side have no fence between them, whatev
 
 ## What it does
 
-- **A woodcutter's lot** holds the woodpile, on one standing lot plot beside the hut. A hut with no such
-  lot fells nothing, and its card and NEEDS ATTENTION say so ([[Woodcutter]]).
+- **A woodcutter's lots** add to what his hut keeps indoors: {ECONOMY_LOT_ROOM} [[Wood|wood]] per unit of
+  each standing lot plot's area, piled on the lowest lot plot beside the hut ([[Woodcutter]]). A hut too
+  small to keep a log indoors needs one to work.
 - **A house's gardens and lots** do nothing yet.
 
 ## Planned
 
 - [planned] A yard's plots touch its building itself, never only its yard, so the building is the door to
   every plot of it. A plot painted on from the yard and not beside the building is no longer its.
-- [planned] A garden or lot still a site can be selected, as a [[Field|field]] site can, with a card like
-  a field site's: the wood brought and still wanted, and who is carrying it. And it looks like a site:
-  staked out as a field site is, not drawn as finished ground with its wall or fence missing.
 - [idea] What a garden does: food for its family, or comfort.
 - [idea] Other buildings with a yard: a store's lot as outdoor storage, a builders' hut's timber yard.

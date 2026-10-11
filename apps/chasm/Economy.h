@@ -70,6 +70,11 @@ class Walkers;
     cells or more of whole fields (LandPlaces), and only its own family - for the camp, whoever lives
     there - fills those places, in the house's place in the order. A field whose share has no farmer
     LIES FALLOW (`farmer_of` 0).
+    THE CAMP'S OWN WORK (woodcutting_plan.md, the user's 2026-10-11): ECONOMY_CAMP_FARMERS on its land at most -
+    the rest lies fallow until a house takes it - and ECONOMY_CAMP_WOODCUTTERS of its own (`cutter_places`),
+    filled as its land is, by those living there, the strongest first. He fells from the camp, with no hut:
+    the least of a log (ECONOMY_CAMP_LOG_WOOD), into a store that takes wood or else the camp's supplies, while
+    they hold less wood than ECONOMY_CAMP_WOODPILE. So more of either takes houses and huts.
 
     A worker walks a ROUTE of points: the grid's A* (Walkers::PlanRoute) where he must, and STRAIGHT where
     the line is clear (EconomyStraightClear) - in the open he need not follow the grid (the user's note).
@@ -79,13 +84,20 @@ class Walkers;
         there - LOGS FIRST, the road builders' (the user's, 2026-10-08) - else the nearest standing tree;
         walks to it, fells it if it stands (it leaves a log and a stump), picks the log up - and, with
         another log lying within ECONOMY_LOG_PAIR_REACH and room for both where they go, that one too
-        (ECONOMY_WOODCUTTER_LOGS) - and carries them, ECONOMY_WOOD_PER_TREE wood a log, to the nearest store
-        that takes wood - or, with none, to his WOODPILE (ECONOMY_HUT_PILE) - and goes home. From home the pile goes
-        first: whenever a store takes wood he fetches from the pile before he fells again. The pile is on
-        a LOT of his own yard beside his hut (`pile_plot`, yards_plan.md - a hut may be built without one):
-        with no lot standing there he has nowhere to put wood, and fells nothing. A lot is fenced, and the HUT IS ITS
-        DOOR: wood is put on the pile and taken off it from the hut plot beside it (`pile_door`), the way
-        he always came home to his hut - nobody walks into the yard.
+        (ECONOMY_WOODCUTTER_LOGS) - and carries them, each worth what his WORKPLACE makes of a log (`log_wood`,
+        woodcutting_plan.md: a bigger shop makes the work easier - ECONOMY_WOOD_PER_TREE from a hut,
+        ECONOMY_LOFT_LOG_WOOD from one two storeys high on every plot, ECONOMY_CAMP_LOG_WOOD from the camp), to the nearest store
+        that takes wood - or, with none, to his WOODPILE - and goes home. From home the pile goes first:
+        whenever a store takes wood he fetches from the pile before he fells again. THE WOODPILE'S ROOM
+        (`pile_room`, woodcutting_plan.md, the user's: a cheap storehouse) is his hut's INDOORS, by its floor
+        area past the floor he works in (ECONOMY_HUT_ROOM past ECONOMY_HUT_WORKSHOP, EconomyHutRoom, `hut_room`) - so
+        a hut on a big plot keeps a lot, and one on a tiny plot none and needs a lot to pile on - and the LOTS of
+        his own yard (yards_plan.md), by theirs (ECONOMY_LOT_ROOM). A buffer: what lies
+        there goes on to a store that takes wood. He fells only while a store or the pile has room for a log.
+        The lot's pile is drawn on the lowest lot plot beside his hut (`pile_plot`); a lot is fenced, and the
+        HUT IS ITS DOOR: wood is put down and taken up from the hut plot beside it (`pile_door`), or with no lot
+        at the hut's own door - nobody walks into the yard. A hut too small to keep a log, with no lot, fells
+        nothing: its card and NEEDS ATTENTION say so.
       - A FIELD (fields_plan.md) is EMPTY until a farmer of its land SOWS it - with its starting crop,
         chosen by the player (AUTO once it has stood a day without one: ECONOMY_CROP_GRACE, issues_plan.md),
         then with its next crop, AUTO by default (EconomyFieldSowCrop) - a while a
@@ -116,6 +128,10 @@ class Walkers;
     lowest first, so a building rises level by level - through ZONE_OP_BUILD_RAISE, which the app
     applies on the same tick (Economy::Raises); what it took is used up. Until a storey stands it does
     nothing: no room, no family, no worker. A site pulled down loses what it was brought.
+    A SITE OVER TREES (woodcutting_plan.md, the user's 2026-10-11 - "making sitting on the edge of a forest
+    preferred"): the trees on its plots, or a field's cells, stand until a woodcutter fells them - the first he
+    goes for, with a road's - and nothing of it rises while one does (SiteTreesStanding); felling the last
+    raises what its goods pay for (Felled). Carried for meanwhile as ever.
     A GARDEN or LOT painted in play is a site too, a plot at a time (ZoneState::ground_built): a little
     wood (ECONOMY_GROUND_WOOD_PER_AREA), its builders the same idle people. Such a site has no building
     id, so a worker's `site` names it as ECONOMY_SITE_GROUND | plot; its wood is `ground_site`, by plot,
@@ -131,11 +147,13 @@ class Walkers;
     buildings can go up before there is a woodcutter.
 
     --- ROAD WORKS (docs/line_works_plan.md) ----------------------------------------------------------
-    A ROAD painted in play is a site as well (ZoneRoadPlanned), and costs no wood - only work. When an idle
-    person finds no wood to carry, he goes out to the nearest plot of a planned road nobody else is on: a
-    standing tree in its way first (RoadTrees), FELLED at his pace - strength, a woodcutter's skill - into
-    a log left lying where it fell, for a woodcutter to fetch; then, nothing of it standing, he LAYS the
-    plot (ECONOMY_LAY_SECONDS at his pace), which goes down through ZONE_OP_GROUND_RAISE like a garden's
+    A ROAD painted in play is a site as well (ZoneRoadPlanned), and costs no wood - only work. ONLY A WOODCUTTER
+    FELLS A TREE (woodcutting_plan.md, the user's 2026-10-11 - roads painted everywhere had cleared a forest
+    with nobody's axe): the standing trees in a planned road's or wall's way (RoadTrees) are the first a
+    woodcutter goes for within his reach (WoodNear), and a line with trees no woodcutter reaches waits
+    (`trees_unreached`, NEEDS ATTENTION). When an idle person finds no wood to carry, he goes out to the
+    nearest plot of a planned road nobody else is on with nothing of its way standing, and LAYS it
+    (ECONOMY_LAY_SECONDS at his pace), which goes down through ZONE_OP_GROUND_RAISE like a garden's
     wall. His `site` names the plot as a ground site does. Done with a piece, he takes the next one along
     the line within ECONOMY_ROAD_REACH of him, up to ECONOMY_ROAD_STINT pieces a trip, and goes home.
     A WALL (step 3) is a road with a cost: its trees are felled the same way, and then - only then - it is
@@ -293,8 +311,12 @@ class Walkers;
 #define ECONOMY_HOUSE_ROOM          4.0f    //a house's, for its own food, water and firewood, per unit of floor area (needs_plan.md)
 #define ECONOMY_HOUSE_KEEPS         (GOODS_FOOD | GOOD_BIT(GOOD_WOOD) | GOOD_BIT(GOOD_WATER))
 #define ECONOMY_LOAD                5       //what a farmer or a water carrier carries at once
-#define ECONOMY_WOOD_PER_TREE       4
-#define ECONOMY_HUT_PILE            24      //wood piled outside the hut when no store takes it: 6 logs
+#define ECONOMY_WOOD_PER_TREE       4       //what a log is worth taken up from a woodcutter's hut (woodcutting_plan.md)...
+#define ECONOMY_LOFT_LOG_WOOD       5       //...from one with a second storey on every plot: a bigger shop makes the work easier
+#define ECONOMY_CAMP_LOG_WOOD       2       //...and from the camp, with no hut at all
+#define ECONOMY_HUT_ROOM            6.0f    //wood a woodcutter's hut keeps indoors, per unit of its floor area past...
+#define ECONOMY_HUT_WORKSHOP        1.5f    //...the floor he works in (the user's, 2026-10-11): a hut of 3 wood keeps none, one of 4 begins to
+#define ECONOMY_LOT_ROOM            2.0f    //...and on a lot of its yard, per unit of its area: about a store's room for the wood it costs
 #define ECONOMY_WOODCUTTER_REACH    40.0f   //world units from the hut
 #define ECONOMY_SETTLEMENT_REACH    50.0f   //a settlement's territory: world units of walking from its camp (settlements_plan.md)
 #define ECONOMY_WOODCUTTER_LOGS     2       //logs he carries off at once, a second lying near the first (the user's)
@@ -334,6 +356,9 @@ class Walkers;
 //The MADE goods (STOCK KEPT): made at a workshop from other goods, and kept to a number - a builders' hut's, a ropewalk's.
 #define GOODS_MADE                  ((GoodsMask)(GOOD_BIT(GOOD_PROVISIONS) | GOOD_BIT(GOOD_ROPE)))
 #define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
+#define ECONOMY_CAMP_FARMERS        1       //the camp's land's shares at most: one farmer (woodcutting_plan.md)
+#define ECONOMY_CAMP_WOODCUTTERS    1       //...and its own woodcutter, felling from the camp
+#define ECONOMY_CAMP_WOODPILE       60      //...while its supplies hold less wood than this: the settlers' own and some
 #define ECONOMY_CROP_GRACE          (CALENDAR_DAY_TICKS)    //a field built with no crop waits this long for one, then starts with AUTO (issues_plan.md)
 #define ECONOMY_FAIR_DAYS           1       //a house keeps its land's food only while less than this a head ahead of the colony's average
 #define ECONOMY_QUEUE_SLACK         8.0f    //errands this much longer than the shortest still go in placing order: ~4 plots
@@ -691,6 +716,12 @@ struct EconomyState{
     std::vector<GoodsMask> keeps;                         //what a building may hold: a store's goods, a house's own
     std::vector<int> room;                              //a store's, and a house's (ECONOMY_HOUSE_ROOM)
     std::vector<int> pile_plot;                         //a woodcutter's woodpile: a lot beside him, -1 none
+    std::vector<int> log_wood;                          //what a log taken up by a woodcutter working here is worth, 0 none
+    std::vector<int> pile_room;                         //...and the wood its woodpile holds: a hut's, the camp's supplies' (ECONOMY_CAMP_WOODPILE)
+    std::vector<int> hut_room;                          //...of a hut's, what it keeps indoors: the rest is on its lots
+    std::vector<int> cutter_places;                     //a camp's own woodcutter's places (ECONOMY_CAMP_WOODCUTTERS), 0 for any other
+    std::vector<uint32_t> trees_unreached;              //sites with a tree in their way no woodcutter reaches: a road's, wall's,
+                                                        //garden's or lot's plot as ECONOMY_SITE_GROUND | plot, else by id
     std::vector<int> capacity;                          //a house's: how many it holds
     std::vector<int> places;                            //a workplace's: how many it employs (0: not one) - a house's or camp's, its land's farmers
     std::vector<uint32_t> farmer_of;                    //by building id: a field's farmer, the person its share falls to - 0 fallow
@@ -935,6 +966,14 @@ private:
     bool FindTree(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //The wood a woodcutter could go for near `at`, logs first (f_logs: only logs), and out to the first of it he
     //can reach, of the first `tries`.
+    //The standing trees in the way of planned roads and walls of his own within `reach` of `at`, sorted - the first
+    //a woodcutter goes for (woodcutting_plan.md).
+    void TreesInTheWay(const EconomyWorker& k, const ZoneState& z, const vec2& at, float reach, std::vector<int>& out) const;
+    //A tree felled: what waited on it goes up - a wall beside it with its wood all there (RaiseWall), the site it stood
+    //on (Build).
+    void Felled(const ZoneState& z, int prop);
+    //Whether a site still has a tree standing in its way (EconomyTreeSite): it rises only once they are all down.
+    bool SiteTreesStanding(const ZoneState& z, uint32_t id) const;
     void WoodNear(const EconomyWorker& k, const ZoneState& z, const vec2& at, float reach, bool f_logs,
                   std::vector<std::pair<std::pair<int,float>,int>>& out) const;
     bool GoForWood(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
@@ -1104,9 +1143,17 @@ std::array<int,GOOD_COUNT> EconomyReserved(const EconomyState& e, uint32_t id);
 //The colony's totals, in its stores only (not what lies at workplaces or is being carried).
 std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z);
 
-//A prop the painting has covered - a building on its plot, a garden or lot on it, a field over its cell: the view
-//no longer draws it (ApplicationChasm::PropHidden, the same rule less the road's), so nobody fells it or waits on it.
+//A prop what is BUILT has covered - a building's standing storey on its plot, a garden or lot built on it, a built field
+//cell over it: the view no longer draws it (ApplicationChasm::PropHidden, the same rule less the road's), so nobody
+//fells it or waits on it. A SITE covers nothing yet: its trees stand until a woodcutter fells them (EconomyTreeSite).
 bool EconomyPropCovered(const ZoneState& z, int plot, int coarse);
+//The site a standing tree on `plot` (in coarse cell `coarse`) is in the way of (woodcutting_plan.md: only a woodcutter
+//fells, and a site over trees rises once they are down): a building whose storey there is not yet standing, a field's
+//cell not yet built, a garden's or lot's plot still a site (ECONOMY_SITE_GROUND | plot). 0 for none.
+uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse);
+//The standing trees on `plot` - or, `coarse` >= 0, in that coarse cell - a site there would wait on: the price tag's
+//count. Any thread, on a published state.
+int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse);
 
 //Whether a worker may walk straight from a to b: on one level, over open ground and roads, not across
 //water, the mountain, a building (but the plots at either end), a field, or a wall or fence.
@@ -1166,6 +1213,8 @@ inline bool EconomyIndoors(const EconomyWorker& k){
 //Construction (CONSTRUCTION): what one storey on `plot` takes of `good`; what all a building's planned storeys -
 //a field site's cells - still take, by good; and what has been brought to it.
 int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int good);
+//...a storey of `kind` on `plot` whatever stands there now: what placing one would cost (the ghost's price tag).
+int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good);
 //...and what a coarse cell of a site painted on cells (a field) takes of `good`, by its kind.
 int EconomyCellCost(int kind, int good);
 std::array<int,GOOD_COUNT> EconomySiteCost(const ChasmWorld& w, const ZoneState& z, uint32_t id);
@@ -1174,6 +1223,10 @@ int EconomySiteBrought(const EconomyState& e, uint32_t id, int good);
 int EconomyGroundWood(const ChasmWorld& w, int plot);
 //What a garden's, lot's or wall's plot takes to build: a wall ECONOMY_WALL_WOOD, the rest by area; a road 0.
 int EconomyGroundCost(const ChasmWorld& w, const ZoneState& z, int plot);
+//...the same for `ground` painted on `plot`, whatever lies there now; none or a road 0.
+int EconomyGroundKindCost(const ChasmWorld& w, int ground, int plot);
+//The wood a woodcutter's hut of `floor_area` standing keeps indoors (woodcutting_plan.md): none for the floor he works in.
+int EconomyHutRoom(float floor_area);
 int EconomyGroundBrought(const EconomyState& e, int plot);
 //How far a field has grown toward its harvest, 0..1 - the look's cue too.
 float EconomyFieldGrowth(const EconomyState& e, const ZoneState& z, uint32_t id);

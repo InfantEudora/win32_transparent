@@ -3,10 +3,10 @@ title: Roads and walls
 aliases: road, roads, wall, walls, palisade, gate, gates, gate door
 kind: buildings
 status: built
-summary: Drawn as lines and built by people without a job. Roads cost only work and double walking speed; walls cost wood too; a road through a wall is a gate whose door can be shut.
-plans: line_works_plan.md > As built; defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner; arches_plan.md > As built: step 2, the floor; arches_plan.md > As built: step 3, built as a site; arches_plan.md > As built: step 4, losing it
+summary: Drawn as lines, cleared by woodcutters and built by people without a job. Roads cost only work and double walking speed; walls cost wood too; a road through a wall is a gate whose door can be shut.
+plans: line_works_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11); defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner; arches_plan.md > As built: step 2, the floor; arches_plan.md > As built: step 3, built as a site; arches_plan.md > As built: step 4, losing it
 code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody
-verified: 2026-10-10
+verified: 2026-10-11
 ---
 
 Roads and walls are drawn as a line in play, and each plot of the line is a site until it's built. A
@@ -14,18 +14,15 @@ road never shares a plot with a building, and stops at the edge of a garden.
 
 ## Building them
 
-When someone without a job finds no wood to carry, they go out to the nearest piece of a planned line that
-nobody else is working on:
-
-1. **Trees in the way first**, felled at their pace ([[Skills|strength]]) and left lying as logs for a
-   [[Woodcutter]] to fetch.
-2. **A road plot** is then laid: {ECONOMY_LAY_SECONDS:#seconds} at an average pace, and no wood.
+1. **Trees in the way** are felled by a [[Woodcutter]] alone, the first he goes for within his reach.
+   A line with a tree no woodcutter reaches waits, and NEEDS ATTENTION says so.
+2. **A road plot** with nothing of its way standing is then laid by someone without a job who finds no
+   wood to carry: {ECONOMY_LAY_SECONDS:#seconds} at an average pace, and no wood. After each plot they take
+   the next along the line within {ECONOMY_ROAD_REACH} world units, up to {ECONOMY_ROAD_STINT} a trip.
 3. **A wall plot** waits until its trees are gone, then takes {ECONOMY_WALL_WOOD} [[Wood|wood]], carried
    like any [[Construction|site's]], and goes up when it is all there.
 
-After each piece they take the next one along the line within {ECONOMY_ROAD_REACH} world units, up to
-{ECONOMY_ROAD_STINT} pieces a trip, then go home. Lines share one queue with building sites, by walk and
-placing order, but a line can't be marked Build first.
+Lines share one queue with building sites, by walk and placing order, but a line can't be marked Build first.
 
 ## Walking
 

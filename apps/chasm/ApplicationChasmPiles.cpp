@@ -4,10 +4,10 @@
 
 /*
     THE WOODCUTTER'S PILE, DRAWN (docs/economy_plan.md): the wood a hut holds - what its woodcutter
-    brought home because no store would take it - stacked as logs on the LOT beside the hut, one log for
-    every ECONOMY_WOOD_PER_TREE wood, on the plot the economy piles on (EconomyState::pile_plot - so the
-    logs lie where he puts them, and none show with no lot standing). Three logs on the ground, two on
-    them, one on top: the six a full pile (ECONOMY_HUT_PILE) holds.
+    brought home because no store would take it - past what it keeps indoors (EconomyState::hut_room,
+    woodcutting_plan.md), stacked as logs on the LOT beside the hut, one log for every ECONOMY_WOOD_PER_TREE
+    wood, on the plot the economy piles on (EconomyState::pile_plot - so the logs lie where he puts them,
+    and none show with no lot standing). Three logs on the ground, two on them, one on top, at most.
 
     View only, one instance set for every pile on the map, of the forest's own log; rebuilt when a
     hut's pile changes, which is a few times a minute at most.
@@ -66,7 +66,7 @@ void ApplicationChasm::UploadPiles(){
     if (f_ours){
         for (size_t id = 1; id < z->buildings.size(); id++){
             if (z->buildings[id].kind == ZONE_KIND_WOODCUTTER && z->buildings[id].size > 0){
-                int wood = EconomyStock(*e,(uint32_t)id,GOOD_WOOD);
+                int wood = EconomyStock(*e,(uint32_t)id,GOOD_WOOD) - ((id < e->hut_room.size()) ? e->hut_room[id] : 0);
                 if (wood > 0){
                     want.push_back(std::make_pair((uint32_t)id,(wood + ECONOMY_WOOD_PER_TREE - 1) / ECONOMY_WOOD_PER_TREE));
                 }

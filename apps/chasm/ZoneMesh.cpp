@@ -23,6 +23,48 @@ void GroundQuarter(std::vector<vertex>& out, const Terrain& t, const vec2* p, in
     MeshQuad(out,c[0],c[1],c[2],c[3],vec3(0.0f,1.0f,0.0f),column);
 }
 
+/*
+    A GARDEN OR LOT STILL A SITE (yards_plan.md, the user's 2026-10-10): staked out as a field site is (CropMesh.h)
+    rather than drawn finished - no grass or earth of its own yet, a stake where its outline turns and a cord along
+    it. Staked as a whole, not plot by plot: no cord between two plots of the same site - the same ground, the same
+    owner - so a lot painted in one drag is one staked-out patch. A plot's outline crosses a cell along two of the
+    four spokes from the cell's middle to its edges' middles (GroundQuarter's quarters), so a cell has a cord on
+    each spoke with a site on one side and not that same site on the other, and a stake in the middle if any.
+*/
+void GroundSiteCell(const ChasmWorld& w, const ZoneState& z, int q, std::vector<vertex>& out){
+    const GridQuad& quad = w.grid->fine.quads[q];
+    const Terrain& t = *w.terrain;
+    auto site = [&](int v){
+        return ZoneEnclosesGround(z.ground[v]) && !z.ground_built[v] && z.storeys[v] == 0;
+    };
+    auto same = [&](int a, int b){
+        return site(a) && site(b) && z.ground[a] == z.ground[b] && ZoneGroundOwner(z,a) == ZoneGroundOwner(z,b);
+    };
+    vec2 p[4];
+    for (int k = 0; k < 4; k++){
+        p[k] = w.grid->fine.pos[quad.v[k]];
+    }
+    vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
+    int stake_on = -1;      //the site plot whose ground the stake stands on
+    for (int k = 0; k < 4; k++){
+        int a = quad.v[k];
+        int b = quad.v[(k + 1) % 4];
+        if (!(site(a) || site(b)) || same(a,b)){
+            continue;
+        }
+        int on = site(a) ? a : b;
+        float level = t.Height(on);
+        vec2 mid = (p[k] + p[(k + 1) % 4]) * 0.5f;
+        MeshCord(out,vec3(centre.x,t.GroundHeight(centre,level) + MESH_SITE_CORD,centre.y),
+                 vec3(mid.x,t.GroundHeight(mid,level) + MESH_SITE_CORD,mid.y),PAL_WALL);
+        stake_on = (stake_on < 0) ? on : stake_on;
+    }
+    if (stake_on >= 0){
+        float ground = t.GroundHeight(centre,t.Height(stake_on));
+        MeshPost(out,centre,0.04f,ground - 0.1f,ground + MESH_SITE_STAKE,PAL_TIMBER);
+    }
+}
+
 }
 
 void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out,
@@ -52,12 +94,14 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
         if (f_ground){
             for (int k = 0; k < 4; k++){
                 int gk = z.ground[quad.v[k]];
-                if (!ZoneEnclosesGround(gk) || z.storeys[quad.v[k]] > 0){
+                //A site's ground is not laid until it stands: it is staked out instead (GroundSiteCell).
+                if (!ZoneEnclosesGround(gk) || z.storeys[quad.v[k]] > 0 || !z.ground_built[quad.v[k]]){
                     continue;
                 }
                 float level = t.Height(quad.v[k]);
                 GroundQuarter(out,t,p,k,level,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
             }
+            GroundSiteCell(w,z,q,out);
         }
         if (f_road || f_ground){    //f_ground: the path just inside a gate
             BuildRoadCell(w,z,q,out);

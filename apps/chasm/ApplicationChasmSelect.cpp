@@ -513,12 +513,67 @@ int FirstPlotOf(const ZoneState& z, uint32_t id){
 }
 
 /*
+    A GARDEN OR LOT BEING BUILT (yards_plan.md, the user's 2026-10-10: selectable like a field site). Ground has no
+    id, so what a click on one selects is its PATCH: the plots of that ground and that owner joined to the one
+    clicked, built or not - one patch while any of it is still a site, staked out (ZoneMesh.cpp), and nothing to
+    select once it all stands, as before. Picked by its lowest plot (PLAY_PICK_GROUND), so a click anywhere on
+    it is the same selection.
+*/
+bool GroundSitePlot(const ZoneState& z, int v){
+    return ZoneEnclosesGround(z.ground[v]) && !z.ground_built[v] && z.storeys[v] == 0;
+}
+
+//Plot `plot`'s patch, sorted - empty if it is not garden or lot ground, or none of the patch is a site.
+void GroundPatch(const ZoneState& z, int plot, std::vector<int>& out){
+    out.clear();
+    if (!z.world || plot < 0 || plot >= (int)z.ground.size() || !ZoneEnclosesGround(z.ground[plot]) || z.storeys[plot]){
+        return;
+    }
+    int ground = z.ground[plot];
+    uint32_t owner = ZoneGroundOwner(z,plot);
+    bool f_site = false;
+    std::vector<int> todo(1,plot);
+    while (!todo.empty()){
+        int v = todo.back();
+        todo.pop_back();
+        if (std::find(out.begin(),out.end(),v) != out.end()){
+            continue;
+        }
+        out.push_back(v);
+        f_site = f_site || GroundSitePlot(z,v);
+        int nb[8];
+        int n = ZonePlotNeighbours(*z.world,v,nb,8);
+        for (int i = 0; i < n; i++){
+            if (z.ground[nb[i]] == ground && !z.storeys[nb[i]] && ZoneGroundOwner(z,nb[i]) == owner){
+                todo.push_back(nb[i]);
+            }
+        }
+    }
+    if (!f_site){
+        out.clear();
+    }
+    std::sort(out.begin(),out.end());
+}
+
+/*
     The people who belong with a selection, for their outlines and pins: a house's or camp's family,
-    a workplace's worker, a field's farmer (land_plan.md), a site's carriers, a store's carriers (to it or
-    fetching from it, for a site or home), and everyone on his way to a crate or taking from it (crates_plan.md).
+    a workplace's worker, a field's farmer (land_plan.md), a site's carriers - a garden's or lot's too, at any
+    plot of it - a store's carriers (to it or fetching from it, for a site or home), and everyone on his way to a
+    crate or taking from it (crates_plan.md).
 */
 void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e, std::vector<uint32_t>& out){
     out.clear();
+    if (p.kind == PLAY_PICK_GROUND){
+        std::vector<int> patch;
+        GroundPatch(z,(int)p.id,patch);
+        for (const EconomyWorker& k : e.workers){
+            if (EconomyIsGroundSite(k.site)
+                && std::binary_search(patch.begin(),patch.end(),EconomyGroundSitePlot(k.site))){
+                out.push_back(k.id);
+            }
+        }
+        return;
+    }
     if (p.kind == PLAY_PICK_CRATE){
         for (const EconomyWorker& k : e.workers){
             if (k.store == (ECONOMY_STORE_CRATE | p.id)){
@@ -556,7 +611,8 @@ void RelatedPeople(const PlayPick& p, const ZoneState& z, const EconomyState& e,
       - a field: the house - or camp - whose land it is (land_plan.md);
       - a house: its family's workplaces - a woodcutter's hut and lot - and its land's fields;
       - a person: his house and workplace, a woodcutter's lot, the fields a farmer farms, and his post;
-      - a gate: its own plots - it has no building to outline - those of a gate on the slant together.
+      - a gate: its own plots - it has no building to outline - those of a gate on the slant together;
+      - a garden or lot being built: the house or hut whose yard it is.
     A house or a hut also has its YARD (yards_plan.md) - every garden and lot plot it owns - so while one is
     painted for it, what it has already stands out. Each listed once, the selection itself never.
 */
@@ -579,7 +635,9 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
             out.plots.push_back(e.pile_plot[id]);
         }
     };
-    if (p.kind == PLAY_PICK_PERSON){
+    if (p.kind == PLAY_PICK_GROUND && p.id < z.ground.size()){
+        building(ZoneGroundOwner(z,(int)p.id));
+    }else if (p.kind == PLAY_PICK_PERSON){
         for (const EconomyWorker& k : e.workers){
             if (k.id == p.id){
                 building(k.house);
@@ -1118,6 +1176,22 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         }
         c.Stock("Brought","for this building",brought,cost,true);
         c.Text("It takes " + takes,HUD_TEXT_DIM);
+        //Trees still standing on it (woodcutting_plan.md): nothing of it rises until a woodcutter has felled them.
+        if (e){
+            int trees = 0;
+            if (f_cells){
+                for (size_t q = 0; q < z.field.size(); q++){
+                    trees += (z.field[q] == id && !z.field_built[q]) ? EconomyTreesOn(w,*e,-1,(int)q) : 0;
+                }
+            }else{
+                for (size_t v = 0; v < z.building.size(); v++){
+                    trees += (z.building[v] == id && z.standing[v] == 0) ? EconomyTreesOn(w,*e,(int)v,-1) : 0;
+                }
+            }
+            if (trees > 0){
+                c.Text(Format("%i tree%s to fell first - a woodcutter's work",trees,trees == 1 ? "" : "s"),HUD_AMBER);
+            }
+        }
         //Short of ROPE, with too little of it anywhere (goods_plan.md): the colony starts with none, so what it still
         //lacks to make some - as NEEDS ATTENTION's row says.
         if (e && site_cost[GOOD_ROPE] > brought[GOOD_ROPE]
@@ -1482,11 +1556,21 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                                                  : "Nobody works here - it needs a free adult with a house",HUD_AMBER);
             }
         }
-        //His woodpile is on a lot of his own yard beside the hut (yards_plan.md): with none standing there, he
-        //fells nothing.
-        bool f_no_lot = b.kind == ZONE_KIND_WOODCUTTER && (id >= e->pile_plot.size() || e->pile_plot[id] < 0);
-        if (f_no_lot){
-            c.Text("No lot of its own beside the hut: nowhere to pile wood",HUD_AMBER);
+        /*
+            His wood goes in the hut, by its floor, and onto the lots of his yard (woodcutting_plan.md): with room for
+            not even a log - a hut on a tiny plot, no lot - he fells nothing.
+        */
+        int wood_room = (b.kind == ZONE_KIND_WOODCUTTER && id < e->pile_room.size()) ? e->pile_room[id] : 0;
+        bool f_no_room = b.kind == ZONE_KIND_WOODCUTTER && info.storeys > 0 && id < e->log_wood.size()
+                         && wood_room < e->log_wood[id];
+        if (f_no_room){
+            c.Text("Too small to keep a log, and no lot beside it: nowhere to put wood",HUD_AMBER);
+        }
+        //What a log makes here (woodcutting_plan.md), and what a second storey on all of it would make of one.
+        if (b.kind == ZONE_KIND_WOODCUTTER && id < e->log_wood.size() && e->log_wood[id] > 0){
+            c.Text((e->log_wood[id] >= ECONOMY_LOFT_LOG_WOOD) ? Format("A log makes %i wood",e->log_wood[id])
+                   : Format("A log makes %i wood - %i with a second storey on all of it",e->log_wood[id],ECONOMY_LOFT_LOG_WOOD),
+                   HUD_TEXT_DIM);
         }
         if (b.kind == ZONE_KIND_WOODCUTTER){
             YardLines(z,id,c);
@@ -1497,8 +1581,13 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             carries the rest on (land_plan.md).
         */
         std::array<int,GOOD_COUNT> held = (id < e->stock.size()) ? e->stock[id] : std::array<int,GOOD_COUNT>{};
-        if (b.kind == ZONE_KIND_WOODCUTTER && (!f_no_lot || AnyGoods(held))){
-            c.Stock("Woodpile","anyone's",held,ECONOMY_HUT_PILE,false,EconomyReserved(*e,id));
+        if (b.kind == ZONE_KIND_WOODCUTTER && (wood_room > 0 || AnyGoods(held))){
+            //What it holds, against its room, and where that room is.
+            int indoors = (id < e->hut_room.size()) ? e->hut_room[id] : 0;
+            int outside = wood_room - indoors;
+            c.Stock("Wood","anyone's",held,wood_room,false,EconomyReserved(*e,id));
+            std::string lot = (outside > 0) ? Format("%i on its lot",outside) : std::string("no lot");
+            c.Text(indoors > 0 ? Format("Keeps %i indoors, ",indoors) + lot : "Too small to keep wood indoors - " + lot,HUD_TEXT_DIM);
         }else if (b.kind == ZONE_KIND_WATER && (info.storeys > 0 || AnyGoods(held))){
             c.Stock("Collected","anyone's",held,ECONOMY_WATER_HOLD,false,EconomyReserved(*e,id));
         }else if (b.kind == ZONE_KIND_ROPEWALK && (info.storeys > 0 || AnyGoods(held))){
@@ -1690,6 +1779,59 @@ void GateCard(const ChasmWorld& w, const ZoneState& z, int plot, Card& c){
 }
 
 /*
+    A GARDEN'S OR LOT'S card while it is being built (GroundPatch): as a field site's - the wood brought of what its
+    plots still take, how many are still to build, and who is carrying for it - and whose yard it is. No "Build
+    first": ground has no place in the queue (construction_plan.md), and a site of it goes by its walk.
+*/
+void GroundSiteCard(const ZoneState& z, const EconomyState* e, const std::vector<int>& patch, Card& c){
+    bool f_garden = z.ground[patch[0]] == ZONE_GROUND_GARDEN;
+    int sites = 0;
+    int need = 0;
+    std::array<int,GOOD_COUNT> brought{};
+    for (int v : patch){
+        if (GroundSitePlot(z,v)){
+            int n = EconomyGroundCost(*z.world,z,v);
+            sites++;
+            need += n;
+            brought[GOOD_WOOD] += e ? std::min(n,EconomyGroundBrought(*e,v)) : 0;
+        }
+    }
+    int standing = (int)patch.size() - sites;
+    c.title = std::string(f_garden ? "Garden" : "Lot") + (standing > 0 ? " - building on" : " - being built");
+    c.Stock("Brought",f_garden ? "for this garden" : "for this lot",brought,need,true);
+    c.Text(Format("It takes %i wood",need),HUD_TEXT_DIM);
+    //Trees still standing on it (woodcutting_plan.md): a plot of it goes up only once a woodcutter has felled its.
+    int trees = 0;
+    for (int v : patch){
+        trees += (e && GroundSitePlot(z,v)) ? EconomyTreesOn(*z.world,*e,v,-1) : 0;
+    }
+    if (trees > 0){
+        c.Text(Format("%i tree%s to fell first - a woodcutter's work",trees,trees == 1 ? "" : "s"),HUD_AMBER);
+    }
+    c.Text(Format("%i plot%s to build%s",sites,sites == 1 ? "" : "s",
+                  standing ? Format(", %i standing",standing).c_str() : ""),HUD_TEXT_DIM);
+    //Whose yard (yards_plan.md): a house's by its family, a hut's, or nobody's until a building beside it takes it.
+    uint32_t owner = ZoneGroundOwner(z,patch[0]);
+    if (owner && z.buildings[owner].kind == ZONE_KIND_HOUSE){
+        std::string family = e ? HouseFamily(*e,owner) : std::string();
+        c.Text(family.empty() ? std::string("Yard of an empty house") : "Yard of the " + family + " family's house");
+    }else if (owner){
+        c.Text(std::string("Yard of a ") + (z.buildings[owner].kind == ZONE_KIND_WOODCUTTER ? "woodcutter's hut" : "building"));
+    }else{
+        c.Text("Nobody's yard",HUD_TEXT_DIM);
+    }
+    if (e){
+        int carriers = 0;
+        for (const EconomyWorker& k : e->workers){
+            carriers += (EconomyIsGroundSite(k.site)
+                         && std::binary_search(patch.begin(),patch.end(),EconomyGroundSitePlot(k.site))) ? 1 : 0;
+        }
+        c.Text(carriers ? Format("%i carrying for it",carriers) : std::string("Waiting for someone free to carry"),
+               HUD_TEXT_DIM);
+    }
+}
+
+/*
     A CRATE's card (crates_plan.md, step 3): what it holds - anyone's, striped where somebody is already on his
     way to take it - where it came from and when, and who is coming for it and what for (Doing). The day is
     the season's, with the year only when it is not this one.
@@ -1734,6 +1876,14 @@ bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const 
             GateCard(w,z,p.plot,c);
             return true;
         }
+    }else if (p.kind == PLAY_PICK_GROUND){
+        //Gone once it all stands, or is erased: nothing of it left to build.
+        std::vector<int> patch;
+        GroundPatch(z,(int)p.id,patch);
+        if (!patch.empty()){
+            GroundSiteCard(z,(e && e->world == z.world) ? e : NULL,patch,c);
+            return true;
+        }
     }else if (p.kind == PLAY_PICK_PERSON && e){
         const EconomyWorker* k = PersonById(*e,p.id);
         if (k){
@@ -1750,10 +1900,20 @@ bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const 
 /*
     A building alone, for its outline: the zones with every other building taken out, so its cells are
     drawn as if it stood by itself - its own silhouette, walls closed where it meets a neighbour. A field
-    is a slab over its cells instead: its crops would outline every plant.
+    is a slab over its cells instead: its crops would outline every plant. A garden or lot being built
+    (PLAY_PICK_GROUND), named as a worker's ground site is (ECONOMY_SITE_GROUND | its lowest plot), is its
+    patch's plots as tiles on the ground.
 */
 void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, std::vector<vertex>& out){
     out.clear();
+    if (EconomyIsGroundSite(id)){
+        std::vector<int> patch;
+        GroundPatch(z,EconomyGroundSitePlot(id),patch);
+        for (int v : patch){
+            BuildPlotTile(w,v,FIELD_OUTLINE_LIFT,out);
+        }
+        return;
+    }
     if (id == 0 || id >= z.buildings.size() || z.buildings[id].size <= 0){
         return;
     }
@@ -1898,7 +2058,7 @@ uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r,
 /*
     What is under the cursor in play mode: a person first, since he stands on a plot that would otherwise
     win; then a crate, the nearest on screen within CRATE_PICK_PX of its middle (crates_plan.md); then the
-    building or field on the plot under the cursor.
+    building or field on the plot under the cursor - or a gate there, or a garden or lot being built.
 
     A PERSON BY HIS FIGURE (selection_plan.md, "Picked by the figure"). The people are pickable objects, so
     the engine reads back which one is under the cursor - exact at every zoom, and nobody hidden behind a
@@ -2005,6 +2165,15 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
             out.kind = PLAY_PICK_GATE;
             out.id = (uint32_t)hover.plot;
             out.plot = hover.plot;
+        }else{
+            //A garden or lot being built (yards_plan.md): its patch, by its lowest plot.
+            std::vector<int> patch;
+            GroundPatch(*z,hover.plot,patch);
+            if (!patch.empty()){
+                out.kind = PLAY_PICK_GROUND;
+                out.id = (uint32_t)patch[0];
+                out.plot = hover.plot;
+            }
         }
     }
     return out;
@@ -2388,11 +2557,13 @@ void ApplicationChasm::UploadSelection(){
     vec4 colour[SELECT_OUTLINES] = {SELECT_COLOUR,HOVER_COLOUR,RELATED_COLOUR,RELATED_COLOUR};
     RelatedPlaces related_places;
     if (f_play && f_ready){
-        if (sel.kind == PLAY_PICK_BUILDING){
-            want[0] = sel.id;
-        }
-        if (hover.kind == PLAY_PICK_BUILDING && hover != sel){
-            want[1] = hover.id;
+        //A garden or lot being built by its patch (BuildSelectionMesh).
+        auto outlined = [](const PlayPick& p) -> uint32_t {
+            return (p.kind == PLAY_PICK_BUILDING) ? p.id : (p.kind == PLAY_PICK_GROUND) ? (ECONOMY_SITE_GROUND | p.id) : 0;
+        };
+        want[0] = outlined(sel);
+        if (hover != sel){
+            want[1] = outlined(hover);
         }
         if (e && e->world == w){
             FindRelatedPlaces(sel,*z,*e,related_places);
@@ -3012,7 +3183,8 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
 void ApplicationChasm::RegisterSelectTools(){
     MCPServer::Get()->RegisterTool("chasm_select",
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
-        "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md) - or a person by `person` id, "
+        "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md), or the "
+        "garden or lot being built there (kind ground, by its patch's lowest plot: docs/yards_plan.md) - or a person by `person` id, "
         "or a crate by `crate` id (docs/crates_plan.md); op clear; op hover px,py: the hover pinned at that "
         "pixel in place of the mouse's - the overlay's and the scene's - so what it shows is in the next screenshot (the top bar's "
         "FOOD lists its foods, a person's light blue outline, his line on a card lit); it returns the hover - "
@@ -3083,9 +3255,9 @@ void ApplicationChasm::RegisterSelectTools(){
                         std::lock_guard<std::mutex> lock(pick_mutex);
                         h = play_hover;
                     }
-                    const char* kinds[] = {"none","building","person","gate","crate"};
+                    const char* kinds[] = {"none","building","person","gate","crate","ground"};
                     return json{{"hover_pinned",true},{"read",f_read},
-                                {"hover",json{{"kind",kinds[std::max(0,std::min(4,h.kind))]},{"id",h.id}}}};
+                                {"hover",json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUND,h.kind))]},{"id",h.id}}}};
                 }
                 f_overlay_mouse_pinned = false;
                 RestorePickPin();
@@ -3099,8 +3271,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 main_scene->AtTickBoundary([&](){
                     GridPick ground = PickUnderPixel(px);
                     PlayPick p = PlayPickUnder(px,ground);
-                    const char* kinds[] = {"none","building","person","gate","crate"};
-                    out = json{{"kind",kinds[std::max(0,std::min(4,p.kind))]},{"id",p.id},{"plot",p.plot},
+                    const char* kinds[] = {"none","building","person","gate","crate","ground"};
+                    out = json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUND,p.kind))]},{"id",p.id},{"plot",p.plot},
                                {"ground_plot",ground.f_hit ? ground.plot : -1},
                                {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0},
                                {"read",f_read}};
@@ -3221,6 +3393,14 @@ void ApplicationChasm::RegisterSelectTools(){
                                 p.kind = PLAY_PICK_CRATE;       //a crate lying there (crates_plan.md)
                                 p.id = c->id;
                                 p.plot = g.plot;
+                            }else{
+                                std::vector<int> patch;         //a garden or lot being built (yards_plan.md)
+                                GroundPatch(*z,g.plot,patch);
+                                if (!patch.empty()){
+                                    p.kind = PLAY_PICK_GROUND;
+                                    p.id = (uint32_t)patch[0];
+                                    p.plot = g.plot;
+                                }
                             }
                         }
                     }
@@ -3239,8 +3419,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 hover = play_hover;
             }
             auto pick_json = [](const PlayPick& p) -> json {
-                const char* kinds[] = {"none","building","person","gate","crate"};
-                return json{{"kind",kinds[std::max(0,std::min(4,p.kind))]},{"id",p.id},{"plot",p.plot}};
+                const char* kinds[] = {"none","building","person","gate","crate","ground"};
+                return json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUND,p.kind))]},{"id",p.id},{"plot",p.plot}};
             };
             json result{{"selected",pick_json(sel)},{"hover",pick_json(hover)},{"play_mode",PlayMode()}};
             if (!pressed.is_null()){

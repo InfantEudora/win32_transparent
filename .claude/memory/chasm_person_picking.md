@@ -28,6 +28,7 @@ Built 2026-10-11 at the user's request (selection_plan.md, "Picked by the figure
 
 **Why:** the user is adding RTS-style control of soldiers; selecting them must work at every zoom.
 **How to apply:** test picking with `chasm_select op under` (now exact), not by projecting points. The first
-`chasm_view play` after a fresh start glides the camera - set the view again before measuring. Multi-select (box,
-shift-click, groups) was proposed and NOT agreed yet. Related: [[ramparts-plan]], [[chasm-defence-plan]],
+`chasm_view play` after a fresh start glides the camera - set the view again before measuring. MULTI-SELECT AGREED 2026-10-11, not built: selection_plan.md "Several people
+selected" - purely view state, grown-ups only, Shift+click / box / card names, click on ground clears, group orders space
+people on one plot (rule change in EconomyPostPoint) or spread; 3-step build order, each step on the user's go-ahead. Related: [[ramparts-plan]], [[chasm-defence-plan]],
 [[minimized-focus-leak]].

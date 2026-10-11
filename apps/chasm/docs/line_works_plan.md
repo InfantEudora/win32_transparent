@@ -201,6 +201,10 @@ Files: `ApplicationChasmRoads.cpp` (`UpdateLineDrag`, `PlaceLine`, `DropLine`, `
 
 ### Step 2: roads as sites, cleared and laid by the idle (2026-10-06)
 
+(Changed 2026-10-11, `woodcutting_plan.md`: the idle no longer fell a line's trees - only a woodcutter does, the
+first he goes for - and only lay the road once its way is clear. Painting roads everywhere had cleared a forest with
+nobody's axe.)
+
 Files: `Zones.*` (`ZoneRoadLaid`, `ZoneRoadPlanned`, `ZoneRoadStands` laid-only, the paint and raise ops,
 gates and arches), `Economy.*` (the errand), `RoadMesh.*` (the stakes, `ROAD_PROP_CLEARANCE`, `RoadNear`
 laid-only), `ZoneMesh.cpp`, `ApplicationChasm.cpp` (`PropHidden`, the felled logs, the save flag,

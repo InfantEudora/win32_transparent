@@ -35,9 +35,11 @@ proposed, as are the first 8 issues").
 | 5 | BUILD HOUSES | anyone living in the camp (or nowhere) | n IN THE CAMP | the HOUSE tool |
 | 6 | BUILD A STORE | no store placed, once a woodcutter or collector stands | - | the STORE tool |
 | 7 | NOBODY AT THE ... | a workplace standing with a place and nobody in it (the card's "Nobody works here") | - | selects it |
-| 8 | WOODCUTTER: NO LOT TO PILE ON | a hut with no lot of its own beside it (the card's "nowhere to pile wood"; `yards_plan.md`) | - | selects it |
+| 8 | WOODCUTTER: NO ROOM FOR WOOD | a hut standing that cannot keep a log - too small indoors, and no lot (`woodcutting_plan.md`; was NO LOT TO PILE ON, `yards_plan.md`) | - | selects it |
 | 9 | HOUSE SHUT IN | a house with no door - shut in on every side (`EconomyShutIn`); RED at the very top with anyone living in it, who cannot get out | n INSIDE | selects it |
 | 10 | HOUSE CROWDED | a house standing with more living in it than it holds - a child born into a full house (`lifeline_plan.md`) | n IN ROOM FOR m | selects it |
+| 11 | ...: NEEDS ROPE | a site that takes rope the colony lacks and makes none (`goods_plan.md`) | GROW HEMP / BUILD A ROPEWALK | a field, or the tool |
+| 12 | TREES IN THE WAY: NO WOODCUTTER NEAR | a road, wall or site with a tree in its way that no woodcutter reaches - only a woodcutter fells (`woodcutting_plan.md`) | n PLACES | the WOODCUTTER tool |
 
 Rows 9 and 10 are the user's (2026-10-09, with births: "a house that holds 3, getting a kid would mean we need to
 expand it").

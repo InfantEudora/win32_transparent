@@ -188,7 +188,11 @@ on already joins the hut's yard, and the fenced lot looks as if the hut opens on
 
 ### A woodpile that grows with the yard
 
-- **Today** the woodpile is ONE plot of the hut's yard, its lowest-numbered lot plot beside the hut
+(Built 2026-10-11 with `woodcutting_plan.md`, step 3: a hut keeps wood indoors by its floor area, and every standing
+lot plot of its yard adds `ECONOMY_LOT_ROOM` by its area - by area, the open question below. What follows is how it
+stood before.)
+
+- **Then** the woodpile was ONE plot of the hut's yard, its lowest-numbered lot plot beside the hut
   (`pile_plot`), and holds `ECONOMY_HUT_PILE` whatever else the yard holds: a second lot, or a bigger one,
   adds nothing.
 - **The user's: a woodcutter with more than one lot, or larger lots, stacks more wood.**
@@ -219,3 +223,38 @@ on already joins the hut's yard, and the fenced lot looks as if the hut opens on
 - **Gardens the same** (Decided, above): the same kind of site, selected and staked out alike.
 - Open: a ground site has no id, so what a click selects - the one plot, or every plot of that lot still
   to build; and whether Build first comes with it.
+
+#### As built (2026-10-11)
+
+The two open points settled by the agent building it, for the user to overrule:
+
+- **A click selects the PATCH**: every plot of that ground and that owner joined to the one clicked, built
+  or not (`GroundPatch`, ApplicationChasmSelect.cpp) - while any of it is still a site. So a lot painted in
+  one drag is one selection, a plot added to a standing lot selects with it ("Lot - building on, 1 plot to
+  build, 1 standing"), and once it all stands there is nothing to select, as before. It is picked by its
+  lowest plot (`PLAY_PICK_GROUND`), so a click anywhere on it is the same selection.
+- **No Build first**: ground has no building id, so putting it first would be new saved and hashed state
+  and a change to the queue (`FindSiteWork`). Left out; a ground site goes by its walk, as ever.
+
+What there is:
+
+- **The card** (`GroundSiteCard`), as a field site's: "Lot - being built" (or "- building on"), the wood
+  brought of what its plots still take as a goods strip, "It takes 6 wood", "2 plots to build", whose yard
+  ("Yard of the De Wit family's house", "Yard of a woodcutter's hut", "Nobody's yard"), and how many are
+  carrying for it. Its carriers are pinned; the owner is outlined as related (`FindRelatedPlaces`); the
+  patch itself in the selection's orange, as plot tiles (`BuildSelectionMesh` takes a ground site's name,
+  `ECONOMY_SITE_GROUND | plot`). Hovered, it is outlined faintly, as a building is.
+- **The look** (`GroundSiteCell`, ZoneMesh.cpp): no grass or earth until it stands - a stake at each cell
+  middle its outline turns at, and a cord along the outline, the field site's own pieces (`MeshPost`,
+  `MeshCord`, `MESH_SITE_STAKE`/`MESH_SITE_CORD` in MeshBuild.h, which CropMesh.cpp now uses too). Staked as
+  a whole: no cord between two plots of the same site (same ground, same owner), so a patch reads as one, and
+  a cord where two owners' sites meet.
+- **`chasm_select`** names the kind `ground`; op select at x,z finds a patch.
+- **Checked** (debug, 8774, paused and stepped, the default seed): three lot plots painted in play beside a
+  new house - one went to the house, two to nobody (the plot must touch the building itself) - drawn as two
+  staked patches with a cord between; a click on the two selected both, orange, "Lot - being built", 6 wood,
+  "Nobody's yard"; 400 ticks later "2 carrying for it", both pinned; 400 more and it stood, fenced and earthen,
+  and the card had gone. A plot added to the house's standing lot: "Lot - building on", "1 plot to build, 1
+  standing", "Yard of the De Wit family's house", the house outlined; a click on the standing plot picked the
+  same selection. A field site painted after: staked as before.
+- **Not checked by a run**: a garden site (the same code, PAL_BUSH once it stands).

@@ -52,7 +52,9 @@ amber when that land is in another settlement or none, and "No way there" when i
 
 ## Planned
 
-- [planned] **Founding by expedition**: packing up a tent, with two or three people, one of them a woodcutter
-  who can gather wood without a house.
+- [planned] **Founding by taking a tent**: each person on an expedition packs a spare tent at the camp and pitches
+  it where they stand, which makes it their home. A camp's own woodcutter, farmer and water carrier keep it going.
+- [planned] **Any home keeps a settlement**, a tent or a house: it only vanishes when the last of them does, and
+  someone whose home goes crams into a house of their own settlement.
 - [planned] **Porters**: a job of its own, maybe with a building, carrying goods between settlements.
 - [planned] Kept stock, the top bar and NEEDS ATTENTION per settlement.

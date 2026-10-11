@@ -87,10 +87,82 @@ recording of it replayed twice: every tick equal, the same two settlements and t
 of it shows; in the debug view, from far out, the posts are specks. A person in a settlement with no camp of its own
 standing - none today - matches only land outside every territory.
 
+## Founding: taking a tent
+
+Talked through with the user on 2026-10-11, after step 1. The other half - a woodcutter working from a camp, at a
+lower rate than from a hut - is `woodcutting_plan.md` ("the camp's two places"), with another agent.
+
+### Founding: decided
+
+- **A tent goes with you** (the agent's, the user: "great"). Taking one is cheaper than making one, and a camp is
+  what lets a woodcutter work with no hut. A camp is one person to a tent, so each member of an expedition carries
+  their own as their load, with water and food in their pack (the scout's, `defence_plan.md`): three people, three
+  tents, a camp of three plots.
+  - **Take a tent**, a toggle on the person's card beside *gather supplies*, and the same stop at the camp: they
+    pack a tent nobody sleeps in - its plot leaves the camp - and fill their pack.
+  - **Pitch**, on their card where they stand: the tent goes up on that plot, or beside one already pitched there,
+    and is their home from then on.
+  - No woodcutter to pick: since step 1 a settlement fills its places from its own people, so the camp's
+    woodcutter's place goes to one of the three.
+- **A tent is just a house.** Any home - a tent or a house - keeps its settlement; a settlement vanishes only when
+  the last thing in it that can be lived in does. Three people who pitched three tents, built a house and erased
+  the tents: they cram into the house.
+- **Pitching in another settlement's area** makes it your home there, and you are given a house when one has room,
+  as anyone in a camp is. The tent can be packed up again and the move repeated. An outpost of tents alone vanishes
+  once they are all packed.
+- **Water from the river's edge**: a camp set up near a river draws its own water. Villagers can't walk the wet
+  bank, so it is drawn standing beside it.
+- **The camp's three places**: woodcutter, farmer, water - the start camp's too, so the mechanic is tested from
+  the first minute of every game.
+- **Foraging** - food from the wild - is just slow. An item of its own, to talk through later.
+- **Making a tent** stays as it is - a camp painted from the build options - but costs rope too: **at least 1 a
+  tent**.
+
+### Founding: proposed, not yet answered
+
+- **The area by beds.** A settlement's reach grows with its beds - tents, and houses' room - from about 20 units
+  for one tent up to `ECONOMY_SETTLEMENT_REACH`. Beds rather than tents, so families leaving tents for houses, or the
+  empty tents cleared after, never shrink it. Not by building on the edge: a chain of buildings would walk the
+  border across the map and bring back the long walks step 1 stopped, and the border would move with every house.
+- **The house place of someone leaving with a tent** (the user's question): kept until the tent is pitched, so an
+  expedition turned back walks home to its bed. Pitching gives it up: the tent is their home, the place goes to
+  whoever needs one, and they live apart from their family from then on - a household of their own, as a new couple
+  founds one. Open: a partner left behind.
+
+### Founding: worked out here, for the user to overrule
+
+- **The territory's centre**: with no camp needed, the flood starts from the settlement's oldest home that stands
+  (the lowest id). Erase the first camp and the next home becomes the centre - inside the old territory, so the
+  border shifts rather than leaps. Still nothing saved.
+- **Which homes found**: any that stands outside every earlier territory. In play only a pitched tent can be:
+  placing outside is refused, as now.
+- **Cramming**: today someone whose home goes walks back to the start camp's spot and belongs to no settlement
+  (`HouseFamilies`, `HomePlot`'s `camp_plot`). Instead someone with no home takes a place in a house of their own
+  settlement, over its room if need be, and moves on as now when a house with room comes free. Crowding does
+  nothing else yet.
+- **A pitched tent is a tent**: `ZoneCampFire` makes about one plot in 5 a fire, by the plot's hash; a tent pitched
+  on such a plot must still be a bed.
+- **Carried**: the tent is its carrier's load until pitched; released from the post, they keep it.
+- **The camp's water**: its place walks to the nearest dry plot beside a wet bank within reach of the camp, draws
+  water there, slower than a collector, and carries it to the camp's supplies, up to a cap as the camp's woodpile
+  is. Enough for three, not for twelve, so the start still wants a collector soon. Nothing under snow.
+- **Overlap**: the camp's places are the code the woodcutting plan is changing (`ECONOMY_CAMP_WOODCUTTERS`,
+  `ECONOMY_CAMP_FARMERS`), so these steps come after its steps 1 and 2 are in.
+
+### Founding: steps
+
+Each its own, checked in the game, with the start playable after every one.
+
+1. **Homes keep a settlement**: the centre from the oldest home, any home founds, and the homeless cram into a
+   house of their own settlement.
+2. **The camp's water place**, the start camp's included.
+3. **A tent costs rope.**
+4. **Take a tent and pitch**: the card's toggle, the stop at the camp, the pitch chip, the house place given up.
+5. **The area by beds**, if agreed.
+
 ## Later, to think through
 
-- **Founding by expedition**: packing up a tent; two or three people, one a woodcutter working without a house;
-  supplies carried (the scout's pack, `defence_plan.md`). How it changes the start.
+- **Foraging**: food from the wild, slow (the user's, above) - what, where, and who gathers it.
 - **Porters**: a job, maybe a building, deciding what goods go where and how many - between settlements, and later
   by winch and zeppelin.
 - **Per settlement**: kept stock and provisions (today the colony's), the top bar, NEEDS ATTENTION.

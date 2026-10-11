@@ -3,18 +3,18 @@ title: Wood
 aliases: timber
 kind: goods
 status: built
-summary: Comes from trees, felled by woodcutters and by people clearing roads. It builds everything that is built, and burns as firewood in winter.
-plans: economy_plan.md > Production; construction_plan.md > As built
+summary: Comes from trees, felled by woodcutters alone. It builds everything that is built, and burns as firewood in winter.
+plans: economy_plan.md > Production; construction_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11)
 code: Economy.h: ECONOMY_WOOD_PER_TREE ECONOMY_BUILD_WOOD_PER_AREA; Economy.cpp: EconomyStoreyCost EconomyGroundCost
-verified: 2026-10-09
+verified: 2026-10-11
 ---
 
 ## Getting it
 
-- [[Woodcutter|Woodcutters]] fell [[Tree|trees]], {ECONOMY_WOOD_PER_TREE} wood each, and fetch the logs
-  that road and wall clearing leaves lying.
+- [[Woodcutter|Woodcutters]] fell [[Tree|trees]]: a log is worth {ECONOMY_CAMP_LOG_WOOD} from the camp,
+  {ECONOMY_WOOD_PER_TREE} from a hut and {ECONOMY_LOFT_LOG_WOOD} from a hut two storeys high.
 - The settlers bring {ECONOMY_START_WOOD}.
-- It is kept in [[Store|stores]], the [[Camp|camp's]] supplies, woodcutters' woodpiles, and houses'
+- It is kept in [[Store|stores]], the [[Camp|camp's]] supplies, woodcutters' huts and lots, and houses'
   woodsheds.
 
 ## Using it

@@ -4,8 +4,8 @@ aliases: building site, building sites, site, sites, builder, builders, builders
 kind: systems
 status: built
 summary: What the player places in play is a site, built a storey at a time from wood that people without a job, and builders, carry to it.
-plans: construction_plan.md > As built; construction_plan.md > Which site goes first; builders_plan.md > As built; yards_plan.md > Noted
-code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND
+plans: construction_plan.md > As built; construction_plan.md > Which site goes first; builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11)
+code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips
 verified: 2026-10-11
 ---
 
@@ -28,6 +28,13 @@ painted on cells so much a cell (`EconomyCellCost`): a [[Guard tower|guard tower
 [[Provisions|provisions]], and keeps them as its stock. A [[Winch|winch]] takes [[Rope|rope]], which the colony has
 to make first. A storey stands only once all it takes of every good
 is there, and what it took is used up. A site pulled down loses what was brought to it.
+
+**A site over trees** waits for them: they stand until a [[Woodcutter]] fells them, the first he goes for,
+and nothing of it rises until the last is down - then at once, if it has all it takes. Its card counts them.
+
+**Before placing**, the tool in hand shows what a click would cost beside the cursor, by these same rules
+(`EconomyKindStoreyCost`), and the trees there to fell first: a line or bridge being dragged all of it,
+nothing for erasing. Hovering a tool on the build bar shows about what a plot or cell of it costs.
 
 ## Who builds
 
@@ -59,8 +66,3 @@ comes before everything, however far away. Roads and walls share this queue.
 
 The settlers' supplies hold {ECONOMY_START_WOOD} wood, so the first buildings go up before there is a
 woodcutter.
-
-## Planned
-
-A garden or lot still a site is to be selectable as a field site is, and to look like a site - on the
-[[Yard|yard's]] page.

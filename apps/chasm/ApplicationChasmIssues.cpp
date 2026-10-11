@@ -224,12 +224,14 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
                 out.push_back(i);
             }
         }
-        if (b.kind == ZONE_KIND_WOODCUTTER && (id >= e.pile_plot.size() || e.pile_plot[id] < 0)){
+        //A hut standing with no room for a log - too small to keep one indoors, and no lot (woodcutting_plan.md).
+        if (b.kind == ZONE_KIND_WOODCUTTER && stands[id] && id < e.pile_room.size() && id < e.log_wood.size()
+            && e.pile_room[id] < e.log_wood[id]){
             ChasmIssue i;
-            i.kind = "no_lot";
+            i.kind = "no_room";
             i.tier = ISSUE_STUCK;
             i.order = (float)id;
-            i.text = "WOODCUTTER: NO LOT TO PILE ON";
+            i.text = "WOODCUTTER: NO ROOM FOR WOOD";
             i.building = (uint32_t)id;
             out.push_back(i);
         }
@@ -315,6 +317,22 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             i.value = "BUILD A ROPEWALK";
             i.tool = CHASM_TOOL_ROPEWALK;
         }
+        out.push_back(i);
+    }
+
+    /*
+        12. Roads, walls and sites with a tree in their way no woodcutter reaches (woodcutting_plan.md): only a
+        woodcutter fells, so they wait for a hut put near them - a click takes up its tool. One row for all: the
+        advice is one. A road's plots count one each.
+    */
+    if (!e.trees_unreached.empty()){
+        ChasmIssue i;
+        i.kind = "trees_unreached";
+        i.tier = ISSUE_STUCK;
+        i.order = 1e6f;
+        i.text = "TREES IN THE WAY: NO WOODCUTTER NEAR";
+        i.value = std::to_string(e.trees_unreached.size()) + (e.trees_unreached.size() == 1 ? " PLACE" : " PLACES");
+        i.tool = CHASM_TOOL_WOODCUTTER;
         out.push_back(i);
     }
 
@@ -445,7 +463,7 @@ void ApplicationChasm::RegisterIssueTools(){
     MCPServer::Get()->RegisterTool("chasm_issues",
         "NEEDS ATTENTION (docs/issues_plan.md): everything the panel over the tools' grid would list, in its order - "
         "the panel shows the first five, in play mode. Each: kind (choose_crop, build_water, build_field, "
-        "build_woodcutter, build_houses, build_store, nobody_at, no_lot, ropewalk_short, house_shut_in, house_crowded, tower_unkept, site_needs_rope), tier (danger: a deadline under two days; "
+        "build_woodcutter, build_houses, build_store, nobody_at, no_room, ropewalk_short, house_shut_in, house_crowded, tower_unkept, site_needs_rope, trees_unreached), tier (danger: a deadline under two days; "
         "countdown: a choice the game makes when it runs out; stuck; next: a next step), text and value as drawn, "
         "left (a countdown's share still to run, 1 to 0) and wait/grace ticks for a field, building (what a click "
         "selects) or tool (what it takes up). View only. include_screenshot as elsewhere.",

@@ -422,6 +422,7 @@ void ApplicationChasm::DrawOverlay(void){
         DrawNeediest(s,jobs_top - 8.0f * s);
         DrawSelectionOverlay(s);
         DrawWalkTip(s);
+        DrawCostTips(s);
     }
     if (!food_tip.empty()){
         const float text_size = 14.0f * s;
@@ -497,12 +498,21 @@ float ApplicationChasm::DrawBuildBar(float s){
     build_bar_min = q0;
     build_bar_max = q1;
     int tool = paint_tool.load();
+    //The tool under the mouse, for its price tip beside the grid (DrawCostTips).
+    float mx = (float)overlay_mouse_x.load();
+    float my = (float)overlay_mouse_y.load();
+    bar_tip_tool = -1;
     for (int i = 0; i < count; i++){
         if (!bar[i].name){
             continue;
         }
         vec2 c0(q0.x + pad + (i % columns) * (cell_w + gap),q0.y + pad + (i / columns) * (cell_h + gap));
         vec2 c1(c0.x + cell_w,c0.y + cell_h);
+        if (mx >= c0.x && mx <= c1.x && my >= c0.y && my <= c1.y){
+            bar_tip_tool = bar[i].tool;
+            bar_tip_a = c0;
+            bar_tip_b = c1;
+        }
         bool f_on = (tool == bar[i].tool);
         overlay->AddRect(c0,c1,6.0f * s,f_on ? UIColor(236,202,92,70) : UIColor(255,255,255,14));
         float base = c0.y + 19.0f * s;

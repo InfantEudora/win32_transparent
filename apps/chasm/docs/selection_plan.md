@@ -242,6 +242,57 @@ surfaces are picked, from the engine's own readback of what is under the cursor.
   adds `figure` (the person drawn at the pixel itself) and `read`. `hover` now pins the scene's hover as well
   as the overlay's, and returns it, so the light blue outline is in the next screenshot.
 
+### Several people selected (the user's, agreed 2026-10-11, not built)
+
+Selection has been one thing at a time, and so have orders ("One person at a time for now", `defence_plan.md`,
+"Direct orders"). Two things now need several: soldiers for defence, and the two or three people who go out to
+found a camp at the chasm's edge (`settlements_plan.md`, "Founding by expedition" - worked on separately). Orders
+are already per person and recorded - one `CHASM_CMD_ORDER` each, the pack and "Gather supplies first" each - so a
+group's order is several of them, and needs no new command.
+
+**Decided** (the user, 2026-10-11):
+
+- **Purely a selection**: a list of people, view state - not recorded, not saved. A group, an expedition or a
+  squad is not something the game keeps; what founding needs is for the settlements plan.
+- **Grown-ups only**, since only they take orders. Moving a whole family, children included, is for later if wanted.
+- **A left click on bare ground clears the group**, as it clears one selection. A drag never clears.
+- **Spread out**: a group sent somewhere stands apart - **on the one plot when it has room for them all**,
+  otherwise over the plots round it.
+
+**Proposed** (the details):
+
+- **Choosing them.** Shift+click a grown-up: added, or taken out if already in. Shift+click a name on a house's or
+  the camp's card: the same, at home too. A left drag with no tool in hand draws a BOX: every grown-up out of doors
+  whose figure's middle is inside it - the selection, or added to it with Shift. A press that moves less than
+  `RIGHT_CLICK_SLOP` is a click, not a drag. While dragging, the box is drawn in the light blue hover colour and
+  everyone it would take is outlined as hovered. A plain click still selects one thing, a child included.
+- **One person is today's selection exactly** - his card, his house and workplace outlined, his pin. Two or more
+  are a group.
+- **On the map**: each of them outlined orange, his badge pinned, his route's dots. Houses and workplaces are not
+  outlined for a group - for three people that is half the village.
+- **The group's card**: "3 people", a row each - badge, name, job, what he is doing, how many days his pack holds -
+  dimmed while at home. A click on a row selects just him; hovering it outlines him light blue; an × takes him out
+  of the group. Under the rows, for everyone posted among them: **Release** and **Gather supplies first**, lit when
+  all of them are at it - each person's own command, as on his card.
+- **A right click** sends each his own `CHASM_CMD_ORDER`:
+  - **One plot when it holds them**: its area at least `ECONOMY_POST_ROOM` (tuning, about 0.8 square units) a person.
+    **Everyone posted on the same plot and layer stands in a place of his own on it**, by rank in id order, as a
+    guard tower spreads its guards (`EconomyPostPoint`) - one person still on its point. That is a RULES change:
+    where people stand moves, so a recording with two posted on one plot plays differently from now.
+  - **Otherwise the clicked plot and the nearest round it**, open and on the same layer - along a wall's deck on
+    the castle - each filled to its room, as many as it takes. The nearest person to the nearest place.
+  - **Refused**, one line for the group: "2 OF 3 SENT - NO WAY THERE".
+  - **On a guard tower**, as many as it has places; the rest are not sent.
+- **The tool**: `chasm_select` op `select` with `people` (ids), op `add` / `remove` (person), `press` with `shift`,
+  op `box` (px0, py0, px1, py1, `shift`); `status` reports the group.
+
+**Build order**:
+
+1. **The group**: the list, Shift+click on the map and on card names, the outlines, pins and routes, the group's
+   card with its rows, × and chips; the tool.
+2. **The box**.
+3. **Group orders**: places on one plot (the rule), the spread over plots round it, the group's refusal, a tower.
+
 ## Who builds what
 
 - Core outline pass: win32-transparent-39.
@@ -264,3 +315,6 @@ the list or the zones change; so any number of related things costs two objects.
 woodcutter piles on is his, not the whole lot area round it, which may be another's.
 
 Not yet: gardens belong to nobody (they do nothing yet - the user); a lot plot itself cannot be selected.
+(Both since changed: gardens and lots belong to a house or hut, and a garden or lot still being built is selected
+by its patch, with a card of its own - yards_plan.md, "A lot or garden site selected like a field site". A
+standing one still cannot be.)

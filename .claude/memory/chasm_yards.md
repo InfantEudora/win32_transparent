@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 962d00b9-0f7e-485d-b7ba-0758261e2ced
-  modified: 2026-10-09T22:31:02.831Z
+  modified: 2026-10-11T10:50:19.607Z
 ---
 
 Built 2026-10-09 with the user's agreement (docs/yards_plan.md). Gardens and lots belong to a building:
@@ -31,6 +31,10 @@ with the house selected; any building tool with a same-kind building selected se
 Zones::Apply extends that one or refuses (ZoneCanExtend, ZoneJoinCorner). A building tool's click storey is sent on
 the RELEASE (paint_press_plot), so a drag from a building no longer adds a floor. The old drag-from-a-building way
 was kept; the user may want it gone - ask, don't assume.
+
+SITES SELECTABLE + STAKED (built 2026-10-11, yards_plan.md "As built (2026-10-11)"): a click selects the PATCH
+(same ground + owner, joined, built or not, while any plot is a site) as PLAY_PICK_GROUND by its lowest plot; no
+Build first for ground. Both were MY calls on the plan's open points, offered to the user to overrule.
 
 **Why:** the user wanted ownership to work like fields' land, and the woodcutter to behave like a shut-in
 house (buildable, just not working).

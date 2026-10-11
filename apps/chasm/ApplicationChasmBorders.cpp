@@ -114,7 +114,7 @@ void ApplicationChasm::UploadBorders(){
     RENDER THREAD, from DrawOverlay in play mode (settlements_plan.md, the user's): with a person selected, how far
     it is to walk to the plot under the cursor - his straight walk where he would take one, else the grid's route
     (Walkers::PlanRoute, the view's own search) - beside the cursor, and whether it is outside his settlement. Worked
-    out again only when he moves to another plot, the cursor to another, or the zones change.
+    out again only when he moves to another plot, the cursor to another, or the zones change. Not with a tool in hand.
 */
 void ApplicationChasm::DrawWalkTip(float s){
     int mx = overlay_mouse_x.load();
@@ -129,7 +129,8 @@ void ApplicationChasm::DrawWalkTip(float s){
             f_over_panel = f_over_panel || (mx >= h.a.x && mx <= h.b.x && my >= h.a.y && my <= h.b.y);
         }
     }
-    if (sel.kind != PLAY_PICK_PERSON || mx < 0 || my < 0 || f_over_panel){
+    //With a tool in hand a right click puts it down rather than sending him, and the price tag has the spot.
+    if (sel.kind != PLAY_PICK_PERSON || mx < 0 || my < 0 || f_over_panel || paint_tool.load() != CHASM_TOOL_SELECT){
         return;
     }
     GridPick hover = GetHoverPick();

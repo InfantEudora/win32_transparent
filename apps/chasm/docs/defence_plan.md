@@ -115,7 +115,8 @@ These are sums from tuning, and change with it.
   is given no job - nor a tower's place - until he is released (the user's), and a working one's place
   is neither taken from him nor counted free, even if a new builders' hut would otherwise free it.
   Released, he is staffed like anyone else on the next pass.
-- **One person at a time** for now. Selecting several is a later step.
+- **One person at a time** for now. Selecting several is a later step - agreed 2026-10-11, `selection_plan.md`,
+  "Several people selected".
 
 ### The pack
 
@@ -724,7 +725,8 @@ Files: `Economy.*` (`EconomyState::guards`, `EconomyWorker::f_chosen`, `ECONOMY_
   per person.
 - **The alarm**: one button sends everyone with a post - and the trainees - to their posts and shuts the
   gates, and another sends them home.
-- **Several people selected** and ordered at once.
+- **Several people selected** and ordered at once - agreed 2026-10-11 (`selection_plan.md`, "Several people
+  selected").
 - **The zombies** (P6), fighting, the ballista tower, moats.
 
 ## Scouting, provisioned first (the user's, agreed 2026-10-10, not built)

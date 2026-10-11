@@ -11,7 +11,7 @@
     ZoneState::chunk_version moves). Per fine cell, in this order:
 
       - ground: a garden or town plot's quarters laid on the relief, in grass or trodden earth -
-        under a house nothing, the house hides it;
+        under a house nothing, the house hides it; one still a site staked out instead, as a field site is;
       - roads, along the edges between road plots (RoadMesh.h);
       - crops, for a cell whose coarse parent is a field (CropMesh.h);
       - houses (BuildingMesh.h);

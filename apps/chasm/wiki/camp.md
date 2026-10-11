@@ -4,8 +4,8 @@ aliases: camps, tent, tents, supplies, camp's supplies
 kind: buildings
 status: built
 summary: Tents and fires where the settlers start. It is home to anyone without a house, and holds the settlers' supplies for the whole colony beside a pantry of its own.
-plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built
-code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld; Economy.h: pantry
+plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11)
+code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld AssignJobs LandPlaces; Economy.h: pantry
 verified: 2026-10-11
 ---
 
@@ -41,6 +41,14 @@ supplies** at once.
 
 While no house is lived in, the [[Field|fields]] belong to the camp, and their harvest goes into its
 supplies.
+
+## Its work
+
+A camp employs **{ECONOMY_CAMP_FARMERS:#farmer}** for its land (more of its fields lie fallow) and
+**{ECONOMY_CAMP_WOODCUTTERS:#woodcutter}** of its own, both from those living there. The camp's woodcutter
+works with no hut: a log is worth only {ECONOMY_CAMP_LOG_WOOD} wood, and goes into a store that takes wood,
+or else the supplies, while they hold less than {ECONOMY_CAMP_WOODPILE}. More of either takes
+[[House|houses]] and [[Woodcutter|huts]].
 
 ## Winter
 

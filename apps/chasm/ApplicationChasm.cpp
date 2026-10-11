@@ -1240,10 +1240,11 @@ void ApplicationChasm::LoadProps(){
 }
 
 /*
-    A prop gives way to what is painted: a house on its plot, a garden or lot on it, a field over its cell,
-    and a LAID road near it (RoadNear: a tree a plot away from a road still leans over it). A planned road's
-    trees stand until the idle fell them (line_works_plan.md). `f_by_road`, if given, says it was the road
-    alone - a felled tree's log may still lie beside one.
+    A prop gives way to what is BUILT (EconomyPropCovered): a house's standing storey on its plot, a garden or
+    lot built on it, a built field over its cell - and to a LAID road near it (RoadNear: a tree a plot away from
+    a road still leans over it). A site's trees stand, as a planned road's do, until a woodcutter fells them
+    (woodcutting_plan.md). `f_by_road`, if given, says it was the road alone - a felled tree's log may still
+    lie beside one.
 */
 bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z, bool* f_by_road){
     if (f_by_road){
@@ -1252,16 +1253,7 @@ bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z, boo
     if (!z){
         return false;
     }
-    if (!z->storeys.empty() && z->storeys[p.plot]){
-        return true;
-    }
-    if (!z->ground.empty() && ZoneEnclosesGround(z->ground[p.plot])){
-        return true;
-    }
-    if (ZoneCastleShape(*z,p.plot) != ZONE_CASTLE_NONE){
-        return true;    //the debug castle's stone (ramparts_plan.md)
-    }
-    if (p.coarse >= 0 && !z->field.empty() && z->field[p.coarse]){
+    if (EconomyPropCovered(*z,p.plot,p.coarse)){
         return true;
     }
     if (z->grounds > 0 && RoadNear(*z->world,*z,p.plot,vec2(p.pos.x,p.pos.z),ROAD_PROP_CLEARANCE)){
@@ -3603,8 +3595,9 @@ void ApplicationChasm::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("chasm_tool",
         "Pick the mouse's tool, as keys 1-0, H, C, J, G, R, T and K do: select, house, field, erase, garden, lot, road, store, "
         "woodcutter, water, winch, camp, bridge, builders, wall, range, tower, ropewalk. With a paint tool the hover outline goes green where a click would "
-        "paint and red where the rules refuse - in play mode, the ghost of what it would place. hover_x/hover_z pin "
-        "the hover to that point (a script has no mouse), until a call with hover_release.",
+        "paint and red where the rules refuse - in play mode, the ghost of what it would place, and `cost` its price "
+        "tag as last drawn (empty for none; the ghost follows a frame behind, so ask again after moving the hover). "
+        "hover_x/hover_z pin the hover to that point (a script has no mouse), until a call with hover_release.",
         json{
             {"type","object"},
             {"properties",{
@@ -3658,14 +3651,17 @@ void ApplicationChasm::RegisterMCPTools(){
             int tool = paint_tool.load();
             int left = script_left.load();
             size_t line = 0;
+            std::string cost;
             {
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 line = line_chain.size();
+                cost = ghost_cost_text;
             }
             return json{{"tool",(tool >= 0 && tool < CHASM_TOOL_COUNT) ? names[tool] : "?"},
                         {"hover_pinned",f_hover_pinned.load()},
                         {"button",(left < 0) ? "mouse" : (left ? "down" : "up")},
-                        {"line_plots",line}};
+                        {"line_plots",line},
+                        {"cost",cost}};
         });
 
 #ifdef DEBUG

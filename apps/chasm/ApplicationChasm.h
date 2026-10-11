@@ -31,6 +31,7 @@
 #define PLAY_PICK_PERSON        2       //an EconomyWorker, by id
 #define PLAY_PICK_GATE          3       //a wall's gate, by its plot - in `id` as in `plot` (defence_plan.md)
 #define PLAY_PICK_CRATE         4       //a crate lying about, by its id (crates_plan.md)
+#define PLAY_PICK_GROUND        5       //a garden or lot still being built, by its patch's lowest plot (yards_plan.md)
 struct PlayPick{
     int kind = PLAY_PICK_NONE;
     uint32_t id = 0;
@@ -577,16 +578,31 @@ private:
         int bridge_from = -1;                   //a bridge being dragged: the bank it starts from
         uint32_t owner = 0;                     //a yard being painted: the building it is for (yards_plan.md)
         uint32_t crates_version = 0;            //the crates, which nothing may be built over (crates_plan.md)
+        uint32_t felled_version = 0;            //the trees, which the price tag counts (woodcutting_plan.md)
         bool operator==(const GhostKey& o) const{
             return world == o.world && zones_version == o.zones_version && plot == o.plot && coarse == o.coarse
                    && tool == o.tool && f_explored == o.f_explored && f_settled == o.f_settled && line_version == o.line_version
-                   && bridge_from == o.bridge_from && owner == o.owner && crates_version == o.crates_version;
+                   && bridge_from == o.bridge_from && owner == o.owner && crates_version == o.crates_version
+                   && felled_version == o.felled_version;
         }
     };
     GhostKey ghost_built;
     void BuildGhostScene();                     //from BuildScene
     void SetGhostUniforms();
     void UpdateGhost();                         //render thread, from PreRender
+    /*
+        THE PRICE TAG (the user's, 2026-10-11): what the ghost would cost to build, by the cursor - worked out with the
+        ghost, from the rules' own costs (EconomyKindStoreyCost and the rest), so it is what the site will ask for. And
+        hovering a tool on the build bar, what one plot or cell of it costs, about: a plot's cost goes by its area.
+    */
+    std::string ghost_cost_text;                //under pick_mutex: the tag as drawn, empty for none (chasm_tool reads it)
+    bool f_ghost_cost_ok = true;                //render thread: whether the ghost is green, for the tag's colour
+    int bar_tip_tool = -1;                      //render thread: the tool hovered on the build bar, -1 none
+    vec2 bar_tip_a, bar_tip_b;                  //...and its cell
+    const ChasmWorld* cost_typical_world = nullptr;     //render thread: the map cost_typical_plot was found on
+    int cost_typical_plot = -1;                 //...its plot of the median area, the bar tip's "about"
+    std::string ToolCostTip(int tool);          //render thread: the bar tip's words for a tool, empty for none
+    void DrawCostTips(float s);                 //render thread, from DrawOverlay in play mode: the tag and the bar tip
 
     /*
         --- The economy, drawn (ApplicationChasmWorkersView.cpp, and the forest and zones below) -----
@@ -853,7 +869,7 @@ private:
     */
     static const int SELECT_OUTLINES = 4;
     Object* select_outline[SELECT_OUTLINES] = {};
-    uint32_t select_outline_id[SELECT_OUTLINES] = {};       //render thread: the building each holds (0, 1)
+    uint32_t select_outline_id[SELECT_OUTLINES] = {};       //render thread: the building each holds (0, 1) - or ground, as a site names it
     uint32_t select_outline_zones[SELECT_OUTLINES] = {};    //...built at this zones version
     std::vector<uint32_t> select_related_buildings;         //render thread: what slot 2 was built from
     std::vector<int> select_related_plots;                  //...and slot 3

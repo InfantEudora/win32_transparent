@@ -1,4 +1,5 @@
 #include "ApplicationChasm.h"
+#include "ChasmHud.h"
 #include "BuildingMesh.h"
 #include "ZoneMesh.h"
 #include "MeshBuild.h"
@@ -6,6 +7,8 @@
 #include "glad.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 
 /*
     THE GHOST (play mode; the user, 2026-10-06): instead of the debug line mesh round the plot under the
@@ -30,6 +33,13 @@
     A WINCH is a thin gantry, and none at all where there is no balcony below to lower to - which is most
     of the map, so most of where the cursor goes showed nothing. Its plot is laid as a tile under the
     gantry, and the landing it lowers to as another.
+
+    THE PRICE TAG (the user's, 2026-10-11): beside the cursor, what the ghost would cost - the goods its site
+    will ask for, from the rules' own costs. A click's worth, as the ghost is: a new building's plot at the
+    storeys it is painted with, and with the extension's corner plot that comes with it (ZoneJoinCorner); one
+    storey more on what stands; a garden's, lot's or wall's plot; a field's or range's cell. A line being drawn
+    or a bridge dragged, all of it. Nothing for what is that already - a lot painted on a lot is only claimed -
+    nor for erasing. Dim where the ghost is red.
 */
 
 #define GHOST_LIFT          0.06f       //a ground ghost over the ground's relief, clear of the ground's own fill
@@ -94,6 +104,32 @@ void GhostBuildingPlot(const ChasmWorld& w, const ZoneState& z, int plot, int ki
     for (int i = 0; i < p.PlotQuadCount(plot); i++){
         BuildHouseCell(w,only,p.PlotQuadCorner(plot,i) / 4,out);
     }
+}
+
+//The goods in `cost`, in the HUD's order and upper case as the overlay writes them: "7 WOOD, 4 ROPE". Empty for none.
+std::string CostWords(const std::array<int,GOOD_COUNT>& cost){
+    std::string s;
+    for (int g : HudGoodsOrder()){
+        if (cost[g] > 0){
+            s += (s.empty() ? "" : ", ") + std::to_string(cost[g]) + " " + GoodName(g);
+        }
+    }
+    std::transform(s.begin(),s.end(),s.begin(),::toupper);
+    return s;
+}
+
+//The tag: "COSTS 7 WOOD", or `lead` for COSTS ("A STOREY MORE: 7 WOOD"), the plots when more than one, and the trees a
+//woodcutter must fell first (woodcutting_plan.md); a road's nothing to carry is said as such.
+std::string CostTag(const std::array<int,GOOD_COUNT>& cost, const char* lead, int plots, int trees){
+    std::string goods = CostWords(cost);
+    std::string s = goods.empty() ? std::string("NO GOODS - ONLY WORK") : lead ? std::string(lead) + ": " + goods : "COSTS " + goods;
+    if (plots > 1 && !goods.empty()){
+        s += " - " + std::to_string(plots) + " PLOTS";
+    }
+    if (trees > 0){
+        s += " - " + std::to_string(trees) + (trees == 1 ? " TREE" : " TREES") + " TO FELL";
+    }
+    return s;
 }
 
 }
@@ -163,6 +199,8 @@ void ApplicationChasm::UpdateGhost(){
             ghost->SetOutline(vec4(0.0f,0.0f,0.0f,0.0f));
         }
         ghost_built = GhostKey();
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        ghost_cost_text.clear();
         return;
     }
     const ChasmWorld& cw = *w;
@@ -191,6 +229,21 @@ void ApplicationChasm::UpdateGhost(){
     std::shared_ptr<const EconomyState> es = GetEconomy();
     bool f_crates = es && es->world == w && !es->crates.empty();
     key.crates_version = (es && es->world == w) ? es->crates_version : 0;
+    key.felled_version = (es && es->world == w) ? es->felled_version : 0;
+    //The trees a site there would wait on (THE PRICE TAG, woodcutting_plan.md): standing ones on the plot or cell.
+    auto trees_on = [&](int at_plot, int at_cell){
+        return (es && es->world == w) ? EconomyTreesOn(*w,*es,at_plot,at_cell) : 0;
+    };
+    //...and the wood a woodcutter's hut `hut` (0 a new one) would keep indoors the more for `more` floor, once all of it
+    //stands: none for the floor he works in (EconomyHutRoom).
+    auto hut_room_gain = [&](uint32_t hut, float more){
+        float base = 0.0f;
+        if (hut){
+            ZoneBuildingInfo info = ZoneBuildingFigures(*w,*zs,hut);
+            base = info.floor_area + info.site_area;
+        }
+        return EconomyHutRoom(base + more) - EconomyHutRoom(base);
+    };
     //...nor outside every settlement's territory (settlements_plan.md): a bridge's near end, where the press was.
     if (hover.f_hit && es && es->world == w){
         int op = f_field ? ZONE_OP_FIELD_PAINT : (from >= 0) ? ZONE_OP_BRIDGE : ZONE_OP_BUILD_PAINT;
@@ -208,9 +261,18 @@ void ApplicationChasm::UpdateGhost(){
     bool f_ok = false;
     int plot = hover.plot;
     int kind = ToolKind(tool);
+    //THE PRICE TAG: what it would cost, by good; whether there is anything to say; its lead-in; how many plots.
+    std::array<int,GOOD_COUNT> cost{};
+    bool f_cost = false;
+    const char* lead = NULL;
+    int plots = 1;
+    int trees = 0;
+    int room_more = -1;         //a woodcutter's hut: the wood it would keep indoors the more, -1 not one
+    bool f_room_new = false;    //...a new hut's, all it keeps
     if (f_line){
         //Each plot once, a tile each. Erasing, only what has road (or wall) to take up, all of it red - what goes.
         std::vector<int> drawn;
+        int laid = 0;
         for (int v : chain){
             if (std::find(drawn.begin(),drawn.end(),v) != drawn.end()){
                 continue;
@@ -228,12 +290,20 @@ void ApplicationChasm::UpdateGhost(){
             }
             if (f_plot_ok){
                 f_ok = true;
+                //Its cost: each plot it lays - not one that is its ground already, nor a road a wall only gates.
+                if (z.ground[v] != line_ground_drawn
+                    && !(line_ground_drawn == ZONE_GROUND_WALL && z.ground[v] == ZONE_GROUND_ROAD)){
+                    cost[GOOD_WOOD] += EconomyGroundKindCost(cw,line_ground_drawn,v);
+                    laid++;
+                }
             }else{
                 for (size_t i = first; i < verts.size(); i++){
                     verts[i].uv = vec2(-1.0f,-1.0f);
                 }
             }
         }
+        f_cost = laid > 0;
+        plots = laid;
     }else if (tool == CHASM_TOOL_BRIDGE){
         //Not yet pressed, or back over where it was: the bank it would start from, dry and free.
         std::vector<int> span;
@@ -246,6 +316,16 @@ void ApplicationChasm::UpdateGhost(){
         for (int v : span){
             BuildPlotTile(cw,v,GHOST_LIFT,verts,terrain_levels[cw.terrain->level[v]].height + ZONE_BRIDGE_DECK);
         }
+        //Dragged across: the whole bridge's cost, its deck's storey a plot.
+        if (from >= 0 && from != plot && span.size() > 1){
+            for (int v : span){
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    cost[g] += ZoneKindPaintStoreys(ZONE_KIND_BRIDGE) * EconomyKindStoreyCost(cw,ZONE_KIND_BRIDGE,v,g);
+                }
+            }
+            f_cost = true;
+            plots = (int)span.size();
+        }
     }else if (kind != ZONE_KIND_NONE){
         //A click on a building is one storey more of it, whatever the tool; on empty ground, a new one.
         uint32_t on = z.building[plot];
@@ -254,11 +334,49 @@ void ApplicationChasm::UpdateGhost(){
             int top = ZoneKindMaxStoreys(shown);
             f_ok = z.storeys[plot] < top;
             GhostBuildingPlot(cw,z,plot,shown,std::min(top,z.storeys[plot] + 1),on,verts);
+            if (f_ok){
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    cost[g] = EconomyStoreyCost(cw,z,plot,g);
+                }
+                f_cost = true;
+                lead = "A STOREY MORE";
+                if (shown == ZONE_KIND_WOODCUTTER){
+                    room_more = hut_room_gain(on,cw.picker->PlotArea(plot));
+                }
+            }
         }else{
             //With one of its kind selected, extending it: red where the plot would not join it.
             f_ok = ZoneCanBuild(cw,z,plot,kind,key.owner,NULL) && ZoneCanExtend(cw,z,plot,kind,key.owner,NULL)
                    && !crate_in_way(ZONE_OP_BUILD_ADD,plot,0);
             GhostBuildingPlot(cw,z,plot,kind,ZoneKindPaintStoreys(kind),0,verts);
+            for (int g = 0; g < GOOD_COUNT; g++){
+                cost[g] = ZoneKindPaintStoreys(kind) * EconomyKindStoreyCost(cw,kind,plot,g);
+            }
+            trees = trees_on(plot,-1);
+            float floor_more = ZoneKindPaintStoreys(kind) * cw.picker->PlotArea(plot);
+            //An extension across a cell brings the corner plot between with it, a storey of it (Zones::Apply).
+            if (key.owner){
+                int nb[8];
+                int n = ZonePlotNeighbours(cw,plot,nb,8);
+                bool f_beside = false;
+                for (int i = 0; i < n; i++){
+                    f_beside = f_beside || z.building[nb[i]] == key.owner;
+                }
+                int corner = f_beside ? -1 : ZoneJoinCorner(cw,z,plot,kind,key.owner);
+                if (corner >= 0){
+                    for (int g = 0; g < GOOD_COUNT; g++){
+                        cost[g] += EconomyKindStoreyCost(cw,kind,corner,g);
+                    }
+                    plots = 2;
+                    trees += trees_on(corner,-1);
+                    floor_more += cw.picker->PlotArea(corner);
+                }
+            }
+            f_cost = true;
+            if (kind == ZONE_KIND_WOODCUTTER){
+                room_more = hut_room_gain(key.owner,floor_more);
+                f_room_new = key.owner == 0;
+            }
         }
         if (shown == ZONE_KIND_WINCH){
             GhostPlotTile(cw,plot,verts);
@@ -282,10 +400,25 @@ void ApplicationChasm::UpdateGhost(){
         f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL))
                && !crate_in_way(ZONE_OP_GROUND_PAINT,plot,ground);
         GhostPlotTile(cw,plot,verts);
+        //A plot of it - not over its own ground, which is only claimed, nor a wall over a road, which only gates it.
+        if (z.ground[plot] != ground && !(ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)){
+            cost[GOOD_WOOD] = EconomyGroundKindCost(cw,ground,plot);
+            f_cost = true;
+            //A garden's or lot's own trees (a road's and wall's are along its line: RoadTrees, the economy's alone).
+            trees = ZoneEnclosesGround(ground) ? trees_on(plot,-1) : 0;
+        }
     }else if (f_field){
         f_ok = (z.field[hover.coarse_quad] || ZoneCanField(cw,z,hover.coarse_quad,NULL))
                && !crate_in_way(ZONE_OP_FIELD_PAINT,hover.coarse_quad,0);
         GhostCellTile(cw,hover.coarse_quad,verts);
+        if (!z.field[hover.coarse_quad]){
+            int cell_kind = (tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD;
+            for (int g = 0; g < GOOD_COUNT; g++){
+                cost[g] = EconomyCellCost(cell_kind,g);
+            }
+            f_cost = true;
+            trees = trees_on(-1,hover.coarse_quad);
+        }
     }else if (tool == CHASM_TOOL_ERASE){
         //What would go, in red: the plot's building as it stands, its ground, or the field under it.
         if (z.building[plot]){
@@ -302,6 +435,16 @@ void ApplicationChasm::UpdateGhost(){
     if (!f_line && (!key.f_explored || !key.f_settled) && tool != CHASM_TOOL_ERASE){
         f_ok = false;
     }
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        ghost_cost_text = (f_cost && !verts.empty()) ? CostTag(cost,lead,plots,trees) : std::string();
+        //What a woodcutter's hut keeps indoors for it (woodcutting_plan.md): none for the floor he works in.
+        if (!ghost_cost_text.empty() && room_more >= 0){
+            ghost_cost_text += (room_more == 0) ? (f_room_new ? " - TOO SMALL TO KEEP WOOD" : " - KEEPS NO MORE WOOD")
+                             : " - KEEPS " + std::to_string(room_more) + (f_room_new ? " WOOD INDOORS" : " MORE WOOD");
+        }
+    }
+    f_ghost_cost_ok = f_ok;
     if (verts.empty()){
         ghost->SetVisibility(false);
         ghost->SetOutline(vec4(0.0f,0.0f,0.0f,0.0f));
@@ -316,4 +459,109 @@ void ApplicationChasm::UpdateGhost(){
     vec3 c = f_ok ? GHOST_OK : GHOST_REFUSED;
     ghost->SetOutline(vec4(c.x,c.y,c.z,1.0f));
     ghost->SetVisibility(true);
+}
+
+/*
+    The BUILD BAR'S TIP for a tool (THE PRICE TAG): what one plot or cell of it costs. A cell's and a wall's are
+    fixed; a plot's goes by its area, so it is a plot of the map's median area - "about" - and the tag at the cursor
+    has the plot's own. A guard tower's goes by its guard places, which come with where paths meet: a place's
+    worth. Empty for a tool that places nothing.
+*/
+std::string ApplicationChasm::ToolCostTip(int tool){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w || tool == CHASM_TOOL_SELECT || tool == CHASM_TOOL_ERASE){
+        return std::string();
+    }
+    if (w.get() != cost_typical_world){
+        cost_typical_world = w.get();
+        cost_typical_plot = -1;
+        std::vector<std::pair<float,int>> areas;
+        for (int v = 0; v < (int)w->grid->fine.pos.size(); v++){
+            if (!w->terrain->wet[v]){
+                areas.push_back(std::make_pair(w->picker->PlotArea(v),v));
+            }
+        }
+        if (!areas.empty()){
+            auto mid = areas.begin() + areas.size() / 2;
+            std::nth_element(areas.begin(),mid,areas.end());
+            cost_typical_plot = mid->second;
+        }
+    }
+    int v = cost_typical_plot;
+    std::array<int,GOOD_COUNT> cost{};
+    if (ChasmCellTool(tool)){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            cost[g] = EconomyCellCost((tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD,g);
+        }
+        return CostWords(cost) + " A CELL";
+    }
+    if (v < 0){
+        return std::string();
+    }
+    if (tool == CHASM_TOOL_ROAD){
+        return "NO GOODS - ONLY WORK: ITS TREES FELLED, THEN LAID";
+    }
+    if (tool == CHASM_TOOL_WALL){
+        cost[GOOD_WOOD] = EconomyGroundKindCost(*w,ZONE_GROUND_WALL,v);
+        return CostWords(cost) + " A PLOT, ITS TREES FELLED FIRST";
+    }
+    if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT){
+        cost[GOOD_WOOD] = EconomyGroundKindCost(*w,(tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT,v);
+        return "ABOUT " + CostWords(cost) + " A PLOT";
+    }
+    int kind = ToolKind(tool);
+    if (kind == ZONE_KIND_NONE){
+        return std::string();
+    }
+    for (int g = 0; g < GOOD_COUNT; g++){
+        cost[g] = ZoneKindPaintStoreys(kind) * EconomyKindStoreyCost(*w,kind,v,g);
+    }
+    if (kind == ZONE_KIND_TOWER){
+        int places = std::max(1,ZoneTowerGuards(*w,v));
+        for (int g = 0; g < GOOD_COUNT; g++){
+            cost[g] = (int)std::lround((float)cost[g] / places);
+        }
+        return CostWords(cost) + " A GUARD PLACE";
+    }
+    std::string tip = "ABOUT " + CostWords(cost) + ((kind == ZONE_KIND_BRIDGE) ? " A PLOT OF DECK" : " A PLOT");
+    return (ZoneKindMaxStoreys(kind) > ZoneKindPaintStoreys(kind)) ? tip + ", AS MUCH AGAIN A STOREY MORE" : tip;
+}
+
+//RENDER THREAD, from DrawOverlay in play mode: the price tag by the cursor, or the bar's tip by the tool hovered there.
+void ApplicationChasm::DrawCostTips(float s){
+    const float size = 14.0f * s;
+    const float side = 9.0f * s;
+    const float h = 24.0f * s;
+    auto tag = [&](const std::string& text, vec2 t0, uint32_t colour){
+        vec2 m = overlay->MeasureText(text.c_str(),size);
+        vec2 t1(t0.x + m.x + side * 2.0f,t0.y + h);
+        overlay->AddRect(t0,t1,7.0f * s,HudFaded(HUD_PANEL,225));
+        overlay->AddText(text.c_str(),vec2(t0.x + side,t0.y + 17.0f * s),size,colour,UI_ALIGN_LEFT);
+    };
+    //On the bar: to its left, level with the tool's cell, clear of what stacks over the bar.
+    if (bar_tip_tool >= 0){
+        std::string tip = ToolCostTip(bar_tip_tool);
+        if (!tip.empty()){
+            float w = overlay->MeasureText(tip.c_str(),size).x + side * 2.0f;
+            tag(tip,vec2(build_bar_min.x - 8.0f * s - w,(bar_tip_a.y + bar_tip_b.y) * 0.5f - h * 0.5f),HUD_TEXT);
+        }
+        return;
+    }
+    std::string text;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        text = ghost_cost_text;
+    }
+    int mx = overlay_mouse_x.load();
+    int my = overlay_mouse_y.load();
+    if (text.empty() || mx < 0 || my < 0 || !ghost || !ghost->IsVisible()){
+        return;
+    }
+    //Below and right of the cursor, as the walk's tip is (DrawWalkTip) - left of it near the screen's right edge.
+    float w = overlay->MeasureText(text.c_str(),size).x + side * 2.0f;
+    float x = (float)mx + 18.0f * s;
+    if (x + w > (float)main_window->width - 8.0f * s){
+        x = (float)mx - 12.0f * s - w;
+    }
+    tag(text,vec2(x,(float)my + 14.0f * s),f_ghost_cost_ok ? HUD_TEXT : HUD_TEXT_DIM);
 }

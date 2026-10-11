@@ -175,6 +175,8 @@ void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount
         if (job >= 0 && job < WORKER_JOB_COUNT){
             out[job].places += e.places[id];
         }
+        //The camp's own woodcutter (woodcutting_plan.md).
+        out[WORKER_JOB_WOODCUTTER].places += (id < e.cutter_places.size()) ? e.cutter_places[id] : 0;
     }
     int none = 0;
     for (const EconomyWorker& k : e.workers){
@@ -528,9 +530,10 @@ int JobOf(int kind){
 }
 
 //What a worker carries off from his workplace (FetchFromWorkplace): whatever it holds - but a ropemaker the rope,
-//never the hemp waiting there to be made into it (goods_plan.md).
+//never the hemp waiting there to be made into it (goods_plan.md), and a woodcutter wood: the camp's (woodcutting_plan.md)
+//holds its supplies too.
 GoodsMask WorkplaceMakes(int job){
-    return (job == WORKER_JOB_ROPEMAKER) ? GOOD_BIT(GOOD_ROPE) : GOODS_ALL;
+    return (job == WORKER_JOB_ROPEMAKER) ? GOOD_BIT(GOOD_ROPE) : (job == WORKER_JOB_WOODCUTTER) ? GOOD_BIT(GOOD_WOOD) : GOODS_ALL;
 }
 
 //The plot a fine quad's corner k is, and a coarse cell's centre: the one vertex its four children share.
@@ -1332,10 +1335,14 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
     SettleLand(z,walkers);
     const ChasmWorld& w = *state.world;
     size_t n = std::min(z.buildings.size(),state.places.size());
+    //The camp's own woodcutter's places (THE CAMP'S OWN WORK) - a camp with no land has those alone.
+    auto cutters = [&](uint32_t id){
+        return (id < state.cutter_places.size()) ? state.cutter_places[id] : 0;
+    };
     std::vector<uint32_t> order;
     for (int pass = 0; pass < 2; pass++){
         for (size_t id = 1; id < n; id++){
-            if (state.places[id] > 0 && (z.buildings[id].kind == ZONE_KIND_BUILDERS) == (pass == 0)){
+            if ((state.places[id] > 0 || cutters((uint32_t)id) > 0) && (z.buildings[id].kind == ZONE_KIND_BUILDERS) == (pass == 0)){
                 order.push_back((uint32_t)id);
             }
         }
@@ -1379,6 +1386,7 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
         person ids kept).
     */
     std::vector<int> reserved(n,0);
+    std::vector<int> reserved_cut(n,0);     //...the camp's woodcutter's
     for (size_t i = 0; i < state.workers.size(); i++){
         EconomyWorker& k = state.workers[i];
         if (k.f_chosen && k.job != WORKER_JOB_GUARD){
@@ -1388,7 +1396,13 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             continue;
         }
         uint32_t b = k.building;
-        if (b && b < n && z.buildings[b].size > 0 && JobOf(z.buildings[b].kind) == k.job && reserved[b] < state.places[b]){
+        bool f_cut = b && b < n && k.job == WORKER_JOB_WOODCUTTER && z.buildings[b].kind == ZONE_KIND_CAMP;
+        if (f_cut && reserved_cut[b] < cutters(b)){
+            reserved_cut[b]++;
+            kept[i] = 1;
+            people[home_of(k)] -= (employable(k) ? 1 : 0);
+        }else if (!f_cut && b && b < n && z.buildings[b].size > 0 && JobOf(z.buildings[b].kind) == k.job
+                  && reserved[b] < state.places[b]){
             reserved[b]++;
             kept[i] = 1;
             people[home_of(k)] -= (employable(k) ? 1 : 0);      //a hand-picked guard was counted free above
@@ -1446,6 +1460,40 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             k.building = id;
             state.version++;
         }
+        /*
+            The camp's own woodcutter (THE CAMP'S OWN WORK), after its farmer and the same way: of those living there,
+            the one it has, then the free, then one taken from a later place - the strongest first.
+        */
+        int cut_free = std::min(cutters(id) - reserved_cut[id],free);
+        if (cut_free <= 0){
+            continue;
+        }
+        std::vector<std::pair<std::pair<int,int>,size_t>> strong;      //((rank, -strength), index)
+        for (size_t i = 0; i < state.workers.size(); i++){
+            const EconomyWorker& k = state.workers[i];
+            if (kept[i] || k.house != id || !employable(k)){
+                continue;
+            }
+            int rank = (k.job == WORKER_JOB_WOODCUTTER && k.building == id) ? 0 : (k.job == WORKER_JOB_NONE) ? 1 : 2;
+            strong.push_back(std::make_pair(std::make_pair(rank,-(int)k.skills[SKILL_STRENGTH]),i));
+        }
+        std::sort(strong.begin(),strong.end());
+        int take = std::min(cut_free,(int)strong.size());
+        free -= take;
+        for (int t = 0; t < take; t++){
+            EconomyWorker& k = state.workers[strong[t].second];
+            kept[strong[t].second] = 1;
+            if (k.job == WORKER_JOB_WOODCUTTER && k.building == id){
+                continue;
+            }
+            if (k.job != WORKER_JOB_NONE && (k.state == WORKER_TO_WORK || k.state == WORKER_WORKING
+                                             || k.state == WORKER_TO_SOW || k.state == WORKER_SOWING)){
+                leave_errand(k);
+            }
+            k.job = WORKER_JOB_WOODCUTTER;
+            k.building = id;
+            state.version++;
+        }
     }
     for (size_t i = 0; i < state.workers.size(); i++){
         EconomyWorker& k = state.workers[i];
@@ -1453,7 +1501,8 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             continue;
         }
         bool f_there = k.building && k.building < n && employable(k) && z.buildings[k.building].size > 0
-                       && JobOf(z.buildings[k.building].kind) == k.job && state.places[k.building] > 0;
+                       && ((JobOf(z.buildings[k.building].kind) == k.job && state.places[k.building] > 0)
+                           || (k.job == WORKER_JOB_WOODCUTTER && cutters(k.building) > 0));
         k.job = WORKER_JOB_NONE;
         k.building = 0;
         if (!f_there){
@@ -1607,6 +1656,10 @@ void Economy::LandPlaces(const ZoneState& z){
             continue;
         }
         if (state.places[o] == 0 || cells[o] >= ECONOMY_FARMER_CELLS){
+            //The camp farms ECONOMY_CAMP_FARMERS shares at most (THE CAMP'S OWN WORK): the rest lies fallow, no share.
+            if (z.buildings[o].kind == ZONE_KIND_CAMP && state.places[o] >= ECONOMY_CAMP_FARMERS){
+                continue;
+            }
             state.places[o]++;
             cells[o] = 0;
         }
@@ -1652,6 +1705,10 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
     if (!k.building || home_plot[k.building] < 0){
         return false;
     }
+    //The camp's woodcutter leaves its supplies where they are: anyone's already, and taken from there (woodcutting_plan.md).
+    if (z.buildings[k.building].kind == ZONE_KIND_CAMP){
+        return false;
+    }
     const std::array<int,GOOD_COUNT>& own = state.stock[k.building];
     GoodsMask made = WorkplaceMakes(k.job);
     int good = -1;
@@ -1663,7 +1720,10 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
     if (good < 0){
         return false;
     }
-    int load = std::min(k.job == WORKER_JOB_WOODCUTTER ? ECONOMY_WOOD_PER_TREE : ECONOMY_LOAD,own[good]);
+    //A woodcutter's a log's worth at a time, as his workplace makes one (log_wood).
+    int log_wood = (k.building < state.log_wood.size() && state.log_wood[k.building] > 0) ? state.log_wood[k.building]
+                                                                                           : ECONOMY_WOOD_PER_TREE;
+    int load = std::min(k.job == WORKER_JOB_WOODCUTTER ? log_wood : ECONOMY_LOAD,own[good]);
     //Water and rope only by the load: both come a unit at a time, and a trip for one is a waste - but a made good's
     //last few for its level all the same.
     int least = (k.job == WORKER_JOB_WATER || k.job == WORKER_JOB_ROPEMAKER) ? ECONOMY_LOAD : 1;
@@ -1947,6 +2007,13 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
             state.places[id] = stands[id] ? 1 : 0;
         }
     }
+    //The camp's own woodcutter (THE CAMP'S OWN WORK): a place while it stands. Its farmers are its land's (LandPlaces).
+    state.cutter_places.assign(n,0);
+    for (size_t id = 1; id < n; id++){
+        if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0 && stands[id] && home_plot[id] >= 0){
+            state.cutter_places[id] = ECONOMY_CAMP_WOODCUTTERS;
+        }
+    }
     /*
         What each store takes, and its room. Next to a workplace: that workplace's goods - a woodcutter
         or a collector sharing a fine edge with a store plot, or a field one plot away (buildings keep a
@@ -2035,6 +2102,74 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
             }
         }
     }
+    /*
+        What a log is worth to a woodcutter working here (woodcutting_plan.md, the user's): a bigger shop makes the
+        work easier. A hut two storeys high on EVERY plot - so a raised corner of a big hut does not buy it - makes
+        more of a log than one storey; the camp, with no hut at all, least.
+    */
+    state.log_wood.assign(n,0);
+    state.pile_room.assign(n,0);
+    state.hut_room.assign(n,0);
+    //A hut's lots (THE WOODPILE'S ROOM): every standing lot plot of its yard, by area.
+    std::vector<float> lot_area(n,0.0f);
+    for (size_t v = 0; v < z.ground.size(); v++){
+        uint32_t owner = (z.ground[v] == ZONE_GROUND_LOT && z.ground_built[v] && z.storeys[v] == 0) ? ZoneGroundOwner(z,(int)v) : 0;
+        if (owner && owner < n && z.buildings[owner].kind == ZONE_KIND_WOODCUTTER){
+            lot_area[owner] += p.PlotArea((int)v);
+        }
+    }
+    for (size_t id = 1; id < n; id++){
+        if (z.buildings[id].kind == ZONE_KIND_WOODCUTTER && !plots_of[id].empty()){
+            bool f_loft = std::all_of(plots_of[id].begin(),plots_of[id].end(),[&](int v){ return z.standing[v] >= 2; });
+            state.log_wood[id] = f_loft ? ECONOMY_LOFT_LOG_WOOD : ECONOMY_WOOD_PER_TREE;
+            //Indoors by its standing floor - a cheap storehouse - and outside on its lots (the user's, woodcutting_plan.md).
+            state.hut_room[id] = EconomyHutRoom(ZoneBuildingFigures(w,z,(uint32_t)id).floor_area);
+            state.pile_room[id] = state.hut_room[id] + (int)std::floor(lot_area[id] * ECONOMY_LOT_ROOM);
+        }else if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0){
+            //The camp's own woodcutter's (THE CAMP'S OWN WORK): his wood goes in with its supplies, up to so much.
+            state.log_wood[id] = ECONOMY_CAMP_LOG_WOOD;
+            state.pile_room[id] = ECONOMY_CAMP_WOODPILE;
+        }
+    }
+    /*
+        The roads, walls and sites with a tree in their way that no woodcutter reaches - and nobody else fells one
+        now (woodcutting_plan.md): each, for NEEDS ATTENTION. A woodcutter reaches ECONOMY_WOODCUTTER_REACH from his
+        workplace's door: a hut that stands, or a camp with its own woodcutter's place.
+    */
+    state.trees_unreached.clear();
+    std::vector<vec2> cutting;
+    for (size_t id = 1; id < n; id++){
+        bool f_cuts = (z.buildings[id].kind == ZONE_KIND_WOODCUTTER && stands[id]) || state.cutter_places[id] > 0;
+        if (f_cuts && home_plot[id] >= 0){
+            cutting.push_back(g.fine.pos[home_plot[id]]);
+        }
+    }
+    auto unreached = [&](const PropInstance& pr){
+        vec2 at(pr.pos.x,pr.pos.z);
+        return std::none_of(cutting.begin(),cutting.end(),[&](const vec2& c){
+            return (at - c).length() <= ECONOMY_WOODCUTTER_REACH;
+        });
+    };
+    std::vector<int> in_way;
+    for (const std::vector<int>* sites : {&road_sites,&wall_sites}){
+        for (int v : *sites){
+            RoadTrees(z,v,in_way);
+            if (std::any_of(in_way.begin(),in_way.end(),[&](int i){ return unreached(w.forest->props[i]); })){
+                state.trees_unreached.push_back(ECONOMY_SITE_GROUND | (uint32_t)v);
+            }
+        }
+    }
+    if (w.forest){
+        for (size_t i = 0; i < w.forest->props.size() && i < state.prop_state.size(); i++){
+            const PropInstance& pr = w.forest->props[i];
+            uint32_t site = (IsTree(pr.kind) && state.prop_state[i] == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
+            if (site && unreached(pr)){
+                state.trees_unreached.push_back(site);
+            }
+        }
+    }
+    std::sort(state.trees_unreached.begin(),state.trees_unreached.end());
+    state.trees_unreached.erase(std::unique(state.trees_unreached.begin(),state.trees_unreached.end()),state.trees_unreached.end());
     //How many a house holds: its floor area at ECONOMY_PERSON_AREA each, one family at most this big.
     state.capacity.assign(n,0);
     state.burn.assign(n,0);
@@ -2379,8 +2514,9 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
 /*
     The wood within `reach` of `at` that a woodcutter could go for: standing trees and felled logs (only logs,
     with f_logs) within ECONOMY_WOODCUTTER_REACH of his hut, that nobody else is after and that are not under a
-    building or a field - LOGS FIRST (the user's, 2026-10-08: logs left lying by the road builders were passed
-    over for the trees nearer the hut), then by the straight line from `at`, the lower index on a tie.
+    building or a field - a tree IN THE WAY of a planned road or wall (TreesInTheWay), or on a site (EconomyTreeSite),
+    first: only a woodcutter fells one (woodcutting_plan.md); then LOGS (the user's, 2026-10-08: logs left lying were
+    passed over for the trees nearer the hut), then by the straight line from `at`, the lower index on a tie.
 */
 void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, const vec2& at, float reach, bool f_logs,
                        std::vector<std::pair<std::pair<int,float>,int>>& out) const{
@@ -2391,6 +2527,10 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, const vec2& a
     }
     const std::vector<PropInstance>& props = w.forest->props;
     vec2 hut = w.grid->fine.pos[home_plot[k.building]];
+    std::vector<int> in_way;
+    if (!f_logs){
+        TreesInTheWay(k,z,hut,ECONOMY_WOODCUTTER_REACH,in_way);
+    }
     std::vector<int> claimed;
     for (const EconomyWorker& o : state.workers){
         if (&o != &k && o.prop >= 0){
@@ -2422,7 +2562,11 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, const vec2& a
                 if (std::find(claimed.begin(),claimed.end(),i) != claimed.end()){
                     continue;
                 }
-                out.push_back(std::make_pair(std::make_pair((ps == PROP_STATE_LOG) ? 0 : 1,d),i));
+                //In the way of a line, or of a site of his own settlement's (EconomyTreeSite): first.
+                uint32_t site = (ps == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
+                bool f_way = std::binary_search(in_way.begin(),in_way.end(),i) || (site && Ours(k,site));
+                int first = f_way ? 0 : (ps == PROP_STATE_LOG) ? 1 : 2;
+                out.push_back(std::make_pair(std::make_pair(first,d),i));
             }
         }
     }
@@ -2675,15 +2819,25 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     bool f_look = ((tick + k.id) % ECONOMY_LOOK_TICKS) == 0;
     std::array<int,GOOD_COUNT>& own = state.stock[k.building];     //his workplace's: stock[0] for none
     float pace = EconomySkillFactor(k.skills[EconomyJobSkill(k.job)]);
-    //A woodcutter's woodpile, on the lot beside his hut - reached from its door, the hut plot beside it; -1
-    //with no lot standing.
-    int pile = (k.job == WORKER_JOB_WOODCUTTER && k.building < pile_door.size()) ? pile_door[k.building] : -1;
+    //What a log he takes up is worth, and the wood his pile holds: his workplace's (woodcutting_plan.md).
+    int log_wood = (k.building < state.log_wood.size() && state.log_wood[k.building] > 0) ? state.log_wood[k.building]
+                                                                                           : ECONOMY_WOOD_PER_TREE;
+    int pile_room = (k.building < state.pile_room.size()) ? state.pile_room[k.building] : 0;
+    /*
+        Where a woodcutter puts his wood down (THE WOODPILE'S ROOM): on the lot beside his hut, from its door - the
+        hut plot beside it - or, with no lot, in the hut at its own door; the camp's own woodcutter in its supplies,
+        at its door. -1 with no room anywhere.
+    */
+    int pile = -1;
+    if (k.job == WORKER_JOB_WOODCUTTER && pile_room > 0 && k.building && k.building < home_plot.size()){
+        pile = (k.building < pile_door.size() && pile_door[k.building] >= 0) ? pile_door[k.building] : home_plot[k.building];
+    }
     //He has a load: to a store that takes it, or - a woodcutter's wood - to his woodpile. Holding it if neither.
     auto deliver = [&](){
         if (FindStore(k,z,walkers)){
             return;
         }
-        if (pile >= 0 && k.carry_good == GOOD_WOOD && own[GOOD_WOOD] + k.carry <= ECONOMY_HUT_PILE){
+        if (pile >= 0 && k.carry_good == GOOD_WOOD && own[GOOD_WOOD] + k.carry <= pile_room){
             if (RouteTo(k,z,walkers,pile,state.world->grid->fine.pos[pile])){
                 k.store = 0;
                 k.state = WORKER_TO_STORE;
@@ -2700,7 +2854,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 return true;
             }
         }
-        return pile >= 0 && own[GOOD_WOOD] + amount <= ECONOMY_HUT_PILE;
+        return pile >= 0 && own[GOOD_WOOD] + amount <= pile_room;
     };
     //Posted, and at something else: dropped for the post (TakePost) - a pressing need seen to first. A guard posted by
     //hand the same (step 8): he goes as an ordered man does, where one the auto-fill picked finishes his errand first.
@@ -2807,11 +2961,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 break;
             }
             //What waits at his workplace first - the pile, the harvest, the water - when a store takes it;
-            //then, for a woodcutter, a tree, while his pile has room for one - and only with a lot to pile on.
+            //then, for a woodcutter, a tree, while a store or his pile has room for it - and only with a pile.
             if (FetchFromWorkplace(k,z,walkers)){
                 break;
             }
-            if (pile >= 0 && own[GOOD_WOOD] + ECONOMY_WOOD_PER_TREE <= ECONOMY_HUT_PILE){
+            if (k.job == WORKER_JOB_WOODCUTTER && pile >= 0 && wood_room(log_wood)){
                 FindTree(k,z,walkers);
             }
             break;
@@ -2867,7 +3021,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     break;
                 }
                 k.carry_good = good;
-                k.carry = std::min(std::min(k.job == WORKER_JOB_WOODCUTTER ? ECONOMY_WOOD_PER_TREE : ECONOMY_LOAD,own[good]),short_by);
+                k.carry = std::min(std::min(k.job == WORKER_JOB_WOODCUTTER ? log_wood : ECONOMY_LOAD,own[good]),short_by);
                 own[good] -= k.carry;
                 if (!FindStore(k,z,walkers)){
                     own[good] += k.carry;   //the store went while he walked: it stays where it was
@@ -2876,22 +3030,24 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     GoHome(k,z,walkers);
                 }
             }else if (state.prop_state[k.prop] == PROP_STATE_STANDING){
-                //Felled: it lies as a log, which he now picks up.
+                //Felled: it lies as a log, which he now picks up - and a wall or site it stood in the way of, all it
+                //takes there, goes up (only a woodcutter fells, woodcutting_plan.md).
                 state.prop_state[k.prop] = PROP_STATE_LOG;
                 state.felled_version++;
+                Felled(z,k.prop);
                 k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
             }else if (state.prop_state[k.prop] == PROP_STATE_LOG){
                 state.prop_state[k.prop] = PROP_STATE_STUMP;
                 state.felled_version++;
                 k.prop = -1;
-                k.carry = ((k.carry_good == GOOD_WOOD) ? k.carry : 0) + ECONOMY_WOOD_PER_TREE;
+                k.carry = ((k.carry_good == GOOD_WOOD) ? k.carry : 0) + log_wood;
                 k.carry_good = GOOD_WOOD;
                 /*
                     TWO LOGS A ROUND (the user's, 2026-10-08): with another lying within ECONOMY_LOG_PAIR_REACH of
                     him, and somewhere to take both, he picks that one up too before he carries them off - a
                     log is half the walk of a tree's wood, and nothing to fell.
                 */
-                if (k.carry < ECONOMY_WOODCUTTER_LOGS * ECONOMY_WOOD_PER_TREE && wood_room(k.carry + ECONOMY_WOOD_PER_TREE)){
+                if (k.carry < ECONOMY_WOODCUTTER_LOGS * log_wood && wood_room(k.carry + log_wood)){
                     std::vector<std::pair<std::pair<int,float>,int>> logs;
                     WoodNear(k,z,k.pos,ECONOMY_LOG_PAIR_REACH,true,logs);
                     if (GoForWood(k,z,walkers,logs,2)){
@@ -2920,7 +3076,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             uint32_t s = k.store;
             if (s == 0){
                 //At his woodpile: onto it, as far as it has room.
-                int put = std::min(k.carry,std::max(0,ECONOMY_HUT_PILE - own[k.carry_good]));
+                int put = std::min(k.carry,std::max(0,pile_room - own[k.carry_good]));
                 own[k.carry_good] += put;
                 k.carry -= put;
             }else if (s < state.accepts.size() && (state.accepts[s] & GOOD_BIT(k.carry_good))){
@@ -3259,17 +3415,9 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 NextRoadWork(k,z,walkers);      //erased, or laid by other hands, while he walked
                 break;
             }
-            if (k.prop >= 0){
-                if (state.prop_state[k.prop] == PROP_STATE_STANDING){
-                    k.state = WORKER_CLEARING;
-                    k.timer = SecondsToTicks(ECONOMY_FELL_SECONDS / pace);
-                }else{
-                    NextRoadWork(k,z,walkers);  //a woodcutter was quicker
-                }
-                break;
-            }
             //To lay it: only with nothing of its way still standing - a neighbour painted since may have
-            //brought a tree into it. A wall has nothing to lay: its wood is carried (FindSiteWork).
+            //brought a tree into it, which is a woodcutter's to fell. A wall has nothing to lay: its wood is
+            //carried (FindSiteWork).
             std::vector<int> trees;
             RoadTrees(z,v,trees);
             if (!trees.empty() || z.ground[v] != ZONE_GROUND_ROAD){
@@ -3281,21 +3429,9 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             break;
         }
         case WORKER_CLEARING:
-            if (--k.timer > 0){
-                break;
-            }
-            //Felled, and left where it fell: a log for a woodcutter to fetch, the road's way clear of it.
-            if (k.prop >= 0 && state.prop_state[k.prop] == PROP_STATE_STANDING){
-                state.prop_state[k.prop] = PROP_STATE_LOG;
-                state.felled_version++;
-                state.version++;
-            }
+            //No longer entered: only a woodcutter fells (woodcutting_plan.md). One felling for a road in a save from
+            //before stops here, and goes on with the next piece.
             k.prop = -1;
-            //A wall whose wood came while its last tree stood goes up now.
-            if (EconomyIsGroundSite(k.site)){
-                RaiseWall(z,EconomyGroundSitePlot(k.site));
-            }
-            k.stint++;
             NextRoadWork(k,z,walkers);
             break;
         case WORKER_LAYING:{
@@ -4873,6 +5009,10 @@ int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int goo
     //An arch's floor costs what its owner's storey would on that plot (arches_plan.md step 3).
     uint32_t owner = z.building[plot] ? 0 : z.ArchOwnerOf(plot);
     int kind = (owner && owner < z.buildings.size()) ? z.buildings[owner].kind : z.KindOf(plot);
+    return EconomyKindStoreyCost(w,kind,plot,good);
+}
+
+int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good){
     if (kind == ZONE_KIND_TOWER){
         return TowerStoreyCost(w,plot,good);
     }
@@ -4936,10 +5076,22 @@ int EconomyGroundWood(const ChasmWorld& w, int plot){
 }
 
 int EconomyGroundCost(const ChasmWorld& w, const ZoneState& z, int plot){
-    if (plot < 0 || plot >= (int)z.ground.size() || z.ground[plot] == ZONE_GROUND_ROAD){
+    if (plot < 0 || plot >= (int)z.ground.size()){
+        return 0;
+    }
+    return EconomyGroundKindCost(w,z.ground[plot],plot);
+}
+
+int EconomyHutRoom(float floor_area){
+    //Past the floor he works in only (the user's, 2026-10-11): a small hut is a workshop, a big one a store too.
+    return (int)std::floor(std::max(0.0f,floor_area - ECONOMY_HUT_WORKSHOP) * ECONOMY_HUT_ROOM);
+}
+
+int EconomyGroundKindCost(const ChasmWorld& w, int ground, int plot){
+    if (ground == ZONE_GROUND_NONE || ground == ZONE_GROUND_ROAD){
         return 0;       //a road takes work, not wood (line_works_plan.md)
     }
-    return (z.ground[plot] == ZONE_GROUND_WALL) ? ECONOMY_WALL_WOOD : EconomyGroundWood(w,plot);
+    return (ground == ZONE_GROUND_WALL) ? ECONOMY_WALL_WOOD : EconomyGroundWood(w,plot);
 }
 
 int EconomyGroundBrought(const EconomyState& e, int plot){
@@ -5338,6 +5490,10 @@ void Economy::Build(const ZoneState& z, uint32_t id){
             RaiseWall(z,v);
             return;
         }
+        //A tree still standing on it: up once a woodcutter has felled it (Felled, woodcutting_plan.md).
+        if (SiteTreesStanding(z,id)){
+            return;
+        }
         int cost = EconomyGroundWood(*state.world,v);
         if (state.ground_site[v] >= cost){
             state.ground_site[v] -= cost;
@@ -5347,6 +5503,10 @@ void Economy::Build(const ZoneState& z, uint32_t id){
         return;
     }
     if (id == 0 || id >= plots_of.size() || id >= state.site.size()){
+        return;
+    }
+    //Nothing of it rises while a tree stands in its way: once a woodcutter has felled the last (Felled).
+    if (SiteTreesStanding(z,id)){
         return;
     }
     //A field site goes down all at once, every cell of it, when all it takes is there (fields_plan.md).
@@ -5426,6 +5586,7 @@ namespace {
 //The verge a planned road's trees are felled from: the view's clearance (RoadNear hides what is nearer a
 //laid road) and a little over, for the curve the drawn road takes inside a corner of its edges.
 #define ECONOMY_ROAD_VERGE  (ROAD_PROP_CLEARANCE + 0.4f)
+#define ECONOMY_WAY_MARGIN  (ECONOMY_ROAD_VERGE + 4.0f)     //a line plot's way reaches its neighbours' and a verge past them: within this of it
 
 float SegmentDistance2D(const vec2& p, const vec2& a, const vec2& b){
     vec2 d = b - a;
@@ -5447,13 +5608,65 @@ float SegmentDistance2D(const vec2& p, const vec2& a, const vec2& b){
     (RoadMesh.h, WALLS). In bucket and index order, so the same trees in the same order every run.
 */
 bool EconomyPropCovered(const ZoneState& z, int plot, int coarse){
-    if (plot >= 0 && plot < (int)z.storeys.size() && (z.storeys[plot] > 0 || ZoneEnclosesGround(z.ground[plot]))){
+    //What is BUILT covers its trees; a site's stand until felled (woodcutting_plan.md) - a debug paint stands at once.
+    if (plot >= 0 && plot < (int)z.storeys.size() && ((z.storeys[plot] > 0 && z.standing[plot] > 0)
+                                                     || (ZoneEnclosesGround(z.ground[plot]) && z.ground_built[plot]))){
         return true;
     }
     if (ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
         return true;    //under the debug castle's stone (ramparts_plan.md)
     }
-    return coarse >= 0 && coarse < (int)z.field.size() && z.field[coarse];
+    return coarse >= 0 && coarse < (int)z.field.size() && z.field[coarse] && z.field_built[coarse];
+}
+
+uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse){
+    if (plot >= 0 && plot < (int)z.storeys.size()){
+        if (z.building[plot] && z.storeys[plot] > 0 && z.standing[plot] == 0){
+            return z.building[plot];
+        }
+        if (ZoneEnclosesGround(z.ground[plot]) && !z.ground_built[plot] && z.storeys[plot] == 0){
+            return ECONOMY_SITE_GROUND | (uint32_t)plot;
+        }
+    }
+    if (coarse >= 0 && coarse < (int)z.field.size() && z.field[coarse] && !z.field_built[coarse]){
+        return z.field[coarse];
+    }
+    return 0;
+}
+
+int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse){
+    if (!w.forest || !w.mesh || (plot < 0 && coarse < 0)){
+        return 0;
+    }
+    //The chunks its quads are in - a prop is listed by the chunk it stands in.
+    std::vector<int> quads;
+    if (coarse >= 0){
+        for (int k = 0; k < 4; k++){
+            quads.push_back(coarse * 4 + k);
+        }
+    }else{
+        for (int i = 0; i < w.picker->PlotQuadCount(plot); i++){
+            quads.push_back(w.picker->PlotQuadCorner(plot,i) / 4);
+        }
+    }
+    std::vector<int> chunks;
+    for (int q : quads){
+        int c = TerrainChunkOfQuad(*w.grid,*w.mesh,q);
+        if (c >= 0 && c < (int)w.forest->chunk_props.size() && std::find(chunks.begin(),chunks.end(),c) == chunks.end()){
+            chunks.push_back(c);
+        }
+    }
+    int n = 0;
+    for (int c : chunks){
+        for (int i : w.forest->chunk_props[c]){
+            const PropInstance& pr = w.forest->props[i];
+            bool f_standing = (size_t)i >= e.prop_state.size() || e.prop_state[i] == PROP_STATE_STANDING;
+            if (IsTree(pr.kind) && f_standing && ((coarse >= 0) ? pr.coarse == coarse : pr.plot == plot)){
+                n++;
+            }
+        }
+    }
+    return n;
 }
 
 void Economy::RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const{
@@ -5509,31 +5722,109 @@ void Economy::RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const{
     }
 }
 
+void Economy::TreesInTheWay(const EconomyWorker& k, const ZoneState& z, const vec2& at, float reach,
+                            std::vector<int>& out) const{
+    out.clear();
+    const std::vector<vec2>& pos = state.world->grid->fine.pos;
+    std::vector<int> trees;
+    auto add = [&](int v){
+        if ((pos[v] - at).length() > reach + ECONOMY_WAY_MARGIN || !Ours(k,ECONOMY_SITE_GROUND | (uint32_t)v)){
+            return;
+        }
+        RoadTrees(z,v,trees);
+        out.insert(out.end(),trees.begin(),trees.end());
+    };
+    for (int v : road_sites){
+        add(v);
+    }
+    for (int v : wall_sites){
+        add(v);
+    }
+    std::sort(out.begin(),out.end());
+    out.erase(std::unique(out.begin(),out.end()),out.end());
+}
+
+void Economy::Felled(const ZoneState& z, int prop){
+    const PropInstance& pr = state.world->forest->props[prop];
+    vec2 at(pr.pos.x,pr.pos.z);
+    const std::vector<vec2>& pos = state.world->grid->fine.pos;
+    for (int v : wall_sites){
+        if ((pos[v] - at).length() <= ECONOMY_WAY_MARGIN){
+            RaiseWall(z,v);
+        }
+    }
+    uint32_t site = EconomyTreeSite(z,pr.plot,pr.coarse);
+    if (site){
+        Build(z,site);
+    }
+}
+
+bool Economy::SiteTreesStanding(const ZoneState& z, uint32_t id) const{
+    const ChasmWorld& w = *state.world;
+    if (!w.forest || tree_nx == 0){
+        return false;
+    }
+    //Where to look: the site's plots not yet standing, or a field's cells not yet built - each round its middle.
+    std::vector<vec2> spots;
+    if (EconomyIsGroundSite(id)){
+        spots.push_back(w.grid->fine.pos[EconomyGroundSitePlot(id)]);
+    }else if (id < cells_of.size() && !cells_of[id].empty()){
+        for (int c : cells_of[id]){
+            if (!z.field_built[c]){
+                vec2 mid(0.0f,0.0f);
+                for (int k = 0; k < 4; k++){
+                    mid += w.grid->FineQuadCentre(c * 4 + k) * 0.25f;
+                }
+                spots.push_back(mid);
+            }
+        }
+    }else if (id < plots_of.size()){
+        for (int v : plots_of[id]){
+            if (z.standing[v] == 0){
+                spots.push_back(w.grid->fine.pos[v]);
+            }
+        }
+    }
+    const float r = 6.0f;       //past a coarse cell's corner from its middle, and well past a plot's quarters
+    for (const vec2& c : spots){
+        int x0 = std::max(0,(int)((c.x - r - tree_origin.x) / tree_cell));
+        int x1 = std::min(tree_nx - 1,(int)((c.x + r - tree_origin.x) / tree_cell));
+        int z0 = std::max(0,(int)((c.y - r - tree_origin.y) / tree_cell));
+        int z1 = std::min(tree_nz - 1,(int)((c.y + r - tree_origin.y) / tree_cell));
+        for (int bz = z0; bz <= z1; bz++){
+            for (int bx = x0; bx <= x1; bx++){
+                int b = bz * tree_nx + bx;
+                for (int j = tree_start[b]; j < tree_start[b + 1]; j++){
+                    int i = tree_items[j];
+                    const PropInstance& pr = w.forest->props[i];
+                    if (state.prop_state[i] == PROP_STATE_STANDING && EconomyTreeSite(z,pr.plot,pr.coarse) == id){
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 /*
-    Line work (line_works_plan.md): of the plots of planned roads and walls, the nearest him by the straight
-    line (the lower index on a tie) - from home, any; on a stint, only within ECONOMY_ROAD_REACH of where he
-    stands, so he works along the line rather than across the map. At each, the piece to do: the nearest
-    standing tree in its way that nobody is after; with none left standing, a road's plot itself to lay, if
-    nobody is laying it - a wall's has nothing to lay, it waits for its wood (FindSiteWork). The first few
-    pieces; a tree is walked to the foot of, on his side.
+    Line work (line_works_plan.md): of the plots of planned roads, the nearest him by the straight line (the
+    lower index on a tie) - from home, any; on a stint, only within ECONOMY_ROAD_REACH of where he stands, so he
+    works along the line rather than across the map. At each, the piece to do: the plot itself to lay, if
+    nothing of its way still stands and nobody is laying it. ONLY A WOODCUTTER FELLS (woodcutting_plan.md):
+    a plot with a tree in its way waits for one (WoodNear), and a wall's has nothing to lay - it waits for its
+    wood (FindSiteWork). The first few pieces.
 */
 void Economy::LineJobs(const EconomyWorker& k, const ZoneState& z, bool f_stint, std::vector<LineJob>& out) const{
     out.clear();
-    if (road_sites.empty() && wall_sites.empty()){
+    if (road_sites.empty()){
         return;
     }
     const ChasmWorld& w = *state.world;
     const std::vector<vec2>& pos = w.grid->fine.pos;
-    std::vector<int> taken_trees;
     std::vector<int> taken_plots;
     for (const EconomyWorker& o : state.workers){
-        if (&o == &k){
-            continue;
-        }
-        if (o.prop >= 0){
-            taken_trees.push_back(o.prop);      //a woodcutter's, or another road worker's
-        }
-        if ((o.state == WORKER_TO_ROAD && o.prop < 0) || o.state == WORKER_LAYING){
+        if (&o != &k && ((o.state == WORKER_TO_ROAD && o.prop < 0) || o.state == WORKER_LAYING)){
             taken_plots.push_back(EconomyGroundSitePlot(o.site));
         }
     }
@@ -5553,41 +5844,15 @@ void Economy::LineJobs(const EconomyWorker& k, const ZoneState& z, bool f_stint,
     for (int v : road_sites){
         consider(v);
     }
-    for (int v : wall_sites){
-        consider(v);
-    }
     std::sort(found.begin(),found.end());
     std::vector<int> trees;
     for (size_t t = 0; t < found.size() && t < 12 && out.size() < 4; t++){
         int v = found[t].second;
         RoadTrees(z,v,trees);
-        int tree = -1;
-        float best = 1e30f;
-        for (int i : trees){
-            if (std::find(taken_trees.begin(),taken_trees.end(),i) != taken_trees.end()){
-                continue;
-            }
-            const PropInstance& pr = w.forest->props[i];
-            float d = (vec2(pr.pos.x,pr.pos.z) - k.pos).length();
-            if (d < best){
-                best = d;
-                tree = i;
-            }
+        if (!trees.empty() || std::find(taken_plots.begin(),taken_plots.end(),v) != taken_plots.end()){
+            continue;   //a tree still in its way, for a woodcutter, or being laid
         }
-        int to_plot = v;
-        vec2 to = pos[v];
-        if (tree >= 0){
-            const PropInstance& pr = w.forest->props[tree];
-            vec2 at(pr.pos.x,pr.pos.z);
-            vec2 d = at - k.pos;
-            float l = d.length();
-            to = (l > 0.8f) ? at - d * (0.6f / l) : at;
-            to_plot = pr.plot;
-        }else if (!trees.empty() || z.ground[v] != ZONE_GROUND_ROAD
-                  || std::find(taken_plots.begin(),taken_plots.end(),v) != taken_plots.end()){
-            continue;   //its trees all being felled by others, a wall cleared (its wood is a carry), or being laid
-        }
-        out.push_back(LineJob{found[t].first,v,tree,to_plot,to});
+        out.push_back(LineJob{found[t].first,v,-1,v,pos[v]});
     }
 }
 

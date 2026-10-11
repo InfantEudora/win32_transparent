@@ -111,3 +111,27 @@ ROADS in play are sites on this same per-plot path since 2026-10-06 (line_works_
 only, no wood, so not among the ground sites the carriers serve - an idle person with no wood to carry
 fells the trees in a planned road's way and lays it, through the same `ZONE_OP_GROUND_RAISE`. Walls are
 next there (step 3), with wood through the carriers as a garden's.
+
+## What it costs, before it is placed (2026-10-11, the user's)
+
+"A small feature that would show us what the cost of placing any of the buildings or plots would be."
+Built the same day, view only (`ApplicationChasmGhost.cpp`, THE PRICE TAG):
+
+- **The price tag**: in play, with a tool in hand, beside the cursor - what a click there would cost, the
+  goods the site will ask for: "COSTS 8 WOOD", "A STOREY MORE: 8 WOOD" over a building, "COSTS 20 WOOD,
+  8 PROVISIONS, 12 WATER" for a tower, "NO GOODS - ONLY WORK" for a road. It is worked out with the ghost,
+  for exactly what the ghost shows: a new building's plot at its painted storeys, and an extension's
+  corner plot that comes with it (`ZoneJoinCorner`); a garden's, lot's or wall's plot; a field's or
+  range's cell; a line being drawn or a bridge dragged, the whole of it, with its plots. Nothing for
+  ground that is that already (painting a lot on a lot only claims it), a wall over a road (it only gates
+  it), or erasing. Dim where the ghost is red. `chasm_tool` returns it as `cost`.
+- **The build bar's tip**: hovering a tool on the grid, beside it, what one plot or cell of it costs. A
+  plot's cost goes by its area, so it is a plot of the map's median area - "ABOUT 7 WOOD A PLOT, AS MUCH
+  AGAIN A STOREY MORE" - and the tag has the plot's own. A tower's is by its guard places, which come with
+  where paths meet ("10 WOOD, 4 PROVISIONS, 6 WATER A GUARD PLACE").
+- **One rule for both**: the economy's costs with the kind given rather than read off the plot -
+  `EconomyKindStoreyCost` (which `EconomyStoreyCost` now calls) and `EconomyGroundKindCost` (`EconomyGroundCost`'s)
+  - so the tag is what the site will ask for. Checked: a house placed where the tag read 8 wood was a site
+  wanting 8; a wall line's tag counted the one plot of it that was placed.
+- The walk's tip (`DrawWalkTip`, settlements_plan.md) steps aside while a tool is in hand: a right click then
+  puts the tool down rather than sending anyone, and the tag has the spot.
