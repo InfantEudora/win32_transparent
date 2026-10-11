@@ -234,15 +234,17 @@ void ApplicationChasm::UpdateGhost(){
     auto trees_on = [&](int at_plot, int at_cell){
         return (es && es->world == w) ? EconomyTreesOn(*w,*es,at_plot,at_cell) : 0;
     };
-    //...and the wood a woodcutter's hut `hut` (0 a new one) would keep indoors the more for `more` floor, once all of it
-    //stands: none for the floor he works in (EconomyHutRoom).
-    auto hut_room_gain = [&](uint32_t hut, float more){
-        float base = 0.0f;
-        if (hut){
-            ZoneBuildingInfo info = ZoneBuildingFigures(*w,*zs,hut);
-            base = info.floor_area + info.site_area;
+    //...and what a woodcutter's hut or a water collector `owner` (0 a new one) of `kind` would keep the more for `more`
+    //floor, once all of it stands: a hut none for the floor he works in (EconomyHutRoom), a collector a load at the
+    //least (EconomyCollectorRoom) - a new one's all of it.
+    auto room_gain = [&](int room_kind, uint32_t owner, float more){
+        int (*room)(float) = (room_kind == ZONE_KIND_WATER) ? EconomyCollectorRoom : EconomyHutRoom;
+        if (!owner){
+            return room(more);
         }
-        return EconomyHutRoom(base + more) - EconomyHutRoom(base);
+        ZoneBuildingInfo info = ZoneBuildingFigures(*w,*zs,owner);
+        float base = info.floor_area + info.site_area;
+        return room(base + more) - room(base);
     };
     //...nor outside every settlement's territory (settlements_plan.md): a bridge's near end, where the press was.
     if (hover.f_hit && es && es->world == w){
@@ -267,8 +269,9 @@ void ApplicationChasm::UpdateGhost(){
     const char* lead = NULL;
     int plots = 1;
     int trees = 0;
-    int room_more = -1;         //a woodcutter's hut: the wood it would keep indoors the more, -1 not one
-    bool f_room_new = false;    //...a new hut's, all it keeps
+    int room_more = -1;         //a woodcutter's hut: the wood it would keep indoors the more, a collector its water; -1 neither
+    bool f_room_new = false;    //...a new one's, all it keeps
+    int room_kind = ZONE_KIND_NONE;     //...which of the two: the building under a click for a storey, not the tool's
     if (f_line){
         //Each plot once, a tile each. Erasing, only what has road (or wall) to take up, all of it red - what goes.
         std::vector<int> drawn;
@@ -341,7 +344,8 @@ void ApplicationChasm::UpdateGhost(){
                 f_cost = true;
                 lead = "A STOREY MORE";
                 if (shown == ZONE_KIND_WOODCUTTER){
-                    room_more = hut_room_gain(on,cw.picker->PlotArea(plot));
+                    room_more = room_gain(shown,on,cw.picker->PlotArea(plot));
+                    room_kind = shown;
                 }
             }
         }else{
@@ -373,9 +377,10 @@ void ApplicationChasm::UpdateGhost(){
                 }
             }
             f_cost = true;
-            if (kind == ZONE_KIND_WOODCUTTER){
-                room_more = hut_room_gain(key.owner,floor_more);
+            if (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER){
+                room_more = room_gain(kind,key.owner,floor_more);
                 f_room_new = key.owner == 0;
+                room_kind = kind;
             }
         }
         if (shown == ZONE_KIND_WINCH){
@@ -438,8 +443,12 @@ void ApplicationChasm::UpdateGhost(){
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         ghost_cost_text = (f_cost && !verts.empty()) ? CostTag(cost,lead,plots,trees) : std::string();
-        //What a woodcutter's hut keeps indoors for it (woodcutting_plan.md): none for the floor he works in.
-        if (!ghost_cost_text.empty() && room_more >= 0){
+        //What a woodcutter's hut keeps indoors for it (woodcutting_plan.md): none for the floor he works in; what a
+        //collector holds, a load at the least.
+        if (!ghost_cost_text.empty() && room_more >= 0 && room_kind == ZONE_KIND_WATER){
+            ghost_cost_text += (room_more == 0) ? std::string(" - HOLDS NO MORE WATER")
+                             : " - HOLDS " + std::to_string(room_more) + (f_room_new ? " WATER" : " MORE WATER");
+        }else if (!ghost_cost_text.empty() && room_more >= 0){
             ghost_cost_text += (room_more == 0) ? (f_room_new ? " - TOO SMALL TO KEEP WOOD" : " - KEEPS NO MORE WOOD")
                              : " - KEEPS " + std::to_string(room_more) + (f_room_new ? " WOOD INDOORS" : " MORE WOOD");
         }

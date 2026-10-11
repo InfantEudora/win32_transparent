@@ -242,7 +242,7 @@ surfaces are picked, from the engine's own readback of what is under the cursor.
   adds `figure` (the person drawn at the pixel itself) and `read`. `hover` now pins the scene's hover as well
   as the overlay's, and returns it, so the light blue outline is in the next screenshot.
 
-### Several people selected (the user's, agreed 2026-10-11, not built)
+### Several people selected (the user's, agreed 2026-10-11)
 
 Selection has been one thing at a time, and so have orders ("One person at a time for now", `defence_plan.md`,
 "Direct orders"). Two things now need several: soldiers for defence, and the two or three people who go out to
@@ -289,9 +289,101 @@ group's order is several of them, and needs no new command.
 **Build order**:
 
 1. **The group**: the list, Shift+click on the map and on card names, the outlines, pins and routes, the group's
-   card with its rows, × and chips; the tool.
-2. **The box**.
+   card with its rows, × and chips; the tool. **Built 2026-10-11**, below.
+2. **The box**. **Built 2026-10-11**, below.
 3. **Group orders**: places on one plot (the rule), the spread over plots round it, the group's refusal, a tower.
+   **Built 2026-10-11**, below.
+
+#### As built: step 1, the group (2026-10-11)
+
+- **The selection**: `PLAY_PICK_GROUP` with its people in `play_group`, in the order added. Every change goes through
+  `SelectPeople` - one id a person selected (a child too), two or more a group of those who can take an order
+  (`EconomyCanOrder`), none nothing - or `ToggleSelected` for a Shift+click; `SelectedPeople` gives the one or the
+  group to whatever acts on them. The dead leave a group on the next pass (`PruneGroup`). View state only, as ever.
+- **Shift+click**: on a grown-up's figure, on a name on a house's or the camp's card, and on a row of the neediest list
+  (a line naming a person, like the card's) - added, or taken out; the view stays. On a child, a building or bare
+  ground it does nothing, and the selection stays. A plain click on someone selects him alone; on bare ground clears.
+- **From a house's card**: a house's card is reached by selecting the house, which would lose the group being put
+  together. So the people selected before a building was are kept (`play_people_before`), and a Shift+click on a name
+  on that building's card adds to THEM - two picked outside, a click on the woodcutter's house, Shift on his name:
+  three. Shift+clicks on the map add only to what is selected. Clearing forgets them.
+- **On the map**: each of them outlined orange, his badge pinned orange, his route's dots - all the routes in the one
+  mesh. A neediest row of anyone in the group is lit orange.
+- **The group's card** (`GroupCard`): "3 people", a row each (`CARD_PERSON`) - his badge, ringed orange; name, job and
+  what he is doing, dimmed at home; how long his pack lasts by what runs out first ("pack 10 days", "pack under a day")
+  - and an x (`OVERLAY_HIT_GROUP_DROP`). A click on a row selects him alone; hovering it outlines him light blue. With
+  anyone ordered out: "Posted" (or "2 of them posted"), **Release** - each released - and **Gather supplies first**,
+  lit while all of them are at it: pressed with some gathering it sets the rest going, with all it stops them all.
+  The person card's chips go through the same code, so for one person nothing changed.
+- **A right click** sends each his own order **to the clicked plot**, all of them - or onto the guard tower clicked.
+  Standing apart is step 3.
+- **The tool**: as proposed - `select` with `people`, `add` / `remove`, `press` with `shift`; `status` reports `group`,
+  and a group's card lines as `{"person","text","pack"}`. The box's op came with step 2.
+
+**Checked** (village save, debug, minimised on 8769; `chasm_select press` at pixels the engine reads as each figure):
+Shift on Kaat with nothing selected - Kaat alone; on Dolf, on Siem - a group of three; on Kaat again, on Dolf - Siem
+alone. A plain click on Bente - Bente alone. Shift on bare ground - the group kept; a plain click there - cleared. Two
+selected, house 20 clicked, Shift on Elin's name (at home) - the three of them. Shift on a child's name (Thijs) - the
+house still selected. The x on Dolf's row - two left; a click on Siem's row - Siem alone. Shift on a neediest row -
+added, the camera unmoved. Three sent by one right click - posted, all on one plot; Gather pressed - all three
+gathering, pressed again - none, then with one gathering already - all three; Release - all three released. On screen:
+the card's rows, three orange outlines and pinned badges, the routes' dots, Siem's neediest row lit.
+
+#### As built: step 2, the box (2026-10-11)
+
+- **The press**: with no tool in hand a left press on the scene is now a CLICK only once let go within
+  `RIGHT_CLICK_SLOP` of where it began - acted on then, not on the press - and moved further, a BOX. So a press that
+  becomes a box has selected and cleared nothing on the way, and "a drag never clears" holds. The overlay's buttons
+  still act on the press, and a script's press (`chasm_select press`) is let go at once.
+- **The box** (`PeopleInBox`): every grown-up out of doors whose figure's middle - half his figure's height over his
+  feet - lands inside it on screen, behind a roof or not, as RTS boxes take units behind buildings. Let go
+  (`TakeBox`): they are the selection, or with Shift held they join it; a box with nobody in it changes nothing.
+  One person in it is one person selected.
+- **While dragging**: the box drawn faintly filled and edged in the hover's light blue, and everyone it would take
+  outlined light blue (`box_people`) - the selected keep their orange.
+- **The tool**: `chasm_select` op `box` px0, py0, px1, py1 - let go as a drag would be, `shift` to add, `in_box` who it
+  took; with `hold` drawn as still being dragged, its people outlined, until an op `box` without it.
+
+**Checked** (village save, debug, minimised on 8769, `op box`): a box round Dolf and Bente - the two of them, a group;
+an empty box - the group kept; a Shift box round Kaat - three; a plain one - Kaat alone. Held: the box on screen, Siem
+outlined light blue and Floris faintly through the roof he stands behind, Kaat (selected) orange. The whole of step
+1's checks again, all passing with the click now on letting go. **Not checked by a script**: a drag with the real
+mouse - press, move and let go are the mouse's own, which a minimised window's tools cannot drive.
+
+#### As built: step 3, group orders (2026-10-11)
+
+As proposed, with one change: **the spread is the rules', not the view's.** Built first in the view, it sent people to
+open plots nobody can walk into - a pocket between a woodcutter's hut and two stores - and they were refused. Only
+the economy knows who can get where, so it decides, and it passes such a pocket over rather than refusing.
+
+- **Places on one plot** (`EconomyPostPoint`, a RULE): everyone ordered to the same plot and layer stands in a place
+  of his own, by rank in id order - evenly round a ring through its corners (`ZoneTowerCorners`), `ECONOMY_POST_STAND`
+  of the way out from its point - as a tower spreads its guards. One alone still stands on its point. Whenever one
+  joins or leaves - an order, a release, a guard posted by hand, a tent pitched - those left there are sent to their
+  new places at once (`Economy::RePlace`), not at their next look.
+- **The room** (`EconomyPostRoom`): a plot's area over `ECONOMY_POST_ROOM`, at least one.
+- **The spread** (`Economy::SpreadPost`): a group's orders carry a flag (`CHASM_CMD_ORDER` value[2], 0 in every
+  recording made before, which replay as they did). Applied in turn, each one goes to the plot clicked while it has
+  room - those already posted there counted - else to the nearest plot round it, searched outward through plots open as
+  an order finds them and walkable as a walker's ground is (or, up on the castle, with the deck sent to), that has room
+  and **a way there for him** (`CanWalkPosted`) - `ECONOMY_SPREAD_PLOTS` looked at, at most. With none, the plot
+  clicked. The view sends the nearest person first, so the nearest take the plot clicked and the farther the ones round it.
+- **The group's refusal**: the per-order refusals held back until all of a group's orders are done, then one line -
+  "2 of 3 sent - every place is taken", "none of 3 sent - something stands there"; nothing when all went. Given up
+  after ten seconds unanswered (`group_orders`, ApplicationChasmTime.cpp).
+- **A tower**: the group in order of distance to it, each posted by hand (`CHASM_CMD_GUARD`), so the nearest take its
+  places and the rest are refused "every place is taken".
+- One person ordered goes to the plot's point, as before.
+
+**Checked** (debug, minimised on 8769): on the village save, three to a plot with room for four - all on it, 0.86 to
+0.92 apart, all standing there; one released - the two left moved across the plot from each other. Six to a plot
+with room for three - three on it and three on the next, each within its room. Three onto a house - none posted, "NONE
+OF 3 SENT - SOMETHING STANDS THERE". One person to the big plot - on its point. On the ramparts scene, four sent up onto
+the wall - all on one deck plot (layer 4), in a square, there within 1,500 ticks; nine - five on it and four on the
+next deck plot along the wall. A debug tower with two places and three sent - the two nearest its guards (the
+automatic one stood down), "2 OF 3 SENT - EVERY PLACE IS TAKEN". A 1,620-tick recording of two group orders (one on a
+plot, one spread) and a release, replayed twice: every tick's state hash equal, the same posts at the end. Found on
+the way, in core: `input_replay` with a null `file` aborted the app (a JSON `value()` on a null) - it checks the type now.
 
 ## Who builds what
 

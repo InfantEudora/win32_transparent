@@ -6,11 +6,12 @@ status: partial
 summary: Goods lying on the ground - the load of someone sent to a post - a store villagers take from, and builders carry off to a store.
 plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3
 code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SourceStock; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
-verified: 2026-10-09
+verified: 2026-10-11
 ---
 
 A crate is goods lying on the ground. One appears when the player sends someone carrying a load to a
-[[Posts|post]]: the load is put down the moment the order is given.
+[[Posts|post]]: the load is put down the moment the order is given. And one is left where a [[Camp|camp]] stood
+when its last tent goes, holding its supplies and pantry ("A camp's goods").
 
 ## Where the load goes
 

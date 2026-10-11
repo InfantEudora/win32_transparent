@@ -4,21 +4,26 @@ aliases: camps, tent, tents, supplies, camp's supplies
 kind: buildings
 status: built
 summary: Tents and fires where the settlers start. It is home to anyone without a house, and holds the settlers' supplies for the whole colony beside a pantry of its own.
-plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11)
-code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld AssignJobs LandPlaces; Economy.h: pantry
+plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11); settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6
+code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY ZoneCampFireTent; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld AssignJobs LandPlaces; Economy.h: pantry
 verified: 2026-10-11
 ---
 
 A new map starts with one camp, just big enough for the settlers. The game puts it on the best spot it
 can find along a river: flat ground for houses and fields, with forest at hand but not all around
 (`ZoneStartCampPlot`). The player can paint more camps. The start camp founds the first [[Settlement|settlement]]:
-the land within a walk of it where its people work; a camp outside every settlement would found another.
+the land within a walk of it where its people work; a camp outside every settlement would found another. A tent
+is a home like a house: every tent counts as a bed toward how far its settlement reaches.
 
 ## Living there
 
-A camp is built like a house, one storey high. Each plot gets a **tent**, except about one plot in
-{ZONE_CAMP_FIRE_EVERY}, which gets a fire. A camp holds **one person to a tent**, from any number of
-families. People in a camp are never indoors: they stand in front of their tents, so a crowded camp shows
+A camp is built like a house, one storey high. **Every plot is a tent**, and a camp holds **one person to a
+tent**, from any number of families. Its fires are props around the tents, never in a tent's place: about
+one in {ZONE_CAMP_FIRE_EVERY} spots of open ground beside a tent at the camp's edge has one, with a log to
+sit on. A tent hemmed in by other tents has no room for a fire.
+
+A tent can be **packed and taken away** by someone sent out, and **pitched** where they stand, which makes a new
+camp or joins one beside it ([[Founding|founding]]). A pitched tent stands at once; it was packed, not built. People in a camp are never indoors: they stand in front of their tents, so a crowded camp shows
 that there are too few [[House|houses]].
 
 A family leaves the camp as soon as a house has room for all of them.
@@ -49,6 +54,14 @@ A camp employs **{ECONOMY_CAMP_FARMERS:#farmer}** for its land (more of its fiel
 works with no hut: a log is worth only {ECONOMY_CAMP_LOG_WOOD} wood, and goes into a store that takes wood,
 or else the supplies, while they hold less than {ECONOMY_CAMP_WOODPILE}. More of either takes
 [[House|houses]] and [[Woodcutter|huts]].
+
+A camp with a river's or pool's edge within {ECONOMY_CAMP_WATER_REACH} of walking also employs a **water
+carrier**, the most ingenious: he walks to the bank, draws {ECONOMY_CAMP_WATER_LOAD} [[Water|water]] at
+{ECONOMY_CAMP_WATER_SECONDS:#seconds} a unit, and carries it into the supplies, while they hold less than
+{ECONOMY_CAMP_WATER_HOLD} and no snow lies on the bank. That is enough for a few, not a village, which wants a
+[[Water collector|collector]]. A painted tent costs {ECONOMY_TENT_ROPE} [[Rope|rope]] with its wood.
+
+When a camp's last tent is packed or erased, its supplies and pantry are left where it stood as a [[Crate|crate]].
 
 ## Winter
 

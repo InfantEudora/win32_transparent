@@ -129,11 +129,60 @@ above a minimum size. A cost 4 woodcutter would start having space indoors."
   hut (keeps 3, under a log) placed: "Too small to keep a log, and no lot beside it", NO ROOM FOR WOOD listed; a
   lot painted for it (4 more): the row gone and its woodcutter out for wood.
 
+## Fixed: the reach is a walk (2026-10-11)
+
+The user saw Bente, the woodcutter of a pitched camp (`saves/camp.json`), go for a tree very far away. It stood
+19 units from her camp in a straight line, across a stream. The way to it was 115 units, round the stream's end,
+and back again with the log. `ECONOMY_WOODCUTTER_REACH` and "the nearest" were both measured by the straight line.
+
+- **Now by the walk.** `WoodNear` floods the map from where the search starts, out to its reach
+  (`Walkers::MapFlood`, the settlements' flood). The map's own ways count: a river only by a bridge, a cliff only by
+  a winch, not what is built. Wood is in reach within `ECONOMY_WOODCUTTER_REACH` of walking from the hut's door,
+  and the nearest is the nearest walk.
+- **The second log** keeps the straight line from the hut, as the first log was well inside it.
+- **NEEDS ATTENTION's** "no woodcutter near" (`trees_unreached`, `Derive`) uses the same flood from each woodcutting
+  workplace, so it agrees with where woodcutters go.
+- **Checked** on the save: after finishing the far trip she was on when it was saved, her next four trees were 21
+  to 28 units' walk away, on her side of the stream. A 2,500-tick recording from the save replayed twice, every
+  tick equal.
+
+## The collector's hold (the user's, 2026-10-11)
+
+"Apply the same logic to the water collector, size wise": it held `ECONOMY_WATER_HOLD` 10 whatever its size, filled
+at one rate, and had one carrier, so a big one cost more for nothing.
+
+- **It holds by its standing floor**, as a hut keeps wood: `ECONOMY_WATER_ROOM` 6 for every unit past
+  `ECONOMY_WATER_PUMP` 1.5, the floor its pump takes (`EconomyCollectorRoom`, derived `water_room`).
+- **But never under a load** (`ECONOMY_LOAD`) - the agent's, agreed: its carrier comes only for a whole one, and it
+  has no lot to spill onto, so a collector holding less would never be emptied. A site holds a load.
+- **Its pace is left alone**: one unit every `ECONOMY_WATER_SECONDS`, about 11 a day, enough for some 22 people, so
+  water is not what holds a colony back yet. A faster fill for a longer collector along the bank is the other lever.
+- **The price tag** says what it would hold: "COSTS 6 WOOD - HOLDS 12 WATER"; an extension "HOLDS 16 MORE WATER".
+- *Checked* (the default seed, play mode): tags along the camp's bank ran 4 wood -> 7, 6 -> 11-13, 8 -> 17-18,
+  10 -> 23, 12 -> 30; one placed on a 2.7 plot (6 wood) was a load as a site, 12 built, filled to 12 and stopped with
+  no store; a store painted, its carrier took a load (12 -> 7) and it filled back to 12.
+
+## Strength (the user's, 2026-10-11)
+
+Looked into, the same day: strength only sped felling (`EconomySkillFactor`, 4.3 s at 10 against 8.8 s at 1),
+and a round is mostly walking, so the strongest brought in some 10-20% more wood than the weakest. Yet the job
+went by strength at `ECONOMY_SKILL_DISTANCE` 4 units a point, while each unit further from home costs about two of
+walking a round: a point saved half a second, the 4 units it bought cost some 5. The user: "both can be tuned a
+little ... only change both by about 25%".
+
+- **Carrying by strength**: anyone with a load walks `ECONOMY_CARRY_STRENGTH` faster a point over 5, slower under
+  (`Walk`): 0.9 at 1, 1.125 at 10, about 25% between them. Empty-handed, as before.
+- **Weighed a quarter less**: a place scores skill at `ECONOMY_SKILL_DISTANCE` 3 a point, was 4. The camp's
+  woodcutter is still its strongest, all living there alike.
+- First for the woodcutter alone, then for every job the same day - "so they have the same rule" (the user's).
+- Worked out, not measured: the strongest woodcutters now bring in some 20-30% more wood a day than the weakest.
+  *Checked* (the woodcutter-only build): the camp's woodcutter (strength 10) walked 1.8 loaded, 1.6 empty.
+
 ## Later
 
-- The water collector, the builders' hut and the ropewalk still cost by area for what does not grow with it:
-  one place, or places and pace by counting plots. A flat cost per plot-storey for those was suggested
-  (2026-10-11), not decided. The woodcutter's hut now has its area's worth: its room.
+- The builders' hut and the ropewalk still cost by area for what does not grow with it: places and pace by
+  counting plots. A flat cost per plot-storey for those was suggested (2026-10-11), not decided. The woodcutter's
+  hut and the water collector now have their area's worth: their room.
 - More woodcutters at a bigger hut - suggested, and left for later in favour of the better logs.
 - The wall's cost, `ECONOMY_WALL_WOOD`, was "one felled tree's logs" (the user's, 2026-10-08): a figure of its
   own now, to retune if wanted.

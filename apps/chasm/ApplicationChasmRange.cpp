@@ -9,23 +9,37 @@ static Debugger* debug = new Debugger("ChasmRange",DEBUG_ALL);
 /*
     THE ARCHERY RANGES, DRAWN (docs/range_plan.md): on every built range cell a TARGET at its north side, a
     row of HAY BALES behind it as the backstop and one at its side - where ZoneRangeCellAt puts them, the
-    rule the trainees stand by too - and ARROWS in the targets while someone trains. Each kind is one instance
-    set of chasm_props.glb's prop, or of a stand-in box built here until that prop is modelled: a name the GLB
-    has is used as soon as it has it, nothing else changes. The ground under them is the zone mesh's (CropMesh).
+    rule the trainees stand by too - and ARROWS: in the air as a trainee looses them, then in the target or,
+    missed, in the ground behind it. Each kind is one instance set of chasm_props.glb's prop, or of a stand-in
+    box built here until that prop is modelled: a name the GLB has is used as soon as it has it, nothing else
+    changes. The ground under them is the zone mesh's (CropMesh).
 
-    View only, rebuilt when the zones change.
+    View only: the props rebuilt when the zones change, the arrows from the trainees' stint clocks (ShotClockOf).
 */
 
-const char* range_asset_names[RANGE_PROPS] = {"range_target","hay_bale","arrow"};
+const char* range_asset_names[RANGE_PROPS] = {"range_target","hay_bale","arrow","arrow_full"};
 
 #define RANGE_BALE_BACK     0.44f   //the backstop's bales, this much of the cell north of its middle
 #define RANGE_BALE_SPREAD   0.28f   //...and this far apart along the row
 #define RANGE_BALE_SIDE     0.36f   //the loose bale, this far east of the middle
-#define RANGE_ARROW_HALF    0.16f   //half an arrow's length: chasm_props.glb's `arrow` is centred on its origin
+#define RANGE_ARROW_HALF    0.16f   //half a stuck arrow's length: chasm_props.glb's `arrow` is centred on its origin
+#define RANGE_ARROW_FULL    0.46f   //a whole arrow, nock to point: `arrow_full`, its origin at the nock, pointing +z
 #define RANGE_BOSS_HEIGHT   0.74f   //the middle of a target's face, above its base (`range_target`)
-#define RANGE_BOSS_RADIUS   0.30f   //...and how far out from it an arrow may stick
 #define RANGE_BOSS_FRONT    0.14f   //...and its face, this far south of the target's origin (between its legs, behind)
-#define RANGE_ARROWS_MOST   5       //arrows in a target, by the end of a stint
+#define RANGE_FACE_HALF_W   0.30f   //an arrow this near its middle across, and
+#define RANGE_FACE_HALF_H   0.28f   //...up and down, sticks in the straw; any further out MISSES
+/*
+    WHERE A SHOT GOES (ShotOf): off the target's middle by a normal scatter each way, one standard deviation
+    RANGE_SPREAD_NOVICE with no archery and RANGE_SPREAD_MASTER at full, straight between. Worked out against the
+    face: a beginner misses about two shots in five, the average trainee at his cap (50%) about one in eleven, a
+    master next to none.
+*/
+#define RANGE_SPREAD_NOVICE 0.24f
+#define RANGE_SPREAD_MASTER 0.05f
+#define RANGE_ARROW_SPEED   8.0f    //world units a second in the air: an arrow's own would cross a range in a frame
+#define RANGE_ARROW_ARC     0.06f   //how high it rises on the way, of the way's length
+#define RANGE_MISS_ON       1.3f    //a miss comes down at most this far behind the target, of the way to the backstop
+#define RANGE_SHOT_SECONDS  4.0f    //a shot, when the props file has no Shoot clip to time it
 
 namespace {
 
@@ -61,14 +75,105 @@ void StandInMesh(int kind, std::vector<vertex>& out){
             Box(out,vec3(-0.12f,0.0f,-0.185f),vec3(-0.08f,0.345f,0.185f),PAL_TIMBER);
             Box(out,vec3(0.08f,0.0f,-0.185f),vec3(0.12f,0.345f,0.185f),PAL_TIMBER);
             break;
-        default:
+        case 2:
             //Centred on its origin, as the modelled one is: its point at -z, in the target.
             Box(out,vec3(-0.012f,-0.012f,-RANGE_ARROW_HALF),vec3(0.012f,0.012f,RANGE_ARROW_HALF),PAL_BARK_DARK);
             Box(out,vec3(-0.03f,-0.004f,RANGE_ARROW_HALF - 0.07f),vec3(0.03f,0.004f,RANGE_ARROW_HALF),PAL_WALL);
             break;
+        default:
+            //A whole arrow, in a hand or in the air: its nock at the origin, its point along +z - the shaft, the
+            //fletching crossed at the nock end, the head dark.
+            Box(out,vec3(-0.010f,-0.010f,0.0f),vec3(0.010f,0.010f,RANGE_ARROW_FULL),PAL_TIMBER);
+            Box(out,vec3(-0.028f,-0.004f,0.01f),vec3(0.028f,0.004f,0.09f),PAL_WALL);
+            Box(out,vec3(-0.004f,-0.028f,0.01f),vec3(0.004f,0.028f,0.09f),PAL_WALL);
+            Box(out,vec3(-0.016f,-0.016f,RANGE_ARROW_FULL - 0.04f),vec3(0.016f,0.016f,RANGE_ARROW_FULL),PAL_BARK_DARK);
+            break;
     }
 }
 
+//One shot: where it leaves the bow, where it crosses the target's face, where it ends, how long it flies.
+struct RangeShot{
+    vec3 from;
+    vec3 via;               //in the face, for a hit: where it sticks
+    vec3 to;                //a miss: in the ground behind
+    float seconds = 0.0f;
+    bool f_hit = false;
+};
+
+/*
+    Where a shot from `from` at the target standing at `base`, turned `yaw`, goes - its scatter (RANGE_SPREAD_*) drawn
+    from `hash`, so it is the same shot every frame and every replay. In the face it sticks; outside it a MISS flies
+    on, level, and comes down in the ground behind the target, short of the backstop `back` behind it - the steeper
+    the higher it passed. A shot so low it would pass under the ground at the face comes down short of the target.
+*/
+RangeShot ShotOf(const vec3& from, const vec3& base, float yaw, float back, float skill, uint32_t hash){
+    float spread = RANGE_SPREAD_NOVICE + (RANGE_SPREAD_MASTER - RANGE_SPREAD_NOVICE) * skill;
+    float u1 = ((float)(hash & 0xFFFFu) + 0.5f) / 65536.0f;
+    float u2 = (float)(hash >> 16) / 65536.0f;
+    float r = spread * std::sqrt(-2.0f * std::log(u1));
+    float dx = r * std::cos(6.2831853f * u2);
+    float dy = r * std::sin(6.2831853f * u2);
+    float cs = std::cos(yaw), sn = std::sin(yaw);
+    RangeShot s;
+    s.from = from;
+    s.via = vec3(base.x + dx * cs + RANGE_BOSS_FRONT * sn,base.y + RANGE_BOSS_HEIGHT + dy,
+                 base.z - dx * sn + RANGE_BOSS_FRONT * cs);
+    s.f_hit = fabsf(dx) <= RANGE_FACE_HALF_W && fabsf(dy) <= RANGE_FACE_HALF_H;
+    s.to = s.via;
+    if (s.via.y < base.y && from.y > base.y){
+        s.via = from + (s.via - from) * ((from.y - base.y) / (from.y - s.via.y));
+        s.to = s.via;
+    }else if (!s.f_hit){
+        vec3 on = s.via - from;
+        on.y = 0.0f;
+        float len = on.length();
+        if (len > 1e-4f){
+            //Down at about 35 degrees, or steeper where the backstop comes first.
+            float drop = std::max(0.0f,s.via.y - base.y);
+            float ahead = std::min(drop * 1.43f,back * RANGE_MISS_ON);
+            s.to = s.via + on * (ahead / len);
+            s.to.y = base.y;
+        }
+    }
+    s.seconds = ((s.via - s.from).length() + (s.to - s.via).length()) / RANGE_ARROW_SPEED;
+    return s;
+}
+
+/*
+    Where a shot's point is `t` seconds after it left the bow, and the way it flies: from the bow to the face rising
+    a little on the way (RANGE_ARROW_ARC), then a miss straight on to the ground.
+*/
+void FlightAt(const RangeShot& s, float t, vec3& point, vec3& dir){
+    float d1 = (s.via - s.from).length();
+    float d2 = (s.to - s.via).length();
+    float at = t * RANGE_ARROW_SPEED;
+    if (at < d1 && d1 > 1e-4f){
+        float f = at / d1;
+        float lift = RANGE_ARROW_ARC * d1;
+        point = s.from + (s.via - s.from) * f + vec3(0.0f,lift * 4.0f * f * (1.0f - f),0.0f);
+        dir = (s.via - s.from) * (1.0f / d1) + vec3(0.0f,RANGE_ARROW_ARC * 4.0f * (1.0f - 2.0f * f),0.0f);
+    }else{
+        float f = d2 > 1e-4f ? std::min(1.0f,(at - d1) / d2) : 1.0f;
+        point = s.via + (s.to - s.via) * f;
+        dir = d2 > 1e-4f ? s.to - s.via : s.via - s.from + vec3(0.0f,-4.0f * RANGE_ARROW_ARC * d1,0.0f);
+    }
+    dir.normalize();
+}
+
+}
+
+bool ApplicationChasm::ShotClockOf(const EconomyWorker& k, uint64_t tick, ShotClock& out) const{
+    if (k.state != WORKER_TRAINING){
+        return false;
+    }
+    const int stint = std::max(1,(int)std::lround(ECONOMY_TRAIN_SECONDS * CALENDAR_TICKS_PER_SECOND));     //Economy's SecondsToTicks
+    int elapsed = std::max(0,std::min(stint,stint - k.timer));
+    float clip = (f_worker_shoot_clip && worker_shoot_seconds > 0.0f) ? worker_shoot_seconds : RANGE_SHOT_SECONDS;
+    out.shots = std::max(1,(int)std::lround(ECONOMY_TRAIN_SECONDS / clip));
+    out.cycle = ECONOMY_TRAIN_SECONDS / (float)out.shots;
+    out.elapsed = (float)elapsed / (float)CALENDAR_TICKS_PER_SECOND;
+    out.start = tick >= (uint64_t)elapsed ? tick - (uint64_t)elapsed : 0;
+    return true;
 }
 
 //RENDER THREAD, from LoadProps: each prop's mesh - the GLB's where it has one, else the stand-in.
@@ -124,17 +229,21 @@ void ApplicationChasm::UploadRange(){
         range_arrows_key = ~0ull;
     }
     /*
-        THE ARROWS: in the target of the cell each trainee stands in while he TRAINS, more as his stint goes on -
-        one, then up to RANGE_ARROWS_MOST. Where each sticks is a hash of the cell and its number, so an arrow
-        stays where it hit. From the people's state every frame, the set rebuilt only when what it shows changes.
+        THE ARROWS (range_plan.md "Shooting"): each trainee's shots this stint, by his stint's clock - shot n leaves
+        the bow at SHOOT_RELEASE of its turn of the clip, flies, and then stays where it went: in his target's face,
+        or missed into the ground behind it. Where each goes is a hash of him, his stint and its number (ShotOf), so
+        an arrow stays where it hit. The stuck ones are rebuilt only when what they show changes; the ones in the
+        air, and those in the archers' hands (UploadWorkers), every frame there are any.
     */
     std::shared_ptr<const EconomyState> e = GetEconomy();
-    std::vector<std::pair<int,int>> shooting;       //target index, arrows
+    std::vector<fmat4> stuck;
+    std::vector<fmat4> flying = worker_hand_arrows;
     uint64_t key = 1469598103934665603ull;
+    auto mix = [&](uint64_t v){ key = (key ^ v) * 1099511628211ull; };
     if (e && e->world == w && !range_target_cell.empty()){
-        const int stint = std::max(1,(int)std::lround(ECONOMY_TRAIN_SECONDS * CALENDAR_TICKS_PER_SECOND));     //Economy's SecondsToTicks
         for (const EconomyWorker& k : e->workers){
-            if (k.state != WORKER_TRAINING){
+            ShotClock clock;
+            if (!ShotClockOf(k,e->tick,clock)){
                 continue;
             }
             GridPick at = w->picker->Pick(k.pos);
@@ -143,36 +252,56 @@ void ApplicationChasm::UploadRange(){
             if (it == range_target_cell.end()){
                 continue;
             }
-            float done = 1.0f - std::max(0,k.timer) / (float)stint;
-            int arrows = 1 + (int)(done * (RANGE_ARROWS_MOST - 1));
-            shooting.push_back(std::make_pair((int)(it - range_target_cell.begin()),arrows));
-            key = (key ^ (uint64_t)(it - range_target_cell.begin())) * 1099511628211ull;
-            key = (key ^ (uint64_t)arrows) * 1099511628211ull;
+            int t = (int)(it - range_target_cell.begin());
+            //His bow at the release: the clip's, measured on his figure (BuildWorkerScene), where he stands and faces.
+            vec2 facing = EconomyWorkerFacing(k);
+            vec3 feet(k.pos.x,WorkerHeight(*w,z.get(),k),k.pos.y);
+            vec3 from = feet + quat(up,atan2f(facing.x,facing.y)) * worker_release_at[PersonFigure(k,e->tick)];
+            float skill = std::max(0.0f,std::min(1.0f,(float)k.archery / (float)ARCHERY_FULL));
+            uint32_t seed = MeshHash(k.id,(uint32_t)clock.start,(uint32_t)(clock.start >> 32));
+            int landed = 0;
+            for (int n = 0; n < clock.shots; n++){
+                float flown = clock.elapsed - ((float)n + SHOOT_RELEASE) * clock.cycle;
+                if (flown < 0.0f){
+                    break;
+                }
+                uint32_t h = MeshHash(seed,(uint32_t)n,0x73686f74u);
+                RangeShot s = ShotOf(from,range_target_pos[t],range_target_yaw[t],range_target_back[t],skill,h);
+                vec3 point, dir;
+                FlightAt(s,std::min(flown,s.seconds),point,dir);
+                if (fabsf(dir.y) > 0.999f){
+                    continue;
+                }
+                if (flown < s.seconds){
+                    flying.push_back(Object::ComposeTransformScale(point - dir * RANGE_ARROW_FULL,TurnZTo(dir,up),
+                                                                   vec3(1.0f,1.0f,1.0f)));
+                    continue;
+                }
+                //Stuck: the point a little in, along the way it came, turned a touch either way as arrows sit.
+                uint32_t j = MeshHash(h);
+                vec3 lean = dir + vec3(((float)(j & 0xFFu) / 255.0f - 0.5f) * 0.12f,
+                                       ((float)((j >> 8) & 0xFFu) / 255.0f - 0.5f) * 0.12f,0.0f);
+                lean.normalize();
+                stuck.push_back(Object::ComposeTransformScale(point - lean * (RANGE_ARROW_HALF * 0.7f),
+                                                              TurnZTo(lean * -1.0f,up),vec3(1.0f,1.0f,1.0f)));
+                landed++;
+            }
+            mix((uint64_t)t);
+            mix(((uint64_t)k.id << 32) ^ clock.start);
+            mix((uint64_t)landed);
         }
     }
-    if (key == range_arrows_key){
-        return;
+    if (key != range_arrows_key){
+        range_arrows_key = key;
+        bool f_any = !stuck.empty();
+        range_set[2]->SetInstances(std::move(stuck));
+        range_set[2]->SetVisibility(f_any);
     }
-    range_arrows_key = key;
-    std::vector<fmat4> arrows;
-    for (const std::pair<int,int>& s : shooting){
-        const vec3& base = range_target_pos[s.first];
-        float yaw = range_target_yaw[s.first];
-        float cs = std::cos(yaw), sn = std::sin(yaw);
-        for (int i = 0; i < s.second; i++){
-            uint32_t h = MeshHash((uint32_t)range_target_cell[s.first],(uint32_t)i,0x6172726fu);
-            float r = RANGE_BOSS_RADIUS * std::sqrt((float)(h % 1000u) / 1000.0f);
-            float a = (float)((h >> 10) % 6283u) / 1000.0f;
-            //On the face, a little in: the tip in the straw, the shaft and fletching out toward the line.
-            vec3 local(r * std::cos(a),RANGE_BOSS_HEIGHT + r * std::sin(a),RANGE_BOSS_FRONT + RANGE_ARROW_HALF * 0.7f);
-            vec3 p(base.x + local.x * cs + local.z * sn,base.y + local.y,base.z - local.x * sn + local.z * cs);
-            float tilt = ((float)((h >> 20) % 1000u) / 1000.0f - 0.5f) * 0.3f;
-            arrows.push_back(Object::ComposeTransformScale(p,quat(up,yaw + tilt),vec3(1.0f,1.0f,1.0f)));
-        }
+    if (!flying.empty() || f_range_flying){
+        f_range_flying = !flying.empty();
+        range_set[3]->SetInstances(std::move(flying));
+        range_set[3]->SetVisibility(f_range_flying);
     }
-    bool f_any = !arrows.empty();
-    range_set[2]->SetInstances(std::move(arrows));
-    range_set[2]->SetVisibility(f_any);
 }
 
 //RENDER THREAD: the targets and bales of every built range cell, where ZoneRangeCellAt puts them; the targets kept
@@ -182,6 +311,7 @@ void ApplicationChasm::BuildRangeProps(const ChasmWorld& cw, const ZoneState* z)
     range_target_cell.clear();
     range_target_pos.clear();
     range_target_yaw.clear();
+    range_target_back.clear();
     std::vector<fmat4> sets[RANGE_PROPS];
     const vec3 up(0.0f,1.0f,0.0f);
     bool f_ours = z != NULL;
@@ -206,6 +336,7 @@ void ApplicationChasm::BuildRangeProps(const ChasmWorld& cw, const ZoneState* z)
         range_target_cell.push_back((int)c);
         range_target_pos.push_back(place(0,ZoneRangeTarget(r),r.middle,wobble));
         range_target_yaw.push_back(wobble);
+        range_target_back.push_back(r.size * (RANGE_BALE_BACK - ZONE_RANGE_TARGET));
         vec2 back = r.centre + r.dir * (r.size * RANGE_BALE_BACK);
         for (int b = -1; b <= 1; b++){
             place(1,back + east * (r.size * RANGE_BALE_SPREAD * (float)b),r.middle,wobble * (float)(b + 2));

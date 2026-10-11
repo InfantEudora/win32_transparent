@@ -53,6 +53,10 @@ void ApplicationChasm::TickEconomy(){
     for (int cell : economy.CropDefaults()){
         f_raised = zones.Apply(ZONE_OP_FIELD_CROP,(uint32_t)cell,ZONE_CROP_AUTO) || f_raised;
     }
+    //A tent packed to take on the road (settlements_plan.md): its plot out of its camp.
+    for (int plot : economy.TentsPacked()){
+        f_raised = zones.Apply(ZONE_OP_BUILD_ERASE,(uint32_t)plot) || f_raised;
+    }
     if (f_raised){
         PublishZones();
     }
@@ -114,6 +118,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         //Gathering a scout's pack (defence_plan.md, "Scouting") - only while he is, likewise.
         if (k.gather > 0){
             h.Add(((uint64_t)k.id << 32) | 0x6A7000u | (uint32_t)k.gather);
+        }
+        //Taking a tent, or carrying one (settlements_plan.md) - only while he is, likewise.
+        if (k.tent != ECONOMY_TENT_NONE){
+            h.Add(((uint64_t)k.id << 32) | 0x7E4700u | (uint32_t)k.tent);
         }
         //His route's layers (ramparts_plan.md) - only once he leaves the ground, so a colony that never does hashes as before.
         if (!k.route_layer.empty()){
@@ -187,6 +195,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         ropewalk's card;
       - someone ordered out told to GATHER a scout's pack first, or not (defence_plan.md, "Scouting") - his card's
         chip; refused as an order is;
+      - someone ordered out told to TAKE A TENT first, or not, and one carried PITCHED where he stands
+        (settlements_plan.md) - his card's chips; refused as an order is;
       - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
@@ -210,7 +220,8 @@ void ApplicationChasm::RegisterEconomyCommands(){
         [this](const SimCommand& cmd) -> objectid_t {
             std::string why;
             //value[1]: the layer he is sent to, one up so a recording from before layers - 0 there - asks for the top.
-            if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why,(int)cmd.value[1] - 1)){
+            //value[2]: one of a group's (selection_plan.md, step 3), spread round the plot - 0 in recordings from before.
+            if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why,(int)cmd.value[1] - 1,cmd.value[2] != 0.0f)){
                 PublishEconomy();
             }else{
                 {
@@ -262,6 +273,67 @@ void ApplicationChasm::RegisterEconomyCommands(){
             order_commands_done++;
             return OBJECTID_INVALID;
         });
+    //A tent taken first (settlements_plan.md, "Founding: taking a tent"): his card's chip - refused as an order is.
+    main_scene->RegisterCommandHandler(CHASM_CMD_TENT,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.TakeTent(cmd.subtype,cmd.value[0] != 0.0f,zones.State(),walkers,&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    /*
+        ...and pitched where he stands: the zones and the economy both, here between ticks - the tent stands and he
+        lives in it before the next tick moves anyone. Refused as an order is, with the rules' reason.
+    */
+    main_scene->RegisterCommandHandler(CHASM_CMD_PITCH,
+        [this](const SimCommand& cmd) -> objectid_t {
+            EnsureZonesWorld();
+            std::string why;
+            int plot = -1;
+            uint32_t camp = 0;
+            if (economy.PitchSpot(cmd.subtype,zones.State(),&plot,&camp,&why)){
+                if (zones.PitchTent(plot,camp)){
+                    economy.Pitched(cmd.subtype,plot,zones.State(),walkers);
+                    PublishZones();
+                    PublishEconomy();
+                }else{
+                    why = zones.last_refusal.empty() ? std::string("no room for a tent here") : zones.last_refusal;
+                }
+            }
+            if (!why.empty()){
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    //Settled without a tent (settlements_plan.md, the user's): sent into another settlement and there - refused as an order is.
+    main_scene->RegisterCommandHandler(CHASM_CMD_SETTLE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.SettleHere(cmd.subtype,zones.State(),walkers,&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
     main_scene->RegisterCommandHandler(CHASM_CMD_KEEP,
         [this](const SimCommand& cmd) -> objectid_t {
             int good = (int)cmd.subtype;
@@ -300,13 +372,14 @@ void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
     main_scene->SubmitCommand(cmd);
 }
 
-void ApplicationChasm::SubmitOrder(uint32_t person, int plot, int layer){
+void ApplicationChasm::SubmitOrder(uint32_t person, int plot, int layer, bool f_spread){
     SimCommand cmd;
     cmd.type = CHASM_CMD_ORDER;
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
     cmd.value[0] = (float)plot;     //a plot index, well inside a float's exact integers
     cmd.value[1] = (float)(layer + 1);
+    cmd.value[2] = f_spread ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -334,6 +407,31 @@ void ApplicationChasm::SubmitGather(uint32_t person, bool f_on){
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
     cmd.value[0] = f_on ? 1.0f : 0.0f;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitTent(uint32_t person, bool f_on){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_TENT;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    cmd.value[0] = f_on ? 1.0f : 0.0f;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitPitch(uint32_t person){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_PITCH;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitSettle(uint32_t person){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_SETTLE;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -434,6 +532,19 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     }
     if (k.prop >= 0){
         j["tree"] = k.prop;
+        //Where it stands, to set beside how far he walks to it (walk_left).
+        if (e && e->world && e->world->forest && k.prop < (int)e->world->forest->props.size()){
+            const vec3& t = e->world->forest->props[k.prop].pos;
+            j["tree_at"] = json{{"x",t.x},{"z",t.z}};
+        }
+    }
+    //What is left of his route to walk, in world units.
+    if (k.seg + 1 < (int)k.route.size()){
+        float left = (k.route[k.seg + 1] - k.pos).length();
+        for (size_t i = (size_t)k.seg + 1; i + 1 < k.route.size(); i++){
+            left += (k.route[i + 1] - k.route[i]).length();
+        }
+        j["walk_left"] = left;
     }
     if (k.store && EconomyIsCrateStore(k.store)){
         j["crate"] = EconomyCrateOfStore(k.store);     //a crate he is taking from or moving (crates_plan.md)
@@ -457,6 +568,9 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     }
     if (k.gather > 0){
         j["gather"] = k.gather;     //places still to go to for a scout's pack (defence_plan.md, "Scouting")
+    }
+    if (k.tent != ECONOMY_TENT_NONE){
+        j["tent"] = (k.tent == ECONOMY_TENT_CARRIED) ? "carried" : "to_take";     //settlements_plan.md
     }
     if (e){
         j["settlement"] = EconomyPersonSettlement(*e,k);    //his home's (settlements_plan.md), 0 none
@@ -493,6 +607,11 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         return nullptr;
     }
     json j{{"stock",StockJson(*e,id)},{"settlement",EconomySettlementOf(*e,id)}};
+    //A camp's own water carrier draws here, beside the water (settlements_plan.md).
+    if (id < e->draw_plot.size() && e->draw_plot[id] >= 0 && e->world){
+        const vec2& p = e->world->grid->fine.pos[e->draw_plot[id]];
+        j["draws_at"] = json{{"plot",e->draw_plot[id]},{"x",p.x},{"z",p.y}};
+    }
     //No door: no plot of it can be walked onto from open ground (EconomyShutIn) - a house so is uninhabitable.
     if (EconomyShutIn(*e,id)){
         j["shut_in"] = true;
@@ -583,6 +702,10 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         }
         j["wood_room"] = (id < e->pile_room.size()) ? e->pile_room[id] : 0;
         j["log_wood"] = (id < e->log_wood.size()) ? e->log_wood[id] : 0;
+    }
+    //A collector's hold, by its standing floor.
+    if (z->buildings[id].kind == ZONE_KIND_WATER){
+        j["water_room"] = (id < e->water_room.size()) ? e->water_room[id] : 0;
     }
     for (const EconomyWorker& k : e->workers){
         if (k.building == id){
@@ -933,9 +1056,16 @@ void ApplicationChasm::RegisterEconomyTools(){
         "op gather - person `person`, ordered out, first fills a scout's pack (`on`, default true), or goes straight on - "
         "RECORDED (CHASM_CMD_GATHER), `refusal` as for an order; a worker shows `gather`, the places still to go to. "
         "`notices` is what the rules told the player: `made` since the load, and the `last` few - nothing_to_take (told "
-        "to gather, nothing anywhere) and ran_out (an ordered man's pack out of `what`). SETTLEMENTS (docs/settlements_plan.md): "
-        "`settlements` lists each - its camp's id - with its territory's plots and its people; a worker and a building show "
-        "their `settlement`, 0 none. "
+        "to gather, nothing anywhere), ran_out (an ordered man's pack out of `what`) and no_tent (told to take a tent, none "
+        "to spare anywhere he can get to). SETTLEMENTS (docs/settlements_plan.md): "
+        "`settlements` lists each - its oldest home's id - with its beds, its reach (world units of walking), its "
+        "territory's plots and its people; a worker and a building show "
+        "their `settlement`, 0 none. op take_tent - person `person`, ordered out, first takes a tent from the nearest camp "
+        "with one to spare (`on`, default true), or goes straight on; op pitch - the tent he carries put up where he "
+        "stands, or as near as it may go, his home from then on (his order over); op settle - one ordered onto another "
+        "settlement's ground and inside its borders moves in without a tent, to a camp's bed to spare, an empty "
+        "house there, or squeezed in where there is most room. All RECORDED (CHASM_CMD_TENT, CHASM_CMD_PITCH, CHASM_CMD_SETTLE), `refusal` as for an order; a "
+        "worker shows `tent`: to_take or carried. A camp's own water carrier draws at `draws_at` (a building's). "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -949,7 +1079,8 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"building",{{"type","integer"},{"description","set_stock, guard, guards: the building's id"}}},
                 {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
                 {"on",{{"type","boolean"}}},
-                {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard, gather: the person's id"}}},
+                {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard, gather, take_tent, "
+                                                            "pitch, settle: the person's id"}}},
                 {"layer",{{"type","integer"},{"description","order: the layer of the plot he stands on, in half storeys - 0 its ground, "
                                                            "a castle deck's (ramparts_plan.md); default its top"}}},
                 {"count",{{"type","integer"},{"description","guards: how many guards the tower takes; keep, order_more: how many"}}},
@@ -1125,6 +1256,24 @@ void ApplicationChasm::RegisterEconomyTools(){
                     result["refusal"] = refusal;
                 }
                 result["building"] = tower;
+            }else if (op == "take_tent" || op == "pitch" || op == "settle"){
+                //A tent taken first, or pitched where he stands - or, sent into another settlement and there, moving
+                //in without one (settlements_plan.md, "Founding: taking a tent").
+                SimCommand cmd;
+                cmd.type = (op == "pitch") ? CHASM_CMD_PITCH : (op == "settle") ? CHASM_CMD_SETTLE : CHASM_CMD_TENT;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)args.value("person",0);
+                cmd.value[0] = args.value("on",true) ? 1.0f : 0.0f;
+                uint32_t before = order_commands_done.load();
+                uint32_t refused = order_refusals.load();
+                SubmitCommandAndWait(cmd);
+                result["ran"] = order_commands_done.load() != before;
+                std::string refusal;
+                if (order_refusals.load() != refused){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = order_last_refusal;
+                }
+                result["refusal"] = refusal;
             }else if (op == "gather"){
                 //A scout's pack gathered first (defence_plan.md, "Scouting").
                 SimCommand cmd;
@@ -1317,10 +1466,12 @@ void ApplicationChasm::RegisterEconomyTools(){
                     what.push_back("food");
                 }
                 notices.push_back(json{{"tick",n.tick},{"person",n.person},{"what",what},
-                                       {"kind",n.kind == NOTICE_NOTHING_TO_TAKE ? "nothing_to_take" : "ran_out"}});
+                                       {"kind",n.kind == NOTICE_NOTHING_TO_TAKE ? "nothing_to_take"
+                                               : n.kind == NOTICE_NO_TENT ? "no_tent" : "ran_out"}});
             }
             result["notices"] = json{{"made",e->notices_made},{"last",notices}};
-            //SETTLEMENTS (settlements_plan.md): each one - its camp's id - with its territory's plots and its people.
+            //SETTLEMENTS (settlements_plan.md): each one - its oldest home's id - with its beds and reach, its
+            //territory's plots and its people.
             std::map<uint32_t,std::pair<int,int>> settled;
             for (uint32_t s : e->settlement){
                 if (s){
@@ -1334,8 +1485,10 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             json settlements = json::array();
-            for (const auto& st : settled){
-                settlements.push_back(json{{"id",st.first},{"plots",st.second.first},{"people",st.second.second}});
+            for (const EconomySettlement& st : e->settlements){
+                std::pair<int,int> got = settled.count(st.id) ? settled[st.id] : std::pair<int,int>(0,0);
+                settlements.push_back(json{{"id",st.id},{"beds",st.beds},{"reach",st.reach},{"plots",got.first},
+                                           {"people",got.second}});
             }
             result["settlements"] = settlements;
             //GUARD TOWERS (defence_plan.md): each one's places - its guard count once it stands (step 8) - its

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 0d964184-f477-47d6-845e-a14ed3a2d9dd
-  modified: 2026-10-10T22:33:02.091Z
+  modified: 2026-10-11T20:23:44.576Z
 ---
 
 2026-10-10: aiming at 100-200 villagers + zombie waves on screen. Shape keys (the spider way) were
@@ -59,6 +59,16 @@ their frame time and slide-to-zero does nothing, so clips are keyed from frame 0
 File quirks: timeline marker `F_12` binds the scene camera to male_armature (renders come out empty);
 the `adult_female` MESH has Walking assigned (harmless exporter warnings); the Mixamo rig + its
 `adult_male.001` sit in collection `Retarget sources`, outside Export.
+
+**2026-10-11 evening:** `Idle` exported (on male_armature; the woman borrows it) - the existing by-name hook
+played it with no code change. Shoot now PLAYED at the range ([[chasm-range]]). Clip changes crossfade
+(TransitionToAnimation, 0.25 s, 0.45 s in/out of Shoot). Loads/kit go into bone space by the PROBE bone's bind
+matrix (IntoBone), not inverse_bind_matrix - the IBM carries the armature's file position, so a moved
+female_armature (x 1.77) put her log a unit beside her. FLAGGED to the user, not changed: GetSkeleton drops the
+armature's SCALE too, so the woman (armature 0.83) is drawn 2.09 model units, taller than the man's 1.875;
+loads now fit the drawn height. Export side effects seen: an FBX import resets scene fps to 30 (clips 25%
+shorter); Walking was on female_armature only for a while (the man borrows it, losing his hip bob).
+Source FBXs arrive already on the 15-bone rig (`*_blender_fit.fbx` in Downloads; treechopping is next).
 
 **Trap:** the Export collection's exporter saved in `chasm_props.blend` had `export_skins` and
 `export_animations` OFF (seen 15:59); a one-click export or `blender_chasm_props.py --add` drops the

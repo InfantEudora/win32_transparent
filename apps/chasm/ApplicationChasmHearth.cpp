@@ -139,9 +139,12 @@ void ApplicationChasm::UploadHearth(){
         }
         if (z.buildings[id].kind == ZONE_KIND_CAMP){
             for (int v : plots[id]){
-                if (ZoneCampFire(v) && z.standing[v] > 0){
-                    vec2 p = g.fine.pos[v];
-                    smoke(vec3(p.x,w->terrain->ground[v] + HEARTH_FIRE_UP,p.y));
+                for (int i = 0; i < picker.PlotQuadCount(v); i++){
+                    int q = picker.PlotQuadCorner(v,i) / 4;
+                    if (ZoneCampFireTent(*w,z,q) == v){
+                        vec2 p = ZoneCampFireAt(*w,q,v);
+                        smoke(vec3(p.x,w->terrain->GroundHeight(p,w->terrain->Height(v)) + HEARTH_FIRE_UP,p.y));
+                    }
                 }
             }
             continue;

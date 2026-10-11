@@ -32,6 +32,7 @@
 #define PLAY_PICK_GATE          3       //a wall's gate, by its plot - in `id` as in `plot` (defence_plan.md)
 #define PLAY_PICK_CRATE         4       //a crate lying about, by its id (crates_plan.md)
 #define PLAY_PICK_GROUND        5       //a garden or lot still being built, by its patch's lowest plot (yards_plan.md)
+#define PLAY_PICK_GROUP         6       //two or more grown-ups at once, in play_group - `id` 0 ("Several people selected")
 struct PlayPick{
     int kind = PLAY_PICK_NONE;
     uint32_t id = 0;
@@ -47,8 +48,20 @@ struct PlayPick{
 #define PERSON_KID_MALE         2
 #define PERSON_KID_FEMALE       3
 extern const char* person_asset_names[PERSON_FIGURES];
+//An archer's bow and quiver in chasm_props.glb (ApplicationChasmWorkersView.cpp), stand-ins where it has none.
+#define GEAR_ASSETS             2
+extern const char* gear_asset_names[GEAR_ASSETS];
 //Which of them a person is drawn as now (ApplicationChasmWorkersView.cpp).
 int PersonFigure(const EconomyWorker& k, uint64_t tick);
+/*
+    The Shoot clip's beats (range_plan.md "Shooting"), as fractions of one turn of it, so a re-export at another frame
+    rate keeps them. Read off its hands, frame by frame, in the 2026-10-11 export (120 frames): the right hand is over
+    his shoulder at the quiver by frame 12, swings down to the bow and nocks from 34, holds at full draw from 68, and
+    the hands part at 93-94. A re-animated clip needs them read again.
+*/
+#define SHOOT_TAKE              0.10f   //the arrow comes out of the quiver, into his right hand
+#define SHOOT_NOCK              0.30f   //...is on the string: from here it points through the bow's grip
+#define SHOOT_RELEASE           0.78f   //...and leaves the bow
 //The archery range's props in chasm_props.glb (ApplicationChasmRange.cpp): target, hay bale, arrow.
 extern const char* range_asset_names[];
 //How a crate is turned where it lies, from its id (ApplicationChasmCrates.cpp) - its outline turns the same.
@@ -57,6 +70,9 @@ float CrateYaw(uint32_t id);
 //(ramparts_plan.md) - and how high he stands now (ApplicationChasmWorkersView.cpp).
 float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k, int seg, float along);
 float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k);
+//The turn that points +z along `d`, +y as near `up` as it goes - a bow at its arrow, an arrow along its flight. `d` must
+//not be along `up` (ApplicationChasmWorkersView.cpp).
+quat TurnZTo(const vec3& d, const vec3& up);
 //The layer of plot `plot` nearest the height of `at` - its ground, if it has ground to stand on, or a deck's.
 int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& at);
 
@@ -84,6 +100,10 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_MAKE_MORE   20      //...an order for `value` more of it - 0 cancels the one running (goods_plan.md)
 #define OVERLAY_HIT_GATHER      21      //a posted person's card: gather a scout's pack first, or stop (defence_plan.md)
 #define OVERLAY_HIT_FAMILY      22      //a house's or the camp's card: select person `value`, indoors or out - the view stays
+#define OVERLAY_HIT_GROUP_DROP  23      //a group's card: person `value` taken out of the group (selection_plan.md)
+#define OVERLAY_HIT_TENT        24      //a posted person's card: take a tent first, or not (settlements_plan.md)
+#define OVERLAY_HIT_PITCH       25      //a person's card: the tent he carries pitched where he stands
+#define OVERLAY_HIT_SETTLE      26      //a person's card: sent into another settlement and there, he moves in without a tent
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -178,7 +198,8 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
                                                         //value[0] health, value[1] water, in ticks - -1 leaves it
 #define CHASM_CMD_ORDER             SIM_CMD_LAST+4      //a person posted (docs/defence_plan.md): subtype his id;
                                                         //value[0] the plot he is sent to, -1 released; value[1]
-                                                        //its layer + 1, 0 its top (ramparts_plan.md)
+                                                        //its layer + 1, 0 its top (ramparts_plan.md); value[2] 1
+                                                        //for one of a group's, spread round it (selection_plan.md)
 #define CHASM_CMD_CRATE             SIM_CMD_LAST+5      //a crate put down (a debug edit, docs/crates_plan.md):
                                                         //subtype the plot; value[0] the good, value[1] how many
 #define CHASM_CMD_STOCK             SIM_CMD_LAST+6      //a building's stock of a good set (a debug edit): subtype
@@ -192,6 +213,10 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
                                                         //instead, a count of 0 cancelling it
 #define CHASM_CMD_GATHER            SIM_CMD_LAST+10     //a scout's pack gathered first (docs/defence_plan.md, "Scouting"):
                                                         //subtype the person; value[0] 1 to gather, 0 straight on
+#define CHASM_CMD_TENT              SIM_CMD_LAST+11     //a tent taken first (docs/settlements_plan.md): subtype the person;
+                                                        //value[0] 1 to take one, 0 straight on
+#define CHASM_CMD_PITCH             SIM_CMD_LAST+12     //the tent he carries pitched where he stands: subtype the person
+#define CHASM_CMD_SETTLE            SIM_CMD_LAST+13     //sent into another settlement, he moves in without a tent: subtype the person
 
 //What a left click does.
 enum ChasmTool{
@@ -339,6 +364,7 @@ private:
     //overlay: what the player's click there does, the overlay's buttons included. The pixel under pick_mutex.
     std::atomic<bool> f_script_press{false};
     std::atomic<bool> f_script_press_right{false};  //...made with the right button: an order (defence_plan.md)
+    std::atomic<bool> f_script_press_shift{false};  //...with Shift held: a person added to the selection, or taken out
     int2 script_press_px;
     /*
         Where the mouse is over the window, for what the overlay shows on hover - the top bar's FOOD, its foods
@@ -464,6 +490,15 @@ private:
     std::atomic<uint32_t> order_refusals{0};
     std::string order_last_refusal;
     uint32_t order_refusal_seen = 0;            //render thread: the last one shown
+    /*
+        A GROUP's orders (selection_plan.md, "Several people selected", step 3), told as ONE line once all of them are
+        done - "2 of 3 sent - no way there" - rather than a refusal each: how many (0 none waiting), the commands count
+        they are all done at, the refusals before them, and when they were sent (steady clock), not to wait for ever.
+    */
+    std::atomic<uint32_t> group_orders{0};
+    std::atomic<uint32_t> group_orders_done_at{0};
+    std::atomic<uint32_t> group_orders_refused_at{0};
+    std::atomic<int64_t> group_orders_since{0};
     //A player's command that took an arch's floors down (arches_plan.md step 4): told in the refusal's place, in amber.
     std::atomic<uint32_t> arch_notices{0};
     uint32_t arch_notice_seen = 0;              //render thread: the last one shown
@@ -484,11 +519,15 @@ private:
     void HashEconomy(StateHash& h);
     void RegisterEconomyCommands();
     void SubmitNeeds(uint32_t person, int health, int water);  //any thread; -1 leaves one as it is
-    void SubmitOrder(uint32_t person, int plot, int layer = -1);    //any thread; plot -1 releases him, layer -1 its top
+    //Any thread; plot -1 releases him, layer -1 its top; f_spread for one of a group's (Economy::Order).
+    void SubmitOrder(uint32_t person, int plot, int layer = -1, bool f_spread = false);
     void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
     void SubmitGuards(uint32_t tower, int count);               //any thread
     void SubmitKeep(int good, int count, bool f_order);         //any thread; f_order: `count` more, 0 cancelling
     void SubmitGather(uint32_t person, bool f_on);              //any thread; refused as an order is
+    void SubmitTent(uint32_t person, bool f_on);                //any thread; refused as an order is
+    void SubmitPitch(uint32_t person);                          //any thread; refused as an order is
+    void SubmitSettle(uint32_t person);                         //any thread; refused as an order is
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
@@ -609,7 +648,8 @@ private:
         Each worker a walker's figure in his job's tunic, with what he carries on him; one object per
         worker, reused, placed every frame from the published state. Render thread.
     */
-    Mesh* worker_meshes[PERSON_FIGURES * 4] = {};   //figure (PERSON_*) * 4 + load (ApplicationChasmWorkersView.cpp)
+#define WORKER_LOADS        5       //what a figure can carry: nothing, a log, a sack, a pail, a tent (WorkersView's LOAD_*)
+    Mesh* worker_meshes[PERSON_FIGURES * WORKER_LOADS] = {};    //figure (PERSON_*) * WORKER_LOADS + load
     std::vector<Object*> worker_objects;
     std::vector<int> worker_object_mesh;            //per object: which of worker_meshes it has, -1 none
     /*
@@ -619,14 +659,29 @@ private:
     */
     std::string worker_skin_name[PERSON_FIGURES];   //its skin, "" while the figure is not rigged
     Mesh* worker_skin_mesh[PERSON_FIGURES] = {};
-    Mesh* worker_skin_load[PERSON_FIGURES * 4] = {};    //figure * 4 + load: the load in its bone's space
+    Mesh* worker_skin_load[PERSON_FIGURES * WORKER_LOADS] = {};     //figure * WORKER_LOADS + load: in its bone's space
     float worker_figure_fit[PERSON_FIGURES] = {};   //its height over the man's (the loads follow it)
     float worker_figure_height[PERSON_FIGURES] = {};    //its height as drawn, feet to crown: what a pick near him spans
     float worker_walk_speed[PERSON_FIGURES] = {};   //world units a second its walk clip carries it at rate 1
     bool f_worker_idle_clip = false;                //the file has an idle clip to stand in
+    /*
+        AN ARCHER'S KIT (range_plan.md "Shooting"), on an archer or a guard with a rigged figure: a BOW in his left
+        hand, placed every frame from his hands - upright as he carries it, square to his arrow while he shoots -
+        and a QUIVER on his back, a child of his spine. The arrow in his right hand is drawn with the range's
+        arrows (worker_hand_arrows). The file's `bow` and `quiver` where it has them, stand-ins where not.
+    */
+    Mesh* worker_bow_mesh = NULL;                   //in the figures' units, its grip at the origin, facing +z
+    Mesh* worker_skin_quiver[PERSON_FIGURES] = {};  //in that figure's Spine's space
+    bool f_worker_shoot_clip = false;               //the file has the Shoot clip
+    float worker_shoot_seconds = 0.0f;              //its length: one shot
+    vec3 worker_release_at[PERSON_FIGURES];         //where his arrow leaves the bow: from his feet, facing +z, world units
+    std::vector<fmat4> worker_hand_arrows;          //this frame's arrows in hand, world: UploadWorkers fills, UploadRange draws
     struct WorkerSkin{
         Object* figure = NULL;                      //the Skeleton, built the first time he is this figure
-        Object* load[4] = {};                       //indexed by load; [0], carrying nothing, is never built
+        Object* load[WORKER_LOADS] = {};            //indexed by load; [0], carrying nothing, is never built
+        Object* bow = NULL;                         //his kit, shown while he is an archer
+        Object* quiver = NULL;
+        Bone* arm[4] = {};                          //Arm.Lower.L, Hand.L, Arm.Lower.R, Hand.R: where the bow and arrow go
         int clip = 0;                               //WORKER_CLIP_*, as last set
         float rate = 1.0f;
     };
@@ -668,18 +723,33 @@ private:
         The archery ranges (ApplicationChasmRange.cpp, range_plan.md): targets, hay bales and arrows, an instance
         set each - chasm_props.glb's prop by its name in range_asset_names, or a stand-in until it is modelled.
     */
-    #define RANGE_PROPS         3                   //target, hay bale, arrow
+    #define RANGE_PROPS         4                   //target, hay bale, arrow (stuck), arrow_full (in hand and in flight)
     Object* range_set[RANGE_PROPS] = {};
     Mesh* range_mesh[RANGE_PROPS] = {};
     std::shared_ptr<const ChasmWorld> range_built_world;
     uint32_t range_built_zones = 0xFFFFFFFFu;       //the zones' version, as last drawn
-    std::vector<int> range_target_cell;             //each target drawn: its cell, where it stands, how it is turned
+    std::vector<int> range_target_cell;             //each target drawn: its cell, where it stands, how it is turned,
     std::vector<vec3> range_target_pos;
     std::vector<float> range_target_yaw;
+    std::vector<float> range_target_back;           //...and how far behind it its backstop stands, where misses land
     uint64_t range_arrows_key = ~0ull;              //the arrows as last drawn: rebuilt only when they change
+    bool f_range_flying = false;                    //arrow_full's set had arrows last frame
     void BuildRangeScene();                         //from LoadProps
     void UploadRange();                             //from PreRender
     void BuildRangeProps(const ChasmWorld& w, const ZoneState* z);  //from UploadRange, when the zones change
+    /*
+        THE SHOT CLOCK (range_plan.md "Shooting"): a trainee on the line shoots one shot a turn of the Shoot clip from
+        the tick he arrives, its length stretched so his stint holds a whole number - all of it read from his stint's
+        timer, so his clip, his arrows in the air and his arrows in the target keep one time, and nothing is saved.
+        False when he is not training.
+    */
+    struct ShotClock{
+        float elapsed = 0.0f;                       //seconds into his stint
+        float cycle = 0.0f;                         //seconds a shot
+        int shots = 0;                              //shots a stint
+        uint64_t start = 0;                         //the tick his stint began: with his id, which stint this is
+    };
+    bool ShotClockOf(const EconomyWorker& k, uint64_t tick, ShotClock& out) const;     //ApplicationChasmRange.cpp
     //The ropewalks' walks, wheels, coils and sheaves (ApplicationChasmRopewalk.cpp, goods_plan.md): one mesh for all.
     Object* ropewalk_object = NULL;
     std::shared_ptr<const ChasmWorld> ropewalk_built_world;
@@ -713,6 +783,9 @@ private:
     void RegisterTimeCommands();
     std::atomic<uint32_t> calendar_commands_done{0};
     void UpdateTimeKeys();                      //physics thread, from UpdateView: pause and speed
+    //Whether the keys are the game's: input live (the window ours), and the debug UI not taking them - a text field
+    //being typed in, a save's name (the user's, 2026-10-11: typing one changed tools, paused, and N made a new map).
+    bool KeysLive();
     void PressTimeButton(int action);           //physics thread, from UpdatePick: OVERLAY_HIT_PAUSE or _SPEED
     void SetSpeed(int index);                   //any thread: a play speed
     void SetSpeedFactor(float factor);          //any thread: any factor 1-PHYSICS_TIME_FACTOR_MAX (the tool, the panel)
@@ -851,7 +924,24 @@ private:
     */
     PlayPick play_hover;
     PlayPick play_selected;
+    std::vector<uint32_t> play_group;       //the people of a PLAY_PICK_GROUP selection, two or more, in the order added
+    /*
+        ...and the people selected before a building was: a house's card, which names its family, is reached by
+        selecting the house - so a Shift+click on a name there adds to these rather than to the house. Forgotten when
+        the selection is cleared.
+    */
+    std::vector<uint32_t> play_people_before;
     std::atomic<uint32_t> play_pick_version{0};
+    /*
+        The selection as PEOPLE (selection_plan.md, "Several people selected"): one is a person selected as ever, two
+        or more a GROUP - grown-ups only, since only they take orders - none, nothing. Any thread; they take pick_mutex.
+    */
+    void SelectPeople(std::vector<uint32_t> ids);
+    //Shift+click: a grown-up added to the selection, or taken out of it - on a card's name, to the people before it.
+    void ToggleSelected(uint32_t person, bool f_card_name = false);
+    std::vector<uint32_t> SelectedPeople();     //the group, or the one person selected, or none
+    void SelectLocked(const PlayPick& p);       //anything but people selected (pick_mutex held): the people kept
+    void PruneGroup();                          //physics thread: the dead taken out of the group
     /*
         Who each drawn figure is, by object id: a person's figure - static or his skeleton - and the load on it.
         The people are PICKABLE, so the engine reads back which of them is under the cursor (PlayPickUnder).
@@ -862,6 +952,21 @@ private:
     std::vector<OverlayHit> overlay_hits_drawing;           //render thread, filled while drawing
     int2 right_press_px;                                    //physics thread: where a right press began
     bool f_right_press = false;
+    /*
+        THE BOX (selection_plan.md, "Several people selected", step 2): with no tool in hand a left press is a CLICK,
+        acted on when let go within RIGHT_CLICK_SLOP of where it began - moved further, a BOX, which on letting go
+        selects every grown-up out of doors whose figure's middle is inside it, or adds them with Shift. A drag never
+        clears: an empty box leaves the selection as it was.
+    */
+    int2 left_press_px;                                     //physics thread: where a left press in select mode began
+    bool f_left_press = false;                              //...ours, and not let go yet
+    bool f_box_drag = false;                                //...and moved past the slop: a box
+    bool f_box_shown = false;                               //under pick_mutex: the box drawn, box_a to box_b in pixels
+    bool f_box_scripted = false;                            //...held there by chasm_select op box hold, not the mouse
+    vec2 box_a, box_b;
+    std::vector<uint32_t> box_people;                       //under pick_mutex: who it would take, outlined as hovered
+    std::vector<uint32_t> PeopleInBox(vec2 a, vec2 b);      //physics or tool thread
+    void TakeBox(const std::vector<uint32_t>& ids, bool f_add);    //the box let go: its people selected, or added
     /*
         The selection's outline-only objects: 0 the selected building, 1 the hovered one, 2 every building
         that BELONGS WITH the selection merged into one, 3 the ground that does (a woodcutter's lot) - see

@@ -1205,6 +1205,7 @@ void ApplicationChasm::LoadProps(){
     gltfloader.LoadGLTFFile("meshes/chasm_props.glb");
     std::vector<std::string> names(prop_asset_names,prop_asset_names + PROP_KIND_COUNT);
     names.insert(names.end(),person_asset_names,person_asset_names + PERSON_FIGURES);
+    names.insert(names.end(),gear_asset_names,gear_asset_names + GEAR_ASSETS);
     names.insert(names.end(),forest_bare_names,forest_bare_names + FOREST_OAK_KINDS);
     names.push_back(CHASM_CRATE_ASSET);
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
@@ -2063,7 +2064,7 @@ void ApplicationChasm::UpdateCamera(){
     }
     cam_wheel = 0.0f;
 
-    if (input->IsInputLive()){
+    if (KeysLive()){
         float pan = cam_distance * CHASM_CAM_KEY_PAN * dt;
         if (input->IsKeyDown(INPUT_MOVE_UP) || input->IsKeyDown(INPUT_TURN_UP)) camera_target += forward * pan;
         if (input->IsKeyDown(INPUT_MOVE_DOWN) || input->IsKeyDown(INPUT_TURN_DOWN)) camera_target -= forward * pan;
@@ -2237,8 +2238,10 @@ void ApplicationChasm::UpdateView(void){
         construction site. The seed, frame and fog keys are debug mode's alone.
     */
     const bool f_debug_keys = !PlayMode();
-    //The tool keys toggle: the active tool's key again puts it down.
-    if (input->IsInputLive()){
+    //The tool keys toggle: the active tool's key again puts it down. Their presses are read either way, so one typed
+    //into a text field does not wait and fire once the field lets go.
+    {
+        const bool f_live = KeysLive();
         const int keys[17] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
@@ -2251,7 +2254,7 @@ void ApplicationChasm::UpdateView(void){
                                CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
                                CHASM_TOOL_RANGE,CHASM_TOOL_TOWER,CHASM_TOOL_ROPEWALK};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
-            if (input->WasKeyPressed(keys[i])){
+            if (input->WasKeyPressed(keys[i]) && f_live){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
                 pick_version++;
             }
@@ -2259,11 +2262,11 @@ void ApplicationChasm::UpdateView(void){
     }
     //After the camera, so the ray goes through the view this pass will draw.
     UpdatePick();
-    if (input->WasKeyPressed(INPUT_CHASM_FRAME) && input->IsInputLive() && f_debug_keys){
+    if (input->WasKeyPressed(INPUT_CHASM_FRAME) && KeysLive() && f_debug_keys){
         FrameMap();
     }
     //V shows debug mode the fog of war as play mode has it (the same as View > fog of war).
-    if (input->WasKeyPressed(INPUT_CHASM_FOG) && input->IsInputLive() && f_debug_keys){
+    if (input->WasKeyPressed(INPUT_CHASM_FOG) && KeysLive() && f_debug_keys){
         f_view_clouds = !f_view_clouds;
     }
     /*
@@ -2273,7 +2276,7 @@ void ApplicationChasm::UpdateView(void){
     */
     bool f_next = input->WasKeyPressed(INPUT_CHASM_NEXT_SEED);
     bool f_previous = input->WasKeyPressed(INPUT_CHASM_PREVIOUS_SEED);
-    if ((f_next || f_previous) && input->IsInputLive() && f_debug_keys){
+    if ((f_next || f_previous) && KeysLive() && f_debug_keys){
         std::shared_ptr<const Grid> g = GetGrid();
         GridSettings s = g ? g->settings : next_settings;
         if (f_next){

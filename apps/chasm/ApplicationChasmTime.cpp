@@ -104,12 +104,16 @@ void ApplicationChasm::SetCalendar(uint64_t tick){
     press made while the window was in the background does not fire when it comes back (Scene.cpp,
     the pause key's note).
 */
+bool ApplicationChasm::KeysLive(){
+    return main_scene->inputcontroller->IsInputLive() && !UIWantsKeyboard();
+}
+
 void ApplicationChasm::UpdateTimeKeys(){
     InputController* input = main_scene->inputcontroller;
     bool f_pause = input->WasKeyPressed(INPUT_CHASM_PAUSE);
     bool f_slower = input->WasKeyPressed(INPUT_CHASM_SLOWER);
     bool f_faster = input->WasKeyPressed(INPUT_CHASM_FASTER);
-    if (!input->IsInputLive()){
+    if (!KeysLive()){
         return;
     }
     if (f_pause){
@@ -535,6 +539,34 @@ float ApplicationChasm::DrawBuildBar(float s){
         uint32_t refusals = zone_refusals.load();
         uint32_t orders = order_refusals.load();
         uint32_t notices = arch_notices.load();
+        /*
+            A GROUP's orders (selection_plan.md, "Several people selected"): their refusals held back until all of them
+            are done, then one line for the lot - nothing if all were sent. Given up after a few seconds unanswered.
+        */
+        uint32_t group = group_orders.load();
+        if (group){
+            bool f_done = order_commands_done.load() >= group_orders_done_at.load();
+            bool f_stale = now.time_since_epoch().count() - group_orders_since.load()
+                           > std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(10)).count();
+            uint32_t refused = orders - group_orders_refused_at.load();
+            if ((f_done || f_stale) && refused > 0){
+                char sent[48];
+                if (refused >= group){
+                    snprintf(sent,sizeof(sent),"none of %u sent",group);
+                }else{
+                    snprintf(sent,sizeof(sent),"%u of %u sent",group - refused,group);
+                }
+                std::lock_guard<std::mutex> lock(grid_mutex);
+                refusal_shown = sent + (order_last_refusal.empty() ? std::string() : " - " + order_last_refusal);
+                refusal_since = now;
+                f_refusal_notice = false;
+                refusal_seconds = 3.0f;
+            }
+            if (f_done || f_stale){
+                group_orders = 0;
+            }
+            order_refusal_seen = orders;
+        }
         if (notices != arch_notice_seen){
             arch_notice_seen = notices;
             refusal_seen = refusals;
@@ -577,6 +609,7 @@ float ApplicationChasm::DrawBuildBar(float s){
             bool f_water = (n.what & GOOD_BIT(GOOD_WATER)) != 0;
             bool f_food = (n.what & GOODS_EATEN) != 0;
             std::string told = (n.kind == NOTICE_NOTHING_TO_TAKE) ? "no food or water for " + name + " to take"
+                             : (n.kind == NOTICE_NO_TENT) ? "no tent to spare for " + name + " to take"
                              : name + " has run out of " + ((f_water && f_food) ? "food and water" : f_water ? "water" : "food");
             if (ne->tick < n.tick + CALENDAR_DAY_TICKS / 2){
                 refusal_shown = told;

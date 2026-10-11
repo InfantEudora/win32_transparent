@@ -138,17 +138,56 @@ void BuildWinch(const ChasmWorld& w, int plot, std::vector<vertex>& out){
 #define TENT_LENGTH         1.25f   //along its ridge
 #define TENT_HALF_W         0.55f   //from the ridge out to a side's foot
 #define TENT_HEIGHT         0.85f
-#define FIRE_RING           0.32f   //the stones' circle
+#define FIRE_RING           0.26f   //the stones' circle
 #define FIRE_STONES         7
 
 /*
-    A CAMP's plot (Zones.h, THE CAMP): a tent - an A-frame of canvas on a ridge pole, its door a dark
-    triangle in the front end - or, on one plot in ZONE_CAMP_FIRE_EVERY, a fire: a ring of stones round
-    two crossed logs and a flame, with a log to sit on beside it. Each tent faces its own way and some
-    are a paler canvas, by the plot's hash, so a camp looks pitched by hand rather than laid out.
+    A CAMP's FIRE (Zones.h, THE CAMP), in a cell of open ground beside a tent (ZoneCampFireTent): a ring of
+    stones round two crossed logs and a flame, with a log to sit on. Drawn by its cell, not its tent, so it is
+    drawn again whenever anything is built on a corner of the cell.
 */
 void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column);
 
+void BuildCampFire(const ChasmWorld& w, int fine_quad, int tent, std::vector<vertex>& out){
+    vec2 c = ZoneCampFireAt(w,fine_quad,tent);
+    vec2 dir = c - w.grid->fine.pos[tent];
+    float len = dir.length();
+    dir = (len > 1e-4f) ? dir * (1.0f / len) : vec2(1.0f,0.0f);
+    vec2 side(-dir.y,dir.x);
+    float y = w.terrain->GroundHeight(c,w.terrain->Height(tent));
+    //Stones round the fire, then the logs crossed in it, then the flame - red, and yellow in its heart.
+    float yaw = std::atan2(dir.y,dir.x);
+    for (int i = 0; i < FIRE_STONES; i++){
+        float a = yaw + 6.2831853f * (float)i / FIRE_STONES;
+        Box(out,c + vec2(std::cos(a),std::sin(a)) * FIRE_RING,0.11f,y - 0.04f,y + 0.08f,PAL_STONE);
+    }
+    Beam(out,c - dir * 0.2f,c + dir * 0.2f,y,0.06f,0.07f,PAL_BARK_DARK);
+    Beam(out,c - side * 0.2f,c + side * 0.2f,y + 0.04f,0.06f,0.07f,PAL_BARK_DARK);
+    auto flame = [&](float half, float top, int column){
+        vec3 apex(c.x,y + top,c.y);
+        vec3 q3[4];
+        for (int i = 0; i < 4; i++){
+            vec2 q = c + (i & 1 ? side : dir) * ((i & 2) ? -half : half);
+            q3[i] = vec3(q.x,y + 0.07f,q.y);
+        }
+        vec2 corner[4] = {dir,side,dir * -1.0f,side * -1.0f};
+        for (int i = 0; i < 4; i++){
+            vec2 o = corner[i] + corner[(i + 1) % 4];
+            MeshTri(out,q3[i],q3[(i + 1) % 4],apex,vec3(o.x,0.4f,o.y),column);
+        }
+    };
+    flame(0.13f,0.42f,PAL_ACCENT);
+    flame(0.07f,0.54f,PAL_FIELD);
+    //A log to sit on, beyond the fire from the tent.
+    vec2 seat = c + dir * 0.55f;
+    Beam(out,seat - side * 0.32f,seat + side * 0.32f,y,0.13f,0.15f,PAL_BARK);
+}
+
+/*
+    A CAMP's plot (Zones.h, THE CAMP): a tent - an A-frame of canvas on a ridge pole, its door a dark
+    triangle in the front end. Each faces its own way and some are a paler canvas, by the plot's hash, so a
+    camp looks pitched by hand rather than laid out.
+*/
 void BuildCampPlot(const ChasmWorld& w, int plot, std::vector<vertex>& out){
     vec2 p = w.grid->fine.pos[plot];
     float y = w.terrain->ground[plot];
@@ -156,35 +195,6 @@ void BuildCampPlot(const ChasmWorld& w, int plot, std::vector<vertex>& out){
     float yaw = ZoneCampYaw(plot);      //the way its people step out of it agrees (ZoneCampDoor)
     vec2 dir(std::cos(yaw),std::sin(yaw));
     vec2 side(-dir.y,dir.x);
-    if (ZoneCampFire(plot)){
-        //Stones round the fire, then the logs crossed in it, then the flame - red, and yellow in its heart.
-        for (int i = 0; i < FIRE_STONES; i++){
-            float a = yaw + 6.2831853f * (float)i / FIRE_STONES;
-            Box(out,p + vec2(std::cos(a),std::sin(a)) * FIRE_RING,0.13f,y - 0.02f,y + 0.09f,PAL_STONE);
-        }
-        Beam(out,p - dir * 0.24f,p + dir * 0.24f,y,0.07f,0.08f,PAL_BARK_DARK);
-        Beam(out,p - side * 0.24f,p + side * 0.24f,y + 0.05f,0.07f,0.08f,PAL_BARK_DARK);
-        auto flame = [&](float half, float top, int column){
-            vec3 apex(p.x,y + top,p.y);
-            vec3 c[4];
-            for (int i = 0; i < 4; i++){
-                vec2 q = p + (i & 1 ? side : dir) * ((i & 2) ? -half : half);
-                c[i] = vec3(q.x,y + 0.08f,q.y);
-            }
-            int order[4] = {0,1,2,3};
-            vec2 corner[4] = {dir,side,dir * -1.0f,side * -1.0f};
-            for (int i = 0; i < 4; i++){
-                vec2 o = corner[i] + corner[(i + 1) % 4];
-                MeshTri(out,c[order[i]],c[order[(i + 1) % 4]],apex,vec3(o.x,0.4f,o.y),column);
-            }
-        };
-        flame(0.15f,0.48f,PAL_ACCENT);
-        flame(0.08f,0.62f,PAL_FIELD);
-        //A log to sit on, a little way off.
-        vec2 seat = p - side * 0.85f;
-        Beam(out,seat - dir * 0.4f,seat + dir * 0.4f,y,0.16f,0.18f,PAL_BARK);
-        return;
-    }
     int canvas = ((h >> 10) % 10 < 7) ? PAL_WALL : PAL_STONE_LIGHT;
     vec2 f = p + dir * (TENT_LENGTH * 0.5f);
     vec2 b = p - dir * (TENT_LENGTH * 0.5f);
@@ -781,14 +791,12 @@ void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<ve
         return;
     }
     if (z.KindOf(plot) == ZONE_KIND_CAMP){
-        if (!ZoneCampFire(plot)){
-            float yaw = ZoneCampYaw(plot);
-            vec2 d(std::cos(yaw),std::sin(yaw));
-            vec2 s(-d.y,d.x);
-            Beam(out,p - d * 0.6f + s * 0.12f,p + d * 0.6f + s * 0.12f,ground,0.06f,0.06f,PAL_BARK);
-            Beam(out,p - d * 0.55f - s * 0.1f,p + d * 0.5f - s * 0.1f,ground,0.06f,0.06f,PAL_BARK);
-            Beam(out,p - d * 0.3f,p + d * 0.3f,ground,0.14f,0.42f,PAL_STONE_LIGHT);     //the canvas, rolled
-        }
+        float yaw = ZoneCampYaw(plot);
+        vec2 d(std::cos(yaw),std::sin(yaw));
+        vec2 s(-d.y,d.x);
+        Beam(out,p - d * 0.6f + s * 0.12f,p + d * 0.6f + s * 0.12f,ground,0.06f,0.06f,PAL_BARK);
+        Beam(out,p - d * 0.55f - s * 0.1f,p + d * 0.5f - s * 0.1f,ground,0.06f,0.06f,PAL_BARK);
+        Beam(out,p - d * 0.3f,p + d * 0.3f,ground,0.14f,0.42f,PAL_STONE_LIGHT);     //the canvas, rolled
         return;
     }
     //The corners of the plot's footprint, round it in order of angle.
@@ -893,6 +901,10 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
     const GridPicker& picker = *w.picker;
     const GridQuad& quad = g.fine.quads[fine_quad];
     const vec3 up(0.0f,1.0f,0.0f);
+    int fire_tent = ZoneCampFireTent(w,z,fine_quad);
+    if (fire_tent >= 0){
+        BuildCampFire(w,fine_quad,fire_tent,out);
+    }
 
     /*
         Each corner as a SOLID between two heights, counted in half-storeys (HALF) from y = 0, so heights
@@ -949,7 +961,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             }
             s[k] = 0;
         }
-        //A camp is no house body either: a tent or a fire on each of its plots, the same way.
+        //A camp is no house body either: a tent on each of its plots, the same way.
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_CAMP){
             if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
                 BuildCampPlot(w,v,out);

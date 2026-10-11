@@ -392,6 +392,27 @@ const char* SiteErrand(int phase, int good, bool f_tower = false){
     return phrases[i][std::max(0,std::min(2,phase)) + (f_tower ? 3 : 0)].c_str();
 }
 
+//Whether his workplace is a camp - its own woodcutter's or water carrier's (Economy.h, THE CAMP'S OWN WORK).
+bool CampWork(const EconomyWorker& k, const ZoneState* z){
+    return z && k.building && k.building < z->buildings.size() && z->buildings[k.building].kind == ZONE_KIND_CAMP;
+}
+
+/*
+    SETTLING (settlements_plan.md, the user's 2026-10-11): sent onto another settlement's ground, inside its borders now,
+    and no tent on him - so his card offers Settle here. Economy::SettleHere says the rest: a bed to spare there.
+*/
+bool CanSettleHere(const EconomyState& e, const EconomyWorker& k){
+    if (k.post < 0 || k.tent == ECONOMY_TENT_CARRIED || !e.world || k.post >= (int)e.settlement.size()){
+        return false;
+    }
+    uint32_t there = e.settlement[k.post];
+    if (!there || there == EconomyPersonSettlement(e,k)){
+        return false;
+    }
+    GridPick here = e.world->picker->Pick(k.pos);
+    return here.f_hit && here.plot >= 0 && here.plot < (int)e.settlement.size() && e.settlement[here.plot] == there;
+}
+
 //What he is doing, as a sentence's end - the card's and the house's list's. With the zones, a wall's way
 //cleared is told from a road's (line_works_plan.md, step 3): the same errand on another line. With the economy,
 //a post he is kept from is told from one he stands on.
@@ -414,10 +435,14 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         case WORKER_AT_HOME:    return EconomyIndoors(k) ? "at home" : (k.house ? "at his tent" : "waiting");
         //A woodcutter out for wood - a log first, a tree if none lies near - and, with one on him, for a second log;
         //at it, felling for longer than a pick-up takes.
-        case WORKER_TO_WORK:    return (k.prop >= 0) ? ((k.carry > 0) ? "going for another log" : "going for wood") : "going to work";
-        case WORKER_WORKING:    return (k.prop < 0) ? "picking up"
+        //A camp's water carrier out to the water's edge to draw a load (settlements_plan.md), not to a collector.
+        case WORKER_TO_WORK:    return (k.prop >= 0) ? ((k.carry > 0) ? "going for another log" : "going for wood")
+                                     : (k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "going to draw water" : "going to work";
+        case WORKER_WORKING:    return (k.prop < 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "drawing water"
+                                     : (k.prop < 0) ? "picking up"
                                      : (k.timer > (int)(ECONOMY_PICK_SECONDS * CALENDAR_TICKS_PER_SECOND)) ? "felling" : "picking up a log";
-        case WORKER_TO_STORE:   return "carrying to a store";
+        case WORKER_TO_STORE:   return (k.store == 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "carrying water to the camp"
+                                     : "carrying to a store";
         case WORKER_UNLOADING:  return "unloading";
         case WORKER_TO_HOME:    return "going home";
         case WORKER_HOLDING:    return "waiting with a load";
@@ -430,6 +455,10 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         case WORKER_CLEARING:   return "clearing a road";
         case WORKER_LAYING:     return "laying a road";
         case WORKER_TO_SUPPLY:{
+            //A tent to take comes before gathering (settlements_plan.md) - a pressing need before either.
+            if (k.tent == ECONOMY_TENT_TO_TAKE && !EconomyPressing(k)){
+                return "going for a tent";
+            }
             if (k.gather > 0){
                 return "gathering supplies";        //a scout's pack, before his post (defence_plan.md)
             }
@@ -438,7 +467,8 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
             bool f_food = (want & GOODS_FOOD) != 0;
             return (f_water && f_food) ? "going for food and water" : f_water ? "going for water" : "going for food";
         }
-        case WORKER_SUPPLYING:  return (k.gather > 0) ? "packing supplies" : "eating and drinking";
+        case WORKER_SUPPLYING:  return (k.tent == ECONOMY_TENT_TO_TAKE && !EconomyPressing(k)) ? "packing a tent"
+                                     : (k.gather > 0) ? "packing supplies" : "eating and drinking";
         case WORKER_TO_GET:     return (k.carry_good == GOOD_WATER) ? "fetching water for home" : "fetching food for home";
         case WORKER_GETTING:    return "picking up for home";
         case WORKER_TO_PANTRY:  return "taking it home";
@@ -721,6 +751,7 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
 #define CARD_TOGGLE 3       //a site's "Build first"; a posted person's "Release", "Gather supplies first" (own choice_action)
 #define CARD_CHOICE 4       //a row of chips, one of them lit: a field's crops (fields_plan.md)
 #define CARD_STOCK  5       //a goods strip (the user's, 2026-10-09)
+#define CARD_PERSON 6       //a group's row: his badge, his line, `right` at its end, and an x taking him out of the group
 struct CardLine{
     int type = CARD_TEXT;
     std::string text;
@@ -732,7 +763,8 @@ struct CardLine{
     int choice_on = -1;         //...the value lit
     int choice_action = 0;      //...and what a click on one does (OVERLAY_HIT_*), with its value
     HudStock stock;             //CARD_STOCK
-    uint32_t person = 0;        //CARD_TEXT about one person: hovering it outlines him, a click selects him
+    uint32_t person = 0;        //CARD_TEXT about one person: hovering it outlines him, a click selects him; CARD_PERSON's
+    std::string right;          //CARD_PERSON: at the row's right, dimmed - how long his pack lasts
 };
 
 //A crop's name as a card says it: capitalised.
@@ -1006,6 +1038,32 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         gather.chips_on = (k.gather > 0) ? 1 : 0;
         gather.choice_action = OVERLAY_HIT_GATHER;
         c.lines.push_back(gather);
+        //TAKING A TENT (settlements_plan.md): one from the nearest camp with one to spare, first - lit while he is to.
+        if (k.tent != ECONOMY_TENT_CARRIED){
+            CardLine tent;
+            tent.type = CARD_TOGGLE;
+            tent.text = "Take a tent";
+            tent.chips_on = (k.tent == ECONOMY_TENT_TO_TAKE) ? 1 : 0;
+            tent.choice_action = OVERLAY_HIT_TENT;
+            c.lines.push_back(tent);
+        }
+    }
+    //Sent into another settlement and there now, with no tent: he moves in as he is, to a bed to spare (settlements_plan.md).
+    if (CanSettleHere(e,k)){
+        CardLine settle;
+        settle.type = CARD_TOGGLE;
+        settle.text = "Settle here";
+        settle.choice_action = OVERLAY_HIT_SETTLE;
+        c.lines.push_back(settle);
+    }
+    //A tent on him (settlements_plan.md): pitched where he stands - his home from then on - posted or not.
+    if (k.tent == ECONOMY_TENT_CARRIED){
+        c.Text("Carrying a tent",HUD_AMBER);
+        CardLine pitch;
+        pitch.type = CARD_TOGGLE;
+        pitch.text = "Pitch the tent here";
+        pitch.choice_action = OVERLAY_HIT_PITCH;
+        c.lines.push_back(pitch);
     }
     /*
         His PACK (defence_plan.md): what he carries to live on - posted, or on his way home - as a store shows what it
@@ -1589,7 +1647,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             std::string lot = (outside > 0) ? Format("%i on its lot",outside) : std::string("no lot");
             c.Text(indoors > 0 ? Format("Keeps %i indoors, ",indoors) + lot : "Too small to keep wood indoors - " + lot,HUD_TEXT_DIM);
         }else if (b.kind == ZONE_KIND_WATER && (info.storeys > 0 || AnyGoods(held))){
-            c.Stock("Collected","anyone's",held,ECONOMY_WATER_HOLD,false,EconomyReserved(*e,id));
+            c.Stock("Collected","anyone's",held,(id < e->water_room.size()) ? e->water_room[id] : 0,false,EconomyReserved(*e,id));
         }else if (b.kind == ZONE_KIND_ROPEWALK && (info.storeys > 0 || AnyGoods(held))){
             //Its rope, anyone's against the pile it stops at, and the hemp it is to be made of - its ropemaker's alone.
             std::array<int,GOOD_COUNT> rope{};
@@ -1838,7 +1896,7 @@ void GroundSiteCard(const ZoneState& z, const EconomyState* e, const std::vector
 */
 void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& crate, uint64_t tick, Card& c){
     uint32_t id = ECONOMY_STORE_CRATE | crate.id;
-    c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : "Crate";
+    c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : (crate.origin == CRATE_CAMP) ? "A camp's goods" : "Crate";
     c.StockByGroup("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
     CalendarDate when = CalendarDateOf(crate.tick);
     std::string date = std::string(CalendarSeasonName(when.season)) + " " + std::to_string(when.day)
@@ -1846,6 +1904,8 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
     std::string by = FirstNameOf(e,crate.by);
     if (crate.origin == CRATE_FOUND){
         c.Text("Found " + date,HUD_TEXT_DIM);
+    }else if (crate.origin == CRATE_CAMP){
+        c.Text("Left where a camp stood, " + date,HUD_TEXT_DIM);     //its last tent packed or erased (settlements_plan.md)
     }else{
         c.Text(by.empty() ? "Put down " + date : "Dropped by " + by + ", " + date,HUD_TEXT_DIM);
     }
@@ -1861,7 +1921,98 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
     }
 }
 
-bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint64_t tick, Card& c){
+/*
+    A GROUP'S CARD (selection_plan.md, "Several people selected"): a row each - his badge, name, job and what he is
+    doing, dimmed at home, and how long his pack lasts - each a click away from being selected alone, or an x from
+    leaving the group. Then, for everyone posted among them, Release, Gather supplies first and Take a tent each: each
+    person's own command, as on his card, lit while all of them are at it; and for those carrying a tent, Pitch.
+*/
+void GroupCard(const ZoneState& z, const EconomyState& e, const std::vector<uint32_t>& group, Card& c){
+    c.title = Format("%i people",(int)group.size());
+    int posted = 0;
+    int gathering = 0;
+    int tentless = 0;       //posted with no tent on them
+    int taking = 0;         //...told to take one
+    int carrying = 0;       //anyone with one on him
+    int settling = 0;       //sent into another settlement, there now, and no tent on him
+    for (uint32_t id : group){
+        const EconomyWorker* k = PersonById(e,id);
+        if (!k){
+            continue;
+        }
+        CardLine l;
+        l.type = CARD_PERSON;
+        l.person = id;
+        l.text = Format("%s - %s, %s",EconomyPersonName(*k).c_str(),JobTitle(k->job),Doing(*k,&z,&e));
+        l.colour = EconomyIndoors(*k) ? HUD_TEXT_DIM : HUD_TEXT;
+        //His pack by what runs out first: what a scout's day out is measured in.
+        if (AnyGoods(k->pack)){
+            float water = (float)k->pack[GOOD_WATER] * NEEDS_WATER_WORTH / CALENDAR_DAY_TICKS;
+            float food = (float)EconomyPackFood(*k) / CALENDAR_DAY_TICKS;
+            float days = std::min(water,food);
+            l.right = (days < 1.0f) ? std::string("pack under a day") : Format("pack %.0f day%s",std::floor(days),
+                                                                                 std::floor(days) == 1.0f ? "" : "s");
+        }
+        c.lines.push_back(l);
+        posted += (k->post >= 0) ? 1 : 0;
+        gathering += (k->post >= 0 && k->gather > 0) ? 1 : 0;
+        tentless += (k->post >= 0 && k->tent != ECONOMY_TENT_CARRIED) ? 1 : 0;
+        taking += (k->post >= 0 && k->tent == ECONOMY_TENT_TO_TAKE) ? 1 : 0;
+        carrying += (k->tent == ECONOMY_TENT_CARRIED) ? 1 : 0;
+        settling += CanSettleHere(e,*k) ? 1 : 0;
+    }
+    if (posted > 0){
+        c.Text(posted == (int)group.size() ? std::string("Posted") : Format("%i of them posted",posted),HUD_AMBER);
+        CardLine release;
+        release.type = CARD_TOGGLE;
+        release.text = "Release";
+        release.choice_action = OVERLAY_HIT_RELEASE;
+        c.lines.push_back(release);
+        CardLine gather;
+        gather.type = CARD_TOGGLE;
+        gather.text = "Gather supplies first";
+        gather.chips_on = (gathering == posted) ? 1 : 0;
+        gather.choice_action = OVERLAY_HIT_GATHER;
+        c.lines.push_back(gather);
+        //A tent each (settlements_plan.md) - for those posted without one, lit while all of them are to take one.
+        if (tentless > 0){
+            CardLine tent;
+            tent.type = CARD_TOGGLE;
+            tent.text = "Take a tent each";
+            tent.chips_on = (taking == tentless) ? 1 : 0;
+            tent.choice_action = OVERLAY_HIT_TENT;
+            c.lines.push_back(tent);
+        }
+    }
+    //Those sent into another settlement and there now, with no tent: they move in as they are, each to a bed to spare.
+    if (settling > 0){
+        CardLine settle;
+        settle.type = CARD_TOGGLE;
+        settle.text = (settling == (int)group.size()) ? std::string("Settle here")
+                                                      : Format("Settle here - %i of them",settling);
+        settle.choice_action = OVERLAY_HIT_SETTLE;
+        c.lines.push_back(settle);
+    }
+    //Their tents pitched where they stand, each beside the last: one camp.
+    if (carrying > 0){
+        c.Text(carrying == 1 ? std::string("One of them carries a tent") : Format("%i of them carry tents",carrying),HUD_AMBER);
+        CardLine pitch;
+        pitch.type = CARD_TOGGLE;
+        pitch.text = carrying == 1 ? "Pitch the tent here" : "Pitch the tents here";
+        pitch.choice_action = OVERLAY_HIT_PITCH;
+        c.lines.push_back(pitch);
+    }
+}
+
+bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint64_t tick, Card& c,
+              const std::vector<uint32_t>& group = {}){
+    if (p.kind == PLAY_PICK_GROUP){
+        if (e && !group.empty()){
+            GroupCard(z,*e,group,c);
+            return true;
+        }
+        return false;
+    }
     if (p.kind == PLAY_PICK_CRATE && e){
         for (const EconomyCrate& crate : e->crates){
             if (crate.id == p.id){
@@ -2051,6 +2202,7 @@ uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r,
     return 0;
 }
 
+
 }
 
 //--- Picking (physics thread) ----------------------------------------------------------------------
@@ -2230,6 +2382,133 @@ void ApplicationChasm::RestorePickPin(){
 }
 
 /*
+    THE SELECTION AS PEOPLE (selection_plan.md, "Several people selected"): one is a person selected, as ever - a
+    child too; two or more a GROUP, of grown-ups only, since only they take orders and a group is for ordering.
+*/
+void ApplicationChasm::SelectPeople(std::vector<uint32_t> ids){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::vector<uint32_t> keep;
+    for (uint32_t id : ids){
+        const EconomyWorker* k = e ? PersonById(*e,id) : NULL;
+        if (k && std::find(keep.begin(),keep.end(),id) == keep.end() && (ids.size() == 1 || EconomyCanOrder(*k,e->tick))){
+            keep.push_back(id);
+        }
+    }
+    std::lock_guard<std::mutex> lock(pick_mutex);
+    play_selected = PlayPick();
+    play_group.clear();
+    play_people_before.clear();
+    if (keep.size() >= 2){
+        play_selected.kind = PLAY_PICK_GROUP;
+        play_group = keep;
+    }else if (keep.size() == 1){
+        play_selected.kind = PLAY_PICK_PERSON;
+        play_selected.id = keep[0];
+    }
+    play_pick_version++;
+}
+
+void ApplicationChasm::SelectLocked(const PlayPick& p){
+    if (play_selected.kind == PLAY_PICK_GROUP){
+        play_people_before = play_group;
+    }else if (play_selected.kind == PLAY_PICK_PERSON){
+        play_people_before = {play_selected.id};
+    }
+    if (p.kind == PLAY_PICK_NONE){
+        play_people_before.clear();
+    }
+    play_selected = p;
+    play_group.clear();
+    play_pick_version++;
+}
+
+void ApplicationChasm::ToggleSelected(uint32_t person, bool f_card_name){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    const EconomyWorker* k = e ? PersonById(*e,person) : NULL;
+    if (!k || !EconomyCanOrder(*k,e->tick)){
+        return;
+    }
+    std::vector<uint32_t> ids = SelectedPeople();
+    if (ids.empty() && f_card_name){
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        ids = play_people_before;
+    }
+    auto at = std::find(ids.begin(),ids.end(),person);
+    if (at != ids.end()){
+        ids.erase(at);
+    }else{
+        ids.push_back(person);
+    }
+    SelectPeople(ids);
+}
+
+std::vector<uint32_t> ApplicationChasm::SelectedPeople(){
+    std::lock_guard<std::mutex> lock(pick_mutex);
+    if (play_selected.kind == PLAY_PICK_GROUP){
+        return play_group;
+    }
+    return (play_selected.kind == PLAY_PICK_PERSON) ? std::vector<uint32_t>{play_selected.id} : std::vector<uint32_t>();
+}
+
+void ApplicationChasm::PruneGroup(){
+    std::vector<uint32_t> ids;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        if (play_selected.kind != PLAY_PICK_GROUP){
+            return;
+        }
+        ids = play_group;
+    }
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    if (!e){
+        return;
+    }
+    size_t was = ids.size();
+    ids.erase(std::remove_if(ids.begin(),ids.end(),[&](uint32_t id){ return !PersonById(*e,id); }),ids.end());
+    if (ids.size() != was){
+        SelectPeople(ids);
+    }
+}
+
+//THE BOX's people: grown-ups out of doors whose figure's middle lands inside the box on screen, behind a roof or not.
+std::vector<uint32_t> ApplicationChasm::PeopleInBox(vec2 a, vec2 b){
+    std::vector<uint32_t> out;
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    if (!w || !e || e->world != w){
+        return out;
+    }
+    vec2 lo(std::min(a.x,b.x),std::min(a.y,b.y));
+    vec2 hi(std::max(a.x,b.x),std::max(a.y,b.y));
+    for (const EconomyWorker& k : e->workers){
+        if (EconomyIndoors(k) || !EconomyCanOrder(k,e->tick)){
+            continue;
+        }
+        vec3 middle = FeetOf(*w,z.get(),k) + vec3(0.0f,worker_figure_height[PersonFigure(k,e->tick)] * 0.5f,0.0f);
+        vec2 sp;
+        if (ScreenOf(main_scene->camera,(float)main_window->width,(float)main_window->height,middle,sp) &&
+            sp.x >= lo.x && sp.x <= hi.x && sp.y >= lo.y && sp.y <= hi.y){
+            out.push_back(k.id);
+        }
+    }
+    return out;
+}
+
+void ApplicationChasm::TakeBox(const std::vector<uint32_t>& ids, bool f_add){
+    if (ids.empty()){
+        return;
+    }
+    std::vector<uint32_t> people = f_add ? SelectedPeople() : std::vector<uint32_t>();
+    for (uint32_t id : ids){
+        if (std::find(people.begin(),people.end(),id) == people.end()){
+            people.push_back(id);
+        }
+    }
+    SelectPeople(people);
+}
+
+/*
     PHYSICS THREAD, from UpdatePick in play mode, before any painting: the overlay takes the mouse
     where it is drawn (a press on it does what it says and nothing beneath is picked or painted); a
     right click - pressed and let go without dragging, which would be a pan - puts a tool down, sends
@@ -2238,15 +2517,20 @@ void ApplicationChasm::RestorePickPin(){
 */
 void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked){
     InputController* input = main_scene->inputcontroller;
+    PruneGroup();
     //A scripted click (chasm_select op press): this pass, at its pixel, as the mouse's would be - the
-    //right button's too.
+    //right button's too, and Shift.
     bool f_script_right = false;
+    bool f_shift = input->IsKeyDown(INPUT_SHIFT);
+    bool f_scripted = false;        //a script's press: pressed and let go at once, never a box
     if (f_script_press.exchange(false)){
+        f_scripted = true;
         {
             std::lock_guard<std::mutex> lock(pick_mutex);
             px = script_press_px;
         }
         f_script_right = f_script_press_right.exchange(false);
+        f_shift = f_script_press_shift.exchange(false);
         f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
         f_clicked = f_over_scene && !f_script_right;
         if (f_over_scene){
@@ -2270,9 +2554,7 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             }else if (hit.action == OVERLAY_HIT_PAUSE || hit.action == OVERLAY_HIT_SPEED){
                 PressTimeButton(hit.action);    //the calendar's buttons (ApplicationChasmTime.cpp)
             }else if (hit.action == OVERLAY_HIT_CLOSE){
-                std::lock_guard<std::mutex> lock(pick_mutex);
-                play_selected = PlayPick();
-                play_pick_version++;
+                SelectPeople({});
             }else if (hit.action == OVERLAY_HIT_TAKE_TOOL){
                 //A hint in NEEDS ATTENTION (issues_plan.md): its tool in hand - a second press keeps it there.
                 paint_tool = hit.value;
@@ -2287,31 +2569,27 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                         p.kind = PLAY_PICK_BUILDING;
                         p.id = (uint32_t)hit.value;
                         p.plot = FirstPlotOf(*z,p.id);
-                        play_selected = p;
-                        play_pick_version++;
+                        SelectLocked(p);
                     }
                     cam_seek_building = (uint32_t)hit.value;
                 }
+            }else if ((hit.action == OVERLAY_HIT_PERSON || hit.action == OVERLAY_HIT_FAMILY) && f_shift){
+                //Shift on a name - the neediest's, a card's (selection_plan.md, "Several people selected"): added to the
+                //selection or taken out, at home too, and the view stays.
+                ToggleSelected((uint32_t)hit.value,hit.action == OVERLAY_HIT_FAMILY);
             }else if (hit.action == OVERLAY_HIT_PERSON){
                 //The neediest list (DrawNeediest): him, selected, and the view taken to him (the camera's glide).
-                {
-                    std::lock_guard<std::mutex> lock(pick_mutex);
-                    PlayPick p;
-                    p.kind = PLAY_PICK_PERSON;
-                    p.id = (uint32_t)hit.value;
-                    play_selected = p;
-                    play_pick_version++;
-                }
+                SelectPeople({(uint32_t)hit.value});
                 cam_seek_person = (uint32_t)hit.value;
             }else if (hit.action == OVERLAY_HIT_FAMILY){
-                //A house's family line, or the camp's (selection_plan.md): him, at home or out. The view stays on the
-                //house - he is in it, or his pin shows where he went.
-                std::lock_guard<std::mutex> lock(pick_mutex);
-                PlayPick p;
-                p.kind = PLAY_PICK_PERSON;
-                p.id = (uint32_t)hit.value;
-                play_selected = p;
-                play_pick_version++;
+                //A house's family line, or the camp's (selection_plan.md), or a group's row: him alone, at home or out.
+                //The view stays - he is in the house, or his pin shows where he went.
+                SelectPeople({(uint32_t)hit.value});
+            }else if (hit.action == OVERLAY_HIT_GROUP_DROP){
+                //A group's row's x: he leaves the group - the last but one leaves one person selected.
+                std::vector<uint32_t> ids = SelectedPeople();
+                ids.erase(std::remove(ids.begin(),ids.end(),(uint32_t)hit.value),ids.end());
+                SelectPeople(ids);
             }else if (hit.action == OVERLAY_HIT_GATE){
                 //A gate's card: its door shut (1) or opened (0) - a recorded zone command (defence_plan.md).
                 PlayPick sel;
@@ -2345,17 +2623,68 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     SubmitGuards(sel.id,hit.value);
                 }
             }else if (hit.action == OVERLAY_HIT_GATHER){
-                //A posted person's card: gather a scout's pack first, or - lit - go straight on (defence_plan.md).
-                PlayPick sel;
-                {
-                    std::lock_guard<std::mutex> lock(pick_mutex);
-                    sel = play_selected;
-                }
+                /*
+                    A posted person's card, or a group's: gather a scout's pack first, or - lit - go straight on
+                    (defence_plan.md). For a group, everyone posted among them: lit while all of them are at it, so a
+                    press with some gathering sets the rest to it, and one with all of them stops them all.
+                */
                 std::shared_ptr<const EconomyState> e = GetEconomy();
-                if (e && sel.kind == PLAY_PICK_PERSON){
-                    for (const EconomyWorker& k : e->workers){
-                        if (k.id == sel.id){
-                            SubmitGather(k.id,k.gather <= 0);
+                if (e){
+                    std::vector<const EconomyWorker*> posted;
+                    bool f_all = true;
+                    for (uint32_t id : SelectedPeople()){
+                        const EconomyWorker* k = PersonById(*e,id);
+                        if (k && k->post >= 0){
+                            posted.push_back(k);
+                            f_all = f_all && k->gather > 0;
+                        }
+                    }
+                    for (const EconomyWorker* k : posted){
+                        if ((k->gather > 0) == f_all){
+                            SubmitGather(k->id,!f_all);
+                        }
+                    }
+                }
+            }else if (hit.action == OVERLAY_HIT_TENT){
+                //A posted person's card, or a group's: take a tent first, or not (settlements_plan.md) - as gathering,
+                //for everyone posted without one.
+                std::shared_ptr<const EconomyState> e = GetEconomy();
+                if (e){
+                    std::vector<const EconomyWorker*> posted;
+                    bool f_all = true;
+                    for (uint32_t id : SelectedPeople()){
+                        const EconomyWorker* k = PersonById(*e,id);
+                        if (k && k->post >= 0 && k->tent != ECONOMY_TENT_CARRIED){
+                            posted.push_back(k);
+                            f_all = f_all && k->tent == ECONOMY_TENT_TO_TAKE;
+                        }
+                    }
+                    for (const EconomyWorker* k : posted){
+                        if ((k->tent == ECONOMY_TENT_TO_TAKE) == f_all){
+                            SubmitTent(k->id,!f_all);
+                        }
+                    }
+                }
+            }else if (hit.action == OVERLAY_HIT_SETTLE){
+                //Everyone selected who may moves into the settlement they were sent to, each to a bed to spare there.
+                std::shared_ptr<const EconomyState> e = GetEconomy();
+                if (e){
+                    for (uint32_t id : SelectedPeople()){
+                        const EconomyWorker* k = PersonById(*e,id);
+                        if (k && CanSettleHere(*e,*k)){
+                            SubmitSettle(k->id);
+                        }
+                    }
+                }
+            }else if (hit.action == OVERLAY_HIT_PITCH){
+                //Everyone selected carrying a tent pitches it where he stands, in the order selected: each beside the
+                //last, one camp (Economy::PitchSpot).
+                std::shared_ptr<const EconomyState> e = GetEconomy();
+                if (e){
+                    for (uint32_t id : SelectedPeople()){
+                        const EconomyWorker* k = PersonById(*e,id);
+                        if (k && k->tent == ECONOMY_TENT_CARRIED){
+                            SubmitPitch(k->id);
                         }
                     }
                 }
@@ -2385,14 +2714,13 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     SubmitGuard(person,0);
                 }
             }else if (hit.action == OVERLAY_HIT_RELEASE){
-                //A posted person's card: back to his work (defence_plan.md) - a recorded order.
-                PlayPick sel;
-                {
-                    std::lock_guard<std::mutex> lock(pick_mutex);
-                    sel = play_selected;
-                }
-                if (sel.kind == PLAY_PICK_PERSON){
-                    SubmitOrder(sel.id,-1);
+                //A posted person's card, or a group's: back to their work (defence_plan.md) - a recorded order each.
+                std::shared_ptr<const EconomyState> e = GetEconomy();
+                for (uint32_t id : SelectedPeople()){
+                    const EconomyWorker* k = e ? PersonById(*e,id) : NULL;
+                    if (k && k->post >= 0){
+                        SubmitOrder(id,-1);
+                    }
                 }
             }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_STORE_ALLOW_GROUP
                       || hit.action == OVERLAY_HIT_SITE_FIRST){
@@ -2455,19 +2783,18 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
         f_right_click = std::abs(px.x - right_press_px.x) <= RIGHT_CLICK_SLOP && std::abs(px.y - right_press_px.y) <= RIGHT_CLICK_SLOP;
     }
     if (f_right_click){
-        PlayPick sel;
-        {
-            std::lock_guard<std::mutex> lock(pick_mutex);
-            sel = play_selected;
-        }
+        std::vector<uint32_t> people = SelectedPeople();
         if (paint_tool != CHASM_TOOL_SELECT){
             paint_tool = CHASM_TOOL_SELECT;
             pick_version++;
-        }else if (sel.kind == PLAY_PICK_PERSON && hover.f_hit && hover.plot >= 0){
+        }else if (!people.empty() && hover.f_hit && hover.plot >= 0){
             /*
                 An ORDER: the selected person goes to the plot under the cursor and stands there. The economy
                 decides whether he can, and the overlay says why not (CHASM_CMD_ORDER). On a GUARD TOWER - the one
                 the cursor picks, or on the plot - he is posted there as its guard by hand instead (step 8).
+                A GROUP (selection_plan.md, "Several people selected", step 3): an order each - on the one plot when it
+                has room for them all, else over the plots round it (Economy::SpreadPost); onto a tower, the nearest first, as
+                many as it has places. Told as one line once all are done (group_orders, DrawBuildBar).
             */
             PlayPick on = PlayPickUnder(px,hover);
             std::shared_ptr<const ZoneState> z = GetZones();
@@ -2477,18 +2804,53 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             }else if (z && hover.plot < (int)z->building.size() && z->KindOf(hover.plot) == ZONE_KIND_TOWER){
                 tower = z->building[hover.plot];
             }
-            if (tower){
-                SubmitGuard(sel.id,tower);
+            //On the layer the mouse is on - the wall-walk under an arch, the road under it (ramparts_plan.md); picked by
+            //the ray alone, there is none to tell: its top.
+            int layer = hover.f_surface ? hover.layer : -1;
+            std::shared_ptr<const ChasmWorld> w = GetWorld();
+            std::shared_ptr<const EconomyState> e = GetEconomy();
+            if (people.size() >= 2 && w && z && e && e->world == w && z->world == w){
+                group_orders_refused_at = order_refusals.load();
+                group_orders_done_at = order_commands_done.load() + (uint32_t)people.size();
+                group_orders_since = std::chrono::steady_clock::now().time_since_epoch().count();
+                group_orders = (uint32_t)people.size();
+                //The nearest first: he takes the plot clicked, or the tower's place, and the farther the rest round it.
+                int at = tower ? FirstPlotOf(*z,tower) : hover.plot;
+                vec2 p = (at >= 0) ? w->grid->fine.pos[at] : vec2();
+                std::vector<const EconomyWorker*> by;
+                for (uint32_t id : people){
+                    if (const EconomyWorker* k = PersonById(*e,id)){
+                        by.push_back(k);
+                    }
+                }
+                std::stable_sort(by.begin(),by.end(),[&](const EconomyWorker* a, const EconomyWorker* b){
+                    return (a->pos - p).length() < (b->pos - p).length();
+                });
+                group_orders_done_at = group_orders_done_at.load() - (uint32_t)(people.size() - by.size());
+                for (const EconomyWorker* k : by){
+                    if (tower){
+                        SubmitGuard(k->id,tower);
+                    }else{
+                        SubmitOrder(k->id,hover.plot,layer,true);
+                    }
+                }
             }else{
-                //On the layer the mouse is on - the wall-walk under an arch, the road under it (ramparts_plan.md);
-                //picked by the ray alone, there is none to tell: its top.
-                SubmitOrder(sel.id,hover.plot,hover.f_surface ? hover.layer : -1);
+                for (uint32_t id : people){
+                    if (tower){
+                        SubmitGuard(id,tower);
+                    }else{
+                        SubmitOrder(id,hover.plot,layer);
+                    }
+                }
             }
         }else{
-            std::lock_guard<std::mutex> lock(pick_mutex);
-            if (play_selected.kind != PLAY_PICK_NONE){
-                play_selected = PlayPick();
-                play_pick_version++;
+            bool f_any;
+            {
+                std::lock_guard<std::mutex> lock(pick_mutex);
+                f_any = play_selected.kind != PLAY_PICK_NONE;
+            }
+            if (f_any){
+                SelectPeople({});
             }
         }
     }
@@ -2499,16 +2861,71 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
         under.kind = PLAY_PICK_PERSON;
         under.id = row_person;
     }
+    /*
+        THE PRESS (selection_plan.md, "Several people selected", step 2): with no tool in hand, a CLICK once let go
+        within RIGHT_CLICK_SLOP of where it began, or else a BOX - so a press that becomes a box has selected and
+        cleared nothing on the way. A script's press is let go at once.
+    */
+    bool f_select = paint_tool == CHASM_TOOL_SELECT;
+    bool f_click = false;
+    if (f_select && f_clicked && f_over_scene){
+        if (f_scripted){
+            f_click = true;
+        }else{
+            left_press_px = px;
+            f_left_press = true;
+            f_box_drag = false;
+        }
+    }
+    if (f_left_press && !f_select){
+        f_left_press = false;               //a tool taken up meanwhile: the press is the tool's
+        f_box_drag = false;
+    }else if (f_left_press){
+        f_box_drag = f_box_drag || std::abs(px.x - left_press_px.x) > RIGHT_CLICK_SLOP
+                                || std::abs(px.y - left_press_px.y) > RIGHT_CLICK_SLOP;
+        if (!input->IsKeyDown(INPUT_CLICK_LEFT)){
+            f_left_press = false;
+            if (f_box_drag){
+                TakeBox(PeopleInBox(vec2((float)left_press_px.x,(float)left_press_px.y),vec2((float)px.x,(float)px.y)),f_shift);
+            }else{
+                f_click = f_over_scene;
+            }
+            f_box_drag = false;
+        }
+    }
+    std::vector<uint32_t> in_box;
+    if (f_box_drag){
+        in_box = PeopleInBox(vec2((float)left_press_px.x,(float)left_press_px.y),vec2((float)px.x,(float)px.y));
+    }
+    //Shift+click (selection_plan.md, "Several people selected"): a grown-up added to the selection or taken out of
+    //it; on anything else, nothing - the selection stays as it is.
+    bool f_shift_click = f_shift && f_click;
+    if (f_shift_click && under.kind == PLAY_PICK_PERSON){
+        ToggleSelected(under.id);
+    }
     std::lock_guard<std::mutex> lock(pick_mutex);
     if (under != play_hover){
         play_hover = under;
         play_pick_version++;
     }
-    //A click on nothing - bare ground - clears the selection.
-    if (paint_tool == CHASM_TOOL_SELECT && f_clicked && f_over_scene && under != play_selected){
-        play_selected = under;
-        play_pick_version++;
-    }else if (paint_tool == CHASM_TOOL_SELECT && f_clicked && f_over_scene){
+    //The box as drawn, and who it would take (UploadSelection outlines them as hovered) - unless a script holds one.
+    if (!f_box_scripted){
+        f_box_shown = f_box_drag;
+        box_a = vec2((float)left_press_px.x,(float)left_press_px.y);
+        box_b = vec2((float)px.x,(float)px.y);
+        box_people.swap(in_box);
+    }
+    //A click on nothing - bare ground - clears the selection, a group's too.
+    if (!f_shift_click && f_click && under != play_selected){
+        if (under.kind == PLAY_PICK_PERSON){
+            play_selected = under;
+            play_group.clear();
+            play_people_before.clear();
+            play_pick_version++;
+        }else{
+            SelectLocked(under);
+        }
+    }else if (!f_shift_click && f_click){
         play_selected.plot = under.plot;
     }
 }
@@ -2545,10 +2962,17 @@ void ApplicationChasm::UploadSelection(){
     }
     PlayPick hover;
     PlayPick sel;
+    std::vector<uint32_t> people;       //the people selected: a group, or the one
+    std::vector<uint32_t> boxed;        //...and those a box being dragged would take, outlined as hovered
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         hover = play_hover;
         sel = play_selected;
+        people = (sel.kind == PLAY_PICK_GROUP) ? play_group
+               : (sel.kind == PLAY_PICK_PERSON) ? std::vector<uint32_t>{sel.id} : std::vector<uint32_t>();
+        if (f_box_shown){
+            boxed = box_people;
+        }
     }
     bool f_play = PlayMode();
     bool f_ready = w && z && z->world == w;
@@ -2650,7 +3074,7 @@ void ApplicationChasm::UploadSelection(){
         SetOutlineOf(o,colour[i]);
         o->SetVisibility(CHASM_OUTLINE_READY != 0);
     }
-    //The people: the selected one, the one under the cursor, and those who belong with the selection.
+    //The people: the selected - one, or a group's - the one under the cursor, and those who belong with the selection.
     std::vector<uint32_t> related;
     if (f_play && f_ready && e && e->world == w){
         RelatedPeople(sel,*z,*e,related);
@@ -2660,9 +3084,9 @@ void ApplicationChasm::UploadSelection(){
         if (f_play && e && i < e->workers.size()){
             uint32_t id = e->workers[i].id;
             //The hover over the related: hovering one of a selected house's family, on the map or his line, picks him out.
-            if (sel.kind == PLAY_PICK_PERSON && sel.id == id){
+            if (std::find(people.begin(),people.end(),id) != people.end()){
                 c = SELECT_COLOUR;
-            }else if (hover.kind == PLAY_PICK_PERSON && hover.id == id){
+            }else if ((hover.kind == PLAY_PICK_PERSON && hover.id == id) || std::find(boxed.begin(),boxed.end(),id) != boxed.end()){
                 c = PERSON_HOVER_COLOUR;
             }else if (std::find(related.begin(),related.end(),id) != related.end()){
                 c = RELATED_COLOUR;
@@ -2724,7 +3148,8 @@ void ApplicationChasm::UploadSelection(){
         SetOutlineOf(o,(i == 0) ? SELECT_COLOUR : HOVER_COLOUR);
         o->SetVisibility(CHASM_OUTLINE_READY != 0);
     }
-    //Where the selected person is going (BuildPathMarks): out of doors and on his way.
+    //Where the selected person is going (BuildPathMarks), out of doors and on his way - or a group's, each his own way,
+    //all in the one mesh.
     if (!path_marks){
         main_scene->AtTickBoundary([&](){
             Object* o = new Object();
@@ -2739,19 +3164,30 @@ void ApplicationChasm::UploadSelection(){
             path_marks = o;
         });
     }
-    const EconomyWorker* walking = (f_play && f_ready && e && e->world == w && sel.kind == PLAY_PICK_PERSON)
-                                   ? PersonById(*e,sel.id) : NULL;
-    if (walking && (EconomyIndoors(*walking) || walking->seg + 1 >= (int)walking->route.size())){
-        walking = NULL;
+    std::vector<const EconomyWorker*> walking;
+    uint64_t key = 0;
+    if (f_play && f_ready && e && e->world == w){
+        for (uint32_t id : people){
+            const EconomyWorker* k = PersonById(*e,id);
+            if (k && !EconomyIndoors(*k) && k->seg + 1 < (int)k->route.size()){
+                walking.push_back(k);
+                key = key * 1099511628211ULL ^ PathMarksKey(*k);
+            }
+        }
     }
-    if (!walking){
+    if (walking.empty()){
         path_marks->SetVisibility(false);
         path_marks_key = 0;
     }else{
-        uint64_t key = PathMarksKey(*walking);
+        key = key ? key : 1;
         if (key != path_marks_key){
             path_marks_key = key;
-            BuildPathMarks(*w,z.get(),*walking,verts);
+            verts.clear();
+            std::vector<vertex> one;
+            for (const EconomyWorker* k : walking){
+                BuildPathMarks(*w,z.get(),*k,one);
+                verts.insert(verts.end(),one.begin(),one.end());
+            }
             if (!verts.empty()){
                 path_marks->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
             }
@@ -2789,12 +3225,13 @@ void ApplicationChasm::DrawNeediest(float s, float bottom){
         }
         return a->id < b->id;
     });
-    PlayPick sel;
     PlayPick hovered;
+    std::vector<uint32_t> selected;     //the one person selected, or a group
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
-        sel = play_selected;
         hovered = play_hover;
+        selected = (play_selected.kind == PLAY_PICK_GROUP) ? play_group
+                 : (play_selected.kind == PLAY_PICK_PERSON) ? std::vector<uint32_t>{play_selected.id} : std::vector<uint32_t>();
     }
     //Each row's words: what he is short of, as his badge says it - dry, then thirsty, then hungry - and his
     //health in the badge ring's colour.
@@ -2844,7 +3281,7 @@ void ApplicationChasm::DrawNeediest(float s, float bottom){
         const Row& r = rows[i];
         float top = p0.y + pad * 0.8f + title_h + line_h * (float)i;
         float mid = top + line_h * 0.5f;
-        bool f_selected = sel.kind == PLAY_PICK_PERSON && sel.id == r.k->id;
+        bool f_selected = std::find(selected.begin(),selected.end(),r.k->id) != selected.end();
         //Lit orange while selected, light blue while he is the hover - here or out on the map.
         if (f_selected || (hovered.kind == PLAY_PICK_PERSON && hovered.id == r.k->id)){
             overlay->AddRect(vec2(p0.x + 4.0f * s,top + 1.0f * s),vec2(p1.x - 4.0f * s,top + line_h - 1.0f * s),6.0f * s,
@@ -2868,20 +3305,30 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     const EconomyState* ep = (e && e->world == w) ? e.get() : NULL;
     PlayPick sel;
     PlayPick hovered;
+    std::vector<uint32_t> group;        //a group's people (selection_plan.md, "Several people selected")
+    bool f_box = false;                 //...and a box being dragged, corner to corner
+    vec2 box0, box1;
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         sel = play_selected;
         hovered = play_hover;
+        if (sel.kind == PLAY_PICK_GROUP){
+            group = play_group;
+        }
+        f_box = f_box_shown;
+        box0 = vec2(std::min(box_a.x,box_b.x),std::min(box_a.y,box_b.y));
+        box1 = vec2(std::max(box_a.x,box_b.x),std::max(box_a.y,box_b.y));
     }
     float width = (float)main_window->width;
     float height = (float)main_window->height;
     /*
-        PINNED: everyone who belongs with the selection, and the selected person himself - his badge on a
-        stem in the selection's colour, kept on screen at its edge when he is off it, so he can be found.
+        PINNED: everyone who belongs with the selection, and the selected person himself - or a group, all of them -
+        his badge on a stem in the selection's colour, kept on screen at its edge when he is off it, so he can be found.
     */
     std::vector<uint32_t> pinned;
     if (ep){
         RelatedPeople(sel,*z,*ep,pinned);
+        pinned.insert(pinned.end(),group.begin(),group.end());
         if (sel.kind == PLAY_PICK_PERSON){
             pinned.push_back(sel.id);
         }
@@ -2965,7 +3412,9 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             if (!person_spot(*k,head,dot,f_off)){
                 continue;
             }
-            uint32_t colour = (sel.kind == PLAY_PICK_PERSON && sel.id == id) ? HUD_SELECT : HUD_AMBER;
+            bool f_selected = (sel.kind == PLAY_PICK_PERSON && sel.id == id)
+                              || std::find(group.begin(),group.end(),id) != group.end();
+            uint32_t colour = f_selected ? HUD_SELECT : HUD_AMBER;
             if (!f_off){
                 overlay->AddLine(head,dot,2.0f * s,HudFaded(colour,220));
             }
@@ -2973,9 +3422,15 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
         }
     }
 
+    //THE BOX being dragged (step 2): faintly filled, edged in the hover's light blue, as are the people it would take.
+    if (f_box){
+        overlay->AddRect(box0,box1,0.0f,HudFaded(HUD_PERSON_HOVER,28));
+        overlay->AddRectOutline(box0,box1,0.0f,1.5f * s,HudFaded(HUD_PERSON_HOVER,210));
+    }
+
     //THE CARD, on the right under the date's level.
     Card card;
-    if (!MakeCard(sel,*w,*z,ep,calendar_shown.load(),card)){
+    if (!MakeCard(sel,*w,*z,ep,calendar_shown.load(),card,group)){
         return;
     }
     const float pad = 14.0f * s;
@@ -2984,10 +3439,15 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     const float line_h = 20.0f * s;
     const float bar_h = 26.0f * s;
     const float chips_h = 30.0f * s;
+    const float row_h = 26.0f * s;             //a group's row (CARD_PERSON), as tall as the neediest's
+    const float badge = BADGE_RADIUS * s;
+    const float drop_w = 22.0f * s;            //...and its x, at the right
     float card_w = CARD_W * s;
     for (const CardLine& l : card.lines){
-        //A long line widens the card rather than running off it - and so does a row of chips.
-        card_w = std::max(card_w,overlay->MeasureText(l.text.c_str(),text_size).x + pad * 2.0f);
+        //A long line widens the card rather than running off it - and so does a row of chips, and a group's row.
+        float before = (l.type == CARD_PERSON) ? badge * 2.0f + 8.0f * s : 0.0f;
+        float after = (l.type == CARD_PERSON) ? overlay->MeasureText(l.right.c_str(),text_size).x + 12.0f * s + drop_w : 0.0f;
+        card_w = std::max(card_w,overlay->MeasureText(l.text.c_str(),text_size).x + before + after + pad * 2.0f);
         if (l.type == CARD_CHOICE){
             float row = pad * 2.0f;
             for (const auto& ch : l.choices){
@@ -3063,7 +3523,8 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     for (const CardLine& l : card.lines){
         h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS) ? chips_h * goods_rows()
            : (l.type == CARD_TOGGLE || l.type == CARD_CHOICE) ? chips_h
-           : (l.type == CARD_STOCK) ? HudStockHeight(overlay,l.stock,card_w - pad * 2.0f,s) : line_h;
+           : (l.type == CARD_STOCK) ? HudStockHeight(overlay,l.stock,card_w - pad * 2.0f,s)
+           : (l.type == CARD_PERSON) ? row_h : line_h;
     }
     h += pad * 0.5f;
     /*
@@ -3138,6 +3599,32 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
                 overlay_hits_drawing.push_back(OverlayHit{r0,r1,OVERLAY_HIT_FAMILY,(int)l.person});
             }
             overlay->AddText(l.text.c_str(),vec2(c0.x + pad,y - 5.0f * s),text_size,l.colour,UI_ALIGN_LEFT);
+        }else if (l.type == CARD_PERSON){
+            //A group's row: lit light blue while he is the hover, a click selects him alone, its x takes him out.
+            y += row_h;
+            float mid = y - row_h * 0.5f;
+            vec2 r0(c0.x + 6.0f * s,y - row_h + 1.0f * s);
+            vec2 r1(c1.x - 6.0f * s,y - 1.0f * s);
+            if (hovered.kind == PLAY_PICK_PERSON && hovered.id == l.person){
+                overlay->AddRect(r0,r1,5.0f * s,HudFaded(HUD_PERSON_HOVER,55));
+            }
+            overlay_hits_drawing.push_back(OverlayHit{r0,r1,OVERLAY_HIT_FAMILY,(int)l.person});
+            const EconomyWorker* k = ep ? PersonById(*ep,l.person) : NULL;
+            if (k){
+                DrawPersonBadge(overlay,vec2(c0.x + pad + badge,mid),s,*k,HUD_SELECT);
+            }
+            overlay->AddText(l.text.c_str(),vec2(c0.x + pad + badge * 2.0f + 8.0f * s,mid + 5.0f * s),text_size,l.colour,
+                             UI_ALIGN_LEFT);
+            vec2 x_mid(c1.x - pad - drop_w * 0.5f + 4.0f * s,mid);
+            overlay->AddText(l.right.c_str(),vec2(x_mid.x - drop_w * 0.5f - 4.0f * s,mid + 5.0f * s),text_size,HUD_TEXT_DIM,
+                             UI_ALIGN_RIGHT);
+            float a = 4.5f * s;
+            overlay->AddLine(x_mid - vec2(a,a),x_mid + vec2(a,a),2.0f * s,HUD_TEXT_DIM);
+            overlay->AddLine(vec2(x_mid.x + a,x_mid.y - a),vec2(x_mid.x - a,x_mid.y + a),2.0f * s,HUD_TEXT_DIM);
+            //After the row's, so it wins where they overlap (OverlayHitAt takes the last drawn).
+            overlay_hits_drawing.push_back(OverlayHit{x_mid - vec2(drop_w * 0.5f,row_h * 0.5f - 1.0f * s),
+                                                      x_mid + vec2(drop_w * 0.5f,row_h * 0.5f - 1.0f * s),
+                                                      OVERLAY_HIT_GROUP_DROP,(int)l.person});
         }else if (l.type == CARD_BAR){
             y += bar_h;
             overlay->AddText(l.text.c_str(),vec2(c0.x + pad,y - 11.0f * s),text_size,l.colour,UI_ALIGN_LEFT);
@@ -3185,7 +3672,10 @@ void ApplicationChasm::RegisterSelectTools(){
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
         "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md), or the "
         "garden or lot being built there (kind ground, by its patch's lowest plot: docs/yards_plan.md) - or a person by `person` id, "
-        "or a crate by `crate` id (docs/crates_plan.md); op clear; op hover px,py: the hover pinned at that "
+        "or a crate by `crate` id (docs/crates_plan.md) - or several grown-ups by `people` (ids), a GROUP; op add / remove `person`: "
+        "into the selection or out of it, as a Shift+click does; op box px0,py0,px1,py1: a box dragged and let go there - every "
+        "grown-up out of doors whose figure's middle is inside, selected or with `shift` added, `in_box` who; `hold` true draws it as "
+        "still being dragged, for a screenshot, until an op box without it; op clear; op hover px,py: the hover pinned at that "
         "pixel in place of the mouse's - the overlay's and the scene's - so what it shows is in the next screenshot (the top bar's "
         "FOOD lists its foods, a person's light blue outline, his line on a card lit); it returns the hover - "
         "op hover with no pixel gives it back; op under "
@@ -3193,11 +3683,11 @@ void ApplicationChasm::RegisterSelectTools(){
         "whose figure is drawn at the pixel itself, `read` whether the engine's readback came, and the overlay's chip there with its value); "
         "under, press and hover have the engine read the pixel as the mouse's, a few frames; "
         "op hits: every chip and button on the overlay, its action, value and centre x,y - a card's line naming a person is `family`; op "
-        "press px,py: a left click there, as the player's - on the HUD it presses what is drawn there (a tool of the "
+        "press px,py: a left click there, as the player's (`shift` true: with Shift held) - on the HUD it presses what is drawn there (a tool of the "
         "grid, a card's chip, pause, speed, a row of the neediest list or of NEEDS ATTENTION), on the scene it selects; `pressed` says what "
         "the HUD had there and the tool in hand after. With `button` right it is a right click: a tool put down, a "
         "selected person sent to the plot there (an order, docs/defence_plan.md) - on a guard tower, posted as its guard by hand (step 8) - or the selection cleared; op "
-        "status (default): the selection and hover, the card as text lines, and the people pinned with it. "
+        "status (default): the selection and hover, `group` (its people, for a group), the card as text lines, and the people pinned with it. "
         "View state only - nothing recorded but what a press sends: a chip's setting, an order, a Release. The card "
         "and outlines show in play mode (chasm_view play). "
         "include_screenshot as elsewhere.",
@@ -3213,6 +3703,13 @@ void ApplicationChasm::RegisterSelectTools(){
                 {"px",{{"type","integer"}}},
                 {"py",{{"type","integer"}}},
                 {"button",{{"type","string"},{"description","press: left (default) or right"}}},
+                {"shift",{{"type","boolean"},{"description","press: with Shift held - a person into the selection or out"}}},
+                {"people",{{"type","array"},{"items",{{"type","integer"}}},{"description","select: several people, a group"}}},
+                {"px0",{{"type","number"}}},
+                {"py0",{{"type","number"}}},
+                {"px1",{{"type","number"}}},
+                {"py1",{{"type","number"}}},
+                {"hold",{{"type","boolean"},{"description","box: drawn as still being dragged"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -3230,7 +3727,8 @@ void ApplicationChasm::RegisterSelectTools(){
             static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
                                                   "field_next","pause","speed","field_land","person","release",
                                                   "take_tool","building","gate","ladder","tower_guards","guard_release",
-                                                  "store_allow_group","keep","make_more","gather","family"};
+                                                  "store_allow_group","keep","make_more","gather","family",
+                                                  "group_drop","tent","pitch","settle"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             /*
                 The hover pinned at a pixel in place of the mouse's, until op hover with none - the overlay's (goods_plan.md:
@@ -3310,6 +3808,38 @@ void ApplicationChasm::RegisterSelectTools(){
                 return json{{"hits",list}};
             }
             /*
+                THE BOX (selection_plan.md, "Several people selected", step 2), px0,py0 to px1,py1: who it takes, and
+                let go as a drag would be - the selection, or added to it with `shift`; an empty one changes nothing.
+                With `hold` it is drawn as though still being dragged, its people outlined, until an op box without it.
+            */
+            json boxed;
+            if (op == "box"){
+                bool f_pixels = args.contains("px0") && args.contains("py0") && args.contains("px1") && args.contains("py1")
+                                && args["px0"].is_number() && args["py0"].is_number() && args["px1"].is_number() && args["py1"].is_number();
+                vec2 a, b;
+                std::vector<uint32_t> ids;
+                if (f_pixels){
+                    a = vec2(args["px0"].get<float>(),args["py0"].get<float>());
+                    b = vec2(args["px1"].get<float>(),args["py1"].get<float>());
+                    main_scene->AtTickBoundary([&](){
+                        ids = PeopleInBox(a,b);
+                    });
+                    boxed = ids;
+                }
+                bool f_hold = f_pixels && args.value("hold",false);
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    f_box_scripted = f_hold;
+                    f_box_shown = f_hold;
+                    box_a = a;
+                    box_b = b;
+                    box_people = f_hold ? ids : std::vector<uint32_t>();
+                }
+                if (f_pixels && !f_hold){
+                    TakeBox(ids,args.value("shift",false));
+                }
+            }
+            /*
                 A left click at a pixel, as the player's (UpdatePlayPick): on the overlay it presses what is
                 drawn there - a tool, a chip, the calendar's buttons, a row of the neediest - and on the
                 scene it selects. Taken on the next pass, which runs paused too; the reply waits for it.
@@ -3338,6 +3868,7 @@ void ApplicationChasm::RegisterSelectTools(){
                 bool f_right = args.value("button",std::string("left")) == "right";
                 pressed["button"] = f_right ? "right" : "left";
                 f_script_press_right = f_right;
+                f_script_press_shift = args.value("shift",false);
                 f_script_press = true;
                 for (int i = 0; i < 400 && f_script_press.load(); i++){
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -3346,7 +3877,27 @@ void ApplicationChasm::RegisterSelectTools(){
                 pressed["taken"] = !f_script_press.load();
                 pressed["tool"] = (int)paint_tool.load();
             }
-            if (op == "clear" || op == "select"){
+            //Several people (selection_plan.md, "Several people selected"): a list, as Shift+clicks would build it - grown-ups
+            //only, as ever - or one added or taken out, as one Shift+click does.
+            bool f_people = op == "select" && args.contains("people") && args["people"].is_array();
+            if (f_people){
+                std::vector<uint32_t> ids;
+                for (const json& v : args["people"]){
+                    if (v.is_number_unsigned()){
+                        ids.push_back(v.get<uint32_t>());
+                    }
+                }
+                SelectPeople(ids);
+            }
+            if ((op == "add" || op == "remove") && args.contains("person") && args["person"].is_number_unsigned()){
+                uint32_t id = args["person"].get<uint32_t>();
+                std::vector<uint32_t> ids = SelectedPeople();
+                bool f_in = std::find(ids.begin(),ids.end(),id) != ids.end();
+                if (f_in != (op == "add")){
+                    ToggleSelected(id);
+                }
+            }
+            if (op == "clear" || (op == "select" && !f_people)){
                 PlayPick p;
                 if (op == "select"){
                     //Checked as numbers first: this build has no exceptions, so a get<> on a null aborts the app.
@@ -3408,27 +3959,40 @@ void ApplicationChasm::RegisterSelectTools(){
                         return json{{"error","nothing to select there"}};
                     }
                 }
-                std::lock_guard<std::mutex> lock(pick_mutex);
-                play_selected = p;
-                play_pick_version++;
+                if (p.kind == PLAY_PICK_PERSON){
+                    SelectPeople({p.id});
+                }else{
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    SelectLocked(p);
+                }
             }
             PlayPick sel, hover;
+            std::vector<uint32_t> group;
             {
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 sel = play_selected;
                 hover = play_hover;
+                if (sel.kind == PLAY_PICK_GROUP){
+                    group = play_group;
+                }
             }
             auto pick_json = [](const PlayPick& p) -> json {
-                const char* kinds[] = {"none","building","person","gate","crate","ground"};
-                return json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUND,p.kind))]},{"id",p.id},{"plot",p.plot}};
+                const char* kinds[] = {"none","building","person","gate","crate","ground","group"};
+                return json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUP,p.kind))]},{"id",p.id},{"plot",p.plot}};
             };
             json result{{"selected",pick_json(sel)},{"hover",pick_json(hover)},{"play_mode",PlayMode()}};
+            if (sel.kind == PLAY_PICK_GROUP){
+                result["group"] = group;
+            }
             if (!pressed.is_null()){
                 result["pressed"] = pressed;
             }
+            if (!boxed.is_null()){
+                result["in_box"] = boxed;
+            }
             const EconomyState* ep = (e && e->world == w) ? e.get() : NULL;
             Card card;
-            if (MakeCard(sel,*w,*z,ep,calendar_shown.load(),card)){
+            if (MakeCard(sel,*w,*z,ep,calendar_shown.load(),card,group)){
                 json lines = json::array();
                 for (const CardLine& l : card.lines){
                     if (l.type == CARD_CHIPS){
@@ -3464,6 +4028,8 @@ void ApplicationChasm::RegisterSelectTools(){
                         }
                         lines.push_back(json{{"stock",l.stock.label},{"whose",l.stock.whose},{"kept",l.stock.f_kept},
                                              {"room",l.stock.room},{"goods",goods},{"reserved",reserved}});
+                    }else if (l.type == CARD_PERSON){
+                        lines.push_back(json{{"person",l.person},{"text",l.text},{"pack",l.right}});
                     }else{
                         lines.push_back(l.type == CARD_BAR ? json{{"text",l.text},{"bar",l.bar}} : json(l.text));
                     }

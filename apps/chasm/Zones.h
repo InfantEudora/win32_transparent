@@ -436,6 +436,12 @@ public:
     //`f_play`: a player's command, whose building is a construction site until it is raised. `owner`: the
     //building a garden or lot is painted for (yards_plan.md), or a building painted to extend; 0 for neither.
     bool Apply(int op, uint32_t index, int kind = 0, uint32_t stroke = 0, bool f_play = false, uint32_t owner = 0);
+    /*
+        A TENT PITCHED (docs/settlements_plan.md, Economy::PitchSpot): a camp plot on `plot`, standing at once - it was
+        packed, not built - joining camp `camp`, or a camp of its own with 0. The stroke in progress is kept, so a
+        drag the player is making goes on as it was. False, and last_refusal says why, if the rules refuse it.
+    */
+    bool PitchTent(int plot, uint32_t camp);
 
     /*
         Empty zones for `world`, then a saved set put back through the rules, each building under
@@ -581,19 +587,22 @@ void ZoneWinchLinks(const ChasmWorld& w, const ZoneState& z, std::vector<std::pa
 
 /*
     THE CAMP (docs/people_plan.md): the settlers' first home - tents and fires, built by a house's rules
-    but one storey high and one person to a plot instead of three to a storey. A plot of a camp has a
-    tent on it, or - one in ZONE_CAMP_FIRE_EVERY, by the plot's own hash - a fire. A new map starts
-    with one, at ZoneStartCampPlot, just big enough for its settlers (Zones::PlaceStartCamp); more can
-    be painted.
+    but one storey high and one person to a plot instead of three to a storey. Every plot of a camp has a
+    tent on it - a tent is a tent, never a fire in its place (the user's, 2026-10-11). Its FIRES are props
+    round the tents: in a cell at the camp's edge with a standing tent on one corner and open ground on the
+    other three, one such cell in ZONE_CAMP_FIRE_EVERY by the cell's hash. A new map starts with one, at
+    ZoneStartCampPlot, just big enough for its settlers (Zones::PlaceStartCamp); more can be painted.
 */
 #define ZONE_CAMP_FIRE_EVERY    5
-bool ZoneCampFire(int plot);
+//The tent plot whose fire fine cell `fine_quad` holds, or -1 for none; and where in the cell it burns.
+int ZoneCampFireTent(const ChasmWorld& w, const ZoneState& z, int fine_quad);
+vec2 ZoneCampFireAt(const ChasmWorld& w, int fine_quad, int tent);
 //Which way a camp plot's tent faces (radians), by the plot's hash - the look and the people agree on it.
 float ZoneCampYaw(int plot);
 //Where someone living in that tent stands when he is home: out in front of its door. People in a camp
 //are never indoors, so a camp full of them shows there are too few houses (the user, 2026-10-06).
 vec2 ZoneCampDoor(const ChasmWorld& w, int plot);
-//How many a camp holds: its tents.
+//How many a camp holds: its tents, a plot each.
 int ZoneCampTents(const ZoneState& z, uint32_t id);
 /*
     A spot a new colony might camp on, scored (Zones.cpp, WHERE A NEW COLONY CAMPS) - every one looked at,

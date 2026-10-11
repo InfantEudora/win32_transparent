@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 29744408-68e4-448f-b96c-c0047ed41572
-  modified: 2026-10-11T14:46:33.098Z
+  modified: 2026-10-11T20:37:03.702Z
 ---
 
 Agreed with the user and built 2026-10-11 (apps/chasm/docs/woodcutting_plan.md, all five steps checked in game):
@@ -20,7 +20,10 @@ Agreed with the user and built 2026-10-11 (apps/chasm/docs/woodcutting_plan.md, 
 **Why:** roads painted everywhere had cleared a forest with no woodcutter, and a hut's size bought nothing.
 RETUNED same day (user: lots held too much for their cost; indoors only above a minimum size, "a cost 4 woodcutter
 would start having space"): ECONOMY_LOT_ROOM 2/area, indoor room only past ECONOMY_HUT_WORKSHOP 1.5 floor
-(EconomyHutRoom); the price tag says what a hut keeps.
+(EconomyHutRoom); the price tag says what a hut keeps. WATER COLLECTOR the same (user, same day): holds a load +
+ECONOMY_WATER_ROOM past ECONOMY_WATER_PUMP floor (EconomyCollectorRoom, derived water_room); fill pace left fixed.
+STRENGTH (user, same day, "about 25%" each): loaded woodcutter walks by strength (ECONOMY_CARRY_STRENGTH, in Walk);
+his job weighs strength at ECONOMY_CUTTER_SKILL_DISTANCE 3 (other jobs keep ECONOMY_SKILL_DISTANCE 4).
 
 **How to apply:** open for the user: start balance (ECONOMY_START_WOOD, camp cap 60) not tuned - they find getting
 farms up fast enough the hardest part (the camp's one-farmer cap is a lever). Several design calls in

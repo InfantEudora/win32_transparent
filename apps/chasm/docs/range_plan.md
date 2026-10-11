@@ -140,6 +140,7 @@ starting wood (40) and two fifths of its wheat (40). The figures below were meas
   `hay_bale` 22, `arrow` 15 - added with `--add`; `blender_chasm_props_check.py --verify` passes them).
 - **Arrows**: one in a trainee's target as his stint begins, up to five by its end, each where a hash of the
   cell and its number puts it on the boss - from his state every frame, the set rebuilt only when it changes.
+  (Replaced 2026-10-11 by the shots he actually looses: see "Shooting" below.)
 - **Checked** (debug, a copied exe on 8774, paused and stepped, the default seed):
   - a two-cell range painted by debug: two places, taken by the two most precise settlers (8 and 9) against
     their walk; out to the line, training, home, out again; ARCHERS 2 / 2 in the overview, the bow on their badges;
@@ -154,3 +155,73 @@ starting wood (40) and two fifths of its wheat (40). The figures below were meas
   the props).
 - **Kinds and jobs taken**: `ZONE_KIND_RANGE` is 10 and `WORKER_JOB_ARCHER` 4; the guard tower (defence step 5) and
   its guard job come after them.
+
+## Shooting (2026-10-11)
+
+The user's Mixamo `Shoot` clip, retargeted onto `male_armature` (`tools/blender_retarget.py`), played by the
+trainees on the line. Proposed in six steps and agreed the same day ("those are 6 good steps"), with three answers:
+
+- **An archer always carries his bow**, not only on the line. (Guards too, as built: the tower's archers.)
+- **Stand-ins first**: a `bow` and a `quiver` modelled later swap in by name.
+- **A low skill can miss the target**, not only scatter wider on it.
+
+### The clip, read
+
+One turn is one shot and its first and last frames are the same pose, so it loops. Read off its hands frame by
+frame (120 frames): the right hand goes over the shoulder to a quiver by frame 12, swings down to the bow at
+26-34, nocks at the hip to 46, raises and draws to 68, holds at full draw, and the hands part at 93-94; then
+the arms come down. The clip turns the body side-on by itself, the bow arm along the figure's forward, so a
+trainee facing his target (his last leg points north) needs no extra turn. The beats are `SHOOT_TAKE`,
+`SHOOT_NOCK` and `SHOOT_RELEASE` (ApplicationChasm.h), fractions of a turn so a re-export at another frame rate
+keeps them; a re-animated clip needs them read again.
+
+### As built
+
+All view: the rules still say only "training, timer", so nothing is saved or hashed and a replay is unchanged.
+
+1. **Played while training** (`ApplicationChasmWorkersView.cpp`): WORKER_CLIP_SHOOT. Its phase and rate come from
+   his stint's timer (`ShotClockOf`, ApplicationChasmRange.cpp): a whole number of shots a stint - 8 at the clip's
+   5.0 s, 10 if it is exported at 30 fps - so he ends with his arms down and walks off without a cut. Clip changes
+   now CROSSFADE (`TransitionToAnimation`, `WORKER_CLIP_BLEND`, longer into and out of Shoot, `WORKER_SHOOT_BLEND`),
+   which also takes the snap out of walk to idle. To and from no clip (hidden, bind pose) is still at once.
+2. **The kit**: a BOW in his left hand and a QUIVER on his back, shown for WORKER_JOB_ARCHER and WORKER_JOB_GUARD.
+   The quiver is a child of his Spine bone. The bow is its own object, placed every frame from his hands, read
+   between ticks (AtTickBoundary) as the renderer reads them: its grip at his left PALM (the wrist carried on along
+   the forearm - the hand bones have no tails); upright and square to his facing as he carries it; square to the
+   arrow from the nock to the lowering (`BowAim`). Fixed to the hand bone instead, it measured horizontal and
+   pointing forward while walking and standing (its long axis 0.1-0.2 up), upright only at full draw.
+3. **The arrow in his hand**, from the take to the release: along his forearm as he brings it over, then from his
+   right palm through the bow's grip. Placed from the posed hands the same way, by the clip's own time rather
+   than the stint's clock so it never parts from the hands. Fixed to the right hand it was 20-60 degrees off the
+   line through the nock and draw. Drawn in the range's `arrow_full` set (a whole arrow; the stuck `arrow` is a stub).
+4. **It flies at the release**: from his bow at `SHOOT_RELEASE` (measured on each figure at Init,
+   `worker_release_at`) to the target, rising a little (`RANGE_ARROW_ARC`), slowed to `RANGE_ARROW_SPEED` - an
+   arrow's own speed would cross a range in a frame.
+5. **Where it lands shows his archery** (`ShotOf`): off the middle by a normal scatter, `RANGE_SPREAD_NOVICE` to
+   `RANGE_SPREAD_MASTER`, from a hash of him, his stint and the shot. Inside the face (`RANGE_FACE_HALF_W/H`) it
+   sticks; outside it misses, flies on and comes down in the ground behind the target, short of the backstop.
+   Worked out against the face: a beginner misses about two in five, the average trainee at his cap one in
+   eleven, a master next to none.
+6. **The target fills with the shots he has made** this stint, each where it went - replacing the 1-to-5 count.
+
+**Found on the way, and fixed: loads ignored where the armature stood.** Loads were moved into their bone's
+space by the skin's INVERSE BIND matrix, which starts from the file's space - the armature's place and scale in
+it - while `GLTFLoader::GetSkeleton` leaves the armature's node out of the drawn figure. With `female_armature`
+moved to x 1.77 in Blender, a woman's log hung about a world unit beside her. Loads, the quiver and the bow now
+use the bone's own bind matrix off the probe (`IntoBone`), so the armature's place in the file no longer matters.
+
+**Flagged, not changed: the armature's SCALE is dropped too.** `female_armature` is scaled 0.83 in the file; the
+skin leaves that out, so the woman is drawn 2.09 model units tall (0.96 world) against the man's 1.875 (0.86) -
+taller than him, where she is shorter in Blender. Her loads and kit are now fitted to what is drawn. Keeping the
+scale is a loader change for every app (GetSkeleton), or the scale applied in Blender.
+
+**Checked** (debug, my own exe on 8769, paused and stepped, the default seed, 31 range cells painted by debug so
+nine adults and children trained): men and women side-on at full draw, the bow upright with the arrow through
+its grip; a woman reaching over her shoulder with an arrow in hand, another nocking at the hip with the bow
+square to the arrow; arrows in the target faces and misses stuck in the ground by the bales; the quiver's
+fletchings over a man's shoulder. The children are unrigged figures: their arrows fly from a rough bow hand,
+with no clip and no kit.
+
+**Not checked**: an arrow caught in the air in a screenshot (a flight is about 11 ticks of each 250); an archer
+walking with his bow; the woman's log after the IntoBone fix, close up. The stand-in quiver is brown on brown
+tunics and hard to see.

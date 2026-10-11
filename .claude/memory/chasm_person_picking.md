@@ -28,7 +28,12 @@ Built 2026-10-11 at the user's request (selection_plan.md, "Picked by the figure
 
 **Why:** the user is adding RTS-style control of soldiers; selecting them must work at every zoom.
 **How to apply:** test picking with `chasm_select op under` (now exact), not by projecting points. The first
-`chasm_view play` after a fresh start glides the camera - set the view again before measuring. MULTI-SELECT AGREED 2026-10-11, not built: selection_plan.md "Several people
+`chasm_view play` after a fresh start glides the camera - set the view again before measuring. MULTI-SELECT AGREED 2026-10-11, STEP 1 BUILT the same day (PLAY_PICK_GROUP + play_group, SelectPeople/
+ToggleSelected/SelectedPeople, play_people_before so Shift on a house card's name adds to the group picked before
+the house; GroupCard/CARD_PERSON; right click sends all to ONE plot until step 3); STEP 2 BUILT too (left drag = box, PeopleInBox/TakeBox; select-mode click now acts on RELEASE within
+RIGHT_CLICK_SLOP; chasm_select op box, `hold` to draw it; real-mouse drag not script-testable); STEP 3 BUILT too: places on one plot are a RULE (EconomyPostPoint by rank, RePlace on join/leave),
+the SPREAD is the rules' too (Economy::SpreadPost via CHASM_CMD_ORDER value[2], reachability via CanWalkPosted -
+a view-side spread sent people into unwalkable pockets), one refusal line per group (group_orders). All 3 steps done: selection_plan.md "Several people
 selected" - purely view state, grown-ups only, Shift+click / box / card names, click on ground clears, group orders space
 people on one plot (rule change in EconomyPostPoint) or spread; 3-step build order, each step on the user's go-ahead. Related: [[ramparts-plan]], [[chasm-defence-plan]],
 [[minimized-focus-leak]].

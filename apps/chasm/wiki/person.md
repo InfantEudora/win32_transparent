@@ -30,7 +30,8 @@ placed, so with too few people the newest workplaces stand empty. [[Field|Fields
 family whose land they are.
 
 The job's skill sets the **pace** of the work (felling, sowing, building): average at 5, faster above
-that, slower below (`EconomySkillFactor`). Everyone walks at the same speed.
+that, slower below (`EconomySkillFactor`). Empty-handed everyone walks alike; with a load, the
+stronger walk faster ([[Skills]]).
 
 Anyone without a job carries wood to [[Construction|building sites]], and clears and lays
 [[Road|roads]]. The player can **order** a grown-up to stand on a [[Posts|post]]; that is their job until

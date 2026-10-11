@@ -25,7 +25,9 @@ static Debugger* debug = new Debugger("ChasmPeople",DEBUG_ALL);
     2026-10-10) - is drawn SKINNED instead: per person a Skeleton of that rig sharing the figure's one skinned mesh,
     so they still draw in one instanced call per pass, walking while his route has a leg left and standing
     otherwise. What he carries is a child of the bone that carries it, so a pail swings with his arm. A
-    figure without a rig stays static, as above, until it gets one; nothing here names the rig.
+    figure without a rig stays static, as above, until it gets one; nothing here names the rig. An archer
+    (range_plan.md "Shooting") carries a bow and a quiver, and on the line plays the Shoot clip by his
+    stint's clock; his arrows, in flight and landed, are the range's (ApplicationChasmRange.cpp).
 
     Measured with the crowd bench (ApplicationChasmCrowdBench.cpp, 2026-10-10): a skinned figure costs about
     2.3 us a tick and 7 us a frame of CPU, a static one next to nothing - so a person standing hidden indoors
@@ -42,11 +44,12 @@ int PersonFigure(const EconomyWorker& k, uint64_t tick){
     return (EconomyStageAt(k.born,tick) < LIFE_YOUNG ? PERSON_KID_MALE : PERSON_ADULT_MALE) + (k.f_female ? 1 : 0);
 }
 
-#define WORKER_LOADS        4       //nothing, a log, a sack, a pail
+//WORKER_LOADS (ApplicationChasm.h): the loads below, one mesh each per figure.
 #define LOAD_NONE           0
 #define LOAD_LOG            1
 #define LOAD_SACK           2
 #define LOAD_PAIL           3
+#define LOAD_TENT           4       //packed, rolled across his back (settlements_plan.md)
 #define PERSON_MODEL_SCALE  0.46f   //the figures are modelled 1.87 tall (a man); drawn the walker's 0.86
 #define WORKER_CHOP_RATE    1.6f    //a working woodcutter's swings a second
 #define WORKER_CHOP_BOB     0.07f   //and how far each lifts him
@@ -55,8 +58,24 @@ int PersonFigure(const EconomyWorker& k, uint64_t tick){
 #define WORKER_CLIP_NONE    0       //none: the rig's bind pose, and nothing to sample each tick
 #define WORKER_CLIP_WALK    1
 #define WORKER_CLIP_IDLE    2
+#define WORKER_CLIP_SHOOT   3
 #define WORKER_WALK_CLIP    "Walking"
 #define WORKER_IDLE_CLIP    "Idle"  //stood in when the file has one; the bind pose otherwise
+#define WORKER_SHOOT_CLIP   "Shoot" //a trainee on the line (range_plan.md "Shooting"): one turn is one shot
+#define WORKER_CLIP_BLEND   0.25f   //seconds a change of clip crossfades over
+#define WORKER_SHOOT_BLEND  0.45f   //...into and out of Shoot: he turns side-on to his target, and back
+/*
+    AN ARCHER'S KIT (range_plan.md "Shooting"). The bow's grip and the arrow's nock are each a PALM: the wrist
+    (a hand bone's head - the hands have no tails) carried on along the forearm by WORKER_PALM_REACH, in the
+    figure's units. The bow turns from upright, as carried, to square with the arrow between WORKER_BOW_RAISE and
+    SHOOT_NOCK, and back between WORKER_BOW_LOWER and WORKER_BOW_DOWN - the Shoot clip's swing to the bow, and
+    its lowering after the release.
+*/
+#define WORKER_PALM_REACH   0.07f
+#define WORKER_BOW_RAISE    0.22f
+#define WORKER_BOW_LOWER    0.82f
+#define WORKER_BOW_DOWN     0.92f
+const char* gear_asset_names[GEAR_ASSETS] = {"bow","quiver"};
 /*
     THE WALK'S PACE is measured from each rig's own feet at Init (MeasureWalkSpeed), so the clip runs at
     a person's speed with his feet planted however the walk is re-animated. The rig of 2026-10-10 walks
@@ -69,9 +88,9 @@ int PersonFigure(const EconomyWorker& k, uint64_t tick){
 
 namespace {
 
-//The bone each load rides on: the log and the sack on the spine, which the shoulders and back move with;
-//the pail in the right hand. A rig without the bone carries the load on its root, still.
-const char* load_bone_names[WORKER_LOADS] = {NULL,"Spine","Spine","Hand.R"};
+//The bone each load rides on: the log, the sack and the tent on the spine, which the shoulders and back move
+//with; the pail in the right hand. A rig without the bone carries the load on its root, still.
+const char* load_bone_names[WORKER_LOADS] = {NULL,"Spine","Spine","Hand.R","Spine"};
 
 /*
     After Object::AddAnimation: a track this rig BORROWED - bound by name to a bone of a node it was not
@@ -138,6 +157,11 @@ int LoadOf(int good){
     }
 }
 
+//What he is seen carrying: his load, else a tent packed for the road.
+int WorkerLoad(const EconomyWorker& k){
+    return (k.carry > 0) ? LoadOf(k.carry_good) : (k.tent == ECONOMY_TENT_CARRIED) ? LOAD_TENT : LOAD_NONE;
+}
+
 void AddLoad(std::vector<vertex>& out, int load){
     switch (load){
         case LOAD_LOG:
@@ -153,11 +177,117 @@ void AddLoad(std::vector<vertex>& out, int load){
                      vec3(0,1,0),PAL_WATER);
             break;
         }
+        case LOAD_TENT:
+            //The canvas rolled across his shoulders, the tent's colour, its poles along it standing out at the ends.
+            Box(out,vec3(-0.21f,0.50f,-0.25f),vec3(0.21f,0.64f,-0.11f),PAL_WALL);
+            Box(out,vec3(-0.27f,0.56f,-0.19f),vec3(0.27f,0.59f,-0.16f),PAL_TIMBER);
+            break;
         default:
             break;
     }
 }
 
+//A box round the line from a to b, `half` out from it each way - a limb of a bow, a string, a quiver.
+void Strut(std::vector<vertex>& out, const vec3& a, const vec3& b, float half, int column){
+    vec3 u = b - a;
+    float len = u.length();
+    if (len < 1e-6f){
+        return;
+    }
+    u = u * (1.0f / len);
+    vec3 p = u.cross(fabsf(u.x) < 0.9f ? vec3(1.0f,0.0f,0.0f) : vec3(0.0f,0.0f,1.0f));
+    p.normalize();
+    vec3 q = u.cross(p);
+    vec3 c[8];
+    for (int i = 0; i < 8; i++){
+        c[i] = ((i & 4) ? b : a) + p * ((i & 1) ? half : -half) + q * ((i & 2) ? half : -half);
+    }
+    MeshQuad(out,c[0],c[1],c[3],c[2],u * -1.0f,column);
+    MeshQuad(out,c[4],c[5],c[7],c[6],u,column);
+    MeshQuad(out,c[0],c[1],c[5],c[4],q * -1.0f,column);
+    MeshQuad(out,c[2],c[3],c[7],c[6],q,column);
+    MeshQuad(out,c[0],c[2],c[6],c[4],p * -1.0f,column);
+    MeshQuad(out,c[1],c[3],c[7],c[5],p,column);
+}
+
+/*
+    THE STAND-INS for an archer's kit, until the props file has a `bow` and a `quiver`, in the figures' units (the
+    man is 1.87 tall in them) - which is how one modelled beside him in Blender comes out:
+      - the BOW with its grip at the origin, its limbs up and down +y and swept back toward the archer (-z) to
+        the tips, the string straight between them: facing +z, the way he shoots;
+      - the QUIVER with its middle at the origin and its mouth up +y, a few fletchings standing out of it. Where
+        it sits on his back is WORKER_QUIVER_AT, not the model's.
+*/
+void BowStandIn(std::vector<vertex>& out){
+    const float half = 0.55f;
+    const float sweep = 0.14f;
+    auto at = [&](float t){ return vec3(0.0f,t * half,-sweep * t * t); };
+    const int segments = 6;
+    for (int s = 0; s < segments; s++){
+        Strut(out,at(-1.0f + 2.0f * s / segments),at(-1.0f + 2.0f * (s + 1) / segments),0.028f,PAL_TIMBER);
+    }
+    Strut(out,vec3(0.0f,-0.07f,0.0f),vec3(0.0f,0.07f,0.0f),0.04f,PAL_BARK_DARK);
+    Strut(out,at(-1.0f),at(1.0f),0.007f,PAL_WALL);
+}
+
+void QuiverStandIn(std::vector<vertex>& out){
+    Strut(out,vec3(0.0f,-0.24f,0.0f),vec3(0.0f,0.22f,0.0f),0.065f,PAL_BARK);
+    for (int i = 0; i < 3; i++){
+        float x = (float)(i - 1) * 0.035f;
+        Strut(out,vec3(x,0.22f,0.012f * i),vec3(x,0.34f,0.012f * i),0.016f,PAL_WALL);
+    }
+}
+//Where the quiver sits on the man's back in his bind pose, and the way its mouth points: up past his right shoulder,
+//where the Shoot clip's right hand goes for an arrow. Fitted to the other figures as the loads are.
+#define WORKER_QUIVER_AT    vec3(0.02f,1.15f,-0.26f)
+#define WORKER_QUIVER_UP    vec3(-0.35f,1.0f,-0.06f)
+
+/*
+    Into the space of `bone` at its bind pose, from the figure's as it is DRAWN - `verts` scaled by `scale` first.
+
+    By the bone's own bind matrix, read off the probe (a skeleton at the origin in its reference pose), and NOT by the
+    skin's inverse bind matrix. That one starts from the FILE's space - wherever the armature stood, at whatever scale,
+    when it was exported - and GLTFLoader::GetSkeleton leaves the armature's node out, so the figure is drawn as if it
+    stood at the origin while a load put through the inverse bind matrix still hung where the armature had been: a
+    log a world unit beside the woman, once her armature was moved off the origin in Blender. NULL keeps the figure's.
+*/
+void IntoBone(std::vector<vertex>& verts, Bone* bone, float scale){
+    fmat4 to_bone = bone ? bone->GetWorldTransformScaleMatrix() : fmat4().identity();
+    to_bone.inverse_transform();
+    const vec3 origin = to_bone * vec3(0.0f,0.0f,0.0f);
+    for (vertex& v : verts){
+        v.pos = to_bone * (v.pos * scale);
+        v.normal = to_bone * v.normal - origin;
+        v.normal.normalize();
+    }
+}
+
+Mesh* RetainedMesh(std::vector<vertex>& verts){
+    Mesh* m = new Mesh();
+    m->SetMeshData(verts.data(),(int)verts.size());
+    m->Retain();    //held for good, as the figures are: SetMesh releases what it replaces
+    return m;
+}
+
+//A palm, in the space the bones are posed in: the wrist carried on along the forearm by `reach`.
+vec3 Palm(Bone* forearm, Bone* hand, float reach){
+    vec3 wrist = hand->GetWorldPosition();
+    vec3 along = wrist - forearm->GetWorldPosition();
+    float len = along.length();
+    return len > 1e-6f ? wrist + along * (reach / len) : wrist;
+}
+
+//How far the bow has turned from upright, as carried, to square with the arrow: 0 to 1 by the Shoot clip's `phase`.
+float BowAim(float phase){
+    float in = (phase - WORKER_BOW_RAISE) / (SHOOT_NOCK - WORKER_BOW_RAISE);
+    float out = (WORKER_BOW_DOWN - phase) / (WORKER_BOW_DOWN - WORKER_BOW_LOWER);
+    return std::max(0.0f,std::min(1.0f,std::min(in,out)));
+}
+
+}
+
+quat TurnZTo(const vec3& d, const vec3& up){
+    return quat::getquat(vec3(0.0f,0.0f,0.0f) - d,vec3(0.0f,0.0f,0.0f),up);
 }
 
 /*
@@ -305,12 +435,33 @@ void ApplicationChasm::BuildWorkerScene(){
     /*
         The rigged figures: the skinned mesh every person of that figure shares, and each load moved into
         the space of the bone it rides on, so that hung on that bone at no offset it sits where it sits on
-        the static figure (the bone's inverse bind matrix takes the model's space to the bone's, as the
-        vertices bound to it are taken). A throwaway skeleton is where the bind matrices are read from.
+        the figure as drawn (IntoBone, and why not by the inverse bind matrix). A throwaway skeleton - the
+        PROBE, at the origin in its reference pose - is where the bind matrices are read from, and where the
+        clips are measured.
     */
     std::vector<std::string> clips = gltfloader.GetAnimationNames();
-    f_worker_idle_clip = std::find(clips.begin(),clips.end(),std::string(WORKER_IDLE_CLIP)) != clips.end();
+    auto has_clip = [&](const char* name){ return std::find(clips.begin(),clips.end(),std::string(name)) != clips.end(); };
+    f_worker_idle_clip = has_clip(WORKER_IDLE_CLIP);
+    f_worker_shoot_clip = has_clip(WORKER_SHOOT_CLIP);
+    //The archer's kit: the file's bow, or the stand-in, shared; the quiver is fitted to each figure below.
+    std::vector<vertex> kit;
+    Mesh* bow = assetmanager->GetMeshFromAsset(gear_asset_names[0]);
+    if (bow){
+        bow->Retain();
+        worker_bow_mesh = bow;
+    }else{
+        BowStandIn(kit);
+        worker_bow_mesh = RetainedMesh(kit);
+    }
+    std::vector<vertex> quiver;
+    if (Mesh* q = assetmanager->GetMeshFromAsset(gear_asset_names[1])){
+        quiver = q->GetVertices();
+    }else{
+        QuiverStandIn(quiver);
+    }
+    float man_drawn = man;      //the man as drawn, the figures' fits are over: his static figure's, or his skin's below
     for (int f = 0; f < PERSON_FIGURES; f++){
+        worker_release_at[f] = vec3(0.0f,0.6f,0.15f);   //a rough bow hand, for a figure without the Shoot clip measured
         std::string skin = gltfloader.GetNodeSkinName(person_asset_names[f]);
         if (skin.empty()){
             continue;
@@ -326,25 +477,49 @@ void ApplicationChasm::BuildWorkerScene(){
         mesh->Retain();
         worker_skin_mesh[f] = mesh;
         worker_skin_name[f] = skin;
+        /*
+            HOW TALL IT IS DRAWN, which is not how tall its vertices are. They are in the file's space, the armature's
+            place and scale in them; the skin draws them by a bone's bind matrix after its inverse bind matrix, which
+            leaves the armature out (GLTFLoader::GetSkeleton) - the same change for every bone at the bind pose, so
+            any one will do. The woman's armature is scaled 0.83 in the file: her vertices are 1.73 tall, and she is
+            drawn 2.09. Her loads and her kit are fitted to what is drawn.
+        */
+        std::vector<Bone*> bones;
+        probe->GetAllBones(probe,bones);
+        Mesh* figure = assetmanager->GetMeshFromAsset(person_asset_names[f]);
+        float drawn = 0.0f;
+        if (!bones.empty() && figure){
+            fmat4 bind = bones[0]->GetWorldTransformScaleMatrix();
+            for (const vertex& v : figure->GetVertices()){
+                drawn = fmaxf(drawn,(bind * (bones[0]->inverse_bind_matrix * v.pos)).y);
+            }
+        }
+        if (f == PERSON_ADULT_MALE && drawn > 0.0f){
+            man_drawn = drawn;
+        }
+        if (drawn > 0.0f && man_drawn > 0.0f){
+            worker_figure_fit[f] = drawn / man_drawn;
+            worker_figure_height[f] = drawn * PERSON_MODEL_SCALE;
+        }
+        float fit = worker_figure_fit[f];
         for (int load = 1; load < WORKER_LOADS; load++){
             std::vector<vertex> lv;
             AddLoad(lv,load);
-            Bone* bone = probe->FindBone(load_bone_names[load]);
-            const vec3 origin = bone ? bone->inverse_bind_matrix * vec3(0.0f,0.0f,0.0f) : vec3(0.0f,0.0f,0.0f);
-            for (vertex& v : lv){
-                //Fitted like the static figure's, then out of world units into the model's.
-                v.pos = v.pos * (worker_figure_fit[f] / PERSON_MODEL_SCALE);
-                if (bone){
-                    v.pos = bone->inverse_bind_matrix * v.pos;
-                    v.normal = bone->inverse_bind_matrix * v.normal - origin;
-                    v.normal.normalize();
-                }
-            }
-            Mesh* m = new Mesh();
-            m->SetMeshData(lv.data(),(int)lv.size());
-            m->Retain();    //held for good, as the static figures are
-            worker_skin_load[f * WORKER_LOADS + load] = m;
+            //Fitted like the static figure's, and out of world units into the figure's.
+            IntoBone(lv,probe->FindBone(load_bone_names[load]),fit / PERSON_MODEL_SCALE);
+            worker_skin_load[f * WORKER_LOADS + load] = RetainedMesh(lv);
         }
+        //The quiver on his back, fitted to him as the loads are.
+        kit = quiver;
+        vec3 mouth = WORKER_QUIVER_UP;
+        mouth.normalize();
+        quat tilt = quat::getquat(vec3(0.0f,1.0f,0.0f),mouth);
+        for (vertex& v : kit){
+            v.pos = tilt * v.pos + WORKER_QUIVER_AT;
+            v.normal = tilt * v.normal;
+        }
+        IntoBone(kit,probe->FindBone("Spine"),fit);
+        worker_skin_quiver[f] = RetainedMesh(kit);
         //The walk's pace, from this rig's own feet with the clip as a person of it will play it.
         Animation* walk = gltfloader.LoadAnimation(WORKER_WALK_CLIP);
         float measured = 0.0f;
@@ -355,11 +530,28 @@ void ApplicationChasm::BuildWorkerScene(){
             measured = MeasureWalkSpeed(probe,walk);
         }
         worker_walk_speed[f] = measured > 0.01f ? measured : WORKER_WALK_SPEED;
-        debug->Info("Person figure '%s' is rigged (%s, %i bones): drawn skinned, walking %.2f units a second at rate 1%s%s\n",
-                    person_asset_names[f],skin.c_str(),probe->num_bones,worker_walk_speed[f],
+        //Where his arrow leaves the bow: his left palm at the release, posed as a person of this rig plays the clip.
+        Animation* shoot = f_worker_shoot_clip ? gltfloader.LoadAnimation(WORKER_SHOOT_CLIP) : NULL;
+        Bone* forearm = probe->FindBone("Arm.Lower.L");
+        Bone* hand = probe->FindBone("Hand.L");
+        if (shoot && forearm && hand){
+            worker_shoot_seconds = shoot->duration;
+            probe->AddAnimation(shoot);
+            KeepOwnPositions(shoot);
+            probe->SwitchToAnimation(shoot);
+            probe->ApplyAnimation(SHOOT_RELEASE * shoot->duration);
+            worker_release_at[f] = Palm(forearm,hand,WORKER_PALM_REACH * fit) * PERSON_MODEL_SCALE;
+        }
+        debug->Info("Person figure '%s' is rigged (%s, %i bones): drawn skinned, %.2f tall, walking %.2f units a second at rate 1%s%s%s\n",
+                    person_asset_names[f],skin.c_str(),probe->num_bones,worker_figure_height[f],worker_walk_speed[f],
                     measured > 0.01f ? "" : " (not measured: no feet named " WORKER_FOOT_L "/" WORKER_FOOT_R ")",
-                    f_worker_idle_clip ? ", standing in its idle clip" : "");
-        delete probe;   //bones carry no mesh, and the skeleton was never in the scene (its one clip is left, a one-off)
+                    f_worker_idle_clip ? ", standing in its idle clip" : "",
+                    shoot ? ", shooting at the range" : "");
+        if (shoot){
+            debug->Info("  its arrows leave the bow at %.2f %.2f %.2f from its feet, a shot every %.2f s of the clip\n",
+                        worker_release_at[f].x,worker_release_at[f].y,worker_release_at[f].z,worker_shoot_seconds);
+        }
+        delete probe;   //bones carry no mesh, and the skeleton was never in the scene (its clips are left, a one-off)
     }
 }
 
@@ -406,7 +598,7 @@ void ApplicationChasm::UploadWorkers(){
         const EconomyWorker& k = e->workers[i];
         int figure = PersonFigure(k,e->tick);
         figure_of[i] = figure;
-        want[i] = figure * WORKER_LOADS + (k.carry > 0 ? LoadOf(k.carry_good) : LOAD_NONE);
+        want[i] = figure * WORKER_LOADS + WorkerLoad(k);
         //A rigged figure's static object stays hidden, so its mesh is left as it is.
         f_swap = f_swap || (!worker_skin_mesh[figure] && want[i] != worker_object_mesh[i]);
     }
@@ -435,7 +627,8 @@ void ApplicationChasm::UploadWorkers(){
         s->SetVisibility(false);
         s->SetScale(vec3(PERSON_MODEL_SCALE,PERSON_MODEL_SCALE,PERSON_MODEL_SCALE));
         //His own copies: Object::AddAnimation binds a clip's tracks to the bones of the skeleton it is given.
-        const char* names[2] = {WORKER_WALK_CLIP,f_worker_idle_clip ? WORKER_IDLE_CLIP : NULL};
+        const char* names[3] = {WORKER_WALK_CLIP,f_worker_idle_clip ? WORKER_IDLE_CLIP : NULL,
+                                f_worker_shoot_clip ? WORKER_SHOOT_CLIP : NULL};
         for (const char* name : names){
             Animation* clip = name ? gltfloader.LoadAnimation(name) : NULL;
             if (!clip){
@@ -445,6 +638,40 @@ void ApplicationChasm::UploadWorkers(){
             //Each rig binds its own channels where the clip has them, and borrows another's by name.
             s->AddAnimation(clip);
             KeepOwnPositions(clip);
+        }
+        s->animation_transition_time_max = WORKER_CLIP_BLEND;
+        s->SetBlendTime("",WORKER_SHOOT_CLIP,WORKER_SHOOT_BLEND);
+        s->SetBlendTime(WORKER_SHOOT_CLIP,WORKER_WALK_CLIP,WORKER_SHOOT_BLEND);
+        s->SetBlendTime(WORKER_SHOOT_CLIP,WORKER_IDLE_CLIP,WORKER_SHOOT_BLEND);
+        //His kit, shown while he is an archer: the quiver on his spine, the bow an object of its own that UploadWorkers
+        //puts in his hand every frame.
+        const char* arm_names[4] = {"Arm.Lower.L","Hand.L","Arm.Lower.R","Hand.R"};
+        for (int a = 0; a < 4; a++){
+            ws.arm[a] = s->FindBone(arm_names[a]);
+        }
+        auto kit_object = [&](const char* what, Mesh* m){
+            Object* o = new Object();
+            o->name = s->name + " " + what;
+            o->SetMesh(m);
+            o->SetMaterialSlot(0,palette_material);
+            o->SetPickability(true);    //a click on his bow picks him
+            o->SetVisualOnly(true);
+            o->SetVisibility(false);
+            return o;
+        };
+        if (worker_skin_quiver[f]){
+            ws.quiver = kit_object("quiver",worker_skin_quiver[f]);
+            Bone* spine = s->FindBone("Spine");
+            if (spine){
+                spine->AttachChild(ws.quiver);
+            }else{
+                s->AttachChild(ws.quiver);
+            }
+        }
+        if (worker_bow_mesh){
+            ws.bow = kit_object("bow",worker_bow_mesh);
+            float scale = PERSON_MODEL_SCALE * worker_figure_fit[f];
+            ws.bow->SetScale(vec3(scale,scale,scale));
         }
         for (int l = 1; l < WORKER_LOADS; l++){
             Mesh* m = worker_skin_load[f * WORKER_LOADS + l];
@@ -478,6 +705,9 @@ void ApplicationChasm::UploadWorkers(){
             if (ws.figure){
                 made.push_back(ws.figure);
             }
+            if (ws.bow){
+                made.push_back(ws.bow);
+            }
         }
     }
 
@@ -494,6 +724,14 @@ void ApplicationChasm::UploadWorkers(){
             changes.push_back({&ws,clip,rate,phase});
         }
     };
+    //His bow and quiver shown, or not.
+    auto show_kit = [&](WorkerSkin& ws, bool f_show){
+        for (Object* kit : {ws.bow,ws.quiver}){
+            if (kit){
+                kit->SetVisibility(f_show);
+            }
+        }
+    };
     //Person i's skeletons but figure `keep`'s hidden, and given no clip - which costs a tick nothing.
     auto park = [&](size_t i, int keep){
         if (i >= worker_skins.size()){
@@ -503,10 +741,18 @@ void ApplicationChasm::UploadWorkers(){
             WorkerSkin& ws = worker_skins[i][f];
             if (f != keep && ws.figure){
                 ws.figure->SetVisibility(false);
+                show_kit(ws,false);
                 set_clip(ws,WORKER_CLIP_NONE,1.0f,0.0f);
             }
         }
     };
+    //The archers drawn this frame, for their kit (place_kit, below).
+    struct Archer{
+        WorkerSkin* ws;
+        int figure;
+        vec3 forward;       //the way he faces
+    };
+    std::vector<Archer> archers;
 
     float seconds = (float)SimSeconds();
     std::vector<std::pair<objectid_t,uint32_t>> figures;    //who each figure drawn is: person_objects
@@ -531,6 +777,7 @@ void ApplicationChasm::UploadWorkers(){
             shown->SetVisibility(false);
             if (ws){
                 set_clip(*ws,WORKER_CLIP_NONE,1.0f,0.0f);
+                show_kit(*ws,false);
             }
             continue;
         }
@@ -559,16 +806,32 @@ void ApplicationChasm::UploadWorkers(){
                 figures.emplace_back(ws->load[l]->GetID(),k.id);
             }
         }
-        int load = k.carry > 0 ? LoadOf(k.carry_good) : LOAD_NONE;
+        int load = WorkerLoad(k);
         for (int l = 1; l < WORKER_LOADS; l++){
             if (ws->load[l]){
                 ws->load[l]->SetVisibility(l == load);
             }
         }
-        //Walking while his route has a leg left, at that leg's speed; standing otherwise. Each on his own step.
+        //An archer carries his bow and quiver wherever he goes (range_plan.md "Shooting"), and a guard is the
+        //tower's archer.
+        bool f_archer = k.job == WORKER_JOB_ARCHER || k.job == WORKER_JOB_GUARD;
+        show_kit(*ws,f_archer);
+        for (Object* kit : {ws->bow,ws->quiver}){
+            if (kit){
+                figures.emplace_back(kit->GetID(),k.id);
+            }
+        }
+        if (f_archer && ws->bow){
+            archers.push_back({ws,f,vec3(facing.x,0.0f,facing.y)});
+        }
+        //Walking while his route has a leg left, at that leg's speed; on the line, shooting by his stint's clock;
+        //standing otherwise. Each on his own step.
         float phase = fmodf((float)k.id * 0.618034f,1.0f);
+        ShotClock shots;
         if (k.seg + 1 < (int)k.route.size() && k.seg < (int)k.speed.size()){
             set_clip(*ws,WORKER_CLIP_WALK,k.speed[k.seg] / worker_walk_speed[f],phase);
+        }else if (f_worker_shoot_clip && worker_shoot_seconds > 0.0f && ShotClockOf(k,e->tick,shots)){
+            set_clip(*ws,WORKER_CLIP_SHOOT,worker_shoot_seconds / shots.cycle,fmodf(shots.elapsed / shots.cycle,1.0f));
         }else{
             set_clip(*ws,f_worker_idle_clip ? WORKER_CLIP_IDLE : WORKER_CLIP_NONE,1.0f,phase);
         }
@@ -578,7 +841,52 @@ void ApplicationChasm::UploadWorkers(){
         person_objects.swap(figures);
     }
 
-    if (!made.empty() || !changes.empty()){
+    /*
+        An archer's bow in his left hand, and while he shoots the arrow in his right - from his hands as they are
+        posed NOW, so read between ticks as the renderer reads them. Carried, the bow stands upright, square to the
+        way he faces; through the shot it turns square to the arrow, from the nock (the swing to it, BowAim) to the
+        lowering. The arrow is in his hand from the quiver to the release: along his forearm as he brings it over,
+        then from his right palm through the bow's grip. Its beats are the clip's own time, not his stint's clock, so
+        it never parts from the hands drawn.
+    */
+    worker_hand_arrows.clear();
+    auto place_kit = [&](const Archer& a){
+        WorkerSkin& ws = *a.ws;
+        if (!ws.arm[0] || !ws.arm[1] || !ws.arm[2] || !ws.arm[3]){
+            return;
+        }
+        const vec3 up(0.0f,1.0f,0.0f);
+        float fit = worker_figure_fit[a.figure];
+        float reach = WORKER_PALM_REACH * PERSON_MODEL_SCALE * fit;
+        vec3 grip = Palm(ws.arm[0],ws.arm[1],reach);
+        vec3 nock = Palm(ws.arm[2],ws.arm[3],reach);
+        quat bow = TurnZTo(a.forward,up);
+        Animation* clip = ws.figure->current_animation;
+        if (clip && clip->name == WORKER_SHOOT_CLIP && clip->duration > 0.0f){
+            float phase = clip->time_index / clip->duration;
+            vec3 line = grip - nock;
+            float len = line.length();
+            if (len > 1e-4f && fabsf(line.y) < 0.95f * len){
+                line = line * (1.0f / len);
+                float aim = BowAim(phase);
+                if (aim > 0.0f){
+                    bow = quat::slerp(bow,TurnZTo(line,up),aim);
+                }
+                if (phase >= SHOOT_TAKE && phase < SHOOT_RELEASE){
+                    vec3 d = (phase < SHOOT_NOCK) ? ws.arm[3]->GetWorldPosition() - ws.arm[2]->GetWorldPosition() : line;
+                    float dl = d.length();
+                    if (dl > 1e-6f && fabsf(d.y) < 0.999f * dl){
+                        worker_hand_arrows.push_back(Object::ComposeTransformScale(nock,TurnZTo(d * (1.0f / dl),up),
+                                                                                   vec3(fit,fit,fit)));
+                    }
+                }
+            }
+        }
+        ws.bow->SetPosition(grip,false);
+        ws.bow->SetRotation(bow,false);
+    };
+
+    if (!made.empty() || !changes.empty() || !archers.empty()){
         main_scene->AtTickBoundary([&](){
             for (Object* s : made){
                 main_scene->AddObject(s);
@@ -587,10 +895,17 @@ void ApplicationChasm::UploadWorkers(){
                 Object* s = c.ws->figure;
                 if (c.clip != c.ws->clip){
                     const char* name = (c.clip == WORKER_CLIP_WALK) ? WORKER_WALK_CLIP
-                                     : (c.clip == WORKER_CLIP_IDLE) ? WORKER_IDLE_CLIP : NULL;
+                                     : (c.clip == WORKER_CLIP_IDLE) ? WORKER_IDLE_CLIP
+                                     : (c.clip == WORKER_CLIP_SHOOT) ? WORKER_SHOOT_CLIP : NULL;
                     Animation* clip = name ? s->FindAnimation(name) : NULL;
-                    //No clip is the bind pose, and from then on nothing for ApplyAnimation to sample.
-                    s->SwitchToAnimation(clip);
+                    /*
+                        From one clip to another, a crossfade (Object::TransitionToAnimation), so he stops, sets off and
+                        turns side-on to his target rather than snapping to it. To none - hidden, or the bind pose, which
+                        leaves ApplyAnimation nothing to sample - and from none, at once.
+                    */
+                    if (!clip || c.ws->clip == WORKER_CLIP_NONE || !s->TransitionToAnimation(clip)){
+                        s->SwitchToAnimation(clip);
+                    }
                     if (clip){
                         clip->time_index = c.phase * clip->duration;
                     }
@@ -598,6 +913,9 @@ void ApplicationChasm::UploadWorkers(){
                 }
                 s->SetAnimationRate(c.rate);
                 c.ws->rate = c.rate;
+            }
+            for (const Archer& a : archers){
+                place_kit(a);
             }
         });
     }

@@ -702,7 +702,8 @@ void Application::RegisterCoreMCPTools(){
                 return json{ {"error","action must be 'start', 'stop' or 'status'"} };
             }
             std::string error;
-            std::string file = args.value("file",std::string(""));
+            //Checked as a string first: value() on a null "file" is a get<> on a null, which with -fno-exceptions aborts.
+            std::string file = (args.contains("file") && args["file"].is_string()) ? args["file"].get<std::string>() : std::string();
             if (!RequestReplay(file,args.value("restore_state",true),error)){
                 return json{ {"error",error} };
             }

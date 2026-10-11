@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 962d00b9-0f7e-485d-b7ba-0758261e2ced
-  modified: 2026-10-09T15:42:33.940Z
+  modified: 2026-10-11T20:23:43.343Z
 ---
 
 Built 2026-10-09 with the user's agreement (docs/range_plan.md).
@@ -32,6 +32,13 @@ Built 2026-10-09 with the user's agreement (docs/range_plan.md).
 - Every range shoots NORTH (ZoneRangeCellAt), so the targets face the camera.
 - Props `range_target` / `hay_bale` / `arrow` are in chasm_props.glb, added with blender_chasm_props.py --add.
   ApplicationChasmRange.cpp draws them as instance sets, with stand-ins if the GLB lacks a prop.
+
+**Shooting, built 2026-10-11** (range_plan.md "Shooting", user agreed the 6 steps): trainees loop the Shoot clip
+by their stint timer (ShotClockOf: whole shots a stint, 8 at 5.0 s); bow (per-frame from the palms, upright when
+carried) + quiver (Spine child) for ARCHER and GUARD jobs; arrow in hand from SHOOT_TAKE to SHOOT_RELEASE; flights
++ landings in ApplicationChasmRange.cpp (ShotOf: normal scatter by archery, misses into the ground behind).
+All view-only: nothing saved/hashed. User's answers: archer always carries the bow; stand-ins first; low skill
+must be able to MISS. Not yet seen in a still: an arrow mid-flight, an archer walking with his bow.
 
 **Why:** archers are the first unit; archery is groundwork for the guard tower (defence step 5, staff by
 archery then precision) and the zombies.

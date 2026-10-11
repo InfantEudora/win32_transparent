@@ -1207,14 +1207,6 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
     return true;
 }
 
-bool ZoneCampFire(int plot){
-    uint32_t h = (uint32_t)plot * 2654435761u;
-    h ^= h >> 13;
-    h *= 0x5bd1e995u;
-    h ^= h >> 15;
-    return (h % ZONE_CAMP_FIRE_EVERY) == 0;
-}
-
 float ZoneCampYaw(int plot){
     uint32_t h = (uint32_t)plot * 0x9E3779B1u + 0xCA4Bu;
     h ^= h >> 15;
@@ -1230,15 +1222,53 @@ vec2 ZoneCampDoor(const ChasmWorld& w, int plot){
     return w.grid->fine.pos[plot] + vec2(std::cos(yaw),std::sin(yaw)) * ZONE_CAMP_DOOR_OUT;
 }
 
+#define ZONE_CAMP_FIRE_OUT  1.3f    //from the tent's plot to its cell's middle, and this much of the way again: clear of the tent
+
+int ZoneCampFireTent(const ChasmWorld& w, const ZoneState& z, int fine_quad){
+    const Grid& g = *w.grid;
+    const Terrain& t = *w.terrain;
+    if (fine_quad < 0 || fine_quad >= (int)g.fine.quads.size()){
+        return -1;
+    }
+    const GridQuad& quad = g.fine.quads[fine_quad];
+    if (quad.parent >= 0 && quad.parent < (int)z.field.size() && z.field[quad.parent]){
+        return -1;      //a field's cell is sown, not sat round
+    }
+    int tent = -1;
+    for (int v : quad.v){
+        if (tent < 0 && z.KindOf(v) == ZONE_KIND_CAMP && z.standing[v] > 0){
+            tent = v;
+        }else if (z.building[v] || z.ground[v] != ZONE_GROUND_NONE || t.wet[v] || t.Mountain(v)){
+            return -1;  //a second tent, anything built or laid, the water or the mountain: no room for a fire
+        }
+    }
+    if (tent < 0){
+        return -1;
+    }
+    for (int v : quad.v){
+        if (!t.SameGround(tent,v)){
+            return -1;  //and not over a terrace's edge
+        }
+    }
+    uint32_t h = (uint32_t)fine_quad * 0x85EBCA6Bu + 0xF12Eu;
+    h ^= h >> 13;
+    h *= 0xC2B2AE35u;
+    h ^= h >> 16;
+    return (h % ZONE_CAMP_FIRE_EVERY == 0) ? tent : -1;
+}
+
+vec2 ZoneCampFireAt(const ChasmWorld& w, int fine_quad, int tent){
+    vec2 p = w.grid->fine.pos[tent];
+    return p + (w.grid->FineQuadCentre(fine_quad) - p) * ZONE_CAMP_FIRE_OUT;
+}
+
 int ZoneCampTents(const ZoneState& z, uint32_t id){
     if (id == 0 || id >= z.buildings.size() || z.buildings[id].kind != ZONE_KIND_CAMP){
         return 0;
     }
     int n = 0;
     for (size_t v = 0; v < z.building.size(); v++){
-        if (z.building[v] == id && !ZoneCampFire((int)v)){
-            n++;
-        }
+        n += (z.building[v] == id) ? 1 : 0;
     }
     return n;
 }
@@ -1300,7 +1330,7 @@ void ZoneCampSpots(const ChasmWorld& w, int tents, std::vector<ZoneCampSpot>& ou
     std::vector<int> camp_mark(n,0), mark(n,0), cell_mark(g.coarse.quads.size(),0);
     int marks = 0;
     std::vector<int> camp_queue, queue, cells;
-    //The camp fits from v: as PlaceStartCamp lays it, a flood through the plots a tent or fire may take, to `tents` tents.
+    //The camp fits from v: as PlaceStartCamp lays it, a flood through the plots a tent may take, to `tents` tents.
     auto fits = [&](int v){
         if (!house(v)){
             return false;
@@ -1310,7 +1340,7 @@ void ZoneCampSpots(const ChasmWorld& w, int tents, std::vector<ZoneCampSpot>& ou
         camp_mark[v] = m;
         int have = 0;
         for (size_t at = 0; at < camp_queue.size() && have < tents; at++){
-            have += ZoneCampFire(camp_queue[at]) ? 0 : 1;
+            have++;
             int nb[8];
             int k = ZonePlotNeighbours(w,camp_queue[at],nb,8);
             for (int j = 0; j < k; j++){
@@ -1523,7 +1553,7 @@ void Zones::PlaceStartCamp(int tents){
         int v = queue[at];
         uint32_t joining = state.stroke_building;
         if (ZoneCanBuild(w,state,v,ZONE_KIND_CAMP,joining,NULL) && Apply(ZONE_OP_BUILD_PAINT,(uint32_t)v,ZONE_KIND_CAMP,CAMP_STROKE)){
-            have += ZoneCampFire(v) ? 0 : 1;
+            have++;
         }else if (at > 0){
             continue;   //not a camp plot: the flood goes on only through the camp
         }
@@ -1587,6 +1617,17 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
         }
     }
     RefreshArches(false);
+}
+
+#define ZONE_PITCH_STROKE   0x7FFFFEu   //a stroke number no drag reaches: a pitched tent joins no building by it
+
+bool Zones::PitchTent(int plot, uint32_t camp){
+    uint32_t stroke = state.stroke;
+    uint32_t building = state.stroke_building;
+    bool f_done = Apply(ZONE_OP_BUILD_PAINT,(uint32_t)plot,ZONE_KIND_CAMP,ZONE_PITCH_STROKE,false,camp);
+    state.stroke = stroke;
+    state.stroke_building = building;
+    return f_done;
 }
 
 //A fine quad's look changed: its chunk has to be rebuilt.

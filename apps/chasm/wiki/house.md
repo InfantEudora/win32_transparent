@@ -25,13 +25,19 @@ but never more than {ECONOMY_HOUSE_MOST}.
 A family without a house (at the [[Camp]], or homeless) moves into the **smallest empty house that holds
 all of them** and that they can walk to; the largest family goes first. If no empty house fits, a smaller
 family living in one that would moves to another empty house to make room. A family whose house is pulled
-down goes back to the camp.
+down goes back to a camp with room for them.
+
+**Crammed.** A family left with no home at all, and no camp with room for them, squeezes into a house or
+camp of the [[Settlement|settlement]] they are standing in, even past its room: the one with the most room
+to spare. Families crammed in together move out, the largest first, as soon as an empty house holds them.
+With no home left in the settlement, they wait where the settlers first camped.
 
 Every round starts and ends at the house, so where it stands decides who gets which job
 ([[Person|jobs]]) and how quick their rounds are. Its card lists the family, dimmed while indoors. **A
 click on a name selects that [[Person|person]]**, at home or out, so they can be ordered without waiting
 for them to come outside; hovering a name outlines them in light blue if they are out. Someone selected
-at home shows on the map by their house's outline. The [[Camp|camp's]] card lists its settlers the same way.
+at home shows on the map by their house's outline; Shift+click adds them to the people already selected.
+The [[Camp|camp's]] card lists its settlers the same way.
 
 ## What it keeps
 

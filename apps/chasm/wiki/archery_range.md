@@ -4,10 +4,10 @@ aliases: range, ranges, archery ranges, archery, archer, archers, trainee, train
 kind: buildings
 status: built
 summary: Painted on coarse cells like a field. A trainee a cell trains there full time, all year, and their archery grows toward what their precision allows.
-plans: range_plan.md > Decided; range_plan.md > As built; range_plan.md > Later
-code: Economy.cpp: GoTrain EconomyCellCost AssignJobs; Economy.h: WORKER_JOB_ARCHER EconomyArcheryCap ARCHERY_FULL; Zones.h: ZONE_KIND_RANGE ZoneKindOnCells
-tuning: ARCHERY_PER_TICK
-verified: 2026-10-10
+plans: range_plan.md > Decided; range_plan.md > As built; range_plan.md > Shooting; range_plan.md > Later
+code: Economy.cpp: GoTrain EconomyCellCost AssignJobs; Economy.h: WORKER_JOB_ARCHER EconomyArcheryCap ARCHERY_FULL; Zones.h: ZONE_KIND_RANGE ZoneKindOnCells; ApplicationChasmRange.cpp: ShotClockOf ShotOf
+tuning: ARCHERY_PER_TICK, RANGE_SPREAD_NOVICE, RANGE_SPREAD_MASTER
+verified: 2026-10-11
 ---
 
 Archers are the first people the colony trains, and they train here. A range is painted over **coarse
@@ -27,8 +27,19 @@ at once. The price is high on purpose: a range is not an early building.
 ([[Skills]]) against the walk from home. Training is the trainee's whole job.
 
 From home, each walks to a cell of their own (the built cells are shared out by id, one each), stands on its
-line facing the target and trains for {ECONOMY_TRAIN_SECONDS:#seconds}, then goes home, and out again. Arrows
-gather in the target through the stint. Training goes on all year, in winter and under the snow.
+line facing the target and trains for {ECONOMY_TRAIN_SECONDS:#seconds}, then goes home, and out again.
+Training goes on all year, in winter and under the snow.
+
+## Shooting
+
+On the line a trainee **shoots**: one shot each turn of the Shoot clip, timed so a stint holds a whole
+number of them, from the moment they arrive (`ShotClockOf`). Each arrow is drawn from the quiver, nocked,
+loosed and flies to the target. It **sticks in the face, or misses** and comes down in the ground behind:
+the scatter narrows with archery, from {RANGE_SPREAD_NOVICE} with none to {RANGE_SPREAD_MASTER} at full
+(`ShotOf`), so a beginner misses often and a trained archer groups tight. The arrows stay until the trainee
+goes home. It is all for show: shots change nothing, and archery grows the same either way.
+
+An archer, and a [[Guard tower|guard]], carries a bow and a quiver wherever they go.
 
 ## Archery
 
@@ -47,5 +58,6 @@ nobody training is listed in NEEDS ATTENTION as NOBODY AT THE RANGE.
 ## Planned
 
 - [planned] Trainees who keep their trade and train part of their time - a change to jobs of its own.
-- [idea] Shooting at something, and what archery does there.
+- [idea] Guards shooting at something from their towers, and what archery does there.
+- [planned] A modelled `bow` and `quiver` in the props file in place of the stand-ins.
 - [idea] An order buildings come in, perhaps a tech tree; until then a range's price says it comes later.
