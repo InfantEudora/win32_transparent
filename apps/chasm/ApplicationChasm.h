@@ -46,6 +46,8 @@ struct PlayPick{
 #define PERSON_KID_MALE         2
 #define PERSON_KID_FEMALE       3
 extern const char* person_asset_names[PERSON_FIGURES];
+//Which of them a person is drawn as now (ApplicationChasmWorkersView.cpp).
+int PersonFigure(const EconomyWorker& k, uint64_t tick);
 //The archery range's props in chasm_props.glb (ApplicationChasmRange.cpp): target, hay bale, arrow.
 extern const char* range_asset_names[];
 //How a crate is turned where it lies, from its id (ApplicationChasmCrates.cpp) - its outline turns the same.
@@ -80,6 +82,7 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_KEEP        19      //a builders' hut's or ropewalk's card: the colony keeps `value` of what it makes
 #define OVERLAY_HIT_MAKE_MORE   20      //...an order for `value` more of it - 0 cancels the one running (goods_plan.md)
 #define OVERLAY_HIT_GATHER      21      //a posted person's card: gather a scout's pack first, or stop (defence_plan.md)
+#define OVERLAY_HIT_FAMILY      22      //a house's or the camp's card: select person `value`, indoors or out - the view stays
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -465,6 +468,10 @@ private:
     uint32_t arch_notice_seen = 0;              //render thread: the last one shown
     std::string refusal_shown;                  //render thread: the refusal on screen, either kind, whole
     bool f_refusal_notice = false;              //render thread: ...or the arch's notice, which is no refusal
+    float refusal_seconds = 3.0f;               //render thread: ...on screen this long - a rules' notice longer
+    //A NOTICE from the rules (Economy.h; defence_plan.md, "Scouting") told in the refusal's place, in amber - render thread.
+    uint32_t notices_seen = 0;                  //EconomyState::notices_made already told of
+    const ChasmWorld* notices_world = nullptr;  //the map they were counted on
     //A DEATH told on the play overlay (needs_plan.md step 5) - render thread.
     size_t deaths_seen = 0;                     //the dead already told of
     const ChasmWorld* deaths_world = nullptr;   //the map they were counted on: a new map's dead are old news
@@ -565,13 +572,14 @@ private:
         uint32_t zones_version = 0;
         int plot = -1, coarse = -1, tool = -1;
         bool f_explored = false;
+        bool f_settled = true;                  //inside a settlement's territory (settlements_plan.md)
         uint32_t line_version = 0;              //a road being drawn: its chain (0 with none)
         int bridge_from = -1;                   //a bridge being dragged: the bank it starts from
         uint32_t owner = 0;                     //a yard being painted: the building it is for (yards_plan.md)
         uint32_t crates_version = 0;            //the crates, which nothing may be built over (crates_plan.md)
         bool operator==(const GhostKey& o) const{
             return world == o.world && zones_version == o.zones_version && plot == o.plot && coarse == o.coarse
-                   && tool == o.tool && f_explored == o.f_explored && line_version == o.line_version
+                   && tool == o.tool && f_explored == o.f_explored && f_settled == o.f_settled && line_version == o.line_version
                    && bridge_from == o.bridge_from && owner == o.owner && crates_version == o.crates_version;
         }
     };
@@ -597,6 +605,7 @@ private:
     Mesh* worker_skin_mesh[PERSON_FIGURES] = {};
     Mesh* worker_skin_load[PERSON_FIGURES * 4] = {};    //figure * 4 + load: the load in its bone's space
     float worker_figure_fit[PERSON_FIGURES] = {};   //its height over the man's (the loads follow it)
+    float worker_figure_height[PERSON_FIGURES] = {};    //its height as drawn, feet to crown: what a pick near him spans
     float worker_walk_speed[PERSON_FIGURES] = {};   //world units a second its walk clip carries it at rate 1
     bool f_worker_idle_clip = false;                //the file has an idle clip to stand in
     struct WorkerSkin{
@@ -661,6 +670,16 @@ private:
     uint32_t ropewalk_built_zones = 0xFFFFFFFFu;    //the zones' version, as last drawn
     std::vector<std::array<uint32_t,3>> ropewalk_built;     //ropewalk, coils, sheaves - as last drawn
     void UploadRopewalks();                         //from PreRender
+    //SETTLEMENTS, drawn (docs/settlements_plan.md, ApplicationChasmBorders.cpp): the territories' border posts, and
+    //with a person selected, the walk to the plot under the cursor - the render thread's own route search for it.
+    Object* border_object = NULL;
+    std::shared_ptr<const ChasmWorld> border_built_world;
+    uint32_t border_built_zones = 0xFFFFFFFFu;      //the territories' zones version, as last drawn
+    void UploadBorders();                           //from PreRender
+    Walkers walk_tip_walkers;
+    std::array<int,4> walk_tip_key = {{-1,-1,-1,-1}};   //person, the plot he is on, the plot under the cursor, zones
+    float walk_tip_length = -1.0f;                  //...and its walk, -1 no way there
+    void DrawWalkTip(float s);                      //render thread, from DrawOverlay in play mode
 
     /*
         --- The calendar and the speed (gameplay_plan.md P1, ApplicationChasmTime.cpp) ---------------
@@ -817,6 +836,12 @@ private:
     PlayPick play_hover;
     PlayPick play_selected;
     std::atomic<uint32_t> play_pick_version{0};
+    /*
+        Who each drawn figure is, by object id: a person's figure - static or his skeleton - and the load on it.
+        The people are PICKABLE, so the engine reads back which of them is under the cursor (PlayPickUnder).
+        Rebuilt every frame by UploadWorkers (render thread); under pick_mutex.
+    */
+    std::vector<std::pair<objectid_t,uint32_t>> person_objects;
     std::vector<OverlayHit> overlay_hits;
     std::vector<OverlayHit> overlay_hits_drawing;           //render thread, filled while drawing
     int2 right_press_px;                                    //physics thread: where a right press began
@@ -840,6 +865,10 @@ private:
     PlayPick PlayPickUnder(int2 px, const GridPick& hover);
     void UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_scene, bool& f_clicked);   //physics thread
     bool OverlayHitAt(int2 px, OverlayHit* hit);
+    //MCP thread: the engine's pick read at `px` (InputController::PinPickPixel) - waits for an answer read there,
+    //a few frames; false if none came. The pin stays until RestorePickPin.
+    bool WaitForPickAt(int2 px);
+    void RestorePickPin();                                  //...back to the hover's pin (chasm_select op hover), or none
     void UploadSelection();                                 //render thread, from PreRender
     float DrawBuildBar(float s);                            //render thread, from DrawOverlay; the top of it and its BUILDING line
     float DrawIssues(float s, float bottom);                //render thread, from DrawOverlay: over the grid (issues_plan.md); its top

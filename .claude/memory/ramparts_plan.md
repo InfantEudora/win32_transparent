@@ -29,7 +29,7 @@ them, Stronghold-style.
 - **Surface picking**: chasm's terrain + zone chunks are PICKABLE now (`surface_ids`), so the engine's G-buffer
   readback gives position/normal at the mouse; `PickUnderMouse`/`PickSurface` -> plot (inset along normal) + layer
   (`SurfaceLayer`). Orders carry the layer (`post_layer`, CHASM_CMD_ORDER value[1] = layer+1). Test the mapping with
-  `chasm_pick surface:[x,y,z] normal:[..]` - the live mouse can't be driven while minimised.
+  `chasm_pick surface:[x,y,z] normal:[..]`, or since 2026-10-11 `chasm_select under/press` at a pixel - they pin the engine's pick pixel ([[chasm-person-picking]]).
 - Selected person's route shown as dots + ring (`BuildPathMarks`, Select.cpp).
 - User verdict 2026-10-10: "it reads very well".
 

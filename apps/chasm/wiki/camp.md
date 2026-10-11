@@ -6,12 +6,13 @@ status: built
 summary: Tents and fires where the settlers start. It is home to anyone without a house, and holds the settlers' supplies for the whole colony beside a pantry of its own.
 plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built
 code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld; Economy.h: pantry
-verified: 2026-10-09
+verified: 2026-10-11
 ---
 
 A new map starts with one camp, just big enough for the settlers. The game puts it on the best spot it
 can find along a river: flat ground for houses and fields, with forest at hand but not all around
-(`ZoneStartCampPlot`). The player can paint more camps.
+(`ZoneStartCampPlot`). The player can paint more camps. The start camp founds the first [[Settlement|settlement]]:
+the land within a walk of it where its people work; a camp outside every settlement would found another.
 
 ## Living there
 

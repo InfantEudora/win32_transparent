@@ -880,6 +880,11 @@ EXPORT_SETTINGS = dict(
     #The villagers' rig (character_armature) and its clips. export_apply above leaves the Armature
     #modifier out and applies the rest - a figure's Mirror - so the skin survives it.
     export_animations=True,
+    #Keys as they are, not one per frame: tools/blender_retarget.py writes clips already reduced to
+    #the LINEAR keys the engine's slerp needs, and sampling would put every frame back. Unsampled
+    #keys keep their frame's time - the exporter only slides a clip to zero when it samples - so a
+    #clip is keyed from frame 0.
+    export_force_sampling=False,
     export_skins=True,
     export_morph=False,
     export_cameras=False,

@@ -583,3 +583,47 @@ bool Walkers::OpenFromOutside(const ZoneState& z, int v){
     }
     return false;
 }
+
+void Walkers::MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist){
+    EnsureGraph();
+    EnsureLinks(z);
+    if (!graph || !world || z.world != world){
+        dist.clear();
+        return;
+    }
+    const Terrain& t = *world->terrain;
+    int n = (int)world->grid->fine.pos.size();
+    dist.assign(n,INFINITY);
+    //Ground a walk goes on from: dry, or a bridge's deck; never the mountain.
+    auto onward = [&](int v){
+        return (!t.wet[v] || ZoneBridgeWalkable(z,v)) && !t.Mountain(v);
+    };
+    typedef std::pair<float,int> Entry;
+    std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> open;
+    for (int v : from){
+        if (v >= 0 && v < n && dist[v] > 0.0f){
+            dist[v] = 0.0f;
+            open.push(Entry(0.0f,v));
+        }
+    }
+    while (!open.empty()){
+        Entry e = open.top();
+        open.pop();
+        int v = e.second;
+        if (e.first > dist[v] || !onward(v)){
+            continue;
+        }
+        for (int i = graph->start[v]; i < graph->start[v + 1]; i++){
+            int u = graph->next[i];
+            //A cliff only by a winch; and nothing too steep, as EdgeOpen - what stands on either plot aside.
+            if (!t.SameGround(v,u) ? !IsLink(v,u) : std::fabs(t.ground[u] - t.ground[v]) > WALKER_STEEPEST * graph->length[i]){
+                continue;
+            }
+            float d = dist[v] + graph->length[i];
+            if (d <= reach && d < dist[u]){
+                dist[u] = d;
+                open.push(Entry(d,u));
+            }
+        }
+    }
+}

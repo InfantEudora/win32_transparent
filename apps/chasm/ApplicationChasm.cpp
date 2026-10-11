@@ -548,6 +548,16 @@ void ApplicationChasm::UpdatePick(){
         bool f_in = main_window->f_has_focus && px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
         overlay_mouse_x = f_in ? px.x : -1;
         overlay_mouse_y = f_in ? px.y : -1;
+    }else{
+        /*
+            ...and the scene's hover too (chasm_select op hover): at the script's pixel, which the engine reads in
+            the mouse's place (InputController::PinPickPixel), with or without focus - so a person's hover outline
+            is in the next screenshot. The mouse's buttons do nothing meanwhile.
+        */
+        px = int2(overlay_mouse_x.load(),overlay_mouse_y.load());
+        f_over_scene = p && !UIWantsMouse();
+        f_clicked = false;
+        f_held = false;
     }
     if (f_over_scene){
         f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
@@ -741,10 +751,13 @@ void ApplicationChasm::RegisterCommandHandlers(){
             //the clouds; a debug placement goes ahead, and the crate under it is lost (Economy::LoseCoveredCrates).
             bool f_crate = !f_clouded && f_play && zw && economy.State().world == zw
                            && EconomyCrateInTheWay(economy.State(),*zw,(int)cmd.value[0],(int)cmd.subtype,(int)cmd.value[1]);
-            if (f_clouded || f_crate){
+            //Nor outside every settlement's territory (settlements_plan.md): play commands only, as for the clouds.
+            bool f_outside = !f_clouded && !f_crate && f_play && zw && economy.State().world == zw
+                             && !EconomyCommandInTerritory(economy.State(),*zw,(int)cmd.value[0],(int)cmd.subtype);
+            if (f_clouded || f_crate || f_outside){
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
-                    zone_last_refusal = f_clouded ? "under the clouds" : "a crate lies there";
+                    zone_last_refusal = f_clouded ? "under the clouds" : f_crate ? "a crate lies there" : "outside the settlement";
                     zone_last_arch_lost = 0;
                 }
                 zone_refusals++;
@@ -2298,6 +2311,7 @@ void ApplicationChasm::PreRender(void){
     UploadCrates();
     UploadRange();
     UploadRopewalks();
+    UploadBorders();
     UploadClouds();
     UploadHearth();
     UpdatePickView();

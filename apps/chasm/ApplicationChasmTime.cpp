@@ -421,6 +421,7 @@ void ApplicationChasm::DrawOverlay(void){
         float jobs_top = DrawJobsOverview(s);
         DrawNeediest(s,jobs_top - 8.0f * s);
         DrawSelectionOverlay(s);
+        DrawWalkTip(s);
     }
     if (!food_tip.empty()){
         const float text_size = 14.0f * s;
@@ -516,7 +517,8 @@ float ApplicationChasm::DrawBuildBar(float s){
         Why the last placement was refused, for a moment at the bottom in the middle - play mode has no panel
         to say it (under the clouds, too close to water, too wide to bridge) - or the last order (no way there:
         defence_plan.md), whichever came last. In the same place, in amber, an ARCH taken down by the player's last
-        command (arches_plan.md step 4) - floors paid for, and maybe a house's places, gone without a word otherwise.
+        command (arches_plan.md step 4) - floors paid for, and maybe a house's places, gone without a word otherwise -
+        and the rules' NOTICES (below).
     */
     {
         auto now = std::chrono::steady_clock::now();
@@ -530,6 +532,7 @@ float ApplicationChasm::DrawBuildBar(float s){
             refusal_since = now;
             refusal_shown = "the arch over the road came down with it";
             f_refusal_notice = true;
+            refusal_seconds = 3.0f;
         }else if (refusals != refusal_seen || orders != order_refusal_seen){
             bool f_order = orders != order_refusal_seen;
             refusal_seen = refusals;
@@ -539,13 +542,45 @@ float ApplicationChasm::DrawBuildBar(float s){
             const std::string& why = f_order ? order_last_refusal : zone_last_refusal;
             refusal_shown = why.empty() ? std::string() : (f_order ? "CAN'T SEND: " : "CAN'T BUILD: ") + why;
             f_refusal_notice = false;
+            refusal_seconds = 3.0f;
+        }
+        /*
+            The rules' NOTICES (Economy.h; defence_plan.md, "Scouting"): a scout with nothing to take, an ordered man's
+            pack run out - the newest since the last look, in amber and for as long as a death, since it comes from
+            play rather than a click. Only one of the last half day: a load brings none along, but a replay's start can.
+        */
+        std::shared_ptr<const EconomyState> ne = GetEconomy();
+        if (ne && (ne->world.get() != notices_world || ne->notices_made < notices_seen)){
+            notices_world = ne->world.get();
+            notices_seen = ne->notices_made;
+        }
+        if (ne && ne->notices_made > notices_seen && !ne->notices.empty()){
+            notices_seen = ne->notices_made;
+            const EconomyNotice& n = ne->notices.back();
+            std::string name = "someone";
+            for (const EconomyWorker& k : ne->workers){
+                name = (k.id == n.person) ? EconomyPersonName(k) : name;
+            }
+            for (const EconomyDeath& d : ne->dead){
+                name = (d.id == n.person) ? EconomyDeathName(d) : name;
+            }
+            bool f_water = (n.what & GOOD_BIT(GOOD_WATER)) != 0;
+            bool f_food = (n.what & GOODS_EATEN) != 0;
+            std::string told = (n.kind == NOTICE_NOTHING_TO_TAKE) ? "no food or water for " + name + " to take"
+                             : name + " has run out of " + ((f_water && f_food) ? "food and water" : f_water ? "water" : "food");
+            if (ne->tick < n.tick + CALENDAR_DAY_TICKS / 2){
+                refusal_shown = told;
+                refusal_since = now;
+                f_refusal_notice = true;
+                refusal_seconds = 5.0f;
+            }
         }
         float age = std::chrono::duration<float>(now - refusal_since).count();
-        if (age < 3.0f && !refusal_shown.empty()){
+        if (age < refusal_seconds && !refusal_shown.empty()){
             std::string text = refusal_shown;
             std::transform(text.begin(),text.end(),text.begin(),::toupper);
             vec2 m = overlay->MeasureText(text.c_str(),size);
-            uint8_t alpha = (uint8_t)(255.0f * std::min(1.0f,(3.0f - age) * 2.0f));
+            uint8_t alpha = (uint8_t)(255.0f * std::min(1.0f,(refusal_seconds - age) * 2.0f));
             const float side = 14.0f * s;
             vec2 r0(cx - m.x * 0.5f - side,bottom - 30.0f * s);
             vec2 r1(cx + m.x * 0.5f + side,bottom);

@@ -6,7 +6,7 @@ status: built
 summary: What the player places in play is a site, built a storey at a time from wood that people without a job, and builders, carry to it.
 plans: construction_plan.md > As built; construction_plan.md > Which site goes first; builders_plan.md > As built; yards_plan.md > Noted
 code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND
-verified: 2026-10-10
+verified: 2026-10-11
 ---
 
 ## Sites
@@ -31,7 +31,8 @@ is there, and what it took is used up. A site pulled down loses what was brought
 
 ## Who builds
 
-Everyone without a job, and **builders**, the job at a **builders' hut**. They go from home to the nearest
+Everyone without a job, and **builders**, the job at a **builders' hut** - only for sites in their own
+[[Settlement|settlement]]. They go from home to the nearest
 of what the site still lacks - [[Wood|wood]], or any other good it takes - (a [[Store]], the [[Camp|camp's]]
 supplies, a [[Woodcutter|woodpile]] for wood, an empty [[House|house]], a [[Crate|crate]]), carry a load to the site, and build
 with it for {ECONOMY_BUILD_SECONDS:#seconds} at their pace ([[Skills|strength]]). Once enough is there, every

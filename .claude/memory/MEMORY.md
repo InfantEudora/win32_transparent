@@ -89,7 +89,7 @@
 - [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets
 - [Line works plan](line_works_plan.md) — AGREED 2026-10-06: chasm roads/walls drag-previewed, built by idle villagers felling trees; waits on window 39
 - [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants); difficulty may retune later
-- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: all 8 steps built (orders … guard tower, towers kept full, guards by hand + count); gatehouse wanted; chasm_select op hits finds chips; scouting steps 1-2 built 2026-10-11, messages next
+- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: all 8 steps built (orders … guard tower, towers kept full, guards by hand + count); gatehouse wanted; chasm_select op hits finds chips; scouting (kept provisions, gather chip, messages) all built 2026-10-11
 - [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop defaults to AUTO after a day; add rows in ChasmIssues
 - [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes; figures are constant names
 - [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-3 BUILT (drop, take via SourceStock, builders move, card); finds and holding->dropping next
@@ -97,6 +97,9 @@
 - [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, full-time archers by precision, per-person archery; props in chasm_props.glb
 - [Chasm goods strip](chasm_goods_strip.md) — cards show stocks as strips: solid anyone's, hollow kept, striped reserved; HudGoodColour per good
 - [Chasm goods plan](chasm_goods_plan.md) — AGREED 2026-10-10: food/water/materials/inputs categories, hemp crop, ropewalk (2-4 plots) makes rope; no starting rope; all 6 steps built and checked end to end; kept stock + make-more orders (provisions, rope) built 2026-10-10
-- [Chasm villager animation](chasm_villager_animation.md) — going skinned (shared mesh, 7-bone rig); crowd bench: ~2.3 us/tick + ~7 us/frame per figure, static free; .blend exporter drops skins
+- [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs, skinned crowd costs; Shoot via tools/blender_retarget.py; export UNSAMPLED, clips keyed from frame 0
 - [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" open questions
 - [Ramparts plan](ramparts_plan.md) — Chasm walk nodes are plot+layer; tower decks + debug castle built 2026-10-10; route_layer drives height; WalkJoin is the shared rule
+- [Chasm person picking](chasm_person_picking.md) — people picked by G-buffer readback + 8 px fallback; skinned outlines in core; chasm_select pins the pick pixel
+- [Minimised app took keystrokes](minimized_focus_leak.md) — OPEN: a --minimized chasm once had input_focused true and obeyed VS Code typing; check input_focused
+- [Chasm settlements](chasm_settlements.md) — 2026-10-11: territories by 50 units' walk from a camp, people work only in their own (Economy::Ours), Settlers-style border posts; step 1 built; founding expeditions + porters to think through

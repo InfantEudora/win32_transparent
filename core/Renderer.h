@@ -176,6 +176,10 @@ class Renderer{
     //f_frustum_cull is on. Only the passes drawn FROM the camera may pass it - see f_frustum_cull.
     void RenderUniqueMeshes(int normal_or_skinned, int custom_shader_index = -1, bool f_occluder_pass = false,
                             bool f_camera_cull = false);
+    //The skeleton that poses a skinned object - itself, or its parent - or NULL.
+    static Skeleton* SkeletonOf(Object* object);
+    //A skeleton's bone matrices appended to `out` by joint index, as the skinned shaders read them; its bone count.
+    int AppendBoneData(Skeleton* skeleton, std::vector<bonedata_t>& out);
 
     /*
         FRUSTUM CULLING - a MEASURING PROTOTYPE (2026-09-30), off by default; see
@@ -592,17 +596,20 @@ class Renderer{
              object (or of none) takes that object's colour, softened by how far it is.
 
         No outlined object, no pass: nothing allocated and nothing drawn, so no app pays for it.
-        Objects come from the visible renderable list - plain meshes only, not instance sets or
-        skinned ones; outline-only objects (Object::f_outline_only) are taken out of that list
-        before any other pass sees it.
+        Objects come from the visible renderable list - plain and skinned meshes, not instance sets
+        or line meshes; outline-only objects (Object::f_outline_only) are taken out of that list
+        before any other pass sees it. A skinned one is drawn in its pose (outline_mask_skinned.vert),
+        its screen box taken from its bones, since a skinned mesh keeps no bounds.
     */
     std::vector<Object*> outlined_objects;      // this frame's, from CullObjects
+    std::vector<bonedata_t> outline_bones;      // a skinned outlined object's bones, one at a time
     GLuint outline_fbo_id = -1;
     GLuint outline_tex_id = -1;                 // RGBA32I: object + 1, hidden, packed colour
     GLuint outline_depth_rbo_id = -1;
     int outline_tex_width = 0;
     int outline_tex_height = 0;
     Shader* outline_mask_shader = NULL;         // outline_mask.vert + outline_mask.frag
+    Shader* outline_mask_skinned_shader = NULL; // outline_mask_skinned.vert + outline_mask.frag
     Shader* outline_shader = NULL;              // lowres_composite.vert + outline.frag
     bool RebuildOutlineFBO();
     void OutlinePass(Camera* camera);
@@ -1003,6 +1010,7 @@ class Renderer{
     //renderable_objects as it stood when each in-flight read was issued, by id. Without this the
     //index that comes back resolves against a differently-culled vector - see ReadPickingAsync.
     std::vector<objectid_t> picking_id_snapshot[PICK_PBO_SLOTS];
+    int2 picking_pixel[PICK_PBO_SLOTS];         //the window pixel each slot's read was issued at
 
     GPUPassTimer gpu_pass_timers[GPU_PASS_COUNT];
     bool f_gpu_timers_supported = false;

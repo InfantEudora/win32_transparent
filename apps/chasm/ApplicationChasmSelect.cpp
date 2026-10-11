@@ -38,10 +38,13 @@
 
 #define SELECT_COLOUR       vec4(1.00f,0.62f,0.16f,1.00f)   //HUD_SELECT: Blender's selection orange
 #define RELATED_COLOUR      vec4(1.00f,0.90f,0.62f,0.85f)   //what belongs with the selection
-#define HOVER_COLOUR        vec4(1.00f,0.95f,0.82f,0.50f)   //under the cursor
-#define PERSON_PICK_PX      14.0f       //a person is picked within this many pixels (at 810 high) of his middle
-#define PERSON_MIDDLE       0.55f       //world units above his feet: where he is picked
-#define PERSON_PIN          1.55f       //...and where his pin points
+#define HOVER_COLOUR        vec4(1.00f,0.95f,0.82f,0.50f)   //a building or crate under the cursor
+#define PERSON_HOVER_COLOUR vec4(0.45f,0.78f,1.00f,1.00f)   //a person under the cursor, or his line on a card: light blue
+#define HUD_PERSON_HOVER    UIColor(115,199,255,255)        //...the same, behind his line on a card or a list
+#define PERSON_NEAR_PX      8.0f        //a person is picked within this many pixels (at 810 high) of the line up his figure
+#define PERSON_HIDDEN_SLACK 0.75f       //...unless what the cursor is on stands this much nearer the eye than he does
+#define PICK_READ_SLOP      4           //pixels the engine's readback may lag the cursor by and still be its answer
+#define PERSON_PIN          1.55f       //world units above his feet where his pin points
 #define CRATE_PICK_PX       12.0f       //a crate is picked within this many pixels (at 810 high) of its middle
 #define CRATE_MIDDLE        0.2f        //...which is this far above the ground under it (crate_a stands 0.40)
 #define THIRST_MARK_WATER   NEEDS_PRESSING_WATER    //water left at which his badge shows a drop: when he goes for it
@@ -671,6 +674,7 @@ struct CardLine{
     int choice_on = -1;         //...the value lit
     int choice_action = 0;      //...and what a click on one does (OVERLAY_HIT_*), with its value
     HudStock stock;             //CARD_STOCK
+    uint32_t person = 0;        //CARD_TEXT about one person: hovering it outlines him, a click selects him
 };
 
 //A crop's name as a card says it: capitalised.
@@ -687,6 +691,11 @@ struct Card{
         l.text = t;
         l.colour = colour;
         lines.push_back(l);
+    }
+    //A line about person `id` (selection_plan.md, "Selecting someone indoors"): a click on it selects him.
+    void Person(const std::string& t, uint32_t id, uint32_t colour = HUD_TEXT){
+        Text(t,colour);
+        lines.back().person = id;
     }
     void Bar(const std::string& t, float f, uint32_t colour = HUD_TEXT){
         CardLine l;
@@ -940,15 +949,25 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         gather.choice_action = OVERLAY_HIT_GATHER;
         c.lines.push_back(gather);
     }
-    //His pack (defence_plan.md): what he carries to live on - posted, or home again with what the pantry had no room for.
-    std::string pack;
-    for (int g = 0; g < GOOD_COUNT; g++){
-        if (k.pack[g] > 0){
-            pack += Format("%s%i %s",pack.empty() ? "" : ", ",k.pack[g],GoodName(g));
-        }
-    }
-    if (!pack.empty()){
-        c.Text("Pack: " + pack,HUD_TEXT_DIM);
+    /*
+        His PACK (defence_plan.md): what he carries to live on - posted, or on his way home - as a store shows what it
+        holds (selection_plan.md, "What a person carries, as a strip"): hollow, his own. It has no room, since water
+        is counted in units and food by the health it gives; what it is worth, in days, takes the room's place.
+    */
+    if (AnyGoods(k.pack)){
+        auto days = [](float d){
+            return (std::fabs(d - std::round(d)) < 0.05f) ? Format("%.0f",d) : Format("%.1f",d);
+        };
+        float water = (float)k.pack[GOOD_WATER] * NEEDS_WATER_WORTH / CALENDAR_DAY_TICKS;
+        float food = (float)EconomyPackFood(k) / CALENDAR_DAY_TICKS;
+        CardLine l;
+        l.type = CARD_STOCK;
+        l.stock.label = "Pack";
+        l.stock.whose = k.f_female ? "her own" : "his own";
+        l.stock.goods = k.pack;
+        l.stock.f_kept = true;
+        l.stock.figure = Format("water %s days, food %s",days(water).c_str(),days(food).c_str());
+        c.lines.push_back(l);
     }
     std::string doing = Doing(k,&z,&e);
     if (k.carry > 0){
@@ -1184,11 +1203,12 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Text(living ? "Uninhabitable: shut in on every side - its family cannot get out"
                           : "Uninhabitable: shut in on every side, with no way in",living ? HUD_DANGER : HUD_AMBER);
         }
+        //Its family, or the camp's settlers: a click on one selects him, at home or out (OVERLAY_HIT_FAMILY).
         for (const EconomyWorker& k : e->workers){
             if (k.house == id){
-                c.Text(Format("  %s, %i - %s, %s",EconomyPersonName(k).c_str(),EconomyAgeAt(k.born,e->tick),JobTitle(k.job),
-                              Doing(k,&z,e)),
-                       EconomyIndoors(k) ? HUD_TEXT_DIM : HUD_TEXT);
+                c.Person(Format("  %s, %i - %s, %s",EconomyPersonName(k).c_str(),EconomyAgeAt(k.born,e->tick),JobTitle(k.job),
+                                Doing(k,&z,e)),
+                         k.id,EconomyIndoors(k) ? HUD_TEXT_DIM : HUD_TEXT);
             }
         }
         //Its LAND (land_plan.md): its fields and their built cells, who farms it, and what lies fallow.
@@ -1876,10 +1896,17 @@ uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r,
 //--- Picking (physics thread) ----------------------------------------------------------------------
 
 /*
-    What is under the cursor in play mode: a person first - the nearest on screen within PERSON_PICK_PX
-    of his middle, out of doors - since he stands on a plot that would otherwise win; then a crate, the same
-    way, within CRATE_PICK_PX of its middle (crates_plan.md); then the building or field on the plot under
-    the cursor.
+    What is under the cursor in play mode: a person first, since he stands on a plot that would otherwise
+    win; then a crate, the nearest on screen within CRATE_PICK_PX of its middle (crates_plan.md); then the
+    building or field on the plot under the cursor.
+
+    A PERSON BY HIS FIGURE (selection_plan.md, "Picked by the figure"). The people are pickable objects, so
+    the engine reads back which one is under the cursor - exact at every zoom, and nobody hidden behind a
+    roof is picked through it. At the far zoom a figure is a few pixels wide, so failing that, the nearest
+    whose figure's middle line - feet to crown, on screen - passes within PERSON_NEAR_PX of the cursor, unless
+    what the cursor is on stands in front of him. Close up, that lies inside the figure, which is target enough.
+    The readback is a frame or two old: it counts only if it was read
+    where the cursor is now, give or take PICK_READ_SLOP (a tool's pixel, InputController::PinPickPixel).
 */
 PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
     PlayPick out;
@@ -1890,23 +1917,47 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
         return out;
     }
     float s = std::max(0.5f,(float)main_window->height / 810.0f);
+    vec2 at((float)px.x,(float)px.y);
     if (e && e->world == w){
-        float best = PERSON_PICK_PX * s;
-        vec2 at((float)px.x,(float)px.y);
+        InputController* input = main_scene->inputcontroller;
+        int2 read_at = input->GetHoveredPixel();
+        bool f_read_here = std::abs(read_at.x - px.x) <= PICK_READ_SLOP && std::abs(read_at.y - px.y) <= PICK_READ_SLOP;
+        objectid_t under = f_read_here ? input->GetHoveredObjectID() : OBJECTID_INVALID;
+        if (under != OBJECTID_INVALID){
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            for (const auto& f : person_objects){
+                if (f.first == under){
+                    out.kind = PLAY_PICK_PERSON;
+                    out.id = f.second;
+                    return out;
+                }
+            }
+        }
+        //How far from the eye the surface under the cursor is - none known over the sky, water or a tree.
+        const vec3 eye = main_scene->camera->GetPosition();
+        float surface = (under != OBJECTID_INVALID) ? (input->GetHoveredPosition() - eye).length() : INFINITY;
+        float best = PERSON_NEAR_PX * s;
         for (const EconomyWorker& k : e->workers){
             if (EconomyIndoors(k)){
                 continue;
             }
-            vec2 sp;
-            if (ScreenOf(main_scene->camera,(float)main_window->width,(float)main_window->height,
-                         FeetOf(*w,z.get(),k) + vec3(0.0f,PERSON_MIDDLE,0.0f),sp)){
-                float d = (sp - at).length();
-                if (d < best){
-                    best = d;
-                    out.kind = PLAY_PICK_PERSON;
-                    out.id = k.id;
-                }
+            vec3 feet = FeetOf(*w,z.get(),k);
+            float tall = worker_figure_height[PersonFigure(k,e->tick)];
+            vec2 a, b;
+            if (!ScreenOf(main_scene->camera,(float)main_window->width,(float)main_window->height,feet,a) ||
+                !ScreenOf(main_scene->camera,(float)main_window->width,(float)main_window->height,feet + vec3(0.0f,tall,0.0f),b)){
+                continue;
             }
+            vec2 ab = b - a;
+            float len2 = ab.dot(ab);
+            float t = (len2 > 1e-6f) ? std::max(0.0f,std::min(1.0f,(at - a).dot(ab) / len2)) : 0.0f;
+            float d = (a + ab * t - at).length();
+            if (d >= best || (feet + vec3(0.0f,tall * t,0.0f) - eye).length() > surface + PERSON_HIDDEN_SLACK){
+                continue;
+            }
+            best = d;
+            out.kind = PLAY_PICK_PERSON;
+            out.id = k.id;
         }
         if (out.kind != PLAY_PICK_NONE){
             return out;
@@ -1982,6 +2033,34 @@ bool ApplicationChasm::OverlayHitAt(int2 px, OverlayHit* hit){
 }
 
 /*
+    MCP THREAD. The renderer reads what is under the mouse back from its G-buffer, which a minimised window's
+    tools cannot move: pinned at `px` instead (InputController::PinPickPixel), and an answer read there waited
+    for - past the reads already in flight, three (Renderer's PICK_PBO_SLOTS), so none of them is taken for it.
+*/
+bool ApplicationChasm::WaitForPickAt(int2 px){
+    InputController* input = main_scene->inputcontroller;
+    input->PinPickPixel(px);
+    uint32_t start = input->GetPickSerial();
+    for (int i = 0; i < 200; i++){
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        int2 at = input->GetHoveredPixel();
+        if (input->GetPickSerial() - start > 3 && at.x == px.x && at.y == px.y){
+            return true;
+        }
+    }
+    return false;
+}
+
+void ApplicationChasm::RestorePickPin(){
+    InputController* input = main_scene->inputcontroller;
+    if (f_overlay_mouse_pinned){
+        input->PinPickPixel(int2(overlay_mouse_x.load(),overlay_mouse_y.load()));
+    }else{
+        input->UnpinPickPixel();
+    }
+}
+
+/*
     PHYSICS THREAD, from UpdatePick in play mode, before any painting: the overlay takes the mouse
     where it is drawn (a press on it does what it says and nothing beneath is picked or painted); a
     right click - pressed and let go without dragging, which would be a pan - puts a tool down, sends
@@ -2002,13 +2081,19 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
         f_over_scene = px.x >= 0 && px.y >= 0 && px.x < main_window->width && px.y < main_window->height;
         f_clicked = f_over_scene && !f_script_right;
         if (f_over_scene){
-            hover = PickUnderPixel(px);
+            //The engine's surface there when the tool had it read there (WaitForPickAt) - a deck's layer, for an order.
+            int2 read_at = input->GetHoveredPixel();
+            hover = (read_at.x == px.x && read_at.y == px.y) ? PickUnderMouse(px) : PickUnderPixel(px);
         }
     }
     OverlayHit hit;
+    uint32_t row_person = 0;        //a line or row naming a person, under the cursor: he is the hover
     if (f_over_scene && OverlayHitAt(px,&hit)){
         f_over_scene = false;
         hover = GridPick();
+        if (hit.action == OVERLAY_HIT_PERSON || hit.action == OVERLAY_HIT_FAMILY){
+            row_person = (uint32_t)hit.value;
+        }
         if (f_clicked){
             if (hit.action == OVERLAY_HIT_TOOL){
                 paint_tool = (paint_tool == hit.value) ? CHASM_TOOL_SELECT : hit.value;
@@ -2049,6 +2134,15 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     play_pick_version++;
                 }
                 cam_seek_person = (uint32_t)hit.value;
+            }else if (hit.action == OVERLAY_HIT_FAMILY){
+                //A house's family line, or the camp's (selection_plan.md): him, at home or out. The view stays on the
+                //house - he is in it, or his pin shows where he went.
+                std::lock_guard<std::mutex> lock(pick_mutex);
+                PlayPick p;
+                p.kind = PLAY_PICK_PERSON;
+                p.id = (uint32_t)hit.value;
+                play_selected = p;
+                play_pick_version++;
             }else if (hit.action == OVERLAY_HIT_GATE){
                 //A gate's card: its door shut (1) or opened (0) - a recorded zone command (defence_plan.md).
                 PlayPick sel;
@@ -2232,6 +2326,9 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
     PlayPick under;
     if (paint_tool == CHASM_TOOL_SELECT && f_over_scene){
         under = PlayPickUnder(px,hover);
+    }else if (row_person){
+        under.kind = PLAY_PICK_PERSON;
+        under.id = row_person;
     }
     std::lock_guard<std::mutex> lock(pick_mutex);
     if (under != play_hover){
@@ -2391,15 +2488,24 @@ void ApplicationChasm::UploadSelection(){
         vec4 c(0.0f,0.0f,0.0f,0.0f);
         if (f_play && e && i < e->workers.size()){
             uint32_t id = e->workers[i].id;
+            //The hover over the related: hovering one of a selected house's family, on the map or his line, picks him out.
             if (sel.kind == PLAY_PICK_PERSON && sel.id == id){
                 c = SELECT_COLOUR;
+            }else if (hover.kind == PLAY_PICK_PERSON && hover.id == id){
+                c = PERSON_HOVER_COLOUR;
             }else if (std::find(related.begin(),related.end(),id) != related.end()){
                 c = RELATED_COLOUR;
-            }else if (hover.kind == PLAY_PICK_PERSON && hover.id == id){
-                c = HOVER_COLOUR;
             }
         }
+        //On whichever figure he is drawn as: the static one, or a rigged figure's skeleton (the rest are hidden).
         SetOutlineOf(worker_objects[i],c);
+        if (i < worker_skins.size()){
+            for (WorkerSkin& ws : worker_skins[i]){
+                if (ws.figure){
+                    SetOutlineOf(ws.figure,c);
+                }
+            }
+        }
     }
     /*
         A crate (crates_plan.md): an outline-only copy of chasm_props.glb's crate where the selected one lies, and
@@ -2513,9 +2619,11 @@ void ApplicationChasm::DrawNeediest(float s, float bottom){
         return a->id < b->id;
     });
     PlayPick sel;
+    PlayPick hovered;
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         sel = play_selected;
+        hovered = play_hover;
     }
     //Each row's words: what he is short of, as his badge says it - dry, then thirsty, then hungry - and his
     //health in the badge ring's colour.
@@ -2566,9 +2674,10 @@ void ApplicationChasm::DrawNeediest(float s, float bottom){
         float top = p0.y + pad * 0.8f + title_h + line_h * (float)i;
         float mid = top + line_h * 0.5f;
         bool f_selected = sel.kind == PLAY_PICK_PERSON && sel.id == r.k->id;
-        if (f_selected){
+        //Lit orange while selected, light blue while he is the hover - here or out on the map.
+        if (f_selected || (hovered.kind == PLAY_PICK_PERSON && hovered.id == r.k->id)){
             overlay->AddRect(vec2(p0.x + 4.0f * s,top + 1.0f * s),vec2(p1.x - 4.0f * s,top + line_h - 1.0f * s),6.0f * s,
-                             HudFaded(HUD_SELECT,60));
+                             f_selected ? HudFaded(HUD_SELECT,60) : HudFaded(HUD_PERSON_HOVER,55));
         }
         DrawPersonBadge(overlay,vec2(p0.x + pad + badge,mid),s,*r.k,f_selected ? HUD_SELECT : 0);
         overlay->AddText(r.name.c_str(),vec2(name_x,mid + 5.0f * s),size,HUD_TEXT,UI_ALIGN_LEFT);
@@ -2587,9 +2696,11 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     }
     const EconomyState* ep = (e && e->world == w) ? e.get() : NULL;
     PlayPick sel;
+    PlayPick hovered;
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         sel = play_selected;
+        hovered = play_hover;
     }
     float width = (float)main_window->width;
     float height = (float)main_window->height;
@@ -2845,6 +2956,16 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     for (const CardLine& l : card.lines){
         if (l.type == CARD_TEXT){
             y += line_h;
+            if (l.person){
+                //A line about a person: lit light blue while he is the hover - this line, or him on the map - and
+                //a click on it selects him.
+                vec2 r0(c0.x + 6.0f * s,y - line_h + 1.0f * s);
+                vec2 r1(c1.x - 6.0f * s,y + 1.0f * s);
+                if (hovered.kind == PLAY_PICK_PERSON && hovered.id == l.person){
+                    overlay->AddRect(r0,r1,5.0f * s,HudFaded(HUD_PERSON_HOVER,55));
+                }
+                overlay_hits_drawing.push_back(OverlayHit{r0,r1,OVERLAY_HIT_FAMILY,(int)l.person});
+            }
             overlay->AddText(l.text.c_str(),vec2(c0.x + pad,y - 5.0f * s),text_size,l.colour,UI_ALIGN_LEFT);
         }else if (l.type == CARD_BAR){
             y += bar_h;
@@ -2892,10 +3013,14 @@ void ApplicationChasm::RegisterSelectTools(){
     MCPServer::Get()->RegisterTool("chasm_select",
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
         "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md) - or a person by `person` id, "
-        "or a crate by `crate` id (docs/crates_plan.md); op clear; op hover px,py: the overlay's hover pinned at that "
-        "pixel in place of the mouse's, so what it shows is in the next screenshot (the top bar's FOOD lists its foods) - "
+        "or a crate by `crate` id (docs/crates_plan.md); op clear; op hover px,py: the hover pinned at that "
+        "pixel in place of the mouse's - the overlay's and the scene's - so what it shows is in the next screenshot (the top bar's "
+        "FOOD lists its foods, a person's light blue outline, his line on a card lit); it returns the hover - "
         "op hover with no pixel gives it back; op under "
-        "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives, and the overlay's chip there with its value); op hits: every chip and button on the overlay, its action, value and centre x,y; op "
+        "px,py: what the cursor would pick at that pixel (and the plot and building the ground pick alone gives, `figure` the person "
+        "whose figure is drawn at the pixel itself, `read` whether the engine's readback came, and the overlay's chip there with its value); "
+        "under, press and hover have the engine read the pixel as the mouse's, a few frames; "
+        "op hits: every chip and button on the overlay, its action, value and centre x,y - a card's line naming a person is `family`; op "
         "press px,py: a left click there, as the player's - on the HUD it presses what is drawn there (a tool of the "
         "grid, a card's chip, pause, speed, a row of the neediest list or of NEEDS ATTENTION), on the scene it selects; `pressed` says what "
         "the HUD had there and the tool in hand after. With `button` right it is a right click: a tool put down, a "
@@ -2933,22 +3058,43 @@ void ApplicationChasm::RegisterSelectTools(){
             static const char* const actions[] = {"panel","tool","store_allow","close","site_first","field_crop",
                                                   "field_next","pause","speed","field_land","person","release",
                                                   "take_tool","building","gate","ladder","tower_guards","guard_release",
-                                                  "store_allow_group","keep","make_more","gather"};
+                                                  "store_allow_group","keep","make_more","gather","family"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
-            //The overlay's hover pinned at a pixel in place of the mouse's, until op hover with none (goods_plan.md:
-            //the top bar's FOOD lists its foods while hovered) - for a screenshot of what is drawn for it.
+            /*
+                The hover pinned at a pixel in place of the mouse's, until op hover with none - the overlay's (goods_plan.md:
+                the top bar's FOOD lists its foods while hovered) and the scene's, read by the engine there as the mouse's
+                would be - for a screenshot of what is drawn for it: a person's light blue outline, his line on a card lit.
+            */
             if (op == "hover"){
                 bool f_pin = args.contains("px") && args.contains("py") && args["px"].is_number() && args["py"].is_number();
                 if (f_pin){
-                    f_overlay_mouse_pinned = true;
                     overlay_mouse_x = args["px"].get<int>();
                     overlay_mouse_y = args["py"].get<int>();
+                    f_overlay_mouse_pinned = true;
+                    bool f_read = WaitForPickAt(int2(overlay_mouse_x.load(),overlay_mouse_y.load()));
+                    //...and a few frames more, for a pass to take the hover up and a frame to draw it.
+                    InputController* input = main_scene->inputcontroller;
+                    uint32_t serial = input->GetPickSerial();
+                    for (int i = 0; i < 100 && input->GetPickSerial() - serial < 3; i++){
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                    PlayPick h;
+                    {
+                        std::lock_guard<std::mutex> lock(pick_mutex);
+                        h = play_hover;
+                    }
+                    const char* kinds[] = {"none","building","person","gate","crate"};
+                    return json{{"hover_pinned",true},{"read",f_read},
+                                {"hover",json{{"kind",kinds[std::max(0,std::min(4,h.kind))]},{"id",h.id}}}};
                 }
-                f_overlay_mouse_pinned = f_pin;
-                return json{{"hover_pinned",f_pin}};
+                f_overlay_mouse_pinned = false;
+                RestorePickPin();
+                return json{{"hover_pinned",false}};
             }
             if (op == "under" && args.contains("px") && args.contains("py") && args["px"].is_number() && args["py"].is_number()){
                 int2 px(args["px"].get<int>(),args["py"].get<int>());
+                //The engine's own answer at the pixel first: which person's figure is there (PlayPickUnder).
+                bool f_read = WaitForPickAt(px);
                 json out;
                 main_scene->AtTickBoundary([&](){
                     GridPick ground = PickUnderPixel(px);
@@ -2956,8 +3102,18 @@ void ApplicationChasm::RegisterSelectTools(){
                     const char* kinds[] = {"none","building","person","gate","crate"};
                     out = json{{"kind",kinds[std::max(0,std::min(4,p.kind))]},{"id",p.id},{"plot",p.plot},
                                {"ground_plot",ground.f_hit ? ground.plot : -1},
-                               {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0}};
+                               {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0},
+                               {"read",f_read}};
+                    //A person's figure under the pixel itself, not one picked near it.
+                    objectid_t id = main_scene->inputcontroller->GetHoveredObjectID();
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    for (const auto& f : person_objects){
+                        if (f.first == id){
+                            out["figure"] = f.second;
+                        }
+                    }
                 });
+                RestorePickPin();
                 //...and what of the overlay is drawn there, which a press there would press - nothing pressed.
                 OverlayHit hit;
                 bool f_hit = OverlayHitAt(px,&hit);
@@ -3001,6 +3157,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 }else{
                     pressed = json{{"overlay",nullptr}};
                 }
+                //What the engine reads there - a person's figure, a deck's surface - as under the mouse.
+                pressed["read"] = WaitForPickAt(px);
                 {
                     std::lock_guard<std::mutex> lock(pick_mutex);
                     script_press_px = px;
@@ -3012,6 +3170,7 @@ void ApplicationChasm::RegisterSelectTools(){
                 for (int i = 0; i < 400 && f_script_press.load(); i++){
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
+                RestorePickPin();
                 pressed["taken"] = !f_script_press.load();
                 pressed["tool"] = (int)paint_tool.load();
             }

@@ -6,7 +6,7 @@ status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
 plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted; selection_plan.md > Selecting someone indoors
 code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn
-verified: 2026-10-10
+verified: 2026-10-11
 ---
 
 The player paints a house over at most {ZONE_HOUSE_MAX_PLOTS:#plots} and gives it storeys
@@ -28,7 +28,10 @@ family living in one that would moves to another empty house to make room. A fam
 down goes back to the camp.
 
 Every round starts and ends at the house, so where it stands decides who gets which job
-([[Person|jobs]]) and how quick their rounds are. Its card lists the family, dimmed while indoors.
+([[Person|jobs]]) and how quick their rounds are. Its card lists the family, dimmed while indoors. **A
+click on a name selects that [[Person|person]]**, at home or out, so they can be ordered without waiting
+for them to come outside; hovering a name outlines them in light blue if they are out. Someone selected
+at home shows on the map by their house's outline. The [[Camp|camp's]] card lists its settlers the same way.
 
 ## What it keeps
 
@@ -54,5 +57,3 @@ living there can't get out until the player clears a plot beside it. Its card wa
 - [planned] Firewood on its [[Yard|lot]]: a house with a lot of its own stores wood there as well as in
   its woodshed's {ECONOMY_WOODSHED_DAYS:#days}, so it holds more for the winter ([[Cold]]). Its lot plots
   will all touch the house, which is their door (on the yard's page).
-- [planned] Selecting someone from its card: a click on a family line selects that [[Person|person]], indoors
-  too, so the player can order them without waiting for them to come out. The [[Camp|camp's]] card the same.

@@ -5,7 +5,7 @@ kind: people
 status: partial
 summary: The player can order a grown-up to stand on a plot. It becomes their job while it lasts, and they live off a pack they take along.
 plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order; defence_plan.md > Scouting, provisioned first
-code: Economy.cpp: Order TakePost GoToPost FillPack Unpack Needs Gather GatherSupplies; Economy.h: EconomyCanOrder NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS
+code: Economy.cpp: Order TakePost GoToPost FillPack Unpack Needs Gather GatherSupplies Notice; Economy.h: EconomyCanOrder NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS EconomyNotice
 verified: 2026-10-11
 ---
 
@@ -38,7 +38,11 @@ They take water ({NEEDS_PACK_WATER} units) and food (worth {NEEDS_PACK_FOOD:days
 provisions first where there are any, since one is the whole pack's food. They eat from it as at home, so a
 pressing need only comes once it's empty. Released, they live on it on the way home too - a scout called back
 from far out walks home on what he carried. Home, what is left goes into the pantry, but provisions, which stay
-packed: no home holds them.
+packed: no home holds them. Their card shows the pack as a goods strip, with what it is worth in days.
+
+**When it runs out** - the moment it goes from holding water and food to lacking one of them - the player is told,
+in amber at the bottom of the screen: "JELLE DE WIT HAS RUN OUT OF WATER" (of food, or of food and water). Only for
+someone ordered out, not a [[Guard tower|tower's]] guard. Nothing more happens: they go for it when the need presses.
 
 ## Scouting: gathering supplies first
 
@@ -51,14 +55,11 @@ out - and then go on to the post. Whether just ordered, on the way or standing t
   [[Provisions|provisions]] first where there are any. Someone setting out from home fills it there.
 - **A second stop** ({ECONOMY_GATHER_STOPS} places in all) for what the first lacked - water at the camp, say, then
   provisions at a store. With something but not everything to be had, they take what there is.
-- **With nothing to be had**, they go on to the post as they were.
+- **With nothing to be had**, they go on to the post as they were, and the player is told: "NO FOOD OR WATER FOR
+  KAAT DE WIT TO TAKE" - only when they took nothing at all, not when a second stop finds nothing.
 - The chip is lit while they are at it, and their card says "gathering supplies". Pressed again, they go straight
   on - turning for the post at once, unless a pressing need takes them to the supply anyway.
 
 Provisions are in the stores only if the colony keeps some: see [[Provisions|provisions]].
 
-## Planned
-
-- [planned] **Scouting's messages** (the user's): with nothing to take when told to gather, a message says so;
-  when a scout's supplies run out, another - they stay until released or until a need is pressing, as now. A
-  mission is just a post, usually given to an [[Archery range|archer]].
+A mission is just a post, usually given to an [[Archery range|archer]].

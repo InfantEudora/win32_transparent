@@ -141,6 +141,13 @@ public:
         plot its door (Economy::Derive); with none, the building is shut in (EconomyShutIn).
     */
     bool OpenFromOutside(const ZoneState& z, int v);
+    /*
+        SETTLEMENTS (docs/settlements_plan.md): how far each plot is to walk from the nearest of plots `from`, over
+        the MAP - the ground's own rules (EdgeOpen's): a standing bridge over water, a winch up a cliff, nothing too
+        steep, never the mountain - and not what is built on it. Water and mountain beside walkable ground are
+        reached, as the land's edge, but lead nowhere. Out to `reach`; INFINITY past it. `dist` is by plot.
+    */
+    void MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist);
 
 private:
     std::shared_ptr<const ChasmWorld> world;

@@ -202,6 +202,60 @@ void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Obje
     }
 }
 
+//The skeleton that poses a skinned object: the object itself, or its parent.
+Skeleton* Renderer::SkeletonOf(Object* object){
+    Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
+    if (!skeleton && object){
+        debug->Trace("Skinned itself does not appear to be a skeleton...\n");
+        skeleton = dynamic_cast<Skeleton*>(object->GetParent());
+    }
+    return skeleton;
+}
+
+int Renderer::AppendBoneData(Skeleton* skeleton, std::vector<bonedata_t>& out){
+    bonedata_t bonedata = {};
+    bonedata.mat_transformscale = fmat4().identity();
+
+    std::vector<Bone*>bones;
+    skeleton->GetAllBones(skeleton,bones);
+    if (bones.size() != skeleton->num_bones){
+        debug->Err("skeleton->GetAllBones() did not yield expected number of bones (%i vs %i)\n",bones.size(),skeleton->num_bones);
+    }
+
+    /*
+        This instance's block of bone matrices, laid out BY JOINT INDEX.
+
+        The shader reads bone_data[instance * bone_count + bones.x], where bones.x is
+        the JOINTS_0 vertex attribute - an index into the skin's joint list. So the
+        block has to be in THAT order, and not in the order a tree walk happens to
+        visit bones in.
+
+        Those two agreed for as long as every rig was a single chain whose depth-first
+        order matched its joint list, which is why pushing them back in walk order
+        worked. It stops being true the moment a skin has more than one root bone: the
+        walk emits a whole subtree before it reaches the second root, while the joint
+        list interleaves them. The failure is silent and looks like a corrupt mesh.
+
+        Bone::bone_index is that joint index - see GLTFLoader::GetBone.
+    */
+    int num_bones = skeleton->num_bones;
+    size_t bone_base = out.size();
+    out.resize(bone_base + num_bones,bonedata);
+    for (Bone* bone:bones){
+        int slot = bone->bone_index;
+        if (slot < 0 || slot >= num_bones){
+            debug->Err("Bone %s has joint index %i, outside this skin's %i joints\n",
+                       bone->name.c_str(),slot,num_bones);
+            continue;
+        }
+        bonedata.mat_inversebind = bone->inverse_bind_matrix;
+        bonedata.mat_transformscale = bone->GetWorldTransformScaleMatrix();
+        out.at(bone_base + slot) = bonedata;
+        bone->bone_unpacked_index = slot;
+    }
+    return num_bones;
+}
+
 //For now all objects are rendered when visible
 void Renderer::CullObjects(const std::vector<Object*>& objects){
     renderable_objects.clear();
@@ -470,59 +524,14 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
             //data.mat_transformscale.print();
 
             if (rendering_mode == MESH_MODE_SKINNED){
-                bonedata_t bonedata = {};
-                bonedata.mat_transformscale = fmat4().identity();
-
                 //It has been previously established we are skinned mesh
-                Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
+                Skeleton* skeleton = SkeletonOf(object);
                 if (!skeleton){
-                    debug->Trace("Skinned itself does not appear to be a skeleton...\n");
-                    skeleton = dynamic_cast<Skeleton*>(object->GetParent());
-                    if (!skeleton){
-                        instancedata.push_back(data);
-                        debug->Warn("Skinned mesh itself does not appear to be a skeleton nor it's parent.\n");
-                        continue;
-                    }
+                    instancedata.push_back(data);
+                    debug->Warn("Skinned mesh itself does not appear to be a skeleton nor it's parent.\n");
+                    continue;
                 }
-
-                std::vector<Bone*>bones;
-                skeleton->GetAllBones(skeleton,bones);
-                if (bones.size() != skeleton->num_bones){
-                    debug->Err("skeleton->GetAllBones() did not yield expected number of bones (%i vs %i)\n",bones.size(),skeleton->num_bones);
-                }
-
-                /*
-                    This instance's block of bone matrices, laid out BY JOINT INDEX.
-
-                    The shader reads bone_data[instance * bone_count + bones.x], where bones.x is
-                    the JOINTS_0 vertex attribute - an index into the skin's joint list. So the
-                    block has to be in THAT order, and not in the order a tree walk happens to
-                    visit bones in.
-
-                    Those two agreed for as long as every rig was a single chain whose depth-first
-                    order matched its joint list, which is why pushing them back in walk order
-                    worked. It stops being true the moment a skin has more than one root bone: the
-                    walk emits a whole subtree before it reaches the second root, while the joint
-                    list interleaves them. The failure is silent and looks like a corrupt mesh.
-
-                    Bone::bone_index is that joint index - see GLTFLoader::GetBone.
-                */
-                int num_bones = skeleton->num_bones;
-                size_t bone_base = boneinstancedata.size();
-                boneinstancedata.resize(bone_base + num_bones,bonedata);
-                for (Bone* bone:bones){
-                    int slot = bone->bone_index;
-                    if (slot < 0 || slot >= num_bones){
-                        debug->Err("Bone %s has joint index %i, outside this skin's %i joints\n",
-                                   bone->name.c_str(),slot,num_bones);
-                        continue;
-                    }
-                    bonedata.mat_inversebind = bone->inverse_bind_matrix;
-                    bonedata.mat_transformscale = bone->GetWorldTransformScaleMatrix();
-                    boneinstancedata.at(bone_base + slot) = bonedata;
-                    bone->bone_unpacked_index = slot;
-                }
-                data.num_bones = num_bones;
+                data.num_bones = AppendBoneData(skeleton,boneinstancedata);
             }
 
             instancedata.push_back(data);
@@ -1130,6 +1139,7 @@ void Renderer::UpscaleFrame(){
 bool Renderer::RebuildOutlineFBO(){
     if (!outline_mask_shader){
         outline_mask_shader = new Shader("shaders/outline_mask.vert","shaders/outline_mask.frag");
+        outline_mask_skinned_shader = new Shader("shaders/outline_mask_skinned.vert","shaders/outline_mask.frag");
         outline_shader = new Shader("shaders/lowres_composite.vert","shaders/outline.frag");
     }
     if (!outline_mask_shader->f_compiled || !outline_shader->f_compiled){
@@ -1197,14 +1207,21 @@ void Renderer::OutlinePass(Camera* camera){
     glDisable(GL_BLEND);
 
     const bool f_gbuffer = (pipeline == PIPELINE_DEFERRED);
-    outline_mask_shader->Use();
-    outline_mask_shader->Setmat4("mat_worldcam",camera->mat_cam);
-    outline_mask_shader->Setvec3("eye_position",camera->GetPosition());
-    outline_mask_shader->Setint("f_gbuffer",f_gbuffer ? 1 : 0);
     if (f_gbuffer){
         glBindTextureUnit(TEXUNIT_GBUFFER_DEPTH, deferred_depth_tex_id);
         glBindTextureUnit(TEXUNIT_GBUFFER_POSITION, deferred_position_tex_id);
     }
+    //The mask's program - a plain mesh's or a skinned one's - told the camera as it is taken up.
+    Shader* bound = NULL;
+    auto use_mask = [&](Shader* mask){
+        if (mask != bound){
+            mask->Use();
+            mask->Setmat4("mat_worldcam",camera->mat_cam);
+            mask->Setvec3("eye_position",camera->GetPosition());
+            mask->Setint("f_gbuffer",f_gbuffer ? 1 : 0);
+            bound = mask;
+        }
+    };
     int vx, vy, vw, vh;
     GetSceneViewport(vx,vy,vw,vh);
     //Pixels of a frame 810 tall, so the line is the same share of the view in any window.
@@ -1218,49 +1235,89 @@ void Renderer::OutlinePass(Camera* camera){
     float sx0 = 1e30f, sy0 = 1e30f, sx1 = -1e30f, sy1 = -1e30f;
     bool f_whole = false;
     const fmat4& cam = camera->mat_cam;
+    //Row vectors, as ComputeViewCull: x*m[0] + y*m[1] + z*m[2] + m[3], each m[i] a vec4.
+    auto apply = [](const fmat4& t, float x, float y, float z){
+        return vec4(x * t.vertex[0].x + y * t.vertex[1].x + z * t.vertex[2].x + t.vertex[3].x,
+                    x * t.vertex[0].y + y * t.vertex[1].y + z * t.vertex[2].y + t.vertex[3].y,
+                    x * t.vertex[0].z + y * t.vertex[1].z + z * t.vertex[2].z + t.vertex[3].z,
+                    x * t.vertex[0].w + y * t.vertex[1].w + z * t.vertex[2].w + t.vertex[3].w);
+    };
+    //A box's eight corners, through `m` (model to world) onto the screen's box - all of it if one is behind the eye.
+    auto take_box = [&](const fmat4& m, const vec3& lo, const vec3& hi){
+        for (int c = 0; c < 8 && !f_whole; c++){
+            vec3 p((c & 1) ? hi.x : lo.x,(c & 2) ? hi.y : lo.y,(c & 4) ? hi.z : lo.z);
+            vec4 w = apply(m,p.x,p.y,p.z);
+            vec4 clip = apply(cam,w.x,w.y,w.z);
+            if (clip.w <= 1e-3f){
+                f_whole = true;
+                break;
+            }
+            float px = (float)vx + (clip.x / clip.w * 0.5f + 0.5f) * (float)vw;
+            float py = (float)vy + (clip.y / clip.w * 0.5f + 0.5f) * (float)vh;
+            sx0 = std::min(sx0,px);
+            sy0 = std::min(sy0,py);
+            sx1 = std::max(sx1,px);
+            sy1 = std::max(sy1,py);
+        }
+    };
     for (size_t k = 0; k < outlined_objects.size(); k++){
         Object* object = outlined_objects[k];
         Mesh* mesh = object->GetMesh();
-        //Plain meshes only, for now: an instance set or a skinned mesh needs its own vertex stage.
-        if (!mesh || object->IsInstanceSet() || mesh->IsSkinnedMesh() || mesh->IsLineMesh()){
+        //An instance set or a line mesh would need a vertex stage of its own.
+        if (!mesh || object->IsInstanceSet() || mesh->IsLineMesh()){
             continue;
         }
-        if (!f_whole && mesh->HasBounds() && mesh->num_morph_targets == 0){
-            const fmat4& m = object->GetWorldTransformScaleMatrix();
-            vec3 lo = mesh->GetBoundsMin();
-            vec3 hi = mesh->GetBoundsMax();
-            for (int c = 0; c < 8 && !f_whole; c++){
-                vec3 p((c & 1) ? hi.x : lo.x,(c & 2) ? hi.y : lo.y,(c & 4) ? hi.z : lo.z);
-                //Row vectors, as ComputeViewCull: x*m[0] + y*m[1] + z*m[2] + m[3], each m[i] a vec4.
-                auto apply = [](const fmat4& t, float x, float y, float z){
-                    return vec4(x * t.vertex[0].x + y * t.vertex[1].x + z * t.vertex[2].x + t.vertex[3].x,
-                                x * t.vertex[0].y + y * t.vertex[1].y + z * t.vertex[2].y + t.vertex[3].y,
-                                x * t.vertex[0].z + y * t.vertex[1].z + z * t.vertex[2].z + t.vertex[3].z,
-                                x * t.vertex[0].w + y * t.vertex[1].w + z * t.vertex[2].w + t.vertex[3].w);
-                };
-                vec4 w = apply(m,p.x,p.y,p.z);
-                vec4 clip = apply(cam,w.x,w.y,w.z);
-                if (clip.w <= 1e-3f){
-                    f_whole = true;
-                    break;
-                }
-                float px = (float)vx + (clip.x / clip.w * 0.5f + 0.5f) * (float)vw;
-                float py = (float)vy + (clip.y / clip.w * 0.5f + 0.5f) * (float)vh;
-                sx0 = std::min(sx0,px);
-                sy0 = std::min(sy0,py);
-                sx1 = std::max(sx1,px);
-                sy1 = std::max(sy1,py);
+        //A skinned mesh is drawn in its pose: its skeleton's bones, uploaded for this one draw.
+        Skeleton* skeleton = NULL;
+        int num_bones = 0;
+        if (mesh->IsSkinnedMesh()){
+            skeleton = SkeletonOf(object);
+            if (!skeleton || !outline_mask_skinned_shader->f_compiled){
+                continue;
             }
+            outline_bones.clear();
+            num_bones = AppendBoneData(skeleton,outline_bones);
+        }
+        if (f_whole){
+        }else if (skeleton){
+            /*
+                No bounds on a skinned mesh, and its pose moves it anyway: the box round its joints, in
+                world space, padded by a third of its size for what hangs past them - a head over its
+                neck bone, a hand past its wrist, the feet under the ankles.
+            */
+            vec3 lo(1e30f,1e30f,1e30f);
+            vec3 hi(-1e30f,-1e30f,-1e30f);
+            for (const bonedata_t& b : outline_bones){
+                const vec4& t = b.mat_transformscale.vertex[3];
+                lo = vec3(std::min(lo.x,t.x),std::min(lo.y,t.y),std::min(lo.z,t.z));
+                hi = vec3(std::max(hi.x,t.x),std::max(hi.y,t.y),std::max(hi.z,t.z));
+            }
+            if (outline_bones.empty()){
+                f_whole = true;
+            }else{
+                float pad = std::max(hi.x - lo.x,std::max(hi.y - lo.y,hi.z - lo.z)) / 3.0f;
+                fmat4 identity;
+                identity.identity();
+                take_box(identity,lo - vec3(pad,pad,pad),hi + vec3(pad,pad,pad));
+            }
+        }else if (mesh->HasBounds() && mesh->num_morph_targets == 0){
+            take_box(object->GetWorldTransformScaleMatrix(),mesh->GetBoundsMin(),mesh->GetBoundsMax());
         }else{
             f_whole = true;
         }
+        Shader* mask = skeleton ? outline_mask_skinned_shader : outline_mask_shader;
+        use_mask(mask);
         instancedata_t data = {};
         data.mat_transformscale = object->GetWorldTransformScaleMatrix();
         data.objectindex = OBJECTID_INVALID;
         data.num_vertices = mesh->num_vertices;
+        data.num_bones = num_bones;
         glNamedBufferData(instdata_ssbo,sizeof(instancedata_t),&data,GL_STREAM_DRAW);
-        outline_mask_shader->Setint("outline_id",(int)k + 1);
-        outline_mask_shader->Setvec4("outline_color",object->GetOutline());
+        if (skeleton){
+            glNamedBufferData(boneinstdata_ssbo,outline_bones.size() * sizeof(bonedata_t),outline_bones.data(),GL_STREAM_DRAW);
+        }
+        mask->Setint("outline_id",(int)k + 1);
+        mask->Setvec4("outline_color",object->GetOutline());
         mesh->RenderInstances(1);
     }
 
@@ -1275,7 +1332,7 @@ void Renderer::OutlinePass(Camera* camera){
     glBindTextureUnit(TEXUNIT_LOWRES_COMPOSITE, outline_tex_id);
     outline_shader->Setfloat("width",width_px);
     outline_shader->Setfloat("hidden_alpha",outline_hidden_alpha);
-    //Every outlined object skipped (an instance set, a skinned mesh): no box, and nothing to draw.
+    //Every outlined object skipped (an instance set, a line mesh): no box, and nothing to draw.
     bool f_draw = f_whole || (sx1 >= sx0);
     if (f_draw && !f_whole){
         //Clamped in floats first: a corner far off screen projects to a number no int holds.
@@ -2052,6 +2109,7 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
     //of the window, GL reads from the bottom. The deferred FBO is the RENDER size, so a window
     //pixel is divided down to the texel it was upscaled from - the same block UpscaleFrame's
     //nearest filter shows it as, which is what keeps a hover on the object under the cursor.
+    const int2 window_pixel(mouse_x,mouse_y);
     int gl_y = height - mouse_y;
     //Tested HERE, in window pixels, as well as against the render size below: a mouse a pixel
     //left of the window is -1, and -1 / 2 truncates to 0 - which would read texel 0 as if the
@@ -2100,6 +2158,8 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
                 input->SetHoveredNormal(n.normalize());
                 input->SetHoveredPosition(vec3(position[0],position[1],position[2]));
             }
+            //Last: a tool waiting on the count for its pinned pixel then finds the rest written.
+            input->SetHoveredPixel(picking_pixel[slot]);
         }
     }
 
@@ -2150,6 +2210,7 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
     //Signalled once the GPU has actually executed the three reads above, which is what the poll
     //at the top of the next visit to this slot is asking about.
     picking_fence[slot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);
+    picking_pixel[slot] = window_pixel;
     f_picking_pbo_has_data[slot] = true;
     picking_pbo_write_index = (slot + 1) % PICK_PBO_SLOTS;
 }
@@ -2376,7 +2437,8 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
         if (tmr_pick_readback){
             tmr_pick_readback->Restart();
         }
-        int2 mouse = input->GetRelativeMousePosition();
+        //The mouse's pixel - or the one a tool pinned (InputController::PinPickPixel).
+        int2 mouse = input->GetPickPixel();
         ReadPickingAsync(input,mouse.x,mouse.y);
         if (tmr_pick_readback){
             tmr_pick_readback->Stop();

@@ -109,6 +109,16 @@ bool ApplicationChasm::LinePlotAllowed(const ChasmWorld& w, const ZoneState& z, 
         }
         return false;
     }
+    //...nor outside every settlement's territory (settlements_plan.md), as the command handler holds it too.
+    if (PlayMode()){
+        std::shared_ptr<const EconomyState> es = GetEconomy();
+        if (es && es->world.get() == &w && !EconomyCommandInTerritory(*es,w,ZONE_OP_GROUND_PAINT,plot)){
+            if (why){
+                *why = "outside the settlement";
+            }
+            return false;
+        }
+    }
     //...nor a wall under an arch with a floor built, which its gate would take down (arches_plan.md step 4).
     if (PlayMode() && ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD && z.ArchBuiltOf(plot) > 0){
         if (why){

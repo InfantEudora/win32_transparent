@@ -1,4 +1,5 @@
 #include "ApplicationChasm.h"
+#include <map>
 #ifdef USE_IMGUI
 #include "imgui.h"
 #endif
@@ -457,6 +458,9 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (k.gather > 0){
         j["gather"] = k.gather;     //places still to go to for a scout's pack (defence_plan.md, "Scouting")
     }
+    if (e){
+        j["settlement"] = EconomyPersonSettlement(*e,k);    //his home's (settlements_plan.md), 0 none
+    }
     if (k.f_chosen){
         j["chosen"] = true;         //a guard posted by hand (step 8)
     }
@@ -488,7 +492,7 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     if (!e || !z || e->world != z->world || id == 0 || id >= z->buildings.size()){
         return nullptr;
     }
-    json j{{"stock",StockJson(*e,id)}};
+    json j{{"stock",StockJson(*e,id)},{"settlement",EconomySettlementOf(*e,id)}};
     //No door: no plot of it can be walked onto from open ground (EconomyShutIn) - a house so is uninhabitable.
     if (EconomyShutIn(*e,id)){
         j["shut_in"] = true;
@@ -922,6 +926,10 @@ void ApplicationChasm::RegisterEconomyTools(){
         "number, its order's level (0 none), the level they make, and what the stores hold. SCOUTING (docs/defence_plan.md): "
         "op gather - person `person`, ordered out, first fills a scout's pack (`on`, default true), or goes straight on - "
         "RECORDED (CHASM_CMD_GATHER), `refusal` as for an order; a worker shows `gather`, the places still to go to. "
+        "`notices` is what the rules told the player: `made` since the load, and the `last` few - nothing_to_take (told "
+        "to gather, nothing anywhere) and ran_out (an ordered man's pack out of `what`). SETTLEMENTS (docs/settlements_plan.md): "
+        "`settlements` lists each - its camp's id - with its territory's plots and its people; a worker and a building show "
+        "their `settlement`, 0 none. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -1292,6 +1300,38 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             result["kept"] = kept;
+            //NOTICES (Economy.h; defence_plan.md, "Scouting"): the last few the rules made, oldest first, and how many in all.
+            json notices = json::array();
+            for (const EconomyNotice& n : e->notices){
+                json what = json::array();
+                if (n.what & GOOD_BIT(GOOD_WATER)){
+                    what.push_back("water");
+                }
+                if (n.what & GOODS_EATEN){
+                    what.push_back("food");
+                }
+                notices.push_back(json{{"tick",n.tick},{"person",n.person},{"what",what},
+                                       {"kind",n.kind == NOTICE_NOTHING_TO_TAKE ? "nothing_to_take" : "ran_out"}});
+            }
+            result["notices"] = json{{"made",e->notices_made},{"last",notices}};
+            //SETTLEMENTS (settlements_plan.md): each one - its camp's id - with its territory's plots and its people.
+            std::map<uint32_t,std::pair<int,int>> settled;
+            for (uint32_t s : e->settlement){
+                if (s){
+                    settled[s].first++;
+                }
+            }
+            for (const EconomyWorker& k : e->workers){
+                uint32_t s = EconomyPersonSettlement(*e,k);
+                if (s){
+                    settled[s].second++;
+                }
+            }
+            json settlements = json::array();
+            for (const auto& st : settled){
+                settlements.push_back(json{{"id",st.first},{"plots",st.second.first},{"people",st.second.second}});
+            }
+            result["settlements"] = settlements;
             //GUARD TOWERS (defence_plan.md): each one's places - its guard count once it stands (step 8) - its
             //junction's, its guards and its stock - theirs to live on; once it stands whole, what it lacks of full and
             //what is on its way to it (the caretakers', step 7).

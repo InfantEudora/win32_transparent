@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 0d964184-f477-47d6-845e-a14ed3a2d9dd
-  modified: 2026-10-10T21:05:15.339Z
+  modified: 2026-10-10T22:33:02.091Z
 ---
 
 2026-10-10: aiming at 100-200 villagers + zombie waves on screen. Shape keys (the spider way) were
@@ -47,6 +47,18 @@ pail on Hand.R, borrowed tracks only are rotation-only, walk speed measured from
 Also fixed: Object::ApplyAnimation tested `!current_animation` before LOAD_DEFAULT_POSE, so
 SwitchToAnimation(NULL) never loaded the reference pose - stopped villagers froze mid-stride (verified:
 standing Hips back to 0.763). Checked in game: man + woman walk side-on, hip bob 0.729-0.758.
+
+**Shoot clip 2026-10-11** (from Mixamo `Shooting30fps`) via `tools/blender_retarget.py`: world-space
+retarget + per-bone RDP to LINEAR keys, 1,463 keys vs 30,200, 7.3 KB in the glb, loads in chasm.
+On male_armature only, in a muted NLA track `Shoot` (that is how the exporter picks it up). The clip
+turns the body left-side-on; the bow arm points along rest forward (-Y), so face the target and play
+it. Not yet played by any game code. Export is now UNSAMPLED (`export_force_sampling=False` in the
+collection exporter, the remembered dialog settings and `blender_chasm_props.py`): unsampled keys keep
+their frame time and slide-to-zero does nothing, so clips are keyed from frame 0 (Walking shifted to
+0,3,7,11,15 - 0.625 s, loop key included). Scene fps restored to 24 (the FBX import had set 30).
+File quirks: timeline marker `F_12` binds the scene camera to male_armature (renders come out empty);
+the `adult_female` MESH has Walking assigned (harmless exporter warnings); the Mixamo rig + its
+`adult_male.001` sit in collection `Retarget sources`, outside Export.
 
 **Trap:** the Export collection's exporter saved in `chasm_props.blend` had `export_skins` and
 `export_animations` OFF (seen 15:59); a one-click export or `blender_chasm_props.py --add` drops the

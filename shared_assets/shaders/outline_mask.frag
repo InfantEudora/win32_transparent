@@ -4,7 +4,8 @@
 
 /*
     Renderer::OutlinePass, step 1: what the mask holds at this pixel - which outlined object (its
-    index + 1, so 0 is none), whether the scene HIDES it here, and its outline colour packed.
+    index + 1, so 0 is none), whether the scene HIDES it here, its outline colour packed, and how far
+    from the eye it is (the bits of a float), so the line where two meet goes round the nearer.
 
     HIDDEN is decided against the G-buffer: the scene's nearest surface at this pixel, as a world
     position, against this fragment's. Distances from the eye rather than depth values, with a
@@ -27,17 +28,17 @@ uniform vec4 outline_color = vec4(1.0);
 
 void main(){
     int hidden = 0;
+    float here = distance(world_position,eye_position);
     if (f_gbuffer != 0){
         ivec2 p = ivec2(gl_FragCoord.xy);
         //1.0 is the cleared depth: nothing drawn here, so nothing in front.
         if (texelFetch(gbuffer_depth,p,0).r < 1.0){
             float scene = distance(texelFetch(gbuffer_position,p,0).xyz,eye_position);
-            float here = distance(world_position,eye_position);
             if (here > scene * 1.003 + 0.03){
                 hidden = 1;
             }
         }
     }
     //The packed colour's bits go through int unchanged (GLSL's uint-to-int keeps the bit pattern).
-    mask = ivec4(outline_id,hidden,int(packUnorm4x8(outline_color)),0);
+    mask = ivec4(outline_id,hidden,int(packUnorm4x8(outline_color)),floatBitsToInt(here));
 }

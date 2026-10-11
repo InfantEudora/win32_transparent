@@ -55,6 +55,7 @@ APP_SRCS += ApplicationChasmPiles.cpp
 APP_SRCS += ApplicationChasmCrates.cpp
 APP_SRCS += ApplicationChasmRange.cpp
 APP_SRCS += ApplicationChasmRopewalk.cpp
+APP_SRCS += ApplicationChasmBorders.cpp
 APP_SRCS += Exploration.cpp
 APP_SRCS += ApplicationChasmExplore.cpp
 APP_SRCS += ApplicationChasmGhost.cpp

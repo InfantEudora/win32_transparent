@@ -1412,6 +1412,43 @@ vec3 InputController::GetHoveredPosition(){
     return window_state.hovered_position;
 }
 
+void InputController::PinPickPixel(int2 px){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    window_state.pick_pixel = px;
+    window_state.f_pick_pinned = true;
+}
+
+void InputController::UnpinPickPixel(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    window_state.f_pick_pinned = false;
+}
+
+int2 InputController::GetPickPixel(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    return window_state.f_pick_pinned ? window_state.pick_pixel : (mouse_position - window_state.window_position);
+}
+
+bool InputController::IsPickPixelPinned(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    return window_state.f_pick_pinned;
+}
+
+void InputController::SetHoveredPixel(int2 px){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    window_state.hovered_pixel = px;
+    window_state.pick_serial++;
+}
+
+int2 InputController::GetHoveredPixel(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    return window_state.hovered_pixel;
+}
+
+uint32_t InputController::GetPickSerial(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    return window_state.pick_serial;
+}
+
 /*
     Clears the button and input transition flags at the end of a physics pass.
 

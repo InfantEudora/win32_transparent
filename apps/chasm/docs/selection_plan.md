@@ -35,13 +35,20 @@ A general renderer feature, so it goes in core, and nothing changes for an app t
 - Cost (chasm, 1440x810, debug): 0 with nothing outlined (the pass does not run; the frame is
   pixel-identical to before); a person and the camp 0.08 ms at width 2, 0.16 at width 4 (0.34 / 0.9
   before the scissor).
-- Limits: plain meshes only - instance sets, skinned and line meshes are skipped; morph targets and
-  wind are not applied in the mask; without PIPELINE_DEFERRED nothing counts as hidden.
+- Limits: instance sets and line meshes are skipped; morph targets and wind are not applied in the mask;
+  without PIPELINE_DEFERRED nothing counts as hidden. SKINNED meshes are outlined in their pose since
+  2026-10-11 (`outline_mask_skinned.vert`, the bones uploaded per draw by `Renderer::AppendBoneData`, the
+  scissor box from the joints padded by a third) - before that, chasm's rigged adults had no outline at all.
+- Where two outlined objects meet (2026-10-11): the line goes on the one FARTHER from the eye, in the colour
+  of the one in front - the mask keeps each pixel's distance - so a selected person standing on his outlined
+  post is outlined orange round him. It used to go by object index, and drew his edge in the ground's gold.
 
 ## In chasm
 
-- **Hover**: a thin faint outline (pale), instead of the debug line mesh. **Click**: the full outline
-  (Blender orange). Clicking empty ground, Escape or a right click deselects.
+- **Hover**: a thin faint outline (pale), instead of the debug line mesh - a PERSON's in full light blue
+  (the user's, 2026-10-11: a few pixels tall, he needs it to show), over the related colour, so one of a
+  selected house's family is picked out. **Click**: the full outline (Blender orange). Clicking empty
+  ground, Escape or a right click deselects.
 - **Related things** in a second, paler colour: a house's family, a workplace's worker, a site's
   carriers, a person's house and workplace.
 - **Pins**: a person is a few pixels tall at play zoom, so a family member or worker who is related to
@@ -62,8 +69,8 @@ Files: `ApplicationChasmSelect.cpp` (all of it), `ChasmHud.h` (the overlay's col
 date), hooks in `ApplicationChasm.cpp` (UpdatePick, UpdatePickView, PreRender) and
 `ApplicationChasmTime.cpp` (DrawOverlay gathers what the mouse can press).
 
-- **Picking** (physics thread): a person first - the nearest out of doors within 14 px (at 810 high) of
-  his middle on screen - then a building BY ITS SHAPE: the ray from the cursor is sampled from 8 above
+- **Picking** (physics thread): a person first - by his figure since 2026-10-11 ("Picked by the figure",
+  below; until then the nearest within 14 px of his middle) - then a building BY ITS SHAPE: the ray from the cursor is sampled from 8 above
   the ground it meets down to it, each sample asking the plot under it whether what stands there reaches
   that high (storeys - a site's planned ones too - and some roof, a tent, a winch's gantry). So a roof
   picks its house, not the ground behind it. Then the field or building on the plot under the cursor.
@@ -147,13 +154,12 @@ naming each good and how many (`ChasmHud.h` / `ChasmHud.cpp`: `HudStock`, `DrawH
   every card above, a camp's 5 wheat reserved by a girl fetching home drawn striped.
 
 **Open:**
-- A person's pack and load are still text; the user wants them as strips - see the next heading. (A crate's
-  card has had its strip since crates step 3.)
-- The right click was checked by reading the code, not by a click (`press` is the left button).
+- A person's load is still text (", with 4 wood"); the pack is a strip since 2026-10-11 - see the next heading.
+  (A crate's card has had its strip since crates step 3.)
 - The mouse wheel over the card still zooms the camera.
-- A family at home is only on the card - indoors, they have no pin. The user wants them selectable from
-  the card: "Selecting someone indoors, from their house's card", below.
 - A pin kept at the bottom edge can sit under a corner panel; the badges draw over the panels.
+- A person standing inside his own outlined workplace (a woodcutter at his hut's door) loses his outline to
+  it: the mask keeps the nearer outlined object, and the hut's walls are nearer.
 
 ### What a person carries, as a strip (the user's, 2026-10-10)
 
@@ -174,6 +180,13 @@ To settle when it is built: what a load is measured against, since loads differ 
 pack shows two measures in one strip - water in units, food by the days of health it gives
 (`NEEDS_PACK_WATER`, `NEEDS_PACK_FOOD`) - for instance without a room, with the days in the header.
 
+**As built (2026-10-11): the pack** - the user asked for it ("in the same colors as the storage would"). A goods
+strip on the person's card, hollow ("Pack - his own", "her own"), in each good's colour with the key below, only
+while it holds something; it replaces the "Pack:" line. **No room**, as proposed: its pieces share the width by
+count, and the header's right says what it is worth in days, "water 12 days, food 10" (a unit of water is
+`NEEDS_WATER_WORTH`, food by `EconomyPackFood`). Seen on a scout's full pack, 6 water and 5 beans. **The load is
+still text**, not asked for this time.
+
 ### Selecting someone indoors, from their house's card (the user's, 2026-10-10)
 
 The user: a house's card shows who lives there, but to select one of them the player has to wait for them
@@ -190,6 +203,44 @@ someone indoors does not have. Wanted, not built:
 To settle when it is built: how the map shows that someone inside a house is selected, with no figure to
 outline - for instance the house drawn in the selection's colour, or a pin over its roof while selected;
 and what a camp's card does with a long list (it already moves left of the bottom-right stack).
+
+**As built (2026-10-11).** A house's or the camp's family line is a card line naming a person
+(`Card::Person`, `CardLine::person`): a click on it selects him, at home or out (`OVERLAY_HIT_FAMILY`) - the
+view stays where it is, unlike the neediest list's glide: he is in the house on screen, or his pin shows
+where he went. **Hovering a line makes him the hover**: his figure outlined light blue if he is out, the line
+lit light blue - and the other way round, hovering him on the map lights his line, and a neediest row the
+same. **Someone selected at home is shown by his house**, which a selected person's RELATED outline already
+draws - nothing new was needed. Checked with `chasm_select press` on the village save: Elin, at home,
+selected from house 20's card, her house outlined gold; a right click on open ground then took her out of
+the house to a post. The camp's long list is left as it is.
+
+### Picked by the figure (the user's, 2026-10-11)
+
+Selecting people was hard: a person was picked within 14 px of a point at his waist, while his badge - what
+a player reaches for - is drawn 20-80 px above that, depending on the zoom. A click on a badge picked the
+building behind it, or cleared the selection; up close, his head and feet did not pick him; and someone
+standing behind a house stole the clicks on its roof. The user's answer: pick people the way the castle's
+surfaces are picked, from the engine's own readback of what is under the cursor.
+
+- **The people are PICKABLE objects** - the static figures, the rigged figures' skeletons and the loads on
+  them - and `person_objects` (rebuilt each frame by UploadWorkers) says who each one is. `PlayPickUnder`
+  takes the person whose figure the engine read back under the cursor: exact at every zoom, and nobody hidden
+  behind a roof is picked through it. The readback counts only if it was read within `PICK_READ_SLOP` of where
+  the cursor is now.
+- **Failing that, near him** (`PERSON_NEAR_PX`, 8 at 810 high): the nearest whose figure's middle line, feet
+  to crown on screen, passes within it - unless what the cursor is on stands `PERSON_HIDDEN_SLACK` nearer the
+  eye than he does. At the far zoom a figure is about 4 x 10 px, so this is most of his target; close up it
+  lies inside the figure, which is target enough.
+- **The badges are not a target** (the user: not needed); they stay the display of health and job.
+- **Measured** (village save, 1440 x 810, `chasm_select op under` scanned over each figure): at the far zoom
+  (55) a person picks over about 14 x 24 px, at the default zoom (34) about 16 x 28, and close up (12) his whole
+  figure, about 25 x 50; a roof in front of someone standing behind a house picks the house; on the ramparts
+  scene a guard on the wall's deck picks by his figure the same as on the ground.
+- **The tool reads the pixel as the mouse's**: `chasm_select` `under`, `press` and `hover` pin the pixel the
+  engine reads back at (`InputController::PinPickPixel`, core) and wait for an answer read there, a few frames
+  - so a minimised window's tools see the same picks a mouse would, the castle's surfaces included. `under`
+  adds `figure` (the person drawn at the pixel itself) and `read`. `hover` now pins the scene's hover as well
+  as the overlay's, and returns it, so the light blue outline is in the next screenshot.
 
 ## Who builds what
 

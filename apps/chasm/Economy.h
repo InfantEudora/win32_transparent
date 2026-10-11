@@ -270,6 +270,19 @@ class Walkers;
     stores never fill with it. Both start at ECONOMY_KEPT_START. Set by recorded commands (CHASM_CMD_KEEP);
     saved and hashed.
 
+    --- SETTLEMENTS (docs/settlements_plan.md) -------------------------------------------------------
+    A CAMP founds a SETTLEMENT - the start camp the first. Camps that stand, in id order: one outside every earlier
+    settlement's territory founds its own, named by its id; one inside is more tents for that one. Its TERRITORY is
+    every plot within ECONOMY_SETTLEMENT_REACH of walking from it over the MAP (Walkers::MapFlood) - never what is
+    built on it, so a building going up moves no border - each plot to the nearer camp by that walk, so where two
+    meet the border falls halfway. A building, field, garden, lot, road, wall or crate is in the settlement of its
+    plot (a building's door); a PERSON in his home's. Worked out from the zones (Settle), never saved.
+    THE LIMIT: people take tasks only in their own settlement (Ours) - a site to carry for and where from, line work,
+    a job, fetching home, the store a load goes to, the builders' and the ropemaker's errands. Families move only
+    into houses of theirs; land goes only to a house or camp of its field's. NOT limited: a post and its supply
+    trips - an order is the player's - nor a pressing need's nearest supply. A play command placing anything
+    outside every territory is refused (EconomyCommandInTerritory); erasing never is.
+
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
     a world): standing, felled with its log lying, or a stump with the log taken. Saved and hashed.
@@ -283,6 +296,7 @@ class Walkers;
 #define ECONOMY_WOOD_PER_TREE       4
 #define ECONOMY_HUT_PILE            24      //wood piled outside the hut when no store takes it: 6 logs
 #define ECONOMY_WOODCUTTER_REACH    40.0f   //world units from the hut
+#define ECONOMY_SETTLEMENT_REACH    50.0f   //a settlement's territory: world units of walking from its camp (settlements_plan.md)
 #define ECONOMY_WOODCUTTER_LOGS     2       //logs he carries off at once, a second lying near the first (the user's)
 #define ECONOMY_LOG_PAIR_REACH      12.0f   //...within this of him where he picked the first up: about six plots
 #define ECONOMY_FELL_SECONDS        6.0f
@@ -637,6 +651,21 @@ struct EconomyCrate{
     uint64_t tick = 0;          //the calendar tick it was put down or placed
 };
 
+/*
+    A NOTICE (defence_plan.md, "Scouting, provisioned first"): something the player is told at the bottom of the
+    screen, as a death is - made by the rules, so a replay makes the same ones. Never saved or hashed: after a load
+    nothing old is told again, and telling changes nothing in the colony.
+*/
+#define NOTICE_NOTHING_TO_TAKE  0       //told to gather, and no food or water to be had anywhere he can get to
+#define NOTICE_RAN_OUT          1       //an ordered man's pack out of water or food - `what` says which - or both
+#define ECONOMY_NOTICES_KEPT    8       //the last few, for the view to find the new ones among
+struct EconomyNotice{
+    uint64_t tick = 0;          //the calendar's
+    uint32_t person = 0;
+    int kind = NOTICE_NOTHING_TO_TAKE;
+    GoodsMask what = 0;         //NOTICE_RAN_OUT: GOOD_BIT(GOOD_WATER), GOODS_EATEN, or both
+};
+
 struct EconomyState{
     std::shared_ptr<const ChasmWorld> world;
     std::vector<std::array<int,GOOD_COUNT>> stock;     //by building id - a camp's: its SUPPLIES
@@ -654,6 +683,8 @@ struct EconomyState{
     std::vector<int> guards;                            //by building id: a tower's GUARD COUNT (POSTS, step 8), -1 not a tower
     std::array<int,GOOD_COUNT> kept = {};               //by good: the colony's KEPT number of a made good (STOCK KEPT)
     std::array<int,GOOD_COUNT> ordered = {};            //...and an order's level for the stores, 0 none - cleared once reached
+    std::vector<EconomyNotice> notices;                 //NOTICES: the last ECONOMY_NOTICES_KEPT, oldest first - not saved
+    uint32_t notices_made = 0;                          //...and how many since the load: the view tells the ones it has not
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<GoodsMask> accepts;
     std::vector<GoodsMask> attached;                      //the goods of the workplaces a store is next to
@@ -668,6 +699,8 @@ struct EconomyState{
     std::vector<uint8_t> snowed;                        //a house the full winter's snow reaches: it fetches firewood
     std::vector<uint8_t> shut;                          //by building id: SHUT IN, no door (EconomyShutIn)
     std::vector<int> door;                              //by building id: the plot a walk to it ends on, -1 none
+    std::vector<uint32_t> settlement;                   //by plot: its SETTLEMENT (its camp's id), 0 outside every one
+    std::vector<uint32_t> settlement_of;                //by building id: the settlement of its door, 0 none
     int camp_plot = -1;                                 //derived from the world: where the unhoused wait
     uint64_t tick = 0;                                  //the calendar's at its last tick or load: what ages are read at
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
@@ -698,6 +731,16 @@ inline bool EconomyTowerUp(const ZoneState& z, int plot){
     return plot >= 0 && plot < (int)z.storeys.size() && z.KindOf(plot) == ZONE_KIND_TOWER && z.standing[plot] > 0
            && z.standing[plot] == z.storeys[plot];
 }
+//SETTLEMENTS: the settlement of building `id` - its door's - and a person's, his home's; 0 none.
+inline uint32_t EconomySettlementOf(const EconomyState& e, uint32_t id){
+    return (id < e.settlement_of.size()) ? e.settlement_of[id] : 0;
+}
+inline uint32_t EconomyPersonSettlement(const EconomyState& e, const EconomyWorker& k){
+    return EconomySettlementOf(e,k.house);
+}
+//Whether a play command `op` on `index` (ZoneOp: a plot, or a coarse cell for a cell op) keeps inside a settlement:
+//a plot - a bridge's near end, a field's cell's middle - in a territory. True for whatever places nothing new.
+bool EconomyCommandInTerritory(const EconomyState& e, const ChasmWorld& w, int op, int index);
 //STOCK KEPT: the made good a building of kind `kind` makes - a builders' hut's provisions, a ropewalk's rope - or -1.
 inline int EconomyMadeAt(int kind){
     return (kind == ZONE_KIND_BUILDERS) ? GOOD_PROVISIONS : (kind == ZONE_KIND_ROPEWALK) ? GOOD_ROPE : -1;
@@ -861,6 +904,12 @@ private:
     //Derived, not saved - from the world (the trees) or the zones (the rest), worked out again on load.
     std::vector<int> home_plot;                 //by building id: where its worker waits, -1 none
     std::vector<std::vector<int>> plots_of;     //by building id: a plot building's plots, in index order
+    //SETTLEMENTS: each plot's walk from its settlement's camp (EconomyState::settlement), and working them out.
+    std::vector<float> settlement_walk;
+    void Settle(const ZoneState& z, Walkers& walkers);
+    //Whether `id` - a building, a crate (ECONOMY_STORE_CRATE), a garden's, lot's or wall's plot (ECONOMY_SITE_GROUND)
+    //- is in his settlement: THE LIMIT on what he takes on.
+    bool Ours(const EconomyWorker& k, uint32_t id) const;
     std::vector<std::vector<int>> arches_of;    //by building id: the road plots its ARCHES stand over (arches_plan.md), in index order
     std::vector<std::vector<int>> tents_of;     //by building id: a camp's tent plots
     std::vector<int> share_of;                  //by building id: a field's share of its owner's land, -1 none (LandPlaces)
@@ -898,8 +947,11 @@ private:
     //His pack filled from a stock, up to NEEDS_PACK_* - a scout's, gathering, up to NEEDS_SCOUT_*; and, home again,
     //emptied back into his pantry.
     void FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
-    //GATHERING: off to the nearest place with what his pack lacks of a scout's. False, his gathering over, if none.
-    bool GatherSupplies(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //GATHERING: off to the nearest place with what his pack lacks of a scout's. False, his gathering over, if it lacks
+    //nothing or none is to be had - `f_none` says which.
+    bool GatherSupplies(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool* f_none = NULL);
+    //A NOTICE for the player (above), the oldest dropped past ECONOMY_NOTICES_KEPT.
+    void Notice(int kind, uint32_t person, GoodsMask what = 0);
     void Unpack(EconomyWorker& k, const ZoneState& z);
     //CRATES: his load put down - into a store he stands at that takes it, else as a crate where he stands or on
     //open ground near it; `amount` of `good` into the crate on `plot` (a new one at `at` if none lies there); and

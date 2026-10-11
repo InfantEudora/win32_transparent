@@ -817,3 +817,26 @@ the post at once. A 3,513-tick recording of the turn-off, a full gather and a re
 equal.
 
 **Next**: the two messages - nothing to take, and a scout's supplies run out.
+
+### As built (2026-10-11): the two messages
+
+- **NOTICES** (`Economy.h`): made by the rules - `EconomyState::notices`, the last `ECONOMY_NOTICES_KEPT`, and
+  `notices_made` - so a replay makes the same ones on the same ticks; never saved or hashed, since telling changes
+  nothing. The overlay tells the newest it has not told (`notices_seen`), in the refusal's place at the bottom in the
+  middle, amber, for 5 seconds as a death is (a refusal has 3) - only one of the last half day.
+- **"NO FOOD OR WATER FOR KAAT DE WIT TO TAKE"** (`NOTICE_NOTHING_TO_TAKE`): told to gather and nothing anywhere he can
+  get to - only when he took nothing at all, so `TakePost` counts his home as his first stop when it gave him
+  something, and a second stop finding nothing is silent. `GatherSupplies` says which: nothing lacking, or none.
+- **"JELLE DE WIT HAS RUN OUT OF WATER"** (`NOTICE_RAN_OUT`; "of food", "of food and water"): the tick his pack goes
+  from holding both to lacking one or both - once a fill, since a pack lacking one stays so until topped up with
+  both. Everyone ORDERED OUT, not only those who gathered: a scout is just a post (Decided). Not a tower's guard,
+  whose tower is his pantry, nor anyone released.
+- `chasm_economy` reports `notices`: `made` and the `last` few.
+
+**Checked** (a copied exe on 8774): with no water or food anywhere, Kaat sent out and told to gather - the notice on
+that tick, the message on screen; supplies back, Jelle sent out with 3 water and made to drink it dry - "HAS RUN OUT
+OF WATER" on the tick the last went; Kaat told again - a scout's pack, 6 water and 5 beans, on her card as a strip
+(`selection_plan.md`). Recorded and replayed twice: every tick equal, the same two notices on the same ticks.
+
+**Open**: with several people posted near home, a "run out" every eight days or so each may be more telling than
+wanted - narrowing it (to those who gathered, or to posts under the clouds) is the user's call.

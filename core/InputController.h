@@ -373,6 +373,10 @@ struct WindowInputState{
     bool f_mouse_over_window = false;
     vec3 hovered_normal = {};       //written by the render thread after the ID/normal readback
     vec3 hovered_position = {};
+    int2 hovered_pixel = int2(-1,-1);   //...the pixel that answer was read at
+    uint32_t pick_serial = 0;           //...and how many answers have come back
+    int2 pick_pixel = {};               //PinPickPixel's, while f_pick_pinned
+    bool f_pick_pinned = false;
 };
 
 class InputController{
@@ -826,6 +830,20 @@ class InputController{
     vec3    GetHoveredNormal();
     void    SetHoveredPosition(vec3 pos);
     vec3    GetHoveredPosition();
+    /*
+        THE PICK PIXEL: where the renderer reads the hovered object, position and normal back
+        (Renderer::ReadPickingAsync) - the mouse's, unless a tool has PINNED it. A minimised window
+        has no mouse an agent can move, so a tool asking what a pixel picks pins it there and waits
+        for an answer read AT that pixel (GetHoveredPixel), a frame or two later - the readback is
+        asynchronous. Nothing pins it by default; unpinned, nothing is different.
+    */
+    void    PinPickPixel(int2 px);
+    void    UnpinPickPixel();
+    int2    GetPickPixel();                 //the pinned pixel, or the mouse's
+    bool    IsPickPixelPinned();
+    void    SetHoveredPixel(int2 px);       //render thread, after the rest of an answer: counts it
+    int2    GetHoveredPixel();
+    uint32_t GetPickSerial();               //answers so far: wait for it to move on, not for a time
     bool    IsMouseOverWindow();
 
     //There needs to be at least some form of feedback from UI which object was selected/hovered.

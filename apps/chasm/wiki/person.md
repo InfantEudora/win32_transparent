@@ -5,8 +5,8 @@ kind: people
 status: built
 summary: Everyone in the colony, each with a family, a home, four skills, a job, and two bars that must not run out.
 plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries
-code: Economy.h: EconomyWorker EconomySkillFactor; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs
-verified: 2026-10-09
+code: Economy.h: EconomyWorker EconomySkillFactor; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood
+verified: 2026-10-11
 ---
 
 The colony is the **settlers** it starts with, a few families waiting at the [[Camp]], and nobody else.
@@ -21,7 +21,8 @@ Nobody arrives and nobody leaves, so a colony that can't feed itself dies out.
 
 ## Jobs
 
-The player never assigns jobs. An empty place at a workplace goes to the free grown-up with the best
+The player never assigns jobs, and nobody takes on work outside their own [[Settlement|settlement]]. An empty
+place at a workplace goes to the free grown-up of its settlement with the best
 score: their skill for that job, minus the walk from home (one point of skill is worth
 {ECONOMY_SKILL_DISTANCE} world units). So **where you paint houses decides who works where**.
 [[Builders' hut|Builders' huts]] are staffed first, then the other workplaces in the order they were
@@ -47,8 +48,13 @@ A person has two bars that drop by one every tick: [[Health]], which food fills,
 ([[Thirst]]). In winter, a cold house drains health faster ([[Cold]]). At zero health a person dies, and
 the colony records the cause: hunger, thirst or cold.
 
+## Their card
+
+Who they are, their home and job, what they are doing, their two bars and their skills. A person with a
+[[Posts|pack]] has it as a goods strip, the way a [[Store|store's]] card shows what it holds - hollow, their own,
+with what it is worth in days at the right ("water 12 days, food 10").
+
 ## Planned
 
 - [planned] Births, old age, and couples moving into a free house as a new family.
-- [planned] Their card shows what they carry the way a [[Store|store's]] shows what it holds: their load
-  and their [[Posts|pack]] as goods strips, in place of the "Pack:" and ", with 4 wood" text.
+- [planned] Their load as a goods strip too, in place of the ", with 4 wood" after what they are doing.

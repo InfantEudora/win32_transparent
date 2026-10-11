@@ -38,6 +38,10 @@ void BuildWalkerFigure(std::vector<vertex>& out, int tunic_column);
 
 const char* person_asset_names[PERSON_FIGURES] = {"adult_male","adult_female","kid_male","kid_female"};
 
+int PersonFigure(const EconomyWorker& k, uint64_t tick){
+    return (EconomyStageAt(k.born,tick) < LIFE_YOUNG ? PERSON_KID_MALE : PERSON_ADULT_MALE) + (k.f_female ? 1 : 0);
+}
+
 #define WORKER_LOADS        4       //nothing, a log, a sack, a pail
 #define LOAD_NONE           0
 #define LOAD_LOG            1
@@ -272,6 +276,13 @@ void ApplicationChasm::BuildWorkerScene(){
             }else{
                 BuildWalkerFigure(verts,PAL_WALL);
             }
+            if (load == LOAD_NONE){
+                float top = 0.0f;
+                for (const vertex& v : verts){
+                    top = fmaxf(top,v.pos.y);
+                }
+                worker_figure_height[f] = top;
+            }
             load_verts.clear();
             AddLoad(load_verts,load);
             for (vertex& v : load_verts){
@@ -375,7 +386,8 @@ void ApplicationChasm::UploadWorkers(){
                 o->name = "Worker " + std::to_string(worker_objects.size());
                 o->SetMesh(worker_meshes[0]);
                 o->SetMaterialSlot(0,palette_material);
-                o->SetPickability(false);
+                //Pickable: the engine reads back who is under the cursor (person_objects, PlayPickUnder).
+                o->SetPickability(true);
                 o->SetVisualOnly(true);
                 o->SetVisibility(false);
                 main_scene->AddObject(o);
@@ -392,7 +404,7 @@ void ApplicationChasm::UploadWorkers(){
     bool f_swap = false;
     for (size_t i = 0; i < n; i++){
         const EconomyWorker& k = e->workers[i];
-        int figure = (EconomyStageAt(k.born,e->tick) < LIFE_YOUNG ? PERSON_KID_MALE : PERSON_ADULT_MALE) + (k.f_female ? 1 : 0);
+        int figure = PersonFigure(k,e->tick);
         figure_of[i] = figure;
         want[i] = figure * WORKER_LOADS + (k.carry > 0 ? LoadOf(k.carry_good) : LOAD_NONE);
         //A rigged figure's static object stays hidden, so its mesh is left as it is.
@@ -418,7 +430,7 @@ void ApplicationChasm::UploadWorkers(){
         s->name = "Worker " + std::to_string(i) + " " + person_asset_names[f];
         s->SetMesh(worker_skin_mesh[f]);
         s->SetMaterialSlot(0,palette_material);
-        s->SetPickability(false);
+        s->SetPickability(true);
         s->SetVisualOnly(true);
         s->SetVisibility(false);
         s->SetScale(vec3(PERSON_MODEL_SCALE,PERSON_MODEL_SCALE,PERSON_MODEL_SCALE));
@@ -443,7 +455,7 @@ void ApplicationChasm::UploadWorkers(){
             p->name = s->name + " load " + std::to_string(l);
             p->SetMesh(m);
             p->SetMaterialSlot(0,palette_material);
-            p->SetPickability(false);
+            p->SetPickability(true);    //a click on his log picks him
             p->SetVisualOnly(true);
             p->SetVisibility(false);
             Bone* bone = s->FindBone(load_bone_names[l]);
@@ -497,6 +509,8 @@ void ApplicationChasm::UploadWorkers(){
     };
 
     float seconds = (float)SimSeconds();
+    std::vector<std::pair<objectid_t,uint32_t>> figures;    //who each figure drawn is: person_objects
+    figures.reserve(n * 2);
     for (size_t i = 0; i < worker_objects.size(); i++){
         Object* o = worker_objects[i];
         if (i >= n){
@@ -536,8 +550,14 @@ void ApplicationChasm::UploadWorkers(){
         shown->SetPosition(vec3(k.pos.x,y,k.pos.y),false);
         shown->SetRotation(quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),false);
         shown->SetVisibility(true);
+        figures.emplace_back(shown->GetID(),k.id);
         if (!ws){
             continue;
+        }
+        for (int l = 1; l < WORKER_LOADS; l++){
+            if (ws->load[l]){
+                figures.emplace_back(ws->load[l]->GetID(),k.id);
+            }
         }
         int load = k.carry > 0 ? LoadOf(k.carry_good) : LOAD_NONE;
         for (int l = 1; l < WORKER_LOADS; l++){
@@ -552,6 +572,10 @@ void ApplicationChasm::UploadWorkers(){
         }else{
             set_clip(*ws,f_worker_idle_clip ? WORKER_CLIP_IDLE : WORKER_CLIP_NONE,1.0f,phase);
         }
+    }
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        person_objects.swap(figures);
     }
 
     if (!made.empty() || !changes.empty()){

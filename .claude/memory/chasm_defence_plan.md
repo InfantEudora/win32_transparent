@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 81514510-853a-4457-94ca-3d840e8ed249
-  modified: 2026-10-10T22:04:55.211Z
+  modified: 2026-10-11T09:01:44.407Z
 ---
 
 Chasm's defence groundwork was talked through and agreed with the user on 2026-10-09, written up as
@@ -51,8 +51,11 @@ the user, not decided.
 SCOUTING ("Scouting, provisioned first", the user's, agreed 2026-10-10): step 1 kept provisions (goods_plan.md)
 and step 2 built 2026-10-11 - "Gather supplies first" toggle on a posted card (EconomyWorker::gather = stops left,
 CHASM_CMD_GATHER), NEEDS_SCOUT_WATER 6 / FOOD 9 days, second stop, nothing to be had -> on as before. Fixed at the
-same time: a RELEASED person now eats from his pack (Needs ate from it only while posted). NEXT: the two messages
-(nothing to take; supplies run out) - they need sim-side events, as deaths are read from `dead`.
+same time: a RELEASED person now eats from his pack (Needs ate from it only while posted). Step 3, the two
+messages, built 2026-10-11: EconomyState::notices + notices_made (rules-made, not saved/hashed), told in the
+refusal's slot in amber for 5 s (ApplicationChasmTime.cpp). "Ran out" fires for everyone ORDERED out - open
+whether the user wants it narrowed. The pack is a strip on the person's card (selection_plan.md); the LOAD is
+still text. The scouting plan's build order is DONE.
 
 Testing traps: a test colony with no fields runs out of wheat and beans in about 8 days (give the camp food);
 chasm_paint's ground kind is `ground`, not `kind`; its `ran` is true even when refused - read `refusal`. Run a

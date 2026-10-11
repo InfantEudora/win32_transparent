@@ -191,6 +191,11 @@ void ApplicationChasm::UpdateGhost(){
     std::shared_ptr<const EconomyState> es = GetEconomy();
     bool f_crates = es && es->world == w && !es->crates.empty();
     key.crates_version = (es && es->world == w) ? es->crates_version : 0;
+    //...nor outside every settlement's territory (settlements_plan.md): a bridge's near end, where the press was.
+    if (hover.f_hit && es && es->world == w){
+        int op = f_field ? ZONE_OP_FIELD_PAINT : (from >= 0) ? ZONE_OP_BRIDGE : ZONE_OP_BUILD_PAINT;
+        key.f_settled = EconomyCommandInTerritory(*es,cw,op,f_field ? hover.coarse_quad : (from >= 0) ? from : hover.plot);
+    }
     auto crate_in_way = [&](int op, int index, int value){
         return f_crates && EconomyCrateInTheWay(*es,cw,op,index,value);
     };
@@ -294,7 +299,7 @@ void ApplicationChasm::UpdateGhost(){
         f_ok = false;
     }
     //Play mode's own rule (play_mode_plan.md): nothing is placed under the clouds - a line asks it per plot.
-    if (!f_line && !key.f_explored && tool != CHASM_TOOL_ERASE){
+    if (!f_line && (!key.f_explored || !key.f_settled) && tool != CHASM_TOOL_ERASE){
         f_ok = false;
     }
     if (verts.empty()){
