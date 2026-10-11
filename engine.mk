@@ -292,6 +292,13 @@ IPATHS += -I.
 #compile the same way for every app - see CORE_CFLAGS. It is inert everywhere else.
 CFLAGS += -DAL_LIBTYPE_STATIC
 
+#ImGui's configuration, 3rdparty/imgui_user_config.h, found through -I$(ROOT)/3rdparty/ above.
+#3rdparty/makefile passes the same define for libs/libimgui.a and the two must agree - imgui.h
+#is compiled on both sides, ImVector's inline functions with it. Above the CORE_CFLAGS line
+#because core/WindowImGui.cpp and core/ApplicationDebugUI.cpp include imgui.h, and inert in
+#everything that does not. For the \" see the note beside it in 3rdparty/makefile.
+CFLAGS += -DIMGUI_USER_CONFIG=\"imgui_user_config.h\"
+
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #O3 highest optimisation #-s to strip symbols
 CFLAGS += $(if $(CONFIG_SUFFIX),$(RFLAGS),$(DFLAGS))

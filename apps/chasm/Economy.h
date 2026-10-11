@@ -55,13 +55,15 @@ class Walkers;
     floor area allows (ECONOMY_PERSON_AREA each, at most ECONOMY_HOUSE_MOST). A home pulled down sends its
     family to a camp with room, or to the camp's spot with nowhere to live.
     JOBS are given out automatically: an empty place at a workplace takes the free housed adult with the
-    best score - his skill for the job (ECONOMY_SKILL_DISTANCE world units a point, a woodcutter's
-    ECONOMY_CUTTER_SKILL_DISTANCE) less the walk from his house - so where the player paints a house is what decides who works where. A workplace has one place
+    best score - his skill for the job (ECONOMY_SKILL_DISTANCE world units a point) less the walk from his
+    house - so where the player paints a house is what decides who works where. A workplace has one place
     once it stands; a BUILDERS' HUT one per plot-storey standing, and one while it is still a site, to build
     it (docs/builders_plan.md). Places are filled IN ORDER - the huts first, then the rest as they were
     placed - so with fewer people than places the newest workplaces stand empty, and a new hut takes its
     builders from them (`places`). A builder does what anyone without a job does: carries wood to sites
-    and lays roads. A worker's skill sets how fast he works (EconomySkillFactor).
+    and lays roads. A worker's skill sets how fast he works (EconomySkillFactor). A workplace the player STOPPED
+    (ZoneBuilding::f_stopped, ZoneKindStoppable; stopping_work_plan.md) has no places: its worker goes free, and
+    what it makes stops - a collector fills only while worked.
     LAND (docs/land_plan.md): a field employs nobody itself. Every field that stands belongs to a house -
     its LAND - or, while no house is lived in, to the camp (`EconomyField::owner`, SettleLand): the
     player's choice (ZoneBuilding::land_of) if that house is lived in, else the house it has, else the
@@ -74,12 +76,15 @@ class Walkers;
     the rest lies fallow until a house takes it - and ECONOMY_CAMP_WOODCUTTERS of its own (`cutter_places`),
     filled as its land is, by those living there, the strongest first. He fells from the camp, with no hut:
     the least of a log (ECONOMY_CAMP_LOG_WOOD), into a store that takes wood or else the camp's supplies, while
-    they hold less wood than ECONOMY_CAMP_WOODPILE. So more of either takes houses and huts.
+    they hold less wood than ECONOMY_CAMP_WOODPILE. So more of either takes houses and huts - and a woodcutter's hut
+    standing in its settlement TAKES his place OVER (the user's 2026-10-11): the camp has none of its own then.
     And ECONOMY_CAMP_WATER_CARRIERS (`drawer_places`, settlements_plan.md) where a river's or pool's edge lies within
     ECONOMY_CAMP_WATER_REACH of walking (`draw_plot`, the dry plot beside the wet bank nearest by the walk), filled
     after its woodcutter, the most ingenious first: he walks there, draws ECONOMY_CAMP_WATER_LOAD at
     ECONOMY_CAMP_WATER_SECONDS a unit, and carries it home into the camp's supplies, while they hold less water than
-    ECONOMY_CAMP_WATER_HOLD - never under the snow. Enough for an outpost of three; a village wants its collector.
+    ECONOMY_CAMP_WATER_HOLD - never under the snow. Enough for an outpost of three; a village wants its collector,
+    and a collector standing in its settlement TAKES his place OVER as a hut does the woodcutter's - worked or
+    STOPPED (stopping_work_plan.md): the player stops one with water plenty in store, so nobody draws it by hand.
 
     A worker walks a ROUTE of points: the grid's A* (Walkers::PlanRoute) where he must, and STRAIGHT where
     the line is clear (EconomyStraightClear) - in the open he need not follow the grid (the user's note).
@@ -217,6 +222,9 @@ class Walkers;
     from home does. A job he had is KEPT: its place is his and stands idle - a collector does not fill, his
     share of a field does not grow - and released, he goes back to it; a jobless one is given none until
     then. Posted people are out of the staffing altogether (AssignJobs). Children cannot be sent.
+    In winter the posted walk the ICE (Walkers::SetSeason; seasons_plan.md, the user's 2026-10-12) - frozen
+    water, where the snow lies - and nobody else; an order onto the water itself is refused. Still over it at
+    the thaw, he is cut off as above: a risk, warned of by the walk tip and by his card (IceHome, `ice_home`).
     His PACK is what he takes along to live on: water and food, apart from any load (NEEDS_PACK_*). Filled
     from his home's pantry when he sets out from home, and topped up at every supply trip; eaten from as he
     would eat at home, a whole unit whenever it fits, so his bars stay up while it lasts and a pressing need
@@ -299,19 +307,25 @@ class Walkers;
     A HOME founds a SETTLEMENT - a camp or a house: a tent is just a house (the user's) - the start camp the first.
     Homes that stand, in id order, so the oldest first: one outside every earlier settlement's territory founds its
     own, named by its id; one inside is more beds for that one. So a settlement lasts while any home of it stands,
-    and with its first camp gone its oldest house is its centre. Its TERRITORY is every plot within its REACH of
-    walking from that home over the MAP (Walkers::MapFlood) - never what is built on it - each plot to the nearer
-    home by that walk, so where two meet the border falls halfway. Its reach goes by its BEDS, tents and houses'
-    room (EconomySettlementReach): ECONOMY_SETTLEMENT_FIRST for one, up to ECONOMY_SETTLEMENT_REACH. A building,
-    field, garden, lot, road, wall or crate is in the settlement of its plot (a building's door); a PERSON in his
-    home's. Worked out from the zones (Settle), never saved. A family whose home goes is CRAMMED into another of the
+    and with its first camp gone its oldest house is its centre. Its TERRITORY starts as every plot within its REACH
+    of walking from that home over the MAP (Walkers::MapFlood) - never what is built on it. Its reach goes by its
+    BEDS, tents and houses' room (EconomySettlementReach): ECONOMY_SETTLEMENT_FIRST for one, up to
+    ECONOMY_SETTLEMENT_REACH. Then it GROWS FROM EVERY BUILDING of it that stands (the user's, 2026-10-12):
+    ECONOMY_SETTLEMENT_BUILDING round each, ECONOMY_SETTLEMENT_TOWER round a guard tower, ECONOMY_SETTLEMENT_WALL round
+    each built wall plot - not a site, a field, range, road, garden or lot - and what stands on land another added
+    grows it on. Each plot goes to the settlement it is the shortest walk from, so where two meet the border falls
+    between them. A building,
+    field, garden, lot, road, wall or crate is in the settlement of its plot (a building's door; a bridge's, either
+    end's); a PERSON in his home's. Worked out from the zones (Settle), never saved. A family whose home goes is CRAMMED into another of the
     settlement it stands in (HouseFamilies).
     TAKING A TENT (settlements_plan.md, "Founding: taking a tent"): someone ordered out may be told to take one
     (TakeTent) - off to the nearest camp with one to spare, as GATHERING goes for supplies; there he packs it, its plot
     out of the camp (TentsPacked), and carries it as his load (ECONOMY_TENT_CARRIED) - released too - until he PITCHES
     it where he stands (PitchSpot, Zones::PitchTent, Pitched): a camp plot of its own or beside one, his home from then
-    on. His house place he keeps until then, and gives up then: a household of his own, as a new couple is. A family
-    of nobody but tent carriers, with no home, is ON THE ROAD: no home is found for it - it pitches its own.
+    on. His house place he keeps until then, and gives up then: a household of his own, as a new couple is - unless
+    his partner lives in that settlement: then he REJOINS them, at their home (PartnerLivingIn), as SETTLING HERE
+    does too. A family of nobody but tent carriers, with no home, is ON THE ROAD: no home is found for it - it
+    pitches its own.
     THE LIMIT: people take tasks only in their own settlement (Ours) - a site to carry for and where from, line work,
     a job, fetching home, the store a load goes to, the builders' and the ropemaker's errands. Families move only
     into houses of theirs; land goes only to a house or camp of its field's. NOT limited: a post and its supply
@@ -335,10 +349,13 @@ class Walkers;
 #define ECONOMY_HUT_ROOM            6.0f    //wood a woodcutter's hut keeps indoors, per unit of its floor area past...
 #define ECONOMY_HUT_WORKSHOP        1.5f    //...the floor he works in (the user's, 2026-10-11): a hut of 3 wood keeps none, one of 4 begins to
 #define ECONOMY_LOT_ROOM            2.0f    //...and on a lot of its yard, per unit of its area: about a store's room for the wood it costs
-#define ECONOMY_WOODCUTTER_REACH    40.0f   //world units from the hut
+#define ECONOMY_WOODCUTTER_REACH    75.0f   //world units from the hut
 #define ECONOMY_SETTLEMENT_REACH    50.0f   //a settlement's territory at most: world units of walking from its oldest home...
 #define ECONOMY_SETTLEMENT_FIRST    20.0f   //...with one bed: a single tent pitched (settlements_plan.md)...
 #define ECONOMY_SETTLEMENT_PER_BED  5.0f    //...and more for every bed past it, so seven beds reach the most
+#define ECONOMY_SETTLEMENT_BUILDING 15.0f   //and every other building of it that stands grows its land this much walking round itself (the user's, 2026-10-12)...
+#define ECONOMY_SETTLEMENT_TOWER    30.0f   //...a guard tower this much...
+#define ECONOMY_SETTLEMENT_WALL     10.0f   //...and each built wall or gate plot this much
 #define ECONOMY_TENT_NONE           0       //TAKING A TENT: a person's `tent` - none...
 #define ECONOMY_TENT_TO_TAKE        1       //...told to take one, off to a camp for it...
 #define ECONOMY_TENT_CARRIED        2       //...or one packed, carried until he pitches it
@@ -354,9 +371,8 @@ class Walkers;
 #define ECONOMY_WORKER_SPEED        1.6f    //walking straight: WALKER_SPEED_GROUND
 #define ECONOMY_PERSON_AREA         1.3f    //floor area a person needs: a house holds its floor area over this, whole people
 #define ECONOMY_HOUSE_MOST          6       //the largest family a house holds, however big
-#define ECONOMY_SKILL_DISTANCE      4.0f    //what a point of skill is worth against the walk to work...
-#define ECONOMY_CUTTER_SKILL_DISTANCE 3.0f  //...a woodcutter's strength a quarter less (the user's, 2026-10-11): his round is mostly walking
-#define ECONOMY_CARRY_STRENGTH      0.025f  //a woodcutter with a load walks this much faster a point of strength over 5, slower under (the user's): ~25% from 1 to 10
+#define ECONOMY_SKILL_DISTANCE      3.0f    //what a point of skill is worth against the walk to work: a quarter less than it was (the user's, 2026-10-11)
+#define ECONOMY_CARRY_STRENGTH      0.025f  //anyone with a load walks this much faster a point of strength over 5, slower under (the user's): ~25% from 1 to 10
 #define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
 #define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence, per unit of the plot's area
@@ -579,7 +595,8 @@ int EconomyCoupleDay(uint32_t a, uint32_t b);
     widow stays single, her husband still hers. They found a NEW FAMILY there, each keeping their own SURNAME
     (`surname`, given at birth), and their children take one of the two (EconomyCoupleSurname). The families
     that need a house take theirs first; the couples what is still free - the eldest unpaired adult first, with
-    the eldest who can pair with them. So a new house is a new couple, and a new couple brings children.
+    the eldest who can pair with them. So a new house is a new couple, and a new couple brings children. One who
+    lives alone in a house that holds two takes the other in there instead (the user's 2026-10-11).
 */
 #define LIFE_COUPLE_ROOM        2       //what a house must hold for a couple to move in
 
@@ -731,9 +748,9 @@ struct EconomyNotice{
 
 //A SETTLEMENT (Economy::Settle), worked out from the zones.
 struct EconomySettlement{
-    uint32_t id = 0;            //its oldest home's building id: what it is named by, and its territory's centre
+    uint32_t id = 0;            //its oldest home's building id: what it is named by, and its territory's heart
     int beds = 0;               //its homes' beds - tents, and houses' room - that its reach was worked out from
-    float reach = 0.0f;         //world units of walking from that home: its territory
+    float reach = 0.0f;         //world units of walking from that home - and its land grows from every building past it
 };
 
 struct EconomyState{
@@ -770,6 +787,8 @@ struct EconomyState{
     std::vector<int> draw_plot;                         //...the plot he draws at, beside the water: -1 none, or not a camp
     std::vector<uint32_t> trees_unreached;              //sites with a tree in their way no woodcutter reaches: a road's, wall's,
                                                         //garden's or lot's plot as ECONOMY_SITE_GROUND | plot, else by id
+    std::vector<std::pair<uint32_t,int>> ice_home;      //the posted whose only way home is over the ice, and the days until
+                                                        //it thaws on that way (Economy::IceHome) - a card's warning
     std::vector<int> capacity;                          //a house's: how many it holds
     std::vector<int> places;                            //a workplace's: how many it employs (0: not one) - a house's or camp's, its land's farmers
     std::vector<uint32_t> farmer_of;                    //by building id: a field's farmer, the person its share falls to - 0 fallow
@@ -1047,6 +1066,7 @@ private:
     void KeepAtDoors();                         //anyone indoors moved to his house's door, wherever Derive put it
     void Replan(const ZoneState& z, Walkers& walkers);
     void TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t calendar_tick, float dt);
+    void IceHome(const ZoneState& z, Walkers& walkers);     //state.ice_home, now
     bool RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, int to_plot, const vec2& to_point,
                  int to_layer = -1);
     bool FindTree(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
@@ -1087,6 +1107,8 @@ private:
     //...a camp's beds to spare for `k` (CampSpare, TentToPack's count); and his house place given up for a household of his own.
     int CampSpare(const ZoneState& z, uint32_t id, const EconomyWorker* k) const;
     void OwnHousehold(EconomyWorker& k);
+    //REJOINING: his partner, if they have a home in `settlement` and are not leaving it with a tent - else NULL.
+    const EconomyWorker* PartnerLivingIn(const EconomyWorker& k, uint32_t settlement) const;
     bool GoForTent(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //A NOTICE for the player (above), the oldest dropped past ECONOMY_NOTICES_KEPT.
     void Notice(int kind, uint32_t person, GoodsMask what = 0);
@@ -1359,6 +1381,8 @@ int EconomyRipenTicks(int crop, int grown, float pace);
 //Whether building `id` stands under the snow at `tick`, at its first plot - where the rule that a water
 //collector fills only off the snow reads it - so a card can say so.
 bool EconomyFrozen(const ChasmWorld& w, const ZoneState& z, uint32_t id, uint64_t tick);
+//Whole days from `tick` until plot `plot` is out from under the snow - its ice gone (Walkers, ICE): 0 not frozen now.
+int EconomyIceDays(const ChasmWorld& w, int plot, uint64_t tick);
 //What a field is to be sown with NOW, with `ticks_left` of growing weather at `pace`: EconomyFieldSowCrop's
 //if it ripens in time - AUTO the most food of those that do - else -1, and it waits for spring.
 int EconomyFieldSowNow(const EconomyField& f, const ZoneBuilding& b, float pace, int ticks_left);

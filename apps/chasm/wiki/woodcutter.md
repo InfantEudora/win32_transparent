@@ -7,12 +7,13 @@ summary: The only one who fells trees. Works from a hut or from the camp, fells 
 plans: economy_plan.md > The woodcutter: logs first; woodcutting_plan.md > Decided (the user, 2026-10-11); woodcutting_plan.md > As built (2026-10-11); yards_plan.md > Noted
 code: Economy.cpp: TickWorker FindTree WoodNear TreesInTheWay FetchFromWorkplace FindStore Felled AssignJobs EconomySkillFactor; Economy.h: WORKER_JOB_WOODCUTTER
 tuning: ECONOMY_PICK_SECONDS
-verified: 2026-10-11
+verified: 2026-10-12
 ---
 
 A job at a **woodcutter's hut**, which the player paints, or at the [[Camp|camp]], which has one
-woodcutter's place of its own. **Only a woodcutter fells a tree**: a [[Roads and walls|road]], a wall or a
-[[Construction|site]] with a tree in its way waits for one.
+woodcutter's place of its own until a hut stands in its [[Settlement|settlement]]: the hut takes it over. **Only a woodcutter fells a tree**: a [[Roads and walls|road]], a wall or a
+[[Construction|site]] with a tree in its way waits for one. A hut's card can **stop work**: it fells nothing
+then, its woodcutter goes free, and the camp's woodcutter does not come back.
 
 ## What a log is worth
 

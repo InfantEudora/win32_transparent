@@ -7,7 +7,7 @@ been reworded: each entry is the text it carried when it was closed, including t
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
 
-Numbers are stable and are never reused. They run 1-97 across both files; **28 was never
+Numbers are stable and are never reused. They run 1-98 across both files; **28 was never
 assigned**.
 
 Sources: `docs/tetris_findings.md` (the `APP=Tetris` run) and `docs/breakout_findings.md` (the
@@ -3249,3 +3249,38 @@ object happened to construct first.
   `core/Object.{h,cpp}`, `core/Scene.{h,cpp}`, `core/Application.{h,cpp}`,
   `core/ApplicationDebugUI.cpp`, `core/ApplicationDebugUI_none.cpp`, `core/ApplicationMCP.cpp`,
   `core/Window.h`, `engine.mk`, `apps/bomber/makefile`.
+
+- [x] **98. ImGui's input queue was written by two threads with no lock - the cause of the rare
+  `Assertion failed: i >= 0 && i < Size, file imgui/imgui.h, line 2369`.** Found, fixed and measured
+  2026-10-12, after it had recurred in several apps. The context is created and framed on the
+  render thread (`Window::ImGuiNewFrame`), but `windproc` runs on the main thread and called
+  `ImGui_ImplWin32_WndProcHandler` through `ImGuiForwardWndProc` with nothing held. Both sides touch
+  `g.InputEventsQueue`: the main thread `push_back`s every mouse/key/char event and scans backwards
+  in `FindLatestInputEvent`; the render thread pushes its own (`ImGui_ImplWin32_NewFrame` ->
+  `AddMouseViewportEvent`, which scans too) and then drains the queue with `resize(0)` or `erase` in
+  `UpdateInputEvents`. A scan that read `Size` before a drain shrank it indexes past the end - that
+  is the assert, and the file in its message is the library's own copy of `imgui.h`, not an app's.
+
+  **Reproduced** by posting WM_CHAR + WM_MOUSEMOVE at `MainWindowClass` from another process
+  (`chasm_nophysics.exe --minimized`): dead in 11-55 s, four runs out of four. A flood keeps the
+  queue growing, so there it shows as the other face of the same race - an access violation when
+  `push_back` reallocates. Under gdb: render thread faulting in `FindLatestInputEvent` from
+  `ImGui_ImplWin32_NewFrame`, main thread in the same instant in `ImVector::reserve` -> `free()`
+  from `windproc` -> `AddInputCharacter`. Finding it is what `core/CrashReport.h` came out of: debug
+  builds now write every thread's stack on an `IM_ASSERT` or an unhandled exception.
+
+  **Fixed** with a `std::recursive_mutex` in `core/WindowImGui.cpp`, held across
+  `ImGuiForwardWndProc`'s call and across `ImGui_ImplWin32_NewFrame` + `ImGui::NewFrame` - the two
+  places the queue is fed and drained; widget code between NewFrame and Render does not touch it
+  (checked: outside the `ImGuiIO::Add*` functions only `UpdateInputEvents` does). Recursive because
+  the handler re-enters `windproc` on the same thread (`SetCapture`/`ReleaseCapture` send
+  `WM_CAPTURECHANGED` synchronously). It cannot deadlock while nothing under it waits on the other
+  thread: the render thread's Win32 calls there (`GetClientRect`, `GetCursorPos`, `SetCursor`,
+  `WindowFromPoint`, which only sends `WM_NCHITTEST` to the calling thread's own windows) never
+  message the main thread's window.
+
+  **Verified** with the same flood: 240 s and no crash, about 3.6 M messages handled against 1.4 M
+  in the longest run that died, the render thread at 60 fps throughout, memory flat at 275-290 MB,
+  MCP answering during and after, no crash report and nothing in stderr. Interactive ImGui input
+  was not exercised (the test instance was minimised); the change only serialises calls that
+  already happened. `core/WindowImGui.cpp`.

@@ -6,7 +6,7 @@ status: built
 summary: Tents and fires where the settlers start. It is home to anyone without a house, and holds the settlers' supplies for the whole colony beside a pantry of its own.
 plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11); settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6
 code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY ZoneCampFireTent; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld AssignJobs LandPlaces; Economy.h: pantry
-verified: 2026-10-11
+verified: 2026-10-12
 ---
 
 A new map starts with one camp, just big enough for the settlers. The game puts it on the best spot it
@@ -52,14 +52,15 @@ supplies.
 A camp employs **{ECONOMY_CAMP_FARMERS:#farmer}** for its land (more of its fields lie fallow) and
 **{ECONOMY_CAMP_WOODCUTTERS:#woodcutter}** of its own, both from those living there. The camp's woodcutter
 works with no hut: a log is worth only {ECONOMY_CAMP_LOG_WOOD} wood, and goes into a store that takes wood,
-or else the supplies, while they hold less than {ECONOMY_CAMP_WOODPILE}. More of either takes
-[[House|houses]] and [[Woodcutter|huts]].
+or else the supplies, while they hold less than {ECONOMY_CAMP_WOODPILE}. More of either takes [[House|houses]]
+and [[Woodcutter|huts]], and once a hut stands in the settlement the camp has no woodcutter of its own.
 
 A camp with a river's or pool's edge within {ECONOMY_CAMP_WATER_REACH} of walking also employs a **water
 carrier**, the most ingenious: he walks to the bank, draws {ECONOMY_CAMP_WATER_LOAD} [[Water|water]] at
 {ECONOMY_CAMP_WATER_SECONDS:#seconds} a unit, and carries it into the supplies, while they hold less than
 {ECONOMY_CAMP_WATER_HOLD} and no snow lies on the bank. That is enough for a few, not a village, which wants a
-[[Water collector|collector]]. A painted tent costs {ECONOMY_TENT_ROPE} [[Rope|rope]] with its wood.
+[[Water collector|collector]] - and once one stands in the settlement, worked or stopped, the camp has no water
+carrier of its own. A painted tent costs {ECONOMY_TENT_ROPE} [[Rope|rope]] with its wood.
 
 When a camp's last tent is packed or erased, its supplies and pantry are left where it stood as a [[Crate|crate]].
 

@@ -124,3 +124,31 @@ Now the water freezes where the snow lies, and the collector's card says why it 
   snow on the ground does.
 - Checked on `chasm_water_nora`: frozen at its start (front at z -25, the collector at -46), the line gone
   1100 ticks on (front at -58), when Nora is fetching again.
+
+## Crossing the ice (the user's, 2026-10-12)
+
+"Make water crossable in winter, only when instructed by posting." The ice was already there, drawn and in the
+rules (above), but nobody could walk it.
+
+- **The posted cross frozen water**: someone under an order, a guard. Villagers going about their work do not,
+  and neither does a settlement's territory (`MapFlood`). Frozen is the line the ice is drawn by and a collector
+  stops at (`UnderSnow`): `Walkers::SetSeason`, set from the tick before a walk is planned.
+- **An order onto the water itself is refused** ("on the water"): the thaw would leave him standing in the river.
+- **The thaw is a risk, with a warning** (the user's choice over refusing an icy route near the thaw). A walk
+  planned over the ice keeps it if the thaw comes on the way; one still across afterwards is cut off until a bridge
+  or the next winter, and waits as anyone cut off from home does. The warnings:
+  - the walk tip, before the right click: "41 units to walk - over the ice, it thaws in 6 days";
+  - the person's card, while posted with no way home but over the ice: "The way home is over the ice - it thaws
+    in about 6 days", red on its last day (`Economy::IceHome`, `ice_home`, looked at each second;
+    `EconomyIceDays` steps a day at a time to the first one the snow is gone from the plot).
+- **The walk tip plans the posted walk** for anyone selected, since a right click posts them: it showed "No way
+  there" over the ice, and over a castle's decks, where the order would go.
+- **Cut off, said so**: someone waiting "at home" away from the house's door - a river, a wall, or the ice gone from
+  under the way back - showed "At his tent"; the card now says "Cut off from home, looking for a way back"
+  (`Doing`, `CARD_CUT_OFF_DISTANCE`). A camp's people at their tents read "At the tent".
+- *Checked* on `camp_3` (debug, a copied exe, paused and stepped): in winter (day 34) a posted route found the way
+  over the lake north of the settlement in 28 plots, a villager's none. An order onto the water: "on the water".
+  Marit ordered over it walked out on the ice; from her first steps her card read "The way home is over the ice -
+  it thaws in about 8 days", 7 at her post, 1 on day 41; on day 43 it had thawed, the line was gone, and released
+  she stayed on the far bank: "Cut off from home, looking for a way back". Bente at home still read "At home".
+  Not looked at on screen: the walk tip's wording (it needs the mouse, and a minimised window draws no overlay).

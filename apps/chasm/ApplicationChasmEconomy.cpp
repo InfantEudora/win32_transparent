@@ -566,6 +566,12 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
         vec2 p = EconomyPostPoint(*e,k);
         j["post"] = json{{"plot",post},{"x",p.x},{"z",p.y},{"there",EconomyAtPost(*e,k)},{"ordered",k.post >= 0},{"layer",k.post_layer}};
     }
+    //ICE (seasons_plan.md): his only way home is over the ice, thawing in so many days (Economy::IceHome).
+    for (size_t i = 0; e && i < e->ice_home.size(); i++){
+        if (e->ice_home[i].first == k.id){
+            j["ice_home_days"] = e->ice_home[i].second;
+        }
+    }
     if (k.gather > 0){
         j["gather"] = k.gather;     //places still to go to for a scout's pack (defence_plan.md, "Scouting")
     }
@@ -706,6 +712,11 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     //A collector's hold, by its standing floor.
     if (z->buildings[id].kind == ZONE_KIND_WATER){
         j["water_room"] = (id < e->water_room.size()) ? e->water_room[id] : 0;
+    }
+    //A workplace the player stopped (stopping_work_plan.md), and its places - 0 while stopped.
+    if (ZoneKindStoppable(z->buildings[id].kind)){
+        j["stopped"] = z->buildings[id].f_stopped != 0;
+        j["places"] = (id < e->places.size()) ? e->places[id] : 0;
     }
     for (const EconomyWorker& k : e->workers){
         if (k.building == id){

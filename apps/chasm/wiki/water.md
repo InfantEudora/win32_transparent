@@ -6,7 +6,7 @@ status: built
 summary: Drawn from rivers and pools by water collectors. Everyone drinks it, and nothing else quenches thirst.
 plans: economy_plan.md > Production; needs_plan.md > Current tuning
 code: Economy.h: NEEDS_WATER_WORTH ECONOMY_WATER_ROOM; Economy.cpp: Consume EconomyCollectorRoom
-verified: 2026-10-11
+verified: 2026-10-12
 ---
 
 - **Where it comes from**: [[Water collector|water collectors]] on the banks of rivers and pools, while
@@ -20,5 +20,5 @@ verified: 2026-10-11
   was stored.
 - People on a [[Posts|post]] carry {NEEDS_PACK_WATER} units in their pack.
 
-The river's wet bank and stones can't be walked or built on. Bridges cross rivers; nothing crosses the
-chasm on foot.
+The river's wet bank and stones can't be walked or built on. Bridges cross rivers - and in winter the
+[[Posts|posted]] cross the ice ([[Seasons]]); nothing crosses the chasm on foot.

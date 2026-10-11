@@ -13,10 +13,12 @@
 */
 #include <winsock2.h>
 #include "glad.h"
+#include <mutex>
 
 #include "Window.h"
 #include "File.h"
 #include "Debug.h"
+#include "CrashReport.h"
 
 //ImGui itself, which core/Window.h deliberately no longer drags into every translation unit in
 //the tree - see the note at the top of it. This file is one of the three places that actually
@@ -80,8 +82,25 @@ bool Window::InitImGui(){
     return true;
 }
 
+/*
+    ImGui's input queue has writers on two threads. The context lives on the render thread, which
+    feeds the queue in ImGui_ImplWin32_NewFrame and drains it in ImGui::NewFrame - but window
+    messages arrive on the main thread, and ImGuiForwardWndProc feeds the same queue from there.
+    Unguarded, that was the rare `i >= 0 && i < Size` assert, and a crash when the queue reallocated
+    under the other thread (backlog item 98). Widget code between NewFrame and Render never touches
+    the queue, so these two places are all that need it.
+
+    Recursive because the handler re-enters windproc on its own thread: SetCapture and
+    ReleaseCapture send WM_CAPTURECHANGED synchronously. It cannot deadlock while nothing under it
+    waits on the other thread, and the render thread's side only makes Win32 calls that never
+    message the main thread's window - WindowFromPoint sends WM_NCHITTEST to the calling thread's
+    own windows only.
+*/
+static std::recursive_mutex input_queue_mutex;
+
 void Window::ImGuiNewFrame(){
     ImGui_ImplOpenGL3_NewFrame();
+    std::lock_guard<std::recursive_mutex> lock(input_queue_mutex);
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 }
@@ -98,5 +117,16 @@ void Window::ImGuiRenderDrawData(){
     is consuming input, which is exactly right: there are no panels to click on.
 */
 int ImGuiForwardWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
+    std::lock_guard<std::recursive_mutex> lock(input_queue_mutex);
     return (int)ImGui_ImplWin32_WndProcHandler(hWnd,msg,wParam,lParam);
+}
+
+/*
+    Where IM_ASSERT goes - see 3rdparty/imgui_user_config.h. In this file because it is in the
+    build exactly when libs/libimgui.a is, and that library is the main caller.
+*/
+void ImGuiAssertFailed(const char* expr, const char* file, int line){
+    char what[1024];
+    snprintf(what, sizeof(what), "ImGui assertion failed: %s, file %s, line %d", expr, file, line);
+    CrashReport(what);
 }

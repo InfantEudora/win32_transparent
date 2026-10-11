@@ -413,6 +413,7 @@ bool CanSettleHere(const EconomyState& e, const EconomyWorker& k){
     return here.f_hit && here.plot >= 0 && here.plot < (int)e.settlement.size() && e.settlement[here.plot] == there;
 }
 
+#define CARD_CUT_OFF_DISTANCE   3.0f    //world units from his house's door: waiting further off, he is cut off from it
 //What he is doing, as a sentence's end - the card's and the house's list's. With the zones, a wall's way
 //cleared is told from a road's (line_works_plan.md, step 3): the same errand on another line. With the economy,
 //a post he is kept from is told from one he stands on.
@@ -431,8 +432,15 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
             return "clearing a wall's way";
         }
     }
+    //Waiting "at home" away from the house's door: cut off from it - a river or a wall, or the ice gone from under
+    //his way back (seasons_plan.md, ICE) - and he tries the way again now and then (Economy::TickWorker).
+    if (k.state == WORKER_AT_HOME && !EconomyIndoors(k) && k.house && z && e && e->world && k.house < z->buildings.size()
+        && z->buildings[k.house].kind != ZONE_KIND_CAMP && k.house < e->door.size() && e->door[k.house] >= 0
+        && (e->world->grid->fine.pos[e->door[k.house]] - k.pos).length() > CARD_CUT_OFF_DISTANCE){
+        return "cut off from home, looking for a way back";
+    }
     switch (k.state){
-        case WORKER_AT_HOME:    return EconomyIndoors(k) ? "at home" : (k.house ? "at his tent" : "waiting");
+        case WORKER_AT_HOME:    return EconomyIndoors(k) ? "at home" : (k.house ? "at the tent" : "waiting");
         //A woodcutter out for wood - a log first, a tree if none lies near - and, with one on him, for a second log;
         //at it, felling for longer than a pick-up takes.
         //A camp's water carrier out to the water's edge to draw a load (settlements_plan.md), not to a collector.
@@ -1025,6 +1033,13 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         }else{
             c.Text("Posted",HUD_AMBER);
         }
+        //ICE (seasons_plan.md): his only way home over the ice - cut off once it thaws (Economy::IceHome).
+        for (const std::pair<uint32_t,int>& ice : e.ice_home){
+            if (ice.first == k.id){
+                c.Text(Format("The way home is over the ice - it thaws in about %i day%s",ice.second,ice.second == 1 ? "" : "s"),
+                       (ice.second <= 1) ? HUD_DANGER : HUD_AMBER);
+            }
+        }
         CardLine release;
         release.type = CARD_TOGGLE;
         release.text = "Release";
@@ -1609,7 +1624,13 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             }
             //Something of it standing: a building's storey, or a range's built cell (range_plan.md).
             bool f_stands = info.storeys > 0 || (b.kind == ZONE_KIND_RANGE && info.floor_area > 0.0f);
-            if (!f_worked && f_stands && !f_short){
+            if (!f_worked && f_stands && b.f_stopped){
+                //Stopped by the player (stopping_work_plan.md): nobody here is meant, not a want - and a collector
+                //fills only while worked, so say what stops with it.
+                c.Text(b.kind == ZONE_KIND_WATER ? "Stopped: no water is collected until it is set working again"
+                       : b.kind == ZONE_KIND_RANGE ? "Stopped: nobody trains here until it is set going again"
+                       : "Stopped: nobody works here until it is set working again",HUD_TEXT_DIM);
+            }else if (!f_worked && f_stands && !f_short){
                 c.Text(b.kind == ZONE_KIND_RANGE ? "Nobody trains here - it needs a free adult with a house"
                                                  : "Nobody works here - it needs a free adult with a house",HUD_AMBER);
             }
@@ -1687,8 +1708,12 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         for (const EconomyWorker& k : e->workers){
             working += (k.building == id) ? 1 : 0;
         }
-        c.Text(Format("%i of %i builder%s",working,places,places == 1 ? "" : "s"),(working < places) ? HUD_AMBER : HUD_TEXT);
-        if (info.storeys == 0){
+        if (b.f_stopped && working == 0){
+            c.Text("Stopped: it takes no builders until it is set working again",HUD_TEXT_DIM);
+        }else{
+            c.Text(Format("%i of %i builder%s",working,places,places == 1 ? "" : "s"),(working < places) ? HUD_AMBER : HUD_TEXT);
+        }
+        if (info.storeys == 0 && !b.f_stopped){
             c.Text("Its first builder builds it",HUD_TEXT_DIM);
         }
         for (const EconomyWorker& k : e->workers){
@@ -1708,6 +1733,18 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         if (info.storeys > 0){
             KeptLines(*e,z,GOOD_PROVISIONS,c);
         }
+    }
+    /*
+        STOPPING WORK (stopping_work_plan.md, the user's 2026-10-12): a workplace that stands - a storey, or a range's
+        built cell - may be stopped, so its people are free for other work, and set going again (OVERLAY_HIT_WORK_STOP).
+    */
+    if (ZoneKindStoppable(b.kind) && (info.storeys > 0 || info.floor_area > 0.0f)){
+        CardLine stop;
+        stop.type = CARD_TOGGLE;
+        stop.text = "Stop work";
+        stop.chips_on = b.f_stopped ? 1 : 0;
+        stop.choice_action = OVERLAY_HIT_WORK_STOP;
+        c.lines.push_back(stop);
     }
     /*
         A GUARD TOWER (defence_plan.md): its guards, staffed by archery and then precision, and its stock - water and
@@ -2720,6 +2757,28 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     const EconomyWorker* k = e ? PersonById(*e,id) : NULL;
                     if (k && k->post >= 0){
                         SubmitOrder(id,-1);
+                    }
+                }
+            }else if (hit.action == OVERLAY_HIT_WORK_STOP){
+                //A workplace's work stopped or set going again (stopping_work_plan.md) - a recorded zone command, by a
+                //plot of it, or a range's by a cell.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const ZoneState> z = GetZones();
+                if (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size()){
+                    int want = z->buildings[sel.id].f_stopped ? 0 : 1;
+                    if (ZoneKindOnCells(z->buildings[sel.id].kind)){
+                        auto cell = std::find(z->field.begin(),z->field.end(),sel.id);
+                        if (cell != z->field.end()){
+                            SubmitZone(ZONE_OP_RANGE_STOP,(int)(cell - z->field.begin()),want);
+                        }
+                    }else{
+                        int plot = (sel.plot >= 0 && sel.plot < (int)z->building.size() && z->building[sel.plot] == sel.id)
+                                   ? sel.plot : FirstPlotOf(*z,sel.id);
+                        SubmitZone(ZONE_OP_WORK_STOP,plot,want);
                     }
                 }
             }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_STORE_ALLOW_GROUP

@@ -6,7 +6,7 @@ status: partial
 summary: The player can order a grown-up to stand on a plot. It becomes their job while it lasts, and they live off a pack they take along.
 plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order; defence_plan.md > Scouting, provisioned first; selection_plan.md > Several people selected (the user's, agreed 2026-10-11)
 code: Economy.cpp: Order TakePost GoToPost SpreadPost RePlace FillPack Unpack Needs Gather GatherSupplies Notice; Economy.h: EconomyCanOrder EconomyPostRoom ECONOMY_POST_ROOM NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS EconomyNotice
-verified: 2026-10-11
+verified: 2026-10-12
 ---
 
 ## Ordering
@@ -14,13 +14,13 @@ verified: 2026-10-11
 A [[Guard tower|guard]] is posted by his job instead: his post is his tower, and he lives on it as below,
 with the tower as his pantry. An order to him comes first and suspends the job like any other.
 
-With a person selected, a right click on a plot sends them there; their card releases them. An order is
-refused for a child, onto a plot with a building, a wall or a shut gate on it (a camp and a standing
-bridge count as open ground), and onto a plot they can't walk to. A right click on a [[Guard tower|guard
-tower]] instead makes them one of its guards, by hand. **Several at once**: drag a box round grown-ups, or Shift+click
-them on the map or on a card, and one right click orders them all - the nearest onto the plot clicked while it has
-room, the rest onto the nearest plots round it they can reach (one each {ECONOMY_POST_ROOM} of a plot's area).
-Several on one plot stand apart, each in a place of their own; onto a tower, the nearest take its places.
+With a person selected, a right click on a plot sends them there; their card releases them. An order is refused for a
+child, onto a plot with a building, a wall or a shut gate on it (a camp and a standing bridge count as open ground), onto
+the water, and onto a plot they can't walk to. In winter they may cross the **ice** ([[Seasons]]): a risk, as the thaw
+cuts off whoever is still across. A right click on a [[Guard tower|guard tower]] instead makes them one of its guards, by
+hand. **Several at once**: drag a box round grown-ups, or Shift+click them on the map or on a card, and one right click
+orders them all - the nearest onto the plot clicked while it has room, the rest onto the nearest plots round it they can
+reach (one each {ECONOMY_POST_ROOM} of a plot's area). Several on one plot stand apart, each in a place of their own; onto a tower, the nearest take its places.
 
 ## On the post
 

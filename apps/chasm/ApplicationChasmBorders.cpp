@@ -148,9 +148,11 @@ void ApplicationChasm::DrawWalkTip(float s){
     if (!k || !here.f_hit || here.plot < 0){
         return;
     }
-    std::array<int,4> key = {{(int)k->id,here.plot,hover.plot,(int)z->version}};
+    //Again each day too: the ice comes and goes with the snow (seasons_plan.md, ICE).
+    std::array<int,5> key = {{(int)k->id,here.plot,hover.plot,(int)z->version,(int)(e->tick / CALENDAR_DAY_TICKS)}};
     if (key != walk_tip_key){
         walk_tip_key = key;
+        walk_tip_ice = -1;
         const std::vector<vec2>& pos = w->grid->fine.pos;
         int layer = EconomyWorkerLayer(*k);
         if (layer == WALK_GROUND && EconomyStraightClear(*w,*z,k->pos,pos[hover.plot],here.plot,hover.plot)){
@@ -159,19 +161,24 @@ void ApplicationChasm::DrawWalkTip(float s){
             if (walk_tip_walkers.GetWorld() != w){
                 walk_tip_walkers.Reset(w);
             }
+            walk_tip_walkers.SetSeason(e->tick);
             WalkPlace from;
             from.plot = here.plot;
             from.layer = (uint8_t)layer;
             std::vector<WalkPlace> places;
             std::vector<float> speeds;
             walk_tip_length = -1.0f;
-            if (walk_tip_walkers.PlanRoute(*z,from,hover.plot,EconomyPosted(*k) ? WALK_WHO_POSTED : WALK_WHO_VILLAGER,
-                                           places,speeds)){
+            //The walk a right click's ORDER would take - he is posted by it - so over the ice too in winter.
+            if (walk_tip_walkers.PlanRoute(*z,from,hover.plot,WALK_WHO_POSTED,places,speeds)){
                 float len = 0.0f;
                 vec2 at = k->pos;
                 for (const WalkPlace& p : places){
                     len += (pos[p.plot] - at).length();
                     at = pos[p.plot];
+                    if (p.layer == WALK_GROUND && w->terrain->wet[p.plot] && !ZoneBridgeWalkable(*z,p.plot)){
+                        int d = EconomyIceDays(*w,p.plot,e->tick);
+                        walk_tip_ice = (walk_tip_ice < 0) ? d : std::min(walk_tip_ice,d);
+                    }
                 }
                 walk_tip_length = len;
             }
@@ -189,6 +196,12 @@ void ApplicationChasm::DrawWalkTip(float s){
         uint32_t there = (hover.plot < (int)e->settlement.size()) ? e->settlement[hover.plot] : 0;
         if (there != EconomyPersonSettlement(*e,*k)){
             text += there ? " - another settlement" : " - outside the settlement";
+            colour = HUD_AMBER;
+        }
+        //Over the ice (the user's, 2026-10-12: a risk with a warning) - still there at the thaw, he is cut off.
+        if (walk_tip_ice >= 0){
+            snprintf(buf,sizeof(buf)," - over the ice, it thaws in %i day%s",walk_tip_ice,walk_tip_ice == 1 ? "" : "s");
+            text += buf;
             colour = HUD_AMBER;
         }
     }

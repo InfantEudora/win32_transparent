@@ -4,9 +4,9 @@ aliases: collector, water carrier
 kind: buildings
 status: built
 summary: A shed at the water's edge that fills with water while it has a carrier, who takes it to a store a load at a time.
-plans: economy_plan.md > Production; bridge_plan.md > As built; woodcutting_plan.md > The collector's hold (the user's, 2026-10-11)
-code: Zones.h: ZONE_KIND_WATER ZoneKindMaxStoreys; Economy.cpp: Tick FetchFromWorkplace SeekSupply EconomyCollectorRoom; Economy.h: WORKER_JOB_WATER
-verified: 2026-10-11
+plans: economy_plan.md > Production; bridge_plan.md > As built; woodcutting_plan.md > The collector's hold (the user's, 2026-10-11); stopping_work_plan.md > Decided (the user, 2026-10-12)
+code: Zones.h: ZONE_KIND_WATER ZoneKindMaxStoreys ZoneKindStoppable; Economy.cpp: Tick FetchFromWorkplace SeekSupply EconomyCollectorRoom; Economy.h: WORKER_JOB_WATER
+verified: 2026-10-12
 ---
 
 The player paints it on the **last dry plot at the edge of a river's or a pool's wet bank**, and its pipe
@@ -29,6 +29,10 @@ The carrier's job goes to whoever scores best on ingenuity against the walk from
 Once a full load ({ECONOMY_LOAD}) is waiting and a [[Store]] has room for it, the carrier walks over from
 home, picks the load up, takes it to the nearest store that takes water, and goes home again. A store
 beside the collector takes only water.
+
+Its card can **stop work** - with water plenty in store, say. Then it takes no carrier, so it **fills
+no more**, and its carrier is free for other work. Once a collector stands in a settlement, worked or
+stopped, the [[Camp|camp]] there draws no water of its own.
 
 ## Drinking at the source
 

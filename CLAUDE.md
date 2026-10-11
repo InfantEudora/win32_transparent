@@ -130,6 +130,10 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   deleting the exe clears it.
 - `stderr` carries all logging. `stdout` is reserved for the MCP stdio transport and must stay
   clean.
+- **A debug build that dies leaves `build/crash_<date>_<time>.txt`** beside the exe, also copied
+  to stderr: what failed (an `IM_ASSERT`, or an unhandled exception such as an access violation),
+  on which thread, and every thread's stack from gdb, attached from inside the process. Read it
+  before guessing. Under a debugger it breaks instead. See `core/CrashReport.h`.
 - Header dependencies are tracked, so editing a header rebuilds its dependents. `make clean` in an
   app folder removes only that app; `make cleancore` clears the shared objects.
 

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5bac1302-f1b1-4435-8b32-339b4416d1b9
-  modified: 2026-10-11T20:31:15.958Z
+  modified: 2026-10-11T23:24:41.471Z
 ---
 
 Talked through with the user 2026-10-11 after a far tent was built by a villager from the camp (no task limit).
@@ -43,7 +43,16 @@ Founding steps 2/3/5/6 BUILT 2026-10-11: camp water carrier (drawer_places/draw_
 ECONOMY_CAMP_WATER_*); tent costs ECONOMY_TENT_ROPE via StoreyGoods; SETTLE HERE (the user's: posted onto another
 settlement's ground, inside its borders, no tent -> SettleHere, needs a free bed: CampSpare or empty house - the
 agent's default); a gone camp's goods -> crate CRATE_CAMP (Derive keeps was_camp: zones clear a gone building's kind).
-Still open: a partner left behind; foraging, porters, per-settlement stock.
+Then the user's: SETTLE never refused for beds - squeezes into the home with most room (crammed, belongs there);
+PRESSING NEEDS only from own settlement or unclaimed land (SeekSupplyOf in_reach), posted and gathering too.
+Then (the user's, testing saves/camp_3.json): partners REJOIN - pitching/settling where the partner lives joins
+their household + home (PartnerLivingIn); COUPLES also pair into a house one lives in alone (holds 2); a
+woodcutter's hut in the settlement TAKES OVER the camp's woodcutter place (after Settle). All built + replay-checked.
+LAND GROWS FROM EVERY BUILDING (the user's, built 2026-10-12, plan "Growing from every building"): heart = founding
+home by beds; every STANDING building +15 walk (ECONOMY_SETTLEMENT_BUILDING), guard tower +30, built wall/gate plot
++10; chains outward; not sites/fields/ranges/roads/yards; Settle grows in waves, narrows hearts in rounds.
+OPEN, asked: children left alone when their last grown-up leaves (follow them, or refuse the leaving).
+Also open: foraging, porters, per-settlement stock. camp_3's home village dies of thirst (camp carrier only).
 
 **Why:** the colony must grow as separate bases supplied deliberately, not one map-wide labour pool.
 **How to apply:** any new errand or "nearest X" search for a person must filter by Ours(k,id); kept stock,

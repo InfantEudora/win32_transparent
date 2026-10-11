@@ -66,6 +66,10 @@ json ChasmSaveToJson(const ChasmSave& s){
         if (b.f_priority){
             jb["priority"] = true;
         }
+        //...and a workplace the player stopped (stopping_work_plan.md).
+        if (b.f_stopped){
+            jb["stopped"] = true;
+        }
         buildings.push_back(jb);
     }
     //[plot, kind] - the kind with its site and gate flags - and a road's or wall's line as a third; a garden's
@@ -306,6 +310,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             }
         }
         b.f_priority = jb.value("priority",false);
+        b.f_stopped = jb.value("stopped",false);
         out.buildings.push_back(b);
         out.next_building = std::max(out.next_building,b.id + 1);
     }

@@ -4,9 +4,9 @@ aliases: calendar, season, winter, spring, summer, autumn, snow, year, day, days
 kind: world
 status: built
 summary: A year of four seasons of ten days each. Winter's snow sweeps down from the north, stopping fields and water collectors and calling for firewood.
-plans: gameplay_plan.md > P1, the calendar; seasons_plan.md > Decided
-code: Calendar.h: CalendarDateOf CalendarSnowCover CalendarSnowAt; Seasons.h: ForestSeasonal
-verified: 2026-10-09
+plans: gameplay_plan.md > P1, the calendar; seasons_plan.md > Decided; seasons_plan.md > Crossing the ice (the user's, 2026-10-12)
+code: Calendar.h: CalendarDateOf CalendarSnowCover CalendarSnowAt; Seasons.h: ForestSeasonal; Walkers.h: SetSeason Frozen; Economy.cpp: IceHome EconomyIceDays
+verified: 2026-10-12
 ---
 
 The calendar is one count of ticks since the colony's first dawn. A day lasts
@@ -28,6 +28,7 @@ running straight. **The first spring has no snow**: there was no winter before t
 |---|---|
 | [[Field|Fields]] | nothing sown in winter or under snow, nothing grows, and winter's first day takes whatever still grows |
 | [[Water collector|Water collectors]] | stop filling while snow lies on them |
+| Rivers and pools | frozen where the snow lies: the [[Posts|posted]] may walk the ice, nobody else. The walk tip says "over the ice, it thaws in N days", and the card of anyone whose only way home is over it counts down to the thaw - still across then, they are cut off until a bridge or the next winter, and their card says so |
 | Homes | burn firewood at dawn while under snow ([[Cold]]) |
 | [[Tree|Trees]] | broadleaves turn one by one through autumn and stand bare in winter (a look only) |
 | Ground | grass fades smoothly through the year; flowers only in spring and summer (a look only) |

@@ -976,6 +976,10 @@ void ApplicationChasm::HashSimState(StateHash& h){
         if (b.kind == ZONE_KIND_TOWER){
             h.Add(((uint64_t)id << 32) | (uint32_t)b.ladder);
         }
+        //A workplace the player stopped (stopping_work_plan.md) - only where stopped, likewise.
+        if (b.f_stopped){
+            h.Add(((uint64_t)id << 32) | 0x5709u);
+        }
     }
     h.Add(((uint64_t)z.stroke << 32) | z.stroke_building);
     HashEconomy(h);
@@ -1501,13 +1505,17 @@ json ApplicationChasm::PickJson(const GridPicker& p, const GridPick& pick){
     //The plot's ground as the walkers judge it: its height, and whether it is wet (a river or a pool).
     float ground = (w && w->picker.get() == &p) ? w->terrain->ground[pick.plot] : 0.0f;
     bool f_wet = (w && w->picker.get() == &p) && w->terrain->wet[pick.plot];
+    //Whose land it is (settlements_plan.md): the settlement's id, 0 nobody's.
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    uint32_t settled = (e && w && e->world == w && pick.plot < (int)e->settlement.size()) ? e->settlement[pick.plot] : 0;
     return json{
         {"hit",true},
         {"x",pick.at.x},
         {"z",pick.at.y},
         {"plot",{{"vertex",pick.plot},{"x",v.x},{"z",v.y},{"level",level},{"biome",biome},{"sides",p.PlotQuadCount(pick.plot)},
                  {"area",p.PlotArea(pick.plot)},{"on_outline",(bool)g.fine.f_boundary[pick.plot]},
-                 {"coarse_corner",pick.plot < (int)g.coarse.pos.size()},{"ground",ground},{"wet",f_wet}}},
+                 {"coarse_corner",pick.plot < (int)g.coarse.pos.size()},{"ground",ground},{"wet",f_wet},
+                 {"settlement",settled}}},
         {"fine_cell",{{"quad",pick.fine_quad},{"corner",pick.corner},{"area",p.FineArea(pick.fine_quad)},
                       {"squareness",GridQuadSquareness(corners)}}},
         {"coarse_cell",{{"quad",pick.coarse_quad},{"area",p.CoarseArea(pick.coarse_quad)}}},
@@ -3378,20 +3386,24 @@ void ApplicationChasm::RegisterMCPTools(){
         "two storeys or more over the piece's top goes OVER it, its pillars on it, and a stair one storey over an arch "
         "goes ON it, climbing over the passage (`over`); anything else takes the piece's place. Debug only (refused "
         "with play). Its decks are walked only by the posted: an order onto a piece stands him on its top deck. "
-        "`castle_here` reports the plot's piece.",
+        "`castle_here` reports the plot's piece. STOPPING WORK (docs/stopping_work_plan.md): work_stop stops the "
+        "workplace at the place - a water collector, woodcutter's hut, ropewalk or builders' hut (`on`, default true; "
+        "false sets it working again) - so it takes nobody and its people go free; range_stop the same for an archery "
+        "range, by a cell of it.",
         json{
             {"type","object"},
             {"properties",{
                 {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
                                                   "build_erase","field_crop","field_next","field_land","field_priority",
-                                                  "gate_shut","range_paint","tower_ladder","castle"}}}},
+                                                  "gate_shut","range_paint","tower_ladder","castle","work_stop","range_stop"}}}},
                 {"shape",{{"type","string"},{"enum",{"block","arch","stair","none"}},
                           {"description","for castle: the debug castle's piece (ramparts_plan.md) - none takes it off"}}},
                 {"storeys",{{"type","integer"},{"description","for castle: its height, 1 to 4 (an arch 2 at least; a stair rises "
                                                              "its last storey); default 2"}}},
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
-                                                        "for gate_shut: shut (default) or open"}}},
+                                                        "for gate_shut: shut (default) or open; for work_stop and range_stop: "
+                                                        "stopped (default) or working"}}},
                 {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","hemp","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
@@ -3466,7 +3478,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 cmd.value[1] = (float)crop;
             }else if (op == ZONE_OP_FIELD_LAND){
                 cmd.value[1] = (float)args.value("house",0u);
-            }else if (op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_GATE_SHUT){
+            }else if (op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_GATE_SHUT || op == ZONE_OP_WORK_STOP || op == ZONE_OP_RANGE_STOP){
                 cmd.value[1] = args.value("on",true) ? 1.0f : 0.0f;
             }else if (op == ZONE_OP_TOWER_LADDER){
                 //Toward the neighbour at to_x/to_z, or `toward` (a plot) - without either, the next open side.

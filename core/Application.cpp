@@ -3,6 +3,7 @@
 
 #include "Application.h"
 #include "PrecisionSleeper.h"
+#include "CrashReport.h"
 
 //For ThreadIdText below - the only way to get text out of a std::thread::id.
 #include <sstream>
@@ -143,6 +144,9 @@ static bool CommandLineValue(const char* flag, std::string& out){
 }
 
 void Application::Start(void){
+    //First, so a crash anywhere after it - in either thread this starts - leaves a report. Debug only.
+    CrashReportInstall();
+
     //Create a main window
     //The app's own name in the title bar - see Application::app_name, which a subclass sets in
     //its constructor and so has already set by the time Start() runs.

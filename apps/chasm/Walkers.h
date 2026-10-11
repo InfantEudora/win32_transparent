@@ -148,8 +148,19 @@ public:
         reached, as the land's edge, but lead nowhere. Out to `reach`; INFINITY past it. `dist` is by plot.
     */
     void MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist);
+    /*
+        ICE (seasons_plan.md, the user's 2026-10-12): the water under the snow is frozen - the same line the view
+        draws its ice by, and a collector stops filling at (UnderSnow) - and the POSTED may walk it: someone under
+        an order, a guard. Nobody else, and not MapFlood's territory. Set from the simulation's tick before a walk is
+        planned (the economy's Tick and Order); a walk planned on the ice keeps it if the thaw comes on the way.
+    */
+    void SetSeason(uint64_t tick);
+    bool Frozen(int v) const;          //plot v under the snow now, by SetSeason's tick
 
 private:
+    bool f_ice = false;                 //any snow at all on the map
+    float ice_front = 0.0f;             //the snow front's z for it (CalendarSnowFrontZ)
+    bool IceOpen(int who, int v) const; //water a walk by `who` may cross on v: frozen, and he is posted
     std::shared_ptr<const ChasmWorld> world;
     std::shared_ptr<const WalkGraph> graph;
     void EnsureGraph();
@@ -178,8 +189,8 @@ private:
     bool JoinOpen(const ZoneState& z, const Join& j, int who, int from, int to) const;
     //A* between two nodes; the nodes in order, both ends included. Empty when there is no way.
     std::vector<int> FindPath(const ZoneState& z, int from, int to, int who) const;
-    bool EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const;
-    bool GroundEnterable(const ZoneState& z, int v, int from, int to) const;
+    bool EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int who = WALK_WHO_VILLAGER) const;
+    bool GroundEnterable(const ZoneState& z, int v, int from, int to, int who = WALK_WHO_VILLAGER) const;
     float EdgeSpeed(const ZoneState& z, int a, int b) const;
     float EdgeLength(int a, int b) const;
 };

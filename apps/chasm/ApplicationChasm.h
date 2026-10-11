@@ -104,6 +104,7 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_TENT        24      //a posted person's card: take a tent first, or not (settlements_plan.md)
 #define OVERLAY_HIT_PITCH       25      //a person's card: the tent he carries pitched where he stands
 #define OVERLAY_HIT_SETTLE      26      //a person's card: sent into another settlement and there, he moves in without a tent
+#define OVERLAY_HIT_WORK_STOP   27      //a workplace's card: its work stopped, or set going again (stopping_work_plan.md)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -763,7 +764,8 @@ private:
     uint32_t border_built_zones = 0xFFFFFFFFu;      //the territories' zones version, as last drawn
     void UploadBorders();                           //from PreRender
     Walkers walk_tip_walkers;
-    std::array<int,4> walk_tip_key = {{-1,-1,-1,-1}};   //person, the plot he is on, the plot under the cursor, zones
+    std::array<int,5> walk_tip_key = {{-1,-1,-1,-1,-1}};    //person, the plot he is on, the plot under the cursor, zones, day
+    int walk_tip_ice = -1;              //...the days until the first ice on that walk thaws, -1 none on it
     float walk_tip_length = -1.0f;                  //...and its walk, -1 no way there
     void DrawWalkTip(float s);                      //render thread, from DrawOverlay in play mode
 

@@ -7,7 +7,7 @@ summary: Painted on coarse cells like a field. A trainee a cell trains there ful
 plans: range_plan.md > Decided; range_plan.md > As built; range_plan.md > Shooting; range_plan.md > Later
 code: Economy.cpp: GoTrain EconomyCellCost AssignJobs; Economy.h: WORKER_JOB_ARCHER EconomyArcheryCap ARCHERY_FULL; Zones.h: ZONE_KIND_RANGE ZoneKindOnCells; ApplicationChasmRange.cpp: ShotClockOf ShotOf
 tuning: ARCHERY_PER_TICK, RANGE_SPREAD_NOVICE, RANGE_SPREAD_MASTER
-verified: 2026-10-11
+verified: 2026-10-12
 ---
 
 Archers are the first people the colony trains, and they train here. A range is painted over **coarse
@@ -24,7 +24,8 @@ at once. The price is high on purpose: a range is not an early building.
 ## Trainees
 
 **A trainee for each built cell**, filled like any workplace ([[Person|jobs]]): by **precision**
-([[Skills]]) against the walk from home. Training is the trainee's whole job.
+([[Skills]]) against the walk from home. Training is the trainee's whole job. Its card can **stop work**:
+it takes no trainees then, and they go free, until it is set going again.
 
 From home, each walks to a cell of their own (the built cells are shared out by id, one each), stands on its
 line facing the target and trains for {ECONOMY_TRAIN_SECONDS:#seconds}, then goes home, and out again.

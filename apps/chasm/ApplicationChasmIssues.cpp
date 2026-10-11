@@ -120,7 +120,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             continue;
         }
         placed[b.kind]++;
-        f_producing = f_producing || ((b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER) && stands[id]);
+        f_producing = f_producing || ((b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER) && stands[id] && !b.f_stopped);
     }
 
     //1. A field left without a crop, counting down to AUTO.

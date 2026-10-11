@@ -496,7 +496,9 @@ and 61 ended up stranded under a band that no longer said anything about them.
   to the pinned commit and to match the working copy), applied with
   `git -C 3rdparty/imgui apply ../../imgui_disable_alpha_compositing.patch`. Nothing applies it
   automatically yet. With no transparent window in use, the only symptom of losing it is the link
-  failure below - not anything visible.
+  failure below - not anything visible. **It did get lost**: on 2026-10-12 the submodule was found
+  clean when `libimgui.a` was next rebuilt (for item 98's `IM_ASSERT` handler), and the patch was
+  re-applied from the root file first.
 
   **And it is not only cosmetic: the patch is also removing a link dependency.** Diffing the
   compiled objects, the unpatched backend additionally references

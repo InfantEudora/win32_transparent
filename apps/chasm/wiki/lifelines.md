@@ -6,7 +6,7 @@ status: partial
 summary: People are born, grow up a stage at a time, and couples have children, with one chance a year each.
 plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: shares; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births; lifeline_plan.md > As built: step 3, couples
 code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING LIFE_COUPLE_ROOM EconomyShare; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers HouseFamilies EconomyRelated EconomyCoupleSurname
-verified: 2026-10-10
+verified: 2026-10-11
 ---
 
 Every [[Person|person]] has a birthday and is a year older on it each game year ([[Seasons]]). The
@@ -36,6 +36,9 @@ to a couple:
 - an adult man and an adult woman, both single, from different families;
 - not related: neither is the other's parent or grandparent, and they share no parent or grandparent;
 - the eldest single adult first, with the eldest who fits, into the smallest empty house both can walk to.
+
+Someone living alone in a house that holds {LIFE_COUPLE_ROOM} pairs off the same way, and the other moves in
+with them. Nobody setting out with a tent pairs off.
 
 This is checked whenever a house is finished, someone dies, or someone turns adult, so an empty house is
 taken the moment a pair exists. Everyone keeps their own surname. A couple's children take one of the two,

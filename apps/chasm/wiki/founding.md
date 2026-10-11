@@ -5,7 +5,7 @@ kind: world
 status: partial
 summary: People sent out take a tent from a camp and pitch it where they stand. It becomes their home, and outside every settlement it founds a new one.
 plans: settlements_plan.md > Founding: decided; settlements_plan.md > Founding: as built, step 4; settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6; settlements_plan.md > Founding: steps
-code: Economy.h: ECONOMY_PITCH_RINGS ECONOMY_TENT_CARRIED NOTICE_NO_TENT; Economy.cpp: TakeTent TentToPack GoForTent PitchSpot Pitched SettleHere CampSpare OwnHousehold HouseFamilies; Zones.h: PitchTent
+code: Economy.h: ECONOMY_PITCH_RINGS ECONOMY_TENT_CARRIED NOTICE_NO_TENT; Economy.cpp: TakeTent TentToPack GoForTent PitchSpot Pitched SettleHere CampSpare OwnHousehold PartnerLivingIn HouseFamilies; Zones.h: PitchTent
 verified: 2026-10-11
 ---
 
@@ -35,9 +35,11 @@ adds a bed there.
 Pitching makes the tent their home. Until then they keep their place in their old home, so an expedition turned
 back walks home to its bed. Pitching gives it up: they become a household of their own, as a new couple does,
 their order is over, and they're offered an empty [[House|house]] in their new settlement, as anyone in a camp is.
+If their partner already lives in that settlement, they **rejoin** them instead: back in the partner's household and
+home, whatever its room, and the pitched tent stands spare. Partners living apart have no children.
 
 Each camp employs its own [[Woodcutter|woodcutter]], so three tents pitched apart are three camps and three
-woodcutters; pitched together, they're one camp with one.
+woodcutters; pitched together, they're one camp with one. A woodcutter's hut built there takes the place over.
 
 A tent can be packed up again by whoever sleeps in it, and the move repeated. A settlement of nothing but tents is
 gone once they are all packed, and what its camp held is left there as a [[Crate|crate]].
@@ -45,9 +47,9 @@ gone once they are all packed, and what its camp held is left there as a [[Crate
 ## Settling without a tent
 
 Someone posted onto another settlement's ground, carrying no tent, has **Settle here** on their card from the
-moment they're inside its borders. They move in as when pitching, into a camp there with a tent to spare or an
-empty house; with neither, they squeeze into the home there with the most room - belonging to that settlement
-without a bed of their own, until a house with room comes free.
+moment they're inside its borders. They move in as when pitching: with their partner if they live there, else
+into a camp there with a tent to spare or an empty house; with none of those, they squeeze into the home there
+with the most room - belonging to that settlement without a bed of their own, until a house with room comes free.
 
 ## Planned
 

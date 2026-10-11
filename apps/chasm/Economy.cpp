@@ -531,6 +531,8 @@ const int crop_after[ZONE_CROP_COUNT][ZONE_CROP_COUNT] = {
 //How often a waiting worker looks for something to do, in ticks - staggered by his building's id,
 //so they do not all look on the same tick. Half a second: soon enough to look prompt.
 #define ECONOMY_LOOK_TICKS  25
+//How often the posted are looked at for a way home only over the ice (IceHome): a second.
+#define ECONOMY_ICE_LOOK_TICKS  50
 
 //A small integer hash, for the settlers' ages and skills: the same world gives the same colony.
 uint32_t Mix(uint32_t a, uint32_t b){
@@ -702,6 +704,21 @@ bool EconomyFrozen(const ChasmWorld& w, const ZoneState& z, uint32_t id, uint64_
         }
     }
     return false;
+}
+
+int EconomyIceDays(const ChasmWorld& w, int plot, uint64_t tick){
+    if (plot < 0 || plot >= (int)w.grid->fine.pos.size()){
+        return 0;
+    }
+    //A day at a time: the snow's front goes back north through the spring, so the first day it is past.
+    const vec2& p = w.grid->fine.pos[plot];
+    int most = (int)(CALENDAR_YEAR_TICKS / CALENDAR_DAY_TICKS);
+    for (int d = 0; d < most; d++){
+        if (!UnderSnow(w,p,tick + (uint64_t)d * CALENDAR_DAY_TICKS)){
+            return d;
+        }
+    }
+    return most;
 }
 
 //--- Walking straight ------------------------------------------------------------------------------
@@ -1293,6 +1310,9 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
         there - the eldest unpaired adult first (the lower id on a tie: the workers are in id order), with the
         eldest who can pair with them, into the smallest empty house that holds two and that both can walk to
         (the lower id on a tie). Each keeps their surname; the family each leaves keeps its house.
+        Or one of them LIVES ALONE in a house that holds two: the other moves in there (settlements_plan.md, the
+        user's 2026-10-11 - three settlers of three families, and the first house went to one of them alone).
+        Nobody setting out with a tent pairs off: they are leaving.
     */
     std::vector<size_t> empty;
     for (size_t id = 1; id < n; id++){
@@ -1303,10 +1323,21 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
     std::stable_sort(empty.begin(),empty.end(),[&](size_t a, size_t b){
         return state.capacity[a] < state.capacity[b];
     });
+    auto unpaired = [&](const EconomyWorker& k){
+        return !k.partner && k.tent == ECONOMY_TENT_NONE && EconomyStageAt(k.born,state.tick) == LIFE_ADULT;
+    };
+    std::vector<uint8_t> alone(n,0);
+    bool f_alone = false;
+    for (const EconomyWorker& k : state.workers){
+        if (k.house && k.house < n && living[k.house] == 1 && can_take(k.house) && state.capacity[k.house] >= LIFE_COUPLE_ROOM
+            && unpaired(k)){
+            alone[k.house] = 1;
+            f_alone = true;
+        }
+    }
     std::vector<size_t> single;
-    for (size_t i = 0; i < state.workers.size() && !empty.empty(); i++){
-        const EconomyWorker& k = state.workers[i];
-        if (!k.partner && EconomyStageAt(k.born,state.tick) == LIFE_ADULT){
+    for (size_t i = 0; i < state.workers.size() && (!empty.empty() || f_alone); i++){
+        if (unpaired(state.workers[i])){
             single.push_back(i);
         }
     }
@@ -1318,7 +1349,7 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
     for (const EconomyDeath& d : state.dead){
         next_family = std::max(next_family,d.family + 1);
     }
-    for (size_t s = 0; s < single.size() && !empty.empty(); s++){
+    for (size_t s = 0; s < single.size() && (!empty.empty() || f_alone); s++){
         EconomyWorker& a = state.workers[single[s]];
         if (a.partner){
             continue;       //paired this pass already, as someone's eldest match
@@ -1329,27 +1360,39 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
                 continue;
             }
             //Both of the house's settlement (SETTLEMENTS): nobody pairs off into another one.
-            auto home = std::find_if(empty.begin(),empty.end(),[&](size_t id){
+            auto fits = [&](size_t id){
                 uint32_t s = EconomySettlementOf(state,(uint32_t)id);
                 return EconomyPersonSettlement(state,a) == s && EconomyPersonSettlement(state,b) == s
                        && CanWalk(z,walkers,a.pos,home_plot[id]) && CanWalk(z,walkers,b.pos,home_plot[id]);
-            });
-            if (home == empty.end()){
-                continue;
+            };
+            //The house one of them lives in alone - the elder's, if both do - else the smallest empty one.
+            uint32_t h = 0;
+            for (const EconomyWorker* k : {&a,&b}){
+                if (!h && k->house && k->house < n && alone[k->house] && fits(k->house)){
+                    h = k->house;
+                }
             }
-            uint32_t h = (uint32_t)*home;
-            empty.erase(home);
+            if (!h){
+                auto home = std::find_if(empty.begin(),empty.end(),fits);
+                if (home == empty.end()){
+                    continue;
+                }
+                h = (uint32_t)*home;
+                empty.erase(home);
+            }
             uint32_t f = next_family++;
             family_size.resize(f + 1,0);
             family_house.resize(f + 1,0);
             for (EconomyWorker* k : {&a,&b}){
+                bool f_moves = k->house != h;
                 if (k->house){
                     living[k->house]--;
+                    alone[k->house] = 0;    //alone there no longer, or gone from it
                 }
                 family_size[k->family]--;
                 k->family = f;
                 k->house = h;
-                if (k->state == WORKER_AT_HOME){
+                if (f_moves && k->state == WORKER_AT_HOME){
                     GoHome(*k,z,walkers);   //moving in
                 }
             }
@@ -1418,8 +1461,7 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
     A worker keeps his job while his workplace is there and among those the people reach - the lower person
     ids first where a workplace has fewer places than workers. Anyone else is free again. Then each empty
     place, in the order, takes the free housed adult with the best score: his skill for the job, worth
-    ECONOMY_SKILL_DISTANCE world units a point (a woodcutter's ECONOMY_CUTTER_SKILL_DISTANCE: where he lives
-    counts for more of his round than his felling), less the straight line from his house to the workplace - the
+    ECONOMY_SKILL_DISTANCE world units a point, less the straight line from his house to the workplace - the
     lower id on a tie, and only someone who can walk there.
     A house's or the camp's LAND (land_plan.md) has its place in the order by the house's id, and only its own
     family fills it - for the camp, whoever lives there - so it counts against the people only as far as the
@@ -1657,8 +1699,7 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
                 //A tower's guards by ARCHERY first - what the range trained - and then as any place, by precision
                 //(range_plan.md, defence_plan.md).
                 int first = (job == WORKER_JOB_GUARD) ? k.archery : 0;
-                float per_point = (job == WORKER_JOB_WOODCUTTER) ? ECONOMY_CUTTER_SKILL_DISTANCE : ECONOMY_SKILL_DISTANCE;
-                float score = k.skills[skill] * per_point - (w.grid->fine.pos[HomePlot(k)] - at).length();
+                float score = k.skills[skill] * ECONOMY_SKILL_DISTANCE - (w.grid->fine.pos[HomePlot(k)] - at).length();
                 //Only someone who can walk there from his house - a river with no bridge parts a village.
                 if ((first > best_first || (first == best_first && score > best_score))
                     && CanWalk(z,walkers,w.grid->fine.pos[HomePlot(k)],home_plot[id])){
@@ -2146,8 +2187,13 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         }else{
             state.places[id] = stands[id] ? 1 : 0;
         }
+        //STOPPED by the player (stopping_work_plan.md): no places, so AssignJobs frees whoever worked it.
+        if (b.f_stopped && ZoneKindStoppable(b.kind)){
+            state.places[id] = 0;
+        }
     }
-    //The camp's own woodcutter (THE CAMP'S OWN WORK): a place while it stands. Its farmers are its land's (LandPlaces).
+    //The camp's own woodcutter (THE CAMP'S OWN WORK): a place while it stands - and no hut stands in its settlement
+    //(A HUT TAKES OVER, after Settle). Its farmers are its land's (LandPlaces).
     state.cutter_places.assign(n,0);
     for (size_t id = 1; id < n; id++){
         if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0 && stands[id] && home_plot[id] >= 0){
@@ -2164,8 +2210,8 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     state.draw_plot.assign(n,-1);
     std::vector<float> bank_walk;
     for (size_t id = 1; id < n; id++){
-        if (state.cutter_places[id] <= 0){
-            continue;       //a camp that stands, with a door: the same as has a woodcutter
+        if (z.buildings[id].kind != ZONE_KIND_CAMP || z.buildings[id].size <= 0 || !stands[id] || home_plot[id] < 0){
+            continue;       //a camp that stands, with a door
         }
         walkers.MapFlood(z,std::vector<int>(1,home_plot[id]),ECONOMY_CAMP_WATER_REACH,bank_walk);
         int best = -1;
@@ -2312,46 +2358,6 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
             state.water_room[id] = EconomyCollectorRoom(ZoneBuildingFigures(w,z,(uint32_t)id).floor_area);
         }
     }
-    /*
-        The roads, walls and sites with a tree in their way that no woodcutter reaches - and nobody else fells one
-        now (woodcutting_plan.md): each, for NEEDS ATTENTION. A woodcutter reaches ECONOMY_WOODCUTTER_REACH of
-        WALKING from his workplace's door (WoodNear's): a hut that stands, or a camp with its own woodcutter's place.
-    */
-    state.trees_unreached.clear();
-    std::vector<uint8_t> reached(g.fine.pos.size(),0);
-    std::vector<float> walk;
-    for (size_t id = 1; id < n; id++){
-        bool f_cuts = (z.buildings[id].kind == ZONE_KIND_WOODCUTTER && stands[id]) || state.cutter_places[id] > 0;
-        if (f_cuts && home_plot[id] >= 0){
-            walkers.MapFlood(z,std::vector<int>(1,home_plot[id]),ECONOMY_WOODCUTTER_REACH,walk);
-            for (size_t v = 0; v < walk.size() && v < reached.size(); v++){
-                reached[v] = reached[v] || walk[v] <= ECONOMY_WOODCUTTER_REACH;
-            }
-        }
-    }
-    auto unreached = [&](const PropInstance& pr){
-        return pr.plot < 0 || pr.plot >= (int)reached.size() || !reached[pr.plot];
-    };
-    std::vector<int> in_way;
-    for (const std::vector<int>* sites : {&road_sites,&wall_sites}){
-        for (int v : *sites){
-            RoadTrees(z,v,in_way);
-            if (std::any_of(in_way.begin(),in_way.end(),[&](int i){ return unreached(w.forest->props[i]); })){
-                state.trees_unreached.push_back(ECONOMY_SITE_GROUND | (uint32_t)v);
-            }
-        }
-    }
-    if (w.forest){
-        for (size_t i = 0; i < w.forest->props.size() && i < state.prop_state.size(); i++){
-            const PropInstance& pr = w.forest->props[i];
-            uint32_t site = (IsTree(pr.kind) && state.prop_state[i] == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
-            if (site && unreached(pr)){
-                state.trees_unreached.push_back(site);
-            }
-        }
-    }
-    std::sort(state.trees_unreached.begin(),state.trees_unreached.end());
-    state.trees_unreached.erase(std::unique(state.trees_unreached.begin(),state.trees_unreached.end()),state.trees_unreached.end());
     //How many a house holds: its floor area at ECONOMY_PERSON_AREA each, one family at most this big.
     state.capacity.assign(n,0);
     state.burn.assign(n,0);
@@ -2427,73 +2433,243 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     LandPlaces(z);
     Tending();
     Settle(z,walkers);
+    /*
+        A HUT TAKES OVER (woodcutting_plan.md, the user's 2026-10-11): a camp has a woodcutter of its own only while no
+        woodcutter's hut stands in its settlement. The hut is where its woodcutter works from then on - not a second
+        one beside him - so an outpost of three that builds a hut still has somebody free to build.
+        A WATER COLLECTOR the same for the camp's water carrier (stopping_work_plan.md, the user's 2026-10-12). Either
+        takes over while it STANDS, worked or stopped: a collector stopped with water plenty in store frees its carrier,
+        and does not send her to draw water by hand at the camp instead.
+    */
+    for (size_t id = 1; id < n; id++){
+        uint32_t s = EconomySettlementOf(state,(uint32_t)id);
+        int kind = z.buildings[id].kind;
+        if ((kind != ZONE_KIND_WOODCUTTER && kind != ZONE_KIND_WATER) || z.buildings[id].size <= 0 || !stands[id] || !s){
+            continue;
+        }
+        std::vector<int>& camp_places = (kind == ZONE_KIND_WOODCUTTER) ? state.cutter_places : state.drawer_places;
+        for (size_t c = 1; c < n; c++){
+            if (camp_places[c] > 0 && EconomySettlementOf(state,(uint32_t)c) == s){
+                camp_places[c] = 0;
+                if (kind == ZONE_KIND_WATER){
+                    state.draw_plot[c] = -1;    //nobody draws there now: chasm_economy no longer names a spot
+                }
+            }
+        }
+    }
+    /*
+        The roads, walls and sites with a tree in their way that no woodcutter reaches - and nobody else fells one
+        now (woodcutting_plan.md): each, for NEEDS ATTENTION. A woodcutter reaches ECONOMY_WOODCUTTER_REACH of
+        WALKING from his workplace's door (WoodNear's): a hut that stands, or a camp with its own woodcutter's place -
+        after the settlements, since a hut takes a camp's place over.
+    */
+    state.trees_unreached.clear();
+    std::vector<uint8_t> reached(g.fine.pos.size(),0);
+    std::vector<float> walk;
+    for (size_t id = 1; id < n; id++){
+        bool f_cuts = (z.buildings[id].kind == ZONE_KIND_WOODCUTTER && stands[id] && !z.buildings[id].f_stopped)
+                      || state.cutter_places[id] > 0;
+        if (f_cuts && home_plot[id] >= 0){
+            walkers.MapFlood(z,std::vector<int>(1,home_plot[id]),ECONOMY_WOODCUTTER_REACH,walk);
+            for (size_t v = 0; v < walk.size() && v < reached.size(); v++){
+                reached[v] = reached[v] || walk[v] <= ECONOMY_WOODCUTTER_REACH;
+            }
+        }
+    }
+    auto unreached = [&](const PropInstance& pr){
+        return pr.plot < 0 || pr.plot >= (int)reached.size() || !reached[pr.plot];
+    };
+    std::vector<int> in_way;
+    for (const std::vector<int>* sites : {&road_sites,&wall_sites}){
+        for (int v : *sites){
+            RoadTrees(z,v,in_way);
+            if (std::any_of(in_way.begin(),in_way.end(),[&](int i){ return unreached(w.forest->props[i]); })){
+                state.trees_unreached.push_back(ECONOMY_SITE_GROUND | (uint32_t)v);
+            }
+        }
+    }
+    if (w.forest){
+        for (size_t i = 0; i < w.forest->props.size() && i < state.prop_state.size(); i++){
+            const PropInstance& pr = w.forest->props[i];
+            uint32_t site = (IsTree(pr.kind) && state.prop_state[i] == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
+            if (site && unreached(pr)){
+                state.trees_unreached.push_back(site);
+            }
+        }
+    }
+    std::sort(state.trees_unreached.begin(),state.trees_unreached.end());
+    state.trees_unreached.erase(std::unique(state.trees_unreached.begin(),state.trees_unreached.end()),state.trees_unreached.end());
     state.zones_version = z.version;
 }
 
 //--- Settlements (docs/settlements_plan.md) --------------------------------------------------------
 
 /*
-    The SETTLEMENTS and their territories (Economy.h): the homes that stand - camps and houses - in id order, so
-    the oldest first, each outside every earlier one's territory founding its own: a flood of walking over the map
-    from its plots, out as far as its beds reach, taking every plot it reaches sooner than the ones before did; a
-    tie stays with the earlier. Then each building's, by its door.
+    The SETTLEMENTS and their territories (Economy.h). Each has a HEART, its founding home - the oldest home standing
+    outside every territory, a camp or a house - reaching as far as the settlement's beds (EconomySettlementReach).
+    Its land then GROWS FROM EVERY BUILDING of it that stands (the user's, 2026-10-12: "it should grow with each
+    building, even a guard post or a wall"): ECONOMY_SETTLEMENT_BUILDING of walking round each, a guard tower's
+    ECONOMY_SETTLEMENT_TOWER, each built wall or gate plot's ECONOMY_SETTLEMENT_WALL - and one standing on land another
+    added grows it in turn, so a settlement spreads by building outward. Not a site, nor a field, range, road, garden
+    or lot: cheap to lay, they would spread land for next to nothing. Each plot goes to the settlement it is the
+    shortest walk from, by any of its buildings - the older on a tie. Then each building's, by its door.
 */
+#define ECONOMY_SETTLEMENT_ROUNDS   8       //the most rounds of narrowing the hearts' reaches to their beds
 void Economy::Settle(const ZoneState& z, Walkers& walkers){
     size_t plots = state.world->grid->fine.pos.size();
-    state.settlement.assign(plots,0);
-    state.settlements.clear();
-    settlement_walk.assign(plots,INFINITY);
     size_t n = std::min(std::min(z.buildings.size(),stands.size()),std::min(home_plot.size(),state.capacity.size()));
+    n = std::min(n,plots_of.size());
     auto is_home = [&](size_t id){
         int kind = z.buildings[id].kind;
         return (kind == ZONE_KIND_CAMP || kind == ZONE_KIND_HOUSE) && z.buildings[id].size > 0 && stands[id]
                && home_plot[id] >= 0 && home_plot[id] < (int)plots;
     };
+    //How far a building grows its settlement's land: one standing on plots, a guard tower furthest; 0 for none.
+    auto grows = [&](size_t id){
+        const ZoneBuilding& b = z.buildings[id];
+        if (b.size <= 0 || !stands[id] || ZoneKindOnCells(b.kind) || plots_of[id].empty()){
+            return 0.0f;
+        }
+        return (b.kind == ZONE_KIND_TOWER) ? ECONOMY_SETTLEMENT_TOWER : ECONOMY_SETTLEMENT_BUILDING;
+    };
+    //The walls that stand, a gate's plot with them: each grows the land round itself.
+    std::vector<int> walls;
+    for (size_t v = 0; v < plots && v < z.ground.size(); v++){
+        if (ZoneWallStands(z,(int)v) || (v < z.gate.size() && z.gate[v] != ZONE_GATE_NONE && z.ground_built[v])){
+            walls.push_back((int)v);
+        }
+    }
+    const float class_reach[3] = {ECONOMY_SETTLEMENT_TOWER,ECONOMY_SETTLEMENT_BUILDING,ECONOMY_SETTLEMENT_WALL};
+    /*
+        A heart's reach by its BEDS - those of every home its land took in. From the most for each, narrowed while
+        its beds hold up less, and everything worked out again; narrowing only ever leaves homes out, so it settles
+        in a round or two: the widest reach each settlement's own beds hold up.
+    */
+    std::vector<float> heart_reach(n,ECONOMY_SETTLEMENT_REACH);
+    std::vector<uint32_t> joined;               //by building id: the settlement whose land it grew, 0 none
+    std::vector<uint8_t> wall_joined;
+    std::vector<int> order;                     //by founding home's id: its settlement's place, 1 the oldest
     std::vector<float> walk;
-    for (size_t id = 1; id < n; id++){
-        if (!is_home(id) || state.settlement[home_plot[id]]){
-            continue;
-        }
-        walkers.MapFlood(z,plots_of[id],ECONOMY_SETTLEMENT_REACH,walk);
-        if (walk.size() < plots){
-            continue;
-        }
-        /*
-            Its reach by its BEDS: the homes it would hold - their doors within it, and nearer it than any earlier
-            settlement. From the most, narrowed while the beds inside it reach less, since narrowing can only
-            leave homes out: the widest reach its own beds hold up.
-        */
-        float reach = ECONOMY_SETTLEMENT_REACH;
-        int beds = 0;
-        for (;;){
-            beds = 0;
-            for (size_t h = 1; h < n; h++){
-                if (is_home(h) && walk[home_plot[h]] <= reach && walk[home_plot[h]] < settlement_walk[home_plot[h]]){
-                    beds += state.capacity[h];
+    for (int round = 0; round < ECONOMY_SETTLEMENT_ROUNDS; round++){
+        state.settlement.assign(plots,0);
+        state.settlements.clear();
+        settlement_walk.assign(plots,INFINITY);
+        joined.assign(n,0);
+        wall_joined.assign(walls.size(),0);
+        order.assign(n,0);
+        //The plots of the flood in `walk` to settlement s, out to `reach`: each the land of the shortest walk.
+        auto claim = [&](uint32_t s, float reach){
+            for (size_t v = 0; v < plots && v < walk.size(); v++){
+                uint32_t o = state.settlement[v];
+                if (walk[v] <= reach && (walk[v] < settlement_walk[v] || (walk[v] == settlement_walk[v] && o && order[s] < order[o]))){
+                    settlement_walk[v] = walk[v];
+                    state.settlement[v] = s;
                 }
             }
-            float held = EconomySettlementReach(beds);
-            if (held >= reach){
+        };
+        //The land a building would join: its door's, else any plot of it held - a bridge's far end.
+        auto land_at = [&](size_t id){
+            int door = home_plot[id];
+            if (door >= 0 && door < (int)plots && state.settlement[door]){
+                return state.settlement[door];
+            }
+            for (int v : plots_of[id]){
+                if (v >= 0 && v < (int)plots && state.settlement[v]){
+                    return state.settlement[v];
+                }
+            }
+            return 0u;
+        };
+        for (;;){
+            /*
+                GROW, in waves: whatever stands on a settlement's land joins it and adds its own, flooded together by
+                settlement and reach - and what that adds may take in more, so again until nothing new joins.
+            */
+            for (;;){
+                std::vector<std::vector<int>> from(state.settlements.size() * 3);
+                bool f_new = false;
+                for (size_t id = 1; id < n; id++){
+                    float r = grows(id);
+                    uint32_t s = (r > 0.0f && !joined[id]) ? land_at(id) : 0;
+                    if (s){
+                        joined[id] = s;
+                        f_new = true;
+                        std::vector<int>& f = from[(size_t)(order[s] - 1) * 3 + ((r == ECONOMY_SETTLEMENT_TOWER) ? 0 : 1)];
+                        f.insert(f.end(),plots_of[id].begin(),plots_of[id].end());
+                    }
+                }
+                for (size_t i = 0; i < walls.size(); i++){
+                    uint32_t s = wall_joined[i] ? 0 : state.settlement[walls[i]];
+                    if (s){
+                        wall_joined[i] = 1;
+                        f_new = true;
+                        from[(size_t)(order[s] - 1) * 3 + 2].push_back(walls[i]);
+                    }
+                }
+                if (!f_new){
+                    break;
+                }
+                for (size_t b = 0; b < from.size(); b++){
+                    if (!from[b].empty()){
+                        walkers.MapFlood(z,from[b],class_reach[b % 3],walk);
+                        claim(state.settlements[b / 3].id,class_reach[b % 3]);
+                    }
+                }
+            }
+            //FOUND: the oldest home standing outside all land founds the next, from its heart.
+            size_t found = 0;
+            for (size_t id = 1; id < n && !found; id++){
+                found = (is_home(id) && !joined[id] && !state.settlement[home_plot[id]]) ? id : 0;
+            }
+            if (!found){
                 break;
             }
-            reach = held;
+            walkers.MapFlood(z,plots_of[found],heart_reach[found],walk);
+            if (walk.size() < plots){
+                break;      //no map to walk
+            }
+            EconomySettlement s;
+            s.id = (uint32_t)found;
+            s.reach = heart_reach[found];
+            state.settlements.push_back(s);
+            order[found] = (int)state.settlements.size();
+            joined[found] = (uint32_t)found;
+            claim((uint32_t)found,heart_reach[found]);
         }
-        for (size_t v = 0; v < plots; v++){
-            if (walk[v] <= reach && walk[v] < settlement_walk[v]){
-                settlement_walk[v] = walk[v];
-                state.settlement[v] = (uint32_t)id;
+        //Each one's beds, and whether they hold up its heart's reach.
+        bool f_narrowed = false;
+        for (EconomySettlement& s : state.settlements){
+            s.beds = 0;
+            for (size_t h = 1; h < n; h++){
+                s.beds += (is_home(h) && joined[h] == s.id) ? state.capacity[h] : 0;
+            }
+            float held = EconomySettlementReach(s.beds);
+            if (held < heart_reach[s.id]){
+                heart_reach[s.id] = held;
+                f_narrowed = true;
             }
         }
-        EconomySettlement s;
-        s.id = (uint32_t)id;
-        s.beds = beds;
-        s.reach = reach;
-        state.settlements.push_back(s);
+        if (!f_narrowed){
+            break;
+        }
     }
     state.settlement_of.assign(z.buildings.size(),0);
     for (size_t id = 1; id < z.buildings.size() && id < home_plot.size(); id++){
         int v = home_plot[id];
         state.settlement_of[id] = (z.buildings[id].size > 0 && v >= 0 && v < (int)plots) ? state.settlement[v] : 0;
+        /*
+            A BRIDGE's door is the lower of its two ends, often the far one - on land no settlement holds, and then
+            nobody built it, though its near end was placed inside one (the user's camp_3, 2026-10-12). It is the
+            settlement's of either end: its door's, else the other's.
+        */
+        if (!state.settlement_of[id] && z.buildings[id].kind == ZONE_KIND_BRIDGE && id < plots_of.size()){
+            for (int e : plots_of[id]){
+                if (e >= 0 && e < (int)plots && !state.world->terrain->wet[e] && state.settlement[e]){
+                    state.settlement_of[id] = state.settlement[e];
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -2621,10 +2797,10 @@ bool Economy::RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, in
 
 void Economy::Walk(EconomyWorker& k, float dt){
     float left = dt;
-    //A woodcutter under a load walks by his strength (the user's, 2026-10-11), average at 5: his round is mostly
-    //walking, so felling faster alone made his strength count for little.
+    //Under a load anyone walks by his strength, whatever his job (the user's, 2026-10-11), average at 5: a round
+    //is mostly walking, so a woodcutter's felling faster alone made his strength count for little.
     float carry_pace = 1.0f;
-    if (k.job == WORKER_JOB_WOODCUTTER && k.carry > 0){
+    if (k.carry > 0){
         carry_pace += ECONOMY_CARRY_STRENGTH * (float)(std::max(1,std::min(10,(int)k.skills[SKILL_STRENGTH])) - 5);
     }
     while (k.seg < (int)k.route.size() - 1 && left > 0.0f){
@@ -4287,6 +4463,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     const ChasmWorld& w = *state.world;
     now = tick;
     state.tick = tick;
+    walkers.SetSeason(tick);    //the ice the posted may cross (Walkers, ICE), for every walk planned this tick
     raises.clear();
     ground_raises.clear();
     field_raises.clear();
@@ -4418,6 +4595,10 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         TickWorker(k,z,walkers,tick,dt);
     }
     Needs(z,walkers,tick);
+    //ICE: who would be cut off by the thaw, for their cards - a second's look is soon enough for a risk of days.
+    if (tick % (uint64_t)ECONOMY_ICE_LOOK_TICKS == 0){
+        IceHome(z,walkers);
+    }
     //After everyone has moved, died or moved out: a camp left empty opens its pantry to all.
     OpenPantries(z);
     if (!state.workers.empty()){
@@ -4540,6 +4721,47 @@ bool Economy::SetNeeds(uint32_t person, int health, int water){
     at once. Released: he goes home, and is staffed like anyone on the next tick - back
     to the work kept for him. A pressing need he is seeing to goes on either way.
 */
+/*
+    ICE (seasons_plan.md, the user's 2026-10-12): in winter the posted cross frozen water (Walkers::SetSeason), which
+    is a risk - one sent over it and still there at the thaw has no way back until a bridge, or the next winter. The
+    user chose it as a risk with a warning: here, those posted whose way home crosses the ice with no way round on
+    dry ground or a bridge, and the days until the first ice on that way is gone - their card says so.
+*/
+void Economy::IceHome(const ZoneState& z, Walkers& walkers){
+    state.ice_home.clear();
+    const ChasmWorld& w = *state.world;
+    if (CalendarSnowCover(now) <= 0.0f){
+        return;     //no snow, no ice
+    }
+    std::vector<WalkPlace> places;
+    std::vector<float> speeds;
+    for (const EconomyWorker& k : state.workers){
+        int home = EconomyPosted(k) ? HomePlot(k) : -1;
+        GridPick here = (home >= 0) ? w.picker->Pick(k.pos) : GridPick();
+        if (!here.f_hit || here.plot < 0 || here.plot == home){
+            continue;
+        }
+        WalkPlace from;
+        from.plot = here.plot;
+        from.layer = (uint8_t)EconomyWorkerLayer(k);
+        if (!walkers.PlanRoute(z,from,home,WALK_WHO_POSTED,places,speeds)){
+            continue;
+        }
+        int days = -1;
+        for (const WalkPlace& p : places){
+            if (p.layer == WALK_GROUND && w.terrain->wet[p.plot] && !ZoneBridgeWalkable(z,p.plot)){
+                int d = EconomyIceDays(w,p.plot,now);
+                days = (days < 0) ? d : std::min(days,d);
+            }
+        }
+        //No ice on his way, or a way round that anyone walks: nothing to lose at the thaw.
+        if (days < 0 || walkers.PlanRoute(z,from,home,WALK_WHO_VILLAGER,places,speeds)){
+            continue;
+        }
+        state.ice_home.push_back(std::make_pair(k.id,days));
+    }
+}
+
 bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walkers, std::string* why, int layer,
                     bool f_spread){
     auto refuse = [&](const char* reason){
@@ -4594,6 +4816,11 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
         || (kind != ZONE_KIND_NONE && kind != ZONE_KIND_CAMP && !ZoneBridgeWalkable(z,plot))){
         return refuse("something stands there");
     }
+    //Over the ice he may go in winter (Walkers, ICE), but not stand on it: the thaw would leave him in the river.
+    if (w.terrain->wet[plot] && !ZoneBridgeWalkable(z,plot)){
+        return refuse("on the water");
+    }
+    walkers.SetSeason(now);     //an order between ticks: the ice as it is now
     //On the debug castle (ramparts_plan.md) he stands on top - its deck, which only the posted walk.
     if (!CanWalkPosted(z,walkers,*k,plot,layer)){
         return refuse("no way there");
@@ -4880,10 +5107,29 @@ void Economy::OwnHousehold(EconomyWorker& k){
 }
 
 /*
+    REJOINING (settlements_plan.md, the user's 2026-10-11): pitching or settling in the settlement where his partner
+    lives, he joins the partner's household and home instead of founding one of his own - whatever its room, as a
+    family grown by a birth is: they are one family again, housed as one, and may have children again.
+*/
+const EconomyWorker* Economy::PartnerLivingIn(const EconomyWorker& k, uint32_t settlement) const{
+    if (!k.partner || !settlement){
+        return NULL;
+    }
+    for (const EconomyWorker& p : state.workers){
+        if (p.id == k.partner){
+            bool f_home = p.house && p.tent == ECONOMY_TENT_NONE && EconomySettlementOf(state,p.house) == settlement;
+            return f_home ? &p : NULL;
+        }
+    }
+    return NULL;
+}
+
+/*
     SETTLING (settlements_plan.md, the user's 2026-10-11): someone ordered onto the ground of another settlement moves
-    there without a tent - once he stands inside its borders, on his way or at his post. Into a camp of it with a bed
-    to spare, the nearest; else an empty house of it; else squeezed in (below). As for pitching, his house place goes
-    - a household of his own - his order is over, and he goes home to the new one.
+    there without a tent - once he stands inside its borders, on his way or at his post. Into his partner's home if
+    they live there (REJOINING); else a camp of it with a bed to spare, the nearest; else an empty house of it; else
+    squeezed in (below). As for pitching, his house place goes - a household of his own - his order is over, and he
+    goes home to the new one.
 */
 bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, std::string* why){
     auto refuse = [&](const char* reason){
@@ -4911,8 +5157,10 @@ bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, 
     if (!here.f_hit || here.plot < 0 || here.plot >= (int)state.settlement.size() || state.settlement[here.plot] != there){
         return refuse("not there yet");
     }
-    //A bed: a camp of it with one to spare, the nearest - else an empty house of it, the nearest.
-    uint32_t bed = 0;
+    //His partner's home there - else a bed: a camp of it with one to spare, the nearest - else an empty house of it, the nearest.
+    const EconomyWorker* partner = PartnerLivingIn(*k,there);
+    uint32_t partner_family = partner ? partner->family : 0;
+    uint32_t bed = partner ? partner->house : 0;
     for (int pass = 0; pass < 2 && !bed; pass++){
         float best = 1e30f;
         for (size_t id = 1; id < z.buildings.size() && id < home_plot.size(); id++){
@@ -4963,7 +5211,11 @@ bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, 
     if (!bed){
         return refuse("nowhere to live there");     //a settlement is its homes: never met
     }
-    OwnHousehold(*k);
+    if (partner){
+        k->family = partner_family;
+    }else{
+        OwnHousehold(*k);
+    }
     k->house = bed;
     if (k->tent == ECONOMY_TENT_TO_TAKE){
         k->tent = ECONOMY_TENT_NONE;
@@ -4987,7 +5239,8 @@ bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, 
 /*
     PITCHED (settlements_plan.md): the tent he carried stands on `plot` (Zones::PitchTent). The zones' change is
     followed at once, so the new camp is known - its bed, its door, its settlement - and he moves in: his house place
-    given up (the user's), a household of his own from now on, as a new couple founds one - unless he is one already.
+    given up (the user's), a household of his own from now on, as a new couple founds one - unless he is one already,
+    or his partner lives in that settlement: then he joins them, at their home (REJOINING), and the tent stands spare.
     His order is over: he is home. A house with room for him there, if one stands empty, as anyone in a camp is offered.
 */
 void Economy::Pitched(uint32_t person, int plot, const ZoneState& z, Walkers& walkers){
@@ -5003,11 +5256,17 @@ void Economy::Pitched(uint32_t person, int plot, const ZoneState& z, Walkers& wa
     if (!k){
         return;
     }
-    OwnHousehold(*k);
+    const EconomyWorker* partner = PartnerLivingIn(*k,EconomySettlementOf(state,camp));
+    uint32_t home = partner ? partner->house : camp;
+    if (partner){
+        k->family = partner->family;
+    }else{
+        OwnHousehold(*k);
+    }
     if (k->carry > 0){
         DropLoad(*k,z);
     }
-    k->house = camp;
+    k->house = home;
     k->tent = ECONOMY_TENT_NONE;
     int was_plot = k->post;
     int was_layer = k->post_layer;

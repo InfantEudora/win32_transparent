@@ -121,11 +121,18 @@ MINIZ_CFLAGS := $(CFLAGS)
 # apps/isoanimation calls ImGui::ShowDemoWindow() for real. It costs nothing in the apps
 # that do not: an archive member is only pulled in when something references it.
 #
-# NO -DIMGUI_* ANYWHERE, and that is checked rather than assumed. 3rdparty/imgui/imconfig.h
-# is stock, and engine.mk defines nothing either. It matters because ImGui's structs cross
-# this boundary - ImVec2, ImDrawData, ImGuiIO - so a define that changed a layout on one
-# side only would corrupt rather than fail to link. If a config is ever added, it has to be
-# added to BOTH, the same trap 3rdparty/miniaudio_config.h exists to remove.
+# ONE -DIMGUI_* AND ONLY ONE: IMGUI_USER_CONFIG, naming 3rdparty/imgui_user_config.h (found
+# through the -I. below). engine.mk passes the same define, and it has to - ImGui's structs
+# cross this boundary (ImVec2, ImDrawData, ImGuiIO) and so do its inline functions, so a
+# setting seen on one side only corrupts rather than fails to link. Settings go in that
+# header, never as further -D's here, so the two sides cannot drift; it is the arrangement
+# 3rdparty/miniaudio_config.h already uses. 3rdparty/imgui/imconfig.h stays stock.
+#
+# The \" is deliberate: it reaches g++ as a plain quote whether make hands the line to sh or
+# to cmd, and the define has to arrive as a string for imgui.h's `#include IMGUI_USER_CONFIG`.
+#
+# -g, unlike libthirdparty.a: an ImGui assert writes every thread's stack (core/CrashReport.h)
+# and the frames inside ImGui are the ones worth having lines for. Release strips it anyway.
 #
 # AND THE SUBMODULE CARRIES A LOCAL PATCH. backends/imgui_impl_win32.cpp has
 # ImGui_ImplWin32_EnableAlphaCompositing() short-circuited with an early return: it calls
@@ -135,8 +142,8 @@ MINIZ_CFLAGS := $(CFLAGS)
 # Check `git -C imgui diff` is non-empty before rebuilding this library.
 #---------------------------------------------------------------------------------------
 IMGUI_OUT    := ../libs/libimgui.a
-IMGUI_CFLAGS := -std=c++17 -Os -fno-exceptions -D_WIN32
-IMGUI_IPATHS := -Iimgui -Iimgui/backends
+IMGUI_CFLAGS := -std=c++17 -Os -g -fno-exceptions -D_WIN32 -DIMGUI_USER_CONFIG=\"imgui_user_config.h\"
+IMGUI_IPATHS := -I. -Iimgui -Iimgui/backends
 
 #Object names are flat inside the archive, matching what the hand-built library held.
 SRCS := stb_image/stb_image.cpp \

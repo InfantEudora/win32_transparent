@@ -1,5 +1,6 @@
 #include "Walkers.h"
 #include "ChasmWorld.h"
+#include "Calendar.h"
 
 #include <algorithm>
 #include <cmath>
@@ -247,13 +248,13 @@ bool Walkers::JoinOpen(const ZoneState& z, const Join& j, int who, int from, int
     if (ZoneBoundaryBetween(z,deck_plot,j.to) != ZONE_BOUNDARY_NONE && !ZoneGateBetween(*world,z,deck_plot,j.to)){
         return false;   //a garden's wall or a lot's fence, as on the ground
     }
-    return GroundEnterable(z,j.to,from,to);
+    return GroundEnterable(z,j.to,from,to,who);
 }
 
 //Whether the ground of plot v may be stepped onto off a deck: what EdgeOpen asks of an edge's far end.
-bool Walkers::GroundEnterable(const ZoneState& z, int v, int from, int to) const{
+bool Walkers::GroundEnterable(const ZoneState& z, int v, int from, int to, int who) const{
     const Terrain& t = *world->terrain;
-    if ((t.wet[v] && !ZoneBridgeWalkable(z,v)) || t.Mountain(v) || ZoneShutToWalkers(z,v)){
+    if ((t.wet[v] && !ZoneBridgeWalkable(z,v) && !IceOpen(who,v)) || t.Mountain(v) || ZoneShutToWalkers(z,v)){
         return false;
     }
     int kind = z.KindOf(v);
@@ -279,7 +280,7 @@ float Walkers::EdgeLength(int a, int b) const{
 }
 
 //Whether a walk from `from` to `to` may use the edge a -> b.
-bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const{
+bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int who) const{
     const Terrain& t = *world->terrain;
     if (!t.SameGround(a,b)){
         //A cliff - unless a winch rides it, with its landing clear (or the walk ending on it).
@@ -290,8 +291,12 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to) const
         return z.storeys[landing] == 0 || landing == to || landing == from;
     }
     //A river and its wet bank are crossed only on a bridge that stands (bridge_plan.md). A water
-    //collector stands on the dry edge of the bank, so its carrier needs no way onto the wet.
-    if ((t.wet[a] && !ZoneBridgeWalkable(z,a)) || (t.wet[b] && !ZoneBridgeWalkable(z,b))){
+    //collector stands on the dry edge of the bank, so its carrier needs no way onto the wet. In winter the
+    //posted cross the ice too (ICE) - and anyone stood on the wet when it thawed may step off it.
+    auto water = [&](int v){
+        return t.wet[v] && !ZoneBridgeWalkable(z,v) && !IceOpen(who,v) && v != from;
+    };
+    if (water(a) || water(b)){
         return false;
     }
     if (t.Mountain(a) || t.Mountain(b)){
@@ -422,7 +427,7 @@ std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to, int who
         if (v < n){
             for (int i = graph->start[v]; i < graph->start[v + 1]; i++){
                 int u = graph->next[i];
-                if (closed[u] || !EdgeOpen(z,v,u,from_ground,to_ground)){
+                if (closed[u] || !EdgeOpen(z,v,u,from_ground,to_ground,who)){
                     continue;
                 }
                 float c = cost[v] + graph->length[i] / EdgeSpeed(z,v,u);
@@ -435,7 +440,7 @@ std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to, int who
             //And down or up a winch, in the links' fixed order.
             for (const auto& l : links){
                 int u = (l.first == v) ? l.second : ((l.second == v) ? l.first : -1);
-                if (u < 0 || closed[u] || !EdgeOpen(z,v,u,from_ground,to_ground)){
+                if (u < 0 || closed[u] || !EdgeOpen(z,v,u,from_ground,to_ground,who)){
                     continue;
                 }
                 float c = cost[v] + WINCH_RIDE_SECONDS;
@@ -582,6 +587,21 @@ bool Walkers::OpenFromOutside(const ZoneState& z, int v){
         }
     }
     return false;
+}
+
+void Walkers::SetSeason(uint64_t tick){
+    //UnderSnow's own figures (Economy.cpp), so the ice a walk takes is where a collector freezes and the view draws it.
+    float cover = CalendarSnowCover(tick);
+    f_ice = cover > 0.0f && world;
+    ice_front = f_ice ? CalendarSnowFrontZ(cover,world->grid->bounds_min.y,world->grid->bounds_max.y) : 0.0f;
+}
+
+bool Walkers::Frozen(int v) const{
+    return f_ice && world && v >= 0 && v < (int)world->grid->fine.pos.size() && CalendarSnowAt(world->grid->fine.pos[v],ice_front);
+}
+
+bool Walkers::IceOpen(int who, int v) const{
+    return who == WALK_WHO_POSTED && Frozen(v);
 }
 
 void Walkers::MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist){

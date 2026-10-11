@@ -32,6 +32,8 @@ const char* ZoneOpName(int op){
         case ZONE_OP_RANGE_PAINT:   return "range_paint";
         case ZONE_OP_TOWER_LADDER:  return "tower_ladder";
         case ZONE_OP_CASTLE:        return "castle";
+        case ZONE_OP_WORK_STOP:     return "work_stop";
+        case ZONE_OP_RANGE_STOP:    return "range_stop";
         default:                   return "none";
     }
 }
@@ -1719,6 +1721,7 @@ void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
         state.buildings[fresh].crop = state.buildings[id].crop;
         state.buildings[fresh].allow = state.buildings[id].allow;
         state.buildings[fresh].f_priority = state.buildings[id].f_priority;
+        state.buildings[fresh].f_stopped = state.buildings[id].f_stopped;      //a stopped workplace's pieces stay stopped
         state.buildings[fresh].next_crop = state.buildings[id].next_crop;
         state.buildings[fresh].land_of = state.buildings[id].land_of;      //a split field's pieces stay that house's
         state.buildings[fresh].split_from = id;
@@ -2124,6 +2127,22 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             state.buildings[id].land_of = (uint32_t)kind;
             break;
         }
+        case ZONE_OP_RANGE_STOP:{
+            //A range's "stop work" (stopping_work_plan.md), as a workplace's by a plot of it - by a cell.
+            int c = (int)index;
+            if (c < 0 || c >= (int)state.field.size() || !state.field[c]
+                || !ZoneKindStoppable(state.buildings[state.field[c]].kind)){
+                last_refusal = "no range there";
+                return false;
+            }
+            uint32_t id = state.field[c];
+            uint8_t want = kind ? 1 : 0;
+            if (state.buildings[id].f_stopped == want){
+                return false;
+            }
+            state.buildings[id].f_stopped = want;
+            break;
+        }
         case ZONE_OP_FIELD_PRIORITY:{
             //A field site's "build first" (construction_plan.md), as a building's by a plot of it - by a cell.
             //Only a field still staked out can be put first; any can be put back.
@@ -2359,6 +2378,25 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             break;
         }
+        case ZONE_OP_WORK_STOP:{
+            /*
+                The player's "stop work" on a workplace (stopping_work_plan.md, the user's 2026-10-12) - a collector
+                with water plenty in store, say. Nothing to draw: the economy takes its places away, and its card
+                says so.
+            */
+            if (plot < 0 || plot >= (int)state.building.size() || state.building[plot] == 0
+                || !ZoneKindStoppable(state.buildings[state.building[plot]].kind)){
+                last_refusal = "no workplace there to stop";
+                return false;
+            }
+            uint32_t id = state.building[plot];
+            uint8_t want = kind ? 1 : 0;
+            if (state.buildings[id].f_stopped == want){
+                return false;
+            }
+            state.buildings[id].f_stopped = want;
+            break;
+        }
         case ZONE_OP_GATE_SHUT:{
             /*
                 A gate's DOOR shut, or opened (defence_plan.md, step 3) - the player's, from the gate's card. A
@@ -2568,6 +2606,7 @@ int Zones::Restore(std::shared_ptr<const ChasmWorld> world, const std::vector<Zo
         state.buildings[b.id].next_crop = f_next ? (uint8_t)b.next_crop : ZONE_CROP_AUTO;
         state.buildings[b.id].allow = (GoodsMask)(b.allow & GOODS_ALL);
         state.buildings[b.id].f_priority = b.f_priority ? 1 : 0;
+        state.buildings[b.id].f_stopped = (b.f_stopped && ZoneKindStoppable(b.kind)) ? 1 : 0;
         //A house the field was given to - ids never change, and one since gone the economy passes over.
         state.buildings[b.id].land_of = (b.kind == ZONE_KIND_FIELD && b.land_of < top) ? b.land_of : 0;
     }
@@ -2677,6 +2716,7 @@ std::vector<ZoneSavedBuilding> ZoneSaveBuildings(const ZoneState& state){
             b.crop = state.buildings[id].crop;
             b.allow = state.buildings[id].allow;
             b.f_priority = state.buildings[id].f_priority != 0;
+            b.f_stopped = state.buildings[id].f_stopped != 0;
             b.next_crop = state.buildings[id].next_crop;
             b.land_of = state.buildings[id].land_of;
             b.ladder = state.buildings[id].ladder;
@@ -2747,6 +2787,7 @@ ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, ui
     info.crop = z.buildings[id].crop;
     info.allow = z.buildings[id].allow;
     info.f_priority = z.buildings[id].f_priority != 0;
+    info.f_stopped = z.buildings[id].f_stopped != 0;
     info.size = z.buildings[id].size;
     info.next_crop = z.buildings[id].next_crop;
     if (ZoneKindOnCells(info.kind)){

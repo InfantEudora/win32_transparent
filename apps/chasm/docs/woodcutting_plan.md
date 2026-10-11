@@ -14,6 +14,10 @@ tree's wood (`line_works_plan.md`), so roads painted everywhere would take it do
   woodcutter to fell them first - "making sitting on the edge of a forest preferred".
 - **The camp employs one farmer and one woodcutter**, filled automatically as every job is. More of either
   takes houses and huts.
+- **A hut takes the camp's woodcutter's place over** (the user's, later the same day, testing an outpost of three:
+  "the woodcutter house creates an extra woodcutter, leaving no job for building"): while a woodcutter's hut stands
+  in a camp's settlement, the camp has no woodcutter of its own. Built and checked: `settlements_plan.md`, "Founding:
+  as built, partners and the hut".
 - **A log's worth goes by where its woodcutter works** - "a larger shop makes working easier":
   - from the camp, with no hut: **2 wood**;
   - from a hut: **4**, as a tree is worth today (`ECONOMY_WOOD_PER_TREE`);

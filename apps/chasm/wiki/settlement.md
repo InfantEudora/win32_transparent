@@ -3,33 +3,35 @@ title: Settlement
 aliases: settlements, territory, territories, border, borders
 kind: world
 status: partial
-summary: Homes and the land within a walk of them, further the more beds they have. People only take on work in their own settlement, and nothing new is placed outside every settlement.
-plans: settlements_plan.md > Decided; settlements_plan.md > Step 1: territories; settlements_plan.md > As built: step 1; settlements_plan.md > Founding: decided; settlements_plan.md > Founding: as built, step 1
-code: Economy.h: ECONOMY_SETTLEMENT_REACH ECONOMY_SETTLEMENT_FIRST ECONOMY_SETTLEMENT_PER_BED EconomySettlementReach EconomySettlementOf EconomyPersonSettlement EconomyCommandInTerritory; Economy.cpp: Settle Ours HouseFamilies; Walkers.cpp: MapFlood; ApplicationChasmBorders.cpp: UploadBorders DrawWalkTip
-verified: 2026-10-11
+summary: Homes and the land within a walk of them - further the more beds they have, and growing from every building that stands. People only take on work in their own settlement, and nothing new is placed outside every settlement.
+plans: settlements_plan.md > Decided; settlements_plan.md > Step 1: territories; settlements_plan.md > Growing from every building (the user's, 2026-10-12); settlements_plan.md > As built: step 1; settlements_plan.md > Founding: decided; settlements_plan.md > Founding: as built, step 1
+code: Economy.h: ECONOMY_SETTLEMENT_REACH ECONOMY_SETTLEMENT_FIRST ECONOMY_SETTLEMENT_PER_BED ECONOMY_SETTLEMENT_BUILDING ECONOMY_SETTLEMENT_TOWER ECONOMY_SETTLEMENT_WALL EconomySettlementReach EconomySettlementOf EconomyPersonSettlement EconomyCommandInTerritory; Economy.cpp: Settle Ours HouseFamilies; Walkers.cpp: MapFlood; ApplicationChasmBorders.cpp: UploadBorders DrawWalkTip
+verified: 2026-10-12
 ---
 
 A **home** founds a settlement - a [[Camp|camp]] or a [[House|house]], since a tent is just a house - and the
-start camp founds the first. Its **territory** is the land within a walk of its oldest home - over the map
-itself, so a river is crossed only on a standing [[Bridge|bridge]], a cliff only by a [[Winch|winch]], and the
-mountain and slopes too steep to walk are left out. What is built on the land doesn't change the walk.
+start camp founds the first. Its **territory** is the land within a walk of its oldest home, its heart, and it
+**grows from every building** of it that stands. Walks go over the map itself: a river only on a standing
+[[Bridge|bridge]], a cliff only by a [[Winch|winch]], never the mountain or a slope too steep. What is built on
+the land doesn't change a walk.
 
 ## How far it reaches
 
-By its **beds**: every tent, and every house's room. One bed - a single tent - reaches
-{ECONOMY_SETTLEMENT_FIRST} units, and each bed more adds {ECONOMY_SETTLEMENT_PER_BED}, up to
-{ECONOMY_SETTLEMENT_REACH}. The start camp's tents already reach the most. Counting beds rather than tents means
-that families leaving their tents for houses, and the empty tents being cleared away, don't shrink it.
+From its heart, by its **beds** - every tent and every house's room in it, so moving into houses doesn't shrink
+it: one bed reaches {ECONOMY_SETTLEMENT_FIRST} units, each more adds {ECONOMY_SETTLEMENT_PER_BED}, up to {ECONOMY_SETTLEMENT_REACH}.
 
-Where two settlements' territories would overlap, each piece of land goes to the home that is the shorter walk
-away, so the border falls halfway between them, bending round rivers and cliffs.
+Then every building that **stands** - not a site - adds the land round itself: {ECONOMY_SETTLEMENT_BUILDING}
+units of walking for most, {ECONOMY_SETTLEMENT_TOWER} for a [[Guard tower|guard tower]], {ECONOMY_SETTLEMENT_WALL}
+for each built wall plot ([[Roads and walls|walls]]). One standing on land another added adds more in turn, so a
+settlement spreads by building outward. Fields, ranges, roads, gardens and lots add none: cheap to lay, they would
+spread it for next to nothing. A building gone takes its land with it.
+
+Where two meet, each piece of land goes to the shorter walk from any of their buildings, bending round rivers and cliffs.
 
 ## How long it lasts
 
-A settlement lasts while **any home in it stands**. Erase its first camp and its oldest house becomes its
-centre, so the border shifts a little toward it. Families whose homes are gone squeeze into the homes that are
-left ([[House|crammed]]). It is gone only when the last of its homes is: its people then have nowhere to live
-and wait where the settlers first camped.
+A settlement lasts while **any home in it stands**; erase its first camp and its oldest house is its heart. Families
+whose homes are gone squeeze into those left ([[House|crammed]]); with the last gone, they wait where the settlers first camped.
 
 A home placed inside a territory adds beds to that settlement. One outside every territory founds a new one. In
 play, that's done by taking a tent out of a camp and pitching it there: see [[Founding|founding]].
@@ -54,7 +56,8 @@ from another village's supplies - posted or not.
 ## Placing
 
 In play, nothing new is placed outside every territory: the placement is refused with "outside the settlement",
-as one under the clouds is, and its outline shows red. A bridge needs its near end inside. Erasing is never refused.
+as one under the clouds is, and its outline shows red. A bridge needs its near end inside, and belongs to the
+settlement of either end, so the far bank may lie outside. Erasing is never refused.
 
 ## How it looks
 

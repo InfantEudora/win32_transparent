@@ -143,6 +143,12 @@ inline int ZoneKindMaxPlots(int kind){
 inline bool ZoneKindOnCells(int kind){
     return kind == ZONE_KIND_FIELD || kind == ZONE_KIND_RANGE;
 }
+//A workplace the player may STOP (stopping_work_plan.md, the user's 2026-10-12): its places go while it is, so its
+//people are free for other work. Not a field (a family's land), a guard tower (its guard count) nor a camp.
+inline bool ZoneKindStoppable(int kind){
+    return kind == ZONE_KIND_WATER || kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_ROPEWALK
+           || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_RANGE;
+}
 //A kind drawn as a HOUSE BODY (BuildingMesh.cpp, BuildHouseCell): walls and a roof, storeys high - not a winch, a
 //camp, a bridge or a guard tower, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
 inline bool ZoneKindHasBody(int kind){
@@ -282,12 +288,15 @@ enum ZoneOp{
     ZONE_OP_RANGE_PAINT,    //coarse cell: join the stroke's range, or start one (range_plan.md) - erased, raised, put first as a field
     ZONE_OP_TOWER_LADDER,   //plot: its guard tower's ladder toward the neighbour plot in value[1], -1 the next open side round (defence_plan.md)
     ZONE_OP_CASTLE,         //plot: the debug castle's piece in value[1] (ZoneCastlePiece), 0 to take it off (ramparts_plan.md)
+    ZONE_OP_WORK_STOP,      //plot: its workplace stopped (value[1] 1) or working again (0) (ZoneKindStoppable, stopping_work_plan.md)
+    ZONE_OP_RANGE_STOP,     //coarse cell: the same for its range, which stands on cells
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's or a range's) rather than a plot.
 inline bool ZoneOpOnCell(int op){
     return op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP || op == ZONE_OP_FIELD_NEXT
-        || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND || op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_RANGE_PAINT;
+        || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND || op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_RANGE_PAINT
+        || op == ZONE_OP_RANGE_STOP;
 }
 const char* ZoneOpName(int op);
 int ZoneOpByName(const std::string& name);  //the names above, and the old house_* ones; -1 if none
@@ -316,13 +325,15 @@ struct ChasmWorld;     //ChasmWorld.h
     however far (construction_plan.md); it drops by itself when nothing of the building is left to
     build, so a storey added later is queued like any other. `split_from` is the building a piece was
     split off by an erase, for the economy to share its stock out by; not saved, since the economy has
-    done that by the time anything is.
+    done that by the time anything is. `f_stopped` is the player's "stop work" on a workplace
+    (ZoneKindStoppable): it has no places while set, so its worker goes free (stopping_work_plan.md).
 */
 struct ZoneBuilding{
     uint8_t kind = ZONE_KIND_NONE;
     uint8_t crop = ZONE_CROP_WHEAT;             //a field's starting crop; ZONE_CROP_NONE until chosen
     GoodsMask allow = GOODS_ALL;
     uint8_t f_priority = 0;
+    uint8_t f_stopped = 0;
     uint8_t next_crop = ZONE_CROP_AUTO;         //a field's crop for every sowing after its first
     int size = 0;
     uint32_t split_from = 0;
@@ -406,6 +417,7 @@ struct ZoneSavedBuilding{
     int crop = ZONE_CROP_WHEAT;
     int allow = GOODS_ALL;                      //a store's own setting
     bool f_priority = false;                    //a site the player put first
+    bool f_stopped = false;                     //a workplace the player stopped
     int next_crop = ZONE_CROP_AUTO;             //a field's (fields_plan.md)
     uint32_t land_of = 0;                       //a field's, given to a house (land_plan.md)
     int ladder = -1;                            //a guard tower's (defence_plan.md); -1 for one from before: its default
@@ -783,6 +795,7 @@ struct ZoneBuildingInfo{
     float site_area = 0.0f;
     int site_cells = 0;         //a field's cells still a site
     bool f_priority = false;    //the site goes first
+    bool f_stopped = false;     //its work stopped by the player
     int next_crop = ZONE_CROP_AUTO;
 };
 ZoneBuildingInfo ZoneBuildingFigures(const ChasmWorld& w, const ZoneState& z, uint32_t id);

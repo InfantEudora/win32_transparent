@@ -145,9 +145,20 @@ lower rate than from a hut - is `woodcutting_plan.md` ("the camp's two places"),
 - **A camp's goods are left as a crate** (the agent's suggestion, the user: "good to pick up"): when its last tent is
   packed or erased, its supplies and pantry lie where it stood - an outpost packed up loses nothing.
 
+- **A partner left behind: they rejoin** (the user's, 2026-10-11: "they should for sure rejoin when their partner
+  settles in"). Partners living in different settlements stay partners, with no children while apart - births want
+  both in one house, as ever. Whoever then pitches or settles in the settlement where the other lives joins the
+  other's household and home, whatever its room (as a birth grows a family past it); a pitched tent stands spare.
+- **A lone house takes a partner** (the user's, 2026-10-11, testing three settlers of three families in tents: "only
+  Dirk moves in, while at least they should form a couple"). Couples formed only into a house still empty, and the
+  homeless are housed first, so the house went to one of them alone and no couple could form. Now one who lives
+  alone in a house that holds two pairs off as before and the other moves in there.
+
 ### Founding: still open
 
-- **A partner left behind** when one of a couple pitches a tent elsewhere.
+- **Children left behind**: if the last grown-up of a family leaves - by tent or by settling - the children stay
+  in the old home with nobody to fetch for them, and a baby with no mother. The agent's suggestion: the children go
+  with the last grown-up; or leaving is refused while they would be left alone.
 
 ### Founding: worked out here, for the user to overrule
 
@@ -310,9 +321,83 @@ Built 2026-10-11:
 - **The crate**: the outpost erased left one crate at its door, "camp", with 11 beans, 18 water and 6 wood - its
   supplies and the pantry its people had unpacked into.
 - **Replay**: a 14,484-tick recording replayed twice, every tick equal.
+- **Changed the same evening** (the user's, after trying it):
+  - **Settle here squeezes in**: with no bed free it is not refused - he is crammed into the home there with the
+    most room to spare, the nearest on a tie, and belongs to that settlement.
+  - **A pressing need only from his own**: `SeekSupplyOf` passes over any source - building or crate - in another
+    settlement's land; his own settlement's and unclaimed land's only. Gathering a scout's pack goes the same way.
+  - *Checked* (copied exe, 8774): Dirk settled into an outpost of 3 tents and 3 people - 4 living there now.
+    Anouk of the home village, posted at the outpost with no water packed and her thirst pressing, set off on the
+    93 units home to her own camp, not to the outpost's pantry beside her; Siem of the outpost drank there at once.
+    A 4,854-tick recording replayed twice, every tick equal.
 - **Two slips on the way**:
   - a gone camp was looked for by its kind, which the zones clear - now by what it was at the last Derive;
   - the first test run set the start camp's water to 2 and left it, and people died of thirst, which freed a bed.
+
+### Founding: as built, partners and the hut (2026-10-11)
+
+- **Rejoining**: `PartnerLivingIn` - the partner, if they have a home in that settlement and are not leaving it with
+  a tent. `Pitched` and `SettleHere` then take the partner's family and home in place of `OwnHousehold` and a bed.
+- **A lone house**: `HouseFamilies`' COUPLES takes, besides the empty houses, a house where one unpaired adult
+  lives alone and that holds `LIFE_COUPLE_ROOM`; for a pair, the one living alone's house first (the elder's if
+  both do), else the smallest empty one as before. Nobody taking or carrying a tent is offered a partner.
+- **A hut takes over** (the user's, the same test: "the woodcutter house creates an extra woodcutter, leaving no
+  job for building"): a camp has no woodcutter's place of its own while a woodcutter's hut stands in its
+  settlement (`woodcutting_plan.md`). Worked out after `Settle`, so the trees out of every woodcutter's reach are
+  now counted after it too.
+- *Checked* on `saves/camp_3.json` (copied exe, 8774): with the outpost's hut standing, Marit lost the camp's
+  woodcutter place at the zones' next change. A load alone restaffs nothing, so a replay keeps to the run it was cut
+  from. A debug house on a plot that holds two: Dirk moved in, and Bente, the elder of the two women, moved in with
+  him as his partner. Marit stayed in her tent and took the water, and Bente, housed, was free to build. Siem of the
+  home village pitched at the outpost, a household of his own; Anouk, posted after him, settled there and joined him,
+  in his tent. Their two children stayed behind alone (still open, above). An 8,457-tick recording replayed twice,
+  every tick equal.
+- *Seen in the save*: the home village is a camp of 9 tents with no water stored and only the camp's water carrier,
+  meant for a few. Three had died of thirst before the save, and Siem and Anouk did on days 13 and 14 of a run
+  left alone - the test topped its water up.
+- *The house the user placed* held one, most likely: a plot of area 2.2 holds 1 (`ECONOMY_PERSON_AREA`), one of 2.7
+  holds 2. Then no couple fits, and Dirk alone is right.
+- **A bridge nobody built** (the user's, the next day, the same save): its site stood "waiting for someone free to
+  carry" with Marit idle beside it. A building is in the settlement of its door, and a bridge's door is its lowest
+  end that can be walked to - here the far one, on land no settlement holds - so it was nobody's, though placing it
+  checks the near end (`EconomyCommandInTerritory`). Now `Settle` gives a bridge whose door lies outside the
+  settlement of its other dry end. *Checked*: the bridge the outpost's; Marit carried for it between her trips for
+  food, 11 of its 18 plots standing after 8,000 ticks, the found crates' wood going in. An 8,001-tick recording
+  replayed twice, every tick equal.
+
+## Growing from every building (the user's, 2026-10-12)
+
+The territory was a walk from the settlement's oldest home alone, its reach by beds: houses beyond the first only
+lengthened it, so a village growing one way pushed its border out evenly round the camp, not past its newest houses.
+The user: "it should grow with each building, even a guard post or a wall." The agent's proposal, agreed whole:
+
+- **The heart stays**: the founding home reaches 20 to 50 by the settlement's beds - every home of it now, wherever
+  its land took it.
+- **Every standing building adds land round itself**: `ECONOMY_SETTLEMENT_BUILDING` 15 units of walking (houses,
+  stores, huts, collectors, the ropewalk, the builders' hut, winches, bridges - a bridge's far end claims the far
+  bank); a guard tower `ECONOMY_SETTLEMENT_TOWER` 30, as military buildings hold land in The Settlers; each built
+  wall or gate plot `ECONOMY_SETTLEMENT_WALL` 10, so a wall carries the border with it. A home far from the heart
+  adds the building's 15, not the settlement's reach by beds (the user's: that would spread land too fast).
+- **Once it stands, not as a site**, so painting sites spreads nothing. **Not fields, ranges, roads, gardens or
+  lots**: cheap to lay, they would spread land for next to nothing (the user's: leave them out).
+- **It chains**: one standing on land another added adds more in turn - a settlement spreads by building outward.
+- **Where two meet** each plot goes to the shorter walk from any of their buildings; the older keeps a tie. A
+  building gone takes its land with it; what then stands outside stays, nothing new goes there.
+
+### As built (2026-10-12)
+
+- `Economy::Settle`, in rounds: hearts founded oldest first; after each, the land GROWS in waves - whatever stands
+  on a settlement's land joins it (its door's, else any plot of it held: a bridge's far end), and each wave floods
+  the newly joined together by settlement and reach (`MapFlood`), until nothing new joins; then the next home left
+  outside founds. Beds are counted over the homes joined; a heart whose beds hold up less narrows, and the round is
+  worked out again (`ECONOMY_SETTLEMENT_ROUNDS` at most).
+- `chasm_pick` reports a plot's `settlement` (0 nobody's), for checking borders.
+- *Checked* (the default map, debug, a copied exe): the camp alone, as before - 12 beds, reach 50, 1,564 plots, the
+  border 44 units straight south. A store at 42: border at 56, 1,631 plots; a second store on that new land at
+  55.6: border at 66, 1,741 - walks along the grid's edges run some 15-20% past the straight line; the first
+  erased: back to 44 and 1,564, the second left outside adding nothing. A guard tower at 42: border at 68, 1,918.
+  Three wall plots at 40-44: border at 52, 1,595. A store site at 42 in play: still 44, 1,564; raised, 56 and 1,631.
+  `camp_3` loaded: both settlements, every building and person of the outpost still in it; a tick 31 ms.
 
 ## Later, to think through
 

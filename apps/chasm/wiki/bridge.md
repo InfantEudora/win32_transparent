@@ -5,8 +5,8 @@ kind: buildings
 status: built
 summary: A wooden span from one dry bank of a river to the other, placed whole and built like any building. It crosses rivers, never lakes or the chasm.
 plans: bridge_plan.md > Decided; bridge_plan.md > As built
-code: Zones.h: ZONE_KIND_BRIDGE ZONE_BRIDGE_SPAN_RIVERS ZoneBridgeChain ZoneBridgeWalkable
-verified: 2026-10-09
+code: Zones.h: ZONE_KIND_BRIDGE ZONE_BRIDGE_SPAN_RIVERS ZoneBridgeChain ZoneBridgeWalkable; Economy.cpp: Settle
+verified: 2026-10-12
 ---
 
 A river's wet band, the water and the stone bank on either side, can't be walked on or built on, so
@@ -25,5 +25,6 @@ placed whole, never plot by plot. It is allowed only when:
 ## Building and crossing
 
 It is a [[Construction|building site]] like any other, built from [[Wood|wood]] (less per plot than a
-house's storey) by people without a job, from the banks inwards. Once a plot of it stands, people walk
+house's storey) by people without a job of the [[Settlement|settlement]] either end lies in, from the banks
+inwards. Once a plot of it stands, people walk
 across it at road speed ([[Roads and walls]]), and a road leading onto it carries on as road.
