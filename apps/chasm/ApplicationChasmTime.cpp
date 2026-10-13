@@ -427,6 +427,7 @@ void ApplicationChasm::DrawOverlay(void){
         DrawSelectionOverlay(s);
         DrawWalkTip(s);
         DrawCostTips(s);
+        DrawForageMenu(s);      //last: over the rest, and its chips win where they overlap (OverlayHitAt)
     }
     if (!food_tip.empty()){
         const float text_size = 14.0f * s;
@@ -753,8 +754,9 @@ float ApplicationChasm::DrawJobsOverview(float s){
     struct Row{ const char* name; int working; int places; bool f_places; };
     std::vector<Row> rows;
     static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER,
-                                WORKER_JOB_ARCHER,WORKER_JOB_GUARD,WORKER_JOB_ROPEMAKER};
-    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","ARCHERS","GUARDS","ROPEMAKERS"};
+                                WORKER_JOB_PICKER,WORKER_JOB_ARCHER,WORKER_JOB_GUARD,WORKER_JOB_ROPEMAKER};
+    static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","PICKERS","ARCHERS","GUARDS",
+                                  "ROPEMAKERS"};
     static_assert(sizeof(shown) / sizeof(shown[0]) == sizeof(names) / sizeof(names[0]),"a name for every job shown");
     for (int i = 0; i < (int)(sizeof(shown) / sizeof(shown[0])); i++){
         const EconomyJobCount& c = counts[shown[i]];

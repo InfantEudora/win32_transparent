@@ -17,6 +17,7 @@ const char* GoodName(int good){
         case GOOD_PROVISIONS: return "provisions";
         case GOOD_HEMP:     return "hemp";
         case GOOD_ROPE:     return "rope";
+        case GOOD_FRUIT:    return "fruit";
         default:            return "?";
     }
 }
@@ -78,6 +79,7 @@ const char* EconomyJobName(int job){
         case WORKER_JOB_ARCHER:     return "archer";
         case WORKER_JOB_GUARD:      return "guard";
         case WORKER_JOB_ROPEMAKER:  return "ropemaker";
+        case WORKER_JOB_PICKER:     return "picker";
         case WORKER_JOB_NONE:       return "none";
         case WORKER_JOB_PLAYING:    return "playing";
         case WORKER_JOB_BABY:       return "baby";
@@ -175,9 +177,11 @@ void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount
         if (job >= 0 && job < WORKER_JOB_COUNT){
             out[job].places += e.places[id];
         }
-        //The camp's own woodcutter (woodcutting_plan.md), and its water carrier (settlements_plan.md).
+        //The camp's own woodcutter (woodcutting_plan.md), its water carrier (settlements_plan.md) and its picker
+        //(foraging_plan.md).
         out[WORKER_JOB_WOODCUTTER].places += (id < e.cutter_places.size()) ? e.cutter_places[id] : 0;
         out[WORKER_JOB_WATER].places += (id < e.drawer_places.size()) ? e.drawer_places[id] : 0;
+        out[WORKER_JOB_PICKER].places += (id < e.picker_places.size()) ? e.picker_places[id] : 0;
     }
     int none = 0;
     for (const EconomyWorker& k : e.workers){
@@ -200,6 +204,7 @@ int EconomyJobSkill(int job){
         case WORKER_JOB_ARCHER:     return SKILL_PRECISION;
         case WORKER_JOB_GUARD:      return SKILL_PRECISION;     //after archery (AssignJobs)
         case WORKER_JOB_ROPEMAKER:  return SKILL_PRECISION;     //a craft (goods_plan.md)
+        case WORKER_JOB_PICKER:     return SKILL_HUSBANDRY;     //knowing the plants (foraging_plan.md)
         default:                    return SKILL_STRENGTH;      //a woodcutter, a builder, and anyone carrying
     }
 }
@@ -843,6 +848,14 @@ void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
         state.prop_state.assign(world->forest->props.size(),PROP_STATE_STANDING);
     }
     BuildTrees();
+    //FORAGING: a new map's plants all ripe (foraging_plan.md) - a save puts back those that are not (Restore).
+    if (world && world->forest){
+        state.fruit.assign(world->forest->props.size(),0);
+        state.regrow.assign(world->forest->props.size(),0);
+        for (int i : plants){
+            state.fruit[i] = (uint8_t)EconomyFruitFull(world->forest->props[i]);
+        }
+    }
     FindCamp();
     MakeSettlers();
     raises.clear();
@@ -1246,6 +1259,45 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
         return f < family_road.size() && family_road[f] && !family_house[f];
     };
     /*
+        ORPHANS (settlements_plan.md, the user's 2026-10-12: "they can now squeeze in" - lifeline_plan.md had none): a
+        household with nobody grown left in it, living where no grown-up lives either - a home of its own, or none -
+        squeezes into a home of its settlement where a grown-up does: a house or a camp, the one with the most room to
+        spare that they can walk to (the lower id on a tie), as the CRAMMED do (below), and lives from its pantry and
+        its family's fetching. It takes no house of its own until one of it is grown. Children going along with their
+        grown-ups (WITH THE GROWN) are no orphans: those grown-ups are of their household still.
+    */
+    std::vector<uint8_t> family_grown(family_size.size(),0);
+    std::vector<int> grown_in(n,0);
+    for (const EconomyWorker& k : state.workers){
+        if (EconomyStageAt(k.born,state.tick) >= LIFE_YOUNG){
+            family_grown[k.family] = 1;
+            if (k.house && k.house < n){
+                grown_in[k.house]++;
+            }
+        }
+    }
+    auto orphans = [&](uint32_t f){
+        return f < family_grown.size() && family_size[f] > 0 && !family_grown[f];
+    };
+    for (uint32_t f = 1; f < family_size.size(); f++){
+        uint32_t h = family_house[f];
+        if (!orphans(f) || (h && h < n && grown_in[h] > 0)){
+            continue;
+        }
+        vec2 at = where(f);
+        size_t best = 0;
+        for (size_t id = 1; id < n; id++){
+            if ((can_take(id) || is_camp(id)) && home_plot[id] >= 0 && grown_in[id] > 0 && ours(f,id)
+                && (best == 0 || state.capacity[id] - living[id] > state.capacity[best] - living[best])
+                && CanWalk(z,walkers,at,home_plot[id])){
+                best = id;
+            }
+        }
+        if (best){
+            move(f,(uint32_t)best);
+        }
+    }
+    /*
         Into a house: every family without one - with no home, in a camp, or crammed - the largest first. Each
         takes the smallest empty house that holds all of them and that they can walk to (the lower id on a tie).
         None: a smaller family living in one that would, and that could move to an empty house that holds
@@ -1254,7 +1306,7 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
     */
     std::vector<uint32_t> waiting;
     for (uint32_t f = 1; f < family_size.size(); f++){
-        if (family_size[f] > 0 && (!is_house(family_house[f]) || crammed(f)) && !on_road(f)){
+        if (family_size[f] > 0 && (!is_house(family_house[f]) || crammed(f)) && !on_road(f) && !orphans(f)){
             waiting.push_back(f);
         }
     }
@@ -1295,7 +1347,7 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
                         elsewhere = e;
                     }
                 }
-                if (lodger && elsewhere){
+                if (lodger && elsewhere && !orphans(lodger)){
                     move(lodger,(uint32_t)elsewhere);
                     best = id;
                 }
@@ -1487,10 +1539,19 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
     auto drawers = [&](uint32_t id){
         return (id < state.drawer_places.size()) ? state.drawer_places[id] : 0;
     };
+    //...and its picker's (foraging_plan.md), where a plant bears in its land.
+    auto pickers = [&](uint32_t id){
+        return (id < state.picker_places.size()) ? state.picker_places[id] : 0;
+    };
+    //A camp's own places of a job (THE CAMP'S OWN WORK): its woodcutter's, water carrier's or picker's.
+    auto camp_places = [&](uint32_t id, int job){
+        return (job == WORKER_JOB_WOODCUTTER) ? cutters(id) : (job == WORKER_JOB_WATER) ? drawers(id)
+             : (job == WORKER_JOB_PICKER) ? pickers(id) : 0;
+    };
     std::vector<uint32_t> order;
     for (int pass = 0; pass < 2; pass++){
         for (size_t id = 1; id < n; id++){
-            if ((state.places[id] > 0 || cutters((uint32_t)id) > 0 || drawers((uint32_t)id) > 0)
+            if ((state.places[id] > 0 || cutters((uint32_t)id) > 0 || drawers((uint32_t)id) > 0 || pickers((uint32_t)id) > 0)
                 && (z.buildings[id].kind == ZONE_KIND_BUILDERS) == (pass == 0)){
                 order.push_back((uint32_t)id);
             }
@@ -1535,8 +1596,8 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
         person ids kept).
     */
     std::vector<int> reserved(n,0);
-    std::vector<int> reserved_cut(n,0);     //...the camp's woodcutter's
-    std::vector<int> reserved_draw(n,0);    //...and its water carrier's
+    //...a camp's own places, by the job's number: its woodcutter's, its water carrier's, its picker's.
+    std::vector<std::array<int,WORKER_JOB_COUNT>> reserved_camp(n,std::array<int,WORKER_JOB_COUNT>{});
     for (size_t i = 0; i < state.workers.size(); i++){
         EconomyWorker& k = state.workers[i];
         if (k.f_chosen && k.job != WORKER_JOB_GUARD){
@@ -1546,17 +1607,13 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             continue;
         }
         uint32_t b = k.building;
-        bool f_cut = b && b < n && k.job == WORKER_JOB_WOODCUTTER && z.buildings[b].kind == ZONE_KIND_CAMP;
-        bool f_draw = b && b < n && k.job == WORKER_JOB_WATER && z.buildings[b].kind == ZONE_KIND_CAMP;
-        if (f_cut && reserved_cut[b] < cutters(b)){
-            reserved_cut[b]++;
+        bool f_camp_own = b && b < n && z.buildings[b].kind == ZONE_KIND_CAMP
+                          && (k.job == WORKER_JOB_WOODCUTTER || k.job == WORKER_JOB_WATER || k.job == WORKER_JOB_PICKER);
+        if (f_camp_own && reserved_camp[b][k.job] < camp_places(b,k.job)){
+            reserved_camp[b][k.job]++;
             kept[i] = 1;
             people[home_of(k)] -= (employable(k) ? 1 : 0);
-        }else if (f_draw && reserved_draw[b] < drawers(b)){
-            reserved_draw[b]++;
-            kept[i] = 1;
-            people[home_of(k)] -= (employable(k) ? 1 : 0);
-        }else if (!f_cut && !f_draw && b && b < n && z.buildings[b].size > 0 && JobOf(z.buildings[b].kind) == k.job
+        }else if (!f_camp_own && b && b < n && z.buildings[b].size > 0 && JobOf(z.buildings[b].kind) == k.job
                   && reserved[b] < state.places[b]){
             reserved[b]++;
             kept[i] = 1;
@@ -1618,15 +1675,16 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
         /*
             The camp's own woodcutter (THE CAMP'S OWN WORK), after its farmer and the same way: of those living there,
             the one it has, then the free, then one taken from a later place - the strongest first. Then its water
-            carrier (settlements_plan.md) the same way, the most ingenious first, as a collector's carrier is chosen.
+            carrier (settlements_plan.md) the same way, the most ingenious first, as a collector's carrier is chosen;
+            then its picker (foraging_plan.md), by husbandry - so an outpost of three is a woodcutter, a water carrier
+            and a picker.
         */
-        for (int camp_job : {WORKER_JOB_WOODCUTTER,WORKER_JOB_WATER}){
-            bool f_wood = camp_job == WORKER_JOB_WOODCUTTER;
-            int open = std::min(f_wood ? cutters(id) - reserved_cut[id] : drawers(id) - reserved_draw[id],free);
+        for (int camp_job : {WORKER_JOB_WOODCUTTER,WORKER_JOB_WATER,WORKER_JOB_PICKER}){
+            int open = std::min(camp_places(id,camp_job) - reserved_camp[id][camp_job],free);
             if (open <= 0){
                 continue;
             }
-            int skill = f_wood ? SKILL_STRENGTH : SKILL_INGENUITY;
+            int skill = EconomyJobSkill(camp_job);
             std::vector<std::pair<std::pair<int,int>,size_t>> best;      //((rank, -skill), index)
             for (size_t i = 0; i < state.workers.size(); i++){
                 const EconomyWorker& k = state.workers[i];
@@ -1663,7 +1721,8 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
         bool f_there = k.building && k.building < n && employable(k) && z.buildings[k.building].size > 0
                        && ((JobOf(z.buildings[k.building].kind) == k.job && state.places[k.building] > 0)
                            || (k.job == WORKER_JOB_WOODCUTTER && cutters(k.building) > 0)
-                           || (k.job == WORKER_JOB_WATER && drawers(k.building) > 0));
+                           || (k.job == WORKER_JOB_WATER && drawers(k.building) > 0)
+                           || (k.job == WORKER_JOB_PICKER && pickers(k.building) > 0));
         k.job = WORKER_JOB_NONE;
         k.building = 0;
         if (!f_there){
@@ -1916,9 +1975,15 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
 void Economy::BuildTrees(){
     tree_start.clear();
     tree_items.clear();
+    plants.clear();
     tree_nx = tree_nz = 0;
     if (!state.world || !state.world->forest){
         return;
+    }
+    for (size_t i = 0; i < state.world->forest->props.size(); i++){
+        if (ForestBears(state.world->forest->props[i])){
+            plants.push_back((int)i);
+        }
     }
     const Grid& g = *state.world->grid;
     tree_origin = g.bounds_min;
@@ -2010,10 +2075,47 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
                 middle - the coarse grid's vertices keep the lowest numbers when it is subdivided, and one with
                 every plot round it built over is shut in - and a house like that was never lived in, a workplace
                 never staffed. With no way in anywhere, still its lowest, and the building SHUT IN (EconomyShutIn).
+                A CAMP's tents need not touch (THE CAMP, Zones.h): its door is in its largest group of touching tents
+                (the lowest plot's group on a tie), so a tent pitched far off in its colony does not take its supplies,
+                its water carrier and its woodcutter's reach away with it. One in a piece: the same as ever.
             */
-            home_plot[id] = plots_of[id].front();
+            const std::vector<int>* plots = &plots_of[id];
+            std::vector<int> group;
+            if (z.buildings[id].kind == ZONE_KIND_CAMP && plots_of[id].size() > 1){
+                std::vector<int> best;
+                std::vector<int> stack;
+                std::vector<int> seen;
+                for (int start : plots_of[id]){
+                    if (std::find(seen.begin(),seen.end(),start) != seen.end()){
+                        continue;
+                    }
+                    group.clear();
+                    stack.assign(1,start);
+                    seen.push_back(start);
+                    while (!stack.empty()){
+                        int at = stack.back();
+                        stack.pop_back();
+                        group.push_back(at);
+                        int nb[8];
+                        int m = ZonePlotNeighbours(w,at,nb,8);
+                        for (int i = 0; i < m; i++){
+                            if (z.building[nb[i]] == id && std::find(seen.begin(),seen.end(),nb[i]) == seen.end()){
+                                seen.push_back(nb[i]);
+                                stack.push_back(nb[i]);
+                            }
+                        }
+                    }
+                    if (group.size() > best.size()){
+                        best.swap(group);
+                    }
+                }
+                std::sort(best.begin(),best.end());
+                group.swap(best);
+                plots = &group;
+            }
+            home_plot[id] = plots->front();
             state.shut[id] = 1;
-            for (int v : plots_of[id]){
+            for (int v : *plots){
                 if (walkers.OpenFromOutside(z,v)){
                     home_plot[id] = v;
                     state.shut[id] = 0;
@@ -2458,6 +2560,30 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         }
     }
     /*
+        FORAGING (Economy.h): a plant built over is gone for good - and a camp has its own PICKER while a plant still
+        stands to bear in its settlement's land, ripe or growing back, so nobody is kept on for land that has none.
+        After the settlements, which say whose land it is.
+    */
+    PlantsCovered(z);
+    state.picker_places.assign(n,0);
+    {
+        std::vector<uint8_t> bearing(n + 1,0);     //by settlement: a plant stands in its land
+        for (int i : plants){
+            int v = w.forest->props[i].plot;
+            if (state.fruit[i] != FORAGE_GONE && state.prop_state[i] == PROP_STATE_STANDING
+                && v >= 0 && v < (int)state.settlement.size()){
+                bearing[std::min<size_t>(state.settlement[v],n)] = 1;
+            }
+        }
+        for (size_t id = 1; id < n; id++){
+            uint32_t s = EconomySettlementOf(state,(uint32_t)id);
+            if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0 && stands[id] && home_plot[id] >= 0
+                && s && bearing[std::min<size_t>(s,n)]){
+                state.picker_places[id] = ECONOMY_CAMP_PICKERS;
+            }
+        }
+    }
+    /*
         The roads, walls and sites with a tree in their way that no woodcutter reaches - and nobody else fells one
         now (woodcutting_plan.md): each, for NEEDS ATTENTION. A woodcutter reaches ECONOMY_WOODCUTTER_REACH of
         WALKING from his workplace's door (WoodNear's): a hut that stands, or a camp with its own woodcutter's place -
@@ -2549,7 +2675,11 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
     std::vector<uint32_t> joined;               //by building id: the settlement whose land it grew, 0 none
     std::vector<uint8_t> wall_joined;
     std::vector<int> order;                     //by founding home's id: its settlement's place, 1 the oldest
+    std::vector<uint8_t> has_camp;              //by founding home's id: its settlement has its camp
     std::vector<float> walk;
+    auto is_camp = [&](size_t id){
+        return z.buildings[id].kind == ZONE_KIND_CAMP;
+    };
     for (int round = 0; round < ECONOMY_SETTLEMENT_ROUNDS; round++){
         state.settlement.assign(plots,0);
         state.settlements.clear();
@@ -2557,6 +2687,7 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
         joined.assign(n,0);
         wall_joined.assign(walls.size(),0);
         order.assign(n,0);
+        has_camp.assign(n,0);
         //The plots of the flood in `walk` to settlement s, out to `reach`: each the land of the shortest walk.
         auto claim = [&](uint32_t s, float reach){
             for (size_t v = 0; v < plots && v < walk.size(); v++){
@@ -2591,6 +2722,18 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
                 for (size_t id = 1; id < n; id++){
                     float r = grows(id);
                     uint32_t s = (r > 0.0f && !joined[id]) ? land_at(id) : 0;
+                    /*
+                        ONE CAMP TO A COLONY (settlements_plan.md, the user's 2026-10-12): a camp never joins land that
+                        has its camp already - it is the heart of its own (FOUND, below), or an outpost pitched beyond the
+                        border would be taken in once its own beds had widened the older one's reach to it. On land
+                        with none - a colony of houses - it is that colony's camp.
+                    */
+                    if (s && is_camp(id) && has_camp[s]){
+                        continue;
+                    }
+                    if (s && is_camp(id)){
+                        has_camp[s] = 1;
+                    }
                     if (s){
                         joined[id] = s;
                         f_new = true;
@@ -2616,10 +2759,11 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
                     }
                 }
             }
-            //FOUND: the oldest home standing outside all land founds the next, from its heart.
+            //FOUND: the oldest home standing outside all land founds the next, from its heart - and a camp that joined
+            //no land, wherever it stands: its land then the plots nearer it than the others' (ONE CAMP TO A COLONY).
             size_t found = 0;
             for (size_t id = 1; id < n && !found; id++){
-                found = (is_home(id) && !joined[id] && !state.settlement[home_plot[id]]) ? id : 0;
+                found = (is_home(id) && !joined[id] && (!state.settlement[home_plot[id]] || is_camp(id))) ? id : 0;
             }
             if (!found){
                 break;
@@ -2634,6 +2778,7 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
             state.settlements.push_back(s);
             order[found] = (int)state.settlements.size();
             joined[found] = (uint32_t)found;
+            has_camp[found] = is_camp(found) ? 1 : 0;
             claim((uint32_t)found,heart_reach[found]);
         }
         //Each one's beds, and whether they hold up its heart's reach.
@@ -2975,6 +3120,10 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, Walkers& walk
                 //In the way of a line, or of a site of his own settlement's (EconomyTreeSite): first.
                 uint32_t site = (ps == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
                 bool f_way = std::binary_search(in_way.begin(),in_way.end(),i) || (site && Ours(k,site));
+                //A FRUIT TREE (foraging_plan.md) he passes by - felled only when it stands in the way of something.
+                if (pr.f_fruit && ps == PROP_STATE_STANDING && !f_way){
+                    continue;
+                }
                 int first = f_way ? 0 : (ps == PROP_STATE_LOG) ? 1 : 2;
                 out.push_back(std::make_pair(std::make_pair(first,d),i));
             }
@@ -3015,6 +3164,270 @@ bool Economy::FindTree(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     std::vector<std::pair<std::pair<int,float>,int>> found;
     WoodNear(k,z,walkers,state.world->grid->fine.pos[home_plot[k.building]],ECONOMY_WOODCUTTER_REACH,false,found);
     return GoForWood(k,z,walkers,found,4);
+}
+
+//--- Foraging (docs/foraging_plan.md) --------------------------------------------------------------
+
+//The ripe plant on `plot` with the most fruit, the lower index on a tie, of `plants` - every prop if NULL: -1 none.
+static int BestPlantOn(const EconomyState& e, const std::vector<int>* plants, int plot){
+    if (!e.world || !e.world->forest || plot < 0){
+        return -1;
+    }
+    const std::vector<PropInstance>& props = e.world->forest->props;
+    int best = -1;
+    int most = 0;
+    auto look = [&](int i){
+        int have = (props[i].plot == plot) ? EconomyFruitOn(e,i) : 0;
+        if (have > most){
+            most = have;
+            best = i;
+        }
+    };
+    if (plants){
+        for (int i : *plants){
+            look(i);
+        }
+    }else{
+        for (size_t i = 0; i < props.size(); i++){
+            if (ForestBears(props[i])){
+                look((int)i);
+            }
+        }
+    }
+    return best;
+}
+
+int EconomyFruitFull(const PropInstance& p){
+    return !ForestBears(p) ? 0 : p.f_fruit ? FORAGE_TREE_FRUIT : FORAGE_BUSH_FRUIT;
+}
+
+int EconomyFruitOn(const EconomyState& e, int prop){
+    if (prop < 0 || prop >= (int)e.fruit.size() || prop >= (int)e.prop_state.size()){
+        return 0;
+    }
+    uint8_t f = e.fruit[prop];
+    return (f == FORAGE_GONE || e.prop_state[prop] != PROP_STATE_STANDING) ? 0 : (int)f;
+}
+
+int EconomyRipePlantOn(const EconomyState& e, int plot){
+    return BestPlantOn(e,NULL,plot);
+}
+
+int Economy::FruitOn(int prop) const{
+    return EconomyFruitOn(state,prop);
+}
+
+int Economy::PickFrom(int prop, int want){
+    int have = FruitOn(prop);
+    int got = std::max(0,std::min(have,want));
+    if (got > 0){
+        state.fruit[prop] = (uint8_t)(have - got);
+        if (state.fruit[prop] == 0){
+            state.regrow[prop] = 0;         //emptied: its days to grow back start now
+        }
+        state.fruit_version++;
+        state.version++;
+    }
+    return got;
+}
+
+/*
+    AT DAWN, every plant (FORAGING, Economy.h). In winter or under the snow, THE FROST, as a field's: the fruit on it
+    is lost, and what was growing back with it - after winter every plant grows its fruit afresh. In growing weather an
+    empty plant counts the dawn, and has its fruit again once FORAGE_REGROW_DAYS are counted. One picked but not
+    bare waits until it is.
+*/
+void Economy::FruitAtDawn(uint64_t tick){
+    if (!state.world || !state.world->forest){
+        return;
+    }
+    const ChasmWorld& w = *state.world;
+    bool f_winter = CalendarDateOf(tick).season == SEASON_WINTER;
+    for (int i : plants){
+        uint8_t& f = state.fruit[i];
+        if (f == FORAGE_GONE || state.prop_state[i] != PROP_STATE_STANDING){
+            continue;
+        }
+        const PropInstance& p = w.forest->props[i];
+        if (f_winter || UnderSnow(w,vec2(p.pos.x,p.pos.z),tick)){
+            if (f > 0 || state.regrow[i] > 0){
+                f = 0;
+                state.regrow[i] = 0;
+                state.fruit_version++;
+            }
+            continue;
+        }
+        if (f == 0 && ++state.regrow[i] >= FORAGE_REGROW_DAYS){
+            f = (uint8_t)EconomyFruitFull(p);
+            state.regrow[i] = 0;
+            state.fruit_version++;
+        }
+    }
+    state.version++;
+}
+
+//Built over - a building's standing storey, a garden or lot, a built field (EconomyPropCovered): gone for good, so a
+//plant the player cleared does not come back when what covers it is pulled down (the user's).
+void Economy::PlantsCovered(const ZoneState& z){
+    if (!state.world || !state.world->forest){
+        return;
+    }
+    for (int i : plants){
+        const PropInstance& p = state.world->forest->props[i];
+        if (state.fruit[i] != FORAGE_GONE && EconomyPropCovered(z,p.plot,p.coarse)){
+            state.fruit[i] = FORAGE_GONE;
+            state.regrow[i] = 0;
+            state.fruit_version++;
+            state.version++;
+        }
+    }
+}
+
+bool Economy::PlotOurs(const EconomyWorker& k, int plot) const{
+    if (plot < 0 || plot >= (int)state.settlement.size()){
+        return false;
+    }
+    uint32_t s = state.settlement[plot];
+    return s == 0 || s == EconomyPersonSettlement(state,k);
+}
+
+/*
+    THE CAMP'S PICKER: the ripe plants of his own settlement's land - only his, as every errand (Ours) - nobody else is
+    after, within `reach` of `at` (all of the land at 0), nearest first by the straight line; out to the first of the
+    nearest few he can get to, standing at its foot on the side he comes from, as a woodcutter does at a tree.
+*/
+bool Economy::GoPick(EconomyWorker& k, const ZoneState& z, Walkers& walkers, const vec2& at, float reach){
+    if (!state.world || !state.world->forest){
+        return false;
+    }
+    const std::vector<PropInstance>& props = state.world->forest->props;
+    uint32_t mine = EconomyPersonSettlement(state,k);
+    if (!mine){
+        return false;
+    }
+    std::vector<int> claimed;
+    for (const EconomyWorker& o : state.workers){
+        if (&o != &k && o.prop >= 0){
+            claimed.push_back(o.prop);
+        }
+    }
+    std::vector<std::pair<float,int>> found;
+    for (int i : plants){
+        const PropInstance& p = props[i];
+        if (p.plot < 0 || p.plot >= (int)state.settlement.size() || state.settlement[p.plot] != mine || FruitOn(i) <= 0){
+            continue;
+        }
+        float d = (vec2(p.pos.x,p.pos.z) - at).length();
+        if ((reach > 0.0f && d > reach) || std::find(claimed.begin(),claimed.end(),i) != claimed.end()){
+            continue;
+        }
+        found.push_back(std::make_pair(d,i));
+    }
+    std::sort(found.begin(),found.end());
+    for (size_t t = 0; t < found.size() && t < 4; t++){
+        int i = found[t].second;
+        const PropInstance& p = props[i];
+        vec2 plant(p.pos.x,p.pos.z);
+        vec2 to = plant - k.pos;
+        float l = to.length();
+        vec2 stand = (l > 0.8f) ? plant - to * (0.6f / l) : plant;
+        if (RouteTo(k,z,walkers,p.plot,stand)){
+            k.prop = i;
+            k.store = 0;
+            k.state = WORKER_TO_WORK;
+            return true;
+        }
+    }
+    return false;
+}
+
+int Economy::ForagePlant(const EconomyWorker& k) const{
+    return BestPlantOn(state,&plants,k.post);
+}
+
+int Economy::ForageWant(const EconomyWorker& k) const{
+    if (k.forage == FORAGE_FRUIT){
+        int plant = ForagePlant(k);
+        int room = std::max(0,NEEDS_SCOUT_FOOD - EconomyPackFood(k)) / EconomyFoodWorth(GOOD_FRUIT);
+        return (plant >= 0) ? std::min(FruitOn(plant),room) : 0;
+    }
+    if (k.forage == FORAGE_WATER){
+        //Frozen over while he draws: as an order to draw under the snow is refused (Forage).
+        if (UnderSnow(*state.world,k.pos,now)){
+            return 0;
+        }
+        return std::max(0,NEEDS_SCOUT_WATER - k.pack[GOOD_WATER]);
+    }
+    return 0;
+}
+
+int Economy::ForageUnitTicks(const EconomyWorker& k) const{
+    if (k.forage == FORAGE_FRUIT){
+        return SecondsToTicks(FORAGE_PICK_SECONDS / EconomySkillFactor(k.skills[EconomyJobSkill(WORKER_JOB_PICKER)]));
+    }
+    return SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS);
+}
+
+void Economy::ForageUnit(EconomyWorker& k){
+    if (k.forage == FORAGE_FRUIT){
+        int plant = ForagePlant(k);
+        if (plant >= 0 && PickFrom(plant,1) > 0){
+            k.pack[GOOD_FRUIT]++;
+        }
+    }else if (k.forage == FORAGE_WATER){
+        k.pack[GOOD_WATER]++;
+    }
+    state.version++;
+}
+
+/*
+    Where someone sent to draw water at wet plot `plot` stands (FORAGING BY HAND): out through the water from it, a few
+    plots, for the dry ones along its edge - open as an order finds a plot - nearest the place clicked first, and the
+    first of those he can get to. Nobody walks the wet bank: he draws standing beside it, as the camp's carrier does.
+*/
+#define FORAGE_BANK_WATER       48      //wet plots looked through for the edge, at most
+
+int Economy::BankPlot(const EconomyWorker& k, const ZoneState& z, Walkers& walkers, int plot){
+    const ChasmWorld& w = *state.world;
+    const Terrain& t = *w.terrain;
+    int n_plots = (int)w.grid->fine.pos.size();
+    auto wet = [&](int v){
+        return t.wet[v] && !ZoneBridgeWalkable(z,v);
+    };
+    auto open = [&](int v){
+        if (v >= (int)z.ground.size() || w.grid->fine.f_boundary[v] || wet(v) || t.Mountain(v)){
+            return false;
+        }
+        int kind = z.KindOf(v);
+        return z.ground[v] != ZONE_GROUND_WALL && !ZoneGateShut(z,v) && (kind == ZONE_KIND_NONE || kind == ZONE_KIND_CAMP);
+    };
+    std::vector<int> seen{plot};
+    std::vector<int> water{plot};
+    std::vector<std::pair<float,int>> banks;
+    const vec2 origin = w.grid->fine.pos[plot];
+    for (size_t at = 0; at < water.size() && water.size() < FORAGE_BANK_WATER; at++){
+        int nb[8];
+        int c = ZonePlotNeighbours(w,water[at],nb,8);
+        for (int i = 0; i < c; i++){
+            int v = nb[i];
+            if (v < 0 || v >= n_plots || std::find(seen.begin(),seen.end(),v) != seen.end()){
+                continue;
+            }
+            seen.push_back(v);
+            if (wet(v)){
+                water.push_back(v);
+            }else if (open(v)){
+                banks.push_back(std::make_pair((w.grid->fine.pos[v] - origin).length(),v));
+            }
+        }
+    }
+    std::sort(banks.begin(),banks.end());
+    for (size_t b = 0; b < banks.size() && b < 6; b++){
+        if (CanWalkPosted(z,walkers,k,banks[b].second)){
+            return banks[b].second;
+        }
+    }
+    return -1;
 }
 
 /*
@@ -3245,7 +3658,7 @@ void Economy::FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
         state.version++;
     }
     //Provisions first where there are any - a soldier's food, one is the whole pack's (defence_plan.md).
-    static const int keeps_best_first[] = {GOOD_PROVISIONS,GOOD_BEANS,GOOD_WHEAT,GOOD_GREENS};
+    static const int keeps_best_first[] = {GOOD_PROVISIONS,GOOD_BEANS,GOOD_WHEAT,GOOD_GREENS,GOOD_FRUIT};
     for (int good : keeps_best_first){
         while (from[good] > 0 && EconomyPackFood(k) < food_to){
             from[good]--;
@@ -3320,6 +3733,9 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     //The camp's own water carrier (THE CAMP'S OWN WORK): draws at the water's edge, not at a collector.
     bool f_draws = k.job == WORKER_JOB_WATER && k.building && k.building < z.buildings.size()
                    && z.buildings[k.building].kind == ZONE_KIND_CAMP;
+    //...and its picker (FORAGING): fruit from the plants of its land, not anything at a workplace.
+    bool f_picks = k.job == WORKER_JOB_PICKER && k.building && k.building < z.buildings.size()
+                   && z.buildings[k.building].kind == ZONE_KIND_CAMP;
     float pace = EconomySkillFactor(k.skills[EconomyJobSkill(k.job)]);
     //What a log he takes up is worth, and the wood his pile holds: his workplace's (woodcutting_plan.md).
     int log_wood = (k.building < state.log_wood.size() && state.log_wood[k.building] > 0) ? state.log_wood[k.building]
@@ -3357,6 +3773,30 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
         }
         return pile >= 0 && own[GOOD_WOOD] + amount <= pile_room;
+    };
+    /*
+        The camp's picker done at a plant: on to the next ripe one within FORAGE_ROUND_REACH of him while his load has
+        room; else back to the camp with what he picked, into its supplies at its door as the water carrier's water
+        goes - cut off from it, a store that takes fruit; with nothing picked, home.
+    */
+    auto pick_on = [&](){
+        k.prop = -1;
+        if (k.carry < ECONOMY_LOAD && GoPick(k,z,walkers,k.pos,FORAGE_ROUND_REACH)){
+            return;
+        }
+        if (k.carry <= 0){
+            k.carry = 0;
+            k.carry_good = -1;
+            GoHome(k,z,walkers);
+            return;
+        }
+        int door = (k.building < home_plot.size()) ? home_plot[k.building] : -1;
+        if (door >= 0 && RouteTo(k,z,walkers,door,state.world->grid->fine.pos[door])){
+            k.store = 0;
+            k.state = WORKER_TO_STORE;
+        }else{
+            deliver();
+        }
     };
     //Posted, and at something else: dropped for the post (TakePost) - a pressing need seen to first. A guard posted by
     //hand the same (step 8): he goes as an ordered man does, where one the auto-fill picked finishes his errand first.
@@ -3485,6 +3925,14 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }
                 break;
             }
+            //The camp's picker (foraging_plan.md): out to the nearest ripe plant of his settlement, while its supplies
+            //hold less fruit than ECONOMY_CAMP_FRUIT_HOLD.
+            if (f_picks){
+                if (own[GOOD_FRUIT] < ECONOMY_CAMP_FRUIT_HOLD){
+                    GoPick(k,z,walkers,k.pos,0.0f);
+                }
+                break;
+            }
             //What waits at his workplace first - the pile, the harvest, the water - when a store takes it;
             //then, for a woodcutter, a tree, while a store or his pile has room for it - and only with a pile.
             if (FetchFromWorkplace(k,z,walkers)){
@@ -3501,6 +3949,18 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     k.state = WORKER_WORKING;       //at his workplace, to pick up a load - or at the water's edge, to draw one
                     k.timer = f_draws ? SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS * ECONOMY_CAMP_WATER_LOAD)
                                       : SecondsToTicks(ECONOMY_PICK_SECONDS);
+                    break;
+                }
+                //The camp's picker at a plant: what it still has, as much as his load has room for, at his pace - picked
+                //bare while he walked, on to the next.
+                if (f_picks){
+                    int n = std::min(FruitOn(k.prop),ECONOMY_LOAD - std::max(0,k.carry));
+                    if (n > 0){
+                        k.state = WORKER_WORKING;
+                        k.timer = SecondsToTicks(FORAGE_PICK_SECONDS * (float)n / pace);
+                    }else{
+                        pick_on();
+                    }
                     break;
                 }
                 int ps = state.prop_state[k.prop];
@@ -3522,6 +3982,16 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             break;
         case WORKER_WORKING:
             if (--k.timer > 0){
+                break;
+            }
+            if (k.prop >= 0 && f_picks){
+                //Picked: what is still on it, as much as his load has room for (PickFrom) - and on (pick_on).
+                int got = PickFrom(k.prop,ECONOMY_LOAD - std::max(0,k.carry));
+                if (got > 0){
+                    k.carry = std::max(0,k.carry) + got;
+                    k.carry_good = GOOD_FRUIT;
+                }
+                pick_on();
                 break;
             }
             if (k.prop < 0 && f_draws){
@@ -3614,8 +4084,9 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
             uint32_t s = k.store;
             if (s == 0){
-                //At his woodpile: onto it, as far as it has room - the camp's water carrier's into its supplies, whole.
-                int put = f_draws ? k.carry : std::min(k.carry,std::max(0,pile_room - own[k.carry_good]));
+                //At his woodpile: onto it, as far as it has room - the camp's water carrier's and picker's into its
+                //supplies, whole.
+                int put = (f_draws || f_picks) ? k.carry : std::min(k.carry,std::max(0,pile_room - own[k.carry_good]));
                 own[k.carry_good] += put;
                 k.carry -= put;
             }else if (s < state.accepts.size() && (state.accepts[s] & GOOD_BIT(k.carry_good))){
@@ -3673,12 +4144,32 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_ON_POST;
+                k.timer = 0;        //FORAGING by hand: begins on the post (below)
             }
             break;
         case WORKER_ON_POST:
             if (EconomyPostPlot(state,k) < 0){
                 GoHome(k,z,walkers);
                 break;
+            }
+            /*
+                FORAGING BY HAND (Economy.h): on his post, a unit at a time into his pack - a fruit off the plant there
+                at his pace, or a unit of water at the camp's water carrier's - each when its timer runs out, until the
+                plant is bare, his pack full or the water frozen. Then he stands, as ever. A pressing need still takes
+                him off (below); back on his post he goes on with it.
+            */
+            if (k.forage != FORAGE_NONE && EconomyAtPost(state,k)){
+                if (k.timer > 0 && --k.timer == 0){
+                    ForageUnit(k);
+                }
+                if (k.timer <= 0){
+                    if (ForageWant(k) > 0){
+                        k.timer = ForageUnitTicks(k);
+                    }else{
+                        k.forage = FORAGE_NONE;
+                    }
+                    state.version++;
+                }
             }
             if (!f_look){
                 break;
@@ -4590,9 +5081,30 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     if (tick % (uint64_t)CALENDAR_DAY_TICKS == 0){
         Heat(z,tick);
         ChancesOfChildren(z,tick);
+        FruitAtDawn(tick);      //FORAGING: the frost's, and what grows back
     }
+    //WITH THE GROWN: the children going along posted beside their grown-up, the babies carried - before anyone moves.
+    WithTheGrown(z,walkers);
     for (EconomyWorker& k : state.workers){
+        if (k.with && EconomyStageAt(k.born,tick) == LIFE_BABY){
+            continue;       //carried: it goes nowhere by itself (below)
+        }
         TickWorker(k,z,walkers,tick,dt);
+    }
+    //...and a baby carried is where its mother is now - out of sight, in her arms.
+    for (EconomyWorker& k : state.workers){
+        if (!k.with || EconomyStageAt(k.born,tick) != LIFE_BABY){
+            continue;
+        }
+        for (const EconomyWorker& m : state.workers){
+            if (m.id == k.with){
+                k.pos = m.pos;
+                StopWhereHeIs(k);
+                k.state = WORKER_AT_HOME;
+                k.f_indoors = true;
+                break;
+            }
+        }
     }
     Needs(z,walkers,tick);
     //ICE: who would be cut off by the thaw, for their cards - a second's look is soon enough for a risk of days.
@@ -4613,6 +5125,7 @@ int EconomyFoodWorth(int good){
         case GOOD_WHEAT:    return CALENDAR_DAY_TICKS;
         case GOOD_GREENS:   return CALENDAR_DAY_TICKS / 2;
         case GOOD_BEANS:    return CALENDAR_DAY_TICKS * 2;
+        case GOOD_FRUIT:    return CALENDAR_DAY_TICKS;      //as wheat (foraging_plan.md): tuning, like the rest
         //Made from a wheat and a beans, and worth the two together (defence_plan.md, PROVISIONS).
         case GOOD_PROVISIONS: return EconomyFoodWorth(GOOD_WHEAT) + EconomyFoodWorth(GOOD_BEANS);
         default:            return 0;
@@ -4656,9 +5169,9 @@ void Economy::EatAndDrink(EconomyWorker& k, const ZoneState& z){
 /*
     Eating and drinking from a stock, at home or away: only a whole unit that fits under full, so nothing is
     wasted. Water first: food does nothing for someone dry. Then food while any fits, the kind that keeps
-    worst first - greens rot, wheat keeps, beans keep longest (gameplay_plan.md, "Goods and food") - so a
-    pantry eats down its greens and saves its beans. PROVISIONS last of all (defence_plan.md): kept for
-    soldiers, eaten only when nothing else there fits.
+    worst first - fruit and greens rot, wheat keeps, beans keep longest (gameplay_plan.md, "Goods and food") - so a
+    pantry eats down its fruit and greens and saves its beans; FRUIT first of all (foraging_plan.md, the user's).
+    PROVISIONS last of all (defence_plan.md): kept for soldiers, eaten only when nothing else there fits.
 */
 void Economy::Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
     while (from[GOOD_WATER] > 0 && k.water + NEEDS_WATER_WORTH <= NEEDS_WATER_FULL){
@@ -4669,7 +5182,7 @@ void Economy::Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
     if (EconomyDry(k)){
         return;
     }
-    static const int keeps_worst_first[] = {GOOD_GREENS,GOOD_WHEAT,GOOD_BEANS,GOOD_PROVISIONS};
+    static const int keeps_worst_first[] = {GOOD_FRUIT,GOOD_GREENS,GOOD_WHEAT,GOOD_BEANS,GOOD_PROVISIONS};
     for (bool f_ate = true; f_ate;){
         f_ate = false;
         for (int good : keeps_worst_first){
@@ -4794,6 +5307,7 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
         k->post_layer = -1;
         RePlace(was_plot,was_layer,k,z,walkers);
         k->gather = 0;
+        k->forage = FORAGE_NONE;
         //A tent not taken yet is not gone for; one carried he keeps, to pitch when he likes (settlements_plan.md).
         if (k->tent == ECONOMY_TENT_TO_TAKE){
             k->tent = ECONOMY_TENT_NONE;
@@ -4835,6 +5349,7 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
     bool f_new = k->post < 0;
     k->post = plot;
     k->post_layer = layer;
+    k->forage = FORAGE_NONE;    //a new post is only that: Forage gives him something to do there after
     if (k->carry > 0){
         DropLoad(*k,z);
     }
@@ -4857,16 +5372,7 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
     (TickWorker), wherever he is on his way or on his post; one setting out from home fills it there first (TakePost).
 */
 bool Economy::Gather(uint32_t person, bool f_on, const ZoneState& z, Walkers& walkers, std::string* why){
-    for (EconomyWorker& k : state.workers){
-        if (k.id != person){
-            continue;
-        }
-        if (f_on && k.post < 0){
-            if (why){
-                *why = "not sent out";
-            }
-            return false;
-        }
+    auto set = [&](EconomyWorker& k){
         //...but not on his way for a tent: that comes first, and gathering after (TickWorker).
         if (!f_on && k.gather > 0 && k.state == WORKER_TO_SUPPLY && k.tent != ECONOMY_TENT_TO_TAKE && !EconomyPressing(k)
             && state.world && z.world == state.world){
@@ -4874,6 +5380,30 @@ bool Economy::Gather(uint32_t person, bool f_on, const ZoneState& z, Walkers& wa
             GoToPost(k,z,walkers);
         }
         k.gather = f_on ? ECONOMY_GATHER_STOPS : 0;
+    };
+    for (EconomyWorker& k : state.workers){
+        if (k.id != person){
+            continue;
+        }
+        if (!EconomyCanOrder(k,now)){
+            if (why){
+                *why = "too young";     //a child gathers as the grown-up he goes with does (below)
+            }
+            return false;
+        }
+        if (f_on && k.post < 0){
+            if (why){
+                *why = "not sent out";
+            }
+            return false;
+        }
+        set(k);
+        //WITH THE GROWN: the children going along with him gather as he does.
+        for (EconomyWorker& c : state.workers){
+            if (c.with == person && c.post >= 0 && EconomyStageAt(c.born,now) == LIFE_CHILD){
+                set(c);
+            }
+        }
         state.version++;
         return true;
     }
@@ -4881,6 +5411,108 @@ bool Economy::Gather(uint32_t person, bool f_on, const ZoneState& z, Walkers& wa
         *why = "nobody by that id";
     }
     return false;
+}
+
+/*
+    FORAGING BY HAND (Economy.h, foraging_plan.md): the player's one-off for someone sent out - a right click on a ripe
+    plant, or on water, and its menu. Refused before he goes: nothing ripe there, no room in his pack, the water frozen
+    or out of his reach, another settlement's land. Then an ORDER to the plant's plot, or to the edge beside the water
+    (BankPlot) - the order's own refusals hold - and what to do there, which begins once he stands on it (TickWorker).
+    One of a GROUP picks the nearest ripe plant to the one clicked that none of them is sent to, within
+    FORAGE_SPREAD_REACH; drawing, they share the edge out as a group's posts do.
+*/
+bool Economy::Forage(uint32_t person, int plot, int what, const ZoneState& z, Walkers& walkers, std::string* why,
+                     bool f_spread){
+    auto refuse = [&](const char* reason){
+        if (why){
+            *why = reason;
+        }
+        return false;
+    };
+    if (!state.world || z.world != state.world || !state.world->forest){
+        return refuse("no colony");
+    }
+    EconomyWorker* k = NULL;
+    for (EconomyWorker& o : state.workers){
+        if (o.id == person){
+            k = &o;
+        }
+    }
+    if (!k){
+        return refuse("nobody by that id");
+    }
+    if (!EconomyCanOrder(*k,now)){
+        return refuse("too young");
+    }
+    const ChasmWorld& w = *state.world;
+    if (plot < 0 || plot >= (int)z.ground.size() || plot >= (int)w.grid->fine.pos.size()){
+        return refuse("no such plot");
+    }
+    int to = -1;
+    bool f_spread_post = false;
+    if (what == FORAGE_FRUIT){
+        if (std::max(0,NEEDS_SCOUT_FOOD - EconomyPackFood(*k)) / EconomyFoodWorth(GOOD_FRUIT) <= 0){
+            return refuse("no room in his pack for more food");
+        }
+        int plant = -1;
+        if (!f_spread){
+            plant = BestPlantOn(state,&plants,plot);
+        }else{
+            const std::vector<PropInstance>& props = w.forest->props;
+            const vec2 origin = w.grid->fine.pos[plot];
+            float best = FORAGE_SPREAD_REACH;
+            for (int i : plants){
+                const PropInstance& p = props[i];
+                float d = (vec2(p.pos.x,p.pos.z) - origin).length();
+                if (d > best || (plant >= 0 && d >= best) || FruitOn(i) <= 0){
+                    continue;       //the lower index on a tie: plants are in index order
+                }
+                bool f_taken = false;
+                for (const EconomyWorker& o : state.workers){
+                    f_taken = f_taken || (&o != k && o.forage == FORAGE_FRUIT && o.post == p.plot);
+                }
+                if (!f_taken){
+                    best = d;
+                    plant = i;
+                }
+            }
+        }
+        if (plant < 0){
+            return refuse(f_spread ? "no more ripe fruit near" : "no ripe fruit there");
+        }
+        to = w.forest->props[plant].plot;
+    }else if (what == FORAGE_WATER){
+        if (!w.terrain->wet[plot] || ZoneBridgeWalkable(z,plot)){
+            return refuse("no water there");
+        }
+        if (UnderSnow(w,w.grid->fine.pos[plot],now)){
+            return refuse("the water is frozen");
+        }
+        if (k->pack[GOOD_WATER] >= NEEDS_SCOUT_WATER){
+            return refuse("no room in his pack for more water");
+        }
+        walkers.SetSeason(now);     //between ticks: the ice as it is now, as an order's
+        to = BankPlot(*k,z,walkers,plot);
+        if (to < 0){
+            return refuse("no way to the water's edge");
+        }
+        f_spread_post = f_spread;
+    }else{
+        return refuse("nothing to forage");
+    }
+    //Only on his own settlement's land or land none holds (the user's), as a pressing need goes (SeekSupplyOf).
+    if (!PlotOurs(*k,to)){
+        return refuse("another settlement's land");
+    }
+    if (!Order(person,to,z,walkers,why,-1,f_spread_post)){
+        return false;
+    }
+    k->forage = what;
+    if (k->state == WORKER_TO_POST || k->state == WORKER_ON_POST){
+        k->timer = 0;       //begun afresh once he stands there - never a pressing need's meal, which has its own timer
+    }
+    state.version++;
+    return true;
 }
 
 /*
@@ -4903,6 +5535,9 @@ bool Economy::TakeTent(uint32_t person, bool f_on, const ZoneState& z, Walkers& 
         if (k.tent == ECONOMY_TENT_CARRIED){
             return refuse("already carrying a tent");
         }
+        if (f_on && !EconomyCanOrder(k,now)){
+            return refuse("too young");     //a child shares his grown-ups' tents (WITH THE GROWN)
+        }
         if (f_on && k.post < 0){
             return refuse("not sent out");
         }
@@ -4922,6 +5557,9 @@ bool Economy::TakeTent(uint32_t person, bool f_on, const ZoneState& z, Walkers& 
     A camp's beds to spare for `k`: its tents less those packed already this tick (out of the camp only once the tick
     is done), those someone else is on his way to pack, and those slept in - by its people not away carrying tents of
     their own, nor on their way for one here (their bed is the tent they take). So his own is one to spare, for him.
+    For ONE OF ITS OWN PEOPLE, none slept in counts (the user's no_tent_to_take, 2026-10-12): a camp holding more than
+    its tents - children squeezed in, a family crammed - has every tent slept in, so nobody living there could pack
+    up and move on. Its people may take its tents while any are left and not spoken for; those staying are crammed.
 */
 int Economy::CampSpare(const ZoneState& z, uint32_t id, const EconomyWorker* k) const{
     if (id == 0 || id >= z.buildings.size() || id >= tents_of.size() || id >= stands.size()
@@ -4932,13 +5570,15 @@ int Economy::CampSpare(const ZoneState& z, uint32_t id, const EconomyWorker* k) 
     for (int v : tents_of[id]){
         spare += (std::find(tents_packed.begin(),tents_packed.end(),v) != tents_packed.end()) ? 0 : 1;
     }
+    bool f_ours = k && k->house == id;
     for (const EconomyWorker& o : state.workers){
         if (&o == k){
             continue;
         }
         bool f_taking = o.tent == ECONOMY_TENT_TO_TAKE && o.store == id
                         && (o.state == WORKER_TO_SUPPLY || o.state == WORKER_SUPPLYING);
-        spare -= (f_taking || (o.house == id && o.tent != ECONOMY_TENT_CARRIED)) ? 1 : 0;
+        bool f_sleeps = !f_ours && o.house == id && o.tent != ECONOMY_TENT_CARRIED;
+        spare -= (f_taking || f_sleeps) ? 1 : 0;
     }
     return spare;
 }
@@ -5000,10 +5640,29 @@ bool Economy::GoForTent(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
 }
 
 /*
+    ONE CAMP TO A COLONY (settlements_plan.md, the user's 2026-10-12): the camp of the colony plot `plot` lies in - the
+    oldest, should a save from before hold two - or 0, with none or outside every colony. A tent pitched or painted
+    there is that camp's wherever it stands (THE CAMP, Zones.h: its tents need not touch), so a colony has one camp and
+    one set of the camp's places, however its tents fall; the first tent outside every colony founds one.
+*/
+uint32_t EconomyColonyCamp(const EconomyState& e, const ZoneState& z, int plot){
+    uint32_t s = (plot >= 0 && plot < (int)e.settlement.size()) ? e.settlement[plot] : 0;
+    if (!s){
+        return 0;
+    }
+    for (uint32_t id = 1; id < z.buildings.size(); id++){
+        if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0 && EconomySettlementOf(e,id) == s){
+            return id;
+        }
+    }
+    return 0;
+}
+
+/*
     PITCHING (settlements_plan.md): where the tent he carries goes up - the plot he stands on, else the nearest a camp
     may stand on, ring by ring out to ECONOMY_PITCH_RINGS, on his own terrace step: not over a crate or a standing tree.
-    Beside a pitched tent it joins that camp, where the camp takes it; otherwise it is a camp of its own. Anywhere -
-    outside every settlement is what it is for; and he stands there, so it is not under the clouds.
+    In a colony with a camp it is that camp's (EconomyColonyCamp), wherever it stands; otherwise a camp of its own - a
+    colony's first, or outside every colony a new one, which is what it is for. He stands there, so not under clouds.
 */
 bool Economy::PitchSpot(uint32_t person, const ZoneState& z, int* plot, uint32_t* camp, std::string* why) const{
     auto refuse = [&](const std::string& reason){
@@ -5042,15 +5701,9 @@ bool Economy::PitchSpot(uint32_t person, const ZoneState& z, int* plot, uint32_t
         });
         std::vector<int> next;
         for (int v : ring){
-            //A pitched tent beside it: the camp it joins - the oldest, beside two.
             int nb[8];
             int n = ZonePlotNeighbours(w,v,nb,8);
-            uint32_t beside = 0;
             for (int i = 0; i < n; i++){
-                uint32_t b = z.building[nb[i]];
-                if (b && z.KindOf(nb[i]) == ZONE_KIND_CAMP && z.standing[nb[i]] > 0 && (beside == 0 || b < beside)){
-                    beside = b;
-                }
                 if (std::find(seen.begin(),seen.end(),nb[i]) == seen.end() && t.SameGround(here.plot,nb[i]) && !t.wet[nb[i]]){
                     seen.push_back(nb[i]);
                     next.push_back(nb[i]);
@@ -5062,11 +5715,8 @@ bool Economy::PitchSpot(uint32_t person, const ZoneState& z, int* plot, uint32_t
                 first_why = first_why ? first_why : "something stands there";
                 continue;
             }
-            uint32_t joins = beside;
-            if (joins && !(ZoneCanExtend(w,z,v,ZONE_KIND_CAMP,joins,&no) && ZoneCanBuild(w,z,v,ZONE_KIND_CAMP,joins,&no))){
-                joins = 0;      //a camp that cannot take it: one of its own beside it
-            }
-            bool f_ok = ZoneCanBuild(w,z,v,ZONE_KIND_CAMP,joins,&no);
+            uint32_t joins = EconomyColonyCamp(state,z,v);
+            bool f_ok = (!joins || ZoneCanExtend(w,z,v,ZONE_KIND_CAMP,joins,&no)) && ZoneCanBuild(w,z,v,ZONE_KIND_CAMP,joins,&no);
             if (f_ok && std::any_of(state.crates.begin(),state.crates.end(),[&](const EconomyCrate& c){ return c.plot == v; })){
                 f_ok = false;
                 no = "a crate lies there";
@@ -5125,6 +5775,131 @@ const EconomyWorker* Economy::PartnerLivingIn(const EconomyWorker& k, uint32_t s
 }
 
 /*
+    WITH THE GROWN (Economy.h; settlements_plan.md, the user's 2026-10-12: "they'd have to come with. They'll need
+    protection from an archer further along in the game"). A CHILD goes along when every grown-up of its household - a
+    young adult counts - is LEAVING it: carrying or taking a tent, or posted onto another settlement's ground, where
+    Settle here is offered. With one of them staying the children stay too, as with a partner left behind. Beside its
+    mother if she is one of them, else its father, else the eldest (the lower id on a tie). A BABY always goes with its
+    mother (the user's): carried whenever she is posted, and from then until she is home again - `with` remembers it,
+    since a baby in a camp often stands off its own tent and could not be told from one out with her.
+*/
+uint32_t Economy::GoesWith(const EconomyWorker& k) const{
+    int stage = EconomyStageAt(k.born,now);
+    if (stage == LIFE_BABY){
+        for (const EconomyWorker& m : state.workers){
+            if (m.id == k.mother){
+                bool f_home = m.state == WORKER_AT_HOME && AtHome(m);
+                return (EconomyPosted(m) || (k.with == m.id && !f_home)) ? m.id : 0;
+            }
+        }
+        return 0;
+    }
+    if (stage != LIFE_CHILD){
+        return 0;
+    }
+    const EconomyWorker* lead = NULL;
+    int lead_rank = 0;
+    for (const EconomyWorker& o : state.workers){
+        if (o.family != k.family || o.id == k.id || EconomyStageAt(o.born,now) < LIFE_YOUNG){
+            continue;
+        }
+        uint32_t there = (o.post >= 0 && o.post < (int)state.settlement.size()) ? state.settlement[o.post] : 0;
+        bool f_leaving = o.post >= 0 && (o.tent != ECONOMY_TENT_NONE || (there && there != EconomyPersonSettlement(state,o)));
+        if (!f_leaving){
+            return 0;       //one of them stays: so do the children
+        }
+        int rank = (o.id == k.mother) ? 0 : (o.id == k.father) ? 1 : 2;
+        if (!lead || rank < lead_rank || (rank == lead_rank && o.born < lead->born)){
+            lead = &o;
+            lead_rank = rank;
+        }
+    }
+    return lead ? lead->id : 0;
+}
+
+/*
+    ...worked out at each tick's start, before anyone moves. A child going along is POSTED beside that grown-up, as one
+    of a group is (EconomyPostPoint), on whatever post he has - packing at home as anyone setting out does, gathering
+    where he gathers (and once at least, out playing with nothing packed) - and is let go with him: home again, or
+    alone if his grown-ups are gone (ORPHANS, HouseFamilies). A child grown up on the way keeps his post as his own.
+    A baby carried goes nowhere by itself: Tick keeps it at its mother's side.
+*/
+void Economy::WithTheGrown(const ZoneState& z, Walkers& walkers){
+    for (EconomyWorker& k : state.workers){
+        uint32_t with = GoesWith(k);
+        if (with != k.with){
+            k.with = with;
+            state.version++;
+        }
+        if (EconomyStageAt(k.born,now) != LIFE_CHILD){
+            continue;
+        }
+        const EconomyWorker* g = NULL;
+        for (const EconomyWorker& o : state.workers){
+            g = (with && o.id == with) ? &o : g;
+        }
+        int was_plot = k.post;
+        int was_layer = k.post_layer;
+        if (g && (k.post != g->post || k.post_layer != g->post_layer)){
+            if (k.post < 0){
+                k.gather = (g->gather > 0) ? g->gather : (k.state == WORKER_AT_HOME && AtHome(k)) ? 0 : 1;
+            }
+            k.post = g->post;
+            k.post_layer = g->post_layer;
+            if (k.state == WORKER_TO_POST || k.state == WORKER_ON_POST){
+                GoToPost(k,z,walkers);
+            }
+            RePlace(k.post,k.post_layer,&k,z,walkers);
+            RePlace(was_plot,was_layer,&k,z,walkers);
+            state.version++;
+        }else if (!g && k.post >= 0){
+            k.post = -1;
+            k.post_layer = -1;
+            k.gather = 0;
+            RePlace(was_plot,was_layer,&k,z,walkers);
+            if (k.state == WORKER_TO_POST || k.state == WORKER_ON_POST){
+                GoHome(k,z,walkers);
+            }
+            state.version++;
+        }
+    }
+}
+
+//Those going with `id` now (GoesWith): his household's children posted beside him, the baby he carries.
+std::vector<uint32_t> Economy::Along(uint32_t id) const{
+    std::vector<uint32_t> out;
+    for (const EconomyWorker& o : state.workers){
+        if (GoesWith(o) == id){
+            out.push_back(o.id);
+        }
+    }
+    return out;
+}
+
+//...into his new home with him, pitching or settling: of his household and home from now on, and off their post.
+void Economy::BringAlong(const EconomyWorker& k, const std::vector<uint32_t>& along, const ZoneState& z, Walkers& walkers){
+    for (EconomyWorker& o : state.workers){
+        if (std::find(along.begin(),along.end(),o.id) == along.end()){
+            continue;
+        }
+        o.family = k.family;
+        o.house = k.house;
+        if (o.post >= 0){
+            int was_plot = o.post;
+            int was_layer = o.post_layer;
+            o.post = -1;
+            o.post_layer = -1;
+            o.gather = 0;
+            RePlace(was_plot,was_layer,&o,z,walkers);
+            if (o.state == WORKER_TO_POST || o.state == WORKER_ON_POST){
+                GoHome(o,z,walkers);
+            }
+        }
+        state.version++;
+    }
+}
+
+/*
     SETTLING (settlements_plan.md, the user's 2026-10-11): someone ordered onto the ground of another settlement moves
     there without a tent - once he stands inside its borders, on his way or at his post. Into his partner's home if
     they live there (REJOINING); else a camp of it with a bed to spare, the nearest; else an empty house of it; else
@@ -5147,6 +5922,9 @@ bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, 
     }
     if (!k){
         return refuse("nobody by that id");
+    }
+    if (!EconomyCanOrder(*k,now)){
+        return refuse("too young");     //a child goes with his grown-ups (WITH THE GROWN), and settles with them
     }
     uint32_t there = (k->post >= 0 && k->post < (int)state.settlement.size()) ? state.settlement[k->post] : 0;
     if (!there || there == EconomyPersonSettlement(state,*k)){
@@ -5211,12 +5989,14 @@ bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, 
     if (!bed){
         return refuse("nowhere to live there");     //a settlement is its homes: never met
     }
+    std::vector<uint32_t> along = Along(k->id);    //WITH THE GROWN: while he is still on his way
     if (partner){
         k->family = partner_family;
     }else{
         OwnHousehold(*k);
     }
     k->house = bed;
+    BringAlong(*k,along,z,walkers);
     if (k->tent == ECONOMY_TENT_TO_TAKE){
         k->tent = ECONOMY_TENT_NONE;
     }
@@ -5226,6 +6006,7 @@ bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, 
     k->post_layer = -1;
     RePlace(was_plot,was_layer,k,z,walkers);     //those still posted there spread round it again (selection_plan.md)
     k->gather = 0;
+    k->forage = FORAGE_NONE;
     //Home - unless a pressing need has him on his way to a supply, which he sees to first (GoHome sends him on).
     if (k->state == WORKER_TO_POST || k->state == WORKER_ON_POST){
         GoHome(*k,z,walkers);
@@ -5258,6 +6039,7 @@ void Economy::Pitched(uint32_t person, int plot, const ZoneState& z, Walkers& wa
     }
     const EconomyWorker* partner = PartnerLivingIn(*k,EconomySettlementOf(state,camp));
     uint32_t home = partner ? partner->house : camp;
+    std::vector<uint32_t> along = Along(k->id);    //WITH THE GROWN: while he still carries the tent
     if (partner){
         k->family = partner->family;
     }else{
@@ -5267,6 +6049,7 @@ void Economy::Pitched(uint32_t person, int plot, const ZoneState& z, Walkers& wa
         DropLoad(*k,z);
     }
     k->house = home;
+    BringAlong(*k,along,z,walkers);
     k->tent = ECONOMY_TENT_NONE;
     int was_plot = k->post;
     int was_layer = k->post_layer;
@@ -5274,6 +6057,7 @@ void Economy::Pitched(uint32_t person, int plot, const ZoneState& z, Walkers& wa
     k->post_layer = -1;
     RePlace(was_plot,was_layer,k,z,walkers);     //those still posted there spread round it again (selection_plan.md)
     k->gather = 0;
+    k->forage = FORAGE_NONE;
     k->store = 0;
     k->prop = -1;
     k->f_indoors = false;
@@ -5398,6 +6182,7 @@ bool Economy::PostGuard(uint32_t person, uint32_t tower, const ZoneState& z, Wal
     int was_layer = k->post_layer;
     k->post = -1;
     k->post_layer = -1;
+    k->forage = FORAGE_NONE;
     RePlace(was_plot,was_layer,k,z,walkers);     //those he was ordered out with spread round it again
     if (k->carry > 0){
         DropLoad(*k,z);
@@ -5945,7 +6730,14 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
             k.health -= 1 + (EconomyDry(k) ? NEEDS_DRY_DRAIN : 0) + (EconomyCold(state,k) ? NEEDS_COLD_DRAIN : 0);
         }
         EatAndDrink(k,z);
-        if (EconomyPosted(k)){
+        if (k.with && EconomyStageAt(k.born,tick) == LIFE_BABY){
+            //WITH THE GROWN: a baby carried is fed from its mother's pack, as she would feed it.
+            for (EconomyWorker& m : state.workers){
+                if (m.id == k.with){
+                    Consume(k,m.pack);
+                }
+            }
+        }else if (EconomyPosted(k)){
             /*
                 POSTS: a whole unit whenever it fits, from his pack - but on a tower from its stock as at home, his
                 pantry, and from the pack only a kind the tower has none of: water while it has no water, food while
@@ -7778,6 +8570,17 @@ EconomySaved EconomySaveState(const EconomyState& state){
             s.props.push_back(std::make_pair((int)i,(int)state.prop_state[i]));
         }
     }
+    //FORAGING: the plants that are not ripe and full, as a new map's all are.
+    if (state.world && state.world->forest){
+        const std::vector<PropInstance>& props = state.world->forest->props;
+        for (size_t i = 0; i < state.fruit.size() && i < props.size(); i++){
+            int full = EconomyFruitFull(props[i]);
+            int regrow = (i < state.regrow.size()) ? state.regrow[i] : 0;
+            if (full > 0 && (state.fruit[i] != full || regrow != 0)){
+                s.plants.push_back(std::array<int,3>{(int)i,(int)state.fruit[i],regrow});
+            }
+        }
+    }
     s.workers = state.workers;
     s.fields = state.fields;
     for (size_t id = 1; id < state.site.size(); id++){
@@ -7846,6 +8649,14 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
             state.prop_state[pr.first] = (uint8_t)pr.second;
         }
     }
+    //FORAGING: the plants as saved - the rest ripe and full, as Reset left them. A save from before has none.
+    for (const std::array<int,3>& pl : saved.plants){
+        if (pl[0] >= 0 && pl[0] < (int)state.fruit.size() && EconomyFruitFull(world->forest->props[pl[0]]) > 0){
+            state.fruit[pl[0]] = (uint8_t)std::max(0,std::min(255,pl[1]));
+            state.regrow[pl[0]] = (uint8_t)std::max(0,std::min(255,pl[2]));
+        }
+    }
+    state.fruit_version++;
     /*
         The people as saved. A save from before P4 has only stand-in workers, with no person ids: they
         are dropped, and the colony starts with its settlers at the camp, as a new one does.

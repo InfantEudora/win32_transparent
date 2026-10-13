@@ -34,6 +34,14 @@ int ForestSeasonal(int kind);
 //The modelled bare oak of each oak kind, PROP_OAK_A on, in chasm_props.glb (blender_chasm_props.py).
 #define FOREST_OAK_KINDS        3
 extern const char* forest_bare_names[FOREST_OAK_KINDS];
+//The FRUIT drawn on a ripe plant (foraging_plan.md): a mesh for each kind that bears, in chasm_props.glb
+//(blender_chasm_props.py), drawn over the plant at its own transform.
+#define FOREST_FRUIT_KINDS      5
+extern const char* forest_fruit_names[FOREST_FRUIT_KINDS];
+//...which of them is a prop kind's, -1 for a kind that bears none; and whether a plant at `stage` shows it: not an
+//oak thinning or bare, whose canopy the fruit would hang outside of - the rules' fruit is there all the same.
+int ForestFruitMesh(int kind);
+bool ForestFruitShows(int stage);
 //The stage prop `prop` (an index into ForestData::props) of `kind` is at on `tick`; GREEN for a kind
 //that has none.
 int ForestStage(int kind, size_t prop, uint64_t tick);

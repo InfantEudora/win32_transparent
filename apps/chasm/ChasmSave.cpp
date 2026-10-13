@@ -115,6 +115,11 @@ json ChasmSaveToJson(const ChasmSave& s){
         for (const auto& pr : e.props){
             props.push_back(json::array({pr.first,pr.second}));
         }
+        //The plants not ripe and full (foraging_plan.md): [prop, fruit on it (255 gone), dawns grown back].
+        json plants = json::array();
+        for (const auto& pl : e.plants){
+            plants.push_back(json::array({pl[0],pl[1],pl[2]}));
+        }
         json workers = json::array();
         for (const EconomyWorker& k : e.workers){
             json route = json::array();
@@ -152,6 +157,14 @@ json ChasmSaveToJson(const ChasmSave& s){
             //A tent he is to take or carries (settlements_plan.md) - only then.
             if (k.tent != ECONOMY_TENT_NONE){
                 workers.back()["tent"] = k.tent;
+            }
+            //What he is to do at his post by hand, picking or drawing (foraging_plan.md) - only then.
+            if (k.forage != FORAGE_NONE){
+                workers.back()["forage"] = k.forage;
+            }
+            //Who a child goes along with, or a baby is carried by (settlements_plan.md) - only then.
+            if (k.with){
+                workers.back()["with"] = k.with;
             }
             //His route's layers (ramparts_plan.md) - only off the ground, so a colony that never climbs saves as before.
             if (!k.route_layer.empty()){
@@ -229,7 +242,7 @@ json ChasmSaveToJson(const ChasmSave& s){
         economy = json{{"stocks",stocks},{"pantries",pantries},{"felled",props},{"people",workers},{"fields",fields},
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
                        {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},
-                       {"kept",kept},{"ordered",ordered}};
+                       {"kept",kept},{"ordered",ordered},{"plants",plants}};
     }
     //The debug castle (ramparts_plan.md): plot and piece - only with some, so a save without one is as before.
     json castle = json::array();
@@ -359,6 +372,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         for (const json& pr : e.value("felled",json::array())){
             out.economy.props.push_back(std::make_pair(pr[0].get<int>(),pr[1].get<int>()));
         }
+        //foraging_plan.md: a save from before has none - every plant ripe.
+        for (const json& pl : e.value("plants",json::array())){
+            out.economy.plants.push_back(std::array<int,3>{pl[0].get<int>(),pl[1].get<int>(),pl[2].get<int>()});
+        }
         //"people" since P4; "workers" before, the stand-ins - read, and dropped by Economy::Restore.
         json people = e.contains("people") ? e["people"] : e.value("workers",json::array());
         for (const json& wk : people){
@@ -407,6 +424,8 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.post_layer = wk.value("post_layer",-1);   //ramparts_plan.md: an order to a layer; none before, his post's top
             k.gather = wk.value("gather",0);    //defence_plan.md, "Scouting": not gathering
             k.tent = wk.value("tent",(int)ECONOMY_TENT_NONE);   //settlements_plan.md: no tent
+            k.forage = wk.value("forage",(int)FORAGE_NONE);     //foraging_plan.md: nothing to do by hand
+            k.with = wk.value("with",0u);       //settlements_plan.md: nobody young went along before
             k.archery = wk.value("archery",0);  //range_plan.md: nobody had trained before ranges
             k.f_chosen = wk.value("chosen",false);      //defence_plan.md step 8: no guard was posted by hand before
             if (wk.contains("pack") && wk["pack"].is_object()){

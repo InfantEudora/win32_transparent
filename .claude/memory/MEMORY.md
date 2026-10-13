@@ -102,7 +102,10 @@
 - [Ramparts plan](ramparts_plan.md) — Chasm walk nodes are plot+layer; tower decks + debug castle built 2026-10-10; route_layer drives height; WalkJoin is the shared rule
 - [Chasm person picking](chasm_person_picking.md) — people picked by G-buffer readback + 8 px fallback; skinned outlines; pick-pixel pin; multi-select all 3 steps built (group, box, group orders spread by the rules)
 - [Minimised app took keystrokes](minimized_focus_leak.md) — OPEN: a --minimized chasm once had input_focused true and obeyed VS Code typing; check input_focused
-- [Chasm settlements](chasm_settlements.md) — 2026-10-11: territories by walk, reach by beds, any home keeps one; founding by tent + settle here BUILT; partners rejoin, lone house pairs, hut replaces camp woodcutter; children-left-behind open
+- [Chasm settlements](chasm_settlements.md) — 2026-10-11: territories by walk, reach by beds, any home keeps one; founding by tent + settle here BUILT; partners rejoin, lone house pairs, hut replaces camp woodcutter; children go with household, babies carried, orphans squeeze in (2026-10-12); one camp per colony
 - [Chasm stop work + ice](chasm_stop_work_and_ice.md) — 2026-10-12: workplaces stoppable (f_stopped); collector takes over camp drawer; posted cross ice with thaw warnings
 - [Chasm woodcutting](chasm_woodcutting.md) — only woodcutters fell (roads/walls/sites wait); camp 1 farmer + 1 woodcutter; logs 2/4/5; hut room by area; built 2026-10-11
+- [Chasm foraging](chasm_foraging.md) — BUILT 2026-10-12: fruit from bushes + oaks, camp picker, posted pick/draw menu; exporting chasm_props.blend drops Idle
 - [ImGui input race + crash reports](imgui_input_race_crash_report.md) — the rare i<Size assert was WndProc vs render thread on InputEventsQueue, FIXED 2026-10-12 (lock in WindowImGui.cpp); debug builds write build/crash_*.txt
+- [Chasm waterfalls](chasm_waterfalls.md) — 2026-10-12 brink + welded sheet + stage 2; camera stays above rim, no shader hot-reload, river line runs 10 past lip
+- [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag: chasm as cracked-mud plates (pull-apart, slumps, islands); not ported, verdict pending

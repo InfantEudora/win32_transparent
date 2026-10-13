@@ -18,6 +18,7 @@ uint32_t HudGoodColour(int good){
         case GOOD_GREENS:       return UIColor(150,206,104);
         case GOOD_BEANS:        return UIColor(200,132,168);
         case GOOD_PROVISIONS:   return UIColor(226,212,166);    //hardtack: paler than wheat, lighter than wood
+        case GOOD_FRUIT:        return UIColor(226,104,84);     //berries: a red, apart from the beans' mauve (foraging_plan.md)
         //Materials browns and greys, inputs a family of their own (goods_plan.md): rope a greyer tan than wood,
         //hemp a sage green, apart from the greens' yellow-green.
         case GOOD_ROPE:         return UIColor(176,160,128);

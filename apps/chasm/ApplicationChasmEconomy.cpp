@@ -87,6 +87,9 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(s.data(),sizeof(int) * GOOD_COUNT);
     }
     h.Bytes(e.prop_state.data(),e.prop_state.size());
+    //The plants' fruit and their growing back (foraging_plan.md), by prop like the felled trees.
+    h.Bytes(e.fruit.data(),e.fruit.size());
+    h.Bytes(e.regrow.data(),e.regrow.size());
     n = (uint32_t)e.workers.size();
     h.Bytes(&n,sizeof(n));
     h.Bytes(&e.next_person,sizeof(e.next_person));
@@ -122,6 +125,14 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         //Taking a tent, or carrying one (settlements_plan.md) - only while he is, likewise.
         if (k.tent != ECONOMY_TENT_NONE){
             h.Add(((uint64_t)k.id << 32) | 0x7E4700u | (uint32_t)k.tent);
+        }
+        //Picking or drawing by hand at his post (foraging_plan.md) - only while he is, likewise.
+        if (k.forage != FORAGE_NONE){
+            h.Add(((uint64_t)k.id << 32) | 0xF0A600u | (uint32_t)k.forage);
+        }
+        //Going along with a grown-up, or carried by his mother (settlements_plan.md) - only while he is, likewise.
+        if (k.with){
+            h.Add(((uint64_t)k.id << 32) ^ 0x3171000000000000ull ^ (uint64_t)k.with);
         }
         //His route's layers (ramparts_plan.md) - only once he leaves the ground, so a colony that never does hashes as before.
         if (!k.route_layer.empty()){
@@ -197,6 +208,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         chip; refused as an order is;
       - someone ordered out told to TAKE A TENT first, or not, and one carried PITCHED where he stands
         (settlements_plan.md) - his card's chips; refused as an order is;
+      - someone sent to PICK a ripe plant or DRAW water by hand (foraging_plan.md) - the right click's menu; refused
+        as an order is;
       - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
@@ -334,6 +347,22 @@ void ApplicationChasm::RegisterEconomyCommands(){
             order_commands_done++;
             return OBJECTID_INVALID;
         });
+    //Picking a plant or drawing water by hand (foraging_plan.md): the right click's menu - refused as an order is.
+    main_scene->RegisterCommandHandler(CHASM_CMD_FORAGE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.Forage(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],zones.State(),walkers,&why,cmd.value[2] != 0.0f)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
     main_scene->RegisterCommandHandler(CHASM_CMD_KEEP,
         [this](const SimCommand& cmd) -> objectid_t {
             int good = (int)cmd.subtype;
@@ -432,6 +461,17 @@ void ApplicationChasm::SubmitSettle(uint32_t person){
     cmd.type = CHASM_CMD_SETTLE;
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitForage(uint32_t person, int plot, int what, bool f_spread){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_FORAGE;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    cmd.value[0] = (float)plot;     //a plot index, well inside a float's exact integers
+    cmd.value[1] = (float)what;
+    cmd.value[2] = f_spread ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -578,6 +618,12 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (k.tent != ECONOMY_TENT_NONE){
         j["tent"] = (k.tent == ECONOMY_TENT_CARRIED) ? "carried" : "to_take";     //settlements_plan.md
     }
+    if (k.forage != FORAGE_NONE){
+        j["forage"] = (k.forage == FORAGE_FRUIT) ? "fruit" : "water";      //by hand at his post (foraging_plan.md)
+    }
+    if (k.with){
+        j["with"] = k.with;     //the grown-up he goes along with, or the mother carrying him (settlements_plan.md)
+    }
     if (e){
         j["settlement"] = EconomyPersonSettlement(*e,k);    //his home's (settlements_plan.md), 0 none
     }
@@ -617,6 +663,10 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     if (id < e->draw_plot.size() && e->draw_plot[id] >= 0 && e->world){
         const vec2& p = e->world->grid->fine.pos[e->draw_plot[id]];
         j["draws_at"] = json{{"plot",e->draw_plot[id]},{"x",p.x},{"z",p.y}};
+    }
+    //...and has a picker, with plants bearing in its land (foraging_plan.md).
+    if (id < e->picker_places.size() && e->picker_places[id] > 0){
+        j["picker_places"] = e->picker_places[id];
     }
     //No door: no plot of it can be walked onto from open ground (EconomyShutIn) - a house so is uninhabitable.
     if (EconomyShutIn(*e,id)){
@@ -1044,7 +1094,9 @@ void ApplicationChasm::RegisterEconomyTools(){
         "set - a RECORDED debug edit (CHASM_CMD_NEEDS), the panel's villager list's. It lands before the "
         "tick's eating, so someone at home with food and water tops straight back up; health 0 kills only "
         "someone who cannot eat on that tick. op order: person `person` is sent to the plot at x,z (or "
-        "`plot`) and stands there - his post, now his job (docs/defence_plan.md); op release: he leaves it "
+        "`plot`) and stands there - his post, now his job (docs/defence_plan.md); `spread` true: as one of a group, "
+        "the plot while it has room, else the nearest round it (give a group's nearest first, as the right click does); "
+        "op release: he leaves it "
         "and goes back to his work. Both RECORDED (CHASM_CMD_ORDER), the right click's and the card's; "
         "`refusal` says why one was refused (a child, nowhere open to stand, no way there). A worker's "
         "`post` shows where and whether he is there; a load he carried is put down as a crate. GUARDS BY HAND "
@@ -1077,6 +1129,12 @@ void ApplicationChasm::RegisterEconomyTools(){
         "settlement's ground and inside its borders moves in without a tent, to a camp's bed to spare, an empty "
         "house there, or squeezed in where there is most room. All RECORDED (CHASM_CMD_TENT, CHASM_CMD_PITCH, CHASM_CMD_SETTLE), `refusal` as for an order; a "
         "worker shows `tent`: to_take or carried. A camp's own water carrier draws at `draws_at` (a building's). "
+        "FORAGING (docs/foraging_plan.md): op forage - person `person` sent to pick the ripe plant on the plot at x,z (or "
+        "`plot`), `what` fruit (default), or to draw water at the edge of the water there, `what` water - an order to stand "
+        "there and a one-off into his pack; `spread` true as one of a group's. RECORDED (CHASM_CMD_FORAGE), `refusal` as for "
+        "an order; a worker shows `forage` while at it. op plants - the plants that bear within `reach` (default 20) of x,z: "
+        "prop, kind (bush, fruit_tree), plot, settlement, fruit (-1 gone), ripe_now, regrow_days. Each settlement lists "
+        "its `plants`: bushes, fruit_trees, gone, ripe and the fruit on them; a camp with a picker shows `picker_places`. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -1091,13 +1149,16 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
                 {"on",{{"type","boolean"}}},
                 {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard, gather, take_tent, "
-                                                            "pitch, settle: the person's id"}}},
+                                                            "pitch, settle, forage: the person's id"}}},
                 {"layer",{{"type","integer"},{"description","order: the layer of the plot he stands on, in half storeys - 0 its ground, "
                                                            "a castle deck's (ramparts_plan.md); default its top"}}},
                 {"count",{{"type","integer"},{"description","guards: how many guards the tower takes; keep, order_more: how many"}}},
                 {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions or rope"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
+                {"what",{{"type","string"},{"description","forage: fruit or water"}}},
+                {"spread",{{"type","boolean"},{"description","forage: one of a group's"}}},
+                {"reach",{{"type","number"},{"description","plants: how far from x,z, world units (default 20)"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -1220,6 +1281,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.subtype = (uint32_t)args.value("person",0);
                 cmd.value[0] = (float)plot;
                 cmd.value[1] = (float)(args.value("layer",-1) + 1);    //ramparts_plan.md: its top by default
+                cmd.value[2] = args.value("spread",false) ? 1.0f : 0.0f;  //one of a group: the plot, else the nearest round it
                 uint32_t before = order_commands_done.load();
                 uint32_t refused = order_refusals.load();
                 SubmitCommandAndWait(cmd);
@@ -1302,6 +1364,68 @@ void ApplicationChasm::RegisterEconomyTools(){
                     refusal = order_last_refusal;
                 }
                 result["refusal"] = refusal;
+            }else if (op == "forage"){
+                //Picking a ripe plant or drawing water by hand (foraging_plan.md): the plot at x,z (or `plot`).
+                int plot = args.value("plot",-1);
+                if (plot < 0 && args.contains("x") && args.contains("z")){
+                    GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
+                    plot = p.f_hit ? p.plot : -1;
+                }
+                std::string what = args.value("what",std::string("fruit"));
+                if (plot < 0 || (what != "fruit" && what != "water")){
+                    return json{{"error","forage: give a plot at x,z (or `plot`), and `what`: fruit or water"}};
+                }
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_FORAGE;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)args.value("person",0);
+                cmd.value[0] = (float)plot;
+                cmd.value[1] = (float)((what == "water") ? FORAGE_WATER : FORAGE_FRUIT);
+                cmd.value[2] = args.value("spread",false) ? 1.0f : 0.0f;
+                uint32_t before = order_commands_done.load();
+                uint32_t refused = order_refusals.load();
+                SubmitCommandAndWait(cmd);
+                result["ran"] = order_commands_done.load() != before;
+                std::string refusal;
+                if (order_refusals.load() != refused){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = order_last_refusal;
+                }
+                result["refusal"] = refusal;
+                result["plot"] = plot;
+            }else if (op == "plants"){
+                //FORAGING (foraging_plan.md): the plants that bear within `reach` (default 20) of x,z, nearest first -
+                //for finding one to send someone to, and for watching one pick bare and grow back.
+                std::shared_ptr<const EconomyState> es = GetEconomy();
+                if (!es || es->world != w || !w->forest || !args.contains("x") || !args.contains("z")){
+                    return json{{"error","plants: give x,z - and an economy for this world"}};
+                }
+                vec2 at(args["x"].get<float>(),args["z"].get<float>());
+                float reach = args.value("reach",20.0f);
+                std::vector<std::pair<float,int>> nearby;
+                for (size_t i = 0; i < w->forest->props.size(); i++){
+                    const PropInstance& p = w->forest->props[i];
+                    float d = (vec2(p.pos.x,p.pos.z) - at).length();
+                    if (ForestBears(p) && d <= reach){
+                        nearby.push_back(std::make_pair(d,(int)i));
+                    }
+                }
+                std::sort(nearby.begin(),nearby.end());
+                json list = json::array();
+                for (size_t t = 0; t < nearby.size() && t < 40; t++){
+                    int i = nearby[t].second;
+                    const PropInstance& p = w->forest->props[i];
+                    int f = (i < (int)es->fruit.size()) ? es->fruit[i] : 0;
+                    list.push_back(json{{"prop",i},{"kind",p.f_fruit ? "fruit_tree" : "bush"},{"plot",p.plot},
+                                        {"x",p.pos.x},{"z",p.pos.z},{"distance",nearby[t].first},
+                                        {"settlement",(p.plot >= 0 && p.plot < (int)es->settlement.size()) ? es->settlement[p.plot] : 0},
+                                        {"fruit",(f == FORAGE_GONE) ? -1 : f},{"ripe_now",EconomyFruitOn(*es,i)},
+                                        {"regrow_days",(i < (int)es->regrow.size()) ? es->regrow[i] : 0},
+                                        {"standing",i < (int)es->prop_state.size() && es->prop_state[i] == PROP_STATE_STANDING}});
+                }
+                result["plants"] = list;
+                result["found"] = (int)nearby.size();
+                return result;
             }else if (op == "keep" || op == "order_more"){
                 //STOCK KEPT (goods_plan.md): a made good's kept number, or an order for more of it.
                 int good = GoodByName(args.value("good",std::string()));
@@ -1495,11 +1619,32 @@ void ApplicationChasm::RegisterEconomyTools(){
                     settled[s].second++;
                 }
             }
+            //FORAGING (foraging_plan.md): what bears fruit in each one's land - its bushes and fruit trees, those gone
+            //(built over), those ripe now and the fruit on them - the figures the tuning is set from.
+            struct Plants{ int bushes = 0, trees = 0, gone = 0, ripe = 0, fruit = 0; };
+            std::map<uint32_t,Plants> plants;
+            if (w->forest){
+                for (size_t i = 0; i < w->forest->props.size() && i < e->fruit.size(); i++){
+                    const PropInstance& p = w->forest->props[i];
+                    if (!ForestBears(p) || p.plot < 0 || p.plot >= (int)e->settlement.size() || !e->settlement[p.plot]){
+                        continue;
+                    }
+                    Plants& pl = plants[e->settlement[p.plot]];
+                    (p.f_fruit ? pl.trees : pl.bushes)++;
+                    pl.gone += (e->fruit[i] == FORAGE_GONE) ? 1 : 0;
+                    int on = EconomyFruitOn(*e,(int)i);
+                    pl.ripe += (on > 0) ? 1 : 0;
+                    pl.fruit += on;
+                }
+            }
             json settlements = json::array();
             for (const EconomySettlement& st : e->settlements){
                 std::pair<int,int> got = settled.count(st.id) ? settled[st.id] : std::pair<int,int>(0,0);
+                Plants pl = plants.count(st.id) ? plants[st.id] : Plants();
                 settlements.push_back(json{{"id",st.id},{"beds",st.beds},{"reach",st.reach},{"plots",got.first},
-                                           {"people",got.second}});
+                                           {"people",got.second},
+                                           {"plants",json{{"bushes",pl.bushes},{"fruit_trees",pl.trees},{"gone",pl.gone},
+                                                          {"ripe",pl.ripe},{"fruit",pl.fruit}}}});
             }
             result["settlements"] = settlements;
             //GUARD TOWERS (defence_plan.md): each one's places - its guard count once it stands (step 8) - its

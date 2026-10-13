@@ -7,8 +7,8 @@
 /*
     THE GOODS (docs/economy_plan.md): wood, water, and food by its crop - three foods, because what
     keeps is the point of the three (gameplay_plan.md, "Goods and food") - PROVISIONS, made from a
-    wheat and a beans for posted people (defence_plan.md), and HEMP and the ROPE made from it (goods_plan.md).
-    Never renumber: saves name a store's stock and what it takes by these.
+    wheat and a beans for posted people (defence_plan.md), HEMP and the ROPE made from it (goods_plan.md), and
+    FRUIT picked from the wild (foraging_plan.md). Never renumber: saves name a store's stock and what it takes by these.
 
     A MASK of goods is a GoodsMask, one bit a good - what a store takes (ZoneBuilding::allow). 16 bits
     (the user's, 2026-10-09): steam, floatstone, coal and leather are coming.
@@ -24,7 +24,8 @@
 #define GOOD_PROVISIONS 5       //a soldier's food: a wheat and a beans (defence_plan.md)
 #define GOOD_HEMP       6       //a crop that is not food: made into rope at a ropewalk (goods_plan.md)
 #define GOOD_ROPE       7       //a building material: the winch's, later the zeppelin's
-#define GOOD_COUNT      8
+#define GOOD_FRUIT      8       //a food picked from bushes and fruit trees, not grown on a field (foraging_plan.md)
+#define GOOD_COUNT      9
 
 /*
     A good's CATEGORY (goods_plan.md, the user's 2026-10-10): FOOD is eaten and WATER drunk; a MATERIAL is
@@ -41,7 +42,7 @@
 typedef uint16_t GoodsMask;
 #define GOOD_BIT(g)     ((GoodsMask)(1u << (g)))
 #define GOODS_ALL       ((GoodsMask)((1u << GOOD_COUNT) - 1))
-#define GOODS_FOOD      ((GoodsMask)(GOOD_BIT(GOOD_WHEAT) | GOOD_BIT(GOOD_GREENS) | GOOD_BIT(GOOD_BEANS)))
+#define GOODS_FOOD      ((GoodsMask)(GOOD_BIT(GOOD_WHEAT) | GOOD_BIT(GOOD_GREENS) | GOOD_BIT(GOOD_BEANS) | GOOD_BIT(GOOD_FRUIT)))
 #define GOODS_EATEN     ((GoodsMask)(GOODS_FOOD | GOOD_BIT(GOOD_PROVISIONS)))  //every food, provisions too
 //What a field yields, whatever is sown on it: the foods, and hemp (goods_plan.md).
 #define GOODS_CROPS     ((GoodsMask)(GOODS_FOOD | GOOD_BIT(GOOD_HEMP)))
@@ -60,6 +61,7 @@ inline int GoodCategory(int good){
         case GOOD_WHEAT:
         case GOOD_GREENS:
         case GOOD_BEANS:
+        case GOOD_FRUIT:
         case GOOD_PROVISIONS:   return GOOD_CATEGORY_FOOD;
         case GOOD_WATER:        return GOOD_CATEGORY_WATER;
         case GOOD_WOOD:

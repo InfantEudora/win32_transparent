@@ -6,9 +6,11 @@
     house's shadow is shaded; two programs from this one body because only the falls discard, and a
     program that can discard loses the early depth test for every fragment.
 
-      chasm_water_sheet.frag  the FALLS - uv.x across (-1..1), uv.y down (0 at the lip, 1 where the
-         sheet meets the mist). Long streaks running down, light where it goes over the edge, white
-         where it reaches the mist, ragged edges.
+      chasm_water_sheet.frag  the FALLS - the river's own coordinates carried over the brink
+         (waterfall_plan.md): uv.x across, eased to +-SHEET_EDGE at the sheet's edges; uv.y the river's
+         along in flow time, so the RIVER'S streaks pour on over the edge without a seam and stretch as
+         the water speeds up. How far it has fallen and where the mist is come from the world height.
+         Threads of white as it falls, white where it reaches the mist, edges ragged further down.
       chasm_water_flat.frag   the RIVERS - uv.x across (-1..1 at the water's edges), uv.y distance
          from the source in world units. Streaks drifting downstream, and a SHORE from the G-buffer:
          the water is left out of the deferred pass, so under every water fragment the G-buffer
@@ -41,8 +43,12 @@ uniform vec3  water_light = vec3(0.40,0.62,0.92);
 uniform vec3  water_mid   = vec3(0.22,0.41,0.81);
 uniform vec3  water_deep  = vec3(0.15,0.31,0.66);
 uniform vec3  water_foam  = vec3(0.90,0.95,0.98);
-//Down a fall in sheet lengths a second; along a river in world units a second.
-uniform float flow_speed = 0.3;
+//Along a river in world units a second - and down a fall, whose uv.y is in the river's units.
+uniform float flow_speed = 2.2;
+//A fall's brink, TERRAIN_WATER_Y: its drop is counted from here. The mist's top, CHASM_MIST_TOP.
+uniform float water_top = -0.5;
+uniform float mist_top = -46.0;
+#define SHEET_EDGE  1.15    //|uv.x| at a sheet's edges below its top (WaterMesh.cpp)
 //Self-lit share of its own colour, so water in shade still reads as water.
 uniform float water_fill = 0.10;
 /*
@@ -171,22 +177,43 @@ vec3 IceColour(){
     return c;
 }
 
-//A fall frozen still: the same long streaks, as icicles down the wall.
+//The rivers' streaks: long along the water, drifting down it, with a slow warp so they do not run in rails.
+//A fall's sheet draws the very same from the very same coordinates, so they pour over the brink.
+float Streaks(float across, float along, float t){
+    float warp = vnoise(vec2(along * 0.05,across * 0.7) + vec2(t * 0.02,0.0));
+    return 0.6 * vnoise(vec2(across * 2.2 + warp * 1.5,(along - t) * 0.22))
+         + 0.4 * vnoise(vec2(across * 5.0 + 7.0,(along - t * 1.25) * 0.6));
+}
+
+//How far below its brink this bit of a sheet is. A spring's starts far under it, so is all fall.
+float SheetDrop(){
+    return water_top - vposition.y;
+}
+
+/*
+    A fall: the river's streaks, carried on. As it falls it whitens in fine threads and its edges darken
+    where the water thins; white again as it nears the mist. Frozen, the same pattern held still, as
+    icicles down the wall.
+*/
 vec3 SheetColour(bool f_frozen){
-    float across = vuv.x;
-    float down = vuv.y;
     float t = f_frozen ? 0.0 : water_seconds * flow_speed;
-    //A fall is some fifty units tall, so its streaks are many to a sheet.
-    float n = 0.65 * vnoise(vec2(across * 3.0,(down - t) * 9.0))
-            + 0.35 * vnoise(vec2(across * 8.0 + 3.1,(down - t * 1.3) * 22.0));
+    float n = Streaks(vuv.x,vuv.y,t);
     vec3 deep = f_frozen ? ice_deep : water_deep;
     vec3 light = f_frozen ? ice_light : water_light;
-    vec3 c = f_frozen ? IceShades(n) : Shades(n);
-    c = mix(c,deep,smoothstep(0.75,1.0,abs(across)) * 0.6);
-    //Light where it rolls over the edge.
-    c = mix(c,light,smoothstep(0.035,0.005,down));
+    vec3 c = f_frozen ? IceShades(0.18 + 0.75 * n) : Shades(0.18 + 0.75 * n);
+    float drop = SheetDrop();
+    float fall = smoothstep(1.0,12.0,drop);
+    float thread = vnoise(vec2(vuv.x * 9.0 + 3.1,(vuv.y - t * 1.3) * 1.2));
+    c = mix(c,light,smoothstep(0.62,0.70,thread) * 0.6 * fall);
+    float edge = abs(vuv.x) / SHEET_EDGE;
+    c = mix(c,deep,smoothstep(0.75,1.0,edge) * 0.6 * fall);
+    //Churned white just over the brink at its two ends, where the water spills against the bank's rock.
+    //Nothing on the brink itself, which is the river's own edge.
+    float churn = smoothstep(0.0,0.6,drop) * (1.0 - smoothstep(2.5,5.0,drop)) * smoothstep(0.80,0.97,edge);
+    churn *= 0.55 + 0.45 * vnoise(vec2(vuv.x * 6.0,(vuv.y - t) * 1.5));
+    c = mix(c,f_frozen ? ice_snow : water_foam,churn * 0.85);
     //White as it nears the mist, broken by the streaks so the band's top is not ruled.
-    float foam = smoothstep(0.86,0.92,down + 0.06 * (n - 0.5));
+    float foam = smoothstep(mist_top + 6.4,mist_top + 3.6,vposition.y + 2.8 * (n - 0.5));
     return mix(c,f_frozen ? ice_snow : water_foam,foam);
 }
 
@@ -197,10 +224,7 @@ vec3 FlatColour(){
     float across = vuv.x;
     float along = vuv.y;
     float t = water_seconds * flow_speed;
-    //Streaks long along the river, drifting down it; a slow warp so they do not run in rails.
-    float warp = vnoise(vec2(along * 0.05,across * 0.7) + vec2(t * 0.02,0.0));
-    float n = 0.6 * vnoise(vec2(across * 2.2 + warp * 1.5,(along - t) * 0.22))
-            + 0.4 * vnoise(vec2(across * 5.0 + 7.0,(along - t * 1.25) * 0.6));
+    float n = Streaks(across,along,t);
     vec3 c = Shades(0.18 + 0.75 * n);
     if (haze_amount > 0.0){
         vec2 xz = vposition.xz;
@@ -221,12 +245,24 @@ vec3 FlatColour(){
     return c;
 }
 
-//A fall's two edges, ragged and moving with the water - still, frozen.
-bool SheetEdgeCut(bool f_frozen){
+/*
+    A fall's two edges, ragged and moving with the water - still, frozen. Straight at the brink, where the
+    sheet meets the river's own straight edge, and fully ragged a third of the way down; in flow time, so
+    the ragged bits stretch into strands as the water speeds up. Lower still the sheet itself breaks: long
+    gaps open between STRANDS, through which the inner layer and the wall show (WaterMesh.cpp).
+*/
+bool SheetCut(bool f_frozen){
     float t = f_frozen ? 0.0 : water_seconds * flow_speed;
     float side = (vuv.x > 0.0) ? 11.0 : 23.0;
-    float n = 0.7 * vnoise(vec2(side,(vuv.y - t) * 40.0)) + 0.3 * vnoise(vec2(side + 5.0,(vuv.y - t) * 100.0));
-    return abs(vuv.x) > 0.72 + 0.28 * n;
+    float n = 0.7 * vnoise(vec2(side,(vuv.y - t) * 0.8)) + 0.3 * vnoise(vec2(side + 5.0,(vuv.y - t) * 2.0));
+    float drop = SheetDrop();
+    float rag = smoothstep(0.5,15.0,drop);
+    if (abs(vuv.x) / SHEET_EDGE > 1.0 + 0.5 * (1.0 - rag) - 0.28 * rag * (1.0 - n)){
+        return true;
+    }
+    float strand = smoothstep(12.0,32.0,drop);
+    float gap = vnoise(vec2(vuv.x * 2.6 + 41.0,(vuv.y - t) * 0.3));
+    return gap > 1.0 - 0.3 * strand;
 }
 
 void main(){
@@ -234,7 +270,7 @@ void main(){
     g_uv_dy = dFdy(vuv);
 #ifdef WATER_SHEET
     bool f_frozen = Frozen();
-    if (SheetEdgeCut(f_frozen)){
+    if (SheetCut(f_frozen)){
         discard;
     }
     vec3 albedo = SheetColour(f_frozen);

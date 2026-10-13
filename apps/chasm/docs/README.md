@@ -158,6 +158,7 @@ does updates its page (`../wiki/README.md`). Started 2026-10-09 with the woodcut
 |---|---|
 | `grid_plan.md` | the irregular grid, terrain levels and cliffs, painting zones, and the build order up to a first replay |
 | `rivers_plan.md` | always a river at home, branches joining rivers, springs pouring from the chasm's wall, and the swallow-hole streams that feed them (built 2026-10-08) |
+| `waterfall_plan.md` | a fall as one surface with its river: a straight brink past the rock, the sheet welded to the river's edge with its streaks carried over; then a bowed curtain, strands, an inner layer, wet rock and spray (agreed and built 2026-10-12) |
 | `biomes_plan.md` | biomes and terrain height: levels for the hard edges plus a relief field; the north mountain that seals the chasm off, hills and peaks, mountain pockets, the swamp and the desert, snow and the ground's colours (steps 1-5 built) |
 | `gameplay_plan.md` | the game on top of it all: steam, zeppelins, seasons, zombies from the swamp, the pyramid; suggestions, open questions, and the first prototype (nothing built) |
 | `roads_plan.md` | step 10 on the building side: roads painted as ground and drawn along the edges, a debug walker by A* (retired 2026-10-07), gates in walls, arches under houses |
@@ -179,6 +180,7 @@ does updates its page (`../wiki/README.md`). Started 2026-10-09 with the woodcut
 | `stopping_work_plan.md` | a workplace stopped from its card - collector, woodcutter's hut, ropewalk, builders' hut, range - so its people go free; a collector in a settlement takes over the camp's water carrying (agreed and built 2026-10-12) |
 | `arches_plan.md` | a road built over by the buildings either side, as a real part of one of them: same kind only, one owner, its storeys counted as floor and built as a site with scaffolding over the road; and what it means for the guard towers (talked through 2026-10-10, nothing built) |
 | `ramparts_plan.md` | walking above the ground: a node per plot and layer, decks over plots apart from what stands on them, stairs and ladders between layers, walls walked by the posted only; step 1 a tower's deck as a real node, step 2 a debug castle of grey blocks, arches and stairs to judge whether it reads (agreed 2026-10-10; both steps built) |
+| `foraging_plan.md` | fruit from the wild: bushes and some oaks bear it and grow it back after a fixed number of days, built over is gone for good; FRUIT a new food, eaten first; a picker at every camp; the posted pick fruit or draw water by hand from a right-click menu (decided and built 2026-10-12; fruit meshes in chasm_props.blend, merged into the GLB; the start camp's land counted, tuning left to the user) |
 
 ### Later, agreed but not yet planned
 

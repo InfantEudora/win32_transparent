@@ -15,8 +15,12 @@
     does for them is let snow lie on the SEASON ROWS too, where the broadleaf trees' own meshes move
     their leaves as they turn.
 
-    WITH NO SNOW THIS IS default.frag, line for line, above the void: f_snow is 0 and main() takes
-    the same path, so the frame is the same frame (measured by pixel diff, ApplicationChasmSnow.cpp).
+    WITH NO SNOW THIS IS default.frag, line for line, above the void and away from the falls: f_snow
+    is 0 and main() takes the same path, so the frame is the same frame (measured by pixel diff,
+    ApplicationChasmSnow.cpp).
+
+    WET ROCK (waterfall_plan.md, stage 2): the wall behind and just beside each fall's and spring's
+    sheet (WaterMeshData::shapes) a shade darker and cooler, so the water sits in the cliff.
 
     THE VOID (2026-10-06): below void_top everything darkens toward black, black at void_bottom just
     above the chasm floor (which is drawn black, PAL_VOID). The walls run down into the dark instead
@@ -61,6 +65,16 @@ uniform int   season_rows_last = 8;
 //The void: full colour above void_top, black at void_bottom (world y).
 uniform float void_top = -1.0e9;
 uniform float void_bottom = -1.0e9;
+/*
+    The sheets, WATER_MAX_SHEETS at most: frame = the lip on the rim line (xz) and out over the chasm
+    (zw), across being out turned left; span = the sheet's middle and half width along the rim, the
+    height it goes over at, and the furthest out it hangs.
+*/
+#define WET_MAX     12
+uniform int   wet_count = 0;
+uniform vec4  wet_frame[WET_MAX];
+uniform vec4  wet_span[WET_MAX];
+uniform vec3  wet_tint = vec3(0.66,0.72,0.82);
 
 float SnowWobble(float x){
     return snow_wobble * (0.7 * sin(x * 0.0245 + 1.3) + 0.3 * sin(x * 0.0610 + 0.4));
@@ -104,6 +118,27 @@ vec2 SnowUV(){
     return (vec2(float(column),float(frozen_row)) + 0.5) / palette_size;
 }
 
+//How wet this fragment is, 0..1: behind a sheet and below where it goes over, fading out about half its
+//width past its two edges (which spread as it falls, as WaterMesh.cpp's FALL_SPREAD) and in front of it.
+float Wetness(){
+    float wet = 0.0;
+    for (int i = 0; i < wet_count; i++){
+        vec2 out_dir = wet_frame[i].zw;
+        vec2 d = vposition.xz - wet_frame[i].xy;
+        float out_by = dot(d,out_dir);
+        float x = dot(d,vec2(-out_dir.y,out_dir.x));
+        float drop = wet_span[i].z - vposition.y;
+        float spread = 1.0 + 0.3 * clamp(drop / 55.0,0.0,1.0);
+        float side = abs(x - wet_span[i].x) / (wet_span[i].y * spread);
+        float w = (1.0 - smoothstep(0.95,1.9,side))
+                * (1.0 - smoothstep(wet_span[i].w - 0.5,wet_span[i].w + 1.0,out_by))
+                * smoothstep(-5.0,-3.0,out_by)
+                * smoothstep(-0.3,0.6,drop);
+        wet = max(wet,w);
+    }
+    return wet;
+}
+
 void main(){
     //UV derivatives while control flow is still uniform - see SampleMaterialTexture.
     g_uv_dx = dFdx(vuv);
@@ -126,6 +161,9 @@ void main(){
         }else{
             color = vec4(LightSurface(albedo),alpha);
         }
+    }
+    if (wet_count > 0){
+        color.rgb *= mix(vec3(1.0),wet_tint,Wetness());
     }
     //Into the void. Eased at both ends, so the walls neither start darkening at a line nor reach
     //black at one.

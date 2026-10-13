@@ -192,6 +192,12 @@ they would have anyway** (the user, 2026-10-09). A baby whose mother dies in her
 nobody takes the caring over. A mechanic that sends orphans to relatives was proposed and left out - it
 would complicate the system a lot, and does nothing useful yet.
 
+**Overruled 2026-10-12** (the user's: "I think they can now squeeze in"): the settlements brought CRAMMED - a
+family whose home goes squeezes into another of its settlement - so orphans now do the same: a household with
+no grown-up left moves into a home of its settlement where a grown-up lives, the one with the most room to
+spare, and lives from that home's pantry. See `settlements_plan.md`, "Founding: decided", with the children
+who now go along with their household and the baby carried by its mother.
+
 ## Skills passed on
 
 The rules are `gameplay_plan.md`'s "Children" (agreed 2026-10-05): take after the parents, grow towards

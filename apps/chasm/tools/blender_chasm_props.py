@@ -8,9 +8,12 @@ away every edit made in Blender since. To re-export after an edit, use the "Expo
 exporter (Collection properties > Exporters > Export), which this sets up; no script needed.
 
 --add is for a new asset in ASSETS: it opens the existing .blend, builds only the assets that have
-no object of that name yet, saves and exports. Nothing already in the file is touched - but an asset
-renamed in Blender counts as missing and is built again under its old name. --replace NAME[,NAME]
-with --add deletes those assets first, to rebuild them after a change here; their edits are lost.
+no object of that name yet, saves and exports - with the settings File > Export remembers in the file,
+as it is exported by hand (export_as_last). Nothing already in the file is touched - but an asset
+renamed in Blender counts as missing and is built again under its old name, and a builder may edit the
+asset it builds on (plant_fruit moves a plant's own fruit off it). --replace NAME[,NAME] with --add
+deletes those assets first, to rebuild them after a change here; their edits are lost. The export is
+the whole file's: check its clips against the last GLB (2026-10-12: the saved file had lost Idle).
 
 Everything is generated from fixed seeds, so a forced rebuild gives the same props.
 
@@ -678,6 +681,77 @@ def bare_broadleaf(leafy, limbs=4):
     return build
 
 
+def gem(bm, centre, r, rot):
+    """A fruit: eight faces round `centre`, a little taller above than below, every face outward."""
+    ring = [bm.verts.new(centre + Vector((r * math.cos(rot + k * math.pi / 2), r * math.sin(rot + k * math.pi / 2), 0)))
+            for k in range(4)]
+    top = bm.verts.new(centre + Vector((0, 0, r * 1.1)))
+    bottom = bm.verts.new(centre - Vector((0, 0, r * 0.9)))
+    faces = []
+    for k in range(4):
+        a, b = ring[k], ring[(k + 1) % 4]
+        faces.append(bm.faces.new((a, b, top)))
+        faces.append(bm.faces.new((b, a, bottom)))
+    return faces
+
+
+def plant_fruit(leafy, count, size, apples=False):
+    """A builder for the FRUIT of the plant named `leafy` (foraging_plan.md): a mesh of its own that the game draws over
+    a ripe plant and leaves off a picked one, so it is built in the plant's own space - keep_origin - and placed on it
+    in the file. Fruit stands on the canopy's faces that look up (berries) or out (apples), spread over it. A plant
+    modelled with its fruit on - bush_b's berries - has them MOVED here, out of the plant, so a picked bush is bare.
+    Needs `leafy` built or loaded first."""
+    def build(bm, rng):
+        if leafy not in bpy.data.objects:
+            raise RuntimeError("%s needs %s in the file to put its fruit on" % (leafy + "_fruit", leafy))
+        mesh = bpy.data.objects[leafy].data
+        uvs = mesh.uv_layers.active.data
+        pal = bm.faces.layers.int["pal"]
+
+        def column(poly):
+            return int(uvs[poly.loop_start].uv[0] * PALETTE_COLS)
+
+        own = [poly for poly in mesh.polygons if column(poly) == PAL_ACCENT]
+        if own:
+            made = {}
+            for poly in own:
+                vs = []
+                for i in poly.vertices:
+                    if i not in made:
+                        made[i] = bm.verts.new(mesh.vertices[i].co)
+                    vs.append(made[i])
+                bm.faces.new(vs)[pal] = PAL_ACCENT
+            #...and out of the plant, whatever else was edited on it left as it is.
+            plant = bmesh.new()
+            plant.from_mesh(mesh)
+            uv = plant.loops.layers.uv.active
+            gone = [f for f in plant.faces if int(f.loops[0][uv].uv[0] * PALETTE_COLS) == PAL_ACCENT]
+            bmesh.ops.delete(plant, geom=gone, context="FACES")
+            plant.to_mesh(mesh)
+            plant.free()
+            mesh.update()
+            return
+        leaves = (PAL_LEAF_DARK, PAL_LEAF, PAL_LEAF_LIGHT, PAL_BUSH)
+        facing = -0.15 if apples else 0.35      #apples hang on the sides too; berries show from above
+        spots = [(poly.center.copy(), poly.normal.copy()) for poly in mesh.polygons
+                 if column(poly) in leaves and poly.normal.z > facing]
+        rng.shuffle(spots)
+        taken = []
+        for c, n in spots:
+            if len(taken) < count and all((c - t).length > size * 3.5 for t, _ in taken):
+                taken.append((c, n))
+        for c, n in taken:
+            if apples:
+                faces = gem(bm, c + n * size * 0.45, size, rng.uniform(0, 6.3))
+            else:
+                faces, _ = add_cone(bm, c - n * 0.02, size, size * 1.6, 3, rng.uniform(0, 6.3), rng,
+                                    tip=(n.x * 0.06, n.y * 0.06), bottom=False)
+            colour(bm, faces, PAL_ACCENT)
+    build.keep_origin = True
+    build.place_at = leafy
+    return build
+
+
 #name, seed, builder, slot (column, row) in the authoring layout
 # ---------------------------------------------------------------------------------------------
 # The archery range (range_plan.md). Each FACES -Y - south once exported (glTF's +Z), toward the
@@ -812,6 +886,13 @@ ASSETS = [
     ("range_target", 91, range_target, (0, 6)),
     ("hay_bale", 92, hay_bale, (1, 6)),
     ("arrow", 93, arrow, (2, 6)),
+    #Fruit (foraging_plan.md, 2026-10-12): on its plant, in the plant's space - after the plants. bush_b's own berries
+    #move here. The slot is unused: each is placed on its plant.
+    ("bush_a_fruit", 101, plant_fruit("bush_a", 6, 0.07), (2, 3)),
+    ("bush_b_fruit", 102, plant_fruit("bush_b", 6, 0.07), (3, 3)),
+    ("tree_oak_a_fruit", 103, plant_fruit("tree_oak_a", 9, 0.15, apples=True), (0, 1)),
+    ("tree_oak_b_fruit", 104, plant_fruit("tree_oak_b", 10, 0.15, apples=True), (1, 1)),
+    ("tree_oak_c_fruit", 105, plant_fruit("tree_oak_c", 8, 0.14, apples=True), (2, 1)),
 ]
 
 SPACING = 5.0
@@ -824,12 +905,14 @@ def build_object(name, seed, builder, slot, material, collection):
     builder(bm, rng)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
     #The origin goes in the middle of what touches the ground - the trunk, for a tree, so a leaning
-    #one leans away from its origin rather than being centred on its crown.
-    low = min(v.co.z for v in bm.verts)
-    base = [v.co for v in bm.verts if v.co.z < low + 0.3]
-    shift = Vector((sum(c.x for c in base) / len(base), sum(c.y for c in base) / len(base), 0))
-    for v in bm.verts:
-        v.co -= shift
+    #one leans away from its origin rather than being centred on its crown. Not for a part built in
+    #another asset's space (keep_origin: a plant's fruit), which is drawn at that asset's origin.
+    if not getattr(builder, "keep_origin", False):
+        low = min(v.co.z for v in bm.verts)
+        base = [v.co for v in bm.verts if v.co.z < low + 0.3]
+        shift = Vector((sum(c.x for c in base) / len(base), sum(c.y for c in base) / len(base), 0))
+        for v in bm.verts:
+            v.co -= shift
     bm.normal_update()
 
     pal = bm.faces.layers.int["pal"]
@@ -848,6 +931,10 @@ def build_object(name, seed, builder, slot, material, collection):
     mesh.materials.append(material)
     obj = bpy.data.objects.new(name, mesh)
     obj.location = (slot[0] * SPACING, -slot[1] * SPACING, 0.0)
+    #...placed on that asset in the file, so the two are seen together (place_at).
+    on = getattr(builder, "place_at", None)
+    if on and on in bpy.data.objects:
+        obj.location = bpy.data.objects[on].location.copy()
     collection.objects.link(obj)
     return obj, tris
 
@@ -932,18 +1019,52 @@ def stage(collection_name):
 SUN_TRAVEL = Vector((1.0, -1.0, -2.0)).normalized()
 
 
-def save_and_export(export):
+def find_layer(layer, collection):
+    """The view layer's entry for `collection`, searched from `layer` down."""
+    if layer.collection == collection:
+        return layer
+    for child in layer.children:
+        found = find_layer(child, collection)
+        if found:
+            return found
+    return None
+
+
+def export_as_last(export):
+    """The GLB as the file was last exported from File > Export - with the settings it remembers, which is how the
+    file is exported by hand: they sample the villagers' clips, and the collection's exporter (setup_export) does not,
+    so exporting with it after hand edits drops keys from them (seen 2026-10-12: Idle gone, Shoot cut to 16 channels).
+    With nothing remembered, the collection's exporter."""
+    remembered = bpy.context.scene.get("glTF2ExportSettings")
+    if not remembered:
+        with bpy.context.temp_override(collection=export):
+            bpy.ops.collection.export_all()
+        return
+    known = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
+    settings = {k: v for k, v in dict(remembered).items() if k in known and k != "filepath"}
+    layer = find_layer(bpy.context.view_layer.layer_collection, export)
+    if layer:
+        bpy.context.view_layer.active_layer_collection = layer     #use_active_collection: the Export collection
+    bpy.ops.export_scene.gltf(filepath=GLB, **settings)
+
+
+def save_and_export(export, fresh=True):
     #palette.png is stored as a path relative to the .blend, unpacked, so an edit to the PNG shows up
-    #here too. Written by hand: relative_remap would write it with Windows backslashes.
+    #here too. Written by hand: relative_remap would write it with Windows backslashes. Only in a fresh
+    #build, where it is the one image: a file edited by hand holds others, and its own are left alone.
     os.makedirs(os.path.dirname(BLEND), exist_ok=True)
-    bpy.data.images[0].filepath = "//" + os.path.relpath(PALETTE, os.path.dirname(BLEND)).replace("\\", "/")
+    if fresh:
+        bpy.data.images[0].filepath = "//" + os.path.relpath(PALETTE, os.path.dirname(BLEND)).replace("\\", "/")
+        print("\nimage path in the .blend: %s" % bpy.data.images[0].filepath)
     bpy.context.preferences.filepaths.save_version = 0      #no chasm_props.blend1 beside it
     bpy.ops.wm.save_as_mainfile(filepath=BLEND, relative_remap=False)
-    print("\nimage path in the .blend: %s" % bpy.data.images[0].filepath)
 
     os.makedirs(os.path.dirname(GLB), exist_ok=True)
-    with bpy.context.temp_override(collection=export):
-        bpy.ops.collection.export_all()
+    if fresh:
+        with bpy.context.temp_override(collection=export):
+            bpy.ops.collection.export_all()
+    else:
+        export_as_last(export)
     print("wrote %s (%d bytes)" % (GLB, os.path.getsize(GLB)))
 
 
@@ -963,7 +1084,7 @@ def add_missing(replace):
         if name not in have:
             obj, tris = build_object(name, seed, builder, slot, material, export)
             print("%-16s %5d" % (name, tris))
-    save_and_export(export)
+    save_and_export(export, fresh=False)
 
 
 def main():

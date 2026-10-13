@@ -1,0 +1,109 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+/*
+    W x for an int8 matrix (Q8_0) and ONE token: one signed byte per weight and one fp32 scale
+    per group of gs (32 or 64). In a 4-bit model this is the 8-bit token embedding doing a
+    second job as the classifier; in an int8 model it is every matrix.
+
+    The same layout idea as llm_matvec_q4.comp - a subgroup computes ROWS rows, and each lane's
+    inputs are loaded once and used for all of them - and the same folded-in rmsnorm and output
+    stage. Simpler here, because the bytes are in order: lane l takes uint l of each 32-uint
+    step, so a row's weights are 128 contiguous bytes per step and x is 32 consecutive vec4s.
+
+    unpackSnorm4x8 gives byte/127, clamped to -1; Q8_0 values lie in -127..127 (the exporter's
+    scale is max/127), so the clamp never bites and multiplying by 127 restores them.
+*/
+
+#define ROWS 4
+#define KSPLIT 4            //subgroups per workgroup, sharing its ROWS rows; MATVEC_ROWS in LLMModel.cpp is ROWS
+
+layout(local_size_x = 32, local_size_y = KSPLIT) in;
+
+layout(std430, binding = 0) readonly buffer WeightValues { uint wq[]; };
+layout(std430, binding = 1) readonly buffer WeightScales { float ws[]; };   //the same buffer
+layout(std430, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(std430, binding = 7) readonly buffer NormWeights { vec4 nw4[]; };
+
+#include "llm_output.glsl"
+
+uniform int n;
+uniform int d;
+uniform int gs;         //values per scale, 32 or 64
+uniform int s_offset;
+uniform int x_offset;   //in vec4s
+uniform int norm_offset;//in vec4s, or -1
+
+shared float norm_partial[KSPLIT];
+shared float row_partial[KSPLIT][ROWS];
+
+void main(){
+    float scale = 1.0;
+    if (norm_offset >= 0){
+        int tid = int(gl_LocalInvocationIndex);
+        float ss = 0.0;
+        for (int i = tid;i < n / 4;i += 32 * KSPLIT){
+            vec4 v = x4[x_offset + i];
+            ss += dot(v,v);
+        }
+        ss = subgroupAdd(ss);
+        if (subgroupElect()){
+            norm_partial[gl_SubgroupID] = ss;
+        }
+        barrier();
+        float total = 0.0;
+        for (uint s = 0;s < gl_NumSubgroups;s++){
+            total += norm_partial[s];
+        }
+        scale = 1.0 / sqrt(total / float(n) + 1e-5);
+    }
+
+    int first_row = int(gl_WorkGroupID.x) * ROWS;
+    if (first_row >= d){
+        return;     //the whole workgroup leaves together, so the barrier below is unaffected
+    }
+    int sg = int(gl_LocalInvocationID.y);
+    int lane = int(gl_LocalInvocationID.x);
+    int nu = n / 4;             //uints per row
+    int ng = n / gs;            //scales per row
+
+    float acc[ROWS];
+    for (int r = 0;r < ROWS;r++){
+        acc[r] = 0.0;
+    }
+    for (int u0 = sg * 32;u0 < nu;u0 += 32 * KSPLIT){
+        int u = u0 + lane;      //this lane's four weights: elements 4u..4u+3
+        if (u >= nu){
+            continue;
+        }
+        vec4 xv = x4[x_offset + u];
+        if (norm_offset >= 0){
+            xv = xv * scale * nw4[norm_offset + u];
+        }
+        int g = (u * 4) / gs;
+        for (int r = 0;r < ROWS;r++){
+            int row = min(first_row + r,d - 1);
+            vec4 b = unpackSnorm4x8(wq[row * nu + u]) * 127.0;
+            acc[r] += dot(b,xv) * ws[s_offset + row * ng + g];
+        }
+    }
+    //each subgroup's sums of its share of the columns, then added up in a fixed order: the
+    //result does not depend on which subgroup finishes first
+    for (int r = 0;r < ROWS;r++){
+        float sum = subgroupAdd(acc[r]);
+        if (lane == 0){
+            row_partial[sg][r] = sum;
+        }
+    }
+    barrier();
+    if (sg == 0 && lane == 0){
+        float v[ROWS];
+        for (int r = 0;r < ROWS;r++){
+            v[r] = 0.0;
+            for (int k = 0;k < KSPLIT;k++){
+                v[r] += row_partial[k][r];
+            }
+        }
+        WriteRows(first_row,v,0,d);
+    }
+}

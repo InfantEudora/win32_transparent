@@ -105,6 +105,7 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_PITCH       25      //a person's card: the tent he carries pitched where he stands
 #define OVERLAY_HIT_SETTLE      26      //a person's card: sent into another settlement and there, he moves in without a tent
 #define OVERLAY_HIT_WORK_STOP   27      //a workplace's card: its work stopped, or set going again (stopping_work_plan.md)
+#define OVERLAY_HIT_FORAGE      28      //the right click's menu (foraging_plan.md): FORAGE_* by hand, 0 posted there, -1 its panel
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -218,6 +219,8 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
                                                         //value[0] 1 to take one, 0 straight on
 #define CHASM_CMD_PITCH             SIM_CMD_LAST+12     //the tent he carries pitched where he stands: subtype the person
 #define CHASM_CMD_SETTLE            SIM_CMD_LAST+13     //sent into another settlement, he moves in without a tent: subtype the person
+#define CHASM_CMD_FORAGE            SIM_CMD_LAST+14     //sent to pick a plant or draw water by hand (docs/foraging_plan.md):
+                                                        //subtype the person; value[0] the plot, [1] FORAGE_*, [2] 1 a group's
 
 //What a left click does.
 enum ChasmTool{
@@ -529,6 +532,7 @@ private:
     void SubmitTent(uint32_t person, bool f_on);                //any thread; refused as an order is
     void SubmitPitch(uint32_t person);                          //any thread; refused as an order is
     void SubmitSettle(uint32_t person);                         //any thread; refused as an order is
+    void SubmitForage(uint32_t person, int plot, int what, bool f_spread);  //any thread; refused as an order is
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
@@ -845,7 +849,16 @@ private:
     std::vector<int> season_look_stage;
     int season_look_set[PROP_KIND_COUNT][FOREST_STAGES] = {};  //the set a standing prop of kind, stage is drawn in
     void BuildSeasonLooks();                        //from LoadProps
-    int ForestSetCount() const { return PROP_KIND_COUNT + (int)season_look_mesh.size(); }
+    /*
+        FRUIT (foraging_plan.md): a ripe plant's fruit, a mesh of its own drawn over the plant - one more set per chunk
+        for each kind that bears, after the looks - so it shows on whatever stage the plant is at, and goes when the
+        plant is picked bare. The economy's fruit_version moving rebuilds the chunks whose plants changed.
+    */
+    bool f_fruit_loaded[FOREST_FRUIT_KINDS] = {};
+    int ForestFruitBase() const { return PROP_KIND_COUNT + (int)season_look_mesh.size(); }
+    int ForestSetCount() const { return ForestFruitBase() + FOREST_FRUIT_KINDS; }
+    std::vector<uint8_t> forest_fruit;              //per prop: its fruit drawn when its chunk's sets were built
+    uint32_t forest_fruit_version = 0xFFFFFFFFu;    //the economy's fruit_version they were built at
     std::vector<uint8_t> forest_prop_stage;         //per prop: the stage its chunk's sets were built with
     int64_t forest_stage_clock = -1;                //the quarter day the stages were last looked at
     void ForestStagesMoved(const ForestData& f, std::vector<uint8_t>& dirty);
@@ -998,6 +1011,24 @@ private:
     float DrawJobsOverview(float s);                        //render thread, from DrawOverlay: builders_plan.md; its top
     void DrawNeediest(float s, float bottom);               //render thread, from DrawOverlay: over the jobs
     void DrawSelectionOverlay(float s);                     //render thread, from DrawOverlay: card + pins
+    /*
+        THE RIGHT CLICK'S MENU (foraging_plan.md, the user's 2026-10-12): with people selected, a right click on a ripe
+        plant or on water opens it at the cursor - Pick fruit and Post here, or Draw water - in place of the order a
+        right click gives anywhere else. Its choice, any other click, or the selection gone closes it. Under pick_mutex.
+    */
+    struct ForageMenu{
+        bool f_open = false;
+        vec2 at;                    //the cursor's pixel it opened at
+        int plot = -1;              //what was clicked, and its layer
+        int layer = -1;
+        bool f_fruit = false;       //a ripe plant on it
+        bool f_water = false;       //water there
+    };
+    ForageMenu forage_menu;
+    void DrawForageMenu(float s);                           //render thread, from DrawOverlay: over all the rest
+    //Physics thread: the selected sent to `plot` as a right click sends them - one order each, a group's spread round
+    //it nearest first - or, with `forage`, sent to pick or draw there by hand (Economy::Forage).
+    void SendSelected(int plot, int layer, uint32_t tower, int forage);
     vec2 build_bar_min;                                     //render thread: where the tools' grid was last drawn, for the overview
     vec2 build_bar_max;
     float build_stack_top = 0.0f;                           //render thread: the top of the grid and all stacked over it

@@ -1,0 +1,139 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+/*
+    Attention, one workgroup per query head (gl_WorkGroupID.x) and token of the batch
+    (gl_WorkGroupID.y). Token b is at position pos0 + b and attends to every cached position up
+    to its own - which includes the earlier tokens of its own batch, whose keys and values the
+    qkv kernel has already written:
+
+      1. score[t] = q . k[t] / sqrt(head_size) for every cached position t <= pos
+      2. softmax over the scores
+      3. out = sum over t of score[t] * v[t]
+
+    The scores go to a global scratch buffer (one row of context_len per head and token) rather
+    than shared memory, so the context length is not capped by the 48 KB a workgroup may have.
+
+    The key/value head of query head h is h / kv_mul (grouped-query attention: kv_mul query
+    heads share one key/value head).
+
+    Each head's whole context is done by one workgroup, so at long contexts this is
+    latency-bound - a split over several workgroups per head (flash-decoding) is the known next
+    step if the timings ask for it.
+*/
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer Query { float q[]; };
+layout(std430, binding = 1) readonly buffer KeyCache { vec4 kc4[]; };
+layout(std430, binding = 2) readonly buffer ValueCache { float vc[]; };
+layout(std430, binding = 3) buffer Scores { float att[]; };
+layout(std430, binding = 4) writeonly buffer Output { float o[]; };
+
+uniform int pos0;           //position of token 0
+uniform int head_size;      //at most 256
+uniform int n_heads;
+uniform int kv_dim;
+uniform int kv_mul;
+uniform int context_len;
+uniform int layer_offset;   //this layer's part of the caches, in floats
+uniform int q_stride;       //floats from one token's query to the next's
+uniform int o_stride;       //floats from one token's output to the next's
+
+shared vec4 qs[64];         //this head's query
+shared float partial[32];   //one per subgroup, for the reductions
+shared float out_partial[256];
+
+//The sum (or max) of v over the whole workgroup. Every invocation must call it.
+float WorkgroupSum(float v){
+    v = subgroupAdd(v);
+    if (subgroupElect()){
+        partial[gl_SubgroupID] = v;
+    }
+    barrier();
+    float total = 0.0;
+    for (uint s = 0;s < gl_NumSubgroups;s++){
+        total += partial[s];
+    }
+    barrier();  //before partial[] is reused
+    return total;
+}
+
+float WorkgroupMax(float v){
+    v = subgroupMax(v);
+    if (subgroupElect()){
+        partial[gl_SubgroupID] = v;
+    }
+    barrier();
+    float m = partial[0];
+    for (uint s = 1;s < gl_NumSubgroups;s++){
+        m = max(m,partial[s]);
+    }
+    barrier();
+    return m;
+}
+
+void main(){
+    int h = int(gl_WorkGroupID.x);
+    int b = int(gl_WorkGroupID.y);
+    int pos = pos0 + b;
+    int tid = int(gl_LocalInvocationID.x);
+    int hs4 = head_size / 4;
+    int kv_head = h / kv_mul;
+    int score_base = (b * n_heads + h) * context_len;
+
+    if (tid < hs4){
+        int qi = b * q_stride + h * head_size + tid * 4;
+        qs[tid] = vec4(q[qi],q[qi + 1],q[qi + 2],q[qi + 3]);
+    }
+    barrier();
+
+    //1. scores, and their max for a stable softmax
+    float scale = 1.0 / sqrt(float(head_size));
+    float local_max = -1e30;
+    for (int t = tid;t <= pos;t += 256){
+        int k4 = (layer_offset + t * kv_dim + kv_head * head_size) / 4;
+        float s = 0.0;
+        for (int i = 0;i < hs4;i++){
+            s += dot(qs[i],kc4[k4 + i]);
+        }
+        s *= scale;
+        att[score_base + t] = s;
+        local_max = max(local_max,s);
+    }
+    float m = WorkgroupMax(local_max);
+
+    //2. softmax: exp and its sum. Each invocation rewrites only the scores it wrote itself.
+    float local_sum = 0.0;
+    for (int t = tid;t <= pos;t += 256){
+        float e = exp(att[score_base + t] - m);
+        att[score_base + t] = e;
+        local_sum += e;
+    }
+    float total = WorkgroupSum(local_sum);
+    //Step 3 reads scores other invocations wrote: make the buffer writes visible first.
+    memoryBarrierBuffer();
+    barrier();
+
+    //3. the weighted sum of the values. Invocation tid takes dimension tid % head_size of every
+    //slices-th position, so consecutive invocations read consecutive floats of a value row.
+    int slices = 256 / head_size;
+    int slice = tid / head_size;
+    int dim = tid % head_size;
+    float acc = 0.0;
+    if (slice < slices){
+        int v_base = layer_offset + kv_head * head_size + dim;
+        for (int t = slice;t <= pos;t += slices){
+            acc += att[score_base + t] * vc[v_base + t * kv_dim];
+        }
+    }
+    out_partial[tid] = acc;
+    barrier();
+    if (tid < head_size){
+        float sum = 0.0;
+        for (int s = 0;s < slices;s++){
+            sum += out_partial[s * head_size + tid];
+        }
+        o[b * o_stride + h * head_size + tid] = sum / total;
+    }
+}

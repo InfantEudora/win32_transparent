@@ -51,7 +51,13 @@ woodcutter's hut in the settlement TAKES OVER the camp's woodcutter place (after
 LAND GROWS FROM EVERY BUILDING (the user's, built 2026-10-12, plan "Growing from every building"): heart = founding
 home by beds; every STANDING building +15 walk (ECONOMY_SETTLEMENT_BUILDING), guard tower +30, built wall/gate plot
 +10; chains outward; not sites/fields/ranges/roads/yards; Settle grows in waves, narrows hearts in rounds.
-OPEN, asked: children left alone when their last grown-up leaves (follow them, or refuse the leaving).
+2026-10-12 BUILT (the user's): children GO WITH the household when every grown-up leaves (tent or other settlement's
+ground) - internally posted beside mother/father/eldest (GoesWith/WithTheGrown, EconomyWorker::with, saved+hashed);
+a BABY carried by its mother whenever she is posted, until home, fed from her pack; ORPHANS squeeze in with a
+grown-up's home of their settlement (HouseFamilies) - overrules lifeline_plan's no-orphan rule. Box select = grown-ups.
+2026-10-12 also: ONE CAMP TO A COLONY (the user's): tents anywhere in a colony join its camp (EconomyColonyCamp;
+zones let a camp's tents not touch, never split it); a camp never joins land with a camp in Settle (founds its own);
+camp door in its largest tent group; ECONOMY_PITCH_RINGS 4. COLONY N panel top-left (SelectionColony).
 Also open: foraging, porters, per-settlement stock. camp_3's home village dies of thirst (camp carrier only).
 
 **Why:** the colony must grow as separate bases supplied deliberately, not one map-wide labour pool.

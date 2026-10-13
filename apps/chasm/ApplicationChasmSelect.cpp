@@ -99,6 +99,8 @@ bool ScreenOf(Camera* cam, float width, float height, const vec3& p, vec2& out){
 #define ICON_STEEL      UIColor(214,220,224,255)    //an axe's head, a hammer's, a bucket's handle
 #define ICON_WHEAT      UIColor(236,200,100,255)
 #define ICON_BALL       UIColor(214,92,70,255)      //a child's ball
+#define ICON_FRUIT      UIColor(226,96,84,255)      //a picker's berries (foraging_plan.md)
+#define ICON_LEAF       UIColor(126,178,84,255)
 
 /*
     THE BADGES' ICONS: a few opaque strokes each, so where they overlap does not show (AddLine's note), on
@@ -215,6 +217,16 @@ void DrawBallIcon(UIOverlay* o, const vec2& c, float s){
     o->AddArc(c,r * 0.62f,-0.6f,1.3f,1.5f * s,ICON_WOOD_END);
 }
 
+//A picker's berries (foraging_plan.md): three, in a cluster under a leaf.
+void DrawBerriesIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(-0.6f,-3.4f),p(4.2f,-6.0f),2.4f * s,ICON_LEAF);
+    float r = 2.7f * s;
+    for (const vec2& at : {p(-2.6f,1.8f),p(2.6f,1.8f),p(0.0f,-2.4f)}){
+        o->AddRect(at - vec2(r,r),at + vec2(r,r),r,ICON_FRUIT);
+    }
+}
+
 //A baby swaddled: a pale face on a bundle - a baby's, and its mother's while she cares for it.
 void DrawBabyIcon(UIOverlay* o, const vec2& c, float s){
     auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
@@ -260,6 +272,7 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
         case WORKER_JOB_WOODCUTTER: DrawAxeIcon(o,c,is); break;
         case WORKER_JOB_FARMER:     DrawWheatIcon(o,c,is); break;
         case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
+        case WORKER_JOB_PICKER:     DrawBerriesIcon(o,c,is); break;
         case WORKER_JOB_BUILDER:    DrawHammerIcon(o,c,is); break;
         case WORKER_JOB_ARCHER:     DrawBowIcon(o,c,is); break;
         case WORKER_JOB_GUARD:      DrawSpearIcon(o,c,is); break;      //a tower's: posted there (defence_plan.md)
@@ -373,6 +386,73 @@ const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
 }
 
 /*
+    THE COLONY (settlements_plan.md, the user's 2026-10-12: which settlement a tent belongs to "is currently not visible
+    at all"): what the selection belongs to - a building, field or yard its plot's (a building's door's), a gate or a
+    crate its plot's, a person his home's, or with none the one he stands in. Named COLONY 1, 2, 3 in the order they
+    were founded (EconomyState::settlements, the oldest first). A group: each of theirs. NO COLONY for something of
+    none; empty with nothing selected.
+*/
+std::string SelectionColony(const PlayPick& sel, const std::vector<uint32_t>& group, const ChasmWorld& w, const EconomyState& e){
+    auto of_plot = [&](int v) -> uint32_t {
+        return (v >= 0 && v < (int)e.settlement.size()) ? e.settlement[v] : 0;
+    };
+    auto of_person = [&](uint32_t id) -> uint32_t {
+        const EconomyWorker* k = PersonById(e,id);
+        if (!k){
+            return 0;
+        }
+        if (uint32_t mine = EconomyPersonSettlement(e,*k)){
+            return mine;
+        }
+        GridPick at = w.picker->Pick(k->pos);
+        return at.f_hit ? of_plot(at.plot) : 0;
+    };
+    std::vector<uint32_t> of;
+    switch (sel.kind){
+        case PLAY_PICK_BUILDING:    of.push_back(EconomySettlementOf(e,sel.id)); break;
+        case PLAY_PICK_PERSON:      of.push_back(of_person(sel.id)); break;
+        case PLAY_PICK_GATE:
+        case PLAY_PICK_GROUND:      of.push_back(of_plot((sel.plot >= 0) ? sel.plot : (int)sel.id)); break;
+        case PLAY_PICK_CRATE:
+            for (const EconomyCrate& c : e.crates){
+                if (c.id == sel.id){
+                    of.push_back(of_plot(c.plot));
+                }
+            }
+            break;
+        case PLAY_PICK_GROUP:
+            for (uint32_t id : group){
+                of.push_back(of_person(id));
+            }
+            break;
+        default:
+            return std::string();
+    }
+    std::vector<int> numbers;
+    bool f_none = false;
+    for (uint32_t settlement : of){
+        int n = 0;
+        for (size_t i = 0; i < e.settlements.size(); i++){
+            n = (e.settlements[i].id == settlement) ? (int)i + 1 : n;
+        }
+        if (!n){
+            f_none = true;
+        }else if (std::find(numbers.begin(),numbers.end(),n) == numbers.end()){
+            numbers.push_back(n);
+        }
+    }
+    std::sort(numbers.begin(),numbers.end());
+    if (numbers.empty()){
+        return f_none ? "NO COLONY" : "";
+    }
+    std::string name = (numbers.size() == 1) ? "COLONY " : "COLONIES ";
+    for (size_t i = 0; i < numbers.size(); i++){
+        name += std::string((i == 0) ? "" : (i + 1 == numbers.size() && !f_none) ? " AND " : ", ") + std::to_string(numbers[i]);
+    }
+    return f_none ? name + " AND NONE" : name;
+}
+
+/*
     An errand for a site, by the good it is for - `phase` 0 going for it, 1 picking it up, 2 taking it to the
     site: food by its category, any other good by name ("fetching rope for a site"). For a guard tower, its site
     or its stock kept full (defence_plan.md, step 7), "for a tower". Made once a good, since Doing hands back a
@@ -402,8 +482,9 @@ bool CampWork(const EconomyWorker& k, const ZoneState* z){
     and no tent on him - so his card offers Settle here. Economy::SettleHere says the rest: a bed to spare there.
 */
 bool CanSettleHere(const EconomyState& e, const EconomyWorker& k){
-    if (k.post < 0 || k.tent == ECONOMY_TENT_CARRIED || !e.world || k.post >= (int)e.settlement.size()){
-        return false;
+    if (k.post < 0 || k.tent == ECONOMY_TENT_CARRIED || !e.world || k.post >= (int)e.settlement.size()
+        || !EconomyCanOrder(k,e.tick)){
+        return false;       //a child settles with the grown-up he goes along with (WITH THE GROWN)
     }
     uint32_t there = e.settlement[k.post];
     if (!there || there == EconomyPersonSettlement(e,k)){
@@ -440,16 +521,21 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         return "cut off from home, looking for a way back";
     }
     switch (k.state){
-        case WORKER_AT_HOME:    return EconomyIndoors(k) ? "at home" : (k.house ? "at the tent" : "waiting");
+        case WORKER_AT_HOME:    return (k.with && k.job == WORKER_JOB_BABY) ? "carried by its mother"
+                                     : EconomyIndoors(k) ? "at home" : (k.house ? "at the tent" : "waiting");
         //A woodcutter out for wood - a log first, a tree if none lies near - and, with one on him, for a second log;
         //at it, felling for longer than a pick-up takes.
         //A camp's water carrier out to the water's edge to draw a load (settlements_plan.md), not to a collector.
-        case WORKER_TO_WORK:    return (k.prop >= 0) ? ((k.carry > 0) ? "going for another log" : "going for wood")
+        //A camp's picker out to a plant, and on to the next while his load has room (foraging_plan.md).
+        case WORKER_TO_WORK:    return (k.job == WORKER_JOB_PICKER && CampWork(k,z)) ? ((k.carry > 0) ? "going to pick more fruit" : "going to pick fruit")
+                                     : (k.prop >= 0) ? ((k.carry > 0) ? "going for another log" : "going for wood")
                                      : (k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "going to draw water" : "going to work";
-        case WORKER_WORKING:    return (k.prop < 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "drawing water"
+        case WORKER_WORKING:    return (k.job == WORKER_JOB_PICKER && CampWork(k,z)) ? "picking fruit"
+                                     : (k.prop < 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "drawing water"
                                      : (k.prop < 0) ? "picking up"
                                      : (k.timer > (int)(ECONOMY_PICK_SECONDS * CALENDAR_TICKS_PER_SECOND)) ? "felling" : "picking up a log";
         case WORKER_TO_STORE:   return (k.store == 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "carrying water to the camp"
+                                     : (k.store == 0 && k.job == WORKER_JOB_PICKER && CampWork(k,z)) ? "carrying fruit to the camp"
                                      : "carrying to a store";
         case WORKER_UNLOADING:  return "unloading";
         case WORKER_TO_HOME:    return "going home";
@@ -485,8 +571,13 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         case WORKER_TO_PLAY:    return "going out to play";
         case WORKER_PLAYING:    return "playing";
         //Posted (defence_plan.md): standing there, or kept from it - a wall, a gate - and waiting for a way.
-        case WORKER_TO_POST:    return f_tower ? "going up the tower" : "going to the post";
+        //...sent to pick a plant or draw water by hand there (foraging_plan.md), and at it.
+        case WORKER_TO_POST:    return (k.forage == FORAGE_FRUIT) ? "going to pick fruit"
+                                     : (k.forage == FORAGE_WATER) ? "going to the water's edge"
+                                     : f_tower ? "going up the tower" : "going to the post";
         case WORKER_ON_POST:    return (e && !EconomyAtPost(*e,k)) ? (f_tower ? "cut off from the tower" : "cut off from the post")
+                                     : (k.forage == FORAGE_FRUIT) ? "picking fruit"
+                                     : (k.forage == FORAGE_WATER) ? "drawing water"
                                      : f_tower ? "on watch on the tower" : "standing guard";
         case WORKER_TO_RANGE:   return "going to the range";
         case WORKER_TRAINING:   return "training";
@@ -530,6 +621,7 @@ const char* JobTitle(int job){
         case WORKER_JOB_WOODCUTTER: return "Woodcutter";
         case WORKER_JOB_FARMER:     return "Farmer";
         case WORKER_JOB_WATER:      return "Water carrier";
+        case WORKER_JOB_PICKER:     return "Picker";
         case WORKER_JOB_BUILDER:    return "Builder";
         case WORKER_JOB_ARCHER:     return "Archer";
         case WORKER_JOB_GUARD:      return "Guard";
@@ -878,15 +970,18 @@ std::string GoodsList(const EconomyState& e, uint32_t id){
 //A family's name, from any of them: a person's name less the first name.
 //The family living in house `id`, by name - empty with nobody there. A couple's family goes by the surname their
 //children take (COUPLES, Economy.h): a new couple keeps two, and the one the house is known by is the children's.
+//A grown-up's family first: orphans squeezed in with them (Economy::HouseFamilies) do not name it.
 std::string HouseFamily(const EconomyState& e, uint32_t id){
-    for (const EconomyWorker& k : e.workers){
-        if (k.house != id){
-            continue;
+    for (int pass = 0; pass < 2; pass++){
+        for (const EconomyWorker& k : e.workers){
+            if (k.house != id || (pass == 0 && !EconomyCanOrder(k,e.tick))){
+                continue;
+            }
+            bool f_couple = std::any_of(e.workers.begin(),e.workers.end(),[&](const EconomyWorker& o){
+                return o.id == k.partner && o.house == id;
+            });
+            return EconomySurnameName(f_couple ? EconomyCoupleSurname(e,k.id,k.partner) : k.surname);
         }
-        bool f_couple = std::any_of(e.workers.begin(),e.workers.end(),[&](const EconomyWorker& o){
-            return o.id == k.partner && o.house == id;
-        });
-        return EconomySurnameName(f_couple ? EconomyCoupleSurname(e,k.id,k.partner) : k.surname);
     }
     return std::string();
 }
@@ -1024,10 +1119,35 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         c.Text(Format("%s at %s %u",JobTitle(k.job),KindTitle(z.buildings[k.building].kind),k.building));
     }
     /*
+        WITH THE GROWN (settlements_plan.md, the user's 2026-10-12): a child going along with a grown-up of his household,
+        or a baby carried by its mother - the game's order, never the player's, so none of the posted chips below
+        (Economy::WithTheGrown). And on the grown-up's card, who goes with them.
+    */
+    const EconomyWorker* with = k.with ? PersonById(e,k.with) : NULL;
+    bool f_along = with && !EconomyCanOrder(k,e.tick);
+    if (f_along && k.job != WORKER_JOB_BABY){
+        c.Text(Format("Going with %s",EconomyPersonName(*with).c_str()),HUD_AMBER);     //a baby: "carried by its mother" (Doing)
+    }
+    int children_along = 0;
+    int babies_along = 0;
+    for (const EconomyWorker& o : e.workers){
+        if (o.with == k.id){
+            (o.job == WORKER_JOB_BABY ? babies_along : children_along)++;
+        }
+    }
+    if (children_along || babies_along){
+        std::string taking = children_along ? Format("Taking %i child%s along",children_along,children_along == 1 ? "" : "ren") : "";
+        std::string carrying = (babies_along == 1) ? "carrying a baby" : babies_along ? Format("carrying %i babies",babies_along) : "";
+        if (taking.empty()){
+            carrying[0] = 'C';
+        }
+        c.Text(taking + ((!taking.empty() && !carrying.empty()) ? ", " : "") + carrying,HUD_AMBER);
+    }
+    /*
         POSTED (defence_plan.md): the post is the job while it lasts; work there was waits, its place kept.
         The Release chip ends it (OVERLAY_HIT_RELEASE, a recorded order).
     */
-    if (k.post >= 0){
+    if (k.post >= 0 && !f_along){
         if (k.job >= 0){
             c.Text("Posted - this work waits until released",HUD_AMBER);
         }else{
@@ -1991,6 +2111,9 @@ void GroupCard(const ZoneState& z, const EconomyState& e, const std::vector<uint
                                                                                  std::floor(days) == 1.0f ? "" : "s");
         }
         c.lines.push_back(l);
+        if (!EconomyCanOrder(*k,e.tick)){
+            continue;       //a child is given no order, and goes along with his grown-ups (WITH THE GROWN)
+        }
         posted += (k->post >= 0) ? 1 : 0;
         gathering += (k->post >= 0 && k->gather > 0) ? 1 : 0;
         tentless += (k->post >= 0 && k->tent != ECONOMY_TENT_CARRIED) ? 1 : 0;
@@ -2546,6 +2669,113 @@ void ApplicationChasm::TakeBox(const std::vector<uint32_t>& ids, bool f_add){
 }
 
 /*
+    PHYSICS THREAD: the selected sent to `plot` as a right click sends them (defence_plan.md) - onto tower `tower` as its
+    guards, if not 0 - or, with `forage`, to pick or draw there by hand (foraging_plan.md). A GROUP (selection_plan.md,
+    "Several people selected", step 3): a command each, nearest first, each spread round the plot - or to the next
+    nearest ripe plant - and told as one line once all are done (group_orders, DrawBuildBar).
+*/
+void ApplicationChasm::SendSelected(int plot, int layer, uint32_t tower, int forage){
+    std::vector<uint32_t> people = SelectedPeople();
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    auto send = [&](uint32_t id, bool f_spread){
+        if (tower){
+            SubmitGuard(id,tower);
+        }else if (forage != FORAGE_NONE){
+            SubmitForage(id,plot,forage,f_spread);
+        }else{
+            SubmitOrder(id,plot,layer,f_spread);
+        }
+    };
+    if (people.size() >= 2 && w && z && e && e->world == w && z->world == w){
+        group_orders_refused_at = order_refusals.load();
+        group_orders_done_at = order_commands_done.load() + (uint32_t)people.size();
+        group_orders_since = std::chrono::steady_clock::now().time_since_epoch().count();
+        group_orders = (uint32_t)people.size();
+        //The nearest first: he takes the plot clicked, or the tower's place, and the farther the rest round it.
+        int at = tower ? FirstPlotOf(*z,tower) : plot;
+        vec2 p = (at >= 0) ? w->grid->fine.pos[at] : vec2();
+        std::vector<const EconomyWorker*> by;
+        for (uint32_t id : people){
+            if (const EconomyWorker* k = PersonById(*e,id)){
+                by.push_back(k);
+            }
+        }
+        std::stable_sort(by.begin(),by.end(),[&](const EconomyWorker* a, const EconomyWorker* b){
+            return (a->pos - p).length() < (b->pos - p).length();
+        });
+        group_orders_done_at = group_orders_done_at.load() - (uint32_t)(people.size() - by.size());
+        for (const EconomyWorker* k : by){
+            send(k->id,true);
+        }
+    }else{
+        for (uint32_t id : people){
+            send(id,false);
+        }
+    }
+}
+
+/*
+    RENDER THREAD. THE RIGHT CLICK'S MENU (foraging_plan.md): beside the cursor where it opened - Pick fruit over a ripe
+    plant, with Post here; Draw water over water, where nobody may stand. Its panel is the menu's too, so a click on it
+    between the choices neither closes it nor picks anything beneath.
+*/
+void ApplicationChasm::DrawForageMenu(float s){
+    ForageMenu m;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        m = forage_menu;
+    }
+    if (!m.f_open || paint_tool != CHASM_TOOL_SELECT || SelectedPeople().empty()){
+        return;
+    }
+    struct Item{ const char* name; int value; };
+    std::vector<Item> items;
+    if (m.f_fruit){
+        items.push_back(Item{"Pick fruit",FORAGE_FRUIT});
+    }
+    if (m.f_water){
+        items.push_back(Item{"Draw water",FORAGE_WATER});
+    }else{
+        items.push_back(Item{"Post here",FORAGE_NONE});
+    }
+    const float text_size = 14.0f * s;
+    const float pad = 7.0f * s;
+    const float row_h = 26.0f * s;
+    float text_w = 0.0f;
+    for (const Item& it : items){
+        text_w = std::max(text_w,overlay->MeasureText(it.name,text_size).x);
+    }
+    float w = text_w + pad * 2.0f + 16.0f * s;
+    float h = pad * 2.0f + row_h * (float)items.size();
+    vec2 p0(m.at.x + 12.0f * s,m.at.y - h * 0.5f);
+    p0.x = std::min(p0.x,(float)main_window->width - w - 8.0f * s);
+    p0.y = std::max(8.0f * s,std::min(p0.y,(float)main_window->height - h - 8.0f * s));
+    vec2 p1 = p0 + vec2(w,h);
+    //All but opaque: it opens over whatever is there - the selected person's card, as often as not.
+    overlay->AddRect(p0,p1,9.0f * s,HudFaded(HUD_PANEL,248));
+    overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_FORAGE,-1});
+    float y = p0.y + pad;
+    for (size_t i = 0; i < items.size(); i++){
+        vec2 k0(p0.x + pad,y + 2.0f * s);
+        vec2 k1(p1.x - pad,y + row_h - 2.0f * s);
+        //The first is what the click was for - the fruit, the water: lit, as a chip that is on.
+        bool f_lit = i == 0 && items[i].value != FORAGE_NONE;
+        if (f_lit){
+            uint32_t fill = (items[i].value == FORAGE_FRUIT) ? HudGoodColour(GOOD_FRUIT) : HudGoodColour(GOOD_WATER);
+            overlay->AddRect(k0,k1,8.0f * s,HudFaded(fill,235));
+        }else{
+            overlay->AddRectOutline(k0,k1,8.0f * s,1.5f * s,HudFaded(HUD_TEXT,118));
+        }
+        overlay->AddText(items[i].name,vec2(k0.x + 8.0f * s,k1.y - 7.0f * s),text_size,
+                         f_lit ? HudFaded(HUD_PANEL,255) : HUD_TEXT,UI_ALIGN_LEFT);
+        overlay_hits_drawing.push_back(OverlayHit{k0,k1,OVERLAY_HIT_FORAGE,items[i].value});
+        y += row_h;
+    }
+}
+
+/*
     PHYSICS THREAD, from UpdatePick in play mode, before any painting: the overlay takes the mouse
     where it is drawn (a press on it does what it says and nothing beneath is picked or painted); a
     right click - pressed and let go without dragging, which would be a pan - puts a tool down, sends
@@ -2578,6 +2808,14 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
     }
     OverlayHit hit;
     uint32_t row_person = 0;        //a line or row naming a person, under the cursor: he is the hover
+    //THE RIGHT CLICK'S MENU (foraging_plan.md): a click anywhere but on it closes it.
+    if (f_clicked){
+        OverlayHit on;
+        if (!(OverlayHitAt(px,&on) && on.action == OVERLAY_HIT_FORAGE)){
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            forage_menu.f_open = false;
+        }
+    }
     if (f_over_scene && OverlayHitAt(px,&hit)){
         f_over_scene = false;
         hover = GridPick();
@@ -2701,6 +2939,17 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                             SubmitTent(k->id,!f_all);
                         }
                     }
+                }
+            }else if (hit.action == OVERLAY_HIT_FORAGE && hit.value >= 0){
+                //The right click's menu (foraging_plan.md): its choice for the plot it opened on, and it closes.
+                ForageMenu m;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    m = forage_menu;
+                    forage_menu.f_open = false;
+                }
+                if (m.f_open){
+                    SendSelected(m.plot,m.layer,0,hit.value);
                 }
             }else if (hit.action == OVERLAY_HIT_SETTLE){
                 //Everyone selected who may moves into the settlement they were sent to, each to a bed to spare there.
@@ -2843,6 +3092,10 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
     }
     if (f_right_click){
         std::vector<uint32_t> people = SelectedPeople();
+        {
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            forage_menu.f_open = false;     //a right click anywhere closes it - or opens it afresh, below
+        }
         if (paint_tool != CHASM_TOOL_SELECT){
             paint_tool = CHASM_TOOL_SELECT;
             pick_version++;
@@ -2851,9 +3104,8 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 An ORDER: the selected person goes to the plot under the cursor and stands there. The economy
                 decides whether he can, and the overlay says why not (CHASM_CMD_ORDER). On a GUARD TOWER - the one
                 the cursor picks, or on the plot - he is posted there as its guard by hand instead (step 8).
-                A GROUP (selection_plan.md, "Several people selected", step 3): an order each - on the one plot when it
-                has room for them all, else over the plots round it (Economy::SpreadPost); onto a tower, the nearest first, as
-                many as it has places. Told as one line once all are done (group_orders, DrawBuildBar).
+                On a RIPE PLANT or on WATER (foraging_plan.md, the user's 2026-10-12), a menu instead - pick it, or draw
+                water there, by hand, or only stand there - and its choice sends them (DrawForageMenu, SendSelected).
             */
             PlayPick on = PlayPickUnder(px,hover);
             std::shared_ptr<const ZoneState> z = GetZones();
@@ -2868,39 +3120,22 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             int layer = hover.f_surface ? hover.layer : -1;
             std::shared_ptr<const ChasmWorld> w = GetWorld();
             std::shared_ptr<const EconomyState> e = GetEconomy();
-            if (people.size() >= 2 && w && z && e && e->world == w && z->world == w){
-                group_orders_refused_at = order_refusals.load();
-                group_orders_done_at = order_commands_done.load() + (uint32_t)people.size();
-                group_orders_since = std::chrono::steady_clock::now().time_since_epoch().count();
-                group_orders = (uint32_t)people.size();
-                //The nearest first: he takes the plot clicked, or the tower's place, and the farther the rest round it.
-                int at = tower ? FirstPlotOf(*z,tower) : hover.plot;
-                vec2 p = (at >= 0) ? w->grid->fine.pos[at] : vec2();
-                std::vector<const EconomyWorker*> by;
-                for (uint32_t id : people){
-                    if (const EconomyWorker* k = PersonById(*e,id)){
-                        by.push_back(k);
-                    }
-                }
-                std::stable_sort(by.begin(),by.end(),[&](const EconomyWorker* a, const EconomyWorker* b){
-                    return (a->pos - p).length() < (b->pos - p).length();
-                });
-                group_orders_done_at = group_orders_done_at.load() - (uint32_t)(people.size() - by.size());
-                for (const EconomyWorker* k : by){
-                    if (tower){
-                        SubmitGuard(k->id,tower);
-                    }else{
-                        SubmitOrder(k->id,hover.plot,layer,true);
-                    }
-                }
+            bool f_fruit = false;
+            bool f_water = false;
+            if (!tower && w && z && e && e->world == w && z->world == w && hover.plot < (int)w->terrain->wet.size()){
+                f_fruit = EconomyRipePlantOn(*e,hover.plot) >= 0;
+                f_water = w->terrain->wet[hover.plot] && !ZoneBridgeWalkable(*z,hover.plot);
+            }
+            if (f_fruit || f_water){
+                std::lock_guard<std::mutex> lock(pick_mutex);
+                forage_menu.f_open = true;
+                forage_menu.at = vec2((float)px.x,(float)px.y);
+                forage_menu.plot = hover.plot;
+                forage_menu.layer = layer;
+                forage_menu.f_fruit = f_fruit;
+                forage_menu.f_water = f_water;
             }else{
-                for (uint32_t id : people){
-                    if (tower){
-                        SubmitGuard(id,tower);
-                    }else{
-                        SubmitOrder(id,hover.plot,layer);
-                    }
-                }
+                SendSelected(hover.plot,layer,tower,FORAGE_NONE);
             }
         }else{
             bool f_any;
@@ -3380,6 +3615,18 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     }
     float width = (float)main_window->width;
     float height = (float)main_window->height;
+    //THE COLONY the selection belongs to, at the top left (SelectionColony) - in the calendar's panel and lettering.
+    if (ep){
+        std::string colony = SelectionColony(sel,group,*w,*ep);
+        if (!colony.empty()){
+            float text = 20.0f * s;
+            vec2 q0(16.0f * s,12.0f * s);
+            vec2 q1(q0.x + overlay->MeasureText(colony.c_str(),text).x + 32.0f * s,q0.y + 44.0f * s);
+            overlay->AddRect(q0,q1,12.0f * s,HUD_PANEL);
+            overlay->AddText(colony.c_str(),vec2(q0.x + 16.0f * s,q0.y + 29.0f * s),text,HUD_TEXT,UI_ALIGN_LEFT);
+            overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
+        }
+    }
     /*
         PINNED: everyone who belongs with the selection, and the selected person himself - or a group, all of them -
         his badge on a stem in the selection's colour, kept on screen at its edge when he is off it, so he can be found.
@@ -3787,7 +4034,7 @@ void ApplicationChasm::RegisterSelectTools(){
                                                   "field_next","pause","speed","field_land","person","release",
                                                   "take_tool","building","gate","ladder","tower_guards","guard_release",
                                                   "store_allow_group","keep","make_more","gather","family",
-                                                  "group_drop","tent","pitch","settle"};
+                                                  "group_drop","tent","pitch","settle","work_stop","forage"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             /*
                 The hover pinned at a pixel in place of the mouse's, until op hover with none - the overlay's (goods_plan.md:
@@ -4099,6 +4346,7 @@ void ApplicationChasm::RegisterSelectTools(){
                 std::vector<uint32_t> related;
                 RelatedPeople(sel,*z,*ep,related);
                 result["pinned"] = related;
+                result["colony"] = SelectionColony(sel,group,*w,*ep);     //as the top left shows it
             }
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
         });

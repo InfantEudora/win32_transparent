@@ -15,10 +15,10 @@ A [[Guard tower|guard]] is posted by his job instead: his post is his tower, and
 with the tower as his pantry. An order to him comes first and suspends the job like any other.
 
 With a person selected, a right click on a plot sends them there; their card releases them. An order is refused for a
-child, onto a plot with a building, a wall or a shut gate on it (a camp and a standing bridge count as open ground), onto
+child - children go with their household ([[Founding]]) - onto a plot with a building, a wall or a shut gate on it (a camp and a standing bridge count as open ground), onto
 the water, and onto a plot they can't walk to. In winter they may cross the **ice** ([[Seasons]]): a risk, as the thaw
 cuts off whoever is still across. A right click on a [[Guard tower|guard tower]] instead makes them one of its guards, by
-hand. **Several at once**: drag a box round grown-ups, or Shift+click them on the map or on a card, and one right click
+hand; on a ripe plant or on water it offers to **pick fruit** or **draw water** there by hand ([[Fruit]]). **Several at once**: drag a box round grown-ups, or Shift+click them on the map or on a card, and one right click
 orders them all - the nearest onto the plot clicked while it has room, the rest onto the nearest plots round it they can
 reach (one each {ECONOMY_POST_ROOM} of a plot's area). Several on one plot stand apart, each in a place of their own; onto a tower, the nearest take its places.
 

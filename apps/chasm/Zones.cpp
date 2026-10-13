@@ -932,6 +932,9 @@ bool ZoneCanExtend(const ChasmWorld& w, const ZoneState& z, int plot, int kind, 
     if (z.buildings[owner].size >= most){
         return refuse(FullRefusal(kind));
     }
+    if (kind == ZONE_KIND_CAMP){
+        return true;        //its tents need not touch (THE CAMP, Zones.h)
+    }
     int nb[8];
     int n = ZonePlotNeighbours(w,plot,nb,8);
     bool f_beside = false;
@@ -1653,6 +1656,9 @@ uint32_t Zones::NewBuilding(int kind){
     old neighbours can start a piece, so only they are flooded from.
 */
 void Zones::SplitAfterRemoval(uint32_t id, int removed, bool f_field){
+    if (!f_field && state.buildings[id].kind == ZONE_KIND_CAMP){
+        return;     //a camp's tents need not touch (THE CAMP, Zones.h): one camp, however they stand
+    }
     const ChasmWorld& w = *state.world;
     std::vector<uint32_t>& owner = f_field ? state.field : state.building;
     auto neighbours = [&](int at, int* out) -> int {
@@ -1900,9 +1906,11 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             uint32_t joining = owner ? owner : (kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER) ? 0 : stroke_target(kind);
             //A diagonal step brings the plot at the cell's corner between first, so the building stays one piece.
-            int bridge = (joining && !plot_touches(plot,joining)) ? ZoneJoinCorner(w,state,plot,kind,joining) : -1;
+            //...but a camp's tents need not touch (THE CAMP, Zones.h): no corner between, and a stroke of them goes on.
+            bool f_apart = kind == ZONE_KIND_CAMP;
+            int bridge = (joining && !f_apart && !plot_touches(plot,joining)) ? ZoneJoinCorner(w,state,plot,kind,joining) : -1;
             int room = (bridge >= 0) ? 2 : 1;
-            if (!owner && joining && ((!plot_touches(plot,joining) && bridge < 0) ||
+            if (!owner && joining && ((!f_apart && !plot_touches(plot,joining) && bridge < 0) ||
                             (ZoneKindMaxPlots(kind) && state.buildings[joining].size + room > ZoneKindMaxPlots(kind)))){
                 joining = 0;
                 bridge = -1;
@@ -2945,7 +2953,10 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
         if (b.kind == ZONE_KIND_HOUSE && b.size > ZONE_HOUSE_MAX_PLOTS){
             big_houses++;
         }
-        //One piece: a flood from its first element reaches all of it.
+        //One piece: a flood from its first element reaches all of it - but a camp, whose tents need not touch.
+        if (b.kind == ZONE_KIND_CAMP){
+            continue;
+        }
         bool f_field = ZoneKindOnCells(b.kind);
         const std::vector<uint32_t>& owner = f_field ? z.field : z.building;
         int first = -1;

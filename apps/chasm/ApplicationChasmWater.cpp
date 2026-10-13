@@ -89,7 +89,10 @@ void ApplicationChasm::SetWaterSheetUniforms(){
     //Both faces: a fall is seen from over the chasm and, past the lip, from above its back.
     glDisable(GL_CULL_FACE);
     water_sheet_shader->Setfloat("water_seconds",(float)SimSeconds());
-    water_sheet_shader->Setfloat("flow_speed",0.32f);
+    //The river's speed: a sheet's uv.y is the river's along carried on (WaterMesh.h).
+    water_sheet_shader->Setfloat("flow_speed",WATER_RIVER_FLOW);
+    water_sheet_shader->Setfloat("water_top",TERRAIN_WATER_Y);
+    water_sheet_shader->Setfloat("mist_top",CHASM_MIST_TOP);
     SetIceUniforms(water_sheet_shader);
 }
 
@@ -110,7 +113,7 @@ void ApplicationChasm::SetWaterPoolUniforms(){
 
 void ApplicationChasm::SetWaterFlatUniforms(){
     water_flat_shader->Setfloat("water_seconds",(float)SimSeconds());
-    water_flat_shader->Setfloat("flow_speed",2.2f);
+    water_flat_shader->Setfloat("flow_speed",WATER_RIVER_FLOW);
     SetIceUniforms(water_flat_shader);
 }
 
@@ -143,8 +146,9 @@ void ApplicationChasm::UploadWater(){
         Surface(water_flat,w->water->flat,water_flat_shader_index);
         Surface(water_pools,w->water->pools,water_pool_shader_index);
         Surface(water_sheets,w->water->sheets,water_sheet_shader_index);
-        debug->Info("Water: %zu river and %zu fall vertices, %zu falls (%.1f ms)\n",w->water->flat.size(),
-                    w->water->sheets.size(),w->terrain->falls.size(),w->water->build_ms);
+        debug->Info("Water: %zu river and %zu fall vertices, %zu falls, %d brinks, %d sheets pushed out by rock (%.1f ms)\n",
+                    w->water->flat.size(),w->water->sheets.size(),w->terrain->falls.size(),w->water->brinks,
+                    w->water->sheets_pushed,w->water->build_ms);
     }
     water_flat->SetVisibility(f_show && !w->water->flat.empty());
     water_pools->SetVisibility(f_show && !w->water->pools.empty());
@@ -159,7 +163,7 @@ void ApplicationChasm::UploadWater(){
 */
 void ApplicationChasm::UpdateMist(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
-    if (!w || !w->mist || !foam_set){
+    if (!w || !w->mist || !w->water || !foam_set){
         return;
     }
     const MistData& m = *w->mist;
@@ -220,33 +224,32 @@ void ApplicationChasm::UpdateMist(){
 
     std::vector<fmat4> foam;
     if (f_show){
-        //The springs' water meets the mist as a fall's does (WaterMesh.cpp), so it foams the same way.
-        std::vector<TerrainFall> falls = w->terrain->falls;
-        for (const TerrainSpring& sp : w->terrain->springs){
-            if (sp.plots > 0){
-                TerrainFall f;
-                f.lip = sp.lip;
-                f.out = sp.out;
-                f.across = sp.across;
-                f.width = sp.width;
-                falls.push_back(f);
-            }
-        }
+        //Every sheet as drawn, the springs' as well as the falls' (WaterMeshData::shapes): foam where it
+        //meets the mist, spray drifting off it above that.
+        const std::vector<WaterSheetShape>& shapes = w->water->shapes;
         //A fall frozen at its lip (chasm_water.glsl, ICE) churns nothing up at its foot.
         float front = SnowFrontNow();
-        for (int f = 0; f < (int)falls.size(); f++){
-            if (CalendarSnowAt(falls[f].lip,front)){
+        auto Add = [&](const vec3& pos, float r, int s){
+            if (r > 0.02f){
+                foam.push_back(Object::ComposeTransformScale(pos,quat(vec3(0.0f,1.0f,0.0f),(float)s * 1.7f),
+                                                             vec3(r,r,r)));
+            }
+        };
+        for (int f = 0; f < (int)shapes.size(); f++){
+            if (CalendarSnowAt(shapes[f].origin,front)){
                 continue;
             }
             for (int s = 0; s < FOAM_PER_FALL; s++){
                 vec3 pos;
                 float r;
-                FoamBall(falls[f],f,s,seconds,pos,r);
-                if (r <= 0.02f){
-                    continue;
-                }
-                foam.push_back(Object::ComposeTransformScale(pos,quat(vec3(0.0f,1.0f,0.0f),(float)s * 1.7f),
-                                                             vec3(r,r,r)));
+                FoamBall(shapes[f].foot,f,s,seconds,pos,r);
+                Add(pos,r,s);
+            }
+            for (int s = 0; s < SPRAY_PER_FALL; s++){
+                vec3 pos;
+                float r;
+                SprayBall(shapes[f].foot,f,s,seconds,pos,r);
+                Add(pos,r,s + FOAM_PER_FALL);
             }
         }
     }

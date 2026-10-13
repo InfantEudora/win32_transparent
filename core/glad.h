@@ -299,6 +299,23 @@ bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
 #define GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS 0x90EB
 #define GL_MAX_COMPUTE_WORK_GROUP_COUNT 0x91BE
 #define GL_MAX_COMPUTE_WORK_GROUP_SIZE 0x91BF
+#define GL_MAX_COMPUTE_SHARED_MEMORY_SIZE 0x8262
+#define GL_SHADER_STORAGE_BARRIER_BIT 0x00002000
+#define GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS 0x90DD
+#define GL_MAX_SHADER_STORAGE_BLOCK_SIZE 0x90DE
+#define GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT 0x90DF
+
+//What a compute workload asks the implementation (apps/llm reads these to decide how a model is
+//laid out). GL_KHR_shader_subgroup's queries, and GL_NVX_gpu_memory_info's - the latter is
+//NVIDIA-only and answers GL_INVALID_ENUM elsewhere, so check the extension list first.
+#define GL_SHADING_LANGUAGE_VERSION 0x8B8C
+#define GL_NUM_EXTENSIONS 0x821D
+#define GL_SUBGROUP_SIZE_KHR 0x9532
+#define GL_SUBGROUP_SUPPORTED_STAGES_KHR 0x9533
+#define GL_SUBGROUP_SUPPORTED_FEATURES_KHR 0x9534
+#define GL_GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX 0x9047
+#define GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX 0x9048
+#define GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX 0x9049
 
 //DEBUGGING
 #define GL_DEBUG_OUTPUT 0x92E0
@@ -611,6 +628,10 @@ GLAPI PFNGLMAKETEXTUREHANDLENONRESIDENTARBPROC glMakeTextureHandleNonResidentARB
 //Information getters
 typedef void (APIENTRYP PFNGLGETINTEGERI_VPROC)(GLenum target, GLuint index, GLint *data);
 GLAPI PFNGLGETINTEGERI_VPROC glGetIntegeri_v;
+//The indexed glGetString: how a core profile lists its extensions, one at a time up to
+//GL_NUM_EXTENSIONS (glGetString(GL_EXTENSIONS) is gone from core profiles). GL 3.0.
+typedef const GLubyte* (APIENTRYP PFNGLGETSTRINGIPROC)(GLenum name, GLuint index);
+GLAPI PFNGLGETSTRINGIPROC glGetStringi;
 
 //Debug
 typedef void (APIENTRY *GLDEBUGPROC)(GLenum source,GLenum type,GLuint id,GLenum severity,GLsizei length,const char *message,const void *userParam);

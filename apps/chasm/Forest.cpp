@@ -120,6 +120,9 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
     auto Place = [&](int kind, vec2 at, float yaw, float scale, float dip = 0.0f){
         PropInstance p;
         p.kind = (uint8_t)kind;
+        //A fruit tree (foraging_plan.md): an oak, by a roll no other prop of the plot uses - a plot grows one oak at most.
+        p.f_fruit = (kind == PROP_OAK_A || kind == PROP_OAK_B || kind == PROP_OAK_C)
+                    && Chance(seed,v,90) < FOREST_FRUIT_TREE_CHANCE;
         p.pos = vec3(at.x,t.GroundHeight(at,t.Height(v)) - dip,at.y);
         p.yaw = yaw;
         p.scale = scale;

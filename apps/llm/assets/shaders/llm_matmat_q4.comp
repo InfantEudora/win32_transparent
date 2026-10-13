@@ -1,0 +1,100 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+/*
+    W X for a 4-bit matrix (Q4_0) and a BATCH of tokens - the prompt. llm_matvec_q4.comp for
+    TOK tokens at once: the same lanes, the same weights layout, the same output stage, with
+    every weight unpacked once and used for all TOK tokens of the workgroup.
+
+    WHY A SECOND KERNEL. One token at a time, the GPU waits on memory: a weight is read, used
+    once, and thrown away, and the arithmetic is idle most of the time. With TOK tokens each
+    weight read feeds TOK multiply-adds, so a prompt goes through at many times the speed of
+    generation - the same reason runq's forward_batch exists on the CPU. The workgroups' second
+    dimension takes further tiles of TOK tokens, which read the weights again; with TOK = 8
+    that is once per 8 tokens instead of once per token.
+
+    The input is already normalised (llm_rmsnorm.comp runs first): folding the norm in, as the
+    one-token kernel does, would cost TOK reads of x per workgroup to save one dispatch per
+    batch.
+
+    X is a row per token, x_stride vec4s apart; the output stage puts token t's results at
+    y_offset + t * y_stride (and, for qkv, at position pos0 + t).
+*/
+
+#define ROWS 4              //rows per subgroup; even, see llm_output.glsl
+#define SUBGROUPS 2         //MATVEC_ROWS in LLMModel.cpp is ROWS * SUBGROUPS
+#define TOK 8               //tokens per workgroup: MATMAT_TOKENS in LLMModel.cpp
+
+layout(local_size_x = 32, local_size_y = SUBGROUPS) in;
+
+layout(std430, binding = 0) readonly buffer WeightValues { uint wq[]; };
+layout(std430, binding = 1) readonly buffer WeightScales { float ws[]; };   //the same buffer
+layout(std430, binding = 2) readonly buffer Input { vec4 x4[]; };
+
+#include "llm_output.glsl"
+
+uniform int n;          //columns, a multiple of 32
+uniform int d;          //rows
+uniform int s_offset;
+uniform int x_offset;   //in vec4s: token 0's input
+uniform int x_stride;   //in vec4s: from one token's input to the next's
+uniform int nb;         //tokens in the batch
+
+void main(){
+    int first_row = (int(gl_WorkGroupID.x) * SUBGROUPS + int(gl_LocalInvocationID.y)) * ROWS;
+    if (first_row >= d){
+        return;
+    }
+    int t0 = int(gl_WorkGroupID.y) * TOK;
+    int nt = min(TOK,nb - t0);      //tokens in this tile; the same for the whole subgroup
+    int lane = int(gl_LocalInvocationID.x);
+    int ng = n / 32;
+    int j = lane & 3;
+    int lane_group = lane >> 2;
+
+    float acc[ROWS * TOK];
+    for (int i = 0;i < ROWS * TOK;i++){
+        acc[i] = 0.0;
+    }
+    for (int g0 = 0;g0 < ng;g0 += 8){
+        int g = g0 + lane_group;
+        if (g >= ng){
+            continue;
+        }
+        vec4 xa[TOK], xb[TOK];
+        float xsum[TOK];
+        for (int t = 0;t < TOK;t++){
+            if (t < nt){
+                int base = x_offset + (t0 + t) * x_stride + g * 8 + j;
+                xa[t] = x4[base];
+                xb[t] = x4[base + 4];
+                xsum[t] = dot(xa[t],vec4(1.0)) + dot(xb[t],vec4(1.0));
+            }else{
+                xa[t] = vec4(0.0);
+                xb[t] = vec4(0.0);
+                xsum[t] = 0.0;
+            }
+        }
+        for (int r = 0;r < ROWS;r++){
+            int row = min(first_row + r,d - 1);
+            int row_group = row * ng + g;
+            uint w = wq[row_group * 4 + j];
+            vec4 lo = unpackUnorm4x8(w & 0x0F0F0F0Fu);
+            vec4 hi = unpackUnorm4x8((w >> 4) & 0x0F0F0F0Fu);
+            float s = ws[s_offset + row_group];
+            for (int t = 0;t < TOK;t++){
+                float q_dot_x = (dot(lo,xa[t]) + dot(hi,xb[t])) * 255.0;
+                acc[r * TOK + t] += (q_dot_x - 8.0 * xsum[t]) * s;
+            }
+        }
+    }
+    for (int t = 0;t < nt;t++){
+        float v[ROWS];
+        for (int r = 0;r < ROWS;r++){
+            v[r] = subgroupAdd(acc[r * TOK + t]);
+        }
+        if (lane == 0){
+            WriteRows(first_row,v,t0 + t,d);
+        }
+    }
+}

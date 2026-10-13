@@ -48,12 +48,22 @@ extern const char* prop_asset_names[PROP_KIND_COUNT];
 
 struct PropInstance{
     uint8_t kind = 0;
+    bool f_fruit = false;   //an oak that is a FRUIT TREE (foraging_plan.md)
     vec3 pos;           //on the ground's relief
     float yaw = 0.0f;   //radians
     float scale = 1.0f;
     int plot = -1;      //the plot it stands on - a house there hides it
     int coarse = -1;    //the coarse cell under it - a field there hides it
 };
+
+/*
+    THE PLANTS THAT BEAR FRUIT (foraging_plan.md, the user's 2026-10-12): the two bushes, and of the oaks - "the
+    light green trees" - a small share, from a hash of their own, so every other prop stands where it did.
+*/
+#define FOREST_FRUIT_TREE_CHANCE    0.10f
+inline bool ForestBears(const PropInstance& p){
+    return p.kind == PROP_BUSH_A || p.kind == PROP_BUSH_B || p.f_fruit;
+}
 
 struct ForestData{
     std::vector<PropInstance> props;

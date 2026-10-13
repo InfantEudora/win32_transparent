@@ -1,0 +1,191 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+/*
+    The block analysis of one token, after its forward pass: for every attention and FFN block,
+    how big its update was, how far it turned the residual stream, and how much of each
+    candidate's final logit it wrote directly. Run once per sampled token, by LLMModel's
+    RecordBlocks, from the updates OUT_BLOCK (llm_output.glsl) kept in the block slots.
+
+    One workgroup per block, plus one for the embedding. Workgroup b < n_blocks works out the
+    residual stream as block b found it - the token's embedding plus every earlier block's
+    gain * update, added in the forward pass's order - and from that and its own update dx:
+
+        out[0] = |x|^2      out[1] = |dx|^2      out[2] = x . dx
+
+    which give runq's two statistics (record_update): |dx| / |x|, and 1 - cos(x, x + gain dx).
+    The gain is applied on the CPU, so the numbers of a switched-off block still say what it
+    would have added.
+
+    --- WHICH BLOCK WROTE THE LOGIT -------------------------------------------------------
+    The classifier reads x_final normalised: logit_c = sum_i e_c,i w_i x_final,i / rms. Take rms
+    as the number this token's forward pass actually had, and the logit is a sum with one term
+    per block, because x_final is the embedding plus the blocks' updates:
+
+        logit_c = (e_c . (w * x0)) / rms + sum over blocks of gain_b (e_c . (w * dx_b)) / rms
+
+    out[3 + c] is the dot product e_c . (w * dx_b) for candidate c (gain and rms come in on the
+    CPU). That is the block's DIRECT share of the logit: what it wrote into the stream in the
+    classifier's direction, not what it changed in the blocks after it. Switching it off changes
+    both, so the two can differ.
+
+    Workgroup n_blocks is the embedding's: out[0] = |x_final|^2 from the real residual stream
+    (for rms), out[1] = |x0|^2, out[2] = |x_final - (x0 + sum gain dx)|^2, the error of rebuilding
+    the stream from the slots - near zero, or the slots are not what the forward pass added - and
+    out[3 + c] its own share of each logit.
+
+    Workgroup n_blocks + 1 has nothing to do with blocks: the softmax's normaliser over the logits
+    row, out[0] = the largest logit and out[1] = sum exp(logit - largest), for the candidates'
+    probabilities. On the CPU that was 131072 exp() a token - 4 ms of a 10 ms token in the debug
+    build - for what this does in a few microseconds.
+*/
+
+#define MAX_CANDIDATES 8    //BLOCK_CANDIDATES in LLMModel.h
+#define SLOT_HEADER 64      //BLOCK_SLOT_HEADER in LLMModel.h
+#define OUTS (3 + MAX_CANDIDATES)
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer EmbedValues { uint ew[]; };
+layout(std430, binding = 1) readonly buffer EmbedScales { float es[]; };   //the same buffer
+layout(std430, binding = 2) readonly buffer ClassValues { uint cw[]; };
+layout(std430, binding = 3) readonly buffer ClassScales { float cs[]; };   //the same buffer
+layout(std430, binding = 4) readonly buffer Slots { float slots[]; };      //n_blocks slots of `slot` floats
+layout(std430, binding = 5) readonly buffer NormWeights { float nw[]; };
+layout(std430, binding = 6) readonly buffer Residual { float x[]; };
+layout(std430, binding = 7) writeonly buffer Stats { float stats[]; };    //(n_blocks + 2) x OUTS
+layout(std430, binding = 8) readonly buffer Logits { float logits[]; };
+
+uniform int dim;
+uniform int n_blocks;
+uniform int slot;           //floats per slot
+uniform int token;          //the token this forward pass took in
+uniform int x_offset;       //floats: its row of x
+uniform int norm_offset;    //floats: the final norm's weights
+uniform int candidates[MAX_CANDIDATES];
+uniform int n_candidates;
+uniform int e_bits, e_gs, e_s_offset;   //the embedding table
+uniform int c_bits, c_gs, c_s_offset;   //the classifier, the same table when it is shared
+uniform int logits_offset;  //floats: the logits row the candidates were picked from
+uniform int vocab;
+
+//One value of a quantized table, decoded as llm_embed.comp does it.
+float EmbedValue(int e){
+    float v;
+    if (e_bits == 8){
+        v = float(int(ew[e >> 2] << (24 - 8 * (e & 3))) >> 24);
+    }else{
+        int byte_index = (e / 32) * 16 + ((e % 32) & 15);
+        uint b = (ew[byte_index >> 2] >> (8 * (byte_index & 3))) & 0xFFu;
+        v = float(int((e % 32) < 16 ? (b & 0x0Fu) : (b >> 4)) - 8);
+    }
+    return v * es[e_s_offset + e / e_gs];
+}
+
+float ClassValue(int e){
+    float v;
+    if (c_bits == 8){
+        v = float(int(cw[e >> 2] << (24 - 8 * (e & 3))) >> 24);
+    }else{
+        int byte_index = (e / 32) * 16 + ((e % 32) & 15);
+        uint b = (cw[byte_index >> 2] >> (8 * (byte_index & 3))) & 0xFFu;
+        v = float(int((e % 32) < 16 ? (b & 0x0Fu) : (b >> 4)) - 8);
+    }
+    return v * cs[c_s_offset + e / c_gs];
+}
+
+shared float partial[32][OUTS];     //one row per subgroup; 256 invocations are at most 32 subgroups
+
+//The softmax normaliser, workgroup n_blocks + 1: a running maximum and sum per invocation (the
+//sum rescaled whenever the maximum rises), then merged per subgroup and across them.
+void Normaliser(int tid, int b){
+    float m = -3.4e38;
+    float s = 0.0;
+    for (int i = tid;i < vocab;i += 256){
+        float v = logits[logits_offset + i];
+        if (v > m){
+            s = s * exp(m - v) + 1.0;
+            m = v;
+        }else{
+            s += exp(v - m);
+        }
+    }
+    float group_max = subgroupMax(m);
+    s = subgroupAdd(s * exp(m - group_max));
+    if (subgroupElect()){
+        partial[gl_SubgroupID][0] = group_max;
+        partial[gl_SubgroupID][1] = s;
+    }
+    barrier();
+    if (tid == 0){
+        float top = -3.4e38;
+        for (uint g = 0;g < gl_NumSubgroups;g++){
+            top = max(top,partial[g][0]);
+        }
+        float total = 0.0;
+        for (uint g = 0;g < gl_NumSubgroups;g++){
+            total += partial[g][1] * exp(partial[g][0] - top);
+        }
+        stats[b * OUTS + 0] = top;
+        stats[b * OUTS + 1] = total;
+    }
+}
+
+void main(){
+    int tid = int(gl_LocalInvocationID.x);
+    int b = int(gl_WorkGroupID.x);
+    if (b > n_blocks){
+        Normaliser(tid,b);
+        return;     //the whole workgroup: the barrier below is never half-reached
+    }
+    float acc[OUTS];
+    for (int k = 0;k < OUTS;k++){
+        acc[k] = 0.0;
+    }
+    for (int i = tid;i < dim;i += 256){
+        float x0 = EmbedValue(token * dim + i);
+        float v;    //what this workgroup's logit shares are taken of: the update, or the embedding
+        if (b < n_blocks){
+            float xi = x0;
+            for (int p = 0;p < b;p++){
+                xi += slots[p * slot] * slots[p * slot + SLOT_HEADER + i];
+            }
+            float dx = slots[b * slot + SLOT_HEADER + i];
+            acc[0] += xi * xi;
+            acc[1] += dx * dx;
+            acc[2] += xi * dx;
+            v = dx;
+        }else{
+            float rebuilt = x0;
+            for (int p = 0;p < n_blocks;p++){
+                rebuilt += slots[p * slot] * slots[p * slot + SLOT_HEADER + i];
+            }
+            float xf = x[x_offset + i];
+            acc[0] += xf * xf;
+            acc[1] += x0 * x0;
+            acc[2] += (xf - rebuilt) * (xf - rebuilt);
+            v = x0;
+        }
+        float wv = nw[norm_offset + i] * v;
+        for (int c = 0;c < MAX_CANDIDATES;c++){
+            if (c < n_candidates){
+                acc[3 + c] += ClassValue(candidates[c] * dim + i) * wv;
+            }
+        }
+    }
+    //per subgroup, then across them in a fixed order
+    for (int k = 0;k < OUTS;k++){
+        float s = subgroupAdd(acc[k]);
+        if (subgroupElect()){
+            partial[gl_SubgroupID][k] = s;
+        }
+    }
+    barrier();
+    if (tid < OUTS){
+        float total = 0.0;
+        for (uint s = 0;s < gl_NumSubgroups;s++){
+            total += partial[s][tid];
+        }
+        stats[b * OUTS + tid] = total;
+    }
+}

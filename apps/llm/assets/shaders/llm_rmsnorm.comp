@@ -1,0 +1,53 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+/*
+    o = weight * x / sqrt(mean(x^2) + 1e-5), over n values: one workgroup per token, token b
+    reading x at x_offset + b * x_stride and writing o at o_offset + b * o_stride.
+
+    The sum of squares is folded per subgroup with subgroupAdd and across subgroups in shared
+    memory. 1e-5 is runq's constant (and Mistral's rms_norm_eps).
+
+    Used where the norm is not folded into the matrix kernel that follows: for a batch, and for
+    the final norm before the classifier.
+*/
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer Input { float x[]; };
+layout(std430, binding = 1) readonly buffer Weights { float w[]; };
+layout(std430, binding = 2) writeonly buffer Output { float o[]; };
+
+uniform int n;
+uniform int x_offset;
+uniform int x_stride;
+uniform int w_offset;
+uniform int o_offset;
+uniform int o_stride;
+
+shared float partial[32];   //one per subgroup; 256 invocations are at most 32 subgroups
+
+void main(){
+    int tid = int(gl_LocalInvocationID.x);
+    int b = int(gl_WorkGroupID.x);
+    int xo = x_offset + b * x_stride;
+    int oo = o_offset + b * o_stride;
+    float ss = 0.0;
+    for (int i = tid;i < n;i += 256){
+        float v = x[xo + i];
+        ss += v * v;
+    }
+    ss = subgroupAdd(ss);
+    if (subgroupElect()){
+        partial[gl_SubgroupID] = ss;
+    }
+    barrier();
+    float total = 0.0;
+    for (uint s = 0;s < gl_NumSubgroups;s++){
+        total += partial[s];
+    }
+    float scale = 1.0 / sqrt(total / float(n) + 1e-5);
+    for (int i = tid;i < n;i += 256){
+        o[oo + i] = w[w_offset + i] * (scale * x[xo + i]);
+    }
+}

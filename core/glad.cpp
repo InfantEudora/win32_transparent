@@ -157,6 +157,7 @@ PFNGLPROGRAMUNIFORMMATRIX3FVPROC glProgramUniformMatrix3fv = NULL;
 PFNGLPROGRAMUNIFORMMATRIX4FVPROC glProgramUniformMatrix4fv = NULL;
 
 PFNGLGETINTEGERI_VPROC glGetIntegeri_v = NULL;
+PFNGLGETSTRINGIPROC glGetStringi = NULL;
 
 PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback = NULL;
 PFNGLPUSHDEBUGGROUPPROC glPushDebugGroup = NULL;
@@ -348,6 +349,7 @@ bool InitGLExtensions(void){
     glProgramUniformMatrix4fv = (PFNGLPROGRAMUNIFORMMATRIX4FVPROC)wglGetProcAddress("glProgramUniformMatrix4fv");
 
     glGetIntegeri_v = (PFNGLGETINTEGERI_VPROC)wglGetProcAddress("glGetIntegeri_v");
+    glGetStringi = (PFNGLGETSTRINGIPROC)wglGetProcAddress("glGetStringi");
 
     glDebugMessageCallback = (PFNGLDEBUGMESSAGECALLBACKPROC)wglGetProcAddress("glDebugMessageCallback");
     glPushDebugGroup = (PFNGLPUSHDEBUGGROUPPROC)wglGetProcAddress("glPushDebugGroup");

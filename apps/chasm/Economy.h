@@ -13,6 +13,7 @@
 #include "Zones.h"
 
 class Walkers;
+struct PropInstance;
 
 /*
     THE ECONOMY (docs/economy_plan.md, P2 + P3): goods in stores, and the first production - the
@@ -326,6 +327,13 @@ class Walkers;
     his partner lives in that settlement: then he REJOINS them, at their home (PartnerLivingIn), as SETTLING HERE
     does too. A family of nobody but tent carriers, with no home, is ON THE ROAD: no home is found for it - it
     pitches its own.
+    WITH THE GROWN (settlements_plan.md, the user's 2026-10-12): nobody young is left behind, nor given an order. A
+    CHILD goes along when every grown-up of its household is LEAVING - carrying or taking a tent, or posted onto
+    another settlement's ground: posted beside its mother if she is one of them, else its father, else the eldest
+    (GoesWith, WithTheGrown), packing and gathering as a scout, with no tent. A BABY is carried by its mother,
+    unseen, whenever she is posted and until she is home again, fed from her pack. Pitching or settling, whoever
+    goes with him moves into the new home with him (BringAlong). ORPHANS - a household with no grown-up left -
+    squeeze into a home of their settlement where a grown-up lives (HouseFamilies).
     THE LIMIT: people take tasks only in their own settlement (Ours) - a site to carry for and where from, line work,
     a job, fetching home, the store a load goes to, the builders' and the ropemaker's errands. Families move only
     into houses of theirs; land goes only to a house or camp of its field's. NOT limited: a post and its supply
@@ -336,6 +344,24 @@ class Walkers;
     --- THE FOREST ----------------------------------------------------------------------------------
     `prop_state`, one byte per prop of the world's forest (ForestData::props, whose order is fixed for
     a world): standing, felled with its log lying, or a stump with the log taken. Saved and hashed.
+
+    --- FORAGING (docs/foraging_plan.md) -------------------------------------------------------------
+    FRUIT from the wild, to keep a camp of a few going before its fields bear (the user's, 2026-10-12). A PLANT
+    bears it - a bush, or an oak the forest made a fruit tree (ForestBears) - while it stands: `fruit`, by prop,
+    is what is on it, FORAGE_BUSH_FRUIT or FORAGE_TREE_FRUIT ripe. Picking takes what the picker has room for and
+    leaves the rest; once EMPTY, it grows its fruit back over FORAGE_REGROW_DAYS dawns of growing weather
+    (`regrow`). At a dawn in winter or under the snow, what is on it is lost - THE FROST, as a field's - and no
+    day counts. Built over (EconomyPropCovered) it is GONE for good (FORAGE_GONE), whatever stands there later.
+    A new map's plants are all ripe. Saved - those not ripe and full - and hashed.
+    THE CAMP'S PICKER (ECONOMY_CAMP_PICKERS, `picker_places`): a place at a camp with a plant in its settlement, after
+    its water carrier, by husbandry. From home he goes to the nearest ripe plant of his own settlement, picks it at
+    FORAGE_PICK_SECONDS a fruit at his pace, and on to the next within FORAGE_ROUND_REACH of him until he has a load
+    (ECONOMY_LOAD) or none is left near - then into the camp's supplies, while they hold less fruit than
+    ECONOMY_CAMP_FRUIT_HOLD. Nothing takes his place over: picking fades as fields and houses cover the bushes.
+    BY HAND (Forage): someone posted is sent to a ripe plant, or to the water's edge, and stands there as his post
+    - a one-off: he picks the plant (into his pack, up to a scout's food) or draws water (up to a scout's water,
+    at the camp's water carrier's pace), a unit at a time, and stays (`forage`). Only on his own settlement's land
+    or land none holds, as a pressing need; never under the snow.
 */
 
 //Per unit of floor area, not per plot: plots differ in size, and what one holds is wiki/cells.md's.
@@ -359,7 +385,7 @@ class Walkers;
 #define ECONOMY_TENT_NONE           0       //TAKING A TENT: a person's `tent` - none...
 #define ECONOMY_TENT_TO_TAKE        1       //...told to take one, off to a camp for it...
 #define ECONOMY_TENT_CARRIED        2       //...or one packed, carried until he pitches it
-#define ECONOMY_PITCH_RINGS         2       //how far from where he stands a tent may go up: rings of plots round his
+#define ECONOMY_PITCH_RINGS         4       //how far from where he stands a tent may go up: rings of plots round him
 #define ECONOMY_WOODCUTTER_LOGS     2       //logs he carries off at once, a second lying near the first (the user's)
 #define ECONOMY_LOG_PAIR_REACH      12.0f   //...within this of him where he picked the first up: about six plots
 #define ECONOMY_FELL_SECONDS        6.0f
@@ -408,6 +434,20 @@ class Walkers;
 #define ECONOMY_CAMP_WATER_SECONDS  16.0f   //...drawing a unit in this long, four times a collector's: some 2.5 a day, enough for three...
 #define ECONOMY_CAMP_WATER_LOAD     3       //...carried home this many at a time...
 #define ECONOMY_CAMP_WATER_HOLD     12      //...while its supplies hold less water than this
+#define ECONOMY_CAMP_PICKERS        1       //...and a picker of its own, where a plant bears fruit in its land (foraging_plan.md)...
+#define ECONOMY_CAMP_FRUIT_HOLD     20      //...while its supplies hold less fruit than this
+//FORAGING (above). Tuning, set from what a camp's land grows (foraging_plan.md, "Current tuning").
+#define FORAGE_BUSH_FRUIT           2       //fruit on a ripe bush...
+#define FORAGE_TREE_FRUIT           6       //...and on a ripe fruit tree
+#define FORAGE_REGROW_DAYS          10      //dawns of growing weather an emptied plant takes to be ripe again: a season
+#define FORAGE_PICK_SECONDS         3.0f    //picking a fruit, at the picker's pace
+#define FORAGE_ROUND_REACH          15.0f   //the camp's picker goes on to a plant within this of him, until he has a load
+#define FORAGE_SPREAD_REACH         15.0f   //one of a group sent to pick: the nearest ripe plant within this of the one clicked
+#define FORAGE_GONE                 0xFF    //a plant's `fruit`: built over, bearing no more
+//What someone posted is at by hand (EconomyWorker::forage). Never renumber: saves hold these.
+#define FORAGE_NONE                 0
+#define FORAGE_FRUIT                1       //picking the plant on his post
+#define FORAGE_WATER                2       //drawing water at the edge beside his post
 #define ECONOMY_CROP_GRACE          (CALENDAR_DAY_TICKS)    //a field built with no crop waits this long for one, then starts with AUTO (issues_plan.md)
 #define ECONOMY_FAIR_DAYS           1       //a house keeps its land's food only while less than this a head ahead of the colony's average
 #define ECONOMY_QUEUE_SLACK         8.0f    //errands this much longer than the shortest still go in placing order: ~4 plots
@@ -490,7 +530,8 @@ const char* SkillName(int skill);
 #define WORKER_JOB_ARCHER       4       //a trainee at an archery range: trains there, full time (range_plan.md)
 #define WORKER_JOB_GUARD        5       //on a guard tower: posted there, living on its stock (defence_plan.md)
 #define WORKER_JOB_ROPEMAKER    6       //at a ropewalk: rope from hemp (goods_plan.md)
-#define WORKER_JOB_COUNT        7
+#define WORKER_JOB_PICKER       7       //a camp's own: fruit from the wild (foraging_plan.md)
+#define WORKER_JOB_COUNT        8
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
@@ -646,8 +687,11 @@ struct EconomyWorker{
     std::array<int,GOOD_COUNT> pack = {};   //his PACK (POSTS): water and food he carries for himself, by good
     int gather = 0;                     //GATHERING (POSTS): places still to go to for a scout's pack first, 0 none
     int tent = 0;                       //TAKING A TENT (SETTLEMENTS): ECONOMY_TENT_*
+    int forage = FORAGE_NONE;           //FORAGING by hand: what he is to do at his post - its units on `timer`
     int archery = 0;                    //ARCHERY (TRAINING, above): experience, of ARCHERY_FULL - kept when he stops
     bool f_chosen = false;              //a guard posted BY HAND (POSTS, step 8): kept ahead of the auto-fill
+    uint32_t with = 0;                  //WITH THE GROWN: who a child goes along with, or a baby is carried by, 0 none
+                                        //(Economy::WithTheGrown) - a baby's kept until its mother is home again
 };
 
 //The most archery he can reach: a tenth of ARCHERY_FULL a point of precision (range_plan.md).
@@ -758,6 +802,8 @@ struct EconomyState{
     std::vector<std::array<int,GOOD_COUNT>> stock;     //by building id - a camp's: its SUPPLIES
     std::vector<std::array<int,GOOD_COUNT>> pantry;    //by building id: a camp's PANTRY, its families' own (STORES)
     std::vector<uint8_t> prop_state;                   //by prop index (ForestData::props)
+    std::vector<uint8_t> fruit;                         //...a plant's fruit on it (FORAGING), FORAGE_GONE built over; 0 any other prop
+    std::vector<uint8_t> regrow;                        //...and an emptied plant's dawns of growing weather since
     std::vector<EconomyWorker> workers;                 //THE PEOPLE, in id order
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;                     //in the order they died
@@ -785,6 +831,7 @@ struct EconomyState{
     std::vector<int> cutter_places;                     //a camp's own woodcutter's places (ECONOMY_CAMP_WOODCUTTERS), 0 for any other
     std::vector<int> drawer_places;                     //...and its water carrier's (ECONOMY_CAMP_WATER_CARRIERS), 0 for any other
     std::vector<int> draw_plot;                         //...the plot he draws at, beside the water: -1 none, or not a camp
+    std::vector<int> picker_places;                     //...and its picker's (ECONOMY_CAMP_PICKERS), 0 for any other (FORAGING)
     std::vector<uint32_t> trees_unreached;              //sites with a tree in their way no woodcutter reaches: a road's, wall's,
                                                         //garden's or lot's plot as ECONOMY_SITE_GROUND | plot, else by id
     std::vector<std::pair<uint32_t,int>> ice_home;      //the posted whose only way home is over the ice, and the days until
@@ -804,6 +851,7 @@ struct EconomyState{
     uint64_t tick = 0;                                  //the calendar's at its last tick or load: what ages are read at
     uint32_t zones_version = 0xFFFFFFFFu;               //the zones `accepts` was worked out for
     uint32_t felled_version = 0;                        //bumped when a prop's state changes - the view
+    uint32_t fruit_version = 0;                         //...and when a plant's fruit does
     uint32_t crates_version = 0;                        //bumped when a crate changes - the view
     uint32_t version = 0;                               //bumped on any change
 };
@@ -847,6 +895,9 @@ inline float EconomySettlementReach(int beds){
 //Whether a play command `op` on `index` (ZoneOp: a plot, or a coarse cell for a cell op) keeps inside a settlement:
 //a plot - a bridge's near end, a field's cell's middle - in a territory. True for whatever places nothing new.
 bool EconomyCommandInTerritory(const EconomyState& e, const ChasmWorld& w, int op, int index);
+//ONE CAMP TO A COLONY (settlements_plan.md): the camp of the colony `plot` lies in, 0 none - the one a tent pitched or
+//painted there joins, wherever it stands (THE CAMP, Zones.h).
+uint32_t EconomyColonyCamp(const EconomyState& e, const ZoneState& z, int plot);
 //STOCK KEPT: the made good a building of kind `kind` makes - a builders' hut's provisions, a ropewalk's rope - or -1.
 inline int EconomyMadeAt(int kind){
     return (kind == ZONE_KIND_BUILDERS) ? GOOD_PROVISIONS : (kind == ZONE_KIND_ROPEWALK) ? GOOD_ROPE : -1;
@@ -900,6 +951,7 @@ struct EconomySaved{
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> stocks;    //non-empty ones only
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> pantries;   //camps' (STORES), non-empty ones only
     std::vector<std::pair<int,int>> props;              //felled props: index, state
+    std::vector<std::array<int,3>> plants;              //plants not ripe and full (FORAGING): index, fruit, regrow
     std::vector<EconomyWorker> workers;
     std::vector<EconomyField> fields;
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> sites;     //sites with goods brought: building, goods
@@ -974,7 +1026,8 @@ public:
     bool TakeTent(uint32_t person, bool f_on, const ZoneState& z, Walkers& walkers, std::string* why);
     /*
         PITCHING (SETTLEMENTS, CHASM_CMD_PITCH): where the tent `person` carries goes up - the plot he stands on, or
-        the nearest one within ECONOMY_PITCH_RINGS a camp may stand on; beside a camp it joins it (`camp`, else 0).
+        the nearest one within ECONOMY_PITCH_RINGS a camp may stand on - and the camp it joins: its colony's (`camp`,
+        EconomyColonyCamp), or 0 for a camp of its own.
         False, and `why` says it, with no tent on him or nowhere. The app puts it up (Zones::PitchTent), then:
     */
     bool PitchSpot(uint32_t person, const ZoneState& z, int* plot, uint32_t* camp, std::string* why) const;
@@ -987,6 +1040,14 @@ public:
         settlement, not there yet.
     */
     bool SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, std::string* why);
+    /*
+        FORAGING BY HAND (CHASM_CMD_FORAGE): person `person` sent to pick the ripe plant on `plot` (FORAGE_FRUIT), or to
+        the edge of the water on `plot` to draw it (FORAGE_WATER) - an order to stand there (Order), and a one-off once
+        he is: into his pack, and he stands on. `f_spread`, one of a group's: the nearest ripe plant to the one clicked
+        that none of them is sent to, or the edge's room shared out as a group's posts are. False, and `why` says it.
+    */
+    bool Forage(uint32_t person, int plot, int what, const ZoneState& z, Walkers& walkers, std::string* why,
+                bool f_spread = false);
     /*
         GUARDS BY HAND (POSTS, step 8; CHASM_CMD_GUARD): person `person` made a guard of tower `tower` by the
         player - a right click - over an automatic pick; or with `tower` 0 released from his tower, its count
@@ -1055,7 +1116,29 @@ private:
     vec2 tree_origin;
     std::vector<int> tree_start;                //per bucket + 1, into tree_items
     std::vector<int> tree_items;                //prop indices, in index order within a bucket
+    std::vector<int> plants;                    //the props that bear fruit (FORAGING), in index order
     void BuildTrees();
+    /*
+        FORAGING (above): every plant at dawn - the frost taking its fruit, an empty one growing it back; the plants
+        built over, gone for good; the fruit on one to be had now; and `want` of it taken off, what was there.
+    */
+    void FruitAtDawn(uint64_t tick);
+    void PlantsCovered(const ZoneState& z);
+    int FruitOn(int prop) const;
+    int PickFrom(int prop, int want);
+    //Plot `plot` his own settlement's land, or none's: where a pressing need may go, and his foraging.
+    bool PlotOurs(const EconomyWorker& k, int plot) const;
+    //THE CAMP'S PICKER: off to the nearest ripe plant of his settlement within `reach` of `at` that nobody else is
+    //after - by the straight line, the first few tried. True if he set off.
+    bool GoPick(EconomyWorker& k, const ZoneState& z, Walkers& walkers, const vec2& at, float reach);
+    //BY HAND: the plant on his post with the most fruit (-1 none); what he still wants there - fruit his pack has room
+    //for, or water; how long a unit of it takes; and a unit of it into his pack.
+    int ForagePlant(const EconomyWorker& k) const;
+    int ForageWant(const EconomyWorker& k) const;
+    int ForageUnitTicks(const EconomyWorker& k) const;
+    void ForageUnit(EconomyWorker& k);
+    //The dry plot beside the water at wet plot `plot` he draws from - open, the nearest him he can get to; -1 none.
+    int BankPlot(const EconomyWorker& k, const ZoneState& z, Walkers& walkers, int plot);
     //What follows from the zones: stocks sized (and a split store's shared out, if f_share), what
     //each store takes and its room, each building's door (where its worker stands); workers and fields
     //kept in step with the buildings.
@@ -1109,6 +1192,12 @@ private:
     void OwnHousehold(EconomyWorker& k);
     //REJOINING: his partner, if they have a home in `settlement` and are not leaving it with a tent - else NULL.
     const EconomyWorker* PartnerLivingIn(const EconomyWorker& k, uint32_t settlement) const;
+    //WITH THE GROWN: the grown-up child `k` goes along with, or the mother baby `k` is carried by - 0 neither; the
+    //children posted along and the babies carried, at each tick's start; and those with `k`, into his new home.
+    uint32_t GoesWith(const EconomyWorker& k) const;
+    void WithTheGrown(const ZoneState& z, Walkers& walkers);
+    void BringAlong(const EconomyWorker& k, const std::vector<uint32_t>& along, const ZoneState& z, Walkers& walkers);
+    std::vector<uint32_t> Along(uint32_t id) const;
     bool GoForTent(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //A NOTICE for the player (above), the oldest dropped past ECONOMY_NOTICES_KEPT.
     void Notice(int kind, uint32_t person, GoodsMask what = 0);
@@ -1276,6 +1365,12 @@ uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse);
 //The standing trees on `plot` - or, `coarse` >= 0, in that coarse cell - a site there would wait on: the price tag's
 //count. Any thread, on a published state.
 int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse);
+//FORAGING: the fruit a plant holds ripe - FORAGE_BUSH_FRUIT, FORAGE_TREE_FRUIT - and 0 for a prop that bears none;
+int EconomyFruitFull(const PropInstance& p);
+//...and what is on prop `prop` to be picked now: 0 for none, a plant gone, or a fruit tree felled. Any thread.
+int EconomyFruitOn(const EconomyState& e, int prop);
+//...the ripe plant on `plot` with the most fruit, the lower index on a tie: -1 none. Any thread, on a published state.
+int EconomyRipePlantOn(const EconomyState& e, int plot);
 
 //Whether a worker may walk straight from a to b: on one level, over open ground and roads, not across
 //water, the mountain, a building (but the plots at either end), a field, or a wall or fence.

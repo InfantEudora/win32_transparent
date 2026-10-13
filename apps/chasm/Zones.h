@@ -604,6 +604,10 @@ void ZoneWinchLinks(const ChasmWorld& w, const ZoneState& z, std::vector<std::pa
     round the tents: in a cell at the camp's edge with a standing tent on one corner and open ground on the
     other three, one such cell in ZONE_CAMP_FIRE_EVERY by the cell's hash. A new map starts with one, at
     ZoneStartCampPlot, just big enough for its settlers (Zones::PlaceStartCamp); more can be painted.
+    ITS TENTS NEED NOT TOUCH (settlements_plan.md, the user's 2026-10-12: one camp to a colony, its tents pitched
+    wherever they like in it): a camp extends onto any plot (ZoneCanExtend), a stroke of them goes on across a gap,
+    and an erase never splits one. Which camp a tent joins - its colony's - is the economy's to say (the owner a
+    command names: EconomyColonyCamp).
 */
 #define ZONE_CAMP_FIRE_EVERY    5
 //The tent plot whose fire fine cell `fine_quad` holds, or -1 for none; and where in the cell it burns.

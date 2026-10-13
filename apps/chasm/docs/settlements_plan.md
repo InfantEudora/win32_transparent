@@ -154,11 +154,26 @@ lower rate than from a hut - is `woodcutting_plan.md` ("the camp's two places"),
   homeless are housed first, so the house went to one of them alone and no couple could form. Now one who lives
   alone in a house that holds two pairs off as before and the other moves in there.
 
+- **Children go with their household** (the user's, 2026-10-12, on the agent's proposal: "they'd have to come with.
+  They'll need protection from an archer further along in the game"). Selecting everyone at the start and sending
+  them off left the children behind. A child is never given an order of its own; the game gives it one:
+  - one grown-up of a household leaving: the children stay with the others - nothing happens to them;
+  - the last grown-up leaving - every grown-up of it (a young adult counts) carrying or taking a tent, or posted
+    onto another settlement's ground, where Settle here is offered: the children go along, posted beside the
+    mother if she is one of them, else the father, else the eldest. They pack from home and gather on the way
+    as any scout does, carry no tent, and come home if that grown-up turns back;
+  - pitching or settling, whoever goes with that grown-up moves into the new home with them, whatever its room,
+    and the other parent rejoins them there later (above).
+- **A baby always goes with its mother** (the user's, the same day): carried by her, unseen, whenever she is
+  posted - with or without a tent, the father staying or not - and until she is home again, fed from her pack.
+- **Orphans squeeze in** (the user's, the same day: "I think they can now squeeze in" - overruling
+  `lifeline_plan.md`'s "no orphan mechanic" of 2026-10-09, since CRAMMED now exists): a household with no grown-up
+  left moves into a home of its settlement where a grown-up lives - the one with the most room to spare - and
+  lives from its pantry and its family's fetching. Grown, it is a household like any other.
+
 ### Founding: still open
 
-- **Children left behind**: if the last grown-up of a family leaves - by tent or by settling - the children stay
-  in the old home with nobody to fetch for them, and a baby with no mother. The agent's suggestion: the children go
-  with the last grown-up; or leaving is refused while they would be left alone.
+Nothing.
 
 ### Founding: worked out here, for the user to overrule
 
@@ -364,6 +379,103 @@ Built 2026-10-11:
   settlement of its other dry end. *Checked*: the bridge the outpost's; Marit carried for it between her trips for
   food, 11 of its 18 plots standing after 8,000 ticks, the found crates' wood going in. An 8,001-tick recording
   replayed twice, every tick equal.
+
+### Founding: as built, children, babies and orphans (2026-10-12)
+
+- **`EconomyWorker::with`**: who a child goes along with, or a baby is carried by - saved and hashed, since a baby's
+  is kept until its mother is home again: a baby in a camp often stands off its own tent (each person's tent is
+  picked by id), so "not at home" could not tell one out with her from one at home.
+- **`GoesWith`**: a child, when every grown-up of its family is posted and carrying or taking a tent, or on another
+  settlement's ground - the mother first, the father, the eldest; a baby, while its mother is posted, then until she
+  is at home. **`WithTheGrown`**, at each tick's start, posts a child on its grown-up's post plot (spread round it as
+  a group is), copying gathering - at least one stop if it was out playing with nothing packed - and lets it go when
+  the rule no longer holds. A child grown up on the way keeps the post as its own.
+- **Carried**: `Tick` skips a carried baby's `TickWorker` and puts it at its mother's position after everyone has
+  walked, hidden (`f_indoors`); `Needs` feeds it from her pack.
+- **Pitching and settling**: `Along` (taken before the grown-up's family changes) and `BringAlong`: family, home, off
+  the post. `Gather` sets the children's gathering with their grown-up's; children are refused `TakeTent`, `Gather`
+  and `SettleHere` ("too young"), as `Order` already did. The cards: "Going with NAME" on a child, "Taking N
+  children along" / "Carrying a baby" on the grown-up, "carried by its mother" as a baby's doing; no posted chips on
+  a child. A house is named by a grown-up's family first, so an orphan lodging there does not name it.
+- **Orphans** (`HouseFamilies`): a family with no grown-up member, in a home where no grown-up of any family lives,
+  moves into the home of its settlement with a grown-up living there and the most room to spare (the lower id on
+  a tie); it never waits for a house of its own, nor is moved out as a lodger.
+- *Checked* on a fresh map (copied exe, 8774), one recording of 21,589 ticks, replayed twice, every tick equal:
+  - Jelle sent with a tent while Kaat and the grown sons stayed: Teun stayed. Teun refused an order, a tent and
+    gathering: "too young".
+  - The Wevers - Siem, Anouk, their grown daughter Marit, all with tents and gathering - and Lieve went with Anouk,
+    packed from the camp (5 beans, 6 water). Anouk released: Lieve turned home; sent again: Lieve followed. Both
+    on their post after 3,000 ticks. Pitched: Lieve in Siem and Anouk's household and tent.
+  - The De Wits' grown-ups dead (the camp's food taken away first, so they could not eat themselves back): Teun
+    stayed in the camp while the Wevers lived there, and moved in with the Veens the moment they pitched far off -
+    drinking there; the house still "the Veen family's".
+  - Anouk's baby, born at the outpost: she was posted nearby, it went with her, at her position, hidden, its card
+    "carried by its mother", hers "Carrying a baby", her pack going down for both; released, it was set down at
+    home when she got there.
+
+### Founding: as built, one camp for a group, and the colony shown (2026-10-12)
+
+- **The user's test**: everyone selected, tents and gathering, sent out together and pitched with the group's one
+  button - they pitched in two or three camps, each with its own water carrier. A tent went up on the nearest free
+  plot to where its pitcher stood, joining a camp only if that plot happened to touch one; a group stands spread over
+  several plots (`SpreadPost`), so the tents fell apart.
+- **Built, then replaced the same evening** (below, one camp to a colony): `PitchSpot` first looked, out to four
+  rings, for a plot that joins a pitched tent; only with none, the nearest plot, a camp of its own.
+- *Checked* (copied exe, 8774, a fresh map, the group ordered as the right click orders one - nearest first, spread -
+  through a new `spread` flag on `chasm_economy`'s order op): at (172, -6) one camp of 10 tents, one woodcutter, one
+  water carrier, one picker - a 5,034-tick recording replayed twice, every tick equal. With the join turned off, the
+  same at (150, 10) made two camps and at (185, -35) two; with it, (150, 10) made one.
+- **Still split, and why** (a log in `PitchSpot`, taken out again): at (185, -35), in a clearing at a forest's edge
+  above a river, every plot beside the camp within one pitcher's reach had a standing tree or was too close to the
+  water, so his tent went up on its own. Not a rule broken - there was no room beside it. Put to the user: the
+  camp's places per settlement rather than per camp - decided, below.
+- **The colony shown** (the user's: which settlement a tent belongs to "is currently not visible at all"): with
+  anything selected, a panel at the top left names it - COLONY 1, 2, 3 in the order founded (`SelectionColony`): a
+  building, field or yard by its plot, a gate or crate by its plot, a person by their home, or with none where they
+  stand; a group, each of theirs ("COLONIES 1 AND 2"); NO COLONY for something of none. `chasm_select` reports it as
+  `colony`. *Checked*: someone of the new camp COLONY 2, the start camp (two tents left) COLONY 1; seen on screen.
+
+### Founding: one camp to a colony (the user's, 2026-10-12)
+
+- **Decided**: the camp's places are per colony - "Yes, it should be per colony. Then setting up a tent would be easier
+  as well: the first tent starts a colony, the second one becomes part of that colony. Perhaps a colony should only be
+  allowed to have a single camp. They can be pitched wherever they like, in one colony, all tents belong to the same
+  camp." So a colony has one camp, and its places - woodcutter, water carrier, picker, farmer - are its colony's.
+- **Built**:
+  - *The zones* (THE CAMP, `Zones.h`): a camp's tents need not touch - `ZoneCanExtend` takes any plot for a camp, a
+    stroke of camp goes on across a gap with no corner plot, `SplitAfterRemoval` never splits one, and the zones'
+    check no longer counts a camp in pieces.
+  - *Which camp*: `EconomyColonyCamp` - the camp of the colony a plot lies in. `PitchSpot` joins it, wherever the
+    plot; a camp painted on an empty plot of a colony with a camp - play or debug - is given it as the command's
+    owner (the zone command's handler). Outside every colony, or in one of houses only, a camp of its own.
+  - *Its door* in its largest group of touching tents, so a tent far off does not take the camp's supplies, water
+    carrier and woodcutter's reach with it. A camp in one piece: as before.
+  - *Settle* (with "Growing from every building", above): a camp never joins land that has its camp already - it
+    founds its own wherever it stands, its land the plots nearer it - else an outpost pitched just beyond the border
+    was taken in: the hearts start at their widest reach, the outpost's tents counted as the older colony's beds held
+    that reach up, and the older colony then had two camps. On land with no camp (a colony of houses), a camp joins.
+  - `ECONOMY_PITCH_RINGS` 2 -> 4: several of a group stand on one plot, and at a forest's edge two rings round it
+    were all tents or trees - five of ten could not pitch.
+- *Checked* (copied exe, 8774, a fresh map, everyone with tents and gathering, ordered as a group):
+  - (185, -35), the clearing at the forest's edge: 9 of 10 pitched (the tenth: trees all round), one camp of 9 tents,
+    COLONY 2, its own; one woodcutter, one water carrier, one picker. A 5,037-tick recording replayed twice, every
+    tick equal.
+  - (172, -6) and (150, 10): all ten in one camp of 10 tents, COLONY 2, one set of places (no water carrier at
+    (150, 10): no bank within its reach).
+  - A camp painted in debug 14 units from the start camp, in colony 1: the start camp's. A tent erased from the
+    middle of the outpost's camp: still one camp. The zones' check: 0 in pieces.
+
+### Founding: as built, packing up a crowded camp (2026-10-12)
+
+- **The user's `saves/no_tent_to_take.json`**: everyone moved out to a new colony, its camp 10 tents for 12 people (two
+  children squeezed in) - and then none of them could take a tent again: "NO TENT TO SPARE". A tent was spare only if
+  nobody else slept in it, his own bed counting for him; with 11 others in 10 tents, there were -1 for anyone.
+- **Built**: `CampSpare` - for one of the camp's own people, none slept in counts against him, only others on their
+  way to pack one there. Its people may take its tents while any are left; those staying are crammed. From another
+  camp, as before: only a tent nobody sleeps in.
+- *Checked* on the save (copied exe, 8774): all ten grown-ups told to take a tent went for one and carried it within
+  1,500 ticks, the two children along with their mothers; the camp, all its tents packed, left its goods as crates,
+  and the colony went with it. A 1,504-tick recording replayed twice, every tick equal.
 
 ## Growing from every building (the user's, 2026-10-12)
 

@@ -1,0 +1,73 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+/*
+    W X for an int8 matrix (Q8_0) and a BATCH of tokens: llm_matvec_q8.comp for TOK tokens at
+    once, as llm_matmat_q4.comp is to llm_matvec_q4.comp. In a 4-bit model this is the
+    classifier when every token's logits are wanted (loss mode); in an int8 model, everything.
+*/
+
+#define ROWS 4
+#define SUBGROUPS 2
+#define TOK 8               //MATMAT_TOKENS in LLMModel.cpp
+
+layout(local_size_x = 32, local_size_y = SUBGROUPS) in;
+
+layout(std430, binding = 0) readonly buffer WeightValues { uint wq[]; };
+layout(std430, binding = 1) readonly buffer WeightScales { float ws[]; };   //the same buffer
+layout(std430, binding = 2) readonly buffer Input { vec4 x4[]; };
+
+#include "llm_output.glsl"
+
+uniform int n;
+uniform int d;
+uniform int gs;
+uniform int s_offset;
+uniform int x_offset;   //in vec4s
+uniform int x_stride;   //in vec4s
+uniform int nb;
+
+void main(){
+    int first_row = (int(gl_WorkGroupID.x) * SUBGROUPS + int(gl_LocalInvocationID.y)) * ROWS;
+    if (first_row >= d){
+        return;
+    }
+    int t0 = int(gl_WorkGroupID.y) * TOK;
+    int nt = min(TOK,nb - t0);
+    int lane = int(gl_LocalInvocationID.x);
+    int nu = n / 4;
+    int ng = n / gs;
+
+    float acc[ROWS * TOK];
+    for (int i = 0;i < ROWS * TOK;i++){
+        acc[i] = 0.0;
+    }
+    for (int u0 = 0;u0 < nu;u0 += 32){
+        int u = u0 + lane;
+        if (u >= nu){
+            continue;
+        }
+        vec4 xv[TOK];
+        for (int t = 0;t < TOK;t++){
+            xv[t] = t < nt ? x4[x_offset + (t0 + t) * x_stride + u] : vec4(0.0);
+        }
+        int g = (u * 4) / gs;
+        for (int r = 0;r < ROWS;r++){
+            int row = min(first_row + r,d - 1);
+            vec4 b = unpackSnorm4x8(wq[row * nu + u]) * 127.0;
+            float s = ws[s_offset + row * ng + g];
+            for (int t = 0;t < TOK;t++){
+                acc[r * TOK + t] += dot(b,xv[t]) * s;
+            }
+        }
+    }
+    for (int t = 0;t < nt;t++){
+        float v[ROWS];
+        for (int r = 0;r < ROWS;r++){
+            v[r] = subgroupAdd(acc[r * TOK + t]);
+        }
+        if (lane == 0){
+            WriteRows(first_row,v,t0 + t,d);
+        }
+    }
+}

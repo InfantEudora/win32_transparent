@@ -1,0 +1,139 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+/*
+    W x for a 4-bit matrix (Q4_0) and ONE token - the generation step. W is d rows by n
+    columns, stored as runq stores it; what happens to the result is llm_output.glsl's business.
+
+    Each group of 32 weights is 16 bytes of nibbles followed - much later, after the whole
+    matrix - by one fp32 scale. Byte k of a group holds element k in its low nibble and element
+    k + 16 in its high nibble, both offset by 8. So uint j (0..3) of a group holds elements
+    4j..4j+3 in its low nibbles and 16+4j..19+4j in its high ones.
+
+    --- THE LAYOUT, AND WHY ---------------------------------------------------------------
+    A subgroup of 32 computes ROWS rows at once. Its lanes take 8 groups per step, four lanes
+    to a group, lane j of the four taking uint j - so for every row the subgroup reads 128
+    contiguous bytes of weights, and the inputs x it needs for those 8 groups are loaded ONCE
+    and used for all ROWS rows.
+
+    That reuse is the whole point. The first version gave each lane a whole group and one row
+    per subgroup: every load of x was 32 lanes reading 128 bytes apart, which the cache serves
+    as 32 separate accesses, and x was read again for every row - seven times the traffic of
+    the weights themselves. Measured on an RTX 2070 it ran at a sixth of the memory bandwidth;
+    this layout tripled the speed of the whole model.
+
+    The -8 offset is taken out of the loop: sum((q - 8) x) = sum(q x) - 8 sum(x), and sum(x)
+    over a lane's 8 inputs is the same for every row. unpackUnorm4x8 turns four bytes into
+    floats in one go, as byte/255, so the dot product is scaled back by 255.
+
+    KSPLIT subgroups share a workgroup's ROWS rows, each taking every KSPLIT-th step of the
+    columns, and their sums are added in a fixed order at the end. That is for the matrices with
+    few, long rows: w2 (3072 rows of 9216) had 768 subgroups in flight one row-set each, too few
+    to keep enough loads outstanding, and ran at half the bandwidth of w13.
+
+    --- THE RMSNORM, FOLDED IN ------------------------------------------------------------
+    With norm_offset >= 0 the input is the raw residual stream and the kernel normalises it on
+    the way in: x * scale * weight, scale = 1/sqrt(mean(x^2) + 1e-5), as runq's rmsnorm. Every
+    workgroup works out the scale itself from x, which costs a read of x from the cache but
+    saves a dispatch per norm - and a dispatch that small is mostly the GPU waiting.
+*/
+
+#define ROWS 4              //rows per subgroup; even, see llm_output.glsl
+#define KSPLIT 4            //subgroups per workgroup, sharing its ROWS rows; MATVEC_ROWS in LLMModel.cpp is ROWS
+
+layout(local_size_x = 32, local_size_y = KSPLIT) in;
+
+layout(std430, binding = 0) readonly buffer WeightValues { uint wq[]; };
+layout(std430, binding = 1) readonly buffer WeightScales { float ws[]; };   //the same buffer
+layout(std430, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(std430, binding = 7) readonly buffer NormWeights { vec4 nw4[]; };
+
+#include "llm_output.glsl"
+
+uniform int n;          //columns, a multiple of 32
+uniform int d;          //rows
+uniform int s_offset;   //where the scales start in ws[], i.e. the values' size in floats
+uniform int x_offset;   //in vec4s
+uniform int norm_offset;//in vec4s into the norm weights, or -1 for an input used as it is
+
+shared float norm_partial[KSPLIT];
+shared float row_partial[KSPLIT][ROWS];
+
+void main(){
+    float scale = 1.0;
+    if (norm_offset >= 0){
+        //before the early exit below: every invocation has to reach the barrier
+        int tid = int(gl_LocalInvocationIndex);
+        float ss = 0.0;
+        for (int i = tid;i < n / 4;i += 32 * KSPLIT){
+            vec4 v = x4[x_offset + i];
+            ss += dot(v,v);
+        }
+        ss = subgroupAdd(ss);
+        if (subgroupElect()){
+            norm_partial[gl_SubgroupID] = ss;
+        }
+        barrier();
+        float total = 0.0;
+        for (uint s = 0;s < gl_NumSubgroups;s++){
+            total += norm_partial[s];
+        }
+        scale = 1.0 / sqrt(total / float(n) + 1e-5);
+    }
+
+    int first_row = int(gl_WorkGroupID.x) * ROWS;
+    if (first_row >= d){
+        return;     //the whole workgroup leaves together, so the barrier below is unaffected
+    }
+    int sg = int(gl_LocalInvocationID.y);
+    int lane = int(gl_LocalInvocationID.x);
+    int ng = n / 32;
+    int j = lane & 3;           //which uint of its group this lane takes
+    int lane_group = lane >> 2; //which of the step's 8 groups
+
+    float acc[ROWS];
+    for (int r = 0;r < ROWS;r++){
+        acc[r] = 0.0;
+    }
+    for (int g0 = sg * 8;g0 < ng;g0 += 8 * KSPLIT){
+        int g = g0 + lane_group;
+        if (g >= ng){
+            continue;
+        }
+        vec4 xa = x4[x_offset + g * 8 + j];         //elements 4j..4j+3
+        vec4 xb = x4[x_offset + g * 8 + 4 + j];     //elements 16+4j..19+4j
+        if (norm_offset >= 0){
+            xa = xa * scale * nw4[norm_offset + g * 8 + j];
+            xb = xb * scale * nw4[norm_offset + g * 8 + 4 + j];
+        }
+        float xsum = dot(xa,vec4(1.0)) + dot(xb,vec4(1.0));
+        for (int r = 0;r < ROWS;r++){
+            int row = min(first_row + r,d - 1);     //a row past the end is computed and not written
+            int row_group = row * ng + g;
+            uint w = wq[row_group * 4 + j];
+            vec4 lo = unpackUnorm4x8(w & 0x0F0F0F0Fu);
+            vec4 hi = unpackUnorm4x8((w >> 4) & 0x0F0F0F0Fu);
+            float q_dot_x = (dot(lo,xa) + dot(hi,xb)) * 255.0;
+            acc[r] += (q_dot_x - 8.0 * xsum) * ws[s_offset + row_group];
+        }
+    }
+    //each subgroup's sums of its share of the columns, then added up in a fixed order: the
+    //result does not depend on which subgroup finishes first
+    for (int r = 0;r < ROWS;r++){
+        float sum = subgroupAdd(acc[r]);
+        if (lane == 0){
+            row_partial[sg][r] = sum;
+        }
+    }
+    barrier();
+    if (sg == 0 && lane == 0){
+        float v[ROWS];
+        for (int r = 0;r < ROWS;r++){
+            v[r] = 0.0;
+            for (int k = 0;k < KSPLIT;k++){
+                v[r] += row_partial[k][r];
+            }
+        }
+        WriteRows(first_row,v,0,d);
+    }
+}

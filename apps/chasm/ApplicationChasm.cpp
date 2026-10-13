@@ -764,8 +764,20 @@ void ApplicationChasm::RegisterCommandHandlers(){
                 zone_commands_done++;
                 return OBJECTID_INVALID;
             }
+            /*
+                ONE CAMP TO A COLONY (settlements_plan.md, the user's 2026-10-12): a camp painted on an empty plot of a
+                colony that has one - in play or debug - is that camp's, wherever it stands, as a tent pitched there is
+                (EconomyColonyCamp; THE CAMP, Zones.h).
+            */
+            uint32_t owner = ZoneCommandOwner(cmd.value[3]);
+            int op = (int)cmd.value[0];
+            if (!owner && (op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD) && (int)cmd.value[1] == ZONE_KIND_CAMP
+                && zw && economy.State().world == zw && cmd.subtype < zones.State().building.size()
+                && !zones.State().building[cmd.subtype]){
+                owner = EconomyColonyCamp(economy.State(),zones.State(),(int)cmd.subtype);
+            }
             bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype,(int)cmd.value[1],(uint32_t)cmd.value[2],
-                                         f_play,ZoneCommandOwner(cmd.value[3]));
+                                         f_play,owner);
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 zone_last_refusal = zones.last_refusal;
@@ -1211,6 +1223,7 @@ void ApplicationChasm::LoadProps(){
     names.insert(names.end(),person_asset_names,person_asset_names + PERSON_FIGURES);
     names.insert(names.end(),gear_asset_names,gear_asset_names + GEAR_ASSETS);
     names.insert(names.end(),forest_bare_names,forest_bare_names + FOREST_OAK_KINDS);
+    names.insert(names.end(),forest_fruit_names,forest_fruit_names + FOREST_FRUIT_KINDS);
     names.push_back(CHASM_CRATE_ASSET);
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
     GetAssetsFromGLTF(names);
@@ -1228,6 +1241,16 @@ void ApplicationChasm::LoadProps(){
         }
     }
     debug->Info("Props: %i of %i kinds loaded\n",loaded,PROP_KIND_COUNT);
+    //A ripe plant's fruit (foraging_plan.md): without its mesh in the file, the plant is drawn bare of it.
+    for (int f = 0; f < FOREST_FRUIT_KINDS; f++){
+        Mesh* mesh = assetmanager->GetMeshFromAsset(forest_fruit_names[f]);
+        f_fruit_loaded[f] = (mesh != NULL);
+        if (mesh){
+            UseGroundShader(mesh);
+        }else{
+            debug->Warn("'%s' not in chasm_props.glb - ripe plants will not show their fruit\n",forest_fruit_names[f]);
+        }
+    }
     //The crate (crates_plan.md) is in the same file, though no forest grows it.
     Mesh* crate = assetmanager->GetMeshFromAsset(CHASM_CRATE_ASSET);
     f_crate_loaded = (crate != NULL);
@@ -1301,8 +1324,9 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
         }
         //A broadleaf standing is drawn in its stage's set (Seasons.h); the stage is kept, to see it move.
         int set = p.kind;
+        int stage = FOREST_STAGE_GREEN;
         if (ForestSeasonal(p.kind) != FOREST_SEASONAL_NONE){
-            int stage = ForestStage(p.kind,(size_t)i,tick);
+            stage = ForestStage(p.kind,(size_t)i,tick);
             forest_prop_stage[i] = (uint8_t)stage;
             set = season_look_set[p.kind][stage];
         }
@@ -1313,8 +1337,13 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
             continue;
         }
         if (state == PROP_STATE_STANDING){
-            sets[set].push_back(Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),
-                                                              vec3(p.scale,p.scale,p.scale)));
+            fmat4 m = Object::ComposeTransformScale(p.pos,quat(vec3(0.0f,1.0f,0.0f),p.yaw),vec3(p.scale,p.scale,p.scale));
+            sets[set].push_back(m);
+            //Ripe (foraging_plan.md): its fruit over it, where it is.
+            int fruit = ForestFruitMesh(p.kind);
+            if (fruit >= 0 && f_fruit_loaded[fruit] && e && EconomyFruitOn(*e,i) > 0 && ForestFruitShows(stage)){
+                sets[ForestFruitBase() + fruit].push_back(m);
+            }
             continue;
         }
         float s = p.scale;
@@ -1403,23 +1432,28 @@ void ApplicationChasm::UploadForest(){
             main_scene->AtTickBoundary([&](){
                 while (prop_sets.size() < need){
                     int s = (int)(prop_sets.size() % set_count);
-                    //A kind's own set, from its asset; or a broadleaf's stage, on its look's mesh.
-                    int k = (s < PROP_KIND_COUNT) ? s : season_look_kind[s - PROP_KIND_COUNT];
+                    //A kind's own set, from its asset; or a broadleaf's stage, on its look's mesh; or a plant's fruit.
+                    int fruit = s - ForestFruitBase();
+                    int k = (s < PROP_KIND_COUNT) ? s : (fruit < 0) ? season_look_kind[s - PROP_KIND_COUNT] : PROP_BUSH_A;
                     Object* o = NULL;
                     if (s < PROP_KIND_COUNT){
                         o = f_props_loaded[k] ? assetmanager->GetObjectFromAsset(prop_asset_names[k]) : NULL;
+                    }else if (fruit >= 0){
+                        o = f_fruit_loaded[fruit] ? assetmanager->GetObjectFromAsset(forest_fruit_names[fruit]) : NULL;
                     }else{
                         o = new Object();
                         o->SetMesh(season_look_mesh[s - PROP_KIND_COUNT]);
                     }
                     if (o){
-                        o->name = std::string(prop_asset_names[k]) +
+                        o->name = (fruit >= 0) ? std::string(forest_fruit_names[fruit]) + " set"
+                                : std::string(prop_asset_names[k]) +
                                   ((s < PROP_KIND_COUNT) ? "" : std::string(" ") + ForestStageName(season_look_stage[s - PROP_KIND_COUNT])) + " set";
                         //The GLB names a material it carries no image for; the palette is ours.
                         o->SetMaterialSlot(0,palette_material);
                         o->SetPickability(false);
                         o->SetVisualOnly(true);
-                        o->SetCastsShadow(PropCastsShadow(k));
+                        //A plant's fruit is a few berries: no shadow worth the pass, as ground cover's.
+                        o->SetCastsShadow(fruit < 0 && PropCastsShadow(k));
                         o->SetInstances(std::vector<fmat4>());
                         o->SetVisibility(false);
                         main_scene->AddObject(o);
@@ -1449,6 +1483,11 @@ void ApplicationChasm::UploadForest(){
         }
         forest_prop_state = e ? e->prop_state : std::vector<uint8_t>();
         forest_felled_version = e ? e->felled_version : 0xFFFFFFFFu;
+        forest_fruit.assign(f.props.size(),0);
+        for (size_t i = 0; e && i < f.props.size(); i++){
+            forest_fruit[i] = EconomyFruitOn(*e,(int)i) > 0 ? 1 : 0;
+        }
+        forest_fruit_version = e ? e->fruit_version : 0xFFFFFFFFu;
         f_forest_shown = f_show;
         return;
     }
@@ -1471,6 +1510,19 @@ void ApplicationChasm::UploadForest(){
             }
         }
         forest_prop_state = e ? e->prop_state : std::vector<uint8_t>();
+    }
+    //...and the plants ripe or picked bare (foraging_plan.md) the same way, by the economy's fruit_version.
+    uint32_t fruit_version = e ? e->fruit_version : 0xFFFFFFFFu;
+    if (fruit_version != forest_fruit_version){
+        forest_fruit_version = fruit_version;
+        forest_fruit.resize(f.props.size(),0);
+        for (size_t i = 0; i < f.props.size(); i++){
+            uint8_t ripe = (e && EconomyFruitOn(*e,(int)i) > 0) ? 1 : 0;
+            if (ripe != forest_fruit[i]){
+                forest_fruit[i] = ripe;
+                f_felled[forest_prop_chunk[i]] = 1;
+            }
+        }
     }
     //The broadleaves whose stage has moved on since their chunk was built (ApplicationChasmSeasons.cpp).
     std::vector<uint8_t> f_staged(chunks,0);

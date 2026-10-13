@@ -3,10 +3,10 @@ title: Food
 aliases: crop, crops, wheat, greens, beans, rotation
 kind: goods
 status: built
-summary: Three crops (wheat, greens and beans), each grown on fields, eaten for health, and best grown in rotation.
+summary: Three crops (wheat, greens and beans), each grown on fields, eaten for health, and best grown in rotation - and fruit from the wild.
 plans: fields_plan.md > Decided; fields_plan.md > AUTO by food; needs_plan.md > Current tuning
 code: Economy.cpp: crop_days crop_yield crop_after EconomyFoodWorth EconomyCropYield EconomyAutoCrop
-verified: 2026-10-09
+verified: 2026-10-12
 ---
 
 | Crop | Grows for | Harvest per unit of field area | Worth eaten |
@@ -38,18 +38,17 @@ doesn't count as a harvest.
 ## Where it is
 
 Food is in [[Store|stores]], houses' pantries, the [[Camp|camp's]] supplies and pantry, and fields'
-harvests waiting to be carried in. The settlers bring {ECONOMY_START_WHEAT} wheat and
-{ECONOMY_START_BEANS} beans. People eat the food that keeps worst first: greens, then wheat, then beans -
+harvests waiting to be carried in - and [[Fruit|fruit]], picked from the wild. The settlers bring {ECONOMY_START_WHEAT} wheat and
+{ECONOMY_START_BEANS} beans. People eat the food that keeps worst first: [[Fruit|fruit]], then greens, then wheat, then beans -
 and [[Provisions|provisions]] last of all, a food made from a wheat and a beans for people on posts.
 
 ## In the top bar
 
-FOOD at the top is the foods summed - wheat, greens and beans - since any of them feeds someone; it counts
+FOOD at the top is the foods summed - wheat, greens, beans and fruit - since any of them feeds someone; it counts
 what lies in [[Store|stores]] and the [[Camp|camp's]] supplies. Hovering it lists each food on its own, and
 [[Provisions|provisions]] beside them, which are the posted people's and not in the sum.
 
 ## Planned
 
-- [planned] Spoilage: greens rotting when winter comes, wheat a little each season, beans not at all.
-- [idea] Early gathering: food from the wild for the first days.
-- [idea] Fruit (keeps a short while), and animals for meat and leather.
+- [planned] Spoilage: fruit and greens rotting when winter comes, wheat a little each season, beans not at all.
+- [idea] Animals for meat and leather.

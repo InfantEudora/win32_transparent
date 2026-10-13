@@ -19,7 +19,8 @@
         floor and the foot of every wall are under it; the shard and the walls stand out of it. A
         dark grey, a shade lighter on top - the sun and the walls' shadows do the rest.
       - The FOAM churns at the foot of each fall, where it meets the mist: lighter puffs that swell,
-        rise and shrink away, one after another.
+        rise and shrink away, one after another. SPRAY drifts off the sheet above it: fewer, smaller
+        puffs of the same, from its lower part out and away (waterfall_plan.md).
 
     (The swamp's mist is NOT puffs. Tried: opaque puffs over water read as snowballs, then stones,
     then slabs, however small, flat or pale. It is a haze in the pools' water shader instead -
@@ -38,6 +39,9 @@
 #define CHASM_MIST_TOP      -46.0f  //where the blanket's top rolls about
 #define MIST_VARIANTS       3       //puff shapes, each in its own shade (lightest first)
 #define FOAM_PER_FALL       32
+#define SPRAY_PER_FALL      14
+//The foam and spray churn about a fall's sheet hanging this far out from the lip they are given.
+#define FOAM_SHEET_OUT      4.1f
 
 struct MistPuff{
     vec3 pos;
@@ -69,5 +73,7 @@ void MistMotion(const MistPuff& p, vec4* out);
 
 //Foam ball `slot` of fall `f` at `seconds`: where it is and its radius, 0 between lives.
 void FoamBall(const TerrainFall& f, int fall_index, int slot, double seconds, vec3& pos, float& radius);
+//Spray puff `slot` of fall `f`, the same way: off the lower part of its sheet, drifting out and fading.
+void SprayBall(const TerrainFall& f, int fall_index, int slot, double seconds, vec3& pos, float& radius);
 
 #endif

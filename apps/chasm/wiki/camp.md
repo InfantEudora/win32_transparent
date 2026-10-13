@@ -5,15 +5,15 @@ kind: buildings
 status: built
 summary: Tents and fires where the settlers start. It is home to anyone without a house, and holds the settlers' supplies for the whole colony beside a pantry of its own.
 plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11); settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6
-code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY ZoneCampFireTent; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld AssignJobs LandPlaces; Economy.h: pantry
+code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY ZoneCampFireTent; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld AssignJobs LandPlaces EconomyColonyCamp Settle; Economy.h: pantry
 verified: 2026-10-12
 ---
 
 A new map starts with one camp, just big enough for the settlers. The game puts it on the best spot it
 can find along a river: flat ground for houses and fields, with forest at hand but not all around
-(`ZoneStartCampPlot`). The player can paint more camps. The start camp founds the first [[Settlement|settlement]]:
-the land within a walk of it where its people work; a camp outside every settlement would found another. A tent
-is a home like a house: every tent counts as a bed toward how far its settlement reaches.
+(`ZoneStartCampPlot`). The start camp founds the first [[Settlement|settlement]]: the land within a walk of it where
+its people work. **A settlement has one camp**: a tent painted or pitched anywhere in it is that camp's, its tents
+needn't touch, and a camp outside every settlement founds another. Every tent counts as a bed toward its reach.
 
 ## Living there
 
@@ -60,7 +60,7 @@ carrier**, the most ingenious: he walks to the bank, draws {ECONOMY_CAMP_WATER_L
 {ECONOMY_CAMP_WATER_SECONDS:#seconds} a unit, and carries it into the supplies, while they hold less than
 {ECONOMY_CAMP_WATER_HOLD} and no snow lies on the bank. That is enough for a few, not a village, which wants a
 [[Water collector|collector]] - and once one stands in the settlement, worked or stopped, the camp has no water
-carrier of its own. A painted tent costs {ECONOMY_TENT_ROPE} [[Rope|rope]] with its wood.
+carrier of its own. A **picker** brings in [[Fruit|fruit]] where a plant bears in its land. A painted tent costs {ECONOMY_TENT_ROPE} [[Rope|rope]] with its wood.
 
 When a camp's last tent is packed or erased, its supplies and pantry are left where it stood as a [[Crate|crate]].
 

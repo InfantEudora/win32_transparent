@@ -68,10 +68,31 @@ void ApplicationChasm::SetGroundUniforms(){
     ground_shader->Setfloat("void_top",GROUND_VOID_TOP);
     ground_shader->Setfloat("void_bottom",terrain_levels[TERRAIN_FLOOR].height + GROUND_VOID_ABOVE_FLOOR);
 
+    //The rock behind every sheet that is drawn and running, wet (the frag's WET ROCK). A frozen fall's is
+    //dry, as it raises no foam (UpdateMist).
+    float front = SnowFrontNow();
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    vec4 wet_frame[WATER_MAX_SHEETS];
+    vec4 wet_span[WATER_MAX_SHEETS];
+    int wet = 0;
+    if (w && w->water && f_view_water){
+        for (const WaterSheetShape& s : w->water->shapes){
+            if (wet < WATER_MAX_SHEETS && !CalendarSnowAt(s.origin,front)){
+                wet_frame[wet] = vec4(s.origin.x,s.origin.y,s.out.x,s.out.y);
+                wet_span[wet] = vec4(s.mid,s.half,s.top_y,s.front);
+                wet++;
+            }
+        }
+    }
+    ground_shader->Setint("wet_count",wet);
+    if (wet > 0){
+        ground_shader->Setvec4v("wet_frame",wet_frame,wet);
+        ground_shader->Setvec4v("wet_span",wet_span,wet);
+    }
+
     //Snow anywhere on the map? Not while the front, at its furthest north bend and with the
     //ragged edge, is still off the north edge - then the shader is default.frag exactly.
     std::shared_ptr<const Grid> g = GetGrid();
-    float front = SnowFrontNow();
     bool f_snow = g && (front + CALENDAR_SNOW_WOBBLE + GROUND_SNOW_EDGE > g->bounds_min.y);
     ground_shader->Setint("f_snow",f_snow ? 1 : 0);
     if (!f_snow){

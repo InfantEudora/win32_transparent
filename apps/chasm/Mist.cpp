@@ -30,6 +30,11 @@
 #define FOAM_LIFE_MAX       3.8f
 #define FOAM_RISE           7.0f    //world units over a life
 #define FOAM_DRIFT          3.5f    //outward, away from the wall
+#define SPRAY_LIFE_MIN      3.0f    //seconds
+#define SPRAY_LIFE_MAX      5.0f
+#define SPRAY_HEIGHT        16.0f   //over the mist's top, the highest a puff starts - most start low
+#define SPRAY_DRIFT         2.8f    //outward over a life
+#define SPRAY_RISE          2.5f    //and upward
 
 namespace {
 
@@ -204,4 +209,22 @@ void FoamBall(const TerrainFall& f, int fall_index, int slot, double seconds, ve
     vec2 at = f.lip + f.across * across + f.out * (out + FOAM_DRIFT * age);
     pos = vec3(at.x,CHASM_MIST_TOP - 1.5f + rise,at.y);
     radius = r0 * ((age < 0.18f) ? age / 0.18f : (1.0f - age) / 0.82f);
+}
+
+//FoamBall's way, smaller and higher: each life starts against the sheet (FOAM_SHEET_OUT), lower more often
+//than not, and drifts out and up as it fades.
+void SprayBall(const TerrainFall& f, int fall_index, int slot, double seconds, vec3& pos, float& radius){
+    uint32_t h = MeshHash((uint32_t)fall_index,(uint32_t)slot,0x5B7Au);
+    float life = SPRAY_LIFE_MIN + (SPRAY_LIFE_MAX - SPRAY_LIFE_MIN) * Unit(h);
+    double local = seconds / life + Unit(MeshHash(h,1));
+    double cycle = std::floor(local);
+    float age = (float)(local - cycle);
+    uint32_t hl = MeshHash(h,(uint32_t)(int64_t)cycle,2);
+    float scale = f.width / 6.0f;
+    float across = (Unit(MeshHash(hl,3)) - 0.5f) * f.width * 1.2f;
+    float high = Unit(MeshHash(hl,4));
+    float r0 = (0.5f + 0.6f * Unit(MeshHash(hl,5))) * scale;
+    vec2 at = f.lip + f.across * across + f.out * (FOAM_SHEET_OUT + 0.4f + SPRAY_DRIFT * age);
+    pos = vec3(at.x,CHASM_MIST_TOP + SPRAY_HEIGHT * high * high + SPRAY_RISE * age,at.y);
+    radius = r0 * ((age < 0.25f) ? age / 0.25f : (1.0f - age) / 0.75f);
 }

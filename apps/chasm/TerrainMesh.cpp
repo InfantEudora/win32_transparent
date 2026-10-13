@@ -248,10 +248,12 @@ public:
 
     /*
         A ground polygon as a fan. Grass that a river's channel lowers is drawn as its bank instead -
-        only the strip above the water ever shows: pale pebbles, like the reference's shore.
+        only the strip above the water ever shows: pale pebbles, like the reference's shore. Only the
+        plateau's: a channel cuts nothing else (GroundY), and a river's line runs on past its lip, over
+        whatever stands below it - a balcony under a fall was drawn as a slab of bank.
     */
     void Fan(const std::vector<vec3>& p, const vec3& want, int column){
-        bool f_dry_ground = (column == COLUMN_GRASS);
+        bool f_dry_ground = (column == COLUMN_GRASS) && ground_level == TERRAIN_PLATEAU;
         for (size_t i = 1; i + 1 < p.size(); i++){
             int c = column;
             if (f_dry_ground){

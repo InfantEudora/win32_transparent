@@ -108,9 +108,13 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   than the blob costs.
 
 - **One exe per app.** Each app is a folder under `apps/` with its own `makefile`, `main.cpp`,
-  `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the fifteen
-  apps are `animation bomber breakout dozer grid isoanimation ocpp pinball ship sim tank testfx
-  tetris tileset ui`.
+  `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the nineteen
+  apps are `animation archer bomber breakout chasm dozer grid isoanimation llm music ocpp pinball
+  ship sim tank testfx tetris tileset ui`.
+
+  `llm` is a bench for a small language model (Ministral 3) run in GL compute shaders, driven by
+  `llm_*` MCP tools; the model files and the CPU reference live in the separate llama_c project.
+  See the header of `apps/llm/ApplicationLLM.h`.
 
 - **`USE_PHYSICS := 0` drops ReactPhysics3D**, for an app that creates no `PhysicsWorld` (today
   that is `bomber`; `ocpp`, `sim`, `testfx` and `ui` could also take it). Worth 1.20 MB of

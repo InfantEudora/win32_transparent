@@ -59,10 +59,11 @@ def verify():
         #The origin: ground level at z = 0 (bases reach a little below it on purpose), and the
         #middle of the footprint near x = y = 0. Leaning trees sit off-centre by their lean, so
         #"near" is judged against the base, the verts within 0.3 of the ground.
+        #A plant's fruit (foraging_plan.md) is in its plant's space, up in the canopy, and has no base of its own.
         base = [v.co for v in mesh.vertices if v.co.z < lo.z + 0.3]
         bx = sum(c.x for c in base) / len(base)
         by = sum(c.y for c in base) / len(base)
-        if not (-0.15 <= lo.z <= 0.0) or abs(bx) > 0.2 or abs(by) > 0.2:
+        if not obj.name.endswith("_fruit") and (not (-0.15 <= lo.z <= 0.0) or abs(bx) > 0.2 or abs(by) > 0.2):
             failures.append("%s: origin is not the base centre (min z %.3f, base centre %.2f %.2f)"
                             % (obj.name, lo.z, bx, by))
 

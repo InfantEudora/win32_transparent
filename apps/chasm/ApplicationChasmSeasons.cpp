@@ -36,6 +36,24 @@ static Debugger* debug = new Debugger("ChasmSeasons",DEBUG_ALL);
 #define FOREST_STAGE_LOOKS_PER_DAY  4       //how often a day the stages are looked at again
 
 const char* forest_bare_names[FOREST_OAK_KINDS] = {"tree_oak_a_bare","tree_oak_b_bare","tree_oak_c_bare"};
+const char* forest_fruit_names[FOREST_FRUIT_KINDS] = {"bush_a_fruit","bush_b_fruit","tree_oak_a_fruit","tree_oak_b_fruit",
+                                                      "tree_oak_c_fruit"};
+
+int ForestFruitMesh(int kind){
+    switch (kind){
+    case PROP_BUSH_A:   return 0;
+    case PROP_BUSH_B:   return 1;
+    case PROP_OAK_A:    return 2;
+    case PROP_OAK_B:    return 3;
+    case PROP_OAK_C:    return 4;
+    }
+    return -1;
+}
+
+bool ForestFruitShows(int stage){
+    return stage != FOREST_STAGE_THIN_GOLD && stage != FOREST_STAGE_THIN_RED && stage != FOREST_STAGE_BARE
+           && stage != FOREST_STAGE_BUD;
+}
 
 int ForestSeasonal(int kind){
     switch (kind){
