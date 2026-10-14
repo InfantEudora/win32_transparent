@@ -368,6 +368,14 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
 }
 
 float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+    //His body off his route (SPACING, zombies_plan.md), which only happens on the ground: the ground where it stands.
+    if ((k.off.x != 0.0f || k.off.y != 0.0f) && EconomyWorkerLayer(k) == WALK_GROUND){
+        vec2 at = EconomyBody(k);
+        GridPick pick = w.picker->Pick(at);
+        if (pick.f_hit && pick.plot >= 0){
+            return w.terrain->GroundHeight(at,w.terrain->Height(pick.plot));
+        }
+    }
     return RouteHeight(w,z,k,k.seg,k.along);
 }
 
@@ -717,11 +725,12 @@ void ApplicationChasm::UploadWorkers(){
         int clip;
         float rate;
         float phase;
+        uint64_t clock;
     };
     std::vector<ClipChange> changes;
-    auto set_clip = [&](WorkerSkin& ws, int clip, float rate, float phase){
-        if (ws.figure && (clip != ws.clip || fabsf(rate - ws.rate) > 0.01f * ws.rate)){
-            changes.push_back({&ws,clip,rate,phase});
+    auto set_clip = [&](WorkerSkin& ws, int clip, float rate, float phase, uint64_t clock = 0){
+        if (ws.figure && (clip != ws.clip || fabsf(rate - ws.rate) > 0.01f * ws.rate || clock != ws.clock)){
+            changes.push_back({&ws,clip,rate,phase,clock});
         }
     };
     //His bow and quiver shown, or not.
@@ -794,7 +803,17 @@ void ApplicationChasm::UploadWorkers(){
         if (facing.dot(facing) < 1e-8f){
             facing = vec2(0.0f,1.0f);
         }
-        shown->SetPosition(vec3(k.pos.x,y,k.pos.y),false);
+        //Shooting at a zombie (zombies_plan.md, step 3): he faces it, and the Shoot clip turns him side-on by itself.
+        if (k.aim){
+            for (const EconomyZombie& m : e->zombies){
+                vec2 to = EconomyBody(m) - EconomyBody(k);
+                if (m.id == k.aim && to.length() > 1e-3f){
+                    facing = to * (1.0f / to.length());
+                }
+            }
+        }
+        vec2 body = EconomyBody(k);     //SPACING: where he stands, off his route
+        shown->SetPosition(vec3(body.x,y,body.y),false);
         shown->SetRotation(quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),false);
         shown->SetVisibility(true);
         figures.emplace_back(shown->GetID(),k.id);
@@ -830,8 +849,13 @@ void ApplicationChasm::UploadWorkers(){
         ShotClock shots;
         if (k.seg + 1 < (int)k.route.size() && k.seg < (int)k.speed.size()){
             set_clip(*ws,WORKER_CLIP_WALK,k.speed[k.seg] / worker_walk_speed[f],phase);
+        }else if (f_worker_shoot_clip && worker_shoot_seconds > 0.0f && k.draw > 0){
+            //A turn of his bow at a zombie (step 3), by the rules' count: his arrow leaves at its release, as they loose it.
+            float turn = (float)CALENDAR_TICKS_PER_SECOND * ARROW_SHOT_SECONDS;
+            set_clip(*ws,WORKER_CLIP_SHOOT,worker_shoot_seconds / ARROW_SHOT_SECONDS,fmodf((float)k.draw / turn,1.0f),~0ull);
         }else if (f_worker_shoot_clip && worker_shoot_seconds > 0.0f && ShotClockOf(k,e->tick,shots)){
-            set_clip(*ws,WORKER_CLIP_SHOOT,worker_shoot_seconds / shots.cycle,fmodf(shots.elapsed / shots.cycle,1.0f));
+            set_clip(*ws,WORKER_CLIP_SHOOT,worker_shoot_seconds / shots.cycle,fmodf(shots.elapsed / shots.cycle,1.0f),
+                     shots.start);
         }else{
             set_clip(*ws,f_worker_idle_clip ? WORKER_CLIP_IDLE : WORKER_CLIP_NONE,1.0f,phase);
         }
@@ -910,7 +934,11 @@ void ApplicationChasm::UploadWorkers(){
                         clip->time_index = c.phase * clip->duration;
                     }
                     c.ws->clip = c.clip;
+                }else if (c.clock != c.ws->clock && s->current_animation){
+                    //The same clip on another clock - a trainee turning from the straw to a zombie: put back in step.
+                    s->current_animation->time_index = c.phase * s->current_animation->duration;
                 }
+                c.ws->clock = c.clock;
                 s->SetAnimationRate(c.rate);
                 c.ws->rate = c.rate;
             }

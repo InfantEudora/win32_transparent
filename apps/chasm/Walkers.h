@@ -42,8 +42,8 @@
 
     WHO walks decides what is open: a tower's deck is anyone's (a dead end - its guards, and the caretakers
     who stock it), a castle's only the POSTED's - guards and anyone under an order (the user's, 2026-10-10:
-    a wall any villager may walk is a way over a shut gate). The hook the zombies' own map will use
-    (gameplay_plan.md, section 7).
+    a wall any villager may walk is a way over a shut gate). A ZOMBIE (zombies_plan.md) walks the villagers'
+    ground and no deck at all; the walls that break under it are its step 4.
 */
 
 #define WALKER_SPEED_ROAD       3.2f    //world units a second, both ends of the edge road
@@ -60,6 +60,7 @@
 #define WALK_GROUND             0       //a node's layer: its plot's ground
 #define WALK_WHO_VILLAGER       0       //who walks: anyone...
 #define WALK_WHO_POSTED         1       //...or a guard, or someone under an order: a castle's decks too
+#define WALK_WHO_ZOMBIE         2       //...or a zombie: the villagers' ground, and never a deck
 
 //Where a walk is: a plot, and the layer on it.
 struct WalkPlace{

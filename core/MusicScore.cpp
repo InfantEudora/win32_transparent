@@ -10,6 +10,7 @@ using json = nlohmann::json;
 #include <cctype>
 #include <cstdint>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 static Debugger* debug = new Debugger("MusicScore", DEBUG_ALL);
@@ -32,6 +33,8 @@ const ModeInfo kModes[MUSIC_MODE_COUNT] = {
     {"phrygian",         {0, 1, 3, 5, 7, 8, 10}},       //minor with a flat 2nd - darker
     {"pentatonic_major", {0, 2, 4, 7, 9}},
     {"ionian",           {0, 2, 4, 5, 7, 9, 11}},
+    {"lydian",           {0, 2, 4, 6, 7, 9, 11}},
+    {"mixolydian",       {0, 2, 4, 5, 7, 9, 10}},
 };
 
 const char* kPitchNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -49,8 +52,34 @@ int MusicModeFromName(const std::string& name){
     return -1;
 }
 
+std::string MusicModeList(){
+    std::string list;
+    for (int m = 0; m < MUSIC_MODE_COUNT; m++) list += (m ? ", " : "") + std::string(kModes[m].name);
+    return list;
+}
+
 const std::vector<int>& MusicModeIntervals(int mode){
     return kModes[(mode >= 0 && mode < MUSIC_MODE_COUNT) ? mode : 0].intervals;
+}
+
+/*
+    A pentatonic mode reads a degree through the seven-note mode it is cut from - ionian for the
+    major, aeolian for the minor - and moves the two it lacks to the nearest note it has (the lower,
+    on a tie). So a motif keeps its contour in every mode instead of meaning something else in five.
+*/
+int MusicModeDegree(int mode, int degree){
+    const std::vector<int>& own = MusicModeIntervals(mode);
+    const bool f_penta = own.size() < 7;
+    const std::vector<int>& frame = f_penta ? MusicModeIntervals(mode == MUSIC_MODE_PENTATONIC_MAJOR ? MUSIC_MODE_IONIAN : MUSIC_MODE_AEOLIAN) : own;
+    const int octave = degree >= 0 ? degree / 7 : -((-degree + 6) / 7);
+    int semis = frame[degree - octave * 7];
+    if (f_penta){
+        int best = own[0];
+        for (int c : own) if (std::abs(c - semis) < std::abs(best - semis)) best = c;
+        if (std::abs(12 - semis) < std::abs(best - semis)) best = 12;      //up to the octave's root
+        semis = best;
+    }
+    return semis + octave * 12;
 }
 
 int MusicPitchClassFromName(const std::string& name){
@@ -88,6 +117,7 @@ std::string MusicPitchClassName(int pc){
 }
 
 std::string MusicNoteName(int midi){
+    if (midi < 0) return "-";
     const int pc = (midi % 12 + 12) % 12;
     return std::string(kPitchNames[pc]) + std::to_string((midi - pc) / 12 - 1);
 }
@@ -244,6 +274,49 @@ bool Note(const json& j, const char* key, int fallback, int& out, const std::str
     return true;
 }
 
+//A motif's text, as MusicMotifDef::notes describes it, into notes and a length in steps.
+bool ParseMotifNotes(const std::string& text, std::vector<MusicMotifNote>& notes, int& steps, std::string& error){
+    notes.clear();
+    steps = 0;
+    bool f_in_note = false;         //a - holds a note; after a rest it only lengthens the rest
+    size_t at = 0;
+    while (at < text.size()){
+        while (at < text.size() && std::isspace((unsigned char)text[at])) at++;
+        size_t end = at;
+        while (end < text.size() && !std::isspace((unsigned char)text[end])) end++;
+        if (end == at) break;
+        const std::string token = text.substr(at, end - at);
+        at = end;
+        if (token == "|") continue;
+        if (token == "-"){
+            if (steps == 0){ error = "a phrase cannot start with - (hold)"; return false; }
+            if (f_in_note) notes.back().length++;
+            steps++;
+            continue;
+        }
+        if (token == "."){
+            f_in_note = false;
+            steps++;
+            continue;
+        }
+        if (token[0] < '1' || token[0] > '7'){
+            error = "'" + token + "' is not a degree 1-7, - or .";
+            return false;
+        }
+        int degree = token[0] - '1';
+        for (size_t i = 1; i < token.size(); i++){
+            if (token[i] == '\'') degree += 7;
+            else if (token[i] == ',') degree -= 7;
+            else{ error = "'" + token + "': only ' and , may follow a degree"; return false; }
+        }
+        notes.push_back({steps, 1, degree});
+        f_in_note = true;
+        steps++;
+    }
+    if (notes.empty()){ error = "the phrase has no notes"; return false; }
+    return true;
+}
+
 } //namespace
 
 bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error){
@@ -264,7 +337,7 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
     s.root_pc = MusicPitchClassFromName(Str(j, "root", "A"));
     s.mode = MusicModeFromName(Str(j, "mode", "pentatonic_minor"));
     if (s.root_pc < 0 || s.mode < 0){
-        error = "root must be a note name and mode one of pentatonic_minor, aeolian, dorian, phrygian, pentatonic_major, ionian";
+        error = "root must be a note name and mode one of " + MusicModeList();
         return false;
     }
     s.bpm = Num(j, "bpm", 60.0f);
@@ -319,10 +392,11 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
             d.offbeat = Num(v, "offbeat", 0.25f);
             d.spread = Num(v, "spread", 0.3f);
             d.height = Num(v, "height", -1.0f);
+            d.f_unpitched = v.contains("unpitched") && v["unpitched"].is_boolean() && v["unpitched"].get<bool>();
             //A sample pushed more than an octave either way stops sounding like its instrument -
             //an octave up a kalimba is a music box, two down it is mud. Said, not refused: the
             //score may want exactly that.
-            if (d.low_midi < d.root_midi - 12 || d.high_midi > d.root_midi + 12){
+            if (!d.f_unpitched && (d.low_midi < d.root_midi - 12 || d.high_midi > d.root_midi + 12)){
                 debug->Warn("%s: register %s..%s is more than an octave from its sample's %s\n", where.c_str(),
                             MusicNoteName(d.low_midi).c_str(), MusicNoteName(d.high_midi).c_str(),
                             MusicNoteName(d.root_midi).c_str());
@@ -333,7 +407,57 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
         return true;
     };
 
-    if (!read_beds(j, -1) || !read_voices(j, -1)) return false;
+    //Named phrases, so one theme can be written once and played by a motif in every section.
+    std::map<std::string, std::string> phrases;
+    if (j.contains("phrases") && j["phrases"].is_object()){
+        for (auto it = j["phrases"].begin(); it != j["phrases"].end(); ++it){
+            if (it.value().is_string()) phrases[it.key()] = it.value().get<std::string>();
+        }
+    }
+    auto read_motifs = [&](const json& parent, int section) -> bool {
+        if (!parent.contains("motifs") || !parent["motifs"].is_array()) return true;
+        for (const json& m : parent["motifs"]){
+            MusicMotifDef d;
+            d.name = Str(m, "name", Str(m, "sample"));
+            d.sample = Str(m, "sample");
+            d.section = section;
+            const std::string where = (section >= 0 ? "section '" + s.sections[section].name + "', " : "") + "motif '" + d.name + "'";
+            if (!Note(m, "root", 60, d.root_midi, where, error)) return false;
+            if (!Note(m, "home", d.root_midi, d.home_midi, where, error)) return false;
+            std::string text = Str(m, "notes");
+            const std::string phrase = Str(m, "phrase");
+            if (!phrase.empty()){
+                if (!phrases.count(phrase)){ error = where + ": no phrase called '" + phrase + "' in \"phrases\""; return false; }
+                text = phrases[phrase];
+            }
+            std::string why;
+            if (!ParseMotifNotes(text, d.notes, d.steps, why)){ error = where + ": " + why; return false; }
+            d.step_beats = std::max(0.125f, Num(m, "step_beats", 1.0f));
+            d.every_bars = std::max(0, (int)Num(m, "every_bars", 8.0f));
+            d.chance_calm = Num(m, "chance_calm", 0.5f);
+            d.chance_tense = Num(m, "chance_tense", d.chance_calm);
+            d.gain = Num(m, "gain", 0.5f);
+            d.release_s = Num(m, "release_s", 0.5f);
+            d.f_ring = m.contains("ring") && m["ring"].is_boolean() && m["ring"].get<bool>();
+            d.spread = Num(m, "spread", 0.2f);
+            d.height = Num(m, "height", -1.0f);
+            //Said, not refused, as for a voice: how far the phrase pushes its sample, at its widest.
+            int low = 127, high = 0;
+            for (const MusicMotifNote& n : d.notes){
+                low = std::min(low, d.home_midi + MusicModeDegree(MUSIC_MODE_PHRYGIAN, n.degree));
+                high = std::max(high, d.home_midi + MusicModeDegree(MUSIC_MODE_LYDIAN, n.degree));
+            }
+            if (low < d.root_midi - 12 || high > d.root_midi + 12){
+                debug->Warn("%s: the phrase reaches %s..%s, more than an octave from its sample's %s\n", where.c_str(),
+                            MusicNoteName(low).c_str(), MusicNoteName(high).c_str(), MusicNoteName(d.root_midi).c_str());
+            }
+            if (!want_sample(d.sample, where)) return false;
+            s.motifs.push_back(d);
+        }
+        return true;
+    };
+
+    if (!read_beds(j, -1) || !read_voices(j, -1) || !read_motifs(j, -1)) return false;
 
     s.section_fade_s = std::max(0.1f, Num(j, "section_fade_s", 6.0f));
     const std::string order = Str(j, "section_order", "cycle");
@@ -353,9 +477,18 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
                 error = "two sections are called '" + d.name + "'";
                 return false;
             }
+            const std::string root = Str(sec, "root"), mode = Str(sec, "mode");
+            if (!root.empty() && (d.root_pc = MusicPitchClassFromName(root)) < 0){
+                error = "section '" + d.name + "': root '" + root + "' is not a note name";
+                return false;
+            }
+            if (!mode.empty() && (d.mode = MusicModeFromName(mode)) < 0){
+                error = "section '" + d.name + "': mode must be one of " + MusicModeList();
+                return false;
+            }
             s.sections.push_back(d);
             const int index = (int)s.sections.size() - 1;
-            if (!read_beds(sec, index) || !read_voices(sec, index)) return false;
+            if (!read_beds(sec, index) || !read_voices(sec, index) || !read_motifs(sec, index)) return false;
         }
     }
 
@@ -370,9 +503,9 @@ bool LoadMusicScore(const char* asset_name, MusicScore& out, std::string& error)
         }
     }
 
-    debug->Ok("Score '%s': %s %s at %.0f bpm, %zu sections, %zu beds, %zu voices, %zu stingers, %zu samples\n", s.name.c_str(),
+    debug->Ok("Score '%s': %s %s at %.0f bpm, %zu sections, %zu beds, %zu voices, %zu motifs, %zu stingers, %zu samples\n", s.name.c_str(),
               MusicPitchClassName(s.root_pc).c_str(), MusicModeName(s.mode), s.bpm, s.sections.size(),
-              s.beds.size(), s.voices.size(), s.stingers.size(), s.samples.size());
+              s.beds.size(), s.voices.size(), s.motifs.size(), s.stingers.size(), s.samples.size());
     out = std::move(s);
     return true;
 }

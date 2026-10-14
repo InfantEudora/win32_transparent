@@ -61,9 +61,13 @@ int PersonFigure(const EconomyWorker& k, uint64_t tick);
 */
 #define SHOOT_TAKE              0.10f   //the arrow comes out of the quiver, into his right hand
 #define SHOOT_NOCK              0.30f   //...is on the string: from here it points through the bow's grip
-#define SHOOT_RELEASE           0.78f   //...and leaves the bow
+#define SHOOT_RELEASE           ARROW_RELEASE   //...and leaves the bow: the rules' beat, as an arrow at a zombie is theirs
 //The archery range's props in chasm_props.glb (ApplicationChasmRange.cpp): target, hay bale, arrow.
 extern const char* range_asset_names[];
+//An arrow, as the range's props draw it - and a zombie's (ApplicationChasmZombies.cpp).
+#define RANGE_ARROW_HALF        0.16f   //half a stuck arrow's length: chasm_props.glb's `arrow` is centred on its origin
+#define RANGE_ARROW_FULL        0.46f   //a whole arrow, nock to point: `arrow_full`, its origin at the nock, pointing +z
+#define RANGE_ARROW_ARC         0.06f   //how high one rises on its way, of the way's length
 //How a crate is turned where it lies, from its id (ApplicationChasmCrates.cpp) - its outline turns the same.
 float CrateYaw(uint32_t id);
 //How high a person's route is at `along` down leg `seg` - on the ground or the deck his route says it is on
@@ -134,6 +138,20 @@ struct ChasmIssue{
 void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out);
 //The middle of a building's plots, or of a field's cells - where the view goes to show it. False if it is gone.
 bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, vec2& out);
+/*
+    The HUD's own figures, worked out from the published state for the panels and for chasm_economy alike, so
+    the two never disagree. View only: nothing here reaches the rules.
+*/
+//Water and food held, in days of them for everyone at their shares; `mouths` is everyone in adults' worth.
+void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food, float* mouths = NULL);
+//Those sleeping in the camp, or with no home at all: BUILD HOUSES's count.
+int ChasmInCamp(const ZoneState& z, const EconomyState& e);
+//The goods the top bar names after PEOPLE and FOOD: wood and water always, any other held or wanted by a site.
+GoodsMask ChasmBarGoods(const ZoneState& z, const EconomyState& e, const std::array<int,GOOD_COUNT>& stored);
+//MOST IN NEED: the first `count` people as the panel ranks them, and what one is short of as his row says it.
+#define NEEDIEST_SHOWN      5
+std::vector<const EconomyWorker*> ChasmNeediest(const EconomyState& e, int count);
+const char* ChasmNeedName(const EconomyWorker& k);
 
 /*
     chasm - a top-down colony sim on a Townscaper-style irregular grid. See docs/README.md for the
@@ -190,6 +208,7 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define INPUT_CHASM_TOOL_RANGE     INPUT_LAST+25     //R: the archery range (range_plan.md)
 #define INPUT_CHASM_TOOL_TOWER     INPUT_LAST+26     //T: the guard tower (defence_plan.md)
 #define INPUT_CHASM_TOOL_ROPEWALK  INPUT_LAST+27     //K, for knot: the ropewalk (goods_plan.md)
+#define INPUT_CHASM_ZOMBIE         INPUT_LAST+28     //Z: a zombie on the plot under the cursor, debug builds (zombies_plan.md)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -221,6 +240,8 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
 #define CHASM_CMD_SETTLE            SIM_CMD_LAST+13     //sent into another settlement, he moves in without a tent: subtype the person
 #define CHASM_CMD_FORAGE            SIM_CMD_LAST+14     //sent to pick a plant or draw water by hand (docs/foraging_plan.md):
                                                         //subtype the person; value[0] the plot, [1] FORAGE_*, [2] 1 a group's
+#define CHASM_CMD_ZOMBIE            SIM_CMD_LAST+15     //zombies dropped (a debug edit, docs/zombies_plan.md): subtype the
+                                                        //plot; value[0] how many - 0 takes every zombie off the map
 
 //What a left click does.
 enum ChasmTool{
@@ -534,11 +555,30 @@ private:
     void SubmitSettle(uint32_t person);                         //any thread; refused as an order is
     void SubmitForage(uint32_t person, int plot, int what, bool f_spread);  //any thread; refused as an order is
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
+    /*
+        ZOMBIES (docs/zombies_plan.md, ApplicationChasmZombies.cpp): dropped by the debug tools - Z under the cursor, the
+        panel, chasm_zombie - as CHASM_CMD_ZOMBIE, recorded. Their rules are the economy's (Economy.h, ZOMBIES); here is
+        the command, the tools and how they are drawn: the props file's `zombie`, one instance set for all of them.
+    */
+    void SubmitZombies(int plot, int count);                    //any thread; count 0 clears them all
+    std::atomic<uint32_t> zombie_commands_done{0};
+    std::atomic<uint32_t> zombie_refusals{0};
+    std::string zombie_last_refusal;            //under grid_mutex, like crate_last_refusal
+    #define CHASM_ZOMBIE_ASSET "zombie"
+    Object* zombie_set = NULL;
+    bool f_zombie_loaded = false;               //LoadProps found it
+    void UploadZombies();                       //render thread, from PreRender
+    //Their ARROWS (step 3), the range's props: in the air (`arrow_full`), and stuck in a zombie or lying (`arrow`).
+    Object* zombie_arrow_set[2] = {};
+    bool f_zombie_arrows_shown = false;
     json EconomyBuildingJson(uint32_t id);      //a building's stock, what it takes, its worker
 #ifdef USE_MCP
     void RegisterEconomyTools();
+    void RegisterZombieTools();
 #endif
 #ifdef USE_IMGUI
+    void RenderZombiePanel();                   //debug builds: drop zombies on the selected plot, or clear them
+    int zombie_edit_count = 1;
     void RenderEconomyInfo(uint32_t id);        //in the building info, for the building under the cursor
     void RenderSelectedStore(int plot);         //what the selected store takes, to be set there
     void RenderSelectedCrate(int plot);         //the crate on the selected plot, or one to put down there
@@ -689,6 +729,7 @@ private:
         Bone* arm[4] = {};                          //Arm.Lower.L, Hand.L, Arm.Lower.R, Hand.R: where the bow and arrow go
         int clip = 0;                               //WORKER_CLIP_*, as last set
         float rate = 1.0f;
+        uint64_t clock = 0;                         //...and the shot clock it keeps step with: a stint's start, ~0 a zombie's
     };
     std::vector<std::array<WorkerSkin,PERSON_FIGURES>> worker_skins;    //per worker, per figure
     void BuildWorkerScene();                        //from BuildScene

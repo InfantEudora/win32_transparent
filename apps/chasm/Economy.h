@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "type_vec2.h"
+#include "type_vec3.h"
 #include "Calendar.h"
 #include "Goods.h"
 #include "Zones.h"
@@ -75,8 +76,11 @@ struct PropInstance;
     LIES FALLOW (`farmer_of` 0).
     THE CAMP'S OWN WORK (woodcutting_plan.md, the user's 2026-10-11): ECONOMY_CAMP_FARMERS on its land at most -
     the rest lies fallow until a house takes it - and ECONOMY_CAMP_WOODCUTTERS of its own (`cutter_places`),
-    filled as its land is, by those living there, the strongest first. He fells from the camp, with no hut:
-    the least of a log (ECONOMY_CAMP_LOG_WOOD), into a store that takes wood or else the camp's supplies, while
+    filled as its land is, by those living there, the strongest first. What they leave open - all of it once the
+    last family has moved into houses - goes to the rest of the COLONY (one camp to a colony, its work the colony's):
+    to those no other place needs, after every workplace and never taken from one, by skill less the walk from home
+    (the user's, 2026-10-14). So the camp's work goes on from houses, after their fields.
+    The camp's woodcutter fells from the camp, with no hut: the least of a log (ECONOMY_CAMP_LOG_WOOD), into a store that takes wood or else the camp's supplies, while
     they hold less wood than ECONOMY_CAMP_WOODPILE. So more of either takes houses and huts - and a woodcutter's hut
     standing in its settlement TAKES his place OVER (the user's 2026-10-11): the camp has none of its own then.
     And ECONOMY_CAMP_WATER_CARRIERS (`drawer_places`, settlements_plan.md) where a river's or pool's edge lies within
@@ -354,7 +358,7 @@ struct PropInstance;
     day counts. Built over (EconomyPropCovered) it is GONE for good (FORAGE_GONE), whatever stands there later.
     A new map's plants are all ripe. Saved - those not ripe and full - and hashed.
     THE CAMP'S PICKER (ECONOMY_CAMP_PICKERS, `picker_places`): a place at a camp with a plant in its settlement, after
-    its water carrier, by husbandry. From home he goes to the nearest ripe plant of his own settlement, picks it at
+    its water carrier, by husbandry - and from the rest of the colony as the camp's other work. From home he goes to the nearest ripe plant of his own settlement, picks it at
     FORAGE_PICK_SECONDS a fruit at his pace, and on to the next within FORAGE_ROUND_REACH of him until he has a load
     (ECONOMY_LOAD) or none is left near - then into the camp's supplies, while they hold less fruit than
     ECONOMY_CAMP_FRUIT_HOLD. Nothing takes his place over: picking fades as fields and houses cover the bushes.
@@ -487,7 +491,15 @@ inline uint32_t EconomyCrateOfStore(uint32_t store){ return store & ~ECONOMY_STO
 #define NEEDS_DRY_DRAIN             2                           //health lost a tick more while dry
 #define NEEDS_PRESSING_WATER        (NEEDS_WATER_FULL / 3)      //below this he goes for water
 #define NEEDS_PRESSING_HEALTH       (NEEDS_HEALTH_FULL / 4)     //...and for food
-#define ECONOMY_MEAL_SECONDS        2.0f                        //eating and drinking away from home
+/*
+    MEALS (zombies_plan.md, step 2; the user's 2026-10-14): a unit at a time, eaten or drunk over its while, its worth
+    coming in a tick at a time - so a meal is seen, on the person's card. Taken from the stock as it starts; the next
+    one only once it is done. None starts with a zombie within NEEDS_MEAL_SAFE of him, and one under way waits while
+    there is.
+*/
+#define ECONOMY_MEAL_SECONDS        2.0f                        //eating a unit of food, whatever it is, wherever
+#define ECONOMY_DRINK_SECONDS       1.0f                        //...and drinking a unit of water
+#define NEEDS_MEAL_SAFE             3.0f                        //no meal with a zombie's body this near his
 #define ECONOMY_HOME_DAYS           2                           //a house fetches below this many days of its family's water, food or firewood
 #define ECONOMY_FIREWOOD_BURN       1                           //wood a home under the snow burns at dawn, a plot-storey
 #define ECONOMY_WOODSHED_DAYS       4                           //a house's room for firewood, apart from its food and water's: days of burning
@@ -506,6 +518,7 @@ int EconomyFoodWorth(int good);
 #define NEEDS_DIED_HUNGER           0
 #define NEEDS_DIED_THIRST           1       //dry when his health ran out
 #define NEEDS_DIED_COLD             2       //cold (and not dry) when it did
+#define NEEDS_DIED_ZOMBIE           3       //a zombie's bite took the last of it (zombies_plan.md, step 2)
 const char* EconomyDeathCause(int cause);
 
 //The base skills (gameplay_plan.md, "People" - the proposal; names may change). Never renumber.
@@ -679,9 +692,16 @@ struct EconomyWorker{
     int seg = 0;
     float along = 0.0f;
     vec2 pos;                   //where he stands now - kept, so a re-plan starts from exactly here
+    vec2 off;                   //SPACING: where his body stands off that, pushed by those near him (EconomyBody)
     bool f_indoors = false;     //in his house (or tent): arrived home, and not set out since
     int health = NEEDS_HEALTH_FULL;     //ticks of life left (NEEDS, above)
     int water = NEEDS_WATER_FULL;       //ticks until he is dry
+    int meal_good = -1;                 //MEALS (above): what he is eating or drinking, -1 nothing...
+    int meal_ticks = 0;                 //...ticks of it still to go...
+    int meal_worth = 0;                 //...and what it has still to give, health or water
+    int swing = 0;                      //A FIGHT (ZOMBIES): ticks until his next blow, while a zombie is within reach
+    int draw = 0;                       //ARROWS (ZOMBIES): ticks into his turn of the Shoot clip while he shoots, 0 not...
+    uint32_t aim = 0;                   //...and the zombie he shoots at, 0 none
     int post = -1;                      //his POST (above): the plot he was sent to stand on, -1 none
     int post_layer = -1;                //...and its layer he was sent to (ramparts_plan.md): -1 its top, 0 its ground
     std::array<int,GOOD_COUNT> pack = {};   //his PACK (POSTS): water and food he carries for himself, by good
@@ -790,6 +810,143 @@ struct EconomyNotice{
     GoodsMask what = 0;         //NOTICE_RAN_OUT: GOOD_BIT(GOOD_WATER), GOODS_EATEN, or both
 };
 
+/*
+    ZOMBIES (docs/zombies_plan.md, step 1): dropped by the debug tools for now. A zombie goes for PEOPLE ONLY: the
+    nearest out of doors and on the ground, by the straight line, the nearest few tried until one can be walked to -
+    looked for again every ZOMBIE_LOOK_TICKS, each zombie on its own tick by its id. It walks as a person does,
+    straight where clear and else by the grid as WALK_WHO_ZOMBIE (Walkers.h), at ZOMBIE_PACE of his speed, and stops
+    ZOMBIE_REACH short of him. Biting is step 2. Tuning, like the needs.
+*/
+#define ZOMBIE_LOOK_TICKS       25      //a look for its target every half second
+#define ZOMBIE_PACE             0.6f    //of a person's speed on the same ground: anyone outwalks it
+#define ZOMBIE_REACH            0.6f    //world units short of its target it stops: an arm's length
+#define ZOMBIE_REPLAN           0.4f    //...and after him again once he is this far from where its walk ends: in reach
+#define ZOMBIE_TRIES            4       //the nearest this many people tried for a way to, at a look
+#define ZOMBIE_LOST_LOOKS       4       //...and with none of them to be got to, a look only one time in this many
+#define ZOMBIE_SPAWN_SPREAD     0.25f   //several dropped on one plot: this far apart, outward from its point
+#define ZOMBIE_SPAWN_MOST       40      //the most one command drops: a wave is tens
+/*
+    A FIGHT (zombies_plan.md, step 2; the user's 2026-10-14): both sides hit. A zombie within FIGHT_REACH of whom it is
+    after BITES him every ZOMBIE_BITE_SECONDS for ZOMBIE_BITE of his health; a grown-up with one within that reach HITS
+    the nearest every FIGHT_SWING_SECONDS for FIGHT_HIT of its ZOMBIE_HEALTH - both by his FIGHT PACE (EconomyFightPace),
+    his strength and ingenuity together: harder and more often. Each side's first blow a whole interval after it is in
+    reach; all reckoned from where everyone stood as the tick began. So an average person at full health kills one
+    in 3 s, a day of health left - about the user's 3 seconds for a fight at full health. Tuning, like the rest.
+*/
+#define ZOMBIE_HEALTH           60      //a zombie's hit points
+#define ZOMBIE_BITE             CALENDAR_DAY_TICKS     //health a bite takes: a day's
+#define ZOMBIE_BITE_SECONDS     0.5f
+#define FIGHT_REACH             1.0f    //body to body: as far as a bite and a blow reach
+#define FIGHT_HIT               10      //hit points a blow takes, at an average pace
+#define FIGHT_SWING_SECONDS     0.5f    //...and how often he strikes, at it
+/*
+    ARROWS (zombies_plan.md, step 3; the user's 2026-10-14): anyone with a bow - an archer or a guard - who is grown and
+    STANDS, on his post (a tower's platform among them) or on the range's line, shoots at the nearest zombie he can SEE:
+    within his sight's reach and over the ground between (ExplorationSight::Clear), from his eye - on a platform, from its
+    height, so he sees and shoots further. Not at one the arrows already in the air will fell. A shot is a turn of the
+    Shoot clip, ARROW_SHOT_SECONDS, its arrow leaving the bow ARROW_RELEASE into it at the one he aims at then; a trainee
+    stops training while he shoots. Where it goes is a scatter each way, ARROW_SPREAD_* a unit of distance by his
+    archery, from a hash of the tick, him and the zombie - inside its body it HITS, for ARROW_HIT, once it has flown
+    there at ARROW_SPEED, following it as it walks. A hit stays stuck in the zombie until it falls; a miss lies in the
+    ground ARROW_LIE_SECONDS. With a zombie within FIGHT_REACH of him he fights it by hand instead (A FIGHT). Arrows
+    without end, for now. Tuning, like the rest.
+*/
+#define ARROW_SHOT_SECONDS      5.0f    //a turn of the Shoot clip: a shot (the user's)
+#define ARROW_RELEASE           0.78f   //...its arrow leaving the bow this far into it - the clip's beat (SHOOT_RELEASE)
+#define ARROW_SPEED             16.0f   //world units a second in the air
+#define ARROW_HIT               20      //of a zombie's ZOMBIE_HEALTH: three fell one
+#define ARROW_SPREAD_NOVICE     0.03f   //the scatter, one standard deviation each way, a unit of distance: no archery...
+#define ARROW_SPREAD_MASTER     0.008f  //...and all of it
+#define ARROW_BODY_HALF_WIDTH   0.22f   //a zombie's body, as an arrow hits it: this far either side of its middle...
+#define ARROW_BODY_HALF_HEIGHT  0.4f    //...and above and below its chest
+#define ARROW_CHEST             0.55f   //its chest over its ground: what he aims at
+#define ARROW_BOW               0.65f   //his bow over his own: where an arrow leaves from
+#define ARROW_MISS_ON           1.43f   //a miss comes down this far past the zombie for every unit it passed over the ground
+#define ARROW_LIE_SECONDS       10.0f   //...and lies there this long
+
+struct EconomyZombie{
+    uint32_t id = 0;            //from 1, never reused
+    uint32_t target = 0;        //the person it is after, 0 none
+    /*
+        LOST: at its last look it could get to none of the nearest. A way that is not there costs A* the whole of the
+        ground it can reach to find out, so it looks again only one time in ZOMBIE_LOST_LOOKS - as someone cut off
+        from home tries every fourth look.
+    */
+    bool f_lost = false;
+    int health = ZOMBIE_HEALTH; //A FIGHT (below): its hit points, gone at 0...
+    int bite = 0;               //...and ticks until its next bite, while whom it is after is within reach
+    vec2 pos;
+    vec2 off;                   //SPACING: where its body stands off that, pushed by the zombies near it (EconomyBody)
+    //Its route, as a person's (EconomyWorker): route[seg] to route[seg + 1], `along` down that leg - all on the ground.
+    std::vector<vec2> route;
+    std::vector<float> speed;
+    int seg = 0;
+    float along = 0.0f;
+};
+//Which way a zombie faces: along its route, or the way its last leg went.
+vec2 EconomyZombieFacing(const EconomyZombie& m);
+/*
+    Whom a zombie can get at: anyone out of doors and on the ground - not someone indoors, nor a baby in its mother's
+    arms (with her, and she is the one out there), nor a guard up on his tower's platform, which it cannot climb.
+*/
+bool EconomyReachable(const EconomyWorker& k, uint64_t tick);
+
+//An ARROW (above), in the air or come down: who loosed it at what, and where it goes.
+struct EconomyArrow{
+    uint32_t by = 0;            //who loosed it, a person's id
+    uint32_t zombie = 0;        //at which zombie - gone once that falls
+    bool f_hit = false;         //...and whether it hits it: decided as it leaves the bow
+    vec3 from;                  //where it left the bow (x, height, world z)
+    vec3 to;                    //where it goes: a hit's place on its zombie, followed as it walks; a miss's in the ground
+    vec2 at;                    //a hit: where in the zombie - across and up from its chest, as it came at it
+    int ticks = 0;              //its flight, all of it
+    int flown = 0;              //...so far: all of it, and it has come down
+    int lie = 0;                //come down in the ground: ticks before it is gone (stuck in its zombie: until that falls)
+};
+//In the air still.
+inline bool EconomyArrowFlying(const EconomyArrow& a){
+    return a.flown < a.ticks;
+}
+
+/*
+    SPACING (zombies_plan.md, "Step 1b"): THE ROUTE IS THE PLAN, THE OFFSET IS THE BODY. A person or a zombie walks his
+    route as ever - `pos` is where the route has him, and everything that plans or keeps count reads it - and his BODY
+    stands `off` from it: what is drawn and picked, and what will reach and be reached. Once a tick, after everyone has
+    moved, each body is pushed away from those of its own kind within SPACING_RADIUS - people from people, zombies from
+    zombies, so a zombie is never pushed off whom it reaches for - harder the nearer they are, all pushes summed from
+    where everyone stood before any moved. And a zombie is kept out of a person's own room, SPACING_BODY - never the
+    other way, and well inside its reach:
+      - one walking is pushed only ACROSS his way, so a group on one path walks side by side, and he leans to his
+        RIGHT for one ahead of him - within SPACING_AHEAD when that one comes at him or stands in his way, so two
+        meeting on a road begin to pass as traffic does before they meet;
+      - one standing is pushed any way;
+      - with nobody near, the offset drifts back toward the route, SPACING_RETURN of it a second;
+      - it is at most SPACING_MOST, and never where its route could not have taken him - the water, a wall, a
+        building, a field, over a fence or a cliff (EconomyStraightClear from `pos`): pulled back halfway, or wholly.
+    Someone indoors has none. A baby carried, and anyone whose route leaves the ground, take no part: theirs settles
+    back at SPACING_SETTLE a second. Tuning, like the rest.
+*/
+#define SPACING_RADIUS          0.6f    //bodies nearer than this push apart: a figure is about 0.5 across
+#define SPACING_BODY            0.4f    //...and a zombie nearer a person than this is pushed off him: not inside him
+#define SPACING_PUSH            2.0f    //world units a second the offset moves by, two bodies on one spot
+#define SPACING_KEEP_RIGHT      0.5f    //...and of that, to his right for a neighbour straight ahead of a walker
+#define SPACING_AHEAD           1.5f    //...looking this far for one coming at him or standing in his way
+#define SPACING_RETURN          0.6f    //of the offset, a second, it drifts back toward the route
+#define SPACING_SETTLE          4.0f    //...and, taking no part, settles back at
+#define SPACING_MOST            0.45f   //the furthest a body stands off its route
+inline vec2 EconomyBody(const EconomyWorker& k){
+    return k.pos + k.off;
+}
+inline vec2 EconomyBody(const EconomyZombie& m){
+    return m.pos + m.off;
+}
+//A FIGHT: his pace at it - his strength's and his ingenuity's EconomySkillFactor together, 1 for an average person.
+float EconomyFightPace(const EconomyWorker& k);
+//MEALS: eating or drinking now.
+inline bool EconomyMealOn(const EconomyWorker& k){
+    return k.meal_ticks > 0;
+}
+
 //A SETTLEMENT (Economy::Settle), worked out from the zones.
 struct EconomySettlement{
     uint32_t id = 0;            //its oldest home's building id: what it is named by, and its territory's heart
@@ -818,6 +975,9 @@ struct EconomyState{
     std::array<int,GOOD_COUNT> ordered = {};            //...and an order's level for the stores, 0 none - cleared once reached
     std::vector<EconomyNotice> notices;                 //NOTICES: the last ECONOMY_NOTICES_KEPT, oldest first - not saved
     uint32_t notices_made = 0;                          //...and how many since the load: the view tells the ones it has not
+    std::vector<EconomyZombie> zombies;                 //ZOMBIES, in id order
+    uint32_t next_zombie = 1;
+    std::vector<EconomyArrow> arrows;                   //ARROWS, in the order loosed
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<GoodsMask> accepts;
     std::vector<GoodsMask> attached;                      //the goods of the workplaces a store is next to
@@ -964,6 +1124,9 @@ struct EconomySaved{
     std::vector<std::pair<int,int>> ordered;            //...and their orders' levels: good, level
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;
+    std::vector<EconomyZombie> zombies;
+    uint32_t next_zombie = 1;
+    std::vector<EconomyArrow> arrows;
     bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
 };
 
@@ -1063,6 +1226,12 @@ public:
         between ticks, like SetNeeds. False, and `why` says it, on ground a crate may not lie on.
     */
     bool SpawnCrate(int plot, int good, int amount, const ZoneState& z, std::string* why);
+    /*
+        ZOMBIES dropped by the debug tools (CHASM_CMD_ZOMBIE, zombies_plan.md): `count` of them on `plot`, spread out
+        from its point; `count` 0 takes every zombie off the map. Applied between ticks, like SpawnCrate. False, and
+        `why` says it, on ground a zombie may not stand on: the water, the mountain, a building or a wall.
+    */
+    bool SpawnZombies(int plot, int count, const ZoneState& z, std::string* why);
     EconomySaved Save() const;          //EconomySaveState of the live state
     const EconomyState& State() const { return state; }
     //The plots whose next storey stands after this tick - the app raises them (ZONE_OP_BUILD_RAISE).
@@ -1232,6 +1401,28 @@ private:
     //STOCK KEPT: how many of made good `good` the stores still lack of its level, less what is on its way to one.
     int KeptShort(const ZoneState& z, int good) const;
     void Walk(EconomyWorker& k, float dt);
+    //ZOMBIES (above, Zombies.cpp): every zombie a tick on - a look for its target on its tick, then its walk. With
+    //`f_zones_moved`, whatever was built or taken down this tick: each one after a target looks again at once.
+    void TickZombies(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt, bool f_zones_moved);
+    //...its look: after the nearest person it can get to - its way planned again with `f_replan`, even to the one it is
+    //after. False, and it stands, with nobody it can.
+    bool ZombieLook(EconomyZombie& m, const ZoneState& z, Walkers& walkers, bool f_replan);
+    //...and its way to `to` from where it stands, as a person's (RouteTo). False, the route as it was, with none.
+    bool ZombieRouteTo(EconomyZombie& m, const ZoneState& z, Walkers& walkers, const vec2& to);
+    //SPACING (above, Spacing.cpp): every body's offset a tick on, pushed by its neighbours - after everyone has moved.
+    void SpaceOut(const ZoneState& z, float dt);
+    //A FIGHT (above, Zombies.cpp): every bite and blow of this tick, from where everyone stands now; the zombies at 0
+    //gone, and whom a bite took the last of named in bitten_dead, for Needs to strike off.
+    void Fights();
+    std::vector<uint32_t> bitten_dead;          //this tick's, cleared as it starts
+    //ARROWS (above, Shooting.cpp): the arrows a tick on - landing, and the zombies they fell gone - then every archer's
+    //turn of his bow, an arrow loosed at its release. Before the fight, so a zombie shot down bites nobody.
+    void Shoot(const ZoneState& z);
+    //...whom he would shoot at from where he stands: the nearest zombie he sees that the arrows on their way (`coming`,
+    //by zombie, the harm they will do) do not fell - its index, -1 none. His eye's ground in `eye_ground`.
+    int ShotTarget(const EconomyWorker& k, const ZoneState& z, const std::vector<int>& coming, float& eye_ground) const;
+    //A zombie's body within `within` of his: no meal then (MEALS).
+    bool ZombieNear(const EconomyWorker& k, float within) const;
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
     void MakeSettlers();
@@ -1272,7 +1463,13 @@ private:
     //Needs: every person's tick of health and water, a meal and a drink at home, and the dead struck off.
     void Needs(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick);
     void EatAndDrink(EconomyWorker& k, const ZoneState& z);
-    void Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
+    //MEALS: the unit he would eat or drink next from `from` - water first, then the food that keeps worst - -1 none fits;
+    //that unit taken and begun, true if one was; and a tick of the meal on.
+    int NextMeal(const EconomyWorker& k, const std::array<int,GOOD_COUNT>& from) const;
+    bool Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from);
+    void MealTick(EconomyWorker& k);
+    //...at home: a meal under way, or one more his home would give him now - so he stays in for it (TickWorker).
+    bool EatingAtHome(const EconomyWorker& k, const ZoneState& z) const;
     //A pressing need his home cannot meet: off to the nearest place that can. True if he set off. With
     //f_home false he cannot get home, and what it holds is no help.
     bool SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home = true);

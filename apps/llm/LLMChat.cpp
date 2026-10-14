@@ -538,7 +538,7 @@ void LLMChatSession::Reset(void){
 
 bool LLMChatSession::Feed(LLMModel& model, const std::vector<int>& new_tokens){
     auto start = Clock::now();
-    int ctx = model.n_contexts - 1;
+    int ctx = Context(model);
     if (!f_cache_valid){
         //someone else used this context since: feed the whole conversation again
         std::vector<int> all = tokens;
@@ -608,7 +608,7 @@ void LLMChatSession::Step(LLMModel& model, LLMTokenizer& tokenizer, double budge
             return;
         }
     }
-    int ctx = model.n_contexts - 1;
+    int ctx = Context(model);
     while (std::chrono::duration<double,std::milli>(Clock::now() - start).count() < budget_ms){
         int next = sampler->Sample(logits);
         model.RecordBlocks(next);   //before the next Forward overwrites what it records

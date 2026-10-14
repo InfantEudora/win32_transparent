@@ -11,7 +11,7 @@
 #
 #     export PATH="/c/msys64/mingw64/bin:$PATH"      # the toolchain is NOT on the default PATH
 #     mingw32-make.exe -j8                           # mingw32-make, not /usr/bin/make
-#     ./build/llm.exe --minimized --mcp-port 8769 2>stderr.log &
+#     ./build/llm.exe --minimized --mcp-port 8771 2>stderr.log &     # 8769 is Chasm's, which the Void reads
 #
 # `make clean` removes this app's build folder only. The shared core objects under
 # ../../build/core belong to every app; `make cleancore` is the one that clears those.
@@ -25,6 +25,8 @@ APP_SRCS += ApplicationLLM.cpp
 APP_SRCS += LLMModel.cpp
 APP_SRCS += LLMTokenizer.cpp
 APP_SRCS += LLMChat.cpp
+APP_SRCS += VoidBrief.cpp
+APP_SRCS += ApplicationLLMVoid.cpp
 
 #No SoundSystem here, so OpenAL is not linked - see the USE_SOUND block in engine.mk.
 

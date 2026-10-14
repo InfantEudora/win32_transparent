@@ -6,7 +6,7 @@ status: built
 summary: Food from the wild. Bushes and a few oaks bear it and grow it back after picking; a camp's picker brings it in, and someone sent out can pick or draw water by hand.
 plans: foraging_plan.md > Decided (the user, 2026-10-12); foraging_plan.md > As built (2026-10-12)
 code: Economy.cpp: FruitAtDawn PlantsCovered PickFrom GoPick Forage ForageWant ForageUnit BankPlot AssignJobs EconomyFoodWorth; Economy.h: WORKER_JOB_PICKER FORAGE_GONE; Forest.h: ForestBears FOREST_FRUIT_TREE_CHANCE
-verified: 2026-10-12
+verified: 2026-10-14
 ---
 
 A [[Food|food]] that is not grown on a [[Field|field]]: it keeps no better than greens, and it is **eaten
@@ -29,7 +29,9 @@ A new map's plants are all ripe, and ripe plants show their fruit.
 ## The camp's picker
 
 A [[Camp|camp]] with a plant standing in its [[Settlement|settlement's]] land has **{ECONOMY_CAMP_PICKERS:#picker}**,
-filled after its water carrier, by [[Skills|husbandry]]. While the camp's supplies hold less than
+filled after its water carrier, by [[Skills|husbandry]]: from those living in the camp first, then from anyone
+in the colony no other workplace needs, so picking goes on after everyone has moved into houses (see
+[[Camp|camp]], "Its work"). While the camp's supplies hold less than
 {ECONOMY_CAMP_FRUIT_HOLD} fruit, the picker goes to the nearest ripe plant of the settlement, picks at
 {FORAGE_PICK_SECONDS:seconds} a fruit at their pace, and goes on to the next within
 {FORAGE_ROUND_REACH} until they carry {ECONOMY_LOAD}, then takes it into the supplies. Nothing takes the

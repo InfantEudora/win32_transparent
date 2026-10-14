@@ -4,9 +4,9 @@ aliases: water bar, dry
 kind: needs
 status: built
 summary: A water bar that runs dry in {NEEDS_WATER_FULL:days}. Once dry, a person loses health much faster and food stops helping.
-plans: needs_plan.md > Decided; needs_plan.md > As built: pressing needs; needs_plan.md > Current tuning
-code: Economy.h: EconomyPressing EconomyDry; Economy.cpp: Needs Consume SeekSupply HomeShort; ApplicationChasmSelect.cpp: THIRST_MARK_WATER DrawPersonBadge
-verified: 2026-10-09
+plans: needs_plan.md > Decided; needs_plan.md > As built: pressing needs; needs_plan.md > Current tuning; zombies_plan.md > Step 2: meals, and a fight
+code: Economy.h: EconomyPressing EconomyDry; Economy.cpp: Needs Consume MealTick SeekSupply HomeShort; ApplicationChasmSelect.cpp: THIRST_MARK_WATER DrawPersonBadge
+verified: 2026-10-14
 ---
 
 Every [[Person|person]] has a water bar. It is full at {NEEDS_WATER_FULL:days} and drops by one every tick.
@@ -20,7 +20,10 @@ it fits, so nothing is wasted. Water comes before food.
 - **Away, when thirst is pressing**: with less than {NEEDS_PRESSING_WATER:days} left and none at home,
   the person finishes what they are doing, takes on no new work, and goes to the nearest place with water
   to spare: a [[Store]], the [[Camp]], a [[Water collector]] or a [[Crate|crate]], but never a house somebody lives in,
-  and only in their own [[Settlement|settlement]] or on unclaimed land. A drink away from home takes {ECONOMY_MEAL_SECONDS:#seconds}.
+  and only in their own [[Settlement|settlement]] or on unclaimed land, and stays there to drink, unit by unit.
+
+**A unit takes {ECONOMY_DRINK_SECONDS:#seconds} to drink**, its water coming in a tick at a time - "Drinking" on the
+person's card - and none is begun, nor goes on, with a [[Zombie|zombie]] within {NEEDS_MEAL_SAFE} ([[Health]]).
 
 ## Dry
 

@@ -171,6 +171,21 @@ json ChasmSaveToJson(const ChasmSave& s){
                 std::vector<int> layers(k.route_layer.begin(),k.route_layer.end());
                 workers.back()["route_layer"] = layers;
             }
+            //Where his body stands off his route (SPACING, zombies_plan.md) - only when it does.
+            if (k.off.x != 0.0f || k.off.y != 0.0f){
+                workers.back()["off"] = json::array({k.off.x,k.off.y});
+            }
+            //A meal under way (MEALS): [good, ticks to go, worth still to give]; a fight's next blow (zombies_plan.md, step 2).
+            if (EconomyMealOn(k)){
+                workers.back()["meal"] = json::array({k.meal_good,k.meal_ticks,k.meal_worth});
+            }
+            if (k.swing > 0){
+                workers.back()["swing"] = k.swing;
+            }
+            //Shooting (ARROWS, step 3): [ticks into his turn, the zombie he aims at] - only while he does.
+            if (k.draw > 0){
+                workers.back()["draw"] = json::array({k.draw,k.aim});
+            }
         }
         //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father,
         //surname.
@@ -243,6 +258,34 @@ json ChasmSaveToJson(const ChasmSave& s){
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
                        {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},
                        {"kept",kept},{"ordered",ordered},{"plants",plants}};
+        //Zombies (zombies_plan.md), each on its route as a person is - only once there have been any, so a save
+        //without them is as before.
+        if (!e.zombies.empty() || e.next_zombie > 1){
+            json zombies = json::array();
+            for (const EconomyZombie& m : e.zombies){
+                json route = json::array();
+                for (const vec2& p : m.route){
+                    route.push_back(json::array({p.x,p.y}));
+                }
+                zombies.push_back(json{{"id",m.id},{"target",m.target},{"lost",m.f_lost},{"health",m.health},{"bite",m.bite},
+                                       {"pos",json::array({m.pos.x,m.pos.y})},{"off",json::array({m.off.x,m.off.y})},
+                                       {"route",route},{"speed",m.speed},{"seg",m.seg},{"along",m.along}});
+            }
+            economy["zombies"] = zombies;
+            economy["next_zombie"] = e.next_zombie;
+            //Their arrows (step 3), in the air and come down: who at what, a hit or not, from, to, where in it, the
+            //flight and how far through it, and how long one in the ground still lies.
+            json arrows = json::array();
+            for (const EconomyArrow& a : e.arrows){
+                arrows.push_back(json{{"by",a.by},{"zombie",a.zombie},{"hit",a.f_hit},
+                                      {"from",json::array({a.from.x,a.from.y,a.from.z})},
+                                      {"to",json::array({a.to.x,a.to.y,a.to.z})},{"at",json::array({a.at.x,a.at.y})},
+                                      {"ticks",a.ticks},{"flown",a.flown},{"lie",a.lie}});
+            }
+            if (!arrows.empty()){
+                economy["arrows"] = arrows;
+            }
+        }
     }
     //The debug castle (ramparts_plan.md): plot and piece - only with some, so a save without one is as before.
     json castle = json::array();
@@ -416,6 +459,21 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             if (wk.contains("pos")){
                 k.pos = vec2(wk["pos"][0].get<float>(),wk["pos"][1].get<float>());
             }
+            //SPACING (zombies_plan.md): on his route, before it - and whenever nobody was near.
+            if (wk.contains("off")){
+                k.off = vec2(wk["off"][0].get<float>(),wk["off"][1].get<float>());
+            }
+            //MEALS and A FIGHT (zombies_plan.md, step 2): none under way, before them.
+            if (wk.contains("meal") && wk["meal"].is_array() && wk["meal"].size() == 3){
+                k.meal_good = wk["meal"][0].get<int>();
+                k.meal_ticks = wk["meal"][1].get<int>();
+                k.meal_worth = wk["meal"][2].get<int>();
+            }
+            k.swing = wk.value("swing",0);
+            if (wk.contains("draw") && wk["draw"].is_array() && wk["draw"].size() == 2){
+                k.draw = wk["draw"][0].get<int>();
+                k.aim = wk["draw"][1].get<uint32_t>();
+            }
             k.f_indoors = wk.value("indoors",false);
             //A save from before needs (needs_plan.md): everyone fed and watered.
             k.health = wk.value("health",(int)NEEDS_HEALTH_FULL);
@@ -507,6 +565,51 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             out.economy.crates.push_back(c);
         }
         out.economy.next_crate = e.value("next_crate",1u);
+        //Absent before zombies (zombies_plan.md): none about.
+        for (const json& mj : e.value("zombies",json::array())){
+            EconomyZombie m;
+            m.id = mj.value("id",0u);
+            m.target = mj.value("target",0u);
+            m.f_lost = mj.value("lost",false);
+            m.health = mj.value("health",(int)ZOMBIE_HEALTH);  //before fights (step 2): unhurt
+            m.bite = mj.value("bite",0);
+            if (mj.contains("pos")){
+                m.pos = vec2(mj["pos"][0].get<float>(),mj["pos"][1].get<float>());
+            }
+            if (mj.contains("off")){
+                m.off = vec2(mj["off"][0].get<float>(),mj["off"][1].get<float>());
+            }
+            for (const json& p : mj.value("route",json::array())){
+                m.route.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
+            }
+            m.speed = mj.value("speed",std::vector<float>());
+            m.seg = mj.value("seg",0);
+            m.along = mj.value("along",0.0f);
+            if (m.route.empty() || m.speed.size() + 1 != m.route.size()){
+                m.route.assign(1,m.pos);
+                m.speed.clear();
+                m.seg = 0;
+                m.along = 0.0f;
+            }
+            out.economy.zombies.push_back(m);
+        }
+        out.economy.next_zombie = e.value("next_zombie",1u);
+        //Absent before arrows (step 3), and with none about.
+        for (const json& aj : e.value("arrows",json::array())){
+            EconomyArrow a;
+            a.by = aj.value("by",0u);
+            a.zombie = aj.value("zombie",0u);
+            a.f_hit = aj.value("hit",false);
+            if (aj.contains("from") && aj.contains("to") && aj.contains("at")){
+                a.from = vec3(aj["from"][0].get<float>(),aj["from"][1].get<float>(),aj["from"][2].get<float>());
+                a.to = vec3(aj["to"][0].get<float>(),aj["to"][1].get<float>(),aj["to"][2].get<float>());
+                a.at = vec2(aj["at"][0].get<float>(),aj["at"][1].get<float>());
+            }
+            a.ticks = aj.value("ticks",1);
+            a.flown = aj.value("flown",0);
+            a.lie = aj.value("lie",0);
+            out.economy.arrows.push_back(a);
+        }
         //A save from before the guard counts has none: its towers keep every place (Economy::Restore).
         for (const json& gc : e.value("guards",json::array())){
             out.economy.guards.push_back(std::make_pair(gc[0].get<uint32_t>(),gc[1].get<int>()));

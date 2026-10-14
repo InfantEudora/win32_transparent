@@ -145,8 +145,14 @@ json ApplicationMusic::StateJson(){
     }
     if (!st.auditioning.empty()) j["auditioning"] = st.auditioning;
     j["beds"] = beds;
-    json voices = json::array(), stingers = json::array();
+    json voices = json::array(), stingers = json::array(), motifs = json::array();
     if (score){
+        for (const MusicMotifDef& m : score->motifs){
+            motifs.push_back({{"name", m.name}, {"sample", m.sample}, {"home", MusicNoteName(m.home_midi)},
+                              {"steps", m.steps}, {"step_beats", m.step_beats}, {"every_bars", m.every_bars},
+                              {"chance_calm", m.chance_calm}, {"chance_tense", m.chance_tense},
+                              {"section", SectionName(st, m.section)}});
+        }
         for (size_t i = 0; i < score->voices.size(); i++){
             const MusicVoiceDef& v = score->voices[i];
             voices.push_back({{"name", v.name}, {"sample", v.sample},
@@ -158,6 +164,7 @@ json ApplicationMusic::StateJson(){
         for (const MusicStingerDef& s : score->stingers) stingers.push_back(s.name);
     }
     j["voices"] = voices;
+    j["motifs"] = motifs;
     j["stingers"] = stingers;
     json recent = json::array();
     for (const MusicNoteLog& n : st.recent){
@@ -181,7 +188,7 @@ bool ApplicationMusic::KeyEventFromJson(const json& args, int current_root, Musi
     }
     if (args.contains("mode") && args["mode"].is_string()){
         e.mode = MusicModeFromName(args["mode"].get<std::string>());
-        if (e.mode < 0){ error = "mode must be one of pentatonic_minor, aeolian, dorian, phrygian, pentatonic_major, ionian"; return false; }
+        if (e.mode < 0){ error = "mode must be one of " + MusicModeList(); return false; }
     }
     if (e.root_pc < 0 && e.mode < 0){ error = "give a root, a shift or a mode"; return false; }
     e.f_now = args.contains("now") && args["now"].is_boolean() && args["now"].get<bool>();
@@ -247,9 +254,20 @@ void ApplicationMusic::RenderMusicPanel(void){
     const std::shared_ptr<const MusicScore> score = player.GetScore();
 
     //--- score ----------------------------------------------------------------------------
-    ImGui::Text("Score: %s (%s)", score ? score->name.c_str() : "-", score_file.c_str());
+    //Every score in assets/music, listed when the combo opens, so a new file shows without a restart.
+    //The panel IS the render thread, so it can load directly rather than through a request.
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("##score", score_file.c_str())){
+        std::error_code ec;
+        std::vector<std::string> files;
+        for (const auto& f : std::filesystem::directory_iterator(GetExecutableDirectory() + "/../assets/music", ec)){
+            if (f.path().extension() == ".json") files.push_back("music/" + f.path().filename().string());
+        }
+        std::sort(files.begin(), files.end());
+        for (const std::string& f : files) if (ImGui::Selectable(f.c_str(), f == score_file)) LoadAndPlay(f);
+        ImGui::EndCombo();
+    }
     ImGui::SameLine();
-    //The panel IS the render thread, so it can reload directly rather than through a request.
     if (ImGui::Button("Reload")) LoadAndPlay(score_file);
     if (!score_error.empty()) ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "%s", score_error.c_str());
     if (!player.IsPlaying()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Not playing - no sound device?");
@@ -333,6 +351,28 @@ void ApplicationMusic::RenderMusicPanel(void){
     if (ImGui::Button("Up a 5th")){ e.root_pc = (st.root_pc + 7) % 12; player.Post(e); }
     ImGui::SameLine();
     if (ImGui::Button("Down a 5th")){ e.root_pc = (st.root_pc + 5) % 12; player.Post(e); }
+
+    //--- motifs ---------------------------------------------------------------------------
+    //One button per name: a name several sections share plays the playing section's (FindMotif).
+    if (!st.motif_names.empty()){
+        ImGui::Separator();
+        ImGui::Text("Motifs:");
+        ImGui::PushID("motifs");
+        std::vector<std::string> shown;
+        for (const std::string& name : st.motif_names){
+            if (std::find(shown.begin(), shown.end(), name) != shown.end()) continue;
+            shown.push_back(name);
+            ImGui::SameLine();
+            if (ImGui::Button(name.c_str())){
+                MusicEvent m;
+                m.type = MusicEvent::MOTIF;
+                m.name = name;
+                player.Post(m);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays at the next bar line, in the key playing then");
+        }
+        ImGui::PopID();
+    }
 
     //--- stingers -------------------------------------------------------------------------
     if (score && !score->stingers.empty()){
@@ -745,9 +785,9 @@ void ApplicationMusic::RegisterMCPTools(void){
 
     MCPServer::Get()->RegisterTool("music_key",
         "Change key. `root` (\"E\", \"F#\"), and/or `shift` in semitones from the current root (7 = "
-        "up a fifth, 5 = down a fifth), and/or `mode` (pentatonic_minor, aeolian, dorian, "
-        "phrygian, pentatonic_major, ionian). Waits for the next bar unless `now` is true. Pitched "
-        "beds cross over to the new key; voices walk to the nearest note of the new scale.",
+        "up a fifth, 5 = down a fifth), and/or `mode` (" + MusicModeList() + "). Waits for the "
+        "next bar unless `now` is true. Pitched beds cross over to the new key; voices walk to the "
+        "nearest note of the new scale. A section that names its own key takes it when it starts.",
         json{{"type","object"},{"properties",{
             {"root",{{"type","string"}}}, {"shift",{{"type","integer"}}}, {"mode",{{"type","string"}}},
             {"now",{{"type","boolean"}}}}}},
@@ -771,6 +811,26 @@ void ApplicationMusic::RegisterMCPTools(void){
             MusicEvent e;
             e.type = MusicEvent::STINGER;
             e.name = name;
+            pl->Post(e);
+            return StateJson();
+        });
+
+    MCPServer::Get()->RegisterTool("music_motif",
+        "Play one of the score's motifs - its written phrase - by name (see music_state's motifs), "
+        "in the key and mode playing then. A name several sections share plays the playing "
+        "section's. Waits for the next bar unless `now` is true.",
+        json{{"type","object"},{"properties",{{"name",{{"type","string"}}}, {"now",{{"type","boolean"}}}}},
+             {"required",json::array({"name"})}},
+        [this, pl](const json& args) -> json {
+            const std::string name = args.value("name", std::string());
+            const std::shared_ptr<const MusicScore> score = pl->GetScore();
+            bool f_found = false;
+            if (score) for (const MusicMotifDef& m : score->motifs) f_found |= (m.name == name);
+            if (!f_found) return json{{"error", "no motif called \"" + name + "\" - see music_state"}};
+            MusicEvent e;
+            e.type = MusicEvent::MOTIF;
+            e.name = name;
+            e.f_now = args.contains("now") && args["now"].is_boolean() && args["now"].get<bool>();
             pl->Post(e);
             return StateJson();
         });
@@ -811,6 +871,7 @@ void ApplicationMusic::RegisterMCPTools(void){
         "bpm, master, bed_gain, voice_gain overrides them for the render. `seed` makes it repeatable "
         "(default 1). `timeline` is a list of events at times: {at_s, root|shift|mode, now} for a key "
         "change, {at_s, suspense} or {at_s, brightness} to move one, {at_s, stinger} for a stinger, "
+        "{at_s, motif, now} for a motif, "
         "{at_s, section, now} for a section change (\"\" = the next one), {at_s, pause: true|false} "
         "to pause or resume (pause_fade_s / resume_fade_s override the fades). The result's "
         "final_time_s is the music's own clock, which a pause holds back.",
@@ -840,6 +901,11 @@ void ApplicationMusic::RegisterMCPTools(void){
                     if (t.contains("stinger") && t["stinger"].is_string()){
                         te.event.type = MusicEvent::STINGER;
                         te.event.name = t["stinger"].get<std::string>();
+                    }
+                    else if (t.contains("motif") && t["motif"].is_string()){
+                        te.event.type = MusicEvent::MOTIF;
+                        te.event.name = t["motif"].get<std::string>();
+                        te.event.f_now = t.contains("now") && t["now"].is_boolean() && t["now"].get<bool>();
                     }
                     else if (t.contains("suspense") && t["suspense"].is_number()){
                         te.event.type = MusicEvent::SUSPENSE;

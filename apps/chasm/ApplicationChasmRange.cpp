@@ -22,8 +22,6 @@ const char* range_asset_names[RANGE_PROPS] = {"range_target","hay_bale","arrow",
 #define RANGE_BALE_BACK     0.44f   //the backstop's bales, this much of the cell north of its middle
 #define RANGE_BALE_SPREAD   0.28f   //...and this far apart along the row
 #define RANGE_BALE_SIDE     0.36f   //the loose bale, this far east of the middle
-#define RANGE_ARROW_HALF    0.16f   //half a stuck arrow's length: chasm_props.glb's `arrow` is centred on its origin
-#define RANGE_ARROW_FULL    0.46f   //a whole arrow, nock to point: `arrow_full`, its origin at the nock, pointing +z
 #define RANGE_BOSS_HEIGHT   0.74f   //the middle of a target's face, above its base (`range_target`)
 #define RANGE_BOSS_FRONT    0.14f   //...and its face, this far south of the target's origin (between its legs, behind)
 #define RANGE_FACE_HALF_W   0.30f   //an arrow this near its middle across, and
@@ -37,7 +35,6 @@ const char* range_asset_names[RANGE_PROPS] = {"range_target","hay_bale","arrow",
 #define RANGE_SPREAD_NOVICE 0.24f
 #define RANGE_SPREAD_MASTER 0.05f
 #define RANGE_ARROW_SPEED   8.0f    //world units a second in the air: an arrow's own would cross a range in a frame
-#define RANGE_ARROW_ARC     0.06f   //how high it rises on the way, of the way's length
 #define RANGE_MISS_ON       1.3f    //a miss comes down at most this far behind the target, of the way to the backstop
 #define RANGE_SHOT_SECONDS  4.0f    //a shot, when the props file has no Shoot clip to time it
 
@@ -255,7 +252,8 @@ void ApplicationChasm::UploadRange(){
             int t = (int)(it - range_target_cell.begin());
             //His bow at the release: the clip's, measured on his figure (BuildWorkerScene), where he stands and faces.
             vec2 facing = EconomyWorkerFacing(k);
-            vec3 feet(k.pos.x,WorkerHeight(*w,z.get(),k),k.pos.y);
+            vec2 body = EconomyBody(k);     //SPACING: where he stands, off his place on the line
+            vec3 feet(body.x,WorkerHeight(*w,z.get(),k),body.y);
             vec3 from = feet + quat(up,atan2f(facing.x,facing.y)) * worker_release_at[PersonFigure(k,e->tick)];
             float skill = std::max(0.0f,std::min(1.0f,(float)k.archery / (float)ARCHERY_FULL));
             uint32_t seed = MeshHash(k.id,(uint32_t)clock.start,(uint32_t)(clock.start >> 32));
@@ -273,6 +271,10 @@ void ApplicationChasm::UploadRange(){
                     continue;
                 }
                 if (flown < s.seconds){
+                    //Shooting at a zombie (zombies_plan.md, step 3), his stint waits: not one hung in the air meanwhile.
+                    if (k.draw > 0){
+                        continue;
+                    }
                     flying.push_back(Object::ComposeTransformScale(point - dir * RANGE_ARROW_FULL,TurnZTo(dir,up),
                                                                    vec3(1.0f,1.0f,1.0f)));
                     continue;

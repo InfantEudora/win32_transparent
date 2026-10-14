@@ -47,7 +47,9 @@ animals yet). The user chose bushes: "fits what we currently have nicely".
   plant's seasonal stage - but not on an oak thinning or bare, whose canopy it would hang outside of.
 
 **The camp's picker**
-- **One place at a camp** (`ECONOMY_CAMP_PICKERS`), camp residents only, by **husbandry**. Filled after the
+- **One place at a camp** (`ECONOMY_CAMP_PICKERS`), camp residents only, by **husbandry** - since 2026-10-14
+  residents first, then anyone in the colony no other place needs (settlements_plan.md, "The camp's own work is
+  the colony's"), so picking goes on once everyone has moved into houses. Filled after the
   water carrier: a founding party of three is a woodcutter, a water carrier and a picker. A farmer's place comes
   only with fields, so it doesn't compete in a new outpost.
 - **Where**: the nearest ripe plant **in the camp's own settlement** (`Ours`, as every errand) - and a camp has

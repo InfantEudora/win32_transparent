@@ -15,8 +15,8 @@
     music - a bench for the adaptive music. See readme.md for what it is for and MusicEngine.h
     for how the music is made; this is the summary a reader of this class needs.
 
-    It draws nothing but panels. One score plays (assets/music/jungle.json unless told otherwise),
-    the "Music" panel steers it - suspense, brightness, tempo, key, stingers - and the music_* MCP
+    It draws nothing but panels. One score plays (assets/music/jungle.json until another is picked),
+    the "Music" panel steers it - suspense, brightness, tempo, key, motifs, stingers - and the music_* MCP
     tools do the same from outside, so an agent can tune it with the person listening. The
     "Library" panel and the library_* tools are the sample library behind the scores: what has
     been classified and how, what is new in unsorted/, and the means to audition and classify it,

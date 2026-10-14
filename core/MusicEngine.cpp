@@ -45,6 +45,7 @@ void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed, int sta
     //Set before the beds below read it, so the section's beds are simply the ones playing from the
     //first sample - a SECTION event would crossfade in from the first section instead.
     section = (start_section >= 0 && start_section < (int)s->sections.size()) ? start_section : 0;
+    TakeSectionKey();               //before the beds below transpose to it
     pending_section = -1;
     section_bar = 0;
     //A reload starts from the top, so it starts playing too: a paused score is not the new one.
@@ -96,9 +97,26 @@ void MusicEngine::Init(const MusicScore* s, int out_rate, uint32_t seed, int sta
         Voice& v = voices[i];
         v.def = &s->voices[i];
         v.height = v.def->height >= 0 ? v.def->height : HeightFromMidi(0.5f * (v.def->low_midi + v.def->high_midi));
+        //An unpitched voice has no register to go by: where its recording is bright, as for a bed.
+        const MusicSample* sample = s->Sample(v.def->sample);
+        if (v.def->f_unpitched && v.def->height < 0 && sample && sample->zcr_hz > 0){
+            v.height = HeightFromMidi(69.0f + 12.0f * std::log2(sample->zcr_hz / 440.0f));
+        }
         status.voice_names.push_back(v.def->name);
         status.voice_sections.push_back(v.def->section);
         status.voice_heights.push_back(v.height);
+    }
+
+    motifs.assign(s->motifs.size(), Motif());
+    status.motif_names.clear();
+    status.motif_sections.clear();
+    for (size_t i = 0; i < motifs.size(); i++){
+        Motif& m = motifs[i];
+        m.def = &s->motifs[i];
+        //Home is the phrase's floor more often than its middle: most phrases climb from the root.
+        m.height = m.def->height >= 0 ? m.def->height : HeightFromMidi(m.def->home_midi + 4.0f);
+        status.motif_names.push_back(m.def->name);
+        status.motif_sections.push_back(m.def->section);
     }
     notes.assign(kNotePool, Play());
     audition = Play();
@@ -369,15 +387,24 @@ void MusicEngine::StartNote(const MusicSample* s, int root_midi, int midi, float
     slot->release_frames = release_s * rate;
 }
 
+void MusicEngine::LogNote(int64_t start, const std::string& part, int midi, bool f_tension){
+    status.notes_total++;
+    status.recent.push_back({start / (double)rate, part, midi, f_tension});
+    if (status.recent.size() > kRecentNotes) status.recent.erase(status.recent.begin());
+}
+
 void MusicEngine::OnBeat(int64_t beat_frame){
     if (beat_count % kBeatsPerBar == 0){
-        if (pending_root >= 0 || pending_mode >= 0) ApplyKey(pending_root, pending_mode);
         if (!score->sections.empty()){
             if (beat_count > 0) section_bar++;
             const int bars = score->sections[section].bars;
             if (pending_section != -1) ApplySection(pending_section == -2 ? NextSection() : pending_section);
             else if (bars > 0 && section_bar >= bars) ApplySection(NextSection());
         }
+        //After the section, which may have brought its own key: a key asked for on this bar wins.
+        if (pending_root >= 0 || pending_mode >= 0) ApplyKey(pending_root, pending_mode);
+        //After both, so a motif coming in with a new section is heard in that section's key.
+        if (!motifs.empty()) OnBarMotifs(beat_frame);
     }
     const double beat_len = 60.0 * rate / std::max(20.0f, params.bpm);
     //The beds' compensation, for voices: energy per beat is gain squared times how often it plays.
@@ -398,17 +425,67 @@ void MusicEngine::OnBeat(int64_t beat_frame){
         if (Random() < d.offbeat) start += (int64_t)(beat_len / 2);
         start += (int64_t)(Random() * 0.02f * rate);     //up to 20 ms late, so no two land together
         bool f_tension = false;
-        const int midi = ChooseNote(v, f_tension);
+        //Unpitched: at the sample's own note, so its own speed.
+        const int midi = d.f_unpitched ? d.root_midi : ChooseNote(v, f_tension);
         v.last_midi = midi;
         const float gain = d.gain * params.voice_gain * HeightGain(v.height) * compensate * (0.6f + 0.4f * Random());
         const float pan = (Random() * 2.0f - 1.0f) * d.spread;
         const int64_t release = d.length_beats > 0 ? (int64_t)(d.length_beats * beat_len) : -1;
         StartNote(score->Sample(d.sample), d.root_midi, midi, gain, pan, start, release, d.release_s);
-
-        status.notes_total++;
-        status.recent.push_back({start / (double)rate, d.name, midi, f_tension});
-        if (status.recent.size() > kRecentNotes) status.recent.erase(status.recent.begin());
+        LogNote(start, d.name, d.f_unpitched ? -1 : midi, f_tension);
     }
+}
+
+//--- motifs --------------------------------------------------------------------------------
+
+void MusicEngine::OnBarMotifs(int64_t bar_frame){
+    for (Motif& m : motifs){
+        const MusicMotifDef& d = *m.def;
+        if (m.f_asked){
+            PlayMotif(m, bar_frame);
+            continue;
+        }
+        if (!InSection(d.section) || d.every_bars <= 0 || bar_frame < m.ends_at) continue;
+        const int bar = d.section >= 0 ? section_bar : beat_count / kBeatsPerBar;
+        if (bar % d.every_bars != 0) continue;
+        if (Random() < Lerp(d.chance_calm, d.chance_tense, params.suspense)) PlayMotif(m, bar_frame);
+    }
+}
+
+/*
+    The whole phrase, scheduled from `start` in the key as it is now. Degree 0 sounds on the key's
+    root nearest the motif's home - not a fixed octave - so a key change moves the phrase by at
+    most a tritone rather than jumping it up or down by most of an octave.
+*/
+void MusicEngine::PlayMotif(Motif& m, int64_t start){
+    const MusicMotifDef& d = *m.def;
+    m.f_asked = false;
+    const double step_len = 60.0 * rate / std::max(20.0f, params.bpm) * d.step_beats;
+    int root = d.home_midi - ((d.home_midi - root_pc) % 12 + 12) % 12;
+    if (d.home_midi - root > 6) root += 12;
+    const MusicSample* sample = score->Sample(d.sample);
+    for (const MusicMotifNote& n : d.notes){
+        const int midi = root + MusicModeDegree(mode, n.degree);
+        //A little late and a little uneven, as the voices are, so it is played rather than printed.
+        const int64_t at = start + (int64_t)(n.step * step_len) + (int64_t)(Random() * 0.015f * rate);
+        const float gain = d.gain * params.voice_gain * HeightGain(m.height) * (0.85f + 0.15f * Random());
+        const float pan = (Random() * 2.0f - 1.0f) * d.spread;
+        const int64_t release = d.f_ring ? -1 : (int64_t)(n.length * step_len);
+        StartNote(sample, d.root_midi, midi, gain, pan, at, release, d.release_s);
+        LogNote(at, d.name, midi, false);
+    }
+    m.ends_at = start + (int64_t)(d.steps * step_len);
+}
+
+//The playing section's motif by that name, else any - so "theme" means this section's theme.
+MusicEngine::Motif* MusicEngine::FindMotif(const std::string& name){
+    Motif* any = nullptr;
+    for (Motif& m : motifs){
+        if (m.def->name != name) continue;
+        if (InSection(m.def->section)) return &m;
+        if (!any) any = &m;
+    }
+    return any;
 }
 
 void MusicEngine::ApplyKey(int new_root, int new_mode){
@@ -437,11 +514,21 @@ int MusicEngine::NextSection(){
 }
 
 void MusicEngine::ApplySection(int s){
-    if (s >= 0 && s < (int)score->sections.size()) section = s;
+    if (s >= 0 && s < (int)score->sections.size()){
+        section = s;
+        TakeSectionKey();
+    }
     section_bar = 0;
     pending_section = -1;
     //RenderBeds sees the new section on its next block and starts the crossfade; OnBeat rolls only
     //the new section's voices from the next beat on.
+}
+
+void MusicEngine::TakeSectionKey(){
+    if (score->sections.empty()) return;
+    const MusicSectionDef& d = score->sections[section];
+    if (d.root_pc >= 0) root_pc = d.root_pc;
+    if (d.mode >= 0) mode = d.mode;
 }
 
 //--- the block -----------------------------------------------------------------------------
@@ -470,6 +557,12 @@ void MusicEngine::Render(float* out, int frames){
             if (want == -1) continue;               //no such section; the tools check names before posting
             if (e.f_now) ApplySection(want == -2 ? NextSection() : want);
             else pending_section = want;
+        }
+        else if (e.type == MusicEvent::MOTIF){
+            Motif* m = FindMotif(e.name);
+            if (!m) continue;                       //the tools check names before posting
+            if (e.f_now) PlayMotif(*m, (int64_t)clock);
+            else m->f_asked = true;
         }
         else if (e.type == MusicEvent::PAUSE){
             f_paused = e.value > 0.5f;

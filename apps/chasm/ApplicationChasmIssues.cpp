@@ -20,11 +20,9 @@
 #define ISSUES_SHOWN        5
 #define ISSUES_RED_DAYS     2.0f    //a hint whose deadline is closer than this goes red, to the top
 
-namespace {
-
 //What the colony holds to live on, in days of it for everyone: water, and food at what each unit is worth.
 //Stores, the camp's supplies and the houses' pantries - not what lies at a workplace or is being carried.
-void DaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food){
+void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food, float* mouths_out){
     int64_t water_ticks = 0;
     int64_t food_ticks = 0;
     for (size_t id = 1; id < e.stock.size() && id < z.buildings.size(); id++){
@@ -45,7 +43,20 @@ void DaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& fo
     float people_days = (float)std::max(1,mouths) / LIFE_SHARE_FULL * CALENDAR_DAY_TICKS;
     water = (float)water_ticks / people_days;
     food = (float)food_ticks / people_days;
+    if (mouths_out){
+        *mouths_out = (float)mouths / LIFE_SHARE_FULL;
+    }
 }
+
+int ChasmInCamp(const ZoneState& z, const EconomyState& e){
+    int in_camp = 0;
+    for (const EconomyWorker& k : e.workers){
+        in_camp += (k.house == 0 || (k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_CAMP)) ? 1 : 0;
+    }
+    return in_camp;
+}
+
+namespace {
 
 std::string DaysText(const char* what, float days){
     char buf[48];
@@ -144,7 +155,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     //2-6. The next steps, each with its deadline where there is one.
     float water_days = 0.0f;
     float food_days = 0.0f;
-    DaysHeld(z,e,water_days,food_days);
+    ChasmDaysHeld(z,e,water_days,food_days);
     auto hint = [&](const char* kind, int order, const char* text, const std::string& value, int tool, float days){
         ChasmIssue i;
         i.kind = kind;
@@ -167,10 +178,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         snprintf(buf,sizeof(buf),"WOOD %i",wood);
         hint("build_woodcutter",4,"BUILD A WOODCUTTER",buf,CHASM_TOOL_WOODCUTTER,1e9f);
     }
-    int in_camp = 0;
-    for (const EconomyWorker& k : e.workers){
-        in_camp += (k.house == 0 || (k.house < n && z.buildings[k.house].kind == ZONE_KIND_CAMP)) ? 1 : 0;
-    }
+    int in_camp = ChasmInCamp(z,e);
     if (in_camp > 0){
         char buf[32];
         snprintf(buf,sizeof(buf),"%i IN THE CAMP",in_camp);

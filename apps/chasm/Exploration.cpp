@@ -37,6 +37,34 @@ void ExplorationSight::Build(const Grid& g, const GridPicker& picker, const Terr
     build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
+bool ExplorationSight::Clear(const vec2& from, float eye_ground, const vec2& to, float top) const{
+    if (ground.empty()){
+        return true;
+    }
+    auto cell_of = [&](const vec2& p){
+        int x = (int)std::floor((p.x - origin.x) / EXPLORATION_CELL);
+        int z = (int)std::floor((p.y - origin.y) / EXPLORATION_CELL);
+        return (x < 0 || z < 0 || x >= width || z >= height) ? -1 : z * width + x;
+    };
+    int a = cell_of(from);
+    int b = cell_of(to);
+    float eye = eye_ground + SIGHT_EYE;
+    //Every half cell along the way, so no cell it crosses is stepped over.
+    int n = (int)std::ceil((to - from).length() / (0.5f * EXPLORATION_CELL));
+    for (int i = 1; i < n; i++){
+        float f = (float)i / (float)n;
+        int c = cell_of(from + (to - from) * f);
+        if (c < 0 || c == a || c == b){
+            continue;
+        }
+        float h = std::max(ground[(size_t)c],std::min(eye_ground,lid[(size_t)c]));
+        if (h > eye + (top - eye) * f){
+            return false;
+        }
+    }
+    return true;
+}
+
 void Exploration::Reset(const vec2& lo, const vec2& hi){
     origin = lo;
     RasterSize(lo,hi,width,height);

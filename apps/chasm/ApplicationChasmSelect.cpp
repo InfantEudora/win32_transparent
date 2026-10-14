@@ -372,8 +372,9 @@ void BuildPathMarks(const ChasmWorld& w, const ZoneState* z, const EconomyWorker
 }
 
 vec3 FeetOf(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
-    //Up on a deck where his route has him (ramparts_plan.md), as he is drawn.
-    return vec3(k.pos.x,WorkerHeight(w,z,k),k.pos.y);
+    //Up on a deck where his route has him (ramparts_plan.md), and off it where his body stands (SPACING), as he is drawn.
+    vec2 body = EconomyBody(k);
+    return vec3(body.x,WorkerHeight(w,z,k),body.y);
 }
 
 const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
@@ -1227,6 +1228,29 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     if (!doing.empty()){
         doing[0] = (char)toupper(doing[0]);
         c.Text(doing,HUD_TEXT_DIM);
+    }
+    /*
+        A FIGHT (zombies_plan.md, step 2): a zombie within his reach - and so his MEAL waits, and none begins, while one
+        is near (Economy.h, MEALS). The meal itself as a bar filling as he eats it.
+    */
+    bool f_zombie_near = false;
+    for (const EconomyZombie& m : e.zombies){
+        f_zombie_near = f_zombie_near || (EconomyBody(m) - EconomyBody(k)).length() <= NEEDS_MEAL_SAFE;
+    }
+    f_zombie_near = f_zombie_near && !EconomyIndoors(k) && EconomyWorkerLayer(k) == WALK_GROUND;
+    if (k.swing > 0){
+        c.Text("Fighting a zombie",HUD_DANGER);
+    }else if (k.draw > 0){
+        c.Text("Shooting at a zombie",HUD_AMBER);      //ARROWS (step 3): his meal waits for it too
+    }else if (f_zombie_near){
+        c.Text("A zombie is near",HUD_AMBER);
+    }
+    if (EconomyMealOn(k)){
+        float seconds = (k.meal_good == GOOD_WATER) ? ECONOMY_DRINK_SECONDS : ECONOMY_MEAL_SECONDS;
+        float total = std::max(1.0f,std::round(seconds * CALENDAR_TICKS_PER_SECOND));
+        std::string what = (k.meal_good == GOOD_WATER) ? std::string("Drinking") : "Eating " + std::string(GoodName(k.meal_good));
+        const char* waits = f_zombie_near ? " - waits while the zombie is near" : (k.draw > 0) ? " - waits while shooting" : "";
+        c.Bar(what + waits,1.0f - (float)k.meal_ticks / total,(*waits) ? HUD_AMBER : HUD_TEXT);
     }
     /*
         His needs (needs_plan.md): health - which is also how fed he is - and water, amber once a day or two
@@ -3498,18 +3522,12 @@ void ApplicationChasm::UploadSelection(){
     his name, what he is short of and how much health he has left, so whoever is in trouble can be found
     before it is too late. A click on one selects him and takes the view to him (OVERLAY_HIT_PERSON).
 */
-#define NEEDIEST_SHOWN      5
-void ApplicationChasm::DrawNeediest(float s, float bottom){
-    std::shared_ptr<const EconomyState> e = GetEconomy();
-    std::shared_ptr<const ZoneState> z = GetZones();
-    if (!e || !z || e->world != z->world || e->workers.empty()){
-        return;
-    }
+std::vector<const EconomyWorker*> ChasmNeediest(const EconomyState& e, int count){
     std::vector<const EconomyWorker*> order;
-    for (const EconomyWorker& k : e->workers){
+    for (const EconomyWorker& k : e.workers){
         order.push_back(&k);
     }
-    int shown = std::min(NEEDIEST_SHOWN,(int)order.size());
+    int shown = std::max(0,std::min(count,(int)order.size()));
     std::partial_sort(order.begin(),order.begin() + shown,order.end(),[](const EconomyWorker* a, const EconomyWorker* b){
         if (a->health != b->health){
             return a->health < b->health;
@@ -3519,6 +3537,22 @@ void ApplicationChasm::DrawNeediest(float s, float bottom){
         }
         return a->id < b->id;
     });
+    order.resize(shown);
+    return order;
+}
+
+const char* ChasmNeedName(const EconomyWorker& k){
+    return EconomyDry(k) ? "DRY" : (k.water < THIRST_MARK_WATER) ? "THIRSTY" : (k.health < NEEDS_PRESSING_HEALTH) ? "HUNGRY" : "";
+}
+
+void ApplicationChasm::DrawNeediest(float s, float bottom){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!e || !z || e->world != z->world || e->workers.empty()){
+        return;
+    }
+    std::vector<const EconomyWorker*> order = ChasmNeediest(*e,NEEDIEST_SHOWN);
+    int shown = (int)order.size();
     PlayPick hovered;
     std::vector<uint32_t> selected;     //the one person selected, or a group
     {
@@ -3543,7 +3577,7 @@ void ApplicationChasm::DrawNeediest(float s, float bottom){
         Row r;
         r.k = &k;
         r.name = EconomyPersonName(k);
-        r.need = EconomyDry(k) ? "DRY" : (k.water < THIRST_MARK_WATER) ? "THIRSTY" : (k.health < NEEDS_PRESSING_HEALTH) ? "HUNGRY" : "";
+        r.need = ChasmNeedName(k);
         r.need_colour = EconomyDry(k) ? HUD_DANGER : (k.water < THIRST_MARK_WATER) ? HUD_WATER : HUD_AMBER;
         snprintf(r.health,sizeof(r.health),"%i%%",(int)std::lround(100.0f * std::max(0,k.health) / NEEDS_HEALTH_FULL));
         r.colour = EconomyDry(k) ? HUD_DANGER : (k.health <= BADGE_LOW_HEALTH) ? HUD_AMBER : HUD_TEXT;

@@ -1519,6 +1519,8 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
     family fills it - for the camp, whoever lives there - so it counts against the people only as far as the
     family reaches. It takes its farmers as the order comes to it: those farming it already, then the free of
     the family, then those working somewhere later in the order - best husbandry first, the lower id on a tie.
+    The camp's OWN WORK (woodcutter, water carrier, picker) follows its farmers the same way, from those living
+    there; what they leave open goes to the rest of the colony after the whole order, to those no place needs.
     So the order is walked once, every workplace keeping its workers (the land choosing its own) before the
     empty places are filled.
     POSTED people (POSTS, defence_plan.md) are out of it altogether: a job one has is his, its place counted
@@ -1677,7 +1679,7 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             the one it has, then the free, then one taken from a later place - the strongest first. Then its water
             carrier (settlements_plan.md) the same way, the most ingenious first, as a collector's carrier is chosen;
             then its picker (foraging_plan.md), by husbandry - so an outpost of three is a woodcutter, a water carrier
-            and a picker.
+            and a picker. What they leave open goes to the rest of the colony after the order (below).
         */
         for (int camp_job : {WORKER_JOB_WOODCUTTER,WORKER_JOB_WATER,WORKER_JOB_PICKER}){
             int open = std::min(camp_places(id,camp_job) - reserved_camp[id][camp_job],free);
@@ -1697,6 +1699,7 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             std::sort(best.begin(),best.end());
             int take = std::min(open,(int)best.size());
             free -= take;
+            reserved_camp[id][camp_job] += take;    //...counted as taken, for the colony's turn
             for (int t = 0; t < take; t++){
                 EconomyWorker& k = state.workers[best[t].second];
                 kept[best[t].second] = 1;
@@ -1711,6 +1714,34 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
                 k.building = id;
                 state.version++;
             }
+        }
+    }
+    /*
+        THE CAMP'S OWN WORK from the rest of the colony (one camp to a colony, settlements_plan.md; the user's,
+        2026-10-14): what its own sleepers left open of a camp's places - all of them once the last has moved into a
+        house - goes to the colony's people no other place needs, after every workplace in the order and never taken
+        from one. So the picker goes on picking from a house, and a house's field is farmed before anyone draws water
+        by hand. Whoever has the job already keeps it here, so his round goes on; the rest are picked once the other
+        places are filled (below).
+    */
+    std::vector<std::array<int,WORKER_JOB_COUNT>> camp_open(n,std::array<int,WORKER_JOB_COUNT>{});
+    for (uint32_t id : order){
+        if (z.buildings[id].kind != ZONE_KIND_CAMP){
+            continue;
+        }
+        int& free = people[place_of(id)];
+        for (int camp_job : {WORKER_JOB_WOODCUTTER,WORKER_JOB_WATER,WORKER_JOB_PICKER}){
+            int open = std::min(camp_places(id,camp_job) - reserved_camp[id][camp_job],free);
+            for (size_t i = 0; i < state.workers.size() && open > 0; i++){
+                const EconomyWorker& k = state.workers[i];
+                if (!kept[i] && k.job == camp_job && k.building == id && employable(k) && home_of(k) == place_of(id)){
+                    kept[i] = 1;
+                    open--;
+                    free--;
+                }
+            }
+            camp_open[id][camp_job] = std::max(0,open);
+            free -= camp_open[id][camp_job];
         }
     }
     for (size_t i = 0; i < state.workers.size(); i++){
@@ -1774,6 +1805,38 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
             best->building = id;
             held[id]++;
             state.version++;
+        }
+    }
+    //...and the camp's places left to the colony (above), from those still free, as any place's: his skill less the
+    //walk from home, and only someone who can walk there.
+    for (uint32_t id : order){
+        for (int camp_job : {WORKER_JOB_WOODCUTTER,WORKER_JOB_WATER,WORKER_JOB_PICKER}){
+            if (camp_open[id][camp_job] <= 0){
+                continue;
+            }
+            vec2 at = w.grid->fine.pos[home_plot[id]];      //a camp has these places only with a door (Derive)
+            int skill = EconomyJobSkill(camp_job);
+            while (camp_open[id][camp_job] > 0){
+                EconomyWorker* best = NULL;
+                float best_score = -1e30f;
+                for (EconomyWorker& k : state.workers){
+                    if (k.job != WORKER_JOB_NONE || !employable(k) || home_of(k) != place_of(id)){
+                        continue;
+                    }
+                    float score = k.skills[skill] * ECONOMY_SKILL_DISTANCE - (w.grid->fine.pos[HomePlot(k)] - at).length();
+                    if (score > best_score && (k.house == id || CanWalk(z,walkers,w.grid->fine.pos[HomePlot(k)],home_plot[id]))){
+                        best_score = score;
+                        best = &k;
+                    }
+                }
+                if (!best){
+                    break;
+                }
+                best->job = camp_job;
+                best->building = id;
+                camp_open[id][camp_job]--;
+                state.version++;
+            }
         }
     }
     Tending();
@@ -3847,6 +3910,15 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (std::any_of(k.pack.begin(),k.pack.end(),[](int n){ return n > 0; })){
                 Unpack(k,z);
             }
+            /*
+                MEALS: his fill of what his home holds before he goes out again, as at a store - home for one look, he took
+                a unit a visit and ate it on the way, and a woodcutter came home hungry for days with his pantry full
+                (the user's, 2026-10-14). Needs begins each unit (EatAndDrink); he waits while one is under way or
+                another would begin.
+            */
+            if (EatingAtHome(k,z)){
+                break;
+            }
             //Before any work: what he needs and his home has run out of (needs_plan.md).
             if (SeekSupply(k,z,walkers)){
                 break;
@@ -4201,6 +4273,10 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 GoHome(k,z,walkers);
                 break;
             }
+            //Shooting at a zombie (ARROWS): his stint waits, and the straw with it.
+            if (k.draw > 0){
+                break;
+            }
             int gain = (int)std::lround(ARCHERY_PER_TICK * pace);
             k.archery = std::min(EconomyArcheryCap(k),k.archery + gain);
             if (--k.timer <= 0){
@@ -4487,21 +4563,29 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_SUPPLYING;
-                k.timer = SecondsToTicks(ECONOMY_MEAL_SECONDS);
+                k.timer = 1;        //his first meal on the next tick: the meals are the time it takes (MEALS)
             }
             break;
         case WORKER_SUPPLYING:
-            if (--k.timer > 0){
+            //A wait at a filling collector (below), or a meal under way: he stays.
+            if (--k.timer > 0 || EconomyMealOn(k)){
                 break;
             }
-            //From what is there now - others may have been quicker - as he would at home: at his own (posted), its
-            //pantry first. A crate is gone if it was emptied meanwhile, and goes if he empties it.
+            //No meal with a zombie near (MEALS): he waits it out here, rather than go hungry and come straight back.
+            if (ZombieNear(k,NEEDS_MEAL_SAFE)){
+                k.timer = ZOMBIE_LOOK_TICKS;
+                break;
+            }
+            //The next unit, while one more fits - from what is there now (others may have been quicker), as he would
+            //at home: at his own (posted), its pantry first. A crate is gone if it was emptied meanwhile, and goes if
+            //he empties it.
             if (std::array<int,GOOD_COUNT>* src = SourceStock(k.store)){
-                if (k.store == k.house){
-                    Consume(k,HomePantry(z,k.house));
-                }
-                Consume(k,*src);
+                bool f_more = k.store == k.house && Consume(k,HomePantry(z,k.house));
+                f_more = f_more || Consume(k,*src);
                 CrateTouched(k.store);
+                if (f_more){
+                    break;
+                }
             }
             /*
                 At a collector that is filling, with room for more and no hunger to see to: he waits for its
@@ -4968,6 +5052,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         state.version++;
     }
     f_resettle = false;
+    bool f_zones_moved = z.version != state.zones_version;     //...as FollowZones asks: the zombies' ways too
     FollowZones(z,walkers);
     //An ORDER for more of a made good (STOCK KEPT) is done once the stores hold its level.
     if (std::any_of(state.ordered.begin(),state.ordered.end(),[](int x){ return x > 0; })){
@@ -5106,6 +5191,15 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
             }
         }
     }
+    //ZOMBIES (zombies_plan.md): after everyone has moved, so each goes for where its target is now.
+    TickZombies(z,walkers,tick,dt,f_zones_moved);
+    //SPACING: every body stood apart from its neighbours, once all of them have moved.
+    SpaceOut(z,dt);
+    //ARROWS: those in the air come down, and the archers loose more - before the fight, so one shot down bites nobody.
+    Shoot(z);
+    //A FIGHT: the bites and blows from where they all stand now - its dead struck off by Needs, a cause of their own.
+    bitten_dead.clear();
+    Fights();
     Needs(z,walkers,tick);
     //ICE: who would be cut off by the thaw, for their cards - a second's look is soon enough for a risk of days.
     if (tick % (uint64_t)ECONOMY_ICE_LOOK_TICKS == 0){
@@ -5137,6 +5231,7 @@ const char* EconomyDeathCause(int cause){
         case NEEDS_DIED_HUNGER: return "hunger";
         case NEEDS_DIED_THIRST: return "thirst";
         case NEEDS_DIED_COLD:   return "cold";
+        case NEEDS_DIED_ZOMBIE: return "a zombie";
         default:                return "?";
     }
 }
@@ -5166,35 +5261,81 @@ void Economy::EatAndDrink(EconomyWorker& k, const ZoneState& z){
     }
 }
 
+bool Economy::EatingAtHome(const EconomyWorker& k, const ZoneState& z) const{
+    if (EconomyMealOn(k)){
+        return true;
+    }
+    if (!k.house || k.house >= state.stock.size() || k.house >= z.buildings.size() || k.state != WORKER_AT_HOME
+        || !AtHome(k)){
+        return false;
+    }
+    int kind = z.buildings[k.house].kind;
+    if (kind != ZONE_KIND_HOUSE && kind != ZONE_KIND_CAMP){
+        return false;
+    }
+    //What EatAndDrink reaches - a house's stock, or a camp's pantry and supplies - and none begun with a zombie near.
+    return NextMeal(k,HomeHeld(z,k.house)) >= 0 && !ZombieNear(k,NEEDS_MEAL_SAFE);
+}
+
 /*
     Eating and drinking from a stock, at home or away: only a whole unit that fits under full, so nothing is
-    wasted. Water first: food does nothing for someone dry. Then food while any fits, the kind that keeps
-    worst first - fruit and greens rot, wheat keeps, beans keep longest (gameplay_plan.md, "Goods and food") - so a
-    pantry eats down its fruit and greens and saves its beans; FRUIT first of all (foraging_plan.md, the user's).
-    PROVISIONS last of all (defence_plan.md): kept for soldiers, eaten only when nothing else there fits.
+    wasted. Water first: food does nothing for someone dry. Then food, the kind that keeps worst first - fruit and
+    greens rot, wheat keeps, beans keep longest (gameplay_plan.md, "Goods and food") - so a pantry eats down its fruit
+    and greens and saves its beans; FRUIT first of all (foraging_plan.md, the user's). PROVISIONS last of all
+    (defence_plan.md): kept for soldiers, eaten only when nothing else there fits.
+    A MEAL (Economy.h) at a time: the unit taken now and its worth given over its while (MealTick) - none while one is
+    under way, and none begun with a zombie near.
 */
-void Economy::Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
-    while (from[GOOD_WATER] > 0 && k.water + NEEDS_WATER_WORTH <= NEEDS_WATER_FULL){
-        from[GOOD_WATER]--;
-        k.water += NEEDS_WATER_WORTH;
-        state.version++;
+int Economy::NextMeal(const EconomyWorker& k, const std::array<int,GOOD_COUNT>& from) const{
+    if (from[GOOD_WATER] > 0 && k.water + NEEDS_WATER_WORTH <= NEEDS_WATER_FULL){
+        return GOOD_WATER;
     }
     if (EconomyDry(k)){
-        return;
+        return -1;
     }
     static const int keeps_worst_first[] = {GOOD_FRUIT,GOOD_GREENS,GOOD_WHEAT,GOOD_BEANS,GOOD_PROVISIONS};
-    for (bool f_ate = true; f_ate;){
-        f_ate = false;
-        for (int good : keeps_worst_first){
-            int worth = EconomyFoodWorth(good);
-            if (from[good] > 0 && k.health + worth <= NEEDS_HEALTH_FULL){
-                from[good]--;
-                k.health += worth;
-                f_ate = true;
-                state.version++;
-                break;
-            }
+    for (int good : keeps_worst_first){
+        if (from[good] > 0 && k.health + EconomyFoodWorth(good) <= NEEDS_HEALTH_FULL){
+            return good;
         }
+    }
+    return -1;
+}
+
+bool Economy::Consume(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
+    if (EconomyMealOn(k)){
+        return false;
+    }
+    int take = NextMeal(k,from);
+    //Asked last, as it is the dearest: everyone at home asks every tick. None begun while he shoots (ARROWS).
+    if (take < 0 || k.draw > 0 || ZombieNear(k,NEEDS_MEAL_SAFE)){
+        return false;
+    }
+    from[take]--;
+    k.meal_good = take;
+    k.meal_worth = (take == GOOD_WATER) ? NEEDS_WATER_WORTH : EconomyFoodWorth(take);
+    k.meal_ticks = std::max(1,SecondsToTicks((take == GOOD_WATER) ? ECONOMY_DRINK_SECONDS : ECONOMY_MEAL_SECONDS));
+    state.version++;
+    return true;
+}
+
+//A tick of his meal: its worth given out evenly over the ticks left, the rest on the last - and none while a zombie is near.
+void Economy::MealTick(EconomyWorker& k){
+    //It waits while a zombie is near him, and while he shoots at one (ARROWS).
+    if (!EconomyMealOn(k) || k.draw > 0 || ZombieNear(k,NEEDS_MEAL_SAFE)){
+        return;
+    }
+    int add = k.meal_worth / k.meal_ticks;
+    k.meal_worth -= add;
+    k.meal_ticks--;
+    if (k.meal_good == GOOD_WATER){
+        k.water = std::min(NEEDS_WATER_FULL,k.water + add);
+    }else{
+        k.health = std::min(NEEDS_HEALTH_FULL,k.health + add);
+    }
+    if (k.meal_ticks == 0){
+        k.meal_good = -1;
+        k.meal_worth = 0;
     }
 }
 
@@ -6729,6 +6870,13 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
             }
             k.health -= 1 + (EconomyDry(k) ? NEEDS_DRY_DRAIN : 0) + (EconomyCold(state,k) ? NEEDS_COLD_DRAIN : 0);
         }
+        //Bitten to death this tick (A FIGHT): struck off below, whatever there is to eat.
+        if (std::find(bitten_dead.begin(),bitten_dead.end(),k.id) != bitten_dead.end()){
+            f_died = true;
+            continue;
+        }
+        //MEALS: the one under way goes on, before another is begun from wherever he is.
+        MealTick(k);
         EatAndDrink(k,z);
         if (k.with && EconomyStageAt(k.born,tick) == LIFE_BABY){
             //WITH THE GROWN: a baby carried is fed from its mother's pack, as she would feed it.
@@ -6785,7 +6933,8 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
     }
     std::vector<EconomyWorker> living;
     for (EconomyWorker& k : state.workers){
-        if (k.health > 0){
+        bool f_bitten = std::find(bitten_dead.begin(),bitten_dead.end(),k.id) != bitten_dead.end();
+        if (k.health > 0 && !f_bitten){
             living.push_back(std::move(k));
             continue;
         }
@@ -6798,7 +6947,8 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         d.mother = k.mother;
         d.father = k.father;
         d.tick = tick;
-        d.cause = EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD : NEEDS_DIED_HUNGER;
+        d.cause = f_bitten ? NEEDS_DIED_ZOMBIE : EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD
+                                                                                       : NEEDS_DIED_HUNGER;
         state.dead.push_back(d);
     }
     state.workers.swap(living);
@@ -8616,6 +8766,9 @@ EconomySaved EconomySaveState(const EconomyState& state){
     }
     s.next_person = state.next_person;
     s.dead = state.dead;
+    s.zombies = state.zombies;
+    s.next_zombie = state.next_zombie;
+    s.arrows = state.arrows;
     return s;
 }
 
@@ -8727,6 +8880,13 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
         state.next_crate = std::max(state.next_crate,c.id + 1);
     }
     state.crates_version++;
+    //ZOMBIES on their routes, as the people are. A save from before them has none.
+    state.zombies = saved.zombies;
+    state.next_zombie = saved.next_zombie;
+    for (const EconomyZombie& m : state.zombies){
+        state.next_zombie = std::max(state.next_zombie,m.id + 1);
+    }
+    state.arrows = saved.arrows;    //ARROWS in the air and come down, as they were
     Derive(z,walkers,false);
     /*
         Land never settled (land_plan.md): a save from before land - its fields have no owner, its farmers work

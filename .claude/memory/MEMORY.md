@@ -57,7 +57,7 @@
 - [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — restore with ShowWindow(h,4) to check UI
 - [Wind system plan](wind_system_plan.md) — archer stream-function wind built with sway/leaves/streaks/fireflies; clouds left
 - [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change don't build/run other apps; the user does
-- [Adaptive music plan](adaptive_music_plan.md) — apps/music is the designer (port 8767); player in core/Music*; games copy via `make publish`
+- [Adaptive music plan](adaptive_music_plan.md) — apps/music is the designer (port 8767); player in core/Music*; games copy via `make publish`; chasm.json drafted 2026-10-14 (seasons + clouds + chasm, motifs)
 - [Lock claim before build](lock_claim_before_build.md) — never build/run in the same parallel step as its #build/#port claim
 - [Cue plan](cue_plan.md) — archer event layer: SoundSystem buses, CueLog baselines, core/CueSystem; one CueSystem + bus per scene; cue panel next
 - [Bridge and crumble plan](bridge_crumble_plan.md) — archer rope bridges (overload snap, creak warnings) + crumbling rocks built; new blocks go LAST
@@ -109,3 +109,5 @@
 - [ImGui input race + crash reports](imgui_input_race_crash_report.md) — the rare i<Size assert was WndProc vs render thread on InputEventsQueue, FIXED 2026-10-12 (lock in WindowImGui.cpp); debug builds write build/crash_*.txt
 - [Chasm waterfalls](chasm_waterfalls.md) — 2026-10-12 brink + welded sheet + stage 2; camera stays above rim, no shader hot-reload, river line runs 10 past lip
 - [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag: chasm as cracked-mud plates (pull-apart, slumps, islands); not ported, verdict pending
+- [Chasm zombies plan](chasm_zombies_plan.md) — user decided 2026-10-14; steps 1, 1b, 2, 3 BUILT (drop+chase, spacing, timed meals+fight, archers/guards shoot in the rules); walls break next
+- [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only, llm app only; step 0 done, 3B invents in calm states

@@ -58,7 +58,7 @@ struct LLMDuetArgs{
     A chat with the model, one turn at a time, generated a few tokens per call of Step so a UI
     can show the reply as it grows. RENDER THREAD ONLY.
 
-    The conversation lives in one of the model's contexts (the last one) as a list of the tokens
+    The conversation lives in one of the model's contexts (`context`, the last by default) as a list of the tokens
     fed so far. Other work may use that context in between - a duet, a loss run - so whenever
     that may have happened the owner calls Invalidate, and the next Send or Step feeds the whole
     conversation again first. Through the batch path that costs a fraction of a second.
@@ -79,6 +79,7 @@ public:
     float topp = 0.9f;
     int max_tokens = 512;
     unsigned long long seed = 1;
+    int context = -1;       //which KV cache it lives in; -1 the last
 
     bool f_generating = false;
     double tokens_per_second = 0.0;     //of the last reply
@@ -93,6 +94,7 @@ public:
     void Stop(){ f_generating = false; }
     void Invalidate(){ f_cache_valid = false; }
     int Used() const { return (int)tokens.size(); }
+    int Context(const LLMModel& model) const { return (context >= 0 && context < model.n_contexts) ? context : model.n_contexts - 1; }
 
 private:
     std::vector<int> tokens;        //everything fed into the context so far

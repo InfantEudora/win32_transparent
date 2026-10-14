@@ -284,6 +284,10 @@ void ApplicationChasm::SetupInput(){
     view_key(VK_SPACE,INPUT_CHASM_PAUSE);
     view_key(VK_OEM_MINUS,INPUT_CHASM_SLOWER);
     view_key(VK_OEM_PLUS,INPUT_CHASM_FASTER);
+#ifdef DEBUG
+    //A debug tool, in either mode: the key is the viewer's, the zombie it drops a recorded command (zombies_plan.md).
+    view_key('Z',INPUT_CHASM_ZOMBIE);
+#endif
 #endif
 }
 
@@ -1225,6 +1229,7 @@ void ApplicationChasm::LoadProps(){
     names.insert(names.end(),forest_bare_names,forest_bare_names + FOREST_OAK_KINDS);
     names.insert(names.end(),forest_fruit_names,forest_fruit_names + FOREST_FRUIT_KINDS);
     names.push_back(CHASM_CRATE_ASSET);
+    names.push_back(CHASM_ZOMBIE_ASSET);
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
     GetAssetsFromGLTF(names);
     int loaded = 0;
@@ -1258,6 +1263,12 @@ void ApplicationChasm::LoadProps(){
         UseGroundShader(crate);
     }else{
         debug->Warn("'%s' not in chasm_props.glb - crates will not be drawn\n",CHASM_CRATE_ASSET);
+    }
+    //...and the zombie (zombies_plan.md), unrigged for now: a figure, so drawn as the people are, not by the ground's
+    //shader - no snow settles on someone walking.
+    f_zombie_loaded = assetmanager->GetMeshFromAsset(CHASM_ZOMBIE_ASSET) != NULL;
+    if (!f_zombie_loaded){
+        debug->Warn("'%s' not in chasm_props.glb - zombies will not be drawn\n",CHASM_ZOMBIE_ASSET);
     }
     //The archery range's props (range_plan.md): the GLB's where it has them, stand-ins where not.
     BuildRangeScene();
@@ -2329,6 +2340,15 @@ void ApplicationChasm::UpdateView(void){
     if (input->WasKeyPressed(INPUT_CHASM_FOG) && KeysLive() && f_debug_keys){
         f_view_clouds = !f_view_clouds;
     }
+#ifdef DEBUG
+    //Z drops a zombie on the plot under the cursor (zombies_plan.md) - in play mode too: it is how a game is tried out.
+    if (input->WasKeyPressed(INPUT_CHASM_ZOMBIE) && KeysLive()){
+        GridPick h = GetHoverPick();
+        if (h.f_hit && h.plot >= 0){
+            SubmitZombies(h.plot,1);
+        }
+    }
+#endif
     /*
         N regenerates with the next seed. Done right here, on the physics thread with the pass's
         lock held, which stalls the window for the length of one generation - fine for a debug key,
@@ -2364,6 +2384,7 @@ void ApplicationChasm::PreRender(void){
     UploadCrowdBench();
     UploadPiles();
     UploadCrates();
+    UploadZombies();
     UploadRange();
     UploadRopewalks();
     UploadBorders();
@@ -2985,6 +3006,7 @@ void ApplicationChasm::RenderChasmPanel(){
 
     RenderTimePanel();
     RenderPeoplePanel();
+    RenderZombiePanel();
 
     if (ImGui::CollapsingHeader("Save")){
         ImGui::InputText("name##save",save_name,sizeof(save_name));
@@ -3830,6 +3852,7 @@ void ApplicationChasm::RegisterMCPTools(){
     RegisterTimeTools();
     RegisterIssueTools();
     RegisterEconomyTools();
+    RegisterZombieTools();
     RegisterSelectTools();
     RegisterBridgeTools();
 }

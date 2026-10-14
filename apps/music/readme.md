@@ -53,9 +53,10 @@ mingw32-make.exe -j8
 ./build/music_nophysics.exe --minimized --mcp-port 8767 2>stderr.log &
 ```
 
-The score is [assets/music/jungle.json](assets/music/jungle.json): key, mode, tempo, and the
-beds, voices and stingers with their calm and tense values. Edit it and press Reload (or call
-`music_reload`). How each part behaves is described in `core/MusicScore.h` and
+The score is [assets/music/jungle.json](assets/music/jungle.json) at start: key, mode, tempo, and
+the beds, voices, motifs and stingers with their calm and tense values. The combo beside Reload
+lists every score in `assets/music/` and switches to one; `music_reload` takes `score` for the same.
+Edit a score and press Reload. How each part behaves is described in `core/MusicScore.h` and
 `core/MusicEngine.h`.
 
 Two sliders shape it. **Suspense** moves every part between its calm and tense values.
@@ -101,6 +102,76 @@ energy under 200 Hz against the canopy's 51%. The level holds through the crossf
 the lightest, at −27.7 dB with 26% under 200 Hz; the cave is the darkest, at −29.4 dB with 64%,
 and becomes −25.1 dB with 77% at suspense 0.8. Both centre on A (A2 and A1), too strongly for
 samplescan to name a key.
+
+### Motifs, and a section's own key
+
+A **motif** is a phrase that is written rather than generated, played now and then by one sampled
+instrument. Its notes are scale degrees, so the same phrase sounds in whatever key and mode is
+playing: one tune heard bright in ionian and sad in aeolian. It is text, one token per step:
+
+```json
+"phrases": {"theme": "1 - 2 3 | 5 - 6 5 | 3 - 2 1 | 2 - 1 -"},
+"motifs": [{"name": "theme", "phrase": "theme", "sample": "music/sounds/hang_G4.wav", "root": "G4",
+            "home": "D4", "ring": true, "every_bars": 8, "chance_calm": 0.6, "chance_tense": 0.3}]
+```
+
+`1`-`7` are degrees (`'` an octave up, `,` an octave down), `-` holds, `.` rests, `|` is ignored.
+Degree 1 sounds on the key's root nearest `home`. `step_beats` sets how long a step is (1 beat by
+default). A phrase named in `phrases` can be shared by motifs in several sections, so one theme is
+written once. A motif may start on every `every_bars`th bar - of its section, so a section's motif
+can come in on the section's first downbeat - with a chance of `chance_calm`..`chance_tense`.
+`ring` lets each note ring out, for plucked and struck samples; otherwise a note is released at its
+written length over `release_s`. The Motifs buttons and `music_motif` play one at the next bar.
+In a pentatonic mode a degree the scale lacks moves to its nearest neighbour (`core/MusicScore.h`).
+
+A voice with `"unpitched": true` plays its sample as recorded - no key, no scale, no register - but
+is rolled against its density like any voice: birdsong, a woodpecker, a far-off voice, dropped in
+now and then. Better than a bed for a recording that fades out at its end, whose loop would have
+a hole in it. The note log shows its notes as `-`.
+
+A voice whose register is a single note plays only that note: chasm.json's guitar strums are
+chords, so each is held to the key's root (`"low": "D2", "high": "D2"`) - the F major strum
+becomes a D major chord, the E minor one a D minor chord - and the frame drum to the fifth.
+
+A **section** may name its own `mode` and `root`, which it takes on its first downbeat, so choosing
+the section is enough to hear it as it is meant. A key change asked for afterwards still applies,
+until the next section that names one. The modes are pentatonic_minor, aeolian, dorian, phrygian,
+pentatonic_major, ionian, lydian and mixolydian.
+
+### chasm.json
+
+Chasm's music, drafted 2026-10-14: folk chamber music - plucks, flute, fiddle and cello, a hand
+drum, sparse. Its own samples (birds, woods, frame drum, guitar strums and a note, a breathy pan
+flute, choir, pad, spooky chimes and voice) went in the same day; the rest are still stand-ins from
+the jungle library. Root D throughout, so every part shares the root and the fifth. One theme (the
+`theme` phrase) runs through four seasons, each playing it on its own instrument and in its own mode:
+
+- **spring**: pentatonic major; birds and a woodpecker, breeze, frogs; kalimba, guitar, a D major
+  strum, a sparse frame drum, a high flute. Theme on hang drum.
+- **summer**: ionian, the fullest; crickets and woods; kalimba, hang, guitar, strum, frame drum,
+  fiddle, far birds. Theme on flute.
+- **autumn**: dorian; low wind, gusts, the rain flute loop; hang, a swelling guitar note, a D minor
+  strum, frame drum, breath flute, cello and bass. Theme on cello.
+- **winter**: aeolian, sparse; snow wind, a drone and the angelical pad, cold strings when tense;
+  metallophone "ice", breath flute and a low cello. Theme on a high flute, half as fast again.
+
+Two more are asked for by name, and are meant to play in the game on players of their own, faded
+in by what the camera looks at, rather than taking a turn:
+
+- **clouds**: phrygian, over unexplored ground - unease, not horror. Winds, whistles, a low
+  heartbeat, a distant drum, spooky chimes and a voice now and then; the theme's opening as a slow
+  cello `fragment`, whose flat second is the unease.
+- **chasm**: dorian, over the chasm once it is seen - awe, no rhythm. Rift wind, a root drone,
+  the angelical choir, wide glints and a hang `call` in open fifths. The `reveal` stinger (the war
+  horn) is for the first time the chasm comes into sight. Dorian because the choir is recorded on
+  the white keys, which IS D dorian, so it plays as recorded; lydian (wonder) would need it three
+  semitones down.
+
+Measured on 60-second renders at suspense 0.2, every section is within 1.8 dB: spring -25.1,
+summer -25.7, autumn -26.9, winter -26.1, clouds -26.7, chasm -26.0 dB RMS.
+
+The bench plays one section at a time, so the blend of the land with clouds or chasm is not heard
+here. Chasm does not play any of it yet.
 
 **Pause** is the game's pause, tried here before any game uses it. It fades the music out over
 `pause_fade_s` (1.5 s) and then HOLDS it. Once the music is silent the engine stops rendering, so

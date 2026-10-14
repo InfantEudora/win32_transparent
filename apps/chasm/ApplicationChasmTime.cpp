@@ -51,6 +51,23 @@ const float speeds[] = {1.0f,2.0f,4.0f};
 
 }
 
+GoodsMask ChasmBarGoods(const ZoneState& z, const EconomyState& e, const std::array<int,GOOD_COUNT>& stored){
+    GoodsMask wanted = 0;
+    std::vector<std::array<int,GOOD_COUNT>> cost = SiteCosts(z);
+    for (size_t id = 1; id < cost.size(); id++){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            wanted |= (cost[id][g] > EconomySiteBrought(e,(uint32_t)id,g)) ? GOOD_BIT(g) : (GoodsMask)0;
+        }
+    }
+    GoodsMask shown = 0;
+    for (int g = 0; g < GOOD_COUNT; g++){
+        if (GoodCategory(g) != GOOD_CATEGORY_FOOD && (g == GOOD_WOOD || g == GOOD_WATER || stored[g] > 0 || (wanted & GOOD_BIT(g)))){
+            shown |= GOOD_BIT(g);
+        }
+    }
+    return shown;
+}
+
 int ApplicationChasm::SpeedCount(){
     return (int)(sizeof(speeds) / sizeof(speeds[0]));
 }
@@ -334,13 +351,7 @@ void ApplicationChasm::DrawOverlay(void){
         for (int g = 0; g < GOOD_COUNT; g++){
             food += (GOODS_FOOD & GOOD_BIT(g)) ? t[g] : 0;
         }
-        GoodsMask wanted = 0;
-        std::vector<std::array<int,GOOD_COUNT>> cost = SiteCosts(*z);
-        for (size_t id = 1; id < cost.size(); id++){
-            for (int g = 0; g < GOOD_COUNT; g++){
-                wanted |= (cost[id][g] > EconomySiteBrought(*e,(uint32_t)id,g)) ? GOOD_BIT(g) : (GoodsMask)0;
-            }
-        }
+        GoodsMask shown = ChasmBarGoods(*z,*e,t);
         int people = (int)e->workers.size();
         int housed = 0;
         for (const EconomyWorker& k : e->workers){
@@ -369,7 +380,7 @@ void ApplicationChasm::DrawOverlay(void){
                 }
                 continue;
             }
-            if (g != GOOD_WOOD && g != GOOD_WATER && t[g] <= 0 && !(wanted & GOOD_BIT(g))){
+            if (!(shown & GOOD_BIT(g))){
                 continue;
             }
             std::string name = GoodName(g);
@@ -653,7 +664,9 @@ float ApplicationChasm::DrawBuildBar(float s){
             if (de->tick < d.tick + CALENDAR_DAY_TICKS / 2){
                 const char* of = (d.cause == NEEDS_DIED_THIRST) ? "thirst" : (d.cause == NEEDS_DIED_COLD) ? "cold" : "hunger";
                 int more = (int)(n - deaths_seen) - 1;
-                death_shown = EconomyDeathName(d) + " died of " + of
+                //Bitten (zombies_plan.md, step 2): killed, not died of.
+                death_shown = EconomyDeathName(d) + ((d.cause == NEEDS_DIED_ZOMBIE) ? std::string(" was killed by a zombie")
+                                                                                    : " died of " + std::string(of))
                               + (more > 0 ? " (and " + std::to_string(more) + " more)" : std::string());
                 std::transform(death_shown.begin(),death_shown.end(),death_shown.begin(),::toupper);
                 death_since = now;

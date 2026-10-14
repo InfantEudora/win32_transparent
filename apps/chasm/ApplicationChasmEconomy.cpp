@@ -7,6 +7,7 @@
 #include "MCPServer.h"
 #endif
 #include "Debug.h"
+#include <ctype.h>
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
@@ -139,6 +140,24 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Add(((uint64_t)k.id << 32) | 0x1A7Eu);
             h.Bytes(k.route_layer.data(),k.route_layer.size());
         }
+        //Where his body stands off his route (SPACING, zombies_plan.md) - only while it does, likewise.
+        if (k.off.x != 0.0f || k.off.y != 0.0f){
+            h.Add(((uint64_t)k.id << 32) | 0x0FF5u);
+            h.Bytes(&k.off,sizeof(k.off));
+        }
+        //A meal under way (MEALS) and a fight's next blow (step 2) - only while there is one, likewise.
+        if (EconomyMealOn(k)){
+            int32_t meal[4] = {(int32_t)k.id,k.meal_good,k.meal_ticks,k.meal_worth};
+            h.Bytes(meal,sizeof(meal));
+        }
+        if (k.swing > 0){
+            h.Add(((uint64_t)k.id << 32) | 0x5000000u | (uint32_t)k.swing);
+        }
+        //His turn of the bow at a zombie (ARROWS, step 3) - only while he shoots, likewise.
+        if (k.draw > 0){
+            int32_t shot[3] = {(int32_t)k.id,k.draw,(int32_t)k.aim};
+            h.Bytes(shot,sizeof(shot));
+        }
         int32_t needs[2] = {k.health,k.water};
         h.Bytes(needs,sizeof(needs));
         h.Bytes(k.pack.data(),sizeof(int) * GOOD_COUNT);     //his pack (defence_plan.md)
@@ -189,6 +208,35 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         if (e.kept[g] || e.ordered[g]){
             int32_t kept[3] = {g,e.kept[g],e.ordered[g]};
             h.Bytes(kept,sizeof(kept));
+        }
+    }
+    //The zombies (zombies_plan.md), each whole on its route as a person is - only once there have been any, so a colony
+    //that never had one hashes as before.
+    if (!e.zombies.empty() || e.next_zombie > 1){
+        n = (uint32_t)e.zombies.size();
+        h.Add(((uint64_t)n << 32) | 0x2081Eu);
+        h.Bytes(&e.next_zombie,sizeof(e.next_zombie));
+        for (const EconomyZombie& m : e.zombies){
+            int32_t head[6] = {(int32_t)m.id,(int32_t)m.target,(int32_t)m.f_lost,m.seg,m.health,m.bite};
+            h.Bytes(head,sizeof(head));
+            h.Bytes(&m.along,sizeof(m.along));
+            h.Bytes(&m.pos,sizeof(m.pos));
+            h.Bytes(&m.off,sizeof(m.off));
+            uint32_t len = (uint32_t)m.route.size();
+            h.Bytes(&len,sizeof(len));
+            h.Bytes(m.route.data(),m.route.size() * sizeof(vec2));
+            h.Bytes(m.speed.data(),m.speed.size() * sizeof(float));
+        }
+        //Their arrows (step 3): who at what, a hit or not, the flight, where from and to - only once there are any.
+        if (!e.arrows.empty()){
+            n = (uint32_t)e.arrows.size();
+            h.Add(((uint64_t)n << 32) | 0xA770u);
+            for (const EconomyArrow& a : e.arrows){
+                int32_t head[6] = {(int32_t)a.by,(int32_t)a.zombie,(int32_t)a.f_hit,a.ticks,a.flown,a.lie};
+                h.Bytes(head,sizeof(head));
+                float where[8] = {a.from.x,a.from.y,a.from.z,a.to.x,a.to.y,a.to.z,a.at.x,a.at.y};
+                h.Bytes(where,sizeof(where));
+            }
         }
     }
 }
@@ -389,6 +437,22 @@ void ApplicationChasm::RegisterEconomyCommands(){
             crate_commands_done++;
             return OBJECTID_INVALID;
         });
+    //ZOMBIES dropped, or all taken off (zombies_plan.md): a debug edit, like the crate - Z, the panel, chasm_zombie.
+    main_scene->RegisterCommandHandler(CHASM_CMD_ZOMBIE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.SpawnZombies((int)cmd.subtype,(int)cmd.value[0],zones.State(),&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    zombie_last_refusal = why;
+                }
+                zombie_refusals++;
+            }
+            zombie_commands_done++;
+            return OBJECTID_INVALID;
+        });
 }
 
 void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
@@ -550,6 +614,21 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
            {"water_days",std::round(k.water * 100.0 / CALENDAR_DAY_TICKS) / 100.0}};
     if (EconomyDry(k)){
         j["dry"] = true;
+    }
+    //Where his body stands off his route (SPACING, zombies_plan.md): x, z above are the route's.
+    if (k.off.x != 0.0f || k.off.y != 0.0f){
+        j["off"] = json::array({std::round(k.off.x * 1000.0f) / 1000.0f,std::round(k.off.y * 1000.0f) / 1000.0f});
+    }
+    //A meal under way (MEALS) - what, the ticks to go, what it has still to give - and a fight (zombies_plan.md, step 2).
+    if (EconomyMealOn(k)){
+        j["meal"] = json{{"good",GoodName(k.meal_good)},{"ticks_left",k.meal_ticks},{"worth_left",k.meal_worth}};
+    }
+    if (k.draw > 0){
+        j["shooting"] = json{{"zombie",k.aim},{"turn_ticks",k.draw}};     //ARROWS (step 3): at which, how far into his turn
+    }
+    if (k.swing > 0){
+        j["fighting"] = true;
+        j["next_blow_ticks"] = k.swing;
     }
     if (e && EconomyCold(*e,k)){
         j["cold"] = true;       //his home under the snow with no fire today (needs_plan.md, step 3)
@@ -1135,6 +1214,21 @@ void ApplicationChasm::RegisterEconomyTools(){
         "an order; a worker shows `forage` while at it. op plants - the plants that bear within `reach` (default 20) of x,z: "
         "prop, kind (bush, fruit_tree), plot, settlement, fruit (-1 gone), ripe_now, regrow_days. Each settlement lists "
         "its `plants`: bushes, fruit_trees, gone, ripe and the fruit on them; a camp with a picker shows `picker_places`. "
+        "THE HUD'S FIGURES (view only, worked out by the functions the panels draw with): `held` - water_days and food_days "
+        "as NEEDS ATTENTION counts them (stores, camp supplies and the houses' pantries, everyone at their share; unrounded - "
+        "the rows round down), and mouths, everyone in adults; `bar` - the top bar as drawn: people, housed, food (the "
+        "foods, provisions apart), then wood, water and any good it names; `people.in_camp` - those sleeping in the camp "
+        "or with no home, BUILD HOUSES's count; `worth_days` - what a unit of water and of each food is worth to one adult, "
+        "in days; `firewood` - the lived-in homes the full winter's snow reaches (homes), what they burn a dawn under it "
+        "(burn_per_dawn), the wood they hold (at_home: a camp's supplies too), the stores' and other camps' (in_stores), "
+        "dawns_at_home and dawns_with_stores, and the homes warm_today and cold_today since the last dawn; `crops` - each "
+        "crop's days to ripen at a pace of 1 and ripens_at_camp, sown today, before the frost there; "
+        "`camp_growing_days_left`; `neediest` - MOST IN NEED's rows in its order: id, name, need (dry, thirsty, hungry, "
+        "none), health_percent, health_days, water_days. op buildings: every building, alone - id, kind, plot (its "
+        "first, -1 on cells) or cell, x, z, stands (any of it), site (any still to build), storeys, site_storeys, "
+        "site_cells, stopped (a stoppable workplace), places (a home's: its land's farmers), workers "
+        "(id, name, job - a farmer's workplace is the home whose land he farms), settlement; a home's living and holds, "
+        "a camp's camp_places (its own woodcutter, water carrier and picker), a field's farmer; and `homeless`. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -1425,6 +1519,92 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 result["plants"] = list;
                 result["found"] = (int)nearby.size();
+                return result;
+            }else if (op == "buildings"){
+                /*
+                    Every building in one call (apps/llm/docs/void_plan.md): where it is, whether it stands or is still a
+                    site, and who works it - what otherwise takes a chasm_pick a place. One pass over the plots and one
+                    over the cells for where each starts and whether any of it stands, as ChasmIssues does. View only.
+                */
+                std::shared_ptr<const EconomyState> es = GetEconomy();
+                std::shared_ptr<const ZoneState> zs = GetZones();
+                if (!es || !zs || es->world != w || zs->world != w){
+                    return json{{"error","no economy for this world yet"}};
+                }
+                size_t n = zs->buildings.size();
+                std::vector<int> first_plot(n,-1);
+                std::vector<int> first_cell(n,-1);
+                std::vector<uint8_t> stands(n,0);
+                for (size_t v = 0; v < zs->building.size(); v++){
+                    uint32_t id = zs->building[v];
+                    if (id && id < n){
+                        first_plot[id] = (first_plot[id] < 0) ? (int)v : first_plot[id];
+                        stands[id] |= (zs->standing[v] > 0) ? 1 : 0;
+                    }
+                }
+                for (size_t q = 0; q < zs->field.size(); q++){
+                    uint32_t id = zs->field[q];
+                    if (id && id < n){
+                        first_cell[id] = (first_cell[id] < 0) ? (int)q : first_cell[id];
+                        stands[id] |= zs->field_built[q] ? 1 : 0;   //a building on cells stands with a built cell
+                    }
+                }
+                std::vector<int> living(n,0);
+                for (const EconomyWorker& k : es->workers){
+                    living[(k.house < n) ? k.house : 0]++;
+                }
+                json list = json::array();
+                for (size_t id = 1; id < n; id++){
+                    const ZoneBuilding& b = zs->buildings[id];
+                    if (b.size <= 0){
+                        continue;
+                    }
+                    ZoneBuildingInfo info = ZoneBuildingFigures(*w,*zs,(uint32_t)id);
+                    vec2 at(0.0f,0.0f);
+                    ChasmBuildingPoint(*w,*zs,(uint32_t)id,at);
+                    json workers = json::array();
+                    for (const EconomyWorker& k : es->workers){
+                        if (k.building == id){
+                            workers.push_back(json{{"id",k.id},{"name",EconomyPersonName(k)},{"job",EconomyJobName(k.job)}});
+                        }
+                    }
+                    json one{{"id",id},{"kind",ZoneKindName(b.kind)},{"plot",first_plot[id]},{"x",at.x},{"z",at.y},
+                             {"stands",stands[id] != 0},{"site",info.site_storeys > 0 || info.site_cells > 0},
+                             {"storeys",info.storeys},{"site_storeys",info.site_storeys},
+                             {"places",(id < es->places.size()) ? es->places[id] : 0},{"workers",workers},
+                             {"settlement",EconomySettlementOf(*es,(uint32_t)id)}};
+                    if (first_cell[id] >= 0){
+                        one["cell"] = first_cell[id];
+                        one["site_cells"] = info.site_cells;
+                    }
+                    if (ZoneKindStoppable(b.kind)){
+                        one["stopped"] = b.f_stopped != 0;
+                    }
+                    if (b.kind == ZONE_KIND_HOUSE || b.kind == ZONE_KIND_CAMP){
+                        one["living"] = living[id];
+                        one["holds"] = (id < es->capacity.size()) ? es->capacity[id] : 0;
+                    }
+                    if (b.kind == ZONE_KIND_CAMP){
+                        //THE CAMP'S OWN WORK (Economy.h): kept apart from `places`, which are its land's farmers.
+                        auto at = [&](const std::vector<int>& v){ return (id < v.size()) ? v[id] : 0; };
+                        one["camp_places"] = json{{EconomyJobName(WORKER_JOB_WOODCUTTER),at(es->cutter_places)},
+                                                  {EconomyJobName(WORKER_JOB_WATER),at(es->drawer_places)},
+                                                  {EconomyJobName(WORKER_JOB_PICKER),at(es->picker_places)}};
+                    }
+                    if (b.kind == ZONE_KIND_FIELD){
+                        //A field employs nobody: its farmer's workplace is the home whose land it is (land_plan.md).
+                        uint32_t farmer = (id < es->farmer_of.size()) ? es->farmer_of[id] : 0;
+                        one["farmer"] = farmer;
+                        for (const EconomyWorker& k : es->workers){
+                            if (farmer && k.id == farmer){
+                                one["farmer_name"] = EconomyPersonName(k);
+                            }
+                        }
+                    }
+                    list.push_back(one);
+                }
+                result["buildings"] = list;
+                result["homeless"] = living[0];
                 return result;
             }else if (op == "keep" || op == "order_more"){
                 //STOCK KEPT (goods_plan.md): a made good's kept number, or an order for more of it.
@@ -1756,7 +1936,111 @@ void ApplicationChasm::RegisterEconomyTools(){
             //Posted (defence_plan.md): standing at a post; a job they had still counts in `working`, its place kept.
             result["people"] = json{{"total",e->workers.size()},{"housed",housed},{"working",employed},
                                     {"children",playing},{"babies",babies},{"expecting",expecting},{"caring",caring},
-                                    {"posted",posted},{"camp_plot",e->camp_plot}};
+                                    {"posted",posted},{"camp_plot",e->camp_plot},{"in_camp",ChasmInCamp(*z,*e)}};
+            /*
+                The HUD's figures (apps/llm/docs/void_plan.md), from the same functions the panels draw with: the days of
+                water and food held as NEEDS ATTENTION counts them - the houses' pantries too, which `stored` leaves out
+                - and the top bar as drawn. Unrounded, as the rows round days DOWN.
+            */
+            float water_days = 0.0f;
+            float food_days = 0.0f;
+            float mouths = 0.0f;
+            ChasmDaysHeld(*z,*e,water_days,food_days,&mouths);
+            result["held"] = json{{"water_days",water_days},{"food_days",food_days},{"mouths",mouths}};
+            json bar{{"people",e->workers.size()},{"housed",housed}};
+            int bar_food = 0;
+            for (int g = 0; g < GOOD_COUNT; g++){
+                bar_food += (GOODS_FOOD & GOOD_BIT(g)) ? totals[g] : 0;
+            }
+            bar["food"] = bar_food;
+            GoodsMask bar_goods = ChasmBarGoods(*z,*e,totals);
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (bar_goods & GOOD_BIT(g)){
+                    bar[GoodName(g)] = totals[g];
+                }
+            }
+            result["bar"] = bar;
+            //What a unit of each is worth to one adult, in days: water's drinking, a food's eating (EconomyFoodWorth).
+            json worth{{"water",(double)NEEDS_WATER_WORTH / CALENDAR_DAY_TICKS}};
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (EconomyFoodWorth(g) > 0){
+                    worth[GoodName(g)] = (double)EconomyFoodWorth(g) / CALENDAR_DAY_TICKS;
+                }
+            }
+            result["worth_days"] = worth;
+            /*
+                FIREWOOD (Economy.h, HEAT) for the winter ahead, whatever the season: the lived-in homes the full winter's
+                snow reaches, what they burn a dawn under it, the wood they hold - a camp's supplies with its pantry, as it
+                burns both - and the dawns that lasts; then with the rest of the stores' and camps' wood too. And how many
+                burned or went cold at the last dawn.
+            */
+            std::vector<int> home_living(z->buildings.size(),0);
+            for (const EconomyWorker& k : e->workers){
+                if (k.house && k.house < home_living.size()){
+                    home_living[k.house]++;
+                }
+            }
+            int fire_homes = 0, fire_burn = 0, fire_at_home = 0, fire_supplies = 0, warm = 0, cold = 0;
+            for (size_t id = 1; id < z->buildings.size() && id < e->stock.size(); id++){
+                int kind = z->buildings[id].kind;
+                if (z->buildings[id].size <= 0 || (kind != ZONE_KIND_HOUSE && kind != ZONE_KIND_CAMP)){
+                    continue;
+                }
+                int heat = (id < e->heat.size()) ? e->heat[id] : HEAT_NONE;
+                warm += (heat == HEAT_WARM) ? 1 : 0;
+                cold += (heat == HEAT_COLD) ? 1 : 0;
+                int burn = (id < e->burn.size()) ? e->burn[id] : 0;
+                if (burn <= 0 || home_living[id] <= 0 || id >= e->snowed.size() || !e->snowed[id]){
+                    continue;
+                }
+                fire_homes++;
+                fire_burn += burn;
+                fire_at_home += e->stock[id][GOOD_WOOD];
+                if (kind == ZONE_KIND_CAMP){
+                    fire_at_home += (id < e->pantry.size()) ? e->pantry[id][GOOD_WOOD] : 0;
+                    fire_supplies += e->stock[id][GOOD_WOOD];
+                }
+            }
+            int fire_elsewhere = totals[GOOD_WOOD] - fire_supplies;    //the stores' and the other camps', not counted at home
+            json firewood{{"homes",fire_homes},{"burn_per_dawn",fire_burn},{"at_home",fire_at_home},{"in_stores",fire_elsewhere},
+                          {"warm_today",warm},{"cold_today",cold}};
+            if (fire_burn > 0){
+                firewood["dawns_at_home"] = (float)fire_at_home / fire_burn;
+                firewood["dawns_with_stores"] = (float)(fire_at_home + fire_elsewhere) / fire_burn;
+            }
+            result["firewood"] = firewood;
+            /*
+                CROPS (Economy.h, THE FROST): each one's growing days at a pace of 1 - a field's own pace, its farmer's
+                skill, is its `frost.pace` - and whether it ripens before the frost at the camp, sown today at that pace;
+                the growing weather the camp has left. With no field yet, this is what "build a field" can be told.
+            */
+            int camp_left = -1;
+            if (e->camp_plot >= 0 && e->camp_plot < (int)w->grid->fine.pos.size()){
+                camp_left = EconomyGrowingTicksLeft(*w,w->grid->fine.pos[e->camp_plot],calendar_shown.load());
+                result["camp_growing_days_left"] = (float)camp_left / CALENDAR_DAY_TICKS;
+            }
+            json crops = json::object();
+            for (int c = 0; c < ZONE_CROP_COUNT; c++){
+                int ticks = EconomyRipenTicks(c,0,1.0f);
+                json one{{"days",(float)ticks / CALENDAR_DAY_TICKS}};
+                if (camp_left >= 0){
+                    one["ripens_at_camp"] = ticks <= camp_left;
+                }
+                crops[ZoneCropName(c)] = one;
+            }
+            result["crops"] = crops;
+            //MOST IN NEED (ChasmNeediest): the panel's rows in its order - what each is short of as his row says it, and
+            //his health as the row's percent and in days.
+            json neediest = json::array();
+            for (const EconomyWorker* k : ChasmNeediest(*e,NEEDIEST_SHOWN)){
+                std::string need = ChasmNeedName(*k);
+                std::transform(need.begin(),need.end(),need.begin(),::tolower);
+                neediest.push_back(json{{"id",k->id},{"name",EconomyPersonName(*k)},{"need",need.empty() ? "none" : need},
+                                        {"health_percent",(int)std::lround(100.0f * std::max(0,k->health) / NEEDS_HEALTH_FULL)},
+                                        {"health_days",std::round(k->health * 100.0 / CALENDAR_DAY_TICKS) / 100.0},
+                                        {"water_days",std::round(k->water * 100.0 / CALENDAR_DAY_TICKS) / 100.0}});
+            }
+            result["neediest"] = neediest;
             //Per job, who works it and its places - the overview's figures (builders_plan.md).
             EconomyJobCount counts[WORKER_JOB_COUNT];
             int jobless = 0;

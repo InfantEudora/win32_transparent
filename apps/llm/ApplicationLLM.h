@@ -5,6 +5,8 @@
 #include "LLMModel.h"
 #include "LLMTokenizer.h"
 #include "LLMChat.h"
+#include "VoidBrief.h"
+#include "BackgroundWork.h"
 #ifdef USE_IMGUI
 #include "imgui.h"
 #endif
@@ -25,11 +27,12 @@
     rounding of fp32 versus runq's int8 activations. Nothing here is bit-exact with runq, and
     that is expected rather than a bug to chase.
 
-    Three windows: LLM (the GPU's limits, the model, loading one), Chat (a conversation with
-    the model, the reply streaming in) and Blocks (what each attention and FFN block did for
-    every token, and switching blocks off). The llm_* MCP tools do the same and more: generate,
-    score a text against runq's loss, run a two-character duet, check a kernel against the CPU,
-    profile, read the block analysis.
+    Four windows: LLM (the GPU's limits, the model, loading one), Chat (a conversation with
+    the model, the reply streaming in), Blocks (what each attention and FFN block did for
+    every token, and switching blocks off) and Void (a running Chasm read into a brief, and the
+    model advising on it - docs/void_plan.md). The llm_* MCP tools do the same and more:
+    generate, score a text against runq's loss, run a two-character duet, check a kernel
+    against the CPU, profile, read the block analysis; the void_* tools drive the Void.
 
     --- WHY IN THE ENGINE, AND NOT A STANDALONE TOOL -----------------------------------------
     Whatever runs here runs in a game unchanged: the same GL 4.5 context, the same Shader class
@@ -120,6 +123,52 @@ private:
     bool f_chat_send = false;           //the panel's Send, serviced in PreRender
     bool f_chat_scroll = false;         //scroll the transcript to the end on the next frame
     std::string chat_error;
+    //Every job that feeds the model calls this: both conversations feed theirs again before going on.
+    void InvalidateChats(){ chat.Invalidate(); void_chat.Invalidate(); }
+
+    /*
+        --- THE VOID (docs/void_plan.md) ----------------------------------------------------------
+        A running Chasm read over its MCP tools into a brief and a menu (VoidBrief), and the model
+        asked to choose one option and say why, as the Void. It only advises: nothing is sent back
+        to the game.
+
+        Reading is blocking HTTP, so it runs on the background worker (LatestResult), never on the
+        render thread that runs the model; the void_read tool reads on its own MCP thread instead.
+        The answer is a conversation of its own, started fresh for every question, in context 0
+        while the Chat keeps the last - and never generated in the same frame as the Chat's reply,
+        as both read the model's one logits buffer.
+    */
+    int void_port = 8769;                   //Chasm's MCP port
+    bool f_void_auto = false;               //read again every void_auto_seconds
+    float void_auto_seconds = 5.0f;
+    LatestResult<VoidBrief> void_brief;     //Request and Adopt on the render thread
+    std::chrono::steady_clock::time_point void_requested;
+    char void_system_path[512] = "";
+    char void_system[8192] = "";            //the Void's system prompt, editable in its window
+    std::string void_system_status;
+    /*
+        The brief as it will be asked, editable in the window: the latest read until someone changes
+        it, and from then on their text, which later reads leave alone. RENDER THREAD ONLY.
+    */
+    std::string void_edit;
+    bool f_void_edited = false;
+    std::chrono::steady_clock::time_point void_edit_from;  //the read it was taken from
+    std::string void_edit_date;
+    void VoidFollowRead();                  //RENDER THREAD: an unedited brief takes the latest read
+    LLMChatSession void_chat;               //RENDER THREAD ONLY
+    std::vector<std::string> void_asked_options;    //the menu the reply answers, as the asked text has it
+    std::string void_asked_date;
+    std::string void_asked_text;
+    bool f_void_asked_edited = false;
+    bool f_void_ask = false;                //the window's Ask, serviced in PreRender
+    std::string void_error;
+    void VoidInit();                        //from Init: the system prompt's file, loaded
+    void VoidRequestRead();                 //RENDER THREAD
+    void VoidUpdate();                      //RENDER THREAD, from PreRender
+    bool VoidAsk(std::string& error);       //RENDER THREAD
+    json VoidAnswerJson();                  //RENDER THREAD: the reply, the letter in it and its option
+    bool VoidLoadSystem(std::string& error);
+    bool VoidSaveSystem(std::string& error);
 
     //The LLM window's load controls, serviced in PreRender like a job.
     char load_model_path[512] = "H:/llama_c/llama2.c/ministral3_3b_instruct_q40e8.bin";
@@ -163,10 +212,12 @@ private:
     void RenderLLMPanel();
     void RenderChatPanel();
     void RenderBlocksPanel();
+    void RenderVoidPanel();
 #endif
 
 #ifdef USE_MCP
     void RegisterMCPTools();
+    void RegisterVoidTools();
 #endif
 };
 

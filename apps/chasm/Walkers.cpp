@@ -242,7 +242,7 @@ int Walkers::DeckNode(int plot, int layer) const{
 bool Walkers::JoinOpen(const ZoneState& z, const Join& j, int who, int from, int to) const{
     int n = (int)world->grid->fine.pos.size();
     if (j.to >= n){
-        return !decks[j.to - n].f_posted || who == WALK_WHO_POSTED;
+        return who != WALK_WHO_ZOMBIE && (!decks[j.to - n].f_posted || who == WALK_WHO_POSTED);
     }
     int deck_plot = (j.from >= n) ? decks[j.from - n].plot : j.from;
     if (ZoneBoundaryBetween(z,deck_plot,j.to) != ZONE_BOUNDARY_NONE && !ZoneGateBetween(*world,z,deck_plot,j.to)){
@@ -484,8 +484,9 @@ WalkPlace Walkers::GoalPlace(const ZoneState& z, int to, int who, int to_layer){
     }
     EnsureGraph();
     EnsureDecks(z);
-    //The ground asked for, where there is ground to stand on: not under a block or a stair.
-    if (to_layer == WALK_GROUND && !ZoneCastleShuts(z,to)){
+    //The ground asked for, where there is ground to stand on: not under a block or a stair. A zombie's is always the
+    //ground, whatever stands on it: it walks no deck.
+    if ((to_layer == WALK_GROUND && !ZoneCastleShuts(z,to)) || who == WALK_WHO_ZOMBIE){
         return goal;
     }
     bool f_asked = false;

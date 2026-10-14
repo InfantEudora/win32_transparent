@@ -4,10 +4,10 @@ aliases: range, ranges, archery ranges, archery, archer, archers, trainee, train
 kind: buildings
 status: built
 summary: Painted on coarse cells like a field. A trainee a cell trains there full time, all year, and their archery grows toward what their precision allows.
-plans: range_plan.md > Decided; range_plan.md > As built; range_plan.md > Shooting; range_plan.md > Later
+plans: range_plan.md > Decided; range_plan.md > As built; range_plan.md > Shooting; range_plan.md > Later; zombies_plan.md > Step 3: guards shoot
 code: Economy.cpp: GoTrain EconomyCellCost AssignJobs; Economy.h: WORKER_JOB_ARCHER EconomyArcheryCap ARCHERY_FULL; Zones.h: ZONE_KIND_RANGE ZoneKindOnCells; ApplicationChasmRange.cpp: ShotClockOf ShotOf
 tuning: ARCHERY_PER_TICK, RANGE_SPREAD_NOVICE, RANGE_SPREAD_MASTER
-verified: 2026-10-12
+verified: 2026-10-14
 ---
 
 Archers are the first people the colony trains, and they train here. A range is painted over **coarse
@@ -40,6 +40,9 @@ the scatter narrows with archery, from {RANGE_SPREAD_NOVICE} with none to {RANGE
 (`ShotOf`), so a beginner misses often and a trained archer groups tight. The arrows stay until the trainee
 goes home. It is all for show: shots change nothing, and archery grows the same either way.
 
+With a [[Zombie|zombie]] in sight the trainee shoots at it instead, for real - their stint waits, and resumes once
+there is nothing left to shoot. Archery decides how often those arrows hit.
+
 An archer, and a [[Guard tower|guard]], carries a bow and a quiver wherever they go.
 
 ## Archery
@@ -59,6 +62,5 @@ nobody training is listed in NEEDS ATTENTION as NOBODY AT THE RANGE.
 ## Planned
 
 - [planned] Trainees who keep their trade and train part of their time - a change to jobs of its own.
-- [idea] Guards shooting at something from their towers, and what archery does there.
 - [planned] A modelled `bow` and `quiver` in the props file in place of the stand-ins.
 - [idea] An order buildings come in, perhaps a tech tree; until then a range's price says it comes later.

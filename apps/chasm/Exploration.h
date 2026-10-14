@@ -2,6 +2,7 @@
 #define _CHASM_EXPLORATION_H_
 
 #include <stdint.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include "type_vec2.h"
@@ -48,10 +49,23 @@ class Terrain;
 #define SIGHT_RANGE_PER_HEIGHT      1.0f    //and this much further for every unit the eye stands over the cell
 #define SIGHT_RANGE_MAX             40.0f
 
+//How far an eye over `eye_ground` sees something standing on `ground`: further the higher it stands over it.
+inline float SightReach(float eye_ground, float ground){
+    float over = eye_ground - ground;
+    return std::min(SIGHT_RANGE_MAX,SIGHT_RANGE + SIGHT_RANGE_PER_HEIGHT * (over > 0.0f ? over : 0.0f));
+}
+
 //The ground under every cell of the exploration's raster, from the world alone: built once a map
 //(ChasmWorld::sight) and immutable after, so any thread may read it.
 struct ExplorationSight{
     void Build(const Grid& g, const GridPicker& picker, const Terrain& t);
+    /*
+        Whether the point at height `top` over `to` can be seen from an eye SIGHT_EYE over `eye_ground` at `from`: the
+        ground between - taken as See takes it, the lid's air too - all below the straight line from the one to the
+        other. The cells of both ends are left out: what either stands on does not hide it. How far is not asked
+        here (SightReach). For a shot (zombies_plan.md, step 3).
+    */
+    bool Clear(const vec2& from, float eye_ground, const vec2& to, float top) const;
     vec2 origin;
     int width = 0;
     int height = 0;

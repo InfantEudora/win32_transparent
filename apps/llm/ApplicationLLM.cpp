@@ -43,9 +43,11 @@ void ApplicationLLM::Init(void){
     main_scene = CreateNewScene("LLM Scene");
 
     ReadGpuInfo();
+    VoidInit();
 
 #ifdef USE_MCP
     RegisterMCPTools();
+    RegisterVoidTools();
 #endif
 }
 
@@ -222,6 +224,7 @@ json ApplicationLLM::LoadModel(const std::string& path, const std::string& tok, 
         model = new LLMModel();
     }
     chat.Reset();
+    void_chat.Reset();
     std::string error;
     if (!model->Load(path,context,contexts,error)){
         return json{ {"error",error} };
@@ -273,7 +276,9 @@ void ApplicationLLM::PreRender(void){
     if (f_chat_send){
         f_chat_send = false;
         chat_error.clear();
-        if (model && model->IsLoaded()){
+        if (void_chat.f_generating){
+            chat_error = "the Void is still speaking";
+        }else if (model && model->IsLoaded()){
             chat.system_prompt = chat_system;
             if (chat.Send(*model,tokenizer,chat_input,chat_error)){
                 chat_input[0] = '\0';
@@ -287,6 +292,7 @@ void ApplicationLLM::PreRender(void){
         chat.Step(*model,tokenizer,CHAT_BUDGET_MS);
         f_chat_scroll = true;
     }
+    VoidUpdate();
     if (f_changed){
         json info = ModelInfoJson();
         std::lock_guard<std::mutex> lock(info_mutex);
@@ -453,6 +459,7 @@ void ApplicationLLM::DrawImGuiUI(void){
     RenderLLMPanel();
     RenderChatPanel();
     RenderBlocksPanel();
+    RenderVoidPanel();
 }
 
 void ApplicationLLM::RenderLLMPanel(void){
@@ -1119,7 +1126,7 @@ void ApplicationLLM::RegisterMCPTools(void){
                 if (!model || !model->IsLoaded()){
                     return json{ {"error","no model loaded"} };
                 }
-                chat.Invalidate();
+                InvalidateChats();
                 return LLMGenerate(*model,tokenizer,g);
             },300000);
         });
@@ -1148,7 +1155,7 @@ void ApplicationLLM::RegisterMCPTools(void){
                 if (!model || !model->IsLoaded()){
                     return json{ {"error","no model loaded"} };
                 }
-                chat.Invalidate();
+                InvalidateChats();
                 return LLMLoss(*model,tokenizer,text);
             },600000);
         });
@@ -1193,7 +1200,7 @@ void ApplicationLLM::RegisterMCPTools(void){
                 if (!model || !model->IsLoaded()){
                     return json{ {"error","no model loaded"} };
                 }
-                chat.Invalidate();
+                InvalidateChats();
                 return LLMDuet(*model,tokenizer,d);
             },600000);
         });
@@ -1268,6 +1275,7 @@ void ApplicationLLM::RegisterMCPTools(void){
             (void)args;
             return RunOnRenderThread([this]() -> json {
                 chat.Reset();
+                void_chat.Reset();
                 if (model){
                     model->Unload();
                 }
@@ -1360,7 +1368,7 @@ void ApplicationLLM::RegisterMCPTools(void){
                 }
                 model->f_profile = f_profile;
                 model->f_fold_norm = f_fold;
-                chat.Invalidate();
+                InvalidateChats();
                 model->ResetProfile();
                 const float* logits = NULL;
                 auto start = std::chrono::steady_clock::now();

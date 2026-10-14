@@ -4,9 +4,9 @@ aliases: people, settler, settlers, villager, villagers, worker, workers
 kind: people
 status: built
 summary: Everyone in the colony, each with a family, a home, four skills, a job, and two bars that must not run out.
-plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries
-code: Economy.h: EconomyWorker EconomySkillFactor; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood
-verified: 2026-10-12
+plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries; zombies_plan.md > Step 1b: spacing out
+code: Economy.h: EconomyWorker EconomySkillFactor EconomyBody; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood; Spacing.cpp: SpaceOut
+verified: 2026-10-14
 ---
 
 The colony is the **settlers** it starts with, a few families waiting at the [[Camp]], and nobody else.
@@ -43,6 +43,14 @@ they are released. A load they are carrying when the order comes is put down as 
 Every round starts and ends at home. At home, a person first sees to a pressing [[Thirst|thirst]] or
 hunger, then [[Fetching home|fetches]] for the house if it is running low, then does the next piece of
 their job. People walk straight across open ground, and follow the grid where something is in the way.
+
+## Keeping apart
+
+Out of doors, people keep apart from one another: everyone within {SPACING_RADIUS} of someone is pushed off his
+route, at most {SPACING_MOST}, and drifts back onto it once nobody is near. Walking, he only steps aside, so a group on
+one path walks side by side; meeting someone, or someone standing in his way, within {SPACING_AHEAD} ahead, he keeps
+to his right. Never onto water, a wall, a building or a field. His route and where he is counted stay as they were;
+only where his body stands moves. A [[Zombie|zombie]] is kept out of his room as well, never the other way.
 
 ## Needs
 

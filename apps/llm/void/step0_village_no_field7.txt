@@ -1,0 +1,29 @@
+TODAY: Year 2, winter, day 3 of 10. Spring in 8 days. The snow lies on the colony; every home burns firewood at dawn.
+
+PEOPLE: 13, all housed. 11 working: 5 farmers, 2 woodcutters, 1 builder, 1 water carrier, 1 ropemaker, 1 archer. 1 child. Anouk Wever and Elin Veen are expecting, both in 14 days.
+
+STORES: food for 22 days, water for 18 days. Wood 103. Rope 10, no provisions, and none are kept.
+
+FIELDS: 8 fields, all bare for the winter. Each sows its next crop in spring:
+Field 2: beans, after wheat. Full yield.
+Field 5: wheat, after beans. Wheat after beans gives 120.
+Field 6: beans, after greens. Full yield.
+Field 7: greens, after greens. Greens after greens gives 70 of a full 100.
+Field 12: beans, after greens. Full yield.
+Field 13: beans, after wheat. Full yield.
+Field 32: greens, after beans. Greens after beans gives 120.
+Field 35: beans, after hemp. Full yield.
+
+WORK: every workplace is full. A guard tower waits for 12 water and 2 wood. A new store waits for 30 wood.
+
+OUT: nobody.
+
+THREATS: none seen.
+
+NEEDS ATTENTION: nothing.
+
+WHAT YOU CAN ADVISE:
+A. Build the guard tower first. It waits for 12 water and 2 wood.
+B. Keep 4 provisions in store. They are made from wheat and beans, and none are kept now.
+C. Build the new store first. It waits for 30 wood; the stores have room enough today.
+D. Nothing today.

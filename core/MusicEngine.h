@@ -25,8 +25,13 @@
                  random walk over the current scale inside its register, sometimes half a beat
                  late. With suspense, a share of notes (up to the score's tension_max) become
                  tension notes - the flat 2nd or the tritone above the root - which is the
-                 cheapest reliable way to make a scale sound uneasy.
+                 cheapest reliable way to make a scale sound uneasy. An unpitched voice rolls
+                 the same way and plays its sample as recorded.
       stingers   play when posted.
+      motifs     on a bar line that is theirs (every_bars, counted from their section's start),
+                 roll against their chance; the whole phrase is then scheduled at once, in the key
+                 and mode of that downbeat. A key change part way through does not bend it: a
+                 phrase finishes as it began. A MOTIF event plays one on the next bar regardless.
 
     BRIGHTNESS is the second axis, beside suspense: 0 is rumble and bass, 1 is high and bright,
     0.5 is the score exactly as written. Every part has a HEIGHT, 0..1 from C2 to C6: its note for
@@ -45,6 +50,8 @@
     SECTION CHANGES ARE TOO, and for the same reason. On the downbeat the new section's voices
     start rolling and the old one's stop (their last notes ring out); the beds cross over more
     slowly, over the score's section_fade_s, equal-power so the level does not dip in the middle.
+    A section that names a root or mode takes it on that same downbeat - and a key change asked
+    for on the same bar is applied after it, so the request wins.
     A bed coming in starts its recording from the top; one going out stops once it is silent, so a
     section that is not playing costs nothing. A section moves on by itself after its `bars`, or
     when a SECTION event asks - by name, or the next one if the name is empty.
@@ -77,14 +84,15 @@ struct MusicParams{
 };
 
 struct MusicEvent{
-    enum Type{ KEY, STINGER, SUSPENSE, BRIGHTNESS, AUDITION, SECTION, PAUSE };
+    enum Type{ KEY, STINGER, SUSPENSE, BRIGHTNESS, AUDITION, SECTION, PAUSE, MOTIF };
     Type type = KEY;
     float value = 0;                //SUSPENSE, BRIGHTNESS: the new value - for scripting a render's arc.
                                     //PAUSE: 1 pauses, 0 resumes
     int root_pc = -1;               //KEY: new root, or -1 to keep it
     int mode = -1;                  //KEY: new mode, or -1 to keep it
-    bool f_now = false;             //KEY, SECTION: skip the wait for the downbeat. PAUSE: skip the fade
-    std::string name;               //STINGER: which. SECTION: which, or empty for the next one
+    bool f_now = false;             //KEY, SECTION, MOTIF: skip the wait for the downbeat. PAUSE: skip the fade
+    std::string name;               //STINGER: which. SECTION: which, or empty for the next one.
+                                    //MOTIF: which - the playing section's by that name if it has one
     std::shared_ptr<const MusicSample> sample;  //AUDITION: what to play, or null to stop
 };
 
@@ -109,6 +117,8 @@ struct MusicStatus{
     std::vector<std::string> voice_names;
     std::vector<float> voice_heights;
     std::vector<int> voice_sections;
+    std::vector<std::string> motif_names;
+    std::vector<int> motif_sections;
     std::vector<std::string> section_names;         //empty if the score has no sections
     int section = 0;                                //the one playing
     int pending_section = -1;                       //waiting for the bar line: -1 none, -2 the next one
@@ -170,6 +180,7 @@ private:
     bool InSection(int part_section) const { return part_section < 0 || part_section == section; }
     int NextSection();
     void ApplySection(int s);
+    void TakeSectionKey();          //the playing section's own root and mode, where it names them
 
     //--- one playing of one sample --------------------------------------------------------
     struct Play{
@@ -213,6 +224,19 @@ private:
     int ChooseNote(Voice& v, bool& f_tension);
     void StartNote(const MusicSample* s, int root_midi, int midi, float gain, float pan, int64_t start,
                    int64_t release_after, float release_s);
+    void LogNote(int64_t start, const std::string& part, int midi, bool f_tension);
+
+    //--- motifs ---------------------------------------------------------------------------
+    struct Motif{
+        const MusicMotifDef* def = nullptr;
+        int64_t ends_at = 0;        //output frame its phrase finishes; it does not start over itself
+        bool f_asked = false;       //a MOTIF event is waiting for the next bar
+        float height = 0.5f;
+    };
+    std::vector<Motif> motifs;
+    void OnBarMotifs(int64_t bar_frame);
+    void PlayMotif(Motif& m, int64_t start);
+    Motif* FindMotif(const std::string& name);
 
     //--- pause ----------------------------------------------------------------------------
     bool f_paused = false;

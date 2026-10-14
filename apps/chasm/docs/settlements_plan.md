@@ -465,6 +465,32 @@ Built 2026-10-11:
   - A camp painted in debug 14 units from the start camp, in colony 1: the start camp's. A tent erased from the
     middle of the outpost's camp: still one camp. The zones' check: 0 in pieces.
 
+### The camp's own work is the colony's (the user's, 2026-10-14)
+
+- **Found by the user**: "as soon as the last leave the tent, the current fruit picker stops picking fruit." The
+  camp's places were per colony in count (one camp to a colony, above), but `AssignJobs` still filled its own
+  woodcutter, water carrier and picker only from those sleeping in it - so the last family into a house took the
+  camp's work with it, the picker's for good (nothing takes it over).
+- **Decided** (the user, asked how it ranks against newer workplaces when people are short): **last once the camp
+  is empty**. Those living there fill it first, in the camp's place in the order, as before. What they leave open
+  - all of it once nobody lives there - goes to the colony's people **no other place needs**, after every workplace
+  in the order and never taken from one, by skill less the walk from home and only someone who can walk there. So
+  a house's field is farmed before anyone draws water by hand.
+- **Built** (`Economy::AssignJobs`): the residents' pass unchanged but counted (`reserved_camp`); after the order, a
+  colony pass keeps whoever has the job already - before the clean-up, so a round under way goes on - and sets
+  aside what is left of the colony's spare people (`camp_open`); after the other places are filled, those are given
+  out from the still free.
+- *Checked* (8769, debug):
+  - `camp`, its second camp's two families housed beside it (debug paint): the field passed to Bente Veen's house
+    and she farms it; Siem Wever, spare, keeps the empty camp's woodcutter going from his house. In the first
+    version, which took the colony in the camp's place in the order, the camp had taken Siem as its water carrier
+    and the field lay fallow - which is what the user was asked about.
+  - `village` (camp empty, one person spare): Lieve Wever, from her house, became its picker and brought fruit in.
+    `camp_3`: Marit Wever the same for its empty camp; jobs handed out again mid-round, she walked on to the same
+    plant.
+  - Inside the tents, the camp's jobs went to the same people as before.
+  - A 3,073-tick recording (the field and houses painted, the families moving) replayed twice: every tick equal.
+
 ### Founding: as built, packing up a crowded camp (2026-10-12)
 
 - **The user's `saves/no_tent_to_take.json`**: everyone moved out to a new colony, its camp 10 tents for 12 people (two

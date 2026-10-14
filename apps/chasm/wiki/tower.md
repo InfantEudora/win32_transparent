@@ -4,9 +4,9 @@ aliases: tower, towers, guard towers, guard, guards, ladder
 kind: buildings
 status: partial
 summary: A two-storey tower of logs in its junction's shape, a guard for each edge past two, built with water and provisions that become its stock - its guards' pantry, entered only by its ladder.
-plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: the tower tuned; defence_plan.md > As built: step 7, the towers kept; defence_plan.md > Guards by hand (step 8); defence_plan.md > Build order; ramparts_plan.md > Step 1: the tower's deck, a real node
+plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: the tower tuned; defence_plan.md > As built: step 7, the towers kept; defence_plan.md > Guards by hand (step 8); defence_plan.md > Build order; ramparts_plan.md > Step 1: the tower's deck, a real node; zombies_plan.md > Step 3: guards shoot
 code: Zones.cpp: ZoneCanBuild ZoneTowerGuards ZoneTowerCorners ZoneTowerLadderOk ZoneTowerDefaultLadder ZoneIsLadderPlot; Walkers.cpp: EdgeOpen EnsureDecks WalkDeckLayers; Economy.cpp: AssignJobs Needs SeekSupplyOf TowerStoreyCost StoreyKept EconomyPostPoint EconomyOnTower KeepTowers TowerLeft EconomyTowerShort PostGuard SetGuards; Economy.h: ECONOMY_TOWER_WOOD ECONOMY_TOWER_WATER ECONOMY_TOWER_PROVISIONS ECONOMY_TOWER_GUARDS_PLACED WORKER_JOB_GUARD
-verified: 2026-10-12
+verified: 2026-10-14
 ---
 
 Tool **T**. One plot, always both storeys: it is painted whole, and taking a storey off takes it all. It
@@ -51,6 +51,7 @@ of its own in the walk - a deck over its plot, up the ladder - so a walk to the 
 - **The tower is his pantry**: he eats and drinks from its stock as at home; his pack is only for a kind the
   tower has none of. Both empty, a pressing need sends him to the nearest supply and back up.
 - The tower pulled down, its guards lose the job and go home.
+- **They shoot** [[Zombie|zombies]] they can see from the platform, where none can reach them - further than from the ground.
 
 Only posted people draw on it: villagers pass towers by, and no carrier, family or builder takes from one.
 
