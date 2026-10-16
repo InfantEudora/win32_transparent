@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f \"$CLAUDE_PROJECT_DIR/tools/lockd/claude_lock_hook.py\" ] || python \"$CLAUDE_PROJECT_DIR/tools/lockd/claude_lock_hook.py\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

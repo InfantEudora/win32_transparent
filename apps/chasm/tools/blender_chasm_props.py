@@ -30,6 +30,10 @@ top, darker underneath) - a little baked occlusion, on top of what the sun does 
 BUDGET: conifers are the forests, drawn instanced by the ten thousand, so they stay near 50
 triangles; nothing here is over about 110. Faces nobody can see - trunk and rock bottoms, which sit
 in the ground - are not built at all.
+
+SHAPE KEYS: the bird (birds_plan.md) is the one asset with them. A builder writes them as bmesh shape
+layers and build_object turns those into the object's keys, in the order made - the morph index the game
+drives. Export them with export_morph on, which the file's own exports have had since the bird.
 """
 
 import json
@@ -89,6 +93,9 @@ PAL_FLOATSTONE_LIGHT = cell(0, 10)  #PAL_MINERALS: floatstone's crystal, light t
 PAL_FLOATSTONE = cell(1, 10)
 PAL_FLOATSTONE_DARK = cell(2, 10)
 PAL_FLOATSTONE_GLINT = cell(3, 10)
+PAL_BIRD_BLACK = cell(0, 11)        #PAL_CREATURES: a crow's black, a blue-grey just short of black so facets read,
+PAL_BIRD_SHEEN = cell(1, 11)        #the blue-black sheen of its back and upper wing,
+PAL_BIRD_BEAK = cell(2, 11)         #and its beak and legs. Column 3 is the magpie's white, for later.
 
 GROUND_SINK = 0.08      #how far trunks and rock bases reach below z = 0, so a slope does not show a gap
 
@@ -1259,6 +1266,182 @@ def outcrop(bm, rng):
 outcrop.footprint_origin = True
 
 
+# ---------------------------------------------------------------------------------------------
+# Creatures (birds_plan.md, 2026-10-17). The bird is drawn at scale 1, about half a villager (0.86
+# tall): 0.43 from beak to tail. It flaps by SHAPE KEYS rather than a rig - every bird is an Object of
+# its own sharing the one mesh, so each has its own wing position for three floats - and the keys'
+# order is the morph index the game drives. Its colours are PAL_CREATURES, off row 0, so never faded.
+# ---------------------------------------------------------------------------------------------
+
+BIRD_KEYS = ("WingsUp", "WingsDown", "Folded")     #morphs 0-2; the engine's fourth slot is kept for a Peck
+
+#The shoulder: the hinge a wing turns about, a line along the body just inside the flank, so a wing's
+#open root never shows. The nose is Blender's -Y: glTF +Z, the way the villagers face.
+BIRD_SHOULDER = Vector((0.030, 0.0, 0.115))
+#One wing in the glide pose, root to hand: (out from the shoulder, leading edge y, trailing edge y, ridge
+#height). A station is a leading edge, a trailing edge and a raised ridge a third of the way back between
+#them, so a wing has two facets on top and a flat underside.
+BIRD_WING = ((0.000, -0.035, 0.120, 0.022),
+             (0.170, -0.045, 0.110, 0.016),     #the wrist, where a wingbeat bends
+             (0.300, -0.030, 0.085, 0.010))
+#The hand ends square, as a crow's spread fingers do, not in a gull's point: a front and a back finger, (out, y).
+BIRD_TIP = ((0.395, -0.010), (0.365, 0.065))
+BIRD_WRIST = 1
+#A stroke key: (lift at the shoulder, more at the wrist, hand swept back), degrees. Up has the hand lag,
+#bent on up past the arm; down sweeps the tips back.
+BIRD_STROKE = {"WingsUp": (50.0, 20.0, 15.0), "WingsDown": (-40.0, -10.0, 25.0)}
+#Folded: where the wrist goes - the bend of the folded wing, high on the chest's side - and how the hand lies
+#back from it over the back: turned from facing out to mostly up, its tip in and down a little toward the
+#tail, its chord and depth squeezed as overlapping feathers are. The inner wing tucks into the body beside it.
+BIRD_FOLD_WRIST = Vector((0.045, -0.035, 0.118))
+BIRD_FOLD_LEAN = 55.0
+BIRD_FOLD_IN = 7.0
+BIRD_FOLD_DROP = 2.0
+BIRD_FOLD_SQUEEZE = 0.45
+BIRD_FOLD_TUCK = 0.025
+#Perched (Folded), everything but the legs tips nose-up about the hips, so the bird sits up as a crow does
+#rather than lying flat as a duck. 0 keeps the body as it flies.
+BIRD_PERCH_PITCH = 15.0
+BIRD_HIP = Vector((0.0, 0.0, 0.085))
+
+
+def bird_wing_pose(p, station, key):
+    """Where the right wing's point `p`, at `station`, goes in shape key `key`. A stroke turns the hand
+    at the wrist, then the whole wing at the shoulder. Folded lays the hand back along the body, its
+    leading edge out and down; the inner wing folds away into a strip inside the folded wrist, as the
+    arm's zig-zag does. Folded's sitting up (BIRD_PERCH_PITCH) is bird()'s, as it moves the body too."""
+    d, lead, trail, _ = BIRD_WING[BIRD_WRIST]
+    wrist = Vector((BIRD_SHOULDER.x + d, (lead + trail) / 2, BIRD_SHOULDER.z))
+    rad = math.radians
+    if key == "Folded":
+        local = p - wrist
+        if station < BIRD_WRIST:
+            local.x = 0.0
+        local = Vector((local.x, local.y * BIRD_FOLD_SQUEEZE, local.z * BIRD_FOLD_SQUEEZE))
+        #(out, back, up) of the glide pose become (back, up, out): span along the body, chord on edge,
+        #then leaned over onto the back.
+        on_edge = Matrix(((0, 0, 1), (1, 0, 0), (0, 1, 0)))
+        lay = (Matrix.Rotation(rad(BIRD_FOLD_IN), 3, "Z") @ Matrix.Rotation(rad(-BIRD_FOLD_DROP), 3, "X")
+               @ Matrix.Rotation(rad(-BIRD_FOLD_LEAN), 3, "Y"))
+        q = BIRD_FOLD_WRIST + lay @ on_edge @ local
+        if station < BIRD_WRIST:
+            q.x -= BIRD_FOLD_TUCK
+        return q
+    lift, bend, sweep = BIRD_STROKE[key]
+    if station > BIRD_WRIST:
+        hand = Matrix.Rotation(rad(sweep), 3, "Z") @ Matrix.Rotation(rad(-bend), 3, "Y")
+        p = wrist + hand @ (p - wrist)
+    return BIRD_SHOULDER + Matrix.Rotation(rad(-lift), 3, "Y") @ (p - BIRD_SHOULDER)
+
+
+def bird(bm, rng):
+    """A crow, low poly: a body of two bands of five, a head with a beak, a fanned tail, two legs, and
+    two wings of two segments each so a wingbeat bends at the wrist rather than flapping a flat paddle.
+    Every face a triangle, so each stays flat in every key. The origin is between the feet."""
+    moved = []                              #(a wing vertex, its side, where each key puts the right wing's)
+
+    def centre(verts):
+        return sum((v.co for v in verts), Vector()) / len(verts)
+
+    def tri(a, b, c, inside):
+        return outward(bm.faces.new((a, b, c)), (a.co + b.co + c.co) / 3 - inside)
+
+    def quad(a, b, c, d, inside):
+        return [tri(a, b, c, inside), tri(a, c, d, inside)]
+
+    def ring(y, zc, w, h):
+        #Five round the body, one on top: a ridge down the back.
+        return [bm.verts.new((w * math.cos(a), y, zc + h * math.sin(a)))
+                for a in (math.radians(90 + 72 * k) for k in range(5))]
+
+    head = ring(-0.120, 0.132, 0.034, 0.032)
+    chest = ring(-0.040, 0.100, 0.052, 0.045)
+    rump = ring(0.090, 0.108, 0.028, 0.020)
+    face = bm.verts.new((0.0, -0.152, 0.128))
+    body = []
+    for a, b in ((head, chest), (chest, rump)):
+        inside = centre(a + b)
+        for k in range(5):
+            body += quad(a[k], a[(k + 1) % 5], b[(k + 1) % 5], b[k], inside)
+    inside = centre(head + [face])
+    body += [tri(head[k], head[(k + 1) % 5], face, inside) for k in range(5)]
+    inside = centre(chest + rump)
+    body += [tri(rump[0], rump[k], rump[k + 1], inside) for k in (1, 2, 3)]    #the rump's end, under the tail
+    colour_by_facing(bm, body, PAL_BIRD_SHEEN, PAL_BIRD_BLACK, PAL_BIRD_BLACK)
+
+    #The beak, a three-sided spike whose base is inside the head.
+    beak = [bm.verts.new(p) for p in ((-0.012, -0.135, 0.134), (0.012, -0.135, 0.134), (0.0, -0.135, 0.116))]
+    tip = bm.verts.new((0.0, -0.207, 0.122))
+    inside = centre(beak + [tip])
+    colour(bm, [tri(beak[k], beak[(k + 1) % 3], tip, inside) for k in range(3)], PAL_BIRD_BEAK)
+
+    #The tail: a fan, a ridge down its middle on top and flat beneath. Its root is inside the rump.
+    a, b = bm.verts.new((-0.020, 0.080, 0.112)), bm.verts.new((0.020, 0.080, 0.112))
+    c, d, e = (bm.verts.new((0.046, 0.218, 0.100)), bm.verts.new((0.0, 0.226, 0.100)),
+               bm.verts.new((-0.046, 0.218, 0.100)))
+    ridge = bm.verts.new((0.0, 0.130, 0.120))
+    up, down = Vector((0, 0, 1)), Vector((0, 0, -1))
+    top = [outward(bm.faces.new(f), up) for f in ((ridge, b, c), (ridge, c, d), (ridge, d, e), (ridge, e, a))]
+    under = [outward(bm.faces.new(f), down) for f in ((a, b, c), (a, c, d), (a, d, e))]
+    colour(bm, top + under, PAL_BIRD_BLACK)
+
+    #Legs: thin spikes from inside the belly down to the feet, either side of the origin.
+    legs = []
+    for s in (-1, 1):
+        x = 0.018 * s
+        hip = [bm.verts.new(p) for p in ((x - 0.007, 0.005, 0.085), (x + 0.007, 0.005, 0.085), (x, -0.008, 0.085))]
+        foot = bm.verts.new((x, 0.0, 0.0))
+        legs += hip + [foot]
+        inside = centre(hip + [foot])
+        colour(bm, [tri(hip[k], hip[(k + 1) % 3], foot, inside) for k in range(3)], PAL_BIRD_BEAK)
+
+    #The wings: the right one worked out, the left its mirror image.
+    for s in (1, -1):
+        def vert(out, y, rise, station):
+            p = Vector((BIRD_SHOULDER.x + out, y, BIRD_SHOULDER.z + rise))
+            v = bm.verts.new((p.x * s, p.y, p.z))
+            moved.append((v, s, [bird_wing_pose(p, station, k) for k in BIRD_KEYS]))
+            return v
+        stations = [(vert(out, lead, 0.0, i), vert(out, lead + (trail - lead) / 3, rise, i), vert(out, trail, 0.0, i))
+                    for i, (out, lead, trail, rise) in enumerate(BIRD_WING)]
+        #The root is capped: its back corner is behind the rump, where an open end would show from the side.
+        under = [tri(*stations[0], centre(stations[0] + stations[1]))]
+        front, back = [], []
+        for (l0, m0, t0), (l1, m1, t1) in zip(stations, stations[1:]):
+            inside = centre([l0, m0, t0, l1, m1, t1])
+            front += quad(l0, l1, m1, m0, inside)
+            back += quad(m0, m1, t1, t0, inside)
+            under += quad(l0, t0, t1, l1, inside)
+        l0, m0, t0 = stations[-1]
+        f1, f2 = (vert(out, y, 0.0, len(BIRD_WING)) for out, y in BIRD_TIP)
+        inside = centre([l0, m0, t0, f1, f2])
+        front.append(tri(l0, f1, m0, inside))
+        back += [tri(m0, f1, f2, inside), tri(m0, f2, t0, inside)]
+        under += quad(l0, t0, f2, f1, inside)
+        colour(bm, front, PAL_BIRD_SHEEN)
+        colour(bm, back + under, PAL_BIRD_BLACK)
+
+    #Every vertex's place in each key: the wings as worked out, the legs where they are, and Folded sitting
+    #the rest up. By index: making a layer invalidates every BMVert held, and iterating gives fresh ones.
+    sit = Matrix.Rotation(math.radians(-BIRD_PERCH_PITCH), 3, "X")
+
+    def whole(q, key):
+        return BIRD_HIP + sit @ (q - BIRD_HIP) if key == "Folded" else q.copy()
+    bm.verts.index_update()
+    poses = {v.index: [whole(v.co, k) for k in BIRD_KEYS] for v in bm.verts}
+    for v in legs:
+        poses[v.index] = [v.co.copy() for k in BIRD_KEYS]
+    for v, s, wing in moved:
+        poses[v.index] = [whole(Vector((q.x * s, q.y, q.z)), k) for q, k in zip(wing, BIRD_KEYS)]
+    layers = [bm.verts.layers.shape.new(k) for k in BIRD_KEYS]
+    for v in bm.verts:
+        for layer, q in zip(layers, poses[v.index]):
+            v[layer] = q
+
+
+bird.keep_origin = True
+
+
 ASSETS = [
     ("tree_pine_a", 11, lambda bm, r: conifer(bm, r, 4.0, 3, 1.90, 7, 0.40, (0.05, 0.0)), (0, 0)),
     ("tree_pine_b", 12, lambda bm, r: conifer(bm, r, 5.0, 4, 1.80, 7, 0.45, (0.18, 0.10)), (1, 0)),
@@ -1340,6 +1523,8 @@ ASSETS = [
     ("mine_cart", 118, mine_cart, (7, 7)),
     ("quarry_crane", 119, quarry_crane, (8, 7)),
     ("outcrop", 120, outcrop, (9, 7)),
+    #Creatures (birds_plan.md, 2026-10-17).
+    ("bird", 131, bird, (0, 8)),
 ]
 
 SPACING = 5.0
@@ -1355,19 +1540,26 @@ def build_object(name, seed, builder, slot, material, collection):
     #one leans away from its origin rather than being centred on its crown. Not for a part built in
     #another asset's space (keep_origin: a plant's fruit), which is drawn at that asset's origin.
     #A prop that fills a plot (footprint_origin) goes in the middle of its footprint instead, where its
-    #chips and ledges would pull the base's middle off to one side.
-    if getattr(builder, "footprint_origin", False):
-        xs, ys = [v.co.x for v in bm.verts], [v.co.y for v in bm.verts]
-        shift = Vector(((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, 0))
+    #chips and ledges would pull the base's middle off to one side. A bird puts its own (keep_origin too).
+    shapes = bm.verts.layers.shape.values()
+
+    def move_all(shift):
         for v in bm.verts:
             v.co -= shift
+            for layer in shapes:            #a shape key moves with its mesh
+                v[layer] -= shift
+    if getattr(builder, "footprint_origin", False):
+        xs, ys = [v.co.x for v in bm.verts], [v.co.y for v in bm.verts]
+        move_all(Vector(((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, 0)))
     elif not getattr(builder, "keep_origin", False):
         low = min(v.co.z for v in bm.verts)
         base = [v.co for v in bm.verts if v.co.z < low + 0.3]
-        shift = Vector((sum(c.x for c in base) / len(base), sum(c.y for c in base) / len(base), 0))
-        for v in bm.verts:
-            v.co -= shift
+        move_all(Vector((sum(c.x for c in base) / len(base), sum(c.y for c in base) / len(base), 0)))
     bm.normal_update()
+    #to_mesh drops shape layers, so they are read off here, in vertex order, and become keys below.
+    keys = [(layer.name, [c for v in bm.verts for c in v[layer]]) for layer in shapes]
+    for key_name, _ in keys:                #by name: removing one renumbers the rest
+        bm.verts.layers.shape.remove(bm.verts.layers.shape[key_name])
 
     pal = bm.faces.layers.int["pal"]
     uv = bm.loops.layers.uv.new("UVMap")
@@ -1390,6 +1582,10 @@ def build_object(name, seed, builder, slot, material, collection):
     if on and on in bpy.data.objects:
         obj.location = bpy.data.objects[on].location.copy()
     collection.objects.link(obj)
+    if keys:
+        obj.shape_key_add(name="Basis", from_mix=False)
+        for key_name, cos in keys:
+            obj.shape_key_add(name=key_name, from_mix=False).data.foreach_set("co", cos)
     return obj, tris
 
 
@@ -1427,7 +1623,9 @@ EXPORT_SETTINGS = dict(
     #clip is keyed from frame 0.
     export_force_sampling=False,
     export_skins=True,
-    export_morph=False,
+    export_morph=True,                  #the bird's wings (shape keys); nothing else has any
+    #The rest of the morph settings are the exporter's defaults: normals in each target too, which
+    #default.vert does not read yet (birds_plan.md), and sparse accessors - append_glb copies those.
     export_cameras=False,
     export_lights=False,
     export_extras=False,
@@ -1546,25 +1744,38 @@ def write_glb(path, gltf, blob):
 def append_glb(path, part_path):
     """Appends every mesh node of the GLB `part_path` to the one at `path`: their bytes after its binary
     chunk, their views, accessors, meshes and nodes after its own, the nodes into its scene. Their material
-    is its material of the same name. Nothing already there moves, and that is checked after writing."""
+    is its material of the same name. Shape keys (a primitive's `targets`) come too: Blender writes them as
+    SPARSE accessors, whose bytes are in their sparse indices' and values' views and which may have no
+    bufferView at all. Nothing already there moves, and that is checked after writing."""
     gltf, blob = read_glb(path)
     part, part_blob = read_glb(part_path)
     old = json.loads(json.dumps(gltf))
     old_blob = bytes(blob)
     materials = {m.get("name"): i for i, m in enumerate(gltf.get("materials", []))}
+    views, accessors = {}, {}               #the part's index -> the file's, so each is copied once
+
+    def view(i):
+        if i not in views:
+            v = part["bufferViews"][i]
+            start = v.get("byteOffset", 0)
+            blob.extend(b"\0" * (-len(blob) % 4))
+            copy = {k: v[k] for k in ("byteStride", "target") if k in v}
+            copy.update(buffer=0, byteOffset=len(blob), byteLength=v["byteLength"])
+            blob.extend(part_blob[start:start + v["byteLength"]])
+            gltf["bufferViews"].append(copy)
+            views[i] = len(gltf["bufferViews"]) - 1
+        return views[i]
 
     def accessor(i):
-        a = dict(part["accessors"][i])
-        view = part["bufferViews"][a["bufferView"]]
-        start = view.get("byteOffset", 0)
-        blob.extend(b"\0" * (-len(blob) % 4))
-        copy = {k: view[k] for k in ("byteStride", "target") if k in view}
-        copy.update(buffer=0, byteOffset=len(blob), byteLength=view["byteLength"])
-        blob.extend(part_blob[start:start + view["byteLength"]])
-        gltf["bufferViews"].append(copy)
-        a["bufferView"] = len(gltf["bufferViews"]) - 1
-        gltf["accessors"].append(a)
-        return len(gltf["accessors"]) - 1
+        if i not in accessors:
+            a = json.loads(json.dumps(part["accessors"][i]))     #deep: sparse is nested
+            if "bufferView" in a:
+                a["bufferView"] = view(a["bufferView"])
+            for side in ("indices", "values") if "sparse" in a else ():
+                a["sparse"][side]["bufferView"] = view(a["sparse"][side]["bufferView"])
+            gltf["accessors"].append(a)
+            accessors[i] = len(gltf["accessors"]) - 1
+        return accessors[i]
 
     added = []
     for node in part["nodes"]:
@@ -1573,20 +1784,23 @@ def append_glb(path, part_path):
         mesh = part["meshes"][node["mesh"]]
         prims = []
         for p in mesh["primitives"]:
-            q = {k: v for k, v in p.items() if k not in ("attributes", "indices", "material")}
+            q = {k: v for k, v in p.items() if k not in ("attributes", "indices", "material", "targets")}
             q["attributes"] = {k: accessor(v) for k, v in p["attributes"].items()}
             if "indices" in p:
                 q["indices"] = accessor(p["indices"])
+            if "targets" in p:
+                q["targets"] = [{k: accessor(v) for k, v in t.items()} for t in p["targets"]]
             if "material" in p:
                 name = part["materials"][p["material"]].get("name")
                 if name not in materials:
                     sys.exit("--merge: material %s is not in %s" % (name, path))
                 q["material"] = materials[name]
             prims.append(q)
-        gltf["meshes"].append(dict(mesh, primitives=prims))
+        gltf["meshes"].append(dict(mesh, primitives=prims))        #its weights and targetNames as they come
         gltf["nodes"].append(dict(node, mesh=len(gltf["meshes"]) - 1))
         gltf["scenes"][gltf.get("scene", 0)]["nodes"].append(len(gltf["nodes"]) - 1)
-        added.append(node["name"])
+        names = mesh.get("extras", {}).get("targetNames")
+        added.append(node["name"] + (" (shape keys %s)" % ", ".join(names) if names else ""))
     gltf["buffers"][0]["byteLength"] = len(blob) + (-len(blob) % 4)
     write_glb(path, gltf, blob)
 
@@ -1647,6 +1861,14 @@ def add_missing(replace, merge=False):
             obj, tris = build_object(name, seed, builder, slot, material, export)
             built.append(obj)
             print("%-16s %5d" % (name, tris))
+    #The file's own exports - the collection's exporter, and what File > Export remembers - had shape keys
+    #off until the bird. On, or exporting the file by hand after reshaping it would drop its keys unseen.
+    if any(o.data.shape_keys for o in built):
+        remembered = bpy.context.scene.get("glTF2ExportSettings")
+        if remembered is not None:
+            remembered["export_morph"] = True
+        for exporter in export.exporters:
+            exporter.export_properties.export_morph = True
     if merge:
         save_and_merge(built)
     else:

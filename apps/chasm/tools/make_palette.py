@@ -5,15 +5,15 @@ After that the PNG is the source: edit it in any paint program. This script refu
 unless given --force, so a hand-tuned palette is never lost to a re-run.
 
 The layout is fixed by apps/chasm/Palette.h: 32 x 16 cells, CELL pixels square. A ROW is a biome
-(row 0 temperate, then desert, frozen, swamp; row 10 the minerals row, row 15 the effects row; the rest spare); a COLUMN
-is a material within it.
+(row 0 temperate, then desert, frozen, swamp; row 10 the minerals row, row 11 the creatures row, row 15 the effects
+row; the rest spare); a COLUMN is a material within it.
 The engine samples the centre of a cell with nearest filtering and no mipmaps, so a cell is
 one flat colour - paint every pixel of a cell the same.
 
 Colours are sRGB-ish values straight to the screen (the engine has no tone mapping), chosen
 against the A Little Age screenshot in art_source/chasm/ under the default lighting.
 
-    python apps/chasm/tools/make_palette.py [--force | --effects | --minerals]
+    python apps/chasm/tools/make_palette.py [--force | --effects | --minerals | --creatures]
 """
 import os
 import sys
@@ -114,6 +114,12 @@ EFFECTS_DEF = [(126, 128, 134), (102, 104, 112), (80, 82, 90), (226, 234, 238), 
 MINERALS_ROW = 10
 MINERALS_DEF = [(176, 156, 246), (122, 102, 222), (72, 54, 160), (232, 226, 255)]
 
+# Row 11, the CREATURES row: the birds' colours (birds_plan.md), the same in every biome and season. A crow's
+# black - a dark blue-grey, not the effects row's pure black, so its facets still read - its blue-black
+# sheen, its beak and legs, and the magpie's off-white for the second kind of bird.
+CREATURES_ROW = 11
+CREATURES_DEF = [(40, 42, 50), (44, 52, 80), (78, 78, 84), (234, 234, 226)]
+
 def paint_row(img, row, colours):
     for c, colour in enumerate(colours):
         for y in range(CELL):
@@ -129,7 +135,8 @@ def main():
     # --effects and --minerals paint only their own cells into the existing PNG, leaving every other
     # cell as it is.
     painted = [(flag, row, colours) for flag, row, colours in (("--effects", EFFECTS_ROW, EFFECTS_DEF),
-                                                               ("--minerals", MINERALS_ROW, MINERALS_DEF))
+                                                               ("--minerals", MINERALS_ROW, MINERALS_DEF),
+                                                               ("--creatures", CREATURES_ROW, CREATURES_DEF))
                if flag in sys.argv]
     if painted:
         img = Image.open(out).convert("RGBA")
@@ -154,6 +161,7 @@ def main():
                     img.putpixel((c * CELL + x, r * CELL + y), colour + (255,))
     paint_effects(img)
     paint_row(img, MINERALS_ROW, MINERALS_DEF)
+    paint_row(img, CREATURES_ROW, CREATURES_DEF)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     img.save(out)
     print("wrote", out)

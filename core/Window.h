@@ -81,6 +81,9 @@ class Window;
 
 #if defined(_WIN32)
 LRESULT CALLBACK windproc(HWND hwnd, UINT wm, WPARAM wp, LPARAM lp);
+#elif defined(__linux__) && !defined(__ANDROID__)
+//The X11 backend's handles, defined in Window_x11.cpp alone: Xlib's own window type is called Window.
+struct WindowX11;
 #endif
 
 class Window{
@@ -92,6 +95,8 @@ public:
     HDC         hDC;        //Handle to a Device Context
     HGLRC       hRC;
     WNDCLASSEXA*  wc = NULL;         //The class this window has
+#elif defined(__linux__) && !defined(__ANDROID__)
+    WindowX11*  x11 = NULL;          //Display, window, GLX context - see Window_x11.cpp
 #endif
 
     InputController* inputcontroller = NULL;

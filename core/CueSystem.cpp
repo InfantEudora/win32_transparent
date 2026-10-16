@@ -320,7 +320,7 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
         }
         for (auto it = jg->begin(); it != jg->end(); ++it){
             std::string at = where + ": group '" + it.key() + "'";
-            if (!it->is_object() || !OnlyKeys(*it,{"gap","duck","duck_ticks","comment"},at,error)){
+            if (!it->is_object() || !OnlyKeys(*it,{"gap","duck","duck_ticks","together","comment"},at,error)){
                 if (error.empty()) error = at + " must be an object";
                 return false;
             }
@@ -328,6 +328,10 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
             g.name = it.key();
             if (!Int(*it,"gap",0,g.gap) || !Int(*it,"duck_ticks",1,g.duck_ticks)){
                 error = at + ": gap and duck_ticks are tick counts";
+                return false;
+            }
+            if (!Int(*it,"together",1,g.together) || g.together < 1){
+                error = at + ": together is how many lines, 1 or more";
                 return false;
             }
             g.duck_ticks = std::max(g.duck_ticks,1);
@@ -1089,6 +1093,24 @@ bool CueSystem::GroupBusy(const std::string& group, uint64_t at, const Playing**
     return false;
 }
 
+//A group's `together`: lines of this cue's priority began on this tick, and nothing else is speaking in it.
+bool CueSystem::JoinsTogether(const Cue& cue) const{
+    const Group* g = cue.group.empty() ? NULL : FindGroup(cue.group);
+    if (!g || g->together < 2){
+        return false;
+    }
+    int with = 0;
+    for (const Playing& p : playing){
+        if (p.group == cue.group && (p.ends == UINT64_MAX || p.ends > now)){
+            if (p.started != now || p.priority != cue.priority){
+                return false;
+            }
+            with++;
+        }
+    }
+    return with > 0 && with < g->together;
+}
+
 void CueSystem::Fire(Waiting& w){
     const Cue* found = FindCue(w.cue);
     if (!found){
@@ -1105,7 +1127,10 @@ void CueSystem::Fire(Waiting& w){
     if (ch.last_fired > (int64_t)now){
         ch.last_fired = -1;
     }
-    if (cue.gap > 0 && ch.last_fired >= 0 && (int64_t)now - ch.last_fired < cue.gap){
+    //Joining lines begun on this very tick (the group's `together`): its own firing a moment ago is the same moment.
+    const bool f_with = JoinsTogether(cue);
+    if (cue.gap > 0 && ch.last_fired >= 0 && (int64_t)now - ch.last_fired < cue.gap &&
+        !(f_with && ch.last_fired == (int64_t)now)){
         Skip(cue.name,sound,"gap");
         return;
     }
@@ -1121,7 +1146,7 @@ void CueSystem::Fire(Waiting& w){
             return;
         }
     }
-    if (!cue.group.empty()){
+    if (!cue.group.empty() && !f_with){
         const Playing* speaking = NULL;
         if (GroupBusy(cue.group,now,&speaking)){
             if (cue.busy == BUSY_QUEUE){
@@ -1136,12 +1161,23 @@ void CueSystem::Fire(Waiting& w){
                 waiting.push_back(w);
                 return;
             }
-            //replace: the same priority is cut as well - a reply to a click is about the click just made.
-            bool f_cut = speaking && ((cue.busy == BUSY_INTERRUPT && cue.priority > speaking->priority) ||
-                                      (cue.busy == BUSY_REPLACE && cue.priority >= speaking->priority));
+            /*
+                replace: the same priority is cut as well - a reply to a click is about the click just made - but
+                only a line begun on an EARLIER tick: on the same one, the first asked is the answer. Every line the
+                group is speaking has to be one this may cut: more than one only when they began together, and
+                then they go together.
+            */
+            bool f_cut = speaking != NULL;
+            for (const Playing& p : playing){
+                if (p.group == cue.group && (p.ends == UINT64_MAX || p.ends > now)){
+                    f_cut = f_cut && ((cue.busy == BUSY_INTERRUPT && cue.priority > p.priority) ||
+                                      (cue.busy == BUSY_REPLACE && (cue.priority > p.priority ||
+                                                                    (cue.priority == p.priority && p.started < now))));
+                }
+            }
             if (f_cut){
                 for (Playing& p : playing){
-                    if (&p == speaking){
+                    if (p.group == cue.group && (p.ends == UINT64_MAX || p.ends > now)){
                         StopPlaying(p);
                         //Cut short, so its group's gap runs from now rather than from its end.
                         group_history[cue.group].last_end = (int64_t)now;

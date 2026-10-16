@@ -51,7 +51,7 @@
   "groups": {
     "notice": { "comment": "What the whole colony hears of, wherever the view is - the notice line's four, a birth, a death, a settlement: one chime at a time, and a second's quiet after it. Each waits its turn (busy queue) for up to three seconds rather than being lost.", "gap": 50 },
     "place":  { "comment": "What happens at a place, heard near the view: a tree down, a rock broken, a storey up, a building finished, a harvest. At 4x a woodcutter fells every few seconds, so one chime at a time and half a second between, and the rest pass unheard.", "gap": 25 },
-    "voice":  { "comment": "One person speaking at a time, and always about what the player did last: a new answer cuts the one being said (busy replace) - but a pick's (priority 0) never cuts an order's (priority 1)." }
+    "voice":  { "comment": "Always about what the player did last: a new answer cuts the one being said (busy replace) - but a pick's (priority 0) never cuts an order's (priority 1). A group picked or sent answers in TWO voices at once (together), a man and a woman where it has both, one either side.", "together": 2 }
   },
 
   "cues": {
@@ -216,80 +216,80 @@
     },
 
     "picked_leo": {
-      "comment": "THE PEOPLE'S VOICES (sound_plan.md, \"Voices\"): leo's takes for a man, leah's for a woman - `voice` 0 or 1 (ApplicationChasmSound.cpp, Say); a child says nothing yet. PICKED OUT - clicked, boxed (the box's first answers), Shift-added, or his name pressed in a list: a greeting, never the same twice running. Spoken to the player, so not quieter further off - only panned a little toward him. Every take is levelled to the same loudness when it is converted (tools/sound_ogg.py, speech/), so both voices take one gain. A double click is one answer (gap).",
+      "comment": "THE PEOPLE'S VOICES (sound_plan.md, \"Voices\"): leo's takes for a man, leah's for a woman - `voice` 0 or 1 (ApplicationChasmSound.cpp, Say); a child says nothing yet. PICKED OUT - clicked, boxed, Shift-added, or his name pressed in a list: a greeting, never the same twice running. Spoken to the player, so not quieter further off - only panned a little: one person toward where he stands (`side`, ApplicationChasmSound.cpp SOUND_VOICE_SIDE_REACH), a group's two one either side. Every take is levelled to the same loudness when it is converted (tools/sound_ogg.py, speech/), so both voices take one gain. A double click is one answer (gap).",
       "signal": "picked", "when": [["voice", "==", 0]], "sounds": ["leo_hi", "leo_whatsup", "leo_yes", "leo_whereto", "leo_morning"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "picked_leah": {
       "signal": "picked", "when": [["voice", "==", 1]], "sounds": ["leah_hi", "leah_whatsup", "leah_yes", "leah_whereto", "leah_morning"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "sent_leo": {
-      "comment": "SENT somewhere - a right click on the ground, or onto a tower as its guard. Answered when the rules TAKE the order (in its command), so a refused one is only `refused`; a group's nearest answers for it.",
+      "comment": "SENT somewhere - a right click on the ground, or onto a tower as its guard. Answered when the rules TAKE the order (in its command), so a refused one is only `refused`; a group's nearest answers for it, and one more beside him.",
       "signal": "sent", "when": [["voice", "==", 0]], "sounds": ["leo_headingover", "leo_onit", "leo_imonit"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "sent_leah": {
       "signal": "sent", "when": [["voice", "==", 1]], "sounds": ["leah_headingover", "leah_onit", "leah_imonit"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "gather_leo": {
       "comment": "His card's chips: GATHER his pack first (a scout's provisions), or TAKE A TENT and go and found a settlement - or SETTLE in another one without.",
       "signal": "gather", "when": [["voice", "==", 0]], "sounds": ["leo_grabsupplies"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "gather_leah": {
       "signal": "gather", "when": [["voice", "==", 1]], "sounds": ["leah_grabsupplies"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "take_tent_leo": {
       "signal": "take_tent", "when": [["voice", "==", 0]], "sounds": ["leo_packingup"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "take_tent_leah": {
       "signal": "take_tent", "when": [["voice", "==", 1]], "sounds": ["leah_packingup"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "settle_leo": {
       "signal": "settle", "when": [["voice", "==", 0]], "sounds": ["leo_packingup"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "settle_leah": {
       "signal": "settle", "when": [["voice", "==", 1]], "sounds": ["leah_packingup"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "released_leo": {
       "comment": "ANY OTHER ORDER is an okay for now (the user's, 2026-10-16), until it has a line of its own - which is a row's sounds and no code, each order being its own signal: released back to his work (a post's or a tower's Release), a chip turned off (straight_on), his tent pitched where he stands, sent to pick fruit or draw water (forage; `what` 1 fruit, 2 water).",
       "signal": "released", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "released_leah": {
       "signal": "released", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "straight_on_leo": {
       "signal": "straight_on", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "straight_on_leah": {
       "signal": "straight_on", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "pitch_leo": {
       "signal": "pitch", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "pitch_leah": {
       "signal": "pitch", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "forage_leo": {
       "signal": "forage", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "forage_leah": {
       "signal": "forage", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
-      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     }
   }
 }

@@ -54,7 +54,7 @@
 - [Input recording](input_recording.md) — F9/F10 + input_record/input_replay, recordings/*.rec text, trim by editing begin/end
 - [Sign text anchors](sign_text_anchors.md) — text on props via parented Cube empties text_<n>; apps/archer/Sign.h
 - [Plant mechanics plan](plant_mechanics_plan.md) — AGREED: arm platforms, bounce pad, bending leaf, branch balance, arrow pegs; apps/archer/docs
-- [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — restore with ShowWindow(h,4) to check UI
+- [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — restore with ShowWindow(h,4) to check UI; posted clicks can't drive ImGui
 - [Wind system plan](wind_system_plan.md) — archer stream-function wind built with sway/leaves/streaks/fireflies; clouds left
 - [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change don't build/run other apps; the user does
 - [Adaptive music plan](adaptive_music_plan.md) — apps/music is the designer (port 8767); player in core/Music*; games copy via `make publish`; archer and (2026-10-16) chasm play it - chasm: 3 players, clouds/chasm layers by the view
@@ -118,4 +118,5 @@
 - [Chasm demo menus](chasm_demo_menus.md) — demo_plan all 7 steps built 2026-10-16 (menus, saves, recording, Settings, discoveries, goals + end page); pop-ups play mode only; four starts edited by the user
 - [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — chasm_load in a test instance overwrites the user's untracked autosave slots; back them up first
 - [Chasm areas plan](chasm_areas_plan.md) — BUILT 2026-10-16: rivers/falls/biomes/plateau/forest found when first seen (EVENT_DISCOVERED), debug overlay, water loops faint under the clouds
-- [Linux port](linux_port_investigation.md) — step 1 DONE 2026-10-16 (compiles+bakes, link stops at 29 window-backend symbols); step 2 Wayland/X11 decision pending; no SDL/GLFW wanted; docs/linux_port_plan.md
+- [Linux port](linux_port_investigation.md) — chasm RUNS on Linux via X11 (2026-10-17), one-file ship binary; gamepads/MCP/ImGui open; no SDL/GLFW wanted; docs/linux_port_plan.md
+- [Chasm birds plan](chasm_birds_plan.md) — steps 0-2 BUILT 2026-10-17: shape-keyed `bird`, Birds.{h,cpp} + chasm_birds tool; colony flocks follow the axe (my call); sound/clouds/title next

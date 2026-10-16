@@ -583,6 +583,16 @@ class InputController{
     void SetRawInputActive(bool active);
     bool IsRawInputActive(){ return f_raw_input_active; }
 
+    /*
+        The cursor and the window's place on the screen, REPORTED by a window backend that is told
+        them in events rather than asking - X11's (core/Window_x11.cpp). Win32 asks instead, with
+        GetCursorPos in PollDevices and WM_MOVE in HandleMessage, so it never calls these. Screen
+        coordinates, as GetCursorPos gives them, so GetRelativeMousePosition means the same thing on
+        both. Any thread; PollDevices picks the cursor up on the next tick, as Win32's does.
+    */
+    void ReportPointerPosition(int2 screen_position);
+    void ReportWindowPosition(int2 client_origin);
+
     //False while another application is in the foreground. Input is not sampled then, so the
     //simulation doesn't respond to keys pressed in whatever the user alt-tabbed to. Maintained
     //from WM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUS in HandleMessage. Note ImGui does NOT come through
@@ -635,6 +645,15 @@ class InputController{
         which has no activation messages to correct it.
     */
     void SyncFocusWithWindow(HWND hWnd);
+#elif defined(__linux__) && !defined(__ANDROID__)
+    /*
+        The X11 counterpart of HandleMessage: Window_x11.cpp's pump hands it every event, and it
+        turns keys, buttons, the wheel, motion, crossing and focus into the same submits Win32's
+        raw input makes. An XEvent*, passed as void* so this header does not take in Xlib - whose
+        window type is called Window, and whose macros include None and Bool. In
+        InputController_linux.cpp.
+    */
+    void HandleXEvent(const void* xevent);
 #elif defined(__ANDROID__)
     //--- Android acquisition -----------------------------------------------------------------
     //The Android counterpart of HandleMessage/PollDevices: sensors and the touch panel are this
@@ -908,14 +927,15 @@ protected:
     //old "atomicise the odd field and hope" approach, and the `hovered_normal` TODO with it.
     std::mutex state_mutex;
     void SetMouseOverWindow(bool over); //window thread; takes state_mutex
-#if defined(__ANDROID__)
+#if !defined(_WIN32)
 public:
     //On Windows this is driven from inside HandleMessage, off WM_ACTIVATE. Android has no
     //message pump here: focus arrives as APP_CMD_GAINED_FOCUS/APP_CMD_LOST_FOCUS in
-    //Application, so the setter has to be reachable from outside the class.
+    //Application, so the setter has to be reachable from outside the class. X11 shows a
+    //--minimized window unfocused from Window_x11.cpp, for the same reason.
 #endif
     void SetFocused(bool focused);      //window thread; raises f_release_all_keys on focus loss
-#if defined(__ANDROID__)
+#if !defined(_WIN32)
 protected:
 #endif
     void PollGamepad();                 //physics thread, from PollDevices
@@ -1022,6 +1042,12 @@ protected:
     std::atomic<bool> f_release_all_keys{false};
 
     int2 mouse_position;    //physics thread only, from the polled cursor position
+    //ReportPointerPosition's, x in the high half and y in the low, so the pair is never read torn.
+    std::atomic<int64_t> reported_pointer{0};
+    std::atomic<bool> f_pointer_reported{false};
+    //HandleXEvent's previous cursor position, which its motion deltas are taken from. Window thread.
+    int2 last_pointer;
+    bool f_last_pointer_valid = false;
 
     std::atomic<objectid_t>hovered_object = {OBJECTID_INVALID};
 

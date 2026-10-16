@@ -35,6 +35,21 @@ retry goes through.
 The lockd tools themselves are passed straight through: the broker hears those directly and
 their replies carry `lost` on their own.
 
+It is ALSO the Stop hook (since 2026-10-17), registered under that event with the same
+command. When the main agent ends its turn - to wait for a subagent, a background command,
+another window or the person - it sends lock_turn_end, which releases the session's file
+leases and keeps #build, #port:* and anything claimed keep_while_waiting. Before this, an
+agent that finished a small change and then waited on a subagent held that file for the
+whole wait: a subagent's tool calls carry its parent's session_id, so every one of them
+heartbeat the parent's leases. Stop prints nothing - output from a Stop hook makes the agent
+carry on with its turn, which is the opposite of the point.
+
+The news reaches the agent on the first tool call of its next turn instead: heartbeat and
+write claims ask for it with turn_note, and the hook hands it over as additionalContext, which
+informs without blocking. Only the main agent asks - a subagent's calls carry `agent_id` and
+would otherwise take the note meant for its parent, since they share its owner id. If the
+same reply also carries `lost`, the call is refused as before and the note rides along.
+
 IT FAILS OPEN. If lockd is not running, or is slow, or answers something unexpected, the
 call proceeds. A deconfliction tool that stops all work the moment it dies is worse than
 the clashes it prevents, and "did I remember to start lockd" is not a question anyone
@@ -81,6 +96,14 @@ def allow():
 def refuse(lines):
     sys.stderr.write("\n".join(lines) + "\n")
     sys.exit(2)
+
+
+def allow_with_context(lines):
+    # No permissionDecision: "allow" there would also skip the user's permission prompt,
+    # and all this wants is to say something on the way past.
+    json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                      "additionalContext": "\n".join(lines)}}, sys.stdout)
+    sys.exit(0)
 
 
 def inside_repo(path):
@@ -133,6 +156,29 @@ def lost_lines(payload):
     return lines
 
 
+def turn_note_lines(payload):
+    turn = payload.get("turn_end")
+    if not turn:
+        return []
+
+    def paths(entries):
+        return ", ".join(entry.get("path", "?") for entry in entries)
+
+    ago_min = int(turn.get("ago_s", 0)) // 60
+    when = "%d min ago" % ago_min if ago_min else "just now"
+    lines = []
+    if turn.get("released"):
+        lines.append("lockd: your file claims were released when your last turn ended (%s), so "
+                     "other agents could take them while you waited: %s. You no longer hold "
+                     "them. If you carry on with that work, lock_claim them again first - the "
+                     "hook re-claims a file when you write it, and refuses the write if someone "
+                     "else has it now." % (when, paths(turn["released"])))
+    if turn.get("still_held"):
+        lines.append("lockd: still held from before that turn ended: %s. Release with "
+                     "lock_release if you are done with them." % paths(turn["still_held"]))
+    return lines
+
+
 def refuse_for_lost(payload, what_was_held):
     lines = ["lockd: you have LOST leases you were relying on. %s" % what_was_held]
     lines += lost_lines(payload)
@@ -141,16 +187,17 @@ def refuse_for_lost(payload, what_was_held):
                  "re-read any file before editing it, since someone else may have changed it. "
                  "If something of yours is still running on a lost #build or #port, it is now "
                  "racing whoever took it. This notice is shown once; retrying goes through.")
-    refuse(lines)
+    refuse(lines + turn_note_lines(payload))
 
 
-def claim_for_write(owner, path):
+def claim_for_write(owner, path, f_main):
     payload = call_tool("lock_claim", {
         "owner": owner,
         "paths": [path],
         "reason": "auto-claimed by PreToolUse hook",
         "ttl_seconds": CLAIM_TTL_S,
         "auto": True,
+        "turn_note": f_main,
     })
     if payload is None:
         allow()
@@ -158,6 +205,9 @@ def claim_for_write(owner, path):
     if payload.get("granted"):
         if payload.get("lost"):
             refuse_for_lost(payload, "The edit was NOT applied, so that you see this first.")
+        note = turn_note_lines(payload)
+        if note:
+            allow_with_context(note)
         allow()
 
     lines = ["lockd: another agent is editing this file. The edit was NOT applied."]
@@ -175,32 +225,52 @@ def claim_for_write(owner, path):
     if payload.get("lost"):
         lines.append("Also - you have LOST leases you were relying on:")
         lines += lost_lines(payload)
-    refuse(lines)
+    refuse(lines + turn_note_lines(payload))
 
 
-def heartbeat(owner):
-    payload = call_tool("lock_heartbeat", {"owner": owner})
-    if payload is None or not payload.get("lost"):
+def heartbeat(owner, f_main):
+    payload = call_tool("lock_heartbeat", {"owner": owner, "turn_note": f_main})
+    if payload is None:
         allow()
-    refuse_for_lost(payload, "This tool call was NOT run, so that you see this first.")
+    if payload.get("lost"):
+        refuse_for_lost(payload, "This tool call was NOT run, so that you see this first.")
+    note = turn_note_lines(payload)
+    if note:
+        allow_with_context(note)
+    allow()
+
+
+def end_turn(owner):
+    # Whatever the broker answers, the stop goes ahead and nothing is printed - see the
+    # note at the top on why a Stop hook must stay silent.
+    call_tool("lock_turn_end", {"owner": owner})
+    allow()
 
 
 def main():
     raw = sys.stdin.read()
     event = json.loads(raw)
 
-    tool = event.get("tool_name") or ""
     owner = event.get("session_id")
-    if not owner or tool.startswith(LOCKD_TOOL_PREFIX):
+    if not owner:
         allow()
+    if event.get("hook_event_name") == "Stop":
+        end_turn(owner)
+
+    tool = event.get("tool_name") or ""
+    if tool.startswith(LOCKD_TOOL_PREFIX):
+        allow()
+    # Present on a subagent's calls only - measured 2026-10-17, along with session_id being
+    # the parent's on both.
+    f_main = not event.get("agent_id")
 
     if tool in WRITING_TOOLS:
         tool_input = event.get("tool_input") or {}
         path = tool_input.get("file_path") or tool_input.get("notebook_path")
         if path and inside_repo(path):
-            claim_for_write(owner, path)
+            claim_for_write(owner, path, f_main)
 
-    heartbeat(owner)
+    heartbeat(owner, f_main)
 
 
 if __name__ == "__main__":

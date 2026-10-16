@@ -134,9 +134,9 @@ static std::string ReadReason(const json &args) {
     return reason.is_string() ? reason.get<std::string>() : std::string();
 }
 
-static bool ReadAuto(const json &args) {
-    const json &f_auto = args.contains("auto") ? args["auto"] : json();
-    return f_auto.is_boolean() && f_auto.get<bool>();
+static bool ReadFlag(const json &args, const char *field) {
+    const json &flag = args.contains(field) ? args[field] : json();
+    return flag.is_boolean() && flag.get<bool>();
 }
 
 // Every reply to a call carrying an owner says what that owner has lost since it last heard,
@@ -167,6 +167,38 @@ static void AttachLost(json *reply, const std::string &owner) {
                             "building, running or editing on their strength, and re-read any "
                             "file first - someone else may have changed it in between.";
     debug->Warn("TOLD %s it lost %d lease(s)\n", owner.c_str(), (int)lost.size());
+}
+
+static json TurnEndLeasesToJson(const std::vector<Lease> &leases) {
+    json out = json::array();
+    for (const Lease &lease : leases) {
+        json entry = { { "path", lease.key } };
+        if (!lease.reason.empty()) {
+            entry["reason"] = lease.reason;
+        }
+        out.push_back(entry);
+    }
+    return out;
+}
+
+// What the owner's last turn end did, for the first call of its next turn. Only when the
+// call asks with 'turn_note', which the hook sets for the main agent alone: a subagent still
+// working after its parent's turn ended shares the parent's owner id, and would otherwise
+// take the note meant for the parent. Lock calls an agent makes itself do not ask either,
+// so the note always arrives through the hook as context rather than in a tool reply.
+static void AttachTurnEnd(json *reply, const json &args, const std::string &owner) {
+    if (!ReadFlag(args, "turn_note")) {
+        return;
+    }
+    TurnEnd turn;
+    if (!g_table->TakeTurnEnd(owner, &turn)) {
+        return;
+    }
+    (*reply)["turn_end"] = {
+        { "ago_s", (LockTable::NowMs() - turn.ended_ms) / 1000 },
+        { "released", TurnEndLeasesToJson(turn.released) },
+        { "still_held", TurnEndLeasesToJson(turn.kept) }
+    };
 }
 
 static json ConflictsToJson(const std::vector<Conflict> &conflicts) {
@@ -207,6 +239,9 @@ static json LeasesToJson(const std::vector<Lease> &leases) {
         if (lease.f_auto) {
             entry["auto"] = true;
         }
+        if (lease.f_keep_while_waiting) {
+            entry["keep_while_waiting"] = true;
+        }
         out.push_back(entry);
     }
     return out;
@@ -235,8 +270,8 @@ static json ToolClaim(const json &args) {
 
     std::vector<std::string> granted;
     std::vector<Conflict> conflicts;
-    bool ok = g_table->Claim(owner, keys, ReadReason(args), ReadTTL(args), ReadAuto(args),
-                             &granted, &conflicts);
+    bool ok = g_table->Claim(owner, keys, ReadReason(args), ReadTTL(args), ReadFlag(args, "auto"),
+                             ReadFlag(args, "keep_while_waiting"), &granted, &conflicts);
 
     if (!ok) {
         debug->Info("DENIED %s wanted %d path(s), %d conflict(s)\n", owner.c_str(),
@@ -248,6 +283,7 @@ static json ToolClaim(const json &args) {
                       "else and retry, or use lock_wait for a short bounded wait." }
         };
         AttachLost(&reply, owner);
+        AttachTurnEnd(&reply, args, owner);
         return reply;
     }
 
@@ -270,6 +306,7 @@ static json ToolClaim(const json &args) {
                   "make a read you did earlier current." }
     };
     AttachLost(&reply, owner);
+    AttachTurnEnd(&reply, args, owner);
     return reply;
 }
 
@@ -317,7 +354,26 @@ static json ToolHeartbeat(const json &args) {
     }
     json reply = { { "held", g_table->Heartbeat(owner) } };
     AttachLost(&reply, owner);
+    AttachTurnEnd(&reply, args, owner);
     return reply;
+}
+
+// Deliberately does NOT AttachLost: the Stop hook that sends this has no way to show the
+// agent anything, so taking the news here would be the one sure way of it never arriving.
+static json ToolTurnEnd(const json &args) {
+    std::string owner;
+    json error;
+    if (!ReadOwner(args, &owner, &error)) {
+        return error;
+    }
+    std::vector<std::string> released;
+    std::vector<std::string> kept;
+    g_table->EndTurn(owner, &released, &kept);
+    if (!released.empty() || !kept.empty()) {
+        debug->Info("TURN END %s -> released %d, kept %d\n", owner.c_str(), (int)released.size(),
+                    (int)kept.size());
+    }
+    return json{ { "released", released }, { "kept", kept } };
 }
 
 static json ToolBreak(const json &args) {
@@ -367,7 +423,8 @@ static json ToolWait(const json &args) {
     for (;;) {
         std::vector<std::string> granted;
         conflicts.clear();
-        if (g_table->Claim(owner, keys, reason, ttl, false, &granted, &conflicts)) {
+        if (g_table->Claim(owner, keys, reason, ttl, false, ReadFlag(args, "keep_while_waiting"),
+                           &granted, &conflicts)) {
             debug->Info("GRANTED (after wait) %s <- %d path(s)\n", owner.c_str(), (int)granted.size());
             json reply = {
                 { "granted", true },
@@ -420,6 +477,19 @@ static void RegisterTools() {
                          "long after you go quiet - it only has to outlast your longest "
                          "single command." }
     };
+    json keep_schema = {
+        { "type", "boolean" },
+        { "description", "Keep these FILE claims when you end your turn. Without it, the Stop "
+                         "hook releases your file claims whenever you stop to wait - for a "
+                         "subagent, a background command or the user - so others can take "
+                         "them meanwhile. Set it only when a background command you leave "
+                         "running writes these files itself (an export, a bake). #build and "
+                         "#port:* are always kept and need no flag." }
+    };
+    json turn_note_schema = {
+        { "type", "boolean" },
+        { "description", "Set by the PreToolUse hook, for the main agent only. Leave it out." }
+    };
 
     MCPServer::Get()->RegisterTool(
         "lock_claim",
@@ -430,7 +500,9 @@ static void RegisterTools() {
         "deadlocking on each other. On refusal, go do other work and retry; do not edit "
         "anyway. Re-read files after a claim is granted: the lock reserves the right to "
         "edit, it does not refresh a read you did before you had it. Release with "
-        "lock_release when you are done - do not sit on locks across a whole session.",
+        "lock_release when you are done - do not sit on locks across a whole session. File "
+        "claims are released for you when you end your turn (see keep_while_waiting), so "
+        "re-claim them if you come back to the same work.",
         json{
             { "type", "object" },
             { "properties", {
@@ -440,9 +512,11 @@ static void RegisterTools() {
                               { "description", "One line on what you are doing, shown to "
                                                "whoever is refused because of you." } } },
                 { "ttl_seconds", ttl_schema },
+                { "keep_while_waiting", keep_schema },
                 { "auto", { { "type", "boolean" },
                             { "description", "Set by the PreToolUse hook for its implicit "
-                                             "claim on a write. Leave it out." } } }
+                                             "claim on a write. Leave it out." } } },
+                { "turn_note", turn_note_schema }
             } },
             { "required", json::array({ "owner", "paths" }) }
         },
@@ -489,10 +563,23 @@ static void RegisterTools() {
         "yourself.",
         json{
             { "type", "object" },
-            { "properties", { { "owner", owner_schema } } },
+            { "properties", { { "owner", owner_schema }, { "turn_note", turn_note_schema } } },
             { "required", json::array({ "owner" }) }
         },
         ToolHeartbeat);
+
+    MCPServer::Get()->RegisterTool(
+        "lock_turn_end",
+        "Say you have stopped to wait: releases your file claims, auto and explicit, and keeps "
+        "#build, #port:* and anything claimed with keep_while_waiting. The Stop hook sends this "
+        "whenever you end a turn, and the first tool call of your next turn tells you what it "
+        "released; there is no need to call it yourself.",
+        json{
+            { "type", "object" },
+            { "properties", { { "owner", owner_schema } } },
+            { "required", json::array({ "owner" }) }
+        },
+        ToolTurnEnd);
 
     MCPServer::Get()->RegisterTool(
         "lock_wait",
@@ -507,6 +594,7 @@ static void RegisterTools() {
                 { "paths", paths_schema },
                 { "reason", { { "type", "string" } } },
                 { "ttl_seconds", ttl_schema },
+                { "keep_while_waiting", keep_schema },
                 { "timeout_seconds", { { "type", "integer" },
                                        { "description", "1..30, default 20." } } }
             } },

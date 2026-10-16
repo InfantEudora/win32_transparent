@@ -59,6 +59,8 @@ APP_SRCS += Economy.cpp
 APP_SRCS += ApplicationChasmEconomy.cpp
 APP_SRCS += ApplicationChasmWorkersView.cpp
 APP_SRCS += ApplicationChasmCrowdBench.cpp
+APP_SRCS += Birds.cpp
+APP_SRCS += ApplicationChasmBirds.cpp
 APP_SRCS += ApplicationChasmPiles.cpp
 APP_SRCS += ApplicationChasmCrates.cpp
 APP_SRCS += ApplicationChasmMines.cpp
@@ -89,12 +91,30 @@ ASSET_ROOTS := assets $(ROOT)/shared_assets
 
 ASSET_PACK_FLAGS += --exclude "fonts/CascadiaMono.ttf"
 ASSET_PACK_FLAGS += --exclude "fonts/mono_sdf.png"
-#The shared sounds this app does not play. Not sound/click.wav: an exclude matches the NAME, and chasm's own
-#click (assets/sound/click.wav, which stands in front of the shared one) would go with it.
+#The shared sounds this app does not play - click.wav among them since chasm's own click became click.ogg
+#(tools/sound_ogg.py): the shared wav no longer stands behind one of its own name, and the cue table plays the ogg.
 ASSET_PACK_FLAGS += --exclude "sound/bleep.wav"
+ASSET_PACK_FLAGS += --exclude "sound/click.wav"
 ASSET_PACK_FLAGS += --exclude "sound/floop.wav"
 ASSET_PACK_FLAGS += --exclude "sound/hax.wav"
 ASSET_PACK_FLAGS += --exclude "meshes/glyphs_unispace.glb"
+#Shared shaders nothing here loads: no skybox is drawn (a flat haze, BuildScene); the field shadows come only from
+#Renderer::EnableFieldShadows, which chasm never calls; texture.comp and noise3d.comp no code in core or here names.
+#Take a line out before using any of them, or a ship build fails to load it.
+ASSET_PACK_FLAGS += --exclude "shaders/skybox.frag"
+ASSET_PACK_FLAGS += --exclude "shaders/skybox.vert"
+ASSET_PACK_FLAGS += --exclude "shaders/field.frag"
+ASSET_PACK_FLAGS += --exclude "shaders/field.vert"
+ASSET_PACK_FLAGS += --exclude "shaders/field_jfa.comp"
+ASSET_PACK_FLAGS += --exclude "shaders/texture.comp"
+ASSET_PACK_FLAGS += --exclude "shaders/noise3d.comp"
+#IMGUI'S FONT, in a build without ImGui only (apps/tetris/makefile has the long version): core/WindowImGui.cpp is the
+#one thing that loads it, and a baked build WITH ImGui dies at startup without it. USE_IMGUI gets its default from
+#engine.mk, included below, so mirror that default before testing it; a command-line USE_IMGUI=0 still wins.
+USE_IMGUI ?= 1
+ifneq ($(USE_IMGUI),1)
+ASSET_PACK_FLAGS += --exclude "fonts/consola.ttf"
+endif
 
 
 include $(ROOT)/engine.mk

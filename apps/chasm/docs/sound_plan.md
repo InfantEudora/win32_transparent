@@ -184,7 +184,9 @@ Each frame, the view counts what is going on near the camera:
 - **Hearths** crackle in winter: houses burning firewood near the camera, counted like people.
 - **Nature is the music's.** Birds, crickets, frogs and the seasons' winds are already in the score's
   season sections, and the rift wind is in its `chasm` section. The cue table does not play them a
-  second time.
+  second time. **The exception is birds you can see** (`birds_plan.md`, the user's 2026-10-17): their
+  calls and wing bursts are placed and timed by what the flock does, so they are cue-table events,
+  alongside the score's songbird beds.
 - **The music's camera share is the same kind of count.** The `clouds` and `chasm` players are faded
   in by how much of the view is unexplored ground and chasm. That share is worked out in the same pass
   over the view, when the music goes in.
@@ -420,7 +422,9 @@ of "The beds" above. Built:
 
 - **`USE_SOUND := 1`**, and `ApplicationChasmSound.cpp`. The makefile no longer excludes
   `sound/click.wav` from a baked build: an exclude matches the asset's name, and chasm's own click
-  stands in front of the shared one under that name.
+  stands in front of the shared one under that name. *Since the sounds became .ogg chasm's click is
+  `click.ogg`, the shared wav stood behind nothing and was packed for nothing, so it is excluded again
+  (2026-10-17, `demo_plan.md`, "As built: the ship's pack").*
 - **The table**, `assets/cues/chasm.json`, reloaded within a second of being saved (an mtime poll, as
   archer's). Buses `effects` > `world`, `activity`, `ui`; a `notice` group. Since the Settings screen
   (`demo_plan.md`, 2026-10-16) the table plays under a layer bus of its own, `sounds`
@@ -518,18 +522,24 @@ made, kept as it is. Several lines for being picked out and for being sent, for 
   it. Each order is its own signal, as the events are: `sent` (to a plot, or onto a tower), `released`,
   `gather`, `take_tent`, `straight_on` (a chip turned off), `settle`, `pitch`, `forage` (`what`
   FORAGE_*). A line of its own for picking fruit is then a row's `sounds`, no code.
-- **One answer a pass** (`Say`, behind its own lock, since MCP's picks come from another thread): an
-  order's over a pick's, and of a rank the first asked - a group's orders go out nearest first, so the
-  nearest answers for the four, once.
-- **One person speaking**: the `voice` group with **`busy: replace`**, new in core - like `interrupt` but
-  cutting a line of the same priority too, so the answer heard is always to the last click. Orders have
-  priority 1, so a pick never cuts an order's answer; an order cuts a pick's. Two checks in
-  `tools/cue_test.cpp`.
+- **Who of a group** (`Say`, behind its own lock, since MCP's picks come from another thread): those asked
+  on a pass, an order's answer over a pick's, in the order asked - a group's orders go out nearest first.
+  One asked, one answers. MORE, and **two answer at once** (the user's, 2026-10-17): the first asked and
+  the first after him in the other voice if the group has one - a man and a woman are two people, two
+  men the same man twice - else the second. Each has a `side`: a pair's are -1 and 1, the one standing
+  more to the left on the left; one alone has his place across the view, -1 to 1 over
+  `SOUND_VOICE_SIDE_REACH` either side of its middle. Every row pans by `side`, to at most 0.3.
+- **One answer at a time**: the `voice` group with **`busy: replace`**, new in core - like `interrupt` but
+  cutting a line of the same priority too if it began on an earlier tick, so the answer heard is always
+  to the last click. Orders have priority 1, so a pick never cuts an order's answer; an order cuts a
+  pick's. The pair is the group's **`together: 2`**, also new in core: lines of one priority begun on one
+  tick speak at once, past the busy rule and a row's own gap (two men are one row twice), and the next
+  answer cuts both. Checks in `tools/cue_test.cpp` for each.
 - **The table's rows** (`picked_leo`, `sent_leah`, ...), a pair per signal: picked -> hi, whatsup, yes,
   whereto, morning; sent -> headingover, onit, imonit; gather -> grabsupplies; take_tent and settle ->
   packingup; the rest -> okay. On a `voice` bus under `effects`, never held; not quieter further off
-  (spoken to the player), panned at most 0.3 toward him. Every row's gain is 0.8, the takes being
-  levelled (below). A gap of 8 passes makes a double click one answer.
+  (spoken to the player). Every row's gain is 0.8, the takes being levelled (below). A gap of 8 passes
+  makes a double click one answer.
 - **Trimmed**: `tools/sound_ogg.py` now walks subfolders, keeps them under `art_source/`, and cuts the
   silence off both ends of anything under `sound/speech/` (40 ms kept before the first sound, 80 ms
   after the last, faded). The takes started 0.16-0.62 s in, which read as lag after a click. 22 files:
@@ -550,3 +560,8 @@ a pause answered in it; a pick right after an order skipped. Not heard: forage, 
 the same path, their rows loaded.
 
 `morning` is said at any hour, the user's call: Chasm has no time of day to see.
+
+The pair, checked the next day in a muted instance: a group of two men and two women picked - a leo and a
+leah line together at -0.3 and +0.3; three men - two different leo lines; a pick of one cut both of a pair,
+and a pair cut one; the four sent by a right click - one each, either side; one sent - one line, near the
+middle where he stood.

@@ -1,11 +1,11 @@
 ---
 name: minimized-screenshot-no-ui
-description: "an app started --minimized returns screenshots WITHOUT ImGui panels even with include_ui true; restore with ShowWindow(h,4) to check UI work without stealing focus"
+description: "an app started --minimized returns screenshots WITHOUT ImGui panels even with include_ui true; restore with ShowWindow(h,4) to check UI work without stealing focus; posted mouse messages cannot drive ImGui"
 metadata:
   node_type: memory
   type: reference
   originSessionId: ab5494ad-10d2-4e73-8d9e-f67e1b05b3cd
-  modified: 2026-10-16T20:33:36.479Z
+  modified: 2026-10-16T22:12:28.610Z
 ---
 
 `screenshot` with `include_ui: true` on an app started `--minimized` comes back with the 3D scene
@@ -24,3 +24,11 @@ chasm card/NEEDS ATTENTION check needs `include_ui: true` (seen 2026-10-16).
 
 Hotkeys gated on HasFocus (F9/F10, the U hide-UI toggle) cannot be tested this way at all - the
 person has to press them. Related: [[archer-app]].
+
+ImGui cannot be DRIVEN reliably either (checked 2026-10-17 on chasm). Mouse messages posted to the
+window (PostMessage WM_MOUSEMOVE, button, wheel) reached ImGui once - probably only because the
+person's real cursor was over the window - and never again in two later instances, with or
+without sleeps between the move and the action. The likely cause: ImGui's TrackMouseEvent gets an
+immediate WM_MOUSELEAVE when the real cursor is elsewhere. So a header that is closed by default,
+or content scrolled out of view, cannot be checked on screen: read what the panel shows through the
+app's MCP tool instead, and say in the report which lines were not seen.

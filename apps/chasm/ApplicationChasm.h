@@ -21,6 +21,7 @@
 #include "Economy.h"
 #include "Exploration.h"
 #include "Seasons.h"
+#include "Birds.h"
 #include "UIMenu.h"
 #include "SceneCapture.h"
 #include "Settings.h"
@@ -904,6 +905,69 @@ private:
     void BuildCrowdBench();                         //from LoadProps
     void UploadCrowdBench();                        //from PreRender
     void RegisterCrowdBenchTool();                  //from RegisterMCPTools
+    /*
+        BIRDS (ApplicationChasmBirds.cpp, Birds.h, docs/birds_plan.md): flocks over the forests that fly up when someone
+        comes near - VIEW, never state. Render thread, but for the tool's requests and its status (birds_mutex).
+    */
+    #define CHASM_BIRD_ASSET "bird"
+    Mesh* bird_mesh = NULL;                         //chasm_props.glb's bird and its shape keys; NULL - no birds drawn
+    std::vector<Object*> bird_objects;              //one per bird, all on bird_mesh: one instanced draw a pass
+    Object* bird_bench = NULL;                      //the tool's `bench`: one bird to look at, in place
+    BirdSky birds;
+    std::shared_ptr<const ChasmWorld> birds_world;  //what the flocks and the tree cells were made for
+    //The trees in cells, to find a roost near a point without walking the whole forest.
+    float bird_cell_x0 = 0.0f, bird_cell_z0 = 0.0f;
+    int bird_cell_cols = 0, bird_cell_rows = 0;
+    std::vector<std::vector<int>> bird_cells;
+    //Per forest set (a kind, then the looks): its perch points in the mesh's own space, and its top.
+    std::vector<std::vector<vec3>> bird_perch_local;
+    std::vector<float> bird_set_top;
+    float bird_tree_top = 6.0f;                     //the tallest tree standing on the map
+    std::chrono::steady_clock::time_point birds_last;
+    bool f_birds_clock = false;
+    bool f_birds_homed = false;                     //the flocks made for this world (HomeBirds)
+    float birds_homing_wait = 0.0f;                 //...real seconds waited for its economy
+    vec2 birds_colony;                              //the colony's middle they were homed round, (0,0) none
+    //Who walks: where each person stood at the economy's last tick, and the scares of those who moved since.
+    std::map<uint32_t,vec2> bird_walkers;
+    uint64_t bird_walkers_tick = 0;
+    std::vector<BirdScare> bird_moving;
+    std::vector<vec2> bird_lures;                  //where woodcutters have been felling lately (BirdWorld::lures)...
+    std::vector<std::pair<vec2,float>> bird_lure_ages;  //...and game seconds since an axe was last at each
+    uint32_t bird_events_seen = 0;
+    //One-off scares - a tree coming down - held a moment, so a step is sure to see them.
+    struct BirdRecent{
+        BirdScare scare;
+        float left;
+    };
+    std::vector<BirdRecent> bird_recent;
+    int bird_status_frames = 0;
+    float birds_step_us = 0.0f;                     //what a frame's step costs, eased (the tool's status)
+    //The tool's: requests for the render thread, and what it last saw.
+    #define BIRD_REQUEST_SPAWN  0
+    #define BIRD_REQUEST_FLUSH  1
+    #define BIRD_REQUEST_CLEAR  2
+    #define BIRD_REQUEST_RESET  3
+    struct BirdRequest{
+        int op = BIRD_REQUEST_SPAWN;
+        vec2 at;
+        float reach = 0.0f;
+        int count = 0;
+        bool f_colony = false;
+    };
+    std::mutex birds_mutex;
+    std::vector<BirdRequest> bird_requests;
+    json birds_status;
+    int bird_bench_key = -1;                        //-1 none; BIRD_KEY_*, 3 glide, 4 flapping
+    vec3 bird_bench_at;
+    std::atomic<bool> f_view_birds{true};
+    void BuildBirdScene();                          //from LoadProps
+    void UploadBirds();                             //from PreRender
+    void RegisterBirdTools();                       //from RegisterMCPTools
+    void BuildBirdTrees(const ChasmWorld& w);       //a new world: the trees in cells, the perches
+    void HomeBirds(const ChasmWorld& w, const EconomyState* e);    //...and once its economy is out, the flocks
+    BirdWorld MakeBirdWorld(const ChasmWorld& w, const ZoneState* z, const EconomyState* e);
+    void BirdScares(const ChasmWorld& w, const EconomyState* e, float dt, std::vector<BirdScare>& out);
     //The woodcutters' log piles outside their huts (ApplicationChasmPiles.cpp). Render thread.
     Object* pile_set = NULL;
     std::shared_ptr<const ChasmWorld> pile_built_world;
@@ -1553,9 +1617,9 @@ private:
     /*
         THE PEOPLE'S VOICES (sound_plan.md, "Voices"): a grown-up answers when the player picks him out, and when he
         takes an order - in the order's command, by the rules, so a refused one is the refusal's sound and never an
-        "on it". Said on the next pass, one answer a pass: an order's over a pick's, and of a rank the first asked - a
-        group's orders go out nearest first, so the nearest answers. Asked from the physics thread's clicks and
-        commands and from MCP's picks, hence a lock of its own.
+        "on it". Said on the next pass, by those asked on this one: an order's answer over a pick's, and of a rank the
+        first asked - a group's orders go out nearest first. A GROUP answers in two voices, one either side (the
+        user's, 2026-10-17). Asked from the physics thread's clicks and commands and from MCP's picks, hence a lock.
     */
 #define CHASM_SAY_PICKED    0
 #define CHASM_SAY_ORDER     1
@@ -1566,9 +1630,9 @@ private:
         int what = 0;                           //a forage's FORAGE_*, as `what`
     };
     std::mutex say_mutex;
-    Said say_next;
+    std::vector<Said> say_next;                 //asked this pass, all of one rank, in the order asked
     void Say(uint32_t person, const char* signal, int rank, int what = 0);     //any thread
-    void SayPicked(const std::vector<uint32_t>& ids);         //the first of a pick answers
+    void SayPicked(const std::vector<uint32_t>& ids);         //a group's two answer
     void SignalVoice();
     /*
         THE MUSIC (ApplicationChasmMusic.cpp; areas_plan.md, "The music"): the score apps/music designs and publishes

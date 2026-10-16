@@ -1363,6 +1363,7 @@ void ApplicationChasm::LoadProps(){
         names.push_back(mine);      //the mine's props (stone_plan.md step 5)
     }
     names.push_back(CHASM_ZOMBIE_ASSET);
+    names.push_back(CHASM_BIRD_ASSET);       //birds_plan.md: its shape keys come with it
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
     GetAssetsFromGLTF(names);
     int loaded = 0;
@@ -1426,6 +1427,7 @@ void ApplicationChasm::LoadProps(){
     //The people's figures are in the same file (ApplicationChasmWorkersView.cpp), so they are made here.
     BuildWorkerScene();
     BuildCrowdBench();
+    BuildBirdScene();
 }
 
 /*
@@ -2759,6 +2761,7 @@ void ApplicationChasm::PreRender(void){
     UploadWater();
     UpdateMist();
     UploadWorkers();
+    UploadBirds();
     UploadCrowdBench();
     UploadPiles();
     UploadCrates();
@@ -3542,6 +3545,7 @@ void ApplicationChasm::RenderChasmPanel(){
 #ifdef USE_MCP
 void ApplicationChasm::RegisterMCPTools(){
     RegisterCrowdBenchTool();
+    RegisterBirdTools();
     MCPServer::Get()->RegisterTool("chasm_grid",
         "The current grid: its settings, vertex/quad/edge counts at both levels (coarse and fine), "
         "how many lattice triangles were left unmerged, its extent in world units (x and z; the grid "

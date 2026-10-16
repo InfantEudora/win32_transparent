@@ -1,35 +1,35 @@
 ---
 name: linux-port-investigation
-description: Linux port - step 1 DONE 2026-10-16 (core+chasm compile and bake on Linux; link stops at the 29 window-backend symbols); step 2 waits on Wayland/X11/both; docs/linux_port_plan.md
+description: "Linux port - chasm RUNS on Linux (X11 backend, 2026-10-17): debug + one-file ship binary checked in WSLg; gamepads/XDND/raw mouse and MCP/ImGui still open; docs/linux_port_plan.md"
 metadata:
   node_type: memory
   type: project
   originSessionId: 4e722717-a7a0-46eb-99ff-90a804914e0e
-  modified: 2026-10-16T21:51:59.186Z
+  modified: 2026-10-16T22:38:32.924Z
 ---
 
 Plan and measurements: **`docs/linux_port_plan.md`** - read it first. Goal (Dick, 2026-10-16): one
 binary for Arch AND Debian, like the one Windows exe, and **no toolkit** - SDL2 and GLFW were tried
 before and disliked; the engine is hand-rolled on purpose.
 
-**Step 1 done 2026-10-16**: `make` and `make ship` in apps/chasm compile and bake on Linux through the
-repo's own makefiles; the link stops at exactly 29 symbols - 13 `Window` methods, `PollDevices`, 15
-GL 1.x direct calls. Windows checked after: debug + ship build, chasm ran, flags/vsync/raw input fine.
+**Done:** step 1 (core compiles; Dick committed it as a7cafcc). Step 2 = **X11, Dick's choice
+2026-10-17** (runs on Wayland desktops through XWayland): `core/Window_x11.cpp` + `core/
+InputController_linux.cpp`. In WSLg chasm renders, takes keys/mouse, plays sound; `make ship` gives an
+8.6 MB file needing only libGL.so.1, libX11.so.6, glibc >= 2.34, runs from an empty folder. Dick is
+taking it to real machines next - their results are the open question.
 
-**Step 2 needs Dick's decision**: Wayland native, X11, or both. A 92-line raw Wayland probe in WSLg
-got a 4.5 core context via EGL and all 99 engine GL entry points (glClear too) from eglGetProcAddress
-with no libGL - so glad can load GL 1.1 as well and the binary links no GL library.
+**Open:** gamepads (evdev; PollGamepad empty), file drop (XDND), raw mouse (XInput2), MCP/sockets and
+ImGui on Linux (step 3, so no MCP screenshot there yet - use scratchpad xcap.c/xsend.c style X tools).
 
-**Method - reuse it.** WSL here: Ubuntu 22.04, g++ 11.2, glibc 2.35, WSLg (llvmpipe 4.5), **no
-passwordless sudo**: dev headers via `apt-get download` + `dpkg -x` into `~/linux_port_sysroot/root`,
-handed to make through `CPLUS_INCLUDE_PATH`/`C_INCLUDE_PATH` (env vars pass engine.mk's command-line
-check). Run WSL scripts from PowerShell - Git Bash mangles `/mnt/c` paths. Grep build logs for
-`fatal error:` too, not just `: error:`.
+**Method - reuse it.** WSL: Ubuntu 22.04, g++ 11.2, WSLg (llvmpipe 4.5), **no passwordless sudo**:
+headers via `apt-get download` + `dpkg -x` into `~/linux_port_sysroot/root`, given to make through
+`CPLUS_INCLUDE_PATH`/`C_INCLUDE_PATH`; link symlinks in `~/linux_port_libs` via `LIBRARY_PATH`. Run
+WSL scripts from PowerShell (Git Bash mangles `/mnt/c`); PowerShell Set-Content writes CRLF - strip it.
+Grep logs for `fatal error:` too.
 
-**Traps found:** a `.S` from the packer names the blob by ABSOLUTE path, so generated dirs must be per
-platform (they are now). Linux defaults USE_MCP/NET/IMGUI to 0 until step 3. Android's keycodes are
-AKEYCODE, so VK guards are `!__ANDROID__`, not removed. Windows replays/baselines won't match Linux.
+**Traps:** WSLg's PulseAudio is not up for the first seconds after WSL starts ("No backend") - not a
+build bug. The packer's `.S` uses an ABSOLUTE path, so generated dirs are per platform. A Linux run
+from apps/chasm/build rotates the same chasm.log as Windows - **check timestamps before restoring
+logs** (one of Dick's logs was lost on 2026-10-17 by restoring blind).
 
-**How to apply:** start from the doc; after a Linux-side change re-run the WSL build and check the
-undefined-symbol list only shrinks. Related: [[android_port_merge]], [[per_app_build_layout]],
-[[deterministic_sim_plan]].
+Related: [[android_port_merge]], [[per_app_build_layout]], [[deterministic_sim_plan]].

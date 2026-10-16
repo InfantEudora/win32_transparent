@@ -51,6 +51,13 @@
 #define PAL_FLOATSTONE      1
 #define PAL_FLOATSTONE_DARK 2       //...to dark
 #define PAL_FLOATSTONE_GLINT 3      //a near-white lilac, for the odd facet catching the light
+//Not a biome either: animals' colours, the same in every biome and season (birds_plan.md). The bird in
+//chasm_props.blend is UV'd straight into it.
+#define PAL_CREATURES       11
+#define PAL_BIRD_BLACK      0       //columns in the creatures row: a crow's black, a blue-grey short of PAL_VOID so facets read
+#define PAL_BIRD_SHEEN      1       //its blue-black back and upper wing
+#define PAL_BIRD_BEAK       2       //its beak and legs, a dark grey
+#define PAL_MAGPIE_WHITE    3       //an off-white, for magpies, the second kind (not modelled yet)
 //Not a biome: colours that are the same in every one - the chasm's mist and the falls' foam (Mist.h).
 #define PAL_EFFECTS         15
 #define PAL_MIST_LIGHT      0       //columns in the effects row

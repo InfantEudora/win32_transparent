@@ -44,6 +44,7 @@ struct Lease {
     int64_t expires_ms = 0;
     int ttl_s = 0;          // this lease's own length, which every renewal restores
     bool f_auto = false;    // taken implicitly by the PreToolUse hook on a write, not asked for
+    bool f_keep_while_waiting = false; // a file lease EndTurn leaves alone - see there
 };
 
 // A lease that ended without its owner releasing it. Kept until the owner next calls, or
@@ -54,6 +55,14 @@ struct LostLease {
     std::string reason;
     std::string how;        // "expired" or "broken"
     int64_t lost_ms = 0;
+};
+
+// What an owner's turn end did to its explicit leases, kept for its next turn - see EndTurn.
+struct TurnEnd {
+    std::string owner;
+    int64_t ended_ms = 0;
+    std::vector<Lease> released; // explicit file leases handed back so others could take them
+    std::vector<Lease> kept;     // explicit leases it went on holding: every #name, and keep_while_waiting files
 };
 
 // One reason a claim was refused. `requested` is what the caller asked for and `held` is
@@ -106,10 +115,12 @@ public:
 
         f_auto marks the hook's implicit claim on a write. It never downgrades a lease the
         owner asked for explicitly: editing a file you claimed for an hour must not turn
-        that claim into a five-minute auto one.
+        that claim into a five-minute auto one. f_keep_while_waiting is likewise set by an
+        explicit claim only, and an auto one leaves it as it was.
     */
     bool Claim(const std::string &owner, const std::vector<std::string> &keys,
                const std::string &reason, int ttl_seconds, bool f_auto,
+               bool f_keep_while_waiting,
                std::vector<std::string> *granted_out, std::vector<Conflict> *conflicts_out);
 
     // Releases the named keys held by this owner, or every key it holds when `all` is set.
@@ -136,6 +147,34 @@ public:
     // current holder of each key filled into holders_out (empty string where free).
     std::vector<LostLease> TakeLost(const std::string &owner, std::vector<std::string> *holders_out);
 
+    /*
+        "This owner has stopped and is waiting." Sent by the Stop hook when an agent ends its
+        turn - to wait for a subagent, a background command, another window or the person.
+        Its FILE leases go, auto and explicit alike, so that a finished change does not sit
+        on a file for as long as the wait lasts. That was unbounded while waiting on a
+        subagent: a subagent's tool calls carry its parent's session id, so its heartbeats
+        kept the parent's leases alive the whole time.
+
+        Files are safe to hand back because nothing can be written on the strength of a
+        stale lease: the hook re-claims a file on the next write and refuses it if somebody
+        else has it, and Claude Code refuses to write a file that changed since it was read.
+        Named resources (#build, #port:*) are NOT released - they usually stand for a process
+        that outlives the turn, a background build or a running app, and nothing re-claims
+        them on their next use. Nor is a file lease claimed with f_keep_while_waiting, which
+        is for a background command that writes the file itself.
+
+        Records a TurnEnd for TakeTurnEnd when the owner held any explicit lease; auto ones
+        go silently, for the same reason their expiry does. The released keys are returned
+        in released_out, auto ones included, and what stayed in kept_out.
+    */
+    void EndTurn(const std::string &owner, std::vector<std::string> *released_out,
+                 std::vector<std::string> *kept_out);
+
+    // Hands over, and forgets, the owner's last TurnEnd, trimmed to what is still true: a
+    // released key it has since claimed again is dropped, and so is a kept one it no longer
+    // holds. False when nothing is left to say.
+    bool TakeTurnEnd(const std::string &owner, TurnEnd *out);
+
     std::vector<Lease> List();
 
     // The manual override, for a lease whose owner is gone and whose TTL has not run out
@@ -151,6 +190,9 @@ public:
     static const int TTL_MIN_S = 30;
     static const int TTL_MAX_S = 3600;
     static const int LOST_KEEP_S = 3600;
+    // Longer than LOST_KEEP_S because a waiting agent comes back: a turn ends on a question
+    // to the person far more often than on a dead session, and the answer can be a day off.
+    static const int TURN_END_KEEP_S = 24 * 3600;
 
     static int64_t NowMs();
 
@@ -169,6 +211,7 @@ private:
     std::mutex m_lock;
     std::vector<Lease> m_leases;
     std::vector<LostLease> m_lost;
+    std::vector<TurnEnd> m_turn_ends; // at most one per owner
     std::string m_root; // normalised, lowercased, trailing '/', or empty
 };
 

@@ -2,23 +2,30 @@
 
     blender.exe -b --python apps/chasm/tools/blender_chasm_props_check.py -- --verify
     blender.exe -b --python apps/chasm/tools/blender_chasm_props_check.py -- --render
+    blender.exe -b --python apps/chasm/tools/blender_chasm_props_check.py -- --bird
 
 --verify imports apps/chasm/assets/meshes/chasm_props.glb into an EMPTY scene - what the game gets,
 not what the .blend holds - and checks every mesh: its name, its triangle count, that its origin is
 the middle of its base (local bounds centred on x/y, ground at z = 0), that every UV is the centre
 of a row-0 palette cell or one of the few in OFF_ROW, and that every normal is its face's normal
-(flat shading survived).
+(flat shading survived). A mesh with shape keys (the bird) has them listed in morph order, with how far
+each moves it, and must be one primitive with no more keys than the engine has slots.
 
 --render opens art_source/chasm/chasm_props.blend and writes art_source/chasm/previews/:
 lineup.png and lineup_cover.png (Workbench, every asset from the game's 55 degree camera),
 forest_*.png (Eevee, the props scattered on palette grass under a north-west sun, to hold up against
 alittleagedemo.jpg; forest_maxzoom.png is the same view at the game's furthest zoom), and
 biomes.png (a patch per palette row, the props' UVs moved to that row as the game will).
+
+--bird imports the GLB too and writes previews/bird_<pose>_<view>.png: the bird gliding and in each shape
+key, from the game's 55 degree camera and from the side; and bird_scale.png, perched beside a villager.
 """
 
+import json
 import math
 import os
 import random
+import struct
 import sys
 
 import bmesh
@@ -30,18 +37,22 @@ REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 BLEND = os.path.join(REPO, "art_source", "chasm", "chasm_props.blend")
 GLB = os.path.join(REPO, "apps", "chasm", "assets", "meshes", "chasm_props.glb")
 PREVIEWS = os.path.join(REPO, "art_source", "chasm", "previews")
+PALETTE = os.path.join(REPO, "apps", "chasm", "assets", "textures", "palette.png")
 
 PALETTE_COLS = 32
 PALETTE_ROWS = 16
 TRI_BUDGET = {"tree_pine": 100, "tree_oak": 120, "tree_palm": 120, "tree_willow": 120,
-              "grass": 12, "fern": 24, "shrub": 24, "reeds": 24}
+              "grass": 12, "fern": 24, "shrub": 24, "reeds": 24, "bird": 80}
 COVER = ("grass", "flowers", "fern", "shrub", "mushrooms", "twig", "reeds")
 #(row, column) cells off row 0 that a prop may use - the same in every biome and season (Palette.h): the
-#crops row's rope, the minerals row's floatstone, the effects row's black.
-OFF_ROW = {(9, 2), (10, 0), (10, 1), (10, 2), (10, 3), (15, 5)}
-#Props whose origin is not their base's middle on purpose: the mine portal's is the mouth's sill, and
-#those that fill a plot have theirs in the middle of their footprint (blender_chasm_props.py, build_object).
-OWN_ORIGIN = ("mine_portal",)
+#crops row's rope, the minerals row's floatstone, the creatures row's bird colours, the effects row's black.
+OFF_ROW = {(9, 2), (10, 0), (10, 1), (10, 2), (10, 3), (11, 0), (11, 1), (11, 2), (11, 3), (15, 5)}
+#Props whose origin is not their base's middle on purpose: the mine portal's is the mouth's sill, the bird's
+#is between its feet, and those that fill a plot have theirs in the middle of their footprint
+#(blender_chasm_props.py, build_object).
+OWN_ORIGIN = ("mine_portal", "bird")
+#The engine's shape key slots (NUM_MORPH_FACTOR_SLOTS, core/Object.h).
+MORPH_SLOTS = 4
 FOOTPRINT_ORIGIN = ("boulder", "outcrop")
 SUN_TRAVEL = Vector((1.0, -1.0, -2.0)).normalized()     #from the north-west, as blender_chasm_props.py
 
@@ -50,6 +61,7 @@ def verify():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=GLB)
     failures = []
+    morphs = []
     total = 0
     print("\n%-16s %5s %6s %6s %6s  %s" % ("asset", "tris", "w", "d", "h", "palette columns"))
     for obj in sorted(bpy.context.scene.objects, key=lambda o: o.name):
@@ -117,9 +129,46 @@ def verify():
         print("%-16s %5d %6.2f %6.2f %6.2f  %s" % (obj.name, tris, size.x, size.y, size.z,
                                                     " ".join(str(c) for c in sorted(
                                                         columns, key=lambda c: (isinstance(c, str), str(c).rjust(6))))))
+        if mesh.shape_keys:
+            morphs.append((mesh.name, mesh.shape_keys.key_blocks))      #the glTF mesh's name, as the GLB has it
     print("%-16s %5d" % ("total", total))
+    failures += shape_keys(morphs)
     print("\n" + ("\n".join("FAIL " + f for f in failures) if failures else "all checks pass"))
     return not failures
+
+
+def shape_keys(morphs):
+    """Lists every mesh's shape keys in morph order, with how far each moves it - from the import, so a
+    key that came through the merge pointing at the wrong data shows. The primitives are read from the
+    GLB itself, which the importer joins: with targets, a mesh must be ONE primitive, as GLTFLoader
+    writes the deltas primitive by primitive and default.vert reads them target by target (Mesh.h)."""
+    failures = []
+    with open(GLB, "rb") as f:
+        data = f.read()
+    gltf = json.loads(data[20:20 + struct.unpack_from("<I", data, 12)[0]])
+    print("\n%-16s %5s %7s  %s" % ("shape keys", "prims", "targets", "morph: name (verts moved, furthest)"))
+    for mesh in gltf["meshes"]:
+        counts = [len(p.get("targets", [])) for p in mesh["primitives"]]
+        if not any(counts):
+            continue
+        name = mesh.get("name")
+        names = mesh.get("extras", {}).get("targetNames", [])
+        keys = dict(morphs).get(name)
+        moves = []
+        for i, kb in enumerate(keys[1:] if keys else []):
+            gone = [(kb.data[v].co - keys[0].data[v].co).length for v in range(len(kb.data))]
+            moved = sum(1 for g in gone if g > 1e-6)
+            moves.append("%d: %s (%d, %.3f)" % (i, kb.name, moved, max(gone)))
+            if not moved:
+                failures.append("%s: shape key %s moves nothing" % (name, kb.name))
+        print("%-16s %5d %7s  %s" % (name, len(counts), "/".join(map(str, counts)), "  ".join(moves)))
+        if len(counts) != 1:
+            failures.append("%s: %d primitives with shape keys; the engine needs one" % (name, len(counts)))
+        if counts[0] > MORPH_SLOTS:
+            failures.append("%s: %d shape keys, the engine has %d slots" % (name, counts[0], MORPH_SLOTS))
+        if names != [kb.name for kb in (keys[1:] if keys else [])] or len(names) != counts[0]:
+            failures.append("%s: targetNames %s do not match the imported keys" % (name, names))
+    return failures
 
 
 # ---------------------------------------------------------------------------------------------
@@ -321,8 +370,79 @@ def preview():
     render(os.path.join(PREVIEWS, "forest_close.png"), engine, (1600, 900))
 
 
+#The bird's poses: (shape key or None for the glide basis, file name).
+BIRD_POSES = ((None, "glide"), ("WingsUp", "wingsup"), ("WingsDown", "wingsdown"), ("Folded", "folded"))
+VILLAGER_HEIGHT = 0.86      #as drawn (birds_plan.md), for bird_scale.png
+
+
+def bird_previews():
+    """--bird: the bird as the game gets it - imported from the GLB, one shape key at a time - from the game's
+    55 degree camera and from its side, into previews/bird_<pose>_<view>.png; and bird_scale.png, perched
+    beside a villager scaled to the height one is drawn at."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.import_scene.gltf(filepath=GLB)
+    scene = bpy.context.scene
+    os.makedirs(PREVIEWS, exist_ok=True)
+    bird = bpy.data.objects["bird"]
+    bird.location = (0, 0, 0)
+    bird.rotation_mode = "XYZ"                           #the importer's is a quaternion, which ignores Euler
+    bird.rotation_euler = (0, 0, math.radians(145))      #flying away north-east, as seen from the south
+    #The GLB's material carries no image (the game has its own): the palette, as the file's has it. Into the
+    #importer's empty image node, and made active, or Workbench draws that one: all magenta.
+    mat = bird.data.materials[0]
+    nodes = mat.node_tree.nodes
+    tex = next((n for n in nodes if n.type == "TEX_IMAGE"), None) or nodes.new("ShaderNodeTexImage")
+    tex.image = bpy.data.images.load(PALETTE)
+    tex.interpolation = "Closest"
+    nodes.active = tex
+    mat.node_tree.links.new(tex.outputs["Color"], nodes["Principled BSDF"].inputs["Base Color"])
+    keys = bird.data.shape_keys.key_blocks
+
+    #A villager to size it by: the figure, scaled from its armature to the height it is drawn at.
+    figure = bpy.data.objects.get("adult_male")
+    rig = figure.parent if figure else None
+    for o in scene.objects:
+        o.hide_render = o not in (bird, figure)
+    if figure:
+        bpy.context.view_layer.update()
+        zs = [(figure.matrix_world @ Vector(c)).z for c in figure.bound_box]
+        (rig or figure).scale = [s * VILLAGER_HEIGHT / (max(zs) - min(zs)) for s in (rig or figure).scale]
+        (rig or figure).location = (100, 0, 0)          #out of the pose shots, brought in for the scale one
+        bpy.context.view_layer.update()
+
+    cam = bpy.data.objects.new("bird_cam", bpy.data.cameras.new("bird_cam"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.data.type = "ORTHO"
+    shading = scene.display.shading
+    shading.light = "STUDIO"
+    shading.color_type = "TEXTURE"
+    shading.show_backface_culling = True
+    scene.display.light_direction = (-0.45, 0.45, 0.77)
+    scene.world = bpy.data.worlds.new("bird_sky")
+    scene.world.color = (0.70, 0.80, 0.86)
+    target = Vector((0, 0, 0.15))
+    for key, name in BIRD_POSES:
+        for kb in keys[1:]:
+            kb.value = 1.0 if kb.name == key else 0.0
+        for view, elevation, azimuth in (("top", 55, 0), ("side", 3, 125)):     #side: along its wings
+            cam.data.ortho_scale = 1.15
+            look_from(cam, target, elevation, azimuth, 5.0)
+            render(os.path.join(PREVIEWS, "bird_%s_%s.png" % (name, view)), "BLENDER_WORKBENCH", (800, 600))
+
+    if figure:
+        for kb in keys[1:]:
+            kb.value = 1.0 if kb.name == "Folded" else 0.0
+        (rig or figure).location = (-0.45, 0.2, 0)
+        cam.data.ortho_scale = 1.4
+        look_from(cam, Vector((-0.2, 0, 0.42)), 20, 20, 5.0)
+        render(os.path.join(PREVIEWS, "bird_scale.png"), "BLENDER_WORKBENCH", (800, 800))
+
+
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 if "--render" in argv:
     preview()
+elif "--bird" in argv:
+    bird_previews()
 else:
     sys.exit(0 if verify() else 1)

@@ -5,13 +5,14 @@ metadata:
   node_type: memory
   type: project
   originSessionId: e532a19b-410c-4f18-b4c7-cc0b53ada9b0
-  modified: 2026-10-16T13:07:31.006Z
+  modified: 2026-10-16T22:48:20.474Z
 ---
 
 Plan: apps/chasm/docs/sound_plan.md - its "As built" section is the current state. Core idea (accepted): game
 events are made ONCE by the rules as one record (EconomyEvent ring, built with [[chasm-statistics]]); every
 reader - notice line, journal, sound - reads it. Nature sounds (birds, crickets, winds) belong to the MUSIC score
-(apps/music's chasm.json, not the cue table assets/cues/chasm.json) - don't duplicate.
+(apps/music's chasm.json, not the cue table assets/cues/chasm.json) - don't duplicate. EXCEPTION (user, 2026-10-17):
+birds you can SEE call through the cue table, alongside the score's songbird beds ([[chasm-birds-plan]]).
 
 2026-10-16 the user added their own first sounds to apps/chasm/assets/sound/ (click, place_building, refused,
 notification, chopping_tree_1..3, hammer_hit_1, hammer_chisel_1, sawing_wood_1; voices in progress) and asked
@@ -51,7 +52,10 @@ Second round, same day (user: "already really good"):
   everything else -> okay (user: "okay for any order not handled yet"). Orders answer in their COMMAND HANDLER only
   when the rules take them (refused = refusal sound only); each order is its own signal so a new line is a table row.
   Say() = one answer per pass (order rank over pick, first asked = a group's nearest), lock-guarded for MCP's thread.
-  Core gained `busy: "replace"` (cuts same priority too); orders priority 1 so picks never cut them.
+  Core gained `busy: "replace"` (cuts same priority if begun on an EARLIER tick); orders priority 1 so picks never cut them.
+  2026-10-17 (user): a GROUP answers in TWO voices at once, man+woman where possible, panned -0.3/+0.3 by payload `side`
+  (one alone: side from his place across the view). Core group option `together: 2` lets same-tick, same-priority
+  lines play together past busy and a row's gap; the next answer cuts both.
   User's answers: `morning` plays at any hour; takes LEVELLED at conversion (all -18 dBFS), so every voice row is gain 0.8.
 
 **Why:** the user's sounds are single blows, so blows-on-clocks replaced the plan's looping "beds" for chop/build.

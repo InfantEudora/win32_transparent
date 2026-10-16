@@ -34,13 +34,15 @@ the command above.
 
 ## `settings.json` (tracked)
 
-One `PreToolUse` hook, matching `*`, which runs `tools/lockd/claude_lock_hook.py`
-before every tool call. On a write it claims the target path from the lock broker
-for the current session and blocks the edit if another agent holds it; on anything
-else it sends a heartbeat that keeps the session's explicit claims alive, and
-refuses the call once if the session has lost one. See `docs/lock_broker.md` §6 for
-what it does and why, and the top of the hook script for how it behaves when the
-broker is down (it lets the call through).
+Two hooks, both running `tools/lockd/claude_lock_hook.py`. `PreToolUse`, matching
+`*`, runs before every tool call. On a write it claims the target path from the lock
+broker for the current session and blocks the edit if another agent holds it. On
+anything else it sends a heartbeat that keeps the session's explicit claims alive,
+and it refuses the call once if the session has lost one. `Stop` (since 2026-10-17)
+runs when the agent ends its turn. It hands the session's file claims back so that
+they are not held while the agent waits, and the agent's next tool call is told what
+went. See `docs/lock_broker.md` §6 for what they do and why, and the top of the hook
+script for how it behaves when the broker is down (it lets the call through).
 
 It matched only the writing tools until 2026-09-30. Matching everything is what
 lets a lease outlive a long build, but it also means a hook that exits 2 blocks

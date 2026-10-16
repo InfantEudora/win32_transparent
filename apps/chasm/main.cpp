@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "BinaryAsset.h"
 #include "Debug.h"
 #include "File.h"
 
@@ -44,6 +45,15 @@ static int ChasmMain(int show_command){
 
     Application* main_app = new ApplicationChasm();
     main_app->Start();
+    /*
+        A baked build lists its packed assets at the end, each marked if the session never asked for it - the weight
+        a ship build carries for nothing (core/BinaryAsset.cpp, ListBinaryAssets) - and anything it read off a disk
+        instead, which a complete bake never does. A session that never saw winter has not asked for winter's
+        samples either, so it is a lead to follow up, not a verdict.
+    */
+#ifdef ASSETS_BAKED
+    BinaryAsset::ListBinaryAssets();
+#endif
     return main_app->Exit();
 }
 

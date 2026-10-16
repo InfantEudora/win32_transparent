@@ -166,23 +166,28 @@ every session that is not driving an app.
    before the lease current. This is the mistake worth designing against - the clash being
    prevented is usually not two simultaneous writes but a stale read-modify-write.
 4. Edit.
-5. `lock_release` when done, or with no `paths` to hand back everything at once.
+5. `lock_release` when done, or with no `paths` to hand back everything at once. Ending your
+   turn hands back your file claims anyway - section 6, "Turn end".
 
 ## 4. Tools
 
 | tool | arguments | notes |
 |---|---|---|
-| `lock_claim` | `owner`, `paths`, `reason`, `ttl_seconds`, `auto` | all-or-nothing; returns `conflicts` on refusal; `auto` is the hook's |
+| `lock_claim` | `owner`, `paths`, `reason`, `ttl_seconds`, `keep_while_waiting`, `auto`, `turn_note` | all-or-nothing; returns `conflicts` on refusal; `auto` and `turn_note` are the hook's |
 | `lock_release` | `owner`, `paths` (optional) | no `paths` releases everything that owner holds |
-| `lock_list` | - | every lease, with owner, reason, age, time left, and `auto` on the hook's |
+| `lock_list` | - | every lease, with owner, reason, age, time left, `auto` on the hook's and `keep_while_waiting` where set |
 | `lock_refresh` | `owner`, `ttl_seconds` | rarely needed; any call carrying `owner` already refreshes |
-| `lock_heartbeat` | `owner` | renews explicit leases only; the hook sends it before every tool call |
+| `lock_heartbeat` | `owner`, `turn_note` | renews explicit leases only; the hook sends it before every tool call |
+| `lock_turn_end` | `owner` | releases the owner's file leases, keeps `#` ones and `keep_while_waiting` files; the Stop hook sends it |
+| `lock_wait` | `owner`, `paths`, `timeout_seconds`, `keep_while_waiting` | 1..30s, default 20 |
+| `lock_break` | `paths` and/or `owner` | force-release; needs one of the two, so it cannot clear the table by accident |
 
 Every reply to a call carrying `owner` may also hold **`lost`**: leases that owner had and no
 longer has, because they expired or were broken, each with how, how long ago, and who holds
 the key now. It is said once and then forgotten. See section 7.
-| `lock_wait` | `owner`, `paths`, `timeout_seconds` | 1..30s, default 20 |
-| `lock_break` | `paths` and/or `owner` | force-release; needs one of the two, so it cannot clear the table by accident |
+
+A `lock_heartbeat` or `lock_claim` sent with `turn_note` may also hold **`turn_end`**: what the
+owner's last turn end released and what it kept. Also said once. See section 6.
 
 `owner` is a stable id for the agent - its session id is ideal, and is what the hook uses.
 `paths` takes a bare string or an array.
@@ -231,10 +236,16 @@ is the one doing a two-line patch fix - which is the clash this exists to preven
             "timeout": 5 }
         ]
       }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "<the same command>", "timeout": 5 } ] }
     ]
   }
 }
 ```
+
+The same script serves both events and tells them apart by `hook_event_name`; `Stop` is
+"Turn end" below.
 
 **It runs before every tool call**, not just writes, since 2026-09-30 - see "The heartbeat"
 below. That makes a hook exiting 2 block *everything*, `Bash` included, which is why the
@@ -284,10 +295,11 @@ capped at 600s; the default is 900s).
 It does **not** renew `auto` leases. Those mean "I just wrote this file", and renewing them on
 every `Read` would have a session sit on every file it ever touched until it went idle.
 
-The price is that an explicit claim is now held until it is released or the agent stops. An
-agent that claims `#build`, finishes, and forgets `lock_release` keeps it for the rest of its
-session instead of for fifteen minutes. `lock_list` shows it with a growing age, and `release`
-at the console takes it back.
+The price is that an explicit claim is held until it is released or the agent stops working.
+Since the turn-end release below that is true of `#build`, `#port:*` and `keep_while_waiting`
+files only: an agent that claims `#build`, finishes, and forgets `lock_release` keeps it for
+the rest of its session instead of for fifteen minutes. The turn-end note reminds it on every
+turn, `lock_list` shows it with a growing age, and `release` at the console takes it back.
 
 ### The lost-lease notice
 
@@ -298,6 +310,71 @@ carrying on as if it were still held is the failure, and a note the agent could 
 how that stays silent. Only explicit leases are reported - an `auto` lease running out is how
 every one of them ends. The lockd tools themselves are passed straight through; their replies
 carry `lost` on their own.
+
+### Turn end: file claims go while an agent waits
+
+Since 2026-10-17 the script is also the **`Stop` hook**. Claude Code fires `Stop` when the main
+agent ends its turn, which is what an agent does to wait - on a subagent, a background command,
+another window or the person. The hook sends `lock_turn_end`, and the broker releases that
+session's **file** leases, explicit and auto alike.
+
+The case that prompted it: an agent finished a small change and then waited for its subagent
+to report back, and held the file for the whole wait. Before this, an idle agent's explicit
+claims lasted their TTL past its last tool call. With a subagent running they never ran out at
+all. **A subagent's tool calls carry its parent's `session_id`** (measured 2026-10-17, along
+with the `agent_id` and `agent_type` fields that only a subagent's calls have), so every one
+of them sent a heartbeat that renewed the parent's leases.
+
+**Files are safe to hand back** because nothing can be written on the strength of a stale
+lease. The hook re-claims a file on the next write and refuses that write if somebody else has
+it now, and Claude Code refuses to write a file that changed after it was read. The worst case
+is "your next edit is refused", which is the ordinary refusal.
+
+**Kept, not released:**
+
+- `#build` and `#port:*`. They usually stand for a process that outlives the turn, such as a
+  background build or an app bound to 8768. Releasing `#build` under a build that is still
+  running invites exactly the race it guards. Nothing re-claims these on their next use, since
+  the hook only enforces file writes.
+- A file claimed with **`keep_while_waiting`**. This is for a background command that writes
+  the file itself, such as an export or a bake. It is a flag rather than read off the `Stop`
+  event's `background_tasks` (which does list running shells) because the usual background
+  task here is an app started for MCP testing, which writes no claimed file. Keeping every
+  file whenever one was running would cancel the feature most of the time.
+
+**The note.** The `Stop` hook prints nothing, because output from a `Stop` hook makes the
+agent carry on with its turn. The broker keeps a record instead. The first tool call of the
+agent's next turn asks for it with `turn_note`, and the hook hands it over as
+`additionalContext`, which informs without blocking:
+
+```
+lockd: your file claims were released when your last turn ended (3 min ago), so other agents
+could take them while you waited: core/foo.cpp. You no longer hold them. If you carry on with
+that work, lock_claim them again first - ...
+lockd: still held from before that turn ended: #build. Release with lock_release if you are
+done with them.
+```
+
+- **Explicit leases only.** An auto lease going is how every one of them ends.
+- **The main agent only.** A subagent's call carries `agent_id`, and since it shares its
+  parent's owner id it would otherwise take the note meant for the parent.
+- **Trimmed against the table at delivery.** A file the delivering write has just re-claimed
+  is not reported as released, and a kept lease released since then is not reported as held.
+- **Merged across turns with no tool call in them.** A plain reply also ends a turn, and would
+  otherwise replace the first turn's news with an empty record.
+- **Kept for 24 hours**, longer than a lost-lease record, because a waiting agent comes back.
+  The answer to a question to the person can be a day off.
+- If the same call also carries **`lost`**, the call is refused as before and the note is
+  added to the refusal.
+
+**What it does not cover:**
+
+- An interrupted turn (Esc) does not fire `Stop`, so the TTL remains the backstop there.
+- A session that was already running when the hook was added may only pick it up after a
+  restart.
+- Parallel subagents of one session share one owner, so lockd does not keep them apart from
+  each other, only from other sessions. Claude Code's changed-since-read check is what catches
+  a clash between them.
 
 ## 7. Why it is built the way it is
 
@@ -392,3 +469,25 @@ refusing a write to a held file, passing lockd's own tools straight through, sta
 against the old broker (which does not know `lock_heartbeat`), and failing open with no broker.
 The settings command's missing-script guard was checked to exit 0 where the bare `python` form
 exits 2.
+
+The turn-end release was exercised on 2026-10-17. First, real hook input was captured from a
+headless session that ran a background `sleep` and a subagent. A subagent's calls carry the
+parent's `session_id` plus `agent_id`/`agent_type`, and the main agent's carry neither of the
+two. `Stop` fires with `background_tasks` listing the running shell.
+
+Then 27 checks ran against a broker on a side port, driving the hook with those event shapes.
+`Stop` exits 0 and prints nothing. It released explicit and auto file leases, kept `#build`
+and a `keep_while_waiting` file, and the released file was then claimable by another owner. A
+subagent's call neither showed nor took the note. The main agent's next call carried it as
+`additionalContext`, with no `permissionDecision`, naming the released explicit files but not
+the auto one, and what was still held. It was shown once. A write to a released file another
+owner had taken was refused as usual. A second, empty `Stop` kept the first turn's news. A file
+re-claimed by the write delivering the note was left out of it. A lost lease still refused the
+call, with the note added. An owner holding only auto leases got no note. lockd's own tools
+passed through, and with no broker `Stop` and `PreToolUse` both exited 0.
+
+Last, two real headless turns against the side broker. A real `Stop` released an explicit file
+claim and kept a `#port`. The transcript of the next turn shows a `hook_additional_context`
+entry between the tool call and its result, and the model quoted both lines of the note back.
+The live broker was then swapped with its table snapshotted and every lease restored under its
+own owner and reason, so nobody lost a claim.

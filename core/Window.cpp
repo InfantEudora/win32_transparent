@@ -1,14 +1,47 @@
-//The Win32 window backend - see "THE CLASS IS THE PLATFORM SEAM" in Window.h. Another platform
-//compiles this file to nothing and brings its own implementation of the same class.
-#if defined(_WIN32)
+/*
+    The Win32 window backend - see "THE CLASS IS THE PLATFORM SEAM" in Window.h - and, first, the
+    few things the desktop backends share: the list of windows, quitting them all, and the blit to
+    the back buffer, which is GL and nothing else. Linux's backend is Window_x11.cpp; the Android
+    port brings a Window of its own, hence the guard.
+*/
+#if !defined(__ANDROID__)
 #include "Window.h"
 #include "Debug.h"
 #include "glad.h"
 #include "File.h"
 
+std::vector<Window*>Window::windows; //A list of windows to match handles to
+
+Window::Window(){
+    windows.push_back(this);
+}
+
+Window::~Window(){
+
+}
+
+//See the comment on the declaration for why this sets the flag and does not send WM_CLOSE.
+void Window::RequestQuitAll(){
+    for (Window* wnd:windows){
+        wnd->f_should_quit = true;
+    }
+}
+
+void Window::CopyBufferToBackBuffer(){
+    //Now we blit the resolve buffer into the back buffer
+    //The correct buffer should already have been selected for reading.
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glDrawBuffer(GL_BACK);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+}
+
+void Window::SetOnFileDropped(std::function<void(std::string)> callback){
+    onFileDropped = callback;
+}
+
+#if defined(_WIN32)
 static Debugger* debug = new Debugger("Window",DEBUG_INFO);
 
-std::vector<Window*>Window::windows; //A list of windows to match handles to
 std::vector<WNDCLASSEXA>Window::wcs;      //Different types of window classes
 
 void ImageDestroy(Image *pImage){
@@ -82,24 +115,9 @@ Window* Window::GetWindowByHandle(HWND hWnd){
     return NULL;
 }
 
-Window::Window(){
-    windows.push_back(this);
-}
-
-Window::~Window(){
-
-}
-
 void Window::Close(){
     f_should_quit = true;
     SendMessage(hWnd, WM_CLOSE, 0, 0);
-}
-
-//See the comment on the declaration for why this sets the flag and does not send WM_CLOSE.
-void Window::RequestQuitAll(){
-    for (Window* wnd:windows){
-        wnd->f_should_quit = true;
-    }
 }
 
 void Window::Show(bool f_minimized){
@@ -419,14 +437,6 @@ void Window::CopyBufferToImage(){
     }
     delete[] cap;
     */
-}
-
-void Window::CopyBufferToBackBuffer(){
-    //Now we blit the resolve buffer into the back buffer
-    //The correct buffer should already have been selected for reading.
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glDrawBuffer(GL_BACK);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
 Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc){
@@ -801,8 +811,5 @@ void Window::Resize(int _width, int _height){
     MoveWindow(hWnd,target.left,target.top,target.right - target.left,target.bottom - target.top,true);
 }
 
-void Window::SetOnFileDropped(std::function<void(std::string)> callback){
-    onFileDropped = callback;
-}
-
 #endif //_WIN32
+#endif //!__ANDROID__

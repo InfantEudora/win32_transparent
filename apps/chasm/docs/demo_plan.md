@@ -801,6 +801,29 @@ Checked in a test window: 810 high, 1.0, as before; 1421 high, 1.32 (it was 1.75
 menu shown at that; Interface size stepped to 85%, saved, and the menus shrank at once. The user's
 `settings.json` was put back after.
 
+## As built: the ship's pack (2026-10-17)
+
+The user, looking at what `make ship` bakes in: `fonts/consola.ttf` and `sound/click.wav` beside `click.ogg`.
+Every packed file was checked against what loads it. Nine more `--exclude`s in the makefile, each with its reason:
+
+- **`fonts/consola.ttf`**, 254 KB: ImGui's font, loaded by core's `WindowImGui.cpp` alone. Excluded only when
+  `USE_IMGUI` is off, as apps/tetris does - a baked build that still has ImGui dies at startup without it.
+- **`sound/click.wav`**, 39 KB: the SHARED click. Chasm's own became `click.ogg`, which the cue table plays, so the
+  shared wav no longer stood behind one of its name.
+- **Seven shaders**, 9 KB: the skybox's two (none is drawn), the field shadows' three (only from
+  `Renderer::EnableFieldShadows`, never called here), `texture.comp` and `noise3d.comp` (named by nothing in core or
+  here). Using any of them later means taking its line out.
+
+The pack went from 120 files and 3.86 MB to 111 and 3.56 MB. Kept, though nothing calls for them yet: four of the
+score's stingers no cue plays (low hit, swell, gust, harp fall, 62 KB - the score's to drop, in apps/music), and
+`lowres_composite.frag` and `render_upscale.frag` (3 KB), which only the debug panels and MCP can switch on.
+
+A baked build now lists its packed assets as it exits (`main.cpp`, `BinaryAsset::ListBinaryAssets`), each marked if
+the session never asked for it, and anything it read off a disk instead. *Checked*: the ship exe started to the title
+with nothing failing to load; it asked for 105 of the 111 files there, the other six being the outline shaders (made
+on the first selection) and the two above. Not seen: the exit listing itself - the exe was stopped, since the title's
+close asks first.
+
 ## Open questions
 
 **The four starts** stay as they are for now (the user, 2026-10-16), who changes `CHASM_STARTS` by

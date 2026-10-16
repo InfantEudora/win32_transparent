@@ -125,10 +125,9 @@ $(foreach v,$(BOOL_SETTINGS),$(if $(filter-out 0 1,$($v)),$(error $v must be 0 o
 # the silent mix-up the CONFIG block is about. Windows' paths and names are UNCHANGED: only
 # Linux's trees carry the platform.
 #
-# LINUX IS AT STEP 1 OF docs/linux_port_plan.md. Core and the app compile; the link stops at
-# the window backend (Window, the input acquisition, the GL loader's lookup), which is step 2.
-# USE_MCP, USE_NET and USE_IMGUI default OFF there until their own platform halves exist -
-# sockets and ImGui's window backend - so a plain `make` gets as far as it can.
+# LINUX'S WINDOW BACKEND IS X11 (core/Window_x11.cpp), which runs on X11 desktops and, through
+# XWayland, on Wayland ones - docs/linux_port_plan.md. USE_MCP, USE_NET and USE_IMGUI default OFF
+# there until their own platform halves exist (sockets, ImGui's window backend: step 3).
 #---------------------------------------------------------------------------------------
 ifeq ($(OS),Windows_NT)
 PLATFORM        := windows
@@ -198,9 +197,9 @@ else
 #ONE FILE ON LINUX TOO, but not -static, and that is forced rather than chosen. The GL driver is
 #the system's and is loaded at run time, and a static glibc cannot load anything; glibc itself
 #is on every machine. So: libstdc++ and libgcc inside the exe as on Windows, every library of
-#ours static, and the system's - the sound server, and the window system's from step 2 of
-#docs/linux_port_plan.md - opened at run time. -ldl is miniaudio's for doing that.
-CFLAGS = -std=c++17 -L$(LIBS_DIR)/ -lthirdparty -static-libstdc++ -static-libgcc -Wl,--gc-sections -ldl -lpthread -lm
+#ours static, the sound server opened at run time by miniaudio (-ldl), and the window system
+#LINKED - libX11 and libGL, which every Linux desktop has as Windows has user32 and opengl32.
+CFLAGS = -std=c++17 -L$(LIBS_DIR)/ -lthirdparty -static-libstdc++ -static-libgcc -Wl,--gc-sections -lGL -lX11 -ldl -lpthread -lm
 endif
 #CFLAGS += $(FNOCONSOLE)
 CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION

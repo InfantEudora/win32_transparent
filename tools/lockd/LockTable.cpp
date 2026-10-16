@@ -129,6 +129,13 @@ int LockTable::ReapExpiredLocked(std::vector<Lease> *reaped_out) {
             i++;
         }
     }
+    for (size_t i = 0; i < m_turn_ends.size();) {
+        if (now - m_turn_ends[i].ended_ms > (int64_t)TURN_END_KEEP_S * 1000) {
+            m_turn_ends.erase(m_turn_ends.begin() + i);
+        } else {
+            i++;
+        }
+    }
     return count;
 }
 
@@ -150,6 +157,7 @@ void LockTable::TouchLocked(const std::string &owner, bool f_include_auto) {
 
 bool LockTable::Claim(const std::string &owner, const std::vector<std::string> &keys,
                       const std::string &reason, int ttl_seconds, bool f_auto,
+                      bool f_keep_while_waiting,
                       std::vector<std::string> *granted_out, std::vector<Conflict> *conflicts_out) {
     std::lock_guard<std::mutex> guard(m_lock);
     ReapExpiredLocked(nullptr);
@@ -196,6 +204,7 @@ bool LockTable::Claim(const std::string &owner, const std::vector<std::string> &
             if (!f_auto) {
                 existing->ttl_s = ttl;
                 existing->f_auto = false;
+                existing->f_keep_while_waiting = f_keep_while_waiting;
                 if (!reason.empty()) {
                     existing->reason = reason;
                 }
@@ -208,6 +217,7 @@ bool LockTable::Claim(const std::string &owner, const std::vector<std::string> &
             lease.granted_ms = now;
             lease.ttl_s = ttl;
             lease.f_auto = f_auto;
+            lease.f_keep_while_waiting = !f_auto && f_keep_while_waiting;
             m_leases.push_back(lease);
         }
         if (granted_out) {
@@ -299,6 +309,103 @@ std::vector<LostLease> LockTable::TakeLost(const std::string &owner,
         m_lost.erase(m_lost.begin() + i);
     }
     return taken;
+}
+
+void LockTable::EndTurn(const std::string &owner, std::vector<std::string> *released_out,
+                        std::vector<std::string> *kept_out) {
+    std::lock_guard<std::mutex> guard(m_lock);
+    ReapExpiredLocked(nullptr);
+
+    TurnEnd turn;
+    turn.owner = owner;
+    turn.ended_ms = NowMs();
+    for (size_t i = 0; i < m_leases.size();) {
+        const Lease &lease = m_leases[i];
+        if (lease.owner != owner) {
+            i++;
+            continue;
+        }
+        bool named = !lease.key.empty() && lease.key[0] == '#';
+        if (named || lease.f_keep_while_waiting) {
+            turn.kept.push_back(lease);
+            if (kept_out) {
+                kept_out->push_back(lease.key);
+            }
+            i++;
+            continue;
+        }
+        if (!lease.f_auto) {
+            turn.released.push_back(lease);
+        }
+        if (released_out) {
+            released_out->push_back(lease.key);
+        }
+        m_leases.erase(m_leases.begin() + i);
+    }
+
+    // A turn can end twice before the owner's next tool call - a reply with no tool call in
+    // it ends one too - and the second has usually released nothing. Merging keeps the first
+    // turn's news instead of replacing it with an empty record.
+    for (size_t i = 0; i < m_turn_ends.size(); i++) {
+        if (m_turn_ends[i].owner != owner) {
+            continue;
+        }
+        for (const Lease &earlier : m_turn_ends[i].released) {
+            bool f_listed = false;
+            for (const Lease &now_released : turn.released) {
+                f_listed = f_listed || now_released.key == earlier.key;
+            }
+            if (!f_listed) {
+                turn.released.push_back(earlier);
+            }
+        }
+        m_turn_ends.erase(m_turn_ends.begin() + i);
+        break;
+    }
+    if (!turn.released.empty() || !turn.kept.empty()) {
+        m_turn_ends.push_back(turn);
+    }
+}
+
+bool LockTable::TakeTurnEnd(const std::string &owner, TurnEnd *out) {
+    std::lock_guard<std::mutex> guard(m_lock);
+    ReapExpiredLocked(nullptr);
+
+    for (size_t i = 0; i < m_turn_ends.size(); i++) {
+        if (m_turn_ends[i].owner != owner) {
+            continue;
+        }
+        TurnEnd turn = m_turn_ends[i];
+        m_turn_ends.erase(m_turn_ends.begin() + i);
+
+        // Trimmed against the table as it is now, so the note never claims something that
+        // stopped being true in between: the hook's own claim on this very write can already
+        // have taken a released file back, and a kept lease can have been released or lost.
+        auto holds = [&](const std::string &key) {
+            for (const Lease &lease : m_leases) {
+                if (lease.owner == owner && lease.key == key) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        out->owner = owner;
+        out->ended_ms = turn.ended_ms;
+        out->released.clear();
+        out->kept.clear();
+        for (const Lease &lease : turn.released) {
+            if (!holds(lease.key)) {
+                out->released.push_back(lease);
+            }
+        }
+        for (const Lease &lease : turn.kept) {
+            if (holds(lease.key)) {
+                out->kept.push_back(lease);
+            }
+        }
+        return !out->released.empty() || !out->kept.empty();
+    }
+    return false;
 }
 
 std::vector<Lease> LockTable::List() {

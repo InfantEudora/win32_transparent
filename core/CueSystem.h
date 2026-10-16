@@ -98,13 +98,17 @@
                                         gain may be a LIST of such curves, which multiply:
                         "gain": [ { "value": "river_distance", "in": [2, 40], "out": [1, 0] },
                                   { "value": "river_hidden", "in": [0, 1], "out": [1, 0.3] } ]
-          "group":    "her"             one line at a time per group
+          "group":    "her"             one line at a time per group - or, with the group's
+                                        "together": 2, up to that many of one priority begun on
+                                        one tick: a moment answered by more than one voice, which
+                                        neither the busy rule nor a cue's gap holds back
           "priority": 0
           "busy":     "skip"            the group is speaking: skip, queue (for max_wait ticks),
           "max_wait": 60                or interrupt a lower priority - or replace, which cuts
-                                        one of the same priority too, so the newest line is the
-                                        one heard: a person answering every click. Neither cuts
-                                        into the group's gap once a line has ended
+                                        one of the same priority too if it began on an earlier
+                                        tick, so the newest line is the one heard: a person
+                                        answering every click. Neither cuts into the group's gap
+                                        once a line has ended
           "gap":      0                 fewest ticks between two firings of this cue
           "max_instances": 0            most playing at once; 0 is no limit
           "on_end":   "drop"            when its scope ends: drop what is waiting (and let what is
@@ -317,6 +321,7 @@ private:
         int gap = 0;
         std::map<std::string,float> duck;   //bus name -> gain while this group speaks
         int duck_ticks = 1;
+        int together = 1;                   //lines of one priority begun on one tick that speak at once
     };
     struct Bus{
         std::string name;
@@ -444,6 +449,7 @@ private:
     float FollowGain(const Playing& p) const;
     float Eval(const Curve& c, float v) const;
     bool  GroupBusy(const std::string& group, uint64_t at, const Playing** speaking) const;
+    bool  JoinsTogether(const Cue& cue) const;
     uint64_t LengthTicks(const std::string& sound, float from, float pitch) const;
     void  Skip(const std::string& cue, const std::string& sound, const char* why);
 };

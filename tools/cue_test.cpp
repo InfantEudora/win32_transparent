@@ -371,7 +371,8 @@ static void rule_checks() {
     cs.Init(60.0f, &out);
     load(cs, R"({
       "buses": { "effects": {}, "voice": {} },
-      "groups": { "her": { "gap": 30 }, "narrator": { "duck": { "effects": 0.25 }, "duck_ticks": 10 }, "reply": {} },
+      "groups": { "her": { "gap": 30 }, "narrator": { "duck": { "effects": 0.25 }, "duck_ticks": 10 }, "reply": {},
+                  "pair": { "together": 2 } },
       "cues": {
         "varied":  { "signal": "v", "sounds": ["a", "b", "c"] },
         "gapped":  { "signal": "g", "sounds": "a", "gap": 20 },
@@ -381,6 +382,7 @@ static void rule_checks() {
         "urgent":  { "signal": "u", "sounds": "big", "group": "her", "busy": "interrupt", "priority": 5 },
         "answer":  { "signal": "a", "sounds": ["line1", "line2"], "group": "reply", "busy": "replace" },
         "alarm":   { "signal": "w", "sounds": "big", "group": "reply", "priority": 2 },
+        "both":    { "signal": "b", "sounds": ["a", "b", "c"], "group": "pair", "busy": "replace", "gap": 20 },
         "story":   { "signal": "n", "sounds": "line1", "group": "narrator", "bus": "voice" },
         "shaken":  { "signal": "s", "gain_by": [{ "value": "hard", "in": [0, 1], "out": [0, 1] }],
                      "actions": [{ "kind": "shake", "amount": 0.5 }, { "kind": "shake", "offset": 3 }] }
@@ -463,15 +465,39 @@ static void rule_checks() {
     check(f_replaced && p.size() == 1 && p[0] == "4600 alarm big" && plays(cs, "skip").size() == 1,
           "replace cuts a line of its own priority, and is skipped under a higher one", joined(l) + " | " + joined(p));
 
+    // together: two lines of one tick speak at once, past the cue's gap; a third that tick is skipped; the next
+    // tick's replaces both. A replace group without it keeps the first of a tick.
+    for (uint64_t t = 4606; t < 4700; t++) cs.Tick(t);
+    cs.log.Clear();
+    cs.Signal("b", CuePayload(), 1);
+    cs.Signal("b", CuePayload(), 2);
+    cs.Signal("b", CuePayload(), 3);
+    cs.Tick(4700);
+    std::vector<std::string> pair = plays(cs);
+    bool f_pair = pair.size() == 2 && pair[0] != pair[1] && plays(cs, "skip").size() == 1;
+    cs.log.Clear();
+    for (uint64_t t = 4701; t < 4725; t++) cs.Tick(t);
+    cs.Signal("b");
+    cs.Tick(4725);
+    bool f_next = plays(cs).size() == 1 && plays(cs, "stop").size() == 2;
+    cs.log.Clear();
+    for (uint64_t t = 4726; t < 4800; t++) cs.Tick(t);
+    cs.Signal("a");
+    cs.Signal("a");
+    cs.Tick(4800);
+    bool f_first = plays(cs).size() == 1 && plays(cs, "stop").empty();
+    check(f_pair && f_next && f_first, "together: a pair of one tick, a third skipped, the next tick replaces both",
+          joined(pair) + " | " + joined(cs.log.Lines()));
+
     // The narrator ducks the effects bus while it speaks, easing over 10 ticks, and lets it back.
-    for (uint64_t t = 4606; t < 4800; t++) cs.Tick(t);
+    for (uint64_t t = 4801; t < 5000; t++) cs.Tick(t);
     int fx = out.bus_id["effects"];
     cs.Signal("n");
-    cs.Tick(4800);
+    cs.Tick(5000);
     float d1 = out.bus_gain[fx];
-    for (uint64_t t = 4801; t < 4815; t++) cs.Tick(t);
+    for (uint64_t t = 5001; t < 5015; t++) cs.Tick(t);
     float d2 = out.bus_gain[fx];
-    for (uint64_t t = 4815; t < 4900; t++) cs.Tick(t);
+    for (uint64_t t = 5015; t < 5100; t++) cs.Tick(t);
     float d3 = out.bus_gain[fx];
     char buf[160];
     snprintf(buf, sizeof(buf), "(first tick %.3f, after 15 %.3f, after it ends %.3f)", d1, d2, d3);
@@ -486,8 +512,8 @@ static void rule_checks() {
                        std::to_string(a.gain).substr(0, 4));
     });
     cs.Signal("s", CuePayload().Set("hard", 0.25f));
-    for (uint64_t t = 5000; t < 5010; t++) cs.Tick(t);
-    check(acts.size() == 2 && acts[0] == "5000 shake 0.50 x0.25" && acts[1] == "5003 shake 0.00 x0.25",
+    for (uint64_t t = 5200; t < 5210; t++) cs.Tick(t);
+    check(acts.size() == 2 && acts[0] == "5200 shake 0.50 x0.25" && acts[1] == "5203 shake 0.00 x0.25",
           "actions reach their handler with the cue's gain, offset ones on their tick", joined(acts));
 
     // History: capture, change it, restore - the next no_repeat pick avoids the restored one.

@@ -42,6 +42,10 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
 //THE LISTENER hears from over the view's centre, this share of the camera's distance up: zooming out turns everything
 //down, and a blow under the middle of a close view is near, not the whole way to the camera's eye.
 #define SOUND_LISTENER_HEIGHT       0.5f
+//THE VOICES: one person answering is panned by where he stands, `side` -1 to 1 this far either side of the view's
+//middle; a pair is -1 and 1. A box of a hundred keeps the first few asked, of whom two answer.
+#define SOUND_VOICE_SIDE_REACH      30.0f
+#define SOUND_VOICE_ASKED           16
 //The people's work stops when the world does - paused, the menu, the title, the statistics - and fades over this,
 //rather than stopping dead or ringing on; and back in over the other.
 #define SOUND_PAUSE_FADE_S          0.6f
@@ -262,55 +266,92 @@ void ApplicationChasm::SignalUI(const char* name){
 */
 void ApplicationChasm::Say(uint32_t person, const char* signal, int rank, int what){
     std::lock_guard<std::mutex> lock(say_mutex);
-    if (rank > say_next.rank){
-        say_next.signal = signal;
-        say_next.person = person;
-        say_next.rank = rank;
-        say_next.what = what;
+    int now = say_next.empty() ? -1 : say_next[0].rank;
+    if (rank < now || say_next.size() >= SOUND_VOICE_ASKED){
+        return;
     }
+    if (rank > now){
+        say_next.clear();
+    }
+    Said s;
+    s.signal = signal;
+    s.person = person;
+    s.rank = rank;
+    s.what = what;
+    say_next.push_back(s);
 }
 
 void ApplicationChasm::SayPicked(const std::vector<uint32_t>& ids){
-    if (!ids.empty()){
-        Say(ids[0],"picked",CHASM_SAY_PICKED);
+    for (uint32_t id : ids){
+        Say(id,"picked",CHASM_SAY_PICKED);
     }
 }
 
-//The answer asked for since the last pass, with his `voice`: 0 a man's, 1 a woman's - the table's rows pick the takes.
+/*
+    The answer asked for since the last pass, each with his `voice` - 0 a man's, 1 a woman's; the table's rows pick the
+    takes - and his `side`, which the rows pan by. ONE asked: one answers, his side where he stands across the view.
+    MORE: two answer at once, the first asked and the first after him in the other voice if there is one - a man and
+    a woman sound like two people where two men are the same man twice - one on each side, the one more to the left
+    on the left (the table's `voice` group speaks them `together`).
+*/
 void ApplicationChasm::SignalVoice(){
-    Said said;
+    std::vector<Said> asked;
     {
         std::lock_guard<std::mutex> lock(say_mutex);
-        said = say_next;
-        say_next = Said();
+        asked.swap(say_next);
     }
-    if (!said.signal){
+    if (asked.empty()){
         return;
     }
     std::shared_ptr<const EconomyState> e = GetEconomy();
     if (!e){
         return;
     }
-    const EconomyWorker* k = NULL;
-    for (const EconomyWorker& w : e->workers){
-        if (w.id == said.person){
-            k = &w;
+    struct Voice{
+        const Said* said;
+        const EconomyWorker* k;
+        int voice;
+        float dx;                   //along the view's right, from its middle
+    };
+    std::vector<Voice> voices;
+    for (const Said& s : asked){
+        for (const EconomyWorker& k : e->workers){
+            if (k.id != s.person){
+                continue;
+            }
+            //A child has no voice yet, and says nothing.
+            int figure = PersonFigure(k,e->tick);
+            if (figure == PERSON_ADULT_MALE || figure == PERSON_ADULT_FEMALE){
+                vec2 at = EconomyBody(k);
+                float dx = (at.x - camera_target.x) * cosf(cam_yaw) - (at.y - camera_target.z) * sinf(cam_yaw);
+                voices.push_back(Voice{&s,&k,(figure == PERSON_ADULT_FEMALE) ? 1 : 0,dx});
+            }
             break;
         }
     }
-    if (!k){
+    if (voices.empty()){
         return;
     }
-    //A child has no voice yet, and says nothing.
-    int figure = PersonFigure(*k,e->tick);
-    if (figure != PERSON_ADULT_MALE && figure != PERSON_ADULT_FEMALE){
-        return;
+    std::vector<Voice> say(1,voices[0]);
+    if (voices.size() >= 2){
+        auto other = std::find_if(voices.begin() + 1,voices.end(),[&](const Voice& v){ return v.voice != voices[0].voice; });
+        say.push_back((other != voices.end()) ? *other : voices[1]);
     }
-    CuePayload p;
-    vec2 at = EconomyBody(*k);
-    p.Set("x",at.x).Set("z",at.y).Set("person",(float)k->id);
-    p.Set("voice",(figure == PERSON_ADULT_FEMALE) ? 1.0f : 0.0f).Set("what",(float)said.what);
-    cues.Signal(said.signal,p);
+    for (size_t i = 0; i < say.size(); i++){
+        float side;
+        if (say.size() == 1){
+            side = std::max(-1.0f,std::min(1.0f,say[0].dx / SOUND_VOICE_SIDE_REACH));
+        }else{
+            const Voice& o = say[1 - i];
+            side = (say[i].dx < o.dx || (say[i].dx == o.dx && i == 0)) ? -1.0f : 1.0f;
+        }
+        const Voice& v = say[i];
+        CuePayload p;
+        vec2 at = EconomyBody(*v.k);
+        p.Set("x",at.x).Set("z",at.y).Set("person",(float)v.k->id);
+        p.Set("voice",(float)v.voice).Set("side",side).Set("what",(float)v.said->what);
+        cues.Signal(v.said->signal,p,(int)v.k->id);     //his id: two of one row draw two takes
+    }
 }
 
 /*

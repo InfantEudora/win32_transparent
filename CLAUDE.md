@@ -293,6 +293,10 @@ the session started, or the session predates the registration; restart the sessi
   not make a read taken before the lease current.
 - `lock_release` when done. The hook renews your explicit claims before every tool call, so an
   unreleased `#build` is now held for the rest of your session, not just fifteen minutes.
+- **Ending your turn hands back your file claims** - to wait on a subagent, a background command
+  or the person - and your next tool call is told which ones went. Re-claim them if you carry on.
+  `#build` and `#port:*` are kept. A file a background command of yours writes (an export, a
+  bake) needs `keep_while_waiting` on its claim.
 - **A tool call refused with `lockd: you have LOST leases` means exactly that.** A claim expired
   or was broken, and the message says who holds it now. Stop relying on it: re-claim before you
   build, run or edit on its strength. If a build or app of yours is still running on it, that

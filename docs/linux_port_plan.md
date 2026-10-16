@@ -6,9 +6,10 @@ build is a single exe.
 Written 2026-10-16. Every fact below was measured in WSL (Ubuntu 22.04, g++ 11.2, glibc 2.35,
 WSLg), not recalled.
 
-**Status: step 1 is done** (core and chasm compile on Linux; Windows unchanged, checked).
-Step 2, the window backend, waits on one decision: Wayland, X11 or both (§3). Steps 3 and 4 are
-open.
+**Status: chasm runs on Linux.** Step 1 (core compiles) is done and committed. Step 2, the window
+backend, is **X11** (Dick's choice, 2026-10-17: it runs on X11 desktops and, through XWayland, on
+Wayland ones) and is built: `make` and `make ship` give a working chasm, measured in WSLg (§3.5).
+Open: gamepads, file drop and raw mouse under step 2; step 3 (MCP, ImGui); step 4 (shipping).
 
 ---
 
@@ -59,7 +60,7 @@ or a `PKGBUILD` would only wrap it.
 
 ---
 
-## 3. Step 2 - the window backend (decision pending)
+## 3. Step 2 - the window backend (X11, built 2026-10-17)
 
 ### 3.1 What it has to provide
 
@@ -121,6 +122,50 @@ standard gamepad layout. Needed whichever window system is chosen.
 
 Estimate, not measured: a native Wayland backend is 1.5-2x the size of today's Win32 window and
 raw-input code, mostly because of the frame.
+
+**Chosen: X11.** Wayland native stays possible later as a second backend behind the same Window;
+§3.2-3.3 are what it would take.
+
+### 3.5 What was built, and what it does
+
+- **`core/Window_x11.cpp`** - the Window methods for X11: an Xlib window with a 24-bit visual (a
+  32-bit one would let the desktop show through wherever alpha is not 1), a GLX 4.5 core debug
+  context from `glXCreateContextAttribsARB` (no dummy context), glad's lookup through
+  `glXGetProcAddressARB`, vsync through `GLX_EXT_swap_control` or `GLX_MESA_swap_control`, the
+  close button (`WM_DELETE_WINDOW`, honouring `f_close_asks_app`), Escape and Alt+Enter as
+  windproc has them, fullscreen and always-on-top by `_NET_WM_STATE`, `--minimized` as an iconic,
+  unfocused start. `XInitThreads` first, because the main thread pumps the connection while the
+  render thread swaps on it.
+- **`core/InputController_linux.cpp`** - `HandleXEvent`, X11's `HandleMessage`: keys as VK codes
+  (keysym at index 0, so letters follow the layout as VKs do; sided modifiers, as RawInput.cpp
+  resolves them; autorepeat as repeated presses), the buttons, the wheel, motion deltas, crossing,
+  focus. `PollDevices` gives the cursor each tick from the last reported position.
+- **Linked, not loaded**: `libGL.so.1` and `libX11.so.6`, on every desktop as user32 and
+  opengl32 are on Windows. The 15 GL 1.x calls resolve from libGL.
+- `Window.cpp`'s shared part (window list, `RequestQuitAll`, the back-buffer blit) moved to its
+  top, outside the Win32 guard, so both backends use one copy.
+
+**Measured in WSLg** (Mesa llvmpipe, XWayland):
+
+- Debug build: the title screen renders as on Windows - shadows, SSAO, UIOverlay text - and logs
+  the same six errors the Windows build does (`bow`, `quiver`, `arrow_full` not found).
+- Input, driven with synthetic X events: Down moved the menu highlight, hovering highlighted
+  Settings, a click opened the Settings page.
+- Sound: miniaudio opened PulseAudio (44.1 kHz stereo) and loaded the Ogg sounds. **WSLg's sound
+  server is not up for the first seconds after WSL starts**: a run then gets "No backend" and
+  carries on silent. Not the build - the same probe succeeded 14 times in a row a minute later.
+- `SIGTERM` takes the Ctrl+C path: "Shutting down by Ctrl+C", both threads joined.
+- `make ship`: **one file, 8.6 MB**, needing `libGL.so.1`, `libX11.so.6`, `libm` and `libc`, and
+  glibc 2.34 or newer (Debian 12 and 13, Arch, Ubuntu 22.04+; not Debian 11). Copied alone into
+  an empty folder it runs, every asset from its baked table, and writes `chasm.log` beside itself.
+- WSLg ignores the iconic hint: `--minimized` windows open visible there. Real window managers
+  are expected to honour it; untested.
+- `Current Display Settings` reads 640 x 480 under WSLg's XWayland - the root window's size there.
+  Only logged.
+
+**Still open in step 2**: gamepads (evdev - `PollGamepad` is empty, see
+`InputController_linux.cpp`), file drop (XDND), raw mouse deltas (XInput2; today's are the
+accelerated cursor's, and stop at the screen edge), and per-monitor display size (XRandR).
 
 ---
 
@@ -217,17 +262,22 @@ then stops at **29 symbols, every one of them step 2's**:
 Once, on the build machine (WSL here):
 
 ```bash
-sudo apt install build-essential mesa-common-dev libgl-dev
-# step 2 adds the window system's headers: libwayland-dev libegl-dev libxkbcommon-dev
-#   wayland-protocols (and/or libx11-dev), mesa-utils for glxinfo
+sudo apt install build-essential mesa-common-dev libgl-dev libx11-dev
+# mesa-utils too, for glxinfo -B
 ```
+
+On Arch: `sudo pacman -S base-devel libglvnd libx11 mesa` (mesa for the GL headers).
 
 Then, as on Windows but with `make`:
 
 ```bash
 cd 3rdparty && make -j8            # -> libs/linux/libthirdparty.a, libimgui.a
-cd apps/chasm && make -j8          # -> build/chasm_nophysics_nomcp_nonet_noimgui (once step 2 exists)
+cd apps/chasm && make -j8          # -> build/chasm_nophysics_nomcp_nonet_noimgui
+cd apps/chasm && make ship -j8     # -> build/chasm_baked_nophysics_nomcp_nonet_noimgui_release
 ```
+
+The ship file is what to hand to another machine: copy it anywhere, `chmod +x` it if the copy lost
+the bit, and run it. It needs a desktop (X11 or Wayland), and nothing else installed.
 
 Building through `/mnt/c` works but is slow; a clone on the Linux side is much faster and sees only
 committed work. The separate trees mean the two never collide either way.

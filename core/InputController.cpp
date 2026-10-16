@@ -1371,6 +1371,16 @@ void InputController::SetMouseOverWindow(bool over){
     window_state.f_mouse_over_window = over;
 }
 
+void InputController::ReportPointerPosition(int2 screen_position){
+    reported_pointer = ((int64_t)screen_position.x << 32) | (uint32_t)screen_position.y;
+    f_pointer_reported = true;
+}
+
+void InputController::ReportWindowPosition(int2 client_origin){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    window_state.window_position = client_origin;
+}
+
 void InputController::SetFocused(bool focused){
     bool was = f_has_focus.exchange(focused);
     if (was && !focused){
