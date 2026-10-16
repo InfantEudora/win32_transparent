@@ -294,13 +294,15 @@ enum ZoneOp{
     ZONE_OP_CASTLE,         //plot: the debug castle's piece in value[1] (ZoneCastlePiece), 0 to take it off (ramparts_plan.md)
     ZONE_OP_WORK_STOP,      //plot: its workplace stopped (value[1] 1) or working again (0) (ZoneKindStoppable, stopping_work_plan.md)
     ZONE_OP_RANGE_STOP,     //coarse cell: the same for its range, which stands on cells
+    ZONE_OP_SITE_CANCEL,    //plot: its building taken off whole, while nothing of it stands - a site's Cancel (construction_plan.md)
+    ZONE_OP_FIELD_CANCEL,   //coarse cell: the same for its field's or range's site
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's or a range's) rather than a plot.
 inline bool ZoneOpOnCell(int op){
     return op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP || op == ZONE_OP_FIELD_NEXT
         || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND || op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_RANGE_PAINT
-        || op == ZONE_OP_RANGE_STOP;
+        || op == ZONE_OP_RANGE_STOP || op == ZONE_OP_FIELD_CANCEL;
 }
 const char* ZoneOpName(int op);
 int ZoneOpByName(const std::string& name);  //the names above, and the old house_* ones; -1 if none

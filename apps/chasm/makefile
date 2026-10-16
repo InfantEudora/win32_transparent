@@ -30,6 +30,7 @@ APP_SRCS += ApplicationChasmTitle.cpp
 APP_SRCS += ApplicationChasmMenu.cpp
 APP_SRCS += ApplicationChasmRecord.cpp
 APP_SRCS += ApplicationChasmGoals.cpp
+APP_SRCS += ChasmVersion.cpp
 APP_SRCS += ApplicationChasmStats.cpp
 APP_SRCS += ChasmStats.cpp
 APP_SRCS += Grid.cpp
@@ -97,3 +98,14 @@ ASSET_PACK_FLAGS += --exclude "meshes/glyphs_unispace.glb"
 
 
 include $(ROOT)/engine.mk
+
+#THE VERSION (ChasmVersion.h): the commit, "+" with changes not yet committed, and the day - passed to
+#ChasmVersion.cpp alone. The stamp file is written only when they differ from the last build's, and the object
+#depends on it, so the file is compiled again on a new commit or a new day and otherwise not: a build with
+#nothing changed still has nothing to do.
+CHASM_GIT := $(shell git describe --always --dirty=+ --abbrev=7 2>/dev/null || echo unknown)
+CHASM_DAY := $(shell date +%Y-%m-%d)
+CHASM_STAMP := $(OBJ_DIR)/version.stamp
+$(shell mkdir -p $(OBJ_DIR); [ "$$(cat $(CHASM_STAMP) 2>/dev/null)" = "$(CHASM_GIT) $(CHASM_DAY)" ] || echo "$(CHASM_GIT) $(CHASM_DAY)" > $(CHASM_STAMP))
+$(OBJ_DIR)/ChasmVersion.o: $(CHASM_STAMP)
+$(OBJ_DIR)/ChasmVersion.o: CFLAGS += -DCHASM_GIT=\"$(CHASM_GIT)\" -DCHASM_BUILD_DATE=\"$(CHASM_DAY)\"

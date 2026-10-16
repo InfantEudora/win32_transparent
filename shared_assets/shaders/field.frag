@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 
 /*
     Writes one fragment's height into the occluder field. All of the work is done by the blend

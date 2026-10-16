@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 /*
     The fireflies' vertex stage - apps/archer/Fireflies.h builds each glow as a quad already in
     world space and facing the eye, so this only projects. uv is -1..1 across the quad and

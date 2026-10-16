@@ -760,6 +760,47 @@ Checked (debug, port 8769, play mode, `casm_edge`):
   failed on 37785; balcony, goal met and demo complete on 39090, in both.
 - **Without MCP and ImGui**, it compiles.
 
+## As built: the version (2026-10-16)
+
+The user's: "We'll start with just 0.0.1. But we're not following semver or anything like that". Shown with the
+git hash and the build date, since the old "debug build, Oct 16 2026" in the title's corner was hardly visible.
+
+- **`ChasmVersion.h/.cpp`**: the number, `CHASM_VERSION` in the `.cpp`, raised by hand; the commit, from
+  `git describe --always --dirty=+`, so "210d9e4+" means built with changes not yet committed; and the day.
+- **The makefile passes the commit and the day to that one file.** It writes `version.stamp` in the object
+  folder only when either differs from the last build's, and the object depends on it. So the file
+  recompiles on a new commit or a new day, and a build with nothing changed still has nothing to do. The
+  old date came from `__DATE__` in the title's file, which was only as new as that file's last edit.
+- **Shown:**
+  - in the window's title: "Chasm 0.0.1";
+  - under the title's logo: "VERSION 0.0.1";
+  - on a panel in the bottom right of the title and the pause menu: "CHASM 0.0.1 - 210d9e4+ - 2026-10-16 -
+    DEBUG BUILD" (`DrawHudBuild`), so a tester's screenshot names its build.
+- **`BuildName()`**, which saves, recordings and bug reports carry, is now "0.0.1 (210d9e4+, 2026-10-16, debug)".
+  A recording from another build still says it may replay differently. `chasm_menu` reports it as `build`.
+
+## As built: the interface's size (2026-10-16)
+
+The user's: the interface "scales bigger when we go fullscreen. But the size is quite nice in the windowed mode".
+Every HUD size was the window's height over 810, the height Chasm opens at: 1.33 at 1080 and 1.78 at 1440. And
+the menus, laid out in screen heights, grew the same. Of the options laid out (never bigger than windowed; grow
+more slowly; follow Windows' display scaling; a setting), the user chose growing more slowly, with a setting.
+
+- **`HudUiScale`** (`ChasmHud.h`), the one place it is worked out: the **square root** of the height over
+  `HUD_UI_HEIGHT` (810), times the setting, never under 0.5. That gives 1.15 at 1080, 1.33 at 1440 and 1.63 at
+  2160. The HUD, the statistics page (its close mark and the end's buttons too) and every menu use it.
+- **The menus**: `UIMenuLayout::scale`, new in core, multiplies an item's width, height and gap but not where
+  the column starts. It defaults to 1, so archer's menus are unchanged. Chasm sets `HudMenuScale` on all its
+  menus each pass (`ReadMenuInput`) and each frame (`DrawOverlay`), so a menu just opened is drawn at its size.
+- **The setting**: Settings > **Interface size**, 75%, 85%, 100%, 115%, 130% or 150%. It is `ui_size` in
+  `settings.json` and applies at once. Clicking along it moves the rows under the mouse as they shrink or grow.
+- Not changed: how near the cursor a person or a crate is picked (`PlayPickUnder`, `PERSON_NEAR_PX`). That goes
+  with the size of the world on screen, which does grow with the window.
+
+Checked in a test window: 810 high, 1.0, as before; 1421 high, 1.32 (it was 1.75), and the HUD and pause
+menu shown at that; Interface size stepped to 85%, saved, and the menus shrank at once. The user's
+`settings.json` was put back after.
+
 ## Open questions
 
 **The four starts** stay as they are for now (the user, 2026-10-16), who changes `CHASM_STARTS` by

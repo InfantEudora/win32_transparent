@@ -39,7 +39,7 @@ proposed, as are the first 8 issues").
 | 9 | HOUSE SHUT IN | a house with no door - shut in on every side (`EconomyShutIn`); RED at the very top with anyone living in it, who cannot get out | n INSIDE | selects it |
 | 10 | HOUSE CROWDED | a house standing with more living in it than it holds - a child born into a full house (`lifeline_plan.md`) | n IN ROOM FOR m | selects it |
 | 11 | ...: NEEDS ROPE | a site that takes rope the colony lacks and makes none (`goods_plan.md`) | GROW HEMP / BUILD A ROPEWALK | a field, or the tool |
-| 12 | TREES IN THE WAY: NO WOODCUTTER NEAR | a road, wall or site with a tree in its way that no woodcutter reaches - only a woodcutter fells (`woodcutting_plan.md`) | n PLACES | the WOODCUTTER tool |
+| 12 | ...: TREES IN THE WAY | a site with a tree in its way that no woodcutter reaches over dry land - only a woodcutter fells (`woodcutting_plan.md`) - one row a building, named (the user's, 2026-10-16: "it's not obvious it's the bridge"); roads, walls, gardens and lots one row, "TREES IN THE WAY: ..." | NO WOODCUTTER NEAR, WAITS FOR THE ICE (reached over the river once it freezes: `bridge_plan.md`), OVER THE ICE NOW; a road's n PLACES | selects it; a road's, the view to its first plot - no longer the WOODCUTTER tool |
 | 2b | FIND A RIVER | play mode, row 2 while the WATER tool waits for a river to be found (`demo_plan.md`, "As built: discoveries"); row 11b's NEEDS STONE says FIND THE CHASM before a winch the same way | WATER n DAYS | - |
 | 13 | FIELD LIES FALLOW / n FIELDS LIE FALLOW | a field standing whose share has no farmer (`land_plan.md`), one row a land | BUILD HOUSES (the camp's), TOO FEW HANDS (a family's), NOBODY CAN REACH IT (no owner) | selects its first field |
 

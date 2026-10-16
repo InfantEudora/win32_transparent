@@ -6,13 +6,15 @@
 #include <windows.h>        //GetModuleFileName - see GetExecutableDirectory
 #else
 #include <sys/stat.h>       //stat/S_ISDIR - see PathExists
+#include <unistd.h>         //readlink - see GetExecutableDirectory
+#include <spawn.h>          //posix_spawnp - see OpenInFileBrowser
 #endif
 #include "File.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("File", DEBUG_ALL);
 
-//Only ever written by SetWritableDataDirectory, and only read on the non-Win32 arm of
+//Only ever written by SetWritableDataDirectory, and only read on the Android arm of
 //GetExecutableDirectory below.
 static std::string writable_data_dir;
 
@@ -132,7 +134,7 @@ std::string GetExecutableDirectory(){
 	}
 	dir = GetBasePath(buf);
 	return dir;
-#else
+#elif defined(__ANDROID__)
 	/*
 		Set by Application from the platform's own answer - see SetWritableDataDirectory in File.h.
 		Empty until that happens, and a caller that concatenates a filename onto an empty string
@@ -140,6 +142,107 @@ std::string GetExecutableDirectory(){
 		path above takes. So an unset directory degrades the same way a failed query does.
 	*/
 	return writable_data_dir;
+#else
+	//Linux's GetModuleFileName: the kernel keeps the exe's path as a link. Once, as above.
+	static std::string dir;
+	static bool f_done = false;
+	if (f_done){
+		return dir;
+	}
+	f_done = true;
+
+	char buf[4096];
+	ssize_t n = readlink("/proc/self/exe",buf,sizeof(buf) - 1);
+	if ((n <= 0) || (n >= (ssize_t)sizeof(buf) - 1)){
+		debug->Err("GetExecutableDirectory: /proc/self/exe unreadable - exe-relative roots will be working-directory relative instead\n");
+		return dir;
+	}
+	buf[n] = '\0';
+	dir = GetBasePath(buf);
+	return dir;
+#endif
+}
+
+int64_t FileWriteTime(const std::string& path){
+#if defined(_WIN32)
+	//Not _stat: MinGW's `stat` is an inline alias for a symbol the static link lacks.
+	WIN32_FILE_ATTRIBUTE_DATA a;
+	if (!GetFileAttributesExA(path.c_str(),GetFileExInfoStandard,&a)){
+		return -1;
+	}
+	//A FILETIME counts 100 ns from 1601.
+	uint64_t t = ((uint64_t)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime;
+	return (int64_t)(t / 10000000ull) - 11644473600ll;
+#else
+	struct stat st;
+	return (stat(path.c_str(),&st) == 0) ? (int64_t)st.st_mtime : -1;
+#endif
+}
+
+bool CopyFileShared(const std::string& from, const std::string& to){
+#if defined(_WIN32)
+	//Every sharing mode allowed, or a file another thread holds open for writing cannot be read at all.
+	HANDLE in = CreateFileA(from.c_str(),GENERIC_READ,FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,NULL,
+							OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+	if (in == INVALID_HANDLE_VALUE){
+		return false;
+	}
+	HANDLE out = CreateFileA(to.c_str(),GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+	bool f_ok = out != INVALID_HANDLE_VALUE;
+	char buffer[65536];
+	DWORD got = 0;
+	while (f_ok && ReadFile(in,buffer,sizeof(buffer),&got,NULL) && got > 0){
+		DWORD wrote = 0;
+		f_ok = WriteFile(out,buffer,got,&wrote,NULL) && wrote == got;
+	}
+	CloseHandle(in);
+	if (out != INVALID_HANDLE_VALUE){
+		CloseHandle(out);
+	}
+	return f_ok;
+#else
+	//POSIX lets anyone read a file another process is writing, so this is just a copy.
+	FILE* in = fopen(from.c_str(),"rb");
+	if (!in){
+		return false;
+	}
+	FILE* out = fopen(to.c_str(),"wb");
+	bool f_ok = out != NULL;
+	char buffer[65536];
+	size_t got = 0;
+	while (f_ok && (got = fread(buffer,1,sizeof(buffer),in)) > 0){
+		f_ok = fwrite(buffer,1,got,out) == got;
+	}
+	fclose(in);
+	if (out){
+		f_ok = (fclose(out) == 0) && f_ok;
+	}
+	return f_ok;
+#endif
+}
+
+bool OpenInFileBrowser(const std::string& path){
+#if defined(_WIN32)
+	std::string cmd = "explorer.exe \"" + path + "\"";
+	STARTUPINFOA si = {};
+	si.cb = sizeof(si);
+	PROCESS_INFORMATION pi = {};
+	if (!CreateProcessA(NULL,&cmd[0],NULL,NULL,FALSE,0,NULL,NULL,&si,&pi)){
+		return false;
+	}
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	return true;
+#elif defined(__ANDROID__)
+	(void)path;
+	return false;
+#else
+	//xdg-open hands the folder to whichever file manager the desktop has. Not waited for: the game
+	//carries on. The child is reaped by nobody, which costs one zombie entry until the game exits.
+	extern char** environ;
+	char* argv[] = {(char*)"xdg-open",(char*)path.c_str(),NULL};
+	pid_t pid = 0;
+	return posix_spawnp(&pid,"xdg-open",NULL,NULL,argv,environ) == 0;
 #endif
 }
 

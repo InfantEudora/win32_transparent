@@ -152,3 +152,46 @@ rules (above), but nobody could walk it.
   it thaws in about 8 days", 7 at her post, 1 on day 41; on day 43 it had thawed, the line was gone, and released
   she stayed on the far bank: "Cut off from home, looking for a way back". Bente at home still read "At home".
   Not looked at on screen: the walk tip's wording (it needs the mouse, and a minimised window draws no overlay).
+- **And a woodcutter, for a site's tree across the water (the user's, 2026-10-16)**: a bridge whose far bank has
+  trees on it waits for the winter, when a woodcutter crosses the ice to fell them (`WALK_WHO_ICE`) - his walks to
+  and from that bank only. A bridge site's plots are crossed under the snow by whoever walks the ice. See
+  `bridge_plan.md`, "Trees across the water".
+
+## The sun through the year (the user's, 2026-10-17)
+
+"In winter, the sun is usually lower, and in summer it's almost fully overhead. This may add to the mood on
+top of the color scheme we already have for the seasons. This should happen automatically and gradually."
+With the debug panel to see it and hold it, under Time.
+
+- **Each season's sun, in its middle** (`sun_seasons`, ApplicationChasmSeasons.cpp; current tuning):
+
+  | Season | Elevation | Warmth | |
+  |---|---|---|---|
+  | spring | 52 degrees | 5700 K | fresh, a shade cooler than tuned |
+  | summer | 72 degrees | 5300 K | high, and the colour as tuned against the reference |
+  | autumn | 38 degrees | 4300 K | golden |
+  | winter | 24 degrees | 7000 K | low, pale and cold |
+
+  Between two middles it eases from one to the next (`ChasmSunOf`), so it is never still for long and turns
+  fastest over a season's first days, while the palette fades. The first spring holds spring's sun to its
+  middle - no winter came before it, as with the palette. The azimuth stays the reference's north-west
+  (`CHASM_SUN_AZIMUTH`), so shadows fall the same way all year and only lengthen. The brightness is in the
+  table too and the same in every season for now: a low sun already lights flat ground less on its own.
+- **Warmth is a colour temperature**, applied as a ratio to the tuned colour (`ChasmSunColour`): 5300 K is
+  exactly the colour matched against the reference, lower is warmer, higher is cooler.
+- **It turns in steps of `SUN_TURN_STEP`** (a quarter degree), not smoothly: a shadow map whose light turns a
+  little every frame is redrawn every frame and its edges crawl. A step moves a house's shadow by a tenth of a
+  unit at most. The colour changes every pass.
+- **A look only**, from the date shown (`UpdateSun`, physics thread, before `FollowSun`): nothing saved,
+  hashed or read by the rules. The title's diorama keeps the tuned sun.
+- **The Sun panel**, under Time: the date's sun and how far it is between two seasons, the one shining with
+  its colour, and *hold the sun* - elevation, azimuth, warmth and brightness, and a button per season for
+  its own. `chasm_time` returns the same as `sun`, and takes `sun` to hold it or `{held:false}` to let go.
+- **Not below 20 degrees**, held or dated (`SUN_ELEVATION_MIN`). Under about 18 degrees flat ground shades
+  itself all over - the shadow lookup's normal offset in the shared `lighting.glsl` (`CalcShadow`) lifts a
+  point by reach x sin, where a grazing light needs reach x sin / cos^2. Measured on seed 12: lit at 20,
+  dark at 16, near and far. A lower winter sun would need that fixed in core first.
+
+Checked on seed 12 at play zoom: the four middles screenshotted - summer's short shadows, autumn's golden
+light, winter's long blue shadows over the snow, spring's fresh green; the turn into autumn at 55 degrees
+and 4800 K, halfway; a held sun and letting it go.

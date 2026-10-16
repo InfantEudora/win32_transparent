@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: ab5494ad-10d2-4e73-8d9e-f67e1b05b3cd
-  modified: 2026-10-07T17:21:36.011Z
+  modified: 2026-10-16T20:33:36.479Z
 ---
 
 `screenshot` with `include_ui: true` on an app started `--minimized` comes back with the 3D scene
@@ -19,7 +19,8 @@ again with `SW_SHOWMINNOACTIVE` = 7 - neither takes the person's keyboard focus.
 then `[U.W]::ShowWindow((Get-Process archer).MainWindowHandle, 4)`.
 
 Only ImGui is missing: core's UIOverlay (chasm's HUD, cards, pins) DOES draw in a minimised
-screenshot - checked 2026-10-07.
+screenshot - checked 2026-10-07. But `include_ui: false` drops the UIOverlay too, not just ImGui: a
+chasm card/NEEDS ATTENTION check needs `include_ui: true` (seen 2026-10-16).
 
 Hotkeys gated on HasFocus (F9/F10, the U hide-UI toggle) cannot be tested this way at all - the
 person has to press them. Related: [[archer-app]].

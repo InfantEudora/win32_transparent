@@ -2,6 +2,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#else
+#include <sys/resource.h>
 #endif
 
 /*
@@ -44,6 +46,10 @@ void BackgroundWorker::Run(){
     //Below the render and physics threads, so a long solve takes the time they leave over rather
     //than a frame's worth of theirs.
     SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL);
+#else
+    //Linux nice is per THREAD despite its name, and "who = 0" is the calling one. Lowering needs no
+    //permission; a failure only leaves it at the normal priority, so it is not checked.
+    setpriority(PRIO_PROCESS,0,getpriority(PRIO_PROCESS,0) + 5);
 #endif
     for (;;){
         std::function<void()> job;

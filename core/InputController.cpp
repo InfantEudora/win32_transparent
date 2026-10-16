@@ -15,10 +15,11 @@ InputController::InputController(){
     AddKeyMap(0,INPUT_MOUSE_DELTA_X);
     AddKeyMap(0,INPUT_MOUSE_DELTA_Y);
 
-    //Default hardware mappings are the one genuinely per-platform part of construction: a VK_ code
-    //and an AKEYCODE_ are different numbers for the same idea. Everything after this line -- the
-    //KeyStates these create, the edges, the scripted holds -- is identical on both.
-#if defined(_WIN32)
+    //Default hardware mappings are the one genuinely per-platform part of construction: a desktop's
+    //VK_ code (core/KeyCodes.h, Windows and Linux alike) and an AKEYCODE_ are different numbers for
+    //the same idea. Everything after this line -- the KeyStates these create, the edges, the
+    //scripted holds -- is identical on both.
+#if !defined(__ANDROID__)
     AddKeyMap(VK_UP,INPUT_MOVE_UP);
     AddKeyMap(VK_DOWN,INPUT_MOVE_DOWN);
     AddKeyMap(VK_LEFT,INPUT_MOVE_LEFT);
@@ -38,7 +39,7 @@ InputController::InputController(){
     //TODO: Make multiple mappings work by somehow orring the up/down together.
     AddKeyMap(VK_LSHIFT,INPUT_SHIFT);
     AddKeyMap(VK_RSHIFT,INPUT_SHIFT);
-#elif defined(__ANDROID__)
+#else
     //The device has a handful of hardware/virtual buttons; the D-pad codes are also what a
     //connected gamepad's hat reports, so one set covers both. Everything else on this device
     //arrives as touch or sensors, which map through AddGamePadMap onto analog_values[] instead.
@@ -61,7 +62,7 @@ InputController::InputController(){
     AddKeyMap(AKEYCODE_SHIFT_RIGHT,INPUT_SHIFT);
 #endif
 
-#if defined(_WIN32)
+#if !defined(__ANDROID__)
     //No pad button by default: every free one is somebody's action in some app (Tetris restarts on
     //Back). An app that wants recording on the pad maps one itself - archer puts it on Back.
     AddKeyMap(VK_F9,INPUT_RECORD_TOGGLE);
@@ -285,11 +286,11 @@ void InputController::SubmitEvent(const InputEvent& event){
     pending_events.push_back(event);
 }
 
-#if defined(_WIN32)
+#if !defined(__ANDROID__)
 void InputController::SetRawInputActive(bool active){
     f_raw_input_active = active;
 }
-#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
+#endif //!__ANDROID__ -- Android equivalents live in InputController_android.cpp
 
 //keymap is only ever built during setup (AddKeyMap) and read afterwards, so walking it from the
 //raw input thread is safe. f_held is touched only by the physics thread in ApplyPendingEvents.
@@ -1211,7 +1212,9 @@ void InputController::PollGamepad(){
 //See the declaration. Deliberately routes through SubmitSystemKey rather than writing KeyState
 //directly: that is what gives a pad button the same edges, the same multi-mapping counting and the
 //same place in the recorded event stream as a key on the keyboard.
-#if defined(_WIN32)
+//Every desktop: it reads only the XInput bit layout, which InputController.h names off Windows too,
+//so a pad read through another API reports in that layout and lands here.
+#if !defined(__ANDROID__)
 void InputController::ApplyGamepadButtons(uint16_t buttons){
     if (buttons == gamepad_buttons){
         return;
@@ -1238,7 +1241,7 @@ void InputController::ApplyGamepadButtons(uint16_t buttons){
         SubmitSystemKey(GAMEPAD_SYSKEY_BASE + bit,(buttons & bit) != 0);
     }
 }
-#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
+#endif //!__ANDROID__ -- Android equivalents live in InputController_android.cpp
 
 //An alias for GetAxis, kept because four apps call it by this name.
 //

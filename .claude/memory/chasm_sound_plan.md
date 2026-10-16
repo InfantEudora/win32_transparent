@@ -52,7 +52,7 @@ Second round, same day (user: "already really good"):
   when the rules take them (refused = refusal sound only); each order is its own signal so a new line is a table row.
   Say() = one answer per pass (order rank over pick, first asked = a group's nearest), lock-guarded for MCP's thread.
   Core gained `busy: "replace"` (cuts same priority too); orders priority 1 so picks never cut them.
-  Open with the user: `morning` at any hour (no visible time of day); takes' loudness spread 8 dB.
+  User's answers: `morning` plays at any hour; takes LEVELLED at conversion (all -18 dBFS), so every voice row is gain 0.8.
 
 **Why:** the user's sounds are single blows, so blows-on-clocks replaced the plan's looping "beds" for chop/build.
 **How to apply:** a sound for an event = a row in chasm.json, no code. Verify with chasm_sound on a MUTED test

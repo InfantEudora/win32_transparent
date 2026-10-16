@@ -1,10 +1,13 @@
 #ifndef _APPLICATION_H_
 #define _APPLICATION_H_
 
+#if defined(_WIN32)
+//winsock2 before windows.h, for every app TU that goes on to include the socket headers.
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
 #include <windows.h>
+#endif
 #include <stdint.h>
 #include <mutex>
 #include <atomic>
@@ -33,7 +36,9 @@
 //instead. It mattered because ObjectCollider holds an rp3d::Collider* and this header is
 //reached by every app: dragging reactphysics3d's headers into all fifteen of them, including
 //the ones built with USE_PHYSICS=0, for a class none of them mention.
+#if defined(_WIN32)
 #include "RawInput.h"
+#endif
 #include "InputRecording.h"
 #include "StateHash.h"
 #include "skeleton/PlayerCharacter.h"
@@ -464,8 +469,12 @@ public:
 
     RRandom* rrand = NULL;
 
+#if defined(_WIN32)
     //Keyboard/mouse acquisition on its own thread. Started in Start(); stops itself on destruction.
+    //Win32's own: it exists to dodge the modal loop a title-bar drag runs, which other window
+    //systems do not have, so elsewhere the window backend acquires input in its own pump.
     RawInputSource raw_input;
+#endif
 
     //Physics Settings
     float physics_tps           = 50.0f; //Target physics ticks per second
@@ -885,7 +894,9 @@ protected:
 #endif
 private:
     bool SetupConsole();
+#if defined(_WIN32)
     static bool WINAPI ConsoleHandler(DWORD console_event);
+#endif
     void UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked);
 };
 

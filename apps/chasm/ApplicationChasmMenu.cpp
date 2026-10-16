@@ -8,6 +8,7 @@
 #include "SoundSystem.h"
 #endif
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <limits>
 #include <stdio.h>
@@ -80,6 +81,7 @@ enum{
     SETTINGS_ITEM_MUSIC,
     SETTINGS_ITEM_EFFECTS,
     SETTINGS_ITEM_FULLSCREEN,
+    SETTINGS_ITEM_UI_SIZE,
     SCREEN_ITEM_ROW = 100,      //+ the row: a map in CHASM_STARTS, or a save in screen_saves
 };
 
@@ -246,6 +248,15 @@ void ApplicationChasm::BuildScreen(){
         screen_menu.AddSlider("Music",settings.GetFloat("volume_music"),0.0f,1.0f,0.05f,SETTINGS_ITEM_MUSIC);
         screen_menu.AddSlider("Sound effects",settings.GetFloat("volume_effects"),0.0f,1.0f,0.05f,SETTINGS_ITEM_EFFECTS);
         screen_menu.AddToggle("Start full screen",settings.GetBool("fullscreen"),SETTINGS_ITEM_FULLSCREEN);
+        //The interface's size (ChasmHud.h): the step nearest what is saved, so a hand-edited value still shows one.
+        std::vector<std::string> sizes;
+        int size_at = 0;
+        for (int i = 0; i < HUD_UI_SIZES; i++){
+            sizes.push_back(std::to_string((int)(HUD_UI_SIZE_STEPS[i] * 100.0f + 0.5f)) + "%");
+            size_at = (fabsf(HUD_UI_SIZE_STEPS[i] - settings.GetFloat("ui_size"))
+                       < fabsf(HUD_UI_SIZE_STEPS[size_at] - settings.GetFloat("ui_size"))) ? i : size_at;
+        }
+        screen_menu.AddChoice("Interface size",sizes,size_at,SETTINGS_ITEM_UI_SIZE);
     }else if (screen == CHASM_SCREEN_NEW){
         for (int i = 0; i < CHASM_START_COUNT; i++){
             std::string label = std::string(CHASM_STARTS[i].name) + " - " + SizeName(CHASM_STARTS[i].fine_cells);
@@ -303,6 +314,7 @@ bool ApplicationChasm::UpdateScreen(InputController* input){
             case SETTINGS_ITEM_MUSIC:       settings.SetFloat("volume_music",it.value); break;
             case SETTINGS_ITEM_EFFECTS:     settings.SetFloat("volume_effects",it.value); break;
             case SETTINGS_ITEM_FULLSCREEN:  settings.SetBool("fullscreen",it.f_on); break;
+            case SETTINGS_ITEM_UI_SIZE:     settings.SetFloat("ui_size",HUD_UI_SIZE_STEPS[std::max(0,std::min(HUD_UI_SIZES - 1,it.choice))]); break;
         }
         if (!settings.Save()){
             debug->Err("Could not save the settings to %s\n",settings.Path().c_str());
@@ -640,6 +652,7 @@ void ApplicationChasm::LoadSettings(){
     settings.DeclareFloat("volume_master",1.0f,0.0f,1.0f);
     settings.DeclareFloat("volume_music",1.0f,0.0f,1.0f);
     settings.DeclareFloat("volume_effects",1.0f,0.0f,1.0f);
+    settings.DeclareFloat("ui_size",1.0f,HUD_UI_SIZE_STEPS[0],HUD_UI_SIZE_STEPS[HUD_UI_SIZES - 1]);     //ChasmHud.h
     std::string report;
     bool f_loaded = settings.Load(GetExecutableDirectory() + "/settings.json",&report);
     if (!report.empty()){
@@ -689,6 +702,8 @@ void ApplicationChasm::DrawPause(float s){
     const float w = (float)main_window->width;
     const float h = (float)main_window->height;
     overlay->AddRect(vec2(0.0f,0.0f),vec2(w,h),0.0f,MENU_SHADE);
+    //The build in the corner, as on the title: a screenshot of a pause names what it was taken in.
+    DrawHudBuild(overlay,w,h,s);
     if (menu_screen.load() != CHASM_SCREEN_MAIN){
         DrawScreen(s);
         return;

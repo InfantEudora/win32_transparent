@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 /*
     The wind streaks' fragment stage: a pale, soft-edged ribbon. The alpha along it (fading in at
     the tail, out at the tip, with the streak's life and the local wind) arrives per vertex; this

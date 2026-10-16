@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 
 /*
     The occluder field: one top-down pass that answers, for every column of the world, "what is

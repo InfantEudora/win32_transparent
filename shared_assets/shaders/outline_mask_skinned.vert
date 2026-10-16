@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 /*
     Renderer::OutlinePass, step 1, for a SKINNED mesh: outline_mask.vert's job - an outlined object
     drawn again into the mask, position only - posed by its skeleton the way default_skinned.vert

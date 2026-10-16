@@ -234,7 +234,7 @@ void EconomyDayLevels(const EconomyState& e, uint64_t tick, EconomyDay& row){
         }
     }
     for (const EconomyCrate& c : e.crates){
-        if (c.origin == CRATE_DROPPED || c.origin == CRATE_CAMP){
+        if (c.origin == CRATE_DROPPED || c.origin == CRATE_CAMP || c.origin == CRATE_SITE){
             for (int g = 0; g < GOOD_COUNT; g++){
                 row.held[g] += c.stock[g];
             }
@@ -2371,6 +2371,29 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     state.pantry.resize(n,std::array<int,GOOD_COUNT>{});    //a camp's; split, it stays with the piece keeping the id
     state.heat.resize(std::max<size_t>(n,1),HEAT_NONE);
     state.guards.resize(n,-1);
+    /*
+        Where each site with something brought stood at the last Derive: one taken off - cancelled, or its last plot
+        erased - leaves it there as a crate (the user's, 2026-10-16), below. A dry plot of it in a settlement's land
+        first, so a bridge's goods are left on its near bank, not out on the water or across it.
+    */
+    std::vector<int> old_spot(plots_of.size(),-1);
+    for (size_t id = 1; id < plots_of.size() && id < state.site.size(); id++){
+        if (std::none_of(state.site[id].begin(),state.site[id].end(),[](int x){ return x > 0; })){
+            continue;
+        }
+        for (int pass = 0; pass < 2 && old_spot[id] < 0; pass++){
+            for (int v : plots_of[id]){
+                bool f_land = v < (int)state.settlement.size() && state.settlement[v] != 0;
+                if (!w.terrain->wet[v] && (f_land || pass == 1)){
+                    old_spot[id] = v;
+                    break;
+                }
+            }
+        }
+        if (old_spot[id] < 0 && id < cells_of.size() && !cells_of[id].empty()){
+            old_spot[id] = CoarseCentre(g,cells_of[id][0]);     //a field's or range's: its middle
+        }
+    }
     //Every plot building's plots, and a field's first cell.
     plots_of.assign(n,std::vector<int>());
     arches_of.assign(n,std::vector<int>());
@@ -2526,6 +2549,16 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
                     int amount = state.stock[id][gd] + state.pantry[id][gd];
                     if (amount > 0){
                         AddToCrate(at,g.fine.pos[at],gd,amount,CRATE_CAMP,0);
+                    }
+                }
+            }
+            //...and a SITE's goods brought where it stood (old_spot, above): nothing carried to it is lost.
+            int spot = (id < old_spot.size()) ? old_spot[id] : -1;
+            if (spot >= 0 && spot < (int)g.fine.pos.size()){
+                int at = CratePlotNear(z,spot,g.fine.pos[spot]);
+                for (int gd = 0; gd < GOOD_COUNT && at >= 0; gd++){
+                    if (state.site[id][gd] > 0){
+                        AddToCrate(at,g.fine.pos[at],gd,state.site[id][gd],CRATE_SITE,0);
                     }
                 }
             }
@@ -2941,29 +2974,48 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         now (woodcutting_plan.md): each, for NEEDS ATTENTION. A woodcutter reaches ECONOMY_WOODCUTTER_REACH of
         WALKING from his workplace's door (WoodNear's): a hut that stands, or a camp with its own woodcutter's place -
         after the settlements, since a hut takes a camp's place over.
+        ...and of those, the ones he will reach over the ICE midwinter brings (the user's, 2026-10-16: a bridge's far
+        bank is felled in winter) - `trees_iced`, so NEEDS ATTENTION says it waits for the ice rather than for a hut.
+        By the season's furthest snow, not today's, so it holds all year; it is not looked at again as the snow comes.
     */
     state.trees_unreached.clear();
-    std::vector<uint8_t> reached(g.fine.pos.size(),0);
+    state.trees_iced.clear();
+    state.wood_reach.assign(g.fine.pos.size(),ECONOMY_WOOD_UNREACHED);
     std::vector<float> walk;
     for (size_t id = 1; id < n; id++){
         bool f_cuts = (z.buildings[id].kind == ZONE_KIND_WOODCUTTER && stands[id] && !z.buildings[id].f_stopped)
                       || state.cutter_places[id] > 0;
         if (f_cuts && home_plot[id] >= 0){
             walkers.MapFlood(z,std::vector<int>(1,home_plot[id]),ECONOMY_WOODCUTTER_REACH,walk);
-            for (size_t v = 0; v < walk.size() && v < reached.size(); v++){
-                reached[v] = reached[v] || walk[v] <= ECONOMY_WOODCUTTER_REACH;
+            for (size_t v = 0; v < walk.size() && v < state.wood_reach.size(); v++){
+                if (walk[v] <= ECONOMY_WOODCUTTER_REACH){
+                    state.wood_reach[v] = ECONOMY_WOOD_REACHED;
+                }
+            }
+            walkers.MapFlood(z,std::vector<int>(1,home_plot[id]),ECONOMY_WOODCUTTER_REACH,walk,WALK_ICE_WINTER);
+            for (size_t v = 0; v < walk.size() && v < state.wood_reach.size(); v++){
+                if (walk[v] <= ECONOMY_WOODCUTTER_REACH && state.wood_reach[v] == ECONOMY_WOOD_UNREACHED){
+                    state.wood_reach[v] = ECONOMY_WOOD_ICE;
+                }
             }
         }
     }
-    auto unreached = [&](const PropInstance& pr){
-        return pr.plot < 0 || pr.plot >= (int)reached.size() || !reached[pr.plot];
+    auto reach_of = [&](const PropInstance& pr){
+        return (pr.plot >= 0 && pr.plot < (int)state.wood_reach.size()) ? (int)state.wood_reach[pr.plot] : ECONOMY_WOOD_UNREACHED;
+    };
+    //A site's trees no woodcutter reaches over dry land: listed - and as iced, while every one of them is over the ice.
+    std::vector<std::pair<uint32_t,int>> found;     //site, the furthest reach of one of its trees: reached never
+    auto note = [&](uint32_t site, int r){
+        if (r != ECONOMY_WOOD_REACHED){
+            found.push_back(std::make_pair(site,r));
+        }
     };
     std::vector<int> in_way;
     for (const std::vector<int>* sites : {&road_sites,&wall_sites}){
         for (int v : *sites){
             RoadTrees(z,v,in_way);
-            if (std::any_of(in_way.begin(),in_way.end(),[&](int i){ return unreached(w.forest->props[i]); })){
-                state.trees_unreached.push_back(ECONOMY_SITE_GROUND | (uint32_t)v);
+            for (int i : in_way){
+                note(ECONOMY_SITE_GROUND | (uint32_t)v,reach_of(w.forest->props[i]));
             }
         }
     }
@@ -2971,13 +3023,24 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         for (size_t i = 0; i < w.forest->props.size() && i < state.prop_state.size(); i++){
             const PropInstance& pr = w.forest->props[i];
             uint32_t site = (IsTree(pr.kind) && state.prop_state[i] == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
-            if (site && unreached(pr)){
-                state.trees_unreached.push_back(site);
+            if (site){
+                note(site,reach_of(pr));
             }
         }
     }
-    std::sort(state.trees_unreached.begin(),state.trees_unreached.end());
-    state.trees_unreached.erase(std::unique(state.trees_unreached.begin(),state.trees_unreached.end()),state.trees_unreached.end());
+    std::sort(found.begin(),found.end());
+    for (size_t a = 0; a < found.size();){
+        size_t b = a;
+        bool f_iced = true;
+        for (; b < found.size() && found[b].first == found[a].first; b++){
+            f_iced = f_iced && found[b].second == ECONOMY_WOOD_ICE;
+        }
+        state.trees_unreached.push_back(found[a].first);
+        if (f_iced){
+            state.trees_iced.push_back(found[a].first);
+        }
+        a = b;
+    }
     state.zones_version = z.version;
 }
 
@@ -3227,6 +3290,18 @@ bool Economy::RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, in
     }
     int from_plot = from.plot;
     int who = EconomyPosted(k) ? WALK_WHO_POSTED : WALK_WHO_VILLAGER;
+    /*
+        A WOODCUTTER OVER THE ICE (the user's, 2026-10-16): in winter, his walk to or from ground he gets to only over the
+        ice (wood_reach, Derive) - a bridge's far bank, a tree in its way there (WoodNear) - takes the ice; any other walk
+        of his goes round as anyone's. A dry way round can be there and be far too long: one went 60 units up the river
+        and back. Caught across by the thaw, he waits as anyone cut off does - for the bridge he cleared the way for.
+    */
+    auto iced = [&](int v){
+        return v >= 0 && v < (int)state.wood_reach.size() && state.wood_reach[v] == ECONOMY_WOOD_ICE;
+    };
+    if (who == WALK_WHO_VILLAGER && k.job == WORKER_JOB_WOODCUTTER && walkers.AnyIce() && (iced(from_plot) || iced(to_plot))){
+        who = WALK_WHO_ICE;
+    }
     std::vector<vec2> route;
     std::vector<float> speed;
     std::vector<uint8_t> layer;
@@ -3418,6 +3493,8 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
     a long way round its end): Walkers::MapFlood from the plot at `at`, the map's own ways - a river crossed on a
     bridge, a cliff by a winch - out to `reach`. From his hut that is his reach; from elsewhere - a second log near the
     first - the hut's is still the straight line, which the first log was well inside.
+    OVER THE ICE (the user's, 2026-10-16): in winter, a tree in the way that only the ice gets him to - a bridge's far
+    bank - as well, by that walk; never any other tree there (RouteTo takes him over).
 */
 void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, Walkers& walkers, const vec2& at, float reach, bool f_logs,
                        std::vector<std::pair<std::pair<int,float>,int>>& out) const{
@@ -3434,6 +3511,8 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, Walkers& walk
     }
     std::vector<float> walk;
     walkers.MapFlood(z,std::vector<int>(1,from.plot),reach,walk);
+    std::vector<float> ice_walk;    //over the ice too: flooded the first time a tree needs it
+    bool f_ice = !f_logs && walkers.AnyIce();
     bool f_from_hut = (at - hut).length() < 1e-3f;
     std::vector<int> in_way;
     if (!f_logs){
@@ -3460,6 +3539,16 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, Walkers& walk
                 const PropInstance& pr = props[i];
                 vec2 p(pr.pos.x,pr.pos.z);
                 float d = (pr.plot >= 0 && pr.plot < (int)walk.size()) ? walk[pr.plot] : INFINITY;
+                bool f_over_ice = false;
+                if (!(d <= reach) && f_ice && ps == PROP_STATE_STANDING && pr.plot >= 0
+                    && (std::binary_search(in_way.begin(),in_way.end(),i)
+                        || (EconomyTreeSite(z,pr.plot,pr.coarse) && Ours(k,EconomyTreeSite(z,pr.plot,pr.coarse))))){
+                    if (ice_walk.empty()){
+                        walkers.MapFlood(z,std::vector<int>(1,from.plot),reach,ice_walk,WALK_ICE_NOW);
+                    }
+                    d = (pr.plot < (int)ice_walk.size()) ? ice_walk[pr.plot] : INFINITY;
+                    f_over_ice = true;
+                }
                 if (!(d <= reach) || (!f_from_hut && (p - hut).length() > ECONOMY_WOODCUTTER_REACH)){
                     continue;       //too far to walk, or none to be walked at all
                 }
@@ -3474,7 +3563,8 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, Walkers& walk
                 uint32_t site = (ps == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
                 bool f_way = std::binary_search(in_way.begin(),in_way.end(),i) || (site && Ours(k,site));
                 //A FRUIT TREE (foraging_plan.md) he passes by - felled only when it stands in the way of something.
-                if (pr.f_fruit && ps == PROP_STATE_STANDING && !f_way){
+                //...and over the ice, only what is in the way.
+                if ((pr.f_fruit && ps == PROP_STATE_STANDING && !f_way) || (f_over_ice && !f_way)){
                     continue;
                 }
                 int first = f_way ? 0 : (ps == PROP_STATE_LOG) ? 1 : 2;
@@ -8393,7 +8483,7 @@ void Economy::NextRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
 
 const char* EconomyCrateOriginName(int origin){
     return (origin == CRATE_FOUND) ? "found" : (origin == CRATE_CAMP) ? "camp" : (origin == CRATE_RUBBLE) ? "rubble"
-         : (origin == CRATE_BROKEN) ? "broken" : "dropped";
+         : (origin == CRATE_BROKEN) ? "broken" : (origin == CRATE_SITE) ? "site" : "dropped";
 }
 
 bool EconomyCrateGround(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& at){

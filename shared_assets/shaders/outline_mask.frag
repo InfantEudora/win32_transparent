@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 //The engine-wide texture unit map. Mirrored in C++ by core/TextureUnits.h.
 #include "texture_units.glsl"
 

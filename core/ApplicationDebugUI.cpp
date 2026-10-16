@@ -21,7 +21,9 @@
 
     Moved out of Application.cpp on 2026-09-14, which was 2381 lines and is now 1174.
 */
+#if defined(_WIN32)
 #include <winsock2.h>
+#endif
 #include "glad.h"
 
 #include "Application.h"
@@ -364,10 +366,10 @@ void Application::RenderDebugMenuBar(){
 
         if (ImGui::BeginMenu("Window")){
             if (ImGui::MenuItem("Set Always on Top")){
-                SetWindowPos(main_window->hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                main_window->SetAlwaysOnTop(true);
             }
             if (ImGui::MenuItem("Set Normal")){
-                SetWindowPos(main_window->hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                main_window->SetAlwaysOnTop(false);
             }
             ImGui::EndMenu();
         }

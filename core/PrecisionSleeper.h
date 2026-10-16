@@ -1,7 +1,9 @@
 #ifndef _PRECISIONSLEEPER_H_
 #define _PRECISIONSLEEPER_H_
 
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 /*
     Sub-millisecond sleeping for the engine's fixed-rate loops, without burning a core.
@@ -23,6 +25,9 @@
     Anything older falls back to a plain waitable timer plus a 1ms system timer period. winmm is
     resolved at RUN time for that path so the engine does not have to link against it - see the
     makefile, where -lwinmm belongs to the optional sound build.
+
+    Linux needs none of this: its high-resolution timers are always on, so clock_nanosleep on the
+    monotonic clock is the high-resolution path, and there is no fallback to have.
 */
 class PrecisionSleeper{
 public:
@@ -49,14 +54,16 @@ public:
     bool IsHighResolution() const { return f_high_resolution; }
 
 private:
+    double        deadline_us       = 0;
+    bool          f_high_resolution = false;
+#if defined(_WIN32)
     //timeBeginPeriod/timeEndPeriod, resolved from winmm.dll only on the fallback path.
     typedef UINT (WINAPI *timeperiod_fn)(UINT);
 
     HANDLE        handle            = NULL;
-    double        deadline_us       = 0;
-    bool          f_high_resolution = false;
     HMODULE       winmm             = NULL;
     timeperiod_fn time_end_period   = NULL;  //Non-NULL only if timeBeginPeriod(1) actually took.
+#endif
 };
 
 #endif

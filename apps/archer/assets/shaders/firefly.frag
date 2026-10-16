@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 /*
     A firefly's glow: a small hot core and a wide soft halo, both warm yellow-green. The engine has
     no bloom, so the halo IS the bloom - drawn, not computed - and it is what grows when the fly

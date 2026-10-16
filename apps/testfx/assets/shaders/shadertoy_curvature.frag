@@ -10,7 +10,7 @@
 // an URL, proper attribution and unmodified screenshot,
 // as part of your educational material. If these
 // conditions are too restrictive please contact me.
-#version 460 core
+#version 450 core
 #include "shadertoy.glsl"
 
 #if HW_PERFORMANCE==0

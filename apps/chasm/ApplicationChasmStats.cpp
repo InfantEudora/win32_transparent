@@ -420,7 +420,7 @@ bool ApplicationChasm::UpdateStats(InputController* input){
     if (stats_end.load() != CHASM_END_NONE){
         return UpdateEndPage(input);
     }
-    float s = std::max(0.5f,(float)main_window->height / 810.0f);
+    float s = HudUiScale((float)main_window->height,settings.GetFloat("ui_size"));
     StatsLayout l = StatsLayoutOf((float)main_window->width,(float)main_window->height,s);
     bool f_on_close = f_in && px.x >= l.close0.x && px.x <= l.close1.x && px.y >= l.close0.y && px.y <= l.close1.y;
     if ((f_live && (f_tab || f_escape)) || (f_click && f_on_close && !UIWantsMouse())){
@@ -462,7 +462,7 @@ void ApplicationChasm::CloseEnd(){
 UIMenuRect ApplicationChasm::EndButtonAt(int item){
     float w = (float)main_window->width;
     float h = (float)main_window->height;
-    float s = std::max(0.5f,h / 810.0f);
+    float s = HudUiScale(h,settings.GetFloat("ui_size"));
     StatsLayout l = StatsLayoutOf(w,h,s,true);
     int count = end_menu.Count();
     const float bw = STATS_END_BUTTON_W * s;

@@ -382,3 +382,10 @@ reads.
     striped "3 reserved", and Floris pinned in amber.
 - **Not checked**: the hover's faint outline over a crate (it needs a mouse over the window; the code is the
   selected outline's with the hover's colour).
+
+## A site's goods (2026-10-16)
+
+A site taken off - its card's Cancel, or the eraser taking its last plot - leaves what was brought to it as a crate
+where it stood, origin `CRATE_SITE` (5, "site"), titled "A site's goods": the user's, with Cancel
+(`construction_plan.md`, "Cancel"). The camp's goods (`CRATE_CAMP`) were the precedent. Counted as held in the
+statistics' history, as dropped loads and a camp's goods are.

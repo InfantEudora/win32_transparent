@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 7a3c3850-95bd-4a10-bf9a-4f6563ca8e67
-  modified: 2026-10-16T19:59:50.695Z
+  modified: 2026-10-16T20:36:28.181Z
 ---
 
 apps/chasm/docs/demo_plan.md steps 1, 2, 4 and 5 were BUILT by 2026-10-16:
@@ -32,6 +32,12 @@ Step 7 was built 2026-10-16 ("As built: the goals and the end"):
 - the goals panel sits at the top left;
 - a death pop-up (`CHASM_ASK_DEATH`);
 - the end is the statistics page in end mode (`stats_end`).
+
+Also built 2026-10-16:
+- the VERSION, 0.0.1, in ChasmVersion.cpp: not semver; the git hash and date come from the makefile's stamp;
+- the INTERFACE SIZE: HudUiScale is sqrt(h/810) × the `ui_size` setting, and menus follow it through UIMenuLayout::scale in core.
+
+New HUD code takes `s` from DrawOverlay. Never compute h/810 again.
 
 My call, flagged to the user: the end comes once both goals are DECIDED (met or failed), not only both met.
 

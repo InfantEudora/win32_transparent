@@ -1,5 +1,8 @@
 #ifndef _RAWINPUT_H_
 #define _RAWINPUT_H_
+//Win32 only, all of it: Application.h includes this behind _WIN32, and RawInput.cpp compiles to
+//nothing elsewhere.
+#if defined(_WIN32)
 class RawInputSource;
 
 #include <windows.h>
@@ -60,5 +63,6 @@ private:
     std::atomic<bool> f_setup_done{false};  //setup finished, successfully or not
     std::atomic<bool> f_setup_ok{false};
 };
+#endif //_WIN32
 
 #endif

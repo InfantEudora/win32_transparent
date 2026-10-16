@@ -3,6 +3,37 @@
 
 static Debugger* debug = new Debugger("PrecisionSleeper",DEBUG_INFO);
 
+#if !defined(_WIN32)
+#include <errno.h>
+#include <time.h>
+
+PrecisionSleeper::PrecisionSleeper(){
+    f_high_resolution = true;
+}
+
+PrecisionSleeper::~PrecisionSleeper(){
+}
+
+double PrecisionSleeper::NowUs(){
+    //The clock steady_clock reads here, so this and PerfTimer agree as they do on Windows.
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC,&now);
+    return (double)now.tv_sec * 1000000.0 + (double)now.tv_nsec / 1000.0;
+}
+
+void PrecisionSleeper::SleepUs(double us){
+    if (us <= 0){
+        return;
+    }
+    struct timespec wait;
+    wait.tv_sec = (time_t)(us / 1000000.0);
+    wait.tv_nsec = (long)((us - (double)wait.tv_sec * 1000000.0) * 1000.0);
+    //A signal - Ctrl+C, say - ends the sleep early and leaves the rest in `wait`; finish it, so this
+    //never returns early, which is the one thing a caller pacing a loop cannot recover from.
+    while (clock_nanosleep(CLOCK_MONOTONIC,0,&wait,&wait) == EINTR){
+    }
+}
+#else
 PrecisionSleeper::PrecisionSleeper(){
     handle = CreateWaitableTimerExW(NULL,NULL,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_ALL_ACCESS);
     if (handle){
@@ -87,6 +118,7 @@ void PrecisionSleeper::SleepUs(double us){
     //pacing a loop cannot recover from.
     Sleep((DWORD)((us + 999.0) / 1000.0));
 }
+#endif
 
 void PrecisionSleeper::SleepUntilNextTick(double period_us){
     if (period_us <= 0){

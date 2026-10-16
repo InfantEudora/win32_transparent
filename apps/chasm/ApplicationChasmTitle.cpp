@@ -1,9 +1,11 @@
 #include "ApplicationChasm.h"
 #include "Debug.h"
 #include "File.h"
+#include "Directory.h"
 #include "UIOverlay.h"
 #include "ChasmHud.h"
 #include "ChasmStats.h"
+#include "ChasmVersion.h"
 #include "Window.h"
 #include "Light.h"
 #include "ObjectAnimation.h"
@@ -75,12 +77,13 @@ UIMenuStyle ApplicationChasm::MenuStyle(){
     return style;
 }
 
+//The build, as saves, recordings and bug reports name it (ChasmVersion.h): "0.0.1 (210d9e4+, 2026-10-16, debug)".
 std::string ApplicationChasm::BuildName(){
+    std::string name = std::string(ChasmVersion()) + " (" + ChasmGitHash() + ", " + ChasmBuildDate();
 #ifdef DEBUG
-    return std::string("debug build, ") + __DATE__;
-#else
-    return std::string("build ") + __DATE__;
+    name += ", debug";
 #endif
+    return name + ")";
 }
 
 bool ApplicationChasm::TitleShowing(){
@@ -89,6 +92,8 @@ bool ApplicationChasm::TitleShowing(){
 
 //INIT, after the world's scene is built: the title's scene and its menu. Nothing in it yet but the camera and the light.
 void ApplicationChasm::CreateTitleScene(){
+    //The window and the taskbar name the version too (ChasmVersion.h); app_name stays "Chasm", which recordings match.
+    main_window->SetTitle(std::string("Chasm ") + ChasmVersion());
     title_scene = CreateNewScene("Title");
     Camera* camera = title_scene->camera;
     camera->name = "Title Camera";
@@ -206,7 +211,7 @@ void ApplicationChasm::ServiceDiorama(){
         SceneCaptureReport r;
         SceneCaptureWrite(*world_scene,*renderer,o,bytes,&r);
         std::string dir = GetExecutableDirectory() + "/../assets/dioramas";
-        CreateDirectoryA(dir.c_str(),NULL);
+        Directory::Create(dir);
         std::string path = dir + "/" + name + ".scap";
         FILE* f = fopen(path.c_str(),"wb");
         bool f_ok = f && fwrite(bytes.data(),1,bytes.size(),f) == bytes.size();
@@ -542,6 +547,11 @@ void ApplicationChasm::RefreshTitleMenu(){
     pan keys (arrows, WS), Enter confirms, Escape is `f_back`. False with nothing live to read. PHYSICS THREAD.
 */
 bool ApplicationChasm::ReadMenuInput(InputController* input, UIMenuInput& in, bool& f_back){
+    //The menus' size (ChasmHud.h, HudMenuScale), so a click lands where DrawOverlay drew them at this window's size.
+    float scale = HudMenuScale((float)main_window->height,settings.GetFloat("ui_size"));
+    for (UIMenu* m : {&title_menu,&ask_menu,&pause_menu,&screen_menu,&end_menu}){
+        m->layout.scale = scale;
+    }
     bool f_escape = input->WasKeyPressed(INPUT_CHASM_MENU);
     bool f_up = input->WasKeyPressed(INPUT_MOVE_UP) || input->WasKeyPressed(INPUT_TURN_UP);
     bool f_down = input->WasKeyPressed(INPUT_MOVE_DOWN) || input->WasKeyPressed(INPUT_TURN_DOWN);
@@ -753,14 +763,7 @@ bool ApplicationChasm::UpdateAsk(InputController* input){
             Busy(a);
         }else if (kind == CHASM_ASK_REPORT){
             //The report's folder in the file browser, ready to zip.
-            std::string cmd = "explorer.exe \"" + detail + "\"";
-            STARTUPINFOA si = {};
-            si.cb = sizeof(si);
-            PROCESS_INFORMATION pi = {};
-            if (CreateProcessA(NULL,&cmd[0],NULL,NULL,FALSE,0,NULL,NULL,&si,&pi)){
-                CloseHandle(pi.hThread);
-                CloseHandle(pi.hProcess);
-            }
+            OpenInFileBrowser(detail);
         }else if (kind == CHASM_ASK_OVERWRITE){
             std::string error;
             ShowNote(WriteSave(a.name,"save",error) ? "Saved: " + SaveTitle() : error);
@@ -799,11 +802,13 @@ void ApplicationChasm::DrawTitle(float s){
     const float h = (float)main_window->height;
     if (menu_screen.load() == CHASM_SCREEN_MAIN){
         overlay->AddText("CHASM",vec2(w * 0.5f,h * 0.30f),78.0f * s,HUD_TEXT,UI_ALIGN_CENTER);
+        std::string version = std::string("VERSION ") + ChasmVersion();
+        overlay->AddText(version.c_str(),vec2(w * 0.5f,h * 0.30f + 36.0f * s),18.0f * s,HUD_TEXT,UI_ALIGN_CENTER);
         UIMenuDraw(overlay,title_menu,w,h,MenuStyle());
     }else{
         DrawScreen(s);
     }
-    overlay->AddText(BuildName().c_str(),vec2(w - 16.0f * s,h - 16.0f * s),13.0f * s,HUD_TEXT_DIM,UI_ALIGN_RIGHT);
+    DrawHudBuild(overlay,w,h,s);
 }
 
 //RENDER THREAD, from DrawOverlay over the title or the game: the question, if one is up, over everything.
@@ -1012,6 +1017,7 @@ void ApplicationChasm::RegisterTitleTools(){
                         {"question",(kind >= 0 && kind <= CHASM_ASK_DEATH) ? questions[kind] : "?"},
                         {"game_on",f_game_on.load()},{"colony",colony},{"busy",busy},{"note",note},
                         {"menu",items(front())}};
+            result["build"] = BuildName();      //as saves and reports name it (ChasmVersion.h)
             //THE DEMO (demo_plan.md step 7): the end's page up, and how each goal stands - as the panel shows them.
             int end = stats_end.load();
             result["end_page"] = !f_stats_open.load() ? "none" : (end == CHASM_END_COMPLETE) ? "complete"
@@ -1049,6 +1055,8 @@ void ApplicationChasm::RegisterTitleTools(){
                                {"volume_master",settings.GetFloat("volume_master")},{"volume_music",settings.GetFloat("volume_music")},
                                {"volume_effects",settings.GetFloat("volume_effects")},{"fullscreen",settings.GetBool("fullscreen")},
                                {"window_fullscreen",main_window->f_fullscreen},{"master_applied",sound_volume.load()},
+                               {"ui_size",settings.GetFloat("ui_size")},
+                               {"ui_scale",HudUiScale((float)main_window->height,settings.GetFloat("ui_size"))},
                                {"music_applied",music_volume.load()},{"effects_applied",effects_volume.load()}};
 #ifdef USE_SOUND
             //...and read back from the buses themselves.

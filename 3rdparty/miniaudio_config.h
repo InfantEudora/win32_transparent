@@ -46,6 +46,13 @@
 /* One backend: the one Windows has. Without this, DirectSound and WinMM are compiled too. */
 #define MA_ENABLE_ONLY_SPECIFIC_BACKENDS
 #define MA_ENABLE_WASAPI
+/* And Linux's: PulseAudio, which PipeWire desktops answer as well, then ALSA under it for a machine
+   with neither. Naming them costs Windows nothing - a backend needs miniaudio's MA_SUPPORT_* for the
+   platform being built as well as this, and struct layout follows MA_SUPPORT_* alone. Both libraries
+   are opened at RUN time, so neither is a link dependency of the exe, and a machine without one is
+   a silent game rather than one that will not start. */
+#define MA_ENABLE_PULSEAUDIO
+#define MA_ENABLE_ALSA
 
 /* No file I/O of any kind - WaveFile.cpp does that. Note MA_NO_DECODING already implies
    MA_NO_RESOURCE_MANAGER inside miniaudio.h; it is spelled out here so the layout

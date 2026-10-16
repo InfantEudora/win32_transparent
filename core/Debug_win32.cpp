@@ -7,12 +7,19 @@
 // Guarded like Debug_android.cpp so both backend files can sit in the same
 // source list and be compiled unconditionally whatever the target is - only
 // the matching one ever contains any code.
-#if defined(_WIN32)
+//
+// THE DESKTOP BACKEND, Linux's as well despite the name: everything here but
+// SetupConsole is plain C, and a Linux terminal takes the same ANSI colours
+// without being asked. Kept under this name rather than renamed, as the Android
+// port's notes and merge scripts know it by it.
+#if !defined(__ANDROID__)
 #include "Debug.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #define DEBUG_IO_BUFFERSIZE 8192
 #define DEBUG_IO_HIGHWM 4096
@@ -56,6 +63,7 @@ static void color_tobuffer(int color) {
 }
 
 void Debugger::SetupConsole() {
+#if defined(_WIN32)
     // Debug output goes to stderr (see Flush()) so stdout stays free for
     // things like an MCPServer's JSON-RPC stdio stream - enable VT color
     // processing on the handle that actually carries the text.
@@ -67,6 +75,7 @@ void Debugger::SetupConsole() {
             SetConsoleMode(handle, mode);
         }
     }
+#endif
     setup_done = true;
 }
 
@@ -118,4 +127,4 @@ void Debugger::Flush() {
     }
 }
 
-#endif // defined(_WIN32)
+#endif // !defined(__ANDROID__)

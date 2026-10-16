@@ -88,6 +88,12 @@ struct UIMenuLayout{
     float width = 0.44f;
     float item_h = 0.058f;
     float gap = 0.012f;
+    /*
+        The items' SIZE - width, item_h and gap, not where the column starts - times this. 1 grows them with the
+        screen; an app whose interface should grow more slowly than the window does (chasm, a UI size setting)
+        sets its own share here each pass.
+    */
+    float scale = 1.0f;
 };
 
 struct UIMenuRect{

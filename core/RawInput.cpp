@@ -1,3 +1,5 @@
+//Win32's alone - see RawInput.h. Elsewhere the window backend acquires input in its own pump.
+#if defined(_WIN32)
 #include "RawInput.h"
 #include "Debug.h"
 
@@ -231,3 +233,5 @@ void RawInputSource::HandleRawInput(HRAWINPUT raw_handle){
         }
     }
 }
+
+#endif //_WIN32

@@ -1,10 +1,10 @@
 #include "ApplicationChasm.h"
 #include "Debug.h"
+#include "File.h"           //FileWriteTime - the cue table's poll
 
 #include <algorithm>
 #include <cmath>
 #include <thread>
-#include <sys/stat.h>
 
 #ifdef USE_SOUND
 //Only here, and only with sound: the one file that names both the cues and SoundSystem.
@@ -158,9 +158,8 @@ void ApplicationChasm::SetupSound(){
 #endif
     //For the poll. A baked build has no file to watch, and needs none.
     if (ResolveAssetPath(CHASM_CUE_TABLE,cue_table_path)){
-        //_stat64 by name: MinGW's `stat` is an inline alias for a symbol this static link lacks.
-        struct _stat64 st;
-        cue_table_mtime = (_stat64(cue_table_path.c_str(),&st) == 0) ? (int64_t)st.st_mtime : 0;
+        int64_t written = FileWriteTime(cue_table_path);
+        cue_table_mtime = (written >= 0) ? written : 0;
     }else{
         cue_table_path.clear();
     }
@@ -177,11 +176,11 @@ void ApplicationChasm::PollCueTable(){
         return;
     }
     cue_table_polled = t;
-    struct _stat64 st;
-    if (_stat64(cue_table_path.c_str(),&st) != 0 || (int64_t)st.st_mtime == cue_table_mtime){
+    int64_t written = FileWriteTime(cue_table_path);
+    if (written < 0 || written == cue_table_mtime){
         return;
     }
-    cue_table_mtime = (int64_t)st.st_mtime;
+    cue_table_mtime = written;
     std::string error;
     if (cues.Reload(error)){
         debug->Info("Cue table reloaded: %s\n",cues.File().c_str());
@@ -595,13 +594,18 @@ void ApplicationChasm::RegisterSoundTools(){
         "(sound, bus, gain, pan, seconds in), `playing` and `waiting` as the cues count them, and the cue log's last "
         "`lines` (default 30): pass, cue, play or skip and why, sound, gain, pan. op play: `cue` at full strength, as "
         "if its trigger came (CueSystem::Audition). `volume` 0..1, with any op, sets the master: 0 mutes without "
-        "changing what the cues decide or log.",
+        "changing what the cues decide or log. `music`, with any op, steers the score as the Music panel does: "
+        "section (a section's name, \"\" the season's), clouds and chasm (0..1 hold the layers' shares of the view, "
+        "below 0 lets them go), stinger (play one of the score's), suspense and brightness (0..1, below 0 the "
+        "score's own). The status's `music` says what each player plays, what drives it (section_from, "
+        "shares_held, mood) and what the game `sent` it last.",
         json{
             {"type","object"},
             {"properties",{
                 {"op",{{"type","string"},{"description","status (default) or play"}}},
                 {"cue",{{"type","string"},{"description","op play: the cue's name"}}},
                 {"volume",{{"type","number"},{"description","0..1, the master"}}},
+                {"music",{{"type","object"},{"description","section, clouds, chasm, stinger, suspense, brightness"}}},
                 {"lines",{{"type","integer"},{"description","the cue log's last lines, default 30"}}}
             }}
         },
@@ -614,6 +618,12 @@ void ApplicationChasm::RegisterSoundTools(){
             auto jv = args.find("volume");
             if (jv != args.end() && jv->is_number()){
                 sound_volume = std::max(0.0f,std::min(1.0f,jv->get<float>()));
+            }
+            auto jm = args.find("music");
+            if (jm != args.end() && jm->is_object()){
+                main_scene->AtTickBoundary([&](){
+                    SteerMusic(*jm);
+                });
             }
             int lines = 30;
             auto jl = args.find("lines");

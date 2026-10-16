@@ -3,10 +3,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdio.h>
 
 #ifdef USE_SOUND
 #include "MusicPlayer.h"
 #include "MusicScore.h"
+#endif
+#ifdef USE_IMGUI
+#include "imgui.h"
 #endif
 
 static Debugger* debug = new Debugger("ChasmMusic",DEBUG_ALL);
@@ -46,6 +50,8 @@ static Debugger* debug = new Debugger("ChasmMusic",DEBUG_ALL);
 #define MUSIC_SHARE_PASSES      5
 //A layer silent this long is paused.
 #define MUSIC_LAYER_REST_S      4.0f
+//What the game sent the music, kept for the Music panel and chasm_sound: the last this many.
+#define MUSIC_SENT_KEPT         12
 
 namespace {
 
@@ -117,10 +123,7 @@ void ApplicationChasm::SetupMusic(){
         const bool f_now = it_now != a.params.end() && it_now->is_boolean() && it_now->get<bool>();
         std::string name;
         if (str("stinger",name)){
-            MusicEvent e;
-            e.type = MusicEvent::STINGER;
-            e.name = name;
-            music[CHASM_MUSIC_LAND]->Post(e);
+            PlayMusicStinger(name,"cue " + a.cue);
         }
         if (str("section",name)){
             MusicEvent e;
@@ -128,10 +131,62 @@ void ApplicationChasm::SetupMusic(){
             e.name = name;
             e.f_now = f_now;
             music[CHASM_MUSIC_LAND]->Post(e);
+            MusicSend("section " + (name.empty() ? std::string("(the next)") : name) + " - cue " + a.cue);
         }
     });
+    MusicSend("section " + music_season + " - the start");
     debug->Info("Music: %s, %i sections, the land in %s\n",CHASM_MUSIC_SCORE,(int)score->sections.size(),
                 music_season.c_str());
+#endif
+}
+
+void ApplicationChasm::MusicSend(const std::string& what){
+    music_sent.push_back(MusicSent{sound_pass,calendar_tick,what});
+    if (music_sent.size() > MUSIC_SENT_KEPT){
+        music_sent.erase(music_sent.begin());
+    }
+}
+
+//The land plays it: a cue's (`why` names it), or the Music panel's. One the score has not got is told, not posted - a cue
+//table naming a stinger the score has lost shows here.
+void ApplicationChasm::PlayMusicStinger(const std::string& name, const std::string& why){
+#ifdef USE_SOUND
+    if (!music[CHASM_MUSIC_LAND] || !music_score){
+        return;
+    }
+    auto it = std::find_if(music_score->stingers.begin(),music_score->stingers.end(),[&name](const MusicStingerDef& s){
+        return s.name == name;
+    });
+    if (it == music_score->stingers.end()){
+        MusicSend("stinger " + name + " - not in the score (" + why + ")");
+        return;
+    }
+    MusicEvent e;
+    e.type = MusicEvent::STINGER;
+    e.name = name;
+    music[CHASM_MUSIC_LAND]->Post(e);
+    MusicSend("stinger " + name + " - " + why);
+#endif
+}
+
+/*
+    The score's two axes, which nothing in the game moves yet: SUSPENSE, calm to tense, and BRIGHTNESS, dark to bright (core
+    MusicEngine.h) - held for every player at once, to hear what they would do. Below 0, the player's own again.
+*/
+void ApplicationChasm::HoldMusicMood(float suspense, float brightness){
+    music_mood_held[0] = suspense;
+    music_mood_held[1] = brightness;
+#ifdef USE_SOUND
+    const MusicParams own;
+    for (int i = 0; i < CHASM_MUSIC_PLAYERS; i++){
+        if (!music[i]){
+            continue;
+        }
+        MusicParams p = music[i]->GetParams();
+        p.suspense = (suspense >= 0.0f) ? std::min(1.0f,suspense) : own.suspense;
+        p.brightness = (brightness >= 0.0f) ? std::min(1.0f,brightness) : own.brightness;
+        music[i]->SetParams(p);
+    }
 #endif
 }
 
@@ -189,20 +244,26 @@ void ApplicationChasm::UpdateMusic(){
     if (!music_score || !music[CHASM_MUSIC_LAND]){
         return;
     }
-    //The season: sent once when it turns, or when a load or a new map lands in another.
+    //The season - or the section the Music panel holds it at: sent once when it turns, or when a load or a new map lands
+    //in another.
     std::string season = CalendarSeasonName(CalendarDateOf(calendar_tick).season);
-    if (season != music_season){
-        music_season = season;
+    std::string section = music_section_held.empty() ? season : music_section_held;
+    if (section != music_season){
+        music_season = section;
         MusicEvent e;
         e.type = MusicEvent::SECTION;
-        e.name = season;
+        e.name = section;
         music[CHASM_MUSIC_LAND]->Post(e);
+        MusicSend("section " + section + (music_section_held.empty() ? " - the season" : " - held"));
     }
     //The layers only while the world shows: under the title, the land alone.
     const bool f_shown = !TitleShowing() && world_scene && main_scene == world_scene;
     if (!f_shown){
         music_share[CHASM_MUSIC_CLOUDS] = 0.0f;
         music_share[CHASM_MUSIC_CHASM] = 0.0f;
+    }else if (f_music_shares_held){
+        music_share[CHASM_MUSIC_CLOUDS] = music_share_held[CHASM_MUSIC_CLOUDS];
+        music_share[CHASM_MUSIC_CHASM] = music_share_held[CHASM_MUSIC_CHASM];
     }else if (sound_pass % MUSIC_SHARE_PASSES == 0){
         MeasureMusicShares();
     }
@@ -258,7 +319,187 @@ json ApplicationChasm::MusicStatusJson(){
                                   {"share",std::round(music_share[i] * 100.0f) / 100.0f},
                                   {"level",std::round(music_layer[i] * 1000.0f) / 1000.0f},{"held",f_music_held[i]}};
     }
+    //How it is driven, and what holds it instead (the Music panel, `music` below).
+    out["section_from"] = music_section_held.empty() ? "season" : "held";
+    out["shares_held"] = f_music_shares_held;
+    MusicParams p = music[CHASM_MUSIC_LAND] ? music[CHASM_MUSIC_LAND]->GetParams() : MusicParams();
+    out["mood"] = json{{"suspense",std::round(p.suspense * 100.0f) / 100.0f},
+                       {"brightness",std::round(p.brightness * 100.0f) / 100.0f},
+                       {"held",music_mood_held[0] >= 0.0f || music_mood_held[1] >= 0.0f}};
+    json sent = json::array();
+    for (const MusicSent& m : music_sent){
+        sent.push_back(json{{"pass",m.pass},{"tick",m.tick},{"what",m.what}});
+    }
+    out["sent"] = sent;
 #endif
     return out;
+}
+
+/*
+    chasm_sound's `music`, at a tick boundary - what the Music panel does: section (a section's name, "" the season's),
+    clouds and chasm (0..1 hold the layers' shares, below 0 lets them go), stinger (one of the score's), suspense and
+    brightness (0..1, below 0 the score's own).
+*/
+void ApplicationChasm::SteerMusic(const json& m){
+#ifdef USE_SOUND
+    if (!m.is_object() || !music_score){
+        return;
+    }
+    auto it = m.find("section");
+    if (it != m.end() && it->is_string()){
+        std::string name = it->get<std::string>();
+        if (name.empty() || music_score->SectionIndex(name) >= 0){
+            music_section_held = name;
+        }
+    }
+    for (int i = CHASM_MUSIC_CLOUDS; i < CHASM_MUSIC_PLAYERS; i++){
+        auto s = m.find(PlayerName(i));
+        if (s != m.end() && s->is_number()){
+            float v = s->get<float>();
+            if (v < 0.0f){
+                f_music_shares_held = false;
+            }else{
+                if (!f_music_shares_held){
+                    music_share_held[CHASM_MUSIC_CLOUDS] = music_share[CHASM_MUSIC_CLOUDS];
+                    music_share_held[CHASM_MUSIC_CHASM] = music_share[CHASM_MUSIC_CHASM];
+                }
+                f_music_shares_held = true;
+                music_share_held[i] = std::min(1.0f,v);
+            }
+        }
+    }
+    it = m.find("stinger");
+    if (it != m.end() && it->is_string()){
+        PlayMusicStinger(it->get<std::string>(),"chasm_sound");
+    }
+    float mood[2] = {music_mood_held[0],music_mood_held[1]};
+    bool f_mood = false;
+    static const char* mood_keys[2] = {"suspense","brightness"};
+    for (int k = 0; k < 2; k++){
+        auto v = m.find(mood_keys[k]);
+        if (v != m.end() && v->is_number()){
+            mood[k] = v->get<float>();
+            f_mood = true;
+        }
+    }
+    if (f_mood){
+        HoldMusicMood(mood[0],mood[1]);
+    }
+#endif
+}
+#endif
+
+#ifdef USE_IMGUI
+/*
+    RENDER THREAD with physics_mutex held, under the Time and Sun panels: how the game drives the music - the land's
+    section and what chose it, each layer's share of the view and the level it makes, the score's mood, and what the
+    game last sent - and a hold on each, to hear the score as the game would play it elsewhere.
+*/
+void ApplicationChasm::RenderMusicPanel(){
+    if (!ImGui::CollapsingHeader("Music")){
+        return;
+    }
+#ifdef USE_SOUND
+    if (!music_score || !music[CHASM_MUSIC_LAND]){
+        ImGui::TextDisabled("no music: no sound device, or %s did not load",CHASM_MUSIC_SCORE);
+        return;
+    }
+    static const char* pitch[12] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+    ImGui::TextDisabled("%s, %i sections - the music volume %.0f%%",CHASM_MUSIC_SCORE,(int)music_score->sections.size(),
+                        music_volume.load() * 100.0f);
+    float over = 0.0f;
+    for (int i = CHASM_MUSIC_CLOUDS; i < CHASM_MUSIC_PLAYERS; i++){
+        over = std::max(over,music_layer[i]);
+    }
+    for (int i = 0; i < CHASM_MUSIC_PLAYERS; i++){
+        if (!music[i]){
+            continue;
+        }
+        MusicStatus st = music[i]->GetStatus();
+        auto name_of = [&st](int s){
+            return (s >= 0 && s < (int)st.section_names.size()) ? st.section_names[s].c_str() : "";
+        };
+        ImGui::Separator();
+        const char* key = (st.root_pc >= 0 && st.root_pc < 12) ? pitch[st.root_pc] : "?";
+        char next[48] = "";
+        if (st.pending_section >= 0 || st.pending_section == -2){
+            snprintf(next,sizeof(next)," (next %s)",st.pending_section >= 0 ? name_of(st.pending_section) : "the next");
+        }
+        ImGui::Text("%s: %s%s, bar %i - %s %s",PlayerName(i),name_of(st.section),next,st.section_bar,key,MusicModeName(st.mode));
+        //The level each bus is at, and what put it there - the land turned down under the loudest layer.
+        if (i == CHASM_MUSIC_LAND){
+            ImGui::Text("  %s, level %.2f%s, %.0f dB",music_section_held.empty() ? "the season's" : "held",music_layer[i],
+                        over > 0.001f ? " under the layers" : "",st.rms_db);
+        }else if (f_music_held[i]){
+            ImGui::Text("  share %.2f -> %.2f, level %.2f, rests",music_share[i],LayerLevel(music_share[i]),music_layer[i]);
+        }else{
+            ImGui::Text("  share %.2f -> %.2f, level %.2f, %.0f dB",music_share[i],LayerLevel(music_share[i]),music_layer[i],
+                        st.rms_db);
+        }
+    }
+    ImGui::Separator();
+    //The holds: a section, the shares, the mood.
+    const char* held = music_section_held.empty() ? "the season's" : music_section_held.c_str();
+    if (ImGui::BeginCombo("section##music",held)){
+        if (ImGui::Selectable("the season's",music_section_held.empty())){
+            music_section_held.clear();
+        }
+        for (const MusicSectionDef& s : music_score->sections){
+            if (ImGui::Selectable(s.name.c_str(),music_section_held == s.name)){
+                music_section_held = s.name;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    bool f_shares = f_music_shares_held;
+    if (ImGui::Checkbox("hold the layers' shares##music",&f_shares)){
+        if (f_shares && !f_music_shares_held){
+            music_share_held[CHASM_MUSIC_CLOUDS] = music_share[CHASM_MUSIC_CLOUDS];
+            music_share_held[CHASM_MUSIC_CHASM] = music_share[CHASM_MUSIC_CHASM];
+        }
+        f_music_shares_held = f_shares;
+    }
+    if (f_music_shares_held){
+        ImGui::SliderFloat("clouds##musicshare",&music_share_held[CHASM_MUSIC_CLOUDS],0.0f,1.0f,"%.2f");
+        ImGui::SliderFloat("chasm##musicshare",&music_share_held[CHASM_MUSIC_CHASM],0.0f,1.0f,"%.2f");
+    }
+    bool f_mood = music_mood_held[0] >= 0.0f || music_mood_held[1] >= 0.0f;
+    MusicParams p = music[CHASM_MUSIC_LAND]->GetParams();
+    if (ImGui::Checkbox("hold the mood##music",&f_mood)){
+        if (f_mood){
+            HoldMusicMood(p.suspense,p.brightness);
+        }else{
+            HoldMusicMood(-1.0f,-1.0f);
+        }
+    }
+    if (f_mood){
+        float m[2] = {music_mood_held[0],music_mood_held[1]};
+        bool f_moved = ImGui::SliderFloat("suspense##music",&m[0],0.0f,1.0f,"%.2f");
+        f_moved |= ImGui::SliderFloat("brightness##music",&m[1],0.0f,1.0f,"%.2f");
+        if (f_moved){
+            HoldMusicMood(m[0],m[1]);
+        }
+    }else{
+        ImGui::Text("suspense %.2f, brightness %.2f",p.suspense,p.brightness);
+        ImGui::TextDisabled("  nothing in the game moves these yet");
+    }
+    ImGui::TextDisabled("stingers:");
+    for (const MusicStingerDef& s : music_score->stingers){
+        ImGui::SameLine();
+        char label[64];
+        snprintf(label,sizeof(label),"%s##stinger",s.name.c_str());
+        if (ImGui::Button(label)){
+            PlayMusicStinger(s.name,"the panel");
+        }
+    }
+    //What the game sent it, newest first.
+    ImGui::TextDisabled("sent, newest first:");
+    for (auto it = music_sent.rbegin(); it != music_sent.rend(); ++it){
+        CalendarDate d = CalendarDateOf(it->tick);
+        ImGui::TextWrapped("%s %i, pass %llu: %s",CalendarSeasonName(d.season),d.day,(unsigned long long)it->pass,it->what.c_str());
+    }
+#else
+    ImGui::TextDisabled("no music in a USE_SOUND=0 build");
+#endif
 }
 #endif

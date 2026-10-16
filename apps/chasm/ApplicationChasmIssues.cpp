@@ -2,6 +2,7 @@
 #include "UIOverlay.h"
 #include "ChasmHud.h"
 #include "Window.h"
+#include "Calendar.h"
 #ifdef USE_MCP
 #include "MCPServer.h"
 #endif
@@ -441,19 +442,58 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     }
 
     /*
-        12. Roads, walls and sites with a tree in their way no woodcutter reaches (woodcutting_plan.md): only a
-        woodcutter fells, so they wait for a hut put near them - a click takes up its tool. One row for all: the
-        advice is one. A road's plots count one each.
+        12. Roads, walls and sites with a tree in their way no woodcutter reaches over dry land (woodcutting_plan.md):
+        only a woodcutter fells. A ROW A BUILDING, named, and a click selects it and takes the view there (the user's,
+        2026-10-16: "it's not obvious it's the bridge") - saying what it waits for: a hut put near, or the ICE, when a
+        woodcutter reaches it over the river once it freezes (a bridge's far bank, e.trees_iced) - and "over the ice
+        now" while it is frozen there, a woodcutter on his way. Roads, walls, gardens and lots in one row, a plot
+        each, the view to the first.
     */
-    if (!e.trees_unreached.empty()){
-        ChasmIssue i;
-        i.kind = "trees_unreached";
-        i.tier = ISSUE_STUCK;
-        i.order = 1e6f;
-        i.text = "TREES IN THE WAY: NO WOODCUTTER NEAR";
-        i.value = std::to_string(e.trees_unreached.size()) + (e.trees_unreached.size() == 1 ? " PLACE" : " PLACES");
-        i.tool = CHASM_TOOL_WOODCUTTER;
-        out.push_back(i);
+    if (!e.trees_unreached.empty() && e.world){
+        const ChasmWorld& w = *e.world;
+        float front = CalendarSnowFrontZ(CalendarSnowCover(e.tick),w.grid->bounds_min.y,w.grid->bounds_max.y);
+        bool f_snow = CalendarSnowCover(e.tick) > 0.0f;
+        auto waits_for = [&](uint32_t site, const vec2& at) -> std::string {
+            if (!std::binary_search(e.trees_iced.begin(),e.trees_iced.end(),site)){
+                return "NO WOODCUTTER NEAR";
+            }
+            return (f_snow && CalendarSnowAt(at,front)) ? "OVER THE ICE NOW" : "WAITS FOR THE ICE";
+        };
+        int ground = 0;
+        int ground_plot = -1;
+        uint32_t ground_site = 0;
+        for (uint32_t site : e.trees_unreached){
+            if (EconomyIsGroundSite(site)){
+                ground_plot = (ground == 0) ? EconomyGroundSitePlot(site) : ground_plot;
+                ground_site = (ground == 0) ? site : ground_site;
+                ground++;
+                continue;
+            }
+            vec2 at;
+            if (site >= z.buildings.size() || !ChasmBuildingPoint(w,z,site,at)){
+                continue;
+            }
+            ChasmIssue i;
+            i.kind = "trees_unreached";
+            i.tier = ISSUE_STUCK;
+            i.order = 1e6f + (float)site;
+            std::string kind = ZoneKindName(z.buildings[site].kind);
+            std::transform(kind.begin(),kind.end(),kind.begin(),::toupper);
+            i.text = kind + ": TREES IN THE WAY";
+            i.value = waits_for(site,at);
+            i.building = site;
+            out.push_back(i);
+        }
+        if (ground > 0 && ground_plot >= 0 && ground_plot < (int)w.grid->fine.pos.size()){
+            ChasmIssue i;
+            i.kind = "trees_unreached";
+            i.tier = ISSUE_STUCK;
+            i.order = 2e6f;
+            i.text = "TREES IN THE WAY: " + waits_for(ground_site,w.grid->fine.pos[ground_plot]);
+            i.value = std::to_string(ground) + (ground == 1 ? " PLACE" : " PLACES");
+            i.plot = ground_plot;
+            out.push_back(i);
+        }
     }
 
     std::stable_sort(out.begin(),out.end(),[](const ChasmIssue& a, const ChasmIssue& b){
@@ -571,6 +611,8 @@ float ApplicationChasm::DrawIssues(float s, float bottom){
         }
         if (i.building){
             overlay_hits_drawing.push_back(OverlayHit{vec2(p0.x,top),vec2(p1.x,top + line_h),OVERLAY_HIT_BUILDING,(int)i.building});
+        }else if (i.plot >= 0){
+            overlay_hits_drawing.push_back(OverlayHit{vec2(p0.x,top),vec2(p1.x,top + line_h),OVERLAY_HIT_PLACE,i.plot});
         }else if (i.tool >= 0){
             overlay_hits_drawing.push_back(OverlayHit{vec2(p0.x,top),vec2(p1.x,top + line_h),OVERLAY_HIT_TAKE_TOOL,i.tool});
         }
@@ -586,7 +628,9 @@ void ApplicationChasm::RegisterIssueTools(){
         "build_woodcutter, build_houses, build_store, find_river (play mode, no river found yet), nobody_at, no_room, ropewalk_short, house_shut_in, house_crowded, field_fallow, tower_unkept, site_needs_rope, site_needs_stone, mine_worked_out, trees_unreached), tier (danger: a deadline under two days; "
         "countdown: a choice the game makes when it runs out; stuck; next: a next step), text and value as drawn, "
         "left (a countdown's share still to run, 1 to 0) and wait/grace ticks for a field, building (what a click "
-        "selects) or tool (what it takes up). View only. include_screenshot as elsewhere.",
+        "selects), plot (where a click takes the view: trees_unreached's roads and walls) or tool (what it takes up). "
+        "trees_unreached is a row a building, its value NO WOODCUTTER NEAR, WAITS FOR THE ICE (reached over the river "
+        "once it freezes) or OVER THE ICE NOW. View only. include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
@@ -611,6 +655,9 @@ void ApplicationChasm::RegisterIssueTools(){
                     }
                     if (i.building){
                         one["building"] = i.building;
+                    }
+                    if (i.plot >= 0){
+                        one["plot"] = i.plot;
                     }
                     if (i.tool >= 0){
                         one["tool"] = i.tool;

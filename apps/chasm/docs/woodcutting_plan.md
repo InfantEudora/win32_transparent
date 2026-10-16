@@ -182,6 +182,12 @@ little ... only change both by about 25%".
 - Worked out, not measured: the strongest woodcutters now bring in some 20-30% more wood a day than the weakest.
   *Checked* (the woodcutter-only build): the camp's woodcutter (strength 10) walked 1.8 loaded, 1.6 empty.
 
+## Over the ice (the user, 2026-10-16)
+
+A tree in a site's way that only the ice gets a woodcutter to - a bridge's far bank - is felled in winter: he
+crosses the ice for it and back, and only for it (`bridge_plan.md`, "Trees across the water"). NEEDS ATTENTION's
+"no woodcutter near" is a row a building now, naming it, and says when it waits for the ice instead.
+
 ## Later
 
 - The builders' hut and the ropewalk still cost by area for what does not grow with it: places and pace by

@@ -27,7 +27,7 @@ int UIControls::DeviceOf(uint32_t code, int analog_index){
     if (code >= GAMEPAD_SYSKEY_BASE){
         return UI_DEVICE_GAMEPAD;
     }
-#if defined(_WIN32)
+#if !defined(__ANDROID__)
     if (code == VK_LBUTTON || code == VK_RBUTTON || code == VK_MBUTTON || code == VK_XBUTTON1 || code == VK_XBUTTON2){
         return UI_DEVICE_MOUSE;
     }
@@ -56,7 +56,7 @@ std::string UIControls::KeyName(uint32_t code, int analog_index){
         {GAMEPAD_KEY_LEFT_THUMB,"LS"}, {GAMEPAD_KEY_RIGHT_THUMB,"RS"},
         {GAMEPAD_KEY_DPAD_UP,"D-pad Up"}, {GAMEPAD_KEY_DPAD_DOWN,"D-pad Down"},
         {GAMEPAD_KEY_DPAD_LEFT,"D-pad Left"}, {GAMEPAD_KEY_DPAD_RIGHT,"D-pad Right"},
-#if defined(_WIN32)
+#if !defined(__ANDROID__)
         {VK_LBUTTON,"Left"}, {VK_RBUTTON,"Right"}, {VK_MBUTTON,"Middle"},
         {VK_XBUTTON1,"Button 4"}, {VK_XBUTTON2,"Button 5"},
         {VK_SPACE,"Space"}, {VK_ESCAPE,"Esc"}, {VK_RETURN,"Enter"}, {VK_TAB,"Tab"},

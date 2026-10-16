@@ -267,6 +267,7 @@ void ApplicationChasm::UpdateGhost(){
     std::array<int,GOOD_COUNT> cost{};
     bool f_cost = false;
     const char* lead = NULL;
+    const char* note = NULL;    //said after it all: a bridge's trees no woodcutter gets to
     int plots = 1;
     int trees = 0;
     int room_more = -1;         //a woodcutter's hut: the wood it would keep indoors the more, a collector its water; -1 neither
@@ -321,11 +322,24 @@ void ApplicationChasm::UpdateGhost(){
         }
         //Dragged across: the whole bridge's cost, its deck's storey a plot.
         if (from >= 0 && from != plot && span.size() > 1){
+            /*
+                ...and its trees, each a woodcutter's to fell before any of it rises - warned of when no woodcutter
+                gets to one over dry land (the user's, 2026-10-16): on the far bank, it waits for the river to freeze
+                (Economy::Derive's wood_reach), or for a hut near if not even the ice brings one there.
+            */
+            bool f_iced = false;
+            bool f_unreached = false;
             for (int v : span){
                 for (int g = 0; g < GOOD_COUNT; g++){
                     cost[g] += ZoneKindPaintStoreys(ZONE_KIND_BRIDGE) * EconomyKindStoreyCost(cw,ZONE_KIND_BRIDGE,v,g);
                 }
+                int on = trees_on(v,-1);
+                trees += on;
+                int reach = (es && es->world == w && v < (int)es->wood_reach.size()) ? es->wood_reach[v] : ECONOMY_WOOD_REACHED;
+                f_iced = f_iced || (on > 0 && reach == ECONOMY_WOOD_ICE);
+                f_unreached = f_unreached || (on > 0 && reach == ECONOMY_WOOD_UNREACHED);
             }
+            note = f_unreached ? " - NO WOODCUTTER NEAR" : f_iced ? " - ACROSS THE WATER: WAITS FOR THE ICE" : NULL;
             f_cost = true;
             plots = (int)span.size();
         }
@@ -451,6 +465,9 @@ void ApplicationChasm::UpdateGhost(){
         }else if (!ghost_cost_text.empty() && room_more >= 0){
             ghost_cost_text += (room_more == 0) ? (f_room_new ? " - TOO SMALL TO KEEP WOOD" : " - KEEPS NO MORE WOOD")
                              : " - KEEPS " + std::to_string(room_more) + (f_room_new ? " WOOD INDOORS" : " MORE WOOD");
+        }
+        if (!ghost_cost_text.empty() && note){
+            ghost_cost_text += note;
         }
     }
     f_ghost_cost_ok = f_ok;

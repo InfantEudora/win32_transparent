@@ -6,7 +6,9 @@
     Nothing here creates an ImGui context, so nothing in the process has one. That is the point:
     with this twin linked, libimgui.a is not linked at all and its 618 KB are not in the binary.
 */
+#if defined(_WIN32)
 #include <winsock2.h>
+#endif
 #include "Window.h"
 
 bool Window::InitImGui(){
@@ -21,6 +23,7 @@ void Window::ImGuiNewFrame(){
 void Window::ImGuiRenderDrawData(){
 }
 
+#if defined(_WIN32)
 int ImGuiForwardWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     (void)hWnd;
     (void)msg;
@@ -30,3 +33,4 @@ int ImGuiForwardWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     //With no panels on screen there is nothing that could legitimately swallow input.
     return 0;
 }
+#endif

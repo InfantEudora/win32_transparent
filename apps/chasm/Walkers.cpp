@@ -308,10 +308,13 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int w
     }
     //A house is walked into only where the walk ends, and out of only where it starts. A winch is
     //walked through - its plot is the way on to the rope - and so is a camp, open ground between tents,
-    //and a bridge that stands.
+    //and a bridge that stands. A bridge's SITE too, under the snow, by those who walk the ice (ICE): its piles
+    //stand in the frozen river and its banks are only staked - and it lies where the crossing is, so a
+    //woodcutter after its far bank's trees went the long way round the river without it (2026-10-16).
     auto passage = [&](int v){
         int kind = z.KindOf(v);
-        return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_CAMP || ZoneBridgeWalkable(z,v);
+        return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_CAMP || ZoneBridgeWalkable(z,v)
+            || (kind == ZONE_KIND_BRIDGE && (who == WALK_WHO_POSTED || who == WALK_WHO_ICE) && Frozen(v));
     };
     if (z.storeys[b] > 0 && b != to && !passage(b)){
         return false;
@@ -601,11 +604,19 @@ bool Walkers::Frozen(int v) const{
     return f_ice && world && v >= 0 && v < (int)world->grid->fine.pos.size() && CalendarSnowAt(world->grid->fine.pos[v],ice_front);
 }
 
-bool Walkers::IceOpen(int who, int v) const{
-    return who == WALK_WHO_POSTED && Frozen(v);
+bool Walkers::FrozenInWinter(int v) const{
+    if (!world || v < 0 || v >= (int)world->grid->fine.pos.size()){
+        return false;
+    }
+    float front = CalendarSnowFrontZ(1.0f,world->grid->bounds_min.y,world->grid->bounds_max.y);
+    return CalendarSnowAt(world->grid->fine.pos[v],front);
 }
 
-void Walkers::MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist){
+bool Walkers::IceOpen(int who, int v) const{
+    return (who == WALK_WHO_POSTED || who == WALK_WHO_ICE) && Frozen(v);
+}
+
+void Walkers::MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist, int ice){
     EnsureGraph();
     EnsureLinks(z);
     if (!graph || !world || z.world != world){
@@ -615,9 +626,10 @@ void Walkers::MapFlood(const ZoneState& z, const std::vector<int>& from, float r
     const Terrain& t = *world->terrain;
     int n = (int)world->grid->fine.pos.size();
     dist.assign(n,INFINITY);
-    //Ground a walk goes on from: dry, or a bridge's deck; never the mountain.
+    //Ground a walk goes on from: dry, or a bridge's deck - or frozen water, if asked; never the mountain.
     auto onward = [&](int v){
-        return (!t.wet[v] || ZoneBridgeWalkable(z,v)) && !t.Mountain(v);
+        bool f_ice = (ice == WALK_ICE_NOW) ? Frozen(v) : (ice == WALK_ICE_WINTER) ? FrozenInWinter(v) : false;
+        return (!t.wet[v] || ZoneBridgeWalkable(z,v) || f_ice) && !t.Mountain(v);
     };
     typedef std::pair<float,int> Entry;
     std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> open;

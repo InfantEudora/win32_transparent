@@ -1,0 +1,14 @@
+Chasm bug report
+
+Build:   0.0.1 (210d9e4+, 2026-10-16, debug)
+Written: 2026-10-16 22:40:49
+Colony:  Seed 12 - year 1, spring 1
+
+  (no recording: none was running)
+  now.json - the colony when the report was made: a save to load
+  screenshot.png - the game when the report was made
+  chasm.log - everything logged this run
+  chasm_previous.log - the run before this one
+  settings.json - the game's settings
+
+Say what happened, and what you expected instead, in the message you send this folder with.

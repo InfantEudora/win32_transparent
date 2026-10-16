@@ -1451,7 +1451,15 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                     boulders += (z.building[v] == id && z.standing[v] == 0) ? EconomyBouldersOn(w,*e,(int)v,-1) : 0;
                 }
             }
-            if (trees > 0){
+            //...and why nobody is felling them, as NEEDS ATTENTION says (Economy::Derive): across the water, or too far.
+            bool f_unreached = std::binary_search(e->trees_unreached.begin(),e->trees_unreached.end(),id);
+            bool f_iced = std::binary_search(e->trees_iced.begin(),e->trees_iced.end(),id);
+            if (trees > 0 && f_iced){
+                c.Text(Format("%i tree%s to fell first - across the water: waits for the ice",trees,trees == 1 ? "" : "s"),
+                       HUD_AMBER);
+            }else if (trees > 0 && f_unreached){
+                c.Text(Format("%i tree%s to fell first - no woodcutter near",trees,trees == 1 ? "" : "s"),HUD_AMBER);
+            }else if (trees > 0){
                 c.Text(Format("%i tree%s to fell first - a woodcutter's work",trees,trees == 1 ? "" : "s"),HUD_AMBER);
             }
             if (boulders > 0){
@@ -1497,6 +1505,17 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         first.text = "Build first";
         first.chips_on = b.f_priority;
         c.lines.push_back(first);
+        /*
+            CANCEL (construction_plan.md; the user's, 2026-10-16): the whole site taken off at once - a bridge is placed
+            whole, and was erased plot by plot - while nothing of it stands. What it was brought is left as a crate.
+        */
+        if (info.storeys == 0 && !(f_cells && info.floor_area > 0.0f)){
+            CardLine cancel;
+            cancel.type = CARD_CHOICE;
+            cancel.choice_action = OVERLAY_HIT_SITE_CANCEL;
+            cancel.choices.push_back(std::make_pair(std::string("Cancel"),0));
+            c.lines.push_back(cancel);
+        }
         /*
             A field's starting crop, chosen while it is still being built (the user's, 2026-10-08), so its
             farmer sows it the day it stands - as long as it was never sown: a sown field growing by more
@@ -2154,6 +2173,7 @@ void GroundSiteCard(const ZoneState& z, const EconomyState* e, const std::vector
 void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& crate, uint64_t tick, Card& c){
     uint32_t id = ECONOMY_STORE_CRATE | crate.id;
     c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : (crate.origin == CRATE_CAMP) ? "A camp's goods"
+            : (crate.origin == CRATE_SITE) ? "A site's goods"
             : EconomyCrateCrystal(crate) ? "Floatstone" : EconomyCrateRubble(crate.origin) ? "Rubble" : "Crate";
     c.StockByGroup("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
     CalendarDate when = CalendarDateOf(crate.tick);
@@ -2164,6 +2184,8 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
         c.Text("Found " + date,HUD_TEXT_DIM);
     }else if (crate.origin == CRATE_CAMP){
         c.Text("Left where a camp stood, " + date,HUD_TEXT_DIM);     //its last tent packed or erased (settlements_plan.md)
+    }else if (crate.origin == CRATE_SITE){
+        c.Text("Brought for a building taken off, " + date,HUD_TEXT_DIM);  //cancelled, or erased (construction_plan.md)
     }else if (crate.origin == CRATE_RUBBLE && EconomyCrateCrystal(crate)){
         c.Text("Fallen from a seam in the wall",HUD_TEXT_DIM);      //a seam's crystal (stone_plan.md)
     }else if (crate.origin == CRATE_RUBBLE){
@@ -2980,6 +3002,8 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     }
                     cam_seek_building = (uint32_t)hit.value;
                 }
+            }else if (hit.action == OVERLAY_HIT_PLACE){
+                cam_seek_plot = hit.value;      //...and one on the ground - a road's - the view taken there only
             }else if ((hit.action == OVERLAY_HIT_PERSON || hit.action == OVERLAY_HIT_FAMILY) && f_shift){
                 //Shift on a name - the neediest's, a card's (selection_plan.md, "Several people selected"): added to the
                 //selection or taken out, at home too, and the view stays.
@@ -3178,6 +3202,24 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                                    ? sel.plot : FirstPlotOf(*z,sel.id);
                         SubmitZone(ZONE_OP_WORK_STOP,plot,want);
                     }
+                }
+            }else if (hit.action == OVERLAY_HIT_SITE_CANCEL){
+                //A site taken off whole (construction_plan.md) - a recorded zone command, by a plot of it or a cell -
+                //and with it gone, nothing selected.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const ZoneState> z = GetZones();
+                if (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size()){
+                    auto cell = std::find(z->field.begin(),z->field.end(),sel.id);
+                    if (ZoneKindOnCells(z->buildings[sel.id].kind) && cell != z->field.end()){
+                        SubmitZone(ZONE_OP_FIELD_CANCEL,(int)(cell - z->field.begin()),0);
+                    }else{
+                        SubmitZone(ZONE_OP_SITE_CANCEL,FirstPlotOf(*z,sel.id),0);
+                    }
+                    SelectPeople({});
                 }
             }else if (hit.action == OVERLAY_HIT_STORE_ALLOW || hit.action == OVERLAY_HIT_STORE_ALLOW_GROUP
                       || hit.action == OVERLAY_HIT_SITE_FIRST){

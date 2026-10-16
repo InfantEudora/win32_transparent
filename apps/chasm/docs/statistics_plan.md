@@ -130,13 +130,15 @@ What follows from it:
   colony has, pantries in.
 - **The end screens** show this page, for now (`demo_plan.md` step 7).
 - **The events** are listed on a wiki page of their own, `wiki/events.md`: what makes each, and what keeps it.
+- **Per settlement: not now.** "History as a whole is good enough for now. When we expand the game to have more
+  settlements that grow larger, we might break it up." The page and the history stay the colony's; the settlements
+  appear only in NOW, with their people and beds. (Rows per settlement would need a settlement id that lasts: today's
+  is its oldest home's, which changes when that home goes.)
+- **Discoveries** belong to the audio work under way (`areas_plan.md`, `EVENT_DISCOVERED`), not to this plan.
 
 ## Open questions
 
-1. **Per settlement.** The page and the history are the colony's; the settlements appear only in NOW, with their
-   people and beds. History per settlement would need rows per settlement, and a settlement's id is its oldest
-   home's, which changes when that home goes.
-2. **Discoveries** (`demo_plan.md` step 6): an event kind of their own when they land, journaled.
+None.
 
 ## Working here
 

@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 
 /*
     The vertex stage every effect in testfx shares, and the whole of why a fullscreen pass needs

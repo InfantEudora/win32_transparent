@@ -121,6 +121,8 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_PICK_UP     29      //a crate's card: the builders fetch it first, or back in the queue (stone_plan.md)
 #define OVERLAY_HIT_STATS       30      //the top bar's figures: the Statistics page (statistics_plan.md)
 #define OVERLAY_HIT_REPLAY_STOP 31      //the replay's bar: the replay stopped (demo_plan.md, step 4)
+#define OVERLAY_HIT_SITE_CANCEL 32      //a site's card: taken off whole, its goods left as a crate (construction_plan.md)
+#define OVERLAY_HIT_PLACE       33      //NEEDS ATTENTION's place on the ground: the view goes to plot `value`
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -143,6 +145,7 @@ struct ChasmIssue{
     std::string value;                  //at the row's right; may be empty
     float left = -1.0f;                 //a countdown's share still to run, 1 to 0; -1 none
     uint32_t building = 0;              //the place it is about - a click selects it - or 0
+    int plot = -1;                      //...or a plot on the ground a click takes the view to - a road's
     int tool = -1;                      //...or the tool a click takes up
 };
 //Every issue, most urgent first. `locked`: the build tools play mode still hides (ToolsLocked), so no hint offers one.
@@ -197,6 +200,26 @@ int ChasmGoalState(int goal, const EconomyState& e, const ChasmDiscoveries& d);
 std::string ChasmGoalNext(int goal, const EconomyState& e, const ChasmDiscoveries& d);
 //The middle of a building's plots, or of a field's cells - where the view goes to show it. False if it is gone.
 bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, vec2& out);
+/*
+    THE SUN THROUGH THE YEAR (docs/seasons_plan.md, "The sun"; ApplicationChasmSeasons.cpp): high in summer and low
+    in winter, golden in autumn and pale in winter - a look, from the date shown, never a rule.
+*/
+struct ChasmSun{
+    float elevation = 0.0f;         //degrees above the horizon
+    float azimuth = 0.0f;           //degrees from north, clockwise: where it stands
+    float kelvin = 0.0f;            //its light's colour temperature - the warmth
+    float brightness = 0.0f;
+};
+//The sun as matched against the reference (BuildScene): where it starts, and the title's always.
+#define CHASM_SUN_ELEVATION     54.3f
+#define CHASM_SUN_AZIMUTH       305.0f      //the north-west, so shadows fall short and down-right on screen
+#define CHASM_SUN_KELVIN        5300.0f
+#define CHASM_SUN_BRIGHTNESS    1.7f
+//The date's sun on `tick`, eased between the middles of the seasons; `from`, `to` and `t` say between which and how far.
+ChasmSun ChasmSunOf(uint64_t tick, int* from = NULL, int* to = NULL, float* t = NULL);
+//Its light: the tuned colour at CHASM_SUN_KELVIN, warmer or cooler from there; the brightest channel 1.
+vec3 ChasmSunColour(float kelvin);
+vec3 ChasmSunDirection(float elevation, float azimuth);    //toward the sun, unit length
 /*
     The HUD's own figures, worked out from the published state for the panels and for chasm_economy alike, so
     the two never disagree. View only: nothing here reaches the rules.
@@ -425,6 +448,7 @@ public:
     //camera glides to where he is - at the zoom it has, unlike the glide to the camp.
     std::atomic<uint32_t> cam_seek_person{0};
     std::atomic<uint32_t> cam_seek_building{0};     //...and a place picked from NEEDS ATTENTION, the same way
+    std::atomic<int> cam_seek_plot{-1};             //...or a plot on the ground, a road's, -1 none
     bool f_cam_fly_keep_zoom = false;
     //Physics thread. Puts the camera over the whole map.
     void FrameMap();
@@ -1262,9 +1286,26 @@ private:
     void UpdatePlayModeViews();                 //render thread, from PreRender
 
     DirectionalLight* sun = NULL;
-    //Where the sun stands relative to what it lights, set in BuildScene.
+    //Where the sun stands relative to what it lights: turned to the date's (or the held) sun by UpdateSun.
     vec3 sun_offset;
     void FollowSun();
+    /*
+        The sun the date makes (ChasmSunOf), or the one the Sun panel or chasm_time holds it at instead. Physics
+        thread, or anyone holding physics_mutex - the panel; the tool at a tick boundary.
+    */
+    ChasmSun sun_dated;
+    ChasmSun sun_held;
+    bool f_sun_held = false;
+    float sun_turned[2] = {-1000.0f,-1000.0f};  //the elevation and azimuth sun_offset was last made from, in steps
+    ChasmSun SunNow() const { return f_sun_held ? sun_held : sun_dated; }
+    void UpdateSun();                           //physics thread, from UpdateView, before FollowSun
+#ifdef USE_IMGUI
+    void RenderSunPanel();
+#endif
+#ifdef USE_MCP
+    json SunStatusJson();                       //chasm_time's `sun`, at a tick boundary...
+    void SteerSun(const json& sun);             //...and its `sun` argument
+#endif
 
     /*
         THE TITLE and THE POP-UP (docs/demo_plan.md; ApplicationChasmTitle.cpp): a scene of the title's own, the game
@@ -1302,7 +1343,7 @@ private:
     void DrawTitle(float s);                    //render thread, from DrawOverlay
     void DrawAsk(float s);
     static UIMenuStyle MenuStyle();             //every menu's look: the HUD's colours
-    static std::string BuildName();             //"debug build, Oct 16 2026": on the title and in every save
+    static std::string BuildName();             //"0.0.1 (210d9e4+, 2026-10-16, debug)": in every save and report
     /*
         THE PAUSE MENU AND THE LISTS (ApplicationChasmMenu.cpp; demo_plan.md steps 1-2): the pause menu over the frozen
         game, and the lists the title and it open - New game's four maps, the saves to load, the saves to save over.
@@ -1551,11 +1592,34 @@ private:
     //Per exploration cell: 0 off the land, 1 ground, 2 the chasm - from the areas, once a map.
     std::vector<uint8_t> music_cells;
     const ChasmWorld* music_cells_world = nullptr;
+    /*
+        What the game sent the music, newest last: a section for the season, a cue's stinger, a debug override - for the
+        Music panel and chasm_sound, to show how it is driven. And the overrides that panel and that tool may hold it at
+        instead: a section in place of the season's, the layers' shares in place of the view's, the score's mood in
+        place of its own. Physics thread, or anyone holding physics_mutex.
+    */
+    struct MusicSent{
+        uint64_t pass;
+        uint64_t tick;
+        std::string what;
+    };
+    std::vector<MusicSent> music_sent;
+    std::string music_section_held;             //"" the season's
+    bool f_music_shares_held = false;
+    float music_share_held[CHASM_MUSIC_PLAYERS] = {};
+    float music_mood_held[2] = {-1.0f,-1.0f};   //suspense and brightness, < 0 the score's own
     void SetupMusic();                          //Init, after SetupSound
     void UpdateMusic();                         //physics thread, every pass, from UpdateSound
     void MeasureMusicShares();
+    void MusicSend(const std::string& what);    //into music_sent
+    void PlayMusicStinger(const std::string& name, const std::string& why);
+    void HoldMusicMood(float suspense, float brightness);
+#ifdef USE_IMGUI
+    void RenderMusicPanel();
+#endif
 #ifdef USE_MCP
     json MusicStatusJson();                     //for chasm_sound, at a tick boundary
+    void SteerMusic(const json& music);         //chasm_sound's `music`, at a tick boundary
 #endif
     void SetupSound();                          //Init, the render thread before the physics thread exists
     void UpdateSound();                         //physics thread, every pass, from UpdateView

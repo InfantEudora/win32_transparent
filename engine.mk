@@ -114,6 +114,38 @@ $(foreach v,$(BOOL_SETTINGS),$(if $(filter-out 0 1,$($v)),$(error $v must be 0 o
 .DEFAULT_GOAL := default
 
 #---------------------------------------------------------------------------------------
+# PLATFORM - which OS this build is for, which is the one it runs on
+#
+# Windows (MSYS2/MinGW, every build this tree has ever had) or Linux. DETECTED, never set:
+# nothing here cross-compiles, so it is not a choice, and not in BUILD_SETTINGS either.
+#
+# What differs is the link line, the exe's name, and - like CONFIG below, and for the same
+# reason - the object trees. One checkout can be built from both sides (WSL sees this tree
+# through /mnt/c), and an object compiled for one OS linked into the other's exe is exactly
+# the silent mix-up the CONFIG block is about. Windows' paths and names are UNCHANGED: only
+# Linux's trees carry the platform.
+#
+# LINUX IS AT STEP 1 OF docs/linux_port_plan.md. Core and the app compile; the link stops at
+# the window backend (Window, the input acquisition, the GL loader's lookup), which is step 2.
+# USE_MCP, USE_NET and USE_IMGUI default OFF there until their own platform halves exist -
+# sockets and ImGui's window backend - so a plain `make` gets as far as it can.
+#---------------------------------------------------------------------------------------
+ifeq ($(OS),Windows_NT)
+PLATFORM        := windows
+PLATFORM_PREFIX :=
+EXE_EXT         := .exe
+LIBS_DIR        := $(ROOT)/libs
+else
+PLATFORM        := linux
+PLATFORM_PREFIX := linux_
+EXE_EXT         :=
+LIBS_DIR        := $(ROOT)/libs/linux
+USE_MCP         ?= 0
+USE_NET         ?= 0
+USE_IMGUI       ?= 0
+endif
+
+#---------------------------------------------------------------------------------------
 # BUILD CONFIGURATION
 #
 # Unlike USE_SOUND, this is NOT an app setting. Debug-vs-release changes CORE_CFLAGS, so
@@ -150,17 +182,26 @@ endif
 #third-party objects are shared, because they no longer vary by app. Both are split by
 #configuration; the exe is not, it is only named by one.
 BUILD_DIR       := build
-OBJ_DIR         := $(BUILD_DIR)/obj/$(CONFIG)
+OBJ_DIR         := $(BUILD_DIR)/obj/$(PLATFORM_PREFIX)$(CONFIG)
 CORE_BUILD_ROOT := $(ROOT)/build/core
-CORE_BUILD_DIR  := $(CORE_BUILD_ROOT)/$(CONFIG)
+CORE_BUILD_DIR  := $(CORE_BUILD_ROOT)/$(PLATFORM_PREFIX)$(CONFIG)
 
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
 #-lreactphysics3d is NOT here: it moved into the USE_PHYSICS block below, which is the whole
 #point of that flag. Everything else on this line is wanted by every app unconditionally.
+ifeq ($(PLATFORM),windows)
 CFLAGS = -std=c++17 -L$(ROOT)/libs/ -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 CFLAGS += -lXinput9_1_0
+else
+#ONE FILE ON LINUX TOO, but not -static, and that is forced rather than chosen. The GL driver is
+#the system's and is loaded at run time, and a static glibc cannot load anything; glibc itself
+#is on every machine. So: libstdc++ and libgcc inside the exe as on Windows, every library of
+#ours static, and the system's - the sound server, and the window system's from step 2 of
+#docs/linux_port_plan.md - opened at run time. -ldl is miniaudio's for doing that.
+CFLAGS = -std=c++17 -L$(LIBS_DIR)/ -lthirdparty -static-libstdc++ -static-libgcc -Wl,--gc-sections -ldl -lpthread -lm
+endif
 #CFLAGS += $(FNOCONSOLE)
 CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
 #tinygltf's own file I/O is dead weight here: core/GLTFLoader.cpp hands it bytes that
@@ -357,7 +398,10 @@ CORE_CFLAGS := $(CFLAGS)
 #games, and an app without sound has nothing to play it on.
 USE_SOUND ?= 0
 ifeq ($(USE_SOUND), 1)
-CFLAGS += -DUSE_SOUND -lole32
+CFLAGS += -DUSE_SOUND
+ifeq ($(PLATFORM),windows)
+CFLAGS += -lole32
+endif
 else
 CORE_SRCS_DROP += $(ROOT)/core/SoundSystem.cpp
 CORE_SRCS_DROP += $(ROOT)/core/WaveFile.cpp
@@ -411,12 +455,17 @@ CORE_SRCS_DROP += $(ROOT)/core/MCPServer.cpp
 endif
 
 ifeq ($(USE_NET),1)
-CFLAGS += -DUSE_NET -lws2_32 -lcrypt32
+CFLAGS += -DUSE_NET
+ifeq ($(PLATFORM),windows)
+CFLAGS += -lws2_32 -lcrypt32
+endif
 else
 CORE_SRCS_DROP += $(ROOT)/core/Socket.cpp
 CORE_SRCS_DROP += $(ROOT)/core/TCPServer.cpp
 CORE_SRCS_DROP += $(ROOT)/core/TCPClient.cpp
 CORE_SRCS_DROP += $(ROOT)/core/HTTPServer.cpp
+#HTTPServer's hot-reload watcher, and nothing else's - it goes with the server.
+CORE_SRCS_DROP += $(ROOT)/core/FileWatcher.cpp
 endif
 
 #---------------------------------------------------------------------------------------
@@ -575,8 +624,10 @@ endif
 #a different kind of output: a build whose flags change what comes out needs somewhere of its own
 #to put it. $(VARIANT_SUFFIX) is empty for a default build, so an ordinary bake is untouched and
 #build/generated is still build/generated.
-GENERATED   := $(BUILD_DIR)/generated$(VARIANT_SUFFIX)
-PACK_TOOL   := $(ROOT)/tools/assetpack/build/assetpack.exe
+#And per PLATFORM, for a reason found the hard way: the .S names the blob by ABSOLUTE path, so a Linux
+#build's stub (/mnt/c/...) left where the Windows build looks would be reassembled there and fail.
+GENERATED   := $(BUILD_DIR)/$(PLATFORM_PREFIX)generated$(VARIANT_SUFFIX)
+PACK_TOOL   := $(ROOT)/tools/assetpack/build/assetpack$(EXE_EXT)
 BAKED_TABLE := $(GENERATED)/BinaryAssetMemory.cpp
 BAKED_STUB  := $(GENERATED)/assets.S
 BAKED_BLOB  := $(GENERATED)/assets.bin
@@ -647,7 +698,7 @@ DEPS = $(CORE_OBJS:.o=.d) $(APP_OBJS:.o=.d)
 #would relink on every single invocation even with nothing changed.
 #$(BAKE_SUFFIX) is _baked when BAKE_ASSETS=1 and empty otherwise - see the BAKED ASSETS
 #block for why it is in the name rather than only in the object path.
-EXE := $(BUILD_DIR)/$(PROJECT)$(BAKE_SUFFIX)$(VARIANT_SUFFIX)$(CONFIG_SUFFIX).exe
+EXE := $(BUILD_DIR)/$(PROJECT)$(BAKE_SUFFIX)$(VARIANT_SUFFIX)$(CONFIG_SUFFIX)$(EXE_EXT)
 
 default: $(EXE)
 
@@ -662,7 +713,7 @@ default: $(EXE)
 #$(CFLAGS) links; it is every library an app could pull from. A missing one is not an error
 #here - the wildcard simply yields nothing - which is what keeps this from breaking a tree
 #where a library has not been built yet.
-ENGINE_LIBS := $(wildcard $(ROOT)/libs/*.a)
+ENGINE_LIBS := $(wildcard $(LIBS_DIR)/*.a)
 
 $(EXE): $(APP_OBJS) $(ASM_OBJS) $(CORE_OBJS) $(ENGINE_LIBS)
 	@mkdir -p $(BUILD_DIR)

@@ -1,6 +1,8 @@
 #include "ChasmHud.h"
+#include "ChasmVersion.h"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <stdio.h>
 
@@ -9,6 +11,29 @@
     cards are: the sizes below are the card's own - its text, its line height - so a strip sits among
     the card's lines as one of them.
 */
+
+float HudUiScale(float window_h, float ui_size){
+    float k = std::max(1.0f,window_h) / HUD_UI_HEIGHT;
+    return std::max(0.5f,sqrtf(k) * ui_size);
+}
+
+float HudMenuScale(float window_h, float ui_size){
+    return HudUiScale(window_h,ui_size) * HUD_UI_HEIGHT / std::max(1.0f,window_h);
+}
+
+float DrawHudBuild(UIOverlay* o, float screen_w, float screen_h, float s){
+    std::string text = std::string("CHASM ") + ChasmVersion() + "   -   " + ChasmGitHash() + "   -   " + ChasmBuildDate();
+#ifdef DEBUG
+    text += "   -   DEBUG BUILD";
+#endif
+    const float size = 15.0f * s;
+    vec2 m = o->MeasureText(text.c_str(),size);
+    vec2 p1(screen_w - 16.0f * s,screen_h - 14.0f * s);
+    vec2 p0(p1.x - m.x - 28.0f * s,p1.y - 30.0f * s);
+    o->AddRect(p0,p1,9.0f * s,HUD_PANEL);
+    o->AddText(text.c_str(),vec2(p1.x - 14.0f * s,p0.y + 20.5f * s),size,HUD_TEXT,UI_ALIGN_RIGHT);
+    return p0.y;
+}
 
 uint32_t HudGoodColour(int good){
     switch (good){

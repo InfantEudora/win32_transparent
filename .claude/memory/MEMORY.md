@@ -118,3 +118,4 @@
 - [Chasm demo menus](chasm_demo_menus.md) — demo_plan all 7 steps built 2026-10-16 (menus, saves, recording, Settings, discoveries, goals + end page); pop-ups play mode only; four starts edited by the user
 - [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — chasm_load in a test instance overwrites the user's untracked autosave slots; back them up first
 - [Chasm areas plan](chasm_areas_plan.md) — BUILT 2026-10-16: rivers/falls/biomes/plateau/forest found when first seen (EVENT_DISCOVERED), debug overlay, water loops faint under the clouds
+- [Linux port](linux_port_investigation.md) — step 1 DONE 2026-10-16 (compiles+bakes, link stops at 29 window-backend symbols); step 2 Wayland/X11 decision pending; no SDL/GLFW wanted; docs/linux_port_plan.md

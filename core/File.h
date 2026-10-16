@@ -57,9 +57,20 @@ std::string GetExecutableDirectory();
     to native code at startup rather than being derivable from anything. So the port's Application
     passes it here once, and everything downstream keeps calling GetExecutableDirectory.
 
-    A no-op on Windows, where the answer IS derivable and GetModuleFileName already gives it.
+    A no-op on Windows and Linux, where the answer IS derivable - GetModuleFileName, /proc/self/exe.
 */
 void SetWritableDataDirectory(const char* path);
+
+//When `path` was last written, in seconds since 1970 (UTC). -1 if there is no such file.
+int64_t FileWriteTime(const std::string& path);
+
+//Copies a file even while another handle - the log's own, say - holds it open for writing. False if
+//`from` could not be read or `to` written.
+bool CopyFileShared(const std::string& from, const std::string& to);
+
+//Opens a folder in the desktop's file browser: Explorer, or whatever xdg-open picks. Does not wait.
+//False if nothing could be started.
+bool OpenInFileBrowser(const std::string& path);
 
 /*
     Adds a search root given RELATIVE TO THE EXECUTABLE rather than to the working directory, so

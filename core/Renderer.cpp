@@ -3090,8 +3090,8 @@ void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum sever
 }
 
 void Renderer::SetVSync(bool enable){
-    if (wglSwapIntervalEXT){
-        wglSwapIntervalEXT(enable);
+    //Through glad rather than wglSwapIntervalEXT by name: the swap interval is a window-system call.
+    if (GLSetSwapInterval(enable ? 1 : 0)){
         if (enable){
             debug->Ok("VSync: Enabled\n");
             f_vsync = true;

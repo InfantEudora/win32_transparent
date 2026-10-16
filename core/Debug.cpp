@@ -4,6 +4,8 @@
 #include <ctime>
 #ifdef _WIN32
 #include <share.h>
+#else
+#include <sys/file.h>   //flock - see OpenExclusive
 #endif
 
 std::mutex Debugger::mutex;
@@ -54,7 +56,14 @@ static FILE *OpenExclusive(const std::string &file, const char *mode) {
 #ifdef _WIN32
     return _fsopen(file.c_str(), mode, _SH_DENYWR);
 #else
-    return fopen(file.c_str(), mode);
+    // POSIX has no share modes, so the same signal is an advisory lock that every copy of the app takes and
+    // tests. Safe for the "w" open too: OpenLogFile probes with "r+b" first, so it never truncates a held file.
+    FILE *f = fopen(file.c_str(), mode);
+    if (f && flock(fileno(f), LOCK_EX | LOCK_NB) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    return f;
 #endif
 }
 

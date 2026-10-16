@@ -6,6 +6,7 @@ not told apart from the wavs. Mono stays mono, stereo stays stereo.
 
     python tools/sound_ogg.py chasm              # every .wav under apps/chasm/assets/sound/
     python tools/sound_ogg.py chasm --dry-run    # say what it would do
+    python tools/sound_ogg.py chasm --again speech/     # the kept sources again, after a rule here changed
 
 For each wav there, in a subfolder or not:
   - encodes it to <name>.ogg beside it, replacing an .ogg of that name;
@@ -14,12 +15,17 @@ For each wav there, in a subfolder or not:
   - rewrites "sound/<path>.wav" to "sound/<path>.ogg" in the app's cue tables (assets/cues/*.json).
 The loaders tell the two apart by content, not by name (core/AudioDecode.h), so nothing else changes.
 
-SPEECH (anything under sound/speech/) has the silence at either end TRIMMED first. A spoken line answers a
-click, and the generated takes start 0.16-0.62 s in (chasm's taunts, 2026-10-16): that much late reads as
-lag. Kept: everything from TRIM_LEAD before the first sample above TRIM_FLOOR to TRIM_TAIL after the last,
-faded in and out over a few ms so the cut does not click. The floor sits under a breath and above the
-takes' own padding (at most 46 of 32768 in them). An effect's attack is never touched. The wav kept in
-art_source is the untrimmed one.
+SPEECH (anything under sound/speech/) is made ready first, an effect never:
+  - TRIMMED: a spoken line answers a click, and the generated takes start 0.16-0.62 s in (chasm's taunts,
+    2026-10-16): that much late reads as lag. Kept: everything from TRIM_LEAD before the first sample above
+    TRIM_FLOOR to TRIM_TAIL after the last, faded in and out over a few ms so the cut does not click. The
+    floor sits under a breath and above the takes' own padding (at most 46 of 32768 in them).
+  - LEVELLED: every line to the same loudness, SPEECH_LEVEL - so a voice's lines sound alike whichever is
+    drawn, and two voices take one gain in the cue table. The takes ranged 8 dB (the user asked for them
+    evened out, 2026-10-16). Loudness is the RMS of the voiced part: LEVEL_WINDOW windows within LEVEL_GATE of
+    the loudest, so pauses and breaths do not pull it down. Never raised past SPEECH_PEAK at its peak.
+The wav kept in art_source is the take as it came; --again makes the .ogg from it once more, leaving it
+there, when these rules change.
 
 New recordings arrive as wav in assets/sound/: drop them there, name them in the cue table as .wav or
 .ogg, and run this.
@@ -28,6 +34,7 @@ OGGENC in the environment names another oggenc2; the default is foobar2000's (64
 """
 import argparse
 import array
+import math
 import os
 import re
 import shutil
@@ -46,11 +53,32 @@ TRIM_FLOOR = 96             #of 32768, about -51 dBFS
 TRIM_LEAD = 0.040           #seconds kept before the first sound...
 TRIM_TAIL = 0.080           #...and after the last, for a breath's tail
 TRIM_FADE = 0.005           #the fade at each cut
+SPEECH_LEVEL = -18.0        #dBFS, the voiced part's RMS
+SPEECH_PEAK = -1.0          #dBFS, the most a sample is raised to: Vorbis puts back up to a dB (-1.0 decoded at -0.1)
+LEVEL_WINDOW = 0.020        #seconds
+LEVEL_GATE = -20.0          #dB under the loudest window: what counts as voiced
 
 
-def trimmed_copy(src, dst):
-    """Writes src without its silent ends to dst. Returns (lead cut, tail cut) in seconds, or None when
-    the file is not 16-bit PCM, which is then encoded as it is."""
+def db(x):
+    return 20.0 * math.log10(max(x, 1e-9) / 32768.0)
+
+
+def loudness(s, channels, rate):
+    """The voiced part's RMS in dBFS, and the peak's."""
+    win = max(1, int(LEVEL_WINDOW * rate)) * channels
+    power = []
+    for i in range(0, len(s) - win + 1, win):
+        power.append(sum(x * x for x in s[i:i + win]) / win)
+    if not power:
+        return -200.0, -200.0
+    gate = max(power) * 10.0 ** (LEVEL_GATE / 10.0)
+    voiced = [p for p in power if p >= gate]
+    return db(math.sqrt(sum(voiced) / len(voiced))), db(max(abs(x) for x in s))
+
+
+def speech_copy(src, dst):
+    """Writes src trimmed and levelled to dst. Returns (lead cut, tail cut, gain dB, level before, level
+    after), or None when the file is not 16-bit PCM, which is then encoded as it is."""
     with wave.open(src, "rb") as w:
         channels, width, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
         frames = w.readframes(n)
@@ -74,6 +102,12 @@ def trimmed_copy(src, dst):
             out[f * channels + c] = int(out[f * channels + c] * a)
             g = (frames_out - 1 - f) * channels + c
             out[g] = int(out[g] * a)
+    level, peak = loudness(out, channels, rate)
+    gain = min(SPEECH_LEVEL - level, SPEECH_PEAK - peak)
+    scale = 10.0 ** (gain / 20.0)
+    for i in range(len(out)):
+        out[i] = max(-32768, min(32767, int(round(out[i] * scale))))
+    after, _ = loudness(out, channels, rate)
     if sys.byteorder != "little":
         out.byteswap()
     with wave.open(dst, "wb") as w:
@@ -81,13 +115,16 @@ def trimmed_copy(src, dst):
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(out.tobytes())
-    return first / rate, (n - end) / rate
+    return first / rate, (n - end) / rate, gain, level, after
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("app", help="the app's folder name under apps/, e.g. chasm")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--again", nargs="?", const="", metavar="PATH",
+                    help="encode the wavs kept in art_source/<app>/sound/ once more (those under PATH, e.g. speech/), "
+                         "leaving them there")
     args = ap.parse_args()
 
     sound_dir = os.path.join(ROOT, "apps", args.app, "assets", "sound")
@@ -97,23 +134,28 @@ def main():
         sys.exit("no %s" % sound_dir)
     if not args.dry_run and not os.path.isfile(OGGENC):
         sys.exit("no encoder at %s - set OGGENC to an oggenc2.exe" % OGGENC)
+    f_again = args.again is not None
+    from_dir = keep_dir if f_again else sound_dir
 
     #Paths under sound/, with forward slashes - as the cue tables name them.
     wavs = []
-    for folder, _, files in os.walk(sound_dir):
+    for folder, _, files in os.walk(from_dir):
         for f in files:
             if f.lower().endswith(".wav"):
-                wavs.append(os.path.relpath(os.path.join(folder, f), sound_dir).replace(os.sep, "/"))
+                wavs.append(os.path.relpath(os.path.join(folder, f), from_dir).replace(os.sep, "/"))
+    if f_again:
+        wavs = [w for w in wavs if w.startswith(args.again.replace(os.sep, "/"))]
     wavs.sort()
     if not wavs:
-        print("nothing to do: no .wav under %s" % sound_dir)
+        print("nothing to do: no .wav under %s" % os.path.join(from_dir, args.again or ""))
         return
     before = after = 0
     scratch = tempfile.mkdtemp(prefix="sound_ogg_")
     try:
         for name in wavs:
-            src = os.path.join(sound_dir, name)
-            dst = src[:-4] + ".ogg"
+            src = os.path.join(from_dir, name)
+            dst = os.path.join(sound_dir, name[:-4] + ".ogg")
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
             with wave.open(src, "rb") as w:
                 rate = w.getframerate()
             size = os.path.getsize(src)
@@ -124,13 +166,14 @@ def main():
             what = ""
             encode = src
             if f_speech:
-                encode = os.path.join(scratch, "trimmed.wav")
-                cut = trimmed_copy(src, encode)
-                if cut is None:
+                encode = os.path.join(scratch, "speech.wav")
+                done = speech_copy(src, encode)
+                if done is None:
                     encode = src
-                    what = "  (not trimmed: not 16-bit, or silent)"
+                    what = "  (as it is: not 16-bit, or silent)"
                 else:
-                    what = "  trimmed %3d + %3d ms" % (cut[0] * 1000, cut[1] * 1000)
+                    what = "  trimmed %3d + %3d ms, %+5.1f dB (%5.1f -> %5.1f dBFS)" % (
+                        done[0] * 1000, done[1] * 1000, done[2], done[3], done[4])
             cmd = [OGGENC, "-Q", "-q", QUALITY]
             if rate > MAX_RATE:
                 cmd += ["--resample", str(MAX_RATE)]
@@ -140,9 +183,10 @@ def main():
                 sys.exit("oggenc2 failed on %s: %s" % (name, (r.stderr or r.stdout).strip()))
             before += size
             after += os.path.getsize(dst)
-            kept = os.path.join(keep_dir, name)
-            os.makedirs(os.path.dirname(kept), exist_ok=True)
-            shutil.move(src, kept)
+            if not f_again:
+                kept = os.path.join(keep_dir, name)
+                os.makedirs(os.path.dirname(kept), exist_ok=True)
+                shutil.move(src, kept)
             print("%-40s %6d Hz %7d -> %6d bytes%s" % (name, rate, size, os.path.getsize(dst), what))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -166,7 +210,8 @@ def main():
                         f.write(changed)
                     print("cues/%s: %d name(s) now .ogg" % (table, count))
     if not args.dry_run:
-        print("%d files: %d -> %d bytes; the wavs are in %s" % (len(wavs), before, after, os.path.relpath(keep_dir, ROOT)))
+        print("%d files: %d -> %d bytes; the wavs %s %s" % (len(wavs), before, after, "stay in" if f_again else "are in",
+                                                         os.path.relpath(keep_dir, ROOT)))
 
 
 if __name__ == "__main__":

@@ -1,12 +1,19 @@
+#if defined(_WIN32)
 #include <winsock2.h>
+#else
+#include <signal.h>     //SIGINT/SIGTERM - SetupConsole
+#include <unistd.h>     //write, _exit - the signal handler may call nothing else
+#endif
 #include "glad.h"
 
 #include "Application.h"
 #include "PrecisionSleeper.h"
 #include "CrashReport.h"
+#include "Directory.h"
 
 //For ThreadIdText below - the only way to get text out of a std::thread::id.
 #include <sstream>
+#include <chrono>       //sleep_for, in the two polls for the physics thread
 #include <string.h>     //strstr, strlen - HasCommandLineFlag
 #include <ctype.h>      //isspace
 #include <time.h>       //the recording's timestamp
@@ -55,8 +62,10 @@ Application::Application(){
     thread_id_main = std::this_thread::get_id();
     debug->Info("Main thread id: %s\n",ThreadIdText(thread_id_main).c_str());
 
+#if defined(_WIN32)
     //TODO: This only needs to be done once.
     Window::RegisterWindowClasses();
+#endif
 
     tmr_physics = new PerfTimer("Physics Time");
     tmr_physics_loop = new PerfTimer("Physics Loop Time");
@@ -67,38 +76,58 @@ Application::Application(){
     tmr_frame_work = new PerfTimer("Frame Work Time");
 };
 
+//The monitor's current mode - a question for the window system, so Window answers it.
 int2 Application::GetDisplaySettings(){
-    DWORD       iMode = 0;
-    BOOL	    res = true;
-    DEVMODEA    devmode;
+    return Window::GetDisplaySize();
+}
 
-    //This would list all the supported setting for whatever the current display is.
-    while(0 && res){
-        res = EnumDisplaySettings(NULL, iMode++, &devmode);
-        if (res){
-            debug->Info("%d x %d, %d bits %d Hz\n", devmode.dmPelsWidth,devmode.dmPelsHeight, devmode.dmBitsPerPel, devmode.dmDisplayFrequency);
+/*
+    The process's command line as one string, which is the shape Windows hands it over in.
+
+    Linux has no GetCommandLine: /proc/self/cmdline holds the same arguments separated by NULs, and
+    joined with spaces they scan exactly like the Windows string, so the two functions below need no
+    second version. Android has no command line worth the name, and answers empty as it always has.
+*/
+static const char* CommandLine(){
+#if defined(_WIN32)
+    return GetCommandLineA();
+#elif defined(__ANDROID__)
+    return "";
+#else
+    //Read once, on first use - the main thread, in Start().
+    static std::string line;
+    static bool f_read = false;
+    if (!f_read){
+        f_read = true;
+        FILE* f = fopen("/proc/self/cmdline","rb");
+        if (f){
+            char buf[4096];
+            size_t n;
+            while ((n = fread(buf,1,sizeof(buf),f)) > 0){
+                line.append(buf,n);
+            }
+            fclose(f);
+        }
+        for (char& c: line){
+            if (c == '\0'){
+                c = ' ';
+            }
         }
     }
-
-    res = EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
-    if (res){
-        debug->Info("Current Display Settings: %d x %d, %d bits %d Hz\n", devmode.dmPelsWidth,devmode.dmPelsHeight, devmode.dmBitsPerPel, devmode.dmDisplayFrequency);
-    }
-    int2 dimensions = {(int)devmode.dmPelsWidth,(int)devmode.dmPelsHeight};
-    return dimensions;
+    return line.c_str();
+#endif
 }
 
 /*
     Whether `flag` appears as a whole argument on the process's command line.
 
-    Read from GetCommandLineA rather than passed down from WinMain, so that a flag understood by
-    the engine works in every app without fifteen main.cpp files each having to forward it. A whole
-    argument means bounded by whitespace or the ends of the string, so "--minimized" does not
-    match inside some longer argument that happens to contain it.
+    Read from the process rather than passed down from main, so that a flag understood by the engine
+    works in every app without fifteen main.cpp files each having to forward it. A whole argument
+    means bounded by whitespace or the ends of the string, so "--minimized" does not match inside
+    some longer argument that happens to contain it.
 */
 static bool HasCommandLineFlag(const char* flag){
-#ifdef _WIN32
-    const char* line = GetCommandLineA();
+    const char* line = CommandLine();
     size_t len = strlen(flag);
     for (const char* p = line ? strstr(line,flag) : NULL; p; p = strstr(p + 1,flag)){
         bool f_starts = (p == line) || isspace((unsigned char)p[-1]);
@@ -107,9 +136,6 @@ static bool HasCommandLineFlag(const char* flag){
             return true;
         }
     }
-#else
-    (void)flag;
-#endif
     return false;
 }
 
@@ -118,8 +144,7 @@ static bool HasCommandLineFlag(const char* flag){
     whole-argument rule as HasCommandLineFlag, so "--mcp-port" does not match "--mcp-portal".
 */
 static bool CommandLineValue(const char* flag, std::string& out){
-#ifdef _WIN32
-    const char* line = GetCommandLineA();
+    const char* line = CommandLine();
     size_t len = strlen(flag);
     for (const char* p = line ? strstr(line,flag) : NULL; p; p = strstr(p + 1,flag)){
         bool f_starts = (p == line) || isspace((unsigned char)p[-1]);
@@ -137,9 +162,6 @@ static bool CommandLineValue(const char* flag, std::string& out){
         out.assign(v,end);
         return true;
     }
-#else
-    (void)flag; (void)out;
-#endif
     return false;
 }
 
@@ -176,7 +198,7 @@ void Application::Start(void){
         Measured - see the note on this flag in CLAUDE.md.
     */
     f_start_minimized = HasCommandLineFlag("--minimized");
-    main_window->Show(f_start_minimized ? SW_SHOWMINNOACTIVE : SW_SHOWDEFAULT);
+    main_window->Show(f_start_minimized);
     //An unactivated window gets no WM_ACTIVATE to tell it it is NOT focused, and the input
     //controller assumes it is - see SyncFocusWithWindow. Without this, --minimized kept the window
     //out of the way and still took every key and wheel notch typed anywhere else.
@@ -210,6 +232,7 @@ void Application::Start(void){
         }
     }
 
+#if defined(_WIN32)
     //Keyboard and mouse acquisition onto its own thread, before anything starts reading input.
     //THIS thread is about to become the window message pump below, and that pump stops dead for
     //the duration of a title-bar drag or a resize (DefWindowProc runs a nested modal loop), which
@@ -223,9 +246,10 @@ void Application::Start(void){
         //just sampled once a tick and without raw deltas.
         debug->Warn("Raw input unavailable, falling back to polled input\n");
     }
+#endif
 
     //We release the window's context from this thread
-    wglMakeCurrent(main_window->hDC, NULL);
+    main_window->ReleaseContext();
 
     //And do all render calls from a seperate thread. It picks up the context released just above.
     //
@@ -235,36 +259,16 @@ void Application::Start(void){
     //nothing left to guard.
     frame_thread = std::thread(FrameThreadFunction,this);
 
-    //Catch all input and window related messages in this thread:
-    MSG msg = {0};
-    while (main_window->f_should_quit == false){
-        if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
-            if (msg.message == WM_QUIT)
-                break;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }else{
-            //Nothing queued. Block until something arrives rather than polling on a Sleep(1):
-            //that Sleep was only ever ~1ms because the physics thread happened to be holding the
-            //system timer resolution at 1ms, and now that nothing raises it, the same call would
-            //idle for up to ~15.6ms. Waiting on the queue instead wakes the instant a message
-            //lands and costs no CPU at all in between.
-            //MWMO_INPUTAVAILABLE closes the race where a message arrives after the PeekMessage
-            //above returned FALSE but before this wait starts - without it that message would not
-            //re-signal the queue and the wait would sit out its full timeout.
-            //The timeout exists only so f_should_quit, which other threads set, is still noticed
-            //when no messages are coming through at all.
-            MsgWaitForMultipleObjectsEx(0,NULL,50,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
-        }
-    }
+    //Catch all input and window related messages in this thread, until something asks to quit.
+    main_window->PumpUntilQuit();
 
     /*
         The pump has ended, so the window is on its way out. Wait for the render thread - and
         through it the physics thread, which it joins itself - to finish the frame and the tick
         they are in, before Start() returns and main() lets the process go.
 
-        RAISED HERE RATHER THAN ASSUMED, because the loop above has two exits and only one of them
-        sets it: WM_QUIT breaks out with f_should_quit still false, and that is the same flag the
+        RAISED HERE RATHER THAN ASSUMED, because the pump has two exits and only one of them sets
+        it: on Win32, WM_QUIT ends it with f_should_quit still false, and that is the same flag the
         render loop is watching. Joining without this would be joining a loop with no reason to
         end. Everything downstream hangs off this one line.
     */
@@ -293,6 +297,7 @@ int Application::Exit(void){
     return 1;
 }
 
+#if defined(_WIN32)
 bool Application::SetupConsole(){
     //Used to do things from console, like CTRL+C
     if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)Application::ConsoleHandler,TRUE)==FALSE){
@@ -301,7 +306,45 @@ bool Application::SetupConsole(){
     }
     return true;
 }
+#else
+/*
+    Ctrl+C on the terminal (SIGINT) and a polite `kill` (SIGTERM), with the same two steps as the
+    Windows ConsoleHandler below and for the same reasons: the first asks for the ordinary shutdown,
+    the second ends the process on the spot in case that shutdown has wedged.
 
+    UNLIKE WINDOWS, THIS RUNS INSIDE WHATEVER THREAD THE SIGNAL INTERRUPTED, which may be holding any
+    lock - the Debugger's included - so it may only do async-signal-safe things: an atomic exchange,
+    write() and _exit(). RequestQuitAll only stores to flags, on a list of windows made before any
+    signal can arrive.
+*/
+static void OnQuitSignal(int signal_number){
+    (void)signal_number;
+    static std::atomic<bool> f_quit_requested(false);
+    if (f_quit_requested.exchange(true)){
+        static const char text[] = "Second Ctrl+C - not waiting, killing the process\n";
+        ssize_t ignored = write(2,text,sizeof(text) - 1);
+        (void)ignored;
+        _exit(1);
+    }
+    static const char text[] = "Shutting down by Ctrl+C\n";
+    ssize_t ignored = write(2,text,sizeof(text) - 1);
+    (void)ignored;
+    Window::RequestQuitAll();
+}
+
+bool Application::SetupConsole(){
+    struct sigaction action = {};
+    action.sa_handler = OnQuitSignal;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGINT,&action,NULL) != 0 || sigaction(SIGTERM,&action,NULL) != 0){
+        debug->Err("Unable to install a console handler!\n");
+        return false;
+    }
+    return true;
+}
+#endif
+
+#if defined(_WIN32)
 /*
     Ctrl+C on the console, and Ctrl+Break, which is the same request by another key.
 
@@ -342,6 +385,7 @@ bool WINAPI Application::ConsoleHandler(DWORD console_event){
     }
     return false;
 }
+#endif
 
 //Virtual function. Should get overriden in each application that extends it.
 void Application::Init(){
@@ -439,8 +483,8 @@ void Application::FrameThreadFunction(Application* app){
     debug->Info("FrameFunction thread id: %s\n",ThreadIdText(app->thread_id_render).c_str());
 
     //We make the window's context current to this thread
-    if (!wglMakeCurrent(app->main_window->hDC, app->main_window->hRC)){
-        debug->Err("FrameFunction Thread unable to get context by wglMakeCurrent\n");
+    if (!app->main_window->MakeContextCurrent()){
+        debug->Err("FrameFunction Thread unable to make the window's context current\n");
         return;
     }
 
@@ -555,9 +599,9 @@ void Application::FrameThreadFunction(Application* app){
         in the task list until it is killed. "Both threads joined" is the line that was missing.
 
         wglMakeCurrent(NULL,NULL) is also simply what the API asks for - MSDN says to make the
-        context not current before the thread using it goes away.
+        context not current before the thread using it goes away. EGL says the same.
     */
-    wglMakeCurrent(NULL,NULL);
+    app->main_window->ReleaseContext();
 
     debug->Info("FrameThreadFunction terminated\n");
 }
@@ -1536,7 +1580,7 @@ objectid_t Application::SubmitCommandAndWait(const SimCommand& cmd, int timeout_
         if (main_scene->GetAppliedCommandSequence() >= sequence){
             return main_scene->GetCommandResult(sequence);
         }
-        Sleep(5);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     debug->Err("SimCommand type %u (sequence %u) was not applied within %d ms\n",
                cmd.type,sequence,timeout_ms);
@@ -1564,9 +1608,9 @@ uint64_t Application::StepPhysicsAndWait(int num_ticks){
     //GetPendingPhysicsSteps() hitting zero is the right thing to wait on rather than the tick
     //counter: Scene::UpdatePhysics decrements it at the END of the tick it ran, precisely so that
     //a caller seeing zero knows the work is finished and the state is safe to read.
-    int timeout_ms = max(2000,num_ticks * 30);
+    int timeout_ms = (std::max)(2000,num_ticks * 30);
     for (int waited_ms = 0; waited_ms < timeout_ms && main_scene->GetPendingPhysicsSteps() > 0; waited_ms += 5){
-        Sleep(5);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     return main_scene->GetPhysicsTick() - tick_before;
 }
@@ -1728,19 +1772,7 @@ bool Application::RequestReplay(const std::string& path_or_name, bool f_restore_
 }
 
 std::vector<std::string> Application::ListRecordings(){
-    std::vector<std::string> names;
-#ifdef _WIN32
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((recordings_dir + "/*.rec").c_str(),&fd);
-    if (h != INVALID_HANDLE_VALUE){
-        do{
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)){
-                names.push_back(fd.cFileName);
-            }
-        }while (FindNextFileA(h,&fd));
-        FindClose(h);
-    }
-#endif
+    std::vector<std::string> names = Directory::ListFiles(recordings_dir,".rec");
     //By name, which is by date: the name is the app and the time the recording started.
     std::sort(names.begin(),names.end());
     return names;
@@ -1858,9 +1890,7 @@ void Application::FinishRecording(uint64_t sim_tick){
         }
         c = (char)tolower((unsigned char)c);
     }
-#ifdef _WIN32
-    CreateDirectoryA(recordings_dir.c_str(),NULL);     //fails harmlessly if it exists
-#endif
+    Directory::Create(recordings_dir);     //fails harmlessly if it exists
     std::string path = recordings_dir + "/" + stem + "_" + recording_file_stamp + ".rec";
 
     /*

@@ -1,9 +1,11 @@
 #ifndef _WINDOW_H_
 #define _WINDOW_H_
 
+#if defined(_WIN32)
 //Windows header
 #include <windows.h>
 #include <mmsystem.h>
+#endif
 #include <atomic>
 #include <string>
 #include <vector>
@@ -14,10 +16,13 @@
 //includes what it uses.
 #include <functional>
 
+#if defined(_WIN32)
+//GLU went: nothing in the tree calls it, and it is one more package a Linux build would need.
 #include <GL/gl.h>
-#include <GL/glu.h>
+#endif
 
 #include "InputController.h"
+#include "type_int2.h"
 
 /*
     NO ImGui HEADERS HERE, deliberately, and this is the interesting part of the file.
@@ -46,6 +51,7 @@
     A FREE function rather than a Window member, because the window procedure that calls it is one
     - Win32 hands WndProc to the OS, so it cannot be a non-static member.
 */
+#if defined(_WIN32)
 int ImGuiForwardWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // Generic wrapper around a DIB with a 32-bit color depth.
@@ -58,25 +64,35 @@ typedef struct{
     BITMAPINFO info;
     BYTE *pPixels;
 } Image;
+#endif
 
 /*
     A Class for managing WIN32 windows.
 
     We need at least one window to be able to query OpenGL capabilities on.
     After that, we can spawn as many windows as we like... theoretically.
+
+    THE CLASS IS THE PLATFORM SEAM. Window.cpp is its Win32 implementation, and everything outside it
+    reaches the window system only through the methods below - which is what lets the rest of core
+    build where another window system sits behind this class (Wayland, X11). The Win32 handles and
+    the layered-window machinery are Win32's alone and say so with #if.
 */
 class Window;
 
+#if defined(_WIN32)
 LRESULT CALLBACK windproc(HWND hwnd, UINT wm, WPARAM wp, LPARAM lp);
+#endif
 
 class Window{
 public:
+#if defined(_WIN32)
     static Window* GetWindowByHandle(HWND hWnd);
 
     HWND        hWnd = 0;   //Handle to a window
     HDC         hDC;        //Handle to a Device Context
     HGLRC       hRC;
     WNDCLASSEXA*  wc = NULL;         //The class this window has
+#endif
 
     InputController* inputcontroller = NULL;
 
@@ -130,19 +146,25 @@ public:
     bool f_close_asks_app = false;
     std::atomic<bool> f_close_asked{false};
 
+#if defined(_WIN32)
     //Bitmap image for layered window
     Image g_image;
     BYTE* pixels = NULL;//[width * height * 4] = {0};
+#endif
 
     Window();
     ~Window();
 
+#if defined(_WIN32)
     static void RegisterWindowClasses();
+#endif
     bool Init();
     bool InitOpenGL(); //Needs to be called on a window, only once.
     bool InitImGui();
 
+#if defined(_WIN32)
     static Window* CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc);
+#endif
     //`title` is what shows in the title bar and on the taskbar. Passed in at creation rather
     //than SetTitle'd afterwards so the window is never briefly called something else - see
     //Application::Start, which hands it the app's own name.
@@ -159,12 +181,32 @@ public:
     void ImGuiRenderDrawData();
 
     void SwapWindowBuffers();
+#if defined(_WIN32)
     void CopyBufferToImage();
+#endif
     void CopyBufferToBackBuffer();
+#if defined(_WIN32)
     void RedrawLayeredWindow();
+#endif
 
-    void Show(int nShowCmd);
+    //The GL context, handed between threads: Start() releases it on the main thread, the render
+    //thread makes it current at its top and releases it again before it ends (FrameThreadFunction).
+    bool MakeContextCurrent();
+    void ReleaseContext();
+
+    //The main thread's whole job once the render thread is running: window messages and input,
+    //until f_should_quit.
+    void PumpUntilQuit();
+
+    //The monitor's current mode, in pixels.
+    static int2 GetDisplaySize();
+
+    //Shows the window the first time. Minimised means minimised AND not activated - see --minimized
+    //in Application::Start for why both halves matter.
+    void Show(bool f_minimized);
     void Resize(int width, int height);
+    //Above every other window, or back among them - the debug UI's Window menu.
+    void SetAlwaysOnTop(bool f_on);
     /*
         Borderless full screen (a topmost popup, maximised) or back to the window it was. What
         Alt+Enter toggles, and what Application applies at start when an app asks for it
@@ -190,8 +232,10 @@ public:
         and unwinds normally. Application::ConsoleHandler is the caller this exists for.
     */
     static void RequestQuitAll();
+#if defined(_WIN32)
     static HWND _FindWindow(std::string title);
     static std::vector<WNDCLASSEXA>wcs;      //Different types of window classes
+#endif
 
     //Callback when a file is dropped on the window
     void SetOnFileDropped(std::function<void(std::string)> callback);

@@ -59,10 +59,10 @@ void UIMenu::Clear(){
 
 UIMenuRect UIMenu::ItemRect(int item, float w, float h) const{
     UIMenuRect r;
-    const float iw = layout.width * h, ih = layout.item_h * h;
+    const float iw = layout.width * h * layout.scale, ih = layout.item_h * h * layout.scale;
     r.x0 = layout.centre_x * w - iw * 0.5f;
     r.x1 = r.x0 + iw;
-    r.y0 = layout.top * h + (float)item * (ih + layout.gap * h);
+    r.y0 = layout.top * h + (float)item * (ih + layout.gap * h * layout.scale);
     r.y1 = r.y0 + ih;
     return r;
 }
@@ -78,7 +78,7 @@ UIMenuRect UIMenu::ValueRect(int item, float w, float h) const{
 
 UIMenuRect UIMenu::TrackRect(int item, float w, float h) const{
     UIMenuRect r = ValueRect(item,w,h);
-    const float ih = layout.item_h * h;
+    const float ih = layout.item_h * h * layout.scale;
     r.x1 = std::max(r.x0 + 1.0f,r.x1 - ih * 1.6f);
     return r;
 }

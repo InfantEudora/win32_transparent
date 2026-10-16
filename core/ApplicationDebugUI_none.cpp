@@ -14,7 +14,9 @@
     USE_IMGUI) and disappears with it - anything a PLAYER needs to see has to be drawn by
     core/UIOverlay or by geometry, which is what apps/tetris already does for its score.
 */
+#if defined(_WIN32)
 #include <winsock2.h>
+#endif
 #include "Application.h"
 
 void Application::UpdateUICameraControls(Camera* camera,int id){

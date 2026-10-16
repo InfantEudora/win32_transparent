@@ -25,7 +25,7 @@ they happen - so a replay keeps the same history, and a load shows what was save
   read: a boulder found, someone on a balcony.
 - **A row a day** holds the [[Person|people]] by stage and every good the colony has at the day's end, and how many
   [[Tree|trees]] were felled, rocks broken and storeys raised that day. *Has* means gathered: stores, homes, packs and
-  loads, and [[Crate|crates]] people put down - not rubble or finds still lying out there.
+  loads, and [[Crate|crates]] people put down or a camp or site left - not rubble or finds still lying out there.
 
 Totals are added up from these whenever they are shown. Nothing is thrown away: a year is
 {CALENDAR_SEASONS} seasons of {CALENDAR_DAYS_PER_SEASON:#days}, a row each.
@@ -48,4 +48,4 @@ before's, plus its births, less its deaths. `chasm_stats` reports any disagreeme
 
 ## Planned
 
-- [proposed] History per settlement, not only the colony's.
+- [parked] History per settlement, not only the colony's - once settlements grow larger (the user, 2026-10-16).

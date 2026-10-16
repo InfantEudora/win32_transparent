@@ -3,7 +3,11 @@
 
     Written for a process that is already broken, so it leans on none of the engine: no Debugger,
     no engine state, Win32 and the C library only.
+
+    Three arms: Win32 here, Linux after it (signals, gdb, backtrace), and a bare one for anything
+    else - Android has its own.
 */
+#if defined(_WIN32)
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -294,3 +298,275 @@ void CrashReportInstall(){
     //installs and then to Windows, which ends the process without a word.
     SetUnhandledExceptionFilter(OnUnhandledException);
 }
+
+#elif defined(__linux__) && !defined(__ANDROID__)
+/*
+    LINUX. The same report, beside the exe, the same way round: the failing thread says what failed,
+    gdb attaches from inside and lists every thread (debug), or the failing thread's own stack is
+    written as module+offset (release, stripped). A fault arrives as a SIGNAL, on the faulting thread,
+    so the handler below plays the part of Windows' unhandled-exception filter.
+
+    No minidump: Linux's equivalent is the kernel's core dump, which systemd-coredump keeps on both
+    Debian and Arch (coredumpctl list / coredumpctl gdb) without the process doing anything.
+*/
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <ucontext.h>
+#ifndef DEBUG
+#include <dlfcn.h>
+#include <execinfo.h>
+#endif
+
+#include "CrashReport.h"
+
+static void WriteText(int file, const char* text){
+    size_t left = strlen(text);
+    while (left > 0){
+        ssize_t n = write(file, text, left);
+        if (n <= 0){
+            return;
+        }
+        text += n;
+        left -= (size_t)n;
+    }
+}
+
+static void ReportPath(char* path, size_t size, const char* ext){
+    static char stamp[32] = "";
+    if (!stamp[0]){
+        time_t now = time(NULL);
+        strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", localtime(&now));
+    }
+    path[0] = 0;
+    ssize_t len = readlink("/proc/self/exe", path, size - 1);
+    path[(len > 0) ? len : 0] = 0;
+    char* slash = (len > 0) ? strrchr(path, '/') : NULL;
+    char* name = slash ? slash + 1 : path;
+    snprintf(name, size - (name - path), "crash_%s.%s", stamp, ext);
+}
+
+//Linux's IsDebuggerPresent: a process being traced says by whom in its status.
+static bool BeingDebugged(){
+    char buffer[2048];
+    int fd = open("/proc/self/status", O_RDONLY);
+    if (fd < 0){
+        return false;
+    }
+    ssize_t got = read(fd, buffer, sizeof(buffer) - 1);
+    close(fd);
+    if (got <= 0){
+        return false;
+    }
+    buffer[got] = 0;
+    const char* tracer = strstr(buffer, "TracerPid:");
+    return tracer && atoi(tracer + 10) != 0;
+}
+
+#ifdef DEBUG
+/*
+    As on Windows: gdb attaches, appends every thread's stack, detaches. One thing Windows does not
+    have to ask for: under Yama (ptrace_scope 1, the default on Ubuntu and common elsewhere) a process
+    may trace its own descendants only, and gdb is our CHILD - so this process says, for the length of
+    the report, that anyone of its own user may attach. A crashing process gives nothing away by it.
+*/
+static void AppendAllStacks(int report, const void* where){
+    prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0);
+    char pid_text[32];
+    snprintf(pid_text, sizeof(pid_text), "%ld", (long)getpid());
+    char info_symbol[64] = "";
+    char info_line[64] = "";
+    if (where){
+        unsigned long long address = (unsigned long long)(uintptr_t)where;
+        snprintf(info_symbol, sizeof(info_symbol), "info symbol 0x%llx", address);
+        snprintf(info_line, sizeof(info_line), "info line *0x%llx", address);
+    }
+    const char* argv[24];
+    int n = 0;
+    argv[n++] = "gdb";
+    argv[n++] = "-batch";
+    argv[n++] = "-nx";
+    argv[n++] = "-iex"; argv[n++] = "set debuginfod enabled off";
+    argv[n++] = "-iex"; argv[n++] = "set print thread-events off";
+    argv[n++] = "-p"; argv[n++] = pid_text;
+    if (where){
+        argv[n++] = "-ex"; argv[n++] = info_symbol;
+        argv[n++] = "-ex"; argv[n++] = info_line;
+    }
+    argv[n++] = "-ex"; argv[n++] = "thread apply all bt";
+    argv[n] = NULL;
+
+    pid_t child = fork();
+    if (child == 0){
+        int nul = open("/dev/null", O_RDONLY);
+        if (nul >= 0){
+            dup2(nul, 0);
+        }
+        dup2(report, 1);
+        dup2(report, 2);
+        execvp("gdb", (char* const*)argv);
+        _exit(127);
+    }
+    if (child < 0){
+        WriteText(report, "Could not start gdb, so no stacks.\n");
+        return;
+    }
+    //Seconds for a debug exe's symbols; the limit is only so a hung attach still ends.
+    int status = 0;
+    for (int waited_ms = 0; waited_ms < 120 * 1000; waited_ms += 50){
+        pid_t done = waitpid(child, &status, WNOHANG);
+        if (done == child){
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 127){
+                WriteText(report, "No gdb on PATH, so no stacks.\n");
+            }
+            return;
+        }
+        usleep(50 * 1000);
+    }
+    kill(child, SIGKILL);
+}
+#else
+//The failing thread's own stack as "  #3  chasm+0x1a2b3c": a stripped exe has no names, and the
+//offset is from where the module was loaded, which is what the link map and addr2line both count in.
+static void AppendOwnStack(int report){
+    void* frames[48];
+    int count = backtrace(frames, 48);
+    WriteText(report, "\nThe failing thread's stack, innermost first:\n");
+    for (int i = 0; i < count; i++){
+        Dl_info info;
+        char line[512];
+        if (dladdr(frames[i], &info) && info.dli_fname){
+            const char* slash = strrchr(info.dli_fname, '/');
+            snprintf(line, sizeof(line), "  #%-2d %s+0x%llx\n", i, slash ? slash + 1 : info.dli_fname,
+                     (unsigned long long)((uintptr_t)frames[i] - (uintptr_t)info.dli_fbase));
+        }else{
+            snprintf(line, sizeof(line), "  #%-2d 0x%llx\n", i, (unsigned long long)(uintptr_t)frames[i]);
+        }
+        WriteText(report, line);
+    }
+}
+#endif
+
+void CrashReport(const char* what, const void* where){
+    //As on Windows: the first thread to fail reports, any other waits for it to end the program.
+    static volatile sig_atomic_t f_reporting = 0;
+    if (__sync_lock_test_and_set(&f_reporting, 1)){
+        for (;;){
+            pause();
+        }
+    }
+
+    long pid = (long)getpid();
+    long tid = (long)syscall(SYS_gettid);
+    fprintf(stderr, "\n%s\non thread %ld\n", what, tid);
+    fflush(stderr);
+
+    //abort() below must end the process rather than come back into this handler as SIGABRT.
+    signal(SIGABRT, SIG_DFL);
+    if (BeingDebugged()){
+        raise(SIGTRAP);
+        abort();
+    }
+
+    char path[4096 + 64];
+    ReportPath(path, sizeof(path), "txt");
+    int report = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (report < 0){
+        fprintf(stderr, "Could not write %s (%s)\n", path, strerror(errno));
+        abort();
+    }
+
+    char header[1600];
+    snprintf(header, sizeof(header), "%s\non thread %ld - gdb lists it as Thread <n> (Thread 0x... (LWP %ld))\n\n",
+             what, tid, tid);
+    WriteText(report, header);
+#ifdef DEBUG
+    AppendAllStacks(report, where);
+#else
+    (void)where;    //the first line of the stack below
+    (void)pid;
+    WriteText(report, "Release build: stripped, so places are given as module+offset - the build's map file names them.\n");
+    AppendOwnStack(report);
+#endif
+    close(report);
+
+    FILE* file = fopen(path, "r");
+    if (file){
+        char buffer[4096];
+        size_t got;
+        while ((got = fread(buffer, 1, sizeof(buffer), file)) > 0){
+            fwrite(buffer, 1, got, stderr);
+        }
+        fclose(file);
+    }
+    fprintf(stderr, "\nCrash report: %s\n", path);
+    fflush(stderr);
+    abort();
+}
+
+static void OnFatalSignal(int number, siginfo_t* info, void* context){
+    const void* at = NULL;
+#if defined(__x86_64__)
+    if (context){
+        at = (const void*)((ucontext_t*)context)->uc_mcontext.gregs[REG_RIP];
+    }
+#else
+    (void)context;
+#endif
+    const char* name = number == SIGSEGV ? "Segmentation fault (SIGSEGV)" : number == SIGBUS ? "Bus error (SIGBUS)"
+                     : number == SIGILL ? "Illegal instruction (SIGILL)" : "Arithmetic exception (SIGFPE)";
+    char what[256];
+    snprintf(what, sizeof(what), "%s at address 0x%llx, at instruction 0x%llx", name,
+             (unsigned long long)(uintptr_t)(info ? info->si_addr : NULL), (unsigned long long)(uintptr_t)at);
+    CrashReport(what, at);
+}
+
+void CrashReportInstall(){
+    /*
+        ITS OWN STACK, because the fault worth reporting most is a stack overflow, and a handler that
+        ran on the overflowed stack would fault again before writing a word. RESETHAND, so a fault
+        inside the report itself ends the process instead of looping.
+    */
+    static char alternate[64 * 1024];
+    stack_t stack = {};
+    stack.ss_sp = alternate;
+    stack.ss_size = sizeof(alternate);
+    sigaltstack(&stack, NULL);
+#ifndef DEBUG
+    //backtrace loads libgcc's unwinder on its first call; do that now, not in a broken process.
+    void* warm[1];
+    backtrace(warm, 1);
+#endif
+    struct sigaction action = {};
+    action.sa_sigaction = OnFatalSignal;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGSEGV, &action, NULL);
+    sigaction(SIGBUS, &action, NULL);
+    sigaction(SIGILL, &action, NULL);
+    sigaction(SIGFPE, &action, NULL);
+}
+
+#else
+#include <stdio.h>
+#include <stdlib.h>
+#include "CrashReport.h"
+
+void CrashReport(const char* what, const void* where){
+    (void)where;
+    fprintf(stderr, "\n%s\n", what);
+    abort();
+}
+
+void CrashReportInstall(){
+}
+#endif

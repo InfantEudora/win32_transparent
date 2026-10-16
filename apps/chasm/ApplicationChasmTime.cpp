@@ -229,7 +229,13 @@ void ApplicationChasm::DrawOverlay(void){
     if (!overlay || !overlay->IsReady() || !main_window){
         return;
     }
-    float s = std::max(0.5f,(float)main_window->height / 810.0f);
+    float s = HudUiScale((float)main_window->height,settings.GetFloat("ui_size"));     //ChasmHud.h
+    //...and the menus', as ReadMenuInput gives them on the physics thread: here too, so a menu just opened is drawn at
+    //its size on its first frame, before its input has been read.
+    float menu_scale = HudMenuScale((float)main_window->height,settings.GetFloat("ui_size"));
+    for (UIMenu* m : {&title_menu,&ask_menu,&pause_menu,&screen_menu,&end_menu}){
+        m->layout.scale = menu_scale;
+    }
     //The title (ApplicationChasmTitle.cpp): its own picture, none of the game's HUD.
     if (TitleShowing()){
         DrawTitle(s);
@@ -1059,7 +1065,11 @@ void ApplicationChasm::RegisterTimeTools(){
         "set_day (days since the colony began, from 0: 0 is spring of year 1, 30 winter of year 1, 40 "
         "spring of year 2) with day_fraction 0-1 - a RECORDED command, applied before this returns; "
         "snow_cover (0-1, negative for off) - a view-only override of the snow for looking at winter "
-        "on any date, never read by the simulation. include_screenshot as elsewhere.",
+        "on any date, never read by the simulation. The `sun` it returns is the one shining - elevation (degrees "
+        "up), azimuth (degrees from north, clockwise), kelvin (its warmth), brightness, colour, whether held - and "
+        "the date's (seasons_plan.md, \"The sun\"); `sun` as an argument holds it - any of elevation (20-85), "
+        "azimuth, kelvin, brightness, the date's for the rest - or {held:false} lets it follow the date again, as "
+        "the Sun panel does. A look only. include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
@@ -1068,6 +1078,7 @@ void ApplicationChasm::RegisterTimeTools(){
                 {"set_day",{{"type","integer"}}},
                 {"day_fraction",{{"type","number"}}},
                 {"snow_cover",{{"type","number"}}},
+                {"sun",{{"type","object"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -1096,9 +1107,19 @@ void ApplicationChasm::RegisterTimeTools(){
                 SubmitCommandAndWait(cmd);
                 f_ran = calendar_commands_done.load() != before;
             }
+            //The sun (ApplicationChasmSeasons.cpp): held or let go, and turned at once rather than on the next pass.
+            json sun;
+            main_scene->AtTickBoundary([&](){
+                if (args.contains("sun")){
+                    SteerSun(args["sun"]);
+                }
+                UpdateSun();
+                sun = SunStatusJson();
+            });
             uint64_t tick = calendar_shown.load();
             CalendarDate d = CalendarDateOf(tick);
             json result{
+                {"sun",sun},
                 {"tick",tick},
                 {"year",d.year},
                 {"season",CalendarSeasonName(d.season)},

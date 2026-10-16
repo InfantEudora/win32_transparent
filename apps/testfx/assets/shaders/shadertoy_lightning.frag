@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 #include "shadertoy.glsl"
 
 float hash11(float p)

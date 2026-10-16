@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 //In version 330 core we only have textures or uniform arrays as an arbitrary data input.
 
 //Multiple of 4 for padding

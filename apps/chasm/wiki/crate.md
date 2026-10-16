@@ -5,16 +5,16 @@ kind: goods
 status: partial
 summary: Goods lying on the ground - the load of someone sent to a post - a store villagers take from, and builders carry off to a store.
 plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14)
-code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
-verified: 2026-10-15
+code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE CRATE_SITE ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble Derive; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
+verified: 2026-10-16
 ---
 
-A crate is goods lying on the ground. One appears when the player sends someone carrying a load to a
-[[Posts|post]]: the load is put down the moment the order is given. And one is left where a [[Camp|camp]] stood
-when its last tent goes, holding its supplies and pantry ("A camp's goods"). **Rubble** is a crate too: piles
-of [[Stone|stone]] laid out with a new colony at the foot of the balconies' walls, or left where a
-[[Stonecutter|stonecutter]] broke a rock - drawn as broken stones, not a crate - and along a seam's foot, piles of
-its [[Floatstone|floatstone]], drawn as broken crystals and named "Floatstone".
+A crate is goods lying on the ground. One appears when the player sends someone carrying a load to a [[Posts|post]]:
+the load is put down the moment the order is given. One is left where a [[Camp|camp]] stood when its last tent goes,
+holding its supplies and pantry ("A camp's goods"), and where a [[Construction|site]] was taken off, holding what was
+brought to it ("A site's goods"). **Rubble** is a crate too: piles of [[Stone|stone]] laid out with a new colony at
+the foot of the balconies' walls, or left where a [[Stonecutter|stonecutter]] broke a rock - drawn as broken stones,
+not a crate - and along a seam's foot, piles of its [[Floatstone|floatstone]], drawn as broken crystals: "Floatstone".
 
 ## Where the load goes
 

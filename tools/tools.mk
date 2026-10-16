@@ -102,10 +102,21 @@ else
 $(error CONFIG must be 'debug' or 'release', not '$(CONFIG)')
 endif
 
-BUILD_DIR := build
-OBJ_DIR   := $(BUILD_DIR)/obj/$(CONFIG)
+#PLATFORM, as in engine.mk: Windows unchanged, Linux in trees of its own and without the .exe.
+ifeq ($(OS),Windows_NT)
+PLATFORM_PREFIX :=
+EXE_EXT         := .exe
+PLATFORM_DEF    := -D_WIN32
+else
+PLATFORM_PREFIX := linux_
+EXE_EXT         :=
+PLATFORM_DEF    :=
+endif
 
-CFLAGS += -std=c++17 -D_WIN32
+BUILD_DIR := build
+OBJ_DIR   := $(BUILD_DIR)/obj/$(PLATFORM_PREFIX)$(CONFIG)
+
+CFLAGS += -std=c++17 $(PLATFORM_DEF)
 
 #-O2 rather than engine.mk's -Og for the debug build: a tool has no frame budget to protect
 #and no hot loop worth stepping through, so the faster default costs nothing and the -g is
@@ -129,8 +140,12 @@ CFLAGS += -DTINYGLTF_NO_WRITER
 CFLAGS += -Wall
 
 #Static, so a tool exe can be run from anywhere without the MSYS runtime on PATH. Tools
-#get copied around and invoked from scripts more than apps do.
-LFLAGS += -static-libstdc++ -static-libgcc -static
+#get copied around and invoked from scripts more than apps do. Not -static on Linux, where a
+#static glibc is the one thing to avoid; its own libraries are on every machine anyway.
+LFLAGS += -static-libstdc++ -static-libgcc
+ifeq ($(OS),Windows_NT)
+LFLAGS += -static
+endif
 
 IPATHS += -I$(ROOT)/core/
 IPATHS += -I$(ROOT)/core/physics
@@ -170,7 +185,7 @@ DEPS = $(TOOL_OBJS:.o=.d) $(CORE_OBJS:.o=.d)
 #---------------------------------------------------------------------------------------
 #The goal is the exe BY ITS REAL PATH - naming it $(PROJECT).exe while writing it into
 #build/ would mean make never finds what it just built and relinks every time.
-EXE := $(BUILD_DIR)/$(PROJECT)$(CONFIG_SUFFIX).exe
+EXE := $(BUILD_DIR)/$(PROJECT)$(CONFIG_SUFFIX)$(EXE_EXT)
 
 default: $(EXE)
 

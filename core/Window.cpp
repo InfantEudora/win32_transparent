@@ -1,3 +1,6 @@
+//The Win32 window backend - see "THE CLASS IS THE PLATFORM SEAM" in Window.h. Another platform
+//compiles this file to nothing and brings its own implementation of the same class.
+#if defined(_WIN32)
 #include "Window.h"
 #include "Debug.h"
 #include "glad.h"
@@ -99,9 +102,69 @@ void Window::RequestQuitAll(){
     }
 }
 
-void Window::Show(int nShowCmd){
-    ShowWindow(hWnd, nShowCmd);
+void Window::Show(bool f_minimized){
+    //SW_SHOWMINNOACTIVE is both halves of --minimized: minimised, and not activated.
+    ShowWindow(hWnd, f_minimized ? SW_SHOWMINNOACTIVE : SW_SHOWDEFAULT);
     //UpdateWindow(hWnd);
+}
+
+bool Window::MakeContextCurrent(){
+    return wglMakeCurrent(hDC, hRC) != FALSE;
+}
+
+//hDC is ignored when the context is NULL (MSDN), so this one form serves both the release Start()
+//makes on the main thread and the one the render thread makes before it ends.
+void Window::ReleaseContext(){
+    wglMakeCurrent(NULL, NULL);
+}
+
+void Window::PumpUntilQuit(){
+    MSG msg = {0};
+    while (f_should_quit == false){
+        if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
+            if (msg.message == WM_QUIT)
+                break;
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }else{
+            //Nothing queued. Block until something arrives rather than polling on a Sleep(1):
+            //that Sleep was only ever ~1ms because the physics thread happened to be holding the
+            //system timer resolution at 1ms, and now that nothing raises it, the same call would
+            //idle for up to ~15.6ms. Waiting on the queue instead wakes the instant a message
+            //lands and costs no CPU at all in between.
+            //MWMO_INPUTAVAILABLE closes the race where a message arrives after the PeekMessage
+            //above returned FALSE but before this wait starts - without it that message would not
+            //re-signal the queue and the wait would sit out its full timeout.
+            //The timeout exists only so f_should_quit, which other threads set, is still noticed
+            //when no messages are coming through at all.
+            MsgWaitForMultipleObjectsEx(0,NULL,50,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+        }
+    }
+}
+
+int2 Window::GetDisplaySize(){
+    DWORD       iMode = 0;
+    BOOL	    res = true;
+    DEVMODEA    devmode;
+
+    //This would list all the supported setting for whatever the current display is.
+    while(0 && res){
+        res = EnumDisplaySettings(NULL, iMode++, &devmode);
+        if (res){
+            debug->Info("%d x %d, %d bits %d Hz\n", devmode.dmPelsWidth,devmode.dmPelsHeight, devmode.dmBitsPerPel, devmode.dmDisplayFrequency);
+        }
+    }
+
+    res = EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    if (res){
+        debug->Info("Current Display Settings: %d x %d, %d bits %d Hz\n", devmode.dmPelsWidth,devmode.dmPelsHeight, devmode.dmBitsPerPel, devmode.dmDisplayFrequency);
+    }
+    int2 dimensions = {(int)devmode.dmPelsWidth,(int)devmode.dmPelsHeight};
+    return dimensions;
+}
+
+void Window::SetAlwaysOnTop(bool f_on){
+    SetWindowPos(hWnd, f_on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 }
 
 //Renaming a window that already exists. CreateNewWindow takes the title it opens with, so this is
@@ -741,3 +804,5 @@ void Window::Resize(int _width, int _height){
 void Window::SetOnFileDropped(std::function<void(std::string)> callback){
     onFileDropped = callback;
 }
+
+#endif //_WIN32

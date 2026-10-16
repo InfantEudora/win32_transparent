@@ -11,7 +11,7 @@
 #include <functional>
 #include <thread>
 #include <stdio.h>
-#include <windows.h>
+#include "Directory.h"
 
 /*
     RECORDING FOR TESTERS (docs/demo_plan.md, step 4).
@@ -54,28 +54,6 @@ std::string Clock(float seconds){
         snprintf(buf,sizeof(buf),"%d:%02d",t / 60,t % 60);
     }
     return buf;
-}
-
-//A file another thread - the log's own - may hold open for writing: read with every sharing allowed.
-bool CopyShared(const std::string& from, const std::string& to){
-    HANDLE in = CreateFileA(from.c_str(),GENERIC_READ,FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,NULL,
-                            OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
-    if (in == INVALID_HANDLE_VALUE){
-        return false;
-    }
-    HANDLE out = CreateFileA(to.c_str(),GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
-    bool f_ok = out != INVALID_HANDLE_VALUE;
-    char buffer[65536];
-    DWORD got = 0;
-    while (f_ok && ReadFile(in,buffer,sizeof(buffer),&got,NULL) && got > 0){
-        DWORD wrote = 0;
-        f_ok = WriteFile(out,buffer,got,&wrote,NULL) && wrote == got;
-    }
-    CloseHandle(in);
-    if (out != INVALID_HANDLE_VALUE){
-        CloseHandle(out);
-    }
-    return f_ok;
 }
 
 std::string BaseName(const std::string& path){
@@ -122,7 +100,7 @@ void ApplicationChasm::RecordFromHere(){
     }
     //By name, which is by date: the oldest first.
     for (size_t i = 0; i + AUTO_RECORDINGS_KEPT <= kept.size(); i++){
-        DeleteFileA((recordings_dir + "/" + kept[i]).c_str());
+        remove((recordings_dir + "/" + kept[i]).c_str());
     }
 }
 
@@ -200,13 +178,9 @@ void ApplicationChasm::StartReport(){
         strftime(stamp,sizeof(stamp),"%Y%m%d_%H%M%S",lt);
     }
     std::string reports = ChasmFolder("reports");
-    CreateDirectoryA(reports.c_str(),NULL);
-    std::string dir = reports + "/" + stamp;
-    char full[MAX_PATH];
-    if (GetFullPathNameA(dir.c_str(),MAX_PATH,full,NULL)){
-        dir = full;
-    }
-    if (!CreateDirectoryA(dir.c_str(),NULL) && GetLastError() != ERROR_ALREADY_EXISTS){
+    Directory::Create(reports);
+    std::string dir = Directory::FullPath(reports + "/" + stamp);
+    if (!Directory::Create(dir)){
         OpenAsk(CHASM_ASK_NOTE,"The bug report could not be written","No folder at " + dir);
         return;
     }
@@ -247,7 +221,7 @@ void ApplicationChasm::WriteReport(const std::string& dir, bool f_recording, uin
     }else if (wait_for([&](){ return GetRecordingsSaved() != recordings_before; },REPORT_WAIT_MS)){
         std::string path = ResolveRecordingPath("");
         recording = BaseName(path);
-        if (CopyShared(path,dir + "/" + recording)){
+        if (CopyFileShared(path,dir + "/" + recording)){
             lines.push_back(recording + " - the run since the last autosave: Replay a recording on the title, or input_replay");
         }else{
             error = "The recording could not be copied.";
@@ -268,30 +242,27 @@ void ApplicationChasm::WriteReport(const std::string& dir, bool f_recording, uin
     }
     //The log so far, and the last run's: if the game crashed before this run, that is where it says so.
     std::string log = Debugger::LogFilePath();
-    if (!log.empty() && CopyShared(log,dir + "/" + BaseName(log))){
+    if (!log.empty() && CopyFileShared(log,dir + "/" + BaseName(log))){
         lines.push_back(BaseName(log) + " - everything logged this run");
         size_t dot = log.find_last_of('.');
         std::string previous = (dot == std::string::npos) ? log + "_previous" : log.substr(0,dot) + "_previous" + log.substr(dot);
-        if (CopyShared(previous,dir + "/" + BaseName(previous))){
+        if (CopyFileShared(previous,dir + "/" + BaseName(previous))){
             lines.push_back(BaseName(previous) + " - the run before this one");
         }
     }
     //Crash reports beside the exe from the last days (core/CrashReport.h), and the settings if there are any.
     std::string exe = GetExecutableDirectory();
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((exe + "/crash_*").c_str(),&fd);
-    if (h != INVALID_HANDLE_VALUE){
-        int64_t now = (int64_t)time(NULL);
-        do{
-            uint64_t t = ((uint64_t)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime;
-            int64_t written = (int64_t)(t / 10000000ull) - 11644473600ll;
-            if (now - written <= REPORT_CRASH_SECONDS && CopyShared(exe + "/" + fd.cFileName,dir + "/" + fd.cFileName)){
-                lines.push_back(std::string(fd.cFileName) + " - a crash report");
-            }
-        }while (FindNextFileA(h,&fd));
-        FindClose(h);
+    int64_t now_s = (int64_t)time(NULL);
+    for (const std::string& name : Directory::ListFiles(exe,"")){
+        if (name.compare(0,6,"crash_") != 0){
+            continue;
+        }
+        int64_t written = FileWriteTime(exe + "/" + name);
+        if (written >= 0 && now_s - written <= REPORT_CRASH_SECONDS && CopyFileShared(exe + "/" + name,dir + "/" + name)){
+            lines.push_back(name + " - a crash report");
+        }
     }
-    if (CopyShared(exe + "/settings.json",dir + "/settings.json")){
+    if (CopyFileShared(exe + "/settings.json",dir + "/settings.json")){
         lines.push_back("settings.json - the game's settings");
     }
     //The page that says what all of it is.

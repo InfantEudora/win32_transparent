@@ -78,7 +78,22 @@ bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
 
 #else
 
+/*
+    THE DESKTOP HALF, for Windows and Linux both. Only the window-system parts differ - WGL's here,
+    behind _WIN32; on Linux the window backend supplies the lookup instead (GLSetPlatform below) - and
+    every GL declaration after them is shared, which is what keeps a GL call meaning the same on both.
+*/
+#if defined(_WIN32)
 #include <windows.h>
+#else
+/*
+    Mesa's <GL/gl.h> pulls in its <GL/glext.h> unless told not to, and that declares the same PFN
+    typedefs this file declares for itself - GLsizeiptr with a different type, since a Linux long is
+    64-bit. LEGACY keeps it to the GL 1.3 it has in common with the Windows header, so everything
+    newer comes from this file on both platforms, as it always has on Windows.
+*/
+#define GL_GLEXT_LEGACY
+#endif
 #include <GL/gl.h>
 #include <stdint.h>
 
@@ -86,6 +101,7 @@ bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
     This named glad, because it might have been... but it isn't
 */
 
+#if defined(_WIN32)
 // WGL_ARB_pixel_format.
 #define WGL_ACCELERATION_ARB                      0x2003
 #define WGL_ACCUM_ALPHA_BITS_ARB                  0x2021
@@ -136,6 +152,7 @@ bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
 #define WGL_TRANSPARENT_RED_VALUE_ARB             0x2037
 #define WGL_TYPE_COLORINDEX_ARB                   0x202C
 #define WGL_TYPE_RGBA_ARB                         0x202B
+#endif
 
 #define GL_MAX_SAMPLES 0x8D57
 
@@ -241,6 +258,7 @@ bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
 #define GL_DYNAMIC_STORAGE_BIT 0x0100
 
 //WGL context
+#if defined(_WIN32)
 #define WGL_CONTEXT_DEBUG_BIT_ARB 0x00000001
 #define WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB 0x00000002
 #define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
@@ -251,6 +269,7 @@ bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
 #define WGL_CONTEXT_PROFILE_MASK_ARB 0x9126
 #define WGL_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
 #define WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB 0x00000002
+#endif
 
 //Textures
 #define GL_CLAMP_TO_EDGE                  0x812F
@@ -349,6 +368,7 @@ bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
 #define GL_MAX_DEBUG_GROUP_STACK_DEPTH 0x826C
 #define GL_DEBUG_GROUP_STACK_DEPTH 0x826D
 
+#if defined(_WIN32)
 //GPU selection
 struct _GPU_DEVICE {
     DWORD  cb;
@@ -361,8 +381,22 @@ DECLARE_HANDLE(HGPUNV);
 typedef struct _GPU_DEVICE GPU_DEVICE;
 typedef struct _GPU_DEVICE *PGPU_DEVICE;
 
-bool InitGLExtensions(void);
 void GLSelectGPU();
+#else
+/*
+    How InitGLExtensions finds a GL function where there is no wglGetProcAddress. The window backend
+    hands in its platform's lookup before it calls InitGLExtensions - eglGetProcAddress on Wayland,
+    which answers for every GL function, 1.1 included - and the way to set the swap interval, which
+    is a window-system call rather than a GL one.
+*/
+typedef void* (*GLProcLoader)(const char* name);
+typedef bool (*GLSwapIntervalSetter)(int interval);
+void GLSetPlatform(GLProcLoader loader, GLSwapIntervalSetter swap_interval);
+#endif
+
+bool InitGLExtensions(void);
+//Vsync on (1) or off (0) through whichever window system this build has. False if it has no way to.
+bool GLSetSwapInterval(int interval);
 
 #ifndef APIENTRY
 #define APIENTRY
@@ -371,9 +405,13 @@ void GLSelectGPU();
 #define APIENTRYP APIENTRY *
 #endif
 
+//Mesa's gl.h defines GLAPI as a visibility attribute; this file's externs want plain extern either way.
+#undef GLAPI
 #define GLAPI extern
 
-typedef signed long long int GLsizeiptr;
+//Pointer-sized and signed, as the GL spec has it - intptr_t is long long on Win64 and long on Linux,
+//which is exactly what each platform's own GL headers say.
+typedef intptr_t    GLsizeiptr;
 typedef intptr_t    GLintptr;
 typedef uint64_t    GLuint64;
 typedef char GLchar;
@@ -383,6 +421,7 @@ typedef void (APIENTRYP PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuf
 typedef void (APIENTRYP PFNGLBINDRENDERBUFFEREXTPROC)(GLenum target, GLuint renderbuffer);
 typedef void (APIENTRYP PFNGLBINDRENDERBUFFERPROC)(GLenum target, GLuint renderbuffer);
 
+#if defined(_WIN32)
 //Window creation
 typedef BOOL (WINAPI * PFNWGLCHOOSEPIXELFORMATARBPROC) (HDC hdc, const int *piAttribIList, const FLOAT *pfAttribFList, UINT nMaxFormats, int *piFormats, UINT *nNumFormats);
 GLAPI PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
@@ -399,6 +438,7 @@ GLAPI PFNWGLENUMGPUDEVICESNVPROC wglEnumGpuDevicesNV;
 
 typedef BOOL (WINAPI * PFNWGLSWAPINTERVALEXTPROC)(GLint);
 GLAPI PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
+#endif
 
 //Render/Frame and Texture Buffers
 typedef void (APIENTRYP PFNGLCREATEFRAMEBUFFERSPROC)(GLsizei n, GLuint *framebuffers);
@@ -669,9 +709,11 @@ GLAPI PFNGLPUSHDEBUGGROUPPROC glPushDebugGroup;
 typedef void (APIENTRYP PFNGLPOPDEBUGGROUPPROC)(void);
 GLAPI PFNGLPOPDEBUGGROUPPROC glPopDebugGroup;
 
+#if defined(_WIN32)
 //WGL Contexts - When we want RenderDoc to work
 typedef HGLRC (APIENTRYP PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC hDC, HGLRC hShareContext, const int *attribList);
 GLAPI PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
+#endif
 
 #endif //!defined(__ANDROID__)
 

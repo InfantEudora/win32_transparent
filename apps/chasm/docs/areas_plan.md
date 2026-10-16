@@ -146,6 +146,17 @@ measures.
 - **Pause:** the music plays on, as the water does - a colony is often paused to think. Archer's pauses
   with the game; this was the agent's choice, for the user to overrule.
 - `chasm_sound` reports each player's section, share, level and whether it is held.
+- **The Music panel** (the user's, 2026-10-17: "a debug panel for the music's cues, so we can see how those
+  are being driven from the game"), under Time and Sun, closed at first: each player's section, bar and key,
+  what drives it - the land's section from the season, a layer's share of the view and the level that makes,
+  the land turned down under the layers - and the last `MUSIC_SENT_KEPT` things the game sent it, newest first:
+  a section for the season, a cue's stinger with the cue's name, a hold. A stinger the score has not got is
+  told there rather than posted, so a cue table naming a lost one shows. And holds: a section in place of the
+  season's, the layers' shares in place of the view's, the score's SUSPENSE and BRIGHTNESS (core
+  `MusicEngine.h`), which nothing in the game moves yet; a button per stinger. `chasm_sound`'s `music`
+  argument does the same, and its status says `section_from`, `shares_held`, `mood` and what was `sent`.
+  Checked: winter held, taken at the bar line; clouds held at 0.8, the layer up to 0.74 and the land down to
+  0.48; suspense held at 0.9; let go, all three back to the season and the view.
 
 Checked in a muted instance: the whole map in view (all cloud) brought the clouds layer up and the land
 down to 0.62; the camp's explored ground let it fade back over a few seconds; `set_day 10` moved the land

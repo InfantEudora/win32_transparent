@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 
 /*
     Copy this to start a shadertoy port. Paste the snippet between the two includes, unchanged.

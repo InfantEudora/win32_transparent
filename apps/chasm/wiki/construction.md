@@ -4,9 +4,9 @@ aliases: building site, building sites, site, sites, builder, builders, builders
 kind: systems
 status: built
 summary: What the player places in play is a site, built a storey at a time from wood that people without a job, and builders, carry to it.
-plans: construction_plan.md > As built; construction_plan.md > Which site goes first; builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11)
-code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips
-verified: 2026-10-11
+plans: construction_plan.md > As built; construction_plan.md > Which site goes first; construction_plan.md > Cancel (the user, 2026-10-16); builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11)
+code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled Derive; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND CRATE_SITE; Zones.h: ZONE_OP_SITE_CANCEL ZONE_OP_FIELD_CANCEL; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips
+verified: 2026-10-16
 ---
 
 ## Sites
@@ -26,8 +26,9 @@ storey does nothing: no room, no family, no worker. **Wood is all it takes**:
 A kind of building can also take other goods, so much a plot-storey (`EconomyStoreyCost`), and a kind
 painted on cells so much a cell (`EconomyCellCost`): a [[Guard tower|guard tower]] takes water and
 [[Provisions|provisions]], and keeps them as its stock. A [[Winch|winch]] takes [[Rope|rope]], which the colony has
-to make first. A storey stands only once all it takes of every good
-is there, and what it took is used up. A site pulled down loses what was brought to it.
+to make first. A storey stands only once all it takes of every good is there, and what it took is used up.
+**Cancel** on a site's card, while none of it stands, takes it off whole - a [[Bridge|bridge]] too - and what was
+brought is left where it stood as a [[Crate|crate]], "A site's goods"; so when the eraser takes its last plot.
 
 **A site over trees** waits for them: they stand until a [[Woodcutter]] fells them, the first he goes for,
 and nothing of it rises until the last is down - then at once, if it has all it takes. Its card counts them.

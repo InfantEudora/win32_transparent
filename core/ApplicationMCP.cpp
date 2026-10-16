@@ -287,7 +287,7 @@ json Application::ReloadShadersAndWait(const std::string& name_filter, int timeo
                 return shader_reload_result;
             }
         }
-        Sleep(5);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
     std::lock_guard<std::mutex> lock(shader_reload_mutex);
@@ -519,7 +519,7 @@ void Application::RegisterCoreMCPTools(){
                 int timeout_ms = (int)(ticks * (1000.0f / physics_tps) * 3.0f) + 2000;
                 int waited_ms = 0;
                 for (; waited_ms < timeout_ms && main_scene->GetPendingObjectMotions() > 0; waited_ms += 5){
-                    Sleep(5);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
                 if (main_scene->GetPendingObjectMotions() > 0){
                     result["note"] = "timed out waiting for the motion to finish - it is still in progress";
@@ -856,7 +856,7 @@ void Application::RegisterCoreMCPTools(){
             //A pass is one tick at most, so a second is dozens of chances; the loop exits on the
             //first pass that applies it.
             for (int waited_ms = 0; waited_ms < 1000 && main_scene != target; waited_ms += 5){
-                Sleep(5);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
             if (main_scene != target){
                 return json{ {"error","the switch was requested but had not landed after 1s"} };
@@ -1026,7 +1026,7 @@ void Application::RegisterCoreMCPTools(){
                     applied = true;
                     break;
                 }
-                Sleep(5);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
             json out;
             out["sequence"] = sequence;

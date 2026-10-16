@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 /*
     The wind streaks' vertex stage - apps/archer/Streaks.h builds the ribbons, already in world
     space and already facing the camera, so this only projects. What the fragment stage needs rides

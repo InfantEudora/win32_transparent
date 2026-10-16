@@ -35,5 +35,7 @@ with the same settings, moves the wav to art_source/<app>/sound/ (the source), a
 Used for chasm's first ten (512 KB -> 65 KB). The user called the setting "pretty much just the lowest setting".
 Since 2026-10-16 (chasm's voices) it walks SUBFOLDERS (kept under art_source too) and TRIMS the silent ends of anything
 under sound/speech/ (40 ms lead, 80 ms tail, faded) - generated takes started up to 0.6 s late, which reads as lag
-after a click. Effects are never trimmed. The kept wav is the untrimmed source.
+after a click. Speech is also LEVELLED (user asked 2026-10-16): voiced RMS to SPEECH_LEVEL -18 dBFS, peak
+ceiling -1 dBFS (Vorbis adds up to ~1 dB at peaks). Effects are never touched. The kept wav is the take as it came;
+`--again <subpath>` re-encodes from art_source when these rules change.
 Related: [[adaptive-music-plan]].

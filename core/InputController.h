@@ -18,6 +18,8 @@ class InputController;
 #if defined(_WIN32)
 #include <xinput.h>
 #endif
+//VK_ codes on every desktop platform, not just Windows - see the note in it.
+#include "KeyCodes.h"
 #include "Object.h"
 #include "type_int2.h"
 

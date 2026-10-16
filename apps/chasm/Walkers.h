@@ -61,6 +61,12 @@
 #define WALK_WHO_VILLAGER       0       //who walks: anyone...
 #define WALK_WHO_POSTED         1       //...or a guard, or someone under an order: a castle's decks too
 #define WALK_WHO_ZOMBIE         2       //...or a zombie: the villagers' ground, and never a deck
+#define WALK_WHO_ICE            3       //...or a villager who may cross the ice: a woodcutter after a site's tree (ICE, below)
+
+//What MapFlood makes of frozen water: nothing (it is water), the ice there is now, or all the ice midwinter brings.
+#define WALK_ICE_NONE           0
+#define WALK_ICE_NOW            1
+#define WALK_ICE_WINTER         2
 
 //Where a walk is: a plot, and the layer on it.
 struct WalkPlace{
@@ -147,21 +153,27 @@ public:
         the MAP - the ground's own rules (EdgeOpen's): a standing bridge over water, a winch up a cliff, nothing too
         steep, never the mountain - and not what is built on it. Water and mountain beside walkable ground are
         reached, as the land's edge, but lead nowhere. Out to `reach`; INFINITY past it. `dist` is by plot.
+        `ice` (WALK_ICE_*) leads on over frozen water as well - a woodcutter's reach (ICE, below).
     */
-    void MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist);
+    void MapFlood(const ZoneState& z, const std::vector<int>& from, float reach, std::vector<float>& dist,
+                  int ice = WALK_ICE_NONE);
     /*
         ICE (seasons_plan.md, the user's 2026-10-12): the water under the snow is frozen - the same line the view
         draws its ice by, and a collector stops filling at (UnderSnow) - and the POSTED may walk it: someone under
         an order, a guard. Nobody else, and not MapFlood's territory. Set from the simulation's tick before a walk is
         planned (the economy's Tick and Order); a walk planned on the ice keeps it if the thaw comes on the way.
+        ...and a WOODCUTTER (WALK_WHO_ICE; the user's, 2026-10-16) when there is no other way: a tree in a site's way
+        across the water - a bridge's far bank - is felled in winter, and he walks back over the ice too.
     */
     void SetSeason(uint64_t tick);
     bool Frozen(int v) const;          //plot v under the snow now, by SetSeason's tick
+    bool AnyIce() const { return f_ice; }
+    bool FrozenInWinter(int v) const;  //...or once the snow lies furthest, midwinter: what never freezes is south of it
 
 private:
     bool f_ice = false;                 //any snow at all on the map
     float ice_front = 0.0f;             //the snow front's z for it (CalendarSnowFrontZ)
-    bool IceOpen(int who, int v) const; //water a walk by `who` may cross on v: frozen, and he is posted
+    bool IceOpen(int who, int v) const; //water a walk by `who` may cross on v: frozen, and he is posted or WALK_WHO_ICE
     std::shared_ptr<const ChasmWorld> world;
     std::shared_ptr<const WalkGraph> graph;
     void EnsureGraph();

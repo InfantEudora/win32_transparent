@@ -26,6 +26,26 @@ inline uint32_t HudFaded(uint32_t c, uint8_t alpha){
 }
 
 /*
+    THE INTERFACE'S SIZE (the user's, 2026-10-16): every HUD size is laid out at s = 1 for a window HUD_UI_HEIGHT
+    high, which is the window Chasm opens in. It grows with the SQUARE ROOT of the height past that - full screen at
+    1440 is 1.33, not 1.78, so a bigger screen shows more of the colony rather than the same panels larger - times
+    the player's UI size setting (`ui_size`, Settings). Never under 0.5.
+*/
+#define HUD_UI_HEIGHT           810.0f
+#define HUD_UI_SIZES            6
+const float HUD_UI_SIZE_STEPS[HUD_UI_SIZES] = {0.75f,0.85f,1.0f,1.15f,1.3f,1.5f};   //the setting's choices
+float HudUiScale(float window_h, float ui_size);
+//The same for a UIMenu, whose layout is in screen heights: its UIMenuLayout::scale.
+float HudMenuScale(float window_h, float ui_size);
+
+/*
+    THE BUILD (ChasmVersion.h; the user's, 2026-10-16), in the bottom right corner of the title and the pause menu:
+    the version, the commit and the day it was built - and a debug build says so - on a panel, so it reads over any
+    picture and a tester's screenshot names what it was taken in. Returns the panel's top.
+*/
+float DrawHudBuild(UIOverlay* o, float screen_w, float screen_h, float s);
+
+/*
     THE GOODS' COLOURS (the user's, 2026-10-09): the top bar's wood, food and water, with the food's gold
     for wheat and a colour of its own for every other food, so a card tells them apart. Anything not named
     here - a good added later - is a plain grey until it is given one. Strips and keys show the goods by

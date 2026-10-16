@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 
 /*
     bluecube2 - the same reference as bluecube.frag, built from one idea instead of thirty knobs.

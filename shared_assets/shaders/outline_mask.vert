@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 /*
     Renderer::OutlinePass, step 1: an outlined object drawn again into the outline mask. Position
     only - whatever material or custom shader the object is drawn with, its SHAPE is the vertex

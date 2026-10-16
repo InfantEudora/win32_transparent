@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 
 /*
     gbuffer - not an effect, a DIAGNOSTIC. Shows what the deferred pass actually left behind for a

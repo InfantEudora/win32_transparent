@@ -1,13 +1,11 @@
 #include "ChasmSave.h"
 #include "File.h"
+#include "Directory.h"
 
 #include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 using json = nlohmann::json;
 
@@ -761,15 +759,8 @@ std::string ChasmFolder(const char* name){
 #else
     std::string path = GetExecutableDirectory() + "/../" + name;
 #endif
-#ifdef _WIN32
     //Without the "build/..": it is shown to the player, in a bug report's place.
-    char full[MAX_PATH];
-    DWORD len = GetFullPathNameA(path.c_str(),MAX_PATH,full,NULL);
-    if (len > 0 && len < MAX_PATH){
-        path = full;
-    }
-#endif
-    return path;
+    return Directory::FullPath(path);
 }
 
 std::string ChasmSaveDirectory(){
@@ -788,9 +779,7 @@ std::string ChasmSavePath(const std::string& name){
 }
 
 bool ChasmSaveWrite(const std::string& name, const json& j, std::string& error){
-#ifdef _WIN32
-    CreateDirectoryA(ChasmSaveDirectory().c_str(),NULL);    //fails harmlessly if it exists
-#endif
+    Directory::Create(ChasmSaveDirectory());    //fails harmlessly if it exists
     std::string path = ChasmSavePath(name);
     std::ofstream f(path.c_str(),std::ios::binary);
     if (!f){
@@ -825,33 +814,15 @@ bool ChasmSaveRead(const std::string& name, json& out, std::string& error){
 
 std::vector<std::string> ChasmSaveList(){
     std::vector<std::string> names;
-#ifdef _WIN32
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((ChasmSaveDirectory() + "/*.json").c_str(),&fd);
-    if (h != INVALID_HANDLE_VALUE){
-        do{
-            std::string n = fd.cFileName;
-            names.push_back(n.substr(0,n.size() - 5));
-        }while (FindNextFileA(h,&fd));
-        FindClose(h);
+    for (const std::string& n : Directory::ListFiles(ChasmSaveDirectory(),".json")){
+        names.push_back(n.substr(0,n.size() - 5));
     }
-#endif
     std::sort(names.begin(),names.end());
     return names;
 }
 
 int64_t ChasmSaveWritten(const std::string& name){
-#ifdef _WIN32
-    WIN32_FILE_ATTRIBUTE_DATA a;
-    if (!GetFileAttributesExA(ChasmSavePath(name).c_str(),GetFileExInfoStandard,&a)){
-        return -1;
-    }
-    //A FILETIME counts 100 ns from 1601.
-    uint64_t t = ((uint64_t)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime;
-    return (int64_t)(t / 10000000ull) - 11644473600ll;
-#else
-    return -1;
-#endif
+    return FileWriteTime(ChasmSavePath(name));
 }
 
 std::vector<ChasmSaveEntry> ChasmSaveEntries(){

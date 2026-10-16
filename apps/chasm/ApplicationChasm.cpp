@@ -196,18 +196,19 @@ void ApplicationChasm::BuildScene(){
         The sky is the renderer's ambient hemisphere, not a second light: a cool, bright sky above a
         dim warm ground is what keeps a shadow blue and readable rather than black, and lights a
         wall facing away from the sun by the sky it does face.
+
+        This is the sun as matched, which the title keeps. In the world it then moves with the year (UpdateSun,
+        docs/seasons_plan.md "The sun"): higher in summer and lower in winter, warmer or cooler.
     */
-    vec3 sun_dir(-0.50f,0.85f,-0.35f);
-    sun_dir.normalize();
-    sun_offset = sun_dir * SUN_DISTANCE;
+    sun_offset = ChasmSunDirection(CHASM_SUN_ELEVATION,CHASM_SUN_AZIMUTH) * SUN_DISTANCE;
 
     sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
-    sun->color = vec3(1.0f,0.95f,0.86f);
+    sun->color = ChasmSunColour(CHASM_SUN_KELVIN);
     //Soft light, as the reference: lit ground about 1.05x its palette colour and shade about 0.7x,
     //so most of it is the sky's and the sun only adds the rest. Measured against
     //art_source/chasm/alittleagedemo.jpg, not judged by eye.
-    sun->brightness = 1.7f;
+    sun->brightness = CHASM_SUN_BRIGHTNESS;
     sun->SetupOrthographic(4096,4096,60.0f,1.0f,SUN_DISTANCE * 2.0f);
     sun->SetPosition(sun_offset);
     sun->SetLookAt(vec3());
@@ -309,7 +310,7 @@ void ApplicationChasm::SetupInput(){
     for (uint32_t action : core_view){
         input->SetRecorded(action,false);
     }
-#if defined(_WIN32)
+#if !defined(__ANDROID__)
     view_key('Q',INPUT_CHASM_ROTATE_LEFT);
     view_key('E',INPUT_CHASM_ROTATE_RIGHT);
     view_key(VK_ESCAPE,INPUT_CHASM_MENU);         //the game's since the title (demo_plan.md): no longer the window's close
@@ -2467,6 +2468,15 @@ void ApplicationChasm::UpdateCamera(){
             cam_fly_to = at;
         }
     }
+    int seek_plot = cam_seek_plot.exchange(-1);
+    if (seek_plot >= 0 && f_play){
+        std::shared_ptr<const ChasmWorld> cw = GetWorld();
+        if (cw && seek_plot < (int)cw->grid->fine.pos.size()){
+            f_cam_flying = true;
+            f_cam_fly_keep_zoom = true;
+            cam_fly_to = cw->grid->fine.pos[seek_plot];
+        }
+    }
     if (f_cam_flying){
         //The player taking the camera over ends the glide where it is.
         bool f_moved = (camera_target - target_before).length() > 1e-5f || cam_distance != distance_before
@@ -2651,6 +2661,7 @@ void ApplicationChasm::UpdateView(void){
     }
     QuickKeys(input);
     UpdateCamera();
+    UpdateSun();
     FollowSun();
     UpdateTimeKeys();
     /*
@@ -3449,6 +3460,8 @@ void ApplicationChasm::RenderChasmPanel(){
     }
 
     RenderTimePanel();
+    RenderSunPanel();
+    RenderMusicPanel();
     RenderPeoplePanel();
     RenderZombiePanel();
 
@@ -3916,14 +3929,17 @@ void ApplicationChasm::RegisterMCPTools(){
         "`castle_here` reports the plot's piece. STOPPING WORK (docs/stopping_work_plan.md): work_stop stops the "
         "workplace at the place - a water collector, woodcutter's hut, ropewalk or builders' hut (`on`, default true; "
         "false sets it working again) - so it takes nobody and its people go free; range_stop the same for an archery "
-        "range, by a cell of it.",
+        "range, by a cell of it. CANCEL (docs/construction_plan.md): site_cancel takes the building at the plot off whole "
+        "while nothing of it stands - a site card's Cancel, a bridge too - field_cancel the same by a cell of a field or "
+        "range; what it was brought is left as a crate (origin site).",
         json{
             {"type","object"},
             {"properties",{
                 {"op",{{"type","string"},{"enum",{"house_add","house_paint","house_remove","house_erase","field_paint","field_erase",
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
                                                   "build_erase","field_crop","field_next","field_land","field_priority",
-                                                  "gate_shut","range_paint","tower_ladder","castle","work_stop","range_stop"}}}},
+                                                  "gate_shut","range_paint","tower_ladder","castle","work_stop","range_stop",
+                                                  "site_cancel","field_cancel"}}}},
                 {"shape",{{"type","string"},{"enum",{"block","arch","stair","none"}},
                           {"description","for castle: the debug castle's piece (ramparts_plan.md) - none takes it off"}}},
                 {"storeys",{{"type","integer"},{"description","for castle: its height, 1 to 4 (an arch 2 at least; a stair rises "

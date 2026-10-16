@@ -5,9 +5,9 @@ kind: people
 status: built
 summary: The only one who fells trees. Works from a hut or from the camp, fells what is in the way first, and carries the wood to a store, or into the hut and onto its lot.
 plans: economy_plan.md > The woodcutter: logs first; woodcutting_plan.md > Decided (the user, 2026-10-11); woodcutting_plan.md > As built (2026-10-11); yards_plan.md > Noted
-code: Economy.cpp: TickWorker FindTree WoodNear TreesInTheWay FetchFromWorkplace FindStore Felled AssignJobs EconomySkillFactor; Economy.h: WORKER_JOB_WOODCUTTER
+code: Economy.cpp: TickWorker FindTree WoodNear TreesInTheWay FetchFromWorkplace FindStore Felled AssignJobs EconomySkillFactor RouteTo; Economy.h: WORKER_JOB_WOODCUTTER; Walkers.h: WALK_WHO_ICE
 tuning: ECONOMY_PICK_SECONDS
-verified: 2026-10-12
+verified: 2026-10-16
 ---
 
 A job at a **woodcutter's hut**, which the player paints, or at the [[Camp|camp]], which has one
@@ -50,9 +50,9 @@ Every round starts and ends at the woodcutter's [[House|house]], or tent.
 1. **What waits at the hut first.** If a [[Store]] will take wood, a log's worth is fetched from the hut
    and delivered. The camp's supplies stay where they are.
 2. **Otherwise wood** within {ECONOMY_WOODCUTTER_REACH} world units' **walk** of the hut or camp - a tree across a
-   river is as far as the way round - a tree **in the way** of a planned road, wall or site first, then a log
-   lying, then the nearest standing [[Tree]] by the walk. Only while a store, the hut or its lot has room for
-   it. Felling takes {ECONOMY_FELL_SECONDS:#seconds} at strength 5 (see Strength, above).
+   river is as far as the way round - a tree **in the way** of a planned road, wall or site first, then a log lying,
+   then the nearest standing [[Tree]] by the walk, while there is room for it; felled in {ECONOMY_FELL_SECONDS:#seconds} at strength 5.
+   **In winter**, one in the way on a [[Bridge|bridge's]] far bank too: he crosses the [[Seasons|ice]] for it and back, for nothing else.
 3. **A second log**, if one lies within {ECONOMY_LOG_PAIR_REACH} and there is room for both: at most
    {ECONOMY_WOODCUTTER_LOGS:#logs} a trip.
 4. **Deliver** to the nearest store that takes wood and has room, or else into the hut and onto its lot.

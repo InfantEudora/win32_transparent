@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 626f6d08-e1e4-40c4-aa34-4b3f03e32cc2
-  modified: 2026-10-16T14:43:34.642Z
+  modified: 2026-10-16T20:33:37.709Z
 ---
 
 2026-10-16: statistics_plan.md version 1 built (its "As built" and "Chosen for version 1"). The user asked for a
@@ -16,8 +16,8 @@ for now. wiki/events.md lists every event kind, what makes it and what keeps it 
 History stays colony-wide (the user, 2026-10-16): split per settlement only once settlements grow larger, not now.
 Discoveries belong to the audio work (areas_plan.md, EVENT_DISCOVERED, another session) - not the statistics agent's.
 
-PENDING (docs/ and wiki/ were locked by the audio session): statistics_plan.md "Open questions" 1 (per settlement)
-and 2 (discoveries) move to "Answered" as above; wiki/statistics.md's "[proposed] History per settlement" -> [parked].
+Both written into statistics_plan.md "Answered" (no open questions left) and wiki/statistics.md ([parked]) 2026-10-16.
+Crates of origin CRATE_SITE (a cancelled site's goods, bridge_plan.md "Trees across the water") count as held too.
 
 - One record for statistics and sound: `EconomyEvent` / `EVENT_*` / `Economy::Event` (ring of 64, `events_by_kind`).
   EVENT_* numbers are SAVED in the journal - append only, never renumber.

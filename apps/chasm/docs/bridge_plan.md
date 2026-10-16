@@ -71,3 +71,45 @@ Seed 12: a bridge with a road up to each end (`chasm_road` to the end plots), jo
   where it stands).
 - Bridges are one plot wide; carts and two-way traffic come later if they matter.
 - Saves made before this with a collector in the wet band lose that collector on load (the rules refuse it).
+
+## Trees across the water (the user, 2026-10-16)
+
+The user's save `nowoodcutternear` (seed 3, year 1 summer 2) showed NEEDS ATTENTION's "TREES IN THE WAY: NO
+WOODCUTTER NEAR" for a bridge, with nothing saying which place it meant. Two pines stood on the bridge's far end
+(plot 5364, outside the settlement): a site rises only once every tree on it is down (`SiteTreesStanding`), and a
+woodcutter's reach is a walk (`MapFlood`) that crosses no river without a bridge - so it could never be built, in
+winter neither, since only the posted walked the ice (`seasons_plan.md`). The user: "It's actually a good feature.
+I'm now hoping that the bridge can only be built in winter." Of the options put (the user's choice, A and D):
+
+- **A. A woodcutter crosses the ice for a tree in a site's way.** Chosen over B, a posted woodcutter felling round
+  his post ("tempting", but not now).
+- **D. The drag warns**, rather than refusing the bridge.
+- **NEEDS ATTENTION names the place**, a click selecting it - and no longer takes up the woodcutter tool.
+- **Cancel on the site's card**, what was brought left in a crate (`construction_plan.md`, "Cancel").
+
+**As built (2026-10-16):**
+- `Economy::Derive` floods each woodcutter's reach twice: over dry land, and over the ice midwinter brings
+  (`WALK_ICE_WINTER`, `Walkers::FrozenInWinter`: the snow at its furthest, so a river south of
+  `CALENDAR_SNOW_REACH` never counts). `wood_reach` keeps by plot which reached it - published, for the ghost - and
+  `trees_iced` the sites of `trees_unreached` whose every tree the ice reaches. Done when the zones change, so it
+  holds all year.
+- `WoodNear`: in winter (`Walkers::AnyIce`), a tree out of dry reach but in the way of a site of his settlement's (or
+  of a line), within reach over today's ice (`WALK_ICE_NOW`), is a candidate - in-the-way trees first, as ever. No
+  other tree across the water is.
+- `RouteTo`: a woodcutter's walk to or from a plot `wood_reach` has as ICE plans as `WALK_WHO_ICE`, which may cross
+  frozen water (`IceOpen`) but takes no deck. First built as a fallback when no walk was found; but there was one,
+  60 units up the river round its end and back, so the woodcutters walked over a day each way. Every other walk of
+  his goes as anyone's.
+- `EdgeOpen`: a bridge SITE's plots are crossed, under the snow, by those who walk the ice (posted, `WALK_WHO_ICE`):
+  its piles stand in the frozen river, and it lies where the crossing is.
+- NEEDS ATTENTION row 12 (`issues_plan.md`), the card's tree line, the ghost's tag ("ACROSS THE WATER: WAITS FOR THE
+  ICE", or "NO WOODCUTTER NEAR").
+
+*Checked* on that save (a debug build, a copied exe, paused and stepped): summer - "BRIDGE: TREES IN THE WAY" /
+"WAITS FOR THE ICE", the card "2 trees to fell first - across the water: waits for the ice" and Cancel. Day 34
+(winter, snow cover 1): "OVER THE ICE NOW"; both woodcutters set out for the pines, crossed in about a third of a day,
+felled them, carried the logs back over the ice, and went on to ordinary trees; the bridge rose (6 of 10 plots by day
+38) and the row was gone. Dragging the same bridge: "COSTS 64 WOOD - 10 PLOTS - 2 TREES TO FELL - ACROSS THE WATER:
+WAITS FOR THE ICE". Cancel: the bridge gone, its 10 wood in a crate on its near end (plot 20573), "A site's goods";
+Teun, on his way with 5 more, took them to a store; Cancel on a standing house refused ("part of it stands").
+Not tried: the thaw catching a woodcutter across (he waits, as anyone cut off does).

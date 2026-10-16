@@ -1,4 +1,4 @@
-#version 460 core
+#version 450 core
 /*
     Vertex stage for MESH_MODE_LINE meshes - the physics debug lines and anything else built
     from line_vertex (core/type_vertex.h): a position and a packed 32-bit colour, 16 bytes.

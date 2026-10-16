@@ -36,9 +36,9 @@ static const KeyName pad_names[] = {
     {GAMEPAD_KEY_Y,             "PAD_Y"},
 };
 
-//The keys with no printable character. Win32 only because VK_ codes are; elsewhere these come out
-//as hex, which still replays - the names are for reading, not for correctness.
-#if defined(_WIN32)
+//The keys with no printable character. Desktop only because VK_ codes are (core/KeyCodes.h); on
+//Android these come out as hex, which still replays - the names are for reading, not for correctness.
+#if !defined(__ANDROID__)
 static const KeyName vk_names[] = {
     {VK_SPACE,"SPACE"}, {VK_RETURN,"RETURN"}, {VK_ESCAPE,"ESCAPE"}, {VK_TAB,"TAB"},
     {VK_BACK,"BACKSPACE"},
@@ -58,7 +58,7 @@ std::string FormatSystemKey(uint32_t code){
             return k.name;
         }
     }
-#if defined(_WIN32)
+#if !defined(__ANDROID__)
     for (const KeyName& k: vk_names){
         if (k.code == code){
             return k.name;
@@ -84,7 +84,7 @@ bool ParseSystemKey(const std::string& text, uint32_t& out){
             return true;
         }
     }
-#if defined(_WIN32)
+#if !defined(__ANDROID__)
     for (const KeyName& k: vk_names){
         if (text == k.name){
             out = k.code;

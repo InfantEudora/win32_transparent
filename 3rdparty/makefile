@@ -58,10 +58,24 @@
 
 CC        := g++
 CC_C      := gcc
-BUILD_DIR := build
-OUT       := ../libs/libthirdparty.a
 
-CFLAGS := -std=c++17 -Os -fno-exceptions -DJSON_NOEXCEPTION -DTINYGLTF_NO_FS -DTINYGLTF_NO_WRITER -DTINYGLTF_NO_STB_IMAGE -D_WIN32
+#---------------------------------------------------------------------------------------
+# PLATFORM - see the block of the same name in engine.mk. Windows' paths are unchanged;
+# Linux's libraries go to libs/linux/ and their objects to build/linux/, so one checkout
+# built from both sides (WSL, through /mnt/c) never hands one OS the other's objects.
+#---------------------------------------------------------------------------------------
+ifeq ($(OS),Windows_NT)
+BUILD_DIR    := build
+LIB_DIR      := ../libs
+PLATFORM_DEF := -D_WIN32
+else
+BUILD_DIR    := build/linux
+LIB_DIR      := ../libs/linux
+PLATFORM_DEF :=
+endif
+OUT       := $(LIB_DIR)/libthirdparty.a
+
+CFLAGS := -std=c++17 -Os -fno-exceptions -DJSON_NOEXCEPTION -DTINYGLTF_NO_FS -DTINYGLTF_NO_WRITER -DTINYGLTF_NO_STB_IMAGE $(PLATFORM_DEF)
 IPATHS := -I. -Itinygltf -Istb_image -Iminiz -Iminiaudio
 
 #---------------------------------------------------------------------------------------
@@ -77,7 +91,7 @@ IPATHS := -I. -Itinygltf -Istb_image -Iminiz -Iminiaudio
 # disagree with this library about where ma_engine's fields are, silently. That file
 # explains it and carries the measurements; there is nothing to keep in step here.
 #---------------------------------------------------------------------------------------
-MA_CFLAGS := -Os -D_WIN32
+MA_CFLAGS := -Os $(PLATFORM_DEF)
 
 #---------------------------------------------------------------------------------------
 # miniz
@@ -141,8 +155,8 @@ MINIZ_CFLAGS := $(CFLAGS)
 # would revert it silently and the symptom would be a visual regression, not a build error.
 # Check `git -C imgui diff` is non-empty before rebuilding this library.
 #---------------------------------------------------------------------------------------
-IMGUI_OUT    := ../libs/libimgui.a
-IMGUI_CFLAGS := -std=c++17 -Os -g -fno-exceptions -D_WIN32 -DIMGUI_USER_CONFIG=\"imgui_user_config.h\"
+IMGUI_OUT    := $(LIB_DIR)/libimgui.a
+IMGUI_CFLAGS := -std=c++17 -Os -g -fno-exceptions $(PLATFORM_DEF) -DIMGUI_USER_CONFIG=\"imgui_user_config.h\"
 IMGUI_IPATHS := -I. -Iimgui -Iimgui/backends
 
 #Object names are flat inside the archive, matching what the hand-built library held.
@@ -162,8 +176,12 @@ IMGUI_SRCS := imgui/imgui.cpp \
               imgui/imgui_widgets.cpp \
               imgui/imgui_tables.cpp \
               imgui/imgui_demo.cpp \
-              imgui/backends/imgui_impl_win32.cpp \
               imgui/backends/imgui_impl_opengl3.cpp
+#The window half of ImGui's backend is the platform's. Linux has none yet: its window backend is
+#step 2 of docs/linux_port_plan.md, and engine.mk builds Linux with USE_IMGUI=0 until then.
+ifeq ($(OS),Windows_NT)
+IMGUI_SRCS += imgui/backends/imgui_impl_win32.cpp
+endif
 
 IMGUI_OBJS := $(addprefix $(BUILD_DIR)/,$(notdir $(IMGUI_SRCS:.cpp=.o)))
 
@@ -187,10 +205,12 @@ default: $(OUT) $(IMGUI_OUT)
 
 $(OUT): $(OBJS)
 	@echo [AR] $@
+	@mkdir -p $(dir $@)
 	ar rcs $@ $^
 
 $(IMGUI_OUT): $(IMGUI_OBJS)
 	@echo [AR] $@
+	@mkdir -p $(dir $@)
 	ar rcs $@ $^
 
 #imgui's objects are built by the same pattern rule below, with its flags swapped out for

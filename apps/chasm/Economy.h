@@ -408,6 +408,10 @@ struct PropInstance;
 #define ECONOMY_HUT_WORKSHOP        1.5f    //...the floor he works in (the user's, 2026-10-11): a hut of 3 wood keeps none, one of 4 begins to
 #define ECONOMY_LOT_ROOM            2.0f    //...and on a lot of its yard, per unit of its area: about a store's room for the wood it costs
 #define ECONOMY_WOODCUTTER_REACH    75.0f   //world units from the hut
+//How a woodcutter reaches a plot (EconomyState::wood_reach): not at all, over dry land, or only over the ice in winter.
+#define ECONOMY_WOOD_UNREACHED      0
+#define ECONOMY_WOOD_REACHED        1
+#define ECONOMY_WOOD_ICE            2
 #define ECONOMY_SETTLEMENT_REACH    50.0f   //a settlement's territory at most: world units of walking from its oldest home...
 #define ECONOMY_SETTLEMENT_FIRST    20.0f   //...with one bed: a single tent pitched (settlements_plan.md)...
 #define ECONOMY_SETTLEMENT_PER_BED  5.0f    //...and more for every bed past it, so seven beds reach the most
@@ -822,6 +826,7 @@ struct EconomyField{
 #define CRATE_CAMP              2       //what a camp held, left where it stood when its last tent went (settlements_plan.md)
 #define CRATE_RUBBLE            3       //stone fallen from the chasm's walls, laid with a new colony (stone_plan.md)
 #define CRATE_BROKEN            4       //...and a rock's stone, left where a stonecutter broke it - rubble too
+#define CRATE_SITE              5       //what a building site was brought, left where it stood when it was taken off
 inline bool EconomyCrateRubble(int origin){ return origin == CRATE_RUBBLE || origin == CRATE_BROKEN; }
 #define ECONOMY_CRATE_RINGS     6       //rings of plots round him searched for open ground to put a load down on: past a camp's tents
 /*
@@ -1149,6 +1154,8 @@ struct EconomyState{
     std::vector<int> picker_places;                     //...and its picker's (ECONOMY_CAMP_PICKERS), 0 for any other (FORAGING)
     std::vector<uint32_t> trees_unreached;              //sites with a tree in their way no woodcutter reaches: a road's, wall's,
                                                         //garden's or lot's plot as ECONOMY_SITE_GROUND | plot, else by id
+    std::vector<uint32_t> trees_iced;                   //...of those, the ones a woodcutter reaches over the ice in winter
+    std::vector<uint8_t> wood_reach;                    //by plot: how a woodcutter reaches it (ECONOMY_WOOD_*) - the ghost's warning
     std::vector<std::pair<uint32_t,int>> ice_home;      //the posted whose only way home is over the ice, and the days until
                                                         //it thaws on that way (Economy::IceHome) - a card's warning
     std::vector<int> capacity;                          //a house's: how many it holds

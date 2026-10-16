@@ -34,6 +34,8 @@ const char* ZoneOpName(int op){
         case ZONE_OP_CASTLE:        return "castle";
         case ZONE_OP_WORK_STOP:     return "work_stop";
         case ZONE_OP_RANGE_STOP:    return "range_stop";
+        case ZONE_OP_SITE_CANCEL:   return "site_cancel";
+        case ZONE_OP_FIELD_CANCEL:  return "field_cancel";
         default:                   return "none";
     }
 }
@@ -2147,6 +2149,58 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             touch_field(c);
             break;
         }
+        case ZONE_OP_SITE_CANCEL:
+        case ZONE_OP_FIELD_CANCEL:{
+            /*
+                A SITE TAKEN OFF WHOLE (the user's, 2026-10-16): a card's Cancel, so a bridge - placed whole - goes the
+                same way rather than plot by plot. Only while nothing of it stands: what is built is pulled down by the
+                eraser. What it was brought is left where it stood, as a crate (Economy::Derive).
+            */
+            bool f_cells = op == ZONE_OP_FIELD_CANCEL;
+            int c = (int)index;
+            uint32_t id = f_cells ? ((c >= 0 && c < (int)state.field.size()) ? state.field[c] : 0)
+                                  : ((plot >= 0 && plot < (int)state.building.size()) ? state.building[plot] : 0);
+            if (!id){
+                last_refusal = f_cells ? "no field there" : "nothing built there";
+                return false;
+            }
+            for (size_t v = 0; v < state.building.size(); v++){
+                if (state.building[v] == id && state.standing[v] > 0){
+                    last_refusal = "part of it stands";
+                    return false;
+                }
+            }
+            for (size_t q = 0; q < state.field.size(); q++){
+                if (state.field[q] == id && state.field_built[q]){
+                    last_refusal = "part of it stands";
+                    return false;
+                }
+            }
+            for (size_t v = 0; v < state.building.size(); v++){
+                if (state.building[v] == id){
+                    state.storeys[v] = 0;
+                    state.building[v] = 0;
+                    state.built_plots--;
+                    touch_road((int)v);
+                }
+            }
+            for (size_t q = 0; q < state.field.size(); q++){
+                if (state.field[q] == id){
+                    state.field[q] = 0;
+                    state.field_cells--;
+                    touch_field((int)q);
+                }
+            }
+            state.buildings[id].size = 0;
+            state.buildings[id].kind = ZONE_KIND_NONE;    //gone; its id is never handed out again
+            for (size_t v = 0; v < state.ground_owner.size(); v++){
+                if (state.ground_owner[v] == id){
+                    state.ground_owner[v] = 0;
+                    touch_plot((int)v);
+                }
+            }
+            break;
+        }
         case ZONE_OP_FIELD_CROP:{
             int c = (int)index;
             if (c < 0 || c >= (int)state.field.size() || !state.field[c] || state.buildings[state.field[c]].kind != ZONE_KIND_FIELD){
@@ -2620,7 +2674,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
     last_arch_lost = RefreshArches(!f_play && op != ZONE_OP_BUILD_RAISE && op != ZONE_OP_GROUND_RAISE
                                    && op != ZONE_OP_FIELD_RAISE);
     if (op == ZONE_OP_BUILD_ADD || op == ZONE_OP_BUILD_REMOVE || op == ZONE_OP_BUILD_ERASE || op == ZONE_OP_BUILD_RAISE
-        || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_RAISE){
+        || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_SITE_CANCEL || op == ZONE_OP_FIELD_CANCEL){
         SettlePriorities();
     }
     state.version++;

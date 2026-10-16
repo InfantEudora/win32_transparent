@@ -528,12 +528,18 @@ made, kept as it is. Several lines for being picked out and for being sent, for 
 - **The table's rows** (`picked_leo`, `sent_leah`, ...), a pair per signal: picked -> hi, whatsup, yes,
   whereto, morning; sent -> headingover, onit, imonit; gather -> grabsupplies; take_tent and settle ->
   packingup; the rest -> okay. On a `voice` bus under `effects`, never held; not quieter further off
-  (spoken to the player), panned at most 0.3 toward him. leah's takes are 2.6 dB quieter than leo's on
-  the whole, so leo's rows are 0.75 and leah's 1.0. A gap of 8 passes makes a double click one answer.
+  (spoken to the player), panned at most 0.3 toward him. Every row's gain is 0.8, the takes being
+  levelled (below). A gap of 8 passes makes a double click one answer.
 - **Trimmed**: `tools/sound_ogg.py` now walks subfolders, keeps them under `art_source/`, and cuts the
   silence off both ends of anything under `sound/speech/` (40 ms kept before the first sound, 80 ms
   after the last, faded). The takes started 0.16-0.62 s in, which read as lag after a click. 22 files:
   1.3 MB of wav -> 127 KB.
+- **Levelled** (the user's, the same day): the takes ranged 8 dB - leo's morning and leah's whereto and
+  okay the quietest, leah's 2.6 dB under leo's on the whole. The tool now brings every speech take's
+  voiced part (the RMS of 20 ms windows within 20 dB of the loudest) to `SPEECH_LEVEL`, -18 dBFS,
+  never past -1 dBFS at the peak - which held leah's packingup 0.6 dB short. Decoded from the shipped
+  .ogg with stb_vorbis, all 22 sit within -17.4 to -18.4 dBFS. `--again speech/` made them again from
+  the kept wavs, which stay as they came.
 
 Checked in a muted instance on the startup world (no save loaded, so no autosave was spent): a man's and a
 woman's picks, each cut by the next; a double click one answer; six picks of one man, no line twice
@@ -543,6 +549,4 @@ settlement) and heard only as `refused`; a group of four sent by a right click, 
 a pause answered in it; a pick right after an order skipped. Not heard: forage, pitch and settle TAKEN -
 the same path, their rows loaded.
 
-Open: `morning` is said at any hour - Chasm has no visible time of day, only the day bar; a `when` on a
-day fraction would hold it to the first part of each day. The takes' loudness ranges 8 dB (leo's
-morning and leah's whereto and okay the quietest); evening them out would be a conversion step.
+`morning` is said at any hour, the user's call: Chasm has no time of day to see.

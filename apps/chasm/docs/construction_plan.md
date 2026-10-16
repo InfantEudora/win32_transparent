@@ -135,3 +135,16 @@ Built the same day, view only (`ApplicationChasmGhost.cpp`, THE PRICE TAG):
   wanting 8; a wall line's tag counted the one plot of it that was placed.
 - The walk's tip (`DrawWalkTip`, settlements_plan.md) steps aside while a tool is in hand: a right click then
   puts the tool down rather than sending anyone, and the tag has the spot.
+
+## Cancel (the user, 2026-10-16)
+
+"A cancel on the bridge would also be nice, now we have to erase it bit by bit" - and "it'd be nice to have the
+brought resources stored in a crate". BUILT the same day (`bridge_plan.md`, "Trees across the water"):
+- **Cancel** on a site's card, while nothing of it stands: `ZONE_OP_SITE_CANCEL` (by a plot) or
+  `ZONE_OP_FIELD_CANCEL` (by a cell, a field's or range's) - recorded, the whole building taken off at once;
+  refused "part of it stands" otherwise, when the eraser is the way. `chasm_paint` op `site_cancel` / `field_cancel`.
+- **What it was brought is left where it stood**, as a crate of its own origin, `CRATE_SITE` ("A site's goods") -
+  for any site gone, so the eraser taking a site's last plot does the same. `Derive` keeps, before it looks again,
+  a dry plot of each site with goods in a settlement's land (a bridge's near end), as it keeps a camp's door.
+  Before, a site pulled down lost what was brought. A load on its way to it goes to a store, as before.
+- The history counts such a crate as held (`EconomyDayLevels`), as a camp's.
