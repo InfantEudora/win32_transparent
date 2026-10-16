@@ -21,15 +21,17 @@
     deadlocks this report. When the partner matters, run the app under gdb, which stops
     everything at the fault.
 
-    DEBUG builds only. Release is stripped, so gdb would print addresses and nothing else; there
-    the report is the header alone. Under a debugger there is no report at all - it breaks
-    instead, since a process gets one debugger and the one already attached beats a text file.
+    The stacks from gdb are DEBUG builds' only. Release is stripped, so gdb would print addresses
+    and nothing else; there the report carries the failing thread's stack as module+offset, which
+    the build's linker map (build/<exe>.map) names, and a minidump crash_<date>_<time>.dmp beside
+    it with every thread. Under a debugger there is no report at all - it breaks instead, since a
+    process gets one debugger and the one already attached beats a text file.
 */
 
 //Reports and ends the program. `where`, if given, is a code address gdb also names by function and line.
 [[noreturn]] void CrashReport(const char* what, const void* where = NULL);
 
-//Routes crashes nobody handles - an access violation, mostly - to CrashReport. DEBUG builds; once, early.
+//Routes crashes nobody handles - an access violation, mostly - to CrashReport. Every build; once, early.
 void CrashReportInstall();
 
 #endif

@@ -600,6 +600,7 @@ void Object::SetInstanceMotion(std::vector<vec4>&& params, float pad){
         params.clear();
     }
     instance_motion = std::move(params);
+    instance_motion_pad = instance_motion.empty() ? 0.0f : pad;
     if (!instance_motion.empty() && pad > 0.0f){
         instance_bounds_min = instance_bounds_min - vec3(pad,pad,pad);
         instance_bounds_max = instance_bounds_max + vec3(pad,pad,pad);

@@ -7,6 +7,7 @@
 #include "MCPServer.h"
 #endif
 #include "Debug.h"
+#include <climits>
 #include <ctype.h>
 #include <float.h>
 #include <math.h>
@@ -39,8 +40,49 @@ void ApplicationChasm::TickEconomy(){
     uint32_t before = economy.State().version;
     economy.Tick(zones.State(),walkers,calendar_tick,main_scene->GetPhysicsTimestep());
     bool f_raised = false;
+    /*
+        EVENTS (Economy.h): a storey raised, and a building standing whole - every storey planned, a field's every cell -
+        for the FIRST time. A house given another storey later is a storey raised again, not a second building, so the
+        journal is asked whether it has this one already: ids are never reused.
+    */
+    auto finished = [&](uint32_t id, int plot){
+        std::shared_ptr<const ChasmWorld> w = zones.GetWorld();
+        const ZoneState& z = zones.State();
+        if (!w || !id || id >= z.buildings.size()){
+            return;
+        }
+        ZoneBuildingInfo info = ZoneBuildingFigures(*w,z,id);
+        if (info.site_storeys > 0 || info.site_cells > 0){
+            return;
+        }
+        for (const EconomyEvent& ev : economy.State().history.journal){
+            if (ev.kind == EVENT_BUILDING_FINISHED && ev.building == id){
+                return;
+            }
+        }
+        EconomyEvent ev;
+        ev.kind = EVENT_BUILDING_FINISHED;
+        ev.building = id;
+        ev.plot = plot;
+        ev.amount = z.buildings[id].kind;
+        vec2 at;
+        if (plot < 0 && ChasmBuildingPoint(*w,z,id,at)){
+            ev.pos = at;
+        }
+        economy.Event(ev,calendar_tick);
+    };
     for (int plot : economy.Raises()){
-        f_raised = zones.Apply(ZONE_OP_BUILD_RAISE,(uint32_t)plot) || f_raised;
+        if (zones.Apply(ZONE_OP_BUILD_RAISE,(uint32_t)plot)){
+            f_raised = true;
+            const ZoneState& z = zones.State();
+            EconomyEvent ev;
+            ev.kind = EVENT_STOREY_RAISED;
+            ev.building = z.building[plot];
+            ev.plot = plot;
+            ev.amount = (ev.building < z.buildings.size()) ? z.buildings[ev.building].kind : 0;
+            economy.Event(ev,calendar_tick);
+            finished(ev.building,plot);
+        }
     }
     //Gardens and lots the builders finished: their walls go up. Roads laid (line_works_plan.md).
     for (int plot : economy.GroundRaises()){
@@ -48,7 +90,11 @@ void ApplicationChasm::TickEconomy(){
     }
     //A field site built: its cells, all at once (fields_plan.md).
     for (int cell : economy.FieldRaises()){
-        f_raised = zones.Apply(ZONE_OP_FIELD_RAISE,(uint32_t)cell) || f_raised;
+        if (zones.Apply(ZONE_OP_FIELD_RAISE,(uint32_t)cell)){
+            f_raised = true;
+            const ZoneState& z = zones.State();
+            finished((cell >= 0 && cell < (int)z.field.size()) ? z.field[cell] : 0,-1);
+        }
     }
     //A field that waited its day for a crop: it starts with AUTO (issues_plan.md).
     for (int cell : economy.CropDefaults()){
@@ -61,6 +107,7 @@ void ApplicationChasm::TickEconomy(){
     if (f_raised){
         PublishZones();
     }
+    CheckStats();       //a day closed: the history against the state, in a debug build's log (ApplicationChasmStats.cpp)
     //Copied for the view once the pass's ticks are done (UpdateView), not after each of them: a whole
     //copy of the economy a tick, ten a pass at 10x, of which the view only ever looks at the last.
     if (economy.State().version != before){
@@ -88,6 +135,12 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(s.data(),sizeof(int) * GOOD_COUNT);
     }
     h.Bytes(e.prop_state.data(),e.prop_state.size());
+    //What the mines have dug (stone_plan.md step 5) - only once any has, so a colony without a mine hashes as before.
+    for (size_t d = 0; d < e.dug.size(); d++){
+        if (e.dug[d] > 0){
+            h.Add(((uint64_t)d << 32) | (uint32_t)e.dug[d] | 0x4D00000000000000ull);
+        }
+    }
     //The plants' fruit and their growing back (foraging_plan.md), by prop like the felled trees.
     h.Bytes(e.fruit.data(),e.fruit.size());
     h.Bytes(e.regrow.data(),e.regrow.size());
@@ -195,6 +248,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(&c.tick,sizeof(c.tick));
         h.Bytes(&c.pos,sizeof(c.pos));
         h.Bytes(c.stock.data(),sizeof(int) * GOOD_COUNT);
+        uint8_t pick_up = c.f_pick_up ? 1 : 0;
+        h.Bytes(&pick_up,sizeof(pick_up));
     }
     //The towers' guard counts (defence_plan.md, step 8), the player's: only towers', by id.
     for (size_t id = 1; id < e.guards.size(); id++){
@@ -238,6 +293,35 @@ void ApplicationChasm::HashEconomy(StateHash& h){
                 h.Bytes(where,sizeof(where));
             }
         }
+    }
+    /*
+        THE HISTORY (statistics_plan.md), a part of its own so a replay that parts there says so. Its TAIL: the journal
+        and the ledger are only ever added to, so with the state traced every tick an entry that differs differs on the
+        tick it is added, as one of the last. Hashing all of it every tick would grow with the game. Where it began,
+        its lengths, the last rows and lines, and today's row so far.
+    */
+    const EconomyHistory& hist = e.history;
+    h.Begin("history");
+    auto day = [&](const EconomyDay& d){
+        int32_t counts[4] = {d.day,d.felled,d.broken,d.storeys};
+        h.Bytes(counts,sizeof(counts));
+        h.Bytes(d.people.data(),sizeof(int) * ECONOMY_STAGES);
+        h.Bytes(d.held.data(),sizeof(int) * GOOD_COUNT);
+    };
+    uint64_t head[5] = {hist.from,hist.journal.size(),hist.days.size(),(uint64_t)hist.felled_from,(uint64_t)hist.broken_from};
+    h.Bytes(head,sizeof(head));
+    day(hist.start);
+    day(hist.today);
+    const size_t tail = 16;
+    for (size_t i = (hist.days.size() > tail) ? hist.days.size() - tail : 0; i < hist.days.size(); i++){
+        day(hist.days[i]);
+    }
+    for (size_t i = (hist.journal.size() > tail) ? hist.journal.size() - tail : 0; i < hist.journal.size(); i++){
+        const EconomyEvent& ev = hist.journal[i];
+        int32_t fields[6] = {ev.kind,(int32_t)ev.person,(int32_t)ev.building,ev.plot,(int32_t)ev.what,ev.amount};
+        h.Bytes(&ev.tick,sizeof(ev.tick));
+        h.Bytes(fields,sizeof(fields));
+        h.Bytes(&ev.pos,sizeof(ev.pos));
     }
 }
 
@@ -363,6 +447,16 @@ void ApplicationChasm::RegisterEconomyCommands(){
             if (economy.PitchSpot(cmd.subtype,zones.State(),&plot,&camp,&why)){
                 if (zones.PitchTent(plot,camp)){
                     economy.Pitched(cmd.subtype,plot,zones.State(),walkers);
+                    //A camp of its own - outside every settlement - is a settlement FOUNDED (an event, Economy.h), on
+                    //the tick this command comes before.
+                    if (!camp){
+                        EconomyEvent ev;
+                        ev.kind = EVENT_SETTLED;
+                        ev.person = cmd.subtype;
+                        ev.building = zones.State().building[plot];
+                        ev.plot = plot;
+                        economy.Event(ev,calendar_tick);
+                    }
                     PublishZones();
                     PublishEconomy();
                 }else{
@@ -437,6 +531,22 @@ void ApplicationChasm::RegisterEconomyCommands(){
             crate_commands_done++;
             return OBJECTID_INVALID;
         });
+    //PICK UP (stone_plan.md): a crate's card's chip, the player's - refused only for a crate no longer there.
+    main_scene->RegisterCommandHandler(CHASM_CMD_PICK_UP,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.SetPickUp(cmd.subtype,cmd.value[0] != 0.0f,&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    crate_last_refusal = why;
+                }
+                crate_refusals++;
+            }
+            crate_commands_done++;
+            return OBJECTID_INVALID;
+        });
     //ZOMBIES dropped, or all taken off (zombies_plan.md): a debug edit, like the crate - Z, the panel, chasm_zombie.
     main_scene->RegisterCommandHandler(CHASM_CMD_ZOMBIE,
         [this](const SimCommand& cmd) -> objectid_t {
@@ -499,6 +609,15 @@ void ApplicationChasm::SubmitGather(uint32_t person, bool f_on){
     cmd.type = CHASM_CMD_GATHER;
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
+    cmd.value[0] = f_on ? 1.0f : 0.0f;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitPickUp(uint32_t crate, bool f_on){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_PICK_UP;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = crate;
     cmd.value[0] = f_on ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
@@ -1165,7 +1284,7 @@ void ApplicationChasm::RegisterEconomyTools(){
         "every field's growth toward its harvest, every construction site (wood needed, brought, its "
         "carriers), how many trees are felled, and the dead (who, the colony's day they died on - a "
         "fraction, from 0 at its first dawn - and of what). op store_allow: "
-        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope) - "
+        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope, fruit, stone, floatstone) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
         "plot) goes first (`on`, default true) or back in the queue - recorded the same way; a site's "
@@ -1186,8 +1305,17 @@ void ApplicationChasm::RegisterEconomyTools(){
         "crate put down at x,z (or `plot`) holding `contents` (goods by name and amount, e.g. {\"wood\":8,"
         "\"beans\":4}) - RECORDED debug edits (CHASM_CMD_CRATE), a good at a time, into the crate already "
         "there if one is; refused off open ground (docs/crates_plan.md). `crates` lists every crate lying "
-        "about: id, plot, x, z, goods, origin (dropped or found), who put it down and the day; a worker "
-        "taking from one, or a builder moving it to a store (to_crate, lifting), names it as `crate`. "
+        "about: id, plot, x, z, goods, origin (dropped, found, camp or rubble - docs/stone_plan.md), who put it down, "
+        "the day, pick_up and too_far (a builder turned it down: past ECONOMY_PICK_UP_WATER of a water bar's walk); a worker taking from one, or a builder moving it to a store (to_crate, lifting), names it "
+        "as `crate`. op pick_up: crate `crate` (an id) fetched first by the builders, from anywhere (`on`, default true), "
+        "or back in the queue - RECORDED (CHASM_CMD_PICK_UP), `refusal` for no such crate. op rocks - the rocks and "
+        "boulders within `reach` (default 20) of x,z: prop, kind, plot, x, z, distance, stone, standing (stone_plan.md). "
+        "op deposits - every DEPOSIT (stone_plan.md step 4): id, kind (seam, mountain, outcrop), good, holds (a number, or "
+        "endless), x, z, plot_count, explored_plots, props (an outcrop's rock in the forest), plots (the mountain's "
+        "foot only with `all` true); a seam's piles (its crystal lying as crates: crate, plot, floatstone, stone, "
+        "pick_up), wall, band, "
+        "balcony and foot_y; dug and left (THE MINE, step 5); the mountain's rise behind its foot (least, median, most, plots_over_1_5); and the map's "
+        "seams, balconies and outcrops. "
         "op set_stock: the stock of building `building` (or the one at x,z; a camp's supplies) set to "
         "`contents` (goods by name and amount, e.g. {\"provisions\":6,\"wheat\":0}) - RECORDED debug edits "
         "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead. `provisions` reports PROVISIONS (docs/defence_plan.md): how many "
@@ -1198,8 +1326,11 @@ void ApplicationChasm::RegisterEconomyTools(){
         "op gather - person `person`, ordered out, first fills a scout's pack (`on`, default true), or goes straight on - "
         "RECORDED (CHASM_CMD_GATHER), `refusal` as for an order; a worker shows `gather`, the places still to go to. "
         "`notices` is what the rules told the player: `made` since the load, and the `last` few - nothing_to_take (told "
-        "to gather, nothing anywhere), ran_out (an ordered man's pack out of `what`) and no_tent (told to take a tent, none "
-        "to spare anywhere he can get to). SETTLEMENTS (docs/settlements_plan.md): "
+        "to gather, nothing anywhere), ran_out (an ordered man's pack out of `what`), no_tent (told to take a tent, none "
+        "to spare anywhere he can get to) and seam_seen (the first to see a floatstone seam). `events` is every EVENT the rules "
+        "made (Economy.h; docs/sound_plan.md) - `made` since the load and the `last` 64: tick, kind (those four, born, died, "
+        "tree_felled, rock_broken, storey_raised, building_finished, harvest, settled), person, building, plot, x, z, what, "
+        "amount; chasm_stats has the saved history they feed. SETTLEMENTS (docs/settlements_plan.md): "
         "`settlements` lists each - its oldest home's id - with its beds, its reach (world units of walking), its "
         "territory's plots and its people; a worker and a building show "
         "their `settlement`, 0 none. op take_tent - person `person`, ordered out, first takes a tent from the nearest camp "
@@ -1253,6 +1384,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"what",{{"type","string"},{"description","forage: fruit or water"}}},
                 {"spread",{{"type","boolean"},{"description","forage: one of a group's"}}},
                 {"reach",{{"type","number"},{"description","plants: how far from x,z, world units (default 20)"}}},
+                {"crate",{{"type","integer"},{"description","pick_up: the crate's id"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -1520,6 +1652,145 @@ void ApplicationChasm::RegisterEconomyTools(){
                 result["plants"] = list;
                 result["found"] = (int)nearby.size();
                 return result;
+            }else if (op == "rocks"){
+                //THE STONECUTTER (stone_plan.md): the rocks and boulders within `reach` (default 20) of x,z, nearest first.
+                std::shared_ptr<const EconomyState> es = GetEconomy();
+                if (!es || es->world != w || !w->forest || !args.contains("x") || !args.contains("z")){
+                    return json{{"error","rocks: give x,z - and an economy for this world"}};
+                }
+                vec2 at(args["x"].get<float>(),args["z"].get<float>());
+                float reach = args.value("reach",20.0f);
+                std::vector<std::pair<float,int>> nearby;
+                for (size_t i = 0; i < w->forest->props.size(); i++){
+                    const PropInstance& p = w->forest->props[i];
+                    float d = (vec2(p.pos.x,p.pos.z) - at).length();
+                    if (ForestIsRock(p.kind) && d <= reach){
+                        nearby.push_back(std::make_pair(d,(int)i));
+                    }
+                }
+                std::sort(nearby.begin(),nearby.end());
+                json list = json::array();
+                for (size_t t = 0; t < nearby.size() && t < 40; t++){
+                    int i = nearby[t].second;
+                    const PropInstance& p = w->forest->props[i];
+                    list.push_back(json{{"prop",i},{"kind",prop_asset_names[p.kind]},{"plot",p.plot},{"x",p.pos.x},{"z",p.pos.z},
+                                        {"distance",nearby[t].first},{"stone",ForestRockStone(p.kind)},
+                                        {"standing",i < (int)es->prop_state.size() && es->prop_state[i] == PROP_STATE_STANDING}});
+                }
+                result["rocks"] = list;
+                result["found"] = (int)nearby.size();
+                return result;
+            }else if (op == "deposits"){
+                /*
+                    DEPOSITS (Deposits.h, stone_plan.md step 4): every one - seams, the mountain, outcrops - what it holds,
+                    where, and how much of it has been seen. The mountain's foot is long: its plots only with `all`, and
+                    how far the mountain rises behind them, which the mine's ground rule (step 5) will be held against.
+                */
+                if (!w->deposits){
+                    return json{{"error","deposits: none for this world"}};
+                }
+                std::shared_ptr<const Exploration> ex = GetExploration();
+                bool f_all = args.value("all",false);
+                const Grid& g = *w->grid;
+                const Terrain& t = *w->terrain;
+                //What the forest stands for each - an outcrop's rock - and the crystal lying on a seam's foot, as crates.
+                std::vector<json> looks(w->deposits->deposits.size(),json::array());
+                for (size_t i = 0; w->forest && i < w->forest->props.size(); i++){
+                    const PropInstance& p = w->forest->props[i];
+                    int d = (p.kind == PROP_OUTCROP) ? w->deposits->At(p.plot) : -1;
+                    if (d >= 0){
+                        looks[d].push_back(json{{"prop",(int)i},{"kind",prop_asset_names[p.kind]},{"plot",p.plot},
+                                                {"x",p.pos.x},{"y",p.pos.y},{"z",p.pos.z},{"scale",p.scale}});
+                    }
+                }
+                std::shared_ptr<const EconomyState> es = GetEconomy();
+                std::vector<json> piles(w->deposits->deposits.size(),json::array());
+                for (size_t i = 0; es && es->world == w && i < es->crates.size(); i++){
+                    const EconomyCrate& c = es->crates[i];
+                    int d = w->deposits->SeamAt(c.plot);
+                    if (d >= 0){
+                        piles[d].push_back(json{{"crate",c.id},{"plot",c.plot},{"floatstone",c.stock[GOOD_FLOATSTONE]},
+                                                {"stone",c.stock[GOOD_STONE]},{"pick_up",c.f_pick_up},{"too_far",c.f_too_far}});
+                    }
+                }
+                json list = json::array();
+                int counts[DEPOSIT_KINDS] = {};
+                for (size_t i = 0; i < w->deposits->deposits.size(); i++){
+                    const Deposit& d = w->deposits->deposits[i];
+                    counts[d.kind]++;
+                    int seen = 0;
+                    for (int p : d.plots){
+                        seen += (!ex || ex->Empty() || ex->Explored(g.fine.pos[p])) ? 1 : 0;
+                    }
+                    json one = {{"id",(int)i},{"kind",DepositKindName(d.kind)},{"good",GoodName(d.good)},
+                                {"holds",(d.holds == DEPOSIT_ENDLESS) ? json("endless") : json(d.holds)},
+                                {"x",d.centre.x},{"z",d.centre.y},{"plot_count",(int)d.plots.size()},{"explored_plots",seen},
+                                {"props",looks[i]}};
+                    if (d.kind != DEPOSIT_MOUNTAIN || f_all){
+                        one["plots"] = d.plots;
+                    }
+                    if (d.kind == DEPOSIT_MOUNTAIN && f_all){
+                        json at = json::array();
+                        for (int p : d.plots){
+                            at.push_back(json::array({g.fine.pos[p].x,g.fine.pos[p].y}));
+                        }
+                        one["plots_at"] = at;
+                    }
+                    //THE MINE (step 5): what has been dug out of it, and what is left.
+                    if (es && es->world == w){
+                        int left = EconomyDepositLeft(*es,(int)i);
+                        one["dug"] = (i < es->dug.size()) ? es->dug[i] : 0;
+                        one["left"] = (left == INT_MAX) ? json("endless") : json(left);
+                    }
+                    if (d.kind == DEPOSIT_SEAM){
+                        json at = json::array();
+                        for (int p : d.plots){
+                            at.push_back(json::array({g.fine.pos[p].x,g.fine.pos[p].y,t.Height(p)}));
+                        }
+                        json wall_at = json::array();
+                        for (int p : d.wall){
+                            wall_at.push_back(json::array({g.fine.pos[p].x,g.fine.pos[p].y,t.Height(p)}));
+                        }
+                        one["plots_at"] = at;
+                        one["wall_at"] = wall_at;
+                        one["piles"] = piles[i];
+                        one["wall"] = d.wall;
+                        one["band"] = d.band;
+                        one["balcony"] = d.balcony;
+                        one["foot_y"] = t.Height(d.plots[0]);
+                    }
+                    if (d.kind == DEPOSIT_MOUNTAIN){
+                        std::vector<float> rise;
+                        for (int p : d.plots){
+                            float most = 0.0f;
+                            for (int k = 0; k < w->picker->PlotQuadCount(p); k++){
+                                const GridQuad& q = g.fine.quads[w->picker->PlotQuadCorner(p,k) / 4];
+                                for (int c = 0; c < 4; c++){
+                                    if (t.Mountain(q.v[c])){
+                                        most = std::max(most,t.ground[q.v[c]] - t.ground[p]);
+                                    }
+                                }
+                            }
+                            rise.push_back(most);
+                        }
+                        std::sort(rise.begin(),rise.end());
+                        int over_storey = 0;
+                        for (float r : rise){
+                            over_storey += (r >= 1.5f) ? 1 : 0;
+                        }
+                        if (!rise.empty()){
+                            one["rise"] = json{{"least",rise.front()},{"median",rise[rise.size() / 2]},{"most",rise.back()},
+                                               {"plots_over_1_5",over_storey}};
+                        }
+                    }
+                    list.push_back(one);
+                }
+                result["deposits"] = list;
+                result["seams"] = counts[DEPOSIT_SEAM];
+                result["balconies"] = w->deposits->balconies;
+                result["outcrops"] = counts[DEPOSIT_OUTCROP];
+                result["build_ms"] = w->deposits->build_ms;
+                return result;
             }else if (op == "buildings"){
                 /*
                     Every building in one call (apps/llm/docs/void_plan.md): where it is, whether it stands or is still a
@@ -1662,6 +1933,21 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 result["refusal"] = refusal;
                 result["plot"] = plot;
+            }else if (op == "pick_up"){
+                //PICK UP (stone_plan.md): as the chip on the crate's card.
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_PICK_UP;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)std::max(0,args.value("crate",0));
+                cmd.value[0] = args.value("on",true) ? 1.0f : 0.0f;
+                uint32_t refused = crate_refusals.load();
+                SubmitCommandAndWait(cmd);
+                std::string refusal;
+                if (crate_refusals.load() != refused){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = crate_last_refusal;
+                }
+                result["refusal"] = refusal;
             }
             std::shared_ptr<const EconomyState> e = GetEconomy();
             std::shared_ptr<const ZoneState> z = GetZones();
@@ -1770,9 +2056,43 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
             }
             result["kept"] = kept;
-            //NOTICES (Economy.h; defence_plan.md, "Scouting"): the last few the rules made, oldest first, and how many in all.
+            //EVENTS (Economy.h; sound_plan.md): the last few the rules made, oldest first, and how many in all.
+            json events = json::array();
+            for (const EconomyEvent& ev : e->events){
+                json what = json::array();
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    if (ev.what & GOOD_BIT(g)){
+                        what.push_back(GoodName(g));
+                    }
+                }
+                json j{{"tick",ev.tick},{"kind",EconomyEventName(ev.kind)},{"person",ev.person},
+                       {"building",ev.building},{"plot",ev.plot},{"x",ev.pos.x},{"z",ev.pos.y},
+                       {"what",what},{"amount",ev.amount}};
+                //An area found (areas_plan.md): its `what` is no good but whether it is the first of its kind.
+                if (ev.kind == EVENT_DISCOVERED){
+                    const AreaData* areas = e->world ? e->world->areas.get() : nullptr;
+                    bool f_known = areas && ev.amount >= 0 && ev.amount < (int)areas->areas.size();
+                    j.erase("what");
+                    j["first"] = (ev.what & 1) != 0;
+                    j["area"] = f_known ? AreaKindName(areas->areas[(size_t)ev.amount].kind) : "unknown";
+                }
+                events.push_back(j);
+            }
+            result["events"] = json{{"made",e->events_made},{"last",events}};
+            /*
+                NOTICES, as this tool gave them before the events (and apps/llm's VoidBrief reads them): the four kinds
+                told about a person - `made` of them since the load, and those of them still in the events' ring.
+            */
             json notices = json::array();
-            for (const EconomyNotice& n : e->notices){
+            uint32_t notices_made = 0;
+            const int notice_kinds[] = {EVENT_NOTHING_TO_TAKE,EVENT_RAN_OUT,EVENT_NO_TENT,EVENT_SEAM_SEEN};
+            for (int kind : notice_kinds){
+                notices_made += e->events_by_kind[kind];
+            }
+            for (const EconomyEvent& n : e->events){
+                if (std::find(std::begin(notice_kinds),std::end(notice_kinds),n.kind) == std::end(notice_kinds)){
+                    continue;
+                }
                 json what = json::array();
                 if (n.what & GOOD_BIT(GOOD_WATER)){
                     what.push_back("water");
@@ -1780,11 +2100,12 @@ void ApplicationChasm::RegisterEconomyTools(){
                 if (n.what & GOODS_EATEN){
                     what.push_back("food");
                 }
-                notices.push_back(json{{"tick",n.tick},{"person",n.person},{"what",what},
-                                       {"kind",n.kind == NOTICE_NOTHING_TO_TAKE ? "nothing_to_take"
-                                               : n.kind == NOTICE_NO_TENT ? "no_tent" : "ran_out"}});
+                if (n.what & GOOD_BIT(GOOD_FLOATSTONE)){
+                    what.push_back("floatstone");
+                }
+                notices.push_back(json{{"tick",n.tick},{"person",n.person},{"what",what},{"kind",EconomyEventName(n.kind)}});
             }
-            result["notices"] = json{{"made",e->notices_made},{"last",notices}};
+            result["notices"] = json{{"made",notices_made},{"last",notices}};
             //SETTLEMENTS (settlements_plan.md): each one - its oldest home's id - with its beds and reach, its
             //territory's plots and its people.
             std::map<uint32_t,std::pair<int,int>> settled;
@@ -2078,7 +2399,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 crates.push_back(json{{"id",c.id},{"plot",c.plot},{"x",c.pos.x},{"z",c.pos.y},{"goods",StockJson(c.stock)},
                                       {"origin",EconomyCrateOriginName(c.origin)},{"by",c.by},{"by_name",by},
-                                      {"day",(double)c.tick / CALENDAR_DAY_TICKS}});
+                                      {"day",(double)c.tick / CALENDAR_DAY_TICKS},{"pick_up",c.f_pick_up},{"too_far",c.f_too_far}});
             }
             result["crates"] = crates;
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));

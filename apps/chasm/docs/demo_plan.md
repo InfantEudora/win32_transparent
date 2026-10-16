@@ -1,0 +1,576 @@
+# Demo Plan: menus, goals, and recording for testers
+
+Proposed and decided 2026-10-15 (see "Decided" below). Built so far: steps 1, 2, 4 and 5 (see the "As
+built" sections at the end); steps 3, 6 and 7 are not started. The aim is to get Chasm to
+testers as the ship build (`make ship`: no ImGui, no MCP, no debug panels), so the game can be tested
+without the debug menu. Statistics were split out into a project of their own: `statistics_plan.md`.
+
+## What the user asked (2026-10-15)
+
+- A small menu and a statistics page.
+- Borrow from archer's menu. The menu needs a separate scene.
+- Escape closes the game at once today. Every way out should go behind an "are you sure?".
+- Save and load already work. Add record and replay, so testers can record a bug.
+- Other things worth building toward a first shippable demo.
+- The main menu over a close-up of a small terrain with a complete town on it: a custom-built one
+  rather than a generated map. Work out if and how that fits the generated world, and whether it
+  needs the same save state.
+
+## Decided (the user, 2026-10-15)
+
+1. **The backdrop is a baked diorama** (option B below), livened up with smoke particles and perhaps
+   a villager at work. "Good plan."
+2. **No zombies in the demo yet.** Its goals are two that can be met today: **get through the winter
+   with no deaths**, and **reach the chasm**.
+3. **Save names are automatic.**
+4. **Always recording**, from each autosave: yes.
+5. **Statistics become a separate project**, for a different agent: `statistics_plan.md`. The user's
+   requirement: after loading a save, the statistics are the same as when it was saved, and where
+   they sum up events and numbers, the sums agree.
+6. **"Reach the chasm" means building a winch and lowering someone down.** More generally, finding a
+   material (floatstone) or building something is a DISCOVERY that can be used as a condition. "We'll
+   need this anyway if we want to limit our building options to show only things we discovered."
+7. **A death pauses the game behind a pop-up,** the same pop-up as the "are you sure" on Escape: "A
+   villager died", with Continue or Main menu. That is also what happens when the first goal fails.
+8. **New game offers four maps** (the user, 2026-10-16), each a seed and a size that the user and
+   Claude choose by hand, rather than a random seed.
+
+## What there is today
+
+- **The ship build** starts straight into a new map of the default seed and flies to the camp, and
+  that is all. There is no new game, no save and no load: saving and loading exist only in the
+  debug panel's Save header and the `chasm_save` / `chasm_load` tools.
+- **Escape closes the window.** That is core's default (`Window::f_escape_closes_window`), which
+  archer turns off. The window's X and Alt+F4 send WM_CLOSE, which `Window.cpp` hands to
+  DefWindowProc, so they close it with no question asked. Core has no hook for asking first.
+- **A save is the seed plus edits** (`ChasmSave.h`): the grid settings (seed and size), buildings,
+  grounds, the date, the economy and the exploration. `world_hash` catches a save that the
+  generator no longer turns into the same world. Files go in `saves/` under the working directory.
+- **Recording is core and works in every build.** F9 starts and stops it, F10 replays the last one.
+  - Chasm records commands only: every key belongs to the viewer (`SetupInput`).
+  - A recording's start state is a save (`CaptureRecordingState`), so a replay starts where the
+    recording began.
+  - Files go in `recordings/` under the working directory.
+  - A tester can use it today, but blind: nothing on screen says it is recording, and there is
+    nowhere to send the file.
+- **Core's menu pieces, made for archer** (`docs/menu_plan.md`):
+  - `UIMenu` and `UIMenuDraw`: buttons, choices, sliders and toggles, driven by keys, mouse or pad.
+  - `UIControls`: the Controls screen, built from the keymap.
+  - `Settings`: a typed store in `settings.json` beside the exe (full screen, MSAA, volumes).
+  - `Window::SetFullscreen`.
+  - There is no text field.
+  - Archer's title is a Scene of its own (`RequestActiveScene`, `OnActiveSceneChanged`), with the
+    level kept loaded under it.
+- **Scenes.** Only the active scene is simulated and drawn, and `main_scene` *is* the active scene.
+  Chasm uses `main_scene` 134 times, and every one means the world: objects added, `AtTickBoundary`,
+  the input controller. Archer keeps a separate `world_scene` pointer for this.
+- **Generating a map is quick.** The default 50k-cell map takes about half a second in a debug
+  build: grid 170 ms, levels 108, mesh 134, forest 27, water 27, sight 15. A load generates it again.
+- **Statistics today** cover only the present: the people (ages, jobs, health), the dead (who, day,
+  cause), stocks, buildings, fields and trees felled. There is no history. Notices keep the last 8,
+  unsaved; deaths are the only events kept.
+- **A tester's problems go unseen.** Crash reports are debug-only (`CrashReport.h`), and all
+  logging goes to stderr, which a double-clicked exe throws away.
+
+## The screens
+
+```
+start --> TITLE ---- Continue / New game / Load ----> GAME --- Escape ---> PAUSE MENU
+            Replay a recording                         ^                     Resume
+            Settings, Controls                         +---------------------Save, Load
+            Quit (asks)                                                      Statistics
+                                                                             Record / Report a bug
+                                                                             Settings, Controls
+                                                                             Main menu
+                                                                             Quit (asks)
+```
+
+Main menu loses nothing, so it doesn't ask: the game stays loaded under the title, and Continue goes
+back to it.
+
+### The title
+
+- **A scene of its own** (the user's call), with its own camera, light, music section and menu. The
+  game's view is untouched and the game stays loaded under it, so Main menu and Continue are instant,
+  as in archer.
+- **Buttons:** Continue (the newest save or autosave; greyed out with none), New game, Load, Replay a
+  recording, Settings, Controls and Quit. The version and build date go in a corner.
+- **The backdrop:** see below.
+
+### The pause menu
+
+- **Over the frozen game, not a scene of its own.** The world stays drawn and dimmed, and the
+  calendar is paused, as the speed button's pause does. Stopping the world needs no scene switch,
+  and a scene switch would stop drawing it.
+- **Buttons:** Resume, Save, Load, Statistics, Start/Stop recording, Report a bug, Settings,
+  Controls, Main menu and Quit.
+
+### Escape
+
+Escape steps back one thing at a time, as in most builders:
+1. the tool in hand, a box drag, or the right-click menu;
+2. then the selection;
+3. and only with none of those, the pause menu.
+
+In the pause menu it goes back to the game, and on a sub-screen it goes back to the menu.
+
+### Every way out asks first
+
+- **The question.** Quit, and Load or New game during a game, all ask "Quit Chasm? 6 minutes since
+  the last save", with Save and quit / Quit / Cancel.
+- **One pop-up for everything that stops play** (the user's): the game pauses, and a box with a line
+  of text and two or three buttons sits over it. It is UIMenu's buttons in a panel. The same pop-up
+  asks before quitting, tells of a death ("A villager died": Continue / Main menu, see "The demo's
+  goals"), and tells of a goal met.
+- **The window's X and Alt+F4 ask too.** That needs core: an opt-in `Window::f_confirm_close`.
+  With it set, WM_CLOSE raises a "close asked" flag instead of closing, and the app shows its
+  question. Every other app is unchanged. It is a small core addition, flagged here as CLAUDE.md
+  asks.
+
+### Save and load
+
+- **Names are automatic** (decided): a save is named for what it is, "Colony 1 - year 1, spring 3".
+  No text field is needed.
+- **Saving:** a new save, or over one in the list.
+- **The list** reads each file for its name, game date, people and the real date it was written.
+  That all comes from the JSON, so no new format is needed.
+- **Autosave** at the first dawn of each season and on leaving the game, rotating through three
+  files. Continue takes the newest of every save.
+- **Quick save** on F5 and quick load on F8 (F9 and F10 are recording's).
+- **A save from another version** that no longer generates the same world (`world_hash`) says so
+  plainly, instead of loading onto the wrong plots. Saves are not migrated (README.md).
+
+### Settings and Controls
+
+- **Settings:** core's (full screen, MSAA, master/music/effects volume), plus Chasm's own:
+  - autosave on or off;
+  - the HUD's scale;
+  - pan and turn speed.
+- **Controls:** `UIControls` over Chasm's keymap, with rows the app names: pan, turn, the tools,
+  speed, select.
+
+## The title's backdrop: a town in close-up
+
+**Where the world comes from:**
+1. The seed and the size go into `GenerateChasmLayout`, which places the rims, balconies, rivers,
+   springs and cracks.
+2. From the layout come the terrain, deposits, mesh, forest, mist and water. These are all free
+   functions over immutable data (`RegenerateGrid`).
+
+A save stores the seed, the size and the edits.
+
+| | How | Same save state? | Cost | The catch |
+|---|---|---|---|---|
+| **A. Live showcase** | An ordinary save of a town built by hand (`saves/menu_town.json`, baked into the ship exe), loaded into *the* world. The camera does a slow orbit and the people walk. | Yes: it is a save. | Almost nothing new. | Not a separate scene. The title and a game can't both be loaded, so Main menu means saving and replacing the game, and the title costs a map's generation. |
+| **B. Baked diorama** | The same save, loaded once in debug. The ground, buildings and props within a radius of the town are written out as one mesh asset, which the title scene shows. | The *source* is an ordinary save. The diorama is geometry and needs no save state. | An exporter and a loader, plus the `world_scene` rename. | Static: no one walks unless a few people are placed. It must be re-exported when the look changes. |
+| **C. Authored terrain** | The save carries its own layout (rift, balconies, rivers) instead of one generated from the seed. Everything after the layout is unchanged. | The format gains an optional `layout` block, and the world hash covers it. | Saving a `ChasmLayout`, and authoring one: by hand at first, an editor later. | The most work. It is also what scenarios, tutorials and a hand-made demo map would need. |
+
+**A small map** is already a setting: `GridSettings` carries the size (`target_fine_cells`), so a map
+of 3-5k cells needs no new code. But the layout generator is tuned for full maps and drops what
+doesn't fit, so a spike would have to show what a small seed gives. Neither A nor B needs one: a
+close-up never shows the map's edge.
+
+**Decided: B**, a separate scene with a baked diorama exported from an ordinary save, livened up
+(the user's):
+- **Smoke:** the hearths' chimney smoke - instanced particles on core's INSTANCE_MOTION_LIFE, with
+  `smoke_material` (`ApplicationChasmHearth.cpp`) - placed at the diorama's chimneys, which the
+  exporter writes down as points.
+- **A villager at work:** a villager model in the title scene, playing a clip in place, on a spot the
+  exporter marks. The rig has Walking, Idle and Shoot today (`ApplicationChasmWorkersView.cpp`), so a
+  working clip - chopping, sawing, carrying - is new animation work for the user; Idle or a walk
+  along a fixed path will do until then.
+
+Why B:
+- the title is up at once, before any map is generated, and the game's world generates while the
+  title shows (as archer's loading progress does), so Continue and New game are quick;
+- the game stays loaded under the title, so Main menu loses nothing;
+- the diorama never runs the rules, so it can't touch saves or replays, and only its source is a
+  save, in the one format there is;
+- C stays open for later: an authored layout is just a different source for the same export.
+
+**Groundwork either way:**
+- `world_scene` for every world use of `main_scene`. This is mechanical and changes no behaviour,
+  but without it a second scene would collect the world's objects.
+- A check of what waits on the world's tick boundary. An MCP tool that calls `AtTickBoundary` on a
+  world that isn't ticking (the title showing) would wait forever.
+
+## Statistics: a project of its own
+
+Split out (the user, 2026-10-15) into `statistics_plan.md`, for a different agent. This plan needs
+two things from it: the Statistics page in the pause menu, and the summary on the end screens. Until
+it lands, the end screens show what is true now: days survived, people, the dead.
+
+## The demo's goals
+
+No zombies yet (the user). Two goals, both doable today:
+
+1. **Through the winter with no deaths.**
+   - Met at the first dawn of the second spring with nobody dead.
+   - Failed at the first death before then.
+   - Both can be worked out from a save as it stands: the dead are saved, with the tick each died
+     on. So a load shows the same, with no new state.
+2. **Reach the chasm: build a winch and lower someone down** (the user's). Met by two discoveries:
+   a winch standing on the rim, and the first person lowered by it to a balcony.
+
+### Discoveries
+
+The user's: "finding the material floatstone, or building something should be an event that can be
+used as a condition. We'll need this anyway if we want to limit our building options to show only
+things we discovered."
+
+- **What a discovery is:** something the colony has done or found for the first time, kept for
+  good. Goals are conditions over discoveries. Later, the build tools shown are too: a tool appears
+  once what it needs has been discovered.
+- **Two kinds, by whether the save already shows it:**
+  - **Read from the save.** No new state. A floatstone seam *seen* is already worked out again from
+    the saved exploration after every load (`stone_plan.md`, "Found by exploring": `LookForSeams`,
+    `NOTICE_SEAM_SEEN`).
+  - **A moment that passes,** such as the first person lowered by a winch, or the first winch built
+    (it may be erased later). These are kept as saved flags. Each is set once by the rules, with the
+    tick it happened on, saved with the economy and in the hash: tools will be shown or hidden by
+    them, so they change what can be done.
+- **Areas found** are the first of the read-from-the-save kind to be built (2026-10-16, `areas_plan.md`):
+  each river, waterfall and biome, `EVENT_DISCOVERED` in the journal, worked out again from the exploration
+  after a load.
+- **For the demo:** a winch built, someone lowered to a balcony, floatstone seen. Next, the first of
+  each building kind, which is what limiting the build tools needs. The list grows as goals and
+  unlocks need it.
+- **The statistics journal** (`statistics_plan.md`) can list discoveries as events: the tick each
+  was made is kept for that. The demo doesn't wait for statistics to have them.
+- **Shown:** a discovery made pops up like a notice ("Jelle De Wit has reached a balcony").
+  `chasm_economy` lists them for agents.
+
+### On screen
+
+- **A small goals panel:** each goal with in progress, met, or failed.
+- **A death** (the user's): the game pauses, and the one pop-up says who died and of what ("A
+  villager died: Kaat De Wit, of thirst"), with Continue or Main menu. Several deaths on one tick
+  share one pop-up. A death in the first winter also marks the first goal failed, and says so on the
+  same pop-up. Continue plays on toward the second goal.
+- **Both goals met:** "Demo complete", with Keep playing or Main menu.
+- **Everyone dead:** "The colony is lost", with Load, New game or Main menu. With nothing left to
+  lose, Load and New game don't ask.
+
+### The rules
+
+- **Discoveries and the end are rules**, so they run in the tick and a replay ends the same way.
+- **The pause for a pop-up is the viewer's.** It stops the ticks and changes no state, like the speed
+  button's pause.
+- **`chasm_economy`** reports the goals and the discoveries for agents.
+
+## Recording and replay for testers
+
+- **On screen:**
+  - "REC" and the time in a corner while recording.
+  - "Replay a recording" on the title lists the recordings with date, length, colony and build.
+  - While replaying, a bar with speed, pause and stop. The view stays free: Chasm's keys already
+    belong to the viewer.
+- **Always recording** (decided): every autosave starts a fresh recording, so a tester who hits a
+  bug can report it afterwards: the autosave plus the recording since then is the whole run. Only
+  commands are recorded, so files stay small: 12 KB for a 3,073-tick test on 2026-10-14.
+- **Report a bug** (pause menu, and F12) writes a folder `reports/<date>_<time>/`, ready to zip and
+  send, holding:
+  - the autosave and the recording up to now;
+  - a screenshot;
+  - the log;
+  - `settings.json`;
+  - the build's version.
+
+  There is no text field, so the tester describes what happened in their message.
+- **A recording names its build.** A replay on another build may diverge from the original, and
+  says so.
+- **Core additions, flagged:**
+  - a log file beside the exe, holding all of stderr, in every build;
+  - a crash dump in release builds (`MiniDumpWriteDump`), where today there is nothing.
+
+## Other things toward a first shippable demo
+
+In rough order of importance:
+
+1. **Goals and an end** (decided, above): through the winter with no deaths, and reach the chasm.
+2. **Autosave and Continue** (above). Testers' sessions end abruptly.
+3. **The version everywhere:** the title, saves, recordings and reports, plus a plain message for a
+   save from another version.
+4. **The log file and the release crash dump** (above).
+5. **Write files beside the exe.** `saves/`, `recordings/` and `reports/` go wherever the working
+   directory happens to be, so a tester's shortcut started elsewhere would scatter them. Write them
+   next to the exe instead, as Settings does (`GetExecutableDirectory`).
+6. **New game options:** the seed (random, or one of the last few). No zombies in the demo
+   (decided); the debug drop stays debug-only.
+7. **Help.** The wiki (`build/wiki.html`) is already written page by page, mechanic by mechanic.
+   Ship it beside the exe and open it from the menu.
+8. **Sound.** The score drafted for Chasm (`apps/music`, `chasm.json`: seasons, clouds, the chasm),
+   with a title section of its own, and the first effects.
+9. **A performance pass** on the release exe: a colony of 100 at 4x, its frame time, and the tick
+   rate it reaches ("RUNNING AT" shows it).
+10. **A tester README** in the ship folder: the keys, the goal, and how to report a bug.
+11. **A first screen** saying what the game is and what the goal is. NEEDS ATTENTION already teaches
+    the next steps after that.
+
+## Steps, in order
+
+1. **Every way out asks first:** the pause menu's skeleton (Resume, Quit), Escape one step at a time,
+   the one pop-up, and core's opt-in close flag.
+2. **Save and load:** the screens, autosave, Continue, quick save, the version and the
+   other-version message.
+3. **Settings and Controls:** core's, plus Chasm's own settings.
+4. **Recording for testers:** REC, always recording, Report a bug, the replay screen, and core's log
+   file (and crash dump).
+5. **The title scene:** the `world_scene` groundwork; the title with its menu over a plain picture;
+   then the diorama exporter and its loader, from `saves/menu_town.json`; then its smoke and its
+   villager.
+6. **Discoveries:** the saved flags and the read-from-the-save ones, set by the rules, with the
+   discovery pop-up and `chasm_economy`'s list.
+7. **The demo's goals and end:** the goals panel, the death pop-up, and the two end screens - their
+   summary from what is true now, until `statistics_plan.md` provides its page.
+
+Steps 1-5 change nothing the rules do. Steps 6 and 7 add rules (discoveries, the end) and saved
+state, checked by save-and-load and by replay as usual. Statistics run alongside, as their own
+project.
+
+## As built: the title, the pop-up and the diorama (2026-10-15)
+
+Step 5's first two slices, started at the user's request; the smoke and the villager are next.
+
+- **The title is a scene of its own** (`ApplicationChasmTitle.cpp`), with its own camera, sun and
+  menu: Continue and Quit for now. The game stays loaded under it.
+  - Builds without ImGui (the ship build) start on it. A debug build starts in the world, as before,
+    with the title an Escape away.
+- **No `world_scene` rename.** The 134 uses of `main_scene` stay: Chasm's entry points skip the world
+  while the title shows (`TitleShowing`): `UpdateView`, `RunSimulationTick`, `PreRender`,
+  `DrawOverlay` and the panels. So world code only runs while the world is the active scene, and its
+  `main_scene` always means the world. That kept the change out of files other agents were editing.
+- **Escape** (`INPUT_CHASM_MENU`) steps back: the tool in hand, then the selection, then the title.
+  On the title it asks to quit. Enter (`INPUT_CHASM_CONFIRM`) confirms in a menu.
+- **The one pop-up** (`OpenAsk`, `UpdateAsk`, `DrawAsk`): "Quit Chasm?" with Quit / Cancel, Cancel
+  focused. Over the game it pauses the world and resumes it after, if it was running.
+- **Every way out asks.** Core `Window::f_close_asks_app` (opt-in, default off) turns WM_CLOSE (the
+  X, Alt+F4) into `f_close_asked`, which the app turns into its question; a yes quits by
+  `RequestQuitAll`. `f_escape_closes_window` is off for Chasm.
+- **A scene switch ends a recording or replay** (core, `ApplyPendingSceneSwitch`). Always recording
+  (step 4) will have to start a fresh recording on the way back from the title.
+- **The diorama: core `SceneCapture`** (`core/SceneCapture.h`, new, opt-in). It writes what a scene
+  draws within a horizontal radius to bytes, and loads them into another scene:
+  - normal and custom-shader meshes, cut by triangle and baked into world space;
+  - materials by name;
+  - custom shaders by their two files;
+  - instance sets kept to the radius, with their motion. `Object::GetInstanceMotionPad` was added
+    for this.
+  Skinned and line meshes, lights and parent links stay behind.
+- **Chasm's side:**
+  - `chasm_diorama` op capture x,z,radius writes `assets/dioramas/<name>.scap`, without the cursor's
+    marks, outlines or debug views. A ship build bakes that folder in.
+  - op load swaps it into the title without a restart.
+  - Both run on the render thread (`ServiceDiorama`), only with the game showing.
+  - The title loads `menu_town` at start, and its camera circles it once every three minutes at
+    about 29 degrees (`UpdateTitleView`). Its sun's shadow box covers it.
+- **`chasm_menu`** reads the screen, the question and the menus, and clicks an item, goes back, or
+  closes the window as the X does, for testing minimised.
+- *Checked* (8769, debug):
+  - The title, the question and the X behave as described: Cancel focused, the game paused under
+    the question and resumed after, Continue back to the game.
+  - A capture of `village_year5` round (244, -28), radius 32: 105 objects, 27,021 triangles, 1,060
+    instances, 4.5 MB. Its houses, fields, roads, palisade, range, river and forest are lit and
+    shadowed as in the game.
+- **Notes:**
+  - The diorama's colours follow the season of the world loaded, because the palette is shared.
+  - `menu_town.scap` is `village_year5` for now, until the user builds a town for it.
+  - An MCP argument of the wrong type (a string for `include_ui`) aborts the app: core's JSON is
+    built without exceptions. That is a core hazard found while testing, not something this work
+    changed.
+
+## As built: the diorama's smoke and people (2026-10-16)
+
+The third slice of step 5, at the user's request ("the season following the game is fine; this capture is
+as good a town as any").
+
+- **Markers in a capture** (`core/SceneCapture.h`, format version 2; version 1 still loads). A capture
+  can carry points the app names, each with its own data (`SceneCaptureMarker`: kind, point, data). They
+  are handed back on load, for what the app brings to life where a frozen mesh can't.
+- **Smoke from every home, warm or not:**
+  - The capture writes a `chimney` marker at each chimney top and camp fire within the radius
+    (`HearthFixtures`, given no heat).
+  - On load, one set of puffs rises from them (`SetSmoke`), the hearths' own: the same mesh, material,
+    LIFE motion and constants.
+  - Both functions were taken out of `UploadHearth`, which now calls them. The game's smoke is
+    unchanged.
+- **People:** a `person` marker for each figure drawn at the moment of the capture. It holds where he
+  stands and faces, his clip and how far through it, what he carries, whether he has his bow, and for
+  a walker the rest of his way while it stays inside the diorama, sampled on the ground.
+  - On load, each is built as the game builds him: `BuildPersonSkin`, taken out of `UploadWorkers`.
+  - Each pass (`UpdateTitleView`), a walker goes there and back along his way at his speed, and an
+    archer's bow follows his hands (`PlaceBow`, also taken out of `UploadWorkers`, with no arrow in
+    hand).
+  - The capture now leaves out the people's own objects (`Worker `, `Crowd`), the range's arrows and
+    the zombies, so nothing they held hangs in the air.
+- **`chasm_menu` op view** points the title camera by hand: a centre, a distance and a pitch, still
+  turning. It's for looking closer and trying framings.
+- *Checked* (8769, debug):
+  - `village_year5` with its range set working again (in the running copy only; the save was not
+    written), and stepped until Dirk De Wit was on the line, then captured round (244, -28), radius 32.
+    That gave 11 markers: 4 chimneys and 7 people, 4.3 MB.
+  - In the title: the smoke rising over the houses; four villagers by the stores, on the road and by a
+    field, one carrying a sack; one walking (moved 2.5 units in 2 s); Dirk at the target with bow and
+    quiver, his pose changing through the Shoot clip.
+  - Back in the game, its people still drawn.
+- **Not yet:**
+  - Children: their figures aren't rigged yet, so they are left out.
+  - The arrow in an archer's hand and arrows in flight.
+  - A working clip of its own (chopping, carrying): new animation for the user. Shooting is the one
+    the rig has today.
+  - The smoke is the hearths' as it is: thin puffs that swell as they rise. A thicker column for the
+    title would be a tuning of its own.
+
+## As built: the pause menu, saves and New game (2026-10-16)
+
+Steps 1 and 2, at the user's go-ahead, in `ApplicationChasmMenu.cpp` (new) with the title's file.
+
+- **The pause menu** is drawn over the frozen game: the world is dimmed and the HUD put away, as under
+  the Statistics page.
+  - Escape opens it once nothing is in hand or selected (`EscapeStep`). Escape in it goes back to the
+    game.
+  - Buttons: Resume, Save, Load, Statistics, Main menu, Quit. Statistics opens the stats page over it,
+    and closing the page comes back to it. Main menu goes to the title with the colony kept under it.
+  - Settings, Controls and recording come with steps 3 and 4.
+- **The title** has Continue, New game, Load and Quit.
+  - Continue goes back to the colony in play. With none (the ship build at start) it loads the newest
+    save of any kind, and it is greyed out with no saves at all.
+  - A debug build still starts in the world, with a colony in play.
+- **New game** lists four maps (`CHASM_STARTS`), each a name, a seed and a size, shown as "small",
+  "medium" or "large".
+  - **Placeholders until the user and Claude choose them:** seed 12 at 50k cells (the map every test
+    has used), seed 3 at 35k, seed 27 at 50k, seed 41 at 80k.
+  - A new game generates the map, places the camp and the first dawn of spring at once
+    (`EnsureZonesWorld`), and puts the view on the camp.
+- **Load** lists every save, newest first, seven to a page: its title, its people and when it was
+  written. A save without a title (from the tools or the panel) is listed by its file name.
+- **Save** lists "New save" and the saves to save over; saving over one asks first. Autosaves and the
+  quick save aren't in this list, as they are written by themselves.
+- **Save names are automatic:** "Seed 27 - year 1, summer 1".
+  - The file is `save_<date>_<time>.json`.
+  - The title, kind (save, auto or quick), colony and build go in a `meta` block. `ChasmSaveToJson`
+    doesn't write it, so a replay's start state is unchanged.
+  - The colony's name is the start's name. A save without one is named "Seed N".
+- **Autosave**, rotating through `autosave_1` to `autosave_3` (the oldest is written over):
+  - at the first dawn of each season (`UpdateAutosave`), but not while replaying, and not when a load
+    or a tool lands mid-year;
+  - on Quit;
+  - on leaving a colony for a load or a new game, never into the slot being loaded.
+  - "Autosaved" shows at the bottom for three seconds.
+- **Changed from the plan: the questions don't offer "Save and quit".** Since leaving autosaves, the
+  quit question is "Quit Chasm? The colony is saved first, as the autosave", with Quit / Cancel.
+  Loading or starting over a colony in play asks "Leave this colony?" the same way. Nothing is lost
+  either way, so there is no time-since-the-last-save line.
+- **Quick save:** F5 saves to `quicksave`, and F8 loads it with no question. Both keys are the
+  viewer's and are not recorded.
+- **A save from another build is refused if its map has changed.** The save's map is generated from
+  its settings and its hash compared before anything is replaced. A mismatch says "This save cannot
+  be loaded: it was made by <build>, whose map is not this build's", and the colony in play stays.
+- **Loading** waits a frame behind "Loading ..." or "Making the map ...", so the word is on screen
+  while the map generates (about half a second in debug).
+  - After it, no menu is left up, nothing is in hand or selected, and the view is on the colony
+    (`FrameColony`): the person nearest the middle of its people, or its camp.
+  - `ApplyCamera` now always moves the game's camera, because a colony is entered from the title,
+    where the title is the active scene.
+- **Saves go next to the exe** (`ChasmSaveDirectory`): `apps/chasm/saves/` for an exe in `build/` (as
+  before, now regardless of the working directory), and `saves/` beside a ship exe. Recordings still
+  go to the working directory, until step 4.
+- **`chasm_menu`** reads all of this: the screen (title, game, pause), the list open, the question
+  with its text, the busy word, the last note, and whether a colony is in play. It gains op `pause`,
+  and op `click` reaches whichever menu is in front.
+- *Checked* (8769, debug, and a build without panels):
+  - Pause, Save (a new save with its meta) and Load.
+  - Main menu, then New game on seed 3 and on seed 27: asked first, autosaved, the view on the
+    camp.
+  - Loading `village_year5` from the title, with the view on the village.
+  - A save with a wrong hash refused, with the colony kept.
+  - Statistics from the pause menu and back.
+  - The quit question cancelled, then quit: autosaved, and a clean exit.
+  - A season turning autosaved into the oldest slot.
+  - The build without panels starts on the title with no colony in play, and Continue loaded the
+    newest save.
+  - F5 and F8 weren't checked: no tool presses keys on a minimised window.
+
+## As built: recording for testers (2026-10-16)
+
+Step 4, taken before step 3 at the user's go-ahead: there is little to put in Settings until there is
+sound. The three core changes were agreed with the user first.
+
+- **Core, the log file** (`Debugger::OpenLogFile`, opt-in per app).
+  - Every line logged also goes to a file, with the time of day and without the colours, flushed as
+    it is written.
+  - The last run's file is kept as `<name>_previous.log`. A second copy running at the same time
+    writes `<name>_2.log`. The file stops at 32 MB.
+  - Chasm opens `chasm.log` beside the exe (`main.cpp`).
+- **Core, crash reports in release builds** (`core/CrashReport.cpp`). The unhandled-exception filter
+  is now installed in every build.
+  - A release crash writes `crash_<date>_<time>.dmp` (a minidump; dbghelp is loaded only then) and
+    the `.txt`, with the failing thread's stack as `exe+offset`, walked with the x64 unwind tables.
+  - A release link now also writes `build/<exe>.map` (`engine.mk`, `RLINK`), and
+    `tools/crash_map.py` names each frame from it.
+  - Checked with a small program that crashes on purpose: the stack came back as
+    `Deeper(int*)`, `Deep(int*)`, `main`.
+- **Core, recording requests.**
+  - `RequestRecordingStart(stem)` names the file in place of the app.
+  - `RequestRecordingRestart(stem)` saves the recording running and starts the next on the same
+    pass.
+  - `DrawInputRecordingBadge` is virtual: Chasm draws its own, because the core badge sat on its
+    top bar.
+  - Defaults are unchanged for every other app.
+- **Always recording** (`ApplicationChasmRecord.cpp`).
+  - A fresh recording `chasm_auto_<date>_<time>.rec` starts on entering a colony, at every
+    autosave, on coming back from the title, and after a replay ends.
+  - The ten newest are kept. A person's own recordings (F9, `input_record`) are never deleted.
+  - Quit waits for the recording to be saved before going.
+  - On in a build without the panels (the tester's build). In a debug build it is a checkbox in the
+    Save header, because it would take over an agent's `input_record`.
+  - A recording's start state now carries the save's `meta`: title, colony and build.
+  - Replaying a recording made by another build says so.
+- **REC** and the minutes recorded show in the top-left corner.
+- **Report a bug** (the pause menu, F12) writes `reports/<date>_<time>/` beside the saves, and then
+  shows the folder's path with "Open the folder" (Explorer) or OK. The folder holds:
+  - the recording up to now, which starts from the last autosave and so carries it;
+  - `now.json`, the colony at that moment;
+  - a screenshot of the game, without the menu;
+  - `chasm.log`, plus the last run's log if there is one;
+  - any crash report from the last two days, and `settings.json` if there is one;
+  - `report.txt`, saying what each file is.
+
+  The files are gathered on a worker thread, because both the recording's save and the screenshot
+  wait on other threads.
+- **Replay a recording** is on the title. It lists Chasm's recordings, newest first, with title,
+  length and date. Over a colony in play it asks first, like a load.
+  - While a replay runs, a bar top left shows how far it has got, with STOP. Pause and speed are the
+    calendar's.
+  - Commands made during a replay were already dropped by core, so looking round can't change it.
+- **A rules fix found on the way** (`Economy::Restore`). A save made before a new colony's first
+  tick lost that tick: no supplies, no rubble, no history. Every new game's first recording starts
+  at that moment.
+  - Such a save is now recognised by calendar 0 and an empty journal, and its first tick follows
+    the zones again, as a fresh start does.
+  - Saves from later in a game are unaffected. A recording made before the fix that starts at
+    calendar 0 now replays with the supplies landing.
+- *Checked* (8769, debug and without panels):
+  - A new colony recorded from its first tick: REC on screen.
+  - Report a bug wrote the folder, with the recording, now.json, the screenshot, the log and the
+    page.
+  - The report's recording replayed from the title. A short one played out and recording started
+    again; a long one was stopped with STOP.
+  - A run of 603 ticks from a new game, then its recording replayed to the same tick: the same
+    economy digest. Before the fix the replay had no supplies.
+  - The release build compiles and writes its map.
+  - Not checked by hand: F12 (no tool presses keys on a minimised window), and "Open the folder".
+
+## Open questions
+
+**The four starts** stay as they are for now (the user, 2026-10-16), who changes `CHASM_STARTS` by
+hand when an interesting seed turns up.
+
+Everything else asked so far was answered on 2026-10-15 (see "Decided"). Left for later, by the
+user's choice:
+
+1. **Limiting the build tools.** The demo should be able to offer fewer tools than the debug build
+   ("but we'll get to that later"). Two ways, not yet chosen:
+   - a fixed set for the demo build;
+   - tools appearing as they are discovered, which needs a starting set (what a colony knows on day
+     one) and a discovery for every other tool.

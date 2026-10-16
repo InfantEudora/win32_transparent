@@ -20,6 +20,7 @@
 #include "BuildingMesh.h"
 
 #include <math.h>
+#include <cmath>
 #include <stdio.h>
 #include <algorithm>
 #include <unordered_set>
@@ -49,10 +50,31 @@ static Debugger* debug = new Debugger("ApplicationChasm",DEBUG_ALL);
 #define CHASM_PLAY_START_DIST   34.0f       //the view entering play mode glides to: the camp and round it
 #define CHASM_PLAY_START_PITCH  0.95f
 #define CHASM_PLAY_FLY          3.0f        //the glide's ease a second: most of the way in a second
+/*
+    THE VIEW'S HEIGHT (ViewGroundHeight): the orbit point on the ground in view, a balcony's as the plateau's. A
+    level it is on is kept while ground of it lies within CHASM_CAM_LEVEL_HOLD; another is glided to. And the
+    camera tilts up over the player's pitch, no further than it must, to clear the ground between it and the
+    point (ClearPitch) - a point on a balcony seen from over the plateau.
+*/
+#define CHASM_CAM_LEVEL_HOLD    2.5f        //world units round the point
+#define CHASM_CAM_LEVEL_GLIDE   3.0f        //the ease a second down or up to another level: most of the way in a second
+#define CHASM_CAM_RELIEF_EASE   12.0f       //...and over the relief of one level: a ridge does not jolt the view
+#define CHASM_CAM_CLEAR         1.5f        //world units the line from the point to the camera keeps over the ground
+#define CHASM_CAM_CLEAR_SAMPLES 12          //ground looked at along it
+#define CHASM_CAM_CLEAR_PITCH   1.45f       //the most it tilts up to: about 83 degrees
+#define CHASM_CAM_LIFT_EASE     6.0f        //the tilt's ease a second, as the ground along the line steps
 #define CHASM_GRID_VIEW_Y       0.40f       //over the ground's relief (TerrainMesh.cpp, GROUND_BUMP)
 #define PICK_VIEW_Y             0.45f       //over the grid view's lines
 #define SUN_DISTANCE            400.0f      //how far out the sun's shadow camera sits from the view
-#define SUN_EXTENT_PER_DISTANCE 0.9f        //shadow half-extent per unit of camera distance
+/*
+    THE SHADOW'S BOX (FollowSun): fitted to the ground in view, between the heights its shadows fall on - what the
+    corners of the view meet from SUN_FIT_BELOW under the orbit point up to SUN_FIT_ABOVE over it or the plateau.
+*/
+#define SUN_FIT_BELOW           12.0f       //world units under the point: the next balcony down
+#define SUN_FIT_ABOVE           10.0f       //...and over it, or over the plateau below it: trees and houses
+#define SUN_FIT_REACH           3.0f        //a corner's line at most this many camera distances: one near the horizon
+#define SUN_FIT_MOST            2.5f        //the half-extent at most, in camera distances: resolution near over far
+#define SUN_FIT_STEP            1.1f        //the half-extent in steps of this ratio, so it changes rarely and edges keep still
 
 ApplicationChasm::ApplicationChasm():Application(){
     app_name = "Chasm";
@@ -118,6 +140,8 @@ void ApplicationChasm::Init(void){
 
     SetupInput();
     RegisterCommandHandlers();
+    //The device and the cue table (ApplicationChasmSound.cpp).
+    SetupSound();
     //The calendar counts days in ticks of this length (Calendar.h); a different tick would stretch them.
     if (std::fabs(physics_us_per_tick - 1000000.0 / CALENDAR_TICKS_PER_SECOND) > 0.5){
         debug->Warn("The tick is %.0f us, but the calendar counts %i ticks a second\n",physics_us_per_tick,
@@ -125,6 +149,33 @@ void ApplicationChasm::Init(void){
     }
     //Init is the render thread before the physics thread exists, so the zones may be set up here.
     EnsureZonesWorld();
+    /*
+        THE TITLE (demo_plan.md): a scene of its own beside the world's, the game kept under it. Escape is the game's
+        now - one step back, then the title - and the window's X and Alt+F4 ask first (Window::f_close_asks_app). A
+        build without the panels - the one testers get - starts on it; a debug build starts in the world, as it
+        always has, the title an Escape away.
+    */
+    world_scene = main_scene;
+    //The ship build's world under the title is only there to be replaced: no colony is in play until one is chosen.
+#ifndef USE_IMGUI
+    f_game_on = false;
+#endif
+    /*
+        RECORDING FOR TESTERS (ApplicationChasmRecord.cpp): recordings beside the saves, found from the exe as they are;
+        and always recording in a build without the panels - the one testers get. With the panels it would take over
+        the recording an agent starts with input_record, so there the panel turns it on.
+    */
+    recordings_dir = ChasmFolder("recordings");
+#ifndef USE_IMGUI
+    f_always_record = true;
+#endif
+    colony_name = "Seed " + std::to_string(next_settings.seed);
+    CreateTitleScene();
+    main_window->f_escape_closes_window = false;
+    main_window->f_close_asks_app = true;
+#ifndef USE_IMGUI
+    RequestActiveScene(title_scene);
+#endif
 #ifdef USE_MCP
     RegisterMCPTools();
 #endif
@@ -259,6 +310,12 @@ void ApplicationChasm::SetupInput(){
 #if defined(_WIN32)
     view_key('Q',INPUT_CHASM_ROTATE_LEFT);
     view_key('E',INPUT_CHASM_ROTATE_RIGHT);
+    view_key(VK_ESCAPE,INPUT_CHASM_MENU);         //the game's since the title (demo_plan.md): no longer the window's close
+    view_key(VK_RETURN,INPUT_CHASM_CONFIRM);
+    view_key(VK_TAB,INPUT_CHASM_STATS);           //the Statistics page (statistics_plan.md)
+    view_key(VK_F5,INPUT_CHASM_QUICK_SAVE);       //F9 and F10 are core's recording
+    view_key(VK_F8,INPUT_CHASM_QUICK_LOAD);
+    view_key(VK_F12,INPUT_CHASM_REPORT);
     view_key('F',INPUT_CHASM_FRAME);
     view_key('N',INPUT_CHASM_NEXT_SEED);
     view_key('B',INPUT_CHASM_PREVIOUS_SEED);
@@ -279,6 +336,8 @@ void ApplicationChasm::SetupInput(){
     view_key('R',INPUT_CHASM_TOOL_RANGE);
     view_key('T',INPUT_CHASM_TOOL_TOWER);
     view_key('K',INPUT_CHASM_TOOL_ROPEWALK);
+    view_key('M',INPUT_CHASM_TOOL_STONECUTTER);   //M for mason (stone_plan.md)
+    view_key('O',INPUT_CHASM_TOOL_MINE);          //O for ore (stone_plan.md step 5)
     view_key('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     view_key(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -305,13 +364,25 @@ void ApplicationChasm::RegenerateGrid(const GridSettings& s){
     std::shared_ptr<Terrain> t = std::make_shared<Terrain>();
     t->Build(*g,w->features);
     w->terrain = t;
+    //Before the mesh, which draws the seams into the walls, and the forest, which stands the outcrops.
+    std::shared_ptr<DepositData> deposits = std::make_shared<DepositData>();
+    BuildDeposits(*g,*w->picker,*t,*deposits);
+    w->deposits = deposits;
     std::shared_ptr<TerrainMeshData> mesh = std::make_shared<TerrainMeshData>();
-    BuildTerrainMesh(*g,*t,*mesh);
+    BuildTerrainMesh(*g,*t,deposits.get(),*mesh);
     w->mesh = mesh;
     std::shared_ptr<ForestData> forest = std::make_shared<ForestData>();
-    BuildForest(*g,*w->picker,*t,*mesh,*forest);
+    BuildForest(*g,*w->picker,*t,*mesh,deposits.get(),*forest);
     w->forest = forest;
     debug->Info("Forest: %i props in %.1f ms\n",(int)forest->props.size(),forest->build_ms);
+    int kinds[DEPOSIT_KINDS] = {};
+    for (const Deposit& d : deposits->deposits){
+        kinds[d.kind]++;
+    }
+    debug->Info("Deposits: %i seams on %i balconies (%i triangles of crystal in the walls), %i outcrops, the mountain's "
+                "foot %i plots, %.1f ms\n",kinds[DEPOSIT_SEAM],deposits->balconies,mesh->num_seam_triangles,
+                kinds[DEPOSIT_OUTCROP],kinds[DEPOSIT_MOUNTAIN] ? (int)deposits->deposits[0].plots.size() : 0,
+                deposits->build_ms);
     std::shared_ptr<MistData> mist = std::make_shared<MistData>();
     BuildMist(*g,*t,*mesh,*mist);
     w->mist = mist;
@@ -321,6 +392,10 @@ void ApplicationChasm::RegenerateGrid(const GridSettings& s){
     std::shared_ptr<ExplorationSight> sight = std::make_shared<ExplorationSight>();
     sight->Build(*g,*w->picker,*t);
     w->sight = sight;
+    std::shared_ptr<AreaData> areas = std::make_shared<AreaData>();
+    BuildAreas(*w->picker,*t,*forest,*sight,*areas);
+    w->areas = areas;
+    debug->Info("Areas: %i to discover, %.1f ms\n",(int)areas->areas.size(),areas->build_ms);
     debug->Info("Chasm: %i mist puffs (%.1f ms), %i rivers, %i falls, %i wet vertices, water %.1f ms, "
                 "sight %.1f ms\n",(int)mist->puffs.size(),mist->build_ms,(int)t->rivers.size(),
                 (int)t->falls.size(),t->wet_count,water->build_ms,sight->build_ms);
@@ -613,13 +688,17 @@ void ApplicationChasm::UpdatePick(){
             f_right_press = false;
         }
     }else{
-        //In debug mode the overlay is the HUD at the top alone - its calendar's buttons, and its panels,
-        //which paint and select nothing beneath them.
+        //In debug mode the overlay is the HUD at the top alone - its calendar's buttons, its figures that open the
+        //Statistics page, and its panels, which paint and select nothing beneath them.
         OverlayHit hit;
         if (f_over_scene && OverlayHitAt(px,&hit)){
             f_over_scene = false;
             hover = GridPick();
-            if (f_clicked){
+            if (f_clicked && hit.action == OVERLAY_HIT_STATS){
+                OpenStats();
+            }else if (f_clicked && hit.action == OVERLAY_HIT_REPLAY_STOP){
+                RequestReplayStop();        //the replay's bar (ApplicationChasmRecord.cpp)
+            }else if (f_clicked){
                 PressTimeButton(hit.action);
             }
             f_clicked = false;
@@ -795,6 +874,19 @@ void ApplicationChasm::RegisterCommandHandlers(){
             if (f_changed && f_play && zones.last_arch_lost > 0){
                 arch_notices++;
             }
+            //For the sound (ApplicationChasmSound.cpp): something placed, or taken away. A chip's command - a crop, a
+            //priority, a store's goods - is not one: its press already clicked.
+            if (f_changed){
+                int v1 = (int)cmd.value[1];
+                if (op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD || op == ZONE_OP_FIELD_PAINT
+                    || op == ZONE_OP_GROUND_PAINT || op == ZONE_OP_BRIDGE || op == ZONE_OP_RANGE_PAINT
+                    || (op == ZONE_OP_CASTLE && v1 != 0)){
+                    zone_placed++;
+                }else if (op == ZONE_OP_BUILD_REMOVE || op == ZONE_OP_BUILD_ERASE || op == ZONE_OP_FIELD_ERASE
+                          || op == ZONE_OP_GROUND_ERASE || op == ZONE_OP_CASTLE){
+                    zone_erased++;
+                }
+            }
             if (f_changed){
                 PublishZones();
             }
@@ -806,6 +898,10 @@ void ApplicationChasm::RegisterCommandHandlers(){
 }
 
 void ApplicationChasm::RunSimulationTick(void){
+    //The title's own ticks (it ticks as any active scene does): the world waits under it, not run.
+    if (TitleShowing()){
+        return;
+    }
     EnsureZonesWorld();
     //Before the calendar moves on: this tick's work is done on this tick's date.
     TickEconomy();
@@ -910,8 +1006,16 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
     return refused == 0;
 }
 
+//A save, with the meta a save from the menus has - so a recording names its colony and the build that made it.
 json ApplicationChasm::CaptureRecordingState(){
-    return ChasmSaveToJson(MakeSave());
+    json j = ChasmSaveToJson(MakeSave());
+    std::string colony;
+    {
+        std::lock_guard<std::mutex> lock(menu_text_mutex);
+        colony = colony_name;
+    }
+    j["meta"] = json{{"title",SaveTitle()},{"kind","recording"},{"colony",colony},{"build",BuildName()}};
+    return j;
 }
 
 void ApplicationChasm::RestoreRecordingState(const json& state){
@@ -922,6 +1026,20 @@ void ApplicationChasm::RestoreRecordingState(const json& state){
         return;
     }
     LoadSave(save,error);
+    //A recording from another build may not replay as it ran (demo_plan.md, step 4), so it says so.
+    const json meta = state.value("meta",json::object());
+    auto meta_text = [&](const char* key){
+        return (meta.is_object() && meta.contains(key) && meta[key].is_string()) ? meta[key].get<std::string>() : std::string();
+    };
+    std::string build = meta_text("build");
+    if (!build.empty() && build != BuildName()){
+        ShowNote("Recorded by " + build + ": this build may replay it differently");
+    }
+    //One started from the title's list is entered as a load is: its colony's name for its saves, the view on it.
+    if (f_menu_replay.exchange(false)){
+        std::string colony = meta_text("colony");
+        EnteredColony(colony.empty() ? "Seed " + std::to_string(save.settings.seed) : colony);
+    }
 }
 
 //The debug castle's piece over a plot's piece (ramparts_plan.md), for the tools: null with none.
@@ -1229,6 +1347,11 @@ void ApplicationChasm::LoadProps(){
     names.insert(names.end(),forest_bare_names,forest_bare_names + FOREST_OAK_KINDS);
     names.insert(names.end(),forest_fruit_names,forest_fruit_names + FOREST_FRUIT_KINDS);
     names.push_back(CHASM_CRATE_ASSET);
+    names.push_back(CHASM_RUBBLE_ASSET);
+    names.push_back(CHASM_CRYSTAL_ASSET);
+    for (const char* mine : {CHASM_MINE_ASSETS}){
+        names.push_back(mine);      //the mine's props (stone_plan.md step 5)
+    }
     names.push_back(CHASM_ZOMBIE_ASSET);
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
     GetAssetsFromGLTF(names);
@@ -1264,6 +1387,23 @@ void ApplicationChasm::LoadProps(){
     }else{
         debug->Warn("'%s' not in chasm_props.glb - crates will not be drawn\n",CHASM_CRATE_ASSET);
     }
+    //Rubble (stone_plan.md): its own pile once modelled; until then the rock cluster, shrunk to one.
+    if (Mesh* rubble = assetmanager->GetMeshFromAsset(CHASM_RUBBLE_ASSET)){
+        UseGroundShader(rubble);
+        rubble_asset = CHASM_RUBBLE_ASSET;
+        rubble_scale = 1.0f;
+    }else if (f_props_loaded[PROP_ROCK_CLUSTER]){
+        debug->Info("'%s' not in chasm_props.glb - rubble is drawn as a small rock cluster\n",CHASM_RUBBLE_ASSET);
+        rubble_asset = prop_asset_names[PROP_ROCK_CLUSTER];
+        rubble_scale = 0.35f;
+    }
+    //...and a seam's crystal lying (EconomyCrateCrystal); without its heap, drawn as the rubble.
+    if (Mesh* crystal = assetmanager->GetMeshFromAsset(CHASM_CRYSTAL_ASSET)){
+        UseGroundShader(crystal);
+        crystal_asset = CHASM_CRYSTAL_ASSET;
+    }else{
+        debug->Info("'%s' not in chasm_props.glb - floatstone lying is drawn as rubble\n",CHASM_CRYSTAL_ASSET);
+    }
     //...and the zombie (zombies_plan.md), unrigged for now: a figure, so drawn as the people are, not by the ground's
     //shader - no snow settles on someone walking.
     f_zombie_loaded = assetmanager->GetMeshFromAsset(CHASM_ZOMBIE_ASSET) != NULL;
@@ -1290,6 +1430,10 @@ bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z, boo
         *f_by_road = false;
     }
     if (!z){
+        return false;
+    }
+    //An outcrop under its mine (stone_plan.md step 5) stays in sight: the mine is a pit in it, its crane beside.
+    if (p.kind == PROP_OUTCROP && p.plot >= 0 && z->KindOf(p.plot) == ZONE_KIND_MINE){
         return false;
     }
     if (EconomyPropCovered(*z,p.plot,p.coarse)){
@@ -1355,6 +1499,10 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
             if (fruit >= 0 && f_fruit_loaded[fruit] && e && EconomyFruitOn(*e,i) > 0 && ForestFruitShows(stage)){
                 sets[ForestFruitBase() + fruit].push_back(m);
             }
+            continue;
+        }
+        //A rock broken (stone_plan.md) leaves no stump: its stone lies there as rubble, which the crates draw.
+        if (!ForestIsTree(p.kind)){
             continue;
         }
         float s = p.scale;
@@ -1718,6 +1866,8 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_BUILDERS:   return ZONE_KIND_BUILDERS;
         case CHASM_TOOL_TOWER:      return ZONE_KIND_TOWER;
         case CHASM_TOOL_ROPEWALK:   return ZONE_KIND_ROPEWALK;
+        case CHASM_TOOL_STONECUTTER: return ZONE_KIND_STONECUTTER;
+        case CHASM_TOOL_MINE:       return ZONE_KIND_MINE;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -2062,14 +2212,121 @@ void ApplicationChasm::FrameMap(){
     ApplyCamera();
 }
 
+/*
+    PHYSICS THREAD, as a colony is entered from a menu (EnteredColony): the view put straight on it, as play mode
+    starts - on whoever stands nearest the middle of its people, or its camp with none - rather than gliding there
+    across a map the player has just arrived on.
+*/
+void ApplicationChasm::FrameColony(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    if (!w){
+        return;
+    }
+    vec2 at = (w->grid->bounds_min + w->grid->bounds_max) * 0.5f;
+    if (e && e->world == w && !e->workers.empty()){
+        vec2 mean;
+        for (const EconomyWorker& k : e->workers){
+            mean += k.pos;
+        }
+        mean = mean * (1.0f / (float)e->workers.size());
+        float best = 1e30f;
+        for (const EconomyWorker& k : e->workers){
+            float d = (k.pos - mean).length();
+            if (d < best){
+                best = d;
+                at = k.pos;
+            }
+        }
+    }else if (e && e->world == w && e->camp_plot >= 0){
+        at = w->grid->fine.pos[e->camp_plot];
+    }
+    camera_target = vec3(at.x,ViewGroundHeight(*w,at,camera_target.y),at.y);
+    cam_yaw = 0.0f;
+    cam_pitch = CHASM_PLAY_START_PITCH;
+    cam_distance = CHASM_PLAY_START_DIST;
+    cam_lift = 0.0f;
+    //Arrived: no glide to the camp to follow, as entering play mode would start.
+    f_cam_fly_pending = false;
+    f_cam_flying = false;
+    f_cam_was_play = PlayMode();
+    ApplyCamera();
+}
+
 void ApplicationChasm::ApplyCamera(){
-    Camera* camera = main_scene->camera;
-    float cp = cosf(cam_pitch);
-    vec3 offset(sinf(cam_yaw) * cp,sinf(cam_pitch),cosf(cam_yaw) * cp);
+    //The world's, even from the title - where a colony is entered (FrameColony) while the title is the active scene.
+    Camera* camera = (world_scene ? world_scene : main_scene)->camera;
+    float pitch = cam_pitch + cam_lift;
+    float cp = cosf(pitch);
+    vec3 offset(sinf(cam_yaw) * cp,sinf(pitch),cosf(cam_yaw) * cp);
     vec3 pos = camera_target + offset * cam_distance;
     camera->SetPosition(pos);
     camera->SetLookAt(camera_target);
     cam_last_written = pos;
+}
+
+/*
+    THE VIEW'S HEIGHT (the user's, 2026-10-14): the orbit point on the ground the player looks at - the plateau with
+    its relief, a balcony, a shard - so a village below the rim is turned about and lit as one on top is; on the
+    plateau's height, the view looked past it at the air over the balcony, and the shadow ended halfway across.
+    Not the chasm's floor, under the cloud deck, nor bare rock: over those the point keeps the height it has, so
+    crossing the chasm does not dive 70 units and climb back. A level it is on is kept while ground of it lies
+    within CHASM_CAM_LEVEL_HOLD, so panning along a rim does not bob between the two. Off the map: as it is.
+*/
+float ApplicationChasm::ViewGroundHeight(const ChasmWorld& w, const vec2& at, float now_y) const{
+    const Terrain& t = *w.terrain;
+    //The height of the level the view may settle on at p, or NAN: off the map, the floor, bare rock.
+    auto level_at = [&](const vec2& p){
+        GridPick k = w.picker->Pick(p);
+        if (!k.f_hit || k.plot < 0 || k.plot >= (int)t.level.size()
+            || t.level[k.plot] == TERRAIN_FLOOR || t.level[k.plot] == TERRAIN_BARE){
+            return NAN;
+        }
+        return t.Height(k.plot);
+    };
+    float level = level_at(at);
+    if (std::isnan(level)){
+        return now_y;
+    }
+    float want = t.GroundHeight(at,level);
+    if (std::fabs(want - now_y) <= TERRAIN_STEP * 0.5f){
+        return want;
+    }
+    for (int i = 0; i < 8; i++){
+        float a = (float)i * 0.78539816f;
+        float beside = level_at(at + vec2(cosf(a),sinf(a)) * CHASM_CAM_LEVEL_HOLD);
+        if (!std::isnan(beside) && std::fabs(t.GroundHeight(at,beside) - now_y) <= TERRAIN_STEP * 0.5f){
+            return t.GroundHeight(at,beside);
+        }
+    }
+    return want;
+}
+
+/*
+    CLEARANCE: the least pitch, `pitch` or more, at which the line from the orbit point out to the camera keeps
+    CHASM_CAM_CLEAR over the ground it passes - so with the point on a balcony, the camera is neither inside the
+    cliff behind it nor looking at the rim instead of the point. Only ground above the point counts: the line
+    starts on the ground. Bare rock stands as any ground does; the floor is far below.
+*/
+float ApplicationChasm::ClearPitch(const ChasmWorld& w, float pitch) const{
+    const Terrain& t = *w.terrain;
+    vec2 back(sinf(cam_yaw),cosf(cam_yaw));         //from the point toward the camera, on the ground
+    vec2 at(camera_target.x,camera_target.z);
+    float reach = cam_distance * cosf(pitch);
+    float need = pitch;
+    for (int i = 1; i <= CHASM_CAM_CLEAR_SAMPLES; i++){
+        float h = reach * (float)i / CHASM_CAM_CLEAR_SAMPLES;
+        vec2 p = at + back * h;
+        GridPick k = w.picker->Pick(p);
+        if (!k.f_hit || k.plot < 0 || k.plot >= (int)t.level.size() || t.level[k.plot] == TERRAIN_FLOOR){
+            continue;
+        }
+        float rise = t.GroundHeight(p,t.Height(k.plot)) + CHASM_CAM_CLEAR - camera_target.y;
+        if (rise > CHASM_CAM_CLEAR && h > 0.0f){
+            need = std::max(need,atanf(rise / h));
+        }
+    }
+    return std::min(need,std::max(pitch,CHASM_CAM_CLEAR_PITCH));
 }
 
 /*
@@ -2103,6 +2360,7 @@ void ApplicationChasm::UpdateCamera(){
             cam_distance = len;
             cam_pitch = asinf(std::max(-1.0f,std::min(1.0f,off.y / len)));
             cam_yaw = atan2f(off.x,off.z);
+            cam_lift = 0.0f;    //the pitch it is at now is all the player's
         }
     }
 
@@ -2258,40 +2516,87 @@ void ApplicationChasm::UpdateCamera(){
         cam_distance = std::max(CHASM_CAM_DIST_MIN,std::min(dist_max,cam_distance));
     }
     /*
-        The orbit point rides the plateau's ground - its relief, not its levels: zoomed in on a peak
-        the camera would otherwise turn about a point deep inside the mountain, but following the
-        levels would drop it 70 units every time the view crossed the chasm. Eased, a fifth of the
-        way a pass, so panning over a ridge does not jolt the view.
+        The orbit point rides the ground in view (ViewGroundHeight): the relief of its level quickly, so
+        panning over a ridge does not jolt the view, and another level - a balcony under the rim - glided to.
+        Then, in play, the tilt that clears the ground between it and the camera (ClearPitch), eased as that
+        ground steps; the debug camera looks where it is put.
     */
     std::shared_ptr<const ChasmWorld> world = GetWorld();
-    float ground_y = world ? world->terrain->GroundHeight(vec2(camera_target.x,camera_target.z),
-                                                          terrain_levels[TERRAIN_PLATEAU].height) : 0.0f;
-    camera_target.y += (ground_y - camera_target.y) * std::min(1.0f,12.0f * dt);
+    if (world && world->terrain && world->picker){
+        float ground_y = ViewGroundHeight(*world,vec2(camera_target.x,camera_target.z),camera_target.y);
+        float rate = (std::fabs(ground_y - camera_target.y) <= TERRAIN_STEP * 0.5f) ? CHASM_CAM_RELIEF_EASE : CHASM_CAM_LEVEL_GLIDE;
+        camera_target.y += (ground_y - camera_target.y) * std::min(1.0f,rate * dt);
+    }
+    float lift = (f_play && world && world->terrain && world->picker) ? ClearPitch(*world,cam_pitch) - cam_pitch : 0.0f;
+    cam_lift += (lift - cam_lift) * std::min(1.0f,CHASM_CAM_LIFT_EASE * dt);
     ApplyCamera();
 }
 
 /*
     PHYSICS THREAD, after the camera: the sun's shadow map over what is in view. archer's
-    FollowView, the same two parts: the ortho is sized to the camera's distance, and the light moves
-    only by whole texels of its own map - a sun that slides by fractions of a texel re-rasterises
-    every shadow edge a little differently each pass, and the edges crawl while the view pans.
+    FollowView, the same two parts: the ortho is sized to the view, and the light moves only by
+    whole texels of its own map - a sun that slides by fractions of a texel re-rasterises every
+    shadow edge a little differently each pass, and the edges crawl while the view pans.
+
+    Sized to THE GROUND IN VIEW (the user's, 2026-10-14): where the corners of the view meet the
+    heights its shadows fall on, seen from the sun. A square of a fixed size round the orbit point at
+    height 0 left the far half of a balcony under the rim outside the map, dark: the view meets lower
+    ground further out, and the sun sees it shifted. A caster outside the box cannot shade a point in
+    it - the sun sees the two in one place - so the receivers are all it must hold.
 */
 void ApplicationChasm::FollowSun(){
     if (!sun){
         return;
     }
-    sun->viewport.zoom = std::max(20.0f,cam_distance * SUN_EXTENT_PER_DISTANCE);
-    vec3 target(camera_target.x,0.0f,camera_target.z);
-    sun->SetPosition(target + sun_offset);
-    sun->SetLookAt(target);
+    //The sun's own axes: they depend only on its direction.
+    sun->SetPosition(camera_target + sun_offset);
+    sun->SetLookAt(camera_target);
+    const vec3 sun_left = sun->GetLeft();
+    const vec3 sun_up = sun->GetUp();
+    vec3 toward = sun_offset;
+    toward.normalize();
+    float l0 = 1e30f, l1 = -1e30f, u0 = 1e30f, u1 = -1e30f;
+    auto hold = [&](const vec3& p){
+        float l = p.dot(sun_left);
+        float u = p.dot(sun_up);
+        l0 = std::min(l0,l);
+        l1 = std::max(l1,l);
+        u0 = std::min(u0,u);
+        u1 = std::max(u1,u);
+    };
+    hold(camera_target);
+    //The view's corners, out to the lowest and the highest ground its shadows fall on - or to SUN_FIT_REACH.
+    Camera* camera = main_scene->camera;
+    vec3 eye = camera->GetPosition();
+    vec3 forward = camera->GetForward();
+    vec3 up = camera->GetUp();
+    vec3 left = camera->GetLeft();
+    float ty = tanf(camera->viewport.fov * 0.5f * 0.017453293f);
+    float tx = ty * std::max(0.1f,camera->viewport.aspect);
+    float lo = std::max(TERRAIN_DECK_Y,camera_target.y - SUN_FIT_BELOW);
+    float hi = std::max(camera_target.y,terrain_levels[TERRAIN_PLATEAU].height) + SUN_FIT_ABOVE;
+    float reach = cam_distance * SUN_FIT_REACH;
+    for (int c = 0; c < 4; c++){
+        vec3 dir = forward + up * ((c & 1) ? ty : -ty) + left * ((c & 2) ? tx : -tx);
+        dir.normalize();
+        for (float y : {lo,hi}){
+            float t = (dir.y < -1e-4f) ? (y - eye.y) / dir.y : reach;
+            hold(eye + dir * std::max(0.0f,std::min(t,reach)));
+        }
+    }
+    //Square, round the middle of what it holds; its half-extent in steps of SUN_FIT_STEP.
+    float half = std::max(l1 - l0,u1 - u0) * 0.5f;
+    half = std::max(20.0f,std::min(half,cam_distance * SUN_FIT_MOST));
+    sun->viewport.zoom = powf(SUN_FIT_STEP,ceilf(logf(half) / logf(SUN_FIT_STEP)));
+    vec3 middle = sun_left * ((l0 + l1) * 0.5f) + sun_up * ((u0 + u1) * 0.5f) + toward * camera_target.dot(toward);
+    sun->SetPosition(middle + sun_offset);
+    sun->SetLookAt(middle);
     float texel = (2.0f * sun->viewport.zoom) / sun->viewport.width;
-    vec3 left = sun->GetLeft();
-    vec3 up = sun->GetUp();
-    vec3 eye = sun->GetPosition();
-    float l = eye.dot(left);
-    float u = eye.dot(up);
-    eye += left * (roundf(l / texel) * texel - l) + up * (roundf(u / texel) * texel - u);
-    sun->SetPosition(eye);
+    vec3 sun_eye = sun->GetPosition();
+    float l = sun_eye.dot(sun_left);
+    float u = sun_eye.dot(sun_up);
+    sun_eye += sun_left * (roundf(l / texel) * texel - l) + sun_up * (roundf(u / texel) * texel - u);
+    sun->SetPosition(sun_eye);
 }
 
 void ApplicationChasm::UpdateView(void){
@@ -2301,6 +2606,37 @@ void ApplicationChasm::UpdateView(void){
         f_economy_unpublished = false;
         PublishEconomy();
     }
+    //The sound, every pass, before anything below can return: it plays on over the title and the menus.
+    UpdateSound();
+    //A replay ended, a quit waiting for its recording, a bug report written (ApplicationChasmRecord.cpp).
+    ServiceRecording();
+    //THE TITLE (ApplicationChasmTitle.cpp): its pass alone while it shows - nothing of the world moves.
+    if (TitleShowing()){
+        UpdateTitle(input);
+        return;
+    }
+    //A season's first dawn autosaves (ApplicationChasmMenu.cpp).
+    UpdateAutosave();
+    //A question over the game - the window's X, leaving the colony: it has the input, and nothing under it moves.
+    if (main_window->f_close_asked.exchange(false)){
+        OpenAsk(CHASM_ASK_QUIT);
+    }
+    if (UpdateAsk(input) || RunBusy()){
+        return;
+    }
+    //The Statistics page (ApplicationChasmStats.cpp): Tab opens it, and while it is up it has the input.
+    if (UpdateStats(input)){
+        return;
+    }
+    //The pause menu (ApplicationChasmMenu.cpp), and the lists it opens: the input while it is up.
+    if (UpdatePause(input)){
+        return;
+    }
+    //Escape: one step back - the tool in hand, the selection, then the pause menu (demo_plan.md).
+    if (input->WasKeyPressed(INPUT_CHASM_MENU) && KeysLive()){
+        EscapeStep();
+    }
+    QuickKeys(input);
     UpdateCamera();
     FollowSun();
     UpdateTimeKeys();
@@ -2313,21 +2649,24 @@ void ApplicationChasm::UpdateView(void){
     //into a text field does not wait and fire once the field lets go.
     {
         const bool f_live = KeysLive();
-        const int keys[17] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+        const int keys[19] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
                               INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
                               INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS,INPUT_CHASM_TOOL_WALL,
-                              INPUT_CHASM_TOOL_RANGE,INPUT_CHASM_TOOL_TOWER,INPUT_CHASM_TOOL_ROPEWALK};
-        const int tools[17] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                              INPUT_CHASM_TOOL_RANGE,INPUT_CHASM_TOOL_TOWER,INPUT_CHASM_TOOL_ROPEWALK,
+                              INPUT_CHASM_TOOL_STONECUTTER,INPUT_CHASM_TOOL_MINE};
+        const int tools[19] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
                                CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
                                CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
-                               CHASM_TOOL_RANGE,CHASM_TOOL_TOWER,CHASM_TOOL_ROPEWALK};
+                               CHASM_TOOL_RANGE,CHASM_TOOL_TOWER,CHASM_TOOL_ROPEWALK,CHASM_TOOL_STONECUTTER,
+                               CHASM_TOOL_MINE};
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
             if (input->WasKeyPressed(keys[i]) && f_live){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
                 pick_version++;
+                SignalUI("click");
             }
         }
     }
@@ -2372,6 +2711,13 @@ void ApplicationChasm::UpdateView(void){
 
 //RENDER THREAD, before the scene draws: the only place GL may be touched for the meshes below.
 void ApplicationChasm::PreRender(void){
+    ServiceDiorama();       //a capture or a reload asked for (ApplicationChasmTitle.cpp): GL, so here
+    //The title: nothing of the world is drawn, so none of it is uploaded; its own animations run on the clock.
+    if (TitleShowing()){
+        static const auto t0 = std::chrono::steady_clock::now();
+        renderer->motion_seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        return;
+    }
     //The clock of everything the GPU animates: the simulation's, so a pause holds the mist still.
     renderer->motion_seconds = (float)SimSeconds();
     UpdateSeasonPalette();
@@ -2384,6 +2730,7 @@ void ApplicationChasm::PreRender(void){
     UploadCrowdBench();
     UploadPiles();
     UploadCrates();
+    UploadMines();
     UploadZombies();
     UploadRange();
     UploadRopewalks();
@@ -2455,11 +2802,22 @@ void ApplicationChasm::UpdateGridView(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     std::shared_ptr<const GridCheckReport> report = GetCheckReport();
     int version = view_version.load();
-    if (!w || (w == grid_view_built_for && version == grid_view_built_version)){
+    /*
+        With the areas shown, what is seen moves as the people look round: built again for the exploration it shows,
+        at most once a second - the whole view is rebuilt, and scouts change the exploration every few ticks.
+    */
+    std::shared_ptr<const Exploration> explored = f_view_areas ? GetExploration() : nullptr;
+    const bool f_seen_moved = explored && explored->version != grid_view_explored_version
+                              && std::chrono::steady_clock::now() - grid_view_areas_built > std::chrono::seconds(1);
+    if (!w || (w == grid_view_built_for && version == grid_view_built_version && !f_seen_moved)){
         return;
     }
     grid_view_built_for = w;
     grid_view_built_version = version;
+    if (explored){
+        grid_view_explored_version = explored->version;
+        grid_view_areas_built = std::chrono::steady_clock::now();
+    }
     auto t0 = std::chrono::steady_clock::now();
     const Grid* g = w->grid.get();
     const Terrain& terrain = *w->terrain;
@@ -2668,6 +3026,45 @@ void ApplicationChasm::UpdateGridView(){
         }
     }
 
+    /*
+        THE AREAS (areas_plan.md): each one's edge round its cells in its kind's colour - bright once any of it is seen,
+        dim before - and a post at its middle, tall once seen. On the sight's raster, at each cell's ground. Where two
+        overlap - a river over the plateau - both edges are drawn.
+    */
+    if (f_view_areas && w->areas && w->sight){
+        const ExplorationSight& sight = *w->sight;
+        const int width = sight.width;
+        const int height = sight.height;
+        std::vector<uint8_t> in((size_t)width * height,0);
+        auto corner = [&](int x, int z){
+            return sight.origin + vec2((float)x,(float)z) * EXPLORATION_CELL;
+        };
+        for (const Area& a : w->areas->areas){
+            bool f_seen = false;
+            for (int c : a.cells){
+                f_seen = f_seen || (explored && c < (int)explored->cells.size() && explored->cells[(size_t)c]);
+                in[(size_t)c] = 1;
+            }
+            uint32_t col = f_seen ? AreaKindColour(a.kind) : LerpColor(0xFF202020u,AreaKindColour(a.kind),0.35f);
+            for (int c : a.cells){
+                int x = c % width;
+                int z = c / width;
+                float y = f_flat ? 0.0f : sight.ground[(size_t)c] + 0.3f;
+                if (x == 0 || !in[(size_t)c - 1])                  line(corner(x,z),corner(x,z + 1),col,y,y);
+                if (x == width - 1 || !in[(size_t)c + 1])          line(corner(x + 1,z),corner(x + 1,z + 1),col,y,y);
+                if (z == 0 || !in[(size_t)(c - width)])            line(corner(x,z),corner(x + 1,z),col,y,y);
+                if (z == height - 1 || !in[(size_t)(c + width)])   line(corner(x,z + 1),corner(x + 1,z + 1),col,y,y);
+            }
+            int mid = (int)std::floor((a.middle.y - sight.origin.y) / EXPLORATION_CELL) * width
+                      + (int)std::floor((a.middle.x - sight.origin.x) / EXPLORATION_CELL);
+            float y = (f_flat || mid < 0 || mid >= (int)sight.ground.size()) ? 0.0f : sight.ground[(size_t)mid];
+            line(a.middle,a.middle,col,y,y + (f_seen ? 12.0f : 5.0f));
+            for (int c : a.cells){
+                in[(size_t)c] = 0;
+            }
+        }
+    }
+
     grid_view_vertices = (int)verts.size();
     if (verts.empty()){
         grid_view->SetVisibility(false);
@@ -2761,6 +3158,10 @@ void ApplicationChasm::FocusIssue(int i){
 #ifdef USE_IMGUI
 void ApplicationChasm::DrawImGuiUI(void){
     RenderApplicationUI();
+    if (TitleShowing()){
+        RenderTitlePanel();
+        return;
+    }
     RenderChasmPanel();
 }
 
@@ -2869,8 +3270,27 @@ void ApplicationChasm::RenderChasmPanel(){
         b = f_view_flat;        if (ImGui::Checkbox("flat",&b)){ f_view_flat = b; changed = true; }
         ImGui::SameLine();
         b = f_view_camp;        if (ImGui::Checkbox("camp spots",&b)){ f_view_camp = b; changed = true; }
+        ImGui::SameLine();
+        b = f_view_areas;       if (ImGui::Checkbox("areas",&b)){ f_view_areas = b; changed = true; }
         if (changed){
             view_version++;
+        }
+        //The areas shown (areas_plan.md): each in its colour, and whether it is seen yet.
+        std::shared_ptr<const ChasmWorld> aw = GetWorld();
+        if (f_view_areas && aw && aw->areas){
+            std::shared_ptr<const Exploration> ex = GetExploration();
+            for (size_t i = 0; i < aw->areas->areas.size(); i++){
+                const Area& a = aw->areas->areas[i];
+                bool f_seen = false;
+                for (int c : a.cells){
+                    f_seen = f_seen || (ex && c < (int)ex->cells.size() && ex->cells[(size_t)c]);
+                }
+                uint32_t col = AreaKindColour(a.kind);
+                ImVec4 colour(((col >> 16) & 0xFF) / 255.0f,((col >> 8) & 0xFF) / 255.0f,(col & 0xFF) / 255.0f,
+                              f_seen ? 1.0f : 0.45f);
+                ImGui::TextColored(colour,"%2i  %-9s %2i  %5i cells  %s",(int)i,AreaKindName(a.kind),a.which,
+                                   (int)a.cells.size(),f_seen ? "seen" : "not seen");
+            }
         }
         ImGui::TextDisabled("%i line vertices, built in %.1f ms",grid_view_vertices,grid_view_ms);
     }
@@ -2939,6 +3359,9 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Tower (T)##tool",tool == CHASM_TOOL_TOWER)) tool = CHASM_TOOL_TOWER;
         ImGui::SameLine();
         if (ImGui::RadioButton("Ropewalk (K)##tool",tool == CHASM_TOOL_ROPEWALK)) tool = CHASM_TOOL_ROPEWALK;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Stonecutter (M)##tool",tool == CHASM_TOOL_STONECUTTER)) tool = CHASM_TOOL_STONECUTTER;
+        if (ImGui::RadioButton("Mine (O)##tool",tool == CHASM_TOOL_MINE)) tool = CHASM_TOOL_MINE;
         if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Woodcutter (9)##tool",tool == CHASM_TOOL_WOODCUTTER)) tool = CHASM_TOOL_WOODCUTTER;
@@ -3037,6 +3460,11 @@ void ApplicationChasm::RenderChasmPanel(){
             ImGui::TextDisabled("%s",save_status.c_str());
         }
         ImGui::TextDisabled("F9 records (from this state), F10 replays the last recording");
+        //A tester's build records from every autosave (ApplicationChasmRecord.cpp); here it would take over input_record.
+        bool f_always = f_always_record.load();
+        if (ImGui::Checkbox("Always recording, as a tester's build",&f_always)){
+            f_always_record = f_always;
+        }
     }
 
     if (ImGui::CollapsingHeader("Pick",ImGuiTreeNodeFlags_DefaultOpen)){
@@ -3182,6 +3610,8 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"clouds",{{"type","boolean"},{"description","the clouds over unexplored ground in debug mode (play mode always draws them)"}}},
                 {"play",{{"type","boolean"},{"description","play mode (the panels hidden, the game camera, the clouds) or debug mode - U at the desk"}}},
                 {"flat",{{"type","boolean"},{"description","draw the grid layers at y = 0 instead of on the terrain - the true cell shapes near cliffs; pair with terrain:false"}}},
+                {"camp",{{"type","boolean"},{"description","where a new colony would camp, and each spot's score (debug builds)"}}},
+                {"areas",{{"type","boolean"},{"description","the areas to discover (areas_plan.md): each edged in its kind's colour, bright once seen, a post at its middle (debug builds; chasm_areas lists them)"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
@@ -3203,6 +3633,7 @@ void ApplicationChasm::RegisterMCPTools(){
             layer("pins",f_view_pins);
             layer("flat",f_view_flat);
             layer("camp",f_view_camp);
+            layer("areas",f_view_areas);
             if (changed){
                 view_version++;
             }
@@ -3250,7 +3681,8 @@ void ApplicationChasm::RegisterMCPTools(){
             result["layers"] = json{{"fine",f_view_fine.load()},{"coarse",f_view_coarse.load()},
                                     {"valence",f_view_valence.load()},{"squareness",f_view_squareness.load()},
                                     {"issues",f_view_issues.load()},{"pins",f_view_pins.load()},
-                                    {"flat",f_view_flat.load()},{"camp",f_view_camp.load()},{"terrain",f_view_terrain.load()},
+                                    {"flat",f_view_flat.load()},{"camp",f_view_camp.load()},{"areas",f_view_areas.load()},
+                                    {"terrain",f_view_terrain.load()},
                                     {"forest",f_view_forest.load()},{"water",f_view_water.load()},{"mist",f_view_mist.load()}};
 #endif
             std::shared_ptr<const Exploration> ex = GetExploration();
@@ -3478,7 +3910,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open; for work_stop and range_stop: "
                                                         "stopped (default) or working"}}},
-                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk"}},{"description","for build_* (default house)"}}},
+                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk","stonecutter","mine"}},{"description","for build_* (default house)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","hemp","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
@@ -3692,7 +4124,7 @@ void ApplicationChasm::RegisterMCPTools(){
             {"properties",{
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                                    "range","tower","ropewalk","castle"}}}},
+                                                    "range","tower","ropewalk","castle","stonecutter","mine"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -3708,7 +4140,7 @@ void ApplicationChasm::RegisterMCPTools(){
             //2026-10-09) left a NULL at the end that every name was compared against: any call crashed.
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                   "range","tower","ropewalk","castle"};
+                                   "range","tower","ropewalk","castle","stonecutter","mine"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             std::string t = args.value("tool",std::string());
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){
@@ -3855,5 +4287,9 @@ void ApplicationChasm::RegisterMCPTools(){
     RegisterZombieTools();
     RegisterSelectTools();
     RegisterBridgeTools();
+    RegisterTitleTools();
+    RegisterStatsTools();
+    RegisterSoundTools();
+    RegisterAreaTools();
 }
 #endif

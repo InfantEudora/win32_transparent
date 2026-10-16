@@ -1,4 +1,5 @@
 #include "Forest.h"
+#include "Deposits.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,6 +14,8 @@ const char* prop_asset_names[PROP_KIND_COUNT] = {
     "grass_a","grass_b","grass_c","flowers_a","flowers_b",
     "fern_a","shrub_a","mushrooms_a","twig_a",
     "reeds_a","reeds_b",
+    "boulder",
+    "outcrop",
 };
 
 #define FOREST_SCALE        70.0f   //world units over which forest patches come and go
@@ -102,7 +105,7 @@ int Pick(float r, int first, const float* weights, int n){
 }
 
 void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, const TerrainMeshData& mesh,
-                 ForestData& out){
+                 const DepositData* deposits, ForestData& out){
     auto t0 = std::chrono::steady_clock::now();
     out = ForestData();
     out.chunk_props.assign(mesh.chunks.size(),std::vector<int>());
@@ -136,7 +139,15 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
         out.props.push_back(p);
         out.count[kind]++;
     };
+    //The forests' patches: smooth noise, ragged at its edges - the same everywhere it is read.
+    auto patches = [seed](const vec2& p){
+        return Noise(p.x / FOREST_SCALE,p.y / FOREST_SCALE,seed) * 0.75f +
+               Noise(p.x / FOREST_DETAIL,p.y / FOREST_DETAIL,seed + 7) * 0.25f;
+    };
+    out.core.assign(g.fine.pos.size(),0);
     for (v = 0; v < (int)g.fine.pos.size(); v++){
+        //Before anything decides what grows here: the core is the forest's shape, not its trees (ForestData::core).
+        out.core[v] = (patches(g.fine.pos[v]) > FOREST_CORE) ? 1 : 0;
         if (!PlotIsFlat(g,picker,t,v)){
             continue;
         }
@@ -183,12 +194,13 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             }
             continue;
         }
-        //A pocket (step 3) is there for what it holds: until resources exist, a show of stone.
-        if (t.biome[v] == TERRAIN_BIOME_POCKET && Chance(seed,v,40) < 0.06f){
-            float a = Chance(seed,v,41) * 6.2831853f;
-            float r = std::sqrt(Chance(seed,v,42)) * PROP_JITTER;
-            Place(PROP_ROCK_CLUSTER,base + vec2(std::cos(a),std::sin(a)) * r,Chance(seed,v,43) * 6.2831853f,
-                  1.0f + Chance(seed,v,44) * 0.5f);
+        /*
+            A pocket (step 3) is there for what it holds: its OUTCROPS (Deposits.h), where its rock clusters stood
+            until resources existed. One fills its plot, so it stands on the plot's point, and nothing else there.
+        */
+        int deposit = deposits ? deposits->At(v) : -1;
+        if (deposit >= 0 && deposits->deposits[deposit].kind == DEPOSIT_OUTCROP){
+            Place(PROP_OUTCROP,base,Chance(seed,v,43) * 6.2831853f,0.9f + Chance(seed,v,44) * 0.2f);
             continue;
         }
         /*
@@ -228,8 +240,7 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             }
             continue;
         }
-        float n = Noise(base.x / FOREST_SCALE,base.y / FOREST_SCALE,seed) * 0.75f +
-                  Noise(base.x / FOREST_DETAIL,base.y / FOREST_DETAIL,seed + 7) * 0.25f;
+        float n = patches(base);
         //An island's top is bare stone and scrub, a balcony's a little less bare - it catches what
         //falls from the rim.
         if (t.level[v] == TERRAIN_ISLAND){
@@ -260,7 +271,8 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             }else if (roll < 0.020f){
                 kind = (Chance(seed,v,3) < 0.5f) ? PROP_BUSH_A : PROP_BUSH_B;
             }else if (roll < 0.028f){
-                kind = Pick(Chance(seed,v,3),PROP_ROCK_A,rock_w,4);
+                //Some of them BOULDERS (stone_plan.md), by a roll of their own, so no other prop moves.
+                kind = (Chance(seed,v,95) < FOREST_BOULDER_CHANCE) ? (int)PROP_BOULDER : Pick(Chance(seed,v,3),PROP_ROCK_A,rock_w,4);
             }
         }
         //Ground cover: up to two pieces a plot, its own rolls, so it neither depends on nor moves the

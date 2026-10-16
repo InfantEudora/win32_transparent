@@ -26,6 +26,11 @@ APP_SRCS += ApplicationChasmBridge.cpp
 APP_SRCS += ApplicationChasmWater.cpp
 APP_SRCS += ApplicationChasmSeasons.cpp
 APP_SRCS += ApplicationChasmHearth.cpp
+APP_SRCS += ApplicationChasmTitle.cpp
+APP_SRCS += ApplicationChasmMenu.cpp
+APP_SRCS += ApplicationChasmRecord.cpp
+APP_SRCS += ApplicationChasmStats.cpp
+APP_SRCS += ChasmStats.cpp
 APP_SRCS += Grid.cpp
 APP_SRCS += ChasmLayout.cpp
 APP_SRCS += GridPick.cpp
@@ -35,6 +40,7 @@ APP_SRCS += Zones.cpp
 APP_SRCS += ZoneMesh.cpp
 APP_SRCS += ChasmSave.cpp
 APP_SRCS += Forest.cpp
+APP_SRCS += Deposits.cpp
 APP_SRCS += CropMesh.cpp
 APP_SRCS += BuildingMesh.cpp
 APP_SRCS += CastleMesh.cpp
@@ -53,6 +59,7 @@ APP_SRCS += ApplicationChasmWorkersView.cpp
 APP_SRCS += ApplicationChasmCrowdBench.cpp
 APP_SRCS += ApplicationChasmPiles.cpp
 APP_SRCS += ApplicationChasmCrates.cpp
+APP_SRCS += ApplicationChasmMines.cpp
 APP_SRCS += Zombies.cpp
 APP_SRCS += Spacing.cpp
 APP_SRCS += Shooting.cpp
@@ -61,20 +68,27 @@ APP_SRCS += ApplicationChasmRange.cpp
 APP_SRCS += ApplicationChasmRopewalk.cpp
 APP_SRCS += ApplicationChasmBorders.cpp
 APP_SRCS += Exploration.cpp
+APP_SRCS += Areas.cpp
 APP_SRCS += ApplicationChasmExplore.cpp
 APP_SRCS += ApplicationChasmGhost.cpp
+APP_SRCS += ApplicationChasmSound.cpp
 
 #NO PHYSICS: the grid, the terrain and the colony are this app's own rules, and nothing here
 #creates a PhysicsWorld. See the USE_PHYSICS block in engine.mk.
 USE_PHYSICS := 0
+
+#SOUND (docs/sound_plan.md): assets/cues/chasm.json says what is heard; ApplicationChasmSound.cpp reports what
+#happens. The app compiles and runs silent with it at 0, the cues still deciding - see the USE_SOUND block in engine.mk.
+USE_SOUND := 1
 
 #The same two roots main.cpp declares, in the same order: this app's own (the palette) first.
 ASSET_ROOTS := assets $(ROOT)/shared_assets
 
 ASSET_PACK_FLAGS += --exclude "fonts/CascadiaMono.ttf"
 ASSET_PACK_FLAGS += --exclude "fonts/mono_sdf.png"
+#The shared sounds this app does not play. Not sound/click.wav: an exclude matches the NAME, and chasm's own
+#click (assets/sound/click.wav, which stands in front of the shared one) would go with it.
 ASSET_PACK_FLAGS += --exclude "sound/bleep.wav"
-ASSET_PACK_FLAGS += --exclude "sound/click.wav"
 ASSET_PACK_FLAGS += --exclude "sound/floop.wav"
 ASSET_PACK_FLAGS += --exclude "sound/hax.wav"
 ASSET_PACK_FLAGS += --exclude "meshes/glyphs_unispace.glb"

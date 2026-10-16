@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: d3d22ef3-3b14-43a8-ac97-3d179fa5960f
-  modified: 2026-10-12T21:10:05.833Z
+  modified: 2026-10-14T15:47:22.580Z
 ---
 
 Chasm's waterfalls were rebuilt 2026-10-12 (agreed with the user, both stages built): `apps/chasm/docs/waterfall_plan.md`.
@@ -16,8 +16,10 @@ seam); uv.y is the river's along in flow time so the streaks pour over. Stage 2:
 **Why:** the old sheet started on the layout's rim LINE, not the jagged plot rim, so it never met the river.
 
 **How to apply / gotchas when checking water visuals in chasm:**
-- The game camera never goes below the rim: `camera_set` is overridden by chasm's orbit camera, and `chasm_view`'s
-  target is clamped to plateau height. Look at a fall's foot from high and steep (pitch 55-80).
+- Since 2026-10-14 the orbit point rides the ground under it (a balcony's too; held over the floor and bare rock),
+  so the camera can go below the rim over a balcony - before that it never did (docs/play_mode_plan.md, "The camera
+  over a balcony"). `camera_set` is still overridden by chasm's orbit camera; aim with `chasm_view`. A fall's foot
+  over the floor is still only seen from high and steep (pitch 55-80).
 - Chasm does not hot-reload shaders - restart the app after editing a .frag/.glsl (no rebuild needed).
 - A river's line runs 10 units past its lip; anything keyed on `RiverDip` near a fall can hit lower ground
   (the bank-colour bug fixed in `TerrainMesh.cpp` `Fan`).

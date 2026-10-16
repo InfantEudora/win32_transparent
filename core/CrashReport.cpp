@@ -11,11 +11,122 @@
 #include <time.h>
 
 #include "CrashReport.h"
+#ifndef DEBUG
+#include <dbghelp.h>
+#endif
 
 static void WriteText(HANDLE file, const char* text){
     DWORD written = 0;
     WriteFile(file, text, (DWORD)strlen(text), &written, NULL);
 }
+
+//Beside the exe, where imgui.ini and the saves already go - the working directory if that fails - as
+//crash_<date>_<time>.<ext>: one stamp per crash, so a report's .txt and .dmp share it.
+static void ReportPath(char* path, size_t size, const char* ext){
+    static char stamp[32] = "";
+    if (!stamp[0]){
+        time_t now = time(NULL);
+        strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", localtime(&now));
+    }
+    path[0] = 0;
+    DWORD len = GetModuleFileNameA(NULL, path, (DWORD)size);
+    char* slash = (len > 0 && len < size) ? strrchr(path, '\\') : NULL;
+    char* name = slash ? slash + 1 : path;
+    snprintf(name, size - (name - path), "crash_%s.%s", stamp, ext);
+}
+
+#ifndef DEBUG
+/*
+    RELEASE BUILDS (demo_plan.md, step 4: a tester's crash used to leave nothing). The exe is stripped, so there are no
+    names to be had here; what is written instead is what a name can be found from later:
+      - a MINIDUMP, crash_<stamp>.dmp - every thread's stack and registers, which a debugger reads;
+      - in the report, the failing thread's stack as exe+offset, walked with the unwind tables every x64 exe carries.
+        The linker's map of the same build (build/<exe>.map, engine.mk's RLINK) names the function at each offset.
+    The dump goes first: walking a broken stack could itself fault, and the dump is the part that must not be lost.
+*/
+static char release_detail[6144] = "";
+
+static void DetailLine(const char* text){
+    size_t used = strlen(release_detail);
+    snprintf(release_detail + used, sizeof(release_detail) - used, "%s", text);
+}
+
+//"  #3  chasm.exe+0x1a2b3c", the module found from the address.
+static void DetailAddress(int frame, DWORD64 pc){
+    HMODULE module = NULL;
+    char name[MAX_PATH] = "?";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)(ULONG_PTR)pc, &module) && module){
+        char path[MAX_PATH];
+        DWORD len = GetModuleFileNameA(module, path, MAX_PATH);
+        const char* slash = (len > 0 && len < MAX_PATH) ? strrchr(path, '\\') : NULL;
+        snprintf(name, sizeof(name), "%s", slash ? slash + 1 : path);
+    }
+    char line[MAX_PATH + 64];
+    snprintf(line, sizeof(line), "  #%-2d %s+0x%llx\r\n", frame, name,
+             (unsigned long long)(pc - (DWORD64)(ULONG_PTR)module));
+    DetailLine(line);
+}
+
+static void WalkStack(CONTEXT context){
+#if defined(__x86_64__) || defined(_M_X64)
+    DetailLine("\r\nThe failing thread's stack, innermost first:\r\n");
+    for (int frame = 0; frame < 48 && context.Rip; frame++){
+        DWORD64 pc = context.Rip;
+        DetailAddress(frame, pc);
+        DWORD64 image_base = 0;
+        PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(pc, &image_base, NULL);
+        if (function){
+            PVOID handler_data = NULL;
+            DWORD64 establisher = 0;
+            RtlVirtualUnwind(0, image_base, pc, function, &context, &handler_data, &establisher, NULL);
+        }else{
+            //A leaf function, with no unwind entry: its return address is on top of the stack.
+            MEMORY_BASIC_INFORMATION m;
+            if (!VirtualQuery((LPCVOID)(ULONG_PTR)context.Rsp, &m, sizeof(m)) || m.State != MEM_COMMIT){
+                break;
+            }
+            context.Rip = *(DWORD64*)(ULONG_PTR)context.Rsp;
+            context.Rsp += 8;
+        }
+    }
+#else
+    (void)context;
+#endif
+}
+
+typedef BOOL (WINAPI *MiniDumpWriteDumpFn)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION,
+                                           PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION);
+
+//dbghelp.dll is loaded only now, so the exe has no dependency on it until it has crashed.
+static void WriteMinidump(EXCEPTION_POINTERS* info){
+    HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
+    MiniDumpWriteDumpFn write = dbghelp ? (MiniDumpWriteDumpFn)(void*)GetProcAddress(dbghelp, "MiniDumpWriteDump") : NULL;
+    char path[MAX_PATH + 64];
+    ReportPath(path, sizeof(path), "dmp");
+    const char* slash = strrchr(path, '\\');
+    char line[MAX_PATH + 96];
+    if (!write){
+        DetailLine("No dbghelp.dll, so no minidump.\r\n");
+        return;
+    }
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE){
+        snprintf(line, sizeof(line), "Could not write the minidump (error %lu).\r\n", GetLastError());
+        DetailLine(line);
+        return;
+    }
+    MINIDUMP_EXCEPTION_INFORMATION exception;
+    exception.ThreadId = GetCurrentThreadId();
+    exception.ExceptionPointers = info;
+    exception.ClientPointers = FALSE;
+    BOOL f_ok = write(GetCurrentProcess(), GetCurrentProcessId(), file, MiniDumpNormal, info ? &exception : NULL, NULL, NULL);
+    CloseHandle(file);
+    snprintf(line, sizeof(line), f_ok ? "Minidump: %s\r\n" : "The minidump %s could not be written.\r\n",
+             slash ? slash + 1 : path);
+    DetailLine(line);
+}
+#endif
 
 #ifdef DEBUG
 //PATH first, then where the toolchain lives on this desk - it is not on PATH by default (CLAUDE.md).
@@ -105,15 +216,17 @@ void CrashReport(const char* what, const void* where){
         abort();
     }
 
-    //Beside the exe, where imgui.ini and the saves already go. The working directory if that fails.
-    char path[MAX_PATH + 64] = "";
-    DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
-    char* slash = (len > 0 && len < MAX_PATH) ? strrchr(path, '\\') : NULL;
-    char* name = slash ? slash + 1 : path;
-    char stamp[32];
-    time_t now = time(NULL);
-    strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", localtime(&now));
-    snprintf(name, sizeof(path) - (name - path), "crash_%s.txt", stamp);
+#ifndef DEBUG
+    //Called directly rather than from the filter (which has done this already): this thread's stack from here.
+    if (!release_detail[0]){
+        WriteMinidump(NULL);
+        CONTEXT context;
+        RtlCaptureContext(&context);
+        WalkStack(context);
+    }
+#endif
+    char path[MAX_PATH + 64];
+    ReportPath(path, sizeof(path), "txt");
 
     //Inheritable, because gdb writes into this same handle - and so into the same file position.
     SECURITY_ATTRIBUTES inherit = {(DWORD)sizeof(inherit), NULL, TRUE};
@@ -130,8 +243,9 @@ void CrashReport(const char* what, const void* where){
 #ifdef DEBUG
     AppendAllStacks(report, where);
 #else
-    (void)where;
-    WriteText(report, "Release build: stripped, so no stacks. The debug build of the same app writes them.\r\n");
+    (void)where;    //the first line of the stack below
+    WriteText(report, "Release build: stripped, so places are given as module+offset - the build's map file names them.\r\n");
+    WriteText(report, release_detail);
 #endif
     CloseHandle(report);
 
@@ -150,11 +264,10 @@ void CrashReport(const char* what, const void* where){
     abort();
 }
 
-#ifdef DEBUG
 /*
-    Without this a crash in a debug build just ends the process - no message, nothing in stderr.
-    The ImGui input-queue race (item 98, fixed) did exactly that when the queue reallocated under
-    it, as well as tripping the IM_ASSERT it was better known by.
+    Without this a crash just ends the process - no message, nothing in stderr. The ImGui input-queue
+    race (item 98, fixed) did exactly that when the queue reallocated under it, as well as tripping
+    the IM_ASSERT it was better known by. In a release build it is all a tester's crash leaves.
 */
 static LONG WINAPI OnUnhandledException(EXCEPTION_POINTERS* info){
     const EXCEPTION_RECORD* record = info->ExceptionRecord;
@@ -169,14 +282,15 @@ static LONG WINAPI OnUnhandledException(EXCEPTION_POINTERS* info){
         snprintf(what, sizeof(what), "Unhandled exception 0x%08lx at instruction 0x%llx",
                  record->ExceptionCode, at);
     }
+#ifndef DEBUG
+    WriteMinidump(info);
+    WalkStack(*info->ContextRecord);
+#endif
     CrashReport(what, record->ExceptionAddress);
 }
-#endif
 
 void CrashReportInstall(){
-#ifdef DEBUG
     //Replaces the MinGW runtime's filter, which offers these to signal handlers this engine never
     //installs and then to Windows, which ends the process without a word.
     SetUnhandledExceptionFilter(OnUnhandledException);
-#endif
 }

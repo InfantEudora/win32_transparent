@@ -107,29 +107,37 @@ void ApplicationChasm::UploadHearth(){
     hearth_built_zones = z.version;
     hearth_built_heat = e.heat;
 
-    const Grid& g = *w->grid;
-    const GridPicker& picker = *w->picker;
-    //The warm homes' plots, by building.
+    std::vector<vec3> tops;
+    std::vector<vertex> panes;
+    HearthFixtures(*w,z,&e.heat,&tops,&panes);
+    bool f_smoke = !tops.empty();
+    SetSmoke(hearth_smoke,tops);
+    hearth_smoke->SetVisibility(f_smoke);
+    if (!panes.empty()){
+        hearth_pane_mesh->SetMeshData(panes.data(),(int)panes.size());
+    }
+    hearth_panes->SetVisibility(!panes.empty());
+}
+
+/*
+    Where a home's smoke rises and its windows glow, from its fixtures - asked of the house's own cells (BuildHouseCell,
+    its vertices thrown away), so the smoke rises from the top of the chimney the mesh drew; a camp's from its fires.
+    Given `heat` (EconomyState::heat), only the WARM homes'; without it, every home's - the title's diorama, which
+    smokes in any season. Either list may be left out.
+*/
+void ApplicationChasm::HearthFixtures(const ChasmWorld& w, const ZoneState& z, const std::vector<uint8_t>* heat,
+                                      std::vector<vec3>* tops, std::vector<vertex>* panes){
+    const GridPicker& picker = *w.picker;
+    //The homes' plots, by building.
     std::vector<std::vector<int>> plots(z.buildings.size());
     for (size_t v = 0; v < z.building.size(); v++){
         uint32_t id = z.building[v];
-        if (id && id < e.heat.size() && e.heat[id] == HEAT_WARM){
+        bool f_home = id && id < z.buildings.size()
+                      && (z.buildings[id].kind == ZONE_KIND_HOUSE || z.buildings[id].kind == ZONE_KIND_CAMP);
+        if (f_home && (!heat || (id < heat->size() && (*heat)[id] == HEAT_WARM))){
             plots[id].push_back((int)v);
         }
     }
-    std::vector<fmat4> puffs;
-    std::vector<vec4> motion;
-    auto smoke = [&](const vec3& top){
-        //A column: the puffs a fifth of a life apart, the whole column offset by the spot's hash so no two
-        //chimneys breathe together.
-        float offset = (float)(MeshHash((uint32_t)std::lround(top.x * 16.0f),(uint32_t)std::lround(top.z * 16.0f)) % 1000) / 1000.0f;
-        for (int i = 0; i < HEARTH_PUFFS; i++){
-            puffs.push_back(Object::ComposeTransformScale(top,quat(vec3(0.0f,1.0f,0.0f),0.0f),vec3(HEARTH_SIZE,HEARTH_SIZE,HEARTH_SIZE)));
-            motion.push_back(vec4(std::fmod(offset + (float)i / HEARTH_PUFFS,1.0f),HEARTH_LIFE,HEARTH_RISE,HEARTH_GROW));
-            motion.push_back(vec4(HEARTH_DRIFT_X,HEARTH_DRIFT_Z,HEARTH_WANDER,0.0f));
-        }
-    };
-    std::vector<vertex> panes;
     std::vector<vertex> scratch;
     BuildingFixtures fx;
     std::vector<int> quads;
@@ -139,17 +147,14 @@ void ApplicationChasm::UploadHearth(){
         }
         if (z.buildings[id].kind == ZONE_KIND_CAMP){
             for (int v : plots[id]){
-                for (int i = 0; i < picker.PlotQuadCount(v); i++){
+                for (int i = 0; tops && i < picker.PlotQuadCount(v); i++){
                     int q = picker.PlotQuadCorner(v,i) / 4;
-                    if (ZoneCampFireTent(*w,z,q) == v){
-                        vec2 p = ZoneCampFireAt(*w,q,v);
-                        smoke(vec3(p.x,w->terrain->GroundHeight(p,w->terrain->Height(v)) + HEARTH_FIRE_UP,p.y));
+                    if (ZoneCampFireTent(w,z,q) == v){
+                        vec2 p = ZoneCampFireAt(w,q,v);
+                        tops->push_back(vec3(p.x,w.terrain->GroundHeight(p,w.terrain->Height(v)) + HEARTH_FIRE_UP,p.y));
                     }
                 }
             }
-            continue;
-        }
-        if (z.buildings[id].kind != ZONE_KIND_HOUSE){
             continue;
         }
         quads.clear();
@@ -164,28 +169,38 @@ void ApplicationChasm::UploadHearth(){
         fx.panes.clear();
         for (int q : quads){
             scratch.clear();
-            BuildHouseCell(*w,z,q,scratch,&fx);
+            BuildHouseCell(w,z,q,scratch,&fx);
         }
         for (const BuildingChimney& c : fx.chimneys){
-            if (c.building == id){
-                smoke(c.top);
+            if (c.building == id && tops){
+                tops->push_back(c.top);
             }
         }
         for (const BuildingPane& pn : fx.panes){
-            if (pn.building != id){
+            if (pn.building != id || !panes){
                 continue;
             }
             vec3 out = pn.outward * HEARTH_PANE_OUT;
-            MeshQuad(panes,pn.corner[0] + out,pn.corner[1] + out,pn.corner[2] + out,pn.corner[3] + out,pn.outward,
+            MeshQuad(*panes,pn.corner[0] + out,pn.corner[1] + out,pn.corner[2] + out,pn.corner[3] + out,pn.outward,
                      PAL_WINDOW_LIT,PAL_EFFECTS);
         }
     }
-    bool f_smoke = !puffs.empty();
-    hearth_smoke->SetInstances(std::move(puffs));
-    hearth_smoke->SetInstanceMotion(std::move(motion),HEARTH_RISE + HEARTH_DRIFT_X + HEARTH_DRIFT_Z + HEARTH_WANDER + HEARTH_SIZE);
-    hearth_smoke->SetVisibility(f_smoke);
-    if (!panes.empty()){
-        hearth_pane_mesh->SetMeshData(panes.data(),(int)panes.size());
+}
+
+//Object `o` - an instance set of the puff, in the smoke material - made the smoke rising from `tops`.
+void ApplicationChasm::SetSmoke(Object* o, const std::vector<vec3>& tops){
+    std::vector<fmat4> puffs;
+    std::vector<vec4> motion;
+    for (const vec3& top : tops){
+        //A column: the puffs a fifth of a life apart, the whole column offset by the spot's hash so no two
+        //chimneys breathe together.
+        float offset = (float)(MeshHash((uint32_t)std::lround(top.x * 16.0f),(uint32_t)std::lround(top.z * 16.0f)) % 1000) / 1000.0f;
+        for (int i = 0; i < HEARTH_PUFFS; i++){
+            puffs.push_back(Object::ComposeTransformScale(top,quat(vec3(0.0f,1.0f,0.0f),0.0f),vec3(HEARTH_SIZE,HEARTH_SIZE,HEARTH_SIZE)));
+            motion.push_back(vec4(std::fmod(offset + (float)i / HEARTH_PUFFS,1.0f),HEARTH_LIFE,HEARTH_RISE,HEARTH_GROW));
+            motion.push_back(vec4(HEARTH_DRIFT_X,HEARTH_DRIFT_Z,HEARTH_WANDER,0.0f));
+        }
     }
-    hearth_panes->SetVisibility(!panes.empty());
+    o->SetInstances(std::move(puffs));
+    o->SetInstanceMotion(std::move(motion),HEARTH_RISE + HEARTH_DRIFT_X + HEARTH_DRIFT_Z + HEARTH_WANDER + HEARTH_SIZE);
 }

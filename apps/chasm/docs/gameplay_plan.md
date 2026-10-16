@@ -55,7 +55,8 @@ zeppelin is then a big decision, and losing one matters.
 
 - **Balconies, by winch.** A winch on the rim lowers to a balcony and hauls floatstone up. Small
   amounts, and a balcony runs out. This is the early source: it needs no zeppelin, so it is how the
-  first zeppelin gets built.
+  first zeppelin gets built. *How*, since 2026-10-14 (`stone_plan.md`): a SEAM in a balcony's wall, about
+  50 each, dug by a MINE on the balcony - which costs stone - and carried up the winch.
 - **Islands, by zeppelin.** Out of reach until you have one. They hold what the next few zeppelins -
   and so the crossing - are built from.
 
@@ -293,7 +294,8 @@ season.
 - **What reaching the pyramid does** - the end screen, a new era, the source of the steam or the
   zombies?
 - **Coal**: from where? Mountain pockets ("mainly for resources") are the obvious place, and would
-  give them their purpose.
+  give them their purpose. Not part of the zeppelin (the user, 2026-10-14); the mountain and the swamp
+  each need a reason to go there - `stone_plan.md`, "A reason for every biome".
 - **Losing**: can the colony die out, or only stall?
 
 ---

@@ -21,6 +21,11 @@
 #include "Economy.h"
 #include "Exploration.h"
 #include "Seasons.h"
+#include "UIMenu.h"
+#include "SceneCapture.h"
+#include "CueSystem.h"
+
+class SoundSystem;
 
 /*
     PLAY MODE'S SELECTION (docs/selection_plan.md): a building - by id, with the plot it was clicked on
@@ -110,6 +115,9 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_SETTLE      26      //a person's card: sent into another settlement and there, he moves in without a tent
 #define OVERLAY_HIT_WORK_STOP   27      //a workplace's card: its work stopped, or set going again (stopping_work_plan.md)
 #define OVERLAY_HIT_FORAGE      28      //the right click's menu (foraging_plan.md): FORAGE_* by hand, 0 posted there, -1 its panel
+#define OVERLAY_HIT_PICK_UP     29      //a crate's card: the builders fetch it first, or back in the queue (stone_plan.md)
+#define OVERLAY_HIT_STATS       30      //the top bar's figures: the Statistics page (statistics_plan.md)
+#define OVERLAY_HIT_REPLAY_STOP 31      //the replay's bar: the replay stopped (demo_plan.md, step 4)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -209,6 +217,14 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define INPUT_CHASM_TOOL_TOWER     INPUT_LAST+26     //T: the guard tower (defence_plan.md)
 #define INPUT_CHASM_TOOL_ROPEWALK  INPUT_LAST+27     //K, for knot: the ropewalk (goods_plan.md)
 #define INPUT_CHASM_ZOMBIE         INPUT_LAST+28     //Z: a zombie on the plot under the cursor, debug builds (zombies_plan.md)
+#define INPUT_CHASM_TOOL_STONECUTTER INPUT_LAST+29   //M, for mason: the stonecutter's hut (stone_plan.md)
+#define INPUT_CHASM_TOOL_MINE      INPUT_LAST+30     //O, for ore: the mine (stone_plan.md step 5)
+#define INPUT_CHASM_MENU           INPUT_LAST+31     //Escape: one step back, then the title; a menu's back (demo_plan.md)
+#define INPUT_CHASM_CONFIRM        INPUT_LAST+32     //Enter: a menu's focused button
+#define INPUT_CHASM_STATS          INPUT_LAST+33     //Tab: the Statistics page, open or closed (statistics_plan.md)
+#define INPUT_CHASM_QUICK_SAVE     INPUT_LAST+34     //F5: a quick save (demo_plan.md)
+#define INPUT_CHASM_QUICK_LOAD     INPUT_LAST+35     //F8: ...and loading it
+#define INPUT_CHASM_REPORT         INPUT_LAST+36     //F12: Report a bug (demo_plan.md, step 4)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -242,6 +258,8 @@ const char* ChasmNeedName(const EconomyWorker& k);
                                                         //subtype the person; value[0] the plot, [1] FORAGE_*, [2] 1 a group's
 #define CHASM_CMD_ZOMBIE            SIM_CMD_LAST+15     //zombies dropped (a debug edit, docs/zombies_plan.md): subtype the
                                                         //plot; value[0] how many - 0 takes every zombie off the map
+#define CHASM_CMD_PICK_UP           SIM_CMD_LAST+16     //a crate fetched first by the builders (docs/stone_plan.md): subtype
+                                                        //the crate; value[0] 1 to pick it up, 0 back in the queue
 
 //What a left click does.
 enum ChasmTool{
@@ -264,6 +282,8 @@ enum ChasmTool{
     CHASM_TOOL_TOWER,       //defence_plan.md: a guard tower, a plot each - on a wall's plot too
     CHASM_TOOL_ROPEWALK,    //goods_plan.md: a ropewalk, a drag of up to four plots
     CHASM_TOOL_CASTLE,      //ramparts_plan.md: the debug castle's pieces, from the panel only - no key, never in play
+    CHASM_TOOL_STONECUTTER, //stone_plan.md: a stonecutter's hut, a drag
+    CHASM_TOOL_MINE,        //stone_plan.md step 5: a mine, a plot each, on a deposit
     CHASM_TOOL_COUNT
 };
 
@@ -339,6 +359,7 @@ public:
     vec3 camera_target;
     float cam_yaw = 0.0f;           //radians; 0 looks toward -z (north)
     float cam_pitch = 0.95f;        //radians above the horizon
+    float cam_lift = 0.0f;          //...and tilted up over it to clear the ground in the way (ClearPitch), eased
     float cam_distance = 120.0f;
     /*
         Entering play mode, the view glides to the colony's start - the camp - unless it already looks
@@ -439,6 +460,8 @@ private:
     int paint_last_index = -1;                  //physics thread: what a drag last painted
     std::atomic<int> bridge_from{-1};           //the bridge tool's press: the bank it starts from, -1 none
     std::atomic<uint32_t> zone_refusals{0};     //bumped on each refused zone command - the play overlay shows why
+    std::atomic<uint32_t> zone_placed{0};       //...and each that placed something, or took it away - for the sound
+    std::atomic<uint32_t> zone_erased{0};
     uint32_t refusal_seen = 0;                  //render thread: the last one shown, and since when
     std::chrono::steady_clock::time_point refusal_since;
     /*
@@ -531,7 +554,7 @@ private:
     bool f_refusal_notice = false;              //render thread: ...or the arch's notice, which is no refusal
     float refusal_seconds = 3.0f;               //render thread: ...on screen this long - a rules' notice longer
     //A NOTICE from the rules (Economy.h; defence_plan.md, "Scouting") told in the refusal's place, in amber - render thread.
-    uint32_t notices_seen = 0;                  //EconomyState::notices_made already told of
+    uint32_t notices_seen = 0;                  //EconomyState::events_made already looked through
     const ChasmWorld* notices_world = nullptr;  //the map they were counted on
     //A DEATH told on the play overlay (needs_plan.md step 5) - render thread.
     size_t deaths_seen = 0;                     //the dead already told of
@@ -554,6 +577,7 @@ private:
     void SubmitPitch(uint32_t person);                          //any thread; refused as an order is
     void SubmitSettle(uint32_t person);                         //any thread; refused as an order is
     void SubmitForage(uint32_t person, int plot, int what, bool f_spread);  //any thread; refused as an order is
+    void SubmitPickUp(uint32_t crate, bool f_on);               //any thread; refused as a debug crate is
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
     /*
         ZOMBIES (docs/zombies_plan.md, ApplicationChasmZombies.cpp): dropped by the debug tools - Z under the cursor, the
@@ -604,6 +628,27 @@ private:
         exploration on a load, after which a look is taken once more and clears nothing the save had not.
     */
     std::vector<float> looked_from;
+    /*
+        Physics thread: per deposit, whether it is a SEAM someone has seen (Deposits.h) - so its notice is told once.
+        Not saved: it follows from what is explored, and is worked out again from that, telling nothing, after a
+        reset or a load (f_seams_stale).
+    */
+    std::vector<uint8_t> seam_seen;
+    bool f_seams_stale = true;
+    //The seams `person` has just brought into sight told, as EVENT_SEAM_SEEN; with the list stale, only marked.
+    void LookForSeams(const ChasmWorld& w, uint32_t person);
+    /*
+        Physics thread: per area of the world's (Areas.h, areas_plan.md), whether it has been seen - the seams' rule
+        again, so not saved and worked out afresh, telling nothing, after a reset or a load (f_areas_stale).
+    */
+    std::vector<uint8_t> area_seen;
+    bool f_areas_stale = true;
+    //The areas `person` has just brought into sight told, as EVENT_DISCOVERED - unless !f_tell (the landing's first
+    //look, which is home and not a discovery) or the list is stale, when they are only marked.
+    void LookForAreas(const ChasmWorld& w, uint32_t person, bool f_tell);
+#ifdef USE_MCP
+    void RegisterAreaTools();
+#endif
     //The ground a person at `at`, in exploration cell `cell`, looks from: his own plot's, at the cell's middle.
     static float SightEyeGround(const ChasmWorld& w, const Exploration& ex, int cell, const vec2& at);
     void ResetExploration();                    //physics thread: a new map, nothing explored
@@ -643,6 +688,10 @@ private:
     std::vector<uint8_t> hearth_built_heat;     //the economy's heat they were built for
     void BuildHearthScene();                    //from BuildScene
     void UploadHearth();                        //render thread, from PreRender
+    //Where smoke rises (chimney tops, camp fires) and windows glow: the warm homes' given `heat`, every home's without.
+    void HearthFixtures(const ChasmWorld& w, const ZoneState& z, const std::vector<uint8_t>* heat,
+                        std::vector<vec3>* tops, std::vector<vertex>* panes);
+    void SetSmoke(Object* o, const std::vector<vec3>& tops);   //an instance set of the puff made the smoke from those
     /*
         THE GHOST (ApplicationChasmGhost.cpp): in play mode, what the tool in hand would place under the
         cursor - see-through, green where the rules allow it and red where they refuse, with an outline
@@ -734,6 +783,8 @@ private:
     std::vector<std::array<WorkerSkin,PERSON_FIGURES>> worker_skins;    //per worker, per figure
     void BuildWorkerScene();                        //from BuildScene
     void UploadWorkers();                           //from PreRender
+    Object* BuildPersonSkin(WorkerSkin& ws, const std::string& name, int f);    //his skeleton, clips and kit, in no scene
+    void PlaceBow(WorkerSkin& ws, int figure, const vec3& forward, std::vector<fmat4>* hand_arrows);
     /*
         THE CROWD BENCH (ApplicationChasmCrowdBench.cpp): a measurement, not a feature - skinned
         adult_male figures walking in place around the camera target, sharing one mesh, to find what
@@ -765,6 +816,39 @@ private:
     std::shared_ptr<const ChasmWorld> crate_built_world;
     uint32_t crate_built_version = 0xFFFFFFFFu;     //the economy's crates_version, as last drawn
     void UploadCrates();                            //from PreRender
+    /*
+        RUBBLE (stone_plan.md), a crate of stone drawn as a pile of stones, its own set: `rubble_a` once it is in
+        chasm_props.glb, until then the rock cluster shrunk to a pile (LoadProps chooses; NULL - not drawn).
+    */
+    #define CHASM_RUBBLE_ASSET  "rubble_a"
+    const char* rubble_asset = NULL;
+    float rubble_scale = 1.0f;
+    Object* rubble_set = NULL;
+    //...and rubble of FLOATSTONE (EconomyCrateCrystal), a seam's crystal fallen: its own heap, `floatstone_b` - NULL,
+    //drawn as rubble.
+    #define CHASM_CRYSTAL_ASSET "floatstone_b"
+    #define CHASM_CRYSTAL_SCALE 1.6f    //modelled 0.42 across, a stone pile 0.69: brought up to a pile's size
+    const char* crystal_asset = NULL;
+    Object* crystal_set = NULL;
+    //How crate `c` is drawn - CRATE_LOOK_* - each look only while its mesh is loaded, else the one before it.
+    #define CRATE_LOOK_CRATE    0
+    #define CRATE_LOOK_RUBBLE   1
+    #define CRATE_LOOK_CRYSTAL  2
+    int CrateLook(const EconomyCrate& c) const;
+    /*
+        THE MINES (stone_plan.md step 5, ApplicationChasmMines.cpp): a standing mine is the worker's `mine_portal` facing the
+        rock it digs and its `mine_cart` on the rails - on an outcrop `quarry_crane` beside the beds - an instance set of
+        each, rebuilt when the zones change; and every seam's band (TerrainSeamBand), an object of crystal and one of rock,
+        the one shown by what is left in it.
+    */
+    #define MINE_PROPS          3
+    #define CHASM_MINE_ASSETS   "mine_portal","mine_cart","quarry_crane"
+    Object* mine_sets[MINE_PROPS] = {};
+    Object* mine_mountain_set = NULL;                   //the portal against the mountain: its rock the frozen row's grey
+    std::shared_ptr<const ZoneState> mines_built_for;
+    std::vector<Object*> seam_objects;                  //by seam band: its crystal, then its rock
+    std::shared_ptr<const TerrainMeshData> seams_built_for;
+    void UploadMines();                                 //from PreRender
     /*
         The archery ranges (ApplicationChasmRange.cpp, range_plan.md): targets, hay bales and arrows, an instance
         set each - chasm_props.glb's prop by its name in range_asset_names, or a stand-in until it is modelled.
@@ -1034,8 +1118,11 @@ private:
     uint32_t select_outline_zones[SELECT_OUTLINES] = {};    //...built at this zones version
     std::vector<uint32_t> select_related_buildings;         //render thread: what slot 2 was built from
     std::vector<int> select_related_plots;                  //...and slot 3
-    //A crate's outlines (crates_plan.md): the selected one, the hovered one - outline-only copies of the crate.
+    //A crate's outlines (crates_plan.md): the selected one, the hovered one - outline-only copies of the crate - and
+    //the same for rubble and a crystal pile, copies of their heaps.
     Object* crate_outline[2] = {};
+    Object* rubble_outline[2] = {};
+    Object* crystal_outline[2] = {};
     //Where the selected person is going: dots along his route and a ring at its end. Render thread; rebuilt when its key moves.
     Object* path_marks = NULL;
     uint64_t path_marks_key = 0;
@@ -1084,6 +1171,8 @@ private:
     void SetupInput();
     void UpdateCamera();
     void ApplyCamera();
+    float ViewGroundHeight(const ChasmWorld& w, const vec2& at, float now_y) const;    //the orbit point's ground
+    float ClearPitch(const ChasmWorld& w, float pitch) const;                          //...and the camera's tilt over it
     /*
         --- Play mode (docs/play_mode_plan.md) --------------------------------------------------------
         DEBUG MODE is the panels shown: the debug views, the tools, the free camera. PLAY MODE is the
@@ -1099,6 +1188,264 @@ private:
     //Where the sun stands relative to what it lights, set in BuildScene.
     vec3 sun_offset;
     void FollowSun();
+
+    /*
+        THE TITLE and THE POP-UP (docs/demo_plan.md; ApplicationChasmTitle.cpp): a scene of the title's own, the game
+        left loaded under it, and one question over everything - the quit, so far. world_scene is the game's, which
+        main_scene is while the game shows; the world's code runs only then (TitleShowing).
+    */
+#define CHASM_ASK_NONE      0
+#define CHASM_ASK_QUIT      1
+#define CHASM_ASK_LEAVE     2           //a load or a new game, over a colony in play
+#define CHASM_ASK_OVERWRITE 3           //a save over one in the list
+#define CHASM_ASK_NOTE      4           //no question, a word and OK: a load that failed, a save from another version
+#define CHASM_ASK_REPORT    5           //a bug report written: its folder opened, or OK
+    Scene* world_scene = NULL;
+    Scene* title_scene = NULL;
+    DirectionalLight* title_sun = NULL;
+    UIMenu title_menu;
+    UIMenu ask_menu;
+    std::atomic<int> ask_kind{CHASM_ASK_NONE};
+    bool f_ask_paused_game = false;             //physics thread: the question paused the game, to be undone after
+    std::mutex menu_inject_mutex;               //chasm_menu's click or back, for the next pass's menu input
+    bool f_menu_click_pending = false;
+    bool f_menu_back_pending = false;
+    vec2 menu_click_at;
+    bool TitleShowing();
+    void CreateTitleScene();
+    void OpenTitle();
+    void CloseTitle();
+    bool ReadMenuInput(InputController* input, UIMenuInput& in, bool& f_back);
+    void UpdateTitle(InputController* input);   //physics thread, from UpdateView while the title shows
+    void OpenAsk(int kind, const std::string& text = "", const std::string& detail = "");
+    void CloseAsk();
+    bool UpdateAsk(InputController* input);     //physics thread: true while a question has the input
+    void EscapeStep();
+    void DrawTitle(float s);                    //render thread, from DrawOverlay
+    void DrawAsk(float s);
+    static UIMenuStyle MenuStyle();             //every menu's look: the HUD's colours
+    static std::string BuildName();             //"debug build, Oct 16 2026": on the title and in every save
+    /*
+        THE PAUSE MENU AND THE LISTS (ApplicationChasmMenu.cpp; demo_plan.md steps 1-2): the pause menu over the frozen
+        game, and the lists the title and it open - New game's four maps, the saves to load, the saves to save over.
+        A load or a new map waits a frame behind "Loading", so the word is up while the physics thread is busy.
+    */
+#define CHASM_SCREEN_MAIN   0           //the title's own menu, or the pause menu's
+#define CHASM_SCREEN_NEW    1
+#define CHASM_SCREEN_LOAD   2
+#define CHASM_SCREEN_SAVE   3
+#define CHASM_SCREEN_REPLAY 4
+#define CHASM_ACT_NONE      0
+#define CHASM_ACT_LOAD      1           //a save, by name
+#define CHASM_ACT_NEW       2           //a new colony on one of the four maps
+#define CHASM_ACT_OVERWRITE 3           //the colony saved over a save, by name
+#define CHASM_ACT_REPLAY    4           //a recording replayed, by its path
+    struct MenuAction{
+        int kind = CHASM_ACT_NONE;
+        std::string name;               //the save to load or save over
+        int start = 0;                  //the map to start on
+    };
+    std::atomic<bool> f_pause_open{false};
+    bool f_pause_paused_game = false;           //physics thread: the pause menu paused the game, to be undone after
+    std::atomic<int> pause_request{0};          //chasm_menu: 1 open the pause menu - served on the next pass
+    UIMenu pause_menu;
+    UIMenu screen_menu;                         //the list in front, when menu_screen is not MAIN
+    std::atomic<int> menu_screen{CHASM_SCREEN_MAIN};
+    std::vector<ChasmSaveEntry> screen_saves;   //physics thread: the saves the list shows, as read when it opened
+    int screen_page = 0;
+    MenuAction ask_action;                      //physics thread: what the question's yes does
+    MenuAction busy_action;                     //...and what waits behind "Loading" for its frame
+    int busy_frame = 0;
+    std::atomic<int> overlay_frames{0};         //render thread: DrawOverlay's passes, counted
+    std::mutex menu_text_mutex;                 //the strings below, for the render thread
+    std::string ask_text;                       //the question's line, and the one under it
+    std::string ask_detail;
+    std::string menu_busy;                      //"Loading ..." while busy_action waits; empty with none
+    std::string menu_note;                      //"Saved ...", shown for a few seconds from menu_note_at
+    std::chrono::steady_clock::time_point menu_note_at;
+    std::string colony_name;                    //the start's name, or "Seed N": what the colony's saves are titled by
+    std::atomic<bool> f_game_on{true};          //a colony in play: Continue goes back to it, and leaving it autosaves
+    int autosave_season = -1;                   //physics thread: year * 4 + season of the last pass, so a dawn is seen
+    void OpenPause();                           //physics thread
+    void ClosePause();
+    bool UpdatePause(InputController* input);   //physics thread, from UpdateView: true while the menu has the input
+    void OpenScreen(int screen);
+    void BuildScreen();
+    bool UpdateScreen(InputController* input);  //physics thread: a list's input, true while one is in front
+    void Choose(const MenuAction& a);           //asks first over a colony in play
+    void Busy(const MenuAction& a);
+    bool RunBusy();                             //physics thread: true while an action waits or ran this pass
+    void RefreshTitleMenu();
+    bool LoadSaveNamed(const std::string& name, std::string& error);
+    void StartNewGame(int start);
+    void EnteredColony(const std::string& colony);
+    bool WriteSave(const std::string& name, const char* kind, std::string& error);
+    void Autosave(const std::string& keep = "", bool f_record = true);     //and a fresh recording from it
+    void UpdateAutosave();                      //physics thread, from UpdateView: a season's first dawn
+    void QuickKeys(InputController* input);
+    std::string SaveTitle();                    //any thread: "Seed 12 - year 2, summer 4"
+    void ShowNote(const std::string& note);
+    void FrameColony();                         //physics thread: the view on the colony, as a game starts or loads
+    void DrawMenuPanel(const UIMenu& menu, const std::string& heading, const std::string& detail, float s,
+                       uint32_t box, bool f_lighter_buttons);
+    void DrawPause(float s);                    //render thread, from DrawOverlay
+    void DrawScreen(float s);
+    void DrawBusyAndNote(float s);
+    /*
+        RECORDING FOR TESTERS (ApplicationChasmRecord.cpp; demo_plan.md step 4): always recording, afresh from every
+        autosave, so a bug can be reported after it happened; Report a bug, a folder of everything that run needs; and
+        the recordings replayed from the title, with a bar to stop them. Always recording is a tester's build's: in a
+        build with the panels it would take over the input_record an agent starts, so there it is the panel's to set.
+    */
+    struct RecordingEntry{
+        std::string path;
+        std::string title;                      //the colony's, from the state's meta - or the file's name
+        std::string recorded_at;                //"2026-10-16 14:03:11"
+        std::string build;
+        uint32_t ticks = 0;                     //its length
+    };
+    std::atomic<bool> f_always_record{false};
+    std::vector<RecordingEntry> screen_recordings;  //physics thread: the list the replay screen shows
+    bool f_was_replaying = false;               //physics thread: the last pass's, so a replay's end is seen
+    std::atomic<bool> f_menu_replay{false};     //a replay the menu started: its colony entered as a load's is
+    bool f_quit_pending = false;                //physics thread: quitting once the recording is saved
+    uint32_t quit_recordings_saved = 0;
+    int quit_wait_passes = 0;
+    std::atomic<int> report_stage{0};           //0 none, 1 being written (a worker thread), 2 written
+    std::string report_dir;                     //(under menu_text_mutex) where it went, or why not
+    std::string report_error;
+    std::vector<RecordingEntry> RecordingEntries();
+    std::string RecordingLabel(const RecordingEntry& e);
+    void RecordFromHere();                      //physics thread: a fresh recording, if always recording
+    void ServiceRecording();                    //physics thread, every pass: a replay ended, a quit waiting, a report
+    void Quit();                                //physics thread: the colony autosaved, the recording saved, then gone
+    void StartReport();                         //physics thread
+    void WriteReport(const std::string& dir, bool f_recording, uint32_t recordings_before, int frames_before);
+    void DrawRecording(float s);                //render thread, from DrawOverlay: REC, or the replay's bar
+    void DrawInputRecordingBadge() override {}  //Chasm's own, DrawRecording, clear of the top bar
+#ifdef USE_IMGUI
+    void RenderTitlePanel();
+#endif
+#ifdef USE_MCP
+    void RegisterTitleTools();
+#endif
+    /*
+        THE STATISTICS PAGE (ApplicationChasmStats.cpp; docs/statistics_plan.md): the colony now, over time and in its
+        journal, over the game - paused under it, as under the question - with the input while it is up.
+    */
+    std::atomic<bool> f_stats_open{false};
+    bool f_stats_paused_game = false;           //physics thread: the page paused the game, to be undone after
+    std::atomic<int> stats_scroll{0};           //the journal's lines scrolled past, from the newest
+    std::atomic<int> stats_request{0};          //chasm_stats: 1 open the page, 2 close it - served on the next pass
+    size_t stats_checked_days = 0;              //physics thread, debug builds: the ledger's rows at the last check
+    void OpenStats();                           //physics thread
+    void CloseStats();
+    bool UpdateStats(InputController* input);   //physics thread, from UpdateView: true while the page has the input
+    void DrawStats(float s);                    //render thread, from DrawOverlay: alone over the world, no HUD
+    void CheckStats();                          //physics thread, from TickEconomy: the history's check, debug builds
+#ifdef USE_MCP
+    void RegisterStatsTools();
+#endif
+    /*
+        SOUND (ApplicationChasmSound.cpp; docs/sound_plan.md). What the game sounds like is assets/cues/chasm.json,
+        reloaded when it changes; the code only reports what happened. The cues run on the PHYSICS THREAD once a PASS,
+        paused or not, on a count of passes - which is real time, since 4x is four ticks in one pass - so a blow keeps
+        its rhythm at any speed and a click still answers in a pause. Nothing here reaches the rules: no state, hash or
+        replay changes with it.
+    */
+    SoundSystem* soundsystem = NULL;            //NULL in a USE_SOUND=0 build, and every caller copes
+    std::unique_ptr<CueOutput> cue_output;      //NULL with no sound or no device: the cues still decide and log
+    CueSystem cues;
+    uint64_t sound_pass = 0;                    //the cues' clock: passes since Init
+    std::atomic<float> sound_volume{1.0f};      //the master bus: 0 mutes without changing what the cues decide
+    int activity_bus = -1;                      //the table's "activity", faded out and held while the world stands still
+    std::string cue_table_path;                 //on disk, for the poll - empty in a baked build, which has nothing to watch
+    int64_t cue_table_mtime = 0;
+    std::chrono::steady_clock::time_point cue_table_polled;
+    //What has been told: a count each, as the notice line keeps its own (sound_plan.md, "The readers").
+    uint32_t sound_events_seen = 0;
+    const ChasmWorld* sound_events_world = nullptr;     //the map they were counted on
+    uint32_t sound_placed_seen = 0;
+    uint32_t sound_erased_seen = 0;
+    uint32_t sound_refusals_seen = 0;
+    /*
+        WORK IN HAND: the blows of someone at work - an axe, a hammer, a saw - each on a clock of his own, as the
+        archer's heartbeat is beats on hers. There is no clip to time a blow to, so the rhythm is the sound's, from
+        his id: two woodcutters side by side never chop in step. Only the nearest few of each kind near the view
+        have a clock (SOUND_WORK_NEAREST), so a forest being felled is a few axes, not a hundred voices.
+    */
+    struct WorkBeat{
+        uint32_t person = 0;
+        int kind = 0;               //CHASM_WORK_*
+        int bout = 0;               //a builder's: what this bout is, CHASM_BOUT_*
+        int left = 0;               //...and its blows still to come
+        uint64_t next = 0;          //work_clock's pass of the next blow
+        uint32_t blows = 0;         //made so far, for the draws
+        vec2 at;                    //where he stands (x, world z)
+    };
+    std::vector<WorkBeat> work_beats;
+    uint64_t work_clock = 0;                    //passes the world has been live: frozen in a pause, so no blows pile up
+    /*
+        THE WATER HEARD (areas_plan.md): a river's loop and a waterfall's, each open while its nearest water is within
+        reach, following how far that is and how much of it is under the clouds - eased, so water coming into sight
+        swells rather than jumps.
+    */
+    bool f_river_heard = false;
+    bool f_falls_heard = false;
+    float river_hidden = 1.0f;
+    float falls_hidden = 1.0f;
+    int ambience_bus = -1;                      //the table's "ambience": plays on in a pause, faded out under the title
+    void SignalWater();
+    void SetupSound();                          //Init, the render thread before the physics thread exists
+    void UpdateSound();                         //physics thread, every pass, from UpdateView
+    void PollCueTable();
+    void SignalEvents();
+    void SignalWork(bool f_live);
+    void SignalUI(const char* name);            //physics thread: a click, a tool taken up
+#ifdef USE_MCP
+    void RegisterSoundTools();
+#endif
+    /*
+        THE DIORAMA (demo_plan.md, "The title's backdrop"): a piece of a world, captured from the game's scene
+        (core/SceneCapture.h) into assets/dioramas/, and loaded into the title's - where its camera turns slowly
+        round it. chasm_diorama asks; the render thread does it (ServiceDiorama), only with the game showing, so
+        the title's scene is neither drawn nor ticked while its objects change.
+    */
+    std::vector<Object*> diorama_objects;
+    SceneCaptureInfo diorama;
+    float title_yaw = 0.0f;                     //physics thread: the title camera's turn, radians
+    bool f_title_view = false;                  //chasm_menu's view: the camera's centre, distance and pitch set by hand
+    vec3 title_view_centre;                     //(under menu_inject_mutex) - for looking closer, and trying framings
+    float title_view_distance = 0.0f;
+    float title_view_pitch = 0.0f;
+    std::mutex diorama_mutex;
+    int diorama_request = 0;                    //0 none, 1 capture, 2 load
+    vec3 diorama_ask_centre;
+    float diorama_ask_radius = 0.0f;
+    std::string diorama_ask_name;
+    std::string diorama_result;                 //the last request's outcome, for the tool
+    int diorama_done = 0;                       //how many requests were served
+    bool LoadDiorama(const std::string& name, std::string& error);     //render thread
+    void ServiceDiorama();                      //render thread, from PreRender
+    void UpdateTitleView(float dt);             //physics thread: the camera round the diorama
+    std::vector<SceneCaptureMarker> DioramaMarkers(const vec3& centre, float radius);  //render thread: chimneys and people
+    void DioramaLife(const std::vector<SceneCaptureMarker>& markers);                //render thread: them made alive
+    /*
+        The diorama's people, brought to life from its markers (LoadDiorama): each a figure as the game builds him
+        (BuildPersonSkin), playing what he was - standing, shooting at the range, or walking: there and back along the
+        stretch of his way he had left within the diorama. Physics thread after the load (UpdateTitleView).
+    */
+    struct DioramaPerson{
+        WorkerSkin ws;
+        int figure = 0;
+        bool f_archer = false;
+        vec3 forward = vec3(0.0f,0.0f,1.0f);
+        std::vector<vec3> path;                 //a walker's: points along his way, on the ground; empty, he stays
+        float speed = 0.0f;                     //...world units a second
+        float along = 0.0f;                     //...how far along the path he is
+        int dir = 1;                            //...and which way he goes
+    };
+    std::vector<DioramaPerson> diorama_people;
 
     vec3 cam_last_written;          //see UpdateCamera: how a camera_set from a tool is noticed
     std::chrono::steady_clock::time_point cam_last_update;
@@ -1119,6 +1466,7 @@ private:
     std::atomic<bool> f_view_pins{true};
     std::atomic<bool> f_view_flat{false};   //every layer at y = 0 instead of on the terrain
     std::atomic<bool> f_view_camp{false};   //the spots a new colony might camp on, and their scores
+    std::atomic<bool> f_view_areas{false};  //the areas to discover (areas_plan.md): seen bright, not yet dim
     std::atomic<int> view_version{0};
     std::atomic<int> selected_issue{-1};
 
@@ -1126,6 +1474,9 @@ private:
     Mesh* grid_view_mesh = NULL;
     std::shared_ptr<const ChasmWorld> grid_view_built_for;  //render thread
     int grid_view_built_version = -1;
+    //The areas layer shows what is SEEN, which moves as the people look: the exploration it was built for, and when.
+    uint32_t grid_view_explored_version = 0;
+    std::chrono::steady_clock::time_point grid_view_areas_built;
     float grid_view_ms = 0.0f;
     int grid_view_vertices = 0;
     void UpdateGridView();

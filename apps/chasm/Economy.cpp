@@ -4,6 +4,7 @@
 #include "Walkers.h"
 #include "RoadMesh.h"
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 
@@ -18,6 +19,8 @@ const char* GoodName(int good){
         case GOOD_HEMP:     return "hemp";
         case GOOD_ROPE:     return "rope";
         case GOOD_FRUIT:    return "fruit";
+        case GOOD_STONE:    return "stone";
+        case GOOD_FLOATSTONE: return "floatstone";
         default:            return "?";
     }
 }
@@ -80,6 +83,8 @@ const char* EconomyJobName(int job){
         case WORKER_JOB_GUARD:      return "guard";
         case WORKER_JOB_ROPEMAKER:  return "ropemaker";
         case WORKER_JOB_PICKER:     return "picker";
+        case WORKER_JOB_STONECUTTER: return "stonecutter";
+        case WORKER_JOB_MINER:      return "miner";
         case WORKER_JOB_NONE:       return "none";
         case WORKER_JOB_PLAYING:    return "playing";
         case WORKER_JOB_BABY:       return "baby";
@@ -108,6 +113,8 @@ int EconomyJobOf(int kind){
         case ZONE_KIND_RANGE:       return WORKER_JOB_ARCHER;      //range_plan.md: its trainees
         case ZONE_KIND_TOWER:       return WORKER_JOB_GUARD;       //defence_plan.md: its guards
         case ZONE_KIND_ROPEWALK:    return WORKER_JOB_ROPEMAKER;   //goods_plan.md
+        case ZONE_KIND_STONECUTTER: return WORKER_JOB_STONECUTTER; //stone_plan.md
+        case ZONE_KIND_MINE:        return WORKER_JOB_MINER;       //stone_plan.md step 5
         default:                    return WORKER_JOB_NONE;
     }
 }
@@ -143,6 +150,161 @@ int EconomyGoodHeld(const EconomyState& e, int good){
         held += (k.carry_good == good) ? std::max(0,k.carry) : 0;
     }
     return held;
+}
+
+//--- Events and the history (Economy.h; sound_plan.md, statistics_plan.md) ---------------------------
+
+const char* EconomyEventName(int kind){
+    switch (kind){
+        case EVENT_NOTHING_TO_TAKE:     return "nothing_to_take";
+        case EVENT_RAN_OUT:             return "ran_out";
+        case EVENT_NO_TENT:             return "no_tent";
+        case EVENT_SEAM_SEEN:           return "seam_seen";
+        case EVENT_BORN:                return "born";
+        case EVENT_DIED:                return "died";
+        case EVENT_TREE_FELLED:         return "tree_felled";
+        case EVENT_ROCK_BROKEN:         return "rock_broken";
+        case EVENT_STOREY_RAISED:       return "storey_raised";
+        case EVENT_BUILDING_FINISHED:   return "building_finished";
+        case EVENT_HARVEST:             return "harvest";
+        case EVENT_SETTLED:             return "settled";
+        case EVENT_DISCOVERED:          return "discovered";
+        default:                        return "unknown";
+    }
+}
+
+int EconomyEventByName(const std::string& name){
+    for (int k = 0; k < EVENT_COUNT; k++){
+        if (name == EconomyEventName(k)){
+            return k;
+        }
+    }
+    return -1;
+}
+
+//What is worth remembering one by one: who came and went, what was reaped and raised, where the colony spread, and
+//floatstone seen and areas found - not what happens tens of times a day, which the ledger counts, nor the scouts'
+//troubles.
+bool EconomyJournaled(int kind){
+    return kind == EVENT_BORN || kind == EVENT_DIED || kind == EVENT_HARVEST || kind == EVENT_BUILDING_FINISHED
+           || kind == EVENT_SETTLED || kind == EVENT_SEAM_SEEN || kind == EVENT_DISCOVERED;
+}
+
+bool EconomyCounted(int kind){
+    return kind == EVENT_TREE_FELLED || kind == EVENT_ROCK_BROKEN || kind == EVENT_STOREY_RAISED;
+}
+
+/*
+    All of each good the colony HAS: every building's stock and a camp's families' pantry, what everyone carries and
+    packs, and the crates its people put down or a camp left behind - so a good does not seem to vanish while it is
+    only moved. Not what lies out there to be found: rubble, a broken rock's stone, a find - the colony has those once
+    someone brings them in.
+*/
+void EconomyDayLevels(const EconomyState& e, uint64_t tick, EconomyDay& row){
+    row.people.fill(0);
+    row.held.fill(0);
+    for (const EconomyWorker& k : e.workers){
+        int stage = EconomyStageAt(k.born,tick);
+        row.people[std::max(0,std::min(ECONOMY_STAGES - 1,stage))]++;
+        if (k.carry_good >= 0 && k.carry_good < GOOD_COUNT){
+            row.held[k.carry_good] += std::max(0,k.carry);
+        }
+        for (int g = 0; g < GOOD_COUNT; g++){
+            row.held[g] += k.pack[g];
+        }
+    }
+    for (const std::vector<std::array<int,GOOD_COUNT>>* stocks : {&e.stock,&e.pantry}){
+        for (const std::array<int,GOOD_COUNT>& s : *stocks){
+            for (int g = 0; g < GOOD_COUNT; g++){
+                row.held[g] += s[g];
+            }
+        }
+    }
+    for (const EconomyCrate& c : e.crates){
+        if (c.origin == CRATE_DROPPED || c.origin == CRATE_CAMP){
+            for (int g = 0; g < GOOD_COUNT; g++){
+                row.held[g] += c.stock[g];
+            }
+        }
+    }
+}
+
+void EconomyForestCleared(const EconomyState& e, int& felled, int& broken){
+    felled = 0;
+    broken = 0;
+    if (!e.world || !e.world->forest){
+        return;
+    }
+    const std::vector<PropInstance>& props = e.world->forest->props;
+    for (size_t i = 0; i < props.size() && i < e.prop_state.size(); i++){
+        if (e.prop_state[i] != PROP_STATE_STANDING){
+            broken += ForestIsRock(props[i].kind) ? 1 : 0;
+            felled += ForestIsRock(props[i].kind) ? 0 : 1;
+        }
+    }
+}
+
+void Economy::Event(int kind, uint32_t person, uint32_t building, int plot, const vec2& pos, int amount, GoodsMask what){
+    EconomyEvent ev;
+    ev.kind = kind;
+    ev.person = person;
+    ev.building = building;
+    ev.plot = plot;
+    ev.pos = pos;
+    ev.amount = amount;
+    ev.what = what;
+    Event(ev,now);
+}
+
+void Economy::Event(EconomyEvent ev, uint64_t tick){
+    ev.tick = tick;
+    if (ev.pos.x == 0.0f && ev.pos.y == 0.0f && state.world && ev.plot >= 0 && ev.plot < (int)state.world->grid->fine.pos.size()){
+        ev.pos = state.world->grid->fine.pos[ev.plot];
+    }
+    state.events.push_back(ev);
+    if (state.events.size() > ECONOMY_EVENTS_KEPT){
+        state.events.erase(state.events.begin());
+    }
+    state.events_made++;
+    if (ev.kind >= 0 && ev.kind < EVENT_COUNT){
+        state.events_by_kind[ev.kind]++;
+    }
+    //THE HISTORY: kept as it is made, so the journal and the telling are one.
+    EconomyDay& today = state.history.today;
+    if (EconomyJournaled(ev.kind)){
+        state.history.journal.push_back(ev);
+    }
+    today.felled += (ev.kind == EVENT_TREE_FELLED) ? 1 : 0;
+    today.broken += (ev.kind == EVENT_ROCK_BROKEN) ? 1 : 0;
+    today.storeys += (ev.kind == EVENT_STOREY_RAISED) ? 1 : 0;
+    state.version++;
+}
+
+void Economy::Notice(int kind, uint32_t person, GoodsMask what){
+    vec2 at;
+    for (const EconomyWorker& k : state.workers){
+        at = (k.id == person) ? k.pos : at;
+    }
+    Event(kind,person,0,-1,at,0,what);
+}
+
+void Economy::CloseDay(uint64_t tick){
+    EconomyHistory& h = state.history;
+    EconomyDayLevels(state,tick,h.today);
+    h.days.push_back(h.today);
+    h.today = EconomyDay();
+    h.today.day = (int)(tick / CALENDAR_DAY_TICKS);
+    state.version++;
+}
+
+void Economy::BeginHistory(uint64_t tick){
+    EconomyHistory& h = state.history;
+    h = EconomyHistory();
+    h.from = tick;
+    h.start.day = (int)(tick / CALENDAR_DAY_TICKS);
+    EconomyDayLevels(state,tick,h.start);
+    EconomyForestCleared(state,h.felled_from,h.broken_from);
+    h.today.day = h.start.day;
 }
 
 int EconomyRopeChain(const EconomyState& e, const ZoneState& z){
@@ -205,6 +367,8 @@ int EconomyJobSkill(int job){
         case WORKER_JOB_GUARD:      return SKILL_PRECISION;     //after archery (AssignJobs)
         case WORKER_JOB_ROPEMAKER:  return SKILL_PRECISION;     //a craft (goods_plan.md)
         case WORKER_JOB_PICKER:     return SKILL_HUSBANDRY;     //knowing the plants (foraging_plan.md)
+        case WORKER_JOB_STONECUTTER: return SKILL_STRENGTH;     //gameplay_plan.md's table: quarrying
+        case WORKER_JOB_MINER:      return SKILL_STRENGTH;      //...and mining
         default:                    return SKILL_STRENGTH;      //a woodcutter, a builder, and anyone carrying
     }
 }
@@ -464,7 +628,7 @@ int EconomyPackFood(const EconomyWorker& k){
     return food;
 }
 
-//What his pack holds any of: GOOD_BIT(GOOD_WATER), GOODS_EATEN for any food, both or neither (NOTICE_RAN_OUT).
+//What his pack holds any of: GOOD_BIT(GOOD_WATER), GOODS_EATEN for any food, both or neither (EVENT_RAN_OUT).
 static GoodsMask PackHolds(const EconomyWorker& k){
     return (GoodsMask)((k.pack[GOOD_WATER] > 0 ? GOOD_BIT(GOOD_WATER) : 0) | (EconomyPackFood(k) > 0 ? GOODS_EATEN : 0));
 }
@@ -586,7 +750,9 @@ int JobOf(int kind){
 //never the hemp waiting there to be made into it (goods_plan.md), and a woodcutter wood: the camp's (woodcutting_plan.md)
 //holds its supplies too.
 GoodsMask WorkplaceMakes(int job){
-    return (job == WORKER_JOB_ROPEMAKER) ? GOOD_BIT(GOOD_ROPE) : (job == WORKER_JOB_WOODCUTTER) ? GOOD_BIT(GOOD_WOOD) : GOODS_ALL;
+    return (job == WORKER_JOB_ROPEMAKER) ? GOOD_BIT(GOOD_ROPE) : (job == WORKER_JOB_WOODCUTTER) ? GOOD_BIT(GOOD_WOOD)
+         : (job == WORKER_JOB_STONECUTTER) ? GOOD_BIT(GOOD_STONE)
+         : (job == WORKER_JOB_MINER) ? (GOOD_BIT(GOOD_STONE) | GOOD_BIT(GOOD_FLOATSTONE)) : GOODS_ALL;
 }
 
 //The plot a fine quad's corner k is, and a coarse cell's centre: the one vertex its four children share.
@@ -838,6 +1004,7 @@ static void StopWhereHeIs(EconomyWorker& k){
 void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
     state = EconomyState();
     state.world = world;
+    pick_up_looks.clear();
     for (int g = 0; g < GOOD_COUNT; g++){
         state.kept[g] = (GOODS_MADE & GOOD_BIT(g)) ? ECONOMY_KEPT_START : 0;
     }
@@ -846,6 +1013,10 @@ void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
     plots_of.clear();
     if (world && world->forest){
         state.prop_state.assign(world->forest->props.size(),PROP_STATE_STANDING);
+    }
+    //THE MINE: nothing dug yet from any deposit.
+    if (world && world->deposits){
+        state.dug.assign(world->deposits->deposits.size(),0);
     }
     BuildTrees();
     //FORAGING: a new map's plants all ripe (foraging_plan.md) - a save puts back those that are not (Restore).
@@ -1036,6 +1207,9 @@ bool Economy::Lifelines(uint64_t tick, bool& f_house){
         state.workers.insert(state.workers.end(),born.begin(),born.end());     //the newest ids: still in id order
         state.version++;
     }
+    for (const EconomyWorker& b : born){
+        Event(EVENT_BORN,b.id,b.house,-1,b.pos);
+    }
     return f_jobs;
 }
 
@@ -1123,6 +1297,88 @@ bool Economy::GoPlay(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uin
     }
     k.state = WORKER_TO_PLAY;
     return true;
+}
+
+int EconomyDepositLeft(const EconomyState& e, int d){
+    if (!e.world || !e.world->deposits || d < 0 || d >= (int)e.world->deposits->deposits.size()){
+        return 0;
+    }
+    int holds = e.world->deposits->deposits[d].holds;
+    int dug = (d < (int)e.dug.size()) ? e.dug[d] : 0;
+    return (holds == DEPOSIT_ENDLESS) ? INT_MAX : std::max(0,holds - dug);
+}
+
+int Economy::MineDepositAt(uint32_t id) const{
+    if (!id || id >= plots_of.size() || plots_of[id].empty() || !state.world->deposits){
+        return -1;
+    }
+    return state.world->deposits->At(plots_of[id].front());
+}
+
+/*
+    THE MINE (Economy.h): from home, to the rock of his mine - before its portal, or on its outcrop - while its deposit
+    has some left and a store of his takes the load he would dig whole. False with nothing to do.
+*/
+bool Economy::GoDig(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    int d = MineDepositAt(k.building);
+    int left = EconomyDepositLeft(state,d);
+    int plot = (k.building < home_plot.size()) ? home_plot[k.building] : -1;
+    if (left <= 0 && d >= 0){
+        DugOut(z,d);    //home from its last load: now the mine lets him go
+        return false;
+    }
+    if (plot < 0){
+        return false;
+    }
+    int good = state.world->deposits->deposits[d].good;
+    int load = std::min(ECONOMY_LOAD,left);
+    bool f_room = false;
+    for (size_t s = 1; s < state.accepts.size() && !f_room; s++){
+        f_room = (state.accepts[s] & GOOD_BIT(good)) && state.room[s] - CarryTotal(state.stock[s]) >= load && Ours(k,(uint32_t)s);
+    }
+    if (!f_room){
+        return false;
+    }
+    const ChasmWorld& w = *state.world;
+    vec2 at = w.grid->fine.pos[plot] + DepositDigWay(*w.grid,*w.picker,*w.terrain,*w.deposits,plot) * ECONOMY_MINE_FACE;
+    if (!RouteTo(k,z,walkers,plot,at)){
+        return false;
+    }
+    k.prop = -1;
+    k.store = 0;
+    k.state = WORKER_TO_WORK;
+    return true;
+}
+
+/*
+    Deposit `d` dug out: every mine on it loses its place - its miner goes free on the next tick (AssignJobs) - but not
+    while he carries a load of it: a job ended takes the load with it, so the last of a seam would be lost on the way.
+*/
+void Economy::DugOut(const ZoneState& z, int d){
+    for (size_t id = 1; id < z.buildings.size() && id < state.places.size(); id++){
+        if (z.buildings[id].kind == ZONE_KIND_MINE && MineDepositAt((uint32_t)id) == d && !MineCarrying((uint32_t)id)){
+            state.places[id] = 0;
+        }
+    }
+    f_restaff = true;
+    state.version++;
+}
+
+bool Economy::MineCarrying(uint32_t id) const{
+    return std::any_of(state.workers.begin(),state.workers.end(),[id](const EconomyWorker& k){
+        return k.building == id && k.carry > 0;
+    });
+}
+
+float Economy::WalkSeconds(EconomyWorker probe, const ZoneState& z, Walkers& walkers, int to_plot, const vec2& to_point){
+    if (!RouteTo(probe,z,walkers,to_plot,to_point)){
+        return -1.0f;
+    }
+    float seconds = 0.0f;
+    for (size_t i = 0; i + 1 < probe.route.size() && i < probe.speed.size(); i++){
+        seconds += (probe.route[i + 1] - probe.route[i]).length() / std::max(0.01f,probe.speed[i]);
+    }
+    return seconds;
 }
 
 //Can someone standing at `from` walk to plot `to`? The route a worker would take, thrown away.
@@ -2039,6 +2295,7 @@ void Economy::BuildTrees(){
     tree_start.clear();
     tree_items.clear();
     plants.clear();
+    rocks.clear();
     tree_nx = tree_nz = 0;
     if (!state.world || !state.world->forest){
         return;
@@ -2046,6 +2303,9 @@ void Economy::BuildTrees(){
     for (size_t i = 0; i < state.world->forest->props.size(); i++){
         if (ForestBears(state.world->forest->props[i])){
             plants.push_back((int)i);
+        }
+        if (ForestIsRock(state.world->forest->props[i].kind)){
+            rocks.push_back((int)i);     //THE STONECUTTER's: few enough to look through whole
         }
     }
     const Grid& g = *state.world->grid;
@@ -2356,6 +2616,11 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         if (b.f_stopped && ZoneKindStoppable(b.kind)){
             state.places[id] = 0;
         }
+        //A MINE (stone_plan.md step 5) whose deposit is dug out: no place, its miner free - as when stopped - once he
+        //has set his last load down (DugOut).
+        if (b.kind == ZONE_KIND_MINE && EconomyDepositLeft(state,MineDepositAt((uint32_t)id)) <= 0 && !MineCarrying((uint32_t)id)){
+            state.places[id] = 0;
+        }
     }
     //The camp's own woodcutter (THE CAMP'S OWN WORK): a place while it stands - and no hut stands in its settlement
     //(A HUT TAKES OVER, after Settle). Its farmers are its land's (LandPlaces).
@@ -2425,6 +2690,10 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
                 }else if (kind == ZONE_KIND_ROPEWALK){
                     //What it makes and what it is made from (goods_plan.md): the hemp brought there, the rope taken.
                     attached |= GOOD_BIT(GOOD_HEMP) | GOOD_BIT(GOOD_ROPE);
+                }else if (kind == ZONE_KIND_STONECUTTER){
+                    attached |= GOOD_BIT(GOOD_STONE);       //stone_plan.md
+                }else if (kind == ZONE_KIND_MINE){
+                    attached |= GOOD_BIT(GOOD_STONE) | GOOD_BIT(GOOD_FLOATSTONE);     //stone_plan.md step 5
                 }
                 //A field's crop changes as it is rotated (fields_plan.md): its store takes every crop's good,
                 //the foods and hemp. A range on cells makes nothing (range_plan.md), so a store beside one is a
@@ -3229,6 +3498,133 @@ bool Economy::FindTree(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     return GoForWood(k,z,walkers,found,4);
 }
 
+/*
+    THE STONECUTTER's next stone (stone_plan.md), from home, while a store of his settlement's has room for some: of
+    what lies within ECONOMY_STONECUTTER_REACH's WALK of his hut (Walkers::MapFlood, as WoodNear), a BOULDER on a site
+    of his settlement's first, then RUBBLE - a crate holding stone, less what others are already lifting - then the
+    nearest ROCK standing and not built over; by the walk, the lower index on a tie. The first of the nearest few he can
+    get to: a crate as a builder goes to one (WORKER_TO_CRATE), a rock as a woodcutter to a tree (WORKER_TO_WORK).
+*/
+bool Economy::FindRock(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    const ChasmWorld& w = *state.world;
+    if (!w.forest || k.building >= home_plot.size() || home_plot[k.building] < 0){
+        return false;
+    }
+    bool f_room = false;
+    for (size_t s = 1; s < state.accepts.size() && !f_room; s++){
+        f_room = (state.accepts[s] & GOOD_BIT(GOOD_STONE)) && state.room[s] > CarryTotal(state.stock[s]) && Ours(k,(uint32_t)s);
+    }
+    if (!f_room){
+        return false;
+    }
+    std::vector<float> walk;
+    walkers.MapFlood(z,std::vector<int>(1,home_plot[k.building]),ECONOMY_STONECUTTER_REACH,walk);
+    auto walked = [&](int plot){
+        return (plot >= 0 && plot < (int)walk.size()) ? walk[plot] : INFINITY;
+    };
+    //(rank, walk), then the prop's index - or a crate's, as -1 - its id.
+    std::vector<std::pair<std::pair<int,float>,int>> found;
+    for (const EconomyCrate& c : state.crates){
+        uint32_t id = ECONOMY_STORE_CRATE | c.id;
+        int left = c.stock[GOOD_STONE];
+        for (const EconomyWorker& o : state.workers){
+            if (&o != &k && o.store == id && (o.state == WORKER_TO_CRATE || o.state == WORKER_LIFTING)){
+                left -= ECONOMY_LOAD;
+            }
+        }
+        float d = walked(c.plot);
+        if (left > 0 && d <= ECONOMY_STONECUTTER_REACH){
+            found.push_back(std::make_pair(std::make_pair(1,d),-1 - (int)c.id));
+        }
+    }
+    for (int i : rocks){
+        const PropInstance& pr = w.forest->props[i];
+        float d = walked(pr.plot);
+        if (state.prop_state[i] != PROP_STATE_STANDING || !(d <= ECONOMY_STONECUTTER_REACH)
+            || EconomyPropCovered(z,pr.plot,pr.coarse)){
+            continue;
+        }
+        bool f_claimed = false;
+        for (const EconomyWorker& o : state.workers){
+            f_claimed = f_claimed || (&o != &k && o.prop == i);
+        }
+        if (f_claimed){
+            continue;
+        }
+        uint32_t site = (pr.kind == PROP_BOULDER) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
+        found.push_back(std::make_pair(std::make_pair((site && Ours(k,site)) ? 0 : 2,d),i));
+    }
+    std::sort(found.begin(),found.end());
+    for (size_t t = 0; t < found.size() && t < 4; t++){
+        int i = found[t].second;
+        if (i < 0){
+            const EconomyCrate* c = CrateById((uint32_t)(-1 - i));
+            if (c && RouteTo(k,z,walkers,c->plot,CrateStand(*c,k.pos))){
+                k.store = ECONOMY_STORE_CRATE | c->id;
+                k.carry_good = GOOD_STONE;      //what he goes for; nothing carried yet
+                k.carry = 0;
+                k.prop = -1;
+                k.state = WORKER_TO_CRATE;
+                return true;
+            }
+            continue;
+        }
+        const PropInstance& pr = w.forest->props[i];
+        vec2 rock(pr.pos.x,pr.pos.z);
+        vec2 to = rock - k.pos;
+        float l = to.length();
+        //Beside it, on the side he comes from: a boulder is broad.
+        float off = (pr.kind == PROP_BOULDER) ? 1.0f : 0.6f;
+        vec2 stand = (l > off + 0.2f) ? rock - to * (off / l) : rock;
+        if (RouteTo(k,z,walkers,pr.plot,stand)){
+            k.prop = i;
+            k.state = WORKER_TO_WORK;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    A rock BROKEN (stone_plan.md): gone for good, and its stone (ForestRockStone) left where it stood as RUBBLE - on its
+    own plot, or where that is no open ground (a boulder under a site) the nearest that is (CratePlotNear). What waited on
+    it goes up, as for a felled tree (Felled). He lifts a load of the rubble there and then, off to a store as a builder
+    moving a crate does (WORKER_LIFTING) - the rest lies for him, the sites and the builders.
+*/
+void Economy::BreakRock(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    const ChasmWorld& w = *state.world;
+    int prop = k.prop;
+    const PropInstance& pr = w.forest->props[prop];
+    state.prop_state[prop] = PROP_STATE_STUMP;      //a rock's CLEARED
+    state.felled_version++;
+    state.version++;
+    Event(EVENT_ROCK_BROKEN,k.id,0,pr.plot,vec2(pr.pos.x,pr.pos.z),prop);
+    Felled(z,prop);
+    k.prop = -1;
+    vec2 at(pr.pos.x,pr.pos.z);
+    int plot = pr.plot;
+    if (!EconomyCrateGround(w,z,plot,at)){
+        plot = CratePlotNear(z,pr.plot,at);
+        if (plot >= 0){
+            at = w.grid->fine.pos[plot];
+        }
+    }
+    const EconomyCrate* c = NULL;
+    if (plot >= 0){
+        AddToCrate(plot,at,GOOD_STONE,ForestRockStone(pr.kind),CRATE_BROKEN,0);
+        c = EconomyCrateOn(state,plot);
+    }
+    if (!c){
+        GoHome(k,z,walkers);    //nowhere open for it near: the stone is lost with the rock
+        return;
+    }
+    k.store = ECONOMY_STORE_CRATE | c->id;
+    k.carry_good = GOOD_STONE;
+    k.carry = 0;
+    k.state = WORKER_LIFTING;
+    k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+}
+
 //--- Foraging (docs/foraging_plan.md) --------------------------------------------------------------
 
 //The ripe plant on `plot` with the most fruit, the lower index on a tie, of `plants` - every prop if NULL: -1 none.
@@ -3752,20 +4148,6 @@ bool Economy::GatherSupplies(EconomyWorker& k, const ZoneState& z, Walkers& walk
     return f_off;
 }
 
-void Economy::Notice(int kind, uint32_t person, GoodsMask what){
-    EconomyNotice n;
-    n.tick = now;
-    n.person = person;
-    n.kind = kind;
-    n.what = what;
-    state.notices.push_back(n);
-    if (state.notices.size() > ECONOMY_NOTICES_KEPT){
-        state.notices.erase(state.notices.begin());
-    }
-    state.notices_made++;
-    state.version++;
-}
-
 //Home again, released: his pack back into the pantry, as far as it keeps each good and has room - a camp's
 //pantry takes it all, but PROVISIONS, which no home holds (defence_plan.md). What does not fit stays packed,
 //for his next post.
@@ -3871,7 +4253,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     //spare, before any gathering; none he can get to has one, told so (a NOTICE), and on as he was.
     if (k.tent == ECONOMY_TENT_TO_TAKE && k.post >= 0 && (k.state == WORKER_TO_POST || k.state == WORKER_ON_POST)
         && !GoForTent(k,z,walkers)){
-        Notice(NOTICE_NO_TENT,k.id);
+        Notice(EVENT_NO_TENT,k.id);
         k.tent = ECONOMY_TENT_NONE;
         state.version++;
     }
@@ -3880,7 +4262,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     bool f_none = false;
     if (k.gather > 0 && k.post >= 0 && (k.state == WORKER_TO_POST || k.state == WORKER_ON_POST) && !GatherSupplies(k,z,walkers,&f_none)){
         if (f_none && k.gather == ECONOMY_GATHER_STOPS){
-            Notice(NOTICE_NOTHING_TO_TAKE,k.id);
+            Notice(EVENT_NOTHING_TO_TAKE,k.id);
         }
         k.gather = 0;
         state.version++;
@@ -3947,6 +4329,10 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (k.job == WORKER_JOB_BUILDER && (KeepTowers(k,z,walkers) || MakeProvisions(k,z,walkers))){
                 break;
             }
+            //...then a crate the player has put PICK UP (stone_plan.md): ahead of building, as FETCH FIRST was to be.
+            if (k.job == WORKER_JOB_BUILDER && MoveCrate(k,z,walkers,true)){
+                break;
+            }
             if (k.job == WORKER_JOB_NONE || k.job == WORKER_JOB_BUILDER){
                 //Nothing of his own to do, or a builder: he carries wood to a construction that wants it, or
                 //goes out to clear a planned road's or wall's way and lay a road - whichever comes first in
@@ -4005,6 +4391,16 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }
                 break;
             }
+            //A stonecutter (stone_plan.md): a boulder, rubble or a rock within reach of his hut - nothing waits at it.
+            if (k.job == WORKER_JOB_STONECUTTER){
+                FindRock(k,z,walkers);
+                break;
+            }
+            //A miner (stone_plan.md step 5): to his mine to dig a load, while its deposit has some and a store has room.
+            if (k.job == WORKER_JOB_MINER){
+                GoDig(k,z,walkers);
+                break;
+            }
             //What waits at his workplace first - the pile, the harvest, the water - when a store takes it;
             //then, for a woodcutter, a tree, while a store or his pile has room for it - and only with a pile.
             if (FetchFromWorkplace(k,z,walkers)){
@@ -4021,6 +4417,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     k.state = WORKER_WORKING;       //at his workplace, to pick up a load - or at the water's edge, to draw one
                     k.timer = f_draws ? SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS * ECONOMY_CAMP_WATER_LOAD)
                                       : SecondsToTicks(ECONOMY_PICK_SECONDS);
+                    //...or at the rock of his mine, to dig a load out of it at his pace.
+                    if (k.job == WORKER_JOB_MINER){
+                        int left = EconomyDepositLeft(state,MineDepositAt(k.building));
+                        k.timer = SecondsToTicks(ECONOMY_MINE_SECONDS * (float)std::max(1,std::min(ECONOMY_LOAD,left)) / pace);
+                    }
                     break;
                 }
                 //The camp's picker at a plant: what it still has, as much as his load has room for, at his pace - picked
@@ -4046,9 +4447,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     }
                 }else{
                     k.state = WORKER_WORKING;
-                    //Felling at his pace: a strong woodcutter is quicker at it.
-                    k.timer = (ps == PROP_STATE_STANDING) ? SecondsToTicks(ECONOMY_FELL_SECONDS / pace)
-                                                          : SecondsToTicks(ECONOMY_PICK_SECONDS);
+                    //Felling at his pace: a strong woodcutter is quicker at it - and breaking a rock, by its stone.
+                    int kind = state.world->forest->props[k.prop].kind;
+                    float work = (k.job == WORKER_JOB_STONECUTTER) ? ECONOMY_BREAK_SECONDS * (float)ForestRockStone(kind)
+                                                                   : ECONOMY_FELL_SECONDS;
+                    k.timer = (ps == PROP_STATE_STANDING) ? SecondsToTicks(work / pace) : SecondsToTicks(ECONOMY_PICK_SECONDS);
                 }
             }
             break;
@@ -4077,6 +4480,21 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }else{
                     deliver();      //cut off from the camp: a store that takes it, or he holds it
                 }
+                break;
+            }
+            if (k.prop < 0 && k.job == WORKER_JOB_MINER){
+                //Dug (THE MINE): a load out of the deposit - what is left of a seam at most - and off to a store with it.
+                int d = MineDepositAt(k.building);
+                int n = std::min(ECONOMY_LOAD,EconomyDepositLeft(state,d));
+                if (n <= 0){
+                    GoHome(k,z,walkers);
+                    break;
+                }
+                state.dug[d] += n;
+                state.version++;
+                k.carry = n;
+                k.carry_good = state.world->deposits->deposits[d].good;
+                deliver();      //the last load too: the mine keeps its place until he is home from it (GoDig, DugOut)
                 break;
             }
             if (k.prop < 0 && k.job == WORKER_JOB_FARMER){
@@ -4110,11 +4528,17 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     k.carry_good = -1;
                     GoHome(k,z,walkers);
                 }
+            }else if (k.job == WORKER_JOB_STONECUTTER && state.prop_state[k.prop] == PROP_STATE_STANDING){
+                BreakRock(k,z,walkers);     //its stone left as rubble, and a load of it lifted (stone_plan.md)
             }else if (state.prop_state[k.prop] == PROP_STATE_STANDING){
                 //Felled: it lies as a log, which he now picks up - and a wall or site it stood in the way of, all it
                 //takes there, goes up (only a woodcutter fells, woodcutting_plan.md).
                 state.prop_state[k.prop] = PROP_STATE_LOG;
                 state.felled_version++;
+                {
+                    const PropInstance& tree = state.world->forest->props[k.prop];
+                    Event(EVENT_TREE_FELLED,k.id,0,tree.plot,vec2(tree.pos.x,tree.pos.z),k.prop);
+                }
                 Felled(z,k.prop);
                 k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
             }else if (state.prop_state[k.prop] == PROP_STATE_LOG){
@@ -5011,9 +5435,10 @@ void Economy::FollowZones(const ZoneState& z, Walkers& walkers){
     }
     KeepAtDoors();
     LoseCoveredCrates(z);
-    //A new colony's first tick: the settlers' supplies into their camp.
+    //A new colony's first tick: the settlers' supplies into their camp, and the rubble along the chasm.
     if (f_new_colony){
         f_new_colony = false;
+        uint32_t camp = 0;
         for (size_t id = 1; id < z.buildings.size(); id++){
             if (z.buildings[id].kind == ZONE_KIND_CAMP && stands[id]){
                 std::array<int,GOOD_COUNT>& s = state.stock[id];
@@ -5021,9 +5446,14 @@ void Economy::FollowZones(const ZoneState& z, Walkers& walkers){
                 s[GOOD_WHEAT] += ECONOMY_START_WHEAT;
                 s[GOOD_BEANS] += ECONOMY_START_BEANS;
                 s[GOOD_WATER] += ECONOMY_START_WATER;
+                camp = (uint32_t)id;
                 break;
             }
         }
+        PlaceRubble(z);
+        //THE HISTORY begins with the landing: its levels with the supplies in, and the settlers' camp its first line.
+        BeginHistory(now);
+        Event(EVENT_SETTLED,0,camp,state.camp_plot,vec2(),(int)state.workers.size());
     }
     HouseFamilies(z,walkers);
     AssignJobs(z,walkers);
@@ -5038,6 +5468,15 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     const ChasmWorld& w = *state.world;
     now = tick;
     state.tick = tick;
+    /*
+        THE LEDGER (Economy.h, THE HISTORY): the day before this one closed, before anything of this tick happens - so
+        a row's people are its births and deaths on from the row before, exactly. On the day changing rather than on
+        dawn's tick, so the date set by hand (CHASM_CMD_CALENDAR) closes the day it left. A new colony's history
+        begins on its first tick instead (FollowZones).
+    */
+    if (!f_new_colony && tick / CALENDAR_DAY_TICKS != (uint64_t)state.history.today.day){
+        CloseDay(tick);
+    }
     walkers.SetSeason(tick);    //the ice the posted may cross (Walkers, ICE), for every walk planned this tick
     raises.clear();
     ground_raises.clear();
@@ -5138,7 +5577,16 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         f.grown += (int)std::lround(farmed * 100.0f);
         if (f.grown >= crop_days[crop] * CALENDAR_DAY_TICKS * 100){
             float area = ZoneBuildingFigures(w,z,f.building).floor_area;
-            state.stock[f.building][GoodOfCrop(crop)] += (int)std::floor(area * crop_yield[crop] * (float)f.yield / 100.0f);
+            int reaped = (int)std::floor(area * crop_yield[crop] * (float)f.yield / 100.0f);
+            state.stock[f.building][GoodOfCrop(crop)] += reaped;
+            uint32_t farmer = (f.building < state.farmer_of.size()) ? state.farmer_of[f.building] : 0;
+            vec2 at;
+            if (f.building < cells_of.size() && !cells_of[f.building].empty()){
+                for (int q = 0; q < 4; q++){
+                    at += w.grid->FineQuadCentre(cells_of[f.building][0] * 4 + q) * 0.25f;
+                }
+            }
+            Event(EVENT_HARVEST,farmer,f.building,-1,at,reaped,GOOD_BIT(GoodOfCrop(crop)));
             f.grown = 0;
             f.f_sown = false;
             f.last = crop;
@@ -5731,22 +6179,23 @@ int Economy::TentToPack(const EconomyWorker& k, const ZoneState& z, uint32_t id)
     auto packed = [&](int v){
         return std::find(tents_packed.begin(),tents_packed.end(),v) != tents_packed.end();
     };
-    //The one at the camp's edge - the fewest of its tents beside it, the later plot on a tie - so it stays one camp.
+    /*
+        The one nearest him, the lower plot on a tie (the user's, 2026-10-14) - he goes to it (GoForTent) and packs the
+        one he stands at. It was the one at the camp's edge, the fewest of its tents beside it, to keep the camp in one
+        piece; since a camp's tents need not touch (one camp to a colony), a tent pitched alone across the town had
+        none beside it, and went from under its pitcher when someone packed one at the camp.
+    */
+    const std::vector<vec2>& pos = state.world->grid->fine.pos;
     int best = -1;
-    int best_beside = 0;
+    float best_d = 0.0f;
     for (int v : tents_of[id]){
         if (packed(v)){
             continue;
         }
-        int nb[8];
-        int n = ZonePlotNeighbours(*state.world,v,nb,8);
-        int beside = 0;
-        for (int i = 0; i < n; i++){
-            beside += (z.building[nb[i]] == id && !packed(nb[i])) ? 1 : 0;
-        }
-        if (best < 0 || beside < best_beside || (beside == best_beside && v > best)){
+        float d = (pos[v] - k.pos).length();
+        if (best < 0 || d < best_d || (d == best_d && v < best)){
             best = v;
-            best_beside = beside;
+            best_d = d;
         }
     }
     return best;
@@ -5756,11 +6205,9 @@ bool Economy::GoForTent(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     const ChasmWorld& w = *state.world;
     std::vector<std::pair<float,uint32_t>> found;
     size_t n = std::min(z.buildings.size(),tents_of.size());
+    //Each camp by the tent he would pack there - the one nearest him (TentToPack) - and to that tent.
     for (size_t id = 1; id < n; id++){
-        if (TentToPack(k,z,(uint32_t)id) < 0){
-            continue;
-        }
-        int plot = SourcePlot((uint32_t)id,k.pos);
+        int plot = TentToPack(k,z,(uint32_t)id);
         if (plot >= 0){
             found.push_back(std::make_pair((w.grid->fine.pos[plot] - k.pos).length(),(uint32_t)id));
         }
@@ -5768,7 +6215,7 @@ bool Economy::GoForTent(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     std::sort(found.begin(),found.end());
     for (size_t t = 0; t < found.size() && t < 4; t++){
         uint32_t id = found[t].second;
-        int plot = SourcePlot(id,k.pos);
+        int plot = TentToPack(k,z,id);
         if (RouteTo(k,z,walkers,plot,SourcePoint(id,plot,k.pos))){
             k.store = id;
             k.prop = -1;
@@ -6917,7 +7364,7 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
                 Consume(k,k.pack);
                 GoodsMask has = PackHolds(k);
                 if (k.post >= 0 && had == (GOOD_BIT(GOOD_WATER) | GOODS_EATEN) && has != had){
-                    Notice(NOTICE_RAN_OUT,k.id,(GoodsMask)(had & ~has));
+                    Notice(EVENT_RAN_OUT,k.id,(GoodsMask)(had & ~has));
                 }
             }
         }else{
@@ -6950,6 +7397,7 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         d.cause = f_bitten ? NEEDS_DIED_ZOMBIE : EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD
                                                                                        : NEEDS_DIED_HUNGER;
         state.dead.push_back(d);
+        Event(EVENT_DIED,d.id,k.house,-1,EconomyBody(k),d.cause);
     }
     state.workers.swap(living);
     HouseFamilies(z,walkers);
@@ -6977,6 +7425,10 @@ float BuildFactor(int kind){
     A guard tower goes by its guard places instead (TowerStoreyCost).
 */
 int StoreyGoods(int kind, int good){
+    if (good == GOOD_STONE){
+        //A stonecutter's hut and a mine, their stone (stone_plan.md): the buildings that make stone are the first to cost it.
+        return (kind == ZONE_KIND_STONECUTTER) ? ECONOMY_STONECUTTER_STONE : (kind == ZONE_KIND_MINE) ? ECONOMY_MINE_STONE : 0;
+    }
     if (good != GOOD_ROPE){
         return 0;
     }
@@ -7634,7 +8086,8 @@ uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse){
     return 0;
 }
 
-int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse){
+//The trees standing on a plot or coarse cell - or, f_boulders, the boulders (stone_plan.md).
+static int StandingOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse, bool f_boulders){
     if (!w.forest || !w.mesh || (plot < 0 && coarse < 0)){
         return 0;
     }
@@ -7661,12 +8114,21 @@ int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coa
         for (int i : w.forest->chunk_props[c]){
             const PropInstance& pr = w.forest->props[i];
             bool f_standing = (size_t)i >= e.prop_state.size() || e.prop_state[i] == PROP_STATE_STANDING;
-            if (IsTree(pr.kind) && f_standing && ((coarse >= 0) ? pr.coarse == coarse : pr.plot == plot)){
+            bool f_kind = f_boulders ? pr.kind == PROP_BOULDER : IsTree(pr.kind);
+            if (f_kind && f_standing && ((coarse >= 0) ? pr.coarse == coarse : pr.plot == plot)){
                 n++;
             }
         }
     }
     return n;
+}
+
+int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse){
+    return StandingOn(w,e,plot,coarse,false);
+}
+
+int EconomyBouldersOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse){
+    return StandingOn(w,e,plot,coarse,true);
 }
 
 void Economy::RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const{
@@ -7804,6 +8266,13 @@ bool Economy::SiteTreesStanding(const ZoneState& z, uint32_t id) const{
             }
         }
     }
+    //...or a BOULDER (stone_plan.md), which waits for a stonecutter as a tree for a woodcutter.
+    for (int i : rocks){
+        const PropInstance& pr = w.forest->props[i];
+        if (pr.kind == PROP_BOULDER && state.prop_state[i] == PROP_STATE_STANDING && EconomyTreeSite(z,pr.plot,pr.coarse) == id){
+            return true;
+        }
+    }
     return false;
 }
 
@@ -7901,7 +8370,8 @@ void Economy::NextRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
 //--- Crates (crates_plan.md) -----------------------------------------------------------------------
 
 const char* EconomyCrateOriginName(int origin){
-    return (origin == CRATE_FOUND) ? "found" : (origin == CRATE_CAMP) ? "camp" : "dropped";
+    return (origin == CRATE_FOUND) ? "found" : (origin == CRATE_CAMP) ? "camp" : (origin == CRATE_RUBBLE) ? "rubble"
+         : (origin == CRATE_BROKEN) ? "broken" : "dropped";
 }
 
 bool EconomyCrateGround(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& at){
@@ -8067,6 +8537,52 @@ void Economy::LoseCoveredCrates(const ZoneState& z){
     }
 }
 
+/*
+    RUBBLE (stone_plan.md): which plots get a pile and how much, by a hash of the seed and the plot - a world always
+    has the same rubble, and plot order gives the ids. Only at the foot of a balcony's wall (the user's, 2026-10-15:
+    none on the rim, so the first stone waits for a winch). A pile lies RUBBLE_TOWARD of the way to its plot's nearest
+    higher corner, so it sits against the wall and still within its own plot's column. On a SEAM's foot (Deposits.h)
+    every plot gets one, of floatstone: its crystal fallen, the way to the seam before there is a mine. Islands are
+    left for the zeppelins.
+*/
+void Economy::PlaceRubble(const ZoneState& z){
+    const ChasmWorld& w = *state.world;
+    const Grid& g = *w.grid;
+    const GridPicker& p = *w.picker;
+    const Terrain& t = *w.terrain;
+    const uint32_t seed = g.settings.seed;
+    for (int v = 0; v < (int)g.fine.pos.size(); v++){
+        if (t.level[v] != TERRAIN_BALCONY || g.fine.f_boundary[v]){
+            continue;
+        }
+        int edge = -1;
+        float edge_d = 1e30f;
+        for (int i = 0; i < p.PlotQuadCount(v); i++){
+            const GridQuad& q = g.fine.quads[p.PlotQuadCorner(v,i) / 4];
+            for (int k = 0; k < 4; k++){
+                int c = q.v[k];
+                float d = (g.fine.pos[c] - g.fine.pos[v]).length();
+                if (t.steps[c] < t.steps[v] && (d < edge_d || (d == edge_d && c < edge))){
+                    edge_d = d;
+                    edge = c;
+                }
+            }
+        }
+        bool f_seam = w.deposits && w.deposits->SeamAt(v) >= 0;
+        if (edge < 0 || (!f_seam && (float)(Mix(seed ^ 0x72756231u,(uint32_t)v) % 10000u) >= RUBBLE_WALL_CHANCE * 10000.0f)){
+            continue;
+        }
+        vec2 at = g.fine.pos[v] + (g.fine.pos[edge] - g.fine.pos[v]) * RUBBLE_TOWARD;
+        if (!EconomyCrateGround(w,z,v,at)){
+            continue;
+        }
+        int lo = f_seam ? RUBBLE_FLOATSTONE_MIN : RUBBLE_WALL_STONE_MIN;
+        int hi = f_seam ? RUBBLE_FLOATSTONE_MAX : RUBBLE_WALL_STONE_MAX;
+        int amount = lo + (int)(Mix(seed ^ (f_seam ? 0x72756233u : 0x72756232u),(uint32_t)v) % (uint32_t)(hi - lo + 1));
+        AddToCrate(v,at,f_seam ? GOOD_FLOATSTONE : GOOD_STONE,amount,CRATE_RUBBLE,0);
+    }
+}
+
 bool Economy::SpawnCrate(int plot, int good, int amount, const ZoneState& z, std::string* why){
     auto refuse = [&](const char* reason){
         if (why){
@@ -8089,6 +8605,20 @@ bool Economy::SpawnCrate(int plot, int good, int amount, const ZoneState& z, std
     }
     AddToCrate(plot,w.grid->fine.pos[plot],good,amount,CRATE_FOUND,0);
     return true;
+}
+
+bool Economy::SetPickUp(uint32_t crate, bool f_on, std::string* why){
+    for (EconomyCrate& c : state.crates){
+        if (c.id == crate){
+            c.f_pick_up = f_on;
+            state.version++;
+            return true;
+        }
+    }
+    if (why){
+        *why = "no such crate";
+    }
+    return false;
 }
 
 const EconomyCrate* Economy::CrateById(uint32_t id) const{
@@ -8143,8 +8673,12 @@ vec2 Economy::SourcePoint(uint32_t id, int plot, const vec2& from) const{
     some store takes a load of - its whole load, with the room - and that he could walk on to that store from,
     the nearest by the straight line, the lower id on a tie: the first of the nearest few he can walk to. A
     crate another caretaker is already on his way to only while it holds more than that one's load.
+    `f_picked` (PICK UP, stone_plan.md): only the crates the player put PICK UP, wherever they lie - the order is the
+    player's, as a post is - though the store is one of his own settlement's still. And only within what he can walk
+    without water (the user's, 2026-10-15): the walk to it and on to that store, by the routes he would take, no
+    longer than ECONOMY_PICK_UP_WATER of a full water bar. A crate turned down for it is marked so for its card.
 */
-bool Economy::MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+bool Economy::MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_picked){
     const ChasmWorld& w = *state.world;
     //The nearest store that takes `amount` of `good` whole, by the straight line from `at` - its plot nearest
     //there - or -1.
@@ -8169,8 +8703,8 @@ bool Economy::MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     std::vector<std::pair<float,uint32_t>> found;
     for (const EconomyCrate& c : state.crates){
         uint32_t id = ECONOMY_STORE_CRATE | c.id;
-        if (!Ours(k,id)){
-            continue;       //SETTLEMENTS: a crate in another's, or in none
+        if (f_picked ? !c.f_pick_up : !Ours(k,id)){
+            continue;       //SETTLEMENTS: a crate in another's, or in none - unless it is picked up
         }
         int left = CarryTotal(c.stock);
         for (const EconomyWorker& o : state.workers){
@@ -8183,17 +8717,59 @@ bool Economy::MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         }
     }
     std::sort(found.begin(),found.end());
+    const float reach = ECONOMY_PICK_UP_WATER * (float)NEEDS_WATER_FULL / (float)CALENDAR_TICKS_PER_SECOND;
     for (size_t t = 0; t < found.size() && t < 4; t++){
-        const EconomyCrate* c = CrateById(EconomyCrateOfStore(found[t].second));
+        EconomyCrate* c = NULL;     //not CrateById's: its mark is set here
+        for (EconomyCrate& x : state.crates){
+            c = ((ECONOMY_STORE_CRATE | x.id) == found[t].second) ? &x : c;
+        }
         int good = -1;
+        int store = -1;
         for (int g = 0; g < GOOD_COUNT && good < 0; g++){
             int sp = (c->stock[g] > 0) ? store_plot(g,std::min(ECONOMY_LOAD,c->stock[g]),c->pos) : -1;
             if (sp >= 0 && CanWalk(z,walkers,c->pos,sp)){
                 good = g;
+                store = sp;
             }
         }
         if (good < 0){
             continue;
+        }
+        if (f_picked){
+            PickUpLook* seen = NULL;
+            for (PickUpLook& l : pick_up_looks){
+                seen = (l.crate == c->id && l.by == k.id) ? &l : seen;
+            }
+            bool f_far = false;
+            if (seen && seen->zones == z.version && seen->store == store && seen->from.x == k.pos.x && seen->from.y == k.pos.y){
+                f_far = seen->f_far;
+            }else{
+                EconomyWorker back;
+                back.pos = c->pos;
+                float there = WalkSeconds(k,z,walkers,c->plot,CrateStand(*c,k.pos));
+                float on = WalkSeconds(back,z,walkers,store,state.world->grid->fine.pos[store]);
+                f_far = there < 0.0f || on < 0.0f || there + on > reach;
+                if (!seen){
+                    if (pick_up_looks.size() >= 64){
+                        pick_up_looks.clear();
+                    }
+                    pick_up_looks.push_back(PickUpLook());
+                    seen = &pick_up_looks.back();
+                }
+                seen->crate = c->id;
+                seen->by = k.id;
+                seen->zones = z.version;
+                seen->store = store;
+                seen->from = k.pos;
+                seen->f_far = f_far;
+            }
+            if (c->f_too_far != f_far){
+                c->f_too_far = f_far;
+                state.version++;
+            }
+            if (f_far){
+                continue;
+            }
         }
         if (RouteTo(k,z,walkers,c->plot,CrateStand(*c,k.pos))){
             k.store = found[t].second;
@@ -8720,6 +9296,11 @@ EconomySaved EconomySaveState(const EconomyState& state){
             s.props.push_back(std::make_pair((int)i,(int)state.prop_state[i]));
         }
     }
+    for (size_t d = 0; d < state.dug.size(); d++){
+        if (state.dug[d] > 0){
+            s.dug.push_back(std::make_pair((int)d,state.dug[d]));
+        }
+    }
     //FORAGING: the plants that are not ripe and full, as a new map's all are.
     if (state.world && state.world->forest){
         const std::vector<PropInstance>& props = state.world->forest->props;
@@ -8769,6 +9350,8 @@ EconomySaved EconomySaveState(const EconomyState& state){
     s.zombies = state.zombies;
     s.next_zombie = state.next_zombie;
     s.arrows = state.arrows;
+    s.history = state.history;
+    s.f_history = true;
     return s;
 }
 
@@ -8795,6 +9378,11 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     for (const auto& st : saved.pantries){
         if (st.first < state.pantry.size()){
             state.pantry[st.first] = st.second;
+        }
+    }
+    for (const auto& dg : saved.dug){
+        if (dg.first >= 0 && dg.first < (int)state.dug.size()){
+            state.dug[dg.first] = dg.second;
         }
     }
     for (const auto& pr : saved.props){
@@ -8842,7 +9430,10 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
             state.ground_site[st.first] = st.second;
         }
     }
-    f_new_colony = false;       //a saved colony has had its supplies
+    //A saved colony has had its supplies - unless it was saved before its first tick, as a recording's start can be
+    //when a new game begins: that first tick is still to come, with its supplies, rubble and history. Its calendar
+    //is still at 0, and its journal has no line yet: the first tick writes the landing.
+    f_new_colony = calendar_tick == 0 && saved.history.journal.empty();
     state.heat.assign(std::max<size_t>(z.buildings.size(),1),HEAT_NONE);
     for (const auto& h : saved.heats){
         if (h.first < state.heat.size()){
@@ -8888,6 +9479,11 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     }
     state.arrows = saved.arrows;    //ARROWS in the air and come down, as they were
     Derive(z,walkers,false);
+    //A colony saved before its first tick (f_new_colony above): that tick follows the zones as a new colony's does - it
+    //is where the supplies land (FollowZones) - so it runs as the first tick of the game it was saved from did.
+    if (f_new_colony){
+        state.zones_version = 0xFFFFFFFFu;
+    }
     /*
         Land never settled (land_plan.md): a save from before land - its fields have no owner, its farmers work
         a field. The first tick settles it. Only such a save: a field with no owner is otherwise one nobody can
@@ -8897,6 +9493,13 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     for (const EconomyWorker& k : state.workers){
         f_resettle = f_resettle || (k.job == WORKER_JOB_FARMER
                                     && (k.building >= z.buildings.size() || z.buildings[k.building].kind == ZONE_KIND_FIELD));
+    }
+    //THE HISTORY as saved - today's row too, so a load mid-day counts on from where it was. A save from before it has
+    //none: it begins here, with what the colony is now.
+    if (saved.f_history){
+        state.history = saved.history;
+    }else{
+        BeginHistory(calendar_tick);
     }
     state.felled_version++;
     state.version++;

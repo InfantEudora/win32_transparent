@@ -216,17 +216,42 @@ void ApplicationChasm::PressTimeButton(int action){
         PAUSE (two bars; lit, with the arrow that starts the clock again, while paused) and SPEED (one
         chevron per multiple of normal; a press goes to the next). Under it the year as a bar of its four
         seasons, the part gone bright, with a mark at today; and under the day a thin line filling as it passes.
-      - TOP MIDDLE, the colony's stores.
+      - TOP MIDDLE, the colony's stores - and a press on them opens the Statistics page (ApplicationChasmStats.cpp).
     Both take the mouse where they are drawn (OverlayHit), in every mode: a press on them presses their
     buttons, and paints or selects nothing beneath.
 
     Sized off the window's height, so it is the same part of the picture at any size.
 */
 void ApplicationChasm::DrawOverlay(void){
+    //Counted for a load waiting behind "Loading" (RunBusy): a frame has gone by, drawn or not.
+    overlay_frames++;
     if (!overlay || !overlay->IsReady() || !main_window){
         return;
     }
     float s = std::max(0.5f,(float)main_window->height / 810.0f);
+    //The title (ApplicationChasmTitle.cpp): its own picture, none of the game's HUD.
+    if (TitleShowing()){
+        DrawTitle(s);
+        DrawAsk(s);
+        DrawBusyAndNote(s);
+        return;
+    }
+    //The Statistics page (ApplicationChasmStats.cpp): over the world without the HUD - nothing of the HUD can be pressed
+    //while the page has the input, and its edges would only show round the page's. The pause menu likewise
+    //(ApplicationChasmMenu.cpp), under the page when the page was opened from it.
+    if (f_stats_open.load() || f_pause_open.load()){
+        overlay_hits_drawing.clear();
+        if (f_stats_open.load()){
+            DrawStats(s);
+        }else{
+            DrawPause(s);
+        }
+        DrawAsk(s);
+        DrawBusyAndNote(s);
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        overlay_hits.swap(overlay_hits_drawing);
+        return;
+    }
     CalendarDate d = CalendarDateOf(calendar_shown.load());
     bool f_paused = main_scene && main_scene->IsPhysicsPaused();
     //What the mouse can press on the overlay is gathered while drawing and handed to UpdatePick at the end.
@@ -391,8 +416,9 @@ void ApplicationChasm::DrawOverlay(void){
         const float size = 16.0f * s;
         const float gap = 22.0f * s;
         const float side = 14.0f * s;
+        const float glyph_w = 14.0f * s;        //THE STATISTICS' mark at the right end: a press on the bar opens them
         std::vector<float> widths;
-        float total = side * 2.0f + gap * (float)(items.size() - 1);
+        float total = side * 2.0f + gap * (float)items.size() + glyph_w;
         for (const BarItem& it : items){
             widths.push_back(overlay->MeasureText(it.text.c_str(),size).x);
             total += widths.back();
@@ -400,8 +426,11 @@ void ApplicationChasm::DrawOverlay(void){
         float cx = (float)main_window->width * 0.5f;
         vec2 q0(cx - total * 0.5f,12.0f * s);
         vec2 q1(cx + total * 0.5f,q0.y + 30.0f * s);
+        float mx = (float)overlay_mouse_x.load();
+        float my = (float)overlay_mouse_y.load();
+        bool f_bar_hover = mx >= q0.x && mx <= q1.x && my >= q0.y && my <= q1.y;
         overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
-        overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
+        overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_STATS,0});
         float x = q0.x + side;
         float food_x = -1.0f;
         float food_w = 0.0f;
@@ -413,9 +442,15 @@ void ApplicationChasm::DrawOverlay(void){
             }
             x += widths[i] + gap;
         }
+        //The mark: three bars rising, brighter while the mouse is on the bar.
+        for (int b = 0; b < 3; b++){
+            float bx = x + b * (glyph_w / 3.0f);
+            float bh = (5.0f + 4.0f * b) * s;
+            float base = q0.y + 21.0f * s;
+            overlay->AddRect(vec2(bx,base - bh),vec2(bx + glyph_w / 3.0f - 1.5f * s,base),1.0f * s,
+                             f_bar_hover ? HUD_TEXT : HUD_TEXT_DIM);
+        }
         //Hovering FOOD: its foods, each in its colour, under the bar - drawn last, over a card.
-        float mx = (float)overlay_mouse_x.load();
-        float my = (float)overlay_mouse_y.load();
         if (food_x >= 0.0f && mx >= food_x - gap * 0.5f && mx <= food_x + food_w + gap * 0.5f && my >= q0.y && my <= q1.y){
             for (int g : HudGoodsOrder()){
                 if (GoodCategory(g) == GOOD_CATEGORY_FOOD){
@@ -458,6 +493,9 @@ void ApplicationChasm::DrawOverlay(void){
             overlay->AddText(food_tip[i].second.c_str(),vec2(sw.x + 15.0f * s,base),text_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
         }
     }
+    DrawRecording(s);   //REC, or the replay's bar (ApplicationChasmRecord.cpp)
+    DrawAsk(s);     //a question over the game, over everything (ApplicationChasmTitle.cpp)
+    DrawBusyAndNote(s);
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         overlay_hits.swap(overlay_hits_drawing);
@@ -484,7 +522,7 @@ float ApplicationChasm::DrawBuildBar(float s){
         {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
         {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
         {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
-        {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{NULL,NULL,-1},{NULL,NULL,-1},
+        {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
         {"3","ERASE",CHASM_TOOL_ERASE}};
     const int count = (int)(sizeof(bar) / sizeof(bar[0]));
     const int columns = 3;
@@ -599,18 +637,31 @@ float ApplicationChasm::DrawBuildBar(float s){
             refusal_seconds = 3.0f;
         }
         /*
-            The rules' NOTICES (Economy.h; defence_plan.md, "Scouting"): a scout with nothing to take, an ordered man's
-            pack run out - the newest since the last look, in amber and for as long as a death, since it comes from
-            play rather than a click. Only one of the last half day: a load brings none along, but a replay's start can.
+            The rules' NOTICES (Economy.h's events; defence_plan.md, "Scouting"): a scout with nothing to take, an ordered
+            man's pack run out, a floatstone seam seen (stone_plan.md) - the newest since the last look, in amber and for as
+            long as a death, since it comes from play rather than a click. Only one of the last half day: a load brings none
+            along, but a replay's start can. The other events in the ring are not told here.
         */
         std::shared_ptr<const EconomyState> ne = GetEconomy();
-        if (ne && (ne->world.get() != notices_world || ne->notices_made < notices_seen)){
+        if (ne && (ne->world.get() != notices_world || ne->events_made < notices_seen)){
             notices_world = ne->world.get();
-            notices_seen = ne->notices_made;
+            notices_seen = ne->events_made;
         }
-        if (ne && ne->notices_made > notices_seen && !ne->notices.empty()){
-            notices_seen = ne->notices_made;
-            const EconomyNotice& n = ne->notices.back();
+        const EconomyEvent* newest = NULL;
+        if (ne && ne->events_made > notices_seen){
+            size_t fresh = std::min((size_t)(ne->events_made - notices_seen),ne->events.size());
+            for (size_t i = ne->events.size() - fresh; i < ne->events.size(); i++){
+                int kind = ne->events[i].kind;
+                //An area found is told only when it is the first of its kind (areas_plan.md, the user's): the first
+                //waterfall, not the second.
+                bool f_notice = kind == EVENT_NOTHING_TO_TAKE || kind == EVENT_RAN_OUT || kind == EVENT_NO_TENT
+                                || kind == EVENT_SEAM_SEEN || (kind == EVENT_DISCOVERED && (ne->events[i].what & 1));
+                newest = f_notice ? &ne->events[i] : newest;
+            }
+            notices_seen = ne->events_made;
+        }
+        if (newest){
+            const EconomyEvent& n = *newest;
             std::string name = "someone";
             for (const EconomyWorker& k : ne->workers){
                 name = (k.id == n.person) ? EconomyPersonName(k) : name;
@@ -620,8 +671,12 @@ float ApplicationChasm::DrawBuildBar(float s){
             }
             bool f_water = (n.what & GOOD_BIT(GOOD_WATER)) != 0;
             bool f_food = (n.what & GOODS_EATEN) != 0;
-            std::string told = (n.kind == NOTICE_NOTHING_TO_TAKE) ? "no food or water for " + name + " to take"
-                             : (n.kind == NOTICE_NO_TENT) ? "no tent to spare for " + name + " to take"
+            const AreaData* areas = ne->world ? ne->world->areas.get() : nullptr;
+            int area_kind = (areas && n.amount >= 0 && n.amount < (int)areas->areas.size()) ? areas->areas[(size_t)n.amount].kind : -1;
+            std::string told = (n.kind == EVENT_DISCOVERED) ? name + " has found " + AreaKindTold(area_kind)
+                             : (n.kind == EVENT_NOTHING_TO_TAKE) ? "no food or water for " + name + " to take"
+                             : (n.kind == EVENT_NO_TENT) ? "no tent to spare for " + name + " to take"
+                             : (n.kind == EVENT_SEAM_SEEN) ? name + " has seen floatstone in a balcony's wall"
                              : name + " has run out of " + ((f_water && f_food) ? "food and water" : f_water ? "water" : "food");
             if (ne->tick < n.tick + CALENDAR_DAY_TICKS / 2){
                 refusal_shown = told;
@@ -767,9 +822,10 @@ float ApplicationChasm::DrawJobsOverview(float s){
     struct Row{ const char* name; int working; int places; bool f_places; };
     std::vector<Row> rows;
     static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER,
-                                WORKER_JOB_PICKER,WORKER_JOB_ARCHER,WORKER_JOB_GUARD,WORKER_JOB_ROPEMAKER};
+                                WORKER_JOB_PICKER,WORKER_JOB_ARCHER,WORKER_JOB_GUARD,WORKER_JOB_ROPEMAKER,
+                                WORKER_JOB_STONECUTTER,WORKER_JOB_MINER};
     static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","PICKERS","ARCHERS","GUARDS",
-                                  "ROPEMAKERS"};
+                                  "ROPEMAKERS","STONECUTTERS","MINERS"};
     static_assert(sizeof(shown) / sizeof(shown[0]) == sizeof(names) / sizeof(names[0]),"a name for every job shown");
     for (int i = 0; i < (int)(sizeof(shown) / sizeof(shown[0])); i++){
         const EconomyJobCount& c = counts[shown[i]];

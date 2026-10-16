@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: ec35e2fd-7f50-4523-9942-7c0c019f9b3f
-  modified: 2026-10-12T20:08:23.316Z
+  modified: 2026-10-14T17:00:07.144Z
 ---
 
 Decided by the user 2026-10-12 ("all points are perfect") and BUILT the same day (apps/chasm/docs/foraging_plan.md,
@@ -24,7 +24,8 @@ committed GLB came from an earlier session state. The collection exporter also u
 So the fruit meshes were exported alone and MERGED into the committed GLB (script, clips byte-identical). Before
 re-exporting that .blend, check its clips against the GLB. blender_chasm_props.py --add now exports with the
 remembered settings and no longer rewrites images[0]'s path (it was a packed Downloads palette).
+2026-10-14: Idle is back on male_armature in the .blend, but the file still differs from the GLB (woman's rig + mesh,
+Idle keys), so a whole export still changes shipped content; `--add --merge` appends only new props ([[chasm-stone-props]]).
 
-**Why:** a new outpost had no food until a field ripened. **How to apply:** fruit tuning is the user's call; any new
-prop for chasm_props.glb faces the Idle trap until the user fixes the .blend. Related: [[chasm-settlements]],
-[[chasm-game-plan]].
+**Why:** a new outpost had no food until a field ripened. **How to apply:** fruit tuning is the user's call; add new
+props for chasm_props.glb with `--add --merge`. Related: [[chasm-settlements]], [[chasm-game-plan]].

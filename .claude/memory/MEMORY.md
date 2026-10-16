@@ -75,7 +75,7 @@
 - [Coordinator + worker windows](coordinator_worker_windows.md) — user prefers briefing blank windows via ListAgents/SendMessage over subagents
 - [Archer model scale](archer_model_scale.md) — model_scale ~1.82, not 2.02; measure before sizing rules off glb pieces
 - [Prop atlas plan](prop_atlas_plan.md) — 11 Tripo textures -> one atlas; analysis tool built; swatch + pack + bake next
-- [Ogg Vorbis settings](ogg_vorbis_settings.md) — archer audio ships .ogg (q-1, 32 kHz cap); core/AudioDecode at load
+- [Ogg Vorbis settings](ogg_vorbis_settings.md) — games ship .ogg (q-1, 32 kHz cap); core/AudioDecode at load; new SFX: `python tools/sound_ogg.py <app>`
 - [ReadFileToString is disk-only](readfiletostring_disk_only.md) — misses baked assets in the ship exe; read disk then LoadFile
 - [Spider leg shape keys](spider_leg_shape_keys.md) — tools/blender_spider_legs.py tetrapod keys; Blender-scripting traps
 - [Blend edit in place OK](blend_edit_in_place_ok.md) — user keeps .blend backups; separate file still wise while Blender has it open
@@ -105,9 +105,16 @@
 - [Chasm settlements](chasm_settlements.md) — 2026-10-11: territories by walk, reach by beds, any home keeps one; founding by tent + settle here BUILT; partners rejoin, lone house pairs, hut replaces camp woodcutter; children go with household, babies carried, orphans squeeze in (2026-10-12); one camp per colony
 - [Chasm stop work + ice](chasm_stop_work_and_ice.md) — 2026-10-12: workplaces stoppable (f_stopped); collector takes over camp drawer; posted cross ice with thaw warnings
 - [Chasm woodcutting](chasm_woodcutting.md) — only woodcutters fell (roads/walls/sites wait); camp 1 farmer + 1 woodcutter; logs 2/4/5; hut room by area; built 2026-10-11
-- [Chasm foraging](chasm_foraging.md) — BUILT 2026-10-12: fruit from bushes + oaks, camp picker, posted pick/draw menu; exporting chasm_props.blend drops Idle
+- [Chasm foraging](chasm_foraging.md) — BUILT 2026-10-12: fruit from bushes + oaks, camp picker, posted pick/draw menu; .blend differs from the glb, add props with --add --merge
 - [ImGui input race + crash reports](imgui_input_race_crash_report.md) — the rare i<Size assert was WndProc vs render thread on InputEventsQueue, FIXED 2026-10-12 (lock in WindowImGui.cpp); debug builds write build/crash_*.txt
-- [Chasm waterfalls](chasm_waterfalls.md) — 2026-10-12 brink + welded sheet + stage 2; camera stays above rim, no shader hot-reload, river line runs 10 past lip
+- [Chasm waterfalls](chasm_waterfalls.md) — 2026-10-12 brink + welded sheet + stage 2; camera dips under the rim only over balconies (since 2026-10-14), no shader hot-reload, river line runs 10 past lip
 - [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag: chasm as cracked-mud plates (pull-apart, slumps, islands); not ported, verdict pending
 - [Chasm zombies plan](chasm_zombies_plan.md) — user decided 2026-10-14; steps 1, 1b, 2, 3 BUILT (drop+chase, spacing, timed meals+fight, archers/guards shoot in the rules); walls break next
 - [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only, llm app only; step 0 done, 3B invents in calm states
+- [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble crates, PICK UP + water reach, stonecutter + boulders, deposits, the mine on O); what stone buys is later
+- [Chasm stone props](chasm_stone_props.md) — 2026-10-14: 10 stone props merged into chasm_props.glb (--add --merge); floatstone = palette row 10 PAL_MINERALS; portal faces +Z
+- [Chasm sound plan](chasm_sound_plan.md) — step 2 BUILT 2026-10-16: USE_SOUND, assets/cues/chasm.json, per-pass cues on the physics thread, ground listener in core, chasm_sound; work blows on per-person clocks
+- [Chasm statistics](chasm_statistics.md) — v1 BUILT + confirmed 2026-10-16: EconomyEvent shared with sound, saved journal + day rows, Tab page, chasm_stats; events in wiki/events.md; camp pantries left out of NEEDS ATTENTION on purpose
+- [Chasm demo menus](chasm_demo_menus.md) — demo_plan steps 1, 2, 4, 5 built 2026-10-16 (menus, saves, autosave, always recording, bug reports, replays); four starts stay placeholders, user edits by hand
+- [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — chasm_load in a test instance overwrites the user's untracked autosave slots; back them up first
+- [Chasm areas plan](chasm_areas_plan.md) — BUILT 2026-10-16: rivers/falls/biomes/plateau/forest found when first seen (EVENT_DISCOVERED), debug overlay, water loops faint under the clouds

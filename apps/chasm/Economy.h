@@ -284,6 +284,34 @@ struct PropInstance;
     a worker's `store` then names the crate (ECONOMY_STORE_CRATE), and he stands beside it to take. Nothing is
     ever delivered to one. MOVED by the caretakers - the builders, never the jobless - as the LAST of their
     errands, a load at a time, to a store that takes it whole (MoveCrate).
+    RUBBLE (docs/stone_plan.md) is a crate of STONE, CRATE_RUBBLE, so all of the above is true of it too: the
+    colony's first stone, fallen from the chasm's walls. A new colony's first tick lays it (PlaceRubble), from
+    the seed: at the FOOT of a balcony's wall, never on the rim, each pile pushed toward the wall within its plot -
+    and along a floatstone SEAM's foot, piles of its crystal, FLOATSTONE (EconomyCrateCrystal). Only on open
+    ground; a save keeps what is left of it.
+    PICK UP (stone_plan.md), the player's, on any crate: the builders move it before building - after the towers and
+    provisions - and from anywhere, an order being the player's; to a store of their own settlement as ever. But
+    not past what he can walk without water: a crate whose walk there and on to the store is longer than
+    ECONOMY_PICK_UP_WATER of a full water bar is turned down, on the walk alone (the user's, 2026-10-15), and says so.
+
+    --- THE STONECUTTER (docs/stone_plan.md) ---------------------------------------------------------
+    A STONECUTTER'S HUT (ZONE_KIND_STONECUTTER) is a woodcutter's hut for stone, built with wood and stone: one place,
+    a STONECUTTER (WORKER_JOB_STONECUTTER, by strength). From home, while a store of his has room for stone, within
+    ECONOMY_STONECUTTER_REACH's walk of his hut (FindRock): a BOULDER on a site of his settlement's first - a site waits
+    for its boulders as for its trees (SiteTreesStanding) - then RUBBLE lying, then the nearest ROCK. A ROCK is a prop of
+    the forest (ForestIsRock): STANDING, or broken and CLEARED (PROP_STATE_STUMP's value). Broken (BreakRock), at
+    ECONOMY_BREAK_SECONDS a stone of it at his pace, its stone (ForestRockStone) is left where it stood as rubble - a
+    crate, so taking it is the crates' - and he lifts a load of it to a store there and then. Only he breaks a rock;
+    one built over is gone, as a tree is.
+
+    --- THE MINE (docs/stone_plan.md, step 5) ---------------------------------------------------------
+    A MINE (ZONE_KIND_MINE) is one plot on a DEPOSIT (Deposits.h; the zones' MineIsBuildable): a floatstone seam's foot,
+    the mountain's foot, an outcrop - built with wood and ECONOMY_MINE_STONE stone. One place, a MINER
+    (WORKER_JOB_MINER, by strength). From home, while its deposit has some left and a store of his has room for a load
+    of what it gives, he walks to the mine (GoDig), digs a load - ECONOMY_MINE_SECONDS a unit at his pace, at most
+    what is left - and carries it to that store, up a winch from a balcony as anyone would. What has been DUG from each
+    deposit (`dug`) is saved and hashed. A seam holds DEPOSIT_SEAM_FLOATSTONE: dug out, its mines have no place - its
+    miners go free - and its band in the wall is rock again. The mountain and the outcrops never run out.
 
     --- ROPE (docs/goods_plan.md) -------------------------------------------------------------------
     A ROPEWALK (ZONE_KIND_ROPEWALK) works from ECONOMY_ROPEWALK_MIN_PLOTS standing plots: its one place, a
@@ -394,6 +422,16 @@ struct PropInstance;
 #define ECONOMY_LOG_PAIR_REACH      12.0f   //...within this of him where he picked the first up: about six plots
 #define ECONOMY_FELL_SECONDS        6.0f
 #define ECONOMY_PICK_SECONDS        1.0f    //picking up a log, putting a load down
+//THE STONECUTTER (stone_plan.md, current tuning): how far from his hut he breaks rocks, how long a stone of a rock
+//takes to break at strength 5 - a boulder is the longest work - and the stone a plot-storey of his hut takes.
+#define ECONOMY_STONECUTTER_REACH   75.0f
+#define ECONOMY_BREAK_SECONDS       2.0f
+#define ECONOMY_STONECUTTER_STONE   5
+//THE MINE (stone_plan.md step 5, current tuning): how long a stone - or a floatstone - takes to dig at strength 5, and
+//the stone a mine is built with besides its wood.
+#define ECONOMY_MINE_SECONDS        8.0f
+#define ECONOMY_MINE_STONE          15
+#define ECONOMY_MINE_FACE           0.3f    //how far toward the rock from his mine's point the miner stands to dig
 #define ECONOMY_WATER_SECONDS       4.0f    //a collector fills one unit in this long
 #define ECONOMY_WATER_ROOM          6.0f    //and holds, uncarried, a load and this per unit of its floor area past...
 #define ECONOMY_WATER_PUMP          1.5f    //...the floor its pump takes (the user's, 2026-10-11, as a woodcutter's hut)
@@ -544,7 +582,9 @@ const char* SkillName(int skill);
 #define WORKER_JOB_GUARD        5       //on a guard tower: posted there, living on its stock (defence_plan.md)
 #define WORKER_JOB_ROPEMAKER    6       //at a ropewalk: rope from hemp (goods_plan.md)
 #define WORKER_JOB_PICKER       7       //a camp's own: fruit from the wild (foraging_plan.md)
-#define WORKER_JOB_COUNT        8
+#define WORKER_JOB_STONECUTTER  8       //at a stonecutter's hut: breaks rocks for stone (stone_plan.md)
+#define WORKER_JOB_MINER        9       //at a mine: digs its deposit, stone or floatstone (stone_plan.md step 5)
+#define WORKER_JOB_COUNT        10
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
@@ -780,8 +820,25 @@ struct EconomyField{
 #define CRATE_DROPPED           0       //a load someone put down
 #define CRATE_FOUND             1       //lying on the map - a debug spawn for now; finds from the seed later
 #define CRATE_CAMP              2       //what a camp held, left where it stood when its last tent went (settlements_plan.md)
+#define CRATE_RUBBLE            3       //stone fallen from the chasm's walls, laid with a new colony (stone_plan.md)
+#define CRATE_BROKEN            4       //...and a rock's stone, left where a stonecutter broke it - rubble too
+inline bool EconomyCrateRubble(int origin){ return origin == CRATE_RUBBLE || origin == CRATE_BROKEN; }
 #define ECONOMY_CRATE_RINGS     6       //rings of plots round him searched for open ground to put a load down on: past a camp's tents
+/*
+    RUBBLE (stone_plan.md, current tuning): at the foot of a balcony's wall only, never on the rim (the user's,
+    2026-10-15) - the share of its plots with a pile and the stone in one; on a floatstone SEAM's foot (Deposits.h)
+    every plot has one, of the seam's crystal instead; and how far a pile lies toward its wall, as a share of the way.
+*/
+#define RUBBLE_WALL_CHANCE      0.33f
+#define RUBBLE_WALL_STONE_MIN   3
+#define RUBBLE_WALL_STONE_MAX   6
+#define RUBBLE_FLOATSTONE_MIN   1
+#define RUBBLE_FLOATSTONE_MAX   3
+#define RUBBLE_TOWARD           0.3f
 #define ECONOMY_CRATE_STAND     0.5f    //a crate is taken from beside it: this far short of it, on the side he comes from
+//PICK UP's reach: the walk there and on to the store, as a share of a full water bar (NEEDS_WATER_FULL) - a wide margin
+//for the water he set out with. Past it, nobody goes: one sent days out died of thirst on the way back (stone_plan.md).
+#define ECONOMY_PICK_UP_WATER   0.5f
 
 //A CRATE (above): what lies where, and where it came from.
 struct EconomyCrate{
@@ -792,23 +849,102 @@ struct EconomyCrate{
     int origin = CRATE_DROPPED;
     uint32_t by = 0;            //who put it down, a person's id - 0 for a find
     uint64_t tick = 0;          //the calendar tick it was put down or placed
+    bool f_pick_up = false;     //PICK UP: the builders fetch it before building, from anywhere (stone_plan.md)
+    //...and turned down at a builder's last look: too far to walk without water (ECONOMY_PICK_UP_WATER). For the card
+    //only - never saved or hashed, nothing in the rules reads it - so after a load it waits for the next look.
+    bool f_too_far = false;
 };
+//Rubble holding floatstone: a seam's crystal fallen at its foot, drawn and named as crystal, not stone.
+inline bool EconomyCrateCrystal(const EconomyCrate& c){
+    return EconomyCrateRubble(c.origin) && c.stock[GOOD_FLOATSTONE] > 0;
+}
 
 /*
-    A NOTICE (defence_plan.md, "Scouting, provisioned first"): something the player is told at the bottom of the
-    screen, as a death is - made by the rules, so a replay makes the same ones. Never saved or hashed: after a load
-    nothing old is told again, and telling changes nothing in the colony.
+    AN EVENT (sound_plan.md, "Game events: one record, many readers"; statistics_plan.md): a moment in the colony,
+    made ONCE by the rules at the moment it happens (Economy::Event), so a replay makes the same ones on the same
+    ticks. Everything that tells of it reads this one record - the notice line, the statistics' journal, and the
+    sound to come - so none of them can disagree with another.
+
+    The last ECONOMY_EVENTS_KEPT are kept for TELLING, with a running count, never saved or hashed: after a load
+    nothing old is told again, and telling changes nothing in the colony. A reader keeps its own count of what it
+    has seen. What has to outlive a load is the HISTORY (below), which keeps the kinds it needs as they are made.
+    Never renumber: the journal saves these.
 */
-#define NOTICE_NOTHING_TO_TAKE  0       //told to gather, and no food or water to be had anywhere he can get to
-#define NOTICE_RAN_OUT          1       //an ordered man's pack out of water or food - `what` says which - or both
-#define NOTICE_NO_TENT          2       //told to take a tent, and no camp he can get to has one to spare
-#define ECONOMY_NOTICES_KEPT    8       //the last few, for the view to find the new ones among
-struct EconomyNotice{
+#define EVENT_NOTHING_TO_TAKE   0       //told to gather, and no food or water to be had anywhere he can get to
+#define EVENT_RAN_OUT           1       //an ordered man's pack out of water or food - `what` says which - or both
+#define EVENT_NO_TENT           2       //told to take a tent, and no camp he can get to has one to spare
+#define EVENT_SEAM_SEEN         3       //the first to see a floatstone seam in a balcony's wall (stone_plan.md step 4)
+#define EVENT_BORN              4       //`person` born, at `building` - his family's home
+#define EVENT_DIED              5       //`person` died; `amount` the cause (NEEDS_DIED_*)
+#define EVENT_TREE_FELLED       6       //`person` felled a tree, prop `amount`
+#define EVENT_ROCK_BROKEN       7       //`person` broke a rock, prop `amount` (stone_plan.md)
+#define EVENT_STOREY_RAISED     8       //a storey of `building` stands on `plot`; `amount` its kind
+#define EVENT_BUILDING_FINISHED 9       //`building` stands whole for the first time - a field's cells all built; `amount` its kind
+#define EVENT_HARVEST           10      //field `building` harvested by `person`: `amount` of the good in `what`
+#define EVENT_SETTLED           11      //a settlement founded, its camp `building`: a tent pitched outside every one by
+                                        //`person`, or a new colony's settlers landing (person 0, `amount` of them)
+#define EVENT_DISCOVERED        12      //`person` the first to see an area (areas_plan.md): `amount` the world's area,
+                                        //`pos` where he saw it, `what` 1 when it is the first of its kind
+#define EVENT_COUNT             13
+#define ECONOMY_EVENTS_KEPT     64      //the last few, for each reader to find the new ones among
+struct EconomyEvent{
     uint64_t tick = 0;          //the calendar's
-    uint32_t person = 0;
-    int kind = NOTICE_NOTHING_TO_TAKE;
-    GoodsMask what = 0;         //NOTICE_RAN_OUT: GOOD_BIT(GOOD_WATER), GOODS_EATEN, or both
+    int kind = EVENT_NOTHING_TO_TAKE;
+    uint32_t person = 0;        //who, 0 nobody
+    uint32_t building = 0;      //which, 0 none
+    int plot = -1;              //where, -1 nowhere in particular: for a sound's place, and the view's glide to it
+    vec2 pos;                   //...and where on it (x, world z)
+    GoodsMask what = 0;         //EVENT_RAN_OUT: GOOD_BIT(GOOD_WATER), GOODS_EATEN, or both; EVENT_HARVEST its good
+    int amount = 0;             //what the kind says
 };
+const char* EconomyEventName(int kind);    //"born", "tree_felled": the signal a cue table sees, and the tools' name
+int EconomyEventByName(const std::string& name);    //...and back, -1 for none
+
+/*
+    THE HISTORY (statistics_plan.md): what the colony did, kept by the rules - made in the tick, so a replay makes
+    the same one, and SAVED, so a load shows the same statistics as were saved. Two parts:
+      - THE JOURNAL: every event of the kinds worth remembering one by one (EconomyJournaled), in the order made -
+        written by Economy::Event itself, so the journal and the telling cannot disagree;
+      - THE LEDGER: a row a day. The levels at its end - the people by stage and every good the colony has, wherever
+        it lies (EconomyDayLevels) - and what happened too often to remember one by one, counted: trees
+        felled, rocks broken, storeys raised. A day closes on the first tick of the next, before anything of that
+        tick has happened, so a row's people are its births and deaths on from the row before, exactly.
+    Totals are worked out from these when shown, never kept beside them, so they cannot disagree either. Nothing
+    is folded away: a year is CALENDAR_SEASONS * CALENDAR_DAYS_PER_SEASON rows. Hashed as a trace part of its own
+    ("history"), its tail only - it is only ever added to.
+*/
+#define ECONOMY_STAGES          4       //LIFE_BABY .. LIFE_ADULT: a ledger row's people
+struct EconomyDay{
+    int day = 0;                                //the calendar's day (tick / CALENDAR_DAY_TICKS)
+    std::array<int,ECONOMY_STAGES> people = {}; //at its end, by stage
+    std::array<int,GOOD_COUNT> held = {};       //...and all of each good the colony has
+    int felled = 0;                             //over it: EVENT_TREE_FELLED
+    int broken = 0;                             //EVENT_ROCK_BROKEN
+    int storeys = 0;                            //EVENT_STOREY_RAISED
+};
+struct EconomyHistory{
+    /*
+        Where it begins: a new colony's first tick, or the load of a save from before the history - which has none,
+        so it starts there. `start` holds the levels then (its counts 0); `felled_from` and `broken_from` the trees
+        down and rocks broken by then, which is what lets the check count the felled against the forest.
+    */
+    uint64_t from = 0;
+    EconomyDay start;
+    int felled_from = 0;
+    int broken_from = 0;
+    std::vector<EconomyEvent> journal;          //in the order made
+    std::vector<EconomyDay> days;               //THE LEDGER, a row a day closed, oldest first
+    EconomyDay today;                           //counting since the day began; its levels filled as it closes
+};
+//The kinds the journal keeps, and the kinds a ledger row counts.
+bool EconomyJournaled(int kind);
+bool EconomyCounted(int kind);
+//The levels a ledger row holds - the people by stage at `tick`, every good the colony has: gathered, not what lies
+//out there as rubble or a find - from the state as it stands.
+struct EconomyState;
+void EconomyDayLevels(const EconomyState& e, uint64_t tick, EconomyDay& row);
+//The props down, as the forest's state stands: the rocks broken, and the rest felled - a log or a stump.
+void EconomyForestCleared(const EconomyState& e, int& felled, int& broken);
 
 /*
     ZOMBIES (docs/zombies_plan.md, step 1): dropped by the debug tools for now. A zombie goes for PEOPLE ONLY: the
@@ -959,6 +1095,7 @@ struct EconomyState{
     std::vector<std::array<int,GOOD_COUNT>> stock;     //by building id - a camp's: its SUPPLIES
     std::vector<std::array<int,GOOD_COUNT>> pantry;    //by building id: a camp's PANTRY, its families' own (STORES)
     std::vector<uint8_t> prop_state;                   //by prop index (ForestData::props)
+    std::vector<int> dug;                               //THE MINE: by deposit (Deposits.h), what has been dug out of it
     std::vector<uint8_t> fruit;                         //...a plant's fruit on it (FORAGING), FORAGE_GONE built over; 0 any other prop
     std::vector<uint8_t> regrow;                        //...and an emptied plant's dawns of growing weather since
     std::vector<EconomyWorker> workers;                 //THE PEOPLE, in id order
@@ -973,8 +1110,12 @@ struct EconomyState{
     std::vector<int> guards;                            //by building id: a tower's GUARD COUNT (POSTS, step 8), -1 not a tower
     std::array<int,GOOD_COUNT> kept = {};               //by good: the colony's KEPT number of a made good (STOCK KEPT)
     std::array<int,GOOD_COUNT> ordered = {};            //...and an order's level for the stores, 0 none - cleared once reached
-    std::vector<EconomyNotice> notices;                 //NOTICES: the last ECONOMY_NOTICES_KEPT, oldest first - not saved
-    uint32_t notices_made = 0;                          //...and how many since the load: the view tells the ones it has not
+    std::vector<EconomyEvent> events;                   //EVENTS: the last ECONOMY_EVENTS_KEPT, oldest first - not saved
+    uint32_t events_made = 0;                           //...and how many since the load: each reader tells the ones it has not
+    //...and of each kind: felled trees soon push a scout's notice out of the ring, so a reader that looks seldom (a
+    //tool) can still tell how many of a rare kind it missed.
+    std::array<uint32_t,EVENT_COUNT> events_by_kind = {};
+    EconomyHistory history;                             //THE HISTORY: the journal and the ledger - saved
     std::vector<EconomyZombie> zombies;                 //ZOMBIES, in id order
     uint32_t next_zombie = 1;
     std::vector<EconomyArrow> arrows;                   //ARROWS, in the order loosed
@@ -1111,6 +1252,7 @@ struct EconomySaved{
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> stocks;    //non-empty ones only
     std::vector<std::pair<uint32_t,std::array<int,GOOD_COUNT>>> pantries;   //camps' (STORES), non-empty ones only
     std::vector<std::pair<int,int>> props;              //felled props: index, state
+    std::vector<std::pair<int,int>> dug;                //THE MINE: deposits dug from - deposit, how much
     std::vector<std::array<int,3>> plants;              //plants not ripe and full (FORAGING): index, fruit, regrow
     std::vector<EconomyWorker> workers;
     std::vector<EconomyField> fields;
@@ -1128,6 +1270,8 @@ struct EconomySaved{
     uint32_t next_zombie = 1;
     std::vector<EconomyArrow> arrows;
     bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
+    EconomyHistory history;
+    bool f_history = false;             //...a save from before the history has none: it begins at the load
 };
 
 class Economy{
@@ -1226,12 +1370,27 @@ public:
         between ticks, like SetNeeds. False, and `why` says it, on ground a crate may not lie on.
     */
     bool SpawnCrate(int plot, int good, int amount, const ZoneState& z, std::string* why);
+    //PICK UP (CHASM_CMD_PICK_UP, stone_plan.md): crate `crate` fetched first by the builders, or back in the queue.
+    //False, and `why` says it, for no such crate.
+    bool SetPickUp(uint32_t crate, bool f_on, std::string* why);
     /*
         ZOMBIES dropped by the debug tools (CHASM_CMD_ZOMBIE, zombies_plan.md): `count` of them on `plot`, spread out
         from its point; `count` 0 takes every zombie off the map. Applied between ticks, like SpawnCrate. False, and
         `why` says it, on ground a zombie may not stand on: the water, the mountain, a building or a wall.
     */
     bool SpawnZombies(int plot, int count, const ZoneState& z, std::string* why);
+    //A SEAM SEEN (EVENT_SEAM_SEEN): told by the app's exploration, which is what knows a seam has come into sight.
+    void SeamSeen(uint32_t person){ Notice(EVENT_SEAM_SEEN,person,GOOD_BIT(GOOD_FLOATSTONE)); }
+    //AN AREA DISCOVERED (EVENT_DISCOVERED): told by the app's exploration too, which is what knows it came into sight.
+    void Discovered(uint32_t person, int area, const vec2& at, bool f_first){
+        Event(EVENT_DISCOVERED,person,0,-1,at,area,f_first ? 1 : 0);
+    }
+    /*
+        AN EVENT (above) made by a rule that runs in the app - TickEconomy raising what the builders finished, a tent
+        pitched by its command - stamped with `tick`, the calendar tick it belongs to. Into the ring, and the journal
+        or today's ledger row as its kind says. Its `pos` is worked out from `plot` when left at the origin.
+    */
+    void Event(EconomyEvent ev, uint64_t tick);
     EconomySaved Save() const;          //EconomySaveState of the live state
     const EconomyState& State() const { return state; }
     //The plots whose next storey stands after this tick - the app raises them (ZONE_OP_BUILD_RAISE).
@@ -1255,6 +1414,21 @@ private:
     std::vector<int> field_raises;
     std::vector<int> crop_defaults;
     std::vector<int> tents_packed;
+    /*
+        PICK UP's reach, remembered (MoveCrate): a builder's verdict on a crate - too far or not - while nothing it rests
+        on has changed: he stands where he did, the zones are as they were, the same store would take it. Otherwise two
+        routes are planned at every look, twice a second, for every far crate. Not saved: a miss works it out again to
+        the same answer, so a load or a replay is none the wiser. Emptied by Reset, and when it grows past a few dozen.
+    */
+    struct PickUpLook{
+        uint32_t crate = 0;
+        uint32_t by = 0;
+        uint32_t zones = 0;
+        int store = -1;
+        vec2 from;
+        bool f_far = false;
+    };
+    std::vector<PickUpLook> pick_up_looks;
     std::vector<std::vector<int>> cells_of;     //by building id: a field's coarse cells, in index order (derived)
     std::vector<int> site_cells;                //by building id: a field's cells still a site (derived)
     std::vector<int> ground_sites;              //the garden, lot and wall plots still to build, in index order (derived)
@@ -1285,6 +1459,7 @@ private:
     vec2 tree_origin;
     std::vector<int> tree_start;                //per bucket + 1, into tree_items
     std::vector<int> tree_items;                //prop indices, in index order within a bucket
+    std::vector<int> rocks;                     //the ROCKS, boulders too (ForestIsRock): prop indices, in order
     std::vector<int> plants;                    //the props that bear fruit (FORAGING), in index order
     void BuildTrees();
     /*
@@ -1322,6 +1497,10 @@ private:
     bool RouteTo(EconomyWorker& k, const ZoneState& z, Walkers& walkers, int to_plot, const vec2& to_point,
                  int to_layer = -1);
     bool FindTree(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //THE STONECUTTER: his next stone, from home - a boulder on a site of his settlement's, then rubble lying, then the
+    //nearest rock, within reach of his hut and while a store has room; and a rock broken, its stone left as rubble.
+    bool FindRock(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    void BreakRock(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //The wood a woodcutter could go for near `at`, logs first (f_logs: only logs), and out to the first of it he
     //can reach, of the first `tries`.
     //The standing trees in the way of planned roads and walls of his own within `reach` of `at`, sorted - the first
@@ -1368,8 +1547,14 @@ private:
     void BringAlong(const EconomyWorker& k, const std::vector<uint32_t>& along, const ZoneState& z, Walkers& walkers);
     std::vector<uint32_t> Along(uint32_t id) const;
     bool GoForTent(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
-    //A NOTICE for the player (above), the oldest dropped past ECONOMY_NOTICES_KEPT.
+    //AN EVENT on the tick being run (above): into the ring, the oldest dropped past ECONOMY_EVENTS_KEPT - and the
+    //journal or today's row, as its kind says. A NOTICE is one about a person, told on the notice line.
+    void Event(int kind, uint32_t person, uint32_t building, int plot, const vec2& pos, int amount = 0, GoodsMask what = 0);
     void Notice(int kind, uint32_t person, GoodsMask what = 0);
+    //THE LEDGER (above): the day before `tick`'s closed into a row, its levels as the state stands, and a new one begun.
+    void CloseDay(uint64_t tick);
+    //Where a new colony's history begins, or a save's that had none: the levels and the forest's count now.
+    void BeginHistory(uint64_t tick);
     void Unpack(EconomyWorker& k, const ZoneState& z);
     //CRATES: his load put down - into a store he stands at that takes it, else as a crate where he stands or on
     //open ground near it; `amount` of `good` into the crate on `plot` (a new one at `at` if none lies there); and
@@ -1378,6 +1563,7 @@ private:
     int CratePlotNear(const ZoneState& z, int start, const vec2& at) const;
     void AddToCrate(int plot, const vec2& at, int good, int amount, int origin, uint32_t by);
     void LoseCoveredCrates(const ZoneState& z);
+    void PlaceRubble(const ZoneState& z);       //RUBBLE, on a new colony's first tick
     //...and as a place goods are taken from (step 2): the stock behind a worker's `store` - a building's, or a
     //crate's (ECONOMY_STORE_CRATE) - NULL if there is none or it is gone; a crate by its id; a crate touched,
     //taken off the map if that emptied it; and where a person stands to take from one, on the side he comes from.
@@ -1388,8 +1574,17 @@ private:
     vec2 CrateStand(const EconomyCrate& c, const vec2& from) const;
     //Where he goes to take from `id` at `plot`: beside a crate, else the plot's point.
     vec2 SourcePoint(uint32_t id, int plot, const vec2& from) const;
-    //A caretaker's last errand: a crate's goods off to a storehouse. True if he set off.
-    bool MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //A caretaker's last errand: a crate's goods off to a storehouse. True if he set off. `f_picked`: only the crates
+    //put PICK UP, from anywhere - his errand before building.
+    bool MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_picked = false);
+    //The seconds `probe`'s walk takes from where he stands to `to_point` on plot `to_plot`, by the route he would take
+    //(RouteTo, so a winch and roads count) - or -1 with no way. `probe` is a copy: its route is thrown away.
+    float WalkSeconds(EconomyWorker probe, const ZoneState& z, Walkers& walkers, int to_plot, const vec2& to_point);
+    //THE MINE: the deposit mine `id` is on (Deposits.h), -1 none; a miner off to dig at his mine; a deposit dug out.
+    int MineDepositAt(uint32_t id) const;
+    bool GoDig(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    void DugOut(const ZoneState& z, int d);
+    bool MineCarrying(uint32_t id) const;      //its miner on his way with a load of it
     //A caretaker's first errand (POSTS, step 7): water or provisions to a guard tower short of them. True if he set off.
     bool KeepTowers(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //PROVISIONS (POSTS): a builder's errand for them, from home (true if he set off); what he does at his hut.
@@ -1562,6 +1757,8 @@ uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse);
 //The standing trees on `plot` - or, `coarse` >= 0, in that coarse cell - a site there would wait on: the price tag's
 //count. Any thread, on a published state.
 int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse);
+//...and the BOULDERS still standing there, which only a stonecutter breaks (stone_plan.md).
+int EconomyBouldersOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse);
 //FORAGING: the fruit a plant holds ripe - FORAGE_BUSH_FRUIT, FORAGE_TREE_FRUIT - and 0 for a prop that bears none;
 int EconomyFruitFull(const PropInstance& p);
 //...and what is on prop `prop` to be picked now: 0 for none, a plant gone, or a fruit tree felled. Any thread.
@@ -1608,6 +1805,8 @@ struct EconomyJobCount{
     int places = 0;
 };
 void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount out[WORKER_JOB_COUNT], int* jobless);
+//THE MINE (stone_plan.md step 5): what is left in deposit `d` to dig - INT_MAX for one that never runs out, 0 for none.
+int EconomyDepositLeft(const EconomyState& e, int d);
 //The skill a job leans on, and how fast a worker with `skill` of it works: 1 at 5, 1.4 at 10, 0.68 at 1.
 int EconomyJobSkill(int job);
 float EconomySkillFactor(int skill);

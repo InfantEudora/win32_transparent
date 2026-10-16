@@ -484,6 +484,14 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         case WM_MBUTTONDOWN:
 
             break;
+        case WM_CLOSE:
+            //An app that asks first (f_close_asks_app in Window.h): nothing closes - it is told, and asks.
+            //Returned here, so DefWindowProc below never sees it and never destroys the window.
+            if (wnd->f_close_asks_app){
+                wnd->f_close_asked = true;
+                return 0;
+            }
+            break;
         case WM_DESTROY:
             debug->Warn("Window destroyed\n");
             wnd->f_should_quit = true;

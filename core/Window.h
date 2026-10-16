@@ -4,6 +4,7 @@
 //Windows header
 #include <windows.h>
 #include <mmsystem.h>
+#include <atomic>
 #include <string>
 #include <vector>
 //SetOnFileDropped/onFileDropped below. This header got <functional> for free until 2026-09-18
@@ -114,6 +115,20 @@ public:
         to stop, not the player pressing a key, and those should not share a control.
     */
     bool f_escape_closes_window = true;
+
+    /*
+        WHETHER THE WINDOW'S CLOSE ASKS THE APP FIRST. False by default: the X, Alt+F4 and anything else
+        that sends WM_CLOSE close the window, as they always have.
+
+        AN APP THAT ASKS "ARE YOU SURE?" SETS IT (apps/chasm/docs/demo_plan.md). Then WM_CLOSE closes
+        nothing: it raises f_close_asked, the app finds it on its next pass, asks its question, and on a
+        yes quits by RequestQuitAll - the way out that never needed WM_CLOSE. Read with exchange(false),
+        so one close is one question.
+
+        Ctrl+C on the console still stops the process, as above: the operator, not the player.
+    */
+    bool f_close_asks_app = false;
+    std::atomic<bool> f_close_asked{false};
 
     //Bitmap image for layered window
     Image g_image;

@@ -46,11 +46,37 @@ struct ChasmSave{
 nlohmann::json ChasmSaveToJson(const ChasmSave& s);
 bool ChasmSaveFromJson(const nlohmann::json& j, ChasmSave& out, std::string& error);
 
-//Files in apps/chasm/saves/, by bare name ("village" -> saves/village.json). Relative to the working
-//directory, which is the app's folder when started as CLAUDE.md describes - like recordings/.
+/*
+    THE GAME'S FOLDERS - saves/, recordings/, reports/ - found from the exe, as main.cpp finds the assets, never from
+    the working directory, so a tester's shortcut started somewhere else does not scatter them (demo_plan.md):
+    apps/chasm/<name>/ for an exe in build/, and beside the exe itself for one with its assets baked in, which is
+    alone in its folder.
+*/
+std::string ChasmFolder(const char* name);
+
+//Files in saves/, by bare name ("village" -> saves/village.json).
+std::string ChasmSaveDirectory();
 std::string ChasmSavePath(const std::string& name);
 bool ChasmSaveWrite(const std::string& name, const nlohmann::json& j, std::string& error);
 bool ChasmSaveRead(const std::string& name, nlohmann::json& out, std::string& error);
 std::vector<std::string> ChasmSaveList();
+int64_t ChasmSaveWritten(const std::string& name);     //the file's time, seconds since 1970; -1 with no such save
+
+/*
+    WHAT THE LOAD SCREEN LISTS (demo_plan.md, "Save and load"): each save by what its JSON says - the title and kind
+    its "meta" was given when it was written, the colony's date and people - newest first, by the file's time. A save
+    without a meta (the tools', the panel's) goes by its file name.
+*/
+struct ChasmSaveEntry{
+    std::string name;                   //the bare name ChasmSaveRead takes
+    std::string title;                  //"Seed 12 - year 2, summer 4", or the file's name
+    std::string kind;                   //"save", "auto", "quick", or empty with no meta
+    std::string colony;
+    std::string build;                  //the build that wrote it
+    uint64_t calendar_tick = 0;
+    int people = 0;
+    int64_t written = 0;                //seconds since 1970
+};
+std::vector<ChasmSaveEntry> ChasmSaveEntries();
 
 #endif

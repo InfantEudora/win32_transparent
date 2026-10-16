@@ -40,16 +40,30 @@ struct TerrainChunk{
                                 //per chunk (the zones, ZoneMesh.h) uses the same split
 };
 
+/*
+    A floatstone SEAM's band (Deposits.h), kept out of the chunks: its wall faces twice over, as crystal and as the
+    wall's own rock, so a seam dug out (stone_plan.md step 5) is drawn as rock again with nothing rebuilt. By deposit
+    index; empty for every deposit that is not a seam.
+*/
+struct TerrainSeamBand{
+    std::vector<vertex> crystal;
+    std::vector<vertex> rock;
+};
+
 struct TerrainMeshData{
     std::vector<TerrainChunk> chunks;
+    std::vector<TerrainSeamBand> seam_bands;
     int chunks_x = 0;
     int chunks_z = 0;
     int num_triangles = 0;
     int num_wall_triangles = 0;
+    int num_seam_triangles = 0;     //of those, the floatstone seams' crystal (Deposits.h)
     float build_ms = 0.0f;
 };
 
-void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out);
+struct DepositData;
+//`deposits` may be NULL: no seams drawn in the walls (Deposits.h).
+void BuildTerrainMesh(const Grid& g, const Terrain& t, const DepositData* deposits, TerrainMeshData& out);
 
 //The level plus its small BUMP only, the same on every map. Not the ground: for anything that stands
 //or is drawn on the ground, use Terrain::GroundHeight, which adds the world's relief (hills, the

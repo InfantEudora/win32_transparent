@@ -165,7 +165,8 @@ nothing to correct. FETCH FIRST and the badge are still proposals, marked where 
 - **The card** shows "Crate" or "Found crate", then its goods, one row each. Then where it came from,
   for example "Dropped by Dirk when sent to a post, summer 3" or "Found summer 9". Last, who is on the
   way to it, and what for: a site, a house or a store.
-- **FETCH FIRST** (proposed), a chip on the card, sends a recorded command that puts moving this crate
+- **FETCH FIRST** (proposed; BUILT 2026-10-14 as **PICK UP**, `stone_plan.md` step 2 - and from anywhere, not only
+  the settlement's land), a chip on the card, sends a recorded command that puts moving this crate
   ahead of the caretakers' building, the way a site can be put first. A find far out is what the player
   will want brought home.
 - **Tools**: `chasm_economy` gives `crates` (id, plot, x, z, goods, origin, by, tick, found, first), and
@@ -225,7 +226,7 @@ First guesses. Each one becomes a named constant beside the `ECONOMY_*` ones.
 
 ## Open
 
-- **FETCH FIRST and the badge**: proposed, not yet talked through.
+- **The badge**: proposed, not yet talked through. (FETCH FIRST is built, as PICK UP: `stone_plan.md`, step 2.)
 - **Water in finds**: left out for now. A collector is cheap and water is everywhere.
 - **Spoilage**, when it comes: if food in a crate out in the open spoils faster than food in a store,
   clearing crates starts to matter more.

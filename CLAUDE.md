@@ -133,11 +133,17 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   (`taskkill //F //IM tetris.exe`). The same error with nothing running means a stale lock;
   deleting the exe clears it.
 - `stderr` carries all logging. `stdout` is reserved for the MCP stdio transport and must stay
-  clean.
+  clean. An app can also log to a file beside the exe (`Debugger::OpenLogFile`): Chasm writes
+  `build/chasm.log`, keeps the last run's as `chasm_previous.log`, and a second copy running at
+  the same time writes `chasm_2.log`.
 - **A debug build that dies leaves `build/crash_<date>_<time>.txt`** beside the exe, also copied
   to stderr: what failed (an `IM_ASSERT`, or an unhandled exception such as an access violation),
   on which thread, and every thread's stack from gdb, attached from inside the process. Read it
   before guessing. Under a debugger it breaks instead. See `core/CrashReport.h`.
+- **A release build that dies** leaves the same `.txt`, with the failing thread's stack as
+  `exe+offset`, plus a minidump `.dmp`. A release link also writes `build/<exe>.map`, and
+  `python tools/crash_map.py <crash .txt> <that .map>` names each frame. Only the map of the
+  very build that crashed is right, so keep it with any exe handed out.
 - Header dependencies are tracked, so editing a header rebuilds its dependents. `make clean` in an
   app folder removes only that app; `make cleancore` clears the shared objects.
 

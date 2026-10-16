@@ -2,6 +2,9 @@
 #include "MeshBuild.h"
 #include "Mist.h"
 #include "Palette.h"
+#ifdef USE_MCP
+#include "MCPServer.h"
+#endif
 
 #include <cmath>
 
@@ -44,7 +47,78 @@ void ApplicationChasm::ResetExploration(){
         exploration.Reset(w->grid->bounds_min,w->grid->bounds_max);
     }
     looked_from.assign(exploration.cells.size(),NAN);
+    f_seams_stale = true;       //a load fills the exploration in after this: the seams are looked at on the next tick
+    f_areas_stale = true;       //...and the areas
     PublishExploration();
+}
+
+/*
+    PHYSICS THREAD. A SEAM is seen once any plot along its foot is explored - from the rim, the air over a balcony is
+    what is looked at, so a balcony's seams come into sight from the edge above. Told as a notice, which is never saved
+    or hashed, so this list is not either.
+*/
+void ApplicationChasm::LookForSeams(const ChasmWorld& w, uint32_t person){
+    bool f_tell = !f_seams_stale;
+    if (f_seams_stale || seam_seen.size() != (w.deposits ? w.deposits->deposits.size() : 0)){
+        seam_seen.assign(w.deposits ? w.deposits->deposits.size() : 0,0);
+        f_seams_stale = false;
+        f_tell = false;
+    }
+    for (size_t i = 0; i < seam_seen.size(); i++){
+        const Deposit& d = w.deposits->deposits[i];
+        if (seam_seen[i] || d.kind != DEPOSIT_SEAM){
+            continue;
+        }
+        for (int p : d.plots){
+            if (exploration.Explored(w.grid->fine.pos[p])){
+                seam_seen[i] = 1;
+                break;
+            }
+        }
+        if (seam_seen[i] && f_tell){
+            economy.SeamSeen(person);
+        }
+    }
+}
+
+/*
+    PHYSICS THREAD. An AREA (Areas.h, areas_plan.md) is seen once any of its cells is explored - the seams' rule - and
+    told as EVENT_DISCOVERED, with where it was seen and whether it is the first of its kind: one already seen, even
+    silently at the landing, makes the next one not the first. Only the areas not seen yet are looked through, each
+    until one of its cells is explored.
+*/
+void ApplicationChasm::LookForAreas(const ChasmWorld& w, uint32_t person, bool f_tell){
+    const AreaData* data = w.areas.get();
+    size_t n = data ? data->areas.size() : 0;
+    if (f_areas_stale || area_seen.size() != n){
+        area_seen.assign(n,0);
+        f_areas_stale = false;
+        f_tell = false;
+    }
+    for (size_t i = 0; i < n; i++){
+        if (area_seen[i]){
+            continue;
+        }
+        const Area& a = data->areas[i];
+        int found = -1;
+        for (int c : a.cells){
+            if (c < (int)exploration.cells.size() && exploration.cells[(size_t)c]){
+                found = c;
+                break;
+            }
+        }
+        if (found < 0){
+            continue;
+        }
+        bool f_first = true;
+        for (size_t j = 0; j < n; j++){
+            f_first = f_first && !(area_seen[j] && data->areas[j].kind == a.kind);
+        }
+        area_seen[i] = 1;
+        if (f_tell){
+            economy.Discovered(person,(int)i,exploration.CellCentre(found),f_first);
+        }
+    }
 }
 
 /*
@@ -69,9 +143,18 @@ void ApplicationChasm::TickExploration(){
     if (exploration.Empty()){
         ResetExploration();
     }
+    if (f_seams_stale){
+        LookForSeams(*w,0);
+    }
+    if (f_areas_stale){
+        LookForAreas(*w,0,false);
+    }
     if (calendar_tick % EXPLORATION_PERSON_TICKS != 0){
         return;
     }
+    //The LANDING: a new colony's first look round, from nothing explored, is home - what it brings into sight is
+    //marked seen and told as nothing.
+    const bool f_landing = exploration.CountExplored() == 0;
     bool f_changed = false;
     for (const EconomyWorker& k : economy.State().workers){
         int cell = exploration.CellAt(k.pos);
@@ -83,7 +166,11 @@ void ApplicationChasm::TickExploration(){
             continue;
         }
         looked_from[(size_t)cell] = eye_ground;
-        f_changed = exploration.See(*w->sight,cell,eye_ground) || f_changed;
+        if (exploration.See(*w->sight,cell,eye_ground)){
+            f_changed = true;
+            LookForSeams(*w,k.id);
+            LookForAreas(*w,k.id,!f_landing);
+        }
     }
     if (f_changed){
         PublishExploration();
@@ -288,3 +375,44 @@ void ApplicationChasm::UploadClouds(){
         o->SetVisibility(f_any);
     }
 }
+
+//--- The areas, for agents ------------------------------------------------------------------------
+
+#ifdef USE_MCP
+void ApplicationChasm::RegisterAreaTools(){
+    MCPServer::Get()->RegisterTool("chasm_areas",
+        "THE AREAS (docs/areas_plan.md; Areas.h): the parts of the map there are to discover - each river, each waterfall, "
+        "each biome as one, the starting land's open ground (plateau) and its forest - generated with the map, in the "
+        "order the discovered event's amount names them. Each: index, kind, which (a river's or fall's own index), cells "
+        "(the exploration's), x and z (its middle), and seen - any of its ground explored, worked out from the "
+        "exploration as the rules do. `seen` counts the seen by kind. Being found is the event `discovered` "
+        "(chasm_economy's events, chasm_stats' journal). The debug view's `areas` layer draws them (chasm_view).",
+        json{{"type","object"},{"properties",json::object()}},
+        [this](const json& args) -> json {
+            (void)args;
+            std::shared_ptr<const ChasmWorld> w = GetWorld();
+            std::shared_ptr<const Exploration> ex = GetExploration();
+            if (!w || !w->areas){
+                return json{{"error","no world"}};
+            }
+            json list = json::array();
+            json seen_by = json::object();
+            for (size_t i = 0; i < w->areas->areas.size(); i++){
+                const Area& a = w->areas->areas[i];
+                bool f_seen = false;
+                for (int c : a.cells){
+                    if (ex && c < (int)ex->cells.size() && ex->cells[(size_t)c]){
+                        f_seen = true;
+                        break;
+                    }
+                }
+                list.push_back(json{{"index",(int)i},{"kind",AreaKindName(a.kind)},{"which",a.which},
+                                    {"cells",(int)a.cells.size()},{"x",std::round(a.middle.x * 10.0f) / 10.0f},
+                                    {"z",std::round(a.middle.y * 10.0f) / 10.0f},{"seen",f_seen}});
+                std::string k = AreaKindName(a.kind);
+                seen_by[k] = (seen_by.contains(k) ? seen_by[k].get<int>() : 0) + (f_seen ? 1 : 0);
+            }
+            return json{{"areas",list},{"seen",seen_by},{"build_ms",std::round(w->areas->build_ms * 10.0f) / 10.0f}};
+        });
+}
+#endif

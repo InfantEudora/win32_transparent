@@ -1,11 +1,105 @@
 #include "Debug.h"
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#ifdef _WIN32
+#include <share.h>
+#endif
 
 std::mutex Debugger::mutex;
 bool Debugger::setup_done = false;
 bool Debugger::enable_buffering = false;
 bool Debugger::enable_console = true;
+
+#define DEBUG_LOG_FILE_MOST (32u * 1024u * 1024u)    //a log file's bytes at most: a run logging in a loop fills no disk
+
+// The log file (Debug.h, OpenLogFile). Written only with Debugger::mutex held, as everything that emits is.
+static FILE *g_log_file = NULL;
+static std::string g_log_path;
+static size_t g_log_bytes = 0;
+
+static const char *LevelText(debug_t type) {
+    switch (type) {
+        case DEBUG_TRACE: return "trace";
+        case DEBUG_DEBUG: return "debug";
+        case DEBUG_INFO:  return " info";
+        case DEBUG_OK:    return "  ok ";
+        case DEBUG_WARN:  return " warn";
+        case DEBUG_ERROR: return " err ";
+        case DEBUG_FATAL: return "fatal";
+        default:          return " -- ";
+    }
+}
+
+static void LogFileLine(debug_t type, const char *name, const char *message) {
+    if (!g_log_file || g_log_bytes >= DEBUG_LOG_FILE_MOST) {
+        return;
+    }
+    char stamp[16] = "";
+    time_t now = time(NULL);
+    struct tm *local = localtime(&now);
+    if (local) {
+        strftime(stamp, sizeof(stamp), "%H:%M:%S", local);
+    }
+    int n = fprintf(g_log_file, "%s [%s] %20s : %s", stamp, LevelText(type), name ? name : "", message);
+    g_log_bytes += (n > 0) ? (size_t)n : 0;
+    if (g_log_bytes >= DEBUG_LOG_FILE_MOST) {
+        fprintf(g_log_file, "\n--- the log file is full: nothing more is written to it ---\n");
+    }
+    fflush(g_log_file);
+}
+
+// Held against other writers, so a second copy of the app running from the same folder can tell it is in use.
+static FILE *OpenExclusive(const std::string &file, const char *mode) {
+#ifdef _WIN32
+    return _fsopen(file.c_str(), mode, _SH_DENYWR);
+#else
+    return fopen(file.c_str(), mode);
+#endif
+}
+
+bool Debugger::OpenLogFile(const std::string &path) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (g_log_file) {
+        fclose(g_log_file);
+        g_log_file = NULL;
+    }
+    g_log_path.clear();
+    g_log_bytes = 0;
+    size_t dot = path.find_last_of('.');
+    size_t slash = path.find_last_of("/\\");
+    bool f_ext = dot != std::string::npos && (slash == std::string::npos || dot > slash);
+    std::string stem = f_ext ? path.substr(0, dot) : path;
+    std::string ext = f_ext ? path.substr(dot) : std::string();
+    // Another copy of the app running keeps its own: chasm.log in use -> chasm_2.log, and so on.
+    for (int i = 1; i <= 9 && !g_log_file; i++) {
+        std::string base = (i == 1) ? stem : stem + "_" + std::to_string(i);
+        std::string file = base + ext;
+        FILE *exists = fopen(file.c_str(), "rb");
+        if (exists) {
+            fclose(exists);
+            FILE *probe = OpenExclusive(file, "r+b");
+            if (!probe) {
+                continue;
+            }
+            fclose(probe);
+            // The last run's, kept: chasm.log -> chasm_previous.log.
+            std::string previous = base + "_previous" + ext;
+            remove(previous.c_str());
+            rename(file.c_str(), previous.c_str());
+        }
+        g_log_file = OpenExclusive(file, "w");
+        if (g_log_file) {
+            g_log_path = file;
+        }
+    }
+    return g_log_file != NULL;
+}
+
+std::string Debugger::LogFilePath() {
+    std::lock_guard<std::mutex> lock(mutex);
+    return g_log_path;
+}
 
 // Returns a static map handle.
 std::map<std::string, Debugger *> *Debugger::GetHandles() {
@@ -215,10 +309,13 @@ void Debugger::PrintLine(debug_t type, const char *format, ...) {
 // a local buffer means concurrent callers (even without the mutex above)
 // can't corrupt each other's in-progress line.
 void Debugger::PrintLineva(debug_t type, const char *format, va_list arglist) {
-    if (!enable_console) {
+    if (!enable_console && !g_log_file) {
         return;
     }
     char message[4096];
     vsnprintf(message, sizeof(message), format, arglist);
-    EmitLine(type, name, message);
+    LogFileLine(type, name, message);
+    if (enable_console) {
+        EmitLine(type, name, message);
+    }
 }

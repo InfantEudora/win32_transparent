@@ -101,6 +101,7 @@ bool ScreenOf(Camera* cam, float width, float height, const vec3& p, vec2& out){
 #define ICON_BALL       UIColor(214,92,70,255)      //a child's ball
 #define ICON_FRUIT      UIColor(226,96,84,255)      //a picker's berries (foraging_plan.md)
 #define ICON_LEAF       UIColor(126,178,84,255)
+#define ICON_ROPE       UIColor(206,188,146,255)    //a ropemaker's coil: rope's tan (HudGoodColour), lifted to read on the disc
 
 /*
     THE BADGES' ICONS: a few opaque strokes each, so where they overlap does not show (AddLine's note), on
@@ -137,6 +138,14 @@ void DrawAxeIcon(UIOverlay* o, const vec2& c, float s){
         o->AddLine(hub,hub + vec2(sinf(a),-cosf(a)) * (5.0f * s),1.8f * s,ICON_STEEL);
     }
     o->AddArc(hub,5.0f * s,a0,a1,1.4f * s,HUD_MARK);
+}
+
+//A stonecutter's pick (stone_plan.md): the axe's handle, and across its top a curved head pointed at both ends.
+void DrawPickIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(-5.0f,6.5f),p(2.0f,-4.5f),1.8f * s,ICON_WOOD);
+    //An arc round a point down the handle, through its top: the head bows over the hand, as a pick's does.
+    o->AddArc(p(-0.7f,-0.3f),5.3f * s,-0.55f,1.69f,2.2f * s,ICON_STEEL);
 }
 
 //A farmer's ear of wheat: a stalk, a grain on top and three pairs down it.
@@ -227,6 +236,25 @@ void DrawBerriesIcon(UIOverlay* o, const vec2& c, float s){
     }
 }
 
+/*
+    A ropemaker's coil of rope (goods_plan.md): two turns spiralling out from the middle, its loose end off to
+    the bottom right. Without it he fell through to the jobless's log.
+*/
+void DrawCoilIcon(UIOverlay* o, const vec2& c, float s){
+    auto at = [&](float a, float r){ return c + vec2(sinf(a),-cosf(a)) * (r * s); };
+    const float a0 = 2.3561945f;            //so the last turn ends at half past four, where the end hangs off
+    const float turns = 2.0f;
+    const int steps = 32;
+    vec2 last = at(a0,1.2f);
+    for (int i = 1; i <= steps; i++){
+        float t = (float)i / steps;
+        vec2 next = at(a0 + t * turns * 6.2831853f,1.2f + 4.4f * t);
+        o->AddLine(last,next,1.5f * s,ICON_ROPE);
+        last = next;
+    }
+    o->AddLine(last,c + vec2(6.0f * s,6.6f * s),1.5f * s,ICON_ROPE);
+}
+
 //A baby swaddled: a pale face on a bundle - a baby's, and its mother's while she cares for it.
 void DrawBabyIcon(UIOverlay* o, const vec2& c, float s){
     auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
@@ -270,9 +298,12 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
     }
     switch (k.job){
         case WORKER_JOB_WOODCUTTER: DrawAxeIcon(o,c,is); break;
+        case WORKER_JOB_STONECUTTER: DrawPickIcon(o,c,is); break;
+        case WORKER_JOB_MINER:      DrawPickIcon(o,c,is); break;
         case WORKER_JOB_FARMER:     DrawWheatIcon(o,c,is); break;
         case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
         case WORKER_JOB_PICKER:     DrawBerriesIcon(o,c,is); break;
+        case WORKER_JOB_ROPEMAKER:  DrawCoilIcon(o,c,is); break;
         case WORKER_JOB_BUILDER:    DrawHammerIcon(o,c,is); break;
         case WORKER_JOB_ARCHER:     DrawBowIcon(o,c,is); break;
         case WORKER_JOB_GUARD:      DrawSpearIcon(o,c,is); break;      //a tower's: posted there (defence_plan.md)
@@ -529,14 +560,20 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         //A camp's water carrier out to the water's edge to draw a load (settlements_plan.md), not to a collector.
         //A camp's picker out to a plant, and on to the next while his load has room (foraging_plan.md).
         case WORKER_TO_WORK:    return (k.job == WORKER_JOB_PICKER && CampWork(k,z)) ? ((k.carry > 0) ? "going to pick more fruit" : "going to pick fruit")
+                                     : (k.prop >= 0 && k.job == WORKER_JOB_STONECUTTER) ? "going to break a rock"
+                                     : (k.job == WORKER_JOB_MINER) ? "going to dig at the mine"
                                      : (k.prop >= 0) ? ((k.carry > 0) ? "going for another log" : "going for wood")
                                      : (k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "going to draw water" : "going to work";
         case WORKER_WORKING:    return (k.job == WORKER_JOB_PICKER && CampWork(k,z)) ? "picking fruit"
                                      : (k.prop < 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "drawing water"
+                                     : (k.job == WORKER_JOB_MINER) ? "digging"
                                      : (k.prop < 0) ? "picking up"
+                                     : (k.job == WORKER_JOB_STONECUTTER) ? "breaking a rock"
                                      : (k.timer > (int)(ECONOMY_PICK_SECONDS * CALENDAR_TICKS_PER_SECOND)) ? "felling" : "picking up a log";
         case WORKER_TO_STORE:   return (k.store == 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "carrying water to the camp"
                                      : (k.store == 0 && k.job == WORKER_JOB_PICKER && CampWork(k,z)) ? "carrying fruit to the camp"
+                                     : (k.job == WORKER_JOB_MINER && k.carry_good == GOOD_FLOATSTONE) ? "carrying floatstone to a store"
+                                     : (k.job == WORKER_JOB_MINER) ? "carrying stone to a store"
                                      : "carrying to a store";
         case WORKER_UNLOADING:  return "unloading";
         case WORKER_TO_HOME:    return "going home";
@@ -593,8 +630,8 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
                                       : (k.carry_good == GOOD_BEANS) ? "taking beans to the hut" : "taking wheat to the hut";
         case WORKER_MAKING:     return (k.carry_good == GOOD_ROPE) ? "making rope" : "making provisions";
         //A caretaker taking a crate's goods to a store (crates_plan.md).
-        case WORKER_TO_CRATE:   return "going to move a crate";
-        case WORKER_LIFTING:    return "lifting from a crate";
+        case WORKER_TO_CRATE:   return (k.job == WORKER_JOB_STONECUTTER) ? "going for rubble" : "going to move a crate";
+        case WORKER_LIFTING:    return (k.job == WORKER_JOB_STONECUTTER) ? "lifting stone" : "lifting from a crate";
         default:                return "";
     }
 }
@@ -613,6 +650,8 @@ const char* KindTitle(int kind){
         case ZONE_KIND_RANGE:       return "Archery range";
         case ZONE_KIND_TOWER:       return "Guard tower";
         case ZONE_KIND_ROPEWALK:    return "Ropewalk";
+        case ZONE_KIND_STONECUTTER: return "Stonecutter's hut";
+        case ZONE_KIND_MINE:        return "Mine";
         default:                    return "?";
     }
 }
@@ -626,6 +665,9 @@ const char* JobTitle(int job){
         case WORKER_JOB_BUILDER:    return "Builder";
         case WORKER_JOB_ARCHER:     return "Archer";
         case WORKER_JOB_GUARD:      return "Guard";
+        case WORKER_JOB_ROPEMAKER:  return "Ropemaker";
+        case WORKER_JOB_STONECUTTER: return "Stonecutter";
+        case WORKER_JOB_MINER:      return "Miner";
         case WORKER_JOB_PLAYING:    return "Child";
         case WORKER_JOB_BABY:       return "Baby";
         case WORKER_JOB_CARING:     return "Caring";
@@ -1394,19 +1436,26 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         c.Stock("Brought","for this building",brought,cost,true);
         c.Text("It takes " + takes,HUD_TEXT_DIM);
         //Trees still standing on it (woodcutting_plan.md): nothing of it rises until a woodcutter has felled them.
+        //...and BOULDERS (stone_plan.md), a stonecutter's.
         if (e){
             int trees = 0;
+            int boulders = 0;
             if (f_cells){
                 for (size_t q = 0; q < z.field.size(); q++){
                     trees += (z.field[q] == id && !z.field_built[q]) ? EconomyTreesOn(w,*e,-1,(int)q) : 0;
+                    boulders += (z.field[q] == id && !z.field_built[q]) ? EconomyBouldersOn(w,*e,-1,(int)q) : 0;
                 }
             }else{
                 for (size_t v = 0; v < z.building.size(); v++){
                     trees += (z.building[v] == id && z.standing[v] == 0) ? EconomyTreesOn(w,*e,(int)v,-1) : 0;
+                    boulders += (z.building[v] == id && z.standing[v] == 0) ? EconomyBouldersOn(w,*e,(int)v,-1) : 0;
                 }
             }
             if (trees > 0){
                 c.Text(Format("%i tree%s to fell first - a woodcutter's work",trees,trees == 1 ? "" : "s"),HUD_AMBER);
+            }
+            if (boulders > 0){
+                c.Text(Format("%i boulder%s to break first - a stonecutter's work",boulders,boulders == 1 ? "" : "s"),HUD_AMBER);
             }
         }
         //Short of ROPE, with too little of it anywhere (goods_plan.md): the colony starts with none, so what it still
@@ -1586,7 +1635,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         c.lines.push_back(chips);
     }
     if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_FIELD || b.kind == ZONE_KIND_RANGE
-        || b.kind == ZONE_KIND_ROPEWALK){
+        || b.kind == ZONE_KIND_ROPEWALK || b.kind == ZONE_KIND_STONECUTTER || b.kind == ZONE_KIND_MINE){
         /*
             A FIELD (fields_plan.md), once it stands: what grows on it, at what yield and how far; or, empty,
             what its farmer will sow. Then its choices - its starting crop until it has been sown once, then
@@ -1753,6 +1802,28 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                     }
                 }
             }
+            /*
+                A MINE (stone_plan.md step 5): what it digs and what is left of it - a seam's floatstone running down
+                to nothing, worked out at last; the mountain's stone and an outcrop's, never.
+            */
+            bool f_dug_out = false;
+            if (b.kind == ZONE_KIND_MINE){
+                int plot = FirstPlotOf(z,id);
+                int d = (plot >= 0 && w.deposits) ? w.deposits->At(plot) : -1;
+                if (d >= 0 && w.deposits->deposits[d].kind == DEPOSIT_SEAM){
+                    const Deposit& dep = w.deposits->deposits[d];
+                    int left = EconomyDepositLeft(*e,d);
+                    f_dug_out = left <= 0;
+                    if (f_dug_out){
+                        c.Text("A floatstone seam - worked out: nothing is left to dig",HUD_AMBER);
+                    }else{
+                        c.Bar(Format("A floatstone seam - %i of %i left",left,dep.holds),(float)left / (float)std::max(1,dep.holds));
+                    }
+                }else if (d >= 0){
+                    c.Text(w.deposits->deposits[d].kind == DEPOSIT_MOUNTAIN ? "Dug into the mountain: its stone never runs out"
+                                                                          : "On an outcrop: its stone never runs out",HUD_TEXT_DIM);
+                }
+            }
             bool f_worked = false;
             for (const EconomyWorker& k : e->workers){
                 if (k.building == id){
@@ -1774,7 +1845,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 c.Text(b.kind == ZONE_KIND_WATER ? "Stopped: no water is collected until it is set working again"
                        : b.kind == ZONE_KIND_RANGE ? "Stopped: nobody trains here until it is set going again"
                        : "Stopped: nobody works here until it is set working again",HUD_TEXT_DIM);
-            }else if (!f_worked && f_stands && !f_short){
+            }else if (!f_worked && f_stands && !f_short && !f_dug_out){
                 c.Text(b.kind == ZONE_KIND_RANGE ? "Nobody trains here - it needs a free adult with a house"
                                                  : "Nobody works here - it needs a free adult with a house",HUD_AMBER);
             }
@@ -2041,11 +2112,16 @@ void GroundSiteCard(const ZoneState& z, const EconomyState* e, const std::vector
     c.Text(Format("It takes %i wood",need),HUD_TEXT_DIM);
     //Trees still standing on it (woodcutting_plan.md): a plot of it goes up only once a woodcutter has felled its.
     int trees = 0;
+    int boulders = 0;       //...and boulders (stone_plan.md)
     for (int v : patch){
         trees += (e && GroundSitePlot(z,v)) ? EconomyTreesOn(*z.world,*e,v,-1) : 0;
+        boulders += (e && GroundSitePlot(z,v)) ? EconomyBouldersOn(*z.world,*e,v,-1) : 0;
     }
     if (trees > 0){
         c.Text(Format("%i tree%s to fell first - a woodcutter's work",trees,trees == 1 ? "" : "s"),HUD_AMBER);
+    }
+    if (boulders > 0){
+        c.Text(Format("%i boulder%s to break first - a stonecutter's work",boulders,boulders == 1 ? "" : "s"),HUD_AMBER);
     }
     c.Text(Format("%i plot%s to build%s",sites,sites == 1 ? "" : "s",
                   standing ? Format(", %i standing",standing).c_str() : ""),HUD_TEXT_DIM);
@@ -2077,7 +2153,8 @@ void GroundSiteCard(const ZoneState& z, const EconomyState* e, const std::vector
 */
 void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& crate, uint64_t tick, Card& c){
     uint32_t id = ECONOMY_STORE_CRATE | crate.id;
-    c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : (crate.origin == CRATE_CAMP) ? "A camp's goods" : "Crate";
+    c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : (crate.origin == CRATE_CAMP) ? "A camp's goods"
+            : EconomyCrateCrystal(crate) ? "Floatstone" : EconomyCrateRubble(crate.origin) ? "Rubble" : "Crate";
     c.StockByGroup("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
     CalendarDate when = CalendarDateOf(crate.tick);
     std::string date = std::string(CalendarSeasonName(when.season)) + " " + std::to_string(when.day)
@@ -2087,6 +2164,12 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
         c.Text("Found " + date,HUD_TEXT_DIM);
     }else if (crate.origin == CRATE_CAMP){
         c.Text("Left where a camp stood, " + date,HUD_TEXT_DIM);     //its last tent packed or erased (settlements_plan.md)
+    }else if (crate.origin == CRATE_RUBBLE && EconomyCrateCrystal(crate)){
+        c.Text("Fallen from a seam in the wall",HUD_TEXT_DIM);      //a seam's crystal (stone_plan.md)
+    }else if (crate.origin == CRATE_RUBBLE){
+        c.Text("Fallen from the chasm's walls",HUD_TEXT_DIM);       //laid with the colony, so no date (stone_plan.md)
+    }else if (crate.origin == CRATE_BROKEN){
+        c.Text("Broken from a rock, " + date,HUD_TEXT_DIM);         //by a stonecutter (stone_plan.md)
     }else{
         c.Text(by.empty() ? "Put down " + date : "Dropped by " + by + ", " + date,HUD_TEXT_DIM);
     }
@@ -2100,6 +2183,22 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
     if (!coming){
         c.Text("Nobody is on the way to it",HUD_TEXT_DIM);
     }
+    //PICK UP (stone_plan.md): the builders fetch it before building, from anywhere - lit while they are to. Only builders
+    //move crates, so with none the card says why nothing happens.
+    if (crate.f_pick_up && std::none_of(e.workers.begin(),e.workers.end(),
+                                        [](const EconomyWorker& k){ return k.job == WORKER_JOB_BUILDER; })){
+        c.Text("No builders to pick it up: build a builders' hut",HUD_AMBER);
+    }else if (crate.f_pick_up && crate.f_too_far && !coming){
+        //Turned down at the last look (ECONOMY_PICK_UP_WATER): more than that walk without water, there and to a store.
+        float days = ECONOMY_PICK_UP_WATER * (float)NEEDS_WATER_FULL / (float)CALENDAR_DAY_TICKS;
+        c.Text(Format("Too far to fetch: over %g days there and to a store",days),HUD_AMBER);
+    }
+    CardLine pick;
+    pick.type = CARD_TOGGLE;
+    pick.text = "Pick up";
+    pick.chips_on = crate.f_pick_up ? 1 : 0;
+    pick.choice_action = OVERLAY_HIT_PICK_UP;
+    c.lines.push_back(pick);
 }
 
 /*
@@ -2330,6 +2429,7 @@ float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
     switch (z.KindOf(plot)){
         case ZONE_KIND_CAMP:    return ground + SHAPE_TENT;
         case ZONE_KIND_WINCH:   return ground + SHAPE_WINCH;
+        case ZONE_KIND_MINE:    return ground + SHAPE_WINCH;      //its portal, about a winch's height
         case ZONE_KIND_BRIDGE:  return terrain_levels[w.terrain->level[plot]].height + ZONE_BRIDGE_DECK + 0.45f;
         default:{
             const float half = ZONE_STOREY_HEIGHT * 0.5f;
@@ -2847,11 +2947,17 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             row_person = (uint32_t)hit.value;
         }
         if (f_clicked){
+            //Every press on the HUD clicks, whatever it does (ApplicationChasmSound.cpp).
+            SignalUI("click");
             if (hit.action == OVERLAY_HIT_TOOL){
                 paint_tool = (paint_tool == hit.value) ? CHASM_TOOL_SELECT : hit.value;
                 pick_version++;
             }else if (hit.action == OVERLAY_HIT_PAUSE || hit.action == OVERLAY_HIT_SPEED){
                 PressTimeButton(hit.action);    //the calendar's buttons (ApplicationChasmTime.cpp)
+            }else if (hit.action == OVERLAY_HIT_STATS){
+                OpenStats();                    //the top bar's figures: the Statistics page (ApplicationChasmStats.cpp)
+            }else if (hit.action == OVERLAY_HIT_REPLAY_STOP){
+                RequestReplayStop();            //the replay's bar (ApplicationChasmRecord.cpp)
             }else if (hit.action == OVERLAY_HIT_CLOSE){
                 SelectPeople({});
             }else if (hit.action == OVERLAY_HIT_TAKE_TOOL){
@@ -2920,6 +3026,21 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 }
                 if (sel.kind == PLAY_PICK_BUILDING){
                     SubmitGuards(sel.id,hit.value);
+                }
+            }else if (hit.action == OVERLAY_HIT_PICK_UP){
+                //A crate's card: fetched first by the builders, or - lit - back in the queue (stone_plan.md).
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const EconomyState> e = GetEconomy();
+                if (e && sel.kind == PLAY_PICK_CRATE){
+                    for (const EconomyCrate& c : e->crates){
+                        if (c.id == sel.id){
+                            SubmitPickUp(c.id,!c.f_pick_up);
+                        }
+                    }
                 }
             }else if (hit.action == OVERLAY_HIT_GATHER){
                 /*
@@ -3423,14 +3544,18 @@ void ApplicationChasm::UploadSelection(){
     /*
         A crate (crates_plan.md): an outline-only copy of chasm_props.glb's crate where the selected one lies, and
         another where the hovered one does - the crates themselves are one instance set, which outlines skip.
+        Rubble (stone_plan.md) has its own pair, of its pile, at its scale, and so has a seam's crystal lying.
     */
-    if (!crate_outline[0] && f_crate_loaded){
-        Mesh* mesh = assetmanager->GetMeshFromAsset(CHASM_CRATE_ASSET);
+    auto make_outlines = [&](Object* (&out)[2], const char* asset, const char* what){
+        Mesh* mesh = (!out[0] && asset) ? assetmanager->GetMeshFromAsset(asset) : NULL;
+        if (!mesh){
+            return;
+        }
         main_scene->AtTickBoundary([&](){
             for (int i = 0; i < 2; i++){
                 Object* o = new Object();
-                o->name = (i == 0) ? "Selected crate outline" : "Hovered crate outline";
-                mesh->Retain();     //the crates' set's mesh too: held for good, or a SetMesh would free it under the set
+                o->name = std::string((i == 0) ? "Selected " : "Hovered ") + what + " outline";
+                mesh->Retain();     //the set's mesh too: held for good, or a SetMesh would free it under the set
                 o->SetMesh(mesh);
                 o->SetMaterialSlot(0,palette_material);
                 o->SetPickability(false);
@@ -3441,15 +3566,14 @@ void ApplicationChasm::UploadSelection(){
                 o->SetOutlineOnly(true);
 #endif
                 main_scene->AddObject(o);
-                crate_outline[i] = o;
+                out[i] = o;
             }
         });
-    }
+    };
+    make_outlines(crate_outline,f_crate_loaded ? CHASM_CRATE_ASSET : NULL,"crate");
+    make_outlines(rubble_outline,rubble_asset,"rubble");
+    make_outlines(crystal_outline,crystal_asset,"floatstone lying");
     for (int i = 0; i < 2; i++){
-        Object* o = crate_outline[i];
-        if (!o){
-            continue;
-        }
         const PlayPick& p = (i == 0) ? sel : hover;
         const EconomyCrate* c = NULL;
         if (f_play && f_ready && e && e->world == w && p.kind == PLAY_PICK_CRATE && !(i == 1 && hover == sel)){
@@ -3457,12 +3581,22 @@ void ApplicationChasm::UploadSelection(){
                 c = (x.id == p.id) ? &x : c;
             }
         }
-        if (!c){
-            o->SetVisibility(false);
+        //Drawn as it is drawn (UploadCrates): each look only while its heap is there.
+        int look = c ? CrateLook(*c) : -1;
+        Object* outlines[3] = {crate_outline[i],rubble_outline[i],crystal_outline[i]};
+        for (int k = 0; k < 3; k++){
+            if (outlines[k] && k != look){
+                outlines[k]->SetVisibility(false);
+            }
+        }
+        Object* o = (look >= 0) ? outlines[look] : NULL;
+        if (!c || !o){
             continue;
         }
+        float scale = (look == CRATE_LOOK_CRYSTAL) ? CHASM_CRYSTAL_SCALE : (look == CRATE_LOOK_RUBBLE) ? rubble_scale : 1.0f;
         o->SetPosition(vec3(c->pos.x,w->terrain->GroundHeight(c->pos,w->terrain->Height(c->plot)),c->pos.y),false);
         o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),CrateYaw(c->id)),false);
+        o->SetScale(vec3(scale,scale,scale));
         SetOutlineOf(o,(i == 0) ? SELECT_COLOUR : HOVER_COLOUR);
         o->SetVisibility(CHASM_OUTLINE_READY != 0);
     }
@@ -4068,7 +4202,8 @@ void ApplicationChasm::RegisterSelectTools(){
                                                   "field_next","pause","speed","field_land","person","release",
                                                   "take_tool","building","gate","ladder","tower_guards","guard_release",
                                                   "store_allow_group","keep","make_more","gather","family",
-                                                  "group_drop","tent","pitch","settle","work_stop","forage"};
+                                                  "group_drop","tent","pitch","settle","work_stop","forage","pick_up","stats",
+                                                  "replay_stop"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             /*
                 The hover pinned at a pixel in place of the mouse's, until op hover with none - the overlay's (goods_plan.md:

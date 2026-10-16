@@ -61,6 +61,17 @@ public:
 
     static void SetupConsole();
     static void Flush();
+    /*
+        THE LOG FILE, opt-in: an app's main opens it, and from then on every line logged goes there too,
+        as stderr has it but without the colours and with the time of day in front. It exists for the exe
+        someone double-clicks, whose stderr goes nowhere. The last run's file is kept beside it as
+        <name>_previous<ext>, so the log of a crash survives the restart that follows. Each line is
+        flushed as it is written, so a crash loses none; it stops at DEBUG_LOG_FILE_MOST bytes, saying so.
+        A second copy of the app, finding the file in use, writes <name>_2<ext> instead, and so on.
+        Any thread. False, and nothing logged to a file, if `path` cannot be written.
+    */
+    static bool OpenLogFile(const std::string& path);
+    static std::string LogFilePath();               //empty with no log file open
     void Start(char *name);
     void SetLevel(debug_t type);
 

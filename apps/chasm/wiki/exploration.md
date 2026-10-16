@@ -5,8 +5,8 @@ kind: world
 status: built
 summary: The map starts under clouds. People clear them by looking around as they go, and nothing can be placed under them in play.
 plans: play_mode_plan.md
-code: Exploration.h: EXPLORATION_CELL SIGHT_RANGE; Exploration.cpp; Economy.cpp: Order
-verified: 2026-10-10
+code: Exploration.h: EXPLORATION_CELL SIGHT_RANGE; Exploration.cpp; Economy.cpp: Order; ApplicationChasmExplore.cpp: LookForAreas
+verified: 2026-10-16
 ---
 
 A new map starts with nothing explored. The settlers at the [[Camp|camp]] look around on the first tick,
@@ -25,6 +25,9 @@ Sight is a **line of sight** over the ground, not a circle:
 
 Nothing is cleared around what is placed or built: a road planned at the clouds' edge shows what lies past
 it only once its builders walk out and look.
+
+What comes into sight can be news: the first to see a floatstone seam ([[Deposit|deposits]]) is told at the bottom
+of the screen, and so is the first of each kind of [[Areas|area]] found - a river, a waterfall, a biome.
 
 ## The rule
 

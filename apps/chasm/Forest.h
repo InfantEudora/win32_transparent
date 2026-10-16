@@ -38,11 +38,27 @@ enum PropKind{
     PROP_FERN, PROP_SHRUB, PROP_MUSHROOMS, PROP_TWIG,
     //The wet band's own cover: the swamp's shallows and the rivers' banks (biomes_plan.md, "Reeds").
     PROP_REEDS_A, PROP_REEDS_B,
+    //A rock bigger than any other, which a building waits on until it is broken (stone_plan.md). Last, after the
+    //cover, so no kind before it moves.
+    PROP_BOULDER,
+    //An OUTCROP's look (Deposits.h): beds of rock on a pocket's floor.
+    PROP_OUTCROP,
     PROP_KIND_COUNT
 };
 #define PROP_COVER_FIRST    PROP_GRASS_A
-//Ground cover's shadow is invisible at the game's zoom and the shadow pass is the dearest one.
-inline bool PropCastsShadow(int kind){ return kind < PROP_COVER_FIRST; }
+//Ground cover's shadow is invisible at the game's zoom and the shadow pass is the dearest one. Everything after the
+//reeds is stone.
+inline bool PropCastsShadow(int kind){ return kind < PROP_COVER_FIRST || kind >= PROP_BOULDER; }
+//A tree, for felling; a ROCK, for breaking - a boulder too (stone_plan.md).
+inline bool ForestIsTree(int kind){ return kind <= PROP_SNOW_PINE; }
+inline bool ForestIsRock(int kind){
+    return (kind >= PROP_ROCK_A && kind <= PROP_ROCK_CLUSTER) || kind == PROP_BOULDER;
+}
+//What breaking a rock gives, by its size (stone_plan.md, current tuning).
+inline int ForestRockStone(int kind){
+    return (kind == PROP_BOULDER) ? 12 : (kind == PROP_ROCK_CLUSTER) ? 6 : (kind == PROP_ROCK_C) ? 4 : ForestIsRock(kind) ? 2 : 0;
+}
+#define FOREST_BOULDER_CHANCE   0.30f   //of the open land's rocks, the share that are boulders
 //The node name of each kind in chasm_props.glb.
 extern const char* prop_asset_names[PROP_KIND_COUNT];
 
@@ -69,10 +85,18 @@ struct ForestData{
     std::vector<PropInstance> props;
     std::vector<std::vector<int>> chunk_props;  //per terrain chunk, indices into props
     int count[PROP_KIND_COUNT] = {};
+    /*
+        Per fine vertex: 1 inside a forest's dense CORE - its noise past the core's threshold - whatever stands there,
+        a cliff's edge or a river's bank included, so the forest is one shape rather than the plots a tree took.
+        The starting land's forest as an area (Areas.h) is these.
+    */
+    std::vector<uint8_t> core;
     float build_ms = 0.0f;
 };
 
+struct DepositData;
+//`deposits` (may be NULL) says where the outcrops stand.
 void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, const TerrainMeshData& mesh,
-                 ForestData& out);
+                 const DepositData* deposits, ForestData& out);
 
 #endif

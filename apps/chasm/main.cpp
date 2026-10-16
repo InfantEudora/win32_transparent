@@ -19,6 +19,9 @@ extern "C" { __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001; }
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd){
+    //Everything logged, to a file beside the exe as well (demo_plan.md, step 4): a tester's double-clicked exe has
+    //nowhere for stderr to go, and a bug report carries the log.
+    Debugger::OpenLogFile(GetExecutableDirectory() + "/chasm.log");
     debug->Info("nShowCmd = %i\n",nShowCmd);
 
     /*

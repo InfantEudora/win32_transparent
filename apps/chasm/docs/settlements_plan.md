@@ -249,6 +249,9 @@ Built 2026-10-11, after step 1 (steps 2 and 3 wait for the woodcutting plan's ca
     pack, and those slept in by its people. A resident away carrying a tent doesn't sleep there, and one on their
     way for a tent counts once. So a person's own tent is always one to spare for them.
   - **Which tent**: the one at the camp's edge (fewest of its tents beside it), so the camp stays one piece.
+    *Since 2026-10-14* (the user's): the one NEAREST them, walked to and packed where they stand. With a camp's tents
+    free to lie anywhere in its colony, a tent pitched alone far off had none beside it - the edge's - and vanished
+    from under its pitcher when someone packed a tent at the base camp.
   - **The plot**: out of its camp on the same tick, as a finished storey goes up (`TentsPacked`, applied as
     `ZONE_OP_BUILD_ERASE` in `TickEconomy`).
   - **None to spare** anywhere they can get to: on as they were, and "NO TENT TO SPARE FOR NAME TO TAKE" (`NOTICE_NO_TENT`).

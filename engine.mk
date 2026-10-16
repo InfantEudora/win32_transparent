@@ -302,6 +302,9 @@ CFLAGS += -DIMGUI_USER_CONFIG=\"imgui_user_config.h\"
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #O3 highest optimisation #-s to strip symbols
 CFLAGS += $(if $(CONFIG_SUFFIX),$(RFLAGS),$(DFLAGS))
+#A release exe is stripped, so its crash report (core/CrashReport.cpp) names each place as exe+offset. The
+#linker's map beside it - build/<exe>.map, never shipped - is what turns such an offset back into a function.
+RLINK = -Wl,-Map=$(basename $@).map
 
 #A measured dead end, recorded so it is not tried twice. The -Wl,--gc-sections above is very
 #nearly inert, because without -ffunction-sections/-fdata-sections the linker's unit of
@@ -663,7 +666,7 @@ ENGINE_LIBS := $(wildcard $(ROOT)/libs/*.a)
 
 $(EXE): $(APP_OBJS) $(ASM_OBJS) $(CORE_OBJS) $(ENGINE_LIBS)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $^ -o $@ $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS)
+	$(CC) $^ -o $@ $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS) $(if $(CONFIG_SUFFIX),$(RLINK))
 	@echo "Built $@ ($(CONFIG))"
 
 $(OBJ_DIR)/%.o: %.cpp

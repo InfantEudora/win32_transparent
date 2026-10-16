@@ -77,6 +77,8 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_RANGE:       return "THE RANGE";
         case ZONE_KIND_TOWER:       return "THE TOWER";
         case ZONE_KIND_ROPEWALK:    return "THE ROPEWALK";
+        case ZONE_KIND_STONECUTTER: return "THE STONECUTTER'S HUT";
+        case ZONE_KIND_MINE:        return "THE MINE";
         default:                    return "A WORKPLACE";
     }
 }
@@ -104,12 +106,14 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     std::vector<uint8_t> stands(n,0);
     std::vector<int> first_plot(n,-1);
     std::vector<int> rope_cost(n,0);    //a site's rope still to build with (goods_plan.md): a winch's
+    std::vector<int> stone_cost(n,0);   //...and its stone (stone_plan.md): a stonecutter's hut's, a mine's
     for (size_t v = 0; v < z.building.size(); v++){
         if (z.building[v] && z.standing[v] > 0){
             stands[z.building[v]] = 1;
         }
         if (z.building[v] && z.building[v] < n && z.storeys[v] > z.standing[v]){
             rope_cost[z.building[v]] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*e.world,z,(int)v,GOOD_ROPE);
+            stone_cost[z.building[v]] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*e.world,z,(int)v,GOOD_STONE);
         }
         if (z.building[v] && z.building[v] < n && first_plot[z.building[v]] < 0){
             first_plot[z.building[v]] = (int)v;
@@ -208,7 +212,8 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             continue;
         }
         bool f_workplace = b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS
-                           || b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_TOWER || b.kind == ZONE_KIND_ROPEWALK;
+                           || b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_TOWER || b.kind == ZONE_KIND_ROPEWALK
+                           || b.kind == ZONE_KIND_STONECUTTER || b.kind == ZONE_KIND_MINE;
         if (f_workplace && stands[id] && id < e.places.size() && e.places[id] > 0 && working[id] == 0){
             ChasmIssue i;
             i.kind = "nobody_at";
@@ -326,6 +331,68 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             i.tool = CHASM_TOOL_ROPEWALK;
         }
         out.push_back(i);
+    }
+
+    /*
+        11b. A site that takes STONE the colony cannot come by (stone_plan.md step 5): more wanted than the stores hold and
+        rubble lies on its own land. Since 2026-10-15 all rubble lies down on the balconies, so the advice is the first
+        link missing: a winch down to it, then a stonecutter's hut to break the rocks - unless that is the very site
+        waiting - and else rubble further out, to PICK UP. One row for every such site, as for rope.
+    */
+    int stone_wanted = 0;
+    uint32_t stone_site = 0;
+    for (size_t id = 1; id < n; id++){
+        int left = stone_cost[id] - EconomySiteBrought(e,(uint32_t)id,GOOD_STONE);
+        if (left > 0){
+            stone_wanted += left;
+            stone_site = stone_site ? stone_site : (uint32_t)id;
+        }
+    }
+    if (stone_wanted > 0){
+        int stone_have = EconomyGoodHeld(e,GOOD_STONE);
+        for (const EconomyCrate& c : e.crates){
+            bool f_ours = c.plot >= 0 && c.plot < (int)e.settlement.size() && e.settlement[c.plot] != 0;
+            stone_have += f_ours ? c.stock[GOOD_STONE] : 0;
+        }
+        if (stone_have < stone_wanted){
+            ChasmIssue i;
+            i.kind = "site_needs_stone";
+            i.tier = ISSUE_STUCK;
+            i.order = (float)stone_site;
+            std::string kind = ZoneKindName(z.buildings[stone_site].kind);
+            std::transform(kind.begin(),kind.end(),kind.begin(),::toupper);
+            i.text = kind + ": NEEDS STONE";
+            bool f_hut = z.buildings[stone_site].kind == ZONE_KIND_STONECUTTER;
+            if (!placed[ZONE_KIND_WINCH]){
+                i.value = "BUILD A WINCH TO THE RUBBLE";
+                i.tool = CHASM_TOOL_WINCH;
+            }else if (!f_hut && !placed[ZONE_KIND_STONECUTTER]){
+                i.value = "BUILD A STONECUTTER'S HUT";
+                i.tool = CHASM_TOOL_STONECUTTER;
+            }else{
+                i.value = "PICK UP RUBBLE FURTHER OUT";
+                i.building = stone_site;
+            }
+            out.push_back(i);
+        }
+    }
+
+    //11c. A mine whose seam is dug out (stone_plan.md step 5): its miner is free, and it stands until erased.
+    for (size_t id = 1; id < n; id++){
+        const ZoneBuilding& b = z.buildings[id];
+        if (b.kind != ZONE_KIND_MINE || b.size <= 0 || !stands[id] || first_plot[id] < 0 || !e.world->deposits){
+            continue;
+        }
+        int d = e.world->deposits->At(first_plot[id]);
+        if (d >= 0 && e.world->deposits->deposits[d].kind == DEPOSIT_SEAM && EconomyDepositLeft(e,d) <= 0){
+            ChasmIssue i;
+            i.kind = "mine_worked_out";
+            i.tier = ISSUE_STUCK;
+            i.order = (float)id;
+            i.text = "MINE: WORKED OUT";
+            i.building = (uint32_t)id;
+            out.push_back(i);
+        }
     }
 
     /*

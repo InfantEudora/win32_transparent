@@ -66,6 +66,8 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_RANGE:       return "range";
         case ZONE_KIND_TOWER:       return "tower";
         case ZONE_KIND_ROPEWALK:    return "ropewalk";
+        case ZONE_KIND_STONECUTTER: return "stonecutter";
+        case ZONE_KIND_MINE:        return "mine";
         default:                    return "none";
     }
 }
@@ -95,6 +97,8 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_BUILDERS:    return 2;       //a workshop, like the woodcutter's
         case ZONE_KIND_TOWER:       return 2;       //and never less: painted whole (ZoneKindPaintStoreys)
         case ZONE_KIND_ROPEWALK:    return 1;       //a long LOW shed (goods_plan.md): length is what it grows by
+        case ZONE_KIND_STONECUTTER: return 1;       //a yard's shed (stone_plan.md): its stone is a storey's cost
+        case ZONE_KIND_MINE:        return 1;       //a portal into the rock (stone_plan.md step 5)
         default:                    return 0;
     }
 }
@@ -688,6 +692,82 @@ static bool WinchIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, 
 }
 
 /*
+    THE MINE's own ground rule (stone_plan.md step 5): one plot ON A DEPOSIT (Deposits.h) - a floatstone seam's foot,
+    dug into its wall; the mountain's foot, dug into its slope (the user's, 2026-10-15: the plateau's gentle foot too,
+    a portal into the slope); or an outcrop, a pit. With the winch, the only building that stands against a cliff:
+    the rock it digs into is left out, and the rest of the corners round it are on its ground, dry, off the mountain,
+    gentle and with no field. Never where a winch lands.
+*/
+static bool MineIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, const char** why){
+    auto refuse = [why](const char* reason){
+        if (why){
+            *why = reason;
+        }
+        return false;
+    };
+    const Grid& g = *w.grid;
+    if (plot < 0 || plot >= (int)g.fine.pos.size()){
+        return refuse("no such plot");
+    }
+    if (g.fine.f_boundary[plot]){
+        return refuse("on the map's edge");
+    }
+    const Terrain& t = *w.terrain;
+    if (!t.Buildable(plot)){
+        return refuse("not on ground a mine can stand on");
+    }
+    const GridPicker& p = *w.picker;
+    int dep = w.deposits ? w.deposits->At(plot) : -1;
+    if (dep < 0){
+        //At the foot of a wall with nothing in it, the reason that says so.
+        bool f_wall = false;
+        for (int i = 0; i < p.PlotQuadCount(plot) && !f_wall; i++){
+            const GridQuad& quad = g.fine.quads[p.PlotQuadCorner(plot,i) / 4];
+            for (int k = 0; k < 4; k++){
+                f_wall = f_wall || t.steps[quad.v[k]] < t.steps[plot];
+            }
+        }
+        return refuse(f_wall ? "no seam in this wall" : "a mine is dug into a seam's wall, the mountain or an outcrop");
+    }
+    int kind = w.deposits->deposits[dep].kind;
+    float lowest = t.ground[plot];
+    float highest = lowest;
+    for (int i = 0; i < p.PlotQuadCount(plot); i++){
+        const GridQuad& quad = g.fine.quads[p.PlotQuadCorner(plot,i) / 4];
+        for (int k = 0; k < 4; k++){
+            int v = quad.v[k];
+            if (kind == DEPOSIT_MOUNTAIN && t.Mountain(v)){
+                continue;       //the slope it digs into
+            }
+            if (!t.SameGround(v,plot)){
+                if (kind == DEPOSIT_SEAM){
+                    continue;   //the wall it digs into, or the balcony's own lip behind it
+                }
+                return refuse("too close to a cliff");
+            }
+            if (t.wet[v]){
+                return refuse("too close to water");
+            }
+            if (t.Mountain(v)){
+                return refuse("on the mountain");
+            }
+            lowest = std::min(lowest,t.ground[v]);
+            highest = std::max(highest,t.ground[v]);
+        }
+        if (!z.field.empty() && z.field[quad.parent]){
+            return refuse("a field is there");
+        }
+    }
+    if (highest - lowest > ZONE_RISE_HOUSE){
+        return refuse("too steep");
+    }
+    if (PlotIsWinchLanding(w,z,plot)){
+        return refuse("a winch lands there");
+    }
+    return true;
+}
+
+/*
     One plot of a bridge, wet or dry: on the map, on buildable ground, not the mountain, nothing on it.
     What a whole bridge needs - dry ends, a wet span, its length - is ZoneBridgeChain's, asked when it is
     placed; this is what each plot of one must still be (a load, the checks).
@@ -848,6 +928,12 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
             return refuse("a winch is one plot");
         }
         return WinchIsBuildable(w,z,plot,why);
+    }
+    if (kind == ZONE_KIND_MINE){
+        if (joining){
+            return refuse("a mine is one plot");
+        }
+        return MineIsBuildable(w,z,plot,why);
     }
     if (kind == ZONE_KIND_BRIDGE){
         return BridgePlotOk(w,z,plot,why);
@@ -1904,7 +1990,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = why;
                 return false;
             }
-            uint32_t joining = owner ? owner : (kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER) ? 0 : stroke_target(kind);
+            uint32_t joining = owner ? owner : (kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE) ? 0 : stroke_target(kind);
             //A diagonal step brings the plot at the cell's corner between first, so the building stays one piece.
             //...but a camp's tents need not touch (THE CAMP, Zones.h): no corner between, and a stroke of them goes on.
             bool f_apart = kind == ZONE_KIND_CAMP;

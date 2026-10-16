@@ -1,4 +1,5 @@
 #include "ChasmSave.h"
+#include "File.h"
 
 #include <cstdio>
 #include <fstream>
@@ -239,6 +240,9 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
             crates.push_back(json{{"id",c.id},{"plot",c.plot},{"pos",json::array({c.pos.x,c.pos.y})},{"goods",goods},
                                   {"origin",c.origin},{"by",c.by},{"tick",c.tick}});
+            if (c.f_pick_up){
+                crates.back()["pick_up"] = true;    //PICK UP (stone_plan.md)
+            }
         }
         //The towers' guard counts (defence_plan.md, step 8): [building, count].
         json guards = json::array();
@@ -258,6 +262,14 @@ json ChasmSaveToJson(const ChasmSave& s){
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
                        {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},
                        {"kept",kept},{"ordered",ordered},{"plants",plants}};
+        //What the mines have dug from each deposit (stone_plan.md step 5): [deposit, how much] - only once any has.
+        if (!e.dug.empty()){
+            json dug = json::array();
+            for (const auto& dg : e.dug){
+                dug.push_back(json::array({dg.first,dg.second}));
+            }
+            economy["dug"] = dug;
+        }
         //Zombies (zombies_plan.md), each on its route as a person is - only once there have been any, so a save
         //without them is as before.
         if (!e.zombies.empty() || e.next_zombie > 1){
@@ -285,6 +297,33 @@ json ChasmSaveToJson(const ChasmSave& s){
             if (!arrows.empty()){
                 economy["arrows"] = arrows;
             }
+        }
+        /*
+            THE HISTORY (statistics_plan.md): where it began, the journal - an event a line, [tick, kind, person,
+            building, plot, what, amount, x, z], its kind a number (Economy.h never renumbers them) - and the ledger:
+            a day a line, [day, people by stage, goods held by name, felled, broken, storeys], today's so far too.
+        */
+        auto day_json = [](const EconomyDay& d){
+            json held = json::object();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (d.held[g]){
+                    held[GoodName(g)] = d.held[g];
+                }
+            }
+            return json::array({d.day,d.people,held,d.felled,d.broken,d.storeys});
+        };
+        const EconomyHistory& h = e.history;
+        json journal = json::array();
+        for (const EconomyEvent& ev : h.journal){
+            journal.push_back(json::array({ev.tick,ev.kind,ev.person,ev.building,ev.plot,ev.what,ev.amount,ev.pos.x,ev.pos.y}));
+        }
+        json days = json::array();
+        for (const EconomyDay& d : h.days){
+            days.push_back(day_json(d));
+        }
+        if (e.f_history){
+            economy["history"] = json{{"from",h.from},{"start",day_json(h.start)},{"felled_from",h.felled_from},
+                                      {"broken_from",h.broken_from},{"journal",journal},{"days",days},{"today",day_json(h.today)}};
         }
     }
     //The debug castle (ramparts_plan.md): plot and piece - only with some, so a save without one is as before.
@@ -414,6 +453,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         by_building("pantries",out.economy.pantries);
         for (const json& pr : e.value("felled",json::array())){
             out.economy.props.push_back(std::make_pair(pr[0].get<int>(),pr[1].get<int>()));
+        }
+        for (const json& dg : e.value("dug",json::array())){
+            out.economy.dug.push_back(std::make_pair(dg[0].get<int>(),dg[1].get<int>()));
         }
         //foraging_plan.md: a save from before has none - every plant ripe.
         for (const json& pl : e.value("plants",json::array())){
@@ -562,6 +604,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             c.origin = cj.value("origin",(int)CRATE_DROPPED);
             c.by = cj.value("by",0u);
             c.tick = cj.value("tick",(uint64_t)0);
+            c.f_pick_up = cj.value("pick_up",false);
             out.economy.crates.push_back(c);
         }
         out.economy.next_crate = e.value("next_crate",1u);
@@ -609,6 +652,57 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             a.flown = aj.value("flown",0);
             a.lie = aj.value("lie",0);
             out.economy.arrows.push_back(a);
+        }
+        //THE HISTORY. A save from before it has none, and the history begins at its load (Economy::Restore).
+        if (e.contains("history") && e["history"].is_object()){
+            const json& hj = e["history"];
+            EconomyHistory& h = out.economy.history;
+            auto read_day = [](const json& dj, EconomyDay& d){
+                if (!dj.is_array() || dj.size() < 6 || !dj[1].is_array() || !dj[2].is_object()){
+                    return false;
+                }
+                d.day = dj[0].get<int>();
+                for (size_t s = 0; s < d.people.size() && s < dj[1].size(); s++){
+                    d.people[s] = dj[1][s].get<int>();
+                }
+                for (auto it = dj[2].begin(); it != dj[2].end(); ++it){
+                    int g = GoodByName(it.key());
+                    if (g >= 0 && it.value().is_number_integer()){
+                        d.held[g] = it.value().get<int>();
+                    }
+                }
+                d.felled = dj[3].get<int>();
+                d.broken = dj[4].get<int>();
+                d.storeys = dj[5].get<int>();
+                return true;
+            };
+            h.from = hj.value("from",(uint64_t)0);
+            h.felled_from = hj.value("felled_from",0);
+            h.broken_from = hj.value("broken_from",0);
+            read_day(hj.value("start",json()),h.start);
+            read_day(hj.value("today",json()),h.today);
+            for (const json& ej : hj.value("journal",json::array())){
+                if (!ej.is_array() || ej.size() < 9){
+                    continue;
+                }
+                EconomyEvent ev;
+                ev.tick = ej[0].get<uint64_t>();
+                ev.kind = ej[1].get<int>();
+                ev.person = ej[2].get<uint32_t>();
+                ev.building = ej[3].get<uint32_t>();
+                ev.plot = ej[4].get<int>();
+                ev.what = (GoodsMask)ej[5].get<int>();
+                ev.amount = ej[6].get<int>();
+                ev.pos = vec2(ej[7].get<float>(),ej[8].get<float>());
+                h.journal.push_back(ev);
+            }
+            for (const json& dj : hj.value("days",json::array())){
+                EconomyDay d;
+                if (read_day(dj,d)){
+                    h.days.push_back(d);
+                }
+            }
+            out.economy.f_history = true;
         }
         //A save from before the guard counts has none: its towers keep every place (Economy::Restore).
         for (const json& gc : e.value("guards",json::array())){
@@ -661,6 +755,27 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     return true;
 }
 
+std::string ChasmFolder(const char* name){
+#ifdef ASSETS_BAKED
+    std::string path = GetExecutableDirectory() + "/" + name;
+#else
+    std::string path = GetExecutableDirectory() + "/../" + name;
+#endif
+#ifdef _WIN32
+    //Without the "build/..": it is shown to the player, in a bug report's place.
+    char full[MAX_PATH];
+    DWORD len = GetFullPathNameA(path.c_str(),MAX_PATH,full,NULL);
+    if (len > 0 && len < MAX_PATH){
+        path = full;
+    }
+#endif
+    return path;
+}
+
+std::string ChasmSaveDirectory(){
+    return ChasmFolder(CHASM_SAVE_DIR);
+}
+
 std::string ChasmSavePath(const std::string& name){
     std::string n = name;
     if (n.size() < 5 || n.compare(n.size() - 5,5,".json") != 0){
@@ -669,12 +784,12 @@ std::string ChasmSavePath(const std::string& name){
     if (n.find('/') != std::string::npos || n.find('\\') != std::string::npos){
         return n;
     }
-    return std::string(CHASM_SAVE_DIR) + "/" + n;
+    return ChasmSaveDirectory() + "/" + n;
 }
 
 bool ChasmSaveWrite(const std::string& name, const json& j, std::string& error){
 #ifdef _WIN32
-    CreateDirectoryA(CHASM_SAVE_DIR,NULL);      //fails harmlessly if it exists
+    CreateDirectoryA(ChasmSaveDirectory().c_str(),NULL);    //fails harmlessly if it exists
 #endif
     std::string path = ChasmSavePath(name);
     std::ofstream f(path.c_str(),std::ios::binary);
@@ -712,7 +827,7 @@ std::vector<std::string> ChasmSaveList(){
     std::vector<std::string> names;
 #ifdef _WIN32
     WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(CHASM_SAVE_DIR "/*.json",&fd);
+    HANDLE h = FindFirstFileA((ChasmSaveDirectory() + "/*.json").c_str(),&fd);
     if (h != INVALID_HANDLE_VALUE){
         do{
             std::string n = fd.cFileName;
@@ -723,4 +838,56 @@ std::vector<std::string> ChasmSaveList(){
 #endif
     std::sort(names.begin(),names.end());
     return names;
+}
+
+int64_t ChasmSaveWritten(const std::string& name){
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (!GetFileAttributesExA(ChasmSavePath(name).c_str(),GetFileExInfoStandard,&a)){
+        return -1;
+    }
+    //A FILETIME counts 100 ns from 1601.
+    uint64_t t = ((uint64_t)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime;
+    return (int64_t)(t / 10000000ull) - 11644473600ll;
+#else
+    return -1;
+#endif
+}
+
+std::vector<ChasmSaveEntry> ChasmSaveEntries(){
+    std::vector<ChasmSaveEntry> out;
+    for (const std::string& name : ChasmSaveList()){
+        ChasmSaveEntry e;
+        e.name = name;
+        e.title = name;
+        e.written = ChasmSaveWritten(name);
+        json j;
+        std::string error;
+        if (!ChasmSaveRead(name,j,error) || !j.is_object() || !j.contains("chasm_save")){
+            continue;
+        }
+        //Read with care, as a file anyone may have edited: with exceptions off, a wrong type would end the app.
+        const json meta = j.value("meta",json::object());
+        if (meta.is_object()){
+            auto text = [&](const char* key){
+                return (meta.contains(key) && meta[key].is_string()) ? meta[key].get<std::string>() : std::string();
+            };
+            e.title = text("title").empty() ? name : text("title");
+            e.kind = text("kind");
+            e.colony = text("colony");
+            e.build = text("build");
+        }
+        if (j.contains("calendar") && j["calendar"].is_number_unsigned()){
+            e.calendar_tick = j["calendar"].get<uint64_t>();
+        }
+        const json economy = j.value("economy",json::object());
+        if (economy.is_object() && economy.contains("people") && economy["people"].is_array()){
+            e.people = (int)economy["people"].size();
+        }
+        out.push_back(e);
+    }
+    std::sort(out.begin(),out.end(),[](const ChasmSaveEntry& a, const ChasmSaveEntry& b){
+        return a.written > b.written;
+    });
+    return out;
 }

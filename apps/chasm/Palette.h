@@ -44,6 +44,13 @@
 #define PAL_HEMP            0       //columns in the crops row: ripe hemp's stalks, an olive green
 #define PAL_HEMP_HEADS      1       //and its crown, fan leaves and seed heads - a yellow-green, not wheat's gold
 #define PAL_ROPE            2       //hemp rope at a ropewalk: a greyed tan, paler than timber, duller than straw
+//Not a biome either: what is dug, the same in every biome and season and never snowed on (stone_plan.md), so a
+//pile of it or a seam in a wall reads at once. The props (chasm_props.blend) are UV'd straight into it.
+#define PAL_MINERALS        10
+#define PAL_FLOATSTONE_LIGHT 0      //columns in the minerals row: floatstone's crystal, a purple-blue, light...
+#define PAL_FLOATSTONE      1
+#define PAL_FLOATSTONE_DARK 2       //...to dark
+#define PAL_FLOATSTONE_GLINT 3      //a near-white lilac, for the odd facet catching the light
 //Not a biome: colours that are the same in every one - the chasm's mist and the falls' foam (Mist.h).
 #define PAL_EFFECTS         15
 #define PAL_MIST_LIGHT      0       //columns in the effects row

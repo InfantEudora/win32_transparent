@@ -4,14 +4,17 @@ aliases: crates, find, finds
 kind: goods
 status: partial
 summary: Goods lying on the ground - the load of someone sent to a post - a store villagers take from, and builders carry off to a store.
-plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3
-code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SourceStock; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
-verified: 2026-10-11
+plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14)
+code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
+verified: 2026-10-15
 ---
 
 A crate is goods lying on the ground. One appears when the player sends someone carrying a load to a
 [[Posts|post]]: the load is put down the moment the order is given. And one is left where a [[Camp|camp]] stood
-when its last tent goes, holding its supplies and pantry ("A camp's goods").
+when its last tent goes, holding its supplies and pantry ("A camp's goods"). **Rubble** is a crate too: piles
+of [[Stone|stone]] laid out with a new colony at the foot of the balconies' walls, or left where a
+[[Stonecutter|stonecutter]] broke a rock - drawn as broken stones, not a crate - and along a seam's foot, piles of
+its [[Floatstone|floatstone]], drawn as broken crystals and named "Floatstone".
 
 ## Where the load goes
 
@@ -35,7 +38,17 @@ or hunger - standing beside it, by the same nearest-first rules.
 
 The [[Builder|builders]], as caretakers, carry crates to a store - the **last** of their errands, after
 building and road work - a load ({ECONOMY_LOAD}) at a time, and only to a store that takes the whole load.
-Nobody without a job moves one, so with no builders' hut a crate is used where it lies.
+They fetch only crates on their own [[Settlement|settlement's]] land. Nobody without a job moves one, so with
+no builders' hut a crate is used where it lies.
+
+**PICK UP**, a chip on the card, puts a crate ahead of building: a builder fetches it after the guard towers
+and provisions, and from **anywhere** he can walk to, since the order is the player's - though still to a
+store of his own settlement. Pressed again, it goes back in the queue. With no builders, the card says so.
+
+But **not further than he can walk without water**, with a wide margin: a crate whose walk there and on to the
+store - by the way he would go, a [[Winch|winch]] and roads counted - takes more than
+{= ECONOMY_PICK_UP_WATER * NEEDS_WATER_FULL / CALENDAR_DAY_TICKS:#days} is turned down, and its card says it is too
+far to fetch. A store nearer to it brings it in reach.
 
 ## Building over it
 
@@ -52,6 +65,7 @@ shows the crate on the selected plot and can put one down there; `chasm_economy`
 
 ## Planned
 
-- [proposed] A FETCH FIRST button on that card, and a badge over each crate on the map.
+- [proposed] A badge over each crate on the map.
+- [idea] PICK UP for many at once - a box over a balcony's piles.
 - [planned] Anyone holding a load that nobody takes puts it down as a crate, and so do the dead.
 - [planned] A few crates placed on the map from the seed, under the clouds, found by exploring.

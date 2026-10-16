@@ -360,7 +360,7 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
     }
     static const std::set<std::string> CUE_KEYS = {
         "signal","begin","end","scope","when","once","chance","delay","jitter","delay_from",
-        "forecast","align","sounds","no_repeat","seed","gain","gain_by","pan_by","pitch","bus",
+        "forecast","align","sounds","no_repeat","seed","gain","gain_by","pan_by","pitch","pitch_jitter","bus",
         "looping","follow","group","priority","busy","max_wait","gap","max_instances","on_end",
         "actions","comment"
     };
@@ -447,6 +447,7 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
             !Str(o,"delay_from","",c.delay_from) || !Str(o,"forecast","",c.forecast) ||
             !Str(o,"align","start",align) || !Bool(o,"no_repeat",true,c.f_no_repeat) ||
             !Num(o,"seed",-1.0f,seed) || !Num(o,"gain",1.0f,c.gain) || !Num(o,"pitch",1.0f,c.pitch) ||
+            !Num(o,"pitch_jitter",0.0f,c.pitch_jitter) ||
             !Str(o,"bus","",c.bus) || !Bool(o,"looping",false,c.f_looping) ||
             !Str(o,"group","",c.group) || !Int(o,"priority",0,c.priority) ||
             !Str(o,"busy","skip",busy) || !Int(o,"max_wait",60,c.max_wait) || !Int(o,"gap",0,c.gap) ||
@@ -578,19 +579,36 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
                 if (jp == jf->end()){
                     continue;
                 }
-                if (!jp->is_object()){
-                    error = fat + "." + parts[k] + " is { in, out, min, max }, and may name its own value";
-                    return false;
+                //The gain may be a LIST of curves, each on a value of its own, that multiply - a loop by its
+                //distance and by whether it is under the clouds. The first is follow_gain, the rest beside it.
+                std::vector<json> each;
+                if (k == 0 && jp->is_array() && !jp->empty()){
+                    each.assign(jp->begin(),jp->end());
+                }else{
+                    each.push_back(*jp);
                 }
-                json with_value = *jp;
-                if (!jp->contains("value")){
-                    if (value.empty()){
-                        error = fat + "." + parts[k] + " needs a value - the follow's or its own";
+                for (size_t n = 0; n < each.size(); n++){
+                    std::string pat = fat + "." + parts[k] + ((each.size() > 1) ? "[" + std::to_string(n) + "]" : "");
+                    if (!each[n].is_object()){
+                        error = pat + " is { in, out, min, max }, and may name its own value";
                         return false;
                     }
-                    with_value["value"] = value;
+                    json with_value = each[n];
+                    if (!each[n].contains("value")){
+                        if (value.empty()){
+                            error = pat + " needs a value - the follow's or its own";
+                            return false;
+                        }
+                        with_value["value"] = value;
+                    }
+                    if (n == 0){
+                        if (!curve(with_value,*into[k],pat)) return false;
+                    }else{
+                        Curve more;
+                        if (!curve(with_value,more,pat)) return false;
+                        c.follow_gain_also.push_back(more);
+                    }
                 }
-                if (!curve(with_value,*into[k],fat + "." + parts[k])) return false;
             }
         }
         auto ja = o.find("actions");
@@ -667,8 +685,22 @@ void CueSystem::SetParameter(const std::string& name, float value){
     parameters[name] = value;
 }
 
+float CueSystem::Parameter(const std::string& name) const{
+    auto it = parameters.find(name);
+    return (it == parameters.end()) ? 0.0f : it->second;
+}
+
 void CueSystem::SetListener(float x){
     listener_x = x;
+}
+
+void CueSystem::SetListener(float x, float z, float height, float right_x, float right_z){
+    listener_x = x;
+    listener_z = z;
+    listener_height = height;
+    listener_right_x = right_x;
+    listener_right_z = right_z;
+    f_listener_ground = true;
 }
 
 void CueSystem::SetActionHandler(const std::string& kind, std::function<void(const CueAction&)> handler){
@@ -817,7 +849,7 @@ void CueSystem::Retire(){
             //Still going: a following sound reads its parameter.
             if (output && p.handle){
                 if (p.follow_gain.f_set){
-                    output->SetGain(p.handle,p.base_gain * Eval(p.follow_gain,FollowValue(p.follow_gain.value,p)));
+                    output->SetGain(p.handle,p.base_gain * FollowGain(p));
                 }
                 if (p.follow_pitch.f_set){
                     output->SetPitch(p.handle,p.base_pitch * Eval(p.follow_pitch,FollowValue(p.follow_pitch.value,p)));
@@ -855,6 +887,9 @@ float CueSystem::Value(const std::string& name, const CuePayload& payload) const
         if (!payload.Has("x")){
             return 0.0f;
         }
+        if (f_listener_ground && payload.Has("z")){
+            return GroundValue(name,payload.Get("x"),payload.Get("z"));
+        }
         float dx = payload.Get("x") - listener_x;
         return (name == "dx") ? dx : fabsf(dx);
     }
@@ -870,11 +905,32 @@ float CueSystem::FollowValue(const std::string& name, const Playing& p) const{
         if (!p.f_has_x){
             return 0.0f;
         }
+        if (f_listener_ground && p.f_has_z){
+            return GroundValue(name,p.x,p.z);
+        }
         float dx = p.x - listener_x;
         return (name == "dx") ? dx : fabsf(dx);
     }
     auto it = parameters.find(name);
     return (it == parameters.end()) ? 0.0f : it->second;
+}
+
+//A following sound's gain factor now: its first curve, times each further one. One curve is exactly that curve.
+float CueSystem::FollowGain(const Playing& p) const{
+    float f = Eval(p.follow_gain,FollowValue(p.follow_gain.value,p));
+    for (const Curve& c : p.follow_gain_also){
+        f *= Eval(c,FollowValue(c.value,p));
+    }
+    return f;
+}
+
+float CueSystem::GroundValue(const std::string& name, float x, float z) const{
+    float dx = x - listener_x;
+    float dz = z - listener_z;
+    if (name == "dx"){
+        return dx * listener_right_x + dz * listener_right_z;
+    }
+    return sqrtf(dx * dx + dz * dz + listener_height * listener_height);
 }
 
 float CueSystem::Eval(const Curve& c, float v) const{
@@ -1110,15 +1166,25 @@ void CueSystem::Fire(Waiting& w){
         Playing p;
         p.f_has_x = w.payload.Has("x");
         p.x = w.payload.Get("x");
+        p.f_has_z = w.payload.Has("z");
+        p.z = w.payload.Get("z");
         float pan = cue.pan_by.f_set ? Eval(cue.pan_by,Value(cue.pan_by.value,w.payload)) : 0.0f;
         if (cue.follow_pan.f_set){
             pan = Eval(cue.follow_pan,FollowValue(cue.follow_pan.value,p));
         }
         pan = (pan < -1.0f) ? -1.0f : ((pan > 1.0f) ? 1.0f : pan);
         float base_gain = gain;
-        float pitch = cue.pitch;
+        //A pitch of its own for each playing, drawn from its trigger as every other draw is. A cue without
+        //pitch_jitter draws nothing, so its pitch is exactly the row's.
+        float spread = 1.0f;
+        if (cue.pitch_jitter > 0.0f){
+            spread = 1.0f + cue.pitch_jitter * (2.0f * CueHash01(cue.key,(uint32_t)w.instance,w.decided,4) - 1.0f);
+        }
+        float pitch = cue.pitch * spread;
+        p.follow_gain = cue.follow_gain;
+        p.follow_gain_also = cue.follow_gain_also;
         if (cue.follow_gain.f_set){
-            gain *= Eval(cue.follow_gain,FollowValue(cue.follow_gain.value,p));
+            gain *= FollowGain(p);
         }
         if (cue.follow_pitch.f_set){
             pitch *= Eval(cue.follow_pitch,FollowValue(cue.follow_pitch.value,p));
@@ -1143,11 +1209,10 @@ void CueSystem::Fire(Waiting& w){
         p.on_end = cue.on_end;
         p.group = cue.group;
         p.priority = cue.priority;
-        p.follow_gain = cue.follow_gain;
         p.follow_pitch = cue.follow_pitch;
         p.follow_pan = cue.follow_pan;
         p.base_gain = base_gain;
-        p.base_pitch = cue.pitch;
+        p.base_pitch = cue.pitch * spread;
         if (output){
             CuePlay play;
             play.gain = gain;

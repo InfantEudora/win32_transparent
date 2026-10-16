@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <unordered_map>
+#include "Deposits.h"
 #include "Palette.h"
 
 /*
@@ -43,6 +44,8 @@
 //"The chasm floor": PAL_VOID on the effects row. A sentinel rather than PAL_VOID itself, because
 //a column means nothing without its row - PAL_VOID is 5, which on a biome row is PAL_ROCK_0.
 #define COLUMN_VOID         -2
+//"Column c of the minerals row" (Palette.h, PAL_MINERALS) whatever the biome: a floatstone seam's band.
+#define COLUMN_MINERAL(c)   (-16 - (c))
 #define GROUND_STEEP        0.80f   //a ground triangle's normal.y under this is bare rock: about 37 degrees
 #define MOUNTAIN_STEEP      0.55f   //the mountain holds snow steeper than that - only its crags are bare: 57 degrees
 #define BARE_COLUMN         (PAL_ROCK_0 + 3)    //the top of a patch too small to use: one brown for all
@@ -127,12 +130,13 @@ struct Ring{
 
 class Builder{
 public:
-    Builder(const Grid& g, const Terrain& t, TerrainMeshData& out) : grid(g), terrain(t), data(out){
+    Builder(const Grid& g, const Terrain& t, const DepositData* d, TerrainMeshData& out) : grid(g), terrain(t), deposits(d), data(out){
         origin = g.bounds_min;
         vec2 size = g.bounds_max - g.bounds_min;
         data.chunks_x = std::max(1,(int)std::ceil(size.x / TERRAIN_CHUNK_SIZE));
         data.chunks_z = std::max(1,(int)std::ceil(size.y / TERRAIN_CHUNK_SIZE));
         data.chunks.assign((size_t)data.chunks_x * data.chunks_z,TerrainChunk());
+        data.seam_bands.assign(d ? d->deposits.size() : 0,TerrainSeamBand());
         for (int k = 0; k <= TERRAIN_FLOOR_STEPS; k++){
             float top = -TERRAIN_STEP * (float)k;
             bool f_seen = top > TERRAIN_DECK_Y;
@@ -197,6 +201,9 @@ public:
         }else if (column == COLUMN_VOID){
             column = PAL_VOID;
             tri_row = PAL_EFFECTS;      //the same black in every biome
+        }else if (column <= COLUMN_MINERAL(0)){
+            column = COLUMN_MINERAL(0) - column;
+            tri_row = PAL_MINERALS;
         }
         vec3 tangent = b - a;
         if (tangent.length() > 1e-9f){
@@ -207,9 +214,10 @@ public:
         v.tangent = tangent;
         v.uv = PaletteUV(column,tri_row);
         v.matid = 0;
-        v.pos = a; chunk->verts.push_back(v);
-        v.pos = b; chunk->verts.push_back(v);
-        v.pos = c; chunk->verts.push_back(v);
+        std::vector<vertex>& verts = into ? *into : chunk->verts;
+        v.pos = a; verts.push_back(v);
+        v.pos = b; verts.push_back(v);
+        v.pos = c; verts.push_back(v);
         data.num_triangles++;
     }
 
@@ -536,6 +544,7 @@ public:
                 continue;
             }
             int high = h[k] > h[(k + 1) % 4] ? a : b;
+            int low = (high == a) ? b : a;
             vec3 out(seg_normal[k].x,0.0f,seg_normal[k].y);
             int r0 = ring_of_step[terrain.steps[high]];
             int r1 = ring_of_step[terrain.steps[high == a ? b : a]];
@@ -549,10 +558,29 @@ public:
                 }
                 vec3 A1 = mid_at(k,r);
                 vec3 B1 = centre_at(r);
-                int column = WallColumn(high,prev,r,A0,B0,B1,A1,out);
+                int column = WallColumn(high,low,prev,r,A0,B0,B1,A1,out);
                 int before = data.num_triangles;
-                Tri(A0,B0,B1,out,column);
-                Tri(A0,B1,A1,out,column);
+                if (column <= COLUMN_MINERAL(0)){
+                    /*
+                        A SEAM's face (TerrainSeamBand): not in the chunk, but in its band twice - as crystal, and as the
+                        stratum it would be without the seam, for when it is dug out.
+                    */
+                    TerrainSeamBand& band = data.seam_bands[deposits->SeamAt(low)];
+                    into = &band.crystal;
+                    Tri(A0,B0,B1,out,column);
+                    Tri(A0,B1,A1,out,column);
+                    data.num_seam_triangles += data.num_triangles - before;
+                    int drawn = data.num_triangles;     //one face drawn either way: the rock is not counted again
+                    int rock = StrataColumn(Band(0.5f * (rings[prev].z + rings[r].z)),high);
+                    into = &band.rock;
+                    Tri(A0,B0,B1,out,rock);
+                    Tri(A0,B1,A1,out,rock);
+                    into = NULL;
+                    data.num_triangles = drawn;
+                }else{
+                    Tri(A0,B0,B1,out,column);
+                    Tri(A0,B1,A1,out,column);
+                }
                 data.num_wall_triangles += data.num_triangles - before;
                 A0 = A1;
                 B0 = B1;
@@ -574,12 +602,12 @@ public:
     }
 
     /*
-        A wall face's rock, between rings r and r + 1 of the wall under plot `high`: its turf, the soil
-        under it, then by which way the face looks - up, a ledge (rock, the odd one moss); down, the
-        dark underside of an overhang - or else its stratum. Rings r and r_below need not be next to
-        each other: Cell skips other tops' caps.
+        A wall face's rock, between rings r and r + 1 of the wall under plot `high`, facing plot `low`: its
+        turf, the soil under it, then by which way the face looks - up, a ledge (rock, the odd one moss);
+        down, the dark underside of an overhang - or else its stratum, or a seam's crystal. Rings r and
+        r_below need not be next to each other: Cell skips other tops' caps.
     */
-    int WallColumn(int high, int r, int r_below, const vec3& a0, const vec3& b0, const vec3& b1, const vec3& a1,
+    int WallColumn(int high, int low, int r, int r_below, const vec3& a0, const vec3& b0, const vec3& b1, const vec3& a1,
                    const vec3& out) const{
         float zm = 0.5f * (rings[r].z + rings[r_below].z);
         float under_top = Top(high) - zm;
@@ -605,6 +633,17 @@ public:
         }
         if (InMouth(high,zm)){
             return COLUMN_VOID;     //the dark inside a spring's mouth
+        }
+        /*
+            A FLOATSTONE SEAM (Deposits.h): the stratum just above its foot, on the faces over its foot plots, is
+            crystal - each face its own of the minerals' shades, mostly the middle ones, the odd one a glint - so
+            it reads as facets, not paint, and from the rim as a purple-blue band along the wall's foot.
+        */
+        int seam = deposits ? deposits->SeamAt(low) : -1;
+        if (seam >= 0 && Band(zm) == deposits->deposits[seam].band){
+            static const int facets[8] = {PAL_FLOATSTONE,PAL_FLOATSTONE_DARK,PAL_FLOATSTONE,PAL_FLOATSTONE_LIGHT,
+                                          PAL_FLOATSTONE,PAL_FLOATSTONE_DARK,PAL_FLOATSTONE_LIGHT,PAL_FLOATSTONE_GLINT};
+            return COLUMN_MINERAL(facets[Hash3(high,low,r + 97) % 8]);
         }
         return StrataColumn(Band(zm),high);
     }
@@ -700,6 +739,7 @@ public:
 private:
     const Grid& grid;
     const Terrain& terrain;
+    const DepositData* deposits;
     TerrainMeshData& data;
     vec2 origin;
     std::vector<Ring> rings;
@@ -707,6 +747,7 @@ private:
     std::vector<int> across;
     uint32_t salt = 0;
     TerrainChunk* chunk = NULL;
+    std::vector<vertex>* into = NULL;   //where Tri puts a triangle instead of the chunk: a seam's band
 };
 
 }
@@ -722,10 +763,10 @@ int TerrainChunkOfQuad(const Grid& g, const TerrainMeshData& m, int quad){
     return cz * m.chunks_x + cx;
 }
 
-void BuildTerrainMesh(const Grid& g, const Terrain& t, TerrainMeshData& out){
+void BuildTerrainMesh(const Grid& g, const Terrain& t, const DepositData* deposits, TerrainMeshData& out){
     auto t0 = std::chrono::steady_clock::now();
     out = TerrainMeshData();
-    Builder b(g,t,out);
+    Builder b(g,t,deposits,out);
     for (int q = 0; q < (int)g.fine.quads.size(); q++){
         b.Cell(q);
     }

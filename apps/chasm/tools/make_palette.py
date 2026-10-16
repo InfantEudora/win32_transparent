@@ -5,14 +5,15 @@ After that the PNG is the source: edit it in any paint program. This script refu
 unless given --force, so a hand-tuned palette is never lost to a re-run.
 
 The layout is fixed by apps/chasm/Palette.h: 32 x 16 cells, CELL pixels square. A ROW is a biome
-(row 0 temperate, then desert, frozen, swamp; row 15 the effects row; the rest spare); a COLUMN is a material within it.
+(row 0 temperate, then desert, frozen, swamp; row 10 the minerals row, row 15 the effects row; the rest spare); a COLUMN
+is a material within it.
 The engine samples the centre of a cell with nearest filtering and no mipmaps, so a cell is
 one flat colour - paint every pixel of a cell the same.
 
 Colours are sRGB-ish values straight to the screen (the engine has no tone mapping), chosen
 against the A Little Age screenshot in art_source/chasm/ under the default lighting.
 
-    python apps/chasm/tools/make_palette.py [--force | --effects]
+    python apps/chasm/tools/make_palette.py [--force | --effects | --minerals]
 """
 import os
 import sys
@@ -107,21 +108,35 @@ PROPS_DEF = [
 EFFECTS_ROW = 15
 EFFECTS_DEF = [(126, 128, 134), (102, 104, 112), (80, 82, 90), (226, 234, 238), (196, 204, 190)]
 
-def paint_effects(img):
-    for c, colour in enumerate(EFFECTS_DEF):
+# Row 10 is not a biome either: the MINERALS row, what is dug, the same in every biome and season and
+# never snowed on (stone_plan.md). Columns 0-3 are floatstone's purple-blue crystal - light, mid, dark -
+# and a near-white lilac for the facet catching the light.
+MINERALS_ROW = 10
+MINERALS_DEF = [(176, 156, 246), (122, 102, 222), (72, 54, 160), (232, 226, 255)]
+
+def paint_row(img, row, colours):
+    for c, colour in enumerate(colours):
         for y in range(CELL):
             for x in range(CELL):
-                img.putpixel((c * CELL + x, EFFECTS_ROW * CELL + y), colour + (255,))
+                img.putpixel((c * CELL + x, row * CELL + y), colour + (255,))
+
+def paint_effects(img):
+    paint_row(img, EFFECTS_ROW, EFFECTS_DEF)
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     out = os.path.normpath(os.path.join(here, "..", "assets", "textures", "palette.png"))
-    # --effects paints only the effects row into the existing PNG, leaving every other cell as it is.
-    if "--effects" in sys.argv:
+    # --effects and --minerals paint only their own cells into the existing PNG, leaving every other
+    # cell as it is.
+    painted = [(flag, row, colours) for flag, row, colours in (("--effects", EFFECTS_ROW, EFFECTS_DEF),
+                                                               ("--minerals", MINERALS_ROW, MINERALS_DEF))
+               if flag in sys.argv]
+    if painted:
         img = Image.open(out).convert("RGBA")
-        paint_effects(img)
+        for flag, row, colours in painted:
+            paint_row(img, row, colours)
+            print("painted row %d's %d cells into %s" % (row, len(colours), out))
         img.save(out)
-        print("painted the effects row into", out)
         return 0
     if os.path.exists(out) and "--force" not in sys.argv:
         print("refusing to overwrite %s - it is the source now; pass --force to start over" % out)
@@ -138,6 +153,7 @@ def main():
                 for x in range(CELL):
                     img.putpixel((c * CELL + x, r * CELL + y), colour + (255,))
     paint_effects(img)
+    paint_row(img, MINERALS_ROW, MINERALS_DEF)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     img.save(out)
     print("wrote", out)

@@ -6,7 +6,8 @@
 --verify imports apps/chasm/assets/meshes/chasm_props.glb into an EMPTY scene - what the game gets,
 not what the .blend holds - and checks every mesh: its name, its triangle count, that its origin is
 the middle of its base (local bounds centred on x/y, ground at z = 0), that every UV is the centre
-of a row-0 palette cell, and that every normal is its face's normal (flat shading survived).
+of a row-0 palette cell or one of the few in OFF_ROW, and that every normal is its face's normal
+(flat shading survived).
 
 --render opens art_source/chasm/chasm_props.blend and writes art_source/chasm/previews/:
 lineup.png and lineup_cover.png (Workbench, every asset from the game's 55 degree camera),
@@ -35,6 +36,13 @@ PALETTE_ROWS = 16
 TRI_BUDGET = {"tree_pine": 100, "tree_oak": 120, "tree_palm": 120, "tree_willow": 120,
               "grass": 12, "fern": 24, "shrub": 24, "reeds": 24}
 COVER = ("grass", "flowers", "fern", "shrub", "mushrooms", "twig", "reeds")
+#(row, column) cells off row 0 that a prop may use - the same in every biome and season (Palette.h): the
+#crops row's rope, the minerals row's floatstone, the effects row's black.
+OFF_ROW = {(9, 2), (10, 0), (10, 1), (10, 2), (10, 3), (15, 5)}
+#Props whose origin is not their base's middle on purpose: the mine portal's is the mouth's sill, and
+#those that fill a plot have theirs in the middle of their footprint (blender_chasm_props.py, build_object).
+OWN_ORIGIN = ("mine_portal",)
+FOOTPRINT_ORIGIN = ("boulder", "outcrop")
 SUN_TRAVEL = Vector((1.0, -1.0, -2.0)).normalized()     #from the north-west, as blender_chasm_props.py
 
 
@@ -63,7 +71,15 @@ def verify():
         base = [v.co for v in mesh.vertices if v.co.z < lo.z + 0.3]
         bx = sum(c.x for c in base) / len(base)
         by = sum(c.y for c in base) / len(base)
-        if not obj.name.endswith("_fruit") and (not (-0.15 <= lo.z <= 0.0) or abs(bx) > 0.2 or abs(by) > 0.2):
+        if obj.name in OWN_ORIGIN:
+            if not -0.15 <= lo.z <= 0.0:
+                failures.append("%s: its ground is not z = 0 (min z %.3f)" % (obj.name, lo.z))
+        elif obj.name in FOOTPRINT_ORIGIN:
+            mid = (lo + hi) / 2
+            if not -0.15 <= lo.z <= 0.0 or abs(mid.x) > 0.02 or abs(mid.y) > 0.02:
+                failures.append("%s: origin is not the footprint's middle (min z %.3f, middle %.2f %.2f)"
+                                % (obj.name, lo.z, mid.x, mid.y))
+        elif not obj.name.endswith("_fruit") and (not (-0.15 <= lo.z <= 0.0) or abs(bx) > 0.2 or abs(by) > 0.2):
             failures.append("%s: origin is not the base centre (min z %.3f, base centre %.2f %.2f)"
                             % (obj.name, lo.z, bx, by))
 
@@ -80,10 +96,11 @@ def verify():
                 u, v = us.pop()
                 col = u * PALETTE_COLS - 0.5
                 row = (1.0 - v) * PALETTE_ROWS - 0.5     #back from Blender's V-up to image rows
-                if abs(col - round(col)) > 1e-3 or abs(row) > 1e-3:
+                cell = (int(round(row)), int(round(col)))
+                if abs(col - round(col)) > 1e-3 or abs(row - round(row)) > 1e-3 or (cell[0] != 0 and cell not in OFF_ROW):
                     failures.append("%s: UV %.4f %.4f is not a row-0 cell centre" % (obj.name, u, v))
                     break
-                columns.add(int(round(col)))
+                columns.add(cell[1] if cell[0] == 0 else "r%dc%d" % cell)
 
         #Flat: the importer keeps the file's normals as custom split normals.
         bent = 0
@@ -98,7 +115,8 @@ def verify():
             if obj.name.startswith(prefix) and tris > budget:
                 failures.append("%s: %d triangles, budget %d" % (obj.name, tris, budget))
         print("%-16s %5d %6.2f %6.2f %6.2f  %s" % (obj.name, tris, size.x, size.y, size.z,
-                                                    " ".join(str(c) for c in sorted(columns))))
+                                                    " ".join(str(c) for c in sorted(
+                                                        columns, key=lambda c: (isinstance(c, str), str(c).rjust(6))))))
     print("%-16s %5d" % ("total", total))
     print("\n" + ("\n".join("FAIL " + f for f in failures) if failures else "all checks pass"))
     return not failures

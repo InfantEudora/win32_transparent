@@ -651,8 +651,12 @@ public:
         recording can start or stop at an exact tick. See InputController::BeginRecording for what
         is recorded and core/InputRecording.h for the file.
     */
-    void RequestRecordingStart();
+    //`stem` names the file in place of the app ("chasm_auto" -> recordings/chasm_auto_<date>_<time>.rec), so an app
+    //can tell the recordings it started itself from the person's.
+    void RequestRecordingStart(const std::string& stem = "");
     void RequestRecordingStop();
+    //The recording running saved, and a new one started on the same pass - or just started, with none running.
+    void RequestRecordingRestart(const std::string& stem = "");
     //Loads the file HERE, on the caller's thread, so a bad file is reported to whoever asked
     //rather than logged from the physics thread. An empty path means the last recording saved.
     //f_restore_state hands the file's `state` to RestoreRecordingState before the first tick.
@@ -773,11 +777,13 @@ protected:
     void ServiceUIToggle();
     void FinishRecording(uint64_t sim_tick);
     //REC / REPLAY in the corner of the window, so a hotkey that toggles something invisible says
-    //that it did. Render thread, drawn with the overlay.
-    void DrawInputRecordingBadge();
+    //that it did. Render thread, drawn with the overlay. An app with a HUD of its own where the
+    //badge would sit draws its own instead.
+    virtual void DrawInputRecordingBadge();
     std::mutex recording_mutex;             //guards everything below up to recordings_saved
     bool f_record_start_requested = false;
     bool f_record_stop_requested = false;
+    std::string record_start_stem;          //the requested start's file stem, empty for the app's name
     bool f_replay_requested = false;
     bool f_replay_stop_requested = false;
     bool f_pending_replay_restore = true;
@@ -791,6 +797,7 @@ protected:
     std::string recording_scene;
     std::string recording_started_at;       //"2026-09-25 14:03:11", for the file
     std::string recording_file_stamp;       //"20260925_140311", for its name
+    std::string recording_stem;             //...and what goes before it, empty for the app's name
 
     //--- The replay's state trace, see HashSimState ---------------------------------------------
     //Physics thread, around each tick: the start check (if on) and the end hash, while replaying.

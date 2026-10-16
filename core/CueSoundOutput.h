@@ -51,6 +51,12 @@ public:
         //CueSystem's bus 0 is "no bus of its own", which for a scene's output is the scene.
         p.bus = (play.bus == SOUND_BUS_MASTER) ? layer : play.bus;
         p.f_looping = play.f_looping;
+        /*
+            A loop is KEPT. Started as a one-shot, it was the first thing taken when every voice was busy: the
+            oldest one-shot goes, and a loop is always the oldest - a waterfall cut off by a burst of footsteps.
+            A cue's loop always ends by its own Stop (its scope ending, a reload), so it never holds a voice past it.
+        */
+        p.flags = play.f_looping ? SOUND_KEEP : SOUND_ONESHOT;
         p.start_seconds = play.from;
         return sound->Play(name,p);
     }

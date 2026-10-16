@@ -130,8 +130,12 @@ now and then. Better than a bed for a recording that fades out at its end, whose
 a hole in it. The note log shows its notes as `-`.
 
 A voice whose register is a single note plays only that note: chasm.json's guitar strums are
-chords, so each is held to the key's root (`"low": "D2", "high": "D2"`) - the F major strum
-becomes a D major chord, the E minor one a D minor chord - and the frame drum to the fifth.
+chords, so each is held to one chord of its own (`"low": "D2", "high": "D2"`) - the F major strum
+becomes a D major chord, the E minor one a D minor chord - and the frame drum to the fifth. A
+season's other chords are more such voices, each on its own note: the same F major strum at G2
+is a G major chord, the C major one at A1 an A major chord. Which chords suit is the section's
+mode, so they are chosen per section. The register is absolute, so these do NOT follow a key
+change to another root (a held note the new scale lacks still plays); chasm stays on D.
 
 A **section** may name its own `mode` and `root`, which it takes on its first downbeat, so choosing
 the section is enough to hear it as it is meant. A key change asked for afterwards still applies,
@@ -146,12 +150,18 @@ flute, choir, pad, spooky chimes and voice) went in the same day; the rest are s
 the jungle library. Root D throughout, so every part shares the root and the fifth. One theme (the
 `theme` phrase) runs through four seasons, each playing it on its own instrument and in its own mode:
 
-- **spring**: pentatonic major; birds and a woodpecker, breeze, frogs; kalimba, guitar, a D major
-  strum, a sparse frame drum, a high flute. Theme on hang drum.
-- **summer**: ionian, the fullest; crickets and woods; kalimba, hang, guitar, strum, frame drum,
-  fiddle, far birds. Theme on flute.
-- **autumn**: dorian; low wind, gusts, the rain flute loop; hang, a swelling guitar note, a D minor
-  strum, frame drum, breath flute, cello and bass. Theme on cello.
+- **spring**: pentatonic major; birds and a woodpecker, breeze, frogs; kalimba, guitar, D and A
+  major strums, a sparse frame drum, a high flute. Theme on hang drum.
+- **summer**: ionian, the fullest; crickets and woods; kalimba, hang, guitar, D, G and A major
+  strums (I, IV, V), frame drum, fiddle, far birds. Theme on flute.
+- **autumn**: dorian; low wind, gusts, the rain flute loop; hang, a swelling guitar note, a guitar
+  pluck, D minor, C and G strums (i, bVII, IV - the dorian folk progression), frame drum, breath
+  flute, cello and bass. Theme on cello.
+
+Those three also have a `pick`: a fingerpicked guitar figure on the tonic chord, two bars of
+half-beat steps (`1, 5, 1 3 5 3 1 5,` ...), which may start every 4 bars. It is written in
+degrees like the theme, so it is a D major arpeggio in spring and summer and D minor in autumn.
+It can land under the theme, which it harmonises.
 - **winter**: aeolian, sparse; snow wind, a drone and the angelical pad, cold strings when tense;
   metallophone "ice", breath flute and a low cello. Theme on a high flute, half as fast again.
 
@@ -169,6 +179,13 @@ in by what the camera looks at, rather than taking a turn:
 
 Measured on 60-second renders at suspense 0.2, every section is within 1.8 dB: spring -25.1,
 summer -25.7, autumn -26.9, winter -26.1, clouds -26.7, chasm -26.0 dB RMS.
+
+The guitar went up in spring, summer and autumn on 2026-10-16 (more guitar and strum notes, the
+other chords, the `pick`). On 120-second renders at suspense 0.2, two seeds each, that added
+0.8 to 2.0 dB: spring -27.1/-26.7 to -25.5/-25.8, summer -26.0/-26.6 to -25.2/-24.6, autumn
+-27.1/-27.4 to -26.3/-26.1, beside winter's unchanged -24.8/-26.2. Summer's key estimate now tips
+to A major rather than D major, both times by a margin of 0.03 to 0.04 (it was D major by 0.04 to
+0.05): more weight on A from the A major strum and the pick, not a note out of key.
 
 The bench plays one section at a time, so the blend of the land with clouds or chasm is not heard
 here. Chasm does not play any of it yet.

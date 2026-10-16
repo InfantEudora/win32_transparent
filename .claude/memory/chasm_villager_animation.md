@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 0d964184-f477-47d6-845e-a14ed3a2d9dd
-  modified: 2026-10-11T20:23:44.576Z
+  modified: 2026-10-14T18:17:34.064Z
 ---
 
 2026-10-10: aiming at 100-200 villagers + zombie waves on screen. Shape keys (the spider way) were
@@ -73,3 +73,7 @@ Source FBXs arrive already on the 15-bone rig (`*_blender_fit.fbx` in Downloads;
 **Trap:** the Export collection's exporter saved in `chasm_props.blend` had `export_skins` and
 `export_animations` OFF (seen 15:59); a one-click export or `blender_chasm_props.py --add` drops the
 rig. The script's `--force` settings were updated to include them. See [[chasm-game-plan]].
+
+**The user, 2026-10-14:** every character gets a rig, and they all share the same animations. The .blend and
+the export hold just three clips (Idle, Shoot, Walking). So rig edits in the .blend that a whole export would
+ship (the female rig, Idle's keys) are intended, not a trap to route around. Related: [[chasm-stone-plan]].

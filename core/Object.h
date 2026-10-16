@@ -218,6 +218,7 @@ class Object{
     void SetInstanceMotion(std::vector<vec4>&& params, float pad);
     const std::vector<vec4>& GetInstanceMotion() const { return instance_motion; }
     bool HasInstanceMotion() const { return !instance_motion.empty(); }
+    float GetInstanceMotionPad() const { return instance_motion_pad; }    //the `pad` it was given, to give again (SceneCapture)
 
     //Modify postition
     void SetPosition(const vec3& newpos,bool f_write_physics=true); //If the position change needs to be written to the physics engine
@@ -583,6 +584,7 @@ protected:
     bool f_instance_set = false;
     std::vector<fmat4> instances;
     std::vector<vec4> instance_motion;      //INSTANCE_MOTION_VEC4S per instance, or empty
+    float instance_motion_pad = 0.0f;
     vec3 instance_bounds_min;
     vec3 instance_bounds_max;
 

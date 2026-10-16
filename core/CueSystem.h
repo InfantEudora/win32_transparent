@@ -21,10 +21,14 @@
     here may change what the next tick of the game computes, so anything that does - a flag, a
     locked control, a hitstop - belongs in the game's rules, which report it as an event.
 
-    ONE THREAD, ONE PLACE. Everything is called on the simulation thread. Signals and scopes are
-    collected through the tick and acted on together by Tick(), which the game calls once at the
-    END of its tick, after everything that can signal has run - so the order of the log does not
-    depend on which part of the game happened to find an event first.
+    ONE THREAD, ONE PLACE. Everything is called on one thread. The archer's is the simulation's:
+    signals and scopes are collected through the tick and acted on together by Tick(), which the
+    game calls once at the END of its tick, after everything that can signal has run - so the order
+    of the log does not depend on which part of the game happened to find an event first, and a
+    replay decides what the original did (below). A game whose sound need not replay exactly may
+    tick it anywhere else, so long as it is one thread: chasm's runs once a pass of the physics
+    loop, paused or not, on a count of passes rather than of ticks, so its sounds keep their timing
+    at 4x and its clicks still answer while the game is paused (apps/chasm/docs/sound_plan.md).
 
     DETERMINISTIC. The clock is whatever tick the game passes to Tick(), which should be one a
     replay restores (the archer's Stage::ticks). Every random draw is a hash of that tick, the
@@ -74,9 +78,13 @@
           "gain_by":  [{ "value": "power", "in": [0, 1], "out": [0.55, 1.0], "min": 0, "max": 1 }]
                                         each factor a clamped linear map of a payload value;
                                         "distance" and "dx" are from the payload's "x" to the
-                                        listener
+                                        listener - or from its "x" and "z", for a listener on
+                                        the ground plane (SetListener)
           "pan_by":   { "value": "dx", "in": [-16, 16], "out": [-1, 1] }
           "pitch":    1.0
+          "pitch_jitter": 0.05          each playing's pitch up to this share either way of it,
+                                        drawn - three takes of an axe blow sound like many; a
+                                        playing's length is counted at the pitch it got
           "bus":      "effects"
           "looping":  false
           "follow":   { "value": "swing_speed", "gain": { "in": [0, 5], "out": [0, 1] },
@@ -87,6 +95,9 @@
                                         listener AS IT MOVES, so a loop standing in the level -
                         "pan": { "value": "dx", "in": [-20, 20], "out": [-0.7, 0.7] }
                                         - is steered as she walks past it. pan replaces pan_by.
+                                        gain may be a LIST of such curves, which multiply:
+                        "gain": [ { "value": "river_distance", "in": [2, 40], "out": [1, 0] },
+                                  { "value": "river_hidden", "in": [0, 1], "out": [1, 0.3] } ]
           "group":    "her"             one line at a time per group
           "priority": 0
           "busy":     "skip"            the group is speaking: skip, queue (for max_wait ticks),
@@ -169,7 +180,7 @@ struct CueAction{
     THE SAME MIXING as apps/archer/PlaceHash.h's Hash01 with the key and instance in place of the
     position, so that a cue with seed 0 and instance 0 draws exactly what the archer's hand-wired
     kick shout drew - which is what lets moving it onto a cue be proved against a recording.
-    Salts: 1 the chance, 2 the jitter, 3 the variant.
+    Salts: 1 the chance, 2 the jitter, 3 the variant, 4 the pitch_jitter.
 */
 float CueHash01(uint32_t key, uint32_t instance, uint64_t tick, uint32_t salt);
 
@@ -196,8 +207,17 @@ public:
     bool IsScopeOpen(const std::string& name, int instance = 0) const;
     //A continuous value a following sound reads - swing speed, push speed. Keeps its last value.
     void SetParameter(const std::string& name, float value);
+    float Parameter(const std::string& name) const;     //its last value, 0 if never set - for panels and tools
     //Where the listener is along x, for distance and pan. The archer's is her position.
     void SetListener(float x);
+    /*
+        ...or on a GROUND PLANE, for a game seen from above: it hears from `height` over (x, z), and
+        (right_x, right_z) is the view's right along the ground, of unit length. A payload with a "z"
+        then has its "distance" in 3D from that point - a view pulled back hears everything quieter -
+        and its "dx" along the right, for pan. A payload with no "z" is still measured along x alone,
+        so a side-view game that never calls this is unchanged.
+    */
+    void SetListener(float x, float z, float height, float right_x, float right_z);
 
     //Acts on everything signalled since the last call, then fires whatever is due. Once a tick.
     void Tick(uint64_t now);
@@ -272,10 +292,12 @@ private:
         std::vector<Curve> gain_by;
         Curve pan_by;
         float pitch = 1.0f;
+        float pitch_jitter = 0.0f;
         std::string bus;
         int   bus_id = 0;
         bool  f_looping = false;
         Curve follow_gain;
+        std::vector<Curve> follow_gain_also;    //a gain given as a list: its curves after the first
         Curve follow_pitch;
         Curve follow_pan;
         std::string group;
@@ -351,6 +373,7 @@ private:
         std::string group;
         int         priority = 0;
         Curve       follow_gain;
+        std::vector<Curve> follow_gain_also;
         Curve       follow_pitch;
         Curve       follow_pan;
         float       base_gain = 1.0f;
@@ -358,12 +381,20 @@ private:
         //Where its trigger said it was, for a follow of "distance" or "dx".
         bool        f_has_x = false;
         float       x = 0.0f;
+        bool        f_has_z = false;
+        float       z = 0.0f;
     };
 
     float tps = 60.0f;
     CueOutput* output = NULL;
     std::string file;
     float listener_x = 0.0f;
+    //The ground-plane listener's rest (SetListener); off until it is set.
+    bool  f_listener_ground = false;
+    float listener_z = 0.0f;
+    float listener_height = 0.0f;
+    float listener_right_x = 1.0f;
+    float listener_right_z = 0.0f;
     uint64_t now = 0;
     uint64_t next_serial = 1;
     int      auditions = 0;                 //Audition's turn through a cue's sounds
@@ -404,6 +435,10 @@ private:
     //What a playing sound's follow reads right now: "distance" and "dx" from where it started to
     //the listener, anything else the parameter of that name.
     float FollowValue(const std::string& name, const Playing& p) const;
+    //"distance" or "dx" of a point on the ground to the ground-plane listener.
+    float GroundValue(const std::string& name, float x, float z) const;
+    //A following sound's gain factor: its follow_gain times every follow_gain_also.
+    float FollowGain(const Playing& p) const;
     float Eval(const Curve& c, float v) const;
     bool  GroupBusy(const std::string& group, uint64_t at, const Playing** speaking) const;
     uint64_t LengthTicks(const std::string& sound, float from, float pitch) const;

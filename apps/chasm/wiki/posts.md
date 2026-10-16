@@ -5,7 +5,7 @@ kind: people
 status: partial
 summary: The player can order a grown-up to stand on a plot. It becomes their job while it lasts, and they live off a pack they take along.
 plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order; defence_plan.md > Scouting, provisioned first; selection_plan.md > Several people selected (the user's, agreed 2026-10-11)
-code: Economy.cpp: Order TakePost GoToPost SpreadPost RePlace FillPack Unpack Needs Gather GatherSupplies Notice; Economy.h: EconomyCanOrder EconomyPostRoom ECONOMY_POST_ROOM NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS EconomyNotice
+code: Economy.cpp: Order TakePost GoToPost SpreadPost RePlace FillPack Unpack Needs Gather GatherSupplies Notice; Economy.h: EconomyCanOrder EconomyPostRoom ECONOMY_POST_ROOM NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS EconomyEvent
 verified: 2026-10-12
 ---
 

@@ -564,6 +564,132 @@ void ApplicationChasm::BuildWorkerScene(){
 }
 
 /*
+    A person's skeleton of a rigged figure `f`, with his own copy of each clip and a child per load on its bone, his
+    kit made and hidden - in no scene yet: the caller adds it, and his bow, which is an object of its own. `name` begins
+    every object's name. UploadWorkers' people, and the title's diorama's (ApplicationChasmTitle.cpp).
+*/
+Object* ApplicationChasm::BuildPersonSkin(WorkerSkin& ws, const std::string& name, int f){
+    Skeleton* s = gltfloader.GetSkeleton(worker_skin_name[f].c_str(),assetmanager);
+    if (!s){
+        return NULL;
+    }
+    s->name = name + " " + person_asset_names[f];
+    s->SetMesh(worker_skin_mesh[f]);
+    s->SetMaterialSlot(0,palette_material);
+    s->SetPickability(true);
+    s->SetVisualOnly(true);
+    s->SetVisibility(false);
+    s->SetScale(vec3(PERSON_MODEL_SCALE,PERSON_MODEL_SCALE,PERSON_MODEL_SCALE));
+    //His own copies: Object::AddAnimation binds a clip's tracks to the bones of the skeleton it is given.
+    const char* names[3] = {WORKER_WALK_CLIP,f_worker_idle_clip ? WORKER_IDLE_CLIP : NULL,
+                            f_worker_shoot_clip ? WORKER_SHOOT_CLIP : NULL};
+    for (const char* name : names){
+        Animation* clip = name ? gltfloader.LoadAnimation(name) : NULL;
+        if (!clip){
+            continue;
+        }
+        clip->looped = true;
+        //Each rig binds its own channels where the clip has them, and borrows another's by name.
+        s->AddAnimation(clip);
+        KeepOwnPositions(clip);
+    }
+    s->animation_transition_time_max = WORKER_CLIP_BLEND;
+    s->SetBlendTime("",WORKER_SHOOT_CLIP,WORKER_SHOOT_BLEND);
+    s->SetBlendTime(WORKER_SHOOT_CLIP,WORKER_WALK_CLIP,WORKER_SHOOT_BLEND);
+    s->SetBlendTime(WORKER_SHOOT_CLIP,WORKER_IDLE_CLIP,WORKER_SHOOT_BLEND);
+    //His kit, shown while he is an archer: the quiver on his spine, the bow an object of its own that UploadWorkers
+    //puts in his hand every frame.
+    const char* arm_names[4] = {"Arm.Lower.L","Hand.L","Arm.Lower.R","Hand.R"};
+    for (int a = 0; a < 4; a++){
+        ws.arm[a] = s->FindBone(arm_names[a]);
+    }
+    auto kit_object = [&](const char* what, Mesh* m){
+        Object* o = new Object();
+        o->name = s->name + " " + what;
+        o->SetMesh(m);
+        o->SetMaterialSlot(0,palette_material);
+        o->SetPickability(true);    //a click on his bow picks him
+        o->SetVisualOnly(true);
+        o->SetVisibility(false);
+        return o;
+    };
+    if (worker_skin_quiver[f]){
+        ws.quiver = kit_object("quiver",worker_skin_quiver[f]);
+        Bone* spine = s->FindBone("Spine");
+        if (spine){
+            spine->AttachChild(ws.quiver);
+        }else{
+            s->AttachChild(ws.quiver);
+        }
+    }
+    if (worker_bow_mesh){
+        ws.bow = kit_object("bow",worker_bow_mesh);
+        float scale = PERSON_MODEL_SCALE * worker_figure_fit[f];
+        ws.bow->SetScale(vec3(scale,scale,scale));
+    }
+    for (int l = 1; l < WORKER_LOADS; l++){
+        Mesh* m = worker_skin_load[f * WORKER_LOADS + l];
+        if (!m){
+            continue;
+        }
+        Object* p = new Object();
+        p->name = s->name + " load " + std::to_string(l);
+        p->SetMesh(m);
+        p->SetMaterialSlot(0,palette_material);
+        p->SetPickability(true);    //a click on his log picks him
+        p->SetVisualOnly(true);
+        p->SetVisibility(false);
+        Bone* bone = s->FindBone(load_bone_names[l]);
+        if (bone){
+            bone->AttachChild(p);
+        }else{
+            s->AttachChild(p);
+        }
+        ws.load[l] = p;
+    }
+    return s;
+}
+
+/*
+    An archer's bow in his left hand, and while he shoots the arrow in his right (into `hand_arrows`, if given) -
+    from his hands as they are posed NOW, so read between ticks as the renderer reads them. See UploadWorkers.
+*/
+void ApplicationChasm::PlaceBow(WorkerSkin& ws, int figure, const vec3& forward, std::vector<fmat4>* hand_arrows){
+    if (!ws.arm[0] || !ws.arm[1] || !ws.arm[2] || !ws.arm[3]){
+        return;
+    }
+    const vec3 up(0.0f,1.0f,0.0f);
+    float fit = worker_figure_fit[figure];
+    float reach = WORKER_PALM_REACH * PERSON_MODEL_SCALE * fit;
+    vec3 grip = Palm(ws.arm[0],ws.arm[1],reach);
+    vec3 nock = Palm(ws.arm[2],ws.arm[3],reach);
+    quat bow = TurnZTo(forward,up);
+    Animation* clip = ws.figure->current_animation;
+    if (clip && clip->name == WORKER_SHOOT_CLIP && clip->duration > 0.0f){
+        float phase = clip->time_index / clip->duration;
+        vec3 line = grip - nock;
+        float len = line.length();
+        if (len > 1e-4f && fabsf(line.y) < 0.95f * len){
+            line = line * (1.0f / len);
+            float aim = BowAim(phase);
+            if (aim > 0.0f){
+                bow = quat::slerp(bow,TurnZTo(line,up),aim);
+            }
+            if (hand_arrows && phase >= SHOOT_TAKE && phase < SHOOT_RELEASE){
+                vec3 d = (phase < SHOOT_NOCK) ? ws.arm[3]->GetWorldPosition() - ws.arm[2]->GetWorldPosition() : line;
+                float dl = d.length();
+                if (dl > 1e-6f && fabsf(d.y) < 0.999f * dl){
+                    hand_arrows->push_back(Object::ComposeTransformScale(nock,TurnZTo(d * (1.0f / dl),up),
+                                                                        vec3(fit,fit,fit)));
+                }
+            }
+        }
+    }
+    ws.bow->SetPosition(grip,false);
+    ws.bow->SetRotation(bow,false);
+}
+
+/*
     RENDER THREAD. One object per worker, made when there are more workers than objects and hidden
     when there are fewer. An object's mesh follows its worker's job and load; a change of mesh joins
     the scene's walk like a new object does, under its lock, and is rare (a load picked up or put
@@ -621,95 +747,13 @@ void ApplicationChasm::UploadWorkers(){
         });
     }
 
-    //A person's skeleton of a rigged figure, with his own copy of each clip and a child per load on its bone.
-    auto build_skin = [&](WorkerSkin& ws, size_t i, int f) -> Object*{
-        Skeleton* s = gltfloader.GetSkeleton(worker_skin_name[f].c_str(),assetmanager);
-        if (!s){
-            return NULL;
-        }
-        s->name = "Worker " + std::to_string(i) + " " + person_asset_names[f];
-        s->SetMesh(worker_skin_mesh[f]);
-        s->SetMaterialSlot(0,palette_material);
-        s->SetPickability(true);
-        s->SetVisualOnly(true);
-        s->SetVisibility(false);
-        s->SetScale(vec3(PERSON_MODEL_SCALE,PERSON_MODEL_SCALE,PERSON_MODEL_SCALE));
-        //His own copies: Object::AddAnimation binds a clip's tracks to the bones of the skeleton it is given.
-        const char* names[3] = {WORKER_WALK_CLIP,f_worker_idle_clip ? WORKER_IDLE_CLIP : NULL,
-                                f_worker_shoot_clip ? WORKER_SHOOT_CLIP : NULL};
-        for (const char* name : names){
-            Animation* clip = name ? gltfloader.LoadAnimation(name) : NULL;
-            if (!clip){
-                continue;
-            }
-            clip->looped = true;
-            //Each rig binds its own channels where the clip has them, and borrows another's by name.
-            s->AddAnimation(clip);
-            KeepOwnPositions(clip);
-        }
-        s->animation_transition_time_max = WORKER_CLIP_BLEND;
-        s->SetBlendTime("",WORKER_SHOOT_CLIP,WORKER_SHOOT_BLEND);
-        s->SetBlendTime(WORKER_SHOOT_CLIP,WORKER_WALK_CLIP,WORKER_SHOOT_BLEND);
-        s->SetBlendTime(WORKER_SHOOT_CLIP,WORKER_IDLE_CLIP,WORKER_SHOOT_BLEND);
-        //His kit, shown while he is an archer: the quiver on his spine, the bow an object of its own that UploadWorkers
-        //puts in his hand every frame.
-        const char* arm_names[4] = {"Arm.Lower.L","Hand.L","Arm.Lower.R","Hand.R"};
-        for (int a = 0; a < 4; a++){
-            ws.arm[a] = s->FindBone(arm_names[a]);
-        }
-        auto kit_object = [&](const char* what, Mesh* m){
-            Object* o = new Object();
-            o->name = s->name + " " + what;
-            o->SetMesh(m);
-            o->SetMaterialSlot(0,palette_material);
-            o->SetPickability(true);    //a click on his bow picks him
-            o->SetVisualOnly(true);
-            o->SetVisibility(false);
-            return o;
-        };
-        if (worker_skin_quiver[f]){
-            ws.quiver = kit_object("quiver",worker_skin_quiver[f]);
-            Bone* spine = s->FindBone("Spine");
-            if (spine){
-                spine->AttachChild(ws.quiver);
-            }else{
-                s->AttachChild(ws.quiver);
-            }
-        }
-        if (worker_bow_mesh){
-            ws.bow = kit_object("bow",worker_bow_mesh);
-            float scale = PERSON_MODEL_SCALE * worker_figure_fit[f];
-            ws.bow->SetScale(vec3(scale,scale,scale));
-        }
-        for (int l = 1; l < WORKER_LOADS; l++){
-            Mesh* m = worker_skin_load[f * WORKER_LOADS + l];
-            if (!m){
-                continue;
-            }
-            Object* p = new Object();
-            p->name = s->name + " load " + std::to_string(l);
-            p->SetMesh(m);
-            p->SetMaterialSlot(0,palette_material);
-            p->SetPickability(true);    //a click on his log picks him
-            p->SetVisualOnly(true);
-            p->SetVisibility(false);
-            Bone* bone = s->FindBone(load_bone_names[l]);
-            if (bone){
-                bone->AttachChild(p);
-            }else{
-                s->AttachChild(p);
-            }
-            ws.load[l] = p;
-        }
-        return s;
-    };
     //The skeletons people need and have not got: made here (Objects only, nothing GL), added below.
     std::vector<Object*> made;
     for (size_t i = 0; i < n; i++){
         int f = figure_of[i];
         WorkerSkin& ws = worker_skins[i][f];
         if (worker_skin_mesh[f] && !ws.figure){
-            ws.figure = build_skin(ws,i,f);
+            ws.figure = BuildPersonSkin(ws,"Worker " + std::to_string(i),f);
             if (ws.figure){
                 made.push_back(ws.figure);
             }
@@ -792,8 +836,11 @@ void ApplicationChasm::UploadWorkers(){
         }
         //On the ground of the plot he stands on, or on the deck his route says - a guard tower's platform.
         float y = WorkerHeight(*w,z.get(),k);
-        //Felling, building, and on a road (line_works_plan.md) felling its trees or laying it.
-        if ((k.job == WORKER_JOB_WOODCUTTER && k.state == WORKER_WORKING) || k.state == WORKER_BUILDING
+        //Felling, breaking a rock or digging at a mine (stone_plan.md), building, and on a road (line_works_plan.md) felling
+        //its trees or laying it.
+        if (((k.job == WORKER_JOB_WOODCUTTER || k.job == WORKER_JOB_STONECUTTER || k.job == WORKER_JOB_MINER)
+             && k.state == WORKER_WORKING)
+            || k.state == WORKER_BUILDING
             || k.state == WORKER_CLEARING || k.state == WORKER_LAYING || k.state == WORKER_SOWING){
             //Each worker on his own beat, so two at one tree (or one site) do not swing as one.
             float phase = seconds * WORKER_CHOP_RATE + (float)i * 0.37f;
@@ -874,41 +921,6 @@ void ApplicationChasm::UploadWorkers(){
         it never parts from the hands drawn.
     */
     worker_hand_arrows.clear();
-    auto place_kit = [&](const Archer& a){
-        WorkerSkin& ws = *a.ws;
-        if (!ws.arm[0] || !ws.arm[1] || !ws.arm[2] || !ws.arm[3]){
-            return;
-        }
-        const vec3 up(0.0f,1.0f,0.0f);
-        float fit = worker_figure_fit[a.figure];
-        float reach = WORKER_PALM_REACH * PERSON_MODEL_SCALE * fit;
-        vec3 grip = Palm(ws.arm[0],ws.arm[1],reach);
-        vec3 nock = Palm(ws.arm[2],ws.arm[3],reach);
-        quat bow = TurnZTo(a.forward,up);
-        Animation* clip = ws.figure->current_animation;
-        if (clip && clip->name == WORKER_SHOOT_CLIP && clip->duration > 0.0f){
-            float phase = clip->time_index / clip->duration;
-            vec3 line = grip - nock;
-            float len = line.length();
-            if (len > 1e-4f && fabsf(line.y) < 0.95f * len){
-                line = line * (1.0f / len);
-                float aim = BowAim(phase);
-                if (aim > 0.0f){
-                    bow = quat::slerp(bow,TurnZTo(line,up),aim);
-                }
-                if (phase >= SHOOT_TAKE && phase < SHOOT_RELEASE){
-                    vec3 d = (phase < SHOOT_NOCK) ? ws.arm[3]->GetWorldPosition() - ws.arm[2]->GetWorldPosition() : line;
-                    float dl = d.length();
-                    if (dl > 1e-6f && fabsf(d.y) < 0.999f * dl){
-                        worker_hand_arrows.push_back(Object::ComposeTransformScale(nock,TurnZTo(d * (1.0f / dl),up),
-                                                                                   vec3(fit,fit,fit)));
-                    }
-                }
-            }
-        }
-        ws.bow->SetPosition(grip,false);
-        ws.bow->SetRotation(bow,false);
-    };
 
     if (!made.empty() || !changes.empty() || !archers.empty()){
         main_scene->AtTickBoundary([&](){
@@ -943,7 +955,7 @@ void ApplicationChasm::UploadWorkers(){
                 c.ws->rate = c.rate;
             }
             for (const Archer& a : archers){
-                place_kit(a);
+                PlaceBow(*a.ws,a.figure,a.forward,&worker_hand_arrows);
             }
         });
     }

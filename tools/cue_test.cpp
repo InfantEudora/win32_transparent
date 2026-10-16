@@ -51,6 +51,7 @@ struct FakeOutput : public CueOutput {
     std::vector<std::string> calls;
     std::map<uint32_t, float> gain_of;
     std::map<uint32_t, float> pan_of;
+    std::map<uint32_t, float> pitch_of;
     std::map<int, float> bus_gain;
     std::map<std::string, int> bus_id;
     uint32_t next = 1;
@@ -67,6 +68,7 @@ struct FakeOutput : public CueOutput {
         calls.push_back(b);
         gain_of[next] = p.gain;
         pan_of[next] = p.pan;
+        pitch_of[next] = p.pitch;
         return next++;
     }
     void Stop(uint32_t h) override { calls.push_back("stop " + std::to_string(h)); }
@@ -640,12 +642,132 @@ static void follow_checks() {
     cs.SetParameter("speed", 4.0f);
     cs.Tick(6);
     check(fabsf(out.gain_of[s] - 1.0f) < 1e-4f, "a follow on a parameter still reads the parameter");
+    //A gain given as a list: each curve on its own value, multiplied - chasm's river by its distance and its
+    //cloud cover. Both re-read every tick.
+    {
+        FakeOutput o3;
+        CueSystem c3;
+        c3.Init(60.0f, &o3);
+        load(c3, R"({"sounds":{"w":"w.wav"},
+                     "cues":{"river":{"begin":"river","sounds":"w","looping":true,"gain":0.8,
+                                      "follow":{"gain":[{"value":"near","in":[0,10],"out":[1,0]},
+                                                        {"value":"hidden","in":[0,1],"out":[1,0.25]}]}}}})");
+        c3.SetParameter("near", 5.0f);
+        c3.SetParameter("hidden", 1.0f);
+        c3.BeginScope("river");
+        c3.Tick(1);
+        uint32_t r = o3.next - 1;
+        float g1 = o3.gain_of[r];
+        c3.SetParameter("hidden", 0.0f);
+        c3.Tick(2);
+        float g2 = o3.gain_of[r];
+        char d3[96];
+        snprintf(d3, sizeof(d3), "%.4f then %.4f", g1, g2);
+        check(fabsf(g1 - 0.8f * 0.5f * 0.25f) < 1e-5f && fabsf(g2 - 0.8f * 0.5f) < 1e-5f,
+              "a gain of several curves multiplies them, each re-read", d3);
+    }
     std::string error;
     CueSystem bad;
     bad.Init(60.0f, &out);
     bool loaded = bad.LoadTableText(R"({"sounds":{"a":"a.wav"},
         "cues":{"x":{"signal":"x","sounds":"a","follow":{"gain":{"in":[0,1],"out":[0,1]}}}}})", error, "test");
     check(!loaded && error.find("needs a value") != std::string::npos, "a part with no value anywhere is an error", error);
+}
+
+/*
+    A listener on the ground plane - chasm's, over the view's centre: distance is 3D from a point
+    above it, pan is along the view's right, a loop's follow re-reads both as the view moves, and a
+    payload with no "z" is still measured along x alone, exactly as a side view measures it.
+*/
+static void ground_checks() {
+    printf("ground listener\n");
+    FakeOutput out;
+    CueSystem cs;
+    cs.Init(60.0f, &out);
+    load(cs, R"({"sounds":{"a":"a.wav","b":"b.wav"},
+                 "cues":{"blow":{"signal":"blow","sounds":"a","gain_by":[{"value":"distance","in":[0,10],"out":[1,0]}],
+                                 "pan_by":{"value":"dx","in":[-10,10],"out":[-1,1]}},
+                         "bed":{"begin":"bed","sounds":"b","looping":true,"on_end":"stop",
+                                "follow":{"value":"distance","gain":{"in":[0,10],"out":[1,0]}}}}})");
+    //Over (0,0) at height 3, looking down -z: right is +x.
+    cs.SetListener(0.0f, 0.0f, 3.0f, 1.0f, 0.0f);
+    cs.Signal("blow", CuePayload().Set("x", 4.0f).Set("z", 0.0f));
+    cs.Tick(1);
+    uint32_t h = out.next - 1;
+    char d[96];
+    snprintf(d, sizeof(d), "gain %.3f pan %.3f", out.gain_of[h], out.pan_of[h]);
+    check(fabsf(out.gain_of[h] - 0.5f) < 1e-4f && fabsf(out.pan_of[h] - 0.4f) < 1e-4f,
+          "distance is 3D from above the point, pan along the right", d);
+    //Turned a quarter: the view's right is now -z, so the same blow is dead ahead, centred.
+    cs.SetListener(0.0f, 0.0f, 3.0f, 0.0f, -1.0f);
+    cs.Signal("blow", CuePayload().Set("x", 4.0f).Set("z", 0.0f));
+    cs.Tick(2);
+    h = out.next - 1;
+    snprintf(d, sizeof(d), "pan %.3f", out.pan_of[h]);
+    check(fabsf(out.pan_of[h]) < 1e-4f, "pan turns with the view", d);
+    cs.Signal("blow", CuePayload().Set("x", 4.0f));
+    cs.Tick(3);
+    h = out.next - 1;
+    snprintf(d, sizeof(d), "gain %.3f pan %.3f", out.gain_of[h], out.pan_of[h]);
+    check(fabsf(out.gain_of[h] - 0.6f) < 1e-4f && fabsf(out.pan_of[h] - 0.4f) < 1e-4f,
+          "no z in the payload: along x alone, as a side view", d);
+    cs.SetListener(0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    cs.BeginScope("bed", 0, CuePayload().Set("x", 6.0f).Set("z", 8.0f));
+    cs.Tick(4);
+    uint32_t b = out.next - 1;
+    check(out.gain_of[b] == 0.0f, "a loop 10 away is silent");
+    cs.SetListener(6.0f, 3.0f, 0.0f, 1.0f, 0.0f);
+    cs.Tick(5);
+    snprintf(d, sizeof(d), "gain %.3f", out.gain_of[b]);
+    check(fabsf(out.gain_of[b] - 0.5f) < 1e-4f, "and its follow re-reads x and z as the view moves", d);
+}
+
+/*
+    pitch_jitter: every playing its own pitch, within the share either way, drawn from the trigger - so
+    two blows on one tick told apart by their instance differ, the same trigger again draws the same,
+    and a row without it plays at exactly its pitch.
+*/
+static void pitch_checks() {
+    printf("pitch_jitter\n");
+    FakeOutput out;
+    CueSystem cs;
+    cs.Init(60.0f, &out);
+    load(cs, R"({"sounds":{"a":"a.wav","b":"b.wav"},
+                 "cues":{"blow":{"signal":"blow","sounds":"a","pitch":1.2,"pitch_jitter":0.1},
+                         "plain":{"signal":"plain","sounds":"b","pitch":1.2}}})");
+    float lo = 10.0f, hi = 0.0f;
+    std::vector<float> first;
+    for (int t = 1; t <= 200; t++) {
+        cs.Signal("blow", CuePayload(), t % 7);
+        cs.Tick((uint64_t)t);
+        float p = out.pitch_of[out.next - 1];
+        lo = std::min(lo, p);
+        hi = std::max(hi, p);
+        if (t <= 3) first.push_back(p);
+    }
+    char d[96];
+    snprintf(d, sizeof(d), "%.3f..%.3f", lo, hi);
+    check(lo >= 1.2f * 0.9f - 1e-4f && hi <= 1.2f * 1.1f + 1e-4f && hi - lo > 0.2f, "spread within the share, and across it", d);
+    cs.Signal("blow", CuePayload(), 1);
+    cs.Signal("blow", CuePayload(), 2);
+    cs.Tick(201);
+    float a = out.pitch_of[out.next - 2], b = out.pitch_of[out.next - 1];
+    snprintf(d, sizeof(d), "%.4f %.4f", a, b);
+    check(a != b, "two on one tick, two instances: two pitches", d);
+    CueSystem again;
+    FakeOutput out2;
+    again.Init(60.0f, &out2);
+    load(again, R"({"sounds":{"a":"a.wav"},"cues":{"blow":{"signal":"blow","sounds":"a","pitch":1.2,"pitch_jitter":0.1}}})");
+    bool same = true;
+    for (int t = 1; t <= 3; t++) {
+        again.Signal("blow", CuePayload(), t % 7);
+        again.Tick((uint64_t)t);
+        same = same && out2.pitch_of[out2.next - 1] == first[t - 1];
+    }
+    check(same, "the same triggers draw the same pitches");
+    cs.Signal("plain");
+    cs.Tick(202);
+    check(out.pitch_of[out.next - 1] == 1.2f, "a row without it plays at exactly its pitch");
 }
 
 int main() {
@@ -656,6 +778,8 @@ int main() {
     sound_checks();
     audition_checks();
     follow_checks();
+    ground_checks();
+    pitch_checks();
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

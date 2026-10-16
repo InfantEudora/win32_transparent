@@ -144,7 +144,7 @@ static bool CommandLineValue(const char* flag, std::string& out){
 }
 
 void Application::Start(void){
-    //First, so a crash anywhere after it - in either thread this starts - leaves a report. Debug only.
+    //First, so a crash anywhere after it - in either thread this starts - leaves a report.
     CrashReportInstall();
 
     //Create a main window
@@ -1652,10 +1652,19 @@ void Application::NextInput(bool f_ticked){
 //--- Input recording ----------------------------------------------------------------------------
 //See the block on RequestRecordingStart in Application.h.
 
-void Application::RequestRecordingStart(){
+void Application::RequestRecordingStart(const std::string& stem){
     std::lock_guard<std::mutex> lock(recording_mutex);
     f_record_start_requested = true;
     f_record_stop_requested = false;
+    record_start_stem = stem;
+}
+
+void Application::RequestRecordingRestart(const std::string& stem){
+    std::lock_guard<std::mutex> lock(recording_mutex);
+    //Both: ServiceInputRecording stops before it starts, so the two land on one pass.
+    f_record_start_requested = true;
+    f_record_stop_requested = true;
+    record_start_stem = stem;
 }
 
 void Application::RequestRecordingStop(){
@@ -1842,7 +1851,7 @@ void Application::FinishRecording(uint64_t sim_tick){
     rec.state = recording_start_state;
 
     //The app name as a file name: spaces and anything a path would choke on become underscores.
-    std::string stem = app_name;
+    std::string stem = recording_stem.empty() ? app_name : recording_stem;
     for (char& c: stem){
         if (!isalnum((unsigned char)c) && c != '-' && c != '_'){
             c = '_';
@@ -1938,9 +1947,11 @@ void Application::ServiceInputRecording(){
     bool f_restore = true;
     int wait_passes = 0;
     InputRecording replay;
+    std::string start_stem;
     {
         std::lock_guard<std::mutex> lock(recording_mutex);
         f_start = f_record_start_requested;
+        start_stem = record_start_stem;
         f_stop = f_record_stop_requested;
         f_replay = f_replay_requested;
         f_replay_stop = f_replay_stop_requested;
@@ -1969,6 +1980,7 @@ void Application::ServiceInputRecording(){
         recording_scene = main_scene->name;
         recording_started_at = LocalTimeText(false);
         recording_file_stamp = LocalTimeText(true);
+        recording_stem = start_stem;
         recording_commands.clear();
         recording_start_tick = tick;
         input->BeginRecording(tick);

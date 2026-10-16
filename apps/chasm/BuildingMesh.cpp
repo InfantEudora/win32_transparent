@@ -53,6 +53,8 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_TIMBER,{PAL_FIELD,PAL_FIELD},2,DOOR_W,2,0},                      //range: on cells, drawn by CropMesh
     {PAL_BARK,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                      //guard tower: drawn by BuildTower instead
     {PAL_WALL,{PAL_FIELD,PAL_FIELD},2,DOOR_W * 1.4f,1,0},                 //ropewalk: plaster under thatch, a window every wall
+    {PAL_STONE,{PAL_STONE_DARK,PAL_BARK_DARK},2,DOOR_W * 1.6f,2,0},       //stonecutter's hut: its own stone under slate or shingle
+    {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //mine: its portal, a prop of its own (ApplicationChasmMines.cpp)
 };
 static_assert(sizeof(kind_looks) / sizeof(kind_looks[0]) == ZONE_KIND_COUNT,"a look for every kind");
 
@@ -973,6 +975,10 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
                 BuildTower(w,z,v,out);
             }
+            s[k] = 0;
+        }
+        //Nor a mine (stone_plan.md step 5): its portal is the worker's prop, drawn with its cart (ApplicationChasmMines.cpp).
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_MINE){
             s[k] = 0;
         }
         //Nor a bridge: once it stands it is a road over the water, drawn with the roads (RoadMesh).

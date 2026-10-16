@@ -87,6 +87,34 @@ placement carries a flag saying so), set by whoever issued it.
   bar of tool keys (construction_plan.md); there is no way to click a tool yet.
 
 
+## The camera over a balcony (the user's, 2026-10-14)
+
+- **Found by the user** (`saves/casm_edge.json`, two villagers posted on a balcony 12 under the rim): the camera
+  stays on the high level, which makes it hard to see what is going on, and the sun's shadow is clipped. "We'd need
+  a way to determine where the camera needs to be height wise." Seeing under the cloud cover is left as it is.
+- **Why**: the orbit point rode the PLATEAU's ground wherever it was - on purpose, so crossing the chasm would not drop
+  it 70 units. Over a balcony it turned about the air 12 over it, so the view looked past the balcony, and the sun's
+  box - a fixed square, 0.9 camera distances, round the point at height 0 - ended before the far half of what was on
+  screen: the view meets lower ground further out, and the sun sees it shifted. Outside the box nothing is shadowed
+  (lighting.glsl), so a cloud's shadow ended on a straight line.
+- **Built** (`ApplicationChasm.cpp`, view only - no tick reads any of it):
+  - *The height* (`ViewGroundHeight`): the orbit point on the ground of the plot under it - the plateau with its
+    relief, a balcony, a shard. Over the floor (under the cloud deck) and bare rock it keeps the height it has, so the
+    chasm is crossed level. A level is kept while ground of it lies within `CHASM_CAM_LEVEL_HOLD` (2.5), so panning
+    along a rim does not bob; another level is glided to (`CHASM_CAM_LEVEL_GLIDE`), the relief followed as before.
+  - *Clearance* (`ClearPitch`, play mode): the camera tilts up over the player's pitch, as little as it must, so the
+    line from the point to it keeps `CHASM_CAM_CLEAR` over the ground - not inside the cliff behind a balcony, and
+    seeing the point past the rim. Eased; the player's own pitch (`cam_pitch`) is untouched.
+  - *The shadow* (`FollowSun`): the sun's box fitted to the ground in view - where the view's corners meet the heights
+    shadows fall on, `SUN_FIT_BELOW` under the point to `SUN_FIT_ABOVE` over it or the plateau - square, at most
+    `SUN_FIT_MOST` camera distances, its size in steps of `SUN_FIT_STEP` so it seldom changes, still snapped to texels.
+- *Checked* (8769, `casm_edge`): the point on the balcony at -11.9 (was 0.06); the balcony fills the view and its
+  shadows reach across it; a low view from the plateau side (yaw 200, distance 20) looks down the wall at the two
+  villagers and the waterfall from below the rim - the camera now goes under the rim over a balcony, which
+  waterfall_plan.md and rivers_plan.md had as never happening; panned out over bare rock and the floor it held -11.9;
+  on the plateau, 0.07. Looking at a balcony across the rim tilts the view up - at the foot of the wall, to about 83
+  degrees.
+
 ## Sight (2026-10-08)
 
 The user: a road placed at the edge of the clouds revealed what lay past it at once - placing things

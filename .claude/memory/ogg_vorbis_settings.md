@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 769861fc-c639-438b-83de-ddeeafeef090
-  modified: 2026-09-30T19:44:19.553Z
+  modified: 2026-10-16T12:57:22.703Z
 ---
 
 2026-09-30: user listened (headphones, quiet room) and found **-q -1, 32 kHz** inaudible against
@@ -29,5 +29,8 @@ The encoder is `C:\Program Files\foobar2000\encoders\oggenc2.exe` (the 64-bit in
 
 **Why:** the samples folder dominated archer's asset size.
 
-**How to apply:** archer SFX (assets/sound, 41 files) were converted too on 2026-09-30: 11.0 MB -> 537 KB, cues/archer.json names .ogg. Only the `cues` part of archer_test moved (landing plays 1 tick later, peak shifted); baselines rewritten. New SFX arrive as wav and need converting by hand; there is no repo script yet. Ship exe 46.6 MB, meshes 34 MB of it.
+**How to apply:** archer SFX (assets/sound, 41 files) were converted too on 2026-09-30: 11.0 MB -> 537 KB, cues/archer.json names .ogg. Only the `cues` part of archer_test moved (landing plays 1 tick later, peak shifted); baselines rewritten. Ship exe 46.6 MB, meshes 34 MB of it.
+New SFX arrive as wav: since 2026-10-16 `python tools/sound_ogg.py <app>` converts every wav in apps/<app>/assets/sound/
+with the same settings, moves the wav to art_source/<app>/sound/ (the source), and rewrites the cue tables to .ogg.
+Used for chasm's first ten (512 KB -> 65 KB). The user called the setting "pretty much just the lowest setting".
 Related: [[adaptive-music-plan]].

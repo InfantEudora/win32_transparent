@@ -132,7 +132,9 @@
 #define ZONE_KIND_RANGE         10      //an archery range, on coarse cells like a field: archers train there (docs/range_plan.md)
 #define ZONE_KIND_TOWER         11      //a guard tower: one plot, two storeys, its guards on top (docs/defence_plan.md)
 #define ZONE_KIND_ROPEWALK      12      //a long low shed: a ropemaker makes rope from hemp (docs/goods_plan.md)
-#define ZONE_KIND_COUNT         13
+#define ZONE_KIND_STONECUTTER   13      //a stonecutter's hut: breaks the rocks round it for stone (docs/stone_plan.md)
+#define ZONE_KIND_MINE          14      //a mine: one plot on a deposit, dug into its wall, the mountain or an outcrop (stone_plan.md)
+#define ZONE_KIND_COUNT         15
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 //The most plots a building of `kind` may have, 0 for no limit: a house's one family, a ropewalk's length.
@@ -147,13 +149,15 @@ inline bool ZoneKindOnCells(int kind){
 //people are free for other work. Not a field (a family's land), a guard tower (its guard count) nor a camp.
 inline bool ZoneKindStoppable(int kind){
     return kind == ZONE_KIND_WATER || kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_ROPEWALK
-           || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_RANGE;
+           || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_RANGE || kind == ZONE_KIND_STONECUTTER
+           || kind == ZONE_KIND_MINE;
 }
 //A kind drawn as a HOUSE BODY (BuildingMesh.cpp, BuildHouseCell): walls and a roof, storeys high - not a winch, a
-//camp, a bridge or a guard tower, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
+//camp, a bridge, a guard tower or a mine, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
 inline bool ZoneKindHasBody(int kind){
     return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER
-           || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_ROPEWALK;
+           || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_ROPEWALK
+           || kind == ZONE_KIND_STONECUTTER;
 }
 int ZoneKindMaxStoreys(int kind);
 //The storeys a plot of `kind` is painted with: one, a click adding more - but a GUARD TOWER whole, all its storeys
