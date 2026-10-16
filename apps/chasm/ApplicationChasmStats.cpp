@@ -34,8 +34,18 @@ static Debugger* debug = new Debugger("ChasmStats",DEBUG_ALL);
 #define STATS_AXIS          UIColor(255,255,255,70) //a chart's baseline, and the hover's line
 #define STATS_SEASONS_SHOWN 8                       //the seasons a bar chart shows: two years
 #define STATS_SCROLL_LINES  3                       //journal lines a turn of the wheel scrolls
+#define STATS_END_FOOT      62.0f                   //the end's foot under the columns: its goals and buttons (x s)
+#define STATS_END_BUTTON_W  190.0f
+#define STATS_END_BUTTON_H  40.0f
 
 namespace {
+
+enum{
+    END_ITEM_KEEP = 1,
+    END_ITEM_TITLE,
+    END_ITEM_LOAD,
+    END_ITEM_NEW,
+};
 
 //The page's pieces, from the window alone - so the physics thread finds its close mark where the render thread drew it.
 struct StatsLayout{
@@ -46,7 +56,8 @@ struct StatsLayout{
     float a0, a1, b0, b1, c0, c1;   //NOW, OVER TIME, the JOURNAL
 };
 
-StatsLayout StatsLayoutOf(float w, float h, float s){
+//`f_end`: the page as an END's (demo_plan.md step 7), its columns shorter by the foot that holds its buttons.
+StatsLayout StatsLayoutOf(float w, float h, float s, bool f_end = false){
     StatsLayout l;
     float margin = 28.0f * s;
     l.p0 = vec2(margin,margin);
@@ -55,7 +66,7 @@ StatsLayout StatsLayoutOf(float w, float h, float s){
     l.close1 = vec2(l.p1.x - 14.0f * s,l.p0.y + 14.0f * s + 28.0f * s);
     l.close0 = vec2(l.close1.x - 28.0f * s,l.close1.y - 28.0f * s);
     l.top = l.p0.y + 74.0f * s;
-    l.bottom = l.p1.y - pad;
+    l.bottom = l.p1.y - pad - (f_end ? STATS_END_FOOT * s : 0.0f);
     float inner = (l.p1.x - l.p0.x) - pad * 2.0f;
     float gap = 28.0f * s;
     float a = (inner - gap * 2.0f) * 0.25f;
@@ -325,6 +336,15 @@ uint32_t JournalColour(int kind){
         case EVENT_SETTLED:             return HUD_SELECT;
         case EVENT_SEAM_SEEN:           return HudGoodColour(GOOD_FLOATSTONE);
         case EVENT_DISCOVERED:          return UIColor(120,190,230);
+        case EVENT_GREW_UP:
+        case EVENT_EXPECTING:           return UIColor(156,204,112);
+        case EVENT_FROST_TOOK:          return UIColor(200,224,240);
+        case EVENT_BOULDER_FOUND:       return HudGoodColour(GOOD_STONE);
+        case EVENT_BALCONY_REACHED:     return UIColor(120,190,230);
+        case EVENT_GOAL_MET:
+        case EVENT_DEMO_COMPLETE:       return HUD_SELECT;
+        case EVENT_GOAL_FAILED:
+        case EVENT_COLONY_LOST:         return HUD_DANGER;
         default:                        return HUD_TEXT_DIM;
     }
 }
@@ -368,7 +388,7 @@ bool ApplicationChasm::UpdateStats(InputController* input){
     int request = stats_request.exchange(0);
     if (request == 1){
         OpenStats();
-    }else if (request == 2){
+    }else if (request == 2 && stats_end.load() == CHASM_END_NONE){
         CloseStats();
     }
     bool f_tab = input->WasKeyPressed(INPUT_CHASM_STATS);
@@ -396,6 +416,10 @@ bool ApplicationChasm::UpdateStats(InputController* input){
         overlay_mouse_x = f_in ? px.x : -1;
         overlay_mouse_y = f_in ? px.y : -1;
     }
+    //An END's page (demo_plan.md step 7) is left only by its buttons; its journal scrolls as the page's does.
+    if (stats_end.load() != CHASM_END_NONE){
+        return UpdateEndPage(input);
+    }
     float s = std::max(0.5f,(float)main_window->height / 810.0f);
     StatsLayout l = StatsLayoutOf((float)main_window->width,(float)main_window->height,s);
     bool f_on_close = f_in && px.x >= l.close0.x && px.x <= l.close1.x && px.y >= l.close0.y && px.y <= l.close1.y;
@@ -403,6 +427,145 @@ bool ApplicationChasm::UpdateStats(InputController* input){
         CloseStats();
     }
     return true;
+}
+
+//--- The end's page (demo_plan.md step 7) -------------------------------------------------------------------------------
+
+/*
+    PHYSICS THREAD, from UpdateEnd: the page as THE END - the demo complete, with Keep playing or Main menu, or the colony
+    lost, with Load, New game or Main menu: with nothing left to lose, those two neither ask nor autosave (Choose). The
+    game paused under it as under the page, and the first button focused.
+*/
+void ApplicationChasm::OpenEnd(int end){
+    end_menu.Clear();
+    if (end == CHASM_END_COMPLETE){
+        end_menu.AddButton("Keep playing",END_ITEM_KEEP);
+    }else{
+        end_menu.AddButton("Load",END_ITEM_LOAD);
+        end_menu.AddButton("New game",END_ITEM_NEW);
+    }
+    end_menu.AddButton("Main menu",END_ITEM_TITLE);
+    end_menu.SetFocus(0);
+    CloseStats();
+    stats_end = end;
+    OpenStats();
+    debug->Info("The end: %s\n",(end == CHASM_END_COMPLETE) ? "the demo complete" : "the colony lost");
+}
+
+void ApplicationChasm::CloseEnd(){
+    stats_end = CHASM_END_NONE;
+    CloseStats();
+}
+
+//A button of the end's in its row along the foot, right-aligned under the journal - from the window alone, so the
+//physics thread finds it where the render thread drew it (chasm_menu's clicks too).
+UIMenuRect ApplicationChasm::EndButtonAt(int item){
+    float w = (float)main_window->width;
+    float h = (float)main_window->height;
+    float s = std::max(0.5f,h / 810.0f);
+    StatsLayout l = StatsLayoutOf(w,h,s,true);
+    int count = end_menu.Count();
+    const float bw = STATS_END_BUTTON_W * s;
+    const float bh = STATS_END_BUTTON_H * s;
+    const float gap = 14.0f * s;
+    UIMenuRect r;
+    r.x1 = l.c1 - (float)(count - 1 - item) * (bw + gap);
+    r.x0 = r.x1 - bw;
+    r.y0 = l.bottom + (STATS_END_FOOT * s - bh) * 0.5f + 6.0f * s;
+    r.y1 = r.y0 + bh;
+    return r;
+}
+
+/*
+    PHYSICS THREAD, from UpdateStats while the page is an end's: its buttons have the input. A row, not a column: left and
+    right move along it as up and down do, the pointer focuses the button under it and a release there presses it.
+    Escape keeps playing when the demo is complete; a lost colony has nothing to go back to.
+*/
+bool ApplicationChasm::UpdateEndPage(InputController* input){
+    UIMenuInput in;
+    bool f_back = false;
+    if (!ReadMenuInput(input,in,f_back)){
+        return true;
+    }
+    in.up = in.up || in.left;
+    in.down = in.down || in.right;
+    in.left = false;
+    in.right = false;
+    int clicked = -1;
+    if (in.f_pointer){
+        for (int i = 0; i < end_menu.Count(); i++){
+            if (EndButtonAt(i).Contains(in.pointer_x,in.pointer_y)){
+                end_menu.SetFocus(i);
+                clicked = in.pointer_released ? i : -1;
+            }
+        }
+    }
+    in.f_pointer = false;
+    UIMenuResult r = end_menu.Update(in);
+    int end = stats_end.load();
+    int id = (clicked >= 0) ? end_menu.Item(clicked).id : (r.event == UI_MENU_ACTIVATED) ? r.id : 0;
+    if (id == 0 && f_back && end == CHASM_END_COMPLETE){
+        id = END_ITEM_KEEP;
+    }
+    switch (id){
+        case END_ITEM_KEEP:
+            CloseEnd();
+            break;
+        case END_ITEM_TITLE:
+            CloseEnd();
+            OpenTitle();
+            break;
+        case END_ITEM_LOAD:
+        case END_ITEM_NEW:
+            CloseEnd();
+            OpenTitle();
+            OpenScreen(id == END_ITEM_LOAD ? CHASM_SCREEN_LOAD : CHASM_SCREEN_NEW);
+            break;
+    }
+    return true;
+}
+
+/*
+    RENDER THREAD, from DrawStats on an end's page: its foot - the goals at the left, each with its mark and how it
+    ended, and the buttons at the right, the focused one outlined.
+*/
+void ApplicationChasm::DrawEndFoot(float s){
+    float w = (float)main_window->width;
+    float h = (float)main_window->height;
+    StatsLayout l = StatsLayoutOf(w,h,s,true);
+    overlay->AddLine(vec2(l.a0,l.bottom + 6.0f * s),vec2(l.c1,l.bottom + 6.0f * s),1.0f * s,STATS_GRID);
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ChasmDiscoveries> d = GetDiscoveries();
+    float line_y = l.bottom + 30.0f * s;
+    if (e && d){
+        for (int g = 0; g < CHASM_GOALS; g++){
+            int state = ChasmGoalState(g,*e,*d);
+            uint32_t colour = (state == CHASM_GOAL_MET) ? UIColor(140,200,110) : (state == CHASM_GOAL_FAILED) ? HUD_DANGER : HUD_TEXT_DIM;
+            std::string text = ChasmGoalTitle(g);
+            std::transform(text.begin(),text.end(),text.begin(),::toupper);
+            text += (state == CHASM_GOAL_MET) ? " - MET" : (state == CHASM_GOAL_FAILED) ? " - FAILED" : " - NOT YET";
+            float y = line_y + (float)g * 20.0f * s;
+            const float mark = 8.0f * s;
+            overlay->AddRect(vec2(l.a0,y - 9.0f * s),vec2(l.a0 + mark,y - 9.0f * s + mark),mark * 0.5f,colour);
+            overlay->AddText(text.c_str(),vec2(l.a0 + mark + 9.0f * s,y),13.0f * s,HUD_TEXT,UI_ALIGN_LEFT);
+        }
+    }
+    UIMenuStyle style = MenuStyle();
+    int focus = end_menu.Focus();
+    vec2 mouse((float)overlay_mouse_x.load(),(float)overlay_mouse_y.load());
+    for (int i = 0; i < end_menu.Count(); i++){
+        UIMenuRect r = EndButtonAt(i);
+        bool f_focus = i == focus || r.Contains(mouse.x,mouse.y);
+        vec2 b0(r.x0,r.y0);
+        vec2 b1(r.x1,r.y1);
+        if (f_focus){
+            overlay->AddRect(b0 - vec2(2.0f * s,2.0f * s),b1 + vec2(2.0f * s,2.0f * s),9.0f * s,style.outline_focus);
+        }
+        overlay->AddRect(b0,b1,8.0f * s,f_focus ? style.panel_focus : UIColor(54,64,70,255));
+        UIMenuItem it = end_menu.Item(i);
+        overlay->AddText(it.label.c_str(),vec2((r.x0 + r.x1) * 0.5f,(r.y0 + r.y1) * 0.5f + 6.0f * s),17.0f * s,
+                         f_focus ? style.text : style.text_dim,UI_ALIGN_CENTER);
+    }
 }
 
 //--- The page ---------------------------------------------------------------------------------------------------------
@@ -417,18 +580,26 @@ void ApplicationChasm::DrawStats(float s){
     const float w = (float)main_window->width;
     const float h = (float)main_window->height;
     overlay->AddRect(vec2(0.0f,0.0f),vec2(w,h),0.0f,STATS_SHADE);
-    StatsLayout l = StatsLayoutOf(w,h,s);
+    //An END's page (demo_plan.md step 7): its own heading, and its buttons in a foot - no close mark, its buttons are
+    //the way out.
+    int end = stats_end.load();
+    StatsLayout l = StatsLayoutOf(w,h,s,end != CHASM_END_NONE);
     overlay->AddRect(l.p0,l.p1,14.0f * s,STATS_PANEL);
     vec2 mouse((float)overlay_mouse_x.load(),(float)overlay_mouse_y.load());
-    //The close mark: an X in a square, lit under the mouse.
-    bool f_over_close = mouse.x >= l.close0.x && mouse.x <= l.close1.x && mouse.y >= l.close0.y && mouse.y <= l.close1.y;
-    overlay->AddRect(l.close0,l.close1,6.0f * s,f_over_close ? UIColor(255,255,255,40) : UIColor(255,255,255,14));
-    vec2 cc = (l.close0 + l.close1) * 0.5f;
-    float arm = 7.0f * s;
-    overlay->AddLine(cc + vec2(-arm,-arm),cc + vec2(arm,arm),2.0f * s,HUD_TEXT);
-    overlay->AddLine(cc + vec2(-arm,arm),cc + vec2(arm,-arm),2.0f * s,HUD_TEXT);
-    overlay->AddText("TAB OR ESC TO CLOSE",vec2(l.close0.x - 12.0f * s,cc.y + 5.0f * s),12.0f * s,HUD_TEXT_DIM,UI_ALIGN_RIGHT);
-    overlay->AddText("THE COLONY",vec2(l.a0,l.p0.y + 42.0f * s),26.0f * s,HUD_TEXT,UI_ALIGN_LEFT);
+    const char* title = (end == CHASM_END_COMPLETE) ? "DEMO COMPLETE" : (end == CHASM_END_LOST) ? "THE COLONY IS LOST" : "THE COLONY";
+    if (end == CHASM_END_NONE){
+        //The close mark: an X in a square, lit under the mouse.
+        bool f_over_close = mouse.x >= l.close0.x && mouse.x <= l.close1.x && mouse.y >= l.close0.y && mouse.y <= l.close1.y;
+        overlay->AddRect(l.close0,l.close1,6.0f * s,f_over_close ? UIColor(255,255,255,40) : UIColor(255,255,255,14));
+        vec2 cc = (l.close0 + l.close1) * 0.5f;
+        float arm = 7.0f * s;
+        overlay->AddLine(cc + vec2(-arm,-arm),cc + vec2(arm,arm),2.0f * s,HUD_TEXT);
+        overlay->AddLine(cc + vec2(-arm,arm),cc + vec2(arm,-arm),2.0f * s,HUD_TEXT);
+        overlay->AddText("TAB OR ESC TO CLOSE",vec2(l.close0.x - 12.0f * s,cc.y + 5.0f * s),12.0f * s,HUD_TEXT_DIM,UI_ALIGN_RIGHT);
+    }else{
+        DrawEndFoot(s);
+    }
+    overlay->AddText(title,vec2(l.a0,l.p0.y + 42.0f * s),26.0f * s,(end == CHASM_END_LOST) ? HUD_DANGER : HUD_TEXT,UI_ALIGN_LEFT);
     if (!e || !z || e->world != z->world){
         overlay->AddText("no colony",vec2((l.p0.x + l.p1.x) * 0.5f,(l.top + l.bottom) * 0.5f),16.0f * s,HUD_TEXT_DIM,UI_ALIGN_CENTER);
         return;
@@ -445,7 +616,7 @@ void ApplicationChasm::DrawStats(float s){
             snprintf(buf,sizeof(buf),"   -   KEPT SINCE %s",ChasmStatsDate(hist.from).c_str());
         }
         since += buf;
-        float title_w = overlay->MeasureText("THE COLONY",26.0f * s).x;
+        float title_w = overlay->MeasureText(title,26.0f * s).x;
         overlay->AddText(since.c_str(),vec2(l.a0 + title_w + 18.0f * s,l.p0.y + 41.0f * s),13.0f * s,HUD_TEXT_DIM,UI_ALIGN_LEFT);
     }
     ChasmStatsNow now = ChasmStatsNowOf(*e,*z);

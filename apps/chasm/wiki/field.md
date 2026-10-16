@@ -5,8 +5,8 @@ kind: buildings
 status: built
 summary: Painted on coarse cells and farmed by the family whose land it is. Sown with a crop, grown through the warm seasons, harvested home first.
 plans: fields_plan.md > Decided; fields_plan.md > The frost; land_plan.md > As built; land_plan.md > Fair shares
-code: Economy.cpp: SettleLand LandPlaces GoSow FetchHarvest PickHarvest EconomyFieldSowNow; Economy.h: EconomyField ECONOMY_CROP_GRACE
-verified: 2026-10-10
+code: Economy.cpp: SettleLand LandPlaces Tending GoSow FetchHarvest PickHarvest EconomyFieldSowNow; Economy.h: EconomyField ECONOMY_CROP_GRACE ECONOMY_CAMP_FARMERS; ApplicationChasmIssues.cpp: ChasmIssues
+verified: 2026-10-16
 ---
 
 A field is painted over **coarse cells**, each on flat ground, and buildings keep a plot away from it.
@@ -20,7 +20,10 @@ Every field belongs to a [[House|house]] as its **land**, or to the [[Camp]] whi
 It goes to the house the player picks on its card if that house is lived in, otherwise to the nearest
 lived-in house whose farmer can walk to it. The land is the family's workplace: one **farmer** for every
 {ECONOMY_FARMER_CELLS} cells or so of whole fields, always from the family itself. A field whose share has
-no farmer lies **fallow**: nothing is sown and nothing grows.
+no farmer lies **fallow**: nothing is sown and nothing grows. NEEDS ATTENTION says so, one row a land, with
+what to do: BUILD HOUSES for the camp's (it farms only {ECONOMY_CAMP_FARMERS:#share}, and a house lived in
+near it takes its land), TOO FEW HANDS for a family's (the card's "Give to:" can hand a field to another),
+and NOBODY CAN REACH IT for a field no house or camp can walk to.
 
 ## A field's year
 

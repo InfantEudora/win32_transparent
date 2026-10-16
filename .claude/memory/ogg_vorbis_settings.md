@@ -33,4 +33,7 @@ The encoder is `C:\Program Files\foobar2000\encoders\oggenc2.exe` (the 64-bit in
 New SFX arrive as wav: since 2026-10-16 `python tools/sound_ogg.py <app>` converts every wav in apps/<app>/assets/sound/
 with the same settings, moves the wav to art_source/<app>/sound/ (the source), and rewrites the cue tables to .ogg.
 Used for chasm's first ten (512 KB -> 65 KB). The user called the setting "pretty much just the lowest setting".
+Since 2026-10-16 (chasm's voices) it walks SUBFOLDERS (kept under art_source too) and TRIMS the silent ends of anything
+under sound/speech/ (40 ms lead, 80 ms tail, faded) - generated takes started up to 0.6 s late, which reads as lag
+after a click. Effects are never trimmed. The kept wav is the untrimmed source.
 Related: [[adaptive-music-plan]].

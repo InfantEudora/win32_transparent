@@ -82,6 +82,8 @@ ApplicationChasm::ApplicationChasm():Application(){
     f_show_scene_window = false;
     f_show_inspector_window = false;
     f_show_engine_window = true;
+    //The player's settings, here - before Start() makes the window - so "start full screen" is known in time.
+    LoadSettings();
 }
 
 void ApplicationChasm::Init(void){
@@ -906,6 +908,8 @@ void ApplicationChasm::RunSimulationTick(void){
     //Before the calendar moves on: this tick's work is done on this tick's date.
     TickEconomy();
     TickExploration();
+    //The demo's goals and its end, as rules, on what this tick's discoveries are (ApplicationChasmGoals.cpp).
+    TickGoals();
     TickCalendar();
 }
 
@@ -997,6 +1001,11 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
         exploration.RevealAll();
     }
     PublishExploration();
+    //What it had seen marked again, telling nothing, and so its DISCOVERIES - now, not on the next tick: a load while
+    //paused would show the build bar of the colony before it until the clock ran.
+    LookForSeams(*w,0);
+    LookForAreas(*w,0,false);
+    UpdateDiscoveries(*w);
     PublishEconomy();
     SetCalendar(save.calendar_tick);
     if (refused){
@@ -2610,6 +2619,8 @@ void ApplicationChasm::UpdateView(void){
     UpdateSound();
     //A replay ended, a quit waiting for its recording, a bug report written (ApplicationChasmRecord.cpp).
     ServiceRecording();
+    //The player's settings, on a change - and the music's and the sounds' volumes (ApplicationChasmMenu.cpp).
+    ApplySettings();
     //THE TITLE (ApplicationChasmTitle.cpp): its pass alone while it shows - nothing of the world moves.
     if (TitleShowing()){
         UpdateTitle(input);
@@ -2621,6 +2632,8 @@ void ApplicationChasm::UpdateView(void){
     if (main_window->f_close_asked.exchange(false)){
         OpenAsk(CHASM_ASK_QUIT);
     }
+    //A death's pop-up, the end's page (demo_plan.md step 7; ApplicationChasmGoals.cpp): from what the ticks just told.
+    UpdateEnd();
     if (UpdateAsk(input) || RunBusy()){
         return;
     }
@@ -2662,12 +2675,20 @@ void ApplicationChasm::UpdateView(void){
                                CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
                                CHASM_TOOL_RANGE,CHASM_TOOL_TOWER,CHASM_TOOL_ROPEWALK,CHASM_TOOL_STONECUTTER,
                                CHASM_TOOL_MINE};
+        //Play mode's tools still waiting for a discovery (demo_plan.md step 6) are not on the bar, and their keys do
+        //nothing - and one in hand from before (debug mode, or another colony) is put down.
+        uint32_t locked = ToolsLocked();
         for (int i = 0; i < (int)(sizeof(keys) / sizeof(keys[0])); i++){
-            if (input->WasKeyPressed(keys[i]) && f_live){
+            if (input->WasKeyPressed(keys[i]) && f_live && !((locked >> tools[i]) & 1u)){
                 paint_tool = (paint_tool == tools[i]) ? CHASM_TOOL_SELECT : tools[i];
                 pick_version++;
                 SignalUI("click");
             }
+        }
+        int held = paint_tool.load();
+        if (held > 0 && held < 32 && ((locked >> held) & 1u)){
+            paint_tool = CHASM_TOOL_SELECT;
+            pick_version++;
         }
     }
     //After the camera, so the ray goes through the view this pass will draw.
@@ -4004,6 +4025,25 @@ void ApplicationChasm::RegisterMCPTools(){
                 cmd.value[1] = (shape == ZONE_CASTLE_NONE) ? 0.0f
                                                            : (float)ZoneCastlePiece(shape,args.value("storeys",2));
             }
+            //A PLAY command for what a discovery has not brought yet is refused, as the build bar hides its tool
+            //(demo_plan.md step 6).
+            if (args.value("play",false)){
+                int tool = -1;
+                if (op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD){
+                    int kind = (int)cmd.value[1];
+                    tool = (kind == ZONE_KIND_WATER) ? CHASM_TOOL_WATER : (kind == ZONE_KIND_WINCH) ? CHASM_TOOL_WINCH
+                         : (kind == ZONE_KIND_TOWER) ? CHASM_TOOL_TOWER : (kind == ZONE_KIND_STONECUTTER) ? CHASM_TOOL_STONECUTTER
+                         : (kind == ZONE_KIND_MINE) ? CHASM_TOOL_MINE : -1;
+                }else if (op == ZONE_OP_GROUND_PAINT && ground == ZONE_GROUND_WALL){
+                    tool = CHASM_TOOL_WALL;
+                }else if (op == ZONE_OP_RANGE_PAINT){
+                    tool = CHASM_TOOL_RANGE;
+                }
+                int need = ChasmToolNeeds(tool);
+                if (need >= 0 && !((discovered_mask.load() >> need) & 1u)){
+                    return json{{"error",std::string("not discovered yet: ") + ChasmDiscoveryName(need)}};
+                }
+            }
             //A tool's strokes in a range of their own, clear of the mouse's (UpdatePaint).
             if (args.contains("stroke")){
                 cmd.value[2] = (float)((1u << 22) + (args["stroke"].get<uint32_t>() & 0x3FFFFF));
@@ -4143,8 +4183,12 @@ void ApplicationChasm::RegisterMCPTools(){
                                    "range","tower","ropewalk","castle","stonecutter","mine"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             std::string t = args.value("tool",std::string());
+            std::string locked;
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){
-                if (t == names[i]){
+                //Play mode's tools still waiting for a discovery are refused, as their keys are (demo_plan.md step 6).
+                if (t == names[i] && ToolLocked(i)){
+                    locked = std::string("not discovered yet: ") + ChasmDiscoveryName(ChasmToolNeeds(i));
+                }else if (t == names[i]){
                     paint_tool = i;
                     pick_version++;
                 }
@@ -4178,11 +4222,15 @@ void ApplicationChasm::RegisterMCPTools(){
                 line = line_chain.size();
                 cost = ghost_cost_text;
             }
-            return json{{"tool",(tool >= 0 && tool < CHASM_TOOL_COUNT) ? names[tool] : "?"},
+            json result{{"tool",(tool >= 0 && tool < CHASM_TOOL_COUNT) ? names[tool] : "?"},
                         {"hover_pinned",f_hover_pinned.load()},
                         {"button",(left < 0) ? "mouse" : (left ? "down" : "up")},
                         {"line_plots",line},
                         {"cost",cost}};
+            if (!locked.empty()){
+                result["refused"] = locked;
+            }
+            return result;
         });
 
 #ifdef DEBUG

@@ -470,7 +470,8 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
         if (busy == "skip"){ c.busy = BUSY_SKIP; }
         else if (busy == "queue"){ c.busy = BUSY_QUEUE; }
         else if (busy == "interrupt"){ c.busy = BUSY_INTERRUPT; }
-        else { error = at + ": busy is skip, queue or interrupt"; return false; }
+        else if (busy == "replace"){ c.busy = BUSY_REPLACE; }
+        else { error = at + ": busy is skip, queue, interrupt or replace"; return false; }
         if (c.jitter < 0 || c.gap < 0 || c.max_instances < 0 || c.max_wait < 0){
             error = at + ": jitter, gap, max_instances and max_wait cannot be negative";
             return false;
@@ -1135,7 +1136,10 @@ void CueSystem::Fire(Waiting& w){
                 waiting.push_back(w);
                 return;
             }
-            if (cue.busy == BUSY_INTERRUPT && speaking && cue.priority > speaking->priority){
+            //replace: the same priority is cut as well - a reply to a click is about the click just made.
+            bool f_cut = speaking && ((cue.busy == BUSY_INTERRUPT && cue.priority > speaking->priority) ||
+                                      (cue.busy == BUSY_REPLACE && cue.priority >= speaking->priority));
+            if (f_cut){
                 for (Playing& p : playing){
                     if (&p == speaking){
                         StopPlaying(p);

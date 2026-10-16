@@ -268,9 +268,10 @@ signal the cue table sees.
 |---|---|---|---|---|
 | `born` | lifelines | now | a soft bell at the house | notice, journal |
 | `couple_housed` | `HouseFamilies`, a couple moving into a free house | now | a short warm motif | notice |
-| `grew_up` | lifelines: child, young adult, adult | now | none | journal |
+| `grew_up` | lifelines: a child become a young adult | built 2026-10-16 | the chime | notice, journal |
+| `expecting` | `ChancesOfChildren`, a couple's chance come up | built 2026-10-16 | the chime | notice, journal |
 | `died` (cause in `amount`) | needs, a zombie's bite | now | a low toll | the death line, then the demo's pop-up; journal; goal 1 |
-| `colony_lost` | the rules, with the last death | now (the overlay works it out today) | a music stinger | end screen |
+| `colony_lost` | `TickGoals`, the tick the last person dies | built 2026-10-16 | the chime; a music stinger later | the end's page, journal |
 | `old_age` | lifelines | planned (`lifeline_plan.md`) | none | journal |
 
 ### Work finished
@@ -284,7 +285,7 @@ The work before each of these is a bed.
 | `building_finished` (kind in `amount`) | the same, when the last storey stands; a field, bridge or tower too | now | a fuller version | journal; discoveries ("the first of each kind") |
 | `line_built` | a road or wall plot laid | now | a soft thud | |
 | `harvest` (yield in `amount`) | the fields' loop in `Economy::Tick` | now | a sheaf or a cart | journal, with the yield |
-| `frost_took` | a field's crop lost to frost (`EconomyField::frost`) | now, not told | a frosty crackle | a notice, if the user wants one |
+| `frost_took` | a field's crop lost to frost (`EconomyField::frost`) | built 2026-10-16, one a field | the chime, once a dawn; later a frosty crackle | notice (one line for all), journal |
 | `crop_auto` | the countdown chose a crop (`Economy::CropDefaults`) | now | a quiet tick | |
 | `rock_broken` | a stonecutter's rock gone | now | a crack | |
 | `stock_reached` | an order for provisions or rope done | now | a soft chime | |
@@ -313,8 +314,8 @@ mark someone cut off by the thaw.
 |---|---|---|---|
 | `season` | the calendar, at a season's first dawn | now | the music's section changes |
 | `snow`, `thaw` | the snow arriving and going | now | the wind lifts / dripping and cracking |
-| `winter_survived` | the first dawn of the second spring, nobody dead | planned (demo goal 1) | a stinger |
-| `chasm_seen` | exploration, the first sight of the chasm | planned (the music's `reveal`) | the war horn |
+| `winter_survived` | the first dawn of the second spring, nobody dead | built as `goal_met` of the first goal (demo_plan.md step 7) | the chime; a stinger later |
+| `chasm_seen` | exploration, the first sight of the chasm | built as `discovered` of the chasm's area (`areas_plan.md`, the cue table's `chasm_reveal`) | the war horn |
 
 Dawn makes no sound: every 45 seconds would grate.
 
@@ -335,8 +336,8 @@ All planned (`demo_plan.md`, steps 6 and 7).
 
 | Signal | Made by | Sound | Also read by |
 |---|---|---|---|
-| `discovery` (which in `amount`): a winch built, the first person lowered to a balcony, the first of each building kind | the rules, with the saved flag | a stinger and a line ("Jelle De Wit has reached a balcony") | goals; later, which build tools show |
-| `goal_met`, `goal_failed`, `demo_complete` | the rules | a stinger | the pop-up |
+| `boulder_found`, `balcony_reached` (built 2026-10-16): the two firsts the discoveries needed an event for. The rest are read from events there already (`demo_plan.md`, "As built: discoveries") | the rules, journaled | the chime and a line ("Jelle De Wit has reached a balcony"); later a stinger | goals; which build tools show |
+| `goal_met`, `goal_failed`, `demo_complete` (built 2026-10-16, `amount` the goal, or the goals met) | `TickGoals` | the chime; a stinger later | notice line, the end's page, journal |
 
 ### The view
 
@@ -394,7 +395,8 @@ Sound is checked from what it decided, not by ear. The user listens.
 6. **With the demo:** the UI sounds, the pop-up, the discovery and goal stingers.
 7. **With the music** (its own step, `apps/music/readme.md`): the score's players, the season as a
    section change, the `clouds` and `chasm` share from the same pass over the view, and `chasm_seen`'s
-   horn.
+   horn. *Built 2026-10-16: `areas_plan.md`, "The music" - the chasm's first sight is the chasm area
+   found.*
 8. **Later:** single blows at close zoom, the rest of the events as their features land.
 
 ## Open questions
@@ -420,7 +422,10 @@ of "The beds" above. Built:
   `sound/click.wav` from a baked build: an exclude matches the asset's name, and chasm's own click
   stands in front of the shared one under that name.
 - **The table**, `assets/cues/chasm.json`, reloaded within a second of being saved (an mtime poll, as
-  archer's). Buses `effects` > `world`, `activity`, `ui`; a `notice` group.
+  archer's). Buses `effects` > `world`, `activity`, `ui`; a `notice` group. Since the Settings screen
+  (`demo_plan.md`, 2026-10-16) the table plays under a layer bus of its own, `sounds`
+  (`CueSoundOutput`'s layer), so its buses are named `sounds/effects`, `sounds/activity` and so on. The
+  effects volume is the layer's gain, which the table never sets.
 - **Where it runs: the physics thread, once a PASS** (`UpdateSound`, first thing in `UpdateView`, before
   any of its early returns), not the render thread the plan named. A pass is real time - 4x is four
   ticks in one pass - so it gives everything open question 1 wanted from a real-time clock: a sound's
@@ -493,4 +498,51 @@ Not yet:
 - **Sounds of their own for the events**, a row for `erased`, and NEEDS ATTENTION's two alerts - step 3.
 - **The beds** for walking, talking, farming, water and the rest - step 4. Chopping and building are
   blows now, which a crowd of hundreds would not be; the nearest-four rule is what keeps them in voices.
-- The cue panel (step 5), menu and title sounds (step 6), music (step 7).
+- The cue panel (step 5), menu and title sounds (step 6). Music (step 7) is built: `areas_plan.md`, "The
+  music".
+
+## Voices (2026-10-16)
+
+The user's first speech: two voices, **leo** for any man and **leah** for any woman, each with eleven
+lines in `assets/sound/speech/taunts/` - `<voice>_<line>_s<seed>`, the seed only the take the generator
+made, kept as it is. Several lines for being picked out and for being sent, for variation; **okay** for
+"any order that's not been handled yet, like picking berries, setting up tent. Anything" (the user's).
+
+- **Who answers.** A grown-up - anyone drawn as one (`PersonFigure`), which is everyone who can take an
+  order: a 6-year-old who has reached the young stage answers, a toddler does not. `voice` 0 is leo's,
+  1 leah's (`SignalVoice`).
+- **When.** PICKED (`picked`): clicked in the scene, again or not; the first of a box; Shift-added; his
+  name pressed in a list or a card; MCP's select. ORDERED: when the rules TAKE the order, in its command
+  - so a refused order is only the `refused` sound, never an "on it" followed by a refusal. Commands
+  drain on every pass, paused or not (`Scene::BeginPass`), so an order given in a pause is answered in
+  it. Each order is its own signal, as the events are: `sent` (to a plot, or onto a tower), `released`,
+  `gather`, `take_tent`, `straight_on` (a chip turned off), `settle`, `pitch`, `forage` (`what`
+  FORAGE_*). A line of its own for picking fruit is then a row's `sounds`, no code.
+- **One answer a pass** (`Say`, behind its own lock, since MCP's picks come from another thread): an
+  order's over a pick's, and of a rank the first asked - a group's orders go out nearest first, so the
+  nearest answers for the four, once.
+- **One person speaking**: the `voice` group with **`busy: replace`**, new in core - like `interrupt` but
+  cutting a line of the same priority too, so the answer heard is always to the last click. Orders have
+  priority 1, so a pick never cuts an order's answer; an order cuts a pick's. Two checks in
+  `tools/cue_test.cpp`.
+- **The table's rows** (`picked_leo`, `sent_leah`, ...), a pair per signal: picked -> hi, whatsup, yes,
+  whereto, morning; sent -> headingover, onit, imonit; gather -> grabsupplies; take_tent and settle ->
+  packingup; the rest -> okay. On a `voice` bus under `effects`, never held; not quieter further off
+  (spoken to the player), panned at most 0.3 toward him. leah's takes are 2.6 dB quieter than leo's on
+  the whole, so leo's rows are 0.75 and leah's 1.0. A gap of 8 passes makes a double click one answer.
+- **Trimmed**: `tools/sound_ogg.py` now walks subfolders, keeps them under `art_source/`, and cuts the
+  silence off both ends of anything under `sound/speech/` (40 ms kept before the first sound, 80 ms
+  after the last, faded). The takes started 0.16-0.62 s in, which read as lag after a click. 22 files:
+  1.3 MB of wav -> 127 KB.
+
+Checked in a muted instance on the startup world (no save loaded, so no autosave was spent): a man's and a
+woman's picks, each cut by the next; a double click one answer; six picks of one man, no line twice
+running; a toddler silent; an order, a release, a gather and its chip off, a tent and its chip off each
+answered with its line; forage, pitch and settle refused there (no ripe fruit, no tent, no other
+settlement) and heard only as `refused`; a group of four sent by a right click, one answer; an order in
+a pause answered in it; a pick right after an order skipped. Not heard: forage, pitch and settle TAKEN -
+the same path, their rows loaded.
+
+Open: `morning` is said at any hour - Chasm has no visible time of day, only the day bar; a `when` on a
+day fraction would hold it to the first part of each day. The takes' loudness ranges 8 dB (leo's
+morning and leah's whereto and okay the quietest); evening them out would be a conversion step.

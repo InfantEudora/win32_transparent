@@ -40,6 +40,8 @@ proposed, as are the first 8 issues").
 | 10 | HOUSE CROWDED | a house standing with more living in it than it holds - a child born into a full house (`lifeline_plan.md`) | n IN ROOM FOR m | selects it |
 | 11 | ...: NEEDS ROPE | a site that takes rope the colony lacks and makes none (`goods_plan.md`) | GROW HEMP / BUILD A ROPEWALK | a field, or the tool |
 | 12 | TREES IN THE WAY: NO WOODCUTTER NEAR | a road, wall or site with a tree in its way that no woodcutter reaches - only a woodcutter fells (`woodcutting_plan.md`) | n PLACES | the WOODCUTTER tool |
+| 2b | FIND A RIVER | play mode, row 2 while the WATER tool waits for a river to be found (`demo_plan.md`, "As built: discoveries"); row 11b's NEEDS STONE says FIND THE CHASM before a winch the same way | WATER n DAYS | - |
+| 13 | FIELD LIES FALLOW / n FIELDS LIE FALLOW | a field standing whose share has no farmer (`land_plan.md`), one row a land | BUILD HOUSES (the camp's), TOO FEW HANDS (a family's), NOBODY CAN REACH IT (no owner) | selects its first field |
 
 Rows 9 and 10 are the user's (2026-10-09, with births: "a house that holds 3, getting a kid would mean we need to
 expand it").
@@ -77,8 +79,7 @@ field is the hint that teaches the most.
 
 ## Later
 
-Easy once the panel exists, and each the user's call: a field lying fallow; a field nobody can reach; "the
-frost will take it, n days short"; people carrying with nowhere to put it down (stores full); sites with
+Easy once the panel exists, and each the user's call: "the frost will take it, n days short"; people carrying with nowhere to put it down (stores full); sites with
 nobody free to carry; winter coming with too little firewood; a collector frozen in winter; water or food
 running low WITH a source (the deadline alone, as now, would mislead: one collector fills about 11 units a day).
 
@@ -115,3 +116,24 @@ two clicks, the card's Auto chip and countdown bar, `chasm_select press` naming 
   count of who lives where beside its `working`. Checked on seed 12: a storey taken off the Wevers' two-storey house
   after their baby was born - HOUSE CROWDED, 5 IN ROOM FOR 2, and the card's "Crowded - add a storey or a plot". The
   shut-in row by the flag it reads, which was checked on its own (lifeline_plan.md, "a building's door").
+
+## As built: fallow land (2026-10-16)
+
+The user's, from play: "a field lying fallow" should be in the list. Row 13, in `ChasmIssues`: a field with a
+built cell and no farmer (`EconomyState::farmer_of` 0, what the card and `chasm_economy`'s `fallow` read). One
+row a land, not a field, so a camp with many fields does not push the next steps out of the top five; the
+value is what to do for that owner:
+
+- **The camp's land:** BUILD HOUSES. The camp farms `ECONOMY_CAMP_FARMERS` share, and its land passes to the
+  first house lived in near it (`SettleLand`).
+- **A family's:** TOO FEW HANDS. Its free adults are fewer than its land's places; the card's "Give to:" can
+  hand a field to another family.
+- **No owner:** NOBODY CAN REACH IT. No house or camp of its settlement can walk to it, so it was never
+  anyone's land. This was the separate "field nobody can reach" of Later, and it falls out of the same test.
+
+Tier STUCK, ranked by the first field's id; a click selects that field. A posted farmer's share is not
+fallow (it waits for him, `Tending`), and nor is a field still a site.
+
+Checked (debug, 8769): village_year5 lists FIELD LIES FALLOW / TOO FEW HANDS for house 11's second field, with
+the jobs overview's FARMERS 4 / 5 in amber; a new seed-12 colony with 39 fields painted by debug round the camp
+lists 32 FIELDS LIE FALLOW / BUILD HOUSES and one across the way as NOBODY CAN REACH IT.

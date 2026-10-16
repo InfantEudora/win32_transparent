@@ -5,7 +5,7 @@ kind: systems
 status: partial
 summary: The moments the rules tell of - a birth, a harvest, a waterfall found - made once, and read by the notice line, the statistics and the sound.
 plans: sound_plan.md > The events; sound_plan.md > Game events: one record, many readers; statistics_plan.md > As built: version 1 (2026-10-16); areas_plan.md > The discovered event
-code: Economy.h: EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas; ApplicationChasmSound.cpp: SignalEvents
+code: Economy.h: EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED EVENT_FROST_TOOK EVENT_GREW_UP EVENT_EXPECTING EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted Lifelines ChancesOfChildren; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas LookForFirsts; ApplicationChasmSound.cpp: SignalEvents
 verified: 2026-10-16
 ---
 
@@ -26,6 +26,14 @@ tree down, a storey up, a harvest) only near the view.
 | Settled | a [[Founding|tent]] pitched outside every [[Settlement|settlement]] founds one; a new colony's settlers landing | journal |
 | Floatstone seen | someone is the first to see a floatstone seam in a balcony's wall ([[Deposit|deposits]]) | journal, notice |
 | Discovered | someone is the first to see an [[Areas|area]] - a river, a waterfall, a biome | journal; notice for the first of its kind |
+| Boulder found | a boulder stands on the colony's own land, on explored ground - the first only ([[Discoveries]]) | journal, notice |
+| Balcony reached | someone stands on a balcony, lowered by a [[Winch|winch]] - the first only ([[Discoveries]]) | journal, notice |
+| Grew up | a child becomes a young adult, and goes to work ([[Lifelines]]) | journal, notice |
+| Expecting | a couple's chance of a child comes up at dawn ([[Lifelines]]) | journal, notice |
+| Frost took | winter's first day takes a [[Field|field's]] crop still growing | journal; one notice for all of them |
+| Goal met, goal failed | one of [[The demo's goals|the demo's goals]] decided | journal, notice |
+| Demo complete | both goals decided | journal; the end's page |
+| Colony lost | the last person dies | journal; the end's page |
 | Tree felled | a [[Woodcutter|woodcutter]] fells a [[Tree|tree]] | counted |
 | Rock broken | a [[Stonecutter|stonecutter]] breaks a rock or a boulder | counted |
 | Storey raised | the builders finish a storey | counted |
@@ -41,19 +49,16 @@ tree down, a storey up, a harvest) only near the view.
 Events are never saved: the last {ECONOMY_EVENTS_KEPT} are kept for telling, so after a load nothing old is told
 again. A seam already seen before the load is not seen a second time. What has to last is in the journal.
 
+A [[Discoveries|discovery]] told says what it brings: "... has found a river - new tools: WATER, BRIDGE". The
+first builders' hut and the first winch finished are told too, for that.
+
 ## Not events (yet)
 
-- **Reaching the chasm.** Nothing marks it today: the demo's goal - a [[Winch|winch]] built and someone lowered by
-  it - and the first sight of the chasm are planned, below.
 - **The work itself** - chopping, building, sowing, walking. Only its end is an event; the work is the background.
 - A refused placement or order, an arch taken down by a command, and NEEDS ATTENTION: the view tells those itself.
 
 ## Planned
 
-- [planned] DISCOVERIES (demo_plan.md step 6): a winch built, the first person lowered to a balcony, floatstone
-  seen, later the first of each building kind - each an event and a saved flag, for the goals and the build tools.
-- [planned] The demo's goals: the first winter through with nobody dead, a goal met or failed, the demo complete.
-- [planned] The chasm first seen, with the music's reveal (sound_plan.md).
-- [proposed] A couple housed, someone grown up, a crop lost to frost or chosen by AUTO, a road or wall laid, a stock
-  reached, a deposit dug out, a gate shut or opened, an arch down, the season and the snow (sound_plan.md).
+- [proposed] A couple housed, a crop chosen by AUTO, a road or wall laid, a stock reached, a deposit dug out, a gate
+  shut or opened, an arch down, the season and the snow (sound_plan.md).
 - [proposed] Zombies: one coming, a bite, a blow, one down, an arrow loosed or hitting.

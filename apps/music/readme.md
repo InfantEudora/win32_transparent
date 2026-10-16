@@ -17,7 +17,8 @@ and every wav it names goes to `music/sounds/` beside it. Only the wavs the scor
 copied; an export no part plays is an experiment, and stays here. Run it again after changing the
 score. It overwrites what the game has, and it leaves a sample the score has stopped naming for
 you to delete. How archer plays the score is described at `title_music` in
-`apps/archer/ApplicationArcher.h`.
+`apps/archer/ApplicationArcher.h`; how chasm plays its own (`GAME=chasm SCORE=chasm`) at the top of
+`apps/chasm/ApplicationChasmMusic.cpp`.
 
 **The game's copy is Ogg Vorbis.** Each wav is encoded to `<name>.ogg`, and the game's score is
 rewritten to name the `.ogg` files. A `.wav` of the same name already in the game is deleted,
@@ -30,8 +31,9 @@ stereo kept as they are. Those were chosen by listening on 2026-09-30, and the r
 copies plain wavs instead. The game decodes the `.ogg` files to PCM at load (`core/AudioDecode.h`),
 which takes about 0.5 s for all 42.
 
-**A game's sound effects** (`apps/archer/assets/sound/`) take the same settings, but no target
-encodes them: a new one arrives as a wav and is converted by hand. Add `--resample 32000` only
+**A game's sound effects** (`apps/archer/assets/sound/`) take the same settings. Since 2026-10-16
+`python tools/sound_ogg.py <game>` converts every wav in a game's `assets/sound/` with them, keeps
+the wav in `art_source/<game>/sound/` and points the cue tables at the `.ogg`; by hand it is: Add `--resample 32000` only
 for a file above 32 kHz; the rate is the 4 bytes at offset 24 of a plain wav
 (`od -An -tu4 -j24 -N4 file.wav`). For example:
 
@@ -188,7 +190,11 @@ to A major rather than D major, both times by a margin of 0.03 to 0.04 (it was D
 0.05): more weight on A from the A major strum and the pick, not a note out of key.
 
 The bench plays one section at a time, so the blend of the land with clouds or chasm is not heard
-here. Chasm does not play any of it yet.
+here. **The game plays it since 2026-10-16** (`apps/chasm/ApplicationChasmMusic.cpp`): one player
+in the season's section, which it is sent at each season's turn; the `clouds` and `chasm` sections
+on players of their own, faded in by how much of the view is unexplored ground and seen chasm, with
+the season's turned down under them; `reveal` when the chasm is first seen. It plays on in a pause.
+The layering is the game's (`MUSIC_*` in that file); everything else is this score's.
 
 **Pause** is the game's pause, tried here before any game uses it. It fades the music out over
 `pause_fade_s` (1.5 s) and then HOLDS it. Once the music is silent the engine stops rendering, so

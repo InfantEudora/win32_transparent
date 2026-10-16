@@ -1,6 +1,6 @@
 ---
 name: chasm-sound-plan
-description: "Chasm sound: apps/chasm/docs/sound_plan.md; step 2 BUILT 2026-10-16 (USE_SOUND, assets/cues/chasm.json, per-pass cues on the physics thread, ground listener in core, chasm_sound) + work blows on per-person clocks like archer's heartbeat"
+description: "Chasm sound: apps/chasm/docs/sound_plan.md; step 2 BUILT 2026-10-16 (USE_SOUND, assets/cues/chasm.json, per-pass cues on the physics thread, ground listener in core, chasm_sound) + work blows on per-person clocks + people's voices (leo/leah taunts on pick and taken orders, busy replace)"
 metadata:
   node_type: memory
   type: project
@@ -41,6 +41,18 @@ Second round, same day (user: "already really good"):
 - Sounds are .ogg via tools/sound_ogg.py; the wavs live in art_source/chasm/sound/ ([[ogg-vorbis-settings]]).
 - Water ambience (river + archer's waterfall loops, `ambience` bus, faint under the clouds) built 2026-10-16 with
   the discoverable areas - see [[chasm-areas-plan]].
+- BUS OWNERSHIP (2026-10-16, the Settings-screen agent): the cue table plays under a LAYER bus "sounds" (CHASM_SOUND_LAYER;
+  table buses are "sounds/<name>" - FindBus with that prefix). The Settings' ApplySettings (ApplicationChasmMenu.cpp)
+  owns the gains of `music` and `sounds` - never set those two elsewhere; the music players' own buses stay mine.
+
+- VOICES (2026-10-16, user's taunts in assets/sound/speech/taunts/, `<voice>_<line>_s<seed>` - the seed is just the
+  take, kept): leo = any man, leah = any woman (grown-up figure = anyone orderable; toddlers silent). Picked -> hi/
+  whatsup/yes/whereto/morning; sent -> headingover/onit/imonit; gather -> grabsupplies; take_tent/settle -> packingup;
+  everything else -> okay (user: "okay for any order not handled yet"). Orders answer in their COMMAND HANDLER only
+  when the rules take them (refused = refusal sound only); each order is its own signal so a new line is a table row.
+  Say() = one answer per pass (order rank over pick, first asked = a group's nearest), lock-guarded for MCP's thread.
+  Core gained `busy: "replace"` (cuts same priority too); orders priority 1 so picks never cut them.
+  Open with the user: `morning` at any hour (no visible time of day); takes' loudness spread 8 dB.
 
 **Why:** the user's sounds are single blows, so blows-on-clocks replaced the plan's looping "beds" for chop/build.
 **How to apply:** a sound for an event = a row in chasm.json, no code. Verify with chasm_sound on a MUTED test

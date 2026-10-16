@@ -1,6 +1,7 @@
 #include "ApplicationChasm.h"
 #include "UIOverlay.h"
 #include "ChasmHud.h"
+#include "ChasmStats.h"
 #include "Window.h"
 #ifdef USE_IMGUI
 #include "imgui.h"
@@ -462,6 +463,15 @@ void ApplicationChasm::DrawOverlay(void){
         }
     }
 
+    /*
+        THE TOP LEFT, one under another so none hides the next: the demo's goals (play mode, ApplicationChasmGoals.cpp),
+        REC or the replay's bar (ApplicationChasmRecord.cpp), then the selection's colony (SelectionColony).
+    */
+    hud_left_y = 12.0f * s;
+    if (PlayMode()){
+        hud_left_y = DrawGoals(s,hud_left_y);
+    }
+    hud_left_y = DrawRecording(s,hud_left_y);
     //Play mode's own UI: the tools and over them what needs attention (issues_plan.md), the jobs and over
     //them the neediest, and the selection's card and pins (selection_plan.md).
     if (PlayMode()){
@@ -493,7 +503,6 @@ void ApplicationChasm::DrawOverlay(void){
             overlay->AddText(food_tip[i].second.c_str(),vec2(sw.x + 15.0f * s,base),text_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
         }
     }
-    DrawRecording(s);   //REC, or the replay's bar (ApplicationChasmRecord.cpp)
     DrawAsk(s);     //a question over the game, over everything (ApplicationChasmTitle.cpp)
     DrawBusyAndNote(s);
     {
@@ -524,7 +533,27 @@ float ApplicationChasm::DrawBuildBar(float s){
         {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
         {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
         {"3","ERASE",CHASM_TOOL_ERASE}};
-    const int count = (int)(sizeof(bar) / sizeof(bar[0]));
+    /*
+        Only what has been DISCOVERED (demo_plan.md step 6): a tool still waiting for its discovery is left out, the
+        rest closing up in the same order. One a discovery has just brought is marked NEW until it is first taken up;
+        what a colony has on entering it is not new (discoveries_epoch).
+    */
+    uint32_t locked = ToolsLocked();
+    uint32_t epoch = discoveries_epoch.load();
+    if (epoch != tools_known_epoch){
+        tools_known_epoch = epoch;
+        tools_known = ~locked;
+        tools_new = 0;
+    }
+    tools_new |= ~locked & ~tools_known;
+    tools_known = ~locked;
+    std::vector<BarTool> shown;
+    for (const BarTool& b : bar){
+        if (!((locked >> b.tool) & 1u)){
+            shown.push_back(b);
+        }
+    }
+    const int count = (int)shown.size();
     const int columns = 3;
     const int rows = (count + columns - 1) / columns;
     const float size = 15.0f * s;
@@ -537,10 +566,7 @@ float ApplicationChasm::DrawBuildBar(float s){
     //Every cell as wide as the widest, so the columns line up.
     float cell_w = 0.0f;
     for (int i = 0; i < count; i++){
-        if (!bar[i].name){
-            continue;
-        }
-        float w = overlay->MeasureText(bar[i].key,key_size).x + key_gap + overlay->MeasureText(bar[i].name,size).x;
+        float w = overlay->MeasureText(shown[i].key,key_size).x + key_gap + overlay->MeasureText(shown[i].name,size).x;
         cell_w = std::max(cell_w,w + inner * 2.0f);
     }
     float cx = (float)main_window->width * 0.5f;
@@ -552,30 +578,37 @@ float ApplicationChasm::DrawBuildBar(float s){
     build_bar_min = q0;
     build_bar_max = q1;
     int tool = paint_tool.load();
+    if (tool >= 0 && tool < 32){
+        tools_new &= ~(1u << tool);
+    }
     //The tool under the mouse, for its price tip beside the grid (DrawCostTips).
     float mx = (float)overlay_mouse_x.load();
     float my = (float)overlay_mouse_y.load();
     bar_tip_tool = -1;
     for (int i = 0; i < count; i++){
-        if (!bar[i].name){
-            continue;
-        }
         vec2 c0(q0.x + pad + (i % columns) * (cell_w + gap),q0.y + pad + (i / columns) * (cell_h + gap));
         vec2 c1(c0.x + cell_w,c0.y + cell_h);
         if (mx >= c0.x && mx <= c1.x && my >= c0.y && my <= c1.y){
-            bar_tip_tool = bar[i].tool;
+            bar_tip_tool = shown[i].tool;
             bar_tip_a = c0;
             bar_tip_b = c1;
         }
-        bool f_on = (tool == bar[i].tool);
-        overlay->AddRect(c0,c1,6.0f * s,f_on ? UIColor(236,202,92,70) : UIColor(255,255,255,14));
+        bool f_on = (tool == shown[i].tool);
+        bool f_new = (tools_new >> shown[i].tool) & 1u;
+        overlay->AddRect(c0,c1,6.0f * s,f_on ? UIColor(236,202,92,70) : f_new ? HudFaded(HUD_AMBER,40) : UIColor(255,255,255,14));
         float base = c0.y + 19.0f * s;
-        overlay->AddText(bar[i].key,vec2(c0.x + inner,base - 1.0f * s),key_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
-        float key_w = overlay->MeasureText(bar[i].key,key_size).x;
-        overlay->AddText(bar[i].name,vec2(c0.x + inner + key_w + key_gap,base),size,f_on ? HUD_TEXT : Faded(HUD_TEXT,170),
-                         UI_ALIGN_LEFT);
+        overlay->AddText(shown[i].key,vec2(c0.x + inner,base - 1.0f * s),key_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+        float key_w = overlay->MeasureText(shown[i].key,key_size).x;
+        overlay->AddText(shown[i].name,vec2(c0.x + inner + key_w + key_gap,base),size,
+                         (f_on || f_new) ? HUD_TEXT : Faded(HUD_TEXT,170),UI_ALIGN_LEFT);
+        if (f_new){
+            //NEW: a dot in the corner, in the notice's amber.
+            const float dot = 3.0f * s;
+            vec2 at(c1.x - 6.0f * s,c0.y + 6.0f * s);
+            overlay->AddRect(vec2(at.x - dot,at.y - dot),vec2(at.x + dot,at.y + dot),dot,HUD_AMBER);
+        }
         //A click on a tool takes it up, as its key does (selection_plan.md).
-        overlay_hits_drawing.push_back(OverlayHit{c0,c1,OVERLAY_HIT_TOOL,bar[i].tool});
+        overlay_hits_drawing.push_back(OverlayHit{c0,c1,OVERLAY_HIT_TOOL,shown[i].tool});
     }
     /*
         Why the last placement was refused, for a moment at the bottom in the middle - play mode has no panel
@@ -647,7 +680,31 @@ float ApplicationChasm::DrawBuildBar(float s){
             notices_world = ne->world.get();
             notices_seen = ne->events_made;
         }
+        /*
+            And a DISCOVERY (demo_plan.md step 6) says what it brings - "NEW TOOLS: WATER, BRIDGE" - when this event is
+            the one that made it: the discoveries are published on the tick, before the economy that carries the event.
+            The first builders' hut and the first winch finished are told for that alone.
+        */
+        std::shared_ptr<const ChasmDiscoveries> found = GetDiscoveries();
+        auto discovery_of = [&](const EconomyEvent& ev){
+            int d = -1;
+            if (ev.kind == EVENT_DISCOVERED){
+                const AreaData* areas = ne->world ? ne->world->areas.get() : nullptr;
+                int kind = (areas && ev.amount >= 0 && ev.amount < (int)areas->areas.size()) ? areas->areas[(size_t)ev.amount].kind : -1;
+                d = (kind == AREA_RIVER || kind == AREA_WATERFALL) ? DISCOVERY_RIVER : (kind == AREA_CHASM) ? DISCOVERY_CHASM : -1;
+            }else if (ev.kind == EVENT_SEAM_SEEN){
+                d = DISCOVERY_FLOATSTONE;
+            }else if (ev.kind == EVENT_BOULDER_FOUND){
+                d = DISCOVERY_BOULDER;
+            }else if (ev.kind == EVENT_BALCONY_REACHED){
+                d = DISCOVERY_BALCONY;
+            }else if (ev.kind == EVENT_BUILDING_FINISHED){
+                d = (ev.amount == ZONE_KIND_BUILDERS) ? DISCOVERY_BUILDERS : (ev.amount == ZONE_KIND_WINCH) ? DISCOVERY_WINCH : -1;
+            }
+            return (d >= 0 && found && found->tick[d] == (int64_t)ev.tick && found->person[d] == ev.person) ? d : -1;
+        };
         const EconomyEvent* newest = NULL;
+        int frosts = 0;     //the frost's on the newest's tick: one line for every field it took
         if (ne && ne->events_made > notices_seen){
             size_t fresh = std::min((size_t)(ne->events_made - notices_seen),ne->events.size());
             for (size_t i = ne->events.size() - fresh; i < ne->events.size(); i++){
@@ -655,8 +712,13 @@ float ApplicationChasm::DrawBuildBar(float s){
                 //An area found is told only when it is the first of its kind (areas_plan.md, the user's): the first
                 //waterfall, not the second.
                 bool f_notice = kind == EVENT_NOTHING_TO_TAKE || kind == EVENT_RAN_OUT || kind == EVENT_NO_TENT
-                                || kind == EVENT_SEAM_SEEN || (kind == EVENT_DISCOVERED && (ne->events[i].what & 1));
+                                || kind == EVENT_SEAM_SEEN || (kind == EVENT_DISCOVERED && (ne->events[i].what & 1))
+                                || kind == EVENT_FROST_TOOK || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING
+                                || kind == EVENT_BOULDER_FOUND || kind == EVENT_BALCONY_REACHED
+                                || (kind == EVENT_BUILDING_FINISHED && discovery_of(ne->events[i]) >= 0)
+                                || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED;
                 newest = f_notice ? &ne->events[i] : newest;
+                frosts += (kind == EVENT_FROST_TOOK) ? 1 : 0;
             }
             notices_seen = ne->events_made;
         }
@@ -677,12 +739,49 @@ float ApplicationChasm::DrawBuildBar(float s){
                              : (n.kind == EVENT_NOTHING_TO_TAKE) ? "no food or water for " + name + " to take"
                              : (n.kind == EVENT_NO_TENT) ? "no tent to spare for " + name + " to take"
                              : (n.kind == EVENT_SEAM_SEEN) ? name + " has seen floatstone in a balcony's wall"
+                             : (n.kind == EVENT_GREW_UP) ? name + " has grown up"
+                             : (n.kind == EVENT_BOULDER_FOUND) ? name + " has found a boulder"
+                             : (n.kind == EVENT_BALCONY_REACHED) ? name + " has reached a balcony"
+                             : (n.kind == EVENT_BUILDING_FINISHED) ? std::string(n.amount == ZONE_KIND_WINCH ? "the first winch"
+                                                                                                         : "the builders' hut")
+                                                                     + " is finished"
                              : name + " has run out of " + ((f_water && f_food) ? "food and water" : f_water ? "water" : "food");
+            //The demo's goals (demo_plan.md step 7): met or failed, by name.
+            if (n.kind == EVENT_GOAL_MET || n.kind == EVENT_GOAL_FAILED){
+                told = std::string(n.kind == EVENT_GOAL_MET ? "goal met: " : "goal failed: ") + ChasmGoalTitle(n.amount);
+            }
+            //The frost (fields_plan.md): one line for all it took at the turn of winter.
+            if (n.kind == EVENT_FROST_TOOK){
+                told = (frosts > 1) ? "the frost took the crops on " + std::to_string(frosts) + " fields"
+                                    : std::string("the frost took a field of ") + ZoneCropName(n.amount);
+            }
+            //Expecting (lifeline_plan.md): the couple, by one surname when they share it.
+            if (n.kind == EVENT_EXPECTING){
+                std::string partner;
+                for (const EconomyWorker& k : ne->workers){
+                    if (k.id == n.person && k.partner){
+                        for (const EconomyWorker& p : ne->workers){
+                            partner = (p.id == k.partner) ? EconomyPersonName(p) : partner;
+                        }
+                    }
+                }
+                size_t a = name.find(' ');
+                size_t b = partner.find(' ');
+                bool f_same = a != std::string::npos && b != std::string::npos && name.substr(a) == partner.substr(b);
+                told = partner.empty() ? name + " is expecting a child"
+                     : f_same ? name.substr(0,a) + " and " + partner + " are expecting a child"
+                     : name + " and " + partner + " are expecting a child";
+            }
+            int d = discovery_of(n);
+            std::string brings = (d >= 0) ? ChasmDiscoveryTools(d) : std::string();
+            if (!brings.empty()){
+                told += " - new tools: " + brings;
+            }
             if (ne->tick < n.tick + CALENDAR_DAY_TICKS / 2){
                 refusal_shown = told;
                 refusal_since = now;
                 f_refusal_notice = true;
-                refusal_seconds = 5.0f;
+                refusal_seconds = brings.empty() ? 5.0f : 8.0f;     //new tools: long enough to find them on the bar
             }
         }
         float age = std::chrono::duration<float>(now - refusal_since).count();

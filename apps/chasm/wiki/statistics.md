@@ -10,7 +10,8 @@ verified: 2026-10-16
 ---
 
 Press **Tab**, click the figures in the top bar, or choose Statistics in the pause menu, for the **Statistics page**.
-The game pauses under it; Tab or Escape closes it, back to the pause menu if it was opened from there.
+The game pauses under it; Tab or Escape closes it, back to the pause menu if it was opened from there. It is
+also [[The demo's goals|the demo's end]], with its own heading and buttons.
 
 ## What is kept
 
@@ -19,7 +20,9 @@ they happen - so a replay keeps the same history, and a load shows what was save
 
 - **The journal** remembers these one by one: a birth, a death and its cause, a harvest with what it gave, a
   building standing whole for the first time, a [[Settlement|settlement]] founded ([[Founding|a tent]] pitched
-  outside every one, and the settlers' landing), and a floatstone seam first seen ([[Deposit|deposits]]).
+  outside every one, and the settlers' landing), a floatstone seam first seen ([[Deposit|deposits]]), an area
+  found, someone grown up, a couple expecting, a crop the frost took, and the firsts the [[Discoveries|discoveries]]
+  read: a boulder found, someone on a balcony.
 - **A row a day** holds the [[Person|people]] by stage and every good the colony has at the day's end, and how many
   [[Tree|trees]] were felled, rocks broken and storeys raised that day. *Has* means gathered: stores, homes, packs and
   loads, and [[Crate|crates]] people put down - not rubble or finds still lying out there.
@@ -45,7 +48,4 @@ before's, plus its births, less its deaths. `chasm_stats` reports any disagreeme
 
 ## Planned
 
-- [planned] Opened from the pause menu's Statistics, once that is built (demo_plan.md step 1).
-- [planned] The demo's end screens show this page (demo_plan.md step 7; the user's, 2026-10-16).
-- [planned] Discoveries in the journal, when they come (demo_plan.md step 6).
 - [proposed] History per settlement, not only the colony's.

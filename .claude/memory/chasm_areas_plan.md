@@ -24,5 +24,6 @@ Built same day (areas_plan.md "As built"):
 **Why:** the user's first good ambient sounds tied into the event system's need for discovering areas.
 **How to apply:** new area kinds append AFTER AREA_DESERT's group is fine only if the index order per map stays
 stable for saved journals (saves aren't migrated anyway - [[chasm-saves-not-migrated]]). Open question: the far
-side of the chasm counts as "the plateau". Next candidates: the chasm itself (music reveal), balconies (demo goal).
+side of the chasm counts as "the plateau". AREA_CHASM (8, the floor) added 2026-10-16 with the music: its first
+sight fires the score's reveal via the cue table's `music` action (areas_plan.md "The music"). Next: balconies.
 Related: [[chasm-sound-plan]], [[chasm-statistics]], [[chasm-demo-menus]], [[chasm-test-instance-autosaves]].

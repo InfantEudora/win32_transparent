@@ -90,5 +90,7 @@ std::string ChasmStatsDate(uint64_t tick);
 std::string ChasmStatsSeasonName(int season);
 //A building kind as the page names it, with its plural: "woodcutter's hut", "woodcutters' huts".
 const char* ChasmKindLabel(int kind, bool f_plural);
+//One of the demo's goals (CHASM_GOAL_*) as the journal, the goals panel and the end page name it: "reach the chasm".
+const char* ChasmGoalTitle(int goal);
 
 #endif

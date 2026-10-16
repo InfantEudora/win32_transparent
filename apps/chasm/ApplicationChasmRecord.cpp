@@ -364,17 +364,18 @@ std::string ApplicationChasm::RecordingLabel(const RecordingEntry& e){
 
 /*
     RENDER THREAD, from DrawOverlay with the HUD: top left, clear of the top bar - REC and how long, while recording;
-    while replaying, the replay's bar: how far through, and Stop. Its pause and speed are the calendar's.
+    while replaying, the replay's bar: how far through, and Stop. Its pause and speed are the calendar's. At `top`, under
+    the goals' panel; returns where the next of the top left's goes - `top` with nothing drawn.
 */
-void ApplicationChasm::DrawRecording(float s){
+float ApplicationChasm::DrawRecording(float s, float top){
     InputController* input = main_window->inputcontroller;
     bool f_rec = input->IsRecording();
     bool f_rep = input->IsReplaying();
     if (!f_rec && !f_rep){
-        return;
+        return top;
     }
     float tps = (physics_tps > 0.0f) ? physics_tps : 50.0f;
-    vec2 p0(16.0f * s,12.0f * s);
+    vec2 p0(16.0f * s,top);
     if (!f_rep){
         std::string text = "REC  " + Clock((float)input->GetRecordingTicks() / tps);
         vec2 size = overlay->MeasureText(text.c_str(),15.0f * s);
@@ -384,7 +385,7 @@ void ApplicationChasm::DrawRecording(float s){
         float r = 4.5f * s;
         overlay->AddRect(dot - vec2(r,r),dot + vec2(r,r),r,UIColor(226,60,50,255));
         overlay->AddText(text.c_str(),vec2(p0.x + 26.0f * s,p0.y + 19.5f * s),15.0f * s,HUD_TEXT_DIM,UI_ALIGN_LEFT);
-        return;
+        return p1.y + 8.0f * s;
     }
     float at = (float)input->GetReplayPosition();
     float end = (float)input->GetReplayEnd();
@@ -407,4 +408,5 @@ void ApplicationChasm::DrawRecording(float s){
     overlay->AddRect(b0,b1,6.0f * s,f_over ? UIColor(255,255,255,60) : UIColor(255,255,255,24));
     overlay->AddText("STOP",vec2((b0.x + b1.x) * 0.5f,b0.y + 22.0f * s),15.0f * s,HUD_TEXT,UI_ALIGN_CENTER);
     overlay_hits_drawing.push_back(OverlayHit{b0,b1,OVERLAY_HIT_REPLAY_STOP,0});
+    return p1.y + 8.0f * s;
 }

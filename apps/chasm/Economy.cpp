@@ -169,6 +169,15 @@ const char* EconomyEventName(int kind){
         case EVENT_HARVEST:             return "harvest";
         case EVENT_SETTLED:             return "settled";
         case EVENT_DISCOVERED:          return "discovered";
+        case EVENT_FROST_TOOK:          return "frost_took";
+        case EVENT_GREW_UP:             return "grew_up";
+        case EVENT_EXPECTING:           return "expecting";
+        case EVENT_BOULDER_FOUND:       return "boulder_found";
+        case EVENT_BALCONY_REACHED:     return "balcony_reached";
+        case EVENT_GOAL_MET:            return "goal_met";
+        case EVENT_GOAL_FAILED:         return "goal_failed";
+        case EVENT_DEMO_COMPLETE:       return "demo_complete";
+        case EVENT_COLONY_LOST:         return "colony_lost";
         default:                        return "unknown";
     }
 }
@@ -182,12 +191,16 @@ int EconomyEventByName(const std::string& name){
     return -1;
 }
 
-//What is worth remembering one by one: who came and went, what was reaped and raised, where the colony spread, and
-//floatstone seen and areas found - not what happens tens of times a day, which the ledger counts, nor the scouts'
-//troubles.
+//What is worth remembering one by one: who came and went, grew up and was expected, what was reaped, raised and lost
+//to the frost, where the colony spread, and what it found - not what happens tens of times a day, which the ledger
+//counts, nor the scouts' troubles. The DISCOVERIES (demo_plan.md) are read from here, so what they need is kept -
+//and the demo's goals and its end, each made once, by whether the journal has it yet.
 bool EconomyJournaled(int kind){
     return kind == EVENT_BORN || kind == EVENT_DIED || kind == EVENT_HARVEST || kind == EVENT_BUILDING_FINISHED
-           || kind == EVENT_SETTLED || kind == EVENT_SEAM_SEEN || kind == EVENT_DISCOVERED;
+           || kind == EVENT_SETTLED || kind == EVENT_SEAM_SEEN || kind == EVENT_DISCOVERED || kind == EVENT_FROST_TOOK
+           || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING || kind == EVENT_BOULDER_FOUND
+           || kind == EVENT_BALCONY_REACHED || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED
+           || kind == EVENT_DEMO_COMPLETE || kind == EVENT_COLONY_LOST;
 }
 
 bool EconomyCounted(int kind){
@@ -1154,6 +1167,7 @@ void Economy::MakeSettlers(){
 bool Economy::Lifelines(uint64_t tick, bool& f_house){
     bool f_jobs = false;
     f_house = false;
+    std::vector<const EconomyWorker*> grown;    //GREW UP on this tick: a young adult, told once the loop is done
     for (EconomyWorker& k : state.workers){
         int stage = EconomyStageAt(k.born,tick);
         if (k.job == WORKER_JOB_BABY && stage >= LIFE_CHILD){
@@ -1164,9 +1178,15 @@ bool Economy::Lifelines(uint64_t tick, bool& f_house){
             k.job = WORKER_JOB_NONE;
             f_jobs = true;
         }
+        if (stage == LIFE_YOUNG && tick > 0 && EconomyStageAt(k.born,tick - 1) < LIFE_YOUNG){
+            grown.push_back(&k);
+        }
         if (stage == LIFE_ADULT && tick > 0 && EconomyStageAt(k.born,tick - 1) < LIFE_ADULT && !k.partner){
             f_house = true;
         }
+    }
+    for (const EconomyWorker* k : grown){
+        Event(EVENT_GREW_UP,k->id,k->house,-1,k->pos);
     }
     for (EconomyWorker& m : state.workers){
         if (m.job == WORKER_JOB_CARING && std::none_of(state.workers.begin(),state.workers.end(),[&](const EconomyWorker& o){
@@ -1259,6 +1279,7 @@ void Economy::ChancesOfChildren(const ZoneState& z, uint64_t tick){
         if ((int)(Mix(Mix(seed,m.id * 4 + 3),(uint32_t)(tick / CALENDAR_YEAR_TICKS)) % 100) < chance){
             m.due = tick + LIFE_EXPECTING_TICKS;
             state.version++;
+            Event(EVENT_EXPECTING,m.id,h,-1,m.pos);
         }
     }
 }
@@ -5567,6 +5588,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
             f.crop = -1;
             f.grown = 0;
             state.version++;
+            Event(EVENT_FROST_TOOK,0,f.building,(f.building < home_plot.size()) ? home_plot[f.building] : -1,vec2(),crop);
             continue;
         }
         int home = home_plot[f.building];

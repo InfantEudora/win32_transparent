@@ -29,6 +29,7 @@ APP_SRCS += ApplicationChasmHearth.cpp
 APP_SRCS += ApplicationChasmTitle.cpp
 APP_SRCS += ApplicationChasmMenu.cpp
 APP_SRCS += ApplicationChasmRecord.cpp
+APP_SRCS += ApplicationChasmGoals.cpp
 APP_SRCS += ApplicationChasmStats.cpp
 APP_SRCS += ChasmStats.cpp
 APP_SRCS += Grid.cpp
@@ -72,6 +73,7 @@ APP_SRCS += Areas.cpp
 APP_SRCS += ApplicationChasmExplore.cpp
 APP_SRCS += ApplicationChasmGhost.cpp
 APP_SRCS += ApplicationChasmSound.cpp
+APP_SRCS += ApplicationChasmMusic.cpp
 
 #NO PHYSICS: the grid, the terrain and the colony are this app's own rules, and nothing here
 #creates a PhysicsWorld. See the USE_PHYSICS block in engine.mk.

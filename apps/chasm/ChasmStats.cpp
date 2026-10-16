@@ -11,6 +11,12 @@ void ChasmStatsDays(const EconomyDay& row, float& food, float& water){
     //Everyone at their SHARE (Economy.h), as ChasmDaysHeld counts them: a baby half an adult, a child three quarters.
     int mouths = row.people[LIFE_BABY] * LIFE_SHARE_BABY + row.people[LIFE_CHILD] * LIFE_SHARE_CHILD
                  + (row.people[LIFE_YOUNG] + row.people[LIFE_ADULT]) * LIFE_SHARE_FULL;
+    //Nobody to feed - a lost colony (demo_plan.md step 7) - has no days of anything: not the whole store for one.
+    if (mouths == 0){
+        food = 0.0f;
+        water = 0.0f;
+        return;
+    }
     float people_days = (float)std::max(1,mouths) / LIFE_SHARE_FULL * CALENDAR_DAY_TICKS;
     int64_t food_ticks = 0;
     for (int g = 0; g < GOOD_COUNT; g++){
@@ -304,6 +310,14 @@ const char* ChasmKindLabel(int kind, bool f_plural){
     }
 }
 
+const char* ChasmGoalTitle(int goal){
+    switch (goal){
+        case CHASM_GOAL_WINTER:     return "through the winter, nobody lost";
+        case CHASM_GOAL_CHASM:      return "reach the chasm";
+        default:                    return "a goal";
+    }
+}
+
 std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
     std::string who = PersonName(e,ev.person);
     std::string good;
@@ -336,6 +350,26 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
             int kind = (a && ev.amount >= 0 && ev.amount < (int)a->areas.size()) ? a->areas[(size_t)ev.amount].kind : -1;
             return who + " found " + AreaKindTold(kind);
         }
+        case EVENT_FROST_TOOK:
+            return std::string("The frost took a field of ") + ZoneCropName(ev.amount);
+        case EVENT_GREW_UP:
+            return who + " grew up";
+        case EVENT_EXPECTING:
+            return who + " was expecting a child";
+        case EVENT_BOULDER_FOUND:
+            return who + " found a boulder";
+        case EVENT_BALCONY_REACHED:
+            return who + " reached a balcony";
+        //Short enough for the journal's column: the goals panel says them in full.
+        case EVENT_GOAL_MET:
+            return std::string("Goal met: ") + (ev.amount == CHASM_GOAL_WINTER ? "through the winter" : ChasmGoalTitle(ev.amount));
+        case EVENT_GOAL_FAILED:
+            return std::string("Goal failed: ") + (ev.amount == CHASM_GOAL_WINTER ? "through the winter" : ChasmGoalTitle(ev.amount));
+        case EVENT_DEMO_COMPLETE:
+            snprintf(buf,sizeof(buf),"Demo complete, %i of %i goals",ev.amount,CHASM_GOALS);
+            return buf;
+        case EVENT_COLONY_LOST:
+            return "The colony was lost";
         case EVENT_TREE_FELLED:
             return who + " felled a tree";
         case EVENT_ROCK_BROKEN:

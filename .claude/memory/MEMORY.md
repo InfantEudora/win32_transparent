@@ -57,7 +57,7 @@
 - [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — restore with ShowWindow(h,4) to check UI
 - [Wind system plan](wind_system_plan.md) — archer stream-function wind built with sway/leaves/streaks/fireflies; clouds left
 - [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change don't build/run other apps; the user does
-- [Adaptive music plan](adaptive_music_plan.md) — apps/music is the designer (port 8767); player in core/Music*; games copy via `make publish`; chasm.json drafted 2026-10-14 (seasons + clouds + chasm, motifs)
+- [Adaptive music plan](adaptive_music_plan.md) — apps/music is the designer (port 8767); player in core/Music*; games copy via `make publish`; archer and (2026-10-16) chasm play it - chasm: 3 players, clouds/chasm layers by the view
 - [Lock claim before build](lock_claim_before_build.md) — never build/run in the same parallel step as its #build/#port claim
 - [Cue plan](cue_plan.md) — archer event layer: SoundSystem buses, CueLog baselines, core/CueSystem; one CueSystem + bus per scene; cue panel next
 - [Bridge and crumble plan](bridge_crumble_plan.md) — archer rope bridges (overload snap, creak warnings) + crumbling rocks built; new blocks go LAST
@@ -75,7 +75,7 @@
 - [Coordinator + worker windows](coordinator_worker_windows.md) — user prefers briefing blank windows via ListAgents/SendMessage over subagents
 - [Archer model scale](archer_model_scale.md) — model_scale ~1.82, not 2.02; measure before sizing rules off glb pieces
 - [Prop atlas plan](prop_atlas_plan.md) — 11 Tripo textures -> one atlas; analysis tool built; swatch + pack + bake next
-- [Ogg Vorbis settings](ogg_vorbis_settings.md) — games ship .ogg (q-1, 32 kHz cap); core/AudioDecode at load; new SFX: `python tools/sound_ogg.py <app>`
+- [Ogg Vorbis settings](ogg_vorbis_settings.md) — games ship .ogg (q-1, 32 kHz cap); core/AudioDecode at load; new SFX: `python tools/sound_ogg.py <app>` (trims speech/)
 - [ReadFileToString is disk-only](readfiletostring_disk_only.md) — misses baked assets in the ship exe; read disk then LoadFile
 - [Spider leg shape keys](spider_leg_shape_keys.md) — tools/blender_spider_legs.py tetrapod keys; Blender-scripting traps
 - [Blend edit in place OK](blend_edit_in_place_ok.md) — user keeps .blend backups; separate file still wise while Blender has it open
@@ -113,8 +113,8 @@
 - [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only, llm app only; step 0 done, 3B invents in calm states
 - [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble crates, PICK UP + water reach, stonecutter + boulders, deposits, the mine on O); what stone buys is later
 - [Chasm stone props](chasm_stone_props.md) — 2026-10-14: 10 stone props merged into chasm_props.glb (--add --merge); floatstone = palette row 10 PAL_MINERALS; portal faces +Z
-- [Chasm sound plan](chasm_sound_plan.md) — step 2 BUILT 2026-10-16: USE_SOUND, assets/cues/chasm.json, per-pass cues on the physics thread, ground listener in core, chasm_sound; work blows on per-person clocks
+- [Chasm sound plan](chasm_sound_plan.md) — step 2 BUILT 2026-10-16: USE_SOUND, assets/cues/chasm.json, per-pass cues on the physics thread, ground listener in core, chasm_sound; work blows on per-person clocks; voices (leo/leah) answer picks + taken orders
 - [Chasm statistics](chasm_statistics.md) — v1 BUILT + confirmed 2026-10-16: EconomyEvent shared with sound, saved journal + day rows, Tab page, chasm_stats; events in wiki/events.md; camp pantries left out of NEEDS ATTENTION on purpose
-- [Chasm demo menus](chasm_demo_menus.md) — demo_plan steps 1, 2, 4, 5 built 2026-10-16 (menus, saves, autosave, always recording, bug reports, replays); four starts stay placeholders, user edits by hand
+- [Chasm demo menus](chasm_demo_menus.md) — demo_plan all 7 steps built 2026-10-16 (menus, saves, recording, Settings, discoveries, goals + end page); pop-ups play mode only; four starts edited by the user
 - [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — chasm_load in a test instance overwrites the user's untracked autosave slots; back them up first
 - [Chasm areas plan](chasm_areas_plan.md) — BUILT 2026-10-16: rivers/falls/biomes/plateau/forest found when first seen (EVENT_DISCOVERED), debug overlay, water loops faint under the clouds

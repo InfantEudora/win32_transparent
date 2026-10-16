@@ -1,11 +1,11 @@
 ---
 title: Areas
-aliases: discovery, discoveries, discovered, waterfall, waterfalls
+aliases: discovered, waterfall, waterfalls
 kind: world
 status: built
-summary: The parts of the map there are to find - each river, each waterfall, each biome, the open plateau and the forest - found when someone first sees them.
-plans: areas_plan.md > Areas; areas_plan.md > The discovered event; areas_plan.md > The water heard
-code: Areas.h: AREA_RIVER AREA_WATERFALL AREA_PLATEAU AREA_FOREST AREA_FALL_REACH BuildAreas; ApplicationChasmExplore.cpp: LookForAreas TickExploration; Economy.h: EVENT_DISCOVERED; ApplicationChasmSound.cpp: SignalWater; Forest.h: ForestData
+summary: The parts of the map there are to find - each river, each waterfall, each biome, the open plateau, the forest and the chasm - found when someone first sees them.
+plans: areas_plan.md > Areas; areas_plan.md > The discovered event; areas_plan.md > The water heard; areas_plan.md > The music
+code: Areas.h: AREA_RIVER AREA_WATERFALL AREA_PLATEAU AREA_FOREST AREA_CHASM AREA_FALL_REACH BuildAreas; ApplicationChasmMusic.cpp: SetupMusic MeasureMusicShares; ApplicationChasmExplore.cpp: LookForAreas TickExploration; Economy.h: EVENT_DISCOVERED; ApplicationChasmSound.cpp: SignalWater; Forest.h: ForestData
 verified: 2026-10-16
 ---
 
@@ -16,7 +16,8 @@ the same ones:
 - **each waterfall**, {AREA_FALL_REACH} round its lip;
 - **each biome** as one area: the mountain, a mountain meadow, the swamp, the desert;
 - **the starting land**, as two: its open ground (the plateau) and its forest, where the forest's
-  dense cores are. The chasm's floor, its balconies and islands are no area yet.
+  dense cores are;
+- **the chasm**: its floor, seen from the rim. Its balconies and islands are no area yet.
 
 ## Found
 
@@ -25,6 +26,7 @@ found it, and it goes into the [[Statistics|journal]]: "Anouk Wever found a rive
 
 - **Only the first of its kind is told** at the bottom of the screen: the first waterfall, not the
   second. The others are found all the same, and kept in the journal.
+- **The chasm's first sight** sounds the music's war horn rather than the chime.
 - **The landing is not news.** What the settlers see on their first look round is home: it counts as
   found, and none of it is told.
 - **Nothing extra is saved.** After a load, which areas are found is worked out again from the explored
@@ -38,6 +40,12 @@ the nearest waterfall's roar, louder the nearer the middle of the view is to it 
 waterfall is heard at its full level once it is found; a river wherever the stretch nearest the view is
 explored. The water plays on in a pause.
 
+## The music
+
+The season's music plays everywhere. Over **unexplored ground** the clouds' music rises over it, and over
+**chasm that has been seen** the chasm's, the season's turned down under either - by how much of the
+view is clouds or chasm, so it moves with the camera.
+
 ## Seeing them
 
 The debug view's **areas** layer draws each area's edge in its own colour, bright once found and dim
@@ -45,5 +53,4 @@ before, with a post at its middle; the panel lists them. `chasm_areas` lists the
 
 ## Planned
 
-- [idea] The chasm itself as an area: its first sight is the music's war horn.
 - [idea] A balcony as an area, for the demo's second goal.

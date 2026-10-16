@@ -3,6 +3,10 @@
 #include "UIOverlay.h"
 #include "ChasmHud.h"
 #include "Window.h"
+#include "File.h"
+#ifdef USE_SOUND
+#include "SoundSystem.h"
+#endif
 #include <algorithm>
 #include <ctime>
 #include <limits>
@@ -62,6 +66,7 @@ enum{
     PAUSE_ITEM_SAVE,
     PAUSE_ITEM_LOAD,
     PAUSE_ITEM_STATS,
+    PAUSE_ITEM_SETTINGS,
     PAUSE_ITEM_REPORT,
     PAUSE_ITEM_TITLE,
     PAUSE_ITEM_QUIT,
@@ -70,6 +75,11 @@ enum{
     SCREEN_ITEM_NEWER,
     SCREEN_ITEM_NEW_SAVE,
     SCREEN_ITEM_NONE,
+    SETTINGS_ITEM_MSAA,
+    SETTINGS_ITEM_MASTER,
+    SETTINGS_ITEM_MUSIC,
+    SETTINGS_ITEM_EFFECTS,
+    SETTINGS_ITEM_FULLSCREEN,
     SCREEN_ITEM_ROW = 100,      //+ the row: a map in CHASM_STARTS, or a save in screen_saves
 };
 
@@ -113,13 +123,14 @@ void ApplicationChasm::OpenPause(){
         return;
     }
     pause_menu.Clear();
-    pause_menu.layout.top = 0.36f;
+    pause_menu.layout.top = 0.30f;
     pause_menu.layout.width = 0.34f;
     pause_menu.layout.item_h = 0.058f;
     pause_menu.AddButton("Resume",PAUSE_ITEM_RESUME);
     pause_menu.AddButton("Save",PAUSE_ITEM_SAVE);
     pause_menu.AddButton("Load",PAUSE_ITEM_LOAD);
     pause_menu.AddButton("Statistics",PAUSE_ITEM_STATS);
+    pause_menu.AddButton("Settings",PAUSE_ITEM_SETTINGS);
     pause_menu.AddButton("Report a bug",PAUSE_ITEM_REPORT);
     pause_menu.AddButton("Main menu",PAUSE_ITEM_TITLE);
     pause_menu.AddButton("Quit",PAUSE_ITEM_QUIT);
@@ -179,6 +190,7 @@ bool ApplicationChasm::UpdatePause(InputController* input){
         case PAUSE_ITEM_SAVE:   OpenScreen(CHASM_SCREEN_SAVE); break;
         case PAUSE_ITEM_LOAD:   OpenScreen(CHASM_SCREEN_LOAD); break;
         case PAUSE_ITEM_STATS:  OpenStats(); break;
+        case PAUSE_ITEM_SETTINGS: OpenScreen(CHASM_SCREEN_SETTINGS); break;
         case PAUSE_ITEM_REPORT: StartReport(); break;   //the menu put away first, so the picture is the game
         case PAUSE_ITEM_TITLE:
             //Main menu loses nothing: the colony stays loaded under the title, and Continue comes back to it.
@@ -221,7 +233,20 @@ void ApplicationChasm::BuildScreen(){
     screen_menu.layout.item_h = 0.050f;
     screen_menu.layout.gap = 0.008f;
     screen_menu.layout.width = (screen == CHASM_SCREEN_NEW) ? 0.62f : 1.05f;
-    if (screen == CHASM_SCREEN_NEW){
+    if (screen == CHASM_SCREEN_SETTINGS){
+        //From the store, so the screen always shows what is saved - archer's settings, without its Controls: there
+        //are no keys to map yet, and no pad to play with.
+        screen_menu.layout.top = 0.34f;
+        screen_menu.layout.width = 0.84f;
+        screen_menu.layout.item_h = 0.060f;
+        screen_menu.layout.gap = 0.012f;
+        const int msaa = settings.GetInt("msaa");
+        screen_menu.AddChoice("Anti-aliasing",{"Off","4x","16x"},(msaa <= 1) ? 0 : ((msaa <= 8) ? 1 : 2),SETTINGS_ITEM_MSAA);
+        screen_menu.AddSlider("Master volume",settings.GetFloat("volume_master"),0.0f,1.0f,0.05f,SETTINGS_ITEM_MASTER);
+        screen_menu.AddSlider("Music",settings.GetFloat("volume_music"),0.0f,1.0f,0.05f,SETTINGS_ITEM_MUSIC);
+        screen_menu.AddSlider("Sound effects",settings.GetFloat("volume_effects"),0.0f,1.0f,0.05f,SETTINGS_ITEM_EFFECTS);
+        screen_menu.AddToggle("Start full screen",settings.GetBool("fullscreen"),SETTINGS_ITEM_FULLSCREEN);
+    }else if (screen == CHASM_SCREEN_NEW){
         for (int i = 0; i < CHASM_START_COUNT; i++){
             std::string label = std::string(CHASM_STARTS[i].name) + " - " + SizeName(CHASM_STARTS[i].fine_cells);
             screen_menu.AddButton(label.c_str(),SCREEN_ITEM_ROW + i);
@@ -266,6 +291,22 @@ bool ApplicationChasm::UpdateScreen(InputController* input){
     UIMenuResult r = screen_menu.Update(in);
     if (f_back || (r.event == UI_MENU_ACTIVATED && r.id == SCREEN_ITEM_BACK)){
         menu_screen = CHASM_SCREEN_MAIN;
+        return true;
+    }
+    if (r.event == UI_MENU_CHANGED && screen == CHASM_SCREEN_SETTINGS){
+        //Into the store and saved at once - a few hundred bytes - so closing the window by any route keeps it.
+        //ApplySettings takes it up on the next pass.
+        const UIMenuItem it = screen_menu.Item(r.item);
+        switch (r.id){
+            case SETTINGS_ITEM_MSAA:        settings.SetInt("msaa",(it.choice == 0) ? 1 : ((it.choice == 1) ? 4 : 16)); break;
+            case SETTINGS_ITEM_MASTER:      settings.SetFloat("volume_master",it.value); break;
+            case SETTINGS_ITEM_MUSIC:       settings.SetFloat("volume_music",it.value); break;
+            case SETTINGS_ITEM_EFFECTS:     settings.SetFloat("volume_effects",it.value); break;
+            case SETTINGS_ITEM_FULLSCREEN:  settings.SetBool("fullscreen",it.f_on); break;
+        }
+        if (!settings.Save()){
+            debug->Err("Could not save the settings to %s\n",settings.Path().c_str());
+        }
         return true;
     }
     if (r.event != UI_MENU_ACTIVATED){
@@ -328,7 +369,8 @@ bool ApplicationChasm::UpdateScreen(InputController* input){
 
 //A load or a new map, asked first over a colony in play - whose yes autosaves it (UpdateAsk).
 void ApplicationChasm::Choose(const MenuAction& a){
-    if (f_game_on.load()){
+    //A lost colony has nothing left to lose (demo_plan.md step 7): left without a question.
+    if (f_game_on.load() && !ColonyLost()){
         ask_action = a;
         OpenAsk(CHASM_ASK_LEAVE);
         return;
@@ -528,7 +570,8 @@ void ApplicationChasm::Autosave(const std::string& keep, bool f_record){
         }
     }
     std::string error;
-    if (!slot.empty() && WriteSave(slot,"auto",error)){
+    //A lost colony is not kept: it would push a colony worth going back to out of the slots.
+    if (!slot.empty() && !ColonyLost() && WriteSave(slot,"auto",error)){
         ShowNote("Autosaved");
     }
     if (f_record){
@@ -583,6 +626,62 @@ void ApplicationChasm::ShowNote(const std::string& note){
     menu_note_at = std::chrono::steady_clock::now();
 }
 
+//--- Settings -----------------------------------------------------------------------------------------------------------
+
+/*
+    THE PLAYER'S SETTINGS (demo_plan.md step 3; core/Settings.h): archer's - anti-aliasing, the master, music and effects
+    volumes, and starting full screen - in settings.json beside the exe, from disk only, never a baked asset. Read in
+    the constructor, so "start full screen" is known before the window is made. The volumes default to 1, so a first
+    run sounds as the cue table and the score were mixed.
+*/
+void ApplicationChasm::LoadSettings(){
+    settings.DeclareBool("fullscreen",false);
+    settings.DeclareInt("msaa",4,1,16);
+    settings.DeclareFloat("volume_master",1.0f,0.0f,1.0f);
+    settings.DeclareFloat("volume_music",1.0f,0.0f,1.0f);
+    settings.DeclareFloat("volume_effects",1.0f,0.0f,1.0f);
+    std::string report;
+    bool f_loaded = settings.Load(GetExecutableDirectory() + "/settings.json",&report);
+    if (!report.empty()){
+        debug->Warn("Settings %s:\n%s",settings.Path().c_str(),report.c_str());
+    }
+    debug->Info("Settings %s %s\n",f_loaded ? "loaded from" : "defaulted - no file at",settings.Path().c_str());
+    f_start_fullscreen = settings.GetBool("fullscreen");
+}
+
+/*
+    PHYSICS THREAD, every pass from UpdateView: the settings into what the game reads - only on a CHANGE (a new
+    revision), so chasm_sound's volume, which writes the same master, is not overruled every pass. The music's bus and
+    the cue table's layer are set whenever they differ: nothing else sets either. All of it the view's - buses and the
+    renderer, never the rules - so a recording replays the same at any setting.
+*/
+void ApplicationChasm::ApplySettings(){
+    uint32_t rev = settings.Revision();
+    if (rev != settings_applied){
+        settings_applied = rev;
+        sound_volume = settings.GetFloat("volume_master");
+        music_volume = settings.GetFloat("volume_music");
+        effects_volume = settings.GetFloat("volume_effects");
+        int msaa = settings.GetInt("msaa");
+        if (renderer && renderer->aa_samples != msaa){
+            renderer->RequestAASamples(msaa);
+        }
+    }
+#ifdef USE_SOUND
+    if (soundsystem && soundsystem->f_initialised){
+        //The score's own bus, over its three players' (ApplicationChasmMusic.cpp); and every sound but the music, the
+        //cue table's layer (ApplicationChasmSound.cpp, SetupSound) - never a bus of the table, whose gains it sets.
+        auto set = [this](int bus, float gain){
+            if (bus >= 0 && bus != SOUND_BUS_MASTER && soundsystem->GetBusGain(bus) != gain){
+                soundsystem->SetBusGain(bus,gain);
+            }
+        };
+        set(music_bus,music_volume.load());
+        set(sounds_bus,effects_volume.load());
+    }
+#endif
+}
+
 //--- Drawing ------------------------------------------------------------------------------------------------------------
 
 //RENDER THREAD, from DrawOverlay in the HUD's place: the frozen game dimmed, and the menu or the list it opened.
@@ -610,6 +709,9 @@ void ApplicationChasm::DrawScreen(float s){
     }else if (screen == CHASM_SCREEN_REPLAY){
         heading = "REPLAY A RECORDING";
         detail = "A run played again from where it began - STOP on its bar ends it";
+    }else if (screen == CHASM_SCREEN_SETTINGS){
+        heading = "SETTINGS";
+        detail = "Kept as they change. Alt+Enter switches full screen now";
     }else{
         heading = "SAVE";
         detail = SaveTitle();

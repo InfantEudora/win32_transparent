@@ -371,7 +371,7 @@ static void rule_checks() {
     cs.Init(60.0f, &out);
     load(cs, R"({
       "buses": { "effects": {}, "voice": {} },
-      "groups": { "her": { "gap": 30 }, "narrator": { "duck": { "effects": 0.25 }, "duck_ticks": 10 } },
+      "groups": { "her": { "gap": 30 }, "narrator": { "duck": { "effects": 0.25 }, "duck_ticks": 10 }, "reply": {} },
       "cues": {
         "varied":  { "signal": "v", "sounds": ["a", "b", "c"] },
         "gapped":  { "signal": "g", "sounds": "a", "gap": 20 },
@@ -379,6 +379,8 @@ static void rule_checks() {
         "remark":  { "signal": "r", "sounds": "line1", "group": "her" },
         "patient": { "signal": "q", "sounds": "line2", "group": "her", "busy": "queue", "max_wait": 200 },
         "urgent":  { "signal": "u", "sounds": "big", "group": "her", "busy": "interrupt", "priority": 5 },
+        "answer":  { "signal": "a", "sounds": ["line1", "line2"], "group": "reply", "busy": "replace" },
+        "alarm":   { "signal": "w", "sounds": "big", "group": "reply", "priority": 2 },
         "story":   { "signal": "n", "sounds": "line1", "group": "narrator", "bus": "voice" },
         "shaken":  { "signal": "s", "gain_by": [{ "value": "hard", "in": [0, 1], "out": [0, 1] }],
                      "actions": [{ "kind": "shake", "amount": 0.5 }, { "kind": "shake", "offset": 3 }] }
@@ -441,15 +443,35 @@ static void rule_checks() {
     check(l.size() == 3 && l[1].find("stop") != std::string::npos && l[2].find("urgent") != std::string::npos,
           "a higher priority interrupts: the line is stopped and the new one plays", joined(l));
 
+    // replace: a line of the same priority is cut too - the newest is heard - but never a higher one.
+    for (uint64_t t = 4406; t < 4500; t++) cs.Tick(t);
+    cs.log.Clear();
+    cs.Signal("a");
+    cs.Tick(4500);
+    cs.Signal("a");
+    cs.Tick(4505);
+    l = cs.log.Lines();
+    p = plays(cs);
+    bool f_replaced = p.size() == 2 && p[1].find("4505 answer") == 0 && plays(cs, "stop").size() == 1;
+    cs.log.Clear();
+    for (uint64_t t = 4506; t < 4600; t++) cs.Tick(t);
+    cs.Signal("w");
+    cs.Tick(4600);
+    cs.Signal("a");
+    cs.Tick(4605);
+    p = plays(cs);
+    check(f_replaced && p.size() == 1 && p[0] == "4600 alarm big" && plays(cs, "skip").size() == 1,
+          "replace cuts a line of its own priority, and is skipped under a higher one", joined(l) + " | " + joined(p));
+
     // The narrator ducks the effects bus while it speaks, easing over 10 ticks, and lets it back.
-    for (uint64_t t = 4406; t < 4600; t++) cs.Tick(t);
+    for (uint64_t t = 4606; t < 4800; t++) cs.Tick(t);
     int fx = out.bus_id["effects"];
     cs.Signal("n");
-    cs.Tick(4600);
+    cs.Tick(4800);
     float d1 = out.bus_gain[fx];
-    for (uint64_t t = 4601; t < 4615; t++) cs.Tick(t);
+    for (uint64_t t = 4801; t < 4815; t++) cs.Tick(t);
     float d2 = out.bus_gain[fx];
-    for (uint64_t t = 4615; t < 4700; t++) cs.Tick(t);
+    for (uint64_t t = 4815; t < 4900; t++) cs.Tick(t);
     float d3 = out.bus_gain[fx];
     char buf[160];
     snprintf(buf, sizeof(buf), "(first tick %.3f, after 15 %.3f, after it ends %.3f)", d1, d2, d3);

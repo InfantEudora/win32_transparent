@@ -11,10 +11,13 @@
 
 namespace {
 
-//The land's kind of a plot, or -1 for none: the chasm's floor, its balconies and islands are not areas yet.
+//The land's kind of a plot, or -1 for none: the chasm's balconies and islands are not areas yet.
 int LandKind(const Terrain& t, const ForestData& forest, int v){
     int level = t.level[v];
-    if (level == TERRAIN_FLOOR || level == TERRAIN_BALCONY || level == TERRAIN_ISLAND){
+    if (level == TERRAIN_FLOOR){
+        return AREA_CHASM;
+    }
+    if (level == TERRAIN_BALCONY || level == TERRAIN_ISLAND){
         return -1;
     }
     switch (t.biome[v]){
@@ -154,6 +157,7 @@ const char* AreaKindName(int kind){
         case AREA_MEADOW:       return "meadow";
         case AREA_SWAMP:        return "swamp";
         case AREA_DESERT:       return "desert";
+        case AREA_CHASM:        return "chasm";
         default:                return "area";
     }
 }
@@ -168,6 +172,7 @@ const char* AreaKindTold(int kind){
         case AREA_MEADOW:       return "a mountain meadow";
         case AREA_SWAMP:        return "the swamp";
         case AREA_DESERT:       return "the desert";
+        case AREA_CHASM:        return "the chasm";
         default:                return "somewhere new";
     }
 }
@@ -182,6 +187,7 @@ uint32_t AreaKindColour(int kind){
         case AREA_MEADOW:       return 0xFF90E070u;
         case AREA_SWAMP:        return 0xFF708050u;
         case AREA_DESERT:       return 0xFFE8B860u;
+        case AREA_CHASM:        return 0xFFB080E0u;
         default:                return 0xFFFF00FFu;
     }
 }

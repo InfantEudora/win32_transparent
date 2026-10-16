@@ -12,7 +12,7 @@ struct ExplorationSight;
 
 /*
     AREAS (docs/areas_plan.md): the parts of the map there are to be discovered - each river, each waterfall, each
-    biome as one, and the starting land split by the forest into its open ground and its forest.
+    biome as one, the starting land split by the forest into its open ground and its forest, and the chasm.
 
     GENERATED with the map and never saved, like the forest: an area is the exploration's cells its ground lies in,
     and it is SEEN once any of them is explored - the floatstone seam's rule. Which are seen is worked out again
@@ -30,7 +30,9 @@ struct ExplorationSight;
 #define AREA_MEADOW         5       //a mountain meadow (TERRAIN_BIOME_POCKET)
 #define AREA_SWAMP          6
 #define AREA_DESERT         7
-#define AREA_KINDS          8
+#define AREA_CHASM          8       //the chasm's floor, seen from the rim as the lid over it: its first sight is the
+                                    //music's reveal (areas_plan.md, "The music")
+#define AREA_KINDS          9
 
 #define AREA_FALL_REACH     6.0f    //a waterfall's ground: this far round its lip, or half its width if wider
 

@@ -1,4 +1,8 @@
 #include "ApplicationChasm.h"
+#include "Areas.h"
+#include "Forest.h"
+#include "GridPick.h"
+#include "Terrain.h"
 #include "MeshBuild.h"
 #include "Mist.h"
 #include "Palette.h"
@@ -50,6 +54,9 @@ void ApplicationChasm::ResetExploration(){
     f_seams_stale = true;       //a load fills the exploration in after this: the seams are looked at on the next tick
     f_areas_stale = true;       //...and the areas
     PublishExploration();
+    //...and the discoveries worked out again, whatever matches - a save of the same map keeps the same world - once
+    //there is something to work them out from: by a load, or on a new colony's first tick.
+    discoveries_world = nullptr;
 }
 
 /*
@@ -150,6 +157,7 @@ void ApplicationChasm::TickExploration(){
         LookForAreas(*w,0,false);
     }
     if (calendar_tick % EXPLORATION_PERSON_TICKS != 0){
+        UpdateDiscoveries(*w);
         return;
     }
     //The LANDING: a new colony's first look round, from nothing explored, is home - what it brings into sight is
@@ -174,6 +182,254 @@ void ApplicationChasm::TickExploration(){
     }
     if (f_changed){
         PublishExploration();
+    }
+    LookForFirsts(*w);
+    UpdateDiscoveries(*w);
+}
+
+//--- Discoveries (demo_plan.md step 6) ---------------------------------------------------------------
+
+const char* ChasmDiscoveryName(int discovery){
+    switch (discovery){
+        case DISCOVERY_RIVER:       return "river";
+        case DISCOVERY_CHASM:       return "chasm";
+        case DISCOVERY_BOULDER:     return "boulder";
+        case DISCOVERY_FLOATSTONE:  return "floatstone";
+        case DISCOVERY_BUILDERS:    return "builders_hut";
+        case DISCOVERY_WINCH:       return "winch";
+        case DISCOVERY_BALCONY:     return "balcony";
+        default:                    return "unknown";
+    }
+}
+
+/*
+    WHAT UNLOCKS WHAT (the user's, 2026-10-16): a river found brings the water collector and the bridge; the chasm,
+    the winch; a boulder the stonecutter can break, his hut; floatstone seen, the mine; and a builders' hut standing,
+    the wall, the range and the tower. Everything else is there from the landing.
+*/
+int ChasmToolNeeds(int tool){
+    switch (tool){
+        case CHASM_TOOL_WATER:
+        case CHASM_TOOL_BRIDGE:         return DISCOVERY_RIVER;
+        case CHASM_TOOL_WINCH:          return DISCOVERY_CHASM;
+        case CHASM_TOOL_STONECUTTER:    return DISCOVERY_BOULDER;
+        case CHASM_TOOL_MINE:           return DISCOVERY_FLOATSTONE;
+        case CHASM_TOOL_WALL:
+        case CHASM_TOOL_RANGE:
+        case CHASM_TOOL_TOWER:          return DISCOVERY_BUILDERS;
+        default:                        return -1;
+    }
+}
+
+std::string ChasmDiscoveryTools(int discovery){
+    static const std::pair<int,const char*> names[] = {
+        {CHASM_TOOL_WATER,"WATER"},{CHASM_TOOL_BRIDGE,"BRIDGE"},{CHASM_TOOL_WINCH,"WINCH"},{CHASM_TOOL_STONECUTTER,"STONECUTTER"},
+        {CHASM_TOOL_MINE,"MINE"},{CHASM_TOOL_WALL,"WALL"},{CHASM_TOOL_RANGE,"RANGE"},{CHASM_TOOL_TOWER,"TOWER"}};
+    std::string out;
+    for (const auto& n : names){
+        if (ChasmToolNeeds(n.first) == discovery){
+            out += (out.empty() ? "" : ", ") + std::string(n.second);
+        }
+    }
+    return out;
+}
+
+uint32_t ApplicationChasm::ToolsLocked() const{
+    if (!PlayMode()){
+        return 0;
+    }
+    uint32_t found = discovered_mask.load();
+    uint32_t locked = 0;
+    for (int t = 0; t < CHASM_TOOL_COUNT && t < 32; t++){
+        int need = ChasmToolNeeds(t);
+        if (need >= 0 && !(found & (1u << need))){
+            locked |= 1u << t;
+        }
+    }
+    return locked;
+}
+
+std::shared_ptr<const ChasmDiscoveries> ApplicationChasm::GetDiscoveries(){
+    std::lock_guard<std::mutex> lock(grid_mutex);
+    return discoveries_snapshot;
+}
+
+/*
+    PHYSICS THREAD. The discoveries again, when the journal has grown or more has been seen since they were last worked
+    out: first from the journal, with the tick and who - the areas, the seams, the firsts below and the buildings
+    finished - then whatever is in sight without an event: the landing's look round, which is home and tells nothing.
+    Those are dated to the history's start.
+*/
+void ApplicationChasm::UpdateDiscoveries(const ChasmWorld& w){
+    const EconomyState& e = economy.State();
+    static const std::vector<EconomyEvent> none;
+    const std::vector<EconomyEvent>& journal = (e.world.get() == &w) ? e.history.journal : none;
+    int seen = 0;
+    for (size_t i = 0; !f_areas_stale && i < area_seen.size(); i++){
+        seen += area_seen[i];
+    }
+    for (size_t i = 0; !f_seams_stale && i < seam_seen.size(); i++){
+        seen += seam_seen[i];
+    }
+    const ZoneState& z = zones.State();
+    if (discoveries_world == &w && discoveries_journal == journal.size() && discoveries_seen == seen
+        && discoveries_zones == z.version){
+        return;
+    }
+    bool f_entered = discoveries_world != &w;
+    discoveries_world = &w;
+    discoveries_journal = journal.size();
+    discoveries_seen = seen;
+    discoveries_zones = z.version;
+    ChasmDiscoveries d;
+    auto made = [&](int which, int64_t tick, uint32_t person){
+        if (d.tick[which] < 0){
+            d.tick[which] = tick;
+            d.person[which] = person;
+            d.mask |= 1u << which;
+        }
+    };
+    const AreaData* areas = w.areas.get();
+    auto area_kind = [&](int i){
+        return (areas && i >= 0 && i < (int)areas->areas.size()) ? areas->areas[(size_t)i].kind : -1;
+    };
+    for (const EconomyEvent& ev : journal){
+        int64_t tick = (int64_t)ev.tick;
+        if (ev.kind == EVENT_DISCOVERED){
+            int kind = area_kind(ev.amount);
+            if (kind == AREA_RIVER || kind == AREA_WATERFALL){
+                made(DISCOVERY_RIVER,tick,ev.person);
+            }else if (kind == AREA_CHASM){
+                made(DISCOVERY_CHASM,tick,ev.person);
+            }
+        }else if (ev.kind == EVENT_SEAM_SEEN){
+            made(DISCOVERY_FLOATSTONE,tick,ev.person);
+        }else if (ev.kind == EVENT_BOULDER_FOUND){
+            made(DISCOVERY_BOULDER,tick,ev.person);
+        }else if (ev.kind == EVENT_BALCONY_REACHED){
+            made(DISCOVERY_BALCONY,tick,ev.person);
+        }else if (ev.kind == EVENT_BUILDING_FINISHED && ev.amount == ZONE_KIND_BUILDERS){
+            made(DISCOVERY_BUILDERS,tick,0);
+        }else if (ev.kind == EVENT_BUILDING_FINISHED && ev.amount == ZONE_KIND_WINCH){
+            made(DISCOVERY_WINCH,tick,0);
+        }else if ((ev.kind == EVENT_GOAL_MET || ev.kind == EVENT_GOAL_FAILED) && ev.amount >= 0 && ev.amount < CHASM_GOALS){
+            //THE DEMO'S GOALS and its end, told once each (ApplicationChasmGoals.cpp): read here with the rest.
+            d.goal_told[ev.amount] = (ev.kind == EVENT_GOAL_MET) ? CHASM_GOAL_MET : CHASM_GOAL_FAILED;
+        }else if (ev.kind == EVENT_DEMO_COMPLETE){
+            d.f_complete_told = true;
+        }else if (ev.kind == EVENT_COLONY_LOST){
+            d.f_lost_told = true;
+        }
+    }
+    int64_t landing = (int64_t)e.history.from;
+    for (size_t i = 0; !f_areas_stale && i < area_seen.size(); i++){
+        int kind = area_seen[i] ? area_kind((int)i) : -1;
+        if (kind == AREA_RIVER || kind == AREA_WATERFALL){
+            made(DISCOVERY_RIVER,landing,0);
+        }else if (kind == AREA_CHASM){
+            made(DISCOVERY_CHASM,landing,0);
+        }
+    }
+    for (size_t i = 0; !f_seams_stale && i < seam_seen.size(); i++){
+        if (seam_seen[i]){
+            made(DISCOVERY_FLOATSTONE,landing,0);
+        }
+    }
+    /*
+        And whatever a building STANDING WHOLE shows was found - a collector or a bridge, a river; a winch, the chasm; a
+        stonecutter's hut, a boulder; a mine, floatstone; a builders' hut, a range or a tower, the builders - finished by
+        the builders or not: one put down in debug mode is never a site, and a save from before the history has none of
+        its buildings in the journal. A colony that has one can build another.
+    */
+    auto shows = [](int kind){
+        switch (kind){
+            case ZONE_KIND_WATER:
+            case ZONE_KIND_BRIDGE:          return DISCOVERY_RIVER;
+            case ZONE_KIND_WINCH:           return DISCOVERY_CHASM;
+            case ZONE_KIND_STONECUTTER:     return DISCOVERY_BOULDER;
+            case ZONE_KIND_MINE:            return DISCOVERY_FLOATSTONE;
+            case ZONE_KIND_BUILDERS:
+            case ZONE_KIND_RANGE:
+            case ZONE_KIND_TOWER:           return DISCOVERY_BUILDERS;
+            default:                        return -1;
+        }
+    };
+    for (size_t id = 1; z.world.get() == &w && id < z.buildings.size(); id++){
+        int kind = z.buildings[id].kind;
+        if (z.buildings[id].size <= 0 || (shows(kind) < 0 && kind != ZONE_KIND_WINCH)){
+            continue;
+        }
+        ZoneBuildingInfo info = ZoneBuildingFigures(w,z,(uint32_t)id);
+        if (info.site_storeys > 0 || info.site_cells > 0){
+            continue;
+        }
+        made(shows(kind),landing,0);
+        if (kind == ZONE_KIND_WINCH){
+            made(DISCOVERY_WINCH,landing,0);
+        }
+    }
+    discoveries = d;
+    discovered_mask = d.mask;
+    //After the mask: the bar takes what a colony has on entering it as known, not NEW.
+    if (f_entered){
+        discoveries_epoch++;
+    }
+    std::shared_ptr<const ChasmDiscoveries> copy = std::make_shared<ChasmDiscoveries>(d);
+    std::lock_guard<std::mutex> lock(grid_mutex);
+    discoveries_snapshot = copy;
+}
+
+/*
+    PHYSICS THREAD, on the looks' ticks. The two firsts nothing else marks, each looked for until it is in the journal:
+      - THE FIRST ON A BALCONY: anyone whose ground is a balcony's - only a winch takes anyone down to one;
+      - THE FIRST BOULDER the stonecutter could break: one standing on the colony's own land (its settlements'
+        territory, which is where it walks and builds), on ground explored - found by whoever is nearest it.
+    Both read the state the tick has made, so a replay finds them on the same tick.
+*/
+void ApplicationChasm::LookForFirsts(const ChasmWorld& w){
+    const EconomyState& e = economy.State();
+    if (e.world.get() != &w){
+        return;
+    }
+    if (!(discoveries.mask & (1u << DISCOVERY_BALCONY)) && w.terrain){
+        for (const EconomyWorker& k : e.workers){
+            GridPick pick = w.picker->Pick(k.pos);
+            if (pick.plot >= 0 && pick.plot < (int)w.terrain->level.size() && w.terrain->level[(size_t)pick.plot] == TERRAIN_BALCONY){
+                economy.BalconyReached(k.id,pick.plot);
+                break;
+            }
+        }
+    }
+    if (!(discoveries.mask & (1u << DISCOVERY_BOULDER)) && w.forest){
+        if (boulders_world != &w){
+            boulders_world = &w;
+            boulder_props.clear();
+            for (size_t i = 0; i < w.forest->props.size(); i++){
+                if (w.forest->props[i].kind == PROP_BOULDER){
+                    boulder_props.push_back((int)i);
+                }
+            }
+        }
+        for (int i : boulder_props){
+            const PropInstance& p = w.forest->props[(size_t)i];
+            vec2 at(p.pos.x,p.pos.z);
+            bool f_standing = (size_t)i < e.prop_state.size() && e.prop_state[(size_t)i] == PROP_STATE_STANDING;
+            bool f_ours = p.plot >= 0 && p.plot < (int)e.settlement.size() && e.settlement[(size_t)p.plot] != 0;
+            if (!f_standing || !f_ours || !exploration.Explored(at)){
+                continue;
+            }
+            uint32_t who = 0;
+            float nearest = INFINITY;
+            for (const EconomyWorker& k : e.workers){
+                float d = (k.pos - at).length();
+                if (d < nearest){
+                    nearest = d;
+                    who = k.id;
+                }
+            }
+            economy.BoulderFound(who,p.plot);
+            break;
+        }
     }
 }
 

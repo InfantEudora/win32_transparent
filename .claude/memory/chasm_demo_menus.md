@@ -1,11 +1,11 @@
 ---
 name: chasm-demo-menus
-description: "Chasm demo_plan steps 1, 2, 4 and 5 built 2026-10-16 (title, pause menu, save/load, autosave, always recording, bug reports, replay list); steps 3, 6 and 7 are left"
+description: "Chasm demo_plan ALL 7 steps built 2026-10-16 (menus, saves, recording for testers, Settings, discoveries unlocking tools, goals + death pop-up + end page)"
 metadata:
   node_type: memory
   type: project
   originSessionId: 7a3c3850-95bd-4a10-bf9a-4f6563ca8e67
-  modified: 2026-10-16T12:57:35.746Z
+  modified: 2026-10-16T19:59:50.695Z
 ---
 
 apps/chasm/docs/demo_plan.md steps 1, 2, 4 and 5 were BUILT by 2026-10-16:
@@ -20,7 +20,22 @@ Core gained:
 - `RequestRecordingStart(stem)` and `RequestRecordingRestart`;
 - a virtual `DrawInputRecordingBadge`.
 
-Left: step 3 (settings, waiting for sound), step 6 (discoveries), step 7 (goals).
+Step 3, Settings, was also built: archer's five settings with no Controls screen (the user wants no key mapping or pad support yet), in `build/settings.json`, applied by ApplySettings. The music volume goes on the `music` bus. The effects volume goes on the cue table's layer bus `sounds`, so the table's buses are named `sounds/<name>`.
+
+Step 6, discoveries, was built 2026-10-16 ("As built: discoveries" in demo_plan.md):
+- read from the journal, the exploration and standing buildings, never saved as flags (the user's choice);
+- the user's unlocks: river → WATER/BRIDGE, chasm → WINCH, boulder → STONECUTTER, floatstone → MINE, builders' hut → WALL/RANGE/TOWER; play mode only;
+- new events: boulder_found, balcony_reached, frost_took, grew_up, expecting, all told on the notice line.
+
+Step 7 was built 2026-10-16 ("As built: the goals and the end"):
+- the goals are rules in `TickGoals` (ApplicationChasmGoals.cpp), told once as journaled events;
+- the goals panel sits at the top left;
+- a death pop-up (`CHASM_ASK_DEATH`);
+- the end is the statistics page in end mode (`stats_end`).
+
+My call, flagged to the user: the end comes once both goals are DECIDED (met or failed), not only both met.
+
+Pop-ups and the end page appear in PLAY MODE only. Agents driving debug mode are never stopped. In play mode, `chasm_menu` reports and clicks them: question "death", `end_page`, `goals`.
 
 **Why:** the user wants a ship build testers can play and report bugs from without the debug menu.
 

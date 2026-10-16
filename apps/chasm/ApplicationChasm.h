@@ -23,9 +23,12 @@
 #include "Seasons.h"
 #include "UIMenu.h"
 #include "SceneCapture.h"
+#include "Settings.h"
 #include "CueSystem.h"
 
 class SoundSystem;
+class MusicPlayer;
+struct MusicScore;
 
 /*
     PLAY MODE'S SELECTION (docs/selection_plan.md): a building - by id, with the plot it was clicked on
@@ -142,8 +145,56 @@ struct ChasmIssue{
     uint32_t building = 0;              //the place it is about - a click selects it - or 0
     int tool = -1;                      //...or the tool a click takes up
 };
-//Every issue, most urgent first.
-void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out);
+//Every issue, most urgent first. `locked`: the build tools play mode still hides (ToolsLocked), so no hint offers one.
+void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out, uint32_t locked = 0);
+
+/*
+    DISCOVERIES (demo_plan.md step 6; the user's, 2026-10-16): what the colony has found or done for the first time,
+    kept for good - what play mode's build tools wait for, and what the demo's goals will ask. Never saved of their
+    own: read from the journal (EconomyHistory, saved and hashed) and from what is explored, so an area or seam seen
+    at the landing, which tells nothing, counts as well. Worked out on the physics thread and published.
+*/
+#define DISCOVERY_RIVER         0       //a river or a waterfall seen: WATER and BRIDGE
+#define DISCOVERY_CHASM         1       //the chasm's floor seen: WINCH
+#define DISCOVERY_BOULDER       2       //a boulder on the colony's land (EVENT_BOULDER_FOUND): STONECUTTER
+#define DISCOVERY_FLOATSTONE    3       //a floatstone seam seen: MINE
+#define DISCOVERY_BUILDERS      4       //a builders' hut finished: WALL, RANGE and TOWER
+#define DISCOVERY_WINCH         5       //a winch finished - the demo's second goal, with the next
+#define DISCOVERY_BALCONY       6       //someone on a balcony, lowered by a winch (EVENT_BALCONY_REACHED)
+#define DISCOVERY_COUNT         7
+/*
+    THE DEMO'S GOALS (demo_plan.md step 7; ApplicationChasmGoals.cpp), CHASM_GOAL_* in Economy.h: each in progress, met or
+    failed. Told once each by the rules as an event, and read back from the journal with the discoveries, so a load
+    does not tell one again; and the END, the demo complete or the colony lost, the same way.
+*/
+#define CHASM_GOAL_GOING        0
+#define CHASM_GOAL_MET          1
+#define CHASM_GOAL_FAILED       2
+#define CHASM_END_NONE          0
+#define CHASM_END_COMPLETE      1       //both goals decided: the end's page, Keep playing or Main menu
+#define CHASM_END_LOST          2       //nobody left: the end's page, Load, New game or Main menu
+struct ChasmDiscoveries{
+    uint32_t mask = 0;                          //a bit per DISCOVERY_*
+    int64_t tick[DISCOVERY_COUNT];              //when it was made - the history's start for the landing's - or -1
+    uint32_t person[DISCOVERY_COUNT] = {};      //who made it, 0 nobody in particular
+    int goal_told[CHASM_GOALS];                 //a goal as the journal has it told, CHASM_GOAL_MET or _FAILED - or -1
+    bool f_complete_told = false;               //EVENT_DEMO_COMPLETE in the journal
+    bool f_lost_told = false;                   //EVENT_COLONY_LOST
+    ChasmDiscoveries(){
+        for (int64_t& t : tick){
+            t = -1;
+        }
+        for (int& g : goal_told){
+            g = -1;
+        }
+    }
+};
+const char* ChasmDiscoveryName(int discovery);  //"river", "builders_hut": chasm_economy's
+int ChasmToolNeeds(int tool);                   //the DISCOVERY_* a build tool waits for in play mode, -1 none
+std::string ChasmDiscoveryTools(int discovery); //what it brings, as the build bar names them: "WATER, BRIDGE" - or ""
+//A goal's state (CHASM_GOAL_GOING ...), from the state and the discoveries; and what one in progress wants next.
+int ChasmGoalState(int goal, const EconomyState& e, const ChasmDiscoveries& d);
+std::string ChasmGoalNext(int goal, const EconomyState& e, const ChasmDiscoveries& d);
 //The middle of a building's plots, or of a field's cells - where the view goes to show it. False if it is gone.
 bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, vec2& out);
 /*
@@ -649,6 +700,32 @@ private:
 #ifdef USE_MCP
     void RegisterAreaTools();
 #endif
+    /*
+        DISCOVERIES (above), physics thread: worked out again whenever the journal grows or more is seen, and published
+        - the mask for the build bar, the tool keys and the hints, the rest for the notice line and chasm_economy.
+    */
+    ChasmDiscoveries discoveries;
+    const ChasmWorld* discoveries_world = nullptr;      //what they were worked out for
+    size_t discoveries_journal = 0;                     //...the journal's length then
+    int discoveries_seen = -1;                          //...and the areas and seams seen then
+    uint32_t discoveries_zones = 0;                     //...and the zones' version
+    std::shared_ptr<const ChasmDiscoveries> discoveries_snapshot;  //under grid_mutex
+    std::atomic<uint32_t> discovered_mask{0};
+    std::atomic<uint32_t> discoveries_epoch{0};         //one more for every colony entered, once its mask is out
+    std::vector<int> boulder_props;                     //the world's boulders, by prop index
+    const ChasmWorld* boulders_world = nullptr;
+    void UpdateDiscoveries(const ChasmWorld& w);        //from TickExploration
+    //The two firsts nothing else makes an event of: a boulder seen on the colony's land, someone on a balcony.
+    void LookForFirsts(const ChasmWorld& w);
+    std::shared_ptr<const ChasmDiscoveries> GetDiscoveries();
+    //Play mode's build tools still waiting for a discovery, a bit per CHASM_TOOL_*: none in debug mode, which builds
+    //anything. Any thread.
+    uint32_t ToolsLocked() const;
+    bool ToolLocked(int tool) const { return tool >= 0 && tool < 32 && ((ToolsLocked() >> tool) & 1u); }
+    //Render thread: the tools unlocked when last looked, and those unlocked since and not yet taken up - marked NEW.
+    uint32_t tools_known = 0;
+    uint32_t tools_new = 0;
+    uint32_t tools_known_epoch = 0xFFFFFFFFu;           //discoveries_epoch they were known for
     //The ground a person at `at`, in exploration cell `cell`, looks from: his own plot's, at the cell's middle.
     static float SightEyeGround(const ChasmWorld& w, const Exploration& ex, int cell, const vec2& at);
     void ResetExploration();                    //physics thread: a new map, nothing explored
@@ -1200,6 +1277,7 @@ private:
 #define CHASM_ASK_OVERWRITE 3           //a save over one in the list
 #define CHASM_ASK_NOTE      4           //no question, a word and OK: a load that failed, a save from another version
 #define CHASM_ASK_REPORT    5           //a bug report written: its folder opened, or OK
+#define CHASM_ASK_DEATH     6           //someone died (demo_plan.md step 7): Continue, or Main menu
     Scene* world_scene = NULL;
     Scene* title_scene = NULL;
     DirectionalLight* title_sun = NULL;
@@ -1235,6 +1313,7 @@ private:
 #define CHASM_SCREEN_LOAD   2
 #define CHASM_SCREEN_SAVE   3
 #define CHASM_SCREEN_REPLAY 4
+#define CHASM_SCREEN_SETTINGS 5
 #define CHASM_ACT_NONE      0
 #define CHASM_ACT_LOAD      1           //a save, by name
 #define CHASM_ACT_NEW       2           //a new colony on one of the four maps
@@ -1321,8 +1400,18 @@ private:
     void Quit();                                //physics thread: the colony autosaved, the recording saved, then gone
     void StartReport();                         //physics thread
     void WriteReport(const std::string& dir, bool f_recording, uint32_t recordings_before, int frames_before);
-    void DrawRecording(float s);                //render thread, from DrawOverlay: REC, or the replay's bar
+    float DrawRecording(float s, float top);    //render thread, from DrawOverlay: REC, or the replay's bar
     void DrawInputRecordingBadge() override {}  //Chasm's own, DrawRecording, clear of the top bar
+    /*
+        THE PLAYER'S SETTINGS (ApplicationChasmMenu.cpp; demo_plan.md step 3): archer's - anti-aliasing, the three
+        volumes, starting full screen - in settings.json beside the exe, read in the constructor and applied on a change.
+    */
+    Settings settings;
+    uint32_t settings_applied = 0xFFFFFFFFu;    //physics thread: the store's revision last applied - none yet
+    std::atomic<float> music_volume{1.0f};      //the `music` bus, over the score's players
+    std::atomic<float> effects_volume{1.0f};    //the cue table's layer (sounds_bus): every sound but the music
+    void LoadSettings();                        //the constructor: before the window, for "start full screen"
+    void ApplySettings();                       //physics thread, every pass from UpdateView
 #ifdef USE_IMGUI
     void RenderTitlePanel();
 #endif
@@ -1343,6 +1432,26 @@ private:
     bool UpdateStats(InputController* input);   //physics thread, from UpdateView: true while the page has the input
     void DrawStats(float s);                    //render thread, from DrawOverlay: alone over the world, no HUD
     void CheckStats();                          //physics thread, from TickEconomy: the history's check, debug builds
+    /*
+        THE DEMO'S GOALS AND ITS END (ApplicationChasmGoals.cpp; demo_plan.md step 7): the goals and the end as rules on
+        the tick; a death's pop-up and the end's page - the statistics page with its own heading and buttons - for the
+        viewer, in play mode; and the goals' panel at the top left.
+    */
+    std::atomic<int> stats_end{CHASM_END_NONE}; //the page up is an end's (CHASM_END_*): its buttons the only way out
+    UIMenu end_menu;                            //...and those, in a row along its foot
+    int end_pending = CHASM_END_NONE;           //physics thread: an end waiting for the pop-up in front to close
+    const ChasmWorld* end_world = nullptr;      //physics thread: the events looked through, for the pop-ups
+    uint32_t end_seen = 0;
+    float hud_left_y = 0.0f;                    //render thread: where the top left's next panel goes
+    bool ColonyLost();                          //physics thread: nobody alive, somebody dead
+    void TickGoals();                           //physics thread, from RunSimulationTick
+    void UpdateEnd();                           //physics thread, from UpdateView: the pop-ups from the events
+    void OpenEnd(int end);
+    void CloseEnd();
+    bool UpdateEndPage(InputController* input); //physics thread, from UpdateStats while the page is an end's
+    UIMenuRect EndButtonAt(int item);           //any thread: an end button's place, from the window alone
+    void DrawEndFoot(float s);                  //render thread, from DrawStats
+    float DrawGoals(float s, float top);        //render thread, from DrawOverlay in play mode: returns its foot
 #ifdef USE_MCP
     void RegisterStatsTools();
 #endif
@@ -1355,6 +1464,10 @@ private:
     */
     SoundSystem* soundsystem = NULL;            //NULL in a USE_SOUND=0 build, and every caller copes
     std::unique_ptr<CueOutput> cue_output;      //NULL with no sound or no device: the cues still decide and log
+    //The cue table's LAYER: everything it plays goes under it, its buses made as "sounds/<name>" (CueSoundOutput). The
+    //settings' effects volume is its gain - a bus the table never sets, where its own buses' gains are the table's,
+    //set again on every load and by its ducks.
+    int sounds_bus = -1;
     CueSystem cues;
     uint64_t sound_pass = 0;                    //the cues' clock: passes since Init
     std::atomic<float> sound_volume{1.0f};      //the master bus: 0 mutes without changing what the cues decide
@@ -1396,6 +1509,54 @@ private:
     float falls_hidden = 1.0f;
     int ambience_bus = -1;                      //the table's "ambience": plays on in a pause, faded out under the title
     void SignalWater();
+    /*
+        THE PEOPLE'S VOICES (sound_plan.md, "Voices"): a grown-up answers when the player picks him out, and when he
+        takes an order - in the order's command, by the rules, so a refused one is the refusal's sound and never an
+        "on it". Said on the next pass, one answer a pass: an order's over a pick's, and of a rank the first asked - a
+        group's orders go out nearest first, so the nearest answers. Asked from the physics thread's clicks and
+        commands and from MCP's picks, hence a lock of its own.
+    */
+#define CHASM_SAY_PICKED    0
+#define CHASM_SAY_ORDER     1
+    struct Said{
+        const char* signal = nullptr;           //a literal: the table's signal
+        uint32_t person = 0;
+        int rank = -1;                          //CHASM_SAY_*
+        int what = 0;                           //a forage's FORAGE_*, as `what`
+    };
+    std::mutex say_mutex;
+    Said say_next;
+    void Say(uint32_t person, const char* signal, int rank, int what = 0);     //any thread
+    void SayPicked(const std::vector<uint32_t>& ids);         //the first of a pick answers
+    void SignalVoice();
+    /*
+        THE MUSIC (ApplicationChasmMusic.cpp; areas_plan.md, "The music"): the score apps/music designs and publishes
+        (assets/music/chasm.json), on three players - the LAND in the season's section, and the CLOUDS and the CHASM
+        sections as layers over it, each faded in by how much of the view is unexplored ground or seen chasm. Raw
+        pointers, as `soundsystem` is: they live as long as the app, and only a USE_SOUND build makes them.
+    */
+#define CHASM_MUSIC_LAND    0
+#define CHASM_MUSIC_CLOUDS  1
+#define CHASM_MUSIC_CHASM   2
+#define CHASM_MUSIC_PLAYERS 3
+    std::shared_ptr<MusicScore> music_score;
+    MusicPlayer* music[CHASM_MUSIC_PLAYERS] = {};
+    int music_bus = -1;                         //under the master, beside the table's layer: the settings' music volume
+    int music_buses[CHASM_MUSIC_PLAYERS] = {-1,-1,-1};
+    std::string music_season;                   //the section the land was last sent to
+    float music_share[CHASM_MUSIC_PLAYERS] = {}; //the view's share of unexplored ground and of seen chasm, as measured...
+    float music_layer[CHASM_MUSIC_PLAYERS] = {}; //...and each player's level, eased toward what the shares make it
+    int music_quiet[CHASM_MUSIC_PLAYERS] = {};  //passes a layer has been silent, to pause its engine
+    bool f_music_held[CHASM_MUSIC_PLAYERS] = {};
+    //Per exploration cell: 0 off the land, 1 ground, 2 the chasm - from the areas, once a map.
+    std::vector<uint8_t> music_cells;
+    const ChasmWorld* music_cells_world = nullptr;
+    void SetupMusic();                          //Init, after SetupSound
+    void UpdateMusic();                         //physics thread, every pass, from UpdateSound
+    void MeasureMusicShares();
+#ifdef USE_MCP
+    json MusicStatusJson();                     //for chasm_sound, at a tick boundary
+#endif
     void SetupSound();                          //Init, the render thread before the physics thread exists
     void UpdateSound();                         //physics thread, every pass, from UpdateView
     void PollCueTable();

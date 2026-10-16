@@ -1,7 +1,7 @@
 # Demo Plan: menus, goals, and recording for testers
 
-Proposed and decided 2026-10-15 (see "Decided" below). Built so far: steps 1, 2, 4 and 5 (see the "As
-built" sections at the end); steps 3, 6 and 7 are not started. The aim is to get Chasm to
+Proposed and decided 2026-10-15 (see "Decided" below). All seven steps are built (see the "As built"
+sections at the end). The aim is to get Chasm to
 testers as the ship build (`make ship`: no ImGui, no MCP, no debug panels), so the game can be tested
 without the debug menu. Statistics were split out into a project of their own: `statistics_plan.md`.
 
@@ -226,9 +226,9 @@ things we discovered."
     the saved exploration after every load (`stone_plan.md`, "Found by exploring": `LookForSeams`,
     `NOTICE_SEAM_SEEN`).
   - **A moment that passes,** such as the first person lowered by a winch, or the first winch built
-    (it may be erased later). These are kept as saved flags. Each is set once by the rules, with the
-    tick it happened on, saved with the economy and in the hash: tools will be shown or hidden by
-    them, so they change what can be done.
+    (it may be erased later). These were to be saved flags. Since the statistics' journal keeps every
+    such event, saved and hashed, they are read from it instead (the user, 2026-10-16: "As built:
+    discoveries").
 - **Areas found** are the first of the read-from-the-save kind to be built (2026-10-16, `areas_plan.md`):
   each river, waterfall and biome, `EVENT_DISCOVERED` in the journal, worked out again from the exploration
   after a load.
@@ -561,16 +561,209 @@ sound. The three core changes were agreed with the user first.
   - The release build compiles and writes its map.
   - Not checked by hand: F12 (no tool presses keys on a minimised window), and "Open the folder".
 
+## As built: Settings (2026-10-16)
+
+Step 3, once sound and music were in (the user: "pretty much the same as archer's"; no key mapping yet,
+and it is not meant to be played with a controller, so there is no Controls screen).
+
+- **Settings is on the title and in the pause menu**, with archer's five settings:
+  - anti-aliasing: Off, 4x or 16x;
+  - master volume;
+  - music;
+  - sound effects;
+  - start full screen. Alt+Enter, core's, still switches full screen straight away.
+- **The store is core `Settings`**, `settings.json` beside the exe, read from disk only.
+  - It is read in the constructor (`LoadSettings`), so "start full screen" is known before the
+    window is made.
+  - Each change is saved as it is made.
+  - The volumes default to 1.0, so a first run sounds the way the cue table and the score were
+    mixed.
+- **Applied by the view only** (`ApplySettings`, every pass from `UpdateView`), so a recording
+  replays the same at any setting.
+  - The master goes to `sound_volume`, only when a setting changes, so `chasm_sound`'s volume still
+    works.
+  - Music goes to the score's `music` bus, over its three players. The music's own code sets only
+    those three players' buses.
+  - Sound effects go to the cue table's new layer bus.
+  - Anti-aliasing goes to `Renderer::RequestAASamples`, only when it differs.
+- **The cue table now plays under a layer bus of its own, `sounds`** (`CueSoundOutput`'s layer, as
+  archer has; the music agent suggested it).
+  - The table's buses are now `sounds/effects`, `sounds/activity` and so on.
+  - The effects volume is the layer's gain, which the table never sets. A gain on the table's own
+    `effects` bus would be undone by each table load and by any duck on it.
+- **`chasm_menu`** reads the settings as saved, as applied, and the buses' gains read back.
+- *Checked* (8769, the tester's build):
+  - Settings from the title and from the pause menu.
+  - The music, effects, master and anti-aliasing clicked: saved to `settings.json` and applied, the
+    buses read back at 0.85, 0.55 and 0.35 and the renderer at 16 samples.
+  - A restart started with them.
+  - The table's sounds were playing on `sounds/ambience`.
+  - Start full screen saved; it takes effect at the next start that isn't `--minimized`.
+  - The test's `settings.json` was deleted afterwards.
+
+## As built: discoveries (2026-10-16)
+
+Step 6, with the user's answers of the same day:
+
+1. **Read from the journal, not saved as flags** ("Yes, might as well"). The statistics' journal is saved,
+   hashed and never trimmed, and already held a building finished with its kind, a seam seen and an area
+   found, each with its tick. So a discovery has no saved state of its own.
+2. **What unlocks what** (the user's):
+
+   | Discovery | Brings |
+   |---|---|
+   | a river (or a waterfall) found | WATER, BRIDGE |
+   | the chasm found | WINCH |
+   | a boulder the stonecutter can break | STONECUTTER |
+   | floatstone seen | MINE |
+   | a builders' hut | WALL, RANGE, TOWER |
+
+   Everything else is on the bar from the landing.
+3. **Notices for a crop lost to frost, someone growing up, and a couple expecting** (the user's: "that's
+   a good one. Someone growing up, and a couple getting pregnant").
+
+What was built:
+
+- **`ChasmDiscoveries`** (`ApplicationChasm.h`), `DISCOVERY_*`: river, chasm, boulder, floatstone,
+  builders' hut, winch, balcony. The last two are the second goal's (step 7) and bring no tool.
+  `UpdateDiscoveries` (`ApplicationChasmExplore.cpp`) works them out on the physics thread whenever the
+  journal grows, more is seen or the zones change. It publishes them as `discovered_mask` and a snapshot.
+  A load works them out before it returns, so a load while paused shows the right bar.
+- **Three sources:**
+  - the journal, with the tick and who;
+  - what is seen without an event: the landing's first look, which tells nothing, dated to the history's
+    start;
+  - **a building standing whole** of a kind that needs one: a collector or bridge shows a river, a winch
+    the chasm, a stonecutter's hut a boulder, a mine floatstone, and a builders' hut, range or tower the
+    builders. That covers debug-mode buildings, which are never sites and so never journaled, and saves
+    from before the journal (`casm_edge` had a builders' hut and a winch, and they were locked until this
+    was added).
+- **Two new events for the two firsts nothing else marked**, looked for by `LookForFirsts` on the
+  exploration's ticks until each is in the journal:
+  - `EVENT_BOULDER_FOUND`: a standing boulder on a settlement's territory (`EconomyState::settlement`),
+    on explored ground. That is "one he can mine": territory is the land walked to and built on. It is
+    credited to whoever is nearest.
+  - `EVENT_BALCONY_REACHED`: anyone whose ground is a balcony's (`TERRAIN_BALCONY`). Only a winch takes
+    anyone down.
+- **Three new events for the notices**: `EVENT_FROST_TOOK` (a field, its crop), `EVENT_GREW_UP` (child to
+  young adult, when they go to work), `EVENT_EXPECTING` (in `ChancesOfChildren`). All five are journaled,
+  appended (13 to 17), named for the cue table (`frost_took`, `grew_up`, `expecting`, `boulder_found`,
+  `balcony_reached`) with a chime row each, and have a line on the statistics page.
+- **Play mode only** (`ToolsLocked`; debug mode builds anything):
+  - a locked tool is left off the build bar, the rest closing up;
+  - its key does nothing, and one in hand is put down;
+  - `chasm_tool` refuses it, and so does a `chasm_paint` with `play: true` for its kind;
+  - NEEDS ATTENTION never offers it: FIND A RIVER (WATER n DAYS) stands in for BUILD A WATER COLLECTOR, and
+    NEEDS STONE says FIND THE CHASM before a winch, and skips the stonecutter's hut while it is locked.
+- **NEW**: a tool a discovery has just brought has an amber dot and lit text until it is first taken up.
+  What a colony has on entering it (`discoveries_epoch`) is not new.
+- **The notice line** tells the new events, and a discovery says what it brings: "ANOUK WEVER HAS FOUND A
+  RIVER - NEW TOOLS: WATER, BRIDGE". It stays 8 s, not 5. The first builders' hut and the first winch
+  finished are told for this. The frost is one line for every field it took that dawn ("THE FROST TOOK THE
+  CROPS ON 4 FIELDS"). A couple shares one surname when they have it.
+- **`chasm_economy`**: `discoveries` (each made or not, tick, person, tools) and `tools_locked`.
+- **Wiki**: a new `discoveries.md`; `events.md` and `statistics.md` updated.
+
+Checked (debug, port 8769, play mode):
+
+- **New seed-12 colony.** No river or chasm in sight at the landing, so WATER, BRIDGE, WINCH, MINE, WALL,
+  RANGE and TOWER were off the bar, with FIND A RIVER · WATER 6 DAYS. A boulder was found on tick 10, which
+  brought STONECUTTER, marked NEW.
+- **The river.** Anouk Wever found a river on tick 1580 while picking. The notice said so with WATER and
+  BRIDGE, both marked NEW, and the hint became BUILD A WATER COLLECTOR.
+- **The builders' hut**, a play site: while it stood unfinished, a play `chasm_paint` wall and
+  `chasm_tool tower` were refused ("not discovered yet: builders_hut"). Finished on tick 2490, it
+  brought WALL, RANGE and TOWER, with its notice.
+- **`casm_edge`** (a save from before the journal): its river and chasm were read from the exploration;
+  its builders' hut, winch and stonecutter's hut from the zones. Only MINE stayed locked, and nothing was
+  marked NEW.
+- **The balcony.** Jelle De Wit, sent by order to rubble on a balcony, went down the winch: "JELLE DE WIT
+  HAS REACHED A BALCONY".
+- **The frost** (`set_day` 29, stepped into winter): four events on one tick, one line on the notice line,
+  and "The frost took a field of beans" in the statistics' journal.
+- **Expecting**: "BENTE VEEN AND DOLF DE WIT ARE EXPECTING A CHILD" on her couple's day.
+- **Grew up**: Teun De Wit on tick 27000, journaled and turned picker. Its notice was not seen: the first
+  boulder was found on the same tick, and the line shows the newest.
+- **A replay** of 3,000 recorded ticks (a builders' hut placed in play, the boulder, the river) ended in
+  the same state, discoveries and events included.
+- **Without MCP and ImGui**, as `make ship` builds it, everything compiles.
+
+Not checked by a run: floatstone seen bringing MINE, and the chasm found by a person rather than read
+from a save. Both go through the same journal events as the river.
+
+## As built: the goals and the end (2026-10-16)
+
+Step 7, as planned under "The demo's goals", with one addition (the first point below).
+
+- **The end comes once both goals are decided**, not only when both are met. The second goal can't fail,
+  so a colony that lost someone before the second spring would otherwise never reach an end. Then it is
+  "DEMO COMPLETE" with how each goal went: the journal says "Demo complete, 1 of 2 goals". **For the user
+  to overrule** if only a full success should end the demo.
+- **The goals are rules** (`ApplicationChasmGoals.cpp`, `TickGoals`, after the exploration on every
+  tick). Each state is worked out from what is saved:
+  - Through the winter: failed by a death before `CALENDAR_YEAR_TICKS`, the first dawn of the second
+    spring; met at that dawn.
+  - The chasm: met by the discoveries `winch` and `balcony`.
+
+  Each outcome is told once as an event, appended (18 to 21): `EVENT_GOAL_MET`, `EVENT_GOAL_FAILED`,
+  `EVENT_DEMO_COMPLETE` (`amount` the goals met) and `EVENT_COLONY_LOST`. They are journaled, and
+  `UpdateDiscoveries` reads them back, so a load never tells one again. `CHASM_GOAL_*` are in `Economy.h`.
+- **The goals panel**, top left in play mode, looks like NEEDS ATTENTION. Each goal shows what it wants
+  next, or MET or FAILED:
+  - goal 1: "23 DAYS TO GO";
+  - goal 2: FIND THE CHASM, then BUILD A WINCH, then LOWER SOMEONE DOWN.
+
+  The top left is now a stack: the goals, then REC or the replay bar, then the selected colony's name.
+  The REC pill and the colony name used to overlap there.
+- **The death pop-up**: `CHASM_ASK_DEATH`, the one pop-up, which pauses the game as the others do.
+  - It lists the dead of those ticks, four by name, then "and n more".
+  - It adds "The first goal is failed: not everyone lived to see the second spring." when the death
+    failed it.
+  - Continue plays on. Main menu goes to the title, losing nothing, as the pause menu's does.
+  - The pop-up's text may now run to several lines (`DrawMenuPanel`).
+- **The end's page is the statistics page** (the user's, 2026-10-16), in an end mode (`stats_end`):
+  - its heading is DEMO COMPLETE, or THE COLONY IS LOST in red;
+  - it has no close mark, and Tab does not close it;
+  - a foot under the columns shows each goal's outcome and the buttons in a row: Keep playing and Main
+    menu, or Load, New game and Main menu. Escape keeps playing after a complete demo; a lost colony is
+    left only by its buttons.
+- **Who opens them**: `UpdateEnd`, in `UpdateView`, reads the fresh events as the notice line does. The
+  pop-ups are play mode's only: debug mode, which agents drive, is never stopped. An end waits for the
+  death pop-up in front of it to close, and a lost colony skips the death pop-up.
+- **A lost colony has nothing left to lose**:
+  - Load and New game ask nothing (`Choose`);
+  - nothing autosaves it, not leaving, quitting or a season's dawn (`Autosave`);
+  - the quit question doesn't promise a save.
+- **The notice line** tells "GOAL MET: REACH THE CHASM" and "GOAL FAILED: ...".
+- **The rest:**
+  - the cue table has a chime row for each new event (stingers later, `sound_plan.md`);
+  - the statistics journal has a line for each;
+  - `chasm_menu` reports the `death` question, `end_page` (and its buttons, clicked by item), `goals`,
+    `demo_complete` and `colony_lost`.
+  - A fix in `ChasmStatsDays`: with nobody alive, the days of food and water are 0. They had shown the
+    whole store as about 200 days on a lost colony's chart.
+
+Checked (debug, port 8769, play mode, `casm_edge`):
+
+- **The panel**: 24 days to go, LOWER SOMEONE DOWN.
+- **A death** (a recorded needs edit): "A villager died - Bente Veen, of thirst", with the first goal
+  failed on the same pop-up, the panel saying FAILED, and the notice line.
+- **Continue, then someone sent down the winch**: GOAL MET: REACH THE CHASM, then DEMO COMPLETE (1 of 2)
+  with Keep playing focused. Keep playing went back to the game.
+- **Both met**: on a fresh load, the chasm reached first (a notice only, the panel MET), then `set_day` 39
+  and stepped to tick 90000. The first goal was met at the dawn, and DEMO COMPLETE showed both MET.
+- **The colony lost**: everyone's needs emptied. "13 villagers died - ... and 9 more", Continue, then the
+  last death opened THE COLONY IS LOST with Load, New game and Main menu. New game opened the map list
+  with no question, and entering a map left the autosaves untouched.
+- **The death pop-up's Main menu** went to the title, and Continue came back with the first goal FAILED.
+- **A replay** of 2,500 recorded ticks with a death and a balcony reached ended the same: died and goal
+  failed on 37785; balcony, goal met and demo complete on 39090, in both.
+- **Without MCP and ImGui**, it compiles.
+
 ## Open questions
 
 **The four starts** stay as they are for now (the user, 2026-10-16), who changes `CHASM_STARTS` by
 hand when an interesting seed turns up.
 
-Everything else asked so far was answered on 2026-10-15 (see "Decided"). Left for later, by the
-user's choice:
-
-1. **Limiting the build tools.** The demo should be able to offer fewer tools than the debug build
-   ("but we'll get to that later"). Two ways, not yet chosen:
-   - a fixed set for the demo build;
-   - tools appearing as they are discovered, which needs a starting set (what a colony knows on day
-     one) and a discovery for every other tool.
+Everything else asked so far was answered on 2026-10-15 (see "Decided"). **Limiting the build tools**
+was settled on 2026-10-16: tools appear as they are discovered (see "As built: discoveries").

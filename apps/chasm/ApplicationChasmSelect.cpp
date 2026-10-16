@@ -2722,6 +2722,7 @@ void ApplicationChasm::ToggleSelected(uint32_t person, bool f_card_name){
         ids.erase(at);
     }else{
         ids.push_back(person);
+        Say(person,"picked",CHASM_SAY_PICKED);     //added, he answers; taken out, he says nothing
     }
     SelectPeople(ids);
 }
@@ -2790,6 +2791,7 @@ void ApplicationChasm::TakeBox(const std::vector<uint32_t>& ids, bool f_add){
         }
     }
     SelectPeople(people);
+    SayPicked(ids);         //one of the box answers for it (ApplicationChasmSound.cpp)
 }
 
 /*
@@ -2985,11 +2987,13 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             }else if (hit.action == OVERLAY_HIT_PERSON){
                 //The neediest list (DrawNeediest): him, selected, and the view taken to him (the camera's glide).
                 SelectPeople({(uint32_t)hit.value});
+                Say((uint32_t)hit.value,"picked",CHASM_SAY_PICKED);
                 cam_seek_person = (uint32_t)hit.value;
             }else if (hit.action == OVERLAY_HIT_FAMILY){
                 //A house's family line, or the camp's (selection_plan.md), or a group's row: him alone, at home or out.
                 //The view stays - he is in the house, or his pin shows where he went.
                 SelectPeople({(uint32_t)hit.value});
+                Say((uint32_t)hit.value,"picked",CHASM_SAY_PICKED);
             }else if (hit.action == OVERLAY_HIT_GROUP_DROP){
                 //A group's row's x: he leaves the group - the last but one leaves one person selected.
                 std::vector<uint32_t> ids = SelectedPeople();
@@ -3353,6 +3357,10 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
         box_a = vec2((float)left_press_px.x,(float)left_press_px.y);
         box_b = vec2((float)px.x,(float)px.y);
         box_people.swap(in_box);
+    }
+    //A click on someone - picked, or picked again - and he answers (ApplicationChasmSound.cpp, Say).
+    if (!f_shift_click && f_click && under.kind == PLAY_PICK_PERSON){
+        Say(under.id,"picked",CHASM_SAY_PICKED);
     }
     //A click on nothing - bare ground - clears the selection, a group's too.
     if (!f_shift_click && f_click && under != play_selected){
@@ -3783,12 +3791,13 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     }
     float width = (float)main_window->width;
     float height = (float)main_window->height;
-    //THE COLONY the selection belongs to, at the top left (SelectionColony) - in the calendar's panel and lettering.
+    //THE COLONY the selection belongs to, at the top left (SelectionColony) - in the calendar's panel and lettering -
+    //under the goals and REC (hud_left_y, DrawOverlay).
     if (ep){
         std::string colony = SelectionColony(sel,group,*w,*ep);
         if (!colony.empty()){
             float text = 20.0f * s;
-            vec2 q0(16.0f * s,12.0f * s);
+            vec2 q0(16.0f * s,hud_left_y);
             vec2 q1(q0.x + overlay->MeasureText(colony.c_str(),text).x + 32.0f * s,q0.y + 44.0f * s);
             overlay->AddRect(q0,q1,12.0f * s,HUD_PANEL);
             overlay->AddText(colony.c_str(),vec2(q0.x + 16.0f * s,q0.y + 29.0f * s),text,HUD_TEXT,UI_ALIGN_LEFT);
@@ -4363,6 +4372,7 @@ void ApplicationChasm::RegisterSelectTools(){
                     }
                 }
                 SelectPeople(ids);
+                SayPicked(ids);
             }
             if ((op == "add" || op == "remove") && args.contains("person") && args["person"].is_number_unsigned()){
                 uint32_t id = args["person"].get<uint32_t>();
@@ -4436,6 +4446,7 @@ void ApplicationChasm::RegisterSelectTools(){
                 }
                 if (p.kind == PLAY_PICK_PERSON){
                     SelectPeople({p.id});
+                    Say(p.id,"picked",CHASM_SAY_PICKED);
                 }else{
                     std::lock_guard<std::mutex> lock(pick_mutex);
                     SelectLocked(p);

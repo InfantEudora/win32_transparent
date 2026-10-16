@@ -96,8 +96,9 @@ const char* TierName(int tier){
 
 }
 
-void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out){
+void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out, uint32_t locked){
     out.clear();
+    auto f_locked = [&](int tool){ return ((locked >> tool) & 1u) != 0; };
     if (e.world != z.world || e.workers.empty()){
         return;
     }
@@ -170,7 +171,10 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         i.tool = tool;
         out.push_back(i);
     };
-    if (!placed[ZONE_KIND_WATER]){
+    //Its tool comes with a river found (demo_plan.md step 6): until then the hint is to find one.
+    if (!placed[ZONE_KIND_WATER] && f_locked(CHASM_TOOL_WATER)){
+        hint("find_river",2,"FIND A RIVER",DaysText("WATER",water_days),-1,water_days);
+    }else if (!placed[ZONE_KIND_WATER]){
         hint("build_water",2,"BUILD A WATER COLLECTOR",DaysText("WATER",water_days),CHASM_TOOL_WATER,water_days);
     }
     if (!placed[ZONE_KIND_FIELD]){
@@ -289,6 +293,43 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     }
 
     /*
+        13. Land LYING FALLOW (land_plan.md; the user's, 2026-10-16): a field standing whose share has no farmer, so
+        nothing is sown and nothing grows. One row a land, since the reason is its owner's: the camp farms
+        ECONOMY_CAMP_FARMERS shares and hands its land to the first house lived in near it; a family has fewer free
+        hands than its land has places; a field nobody can walk to has no owner at all. A click selects its first
+        field, whose card says why and has "Give to:".
+    */
+    std::vector<int> fallow(n,0);
+    std::vector<uint32_t> fallow_first(n,0);
+    for (const EconomyField& f : e.fields){
+        uint32_t id = f.building;
+        if (id >= n || z.buildings[id].kind != ZONE_KIND_FIELD || z.buildings[id].size <= 0 || !stands[id]
+            || (id < e.farmer_of.size() && e.farmer_of[id])){
+            continue;
+        }
+        uint32_t o = (f.owner < n) ? f.owner : 0;
+        fallow[o]++;
+        fallow_first[o] = fallow_first[o] ? fallow_first[o] : id;
+    }
+    for (size_t o = 0; o < n; o++){
+        if (!fallow[o]){
+            continue;
+        }
+        ChasmIssue i;
+        i.kind = "field_fallow";
+        i.tier = ISSUE_STUCK;
+        i.order = (float)fallow_first[o];
+        i.text = (fallow[o] == 1) ? "FIELD LIES FALLOW" : std::to_string(fallow[o]) + " FIELDS LIE FALLOW";
+        if (!o){
+            i.value = (fallow[o] == 1) ? "NOBODY CAN REACH IT" : "NOBODY CAN REACH THEM";
+        }else{
+            i.value = (z.buildings[o].kind == ZONE_KIND_CAMP) ? "BUILD HOUSES" : "TOO FEW HANDS";
+        }
+        i.building = fallow_first[o];
+        out.push_back(i);
+    }
+
+    /*
         11. A site that takes ROPE when the colony has too little and makes none (goods_plan.md; the user's: no
         first rope - "you have to set up production for it"): pointed at the first link missing, hemp - a field to
         choose it on, or the field tool with none - then a ropewalk. Once both are there the rope is coming, and
@@ -363,10 +404,14 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             std::transform(kind.begin(),kind.end(),kind.begin(),::toupper);
             i.text = kind + ": NEEDS STONE";
             bool f_hut = z.buildings[stone_site].kind == ZONE_KIND_STONECUTTER;
-            if (!placed[ZONE_KIND_WINCH]){
+            //A tool still waiting for its discovery is not offered: the chasm to find first, and with no boulder found
+            //the stonecutter's hut is passed over.
+            if (!placed[ZONE_KIND_WINCH] && f_locked(CHASM_TOOL_WINCH)){
+                i.value = "FIND THE CHASM";
+            }else if (!placed[ZONE_KIND_WINCH]){
                 i.value = "BUILD A WINCH TO THE RUBBLE";
                 i.tool = CHASM_TOOL_WINCH;
-            }else if (!f_hut && !placed[ZONE_KIND_STONECUTTER]){
+            }else if (!f_hut && !placed[ZONE_KIND_STONECUTTER] && !f_locked(CHASM_TOOL_STONECUTTER)){
                 i.value = "BUILD A STONECUTTER'S HUT";
                 i.tool = CHASM_TOOL_STONECUTTER;
             }else{
@@ -459,7 +504,7 @@ float ApplicationChasm::DrawIssues(float s, float bottom){
         return bottom;
     }
     std::vector<ChasmIssue> issues;
-    ChasmIssues(*z,*e,issues);
+    ChasmIssues(*z,*e,issues,ToolsLocked());
     if (issues.empty()){
         return bottom;
     }
@@ -538,7 +583,7 @@ void ApplicationChasm::RegisterIssueTools(){
     MCPServer::Get()->RegisterTool("chasm_issues",
         "NEEDS ATTENTION (docs/issues_plan.md): everything the panel over the tools' grid would list, in its order - "
         "the panel shows the first five, in play mode. Each: kind (choose_crop, build_water, build_field, "
-        "build_woodcutter, build_houses, build_store, nobody_at, no_room, ropewalk_short, house_shut_in, house_crowded, tower_unkept, site_needs_rope, trees_unreached), tier (danger: a deadline under two days; "
+        "build_woodcutter, build_houses, build_store, find_river (play mode, no river found yet), nobody_at, no_room, ropewalk_short, house_shut_in, house_crowded, field_fallow, tower_unkept, site_needs_rope, site_needs_stone, mine_worked_out, trees_unreached), tier (danger: a deadline under two days; "
         "countdown: a choice the game makes when it runs out; stuck; next: a next step), text and value as drawn, "
         "left (a countdown's share still to run, 1 to 0) and wait/grace ticks for a field, building (what a click "
         "selects) or tool (what it takes up). View only. include_screenshot as elsewhere.",
@@ -555,7 +600,7 @@ void ApplicationChasm::RegisterIssueTools(){
             json list = json::array();
             if (e && z){
                 std::vector<ChasmIssue> issues;
-                ChasmIssues(*z,*e,issues);
+                ChasmIssues(*z,*e,issues,ToolsLocked());
                 for (const ChasmIssue& i : issues){
                     json one{{"kind",i.kind},{"tier",TierName(i.tier)},{"text",i.text},{"value",i.value}};
                     if (i.left >= 0.0f){

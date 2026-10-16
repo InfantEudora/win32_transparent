@@ -3,6 +3,7 @@
 #include "File.h"
 #include "UIOverlay.h"
 #include "ChasmHud.h"
+#include "ChasmStats.h"
 #include "Window.h"
 #include "Light.h"
 #include "ObjectAnimation.h"
@@ -11,6 +12,9 @@
 #endif
 #ifdef USE_MCP
 #include "MCPServer.h"
+#endif
+#ifdef USE_SOUND
+#include "SoundSystem.h"
 #endif
 #include <algorithm>
 #include <chrono>
@@ -35,7 +39,7 @@
 
 static Debugger* debug = new Debugger("ChasmTitle",DEBUG_ALL);
 
-#define TITLE_MENU_TOP      0.50f       //the menu's first button, in window heights
+#define TITLE_MENU_TOP      0.45f       //the menu's first button, in window heights
 #define TITLE_SHADE         UIColor(0,0,0,110)      //over the world while a question is up
 #define TITLE_DIORAMA       "menu_town"             //assets/dioramas/<this>.scap: what the title shows
 #define TITLE_TURN          0.035f      //the camera's turn round the diorama, radians a second: three minutes a round
@@ -50,6 +54,7 @@ enum{
     TITLE_ITEM_NEW,
     TITLE_ITEM_LOAD,
     TITLE_ITEM_REPLAY,
+    TITLE_ITEM_SETTINGS,
     TITLE_ITEM_QUIT,
     ASK_ITEM_YES,
     ASK_ITEM_NO,
@@ -107,6 +112,7 @@ void ApplicationChasm::CreateTitleScene(){
     title_menu.AddButton("New game",TITLE_ITEM_NEW);
     title_menu.AddButton("Load",TITLE_ITEM_LOAD);
     title_menu.AddButton("Replay a recording",TITLE_ITEM_REPLAY);
+    title_menu.AddButton("Settings",TITLE_ITEM_SETTINGS);
     title_menu.AddButton("Quit",TITLE_ITEM_QUIT);
     RefreshTitleMenu();
 
@@ -634,6 +640,7 @@ void ApplicationChasm::UpdateTitle(InputController* input){
         case TITLE_ITEM_NEW:        OpenScreen(CHASM_SCREEN_NEW); break;
         case TITLE_ITEM_LOAD:       OpenScreen(CHASM_SCREEN_LOAD); break;
         case TITLE_ITEM_REPLAY:     OpenScreen(CHASM_SCREEN_REPLAY); break;
+        case TITLE_ITEM_SETTINGS:   OpenScreen(CHASM_SCREEN_SETTINGS); break;
         case TITLE_ITEM_QUIT:       OpenAsk(CHASM_ASK_QUIT); break;
     }
 }
@@ -653,7 +660,7 @@ void ApplicationChasm::OpenAsk(int kind, const std::string& text, const std::str
     switch (kind){
         case CHASM_ASK_QUIT:
             line = "Quit Chasm?";
-            under = f_game_on.load() ? "The colony is saved first, as the autosave." : "";
+            under = (f_game_on.load() && !ColonyLost()) ? "The colony is saved first, as the autosave." : "";
             ask_menu.AddButton("Quit",ASK_ITEM_YES);
             ask_menu.AddButton("Cancel",ASK_ITEM_NO);
             ask_menu.SetFocus(1);
@@ -678,6 +685,13 @@ void ApplicationChasm::OpenAsk(int kind, const std::string& text, const std::str
             ask_menu.AddButton("Open the folder",ASK_ITEM_YES);
             ask_menu.AddButton("OK",ASK_ITEM_NO);
             ask_menu.SetFocus(1);
+            break;
+        case CHASM_ASK_DEATH:
+            //A death (demo_plan.md step 7, ApplicationChasmGoals.cpp): who and of what, in `detail`. Continue plays on;
+            //Main menu loses nothing, as the pause menu's doesn't.
+            ask_menu.AddButton("Continue",ASK_ITEM_NO);
+            ask_menu.AddButton("Main menu",ASK_ITEM_YES);
+            ask_menu.SetFocus(0);
             break;
         default:
             return;
@@ -751,6 +765,8 @@ bool ApplicationChasm::UpdateAsk(InputController* input){
             std::string error;
             ShowNote(WriteSave(a.name,"save",error) ? "Saved: " + SaveTitle() : error);
             menu_screen = CHASM_SCREEN_MAIN;
+        }else if (kind == CHASM_ASK_DEATH){
+            OpenTitle();
         }
     }
     return true;
@@ -824,17 +840,29 @@ void ApplicationChasm::DrawMenuPanel(const UIMenu& menu, const std::string& head
     UIMenuRect first = menu.ItemRect(0,w,h);
     UIMenuRect last = menu.ItemRect(count - 1,w,h);
     const float pad = 22.0f * s;
-    const float title_h = (detail.empty() ? 54.0f : 80.0f) * s;
+    //The line under the heading may be several: a death's names, one a line.
+    std::vector<std::string> lines;
+    for (size_t at = 0; !detail.empty() && at <= detail.size();){
+        size_t end = detail.find('\n',at);
+        end = (end == std::string::npos) ? detail.size() : end;
+        lines.push_back(detail.substr(at,end - at));
+        at = end + 1;
+    }
+    const float line_h = 22.0f * s;
+    const float title_h = 54.0f * s + (lines.empty() ? 0.0f : 26.0f * s + line_h * (float)(lines.size() - 1));
     //As wide as the buttons, or as the words over them where those are wider.
     float half = (first.x1 - first.x0) * 0.5f;
     half = std::max(half,overlay->MeasureText(heading.c_str(),24.0f * s).x * 0.5f);
-    half = std::max(half,overlay->MeasureText(detail.c_str(),16.0f * s).x * 0.5f);
+    for (const std::string& line : lines){
+        half = std::max(half,overlay->MeasureText(line.c_str(),16.0f * s).x * 0.5f);
+    }
     float mid = (first.x0 + first.x1) * 0.5f;
-    overlay->AddRect(vec2(mid - half - pad,first.y0 - title_h - pad),vec2(mid + half + pad,last.y1 + pad),12.0f * s,box);
     float top = first.y0 - title_h - pad;
+    overlay->AddRect(vec2(mid - half - pad,top),vec2(mid + half + pad,last.y1 + pad),12.0f * s,box);
     overlay->AddText(heading.c_str(),vec2(w * 0.5f,top + pad + 24.0f * s),24.0f * s,HUD_TEXT,UI_ALIGN_CENTER);
-    if (!detail.empty()){
-        overlay->AddText(detail.c_str(),vec2(w * 0.5f,top + pad + 52.0f * s),16.0f * s,HUD_TEXT_DIM,UI_ALIGN_CENTER);
+    for (size_t i = 0; i < lines.size(); i++){
+        overlay->AddText(lines[i].c_str(),vec2(w * 0.5f,top + pad + 52.0f * s + line_h * (float)i),16.0f * s,HUD_TEXT_DIM,
+                         UI_ALIGN_CENTER);
     }
     UIMenuStyle style = MenuStyle();
     if (f_lighter_buttons){
@@ -871,7 +899,10 @@ void ApplicationChasm::RegisterTitleTools(){
         "the window's X or Alt+F4 - the quit question. op view: the title camera by hand, still turning - round x,z "
         "(default the diorama's middle) at `distance` and `pitch` degrees; with none of those, back to its own. "
         "Clicks are menu input, not recorded commands; but Load, New game and Save do what they say - files are "
-        "written and read in saves/ - and Quit really quits.",
+        "written and read in saves/ - and Quit really quits. THE DEMO (demo_plan.md step 7): question `death` is a "
+        "death's pop-up (Continue, Main menu); `end_page` complete or lost is the end's statistics page, its buttons "
+        "clicked by item as any menu's (Keep playing, Main menu; or Load, New game, Main menu); `goals` how each "
+        "goal stands, as the panel shows it, with demo_complete and colony_lost once told. Both pop up in play mode only.",
         json{
             {"type","object"},
             {"properties",{
@@ -894,6 +925,9 @@ void ApplicationChasm::RegisterTitleTools(){
                 if (ask_kind.load() != CHASM_ASK_NONE){
                     return ask_menu;
                 }
+                if (f_stats_open.load() && stats_end.load() != CHASM_END_NONE){
+                    return end_menu;
+                }
                 if (menu_screen.load() != CHASM_SCREEN_MAIN){
                     return screen_menu;
                 }
@@ -914,7 +948,9 @@ void ApplicationChasm::RegisterTitleTools(){
             }else if (op == "click"){
                 vec2 at(args.value("x",0.0f),args.value("y",0.0f));
                 if (args.contains("item")){
-                    UIMenuRect r = front().ItemRect(args["item"].get<int>(),w,h);
+                    //The end's buttons stand in a row of their own (EndButtonAt), not where a menu's column would.
+                    bool f_end = ask_kind.load() == CHASM_ASK_NONE && f_stats_open.load() && stats_end.load() != CHASM_END_NONE;
+                    UIMenuRect r = f_end ? EndButtonAt(args["item"].get<int>()) : front().ItemRect(args["item"].get<int>(),w,h);
                     at = vec2((r.x0 + r.x1) * 0.5f,(r.y0 + r.y1) * 0.5f);
                 }
                 {
@@ -957,8 +993,8 @@ void ApplicationChasm::RegisterTitleTools(){
                 return json{{"items",list},{"focus",m.Focus()}};
             };
             int kind = ask_kind.load();
-            static const char* const questions[] = {"none","quit","leave","overwrite","note","report"};
-            static const char* const lists[] = {"main","new","load","save","replay"};
+            static const char* const questions[] = {"none","quit","leave","overwrite","note","report","death"};
+            static const char* const lists[] = {"main","new","load","save","replay","settings"};
             int list = menu_screen.load();
             std::string text, detail, busy, note, colony;
             {
@@ -970,16 +1006,59 @@ void ApplicationChasm::RegisterTitleTools(){
                 colony = colony_name;
             }
             json result{{"screen",TitleShowing() ? "title" : f_pause_open.load() ? "pause" : "game"},
-                        {"list",(list >= 0 && list <= CHASM_SCREEN_REPLAY) ? lists[list] : "?"},
+                        {"list",(list >= 0 && list <= CHASM_SCREEN_SETTINGS) ? lists[list] : "?"},
                         {"diorama",json{{"objects",(int)diorama_objects.size()},{"x",diorama.centre.x},{"z",diorama.centre.z},
                                         {"radius",diorama.radius}}},
-                        {"question",(kind >= 0 && kind <= CHASM_ASK_REPORT) ? questions[kind] : "?"},
+                        {"question",(kind >= 0 && kind <= CHASM_ASK_DEATH) ? questions[kind] : "?"},
                         {"game_on",f_game_on.load()},{"colony",colony},{"busy",busy},{"note",note},
                         {"menu",items(front())}};
+            //THE DEMO (demo_plan.md step 7): the end's page up, and how each goal stands - as the panel shows them.
+            int end = stats_end.load();
+            result["end_page"] = !f_stats_open.load() ? "none" : (end == CHASM_END_COMPLETE) ? "complete"
+                               : (end == CHASM_END_LOST) ? "lost" : "none";
+            if (result["end_page"] != "none"){
+                json rects = json::array();
+                for (int i = 0; i < end_menu.Count(); i++){
+                    UIMenuRect r = EndButtonAt(i);
+                    rects.push_back(json::array({r.x0,r.y0,r.x1,r.y1}));
+                }
+                result["menu"]["rects"] = rects;    //the row's own: the items' "rect" are a column's
+            }
+            std::shared_ptr<const EconomyState> ge = GetEconomy();
+            std::shared_ptr<const ChasmDiscoveries> gd = GetDiscoveries();
+            if (ge && gd){
+                static const char* const states[] = {"in_progress","met","failed"};
+                json goals = json::array();
+                for (int g = 0; g < CHASM_GOALS; g++){
+                    int st = ChasmGoalState(g,*ge,*gd);
+                    goals.push_back(json{{"goal",ChasmGoalTitle(g)},{"state",states[st]},
+                                         {"next",(st == CHASM_GOAL_GOING) ? ChasmGoalNext(g,*ge,*gd) : std::string()},
+                                         {"told",gd->goal_told[g] >= 0}});
+                }
+                result["goals"] = goals;
+                result["demo_complete"] = gd->f_complete_told;
+                result["colony_lost"] = gd->f_lost_told;
+            }
             if (kind != CHASM_ASK_NONE){
                 result["question_text"] = text;
                 result["question_detail"] = detail;
             }
+            //The settings as saved, and as applied: the renderer's samples, the window, the three buses' gains.
+            json settings_json{{"path",settings.Path()},{"msaa",settings.GetInt("msaa")},
+                               {"msaa_in_use",renderer ? renderer->aa_samples : 0},
+                               {"volume_master",settings.GetFloat("volume_master")},{"volume_music",settings.GetFloat("volume_music")},
+                               {"volume_effects",settings.GetFloat("volume_effects")},{"fullscreen",settings.GetBool("fullscreen")},
+                               {"window_fullscreen",main_window->f_fullscreen},{"master_applied",sound_volume.load()},
+                               {"music_applied",music_volume.load()},{"effects_applied",effects_volume.load()}};
+#ifdef USE_SOUND
+            //...and read back from the buses themselves.
+            if (soundsystem && soundsystem->f_initialised){
+                settings_json["bus_gains"] = json{{"master",soundsystem->GetBusGain(SOUND_BUS_MASTER)},
+                                                  {"music",music_bus >= 0 ? soundsystem->GetBusGain(music_bus) : -1.0f},
+                                                  {"sounds",sounds_bus >= 0 ? soundsystem->GetBusGain(sounds_bus) : -1.0f}};
+            }
+#endif
+            result["settings"] = settings_json;
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
         });
 

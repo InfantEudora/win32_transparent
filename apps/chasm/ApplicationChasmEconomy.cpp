@@ -368,6 +368,8 @@ void ApplicationChasm::RegisterEconomyCommands(){
             //value[2]: one of a group's (selection_plan.md, step 3), spread round the plot - 0 in recordings from before.
             if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why,(int)cmd.value[1] - 1,cmd.value[2] != 0.0f)){
                 PublishEconomy();
+                //Taken, so he answers (ApplicationChasmSound.cpp, Say) - a refused order is the refusal's sound alone.
+                Say(cmd.subtype,((int)cmd.value[0] >= 0) ? "sent" : "released",CHASM_SAY_ORDER);
             }else{
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -384,6 +386,7 @@ void ApplicationChasm::RegisterEconomyCommands(){
             std::string why;
             if (economy.PostGuard(cmd.subtype,(uint32_t)cmd.value[0],zones.State(),walkers,&why)){
                 PublishEconomy();
+                Say(cmd.subtype,((uint32_t)cmd.value[0] != 0) ? "sent" : "released",CHASM_SAY_ORDER);
             }else{
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -408,6 +411,7 @@ void ApplicationChasm::RegisterEconomyCommands(){
             std::string why;
             if (economy.Gather(cmd.subtype,cmd.value[0] != 0.0f,zones.State(),walkers,&why)){
                 PublishEconomy();
+                Say(cmd.subtype,(cmd.value[0] != 0.0f) ? "gather" : "straight_on",CHASM_SAY_ORDER);
             }else{
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -424,6 +428,7 @@ void ApplicationChasm::RegisterEconomyCommands(){
             std::string why;
             if (economy.TakeTent(cmd.subtype,cmd.value[0] != 0.0f,zones.State(),walkers,&why)){
                 PublishEconomy();
+                Say(cmd.subtype,(cmd.value[0] != 0.0f) ? "take_tent" : "straight_on",CHASM_SAY_ORDER);
             }else{
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -459,6 +464,7 @@ void ApplicationChasm::RegisterEconomyCommands(){
                     }
                     PublishZones();
                     PublishEconomy();
+                    Say(cmd.subtype,"pitch",CHASM_SAY_ORDER);
                 }else{
                     why = zones.last_refusal.empty() ? std::string("no room for a tent here") : zones.last_refusal;
                 }
@@ -479,6 +485,7 @@ void ApplicationChasm::RegisterEconomyCommands(){
             std::string why;
             if (economy.SettleHere(cmd.subtype,zones.State(),walkers,&why)){
                 PublishEconomy();
+                Say(cmd.subtype,"settle",CHASM_SAY_ORDER);
             }else{
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -495,6 +502,7 @@ void ApplicationChasm::RegisterEconomyCommands(){
             std::string why;
             if (economy.Forage(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],zones.State(),walkers,&why,cmd.value[2] != 0.0f)){
                 PublishEconomy();
+                Say(cmd.subtype,"forage",CHASM_SAY_ORDER,(int)cmd.value[1]);
             }else{
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -1283,7 +1291,9 @@ void ApplicationChasm::RegisterEconomyTools(){
         "store, his health and water in days of life left and whether he is dry - docs/needs_plan.md), "
         "every field's growth toward its harvest, every construction site (wood needed, brought, its "
         "carriers), how many trees are felled, and the dead (who, the colony's day they died on - a "
-        "fraction, from 0 at its first dawn - and of what). op store_allow: "
+        "fraction, from 0 at its first dawn - and of what), the DISCOVERIES (docs/demo_plan.md step 6: river, chasm, "
+        "boulder, floatstone, builders_hut, winch, balcony - each made or not, its tick and person, the build tools it "
+        "brings) and tools_locked (what play mode's build bar still hides; none in debug mode). op store_allow: "
         "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope, fruit, stone, floatstone) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
@@ -2388,6 +2398,34 @@ void ApplicationChasm::RegisterEconomyTools(){
                 felled += (s != PROP_STATE_STANDING) ? 1 : 0;
             }
             result["felled"] = felled;
+            /*
+                The DISCOVERIES (demo_plan.md step 6): each made with its tick - the history's start for what the landing
+                saw - and who, and what tools it brings; and the tools play mode still hides.
+            */
+            std::shared_ptr<const ChasmDiscoveries> found = GetDiscoveries();
+            json discoveries = json::array();
+            for (int d = 0; found && d < DISCOVERY_COUNT; d++){
+                json one{{"discovery",ChasmDiscoveryName(d)},{"made",found->tick[d] >= 0},{"tools",ChasmDiscoveryTools(d)}};
+                if (found->tick[d] >= 0){
+                    one["tick"] = found->tick[d];
+                    one["person"] = found->person[d];
+                }
+                discoveries.push_back(one);
+            }
+            result["discoveries"] = discoveries;
+            //In play mode only: debug mode builds anything.
+            uint32_t locks = ToolsLocked();
+            json locked = json::array();
+            for (int d = 0; d < DISCOVERY_COUNT; d++){
+                bool f_waits = false;
+                for (int t = 0; t < CHASM_TOOL_COUNT; t++){
+                    f_waits = f_waits || (ChasmToolNeeds(t) == d && ((locks >> t) & 1u));
+                }
+                if (f_waits){
+                    locked.push_back(ChasmDiscoveryTools(d));
+                }
+            }
+            result["tools_locked"] = locked;
             //The crates lying about (crates_plan.md), in id order.
             json crates = json::array();
             for (const EconomyCrate& c : e->crates){

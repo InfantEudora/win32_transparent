@@ -26,6 +26,7 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
         whether or not the table has a row for it yet, so a sound for one is a row and no code;
       - the player's commands answered: "placed", "erased", "refused";
       - the HUD: "click";
+      - THE PEOPLE'S VOICES: a person picked out or given an order answers - "picked", "sent" and the rest (Say);
       - WORK IN HAND: "chop", "hammer", "chisel", "saw" - a blow at a time, from clocks of the workers' own (below).
 
     ON THE PHYSICS THREAD, ONCE A PASS, paused or not (UpdateSound, from the top of UpdateView). The cues' clock is
@@ -36,6 +37,7 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
 */
 
 #define CHASM_CUE_TABLE             "cues/chasm.json"
+#define CHASM_SOUND_LAYER           "sounds"    //the table's layer bus: its buses are "sounds/<name>" (CueSoundOutput)
 
 //THE LISTENER hears from over the view's centre, this share of the camera's distance up: zooming out turns everything
 //down, and a blow under the middle of a close view is near, not the whole way to the camera's eye.
@@ -134,7 +136,10 @@ void ApplicationChasm::SetupSound(){
     //Only a working device gets an output: a table checked against a device with nothing registered would refuse
     //every sound in it, and the cues would not even decide.
     if (soundsystem->f_initialised){
-        cue_output.reset(new CueSoundOutput(soundsystem));
+        //Under a layer of its own, so one gain on it is every sound but the music - the settings' effects volume.
+        int layer = soundsystem->AddBus(CHASM_SOUND_LAYER);
+        sounds_bus = (layer >= 0) ? layer : SOUND_BUS_MASTER;
+        cue_output.reset(new CueSoundOutput(soundsystem,sounds_bus));
         output = cue_output.get();
     }
 #endif
@@ -143,10 +148,12 @@ void ApplicationChasm::SetupSound(){
     if (!cues.LoadTable(CHASM_CUE_TABLE,error)){
         debug->Err("Cue table: %s - silent until it loads\n",error.c_str());
     }
+    //The score's players, and the table's `music` action (ApplicationChasmMusic.cpp).
+    SetupMusic();
 #ifdef USE_SOUND
     if (soundsystem->f_initialised){
-        activity_bus = soundsystem->FindBus("activity");
-        ambience_bus = soundsystem->FindBus("ambience");
+        activity_bus = soundsystem->FindBus(CHASM_SOUND_LAYER "/activity");
+        ambience_bus = soundsystem->FindBus(CHASM_SOUND_LAYER "/ambience");
     }
 #endif
     //For the poll. A baked build has no file to watch, and needs none.
@@ -181,8 +188,8 @@ void ApplicationChasm::PollCueTable(){
 #ifdef USE_SOUND
         //A bus the table has only now declared.
         if (soundsystem && soundsystem->f_initialised){
-            activity_bus = soundsystem->FindBus("activity");
-            ambience_bus = soundsystem->FindBus("ambience");
+            activity_bus = soundsystem->FindBus(CHASM_SOUND_LAYER "/activity");
+            ambience_bus = soundsystem->FindBus(CHASM_SOUND_LAYER "/ambience");
         }
 #endif
     }else{
@@ -219,6 +226,8 @@ void ApplicationChasm::UpdateSound(){
     SignalEvents();
     SignalWork(f_live);
     SignalWater();
+    SignalVoice();
+    UpdateMusic();
     /*
         The rules' answers to the player's commands. Answered in the tick, so a placement made in a pause is heard
         when the game goes on - with the building it makes, which is when it can be seen too. At most one of each
@@ -244,6 +253,65 @@ void ApplicationChasm::UpdateSound(){
 
 void ApplicationChasm::SignalUI(const char* name){
     cues.Signal(name);
+}
+
+/*
+    THE PEOPLE'S VOICES (sound_plan.md, "Voices"). What he says is the table's: here is only that he was picked out
+    ("picked") or what he was told - "sent" to a place or a tower, "released" back to his work, to "gather" a pack or
+    take a tent first ("take_tent") or go "straight_on" without, to "settle" in another settlement, "pitch" his tent,
+    or "forage" (with `what`, FORAGE_*). Each by name, as the events are, so a line of its own for one is a row.
+*/
+void ApplicationChasm::Say(uint32_t person, const char* signal, int rank, int what){
+    std::lock_guard<std::mutex> lock(say_mutex);
+    if (rank > say_next.rank){
+        say_next.signal = signal;
+        say_next.person = person;
+        say_next.rank = rank;
+        say_next.what = what;
+    }
+}
+
+void ApplicationChasm::SayPicked(const std::vector<uint32_t>& ids){
+    if (!ids.empty()){
+        Say(ids[0],"picked",CHASM_SAY_PICKED);
+    }
+}
+
+//The answer asked for since the last pass, with his `voice`: 0 a man's, 1 a woman's - the table's rows pick the takes.
+void ApplicationChasm::SignalVoice(){
+    Said said;
+    {
+        std::lock_guard<std::mutex> lock(say_mutex);
+        said = say_next;
+        say_next = Said();
+    }
+    if (!said.signal){
+        return;
+    }
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    if (!e){
+        return;
+    }
+    const EconomyWorker* k = NULL;
+    for (const EconomyWorker& w : e->workers){
+        if (w.id == said.person){
+            k = &w;
+            break;
+        }
+    }
+    if (!k){
+        return;
+    }
+    //A child has no voice yet, and says nothing.
+    int figure = PersonFigure(*k,e->tick);
+    if (figure != PERSON_ADULT_MALE && figure != PERSON_ADULT_FEMALE){
+        return;
+    }
+    CuePayload p;
+    vec2 at = EconomyBody(*k);
+    p.Set("x",at.x).Set("z",at.y).Set("person",(float)k->id);
+    p.Set("voice",(figure == PERSON_ADULT_FEMALE) ? 1.0f : 0.0f).Set("what",(float)said.what);
+    cues.Signal(said.signal,p);
 }
 
 /*
@@ -629,6 +697,7 @@ void ApplicationChasm::RegisterSoundTools(){
                                        {"falls",json{{"heard",f_falls_heard},{"distance",param("falls_distance")},
                                                      {"dx",param("falls_dx")},{"hidden",param("falls_hidden")}}}};
                 result["voices"] = voices;
+                result["music"] = MusicStatusJson();
                 result["playing"] = cues.NumPlaying();
                 result["waiting"] = cues.NumWaiting();
             });

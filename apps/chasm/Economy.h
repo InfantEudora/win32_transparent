@@ -885,7 +885,21 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
                                         //`person`, or a new colony's settlers landing (person 0, `amount` of them)
 #define EVENT_DISCOVERED        12      //`person` the first to see an area (areas_plan.md): `amount` the world's area,
                                         //`pos` where he saw it, `what` 1 when it is the first of its kind
-#define EVENT_COUNT             13
+#define EVENT_FROST_TOOK        13      //winter took field `building`'s crop, `amount` (ZONE_CROP_*), still growing
+#define EVENT_GREW_UP           14      //`person` a young adult: a child no more, and at work from now
+#define EVENT_EXPECTING         15      //`person` expecting a child, by her partner, in house `building`
+#define EVENT_BOULDER_FOUND     16      //`person` near the first boulder seen on the colony's land, on `plot` (demo_plan.md)
+#define EVENT_BALCONY_REACHED   17      //`person` the first on a balcony, lowered by a winch, on `plot` (demo_plan.md)
+#define EVENT_GOAL_MET          18      //the demo's goal `amount` (CHASM_GOAL_*) met - by `person`, if one made it so
+#define EVENT_GOAL_FAILED       19      //...or failed: `person` the death that failed it
+#define EVENT_DEMO_COMPLETE     20      //both of the demo's goals decided; `amount` how many were met
+#define EVENT_COLONY_LOST       21      //nobody left alive: `person` the last to die
+#define EVENT_COUNT             22
+//The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
+//chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
+#define CHASM_GOAL_WINTER       0
+#define CHASM_GOAL_CHASM        1
+#define CHASM_GOALS             2
 #define ECONOMY_EVENTS_KEPT     64      //the last few, for each reader to find the new ones among
 struct EconomyEvent{
     uint64_t tick = 0;          //the calendar's
@@ -1385,6 +1399,10 @@ public:
     void Discovered(uint32_t person, int area, const vec2& at, bool f_first){
         Event(EVENT_DISCOVERED,person,0,-1,at,area,f_first ? 1 : 0);
     }
+    //THE FIRST BOULDER on the colony's land, and THE FIRST ON A BALCONY (demo_plan.md, discoveries): the app's
+    //exploration looks for both, as it does for seams, until each is in the journal.
+    void BoulderFound(uint32_t person, int plot){ Event(EVENT_BOULDER_FOUND,person,0,plot,vec2()); }
+    void BalconyReached(uint32_t person, int plot){ Event(EVENT_BALCONY_REACHED,person,0,plot,vec2()); }
     /*
         AN EVENT (above) made by a rule that runs in the app - TickEconomy raising what the builders finished, a tent
         pitched by its command - stamped with `tick`, the calendar tick it belongs to. Into the ring, and the journal

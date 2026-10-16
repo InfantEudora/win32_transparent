@@ -13,20 +13,45 @@
     "hammer_chisel": "sound/hammer_chisel_1.ogg",
     "saw":           "sound/sawing_wood_1.ogg",
     "water_stream":  "sound/water_stream.ogg",
-    "waterfall":     "sound/waterfall.ogg"
+    "waterfall":     "sound/waterfall.ogg",
+
+    "leo_hi":           "sound/speech/taunts/leo_hi_s7.ogg",
+    "leo_whatsup":      "sound/speech/taunts/leo_whatsup_s10.ogg",
+    "leo_yes":          "sound/speech/taunts/leo_yes_s10.ogg",
+    "leo_whereto":      "sound/speech/taunts/leo_whereto_s8.ogg",
+    "leo_morning":      "sound/speech/taunts/leo_morning_s7.ogg",
+    "leo_headingover":  "sound/speech/taunts/leo_headingover_s7.ogg",
+    "leo_onit":         "sound/speech/taunts/leo_onit_s9.ogg",
+    "leo_imonit":       "sound/speech/taunts/leo_imonit_s7.ogg",
+    "leo_okay":         "sound/speech/taunts/leo_okay_s7.ogg",
+    "leo_grabsupplies": "sound/speech/taunts/leo_grabsupplies_s6.ogg",
+    "leo_packingup":    "sound/speech/taunts/leo_packingup_s3.ogg",
+    "leah_hi":          "sound/speech/taunts/leah_hi_s9.ogg",
+    "leah_whatsup":     "sound/speech/taunts/leah_whatsup_s5.ogg",
+    "leah_yes":         "sound/speech/taunts/leah_yes_s2.ogg",
+    "leah_whereto":     "sound/speech/taunts/leah_whereto_s2.ogg",
+    "leah_morning":     "sound/speech/taunts/leah_morning_s4.ogg",
+    "leah_headingover": "sound/speech/taunts/leah_headingover_s3.ogg",
+    "leah_onit":        "sound/speech/taunts/leah_onit_s3.ogg",
+    "leah_imonit":      "sound/speech/taunts/leah_imonit_s2.ogg",
+    "leah_okay":        "sound/speech/taunts/leah_okay_s4.ogg",
+    "leah_grabsupplies": "sound/speech/taunts/leah_grabsupplies_s2.ogg",
+    "leah_packingup":   "sound/speech/taunts/leah_packingup_s2.ogg"
   },
 
   "buses": {
-    "effects":  { "comment": "Everything but the music, under the master - the settings' effects volume, once there is one (demo_plan.md)." },
+    "effects":  { "comment": "Everything but the music. Under the table's layer, sounds, whose gain is the settings' effects volume (ApplicationChasmMenu.cpp, ApplySettings)." },
     "world":    { "parent": "effects", "comment": "The colony's events at a place: a tree down, a storey up, a harvest - heard near the view." },
     "activity": { "parent": "effects", "comment": "The people at work. Faded out and held while the world stands still - paused, the menu, the title, the statistics - and back in when it moves." },
     "ui":       { "parent": "effects", "comment": "Clicks, placing, refusals and the notices' chime. Never held: a click answers in a pause." },
-    "ambience": { "parent": "effects", "comment": "The world's own sounds - the water. Plays on in a pause, since time stopping does not stop a river; faded out under the title." }
+    "ambience": { "parent": "effects", "comment": "The world's own sounds - the water. Plays on in a pause, since time stopping does not stop a river; faded out under the title." },
+    "voice":    { "parent": "effects", "comment": "The people answering the player. Never held: an order given in a pause is answered there." }
   },
 
   "groups": {
     "notice": { "comment": "What the whole colony hears of, wherever the view is - the notice line's four, a birth, a death, a settlement: one chime at a time, and a second's quiet after it. Each waits its turn (busy queue) for up to three seconds rather than being lost.", "gap": 50 },
-    "place":  { "comment": "What happens at a place, heard near the view: a tree down, a rock broken, a storey up, a building finished, a harvest. At 4x a woodcutter fells every few seconds, so one chime at a time and half a second between, and the rest pass unheard.", "gap": 25 }
+    "place":  { "comment": "What happens at a place, heard near the view: a tree down, a rock broken, a storey up, a building finished, a harvest. At 4x a woodcutter fells every few seconds, so one chime at a time and half a second between, and the rest pass unheard.", "gap": 25 },
+    "voice":  { "comment": "One person speaking at a time, and always about what the player did last: a new answer cuts the one being said (busy replace) - but a pick's (priority 0) never cuts an order's (priority 1)." }
   },
 
   "cues": {
@@ -66,10 +91,44 @@
     "settled": {
       "signal": "settled", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
     },
+    "grew_up": {
+      "comment": "Told on the notice line since 2026-10-16 (demo_plan.md step 6), so heard anywhere as the rest of the colony's own: someone grown up, a couple expecting, the frost taking a field (an event a field: skipped while the group sounds, so a winter's turn chimes once), the first boulder and the first on a balcony.",
+      "signal": "grew_up", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "expecting": {
+      "signal": "expecting", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "frost_took": {
+      "signal": "frost_took", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "skip"
+    },
+    "boulder_found": {
+      "signal": "boulder_found", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "balcony_reached": {
+      "signal": "balcony_reached", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "goal_met": {
+      "comment": "THE DEMO'S GOALS AND ITS END (demo_plan.md step 7): the chime for now, as every event has; sound_plan.md wants stingers for these, from the score.",
+      "signal": "goal_met", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "goal_failed": {
+      "signal": "goal_failed", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "demo_complete": {
+      "signal": "demo_complete", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "colony_lost": {
+      "signal": "colony_lost", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
     "discovered_first": {
-      "comment": "AN AREA FOUND (areas_plan.md): the first of its kind - the first waterfall, the swamp - is told on the notice line, so it chimes with it, heard anywhere. area is its kind (Areas.h AREA_*: 0 river, 1 waterfall, 2 plateau, 3 forest, 4 mountain, 5 meadow, 6 swamp, 7 desert), for a row of its own one day.",
-      "signal": "discovered", "when": [ ["first", "==", 1] ],
+      "comment": "AN AREA FOUND (areas_plan.md): the first of its kind - the first waterfall, the swamp - is told on the notice line, so it chimes with it, heard anywhere. area is its kind (Areas.h AREA_*: 0 river, 1 waterfall, 2 plateau, 3 forest, 4 mountain, 5 meadow, 6 swamp, 7 desert, 8 chasm), for a row of its own one day. Not the chasm, whose first sight is the music's (chasm_reveal).",
+      "signal": "discovered", "when": [ ["first", "==", 1], ["area", "!=", 8] ],
       "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "chasm_reveal": {
+      "comment": "THE CHASM FIRST SEEN (area 8, AREA_CHASM): the score's war horn, its `reveal` stinger - MUSIC, not a sound: the `music` action sends it to the land's player (ApplicationChasmMusic.cpp), so apps/music says which file and how loud. It stands in for the chime.",
+      "signal": "discovered", "when": [ ["first", "==", 1], ["area", "==", 8] ],
+      "actions": [ { "kind": "music", "stinger": "reveal" } ]
     },
     "discovered": {
       "comment": "Any other area found - a second river - is not told, and chimes only near the view, where it was seen, as a tree felled does.",
@@ -154,6 +213,83 @@
       "follow": { "gain": [ { "value": "falls_distance", "in": [8, 60], "out": [1, 0] },
                             { "value": "falls_hidden", "in": [0, 1], "out": [1, 0.3] } ],
                   "pan": { "value": "falls_dx", "in": [-30, 30], "out": [-0.5, 0.5] } }
+    },
+
+    "picked_leo": {
+      "comment": "THE PEOPLE'S VOICES (sound_plan.md, \"Voices\"): leo's takes for a man, leah's for a woman - `voice` 0 or 1 (ApplicationChasmSound.cpp, Say); a child says nothing yet. PICKED OUT - clicked, boxed (the box's first answers), Shift-added, or his name pressed in a list: a greeting, never the same twice running. Spoken to the player, so not quieter further off - only panned a little toward him. leah's takes are about 2.6 dB quieter than leo's on the whole, hence 1.0 against 0.75. A double click is one answer (gap).",
+      "signal": "picked", "when": [["voice", "==", 0]], "sounds": ["leo_hi", "leo_whatsup", "leo_yes", "leo_whereto", "leo_morning"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "picked_leah": {
+      "signal": "picked", "when": [["voice", "==", 1]], "sounds": ["leah_hi", "leah_whatsup", "leah_yes", "leah_whereto", "leah_morning"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "sent_leo": {
+      "comment": "SENT somewhere - a right click on the ground, or onto a tower as its guard. Answered when the rules TAKE the order (in its command), so a refused one is only `refused`; a group's nearest answers for it.",
+      "signal": "sent", "when": [["voice", "==", 0]], "sounds": ["leo_headingover", "leo_onit", "leo_imonit"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "sent_leah": {
+      "signal": "sent", "when": [["voice", "==", 1]], "sounds": ["leah_headingover", "leah_onit", "leah_imonit"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "gather_leo": {
+      "comment": "His card's chips: GATHER his pack first (a scout's provisions), or TAKE A TENT and go and found a settlement - or SETTLE in another one without.",
+      "signal": "gather", "when": [["voice", "==", 0]], "sounds": ["leo_grabsupplies"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "gather_leah": {
+      "signal": "gather", "when": [["voice", "==", 1]], "sounds": ["leah_grabsupplies"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "take_tent_leo": {
+      "signal": "take_tent", "when": [["voice", "==", 0]], "sounds": ["leo_packingup"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "take_tent_leah": {
+      "signal": "take_tent", "when": [["voice", "==", 1]], "sounds": ["leah_packingup"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "settle_leo": {
+      "signal": "settle", "when": [["voice", "==", 0]], "sounds": ["leo_packingup"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "settle_leah": {
+      "signal": "settle", "when": [["voice", "==", 1]], "sounds": ["leah_packingup"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "released_leo": {
+      "comment": "ANY OTHER ORDER is an okay for now (the user's, 2026-10-16), until it has a line of its own - which is a row's sounds and no code, each order being its own signal: released back to his work (a post's or a tower's Release), a chip turned off (straight_on), his tent pitched where he stands, sent to pick fruit or draw water (forage; `what` 1 fruit, 2 water).",
+      "signal": "released", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "released_leah": {
+      "signal": "released", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "straight_on_leo": {
+      "signal": "straight_on", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "straight_on_leah": {
+      "signal": "straight_on", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "pitch_leo": {
+      "signal": "pitch", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "pitch_leah": {
+      "signal": "pitch", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "forage_leo": {
+      "signal": "forage", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
+      "bus": "voice", "gain": 0.75, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
+    },
+    "forage_leah": {
+      "signal": "forage", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
+      "bus": "voice", "gain": 1.0, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "dx", "in": [-30, 30], "out": [-0.3, 0.3]}
     }
   }
 }

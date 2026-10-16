@@ -101,7 +101,10 @@
           "group":    "her"             one line at a time per group
           "priority": 0
           "busy":     "skip"            the group is speaking: skip, queue (for max_wait ticks),
-          "max_wait": 60                or interrupt a lower priority
+          "max_wait": 60                or interrupt a lower priority - or replace, which cuts
+                                        one of the same priority too, so the newest line is the
+                                        one heard: a person answering every click. Neither cuts
+                                        into the group's gap once a line has ended
           "gap":      0                 fewest ticks between two firings of this cue
           "max_instances": 0            most playing at once; 0 is no limit
           "on_end":   "drop"            when its scope ends: drop what is waiting (and let what is
@@ -270,7 +273,7 @@ private:
     };
     enum Trigger{ TRIGGER_SIGNAL, TRIGGER_BEGIN, TRIGGER_END };
     enum OnEnd{ END_DROP, END_STOP, END_KEEP };
-    enum Busy{ BUSY_SKIP, BUSY_QUEUE, BUSY_INTERRUPT };
+    enum Busy{ BUSY_SKIP, BUSY_QUEUE, BUSY_INTERRUPT, BUSY_REPLACE };
 
     struct Cue{
         std::string name;

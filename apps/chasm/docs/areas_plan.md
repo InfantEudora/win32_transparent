@@ -121,3 +121,33 @@ seconds.
 Open with the user:
 - The far side of the chasm is the same temperate plateau, so it is part of "the plateau" - found at the
   landing. It could be an area of its own, with the chasm.
+
+## The music (2026-10-16)
+
+The user asked for the score from apps/music, handed over the way archer's is: tuned in the music app,
+then published to the game. The way the game plays it was agreed 2026-10-14 (the music app's readme,
+"chasm.json"), and is built here, because the clouds and the chasm it is faded by are what this plan
+measures.
+
+- **Published** with `make publish GAME=chasm SCORE=chasm` from apps/music: `assets/music/chasm.json` and its
+  46 samples as `.ogg`, 77 MB of wav to 2.2 MB. Publish again after tuning; the game plays what it was last
+  given.
+- **Three players on the one score** (`ApplicationChasmMusic.cpp`), each on a bus of its own under `music`:
+  - **the land**, in the season's section, sent the next at the season's turn - taken at its next bar line,
+    with the score's crossfade. It plays under the title too, in spring before there is a colony;
+  - **the clouds** and **the chasm**, layers faded in by their SHARE of the view: round the view's centre,
+    out to `MUSIC_VIEW_REACH` of the camera's distance, the middle counting most, how much of the land is
+    unexplored and how much is chasm that has been seen. Heard from `MUSIC_SHARE_FROM` to `MUSIC_SHARE_FULL`
+    on a smooth step, eased over `MUSIC_EASE_S`; the land goes down by `MUSIC_LAND_DUCK` under a layer at
+    full, so two keys are never heard at full together. A layer silent for `MUSIC_LAYER_REST_S` is paused.
+- **The chasm is an area** (`AREA_CHASM`, its floor, seen as the lid from the rim), so its first sight is a
+  discovered event like any other; the cue table's `chasm_reveal` row sends the score's `reveal` stinger
+  through the `music` action (archer's), in place of the chime. Found at the landing it is home, and silent.
+- **Pause:** the music plays on, as the water does - a colony is often paused to think. Archer's pauses
+  with the game; this was the agent's choice, for the user to overrule.
+- `chasm_sound` reports each player's section, share, level and whether it is held.
+
+Checked in a muted instance: the whole map in view (all cloud) brought the clouds layer up and the land
+down to 0.62; the camp's explored ground let it fade back over a few seconds; `set_day 10` moved the land
+to summer at its next bar line; the chasm found from the rim fired `chasm_reveal`; a view over the chasm
+seen brought the chasm layer to full with the land at 0.3.
