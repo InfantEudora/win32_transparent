@@ -6,7 +6,7 @@ status: partial
 summary: Homes and the land within a walk of them - further the more beds they have, and growing from every building that stands. People only take on work in their own settlement, and nothing new is placed outside every settlement.
 plans: settlements_plan.md > Decided; settlements_plan.md > Step 1: territories; settlements_plan.md > Growing from every building (the user's, 2026-10-12); settlements_plan.md > As built: step 1; settlements_plan.md > Founding: decided; settlements_plan.md > Founding: as built, step 1
 code: Economy.h: ECONOMY_SETTLEMENT_REACH ECONOMY_SETTLEMENT_FIRST ECONOMY_SETTLEMENT_PER_BED ECONOMY_SETTLEMENT_BUILDING ECONOMY_SETTLEMENT_TOWER ECONOMY_SETTLEMENT_WALL EconomySettlementReach EconomySettlementOf EconomyPersonSettlement EconomyCommandInTerritory; Economy.cpp: Settle Ours HouseFamilies; Walkers.cpp: MapFlood; ApplicationChasmBorders.cpp: UploadBorders DrawWalkTip; ApplicationChasmSelect.cpp: SelectionColony
-verified: 2026-10-12
+verified: 2026-10-17
 ---
 
 A **home** founds a settlement - a [[Camp|camp]] or a [[House|house]], since a tent is just a house - and the
@@ -65,8 +65,8 @@ Its border is marked on the land the way The Settlers marks one: a slim post wit
 edge of land where one settlement ends or two meet, the flag turned toward the territory - not along a cliff's edge.
 With anything selected, the top left names its colony: COLONY 1, 2, 3 in the order founded, a person's by their home.
 
-With a person selected, the cursor says how far it is to walk to the land under it ("37 units to walk"), in
-amber when that land is in another settlement or none, and "No way there" when it can't be reached.
+With a person selected, the cursor says how far it is to walk to the land under it ("37 units to walk"), amber when
+it is in another settlement or none, "No way there" if it can't be reached, and "Hidden under the clouds" under them.
 
 ## Planned
 

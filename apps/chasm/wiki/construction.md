@@ -6,7 +6,7 @@ status: built
 summary: What the player places in play is a site, built a storey at a time from wood that people without a job, and builders, carry to it.
 plans: construction_plan.md > As built; construction_plan.md > Which site goes first; construction_plan.md > Cancel (the user, 2026-10-16); builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11)
 code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled Derive; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND CRATE_SITE; Zones.h: ZONE_OP_SITE_CANCEL ZONE_OP_FIELD_CANCEL; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips
-verified: 2026-10-16
+verified: 2026-10-17
 ---
 
 ## Sites
@@ -33,9 +33,9 @@ brought is left where it stood as a [[Crate|crate]], "A site's goods"; so when t
 **A site over trees** waits for them: they stand until a [[Woodcutter]] fells them, the first he goes for,
 and nothing of it rises until the last is down - then at once, if it has all it takes. Its card counts them.
 
-**Before placing**, the tool in hand shows what a click would cost beside the cursor, by these same rules
-(`EconomyKindStoreyCost`), and the trees there to fell first: a line or bridge being dragged all of it,
-nothing for erasing. Hovering a tool on the build bar shows about what a plot or cell of it costs.
+**Before placing**, the tool in hand shows beside the cursor what a click would cost, by these same rules
+(`EconomyKindStoreyCost`), and the trees to fell first: a dragged line or bridge all of it, nothing for erasing,
+only HIDDEN UNDER THE CLOUDS under them. A tool hovered on the build bar shows about what a plot or cell of it costs.
 
 ## Who builds
 

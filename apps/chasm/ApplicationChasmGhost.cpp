@@ -39,7 +39,7 @@
     storeys it is painted with, and with the extension's corner plot that comes with it (ZoneJoinCorner); one
     storey more on what stands; a garden's, lot's or wall's plot; a field's or range's cell. A line being drawn
     or a bridge dragged, all of it. Nothing for what is that already - a lot painted on a lot is only claimed -
-    nor for erasing. Dim where the ghost is red.
+    nor for erasing. Dim where the ghost is red, and under the clouds only that it is hidden.
 */
 
 #define GHOST_LIFT          0.06f       //a ground ghost over the ground's relief, clear of the ground's own fill
@@ -468,6 +468,11 @@ void ApplicationChasm::UpdateGhost(){
         }
         if (!ghost_cost_text.empty() && note){
             ghost_cost_text += note;
+        }
+        //Under the clouds the tag says only that (the user's, 2026-10-17): the trees to fell, the room, the ice a bridge
+        //waits for are the hidden ground's, and gave it away. A line is held to them per plot, so it keeps its tag.
+        if (!f_line && !key.f_explored && tool != CHASM_TOOL_ERASE && !verts.empty()){
+            ghost_cost_text = "HIDDEN UNDER THE CLOUDS";
         }
     }
     f_ghost_cost_ok = f_ok;

@@ -67,6 +67,17 @@ is `wiki/birds.md`. The figures are the constants in `Birds.h`; the tuning table
    burst shell.
 4. A flock whose woods are all felled finds a new home in the nearest trees left.
 
+**Wanderers, added the same day at the user's ask** ("a few birds fly around in small flocks and single"):
+
+- A flock's role is now `BIRD_ROLE_FOREST`, `_COLONY` or `_WANDER`. There are `BIRD_WANDERERS` wanderers of
+  one to three birds (`BIRD_WANDER_ALONE` of them single), half homed round the colony.
+- They sit 8-25 s, fly to trees at least `BIRD_WANDER_AWAY` off, circle 4-12 s, and fly on rather than land
+  half the time, a little higher than the flocks.
+- Every flock now travels on a turning, gently wandering way (`BIRD_TURN_RATE`, `BIRD_WOBBLE`) instead of a
+  straight line.
+- Seen in game: at any moment 4-8 of the 8 are in the air, three of them over the colony's woods. The step
+  costs 60-100 µs a frame in debug, up from 42-49.
+
 **Not yet:**
 
 - The calls are made (`BirdCall`) but dropped until step 3.

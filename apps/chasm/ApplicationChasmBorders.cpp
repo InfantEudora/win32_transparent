@@ -114,7 +114,8 @@ void ApplicationChasm::UploadBorders(){
     RENDER THREAD, from DrawOverlay in play mode (settlements_plan.md, the user's): with a person selected, how far
     it is to walk to the plot under the cursor - his straight walk where he would take one, else the grid's route
     (Walkers::PlanRoute, the view's own search) - beside the cursor, and whether it is outside his settlement. Worked
-    out again only when he moves to another plot, the cursor to another, or the zones change. Not with a tool in hand.
+    out again only when he moves to another plot, the cursor to another, or the zones change. Not with a tool in hand,
+    and nothing of it under the clouds.
 */
 void ApplicationChasm::DrawWalkTip(float s){
     int mx = overlay_mouse_x.load();
@@ -146,6 +147,25 @@ void ApplicationChasm::DrawWalkTip(float s){
     }
     GridPick here = k ? w->picker->Pick(k->pos) : GridPick();
     if (!k || !here.f_hit || here.plot < 0){
+        return;
+    }
+    auto tip = [&](const std::string& text, uint32_t colour){
+        const float size = 14.0f * s;
+        const float side = 9.0f * s;
+        vec2 m = overlay->MeasureText(text.c_str(),size);
+        vec2 t0((float)mx + 18.0f * s,(float)my + 14.0f * s);
+        vec2 t1(t0.x + m.x + side * 2.0f,t0.y + 24.0f * s);
+        overlay->AddRect(t0,t1,7.0f * s,HudFaded(HUD_PANEL,225));
+        overlay->AddText(text.c_str(),vec2(t0.x + side,t0.y + 17.0f * s),size,colour,UI_ALIGN_LEFT);
+    };
+    /*
+        Under the clouds it says only that (the user's, 2026-10-17): no way there, the ice on the way, whose ground it is
+        are each the hidden ground's, and gave it away. Asked at the plot's middle, as a play command is held to the
+        clouds (ZoneCommandExplored). He can still be sent there - that is how the clouds are pushed back.
+    */
+    std::shared_ptr<const Exploration> ex = GetExploration();
+    if (ex && !ex->Explored(w->grid->fine.pos[hover.plot])){
+        tip("Hidden under the clouds",HUD_TEXT_DIM);
         return;
     }
     //Again each day too: the ice comes and goes with the snow (seasons_plan.md, ICE).
@@ -205,11 +225,5 @@ void ApplicationChasm::DrawWalkTip(float s){
             colour = HUD_AMBER;
         }
     }
-    const float size = 14.0f * s;
-    const float side = 9.0f * s;
-    vec2 m = overlay->MeasureText(text.c_str(),size);
-    vec2 t0((float)mx + 18.0f * s,(float)my + 14.0f * s);
-    vec2 t1(t0.x + m.x + side * 2.0f,t0.y + 24.0f * s);
-    overlay->AddRect(t0,t1,7.0f * s,HudFaded(HUD_PANEL,225));
-    overlay->AddText(text.c_str(),vec2(t0.x + side,t0.y + 17.0f * s),size,colour,UI_ALIGN_LEFT);
+    tip(text,colour);
 }

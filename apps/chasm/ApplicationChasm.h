@@ -953,7 +953,7 @@ private:
         vec2 at;
         float reach = 0.0f;
         int count = 0;
-        bool f_colony = false;
+        int role = BIRD_ROLE_FOREST;
     };
     std::mutex birds_mutex;
     std::vector<BirdRequest> bird_requests;

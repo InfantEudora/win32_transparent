@@ -53,6 +53,25 @@
     that puts it up. The user's moment (birds_plan.md): birds flying out of the trees being cut.
 */
 #define BIRD_LURE_REACH         16.0f
+/*
+    WANDERERS (the user's, 2026-10-17: "a few birds fly around in small flocks and single"): ones, twos and threes that
+    are mostly in the air - a short sit, then a long flight to trees far off, circling longer and as often flying on as
+    coming down. Half are homed round the colony, so there are some where the player looks.
+*/
+#define BIRD_WANDERERS          8
+#define BIRD_WANDER_ALONE       0.4f    //the share that are one bird; the rest two or three
+#define BIRD_WANDER_COLONY      4       //of them, homed within BIRD_WANDER_ROAM of the colony's middle
+#define BIRD_WANDER_ROAM        70.0f   //how far from home they settle...
+#define BIRD_WANDER_AWAY        25.0f   //...at least this far from where they last sat
+#define BIRD_WANDER_SIT_MIN_S   8.0f
+#define BIRD_WANDER_SIT_MAX_S   25.0f
+#define BIRD_WANDER_CIRCLE_MAX_S 12.0f  //circling from BIRD_CIRCLE_S to this
+#define BIRD_WANDER_FLY_ON      0.5f    //the chance that, done circling, they fly on rather than come down
+#define BIRD_WANDER_LIFT        4.0f    //up to this much higher than the flocks fly
+//Travelling, the flock's way turns rather than snaps, and wanders a little off the straight line - more for a wanderer.
+#define BIRD_TURN_RATE          1.0f    //radians a second
+#define BIRD_WOBBLE             0.25f   //radians
+#define BIRD_WANDER_WOBBLE      0.6f
 #define BIRD_ROAM               30.0f   //how far from its home a flock settles
 #define BIRD_CRUISE_SPEED       5.0f
 #define BIRD_FLUSH_SPEED        8.0f
@@ -102,6 +121,10 @@ struct BirdWorld{
 #define BIRD_FLYING     1
 #define BIRD_LANDING    2       //on its way down to its perch
 
+#define BIRD_ROLE_FOREST    0   //a flock homed in a forest's core
+#define BIRD_ROLE_COLONY    1   //...round the colony, following the axe (BIRD_LURE_REACH)
+#define BIRD_ROLE_WANDER    2   //one to three birds, mostly in the air (BIRD_WANDERERS)
+
 #define FLOCK_SETTLED   0       //in its roost, every bird perched or on its way down
 #define FLOCK_TRAVEL    1       //the anchor on its way to the next roost
 #define FLOCK_CIRCLE    2       //...and round it, before they come down
@@ -131,7 +154,9 @@ struct Bird{
 struct BirdFlock{
     uint32_t id = 0;
     int state = FLOCK_SETTLED;
-    bool f_colony = false;      //homed by the colony: follows the axe (BIRD_LURE_REACH)
+    int role = BIRD_ROLE_FOREST;
+    float heading = 0.0f;       //travelling: the anchor's way, radians about +Y from +Z
+    float lift = 0.0f;          //how much higher than BIRD_CRUISE_CLEAR it flies: a wanderer's own
     vec2 home;                  //the forest it keeps to
     vec3 anchor;                //where the flock is: a point in the air the birds fly round
     vec3 anchor_vel;
@@ -169,7 +194,7 @@ class BirdSky{
 public:
     void Reset(uint32_t seed);
     //A flock of `count` settled in a roost near `home` - false where there is none.
-    bool AddFlock(const BirdWorld& w, const vec2& home, int count, bool f_colony = false);
+    bool AddFlock(const BirdWorld& w, const vec2& home, int count, int role = BIRD_ROLE_FOREST);
     //`dt` game seconds. `scares` are this step's: whoever is walking, chopping, or a tree just down.
     void Step(const BirdWorld& w, float dt, const std::vector<BirdScare>& scares);
     //Every flock in reach of `s` scared up now, whatever it is doing (the tool's `flush`).
@@ -186,6 +211,7 @@ private:
     std::vector<BirdFlock> flocks;
     std::vector<BirdCall> calls;
     float Draw(BirdFlock& f, uint32_t salt);
+    float SitTime(BirdFlock& f);    //how long it stays settled this time: a wanderer's sits are short
     void Settle(BirdFlock& f);
     void TakeOff(BirdFlock& f, float stagger);
     void Scare(const BirdWorld& w, BirdFlock& f, const BirdScare& s);

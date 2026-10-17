@@ -27,6 +27,10 @@ tree or one built over is no perch. Every so often, after {BIRD_RESTLESS_MIN_S} 
 [[Woodcutter|woodcutter]] has felled at lately, if there is one, and that becomes their home. If their
 woods are all felled, they find a new home in the nearest trees left.
 
+**Wanderers** are mostly in the air: {BIRD_WANDERERS} of them, one bird or two or three, {BIRD_WANDER_COLONY}
+homed round the colony. They sit for only {BIRD_WANDER_SIT_MIN_S} to {BIRD_WANDER_SIT_MAX_S} seconds, then fly
+to trees at least {BIRD_WANDER_AWAY} away, circle longer, and as often fly on as come down.
+
 ## What puts them up
 
 | | Reach |

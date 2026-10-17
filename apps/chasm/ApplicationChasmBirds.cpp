@@ -227,14 +227,20 @@ void ApplicationChasm::HomeBirds(const ChasmWorld& w, const EconomyState* e){
         colony = colony / (float)e->workers.size();
     }
     std::vector<int> near_colony;
+    std::vector<int> wander_near;
     std::vector<int> cores;
+    std::vector<int> all;
     for (const std::vector<int>& cell : bird_cells){
         for (int i : cell){
             const PropInstance& p = f.props[i];
+            all.push_back(i);
             if (f_colony){
                 float d = (vec2(p.pos.x,p.pos.z) - colony).length();
                 if (d >= BIRD_COLONY_MIN && d <= BIRD_COLONY_MAX){
                     near_colony.push_back(i);
+                }
+                if (d <= BIRD_WANDER_ROAM){
+                    wander_near.push_back(i);
                 }
             }
             if (p.plot >= 0 && (size_t)p.plot < f.core.size() && f.core[p.plot]){
@@ -243,9 +249,10 @@ void ApplicationChasm::HomeBirds(const ChasmWorld& w, const EconomyState* e){
         }
     }
     by_seed(near_colony);
+    by_seed(wander_near);
     by_seed(cores);
-    std::vector<vec2> taken;
-    auto take = [&](const std::vector<int>& from, int up_to, float spacing){
+    by_seed(all);
+    auto take = [&](std::vector<vec2>& taken, const std::vector<int>& from, int up_to, float spacing){
         for (int i : from){
             if ((int)taken.size() >= up_to){
                 return;
@@ -260,25 +267,40 @@ void ApplicationChasm::HomeBirds(const ChasmWorld& w, const EconomyState* e){
             }
         }
     };
-    take(near_colony,BIRD_COLONY_FLOCKS,BIRD_COLONY_SPACING);
+    std::vector<vec2> taken;
+    take(taken,near_colony,BIRD_COLONY_FLOCKS,BIRD_COLONY_SPACING);
     int by_colony = (int)taken.size();
-    take(cores,BIRD_FLOCKS,BIRD_HOME_SPACING);
+    take(taken,cores,BIRD_FLOCKS,BIRD_HOME_SPACING);
+    //The wanderers: half round the colony, where the player looks, the rest anywhere there are trees.
+    std::vector<vec2> wanderers;
+    take(wanderers,wander_near,BIRD_WANDER_COLONY,BIRD_WANDER_AWAY * 0.5f);
+    take(wanderers,all,BIRD_WANDERERS,BIRD_WANDER_AWAY);
     //The flocks themselves are made by UploadBirds, which has the roosts.
+    auto draw_of = [seed](const vec2& at){
+        return Hash(seed ^ Hash((uint32_t)(at.x * 7.0f) ^ (uint32_t)(at.y * 13.0f)));
+    };
     std::lock_guard<std::mutex> lock(birds_mutex);
     for (size_t i = 0; i < taken.size(); i++){
-        const vec2& at = taken[i];
+        BirdRequest r;
+        r.op = BIRD_REQUEST_SPAWN;
+        r.at = taken[i];
+        r.role = ((int)i < by_colony) ? BIRD_ROLE_COLONY : BIRD_ROLE_FOREST;
+        r.count = BIRD_FLOCK_MIN + (int)(draw_of(r.at) % (uint32_t)(BIRD_FLOCK_MAX - BIRD_FLOCK_MIN + 1));
+        bird_requests.push_back(r);
+    }
+    for (const vec2& at : wanderers){
         BirdRequest r;
         r.op = BIRD_REQUEST_SPAWN;
         r.at = at;
-        r.f_colony = (int)i < by_colony;
-        r.count = BIRD_FLOCK_MIN + (int)(Hash(seed ^ Hash((uint32_t)(at.x * 7.0f) ^ (uint32_t)(at.y * 13.0f)))
-                                         % (uint32_t)(BIRD_FLOCK_MAX - BIRD_FLOCK_MIN + 1));
+        r.role = BIRD_ROLE_WANDER;
+        uint32_t h = draw_of(at);
+        r.count = ((float)(h & 0xFFFF) / 65536.0f < BIRD_WANDER_ALONE) ? 1 : 2 + (int)((h >> 16) & 1);
         bird_requests.push_back(r);
     }
     f_birds_homed = true;
     birds_colony = f_colony ? colony : vec2();
-    debug->Info("Birds: %i flock homes, %i by the colony%s\n",(int)taken.size(),by_colony,
-                f_colony ? "" : " (none: no colony)");
+    debug->Info("Birds: %i flock homes, %i by the colony%s; %i wanderers\n",(int)taken.size(),by_colony,
+                f_colony ? "" : " (none: no colony)",(int)wanderers.size());
 }
 
 //What the birds ask of the world this frame: the ground, the roosts, which trees still stand.
@@ -499,7 +521,7 @@ void ApplicationChasm::UploadBirds(){
     }
     for (const BirdRequest& r : requests){
         if (r.op == BIRD_REQUEST_SPAWN){
-            if (!birds.AddFlock(bw,r.at,r.count,r.f_colony)){
+            if (!birds.AddFlock(bw,r.at,r.count,r.role)){
                 debug->Info("Birds: no roost near %.1f, %.1f for a flock\n",r.at.x,r.at.y);
             }
         }else if (r.op == BIRD_REQUEST_FLUSH){
@@ -586,6 +608,7 @@ void ApplicationChasm::UploadBirds(){
     if (++bird_status_frames >= 10){
         bird_status_frames = 0;
         static const char* states[] = {"settled","travel","circle","scatter"};
+        static const char* roles[] = {"forest","colony","wander"};
         json flocks = json::array();
         for (const BirdFlock& f : birds.Flocks()){
             int perched = 0;
@@ -603,7 +626,7 @@ void ApplicationChasm::UploadBirds(){
                                   {"roost_tree",f.roost.tree},{"perches",(int)f.roost.perches.size()},
                                   {"home",{f.home.x,f.home.y}},{"timer",f.timer},{"wary_s",f.wary_left},
                                   {"flushes",f.flushes},{"scare_gap",nearest},
-                                  {"colony",f.f_colony}});
+                                  {"role",roles[f.role % 3]}});
         }
         json status{{"flocks",flocks},{"birds",birds.Count()},{"objects",(int)bird_objects.size()},
                     {"shape_keys",bird_mesh->num_morph_targets},{"tree_top",bird_tree_top},
@@ -621,7 +644,7 @@ void ApplicationChasm::RegisterBirdTools(){
         "The birds (birds_plan.md, ApplicationChasmBirds.cpp) - VIEW, never state: flocks homed in the forests, perched "
         "in the trees, moving on now and then, scared up by anyone walking near, an axe at a tree or a tree felled. "
         "op status (default): each flock's state, birds, anchor, roost; the scares this frame. op spawn: a flock of "
-        "`count` near x,z (default the camera target). op flush: scares every flock within `reach` (default the axe's) "
+        "`count` near x,z (default the camera target), living by `role`. op flush: scares every flock within `reach` (default the axe's) "
         "of x,z, as if someone were there. op clear: no flocks. op reset: the map's flocks made again at their homes. "
         "op bench: one bird at x,z (default the camera target, `height` over the ground, default 1.5), turning slowly, "
         "held in `pose` glide|up|down|folded or `flap`ping on the real clock, so it moves in a pause; pose off removes "
@@ -634,6 +657,8 @@ void ApplicationChasm::RegisterBirdTools(){
                 {"x",{{"type","number"}}},
                 {"z",{{"type","number"}}},
                 {"count",{{"type","integer"},{"description","spawn: birds in the flock (default 7)"}}},
+                {"role",{{"type","string"},{"enum",json::array({"forest","colony","wander"})},
+                         {"description","spawn: how it lives (default forest); wander is mostly in the air"}}},
                 {"reach",{{"type","number"},{"description","flush: how far it reaches"}}},
                 {"pose",{{"type","string"},{"enum",json::array({"glide","up","down","folded","flap","off"})}}},
                 {"height",{{"type","number"},{"description","bench: over the ground"}}},
@@ -660,6 +685,8 @@ void ApplicationChasm::RegisterBirdTools(){
                      : (op == "clear") ? BIRD_REQUEST_CLEAR : BIRD_REQUEST_RESET;
                 r.at = at;
                 r.count = std::max(1,std::min(BIRD_FLOCK_MAX * 3,args.value("count",7)));
+                std::string role = args.value("role","forest");
+                r.role = (role == "wander") ? BIRD_ROLE_WANDER : (role == "colony") ? BIRD_ROLE_COLONY : BIRD_ROLE_FOREST;
                 r.reach = args.value("reach",BIRD_REACH_CHOP);
                 std::lock_guard<std::mutex> lock(birds_mutex);
                 bird_requests.push_back(r);

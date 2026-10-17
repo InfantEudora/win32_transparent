@@ -80,11 +80,17 @@ void BirdSky::TakeCalls(std::vector<BirdCall>& out){
     calls.clear();
 }
 
-bool BirdSky::AddFlock(const BirdWorld& w, const vec2& home, int count, bool f_colony){
+float BirdSky::SitTime(BirdFlock& f){
+    return (f.role == BIRD_ROLE_WANDER) ? Mid(BIRD_WANDER_SIT_MIN_S,BIRD_WANDER_SIT_MAX_S,Draw(f,1))
+                                        : Mid(BIRD_RESTLESS_MIN_S,BIRD_RESTLESS_MAX_S,Draw(f,1));
+}
+
+bool BirdSky::AddFlock(const BirdWorld& w, const vec2& home, int count, int role){
     BirdFlock f;
     f.id = next_id++;
     f.home = home;
-    f.f_colony = f_colony;
+    f.role = role;
+    f.lift = (role == BIRD_ROLE_WANDER) ? Draw(f,5) * BIRD_WANDER_LIFT : 0.0f;
     BirdRoost r;
     if (!w.roost || !w.roost(home,BIRD_ROAM * 0.5f,std::vector<BirdScare>(),Mix(seed ^ f.id),r) || r.perches.empty()){
         return false;
@@ -111,7 +117,7 @@ bool BirdSky::AddFlock(const BirdWorld& w, const vec2& home, int count, bool f_c
     }
     f.anchor = r.at + vec3(0.0f,2.0f,0.0f);
     f.state = FLOCK_SETTLED;
-    f.timer = Mid(BIRD_RESTLESS_MIN_S,BIRD_RESTLESS_MAX_S,Draw(f,1));
+    f.timer = SitTime(f);
     flocks.push_back(f);
     return true;
 }
@@ -212,30 +218,37 @@ void BirdSky::NextRoost(const BirdWorld& w, BirdFlock& f, const std::vector<Bird
     if (f.wary_left > 0.0f){
         avoid.push_back(f.wary);
     }
-    //Restless, it moves on rather than settling where it sat.
-    if (f.roost.tree >= 0 && f.state == FLOCK_SETTLED){
-        avoid.push_back(BirdScare{Flat(f.roost.at),6.0f});
+    //Restless - or a wanderer flying on - it moves on rather than settling where it sat; a wanderer goes far.
+    const bool f_wander = (f.role == BIRD_ROLE_WANDER);
+    if (f.roost.tree >= 0 && (f.state == FLOCK_SETTLED || f.state == FLOCK_CIRCLE)){
+        avoid.push_back(BirdScare{Flat(f.roost.at),f_wander ? BIRD_WANDER_AWAY : 6.0f});
     }
+    const float roam = f_wander ? BIRD_WANDER_ROAM : BIRD_ROAM;
     BirdRoost r;
     uint32_t draw = Mix(seed ^ f.id ^ (f.draws++ * 0x27D4EB2Du));
+    bool f_found = false;
     //A colony flock follows the axe: near one of the trees being felled, which becomes its home.
-    if (f.f_colony && !w.lures.empty()){
+    if (f.role == BIRD_ROLE_COLONY && !w.lures.empty()){
         const vec2& lure = w.lures[draw % (uint32_t)w.lures.size()];
         if (w.roost && w.roost(lure,BIRD_LURE_REACH,avoid,draw,r) && !r.perches.empty()){
             f.roost = r;
             f.home = lure;
-            f.state = FLOCK_TRAVEL;
-            return;
+            f_found = true;
         }
     }
-    if (w.roost && w.roost(f.home,BIRD_ROAM,avoid,draw,r) && !r.perches.empty()){
+    if (!f_found && w.roost && w.roost(f.home,roam,avoid,draw,r) && !r.perches.empty()){
         f.roost = r;
-    }else if (w.roost && w.roost(Flat(f.anchor),BIRD_ROAM * 2.0f,avoid,draw,r) && !r.perches.empty()){
+    }else if (!f_found && w.roost && w.roost(Flat(f.anchor),roam * 2.0f,avoid,draw,r) && !r.perches.empty()){
         //Its woods felled: a new home in the nearest trees left.
         f.roost = r;
         f.home = Flat(r.at);
     }
-    //None clear: back over the old roost, to try again from there.
+    //None clear: back over the old roost, to try again from there. Setting off, the way it is already going, if any.
+    if (f.state != FLOCK_TRAVEL){
+        vec2 v = Flat(f.anchor_vel);
+        vec2 to = Flat(f.roost.at) - Flat(f.anchor);
+        f.heading = (v.length() > 0.5f) ? atan2f(v.x,v.y) : atan2f(to.x,to.y);
+    }
     f.state = FLOCK_TRAVEL;
 }
 
@@ -321,32 +334,49 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
         if (d <= BIRD_CIRCLE_RADIUS * 1.2f){
             f.state = FLOCK_CIRCLE;
             f.circle = atan2f(-to.x,-to.y);
-            f.timer = BIRD_CIRCLE_S;
+            f.timer = (f.role == BIRD_ROLE_WANDER) ? Mid(BIRD_CIRCLE_S,BIRD_WANDER_CIRCLE_MAX_S,Draw(f,6)) : BIRD_CIRCLE_S;
         }else{
-            vec2 step = to * (std::min(d,BIRD_CRUISE_SPEED * dt) / d);
-            f.anchor.x += step.x;
-            f.anchor.z += step.y;
+            /*
+                The way turns toward the roost at BIRD_TURN_RATE, wandering off the straight line by a slow swing - so a
+                flight is a curve. Near the roost the swing goes and it turns three times as hard, so it can never
+                circle short of the roost on a turn too wide to reach it.
+            */
+            float way = atan2f(to.x,to.y);
+            float rate = BIRD_TURN_RATE;
+            if (d > 2.5f * BIRD_CIRCLE_RADIUS){
+                float wobble = (f.role == BIRD_ROLE_WANDER) ? BIRD_WANDER_WOBBLE : BIRD_WOBBLE;
+                way += wobble * sinf(f.clock * 0.31f + (float)f.id * 1.7f);
+            }else{
+                rate *= 3.0f;
+            }
+            f.heading += Clamp(AngleTo(f.heading,way),-rate * dt,rate * dt);
+            float step = std::min(d,BIRD_CRUISE_SPEED * dt);
+            f.anchor.x += sinf(f.heading) * step;
+            f.anchor.z += cosf(f.heading) * step;
         }
         //Over the tallest tree: up at once, down slowly.
-        vec2 ahead = Flat(f.anchor) + ((d > 0.01f) ? to * (std::min(d,8.0f) / d) : vec2());
+        vec2 ahead = Flat(f.anchor) + vec2(sinf(f.heading),cosf(f.heading)) * std::min(d,8.0f);
         float ground = w.ground ? std::max(w.ground(Flat(f.anchor)),w.ground(ahead)) : 0.0f;
-        float want = ground + w.tree_top + BIRD_CRUISE_CLEAR;
+        float want = ground + w.tree_top + BIRD_CRUISE_CLEAR + f.lift;
         f.anchor.y = (want > f.anchor.y) ? want : std::max(want,f.anchor.y - BIRD_SINK_RATE * dt);
     }else if (f.state == FLOCK_CIRCLE){
         f.circle += BIRD_CRUISE_SPEED / BIRD_CIRCLE_RADIUS * dt;
         f.anchor.x = f.roost.at.x + sinf(f.circle) * BIRD_CIRCLE_RADIUS;
         f.anchor.z = f.roost.at.z + cosf(f.circle) * BIRD_CIRCLE_RADIUS;
-        float want = f.roost.at.y + 2.5f;
+        //Circling its way round: heading along the circle, so flying on leaves on the tangent, not a turn.
+        f.heading = f.circle + 1.5707963f;
+        float want = f.roost.at.y + 2.5f + f.lift;
         f.anchor.y = std::max(want,f.anchor.y - BIRD_SINK_RATE * dt);
         f.timer -= dt;
         if (f.timer <= 0.0f){
-            if (clear_of(Flat(f.roost.at)) && (!w.standing || f.roost.tree < 0 || w.standing(f.roost.tree))){
+            const bool f_fly_on = (f.role == BIRD_ROLE_WANDER) && Draw(f,7) < BIRD_WANDER_FLY_ON;
+            if (!f_fly_on && clear_of(Flat(f.roost.at)) && (!w.standing || f.roost.tree < 0 || w.standing(f.roost.tree))){
                 Settle(f);
                 for (Bird& b : f.birds){
                     b.state = BIRD_LANDING;
                 }
                 f.state = FLOCK_SETTLED;
-                f.timer = Mid(BIRD_RESTLESS_MIN_S,BIRD_RESTLESS_MAX_S,Draw(f,1));
+                f.timer = SitTime(f);
             }else{
                 NextRoost(w,f,scares);
             }

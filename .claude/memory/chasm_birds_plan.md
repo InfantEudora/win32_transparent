@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 2a27b5d5-13c2-4f25-8145-e56a2a256841
-  modified: 2026-10-16T23:42:42.128Z
+  modified: 2026-10-17T15:11:30.368Z
 ---
 
 Plan agreed 2026-10-17 (apps/chasm/docs/birds_plan.md - its "As built" section is the current state), for the demo:
@@ -30,7 +30,12 @@ Steps 1-2 + step 4's homes BUILT by me the same day, checked in a muted test cop
   physics_time_factor (tick count stutters at bird speed); cohesive flush (one way out, not a burst).
 - Measured: 42-49 us/frame for 84 birds in debug. At zoom 55 they read over open ground/water, nearly lost over dark
   pine; colour reads blue-purple (sheen cell). Size knob BIRD_DRAW_SCALE.
-- chasm_birds: status (flushes, scare_gap, lures, step_us), spawn, flush, clear, reset, bench, show/hide.
+- chasm_birds: status (flushes, scare_gap, lures, step_us, role), spawn (role forest|colony|wander), flush, clear,
+  reset, bench, show/hide.
+- WANDERERS (user, later 2026-10-17: "a few birds fly around in small flocks and single"): BIRD_ROLE_WANDER, 8 of 1-3
+  birds, half by the colony; short sits, long flights, fly on half the time; all flocks now fly curved ways
+  (BIRD_TURN_RATE/WOBBLE). Step cost rose to 60-100 us/frame debug. User liked the birds ("looks very nice") and is
+  gathering the sounds themselves.
 
 **Why:** birds must never draw from the shared RRandom or enter save/hash/recording ([[rrand-shared-stream-todo]]).
 **How to apply:** next per the plan: sound (step 3, BirdCall already made, dropped in UploadBirds), hide over clouds +
