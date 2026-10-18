@@ -4,16 +4,16 @@ aliases: woodcutter's hut, woodcutters' huts, hut, woodpile
 kind: people
 status: built
 summary: The only one who fells trees. Works from a hut or from the camp, fells what is in the way first, and carries the wood to a store, or into the hut and onto its lot.
-plans: economy_plan.md > The woodcutter: logs first; woodcutting_plan.md > Decided (the user, 2026-10-11); woodcutting_plan.md > As built (2026-10-11); yards_plan.md > Noted
-code: Economy.cpp: TickWorker FindTree WoodNear TreesInTheWay FetchFromWorkplace FindStore Felled AssignJobs EconomySkillFactor RouteTo; Economy.h: WORKER_JOB_WOODCUTTER; Walkers.h: WALK_WHO_ICE
+plans: economy_plan.md > The woodcutter: logs first; woodcutting_plan.md > Decided (the user, 2026-10-11); woodcutting_plan.md > As built (2026-10-11); yards_plan.md > Noted; building_size_plan.md > Decided (the user, 2026-10-18)
+code: Economy.cpp: TickWorker FindTree WoodNear TreesInTheWay FetchFromWorkplace FindStore Felled AssignJobs EconomySkillFactor RouteTo; Economy.h: WORKER_JOB_WOODCUTTER ECONOMY_PLOTS_PER_WORKER; Walkers.h: WALK_WHO_ICE
 tuning: ECONOMY_PICK_SECONDS
 verified: 2026-10-18
 ---
 
 A job at a **woodcutter's hut**, which the player drags out over at most {ZONE_BUILDING_MAX_PLOTS:#plots}, or at the [[Camp|camp]], which has one
 woodcutter's place of its own until a hut stands in its [[Settlement|settlement]]: the hut takes it over. **Only a woodcutter fells a tree**: a [[Roads and walls|road]], a wall or a
-[[Construction|site]] with a tree in its way waits for one. A hut's card can **stop work**: it fells nothing
-then, its woodcutter goes free, and the camp's woodcutter does not come back.
+[[Construction|site]] with a tree in its way waits for one. A hut takes a woodcutter for every {ECONOMY_PLOTS_PER_WORKER:#plots} standing,
+rounded up. Its card can **stop work**: it fells nothing then, its woodcutters go free, and the camp's does not come back.
 
 ## What a log is worth
 

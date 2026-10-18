@@ -4,10 +4,10 @@ aliases: cell, cells, plot, plots, grid, coarse cell, coarse cells, fine cell, f
 kind: world
 status: built
 summary: The ground is an irregular grid of four-sided cells. Buildings are painted on plots and fields on coarse cells, and their area decides what they hold, house and grow.
-plans: grid_plan.md > 1. How the grid is made; grid_plan.md > 2. Plots and cells
+plans: grid_plan.md > 1. How the grid is made; grid_plan.md > 2. Plots and cells; building_size_plan.md > Decided (the user, 2026-10-18)
 code: Grid.h: GridSettings; GridPick.h: PlotArea CoarseArea; Zones.cpp: ZoneBuildingFigures
 measured: PLOT = 3.3; PLOT_SMALL = 1.9; PLOT_LARGE = 4.5; CELL = 13.1
-verified: 2026-10-09
+verified: 2026-10-18
 ---
 
 ## The grid
@@ -49,4 +49,6 @@ or houses goes by that. A field's harvest goes by the area of its built cells.
 - Harvests are at full yield. The crop before changes them ([[Food|rotation]]); a slow farmer only makes
   them take longer.
 - A field costs {ECONOMY_FIELD_WOOD_PER_CELL} wood a cell whatever the cell's size, so large cells are the
-  better buy.
+  better buy. A building likewise: each plot's ground storey takes a footing of {ECONOMY_FOOTING_WOOD} wood more
+  ([[Construction]]), so the same floor on fewer, larger plots costs less - and from storey
+  {ECONOMY_HIGH_STOREY} up a storey takes [[Stone|stone]] too.

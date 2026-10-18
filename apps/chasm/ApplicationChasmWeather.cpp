@@ -175,7 +175,7 @@ void ApplicationChasm::BuildWeatherScene(){
         set->SetCastsShadow(false);
         set->SetInstances(std::vector<fmat4>());
         set->SetVisibility(false);
-        main_scene->AddObject(set);
+        world_scene->AddObject(set);
     };
     flakes(snow_mesh,snow_set,snow_shader_index,"Snow");
     flakes(spindrift_mesh,spindrift_set,spindrift_shader_index,"Spindrift");
@@ -324,7 +324,7 @@ void ApplicationChasm::UploadWeather(){
     weather_last = now;
     //The weather clock stands still in a pause, as the water and the mist do (the user's, 2026-10-18): the flakes hang
     //where they were and the trees hold their bend. Running, it keeps real time at any speed.
-    const float run = main_scene->IsPhysicsPaused() ? 0.0f : dt;
+    const float run = world_scene->IsPhysicsPaused() ? 0.0f : dt;
     weather_seconds += (double)run;
 
     WeatherView v;
@@ -458,7 +458,7 @@ void ApplicationChasm::UploadWeather(){
         return;
     }
     //The cells round a point ahead along the view, out to SNOW_REACH of it: past that the shader has faded them out.
-    Camera* camera = main_scene->camera;
+    Camera* camera = world_scene->camera;
     vec3 eye = camera->GetPosition();
     vec3 look = vec3(v.at.x,v.ground,v.at.y) - eye;
     float l = look.length();

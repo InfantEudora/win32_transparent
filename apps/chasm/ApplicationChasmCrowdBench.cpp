@@ -110,13 +110,13 @@ void ApplicationChasm::UploadCrowdBench(){
 
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     int side = (int)ceilf(sqrtf((float)want));
-    main_scene->AtTickBoundary([&](){
+    world_scene->AtTickBoundary([&](){
         for (Object* o : made){
-            main_scene->AddObject(o);
+            world_scene->AddObject(o);
             crowd_objects.push_back(o);
         }
         for (Object* o : made_plain){
-            main_scene->AddObject(o);
+            world_scene->AddObject(o);
             crowd_plain.push_back(o);
         }
         //The pool not asked for, all hidden (and the skeletons frozen); then the one asked for.

@@ -113,6 +113,8 @@ public:
     bool f_fullscreen = false;
     bool f_istogglingfullscreen = false;
     bool f_has_focus = false;
+    //Set by SwapWindowBuffers (render thread); until then the window is painted black - see WM_ERASEBKGND.
+    std::atomic<bool> f_presented{false};
     std::string title = "Window Title";
 
     bool f_should_quit = false;

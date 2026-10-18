@@ -4,16 +4,17 @@ aliases: firewood, heat, warm, woodshed, chimney
 kind: needs
 status: built
 summary: Under winter's snow a home must burn firewood each dawn. A home that can't is cold that day, and its people lose health faster.
-plans: needs_plan.md > As built: step 3
+plans: needs_plan.md > As built: step 3; building_size_plan.md > Decided (the user, 2026-10-18)
 code: Economy.cpp: Heat FirewoodNow FirewoodFair; Economy.h: EconomyCold HEAT_COLD; ApplicationChasmHearth.cpp
-verified: 2026-10-09
+verified: 2026-10-18
 ---
 
 ## At dawn
 
 Every **inhabited** home under the [[Seasons|snow]] burns firewood at dawn: {ECONOMY_FIREWOOD_BURN} wood
-for each plot-storey of a [[House|house]], or each plot of a [[Camp|camp]] (tents and fires alike). With
-enough, the home is **warm** that day. With too little it burns nothing, and its family is **cold** until
+for each plot of a [[House|house]]'s ground storey and **half that for each storey over it** - heat rises, so
+tall, packed houses are cheaper to keep warm; an odd half is burnt every other dawn - or each plot of a
+[[Camp|camp]] (tents and fires alike). With enough, the home is **warm** that day. With too little it burns nothing, and its family is **cold** until
 the next dawn.
 
 - If nobody is home, nothing burns. The south, which the snow never reaches, never needs a fire.

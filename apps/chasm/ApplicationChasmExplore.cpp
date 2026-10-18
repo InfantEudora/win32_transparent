@@ -541,7 +541,7 @@ void ApplicationChasm::UploadClouds(){
     size_t chunks = mesh.chunks.size();
     size_t need = chunks * 2;
     if (cloud_sets.size() < need){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             while (cloud_sets.size() < need){
                 Object* o = new Object();
                 o->name = "Cloud set " + std::to_string(cloud_sets.size());
@@ -554,7 +554,7 @@ void ApplicationChasm::UploadClouds(){
                 o->SetCastsShadow(true);
                 o->SetInstances(std::vector<fmat4>());
                 o->SetVisibility(false);
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 cloud_sets.push_back(o);
             }
         });

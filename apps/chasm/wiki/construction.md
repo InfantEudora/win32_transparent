@@ -4,29 +4,29 @@ aliases: building site, building sites, site, sites, builder, builders, builders
 kind: systems
 status: built
 summary: What the player places in play is a site, built a storey at a time from wood that people without a job, and builders, carry to it.
-plans: construction_plan.md > As built; construction_plan.md > Which site goes first; construction_plan.md > Cancel (the user, 2026-10-16); builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11); drag_plan.md > Decided (the user, 2026-10-17/18); drag_plan.md > As built (2026-10-18)
-code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled Derive; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND CRATE_SITE; Zones.h: ZONE_OP_SITE_CANCEL ZONE_OP_FIELD_CANCEL ZoneKindMaxPlots ZoneKindOnePlot; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips; ApplicationChasmRoads.cpp: PlanDrag PlaceDrag; ApplicationChasmTime.cpp: DrawToolTip ToolTipText
+plans: construction_plan.md > As built; construction_plan.md > Which site goes first; construction_plan.md > Cancel (the user, 2026-10-16); builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11); drag_plan.md > Decided (the user, 2026-10-17/18); drag_plan.md > As built (2026-10-18); building_size_plan.md > Decided (the user, 2026-10-18)
+code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled Derive EconomyKindStoreysCost EconomyPlotLeftCost; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND CRATE_SITE ECONOMY_FOOTING_WOOD ECONOMY_HIGH_STOREY; Zones.h: ZONE_OP_SITE_CANCEL ZONE_OP_FIELD_CANCEL ZoneKindMaxPlots ZoneKindOnePlot; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips; ApplicationChasmRoads.cpp: PlanDrag PlaceDrag; ApplicationChasmTime.cpp: DrawToolTip ToolTipText
 verified: 2026-10-18
 ---
 
 ## Sites
 
 A building placed in play has its storeys planned, and each stands only once it's built. Until then a
-storey does nothing: no room, no family, no worker. **Wood is all it takes**:
+storey does nothing: no room, no family, no worker. **Wood**, first of all:
 
 - a building's storey: {ECONOMY_BUILD_WOOD_PER_AREA} per unit of floor area, more or less by kind (a
-  camp's tents less, a winch more, a bridge less: `BuildFactor`);
-- a garden's or lot's plot: {ECONOMY_GROUND_WOOD_PER_AREA} per unit of area, built from a plot beside it,
-  so the fence never goes up around the builder. Anyone else it goes up around may climb out over it, but
-  nobody climbs in;
+  camp's tents less, a winch more, a bridge less: `BuildFactor`) - and a plot's ground storey a **footing** of
+  {ECONOMY_FOOTING_WOOD} more (a house, store or workshop), so the same area on fewer, bigger plots is cheaper;
+- a garden's or lot's plot: {ECONOMY_GROUND_WOOD_PER_AREA} per unit of area, built from a plot beside it, so the fence never goes
+  up around the builder (anyone else it goes up around may climb out over it, but nobody climbs in);
 - a [[Field|field]]: {ECONOMY_FIELD_WOOD_PER_CELL} a cell, every cell at once;
-- roads and walls: see [[Roads and walls]];
-- an arch over a road: its building's own cost a storey, as part of that building's site ([[Roads and walls]]).
+- roads and walls: see [[Roads and walls]] - and an arch over a road costs its building's own storey, as part of its site.
 
 A kind of building can also take other goods, so much a plot-storey (`EconomyStoreyCost`), and a kind
 painted on cells so much a cell (`EconomyCellCost`): a [[Guard tower|guard tower]] takes water and
 [[Provisions|provisions]], and keeps them as its stock. A [[Winch|winch]] takes [[Rope|rope]], which the colony has
-to make first. A storey stands only once all it takes of every good is there, and what it took is used up.
+to make first. **Height takes [[Stone|stone]]**: every storey from storey {ECONOMY_HIGH_STOREY} up, {ECONOMY_HIGH_STONE_PER_AREA} a unit of its floor area.
+A storey stands only once all it takes of every good is there, and what it took is used up.
 **Cancel** on a site's card, while none of it stands, takes it off whole - a [[Bridge|bridge]] too - and what was
 brought is left where it stood as a [[Crate|crate]], "A site's goods"; so when the eraser takes its last plot. Anyone
 on the way to it turns at once, their load to a [[Store|store]] or put down where they are.

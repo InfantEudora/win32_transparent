@@ -54,7 +54,7 @@ void ApplicationChasm::UploadBorders(){
         return;
     }
     if (!border_object){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             Object* o = new Object();
             o->name = "settlement borders";
             o->SetMesh(new Mesh());
@@ -62,7 +62,7 @@ void ApplicationChasm::UploadBorders(){
             o->SetPickability(false);
             o->SetVisualOnly(true);
             o->SetVisibility(false);
-            main_scene->AddObject(o);
+            world_scene->AddObject(o);
             border_object = o;
         });
         if (!border_object){

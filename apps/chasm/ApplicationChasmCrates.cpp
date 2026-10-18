@@ -38,7 +38,7 @@ void ApplicationChasm::UploadCrates(){
         if (set || !asset){
             return;
         }
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             set = assetmanager->GetObjectFromAsset(asset);
             if (set){
                 set->name = name;
@@ -48,7 +48,7 @@ void ApplicationChasm::UploadCrates(){
                 set->SetVisualOnly(true);
                 set->SetInstances(std::vector<fmat4>());
                 set->SetVisibility(false);
-                main_scene->AddObject(set);
+                world_scene->AddObject(set);
             }
         });
     };

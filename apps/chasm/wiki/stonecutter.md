@@ -4,14 +4,14 @@ aliases: stonecutter's hut, stonecutters' huts, stonecutters, rock, rocks, bould
 kind: people
 status: built
 summary: Breaks the rocks round his hut for stone - a boulder on a building site first - and leaves their stone as rubble, carrying a load of it to a store.
-plans: stone_plan.md > 3. Clearing rocks: the stonecutter's hut; stone_plan.md > As built: step 3 (2026-10-14)
-code: Zones.h: ZONE_KIND_STONECUTTER; Economy.h: WORKER_JOB_STONECUTTER ECONOMY_STONECUTTER_REACH ECONOMY_BREAK_SECONDS ECONOMY_STONECUTTER_STONE CRATE_BROKEN; Economy.cpp: FindRock BreakRock SiteTreesStanding StoreyGoods; Forest.h: PROP_BOULDER ForestRockStone FOREST_BOULDER_CHANCE
+plans: stone_plan.md > 3. Clearing rocks: the stonecutter's hut; stone_plan.md > As built: step 3 (2026-10-14); building_size_plan.md > Decided (the user, 2026-10-18)
+code: Zones.h: ZONE_KIND_STONECUTTER; Economy.h: WORKER_JOB_STONECUTTER ECONOMY_STONECUTTER_REACH ECONOMY_BREAK_SECONDS ECONOMY_STONECUTTER_STONE CRATE_BROKEN ECONOMY_PLOTS_PER_WORKER; Economy.cpp: FindRock BreakRock SiteTreesStanding StoreyGoods; Forest.h: PROP_BOULDER ForestRockStone FOREST_BOULDER_CHANCE
 verified: 2026-10-18
 ---
 
 A job at a **stonecutter's hut**, which the player drags out like a woodcutter's, at most {ZONE_BUILDING_MAX_PLOTS:#plots}: one storey, built with wood and
-**{ECONOMY_STONECUTTER_STONE} [[Stone|stone]]** a plot. Its one place goes to whoever scores best on strength
-against the walk from home ([[Person|jobs]]), and its card can **stop work**. **Only a stonecutter breaks a rock.**
+**{ECONOMY_STONECUTTER_STONE} [[Stone|stone]]** a plot. It takes a stonecutter for every {ECONOMY_PLOTS_PER_WORKER:#plots}, rounded up, each
+place going to whoever scores best on strength against the walk from home ([[Person|jobs]]), and its card can **stop work**. **Only a stonecutter breaks a rock.**
 
 ## Rocks and boulders
 

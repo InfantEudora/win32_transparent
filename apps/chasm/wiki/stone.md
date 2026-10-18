@@ -4,13 +4,14 @@ aliases: stones, rubble, rubble pile, rubble piles, pile of rubble, piles of rub
 kind: goods
 status: partial
 summary: A building material - the stonecutter's hut and the mine are built with it. It comes as rubble fallen from the chasm's walls, and from the rocks a stonecutter breaks; both lie as piles, used and carried off like any crate.
-plans: stone_plan.md > Decided (the user, 2026-10-14); stone_plan.md > 1. Stone, and rubble at the foot of the wall; stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14); stone_plan.md > As built: step 3 (2026-10-14); stone_plan.md > As built: the third round (2026-10-15); stone_plan.md > As built: step 5 (2026-10-15)
-code: Goods.h: GOOD_STONE GOOD_FLOATSTONE; Economy.h: CRATE_RUBBLE CRATE_BROKEN ECONOMY_STONECUTTER_STONE; Economy.cpp: PlaceRubble BreakRock EconomyCrateGround
-verified: 2026-10-15
+plans: stone_plan.md > Decided (the user, 2026-10-14); stone_plan.md > 1. Stone, and rubble at the foot of the wall; stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14); stone_plan.md > As built: step 3 (2026-10-14); stone_plan.md > As built: the third round (2026-10-15); stone_plan.md > As built: step 5 (2026-10-15); building_size_plan.md > Decided (the user, 2026-10-18)
+code: Goods.h: GOOD_STONE GOOD_FLOATSTONE; Economy.h: CRATE_RUBBLE CRATE_BROKEN ECONOMY_STONECUTTER_STONE ECONOMY_HIGH_STOREY ECONOMY_HIGH_STONE_PER_AREA; Economy.cpp: PlaceRubble BreakRock EconomyCrateGround
+verified: 2026-10-18
 ---
 
 A **material**, as [[Wood|wood]] and [[Rope|rope]] are: something built with, once. A
-[[Stonecutter|stonecutter's hut]] takes {ECONOMY_STONECUTTER_STONE} a plot, with its wood, and a [[Mine|mine]] {ECONOMY_MINE_STONE}. Every [[Store|store]]
+[[Stonecutter|stonecutter's hut]] takes {ECONOMY_STONECUTTER_STONE} a plot, with its wood, a [[Mine|mine]] {ECONOMY_MINE_STONE}, and every storey from
+storey {ECONOMY_HIGH_STOREY} up - a [[House|house's]] or a [[Store|store's]] - {ECONOMY_HIGH_STONE_PER_AREA} a unit of its floor area ([[Construction]]). Every [[Store|store]]
 takes it, and STONE shows in the top bar once the stores hold some.
 
 ## Where it comes from

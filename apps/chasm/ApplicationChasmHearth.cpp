@@ -69,7 +69,7 @@ void ApplicationChasm::UploadHearth(){
         return;
     }
     if (!hearth_smoke){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             hearth_smoke = new Object();
             hearth_smoke->name = "Hearth smoke";
             hearth_smoke->SetMesh(hearth_puff_mesh);
@@ -79,7 +79,7 @@ void ApplicationChasm::UploadHearth(){
             hearth_smoke->SetCastsShadow(false);
             hearth_smoke->SetInstances(std::vector<fmat4>());
             hearth_smoke->SetVisibility(false);
-            main_scene->AddObject(hearth_smoke);
+            world_scene->AddObject(hearth_smoke);
             hearth_pane_mesh = new Mesh();
             hearth_panes = new Object();
             hearth_panes->name = "Hearth windows";
@@ -89,7 +89,7 @@ void ApplicationChasm::UploadHearth(){
             hearth_panes->SetPickability(false);
             hearth_panes->SetCastsShadow(false);
             hearth_panes->SetVisibility(false);
-            main_scene->AddObject(hearth_panes);
+            world_scene->AddObject(hearth_panes);
         });
     }
     bool f_ready = w && zs && es && zs->world == w && es->world == w;

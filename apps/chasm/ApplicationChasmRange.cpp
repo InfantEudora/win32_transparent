@@ -265,7 +265,7 @@ void ApplicationChasm::UploadRange(){
         return;
     }
     if (!range_set[0]){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             for (int k = 0; k < RANGE_PROPS; k++){
                 Object* o = new Object();
                 o->name = std::string("Range ") + range_asset_names[k];
@@ -275,7 +275,7 @@ void ApplicationChasm::UploadRange(){
                 o->SetPickability(false);
                 o->SetInstances(std::vector<fmat4>());
                 o->SetVisibility(false);
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 range_set[k] = o;
             }
         });

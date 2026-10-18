@@ -494,6 +494,60 @@ int EconomyChildrenOf(const EconomyState& e, uint32_t mother){
     return n;
 }
 
+int EconomyHouseAppeal(const ZoneState& z, uint32_t h, int* from_storeys, int* from_garden){
+    int storeys = 0;
+    for (size_t v = 0; v < z.building.size(); v++){
+        storeys = (z.building[v] == h) ? std::max(storeys,(int)z.standing[v]) : storeys;
+    }
+    //Its garden, standing: the first plot LIFE_BIRTH_GARDEN, each after it half the one before.
+    int garden = 0;
+    int next = LIFE_BIRTH_GARDEN;
+    for (size_t v = 0; v < z.ground_owner.size() && next > 0; v++){
+        if (z.ground[v] == ZONE_GROUND_GARDEN && z.ground_built[v] && ZoneGroundOwner(z,(int)v) == h){
+            garden += next;
+            next /= 2;
+        }
+    }
+    int high = std::max(0,storeys - 1) * LIFE_BIRTH_PER_STOREY;
+    if (from_storeys){
+        *from_storeys = high;
+    }
+    if (from_garden){
+        *from_garden = garden;
+    }
+    return high + garden;
+}
+
+int EconomyLivingIn(const EconomyState& e, uint32_t h){
+    int n = 0;
+    for (const EconomyWorker& k : e.workers){
+        n += (k.house == h) ? 1 : 0;
+    }
+    return n;
+}
+
+int EconomyCrowdedBy(const EconomyState& e, const ZoneState& z, uint32_t h){
+    if (!h || h >= z.buildings.size() || z.buildings[h].kind != ZONE_KIND_HOUSE || h >= e.capacity.size()){
+        return 0;       //a camp crams its homeless in by design (settlements_plan.md): only a house is crowded
+    }
+    return std::max(0,EconomyLivingIn(e,h) - e.capacity[h]);
+}
+
+int EconomyBirthChance(const EconomyState& e, const ZoneState& z, uint32_t h){
+    int living = EconomyLivingIn(e,h);
+    int room = (h < e.capacity.size()) ? e.capacity[h] : 0;
+    int base = (living > room) ? LIFE_BIRTH_CROWDED : (living < room) ? LIFE_BIRTH_ROOM : LIFE_BIRTH_FULL;
+    return base + EconomyHouseAppeal(z,h,NULL,NULL);
+}
+
+float EconomyCrowdedPace(int crowded_by){
+    return std::max(LIFE_CROWDED_LEAST,1.0f - LIFE_CROWDED_PACE * (float)std::max(0,crowded_by));
+}
+
+float EconomyPersonCrowdedPace(const EconomyState& e, const ZoneState& z, const EconomyWorker& k){
+    return EconomyCrowdedPace(EconomyCrowdedBy(e,z,k.house));
+}
+
 namespace {
 
 //A person's mother and father by id, among the living or the dead: the tree outlives the people in it.
@@ -1095,6 +1149,7 @@ void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
     tents_of.clear();       //a camp gone leaves its goods by what was one at the last Derive: none before the first
     share_of.clear();
     field_pace.clear();
+    crowded_by.clear();     //counted afresh on the first tick, so a load or replay starts from its own people
     f_resettle = false;
     f_new_colony = true;
 }
@@ -1316,11 +1371,8 @@ void Economy::ChancesOfChildren(const ZoneState& z, uint64_t tick){
         if (!f_warm || !f_fed || !of_age(m) || !of_age(*p) || EconomyChildrenOf(state,m.id) >= LIFE_CHILDREN_MOST){
             continue;
         }
-        int living = 0;
-        for (const EconomyWorker& o : state.workers){
-            living += (o.house == h) ? 1 : 0;
-        }
-        int chance = (h < state.capacity.size() && living < state.capacity[h]) ? LIFE_BIRTH_ROOM : LIFE_BIRTH_FULL;
+        //By its room - crowded, full or a place to spare - and its APPEAL (building_size_plan.md).
+        int chance = EconomyBirthChance(state,z,h);
         if ((int)(Mix(Mix(seed,m.id * 4 + 3),(uint32_t)(tick / CALENDAR_YEAR_TICKS)) % 100) < chance){
             m.due = tick + LIFE_EXPECTING_TICKS;
             state.version++;
@@ -2296,10 +2348,35 @@ void Economy::Tending(){
         int s = share_of[f.building];
         if (s < (int)list.size()){
             state.farmer_of[f.building] = list[s]->id;
-            //Posted (defence_plan.md), his share waits for him: still his, and growing nothing meanwhile.
-            field_pace[f.building] = (list[s]->post >= 0) ? 0.0f : EconomySkillFactor(list[s]->skills[SKILL_HUSBANDRY]);
+            //Posted (defence_plan.md), his share waits for him: still his, and growing nothing meanwhile. Crowded at
+            //home, slower (building_size_plan.md).
+            field_pace[f.building] = (list[s]->post >= 0) ? 0.0f
+                                   : EconomySkillFactor(list[s]->skills[SKILL_HUSBANDRY]) * CrowdPace(*list[s]);
         }
     }
+}
+
+void Economy::Crowding(const ZoneState& z){
+    std::vector<int> living(z.buildings.size(),0);
+    for (const EconomyWorker& k : state.workers){
+        if (k.house < living.size()){
+            living[k.house]++;
+        }
+    }
+    std::vector<int> over(z.buildings.size(),0);
+    for (size_t h = 1; h < over.size() && h < state.capacity.size(); h++){
+        if (z.buildings[h].kind == ZONE_KIND_HOUSE){
+            over[h] = std::max(0,living[h] - state.capacity[h]);
+        }
+    }
+    if (over != crowded_by){
+        crowded_by.swap(over);
+        Tending();
+    }
+}
+
+float Economy::CrowdPace(const EconomyWorker& k) const{
+    return EconomyCrowdedPace((k.house < crowded_by.size()) ? crowded_by[k.house] : 0);
 }
 
 /*
@@ -2329,7 +2406,17 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
     //A woodcutter's a log's worth at a time, as his workplace makes one (log_wood).
     int log_wood = (k.building < state.log_wood.size() && state.log_wood[k.building] > 0) ? state.log_wood[k.building]
                                                                                            : ECONOMY_WOOD_PER_TREE;
-    int load = std::min(k.job == WORKER_JOB_WOODCUTTER ? log_wood : ECONOMY_LOAD,own[good]);
+    int per_load = (k.job == WORKER_JOB_WOODCUTTER) ? log_wood : ECONOMY_LOAD;
+    //A load each for those of his workplace already on their way to take one here (WORKERS BY PLOTS,
+    //building_size_plan.md): not his to come for too.
+    int there = own[good];
+    for (const EconomyWorker& o : state.workers){
+        if (&o != &k && o.building == k.building && o.job == k.job && o.prop < 0 && o.carry <= 0
+            && (o.state == WORKER_TO_WORK || o.state == WORKER_WORKING)){
+            there -= per_load;
+        }
+    }
+    int load = std::min(per_load,there);
     //Water and rope only by the load: both come a unit at a time, and a trip for one is a waste - but a made good's
     //last few for its level all the same.
     int least = (k.job == WORKER_JOB_WATER || k.job == WORKER_JOB_ROPEMAKER) ? ECONOMY_LOAD : 1;
@@ -2338,7 +2425,7 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
         load = std::min(load,short_by);
         least = std::min(least,short_by);
     }
-    if (load <= 0 || own[good] < least){
+    if (load <= 0 || there < least){
         return false;
     }
     bool f_taken = false;
@@ -2709,6 +2796,13 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
                 standing += (z.standing[v] > 0) ? 1 : 0;
             }
             state.places[id] = (standing >= ECONOMY_ROPEWALK_MIN_PLOTS) ? 1 : 0;
+        }else if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STONECUTTER){
+            //WORKERS BY PLOTS (building_size_plan.md): a worker for every ECONOMY_PLOTS_PER_WORKER plots standing, rounded up.
+            int standing = 0;
+            for (int v : plots_of[id]){
+                standing += (z.standing[v] > 0) ? 1 : 0;
+            }
+            state.places[id] = (standing + ECONOMY_PLOTS_PER_WORKER - 1) / ECONOMY_PLOTS_PER_WORKER;
         }else{
             state.places[id] = stands[id] ? 1 : 0;
         }
@@ -2895,6 +2989,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     //How many a house holds: its floor area at ECONOMY_PERSON_AREA each, one family at most this big.
     state.capacity.assign(n,0);
     state.burn.assign(n,0);
+    state.burn_halves.assign(n,0);
     state.woodshed.assign(n,0);
     state.snowed.assign(n,0);
     float full_winter = CalendarSnowFrontZ(1.0f,w.grid->bounds_min.y,w.grid->bounds_max.y);
@@ -2909,12 +3004,18 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
             //Its family's own food and firewood (P5): smaller than a store's, by the same floor area.
             state.keeps[id] = ECONOMY_HOUSE_KEEPS;
             state.room[id] = (int)std::floor(area * ECONOMY_HOUSE_ROOM);
-            //HEAT: its fire, a plot-storey standing at a time; its woodshed; whether winter's snow reaches it.
-            int plot_storeys = arch_floors[id];
+            /*
+                HEAT: its fire; its woodshed; whether winter's snow reaches it. HEAT RISES (building_size_plan.md): a
+                plot's ground storey burns a whole firewood, each storey over it - and each arch floor - half, so tall
+                and packed houses are cheaper to keep warm. In halves, the odd one burnt every other dawn (Heat); the
+                day's burn rounded up for the woodshed and fetching.
+            */
+            int halves = arch_floors[id];
             for (int v : plots_of[id]){
-                plot_storeys += z.standing[v];
+                halves += (z.standing[v] > 0) ? 2 + (z.standing[v] - 1) : 0;
             }
-            state.burn[id] = plot_storeys * ECONOMY_FIREWOOD_BURN;
+            state.burn_halves[id] = halves * ECONOMY_FIREWOOD_BURN;
+            state.burn[id] = (state.burn_halves[id] + 1) / 2;
             state.woodshed[id] = state.burn[id] * ECONOMY_WOODSHED_DAYS;
             state.snowed[id] = (!plots_of[id].empty() && CalendarSnowAt(w.grid->fine.pos[plots_of[id][0]],full_winter)) ? 1 : 0;
         }else if (z.buildings[id].kind == ZONE_KIND_CAMP && z.buildings[id].size > 0){
@@ -2927,6 +3028,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
             state.capacity[id] = (int)tents_of[id].size();
             //Its fires burn by its floor area too: a plot each, a tent with a fire beside it or none (needs_plan.md).
             state.burn[id] = (int)plots_of[id].size() * ECONOMY_FIREWOOD_BURN;
+            state.burn_halves[id] = state.burn[id] * 2;
             /*
                 Its families FETCH for it like a house's (the user's, 2026-10-09 - they did not, so a baby born
                 there went dry once the settlers' supplies did): a pantry's room and a woodshed by its floor area,
@@ -3979,9 +4081,9 @@ int Economy::ForageWant(const EconomyWorker& k) const{
 
 int Economy::ForageUnitTicks(const EconomyWorker& k) const{
     if (k.forage == FORAGE_FRUIT){
-        return SecondsToTicks(FORAGE_PICK_SECONDS / EconomySkillFactor(k.skills[EconomyJobSkill(WORKER_JOB_PICKER)]));
+        return SecondsToTicks(FORAGE_PICK_SECONDS / (EconomySkillFactor(k.skills[EconomyJobSkill(WORKER_JOB_PICKER)]) * CrowdPace(k)));
     }
-    return SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS);
+    return SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS / CrowdPace(k));
 }
 
 void Economy::ForageUnit(EconomyWorker& k){
@@ -4338,7 +4440,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     //...and its picker (FORAGING): fruit from the plants of its land, not anything at a workplace.
     bool f_picks = k.job == WORKER_JOB_PICKER && k.building && k.building < z.buildings.size()
                    && z.buildings[k.building].kind == ZONE_KIND_CAMP;
-    float pace = EconomySkillFactor(k.skills[EconomyJobSkill(k.job)]);
+    //His pace at his work: by its skill - and slower from a crowded house (APPEAL AND CROWDING, building_size_plan.md).
+    float pace = EconomySkillFactor(k.skills[EconomyJobSkill(k.job)]) * CrowdPace(k);
     //What a log he takes up is worth, and the wood his pile holds: his workplace's (woodcutting_plan.md).
     int log_wood = (k.building < state.log_wood.size() && state.log_wood[k.building] > 0) ? state.log_wood[k.building]
                                                                                            : ECONOMY_WOOD_PER_TREE;
@@ -4577,7 +4680,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (Arrived(k)){
                 if (k.prop < 0){
                     k.state = WORKER_WORKING;       //at his workplace, to pick up a load - or at the water's edge, to draw one
-                    EconomyStartTimer(k,f_draws ? SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS * ECONOMY_CAMP_WATER_LOAD)
+                    EconomyStartTimer(k,f_draws ? SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS * ECONOMY_CAMP_WATER_LOAD / CrowdPace(k))
                                                 : SecondsToTicks(ECONOMY_PICK_SECONDS));
                     //...or at the rock of his mine, to dig a load out of it at his pace.
                     if (k.job == WORKER_JOB_MINER){
@@ -5664,6 +5767,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     f_resettle = false;
     bool f_zones_moved = z.version != state.zones_version;     //...as FollowZones asks: the zombies' ways too
     FollowZones(z,walkers);
+    Crowding(z);        //APPEAL AND CROWDING: who works slower this tick for where he lives
     //An ORDER for more of a made good (STOCK KEPT) is done once the stores hold its level.
     if (std::any_of(state.ordered.begin(),state.ordered.end(),[](int x){ return x > 0; })){
         std::array<int,GOOD_COUNT> stored = EconomyStoredTotals(state,z);
@@ -5691,11 +5795,11 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     }
     f_restaff = false;
     //Who works where, by workplace id: a collector fills only while somebody works it (a field: field_pace) -
-    //not while he is away at a post (defence_plan.md).
-    std::vector<float> pace(z.buildings.size(),0.0f);
+    //not while he is away at a post (defence_plan.md) - and for each who does (WORKERS BY PLOTS, building_size_plan.md).
+    std::vector<float> working(z.buildings.size(),0.0f);
     for (const EconomyWorker& k : state.workers){
-        if (k.building && k.building < pace.size() && k.post < 0){
-            pace[k.building] = EconomySkillFactor(k.skills[EconomyJobSkill(k.job)]);
+        if (k.building && k.building < working.size() && k.post < 0){
+            working[k.building] += CrowdPace(k);
         }
     }
     CalendarDate date = CalendarDateOf(tick);
@@ -5766,19 +5870,25 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
             state.version++;
         }
     }
-    //A collector fills, a unit at a time, up to what it holds - not frozen under the snow.
+    /*
+        A collector fills, a unit at a time, up to what it holds - not frozen under the snow: a unit every
+        ECONOMY_WATER_SECONDS for each worker at it, so a second carrier brings water rather than waits for it. From the
+        tick alone, so nothing is kept between ticks.
+    */
     int water_ticks = SecondsToTicks(ECONOMY_WATER_SECONDS);
-    if (tick % (uint64_t)water_ticks == 0){
-        for (size_t id = 1; id < z.buildings.size(); id++){
-            if (z.buildings[id].kind != ZONE_KIND_WATER || z.buildings[id].size <= 0 || home_plot[id] < 0 || pace[id] <= 0.0f){
-                continue;
-            }
-            std::array<int,GOOD_COUNT>& s = state.stock[id];
-            int hold = (id < state.water_room.size()) ? state.water_room[id] : ECONOMY_LOAD;
-            if (s[GOOD_WATER] < hold && !UnderSnow(w,w.grid->fine.pos[home_plot[id]],tick)){
-                s[GOOD_WATER]++;
-                state.version++;
-            }
+    for (size_t id = 1; id < z.buildings.size(); id++){
+        if (z.buildings[id].kind != ZONE_KIND_WATER || z.buildings[id].size <= 0 || home_plot[id] < 0 || working[id] <= 0.0f){
+            continue;
+        }
+        int every = std::max(1,(int)std::lround((float)water_ticks / working[id]));
+        if (tick % (uint64_t)every != 0){
+            continue;
+        }
+        std::array<int,GOOD_COUNT>& s = state.stock[id];
+        int hold = (id < state.water_room.size()) ? state.water_room[id] : ECONOMY_LOAD;
+        if (s[GOOD_WATER] < hold && !UnderSnow(w,w.grid->fine.pos[home_plot[id]],tick)){
+            s[GOOD_WATER]++;
+            state.version++;
         }
     }
     //HEAT: every home's fire, lit or not, at dawn - and then the couples whose day it is (BIRTHS), which
@@ -7371,19 +7481,22 @@ void Economy::Heat(const ZoneState& z, uint64_t tick){
         }
     }
     size_t n = std::min(std::min(state.heat.size(),z.buildings.size()),std::min(state.stock.size(),state.burn.size()));
-    n = std::min(n,state.pantry.size());
+    n = std::min(n,std::min(state.pantry.size(),state.burn_halves.size()));
+    uint64_t day = tick / CALENDAR_DAY_TICKS;
     for (size_t id = 1; id < n; id++){
         uint8_t heat = HEAT_NONE;
         if (state.burn[id] > 0 && living[id] > 0 && id < plots_of.size() && !plots_of[id].empty()
             && UnderSnow(w,w.grid->fine.pos[plots_of[id][0]],tick)){
+            //Today's: an odd half (HEAT RISES) burnt on every other dawn, so two days burn it whole.
+            int burn = (state.burn_halves[id] + (int)(day & 1)) / 2;
             //A camp's pantry first, then its supplies (STORES); a house's pantry is its stock, so this is only that.
             int& own = state.pantry[id][GOOD_WOOD];
             int& wood = state.stock[id][GOOD_WOOD];
-            heat = (own + wood >= state.burn[id]) ? HEAT_WARM : HEAT_COLD;
+            heat = (own + wood >= burn) ? HEAT_WARM : HEAT_COLD;
             if (heat == HEAT_WARM){
-                int first = std::min(own,state.burn[id]);
+                int first = std::min(own,burn);
                 own -= first;
-                wood -= state.burn[id] - first;
+                wood -= burn - first;
             }
         }
         state.heat[id] = heat;
@@ -7636,22 +7749,56 @@ bool StoreyKept(int kind, int good){
 
 }
 
-int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int good){
+int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int good, int level){
     //An arch's floor costs what its owner's storey would on that plot (arches_plan.md step 3).
     uint32_t owner = z.building[plot] ? 0 : z.ArchOwnerOf(plot);
     int kind = (owner && owner < z.buildings.size()) ? z.buildings[owner].kind : z.KindOf(plot);
-    return EconomyKindStoreyCost(w,kind,plot,good);
+    return EconomyKindStoreyCost(w,kind,plot,good,level);
 }
 
-int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good){
+int EconomyStoreysCost(const ChasmWorld& w, const ZoneState& z, int plot, int good, int from, int to){
+    int cost = 0;
+    for (int level = from + 1; level <= to; level++){
+        cost += EconomyStoreyCost(w,z,plot,good,level);
+    }
+    return cost;
+}
+
+int EconomyPlotLeftCost(const ChasmWorld& w, const ZoneState& z, int plot, int good){
+    if (z.building[plot]){
+        return EconomyStoreysCost(w,z,plot,good,z.standing[plot],z.storeys[plot]);
+    }
+    //An arch's floors stand over its passage, its first floor at the second storey.
+    if (z.ArchOwnerOf(plot)){
+        return EconomyStoreysCost(w,z,plot,good,1 + z.ArchBuiltOf(plot),1 + ZoneArchFloors(z.ArchOf(plot)));
+    }
+    return 0;
+}
+
+int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good, int level){
     if (kind == ZONE_KIND_TOWER){
         return TowerStoreyCost(w,plot,good);
     }
+    float area = w.picker->PlotArea(plot);
     if (good == GOOD_WOOD){
-        float wood = w.picker->PlotArea(plot) * ECONOMY_BUILD_WOOD_PER_AREA * BuildFactor(kind);
-        return std::max(1,(int)std::ceil(wood));
+        float wood = area * ECONOMY_BUILD_WOOD_PER_AREA * BuildFactor(kind);
+        //A FOOTING (building_size_plan.md): a plot's ground storey, where the player chose plots over plot size.
+        int footing = (level == 1 && ZoneKindHasBody(kind)) ? ECONOMY_FOOTING_WOOD : 0;
+        return std::max(1,(int)std::ceil(wood)) + footing;
+    }
+    //STONE from the third storey up (building_size_plan.md), by area as wood is: height dearer than width.
+    if (good == GOOD_STONE && level >= ECONOMY_HIGH_STOREY){
+        return StoreyGoods(kind,good) + std::max(1,(int)std::ceil(area * ECONOMY_HIGH_STONE_PER_AREA));
     }
     return StoreyGoods(kind,good);
+}
+
+int EconomyKindStoreysCost(const ChasmWorld& w, int kind, int plot, int good, int from, int to){
+    int cost = 0;
+    for (int level = from + 1; level <= to; level++){
+        cost += EconomyKindStoreyCost(w,kind,plot,good,level);
+    }
+    return cost;
 }
 
 /*
@@ -7686,11 +7833,9 @@ std::array<int,GOOD_COUNT> EconomySiteCost(const ChasmWorld& w, const ZoneState&
     }
     for (size_t v = 0; v < z.building.size(); v++){
         //Its arches' floors still to build too (arches_plan.md step 3).
-        int left = (z.building[v] == id) ? z.storeys[v] - z.standing[v]
-                 : (z.ArchOwnerOf((int)v) == id) ? ZoneArchFloors(z.ArchOf((int)v)) - z.ArchBuiltOf((int)v) : 0;
-        if (left > 0){
+        if (z.building[v] == id || (!z.building[v] && z.ArchOwnerOf((int)v) == id)){
             for (int g = 0; g < GOOD_COUNT; g++){
-                cost[g] += left * EconomyStoreyCost(w,z,(int)v,g);
+                cost[g] += EconomyPlotLeftCost(w,z,(int)v,g);
             }
         }
     }
@@ -7774,18 +7919,12 @@ std::array<int,GOOD_COUNT> Economy::SiteNeed(const ZoneState& z, uint32_t id) co
         }
         return need;
     }
-    for (int v : plots_of[id]){
-        if (z.storeys[v] > z.standing[v]){
+    //Its storeys still to build, and its arches' floors (arches_plan.md step 3) - each by its level.
+    for (const std::vector<int>* list : {&plots_of[id],&arches_of[id]}){
+        for (int v : *list){
             for (int g = 0; g < GOOD_COUNT; g++){
-                need[g] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*state.world,z,v,g);
+                need[g] += EconomyPlotLeftCost(*state.world,z,v,g);
             }
-        }
-    }
-    //Its arches' floors still to build (arches_plan.md step 3).
-    for (int v : arches_of[id]){
-        int left = ZoneArchFloors(z.ArchOf(v)) - z.ArchBuiltOf(v);
-        for (int g = 0; g < GOOD_COUNT && left > 0; g++){
-            need[g] += left * EconomyStoreyCost(*state.world,z,v,g);
         }
     }
     return need;
@@ -8197,10 +8336,10 @@ void Economy::Build(const ZoneState& z, uint32_t id){
         if (best < 0){
             return;
         }
-        //All it takes of every good, or it waits for the rest (SITE COSTS PER GOOD).
+        //All it takes of every good, or it waits for the rest (SITE COSTS PER GOOD) - the storey over the level reached.
         std::array<int,GOOD_COUNT> cost;
         for (int g = 0; g < GOOD_COUNT; g++){
-            cost[g] = EconomyStoreyCost(*state.world,z,best,g);
+            cost[g] = EconomyStoreyCost(*state.world,z,best,g,best_level + 1);
             if (state.site[id][g] < cost[g]){
                 return;
             }
@@ -9839,11 +9978,12 @@ int EconomyFieldSowNow(const EconomyField& f, const ZoneBuilding& b, float pace,
     return (crop >= 0 && ripens(crop)) ? crop : -1;
 }
 
-float EconomyFieldPace(const EconomyState& e, uint32_t id){
+float EconomyFieldPace(const EconomyState& e, const ZoneState& z, uint32_t id){
     uint32_t farmer = (id < e.farmer_of.size()) ? e.farmer_of[id] : 0;
     for (const EconomyWorker& k : e.workers){
         if (farmer && k.id == farmer){
-            return (k.post >= 0) ? 0.0f : EconomySkillFactor(k.skills[SKILL_HUSBANDRY]);    //posted: it waits (Tending)
+            //Posted: it waits (Tending). Crowded at home, slower (building_size_plan.md).
+            return (k.post >= 0) ? 0.0f : EconomySkillFactor(k.skills[SKILL_HUSBANDRY]) * EconomyPersonCrowdedPace(e,z,k);
         }
     }
     return 0.0f;

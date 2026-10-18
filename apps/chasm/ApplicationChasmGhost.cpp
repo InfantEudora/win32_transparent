@@ -182,7 +182,7 @@ void ApplicationChasm::UpdateGhost(){
         if (!w || ghost_shader_index < 0){
             return;
         }
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             ghost = new Object();
             ghost->name = "Ghost";
             Mesh* mesh = new Mesh();
@@ -193,7 +193,7 @@ void ApplicationChasm::UpdateGhost(){
             ghost->SetPickability(false);
             ghost->SetCastsShadow(false);
             ghost->SetVisibility(false);
-            main_scene->AddObject(ghost);
+            world_scene->AddObject(ghost);
         });
     }
     int tool = paint_tool;
@@ -428,7 +428,7 @@ void ApplicationChasm::UpdateGhost(){
                     }
                     made_index(a.building[v]);
                     for (int g = 0; g < GOOD_COUNT; g++){
-                        cost[g] += a.storeys[v] * EconomyKindStoreyCost(cw,kind,(int)v,g);
+                        cost[g] += EconomyKindStoreysCost(cw,kind,(int)v,g,0,a.storeys[v]);
                     }
                     trees += trees_on((int)v,-1);
                     floor_more += a.storeys[v] * cw.picker->PlotArea((int)v);
@@ -521,7 +521,7 @@ void ApplicationChasm::UpdateGhost(){
             bool f_unreached = false;
             for (int v : span){
                 for (int g = 0; g < GOOD_COUNT; g++){
-                    cost[g] += ZoneKindPaintStoreys(ZONE_KIND_BRIDGE) * EconomyKindStoreyCost(cw,ZONE_KIND_BRIDGE,v,g);
+                    cost[g] += EconomyKindStoreysCost(cw,ZONE_KIND_BRIDGE,v,g,0,ZoneKindPaintStoreys(ZONE_KIND_BRIDGE));
                 }
                 int on = trees_on(v,-1);
                 trees += on;
@@ -543,7 +543,7 @@ void ApplicationChasm::UpdateGhost(){
             GhostBuildingPlot(cw,z,plot,shown,std::min(top,z.storeys[plot] + 1),on,verts);
             if (f_ok){
                 for (int g = 0; g < GOOD_COUNT; g++){
-                    cost[g] = EconomyStoreyCost(cw,z,plot,g);
+                    cost[g] = EconomyStoreyCost(cw,z,plot,g,z.storeys[plot] + 1);     //the storey over those planned
                 }
                 f_cost = true;
                 lead = "A STOREY MORE";
@@ -558,7 +558,7 @@ void ApplicationChasm::UpdateGhost(){
                    && !crate_in_way(ZONE_OP_BUILD_ADD,plot,0);
             GhostBuildingPlot(cw,z,plot,kind,ZoneKindPaintStoreys(kind),0,verts);
             for (int g = 0; g < GOOD_COUNT; g++){
-                cost[g] = ZoneKindPaintStoreys(kind) * EconomyKindStoreyCost(cw,kind,plot,g);
+                cost[g] = EconomyKindStoreysCost(cw,kind,plot,g,0,ZoneKindPaintStoreys(kind));
             }
             trees = trees_on(plot,-1);
             float floor_more = ZoneKindPaintStoreys(kind) * cw.picker->PlotArea(plot);
@@ -573,7 +573,7 @@ void ApplicationChasm::UpdateGhost(){
                 int corner = f_beside ? -1 : ZoneJoinCorner(cw,z,plot,kind,key.owner);
                 if (corner >= 0){
                     for (int g = 0; g < GOOD_COUNT; g++){
-                        cost[g] += EconomyKindStoreyCost(cw,kind,corner,g);
+                        cost[g] += EconomyKindStoreyCost(cw,kind,corner,g,1);
                     }
                     plots = 2;
                     trees += trees_on(corner,-1);
@@ -736,7 +736,7 @@ std::string ApplicationChasm::ToolCostTip(int tool){
         return std::string();
     }
     for (int g = 0; g < GOOD_COUNT; g++){
-        cost[g] = ZoneKindPaintStoreys(kind) * EconomyKindStoreyCost(*w,kind,v,g);
+        cost[g] = EconomyKindStoreysCost(*w,kind,v,g,0,ZoneKindPaintStoreys(kind));
     }
     if (kind == ZONE_KIND_TOWER){
         int places = std::max(1,ZoneTowerGuards(*w,v));

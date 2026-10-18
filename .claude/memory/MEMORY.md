@@ -122,3 +122,6 @@
 - [Chasm weather plan](chasm_weather_plan.md) — BUILT 2026-10-18: winter storm at the front (sway, snow + spindrift shader, gust stinger once, smoke/suspense/light/birds); core SetWindField XZ plane; user liked it; weather freezes in a pause like water/mist
 - [Chasm birds plan](chasm_birds_plan.md) — ALL 5 steps BUILT by 2026-10-18 (sound, seasons gather, title flock); birds stay over the clouds (user); menu_town needs a re-capture for title perches
 - [chasm_select: read op status](chasm_select_status_not_select.md) — op select returns a stale card after sim_step; cards draw only in play mode, restored window
+- [Chasm building size plan](chasm_building_size_plan.md) — BUILT 2026-10-18: footings, stone storeys 3+, workers by plots, heat rises, appeal + crowding; storey cost takes a LEVEL now
+- [archer_test baseline stale](archer_test_baseline_stale.md) — differs from tick 0 on a CLEAN HEAD (A/B 2026-10-18); not your change; --write is the user's call
+- [Worktree A/B build](worktree_ab_build.md) — HEAD in a worktree: copy libs/, 3rdparty/, the .rec; MAX_PATH under the scratchpad -> subst + CPLUS_INCLUDE_PATH

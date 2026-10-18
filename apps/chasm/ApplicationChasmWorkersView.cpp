@@ -706,7 +706,7 @@ void ApplicationChasm::UploadWorkers(){
     std::shared_ptr<const ZoneState> z = GetZones();
     size_t n = (w && e && e->world == w) ? e->workers.size() : 0;
     if (worker_objects.size() < n){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             while (worker_objects.size() < n){
                 Object* o = new Object();
                 o->name = "Worker " + std::to_string(worker_objects.size());
@@ -716,7 +716,7 @@ void ApplicationChasm::UploadWorkers(){
                 o->SetPickability(true);
                 o->SetVisualOnly(true);
                 o->SetVisibility(false);
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 worker_objects.push_back(o);
                 worker_object_mesh.push_back(0);
             }
@@ -737,7 +737,7 @@ void ApplicationChasm::UploadWorkers(){
         f_swap = f_swap || (!worker_skin_mesh[figure] && want[i] != worker_object_mesh[i]);
     }
     if (f_swap){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             for (size_t i = 0; i < n; i++){
                 if (!worker_skin_mesh[figure_of[i]] && want[i] != worker_object_mesh[i]){
                     worker_objects[i]->SetMesh(worker_meshes[want[i]]);
@@ -923,9 +923,9 @@ void ApplicationChasm::UploadWorkers(){
     worker_hand_arrows.clear();
 
     if (!made.empty() || !changes.empty() || !archers.empty()){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             for (Object* s : made){
-                main_scene->AddObject(s);
+                world_scene->AddObject(s);
             }
             for (const ClipChange& c : changes){
                 Object* s = c.ws->figure;

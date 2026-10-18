@@ -108,14 +108,14 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     std::vector<uint8_t> stands(n,0);
     std::vector<int> first_plot(n,-1);
     std::vector<int> rope_cost(n,0);    //a site's rope still to build with (goods_plan.md): a winch's
-    std::vector<int> stone_cost(n,0);   //...and its stone (stone_plan.md): a stonecutter's hut's, a mine's
+    std::vector<int> stone_cost(n,0);   //...and its stone (stone_plan.md): a stonecutter's hut's, a mine's, a third storey's
     for (size_t v = 0; v < z.building.size(); v++){
         if (z.building[v] && z.standing[v] > 0){
             stands[z.building[v]] = 1;
         }
         if (z.building[v] && z.building[v] < n && z.storeys[v] > z.standing[v]){
-            rope_cost[z.building[v]] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*e.world,z,(int)v,GOOD_ROPE);
-            stone_cost[z.building[v]] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*e.world,z,(int)v,GOOD_STONE);
+            rope_cost[z.building[v]] += EconomyPlotLeftCost(*e.world,z,(int)v,GOOD_ROPE);
+            stone_cost[z.building[v]] += EconomyPlotLeftCost(*e.world,z,(int)v,GOOD_STONE);
         }
         if (z.building[v] && z.building[v] < n && first_plot[z.building[v]] < 0){
             first_plot[z.building[v]] = (int)v;

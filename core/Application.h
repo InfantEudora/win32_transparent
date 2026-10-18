@@ -18,6 +18,8 @@
 //app_name is a std::string. Window.h happens to pull this in too, but an include that is only
 //there by transit is one refactor away from not being there at all.
 #include <string>
+//The loading screen's step timings.
+#include <chrono>
 #include "Window.h"
 #include "Renderer.h"
 #include "Shader.h"
@@ -401,6 +403,63 @@ public:
         and core's call then finds one already there and leaves it alone.
     */
     void EnsureOverlay();
+
+    /*
+        --- THE LOADING SCREEN ----------------------------------------------------------------------
+
+        LOADING, a bar and the name of the step under way, drawn from INSIDE an app's Init. Init runs on
+        the render thread with the GL context current, before the frame loop starts, and every build step
+        needs that context - so the work cannot move to another thread, and Init draws a frame between
+        steps instead. The window stays responsive throughout, because its messages are pumped on the main
+        thread, not this one. From apps/archer, where it began; apps/chasm's release build uses it too.
+
+            BeginLoading(STEPS,true);       //once the window has its size; makes the overlay
+            LoadingStep("the world");   BuildWorld();
+            LoadingStep("sound");       SetupSound();
+            EndLoading();
+
+        One frame per step, drawn BEFORE the step runs, so a long step shows its own name for as long as it
+        takes. Each step logs what the one before it cost, so the log answers "where does the load go"
+        without anyone adding timers; EndLoading logs the last and the whole load's, and warns when the
+        steps run do not match STEPS - the bar's total, which would otherwise stop short or run past the end.
+
+        f_draw false keeps the log and draws nothing, for a build that does not want the screen.
+
+        Black behind the text unless the app draws something there (DrawLoadingBackground), in the colours
+        of loading_style. Only the app's own Init frames: a scene switch later is the app's business.
+        RENDER THREAD, from Init only.
+    */
+    void BeginLoading(int steps, bool f_draw = true);
+    void LoadingStep(const char* label);
+    void EndLoading();
+    //Between BeginLoading and EndLoading. Render thread - nothing else is running yet.
+    bool IsLoading() const { return f_loading; }
+    struct LoadingStyle{
+        uint32_t text     = UIColor(238,238,238,255);
+        uint32_t text_dim = UIColor(238,238,238,150);   //the step's name
+        uint32_t band     = UIColor(  0,  0,  0,  0);   //under the text, so a busy background cannot eat it
+        uint32_t bar_back = UIColor(255,255,255, 45);
+        uint32_t bar_fill = UIColor(238,238,238,235);
+    };
+    LoadingStyle loading_style;     //set before BeginLoading
+    /*
+        Behind the loading text, with the window's size current: a black frame unless overridden. Archer
+        draws its title scene here. Whatever it draws has to leave the frame's target bound, as a scene's
+        DrawFrame does, for the text and the present to land on.
+    */
+    virtual void DrawLoadingBackground();
+    //The band, LOADING, the bar and the step's name, low and centred, sized off the window's height.
+    void DrawLoadingText();
+    bool f_loading = false;
+    bool f_loading_draws = false;
+    //Not loading_step(s): apps/bomber has its own of those, for its in-game loading page.
+    int  loading_steps_begun = 0;   //the bar shows the ones before the current
+    int  loading_steps_total = 1;
+    std::string loading_label;
+    std::chrono::steady_clock::time_point loading_start;
+    std::chrono::steady_clock::time_point loading_step_start;
+    //One frame: the background and the text, from inside Init. See the definition.
+    void DrawLoadingFrame();
     //Surface size the touch-button layout was last computed for, so DrawFrame can notice a
     //resize. -1 forces LayoutTouchButtons to run before the first frame.
     int touch_layout_w = -1;
@@ -527,8 +586,8 @@ public:
     /*
         Set by the app BEFORE Start() - in its constructor, from its settings (core/Settings.h) -
         to come up borderless full screen. Applied once the app's Init has returned, so a Resize
-        the app does in Init cannot undo it. --minimized wins: a window opened for an agent to
-        drive must not cover the desk.
+        the app does in Init cannot undo it - or at BeginLoading, for an app that shows a loading
+        screen. --minimized wins: a window opened for an agent to drive must not cover the desk.
     */
     bool f_start_fullscreen = false;
 

@@ -975,8 +975,17 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
     if (z->buildings[id].kind == ZONE_KIND_HOUSE || z->buildings[id].kind == ZONE_KIND_CAMP){
         static const char* heats[3] = {"none","warm","cold"};
         int heat = (id < e->heat.size()) ? e->heat[id] : HEAT_NONE;
-        j["burns"] = (id < e->burn.size()) ? e->burn[id] : 0;
+        j["burns"] = (id < e->burn_halves.size()) ? e->burn_halves[id] * 0.5f : 0.0f;     //in halves (HEAT RISES)
         j["heat"] = heats[std::min(2,std::max(0,heat))];
+    }
+    //APPEAL AND CROWDING (building_size_plan.md): a couple's chance of a child a year here, its appeal, and how crowded.
+    if (z->buildings[id].kind == ZONE_KIND_HOUSE){
+        int from_storeys = 0;
+        int from_garden = 0;
+        EconomyHouseAppeal(*z,id,&from_storeys,&from_garden);
+        j["birth_chance"] = EconomyBirthChance(*e,*z,id);
+        j["appeal"] = json{{"storeys",from_storeys},{"garden",from_garden}};
+        j["crowded_by"] = EconomyCrowdedBy(*e,*z,id);
     }
     //A woodcutter's woodpile: the lot plot it is on, or -1 with no lot standing beside the hut; its room, indoors and in
     //all, and what a log makes there (woodcutting_plan.md) - the camp's own woodcutter's too.
@@ -2040,7 +2049,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 //THE FROST (Economy.h): the growing weather it has left at its middle, what is sown now in it, and
                 //whether what grows ripens in time.
-                float pace = EconomyFieldPace(*e,f.building);
+                float pace = EconomyFieldPace(*e,*z,f.building);
                 int left = EconomyGrowingTicksLeft(*w,at,calendar_shown.load());
                 int now = EconomyFieldSowNow(f,zb,pace,left);
                 json frost{{"growing_days_left",(float)left / CALENDAR_DAY_TICKS},{"pace",pace},
@@ -2341,7 +2350,8 @@ void ApplicationChasm::RegisterEconomyTools(){
                     home_living[k.house]++;
                 }
             }
-            int fire_homes = 0, fire_burn = 0, fire_at_home = 0, fire_supplies = 0, warm = 0, cold = 0;
+            int fire_homes = 0, fire_at_home = 0, fire_supplies = 0, warm = 0, cold = 0;
+            float fire_burn = 0.0f;
             for (size_t id = 1; id < z->buildings.size() && id < e->stock.size(); id++){
                 int kind = z->buildings[id].kind;
                 if (z->buildings[id].size <= 0 || (kind != ZONE_KIND_HOUSE && kind != ZONE_KIND_CAMP)){
@@ -2355,7 +2365,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                     continue;
                 }
                 fire_homes++;
-                fire_burn += burn;
+                fire_burn += (id < e->burn_halves.size()) ? e->burn_halves[id] * 0.5f : (float)burn;
                 fire_at_home += e->stock[id][GOOD_WOOD];
                 if (kind == ZONE_KIND_CAMP){
                     fire_at_home += (id < e->pantry.size()) ? e->pantry[id][GOOD_WOOD] : 0;
@@ -2365,7 +2375,7 @@ void ApplicationChasm::RegisterEconomyTools(){
             int fire_elsewhere = totals[GOOD_WOOD] - fire_supplies;    //the stores' and the other camps', not counted at home
             json firewood{{"homes",fire_homes},{"burn_per_dawn",fire_burn},{"at_home",fire_at_home},{"in_stores",fire_elsewhere},
                           {"warm_today",warm},{"cold_today",cold}};
-            if (fire_burn > 0){
+            if (fire_burn > 0.0f){
                 firewood["dawns_at_home"] = (float)fire_at_home / fire_burn;
                 firewood["dawns_with_stores"] = (float)(fire_at_home + fire_elsewhere) / fire_burn;
             }

@@ -39,7 +39,7 @@ void ApplicationChasm::UploadMines(){
         if (mine_sets[i] || !assetmanager->GetMeshFromAsset(mine_asset_names[i])){
             continue;
         }
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             Object* set = assetmanager->GetObjectFromAsset(mine_asset_names[i]);
             if (set){
                 set->name = std::string("mines: ") + mine_asset_names[i];
@@ -48,7 +48,7 @@ void ApplicationChasm::UploadMines(){
                 set->SetVisualOnly(true);
                 set->SetInstances(std::vector<fmat4>());
                 set->SetVisibility(false);
-                main_scene->AddObject(set);
+                world_scene->AddObject(set);
             }
             mine_sets[i] = set;
         });
@@ -65,7 +65,7 @@ void ApplicationChasm::UploadMines(){
                 v.uv = PaletteUV(column,PAL_FROZEN);
             }
         }
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             Object* set = new Object();
             set->name = "mines: mine_portal, against the mountain";
             set->SetMesh(new Mesh());
@@ -75,7 +75,7 @@ void ApplicationChasm::UploadMines(){
             set->SetVisualOnly(true);
             set->SetInstances(std::vector<fmat4>());
             set->SetVisibility(false);
-            main_scene->AddObject(set);
+            world_scene->AddObject(set);
             mine_mountain_set = set;
         });
         mines_built_for.reset();    //placed again, now that there is a set for them
@@ -134,7 +134,7 @@ void ApplicationChasm::UploadMines(){
     const std::vector<TerrainSeamBand>& bands = w->mesh->seam_bands;
     if (w->mesh != seams_built_for){
         seams_built_for = w->mesh;
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             while (seam_objects.size() < bands.size() * 2){
                 Object* o = new Object();
                 o->name = "Seam band " + std::to_string(seam_objects.size() / 2) + ((seam_objects.size() % 2) ? " rock" : " crystal");
@@ -142,7 +142,7 @@ void ApplicationChasm::UploadMines(){
                 o->SetMaterialSlot(0,palette_material);
                 o->SetVisualOnly(true);
                 o->SetVisibility(false);
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 seam_objects.push_back(o);
             }
             for (size_t i = 0; i < seam_objects.size(); i++){

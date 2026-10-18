@@ -335,6 +335,7 @@ void Window::SwapWindowBuffers(){
         CopyBufferToBackBuffer();
         SwapBuffers(hDC);
     }
+    f_presented = true;
 }
 
 void Window::RedrawLayeredWindow(){
@@ -623,6 +624,21 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         break;
         case WM_PAINT:
             debug->Info("WM_PAINT received\n");
+        break;
+        case WM_ERASEBKGND:
+            /*
+                BLACK UNTIL THE FIRST FRAME. The class has no background brush, so nothing erases the
+                window - and from the moment it is shown until the render thread presents its first
+                frame, it shows WHITE: measured 2026-10-18 on chasm's ship exe as a tenth to a fifth of a
+                second of white in front of its black loading screen. So it is filled black here until
+                then, and left to DefWindowProc after - which, with no brush, erases nothing, as before.
+            */
+            if (!wnd->f_presented){
+                RECT client;
+                GetClientRect(hWnd,&client);
+                FillRect((HDC)wParam,&client,(HBRUSH)GetStockObject(BLACK_BRUSH));
+                return 1;
+            }
         break;
         case WM_SIZE:
             debug->Info("WM_SIZE received\n");

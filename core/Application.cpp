@@ -494,7 +494,8 @@ void Application::FrameThreadFunction(Application* app){
 
     app->Init();
 
-    //After Init, so the app's own Resize there cannot undo it - see f_start_fullscreen.
+    //After Init, so the app's own Resize there cannot undo it - see f_start_fullscreen. An app with a
+    //loading screen is full screen already (BeginLoading), and asking again does nothing.
     if (app->f_start_fullscreen && !app->f_start_minimized){
         app->main_window->SetFullscreen(true);
     }
@@ -612,6 +613,128 @@ void Application::EnsureOverlay(){
     }
     overlay = new UIOverlay();
     overlay->Init();
+}
+
+/*
+    The loading screen - see the note on BeginLoading in Application.h.
+
+    IT ALSO GOES FULL SCREEN when the settings ask for it, so the screen comes up at the size the game
+    runs at rather than at the window's for as long as loading takes, then jumping. FrameThreadFunction's
+    own call after Init then finds it done, and SetFullscreen ignores a request for the state it is in.
+    Init has sized its window by the time it calls this, so no Resize after it undoes it. Only when the
+    screen is drawn: a build that does not show it goes full screen where it always did.
+*/
+void Application::BeginLoading(int steps, bool f_draw){
+    loading_steps_total = std::max(steps,1);
+    loading_steps_begun = 0;
+    loading_label.clear();
+    loading_start = std::chrono::steady_clock::now();
+    loading_step_start = loading_start;
+    f_loading = true;
+    f_loading_draws = f_draw;
+    if (f_draw){
+        if (f_start_fullscreen && !f_start_minimized){
+            main_window->SetFullscreen(true);
+        }
+        EnsureOverlay();
+    }
+}
+
+void Application::LoadingStep(const char* label){
+    auto now = std::chrono::steady_clock::now();
+    if (loading_steps_begun > 0){
+        debug->Info("Loading: %s took %.0f ms\n",loading_label.c_str(),
+                    std::chrono::duration<float,std::milli>(now - loading_step_start).count());
+    }
+    loading_step_start = now;
+    loading_steps_begun++;
+    loading_label = label ? label : "";
+    if (f_loading_draws){
+        DrawLoadingFrame();
+    }
+}
+
+//Draws nothing: the next frame is the frame loop's, and shows whatever the app put up.
+void Application::EndLoading(){
+    if (!f_loading){
+        return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (loading_steps_begun > 0){
+        debug->Info("Loading: %s took %.0f ms\n",loading_label.c_str(),
+                    std::chrono::duration<float,std::milli>(now - loading_step_start).count());
+    }
+    if (loading_steps_begun != loading_steps_total){
+        debug->Warn("Loading ran %d steps against the %d BeginLoading was given - the bar was wrong\n",
+                    loading_steps_begun,loading_steps_total);
+    }
+    f_loading = false;
+    debug->Ok("Loaded in %.0f ms\n",std::chrono::duration<float,std::milli>(now - loading_start).count());
+}
+
+/*
+    One frame of the loading screen, from INSIDE Init.
+
+    The frame loop has not started yet - it starts when Init returns - so this is the same sequence
+    DrawFrame runs, minus everything that is not the loading screen: no PreRender (the app's view work,
+    half built), no ImGui and no DrawOverlay (the panels and the HUD read what is being built). It
+    services a resize itself for the same reason, since the loop is not there yet to do it; Init's own
+    Resize, and BeginLoading's full screen, land here first.
+*/
+void Application::DrawLoadingFrame(){
+    if (!renderer || !main_window){
+        return;
+    }
+    if (main_window->f_resized){
+        main_window->f_resized = false;
+        renderer->Resize(main_window->width,main_window->height);
+    }
+    DrawLoadingBackground();
+    if (overlay){
+        overlay->Begin(main_window->width,main_window->height);
+        DrawLoadingText();
+        renderer->BeginGPUPass(Renderer::GPU_PASS_OVERLAY);
+        overlay->Draw();
+        renderer->EndGPUPass(Renderer::GPU_PASS_OVERLAY);
+    }
+    renderer->EndGPUFrame();
+    main_window->SwapWindowBuffers();
+}
+
+void Application::DrawLoadingBackground(){
+    renderer->ClearPresentTarget(vec4(0.0f,0.0f,0.0f,1.0f));
+}
+
+//Archer's layout: low and centred, so it sits under a title picture as well as on black.
+void Application::DrawLoadingText(){
+    if (!overlay || !overlay->IsReady() || !main_window){
+        return;
+    }
+    const LoadingStyle& style = loading_style;
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float size = std::min(std::max(h * 0.042f,16.0f),72.0f);
+    const float cx = w * 0.5f;
+    const float baseline = h * 0.86f;
+    const float bar_w = size * 9.0f;
+    const float pad = size * 0.9f;
+    const float bar_top = baseline + size * 0.45f;
+    const float bar_h = std::max(3.0f,size * 0.16f);
+    const float label_size = size * 0.5f;
+    const float label_baseline = bar_top + bar_h + label_size * 1.6f;
+    overlay->AddRect(vec2(cx - bar_w * 0.5f - pad,baseline - size * 1.1f),
+                     vec2(cx + bar_w * 0.5f + pad,label_baseline + label_size * 0.7f),
+                     size * 0.4f,style.band);
+    overlay->AddText("LOADING",vec2(cx,baseline),size,style.text,UI_ALIGN_CENTER);
+    //The steps before the one under way: the first shows an empty bar, the last nearly full.
+    float fraction = std::min(std::max((float)(loading_steps_begun - 1) / (float)loading_steps_total,0.0f),1.0f);
+    vec2 bar_min(cx - bar_w * 0.5f,bar_top);
+    vec2 bar_max(cx + bar_w * 0.5f,bar_top + bar_h);
+    overlay->AddRect(bar_min,bar_max,bar_h * 0.5f,style.bar_back);
+    if (fraction > 0.0f){
+        overlay->AddRect(bar_min,vec2(bar_min.x + bar_w * fraction,bar_max.y),bar_h * 0.5f,style.bar_fill);
+    }
+    overlay->AddText(loading_label.c_str(),vec2(cx,label_baseline),label_size,style.text_dim,UI_ALIGN_CENTER);
 }
 
 void Application::DrawFrame(){

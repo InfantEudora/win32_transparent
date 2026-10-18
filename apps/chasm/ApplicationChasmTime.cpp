@@ -34,7 +34,7 @@ std::vector<std::array<int,GOOD_COUNT>> SiteCosts(const ZoneState& z){
     for (size_t v = 0; v < z.building.size(); v++){
         if (z.storeys[v] > z.standing[v] && z.building[v] < cost.size()){
             for (int g = 0; g < GOOD_COUNT; g++){
-                cost[z.building[v]][g] += (z.storeys[v] - z.standing[v]) * EconomyStoreyCost(*z.world,z,(int)v,g);
+                cost[z.building[v]][g] += EconomyPlotLeftCost(*z.world,z,(int)v,g);
             }
         }
     }
@@ -260,7 +260,7 @@ void ApplicationChasm::DrawOverlay(void){
         return;
     }
     CalendarDate d = CalendarDateOf(calendar_shown.load());
-    bool f_paused = main_scene && main_scene->IsPhysicsPaused();
+    bool f_paused = world_scene && world_scene->IsPhysicsPaused();
     //What the mouse can press on the overlay is gathered while drawing and handed to UpdatePick at the end.
     overlay_hits_drawing.clear();
 

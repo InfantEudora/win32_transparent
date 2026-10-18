@@ -1554,6 +1554,12 @@ private:
 #define CHASM_ASK_NOTE      4           //no question, a word and OK: a load that failed, a save from another version
 #define CHASM_ASK_REPORT    5           //a bug report written: its folder opened, or OK
 #define CHASM_ASK_DEATH     6           //someone died (demo_plan.md step 7): Continue, or Main menu
+    /*
+        The game's scene, for the app's life. THE WORLD'S OBJECTS GO INTO IT BY NAME, never into main_scene: the render
+        thread is not in step with a scene switch, so a PreRender that began in the world can finish after the title
+        took over, and an Upload* adding to main_scene then put its object in the title (2026-10-18: the world's
+        clouds over the title's diorama). The same for what the world's render-side code reads - its camera, its pause.
+    */
     Scene* world_scene = NULL;
     Scene* title_scene = NULL;
     DirectionalLight* title_sun = NULL;

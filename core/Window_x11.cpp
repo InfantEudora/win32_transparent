@@ -386,6 +386,7 @@ void Window::ReleaseContext(){
 void Window::SwapWindowBuffers(){
     CopyBufferToBackBuffer();
     glXSwapBuffers(x11->display,x11->window);
+    f_presented = true;
 }
 
 void Window::PumpUntilQuit(){

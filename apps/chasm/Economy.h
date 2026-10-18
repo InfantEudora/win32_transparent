@@ -137,8 +137,8 @@ struct PropInstance;
     --- CONSTRUCTION (docs/construction_plan.md) ------------------------------------------------------
     A building a player places is a SITE (Zones.h, CONSTRUCTION): its storeys are planned, and stand
     only when built. A storey takes WOOD - ECONOMY_BUILD_WOOD_PER_AREA of its floor area, more or less by
-    kind - and, by kind, other goods (EconomyStoreyCost: SITE COSTS PER GOOD, defence_plan.md step 4; no
-    kind takes any yet). IDLE PEOPLE - anyone without a job - carry them: from his home to the nearest
+    kind, and a FOOTING more on a plot's ground storey - and, by kind, other goods (EconomyStoreyCost: SITE
+    COSTS PER GOOD, defence_plan.md step 4), and STONE from its third storey up (building_size_plan.md). IDLE PEOPLE - anyone without a job - carry them: from his home to the nearest
     of a good the site still wants (a store's, the camp's supplies, a house nobody lives in, a
     woodcutter's pile), a load to the site, and a while building with it there (ECONOMY_BUILD_SECONDS at
     his pace), whatever the good. What a site has been brought is `site`, by building id and good. When a
@@ -447,6 +447,12 @@ struct PropInstance;
 #define ECONOMY_SKILL_DISTANCE      3.0f    //what a point of skill is worth against the walk to work: a quarter less than it was (the user's, 2026-10-11)
 #define ECONOMY_CARRY_STRENGTH      0.025f  //anyone with a load walks this much faster a point of strength over 5, slower under (the user's): ~25% from 1 to 10
 #define ECONOMY_BUILD_WOOD_PER_AREA 2.0f    //wood a storey takes per unit of its floor area
+//SIZE AND HEIGHT (building_size_plan.md, the user's 2026-10-18; current tuning): another plot dearer than a bigger one,
+//another storey dearer again.
+#define ECONOMY_FOOTING_WOOD        2       //a FOOTING: wood a plot's ground storey takes over its area's, for a kind with a body
+#define ECONOMY_HIGH_STOREY         3       //the first storey that takes STONE...
+#define ECONOMY_HIGH_STONE_PER_AREA 1.0f    //...so much a unit of its floor area
+#define ECONOMY_PLOTS_PER_WORKER    2       //standing plots a woodcutter's hut, collector or stonecutter's hut takes a worker for
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
 #define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence, per unit of the plot's area
 #define ECONOMY_WALL_WOOD           4       //a palisade plot, flat: one felled tree's logs (the user's, 2026-10-08)
@@ -685,6 +691,17 @@ int EconomyShare(int64_t born, uint64_t tick);
 #define LIFE_OLD_TICKS          (CALENDAR_YEAR_TICKS * 36)         //no more once either is this old (old age itself: step 4)
 #define LIFE_BIRTH_ROOM         50      //percent a year, with a place to spare in the house
 #define LIFE_BIRTH_FULL         25      //...and with none
+/*
+    APPEAL AND CROWDING (building_size_plan.md, the user's 2026-10-18; current tuning): a house's APPEAL adds to the
+    chance - each storey of it over the first, and its garden, the first plot most and each after half the one
+    before - and a CROWDED house, more living in it than it holds, starts lower. Its people also work slower
+    (EconomyCrowdedPace), every task timed at his pace.
+*/
+#define LIFE_BIRTH_CROWDED      10      //percent a year in a crowded house, before its appeal
+#define LIFE_BIRTH_PER_STOREY   5       //...for each storey over the first, its tallest plot's
+#define LIFE_BIRTH_GARDEN       8       //...for its first standing garden plot, each next half the one before
+#define LIFE_CROWDED_PACE       0.1f    //work lost for each person living there past its room...
+#define LIFE_CROWDED_LEAST      0.5f    //...down to this pace at the slowest
 //A couple's day of the year for its chance (0 - 39), the same whichever of them is asked.
 int EconomyCoupleDay(uint32_t a, uint32_t b);
 
@@ -1173,7 +1190,8 @@ struct EconomyState{
     std::vector<int> capacity;                          //a house's: how many it holds
     std::vector<int> places;                            //a workplace's: how many it employs (0: not one) - a house's or camp's, its land's farmers
     std::vector<uint32_t> farmer_of;                    //by building id: a field's farmer, the person its share falls to - 0 fallow
-    std::vector<int> burn;                              //a house's or camp's firewood a dawn under the snow
+    std::vector<int> burn;                              //a house's or camp's firewood a dawn under the snow - rounded up...
+    std::vector<int> burn_halves;                       //...of this, in halves (HEAT RISES, building_size_plan.md)
     std::vector<int> woodshed;                          //a house's room for firewood
     std::vector<uint8_t> snowed;                        //a house the full winter's snow reaches: it fetches firewood
     std::vector<uint8_t> shut;                          //by building id: SHUT IN, no door (EconomyShutIn)
@@ -1263,6 +1281,17 @@ inline bool EconomyShutIn(const EconomyState& e, uint32_t id){
 
 //A mother's children so far (BIRTHS), the living and the dead.
 int EconomyChildrenOf(const EconomyState& e, uint32_t mother);
+/*
+    APPEAL AND CROWDING: house `h`'s appeal, percent, from its storeys and from its garden (either out may be NULL);
+    how many live there and past its room; a couple's chance a year there, percent; and person k's pace at his work
+    for where he lives, 1 but in a crowded house. One rule for the dawn's roll and the cards alike.
+*/
+int EconomyHouseAppeal(const ZoneState& z, uint32_t h, int* from_storeys, int* from_garden);
+int EconomyLivingIn(const EconomyState& e, uint32_t h);
+int EconomyCrowdedBy(const EconomyState& e, const ZoneState& z, uint32_t h);
+int EconomyBirthChance(const EconomyState& e, const ZoneState& z, uint32_t h);
+float EconomyCrowdedPace(int crowded_by);
+float EconomyPersonCrowdedPace(const EconomyState& e, const ZoneState& z, const EconomyWorker& k);
 //Too close kin for a couple (COUPLES): one the other's parent or grandparent, or a parent or grandparent shared.
 bool EconomyRelated(const EconomyState& e, const EconomyWorker& a, const EconomyWorker& b);
 //The surname a couple's children take: the mother's or the father's, by a hash of the two - the dead's kept too.
@@ -1491,6 +1520,7 @@ private:
     std::vector<std::vector<int>> tents_of;     //by building id: a camp's tent plots
     std::vector<int> share_of;                  //by building id: a field's share of its owner's land, -1 none (LandPlaces)
     std::vector<float> field_pace;              //by building id: its farmer's pace, 0 fallow (Tending)
+    std::vector<int> crowded_by;                //by house id: how many live there past its room, this tick (Crowding)
     bool f_resettle = false;                    //a loaded save's land not yet settled (an older save's)
     bool f_restaff = false;                     //an order given or ended since the last tick: staffing again
     uint64_t now = 0;                           //the tick being run, for the rules that ask the date inside it
@@ -1695,6 +1725,10 @@ private:
     void SettleLand(const ZoneState& z, Walkers& walkers);
     void LandPlaces(const ZoneState& z);
     void Tending();
+    //APPEAL AND CROWDING (Economy.h): every house's crowding counted at the top of a tick - its farmers' paces again if it
+    //changed - and someone's pace for where he lives, 1 but in a crowded house.
+    void Crowding(const ZoneState& z);
+    float CrowdPace(const EconomyWorker& k) const;
     //Needs: every person's tick of health and water, a meal and a drink at home, and the dead struck off.
     void Needs(const ZoneState& z, Walkers& walkers, uint64_t calendar_tick);
     void EatAndDrink(EconomyWorker& k, const ZoneState& z);
@@ -1867,11 +1901,19 @@ std::string EconomySurnameName(int surname);
 inline bool EconomyIndoors(const EconomyWorker& k){
     return k.f_indoors && k.house != 0 && k.state == WORKER_AT_HOME;
 }
-//Construction (CONSTRUCTION): what one storey on `plot` takes of `good`; what all a building's planned storeys -
-//a field site's cells - still take, by good; and what has been brought to it.
-int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int good);
+/*
+    Construction (CONSTRUCTION): what storey `level` on `plot` takes of `good` - 1 its ground storey, an arch's first
+    floor 2 - since SIZE AND HEIGHT (building_size_plan.md) a ground storey takes a FOOTING and one from
+    ECONOMY_HIGH_STOREY up STONE; the storeys over `from` up to `to` together; what is still to build on `plot` - its
+    storeys over those standing, or an arch's floors over those built; what all a building's planned storeys - a field
+    site's cells - still take, by good; and what has been brought to it.
+*/
+int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int good, int level);
+int EconomyStoreysCost(const ChasmWorld& w, const ZoneState& z, int plot, int good, int from, int to);
+int EconomyPlotLeftCost(const ChasmWorld& w, const ZoneState& z, int plot, int good);
 //...a storey of `kind` on `plot` whatever stands there now: what placing one would cost (the ghost's price tag).
-int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good);
+int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good, int level);
+int EconomyKindStoreysCost(const ChasmWorld& w, int kind, int plot, int good, int from, int to);
 //...and what a coarse cell of a site painted on cells (a field) takes of `good`, by its kind.
 int EconomyCellCost(int kind, int good);
 std::array<int,GOOD_COUNT> EconomySiteCost(const ChasmWorld& w, const ZoneState& z, uint32_t id);
@@ -1921,8 +1963,8 @@ int EconomyIceDays(const ChasmWorld& w, int plot, uint64_t tick);
 //What a field is to be sown with NOW, with `ticks_left` of growing weather at `pace`: EconomyFieldSowCrop's
 //if it ripens in time - AUTO the most food of those that do - else -1, and it waits for spring.
 int EconomyFieldSowNow(const EconomyField& f, const ZoneBuilding& b, float pace, int ticks_left);
-//A field's farmer's pace (EconomySkillFactor of his husbandry), 0 with nobody to farm it - from the state alone.
-float EconomyFieldPace(const EconomyState& e, uint32_t id);
+//A field's farmer's pace (EconomySkillFactor of his husbandry, slower crowded), 0 with nobody to farm it - as Tending has it.
+float EconomyFieldPace(const EconomyState& e, const ZoneState& z, uint32_t id);
 //A field's growing record, NULL for none.
 const EconomyField* EconomyFieldOf(const EconomyState& e, uint32_t id);
 

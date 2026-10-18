@@ -615,9 +615,9 @@ void ApplicationChasm::UploadBirds(){
             o->SetScale(vec3(BIRD_DRAW_SCALE,BIRD_DRAW_SCALE,BIRD_DRAW_SCALE));
             made.push_back(o);
         }
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             for (Object* o : made){
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 bird_objects.push_back(o);
             }
         });

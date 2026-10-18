@@ -4,8 +4,8 @@ aliases: home, homes
 kind: buildings
 status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
-plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted; selection_plan.md > Selecting someone indoors
-code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn
+plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted; selection_plan.md > Selecting someone indoors; building_size_plan.md > Decided (the user, 2026-10-18)
+code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock EconomyCrowdedPace EconomyHouseAppeal; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn
 verified: 2026-10-18
 ---
 
@@ -20,7 +20,9 @@ does the same with nothing selected.
 ## Who lives there
 
 **One family.** A house holds as many people as its floor area allows, at {ECONOMY_PERSON_AREA} a person,
-but never more than {ECONOMY_HOUSE_MOST}.
+but never more than {ECONOMY_HOUSE_MOST}. **Crowded** - more living there than that, after a birth - its
+people work {= LIFE_CROWDED_PACE * 100}% slower for each one over, at worst at {= LIFE_CROWDED_LEAST * 100}%, and a child is less likely.
+Storeys and a garden make one likelier ([[Lifelines]]); upper storeys burn half ([[Cold]]).
 
 A family without a house (at the [[Camp]], or homeless) moves into the **smallest empty house that holds
 all of them** and that they can walk to; the largest family goes first. If no empty house fits, a smaller

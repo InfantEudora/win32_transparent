@@ -15,6 +15,7 @@
 #include "Light.h"
 #include "Texture.h"
 #include "Palette.h"
+#include "ChasmHud.h"
 #include "RoadMesh.h"
 #include "CropMesh.h"
 #include "BuildingMesh.h"
@@ -123,7 +124,25 @@ void ApplicationChasm::Init(void){
 
     main_window->Resize(1440,810);
 
+    /*
+        THE LOADING SCREEN (core's, Application::BeginLoading - archer's, on black): LOADING, a bar and the step under
+        way, in a release exe - the one testers start. A debug exe only logs what each step took, and draws nothing.
+        Only here, for Init: a load or a new map later has its own "Loading ..." (RunBusy).
+    */
+#ifdef DEBUG
+    const bool f_loading_screen = false;
+#else
+    const bool f_loading_screen = true;
+#endif
+    loading_style.text = HUD_TEXT;
+    loading_style.text_dim = HUD_TEXT_DIM;
+    loading_style.bar_back = UIColor(255,255,255,40);
+    loading_style.bar_fill = HUD_SELECT;
+    BeginLoading(5,f_loading_screen);
+
     main_scene = CreateNewScene("Chasm");
+    //Named at once, for everything below that adds the world's objects to it - see world_scene in ApplicationChasm.h.
+    world_scene = main_scene;
     assetmanager = new AssetManager();
     rrand = new RRandom(1);
 
@@ -134,13 +153,17 @@ void ApplicationChasm::Init(void){
     */
     main_scene->camera->SetupPerspective(renderer->width,renderer->height,40.0f,0.5f,4000.0f);
 
+    LoadingStep("shaders");
     BuildScene();
+    LoadingStep("props");
     LoadProps();
     BuildSwayMaterials();
+    LoadingStep("the map");
     RegenerateGrid(next_settings);
     //Init is the render thread before the physics thread exists, so the camera may be set here.
     FrameMap();
 
+    LoadingStep("sound");
     SetupInput();
     RegisterCommandHandlers();
     //The device and the cue table (ApplicationChasmSound.cpp).
@@ -158,7 +181,6 @@ void ApplicationChasm::Init(void){
         build without the panels - the one testers get - starts on it; a debug build starts in the world, as it
         always has, the title an Escape away.
     */
-    world_scene = main_scene;
     //The ship build's world under the title is only there to be replaced: no colony is in play until one is chosen.
 #ifndef USE_IMGUI
     f_game_on = false;
@@ -173,15 +195,24 @@ void ApplicationChasm::Init(void){
     f_always_record = true;
 #endif
     colony_name = "Seed " + std::to_string(next_settings.seed);
+    LoadingStep("the title");
     CreateTitleScene();
     main_window->f_escape_closes_window = false;
     main_window->f_close_asks_app = true;
 #ifndef USE_IMGUI
-    RequestActiveScene(title_scene);
+    /*
+        Straight in, not RequestActiveScene. A direct write is right HERE and nowhere else (apps/archer, apps/bomber):
+        Init runs before the physics thread exists, so nothing else reads main_scene yet. Requested, the world stayed
+        active until the physics thread's first pass, and a frame that started before that ran the world's PreRender
+        - whose uploads add their objects to whichever scene is active by then: the title got the world's blanket of
+        clouds over its diorama (2026-10-18, once the loading screen made the first frame come sooner).
+    */
+    main_scene = title_scene;
 #endif
 #ifdef USE_MCP
     RegisterMCPTools();
 #endif
+    EndLoading();
 }
 
 void ApplicationChasm::BuildScene(){
@@ -213,7 +244,7 @@ void ApplicationChasm::BuildScene(){
     sun->SetupOrthographic(4096,4096,60.0f,1.0f,SUN_DISTANCE * 2.0f);
     sun->SetPosition(sun_offset);
     sun->SetLookAt(vec3());
-    main_scene->AddObject(sun);
+    world_scene->AddObject(sun);
 
     renderer->ambient_sky = vec3(0.64f,0.69f,0.80f);
     //The ground's bounce, warm and fairly bright: a wall facing sideways takes half of this, and at
@@ -275,7 +306,7 @@ void ApplicationChasm::BuildScene(){
     pick_view->SetCastsShadow(false);
     pick_view->SetVisibility(false);
     pick_view->SetPosition(vec3(0.0f,PICK_VIEW_Y,0.0f));
-    main_scene->AddObject(pick_view);
+    world_scene->AddObject(pick_view);
 
 #ifdef DEBUG
     grid_view = new Object();
@@ -287,7 +318,7 @@ void ApplicationChasm::BuildScene(){
     grid_view->SetCastsShadow(false);
     grid_view->SetVisibility(false);
     grid_view->SetPosition(vec3(0.0f,CHASM_GRID_VIEW_Y,0.0f));
-    main_scene->AddObject(grid_view);
+    world_scene->AddObject(grid_view);
 #endif
 }
 
@@ -1284,7 +1315,7 @@ void ApplicationChasm::UploadZones(){
     }
     size_t n = w->mesh->chunks.size();
     if (zone_chunks.size() < n){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             while (zone_chunks.size() < n){
                 Object* chunk = new Object();
                 chunk->name = "Zones " + std::to_string(zone_chunks.size());
@@ -1292,7 +1323,7 @@ void ApplicationChasm::UploadZones(){
                 chunk->SetMaterialSlot(0,palette_material);
                 chunk->SetVisualOnly(true);
                 chunk->SetVisibility(false);
-                main_scene->AddObject(chunk);
+                world_scene->AddObject(chunk);
                 zone_chunks.push_back(chunk);
                 surface_ids.push_back(chunk->GetID());     //pickable: the engine reads its surface (PickUnderMouse)
             }
@@ -1625,7 +1656,7 @@ void ApplicationChasm::UploadForest(){
         size_t need = chunks * set_count;
         if (prop_sets.size() < need){
             //New objects join the scene the physics thread walks - under its lock.
-            main_scene->AtTickBoundary([&](){
+            world_scene->AtTickBoundary([&](){
                 while (prop_sets.size() < need){
                     int s = (int)(prop_sets.size() % set_count);
                     //A kind's own set, from its asset; or a broadleaf's stage, on its look's mesh; or a plant's fruit.
@@ -1662,7 +1693,7 @@ void ApplicationChasm::UploadForest(){
                         o->SetCastsShadow(fruit < 0 && PropCastsShadow(k));
                         o->SetInstances(std::vector<fmat4>());
                         o->SetVisibility(false);
-                        main_scene->AddObject(o);
+                        world_scene->AddObject(o);
                     }
                     prop_sets.push_back(o);
                 }
@@ -2198,7 +2229,7 @@ void ApplicationChasm::UploadTerrain(){
     }
     const TerrainMeshData& m = *w->mesh;
     bool f_new_mesh = (w->mesh != terrain_uploaded);
-    main_scene->AtTickBoundary([&](){
+    world_scene->AtTickBoundary([&](){
         while (terrain_chunks.size() < m.chunks.size()){
             Object* chunk = new Object();
             chunk->name = "Terrain " + std::to_string(terrain_chunks.size());
@@ -2206,7 +2237,7 @@ void ApplicationChasm::UploadTerrain(){
             chunk->SetMaterialSlot(0,palette_material);
             chunk->SetVisualOnly(true);
             chunk->SetVisibility(false);
-            main_scene->AddObject(chunk);
+            world_scene->AddObject(chunk);
             terrain_chunks.push_back(chunk);
             surface_ids.push_back(chunk->GetID());
         }

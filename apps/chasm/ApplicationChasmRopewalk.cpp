@@ -27,7 +27,7 @@ void ApplicationChasm::UploadRopewalks(){
         return;
     }
     if (!ropewalk_object){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             Object* o = new Object();
             o->name = "ropewalks";
             o->SetMesh(new Mesh());
@@ -35,7 +35,7 @@ void ApplicationChasm::UploadRopewalks(){
             o->SetPickability(false);
             o->SetVisualOnly(true);
             o->SetVisibility(false);
-            main_scene->AddObject(o);
+            world_scene->AddObject(o);
             ropewalk_object = o;
         });
         if (!ropewalk_object){

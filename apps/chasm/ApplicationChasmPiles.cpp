@@ -43,7 +43,7 @@ void ApplicationChasm::UploadPiles(){
         return;
     }
     if (!pile_set){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             pile_set = assetmanager->GetObjectFromAsset(prop_asset_names[PROP_LOG]);
             if (pile_set){
                 pile_set->name = "log piles";
@@ -52,7 +52,7 @@ void ApplicationChasm::UploadPiles(){
                 pile_set->SetVisualOnly(true);
                 pile_set->SetInstances(std::vector<fmat4>());
                 pile_set->SetVisibility(false);
-                main_scene->AddObject(pile_set);
+                world_scene->AddObject(pile_set);
                 UseGroundShader(pile_set->GetMesh());
             }
         });

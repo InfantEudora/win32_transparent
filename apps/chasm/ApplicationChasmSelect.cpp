@@ -1157,6 +1157,10 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         c.Text("Nowhere to live",HUD_AMBER);
     }else if (k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_CAMP){
         c.Text("Lives in the camp - waiting for a house",HUD_AMBER);
+    }else if (int over = EconomyCrowdedBy(e,z,k.house)){
+        //Crowded (building_size_plan.md): slower at whatever work he does.
+        c.Text(Format("Lives in house %u - crowded: works at %i%%",k.house,(int)std::lround(EconomyCrowdedPace(over) * 100.0f)),
+               HUD_AMBER);
     }else{
         c.Text(Format("Lives in house %u",k.house));
     }
@@ -1617,10 +1621,25 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             }
         }else if (info.storeys > 0){
             c.Text(Format("Holds %i, %i living here",holds,living));
-            //More than it holds - a child born into a full house (lifeline_plan.md): a storey or a plot more.
+            //More than it holds - a child born into a full house (lifeline_plan.md): a storey or a plot more. What it
+            //costs (building_size_plan.md): its people's work, and the chance of another child.
             if (living > holds){
-                c.Text("Crowded - add a storey or a plot",HUD_AMBER);
+                int pace = (int)std::lround(EconomyCrowdedPace(living - holds) * 100.0f);
+                c.Text(Format("Crowded - they work at %i%%, a child less likely: add a storey or a plot",pace),HUD_AMBER);
             }
+            //APPEAL (building_size_plan.md): what a couple here has of a child a year, and what raises it.
+            int from_storeys = 0;
+            int from_garden = 0;
+            EconomyHouseAppeal(z,id,&from_storeys,&from_garden);
+            std::string appeal;
+            if (from_storeys > 0){
+                appeal = Format("storeys +%i",from_storeys);
+            }
+            if (from_garden > 0){
+                appeal += (appeal.empty() ? "" : ", ") + Format("garden +%i",from_garden);
+            }
+            c.Text(Format("A child: %i%% a year",EconomyBirthChance(*e,z,id))
+                   + (appeal.empty() ? std::string(" - storeys and a garden raise it") : " (" + appeal + ")"),HUD_TEXT_DIM);
         }
         //SHUT IN on every side, with no door: nobody moves in, and those inside cannot get out (EconomyShutIn).
         if (b.kind == ZONE_KIND_HOUSE && EconomyShutIn(*e,id)){
@@ -1741,7 +1760,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                     mid += w.grid->FineQuadCentre((int)(first - z.field.begin()) * 4 + j) * 0.25f;
                 }
             }
-            float pace = EconomyFieldPace(*e,id);
+            float pace = EconomyFieldPace(*e,z,id);
             int left = EconomyGrowingTicksLeft(w,mid,tick);
             int after = -1;
             if (f->f_sown && f->crop >= 0){
@@ -1907,6 +1926,16 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                     c.Text(w.deposits->deposits[d].kind == DEPOSIT_MOUNTAIN ? "Dug into the mountain: its stone never runs out"
                                                                           : "On an outcrop: its stone never runs out",HUD_TEXT_DIM);
                 }
+            }
+            //WORKERS BY PLOTS (building_size_plan.md): how many it takes, and the plots that would take one more.
+            if ((b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STONECUTTER)
+                && info.storeys > 0 && !b.f_stopped && id < e->places.size() && e->places[id] > 0){
+                int places = e->places[id];
+                int more = places * ECONOMY_PLOTS_PER_WORKER + 1;
+                std::string takes = (places == 1) ? std::string("Takes one worker") : Format("Takes %i workers",places);
+                c.Text((more <= ZoneKindMaxPlots(b.kind)) ? takes + Format(" - %i plots would take %i",more,places + 1)
+                                                          : takes + Format(", one for every %i plots",ECONOMY_PLOTS_PER_WORKER),
+                       HUD_TEXT_DIM);
             }
             bool f_worked = false;
             for (const EconomyWorker& k : e->workers){
@@ -3505,7 +3534,7 @@ void ApplicationChasm::UploadSelection(){
     std::shared_ptr<const ZoneState> z = GetZones();
     std::shared_ptr<const EconomyState> e = GetEconomy();
     if (!select_outline[0]){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             for (int i = 0; i < SELECT_OUTLINES; i++){
                 Object* o = new Object();
                 o->name = "Selection outline " + std::to_string(i);
@@ -3518,7 +3547,7 @@ void ApplicationChasm::UploadSelection(){
 #if CHASM_OUTLINE_READY
                 o->SetOutlineOnly(true);
 #endif
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 select_outline[i] = o;
             }
         });
@@ -3675,7 +3704,7 @@ void ApplicationChasm::UploadSelection(){
         if (!mesh){
             return;
         }
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             for (int i = 0; i < 2; i++){
                 Object* o = new Object();
                 o->name = std::string((i == 0) ? "Selected " : "Hovered ") + what + " outline";
@@ -3689,7 +3718,7 @@ void ApplicationChasm::UploadSelection(){
 #if CHASM_OUTLINE_READY
                 o->SetOutlineOnly(true);
 #endif
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 out[i] = o;
             }
         });
@@ -3727,7 +3756,7 @@ void ApplicationChasm::UploadSelection(){
     //Where the selected person is going (BuildPathMarks), out of doors and on his way - or a group's, each his own way,
     //all in the one mesh.
     if (!path_marks){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             Object* o = new Object();
             o->name = "Selected person's way";
             o->SetMesh(new Mesh());
@@ -3736,7 +3765,7 @@ void ApplicationChasm::UploadSelection(){
             o->SetVisualOnly(true);
             o->SetCastsShadow(false);
             o->SetVisibility(false);
-            main_scene->AddObject(o);
+            world_scene->AddObject(o);
             path_marks = o;
         });
     }
@@ -3936,10 +3965,10 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     //whether it had to be (then it has no stem). False behind the camera.
     auto pin_spot = [&](const vec3& stem, const vec3& top, float rise, vec2& head, vec2& dot, bool& f_off){
         vec2 tip;
-        if (!ScreenOf(main_scene->camera,width,height,top,tip)){
+        if (!ScreenOf(world_scene->camera,width,height,top,tip)){
             return false;
         }
-        ScreenOf(main_scene->camera,width,height,stem,head);
+        ScreenOf(world_scene->camera,width,height,stem,head);
         float margin = 18.0f * s;
         float bottom = height - 64.0f * s;
         f_off = tip.x < margin || tip.y < margin || tip.x > width - margin || tip.y > bottom;

@@ -3357,17 +3357,8 @@ private:
     void TeleportToCursor(InputController* input);
     void LeaveTitle();
 
-    //Loading progress, written and read on the render thread only - Init draws its own frames.
-    bool        f_loading = false;
-    int         loading_step = 0;
-    int         loading_steps = 1;
-    const char* loading_label = "";
-    std::chrono::steady_clock::time_point loading_step_start;
-    std::chrono::steady_clock::time_point loading_start;
-    //Starts step `index` of `count`: logs how long the previous one took, then draws a frame.
-    void LoadingStep(int index, int count, const char* label);
-    //One frame of the title scene and its overlay, drawn from inside Init. See the definition.
-    void DrawLoadingFrame();
+    //Behind core's loading text (Application::BeginLoading): the title's art. See the definition.
+    void DrawLoadingBackground() override;
     //Exchanges the live level's members with this parked slot's. See ArcherLevel.
     void SwapLevel(ArcherLevel& parked);
     //Builds `level` as a scene of its own called `name`, sharing the character. See the definition.

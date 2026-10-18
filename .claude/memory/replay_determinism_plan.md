@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 2e3d945b-d959-4cf6-b015-2e9c5cf4eed0
-  modified: 2026-09-28T18:35:11.201Z
+  modified: 2026-10-18T13:22:39.096Z
 ---
 
 2026-09-28: user insists replays must be reliable ("that is the whole point of the determinism"). Plan written in docs/replay_determinism_plan.md and agreed in outline.
@@ -24,7 +24,7 @@ Step 5 (anim/pose) DONE 2026-09-28 night: user OK'd excluding grass + all visual
 
 DONE 2026-09-28 ~23:30: rp3d agent added PhysicsWorld::rebuildInternalState() + computeStateHash() (local fixes in the fork, lib + 3rdparty headers installed) and the `physics` part in core's HashSimState; I made rebuildInternalState the LAST statement of ApplicationArcher::RestoreRecordingState. Result: fresh/warm/reversed/debug-vs-release all bit-identical in every part. From now on any trace difference between two runs of one exe is a NEW leak; start with cue_replay --detail.
 
-USER DECISION 2026-09-28: keep ONE test recording, archer_test.rec; others in recordings/archive/ (not deleted - four were untracked). Every agent re-checks after a game change and rewrites with --write archer_test if intended; documented in CLAUDE.md.
+USER DECISION 2026-09-28: keep ONE test recording, archer_test.rec; others in recordings/archive/ (not deleted - four were untracked). Every agent re-checks after a game change and rewrites with --write archer_test if intended; documented in CLAUDE.md. 2026-10-18: the baseline is stale at HEAD, see [[archer-test-baseline-stale]].
 
 **Why:** cue_replay only compares sounds, so it hid divergence.
 **How to apply:** core steps (replay ignores live keys, hasher + HashSimState hook + replay_trace, cue_replay .trace) may go ahead; anything in apps/archer waits until the bridge agent is finished - check lockd first.

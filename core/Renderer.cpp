@@ -2491,6 +2491,13 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
     }
 }
 
+//The same choice as the end of DrawFrame, so the present cannot tell this frame from a scene's.
+void Renderer::ClearPresentTarget(const vec4& colour){
+    GLuint target = ((render_scale > 1) && (upscale_fbo_id != (GLuint)-1)) ? upscale_fbo_id : resolve_fbo_id;
+    glBindFramebuffer(GL_FRAMEBUFFER, target);
+    glClearNamedFramebufferfv(target,GL_COLOR,0,(const float*)&colour);
+}
+
 std::vector<uint8_t> Renderer::RequestScreenshot(bool f_include_ui, int timeout_ms){
     std::unique_lock<std::mutex> lock(screenshot_mutex);
     screenshot_requested = true;

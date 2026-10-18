@@ -38,7 +38,7 @@ void ApplicationChasm::UploadZombies(){
         return;
     }
     if (!zombie_set){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             zombie_set = assetmanager->GetObjectFromAsset(CHASM_ZOMBIE_ASSET);
             if (zombie_set){
                 zombie_set->name = "zombies";
@@ -48,7 +48,7 @@ void ApplicationChasm::UploadZombies(){
                 zombie_set->SetVisualOnly(true);
                 zombie_set->SetInstances(std::vector<fmat4>());
                 zombie_set->SetVisibility(false);
-                main_scene->AddObject(zombie_set);
+                world_scene->AddObject(zombie_set);
             }
             //Their arrows: the range's, once its props are loaded (BuildRangeScene) - in the air whole, else a stub.
             for (int k = 0; k < 2 && range_mesh[2] && range_mesh[3]; k++){
@@ -60,7 +60,7 @@ void ApplicationChasm::UploadZombies(){
                 o->SetPickability(false);
                 o->SetInstances(std::vector<fmat4>());
                 o->SetVisibility(false);
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 zombie_arrow_set[k] = o;
             }
         });

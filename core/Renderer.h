@@ -460,6 +460,13 @@ class Renderer{
     //serviced only at the point it asked for, so the other call is a cheap no-op.
     void CaptureScreenshotIfRequested(bool f_after_ui);
 
+    /*
+        A frame with no scene in it: binds the target DrawFrame would have left bound - the one the
+        overlay draws on and SwapWindowBuffers presents - and clears it to `colour`. Application's
+        loading screen, drawn before any scene can be.
+    */
+    void ClearPresentTarget(const vec4& colour);
+
     void UploadMaterials();
     void UploadLights();
     void UploadCubeMap(CubeMap* cubemap);

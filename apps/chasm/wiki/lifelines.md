@@ -4,9 +4,9 @@ aliases: age, ages, birth, births, baby, babies, child, children, couple, couple
 kind: people
 status: partial
 summary: People are born, grow up a stage at a time, and couples have children, with one chance a year each.
-plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: shares; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births; lifeline_plan.md > As built: step 3, couples
-code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING LIFE_COUPLE_ROOM EconomyShare; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers HouseFamilies EconomyRelated EconomyCoupleSurname
-verified: 2026-10-12
+plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: shares; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births; lifeline_plan.md > As built: step 3, couples; building_size_plan.md > Decided (the user, 2026-10-18)
+code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING LIFE_COUPLE_ROOM EconomyShare; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers HouseFamilies EconomyRelated EconomyCoupleSurname EconomyBirthChance EconomyHouseAppeal
+verified: 2026-10-18
 ---
 
 Every [[Person|person]] has a birthday and is a year older on it each game year ([[Seasons]]). The
@@ -55,7 +55,9 @@ A couple has **one chance a year**, at dawn on the couple's own day of the year.
 - she is not already expecting or caring, and has had fewer than {LIFE_CHILDREN_MOST} children, the dead
   counted.
 
-The chance is {LIFE_BIRTH_ROOM}% with a place to spare in the house, {LIFE_BIRTH_FULL}% in a full one.
+The chance is {LIFE_BIRTH_ROOM}% with a place to spare in the house, {LIFE_BIRTH_FULL}% full, {LIFE_BIRTH_CROWDED}% crowded
+([[House]]). Its **appeal** adds to it: {LIFE_BIRTH_PER_STOREY}% a storey over the first, and its garden {LIFE_BIRTH_GARDEN}% for the
+first plot, each after it half the one before.
 When it comes, she is **expecting** for {LIFE_EXPECTING_TICKS:seasons} and works on. The child is born
 the first time she is home after it is due.
 
@@ -69,5 +71,4 @@ home with the most room to spare. They live from its pantry until one of them is
 ## Planned
 
 - [planned] Old age: stopping work, going for walks, still running errands, and dying of it.
-- [planned] Crowding: a house holding more than its room costs everyone in it. Births are what cause it.
 - Skills passed on from the parents, and growing with work, are on [[Skills]].

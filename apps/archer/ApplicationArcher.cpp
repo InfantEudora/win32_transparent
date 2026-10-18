@@ -967,17 +967,17 @@ void ApplicationArcher::Init(void){
         THE LOADING SCREEN GOES UP FIRST, before anything slow.
 
         The window is sized now rather than at the end of Init, so the first loading frame is
-        already at the size the game runs at instead of the size the window was created at. The
-        overlay is made here rather than by core after Init returns, because the progress text is
-        drawn DURING Init - see EnsureOverlay. Everything from here to the end of Init is timed and
-        drawn step by step through LoadingStep.
+        already at the size the game runs at instead of the size the window was created at.
+        Everything from here to the end of Init is timed and drawn step by step through core's
+        LoadingStep (Application::BeginLoading), over the title's art - see DrawLoadingBackground.
+
+        LOADING_STEPS is checked by EndLoading, so adding a step and forgetting the total is a
+        warning in the log rather than a bar that stops short or runs past the end.
     */
+    const int LOADING_STEPS = 17;
     main_window->Resize(1600,900);      //16:9; a side-scroller wants width far more than height
     CreateTitleScene();
-    EnsureOverlay();
-    f_loading = true;
-    loading_start = std::chrono::steady_clock::now();
-    loading_step_start = loading_start;
+    BeginLoading(LOADING_STEPS);
 
     //The archer, the blocks and every prop are all scaled unit boxes, so one mesh serves them
     //all - and the archer's collider then cannot disagree with its own mesh, because both come
@@ -1013,45 +1013,38 @@ void ApplicationArcher::Init(void){
     main_scene->physics_world->SetGravity(vec3(0.0f,ARCHER_PROP_GRAVITY,0.0f));
     main_scene->physics_world->SetDebugRendering(false);
 
-    /*
-        The loading steps. Numbered by a counter rather than by hand, and checked against
-        LOADING_STEPS at the end, so adding a step and forgetting the total is a warning in the
-        log rather than a bar that stops short or runs past the end.
-    */
-    const int LOADING_STEPS = 17;
-    int step = 0;
-    LoadingStep(step++,LOADING_STEPS,"materials");
+    LoadingStep("materials");
     BuildMaterials();
     /*
         The character's file holds the props as well as her, and the first of them - the crate - is
         wanted by BuildProps below, well before BuildArcherModel. So it is read once, here, rather
         than by BuildArcherModel; everything after this finds it already loaded.
     */
-    LoadingStep(step++,LOADING_STEPS,"reading the archer");
+    LoadingStep("reading the archer");
     gltfloader.LoadGLTFFile(ARCHER_MODEL_ASSET);
-    LoadingStep(step++,LOADING_STEPS,"props");
+    LoadingStep("props");
     BuildCrateMesh();
     BuildStandMesh();
     BuildStrawManMesh();
-    LoadingStep(step++,LOADING_STEPS,"the level");
+    LoadingStep("the level");
     BuildBlocks();
     //After BuildBlocks, which it hides the melted half of - see the note on the declaration.
-    LoadingStep(step++,LOADING_STEPS,"terrain");
+    LoadingStep("terrain");
     BuildTerrain();
-    LoadingStep(step++,LOADING_STEPS,"the archer");
+    LoadingStep("the archer");
     BuildArcher();
     BuildArcherModel();
     //After it, for model_scale - BuildBlocks above stood the bigtree and the mushroom as boxes.
     BuildPlantModels();
     //AFTER the model, for model_scale: an archery stand is drawn at the character's scale, and at
     //the 1.0 it has before BuildArcherModel measures her it came out a doll's-house stand.
-    LoadingStep(step++,LOADING_STEPS,"props and bow");
+    LoadingStep("props and bow");
     BuildProps();
     //After it: the grip is derived from a posed clip, and both the bones and the clips arrive with
     //the model. See the note on the declaration.
     BuildBow();
     //After BuildArcherModel too, for the loader and the character's scale - see the declaration.
-    LoadingStep(step++,LOADING_STEPS,"foliage");
+    LoadingStep("foliage");
     BuildFoliage();
     //After BuildArcherModel too - the leaves are sized by model_scale.
     BuildWindLeaves();
@@ -1060,7 +1053,7 @@ void ApplicationArcher::Init(void){
     //a model_scale of 1, half size. Again now that the scale is known; placing is cheap, the wall's
     //mesh is not remade.
     PlaceAllBackdropPines();
-    LoadingStep(step++,LOADING_STEPS,"vines and rope");
+    LoadingStep("vines and rope");
     BuildVines();
     //After it: made of the same pieces.
     BuildGrownVines();
@@ -1068,7 +1061,7 @@ void ApplicationArcher::Init(void){
     BuildRopeSkin();
     //After the vines (their params) and the terrain (the walls the spiders walk): the world's only.
     BuildCreatures();
-    LoadingStep(step++,LOADING_STEPS,"arrows and scenery");
+    LoadingStep("arrows and scenery");
     BuildArrowViews();
     BuildAimArc();
     BuildRopeAttachMarkers();
@@ -1078,7 +1071,7 @@ void ApplicationArcher::Init(void){
     BuildSigns();
     BuildScenery();
     BuildApples();
-    LoadingStep(step++,LOADING_STEPS,"lights and sound");
+    LoadingStep("lights and sound");
     //Only the line object here; the field itself is built by the "wind" step below.
     wind_view.Init(main_scene);
     BuildEdgeView();
@@ -1090,20 +1083,20 @@ void ApplicationArcher::Init(void){
     SetupCamera();
     SetupInput();
     SetupSound();
-    LoadingStep(step++,LOADING_STEPS,"music");
+    LoadingStep("music");
     SetupMusic();
     RegisterCommandHandlers();
     //LAST, because they share the character the lines above built - see the note on ArcherLevel.
     world_scene = main_scene;
     parked_levels.reserve(4);           //BuildExtraLevel holds a reference into it while it builds
-    LoadingStep(step++,LOADING_STEPS,"the range");
+    LoadingStep("the range");
     range_scene = BuildExtraLevel(STAGE_LEVEL_RANGE,"Range");
-    LoadingStep(step++,LOADING_STEPS,"the rope course");
+    LoadingStep("the rope course");
     rope_scene = BuildExtraLevel(STAGE_LEVEL_ROPE,"Rope");
-    LoadingStep(step++,LOADING_STEPS,"the character scene");
+    LoadingStep("the character scene");
     character_scene = BuildExtraLevel(STAGE_LEVEL_CHARACTER,"Character");
     BuildCharacterScene();
-    LoadingStep(step++,LOADING_STEPS,"the web");
+    LoadingStep("the web");
     web_scene = BuildExtraLevel(STAGE_LEVEL_WEB,"Web");
     /*
         The wind field's first request. The solve runs on the background worker, so this only
@@ -1112,7 +1105,7 @@ void ApplicationArcher::Init(void){
         Until then the grass stands still. After the extra levels, which leave the main level live,
         so the request is for the world's blocks.
     */
-    LoadingStep(step++,LOADING_STEPS,"wind");
+    LoadingStep("wind");
     UpdateWind();
     /*
         After everything that loads from archer.glb, because what the game has asked for by then is
@@ -1154,14 +1147,7 @@ void ApplicationArcher::Init(void){
     main_scene->StepPhysics(1);
 
     //The last step's time, and the whole load's.
-    LoadingStep(step,LOADING_STEPS,NULL);
-    if (step != LOADING_STEPS){
-        debug->Warn("Loading ran %d steps against LOADING_STEPS %d - the bar was wrong\n",
-                    step,LOADING_STEPS);
-    }
-    f_loading = false;
-    debug->Ok("Loaded in %.0f ms\n",
-              std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - loading_start).count());
+    EndLoading();
 
     /*
         AND THE TITLE BECOMES THE LIVE SCENE, now that everything is built: the loading text turns
@@ -7479,6 +7465,12 @@ void ApplicationArcher::BuildBackground(){
 
 //--- The title and loading screen ---------------------------------------------------------------
 
+#define TITLE_TEXT          UIColor(242,232,204,255)    //the parchment of the painted signs
+#define TITLE_TEXT_DIM      UIColor(242,232,204,150)
+#define TITLE_BAND          UIColor(  8, 14, 10,150)    //under the text, so busy art cannot eat it
+#define TITLE_BAR_BACK      UIColor(242,232,204, 45)
+#define TITLE_BAR_FILL      UIColor(150,196, 80,235)    //the moss
+
 /*
     An orthographic camera and one unlit quad, as in apps/bomber's CreateTitleScene. RENDER
     THREAD, from the top of Init - it is the first thing on screen, so it is built before anything
@@ -7494,6 +7486,12 @@ void ApplicationArcher::BuildBackground(){
 */
 void ApplicationArcher::CreateTitleScene(){
     title_scene = CreateNewScene("Title Screen");
+    //Core's loading text, which goes up over this next, in the title's colours.
+    loading_style.text = TITLE_TEXT;
+    loading_style.text_dim = TITLE_TEXT_DIM;
+    loading_style.band = TITLE_BAND;
+    loading_style.bar_back = TITLE_BAR_BACK;
+    loading_style.bar_fill = TITLE_BAR_FILL;
 
     Camera* camera = title_scene->camera;
     camera->name = "Title Camera";
@@ -7561,7 +7559,7 @@ void ApplicationArcher::FitTitleQuad(int w, int h){
     fit(menu_quad,MENU_IMAGE_ASPECT);
     //The menus' art behind Controls and Settings, the title's everywhere else - loading included.
     //Read every frame here, so the picture changes on the frame the screen does.
-    const bool f_menu = !f_loading && (menu_screen != MENU_SCREEN_TITLE) && menu_quad;
+    const bool f_menu = !IsLoading() && (menu_screen != MENU_SCREEN_TITLE) && menu_quad;
     if (title_quad){
         title_quad->SetVisibility(!f_menu);
     }
@@ -7571,74 +7569,22 @@ void ApplicationArcher::FitTitleQuad(int w, int h){
 }
 
 /*
-    Starts loading step `index` of `count`. RENDER THREAD, from Init only.
-
-    Logs what the PREVIOUS step cost, so the log answers "where does the load go" without anyone
-    having to add timers, then draws a frame showing this one. A NULL label is the call after the
-    last step: it logs that step's time and draws nothing, because the next frame is the core
-    loop's and shows "click to continue".
-
-    One frame per step, drawn BEFORE the step runs, so a long step shows its own name for as long
-    as it takes. There are few enough steps that the frames themselves cost nothing to speak of.
+    Behind core's loading text, one frame per step during Init (Application::DrawLoadingFrame, which
+    has serviced any resize by now): the title scene, the art fitted to the window first.
 */
-void ApplicationArcher::LoadingStep(int index, int count, const char* label){
-    auto now = std::chrono::steady_clock::now();
-    if (index > 0){
-        debug->Info("Loading: %s took %.0f ms\n",loading_label,
-                    std::chrono::duration<float,std::milli>(now - loading_step_start).count());
-    }
-    loading_step_start = now;
-    loading_step = index;
-    loading_steps = std::max(count,1);
-    loading_label = label ? label : "";
-    if (label){
-        DrawLoadingFrame();
-    }
-}
-
-/*
-    One frame of the title scene with the loading text over it, from INSIDE Init.
-
-    The core frame loop has not started yet - it starts when Init returns - so this is the same
-    sequence Application::DrawFrame runs, minus everything that is not the title: no PreRender
-    (the world's view work, half built), no ImGui (its panels read the level being built), and
-    only the app's own overlay. It services a resize itself for the same reason, since the core
-    loop is not there yet to do it; Init's own Resize lands here first.
-*/
-void ApplicationArcher::DrawLoadingFrame(){
-    if (!title_scene || !renderer || !main_window){
+void ApplicationArcher::DrawLoadingBackground(){
+    if (!title_scene){
+        Application::DrawLoadingBackground();
         return;
-    }
-    if (main_window->f_resized){
-        main_window->f_resized = false;
-        renderer->Resize(main_window->width,main_window->height);
     }
     FitTitleQuad(main_window->width,main_window->height);
     title_scene->DrawFrame();
-    if (overlay){
-        overlay->Begin(main_window->width,main_window->height);
-        DrawOverlay();
-        renderer->BeginGPUPass(Renderer::GPU_PASS_OVERLAY);
-        overlay->Draw();
-        renderer->EndGPUPass(Renderer::GPU_PASS_OVERLAY);
-    }
-    renderer->EndGPUFrame();
-    main_window->SwapWindowBuffers();
 }
 
-#define TITLE_TEXT          UIColor(242,232,204,255)    //the parchment of the painted signs
-#define TITLE_TEXT_DIM      UIColor(242,232,204,150)
-#define TITLE_BAND          UIColor(  8, 14, 10,150)    //under the text, so busy art cannot eat it
-#define TITLE_BAR_BACK      UIColor(242,232,204, 45)
-#define TITLE_BAR_FILL      UIColor(150,196, 80,235)    //the moss
-
 /*
-    The title's text, low and centred over the art. RENDER THREAD: from DrawLoadingFrame during
-    Init, and from the core loop while the title is the live scene.
-
-    While loading: LOADING, a bar, and the name of the step under way. Once loaded: CLICK TO
-    CONTINUE, breathing on the title scene's own tick count so it pauses with the simulation like
-    every other duration here.
+    The HUD in a level, or the title's menus while the title is the live scene. RENDER THREAD, from
+    the core loop. The loading text over the title during Init is core's (DrawLoadingText), drawn
+    without this.
 
     Sized off the window's height, so the text is the same fraction of the picture at any size.
 */
@@ -7646,7 +7592,7 @@ void ApplicationArcher::DrawOverlay(void){
     if (!overlay || !overlay->IsReady() || !main_window){
         return;
     }
-    if (!f_loading && !(title_scene && (main_scene == title_scene))){
+    if (!(title_scene && (main_scene == title_scene))){
         DrawVision();
         DrawZoneLabel();
         //Dressing her is not playing: the wardrobe in place of the game's HUD.
@@ -7660,36 +7606,8 @@ void ApplicationArcher::DrawOverlay(void){
         DrawScreenFade();
         return;
     }
-    const float w = (float)main_window->width;
-    const float h = (float)main_window->height;
-    const float size = clamp(h * 0.042f,16.0f,72.0f);
-    const float cx = w * 0.5f;
-    const float baseline = h * 0.86f;
-    const float bar_w = size * 9.0f;
-    const float pad = size * 0.9f;
-
-    if (f_loading){
-        const float bar_top = baseline + size * 0.45f;
-        const float bar_h = std::max(3.0f,size * 0.16f);
-        const float label_size = size * 0.5f;
-        const float label_baseline = bar_top + bar_h + label_size * 1.6f;
-        overlay->AddRect(vec2(cx - bar_w * 0.5f - pad,baseline - size * 1.1f),
-                         vec2(cx + bar_w * 0.5f + pad,label_baseline + label_size * 0.7f),
-                         size * 0.4f,TITLE_BAND);
-        overlay->AddText("LOADING",vec2(cx,baseline),size,TITLE_TEXT,UI_ALIGN_CENTER);
-        float fraction = clamp((float)loading_step / (float)loading_steps,0.0f,1.0f);
-        vec2 bar_min(cx - bar_w * 0.5f,bar_top);
-        vec2 bar_max(cx + bar_w * 0.5f,bar_top + bar_h);
-        overlay->AddRect(bar_min,bar_max,bar_h * 0.5f,TITLE_BAR_BACK);
-        if (fraction > 0.0f){
-            overlay->AddRect(bar_min,vec2(bar_min.x + bar_w * fraction,bar_max.y),bar_h * 0.5f,TITLE_BAR_FILL);
-        }
-        overlay->AddText(loading_label,vec2(cx,label_baseline),label_size,TITLE_TEXT_DIM,UI_ALIGN_CENTER);
-        return;
-    }
-
-    //Loaded: the menu where "click to continue" was (docs/menu_plan.md).
-    DrawMenus(w,h);
+    //The menu where "click to continue" was (docs/menu_plan.md).
+    DrawMenus((float)main_window->width,(float)main_window->height);
     DrawScreenFade();
 }
 

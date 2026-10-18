@@ -47,7 +47,7 @@ void ApplicationChasm::BuildWaterScene(){
         o->SetCastsShadow(false);
         o->SetMaterialSlot(0,water_material);
         o->SetVisibility(false);
-        main_scene->AddObject(o);
+        world_scene->AddObject(o);
         return o;
     };
     water_flat = Make("Rivers");
@@ -77,12 +77,12 @@ void ApplicationChasm::BuildWaterScene(){
     foam_set->SetCastsShadow(false);
     foam_set->SetInstances(std::vector<fmat4>());
     foam_set->SetVisibility(false);
-    main_scene->AddObject(foam_set);
+    world_scene->AddObject(foam_set);
 }
 
-//The simulation's clock in seconds: a paused game holds the water, mist and foam still.
+//The simulation's clock in seconds: a paused game holds the water, mist and foam still. The world's, whichever is active.
 double ApplicationChasm::SimSeconds(){
-    return (double)main_scene->GetPhysicsTick() * (double)main_scene->GetPhysicsTimestep();
+    return (double)world_scene->GetPhysicsTick() * (double)world_scene->GetPhysicsTimestep();
 }
 
 void ApplicationChasm::SetWaterSheetUniforms(){
@@ -169,7 +169,7 @@ void ApplicationChasm::UpdateMist(){
     const MistData& m = *w->mist;
     size_t need = m.chunk_puffs.size() * MIST_VARIANTS;
     if (mist_sets.size() < need){
-        main_scene->AtTickBoundary([&](){
+        world_scene->AtTickBoundary([&](){
             while (mist_sets.size() < need){
                 Object* o = new Object();
                 o->name = "Mist set " + std::to_string(mist_sets.size());
@@ -183,7 +183,7 @@ void ApplicationChasm::UpdateMist(){
                 o->SetCastsShadow(true);
                 o->SetInstances(std::vector<fmat4>());
                 o->SetVisibility(false);
-                main_scene->AddObject(o);
+                world_scene->AddObject(o);
                 mist_sets.push_back(o);
             }
         });
