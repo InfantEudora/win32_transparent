@@ -62,6 +62,7 @@
 #define SHAPE_ROOF          0.6f        //a roof's reach above the eaves, as the pick sees it (BuildingMesh: 0.85 at the ridge)
 #define SHAPE_TENT          0.85f       //a tent, as tall as it is drawn
 #define SHAPE_WINCH         2.6f        //a winch's gantry
+#define SHAPE_WELL          1.9f        //a well's roof at its ridge (BuildingMesh.cpp, BuildWell)
 
 namespace {
 
@@ -696,6 +697,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_ROPEWALK:    return "Ropewalk";
         case ZONE_KIND_STONECUTTER: return "Stonecutter's hut";
         case ZONE_KIND_MINE:        return "Mine";
+        case ZONE_KIND_WELL:        return "Well (debug)";
         default:                    return "?";
     }
 }
@@ -2029,6 +2031,16 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     if (b.kind == ZONE_KIND_WINCH && info.storeys > 0){
         c.Text("Lowers to the balcony below",HUD_TEXT_DIM);
     }
+    //A WELL (water_tools_plan.md): the water it still holds, anyone's - or that it is kept full.
+    if (b.kind == ZONE_KIND_WELL && id < e->stock.size()){
+        std::array<int,GOOD_COUNT> water{};
+        water[GOOD_WATER] = e->stock[id][GOOD_WATER];
+        bool f_endless = EconomyWellEndless(*e,id);
+        c.Stock("Water",f_endless ? "anyone's, kept full" : "anyone's",water,0,false,EconomyReserved(*e,id));
+        c.Text(f_endless ? "Endless: it never runs dry" : (water[GOOD_WATER] > 0) ? "It runs dry once this is drawn"
+                                                                              : "Drawn dry",
+               (!f_endless && water[GOOD_WATER] == 0) ? HUD_AMBER : HUD_TEXT_DIM);
+    }
     //Its builders (builders_plan.md): its places filled before any other workplace's.
     if (b.kind == ZONE_KIND_BUILDERS){
         int places = (id < e->places.size()) ? e->places[id] : 0;
@@ -2299,11 +2311,12 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
     if (!coming){
         c.Text("Nobody is on the way to it",HUD_TEXT_DIM);
     }
-    //PICK UP (stone_plan.md): the builders fetch it before building, from anywhere - lit while they are to. Only builders
-    //move crates, so with none the card says why nothing happens.
-    if (crate.f_pick_up && std::none_of(e.workers.begin(),e.workers.end(),
-                                        [](const EconomyWorker& k){ return k.job == WORKER_JOB_BUILDER; })){
-        c.Text("No builders to pick it up: build a builders' hut",HUD_AMBER);
+    //PICK UP (stone_plan.md): anyone free fetches it before building, from anywhere - lit while they are to. Free is a
+    //builder, or anyone jobless and not posted (TickWorker's gate), so with none of either the card says why nothing happens.
+    if (crate.f_pick_up && std::none_of(e.workers.begin(),e.workers.end(),[](const EconomyWorker& k){
+            return k.job == WORKER_JOB_BUILDER || (k.job == WORKER_JOB_NONE && k.post < 0);
+        })){
+        c.Text("Nobody free to pick it up: no builders, and everyone has a job",HUD_AMBER);
     }else if (crate.f_pick_up && crate.f_too_far && !coming){
         //Turned down at the last look (ECONOMY_PICK_UP_WATER): more than that walk without water, there and to a store.
         float days = ECONOMY_PICK_UP_WATER * (float)NEEDS_WATER_FULL / (float)CALENDAR_DAY_TICKS;
@@ -2546,6 +2559,7 @@ float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
         case ZONE_KIND_CAMP:    return ground + SHAPE_TENT;
         case ZONE_KIND_WINCH:   return ground + SHAPE_WINCH;
         case ZONE_KIND_MINE:    return ground + SHAPE_WINCH;      //its portal, about a winch's height
+        case ZONE_KIND_WELL:    return ground + SHAPE_WELL;
         case ZONE_KIND_BRIDGE:  return terrain_levels[w.terrain->level[plot]].height + ZONE_BRIDGE_DECK + 0.45f;
         default:{
             const float half = ZONE_STOREY_HEIGHT * 0.5f;
@@ -3156,7 +3170,7 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     SubmitGuards(sel.id,hit.value);
                 }
             }else if (hit.action == OVERLAY_HIT_PICK_UP){
-                //A crate's card: fetched first by the builders, or - lit - back in the queue (stone_plan.md).
+                //A crate's card: fetched first by anyone free, or - lit - back in the queue (stone_plan.md).
                 PlayPick sel;
                 {
                     std::lock_guard<std::mutex> lock(pick_mutex);

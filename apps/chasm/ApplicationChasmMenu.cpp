@@ -582,8 +582,11 @@ void ApplicationChasm::Autosave(const std::string& keep, bool f_record){
         }
     }
     std::string error;
-    //A lost colony is not kept: it would push a colony worth going back to out of the slots.
-    if (!slot.empty() && !ColonyLost() && WriteSave(slot,"auto",error)){
+    //A lost colony is not kept: it would push a colony worth going back to out of the slots. Nor is a test map
+    //(test_maps_plan.md), for the same reason - it is saved by hand or not at all.
+    std::shared_ptr<const Grid> g = GetGrid();
+    bool f_test = g && !GridKindHasChasm(g->settings.kind);
+    if (!slot.empty() && !ColonyLost() && !f_test && WriteSave(slot,"auto",error)){
         ShowNote("Autosaved");
     }
     if (f_record){

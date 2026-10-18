@@ -39,6 +39,7 @@ APP_SRCS += GridPick.cpp
 APP_SRCS += Terrain.cpp
 APP_SRCS += TerrainMesh.cpp
 APP_SRCS += Zones.cpp
+APP_SRCS += TitleTown.cpp
 APP_SRCS += ZoneMesh.cpp
 APP_SRCS += ChasmSave.cpp
 APP_SRCS += Forest.cpp

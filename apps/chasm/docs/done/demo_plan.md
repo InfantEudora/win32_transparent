@@ -1,9 +1,24 @@
 # Demo Plan: menus, goals, and recording for testers
 
+**FINISHED 2026-10-18.** The demo went out to testers as Chasm 0.0.2 (commit `7de4696`) and ran on
+all ten of their machines, two of them Linux, with nothing reported. Moved to `docs/done/` then; it is
+kept as the record of what was decided and built, and nothing more is added to it. The next demo's
+work is finishing the defence (`../defence_plan.md`, `../zombies_plan.md`).
+
+**Not done, and not lost** - picked up by a later plan if it is still wanted:
+
+- From "Other things toward a first shippable demo": the wiki shipped as Help and opened from the
+  menu (7), a performance pass on the release exe (9), a tester README in the ship folder (10), and a
+  first screen saying what the game is and what the goal is (11).
+- From the diorama ("As built: the diorama's smoke and people", *Not yet*): children, an archer's
+  arrows, a working clip of its own (new animation, the user's), and a thicker smoke column.
+- Option C of the backdrop, an authored terrain, left open for scenarios and tutorials.
+
 Proposed and decided 2026-10-15 (see "Decided" below). All seven steps are built (see the "As built"
 sections at the end). The aim is to get Chasm to
 testers as the ship build (`make ship`: no ImGui, no MCP, no debug panels), so the game can be tested
 without the debug menu. Statistics were split out into a project of their own: `statistics_plan.md`.
+(The other plans named below are in `docs/`, one folder up, as this one was when it was written.)
 
 ## What the user asked (2026-10-15)
 

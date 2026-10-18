@@ -55,10 +55,10 @@ what keep building going. A builder is also the colony's **caretaker**, and his 
 1. a [[Guard tower|guard tower]] short of its water or provisions: he carries them there;
 2. [[Provisions|provisions]] something wants, or the colony keeps: he makes them at his hut, and takes the
    kept ones to a store;
-3. building, as above, and road work;
-4. a [[Crate|crate]]'s goods to a store.
+3. a [[Crate|crate]] the player has put **PICK UP**, then building, as above, and road work;
+4. any other crate's goods to a store.
 
-The jobless only ever do the third.
+The jobless do the third.
 
 ## Which site first
 

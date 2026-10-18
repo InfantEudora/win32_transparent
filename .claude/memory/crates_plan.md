@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 47e6cba0-a787-423c-b97b-1ca2ffa6b50e
-  modified: 2026-10-18T11:05:00.000Z
+  modified: 2026-10-18T18:03:17.979Z
 ---
 
 Chasm crates, agreed with the user 2026-10-09 in `apps/chasm/docs/crates_plan.md`. The user's decisions: a
@@ -36,6 +36,10 @@ takes no deliveries). TO_FETCH/TO_SITE check SiteAlive each look and turn; `deli
 leave_errand/AtWorkshop/AtRopewalk; the dead DropLoad. WORKER_HOLDING kept only for Replan's cut-off carrier (delivers
 next look). User chose "drop where he turned" over "carry back to the camp" ("good enough for now"). Repro on seed 31:
 bridge (162.46,-33.32)->(153.95,-41.025) is "under the clouds" until ~15,000 ticks into a fresh colony.
+
+PICK UP BY ANYONE FREE 2026-10-18 (the user: "should be any villager that is idle"): the flagged errand
+(`MoveCrate(...,true)`) runs for WORKER_JOB_NONE as well as builders, before FindSiteWork; an UNFLAGGED crate is
+still the builders' last errand only. stone_plan.md "As built: PICK UP by anyone free".
 
 **Why:** the user's fix for a posted carrier's load, and the small start of They Are Billions-style finds.
 **How to apply:** build in the plan's order, asking before each step; after any economy change run a replay

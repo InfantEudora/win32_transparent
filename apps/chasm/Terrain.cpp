@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 
 /*
@@ -672,6 +673,14 @@ float SmoothStep(float e0, float e1, float x){
 void Terrain::BuildRelief(const Grid& g){
     const uint32_t seed = g.settings.seed;
     relief_seed = seed;
+    //A kind without hills (Grid.h, GRID_KIND_*) is flat: with no relief, Relief reads 0 everywhere.
+    if (!GridKindHasHills(g.settings.kind)){
+        relief.clear();
+        relief_w = 0;
+        relief_h = 0;
+        relief_max = 0.0f;
+        return;
+    }
     relief_origin = g.bounds_min;
     vec2 size = g.bounds_max - g.bounds_min;
     relief_w = (int)std::ceil(size.x / relief_cell) + 2;
@@ -1241,11 +1250,25 @@ bool Terrain::RiverCoords(const vec2& p, float reach, int& river, float& along, 
 void RunTerrainChecks(const Grid& g, const Terrain& t, const std::vector<GridLine>& features,
                       GridCheckReport& report){
     char buf[256];
-    auto add_result = [&report](const char* name, bool f_pass, const std::string& detail){
+    /*
+        A test map has no chasm (test_maps_plan.md), so what these say about one - a single chasm, a river at
+        home, the two sides sealed and whole, a balcony - is skipped there rather than failed. They still run.
+    */
+    static const char* const chasm_only[] = {"one chasm","rivers","sealed","sides","balconies"};
+    const bool f_chasm = GridKindHasChasm(g.settings.kind);
+    auto add_result = [&report,f_chasm](const char* name, bool f_pass, const std::string& detail){
         GridCheckResult r;
         r.name = name;
         r.f_pass = f_pass;
         r.detail = detail;
+        for (const char* c : chasm_only){
+            if (!f_chasm && strcmp(name,c) == 0){
+                r.f_pass = true;
+                r.f_skipped = true;
+                r.detail = "not a chasm map - " + detail;
+            }
+        }
+        f_pass = r.f_pass;
         report.results.push_back(r);
         if (!f_pass){
             report.f_pass = false;

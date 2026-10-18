@@ -1,14 +1,14 @@
 # Statistics Plan: what the colony did, kept so a load shows the same
 
-Split out of `demo_plan.md` on 2026-10-15 as a project of its own. Version 1 built 2026-10-16 ("As built"). What it
+Split out of `done/demo_plan.md` on 2026-10-15 as a project of its own. Version 1 built 2026-10-16 ("As built"). What it
 chose where the brief left the choice open is under "Chosen for version 1", confirmed by the user the same day ("good
 choices"); what is still open is under "Open questions".
 
 ## What it is for
 
-- **A Statistics page** in the demo's pause menu (`demo_plan.md`, "The screens").
+- **A Statistics page** in the demo's pause menu (`done/demo_plan.md`, "The screens").
 - **The summary on the demo's end screens**: "Demo complete" and "The colony is lost"
-  (`demo_plan.md`, "The demo's goals").
+  (`done/demo_plan.md`, "The demo's goals").
 - **A `chasm_stats` MCP tool** for agents, and for the Void (`apps/llm/docs/void_plan.md`), which
   asked for a journal of what happened: births, harvests with their yield, sites finished.
 
@@ -51,7 +51,7 @@ What follows from it:
   - bars by season: births, deaths, harvests and trees felled.
 - **A journal:** births, deaths, harvests with their yield, buildings finished, colonies founded,
   the first winter survived, and DISCOVERIES. Discoveries are the demo's own saved flags, each with
-  the tick it was made on (`demo_plan.md`, "Discoveries"). The journal lists them; it doesn't own them.
+  the tick it was made on (`done/demo_plan.md`, "Discoveries"). The journal lists them; it doesn't own them.
 - **Drawn** on UIOverlay: `AddLine`, `AddRect` and `AddText` are enough.
 
 ## Chosen for version 1 (2026-10-16, confirmed by the user)
@@ -128,7 +128,7 @@ What follows from it:
 - **Two food figures, on purpose.** NEEDS ATTENTION's days (`ChasmDaysHeld`) leave a camp's pantry out because only
   the family living there may eat from it, not everyone; that is good enough for now. The page's days are what the
   colony has, pantries in.
-- **The end screens** show this page, for now (`demo_plan.md` step 7).
+- **The end screens** show this page, for now (`done/demo_plan.md` step 7).
 - **The events** are listed on a wiki page of their own, `wiki/events.md`: what makes each, and what keeps it.
 - **Per settlement: not now.** "History as a whole is good enough for now. When we expand the game to have more
   settlements that grow larger, we might break it up." The page and the history stay the colony's; the settlements
@@ -154,6 +154,6 @@ None.
 1. ~~Confirm the shape with the user~~ - chosen for version 1, above, for the user to confirm.
 2. *Built*: the ledger and the journal in the rules and the save, with the check.
 3. *Built*: `chasm_stats`, and the three checks.
-4. *Built* as a page of its own, opened by Tab and the top bar. The pause menu (`demo_plan.md` step 1) is to open
+4. *Built* as a page of its own, opened by Tab and the top bar. The pause menu (`done/demo_plan.md` step 1) is to open
    it once that is built.
-5. The end screens: the Statistics page itself, for now (the user's), with `demo_plan.md` step 7.
+5. The end screens: the Statistics page itself, for now (the user's), with `done/demo_plan.md` step 7.

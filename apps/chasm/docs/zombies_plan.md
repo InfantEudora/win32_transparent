@@ -54,6 +54,8 @@ Billions (a cascade of the infected).
    both sides hit - below.)
 3. **Guards shoot**: a tower's guards and the posted archers shoot a zombie in range and in sight; a zombie has a
    few hit points and falls. The Shoot clip and the arrow's flight aimed at it. (Trainees on the line too - below.)
+   3b. **Guards hold their posts** - kept until released, held by zombies in range, a pack of water each (the user's,
+   2026-10-18, below).
 4. **Walls break**: a wall's and a gate's strength, the way's cost of breaking them, and a broken palisade plot a
    gap to build again like any line work.
 
@@ -329,3 +331,100 @@ while he shoots), `ApplicationChasmSelect.cpp` (the card's "Shooting at a zombie
   someone below a pressing hunger sends him off his post for food, through the fight.
 - **For later**: trees and walls do not stop a shot or a sight; a guard on a tower sees no further for EXPLORATION, only for
   shooting (`TickExploration` looks from the ground); arrows run out never.
+
+## Step 3b: guards hold their posts (the user, 2026-10-18)
+
+The two things step 3 found "for the user" are answered, and built the same day ("As built: step 3b", below). **How
+shooting reads from the camera, and how one guard against one zombie feels**, the user is looking at in the game.
+
+- **A guard keeps his tower until the player releases him**, as someone ordered out keeps his post. The job filling
+  never takes him off it: not for a place opening somewhere else (Lieve, above), not for a better archer, not for a
+  shortage of people. He leaves it only when released, when the tower's count is lowered past him, or when the tower
+  is gone.
+- **Zombies in range keep him there**: a pressing need does not send him off for water or food while there is a zombie
+  he could shoot or is fighting. Once none is left in range he goes, as now.
+- **Every guard carries water for a few days**, as the posted do.
+
+**What there is today** (read 2026-10-18): a guard already counts as posted (`EconomyPosted`) and already has the posted
+person's pack (`NEEDS_PACK_*`: 3 water and a provision's worth), eaten from only for a kind his tower has none of
+(`Needs`). But it is filled only when he sets out from home (`TakePost`) or on a supply trip, so an automatic guard who
+goes up straight from an errand climbs with whatever is in his pack already, usually nothing. And `AssignJobs` keeps only
+a hand-picked guard (`f_chosen`) out of the filling.
+
+**Proposed with it**, to settle when it is built:
+
+- **Kept**: a guard who has taken his tower is reserved in `AssignJobs` as a hand-picked one is. Lowering the count
+  still sends the automatic guards home first; "by hand" keeps its one meaning, that the player's pick takes an
+  automatic guard's place.
+- **His pack before he climbs**: on his way up, by his home - or the nearest supply, `SeekSupplyOf` - as a scout's
+  gathering does with one stop, unless his pack already holds it. Topped up on every supply trip after, as now. The
+  pack stays the posted one's size, `NEEDS_PACK_*`.
+- **In range** is a zombie `ShotTarget` would pick for him, or one within `FIGHT_REACH`. **For anyone posted**, an
+  archer ordered out as well as a guard; someone posted without a bow is held by a fight only.
+- **Drinking under fire**: today a meal waits while he shoots and none begins, so a long wave can dry a guard out
+  with water on his back. Whether he drinks from his pack between turns of the Shoot clip is the user's call. *Yes*
+  (the user, 2026-10-18, after it was seen - below): built.
+
+## As built: step 3b (2026-10-18)
+
+Files: `Economy.cpp` (`AssignJobs`' keeping, `PackUp` and its two callers `TakePost` and `GoHome`, `SeekSupplyOf`'s
+`f_towers`, the hold on the post in `TickWorker`), `Economy.h`, `Shooting.cpp` (`ZombiesInRange`, `DrinkBetweenShots`),
+`tools/chasm_guard_test.py` (new), the wiki's tower, posts and zombie pages.
+
+- **Kept**: `AssignJobs` keeps every guard as it kept the hand-picked one - the posted and the hand-picked first, then
+  the automatic guards - so a count lowered still sends the automatic ones home first, and a shortage of people empties
+  the newest of the OTHER workplaces.
+- **Held**: on his post, a pressing need is not seen to while `ZombiesInRange` - a zombie within `FIGHT_REACH`, or one
+  `ShotTarget` finds for a shooter. It asks with none of the arrows in the air counted, since otherwise he was free to
+  walk off the moment every zombie in sight was doomed by arrows on their way. For anyone posted.
+- **Packed**: `PackUp`, where a guard sets out for his tower (`TakePost`, and `GoHome` for one coming off an errand or a
+  supply trip): with less than `NEEDS_PACK_WATER` in his pack, the nearest place with water (`SeekSupplyOf`, towers
+  left out), where he packs as anyone posted does on a supply trip. Never once he stands on his tower. Each stop takes
+  water from where it is, so it ends - his pack full, or nowhere left with any.
+- **The test**: `python apps/chasm/tools/chasm_guard_test.py --port <port>`, against a DEBUG copy (it replaces the map).
+  Each case is built on a flat test map (`test_maps_plan.md`) from nothing and run paused:
+  - `shortage`: a builders' hut painted with nobody free;
+  - `death`: Lieve's case - the range's archer dies;
+  - `player`: release, count up, count down;
+  - `wave`: tower and pack dry, thirsty, three zombies in sight;
+  - `pack`: setting out from an empty home;
+  - `pack_errand`: made a guard on the range's line.
+  Before the change `player` passed and the other five failed, each as the user saw it - the guard made a builder, made
+  the range's archer, off to the store with three zombies standing, up the tower with 2 water and with none. After it,
+  all six pass, about a minute in all.
+- **Checked**: a recording of 3,003 ticks - the shortage, four zombies, the guard made thirsty - replayed twice: equal on
+  every tick, nothing changed between ticks, and both ended as the run did.
+- **Seen - drinking under fire mattered more now.** In that recording the guard, his tower emptied and his water set to
+  1.2 days, ended the run on his tower DRY with 3 water in his pack: a meal waits while he shoots, and the hold no longer
+  let him walk off for it. In the `wave` case three zombies took 2,750 ticks (55 s) to bring down, and he went dry in
+  it. Dry, health falls three times as fast, so a long enough wave would have killed a guard of thirst on his post.
+- **A drink between shots** (the user's yes, the same day): `DrinkBetweenShots` (Shooting.cpp), asked in `Shoot` as a
+  turn of the Shoot clip would begin. A drink under way, or one begun then, holds the turn - the bow down, as with nobody
+  to shoot - and the next turn follows it. Water alone, offered to `Consume` on its own so a drink is what it begins:
+  from his tower's water, or with none there his pack's, as `Needs` would; a unit only when it fits, so about one drink
+  of a second every two days of the bar, against turns of 5 s. Food still waits for the wave - slower to eat, worth less
+  a unit, and hunger kills slower. Not with a zombie within `NEEDS_MEAL_SAFE`, as for every meal.
+  - A seventh case, `drink`: his tower dry, his pack full, thirsty at 1.2 days, three zombies in sight. On the build
+    before it he drank nothing in a 2,500-tick wave and fell to 0.10 days; on this one he drank from his pack at tick 250
+    - his turn's end - never fell below 1.10 days, and shot on: the wave took 2,550 ticks, a second more. All seven pass.
+  - The same 3,003-tick recording made again: two replays equal on every tick, nothing changed between ticks, and
+    stopped at the recording's end each was where the run was - 1.95 days of water, a unit gone from the pack.
+- **Not checked**: on a chasm map - none of today's saves has a tower and a wave in it, and a save with towers now staffs
+  differently, as it should; an ordered archer held by zombies (the same `ON_POST` path, not run); a guard's pack stop
+  in a settlement whose only water is a collector.
+
+## Noted, for later (2026-10-18)
+
+The smaller things found along the way, kept here so they can be picked up later or left. None is planned.
+
+- **Shots and sight** pass through trees and walls; a guard on a tower sees no further for exploration, only for
+  shooting; arrows never run out.
+- **Zombies on one person** all stop on one point and spread only by their offsets, so past five or six they crowd
+  within `SPACING_MOST` of it. A crowd does not queue (step 4 may want it, at a gate).
+- **A zombie lost behind a palisade** within `NEEDS_MEAL_SAFE` of someone keeps him from eating, though it cannot
+  reach him.
+- **Someone indoors is safe**: whether zombies wait at the door or break in is open.
+- **"Run out" notices** (`defence_plan.md`, the two messages): with several posted near home, one every eight days or so
+  each may say too much.
+- **Cold on a post in winter** (`defence_plan.md`, "Open").
+- **Sites take the food and water people need** with nothing kept back (`defence_plan.md`, "Open").

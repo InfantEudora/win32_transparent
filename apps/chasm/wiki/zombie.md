@@ -4,9 +4,9 @@ aliases: zombies, enemy, enemies, the threat
 kind: systems
 status: partial
 summary: The colony's enemy. For now dropped by debug tools only, a zombie walks after the nearest person it can get to and bites him; a grown-up fights back, and archers and guards shoot it.
-plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot
-code: Spacing.cpp: SpaceOut; Economy.h: EconomyZombie EconomyFightPace ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights; Shooting.cpp: Shoot ShotTarget; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel
-verified: 2026-10-14
+plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts
+code: Spacing.cpp: SpaceOut; Economy.h: EconomyZombie EconomyFightPace ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights; Shooting.cpp: Shoot ShotTarget ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel
+verified: 2026-10-18
 ---
 
 A zombie goes for **people only**. Walls, gates and buildings are only what stands in its way. There are no
@@ -45,11 +45,12 @@ at full health kills one in about 3 seconds; hungry, or against two, he dies fir
 Anyone grown with a bow - an [[Archery range|archer]] or a [[Guard tower|guard]] - who **stands**, on a
 [[Posts|post]], a tower's platform or the range's line, shoots the **nearest zombie they can see**: over the ground
 between, as far as [[Exploration|sight]] reaches, so further from a tower. Walls and trees do not stop it. A shot is a
-turn of the Shoot clip, {ARROW_SHOT_SECONDS:#seconds}; a trainee's stint and a meal wait meanwhile. The arrow flies at
+turn of the Shoot clip, {ARROW_SHOT_SECONDS:#seconds}; a trainee's stint and a meal wait meanwhile, a drink is taken between turns. The arrow flies at
 {ARROW_SPEED} units a second and hits or misses by a scatter that widens with the distance and narrows with archery,
 {ARROW_SPREAD_NOVICE} to {ARROW_SPREAD_MASTER} a unit; a hit takes {ARROW_HIT}. None goes at a zombie the arrows in
 the air will fell. With one within {FIGHT_REACH}, they fight it by hand instead. A trained archer usually drops one
-walking at them from 20 units off; an untrained one wounds it. Arrows never run out, for now.
+walking at them from 20 units off; an untrained one wounds it. Arrows never run out, for now. While one is in range,
+someone [[Posts|posted]] stays on his post however thirsty, and a [[Guard tower|guard]] keeps his tower until released.
 
 ## On screen
 

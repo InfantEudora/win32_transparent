@@ -6,11 +6,12 @@ status: built
 summary: Drawn from rivers and pools by water collectors. Everyone drinks it, and nothing else quenches thirst.
 plans: economy_plan.md > Production; needs_plan.md > Current tuning
 code: Economy.h: NEEDS_WATER_WORTH ECONOMY_WATER_ROOM; Economy.cpp: Consume EconomyCollectorRoom
-verified: 2026-10-12
+verified: 2026-10-18
 ---
 
 - **Where it comes from**: [[Water collector|water collectors]] on the banks of rivers and pools, while
-  they have a carrier and no snow lies on them. The settlers bring {ECONOMY_START_WATER}.
+  they have a carrier and no snow lies on them. The settlers bring {ECONOMY_START_WATER}. On a test map,
+  a debug [[Well|well]].
 - **Where it goes**: carriers take it to a [[Store]] that takes water, {ECONOMY_LOAD} at a time. Houses
   [[Fetching home|fetch]] it home, and anyone with a pressing thirst drinks at a store, the camp or a
   collector.

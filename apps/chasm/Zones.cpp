@@ -70,6 +70,7 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_ROPEWALK:    return "ropewalk";
         case ZONE_KIND_STONECUTTER: return "stonecutter";
         case ZONE_KIND_MINE:        return "mine";
+        case ZONE_KIND_WELL:        return "well";
         default:                    return "none";
     }
 }
@@ -101,6 +102,7 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_ROPEWALK:    return 1;       //a long LOW shed (goods_plan.md): length is what it grows by
         case ZONE_KIND_STONECUTTER: return 1;       //a yard's shed (stone_plan.md): its stone is a storey's cost
         case ZONE_KIND_MINE:        return 1;       //a portal into the rock (stone_plan.md step 5)
+        case ZONE_KIND_WELL:        return 1;       //a ring of stone and its roof (water_tools_plan.md)
         default:                    return 0;
     }
 }
@@ -907,6 +909,7 @@ static const char* FullRefusal(int kind){
         case ZONE_KIND_WINCH:       return "a winch is one plot";
         case ZONE_KIND_TOWER:       return "a tower is one plot";
         case ZONE_KIND_MINE:        return "a mine is one plot";
+        case ZONE_KIND_WELL:        return "a well is one plot";
         default:                    return "a building is at most four plots";
     }
 }
@@ -948,6 +951,10 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
             return refuse("a mine is one plot");
         }
         return MineIsBuildable(w,z,plot,why);
+    }
+    //A well (water_tools_plan.md) goes wherever a house could, on its own: it needs no water near.
+    if (kind == ZONE_KIND_WELL && joining){
+        return refuse("a well is one plot");
     }
     if (kind == ZONE_KIND_BRIDGE){
         return BridgePlotOk(w,z,plot,why);
@@ -1976,6 +1983,10 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = "a bridge is drawn from bank to bank (ZONE_OP_BRIDGE)";
                 return false;
             }
+            if (kind == ZONE_KIND_WELL && f_play){
+                last_refusal = "a well is a debug tool, never a player's (water_tools_plan.md)";
+                return false;
+            }
             if (plot < 0 || plot >= (int)state.storeys.size()){
                 last_refusal = "no such plot";
                 return false;
@@ -2013,7 +2024,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = why;
                 return false;
             }
-            uint32_t joining = owner ? owner : (kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE) ? 0 : stroke_target(kind);
+            uint32_t joining = owner ? owner : ZoneKindOnePlot(kind) ? 0 : stroke_target(kind);
             //A diagonal step brings the plot at the cell's corner between first, so the building stays one piece.
             //...but a camp's tents need not touch (THE CAMP, Zones.h): no corner between, and a stroke of them goes on.
             bool f_apart = kind == ZONE_KIND_CAMP;

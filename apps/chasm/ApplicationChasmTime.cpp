@@ -638,6 +638,11 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
             snprintf(buf,sizeof(buf),"Not dragged: click to place one, on a deposit - it shows green only there.");
             controls = "Click to place - Shift+click removes - Right-click puts the tool down";
             break;
+        case CHASM_TOOL_WELL:
+            what = "A debug well: water anyone may take, as much as the seed gives it. set_stock can make it endless.";
+            snprintf(buf,sizeof(buf),"Not dragged: click to place one wherever a house could stand. It stands at once.");
+            controls = "Click to place - Shift+click removes - Right-click puts the tool down";
+            break;
         case CHASM_TOOL_ERASE:
             what = "Removes a building's plot, a yard, a road or a field's cell. An erased site leaves what was brought as a crate.";
             snprintf(buf,sizeof(buf),"Drag over what should go and it turns red; let go to erase it.");
@@ -843,7 +848,7 @@ float ApplicationChasm::DrawBuildBar(float s){
                                 || kind == EVENT_FROST_TOOK || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING
                                 || kind == EVENT_BOULDER_FOUND || kind == EVENT_BALCONY_REACHED
                                 || (kind == EVENT_BUILDING_FINISHED && discovery_of(ne->events[i]) >= 0)
-                                || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED;
+                                || ((kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED) && TriggerOn(ne->events[i].amount));
                 newest = f_notice ? &ne->events[i] : newest;
                 frosts += (kind == EVENT_FROST_TOOK) ? 1 : 0;
             }
@@ -966,7 +971,7 @@ float ApplicationChasm::DrawBuildBar(float s){
         if (age < death_seconds && !death_shown.empty()){
             line(death_shown,bottom - 36.0f * s,(uint8_t)(255.0f * std::min(1.0f,(death_seconds - age) * 2.0f)));
         }
-        if (de && de->workers.empty() && !de->dead.empty()){
+        if (de && de->workers.empty() && !de->dead.empty() && TriggerOn(CHASM_TRIGGER_LOST)){
             line("THE COLONY IS LOST - NOBODY IS LEFT",bottom - 72.0f * s,255);
         }
     }

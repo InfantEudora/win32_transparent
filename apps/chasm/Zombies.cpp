@@ -69,6 +69,21 @@ void WalkZombie(EconomyZombie& m, float dt){
 
 }
 
+const char* EconomyDropRefusal(const ChasmWorld& w, const ZoneState& z, int plot){
+    int kind = z.KindOf(plot);
+    if (z.ground[plot] == ZONE_GROUND_WALL || ZoneGateShut(z,plot)
+        || (kind != ZONE_KIND_NONE && kind != ZONE_KIND_CAMP && !ZoneBridgeWalkable(z,plot))){
+        return "something stands there";
+    }
+    if (w.terrain->wet[plot] && !ZoneBridgeWalkable(z,plot)){
+        return "on the water";
+    }
+    if (w.terrain->Mountain(plot)){
+        return "on the mountain";
+    }
+    return NULL;
+}
+
 bool Economy::SpawnZombies(int plot, int count, const ZoneState& z, std::string* why){
     auto refuse = [&](const char* text){
         if (why){
@@ -92,16 +107,8 @@ bool Economy::SpawnZombies(int plot, int count, const ZoneState& z, std::string*
         return refuse("no such plot");
     }
     //Where a person may be sent (Order): open ground, a road, a camp or a bridge - and not the mountain, which nothing walks.
-    int kind = z.KindOf(plot);
-    if (z.ground[plot] == ZONE_GROUND_WALL || ZoneGateShut(z,plot)
-        || (kind != ZONE_KIND_NONE && kind != ZONE_KIND_CAMP && !ZoneBridgeWalkable(z,plot))){
-        return refuse("something stands there");
-    }
-    if (w.terrain->wet[plot] && !ZoneBridgeWalkable(z,plot)){
-        return refuse("on the water");
-    }
-    if (w.terrain->Mountain(plot)){
-        return refuse("on the mountain");
+    if (const char* bad = EconomyDropRefusal(w,z,plot)){
+        return refuse(bad);
     }
     //Out from the plot's point along the golden angle's spiral, so no two stand on one spot.
     vec2 at = w.grid->fine.pos[plot];

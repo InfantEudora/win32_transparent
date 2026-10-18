@@ -4,7 +4,7 @@ aliases: crates, find, finds
 kind: goods
 status: partial
 summary: Goods lying on the ground - the load of someone sent to a post, or one nobody would take - a store villagers take from, and builders carry off to a store.
-plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; crates_plan.md > As built: step 5, dropping instead of holding (2026-10-18); stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14)
+plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; crates_plan.md > As built: step 5, dropping instead of holding (2026-10-18); stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14); stone_plan.md > As built: PICK UP by anyone free (2026-10-18)
 code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE CRATE_SITE ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble Derive; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
 verified: 2026-10-18
 ---
@@ -40,15 +40,15 @@ or hunger - standing beside it, by the same nearest-first rules.
 
 The [[Builder|builders]], as caretakers, carry crates to a store - the **last** of their errands, after
 building and road work - a load ({ECONOMY_LOAD}) at a time, and only to a store that takes the whole load.
-They fetch only crates on their own [[Settlement|settlement's]] land. Nobody without a job moves one, so with
-no builders' hut a crate is used where it lies.
+They fetch only crates on their own [[Settlement|settlement's]] land; nobody without a job moves one unasked.
 
-**PICK UP**, a chip on the card, puts a crate ahead of building: a builder fetches it after the guard towers and
-provisions, from **anywhere** he can walk to, as the order is the player's - though to a store in his own settlement.
-Pressed again, it goes back in the queue. With no builders, the card says so; a crate under the clouds has none.
+**PICK UP**, a chip on the card, puts a crate ahead of building for **anyone free**: a builder after the guard
+towers and provisions, and anyone without a job. From **anywhere** they can walk to, as the order is the player's -
+though to a store in their own settlement. Pressed again, it goes back in the queue. With nobody free - no builders,
+everyone in a job or on a post - the card says so; a crate under the clouds has none.
 
-But **not further than he can walk without water**, with a wide margin: a crate whose walk there and on to the
-store - by the way he would go, a [[Winch|winch]] and roads counted - takes more than
+But **not further than they can walk without water**, with a wide margin: a crate whose walk there and on to the
+store - by the way they would go, a [[Winch|winch]] and roads counted - takes more than
 {= ECONOMY_PICK_UP_WATER * NEEDS_WATER_FULL / CALENDAR_DAY_TICKS:#days} is turned down, and its card says it is too
 far to fetch. A store nearer to it brings it in reach.
 

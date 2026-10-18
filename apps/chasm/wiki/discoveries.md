@@ -4,7 +4,7 @@ aliases: discovery, unlock, unlocks, new tools
 kind: systems
 status: built
 summary: What the colony has found or done for the first time, kept for good. In play, the build bar shows a tool only once what it needs has been discovered.
-plans: demo_plan.md > Discoveries; demo_plan.md > As built: discoveries (2026-10-16)
+plans: done/demo_plan.md > Discoveries; done/demo_plan.md > As built: discoveries (2026-10-16)
 code: ApplicationChasm.h: DISCOVERY_RIVER DISCOVERY_CHASM DISCOVERY_BOULDER DISCOVERY_FLOATSTONE DISCOVERY_BUILDERS DISCOVERY_WINCH DISCOVERY_BALCONY; ApplicationChasmExplore.cpp: UpdateDiscoveries LookForFirsts ChasmToolNeeds ToolsLocked; Economy.h: EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED
 verified: 2026-10-16
 ---

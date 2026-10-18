@@ -35,7 +35,7 @@ that, slower below (`EconomySkillFactor`). Empty-handed everyone walks alike; wi
 stronger walk faster ([[Skills]]).
 
 Anyone without a job carries whatever [[Construction|building sites]] want, and clears and lays
-[[Road|roads]]. The player can **order** a grown-up to stand on a [[Posts|post]]; that is their job until
+[[Road|roads]] - after fetching any [[Crate|crate]] the player has put PICK UP. The player can **order** a grown-up to stand on a [[Posts|post]]; that is their job until
 they are released. A load they are carrying when the order comes is put down as a [[Crate|crate]].
 
 ## A round

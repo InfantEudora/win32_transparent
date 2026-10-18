@@ -50,7 +50,7 @@ choices the user has not yet made are under "Open questions".
   - NEEDS ATTENTION (`ApplicationChasmIssues.cpp`): worked out on the render thread each frame, never
     made by the rules.
 - **Two more are planned**: the statistics journal (`statistics_plan.md`, for another agent) and the
-  demo's discoveries (`demo_plan.md`, "Discoveries"). Neither is built.
+  demo's discoveries (`done/demo_plan.md`, "Discoveries"). Neither is built.
 - **Several moments leave no trace at all**: a harvest, a building finished and a tree felled change
   the state but are never told (`statistics_plan.md`, "What there is today").
 - **The music is drafted, not played** (`apps/music/readme.md`, "chasm.json"):
@@ -111,7 +111,7 @@ choices the user has not yet made are under "Open questions".
   buildings finished, settlements founded and discoveries. If the journal is written inside
   `Economy::Event`, the journal and the telling cannot disagree. That is the statistics agent's to
   decide (see "Working with the statistics plan").
-- **The discoveries** (`demo_plan.md`): the rule that sets a discovery's saved flag also makes a
+- **The discoveries** (`done/demo_plan.md`): the rule that sets a discovery's saved flag also makes a
   `discovery` event, with the discovery's number as `amount`.
 - **Sound**: every new event is signalled to the cue table by its name, with `x`, `z` and `amount` in
   the payload. Whether it makes a sound, and which one, is a row in the table, as in archer: the code
@@ -205,7 +205,7 @@ Each frame, the view counts what is going on near the camera:
     gone for a few seconds, and the cue's `gap` keeps it rare.
   - For the first seconds after a load or a new map, rows are not new. The opening checklist is not
     an alarm.
-- **The demo's screens** (`demo_plan.md`): the pop-up opening, menu moves, autosave, quick save and
+- **The demo's screens** (`done/demo_plan.md`): the pop-up opening, menu moves, autosave, quick save and
   load, recording on and off, and a bug report written. All quiet and short.
 
 ## Where it runs
@@ -230,7 +230,7 @@ Each frame, the view counts what is going on near the camera:
   - `ui`: clicks, alerts, the pop-up;
   - `music`: the score's players.
 
-  Core's settings already name master, music and effects volumes (`demo_plan.md`, "Settings and
+  Core's settings already name master, music and effects volumes (`done/demo_plan.md`, "Settings and
   Controls"). Effects is the parent of `world`, `activity` and `ui`.
 - **Pause** fades `activity` out over a second or so (the people stand still). Water and hearths play
   on, and `ui` is never held. Archer's fade and hold is the mechanism (`SetBusPaused` with a fade).
@@ -317,7 +317,7 @@ mark someone cut off by the thaw.
 |---|---|---|---|
 | `season` | the calendar, at a season's first dawn | now | the music's section changes |
 | `snow`, `thaw` | the snow arriving and going | now | the wind lifts / dripping and cracking |
-| `winter_survived` | the first dawn of the second spring, nobody dead | built as `goal_met` of the first goal (demo_plan.md step 7) | the chime; a stinger later |
+| `winter_survived` | the first dawn of the second spring, nobody dead | built as `goal_met` of the first goal (done/demo_plan.md step 7) | the chime; a stinger later |
 | `chasm_seen` | exploration, the first sight of the chasm | built as `discovered` of the chasm's area (`areas_plan.md`, the cue table's `chasm_reveal`) | the war horn |
 
 Dawn makes no sound: every 45 seconds would grate.
@@ -335,11 +335,11 @@ Zombies are not in the demo.
 
 ### The demo
 
-All planned (`demo_plan.md`, steps 6 and 7).
+All planned (`done/demo_plan.md`, steps 6 and 7).
 
 | Signal | Made by | Sound | Also read by |
 |---|---|---|---|
-| `boulder_found`, `balcony_reached` (built 2026-10-16): the two firsts the discoveries needed an event for. The rest are read from events there already (`demo_plan.md`, "As built: discoveries") | the rules, journaled | the chime and a line ("Jelle De Wit has reached a balcony"); later a stinger | goals; which build tools show |
+| `boulder_found`, `balcony_reached` (built 2026-10-16): the two firsts the discoveries needed an event for. The rest are read from events there already (`done/demo_plan.md`, "As built: discoveries") | the rules, journaled | the chime and a line ("Jelle De Wit has reached a balcony"); later a stinger | goals; which build tools show |
 | `goal_met`, `goal_failed`, `demo_complete` (built 2026-10-16, `amount` the goal, or the goals met) | `TickGoals` | the chime; a stinger later | notice line, the end's page, journal |
 
 ### The view
@@ -425,10 +425,10 @@ of "The beds" above. Built:
   `sound/click.wav` from a baked build: an exclude matches the asset's name, and chasm's own click
   stands in front of the shared one under that name. *Since the sounds became .ogg chasm's click is
   `click.ogg`, the shared wav stood behind nothing and was packed for nothing, so it is excluded again
-  (2026-10-17, `demo_plan.md`, "As built: the ship's pack").*
+  (2026-10-17, `done/demo_plan.md`, "As built: the ship's pack").*
 - **The table**, `assets/cues/chasm.json`, reloaded within a second of being saved (an mtime poll, as
   archer's). Buses `effects` > `world`, `activity`, `ui`; a `notice` group. Since the Settings screen
-  (`demo_plan.md`, 2026-10-16) the table plays under a layer bus of its own, `sounds`
+  (`done/demo_plan.md`, 2026-10-16) the table plays under a layer bus of its own, `sounds`
   (`CueSoundOutput`'s layer), so its buses are named `sounds/effects`, `sounds/activity` and so on. The
   effects volume is the layer's gain, which the table never sets.
 - **Where it runs: the physics thread, once a PASS** (`UpdateSound`, first thing in `UpdateView`, before

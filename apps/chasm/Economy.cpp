@@ -691,6 +691,15 @@ int EconomyTowerStock(const ChasmWorld& w, int plot, int good){
     return ZoneTowerGuards(w,plot) * per;
 }
 
+namespace {
+uint32_t Mix(uint32_t a, uint32_t b);      //below, with the settlers it was written for
+}
+
+int EconomyWellWater(const ChasmWorld& w, int plot){
+    uint32_t h = Mix(Mix(w.grid->settings.seed,(uint32_t)plot),0x3E11u);
+    return ECONOMY_WELL_WATER_MIN + (int)(h % (uint32_t)(ECONOMY_WELL_WATER_MAX - ECONOMY_WELL_WATER_MIN + 1));
+}
+
 std::array<int,GOOD_COUNT> EconomyTowerShort(const EconomyState& e, const ChasmWorld& w, uint32_t id, int plot){
     std::array<int,GOOD_COUNT> short_of{};
     if (plot < 0 || id >= e.stock.size()){
@@ -1161,7 +1170,9 @@ void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
 #define ECONOMY_CAMP_REACH      2.0f    //within this of his home plot, he is there - the camp is a ring of people
 
 void Economy::FindCamp(){
-    state.camp_plot = state.world ? ZoneStartCampPlot(*state.world,EconomySettlerCount()) : -1;
+    //A test map has no camp, and so no settlers (test_maps_plan.md): it starts with nobody on it.
+    bool f_chasm = state.world && GridKindHasChasm(state.world->grid->settings.kind);
+    state.camp_plot = f_chasm ? ZoneStartCampPlot(*state.world,EconomySettlerCount()) : -1;
 }
 
 int EconomySettlerCount(){
@@ -1254,6 +1265,91 @@ void Economy::MakeSettlers(){
         EconomyWorker& m = state.workers[mothers[Mix(seed,0xB1A7u) % mothers.size()]];
         m.due = (uint64_t)(SETTLER_DUE_DAY + Mix(seed,0xB1A8u) % SETTLER_DUE_SPAN) * CALENDAR_DAY_TICKS;
     }
+}
+
+/*
+    A PERSON PUT DOWN (Economy.h; test_maps_plan.md step 5): what the seed does not say is a settler's - his age, sex
+    and skills, from his id - so one put down with nothing named is any settler. Then housed and staffed at once, as
+    one settling here is (SettleHere), so the rules take him up on the next tick rather than at the zones' next change.
+*/
+bool Economy::AddPerson(int plot, uint32_t house, int age_days, const int skills[SKILL_COUNT], int sex, int archery,
+                        const ZoneState& z, Walkers& walkers, std::string* why, uint32_t* made){
+    auto refuse = [&](const char* text){
+        if (why){
+            *why = text;
+        }
+        return false;
+    };
+    if (!state.world || z.world != state.world){
+        return refuse("no world");
+    }
+    const ChasmWorld& w = *state.world;
+    if (plot < 0 || plot >= (int)z.ground.size() || plot >= (int)w.grid->fine.pos.size()){
+        return refuse("no such plot");
+    }
+    if (const char* bad = EconomyDropRefusal(w,z,plot)){
+        return refuse(bad);
+    }
+    //A home that stands, as HouseFamilies lives in.
+    bool f_camp = house && house < z.buildings.size() && z.buildings[house].kind == ZONE_KIND_CAMP;
+    if (house && (house >= z.buildings.size() || house >= stands.size() || !stands[house] || z.buildings[house].size <= 0
+                  || (z.buildings[house].kind != ZONE_KIND_HOUSE && !f_camp))){
+        return refuse("not a home that stands");
+    }
+    const uint32_t seed = w.grid->settings.seed;
+    const uint32_t id = state.next_person;
+    //Grown up: a child would want a mother to care for him (LIFELINES).
+    int64_t age = (age_days > 0) ? (int64_t)age_days * CALENDAR_DAY_TICKS
+                                 : (int64_t)(SETTLER_COUPLE_AGE + (int)(Mix(seed,id * 8 + 0) % SETTLER_COUPLE_SPAN)) * CALENDAR_YEAR_TICKS;
+    if (age < (int64_t)LIFE_CHILD_TICKS){
+        return refuse("a child: only someone grown up is put down");
+    }
+    //Into the family living in his house, or one of his own - a new number, never one of the dead's (as a couple's).
+    uint32_t family = 0;
+    uint8_t surname = 0;
+    uint32_t next_family = 1;
+    for (const EconomyWorker& o : state.workers){
+        next_family = std::max(next_family,o.family + 1);
+        if (house && !f_camp && o.house == house && !family){
+            family = o.family;
+            surname = o.surname;
+        }
+    }
+    for (const EconomyDeath& d : state.dead){
+        next_family = std::max(next_family,d.family + 1);
+    }
+    if (!family){
+        family = next_family;
+        surname = (uint8_t)EconomySettlerSurname(family);
+    }
+    EconomyWorker k;
+    k.id = id;
+    k.family = family;
+    k.surname = surname;
+    k.house = house;
+    k.born = (int64_t)state.tick - age;
+    k.f_female = (sex == 0) ? (Mix(seed,id * 8 + 5) & 1) != 0 : sex == 2;
+    for (int sk = 0; sk < SKILL_COUNT; sk++){
+        int s = skills ? skills[sk] : 0;
+        k.skills[sk] = (uint8_t)((s > 0) ? std::min(10,s) : (int)(1 + Mix(seed,id * 8 + 1 + sk) % 10));
+    }
+    k.archery = std::max(0,std::min(archery,EconomyArcheryCap(k)));
+    k.pos = w.grid->fine.pos[plot];
+    k.route.assign(1,k.pos);
+    state.workers.push_back(k);     //the newest id: still in id order
+    state.next_person++;
+    HouseFamilies(z,walkers);
+    for (EconomyWorker& o : state.workers){
+        if (o.id == id && o.state == WORKER_AT_HOME && !AtHome(o)){
+            GoHome(o,z,walkers);
+        }
+    }
+    f_restaff = true;
+    state.version++;
+    if (made){
+        *made = id;
+    }
+    return true;
 }
 
 /*
@@ -1899,7 +1995,8 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
     empty places are filled.
     POSTED people (POSTS, defence_plan.md) are out of it altogether: a job one has is his, its place counted
     taken before the order is walked - never filled again, never moved by it - while its workplace is there to
-    have it; a jobless one is given none until he is released.
+    have it; a jobless one is given none until he is released. A TOWER'S GUARDS are kept the same way (zombies_plan.md
+    step 3b), so a tower is never what a shortage of people empties: the newest of the other workplaces is.
     SETTLEMENTS (Economy.h): a workplace is filled from its own settlement's people alone, and counted against
     them - each settlement's newest workplaces stand empty when its people run short, not another's.
 */
@@ -1971,18 +2068,17 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
         guard posted BY HAND (step 8): the player's pick, never swapped out by the auto-fill below nor taken by a
         shortage of people - he loses it only with his tower, or its count lowered past the hand-picked (the lower
         person ids kept).
+        Then EVERY OTHER GUARD the same way (zombies_plan.md step 3b, the user's): a tower's guard keeps it until the
+        player releases him, as someone ordered out keeps his post - never moved to a place left open nearer the front
+        of the order, nor taken by a builders' hut painted with nobody free. One automatic guard was moved off his tower
+        mid-wave so, to the range a death had left open, and died climbing down. Last, so a count lowered sends the
+        automatic guards home before the hand-picked.
     */
     std::vector<int> reserved(n,0);
     //...a camp's own places, by the job's number: its woodcutter's, its water carrier's, its picker's.
     std::vector<std::array<int,WORKER_JOB_COUNT>> reserved_camp(n,std::array<int,WORKER_JOB_COUNT>{});
-    for (size_t i = 0; i < state.workers.size(); i++){
+    auto keep = [&](size_t i){
         EconomyWorker& k = state.workers[i];
-        if (k.f_chosen && k.job != WORKER_JOB_GUARD){
-            k.f_chosen = false;
-        }
-        if ((k.post < 0 && !k.f_chosen) || k.job < 0){
-            continue;
-        }
         uint32_t b = k.building;
         bool f_camp_own = b && b < n && z.buildings[b].kind == ZONE_KIND_CAMP
                           && (k.job == WORKER_JOB_WOODCUTTER || k.job == WORKER_JOB_WATER || k.job == WORKER_JOB_PICKER);
@@ -1994,12 +2090,27 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
                   && reserved[b] < state.places[b]){
             reserved[b]++;
             kept[i] = 1;
-            people[home_of(k)] -= (employable(k) ? 1 : 0);      //a hand-picked guard was counted free above
+            people[home_of(k)] -= (employable(k) ? 1 : 0);      //a guard was counted free above
         }else{
             k.job = WORKER_JOB_NONE;
             k.building = 0;
             k.f_chosen = false;
             state.version++;
+        }
+    };
+    for (size_t i = 0; i < state.workers.size(); i++){
+        EconomyWorker& k = state.workers[i];
+        if (k.f_chosen && k.job != WORKER_JOB_GUARD){
+            k.f_chosen = false;
+        }
+        if (k.job >= 0 && (k.post >= 0 || k.f_chosen)){
+            keep(i);
+        }
+    }
+    for (size_t i = 0; i < state.workers.size(); i++){
+        const EconomyWorker& k = state.workers[i];
+        if (!kept[i] && k.job == WORKER_JOB_GUARD && k.post < 0 && !k.f_chosen){
+            keep(i);
         }
     }
     for (uint32_t id : order){
@@ -2504,6 +2615,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     state.pantry.resize(n,std::array<int,GOOD_COUNT>{});    //a camp's; split, it stays with the piece keeping the id
     state.heat.resize(std::max<size_t>(n,1),HEAT_NONE);
     state.guards.resize(n,-1);
+    state.endless.resize(n,0);
     /*
         Where each site with something brought stood at the last Derive: one taken off - cancelled, or its last plot
         erased - leaves it there as a crate (the user's, 2026-10-16), below. A dry plot of it in a settlement's land
@@ -4205,9 +4317,12 @@ void Economy::GoHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     }
     k.prop = -1;
     k.store = 0;
-    //Posted (defence_plan.md): back to his post, not home - a guard to his tower.
+    //Posted (defence_plan.md): back to his post, not home - a guard to his tower, by a supply for his pack's water
+    //if it is short (PackUp).
     if (EconomyPosted(k)){
-        GoToPost(k,z,walkers);
+        if (!PackUp(k,z,walkers)){
+            GoToPost(k,z,walkers);
+        }
         return;
     }
     if (RouteHome(k,z,walkers)){
@@ -4254,7 +4369,9 @@ void Economy::TakePost(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         k.carry = 0;
         k.carry_good = -1;      //one fetching home names the kind he was after, holding nothing yet
     }
-    GoToPost(k,z,walkers);
+    if (!PackUp(k,z,walkers)){
+        GoToPost(k,z,walkers);
+    }
 }
 
 //The way to his post - a guard's, up onto his tower to his place there; with none, he waits where he is - on his
@@ -4384,6 +4501,22 @@ void Economy::FillPack(EconomyWorker& k, std::array<int,GOOD_COUNT>& from){
             state.version++;
         }
     }
+}
+
+/*
+    A GUARD'S PACK (zombies_plan.md step 3b, the user's): every guard carries water for a few days, as the posted do -
+    his tower's stock is his pantry, his pack what keeps him there once it runs dry. Packed at home when he sets out
+    from there (TakePost); still short of its water - home had none, or he was made a guard out at work and never
+    passed it - he goes by the nearest place with some, where he fills it as anyone posted does on a supply trip, and
+    then up. Never a tower: a pack filled from the stock it would stand guard over adds nothing. Only on his way up -
+    standing on his tower he is never sent down for it. Each stop takes water from where it is, so it ends: with his
+    pack full, or nowhere left that has any.
+*/
+bool Economy::PackUp(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    if (k.job != WORKER_JOB_GUARD || k.post >= 0 || k.pack[GOOD_WATER] >= NEEDS_PACK_WATER || EconomyAtPost(state,k)){
+        return false;
+    }
+    return SeekSupplyOf(k,z,walkers,false,GOOD_BIT(GOOD_WATER),false);
 }
 
 /*
@@ -4594,8 +4727,9 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (k.job == WORKER_JOB_BUILDER && (KeepTowers(k,z,walkers) || MakeProvisions(k,z,walkers))){
                 break;
             }
-            //...then a crate the player has put PICK UP (stone_plan.md): ahead of building, as FETCH FIRST was to be.
-            if (k.job == WORKER_JOB_BUILDER && MoveCrate(k,z,walkers,true)){
+            //...then a crate the player has put PICK UP (stone_plan.md): ahead of building, as FETCH FIRST was to be - by
+            //anyone free, the jobless as well as a builder (the user's, 2026-10-18), since the order is the player's.
+            if ((k.job == WORKER_JOB_NONE || k.job == WORKER_JOB_BUILDER) && MoveCrate(k,z,walkers,true)){
                 break;
             }
             if (k.job == WORKER_JOB_NONE || k.job == WORKER_JOB_BUILDER){
@@ -4942,7 +5076,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 looks, as someone cut off from home does.
             */
             if (EconomyAtPost(state,k)){
-                SeekSupply(k,z,walkers);
+                //HELD BY ZOMBIES (zombies_plan.md step 3b): with one in range he stays through a pressing need, on his
+                //pack and his tower's stock, and goes for it once none is left.
+                if (!ZombiesInRange(k,z)){
+                    SeekSupply(k,z,walkers);
+                }
             }else if (!SeekSupply(k,z,walkers) && ((tick + k.id) / ECONOMY_LOOK_TICKS) % 4 == 0){
                 GoToPost(k,z,walkers);
             }
@@ -5706,6 +5844,10 @@ void Economy::FollowZones(const ZoneState& z, Walkers& walkers){
             state.stock[id][GOOD_WATER] = EconomyTowerStock(w,plots_of[id].front(),GOOD_WATER);
             state.stock[id][GOOD_PROVISIONS] = EconomyTowerStock(w,plots_of[id].front(),GOOD_PROVISIONS);
         }
+        //A WELL (water_tools_plan.md) - only ever placed in debug - holds what the seed gives its plot.
+        if (z.buildings[id].kind == ZONE_KIND_WELL && stands[id] && !plots_of[id].empty()){
+            state.stock[id][GOOD_WATER] = EconomyWellWater(w,plots_of[id].front());
+        }
     }
     KeepAtDoors();
     LoseCoveredCrates(z);
@@ -5725,9 +5867,12 @@ void Economy::FollowZones(const ZoneState& z, Walkers& walkers){
             }
         }
         PlaceRubble(z);
-        //THE HISTORY begins with the landing: its levels with the supplies in, and the settlers' camp its first line.
+        //THE HISTORY begins with the landing: its levels with the supplies in, and the settlers' camp its first line -
+        //on a map with settlers; a test map starts with nobody (test_maps_plan.md).
         BeginHistory(now);
-        Event(EVENT_SETTLED,0,camp,state.camp_plot,vec2(),(int)state.workers.size());
+        if (!state.workers.empty()){
+            Event(EVENT_SETTLED,0,camp,state.camp_plot,vec2(),(int)state.workers.size());
+        }
     }
     HouseFamilies(z,walkers);
     AssignJobs(z,walkers);
@@ -5768,6 +5913,13 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     bool f_zones_moved = z.version != state.zones_version;     //...as FollowZones asks: the zombies' ways too
     FollowZones(z,walkers);
     Crowding(z);        //APPEAL AND CROWDING: who works slower this tick for where he lives
+    //An endless WELL (water_tools_plan.md) full again, before anyone comes to it this tick.
+    for (size_t id = 1; id < state.endless.size() && id < z.buildings.size(); id++){
+        if (state.endless[id] && z.buildings[id].kind == ZONE_KIND_WELL && state.stock[id][GOOD_WATER] < ECONOMY_WELL_ENDLESS){
+            state.stock[id][GOOD_WATER] = ECONOMY_WELL_ENDLESS;
+            state.version++;
+        }
+    }
     //An ORDER for more of a made good (STOCK KEPT) is done once the stores hold its level.
     if (std::any_of(state.ordered.begin(),state.ordered.end(),[](int x){ return x > 0; })){
         std::array<int,GOOD_COUNT> stored = EconomyStoredTotals(state,z);
@@ -6069,9 +6221,17 @@ void Economy::MealTick(EconomyWorker& k){
     }
 }
 
-bool Economy::SetStock(uint32_t id, int good, int amount, bool f_pantry){
+bool Economy::SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry, bool f_endless){
     if (!id || id >= state.stock.size() || id >= state.pantry.size() || good < 0 || good >= GOOD_COUNT || amount < 0){
         return false;
+    }
+    //A WELL holds water alone. It is endless only when told so, and any amount set without that makes it finite again.
+    bool f_well = id < z.buildings.size() && z.buildings[id].kind == ZONE_KIND_WELL && id < state.endless.size();
+    if ((f_well && (good != GOOD_WATER || f_pantry)) || (!f_well && f_endless)){
+        return false;
+    }
+    if (f_well){
+        state.endless[id] = f_endless ? 1 : 0;
     }
     (f_pantry ? state.pantry[id] : state.stock[id])[good] = amount;
     state.version++;
@@ -7121,7 +7281,8 @@ bool Economy::SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
 }
 
 //SeekSupply's search for a place with some of `want`: water, and food - provisions only where `want` has them.
-bool Economy::SeekSupplyOf(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home, GoodsMask want){
+bool Economy::SeekSupplyOf(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home, GoodsMask want,
+                           bool f_towers){
     bool f_posted = EconomyPosted(k);
     /*
         SETTLEMENTS (the user's, 2026-10-11): in need, only from his own settlement, or from land no settlement holds -
@@ -7197,7 +7358,7 @@ bool Economy::SeekSupplyOf(EconomyWorker& k, const ZoneState& z, Walkers& walker
         //Never a builders' hut: its wheat, beans and provisions are for the sites (defence_plan.md). A guard tower
         //only for the posted: its stock is its guards', and the village would empty it.
         if ((id == k.house && !f_own) || z.buildings[id].size <= 0 || (PrivateStock(z,(uint32_t)id) && !f_own)
-            || z.buildings[id].kind == ZONE_KIND_BUILDERS || (z.buildings[id].kind == ZONE_KIND_TOWER && !f_posted)
+            || z.buildings[id].kind == ZONE_KIND_BUILDERS || (z.buildings[id].kind == ZONE_KIND_TOWER && (!f_posted || !f_towers))
             || !in_reach(EconomySettlementOf(state,(uint32_t)id)) || !has((uint32_t)id,want) || !offers((uint32_t)id)){
             continue;
         }
@@ -7310,6 +7471,7 @@ bool Economy::FetchFrom(const EconomyWorker& k, const ZoneState& z, uint32_t id)
         case ZONE_KIND_CAMP:
         case ZONE_KIND_WATER:
         case ZONE_KIND_WOODCUTTER:
+        case ZONE_KIND_WELL:                    //water_tools_plan.md
             return true;
         case ZONE_KIND_HOUSE:
             return !PrivateStock(z,id);         //nobody lives there: its stock is anyone's now
@@ -8998,7 +9160,8 @@ vec2 Economy::SourcePoint(uint32_t id, int plot, const vec2& from) const{
     the nearest by the straight line, the lower id on a tie: the first of the nearest few he can walk to. A
     crate another caretaker is already on his way to only while it holds more than that one's load.
     `f_picked` (PICK UP, stone_plan.md): only the crates the player put PICK UP, wherever they lie - the order is the
-    player's, as a post is - though the store is one of his own settlement's still. And only within what he can walk
+    player's, as a post is - though the store is one of his own settlement's still. Not the caretakers' alone: anyone
+    without a job runs it too (the user's, 2026-10-18), and nothing here asks his job. And only within what he can walk
     without water (the user's, 2026-10-15): the walk to it and on to that store, by the routes he would take, no
     longer than ECONOMY_PICK_UP_WATER of a full water bar. A crate turned down for it is marked so for its card.
 */
@@ -9074,7 +9237,9 @@ bool Economy::MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers, 
                 float on = WalkSeconds(back,z,walkers,store,state.world->grid->fine.pos[store]);
                 f_far = there < 0.0f || on < 0.0f || there + on > reach;
                 if (!seen){
-                    if (pick_up_looks.size() >= 64){
+                    //Room for a verdict on each of the nearest four for everyone who looks - the jobless too now - so
+                    //a colony with a dozen idle does not empty it at every look and plan every route again.
+                    if (pick_up_looks.size() >= 64 + 4 * state.workers.size()){
                         pick_up_looks.clear();
                     }
                     pick_up_looks.push_back(PickUpLook());
@@ -9152,7 +9317,7 @@ bool Economy::KeepTowers(EconomyWorker& k, const ZoneState& z, Walkers& walkers)
     for (size_t id = 1; id < n && id < stands.size(); id++){
         const ZoneBuilding& b = z.buildings[id];
         bool f_hut = b.kind == ZONE_KIND_BUILDERS;
-        bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP || f_hut
+        bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP || f_hut || b.kind == ZONE_KIND_WELL
                        || (b.kind == ZONE_KIND_HOUSE && !PrivateStock(z,(uint32_t)id));
         if (b.size <= 0 || !f_holds || !stands[id] || !Ours(k,(uint32_t)id)){
             continue;
@@ -9664,6 +9829,11 @@ EconomySaved EconomySaveState(const EconomyState& state){
             s.guards.push_back(std::make_pair((uint32_t)id,state.guards[id]));
         }
     }
+    for (size_t id = 1; id < state.endless.size(); id++){
+        if (state.endless[id]){
+            s.endless.push_back((uint32_t)id);
+        }
+    }
     //STOCK KEPT: every made good's number, so a save keeps a 0 the start would make something else; orders running.
     for (int g = 0; g < GOOD_COUNT; g++){
         if (GOODS_MADE & GOOD_BIT(g)){
@@ -9779,6 +9949,12 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     for (size_t id = 1; saved.guards.empty() && id < z.buildings.size(); id++){
         if (z.buildings[id].kind == ZONE_KIND_TOWER && z.buildings[id].size > 0){
             state.guards[id] = -2;
+        }
+    }
+    state.endless.assign(z.buildings.size(),0);
+    for (uint32_t id : saved.endless){
+        if (id < state.endless.size() && z.buildings[id].kind == ZONE_KIND_WELL){
+            state.endless[id] = 1;
         }
     }
     //STOCK KEPT as set - a good the save does not name keeps the start's (Reset) - and the orders running.

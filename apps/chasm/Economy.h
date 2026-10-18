@@ -290,8 +290,9 @@ struct PropInstance;
     the seed: at the FOOT of a balcony's wall, never on the rim, each pile pushed toward the wall within its plot -
     and along a floatstone SEAM's foot, piles of its crystal, FLOATSTONE (EconomyCrateCrystal). Only on open
     ground; a save keeps what is left of it.
-    PICK UP (stone_plan.md), the player's, on any crate: the builders move it before building - after the towers and
-    provisions - and from anywhere, an order being the player's; to a store of their own settlement as ever. But
+    PICK UP (stone_plan.md), the player's, on any crate: anyone free moves it before building - a builder after the
+    towers and provisions, and anyone without a job (the user's, 2026-10-18) - and from anywhere, an order being the
+    player's; to a store of their own settlement as ever. But
     not past what he can walk without water: a crate whose walk there and on to the store is longer than
     ECONOMY_PICK_UP_WATER of a full water bar is turned down, on the walk alone (the user's, 2026-10-15), and says so.
 
@@ -313,6 +314,15 @@ struct PropInstance;
     what is left - and carries it to that store, up a winch from a balcony as anyone would. What has been DUG from each
     deposit (`dug`) is saved and hashed. A seam holds DEPOSIT_SEAM_FLOATSTONE: dug out, its mines have no place - its
     miners go free - and its band in the wall is rock again. The mountain and the outcrops never run out.
+
+    --- A WELL (docs/water_tools_plan.md, step 1) ----------------------------------------------------
+    A WELL (ZONE_KIND_WELL) is a debug tool for test maps, which have no river: one plot holding water anyone may take,
+    with no worker. Its water is its stock, so it is a supply as a store is - the thirsty drink there (SeekSupply),
+    houses fetch from it (FetchFrom), the caretakers fill towers from it (KeepTowers) - but nobody delivers to it, and
+    the top bar does not count it. Placed, it holds EconomyWellWater: an amount from the map's seed and its plot, so the
+    same well on the same map always holds the same (the user's: a well may later be a spot on the release game's map).
+    Drawn dry, it has nothing to offer. ENDLESS (`endless`, saved and hashed) only by set_stock: kept at
+    ECONOMY_WELL_ENDLESS every tick. Snow does not stop it, and the camp keeps its own water carrier beside one.
 
     --- ROPE (docs/goods_plan.md) -------------------------------------------------------------------
     A ROPEWALK (ZONE_KIND_ROPEWALK) works from ECONOMY_ROPEWALK_MIN_PLOTS standing plots: its one place, a
@@ -514,6 +524,11 @@ struct PropInstance;
 #define ECONOMY_TOWER_WATER         6       //...its water - its stock full, and what it is built with: 12 days for the guard
 #define ECONOMY_TOWER_PROVISIONS    4       //...and its provisions, at 3 water to 2 provisions so both run out together
 #define ECONOMY_TOWER_GUARDS_PLACED 1       //a new tower's guard count (step 8, the user's): the player adds more
+//A WELL (water_tools_plan.md, current tuning): what one holds, from the seed - a unit is two days of an adult's water, so
+//ten people draw one dry in 20 to 40 days - and what an endless one is kept at, the settlers' water.
+#define ECONOMY_WELL_WATER_MIN      100
+#define ECONOMY_WELL_WATER_MAX      200
+#define ECONOMY_WELL_ENDLESS        ECONOMY_START_WATER
 //A worker's `site` naming a garden or lot plot rather than a building (the plot in the low bits).
 #define ECONOMY_SITE_GROUND         0x80000000u
 inline bool EconomyIsGroundSite(uint32_t site){ return (site & ECONOMY_SITE_GROUND) != 0; }
@@ -883,8 +898,8 @@ struct EconomyCrate{
     int origin = CRATE_DROPPED;
     uint32_t by = 0;            //who put it down, a person's id - 0 for a find
     uint64_t tick = 0;          //the calendar tick it was put down or placed
-    bool f_pick_up = false;     //PICK UP: the builders fetch it before building, from anywhere (stone_plan.md)
-    //...and turned down at a builder's last look: too far to walk without water (ECONOMY_PICK_UP_WATER). For the card
+    bool f_pick_up = false;     //PICK UP: builders and the jobless fetch it before building, from anywhere (stone_plan.md)
+    //...and turned down at the last look anyone took: too far to walk without water (ECONOMY_PICK_UP_WATER). For the card
     //only - never saved or hashed, nothing in the rules reads it - so after a load it waits for the next look.
     bool f_too_far = false;
 };
@@ -1156,6 +1171,7 @@ struct EconomyState{
     std::vector<EconomyCrate> crates;                   //CRATES, in id order
     uint32_t next_crate = 1;
     std::vector<int> guards;                            //by building id: a tower's GUARD COUNT (POSTS, step 8), -1 not a tower
+    std::vector<uint8_t> endless;                       //by building id: a WELL kept full (set_stock's), 0 for any other
     std::array<int,GOOD_COUNT> kept = {};               //by good: the colony's KEPT number of a made good (STOCK KEPT)
     std::array<int,GOOD_COUNT> ordered = {};            //...and an order's level for the stores, 0 none - cleared once reached
     std::vector<EconomyEvent> events;                   //EVENTS: the last ECONOMY_EVENTS_KEPT, oldest first - not saved
@@ -1227,6 +1243,11 @@ vec2 EconomyPostPoint(const EconomyState& e, const EconomyWorker& k);
 int EconomyPostRoom(const ChasmWorld& w, int plot);
 //A guard tower's full stock of `good` - what it is built with and keeps: so much a guard place (ECONOMY_TOWER_*).
 int EconomyTowerStock(const ChasmWorld& w, int plot, int good);
+//A WELL's water when placed on `plot`: ECONOMY_WELL_WATER_MIN to _MAX by a hash of the map's seed and the plot.
+int EconomyWellWater(const ChasmWorld& w, int plot);
+inline bool EconomyWellEndless(const EconomyState& e, uint32_t id){
+    return id < e.endless.size() && e.endless[id] != 0;
+}
 //A guard tower standing whole on `plot` - its platform up: what takes guards and is kept full. Its `places` cannot
 //say it, as they are its guard count (step 8), which may be 0.
 inline bool EconomyTowerUp(const ZoneState& z, int plot){
@@ -1324,7 +1345,8 @@ struct EconomySaved{
     std::vector<EconomyCrate> crates;
     uint32_t next_crate = 1;
     std::vector<std::pair<uint32_t,int>> guards;        //towers' guard counts: building, count
-    std::vector<std::pair<int,int>> kept;               //made goods' kept numbers (STOCK KEPT): good, count - none, the start's
+    std::vector<uint32_t> endless;                      //the endless WELLS, by building id
+    std::vector<std::pair<int,int>> kept;              //made goods' kept numbers (STOCK KEPT): good, count - none, the start's
     std::vector<std::pair<int,int>> ordered;            //...and their orders' levels: good, level
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;
@@ -1335,6 +1357,10 @@ struct EconomySaved{
     EconomyHistory history;
     bool f_history = false;             //...a save from before the history has none: it begins at the load
 };
+
+//Why nobody may be put down on `plot` by the debug tools - a zombie or a person - or NULL: what a person may be sent
+//to is open ground, a road, a camp or a bridge, and not the water or the mountain.
+const char* EconomyDropRefusal(const ChasmWorld& w, const ZoneState& z, int plot);
 
 class Economy{
 public:
@@ -1354,8 +1380,9 @@ public:
     bool SetNeeds(uint32_t person, int health, int water);
     //A debug edit (CHASM_CMD_STOCK, the tool's set_stock): building `id`'s stock of `good` set to `amount` - a
     //camp's supplies, or with f_pantry its pantry. For putting provisions in a store, or emptying one, without
-    //waiting for it. False if none.
-    bool SetStock(uint32_t id, int good, int amount, bool f_pantry = false);
+    //waiting for it. A WELL holds water alone: `f_endless` makes it endless, and an amount without it finite again.
+    //False if none, or refused.
+    bool SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry = false, bool f_endless = false);
     /*
         PROVISIONS (POSTS): how many are still wanted - by sites, towers and the level kept (STOCK KEPT) - beyond
         what is made and being made; below 0, made and not wanted. With `spare`, how many lie made beyond what the
@@ -1435,7 +1462,7 @@ public:
         between ticks, like SetNeeds. False, and `why` says it, on ground a crate may not lie on.
     */
     bool SpawnCrate(int plot, int good, int amount, const ZoneState& z, std::string* why);
-    //PICK UP (CHASM_CMD_PICK_UP, stone_plan.md): crate `crate` fetched first by the builders, or back in the queue.
+    //PICK UP (CHASM_CMD_PICK_UP, stone_plan.md): crate `crate` fetched first by anyone free, or back in the queue.
     //False, and `why` says it, for no such crate.
     bool SetPickUp(uint32_t crate, bool f_on, std::string* why);
     /*
@@ -1444,6 +1471,16 @@ public:
         `why` says it, on ground a zombie may not stand on: the water, the mountain, a building or a wall.
     */
     bool SpawnZombies(int plot, int count, const ZoneState& z, std::string* why);
+    /*
+        A PERSON PUT DOWN by the debug tools (CHASM_CMD_PERSON, test_maps_plan.md step 5): an ordinary villager on
+        `plot`, grown up, who lives by the rules from then on - housed, given work, eating as anyone does. `house` a home
+        that stands, whose family he joins (a camp's: a family of his own there), or 0 - a family of his own with
+        nowhere to live, housed by the rules as anyone homeless is. 0 for `age_days`, a skill or `sex` is the seed's, as
+        a settler's; `sex` 1 a man, 2 a woman. Refused on the ground a zombie is (EconomyDropRefusal), and for a child or
+        a home that is not one. `made` gets his id.
+    */
+    bool AddPerson(int plot, uint32_t house, int age_days, const int skills[SKILL_COUNT], int sex, int archery,
+                   const ZoneState& z, Walkers& walkers, std::string* why, uint32_t* made = NULL);
     //A SEAM SEEN (EVENT_SEAM_SEEN): told by the app's exploration, which is what knows a seam has come into sight.
     void SeamSeen(uint32_t person){ Notice(EVENT_SEAM_SEEN,person,GOOD_BIT(GOOD_FLOATSTONE)); }
     //AN AREA DISCOVERED (EVENT_DISCOVERED): told by the app's exploration too, which is what knows it came into sight.
@@ -1484,10 +1521,11 @@ private:
     std::vector<int> crop_defaults;
     std::vector<int> tents_packed;
     /*
-        PICK UP's reach, remembered (MoveCrate): a builder's verdict on a crate - too far or not - while nothing it rests
+        PICK UP's reach, remembered (MoveCrate): one person's verdict on a crate - too far or not - while nothing it rests
         on has changed: he stands where he did, the zones are as they were, the same store would take it. Otherwise two
         routes are planned at every look, twice a second, for every far crate. Not saved: a miss works it out again to
-        the same answer, so a load or a replay is none the wiser. Emptied by Reset, and when it grows past a few dozen.
+        the same answer, so a load or a replay is none the wiser. Emptied by Reset, and when it grows past a few dozen
+        and four a person.
     */
     struct PickUpLook{
         uint32_t crate = 0;
@@ -1645,7 +1683,7 @@ private:
     //Where he goes to take from `id` at `plot`: beside a crate, else the plot's point.
     vec2 SourcePoint(uint32_t id, int plot, const vec2& from) const;
     //A caretaker's last errand: a crate's goods off to a storehouse. True if he set off. `f_picked`: only the crates
-    //put PICK UP, from anywhere - his errand before building.
+    //put PICK UP, from anywhere - an errand before building, a builder's or anyone jobless.
     bool MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_picked = false);
     //The seconds `probe`'s walk takes from where he stands to `to_point` on plot `to_plot`, by the route he would take
     //(RouteTo, so a winch and roads count) - or -1 with no way. `probe` is a copy: its route is thrown away.
@@ -1683,11 +1721,16 @@ private:
     //ARROWS (above, Shooting.cpp): the arrows a tick on - landing, and the zombies they fell gone - then every archer's
     //turn of his bow, an arrow loosed at its release. Before the fight, so a zombie shot down bites nobody.
     void Shoot(const ZoneState& z);
+    //...a drink between his turns (step 3b): one under way, or one begun now, holds his next turn. True if so.
+    bool DrinkBetweenShots(EconomyWorker& k, const ZoneState& z);
     //...whom he would shoot at from where he stands: the nearest zombie he sees that the arrows on their way (`coming`,
     //by zombie, the harm they will do) do not fell - its index, -1 none. His eye's ground in `eye_ground`.
     int ShotTarget(const EconomyWorker& k, const ZoneState& z, const std::vector<int>& coming, float& eye_ground) const;
     //A zombie's body within `within` of his: no meal then (MEALS).
     bool ZombieNear(const EconomyWorker& k, float within) const;
+    //A zombie he could shoot at - in his sight, doomed by arrows on their way or not - or one he is fighting: he
+    //keeps his post through a pressing need while there is one (zombies_plan.md step 3b).
+    bool ZombiesInRange(const EconomyWorker& k, const ZoneState& z) const;
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
     void MakeSettlers();
@@ -1742,7 +1785,12 @@ private:
     //A pressing need his home cannot meet: off to the nearest place that can. True if he set off. With
     //f_home false he cannot get home, and what it holds is no help.
     bool SeekSupply(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home = true);
-    bool SeekSupplyOf(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home, GoodsMask want);
+    //`f_towers` false: a guard tower is not one of the places, as for a guard's pack (PackUp).
+    bool SeekSupplyOf(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_home, GoodsMask want,
+                      bool f_towers = true);
+    //A GUARD setting out for his tower (zombies_plan.md step 3b): with his pack short of its water, by the nearest
+    //place that has some first - never a tower, so what he carries is more than the tower holds. True if he set off.
+    bool PackUp(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //Fetching home (needs_plan.md, step 2): what his house is short of; off to fetch it; a load of it picked
     //up at `from` and carried home; and the way home itself.
     GoodsMask HomeShort(const EconomyWorker& k, const ZoneState& z, GoodsMask* first) const;

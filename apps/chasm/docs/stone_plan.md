@@ -614,3 +614,33 @@ pick badge, the mine's card), `ApplicationChasmIssues.cpp` (NEEDS STONE, MINE: W
   strata, brown against the mountain's grey - the props' note foresaw it. `UploadMines` makes a copy of the portal
   with those cells (columns 5, 6, 8) moved to the frozen row for mines against the mountain. On the plateau's gentle
   foot the portal stands as a block a little out from the slope - "a portal into the slope", as decided.
+
+## As built: PICK UP by anyone free (2026-10-18)
+
+The user, testing: "the pickup command on a crate is only done by builders. This should be any villager that is idle
+ready to pick up work." Idle here is what it is everywhere else in the economy: no job (`WORKER_JOB_NONE`) - the
+people who carry for sites and lay roads. Files: `Economy.cpp` (`TickWorker`'s gate, `MoveCrate`'s header, the
+`PickUpLook` cap), `Economy.h` (the comments), `ApplicationChasmSelect.cpp` (the card's line),
+`ApplicationChasmEconomy.cpp` and `ApplicationChasm.h` (the tool's words, comments); the wiki's `crate.md`,
+`stone.md`, `floatstone.md`, `construction.md` and `person.md`.
+
+- **Who**: a builder as before - after the towers and provisions - and now anyone without a job, at the same place
+  in his look: after his house's errands, before carrying for a site. So a PICK UP takes the jobless off building
+  for as long as it lasts, as it takes the builders; it is the player's order. Children, babies, mothers with a
+  baby and the posted never go - each is stopped earlier in the look.
+- **Unchanged**: an UNFLAGGED crate is still the builders' last errand alone (crates_plan.md, the user's); the reach
+  (`ECONOMY_PICK_UP_WATER`), the store in his own settlement, others' loads on the way counted off.
+- **The card**: "Nobody free to pick it up: no builders, and everyone has a job", in amber, while set with no builder
+  and nobody jobless and unposted. It used to say "No builders to pick it up".
+- **The remembered verdicts** (`PickUpLook`) were emptied past 64; with every jobless person keeping one for each of
+  the four crates he looks at, a colony of a dozen idle would have emptied it every look and planned two routes a
+  crate each time. The cap is now 64 plus four a person.
+- **Tested** (debug, seed 12 fresh, minimised, port 8769): seven jobless at the camp, no builders' hut; a store
+  painted by the camp and two crates of 3 stone put down about 20 from it (98 and 99):
+  - 1,500 ticks with neither flagged: nobody went to either;
+  - crate 98 put PICK UP: Bente Veen, no job, set out at her next look, lifted it whole and carried it into the store
+    (3 stone); nobody else went, one load being all of it; crate 99, unflagged, lay untouched for the rest of the run;
+  - that run recorded (3,701 ticks) and replayed twice with the start-of-tick check: every tick's hash equal, nothing
+    changed between ticks, both ending with 98 gone, 99 lying, the store at 3 stone and 6 wood as recorded.
+  - Not tried in the game: the card's "Nobody free" line (a colony with nobody jobless), and a jobless person turning
+    a crate down as too far - the same `MoveCrate` code as a builder's, nothing in it asks his job.

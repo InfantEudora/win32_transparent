@@ -101,6 +101,7 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_WALL,{PAL_FIELD,PAL_FIELD},2,DOOR_W * 1.4f,1,0},                 //ropewalk: plaster under thatch, a window every wall
     {PAL_STONE,{PAL_STONE_DARK,PAL_BARK_DARK},2,DOOR_W * 1.6f,2,0},       //stonecutter's hut: its own stone under slate or shingle
     {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //mine: its portal, a prop of its own (ApplicationChasmMines.cpp)
+    {PAL_STONE,{PAL_ROOF,PAL_ROOF},2,DOOR_W,2,0},                         //well: drawn by BuildWell instead
 };
 static_assert(sizeof(kind_looks) / sizeof(kind_looks[0]) == ZONE_KIND_COUNT,"a look for every kind");
 
@@ -181,6 +182,67 @@ void BuildWinch(const ChasmWorld& w, int plot, std::vector<vertex>& out){
     vec2 shed = p - dir * 0.45f;
     Beam(out,shed - side * 0.55f,shed + side * 0.55f,y0 - 0.3f,1.25f,0.9f,PAL_BARK_DARK);
     Beam(out,shed - side * 0.65f,shed + side * 0.65f,y0 + 0.95f,0.14f,1.05f,PAL_STONE_DARK);
+}
+
+#define WELL_OFFSET         0.6f    //the ring's middle from the plot's point: who comes for water stands at the point, beside it
+#define WELL_RADIUS         0.36f
+#define WELL_RING_HEIGHT    0.55f
+#define WELL_RING_SIDES     8
+#define WELL_EAVES          1.45f   //above the ground
+#define WELL_RIDGE          1.9f    //...and its roof's ridge: SHAPE_WELL (ApplicationChasmSelect.cpp)
+#define WELL_WINDLASS       1.1f
+
+/*
+    A WELL (water_tools_plan.md) - a stand-in, while wells are a debug tool: a ring of stone with the dark water in it,
+    two posts with a windlass and its rope, a little gabled roof over them, and a bucket on the rim. Off the plot's
+    point by WELL_OFFSET, the way its hash turns it, so whoever comes to draw stands beside it rather than in it.
+*/
+void BuildWell(const ChasmWorld& w, int plot, std::vector<vertex>& out){
+    vec2 p = w.grid->fine.pos[plot];
+    float y = w.terrain->ground[plot];
+    float yaw = (float)(MeshHash((uint32_t)plot,0x3E11u) % 6283u) * 0.001f;
+    vec2 dir(std::cos(yaw),std::sin(yaw));
+    vec2 side(-dir.y,dir.x);
+    vec2 c = p + dir * WELL_OFFSET;
+    //The ring, a stone beam along each side - a little long, so the corners close - and the water's dark inside it.
+    const float step = 6.2831853f / WELL_RING_SIDES;
+    const float stretch = 1.08f;
+    vec3 rim[WELL_RING_SIDES];
+    for (int i = 0; i < WELL_RING_SIDES; i++){
+        vec2 a = c + vec2(std::cos(step * i),std::sin(step * i)) * WELL_RADIUS;
+        vec2 b = c + vec2(std::cos(step * (i + 1)),std::sin(step * (i + 1))) * WELL_RADIUS;
+        vec2 m = (a + b) * 0.5f;
+        Beam(out,m + (a - m) * stretch,m + (b - m) * stretch,y - 0.1f,WELL_RING_HEIGHT + 0.1f,0.14f,PAL_STONE);
+        rim[i] = vec3(a.x,y + WELL_RING_HEIGHT - 0.15f,a.y);
+    }
+    vec3 mid(c.x,y + WELL_RING_HEIGHT - 0.15f,c.y);
+    for (int i = 0; i < WELL_RING_SIDES; i++){
+        MeshTri(out,mid,rim[i],rim[(i + 1) % WELL_RING_SIDES],vec3(0,1,0),PAL_BARK_DARK);
+    }
+    //Two posts either side, the windlass across them, and its rope down into the water.
+    vec2 post_a = c + side * (WELL_RADIUS + 0.02f);
+    vec2 post_b = c - side * (WELL_RADIUS + 0.02f);
+    Upright(out,post_a,0.1f,y,y + WELL_EAVES,PAL_BARK);
+    Upright(out,post_b,0.1f,y,y + WELL_EAVES,PAL_BARK);
+    Beam(out,post_a,post_b,y + WELL_WINDLASS - 0.05f,0.1f,0.1f,PAL_TIMBER);
+    Upright(out,c,0.03f,y + WELL_RING_HEIGHT - 0.15f,y + WELL_WINDLASS,PAL_BARK_DARK);
+    //The roof: two slopes from the eaves, front and back, to the ridge along the windlass - each drawn from under too.
+    const float half_len = WELL_RADIUS + 0.2f;
+    const float reach = WELL_RADIUS + 0.06f;
+    vec3 ridge_a(post_a.x + side.x * 0.18f,y + WELL_RIDGE,post_a.y + side.y * 0.18f);
+    vec3 ridge_b(post_b.x - side.x * 0.18f,y + WELL_RIDGE,post_b.y - side.y * 0.18f);
+    for (int s = -1; s <= 1; s += 2){
+        vec2 ea = c + side * half_len + dir * (reach * (float)s);
+        vec2 eb = c - side * half_len + dir * (reach * (float)s);
+        vec3 eave_a(ea.x,y + WELL_EAVES,ea.y);
+        vec3 eave_b(eb.x,y + WELL_EAVES,eb.y);
+        vec3 up(dir.x * (float)s,reach / (WELL_RIDGE - WELL_EAVES),dir.y * (float)s);
+        MeshQuad(out,eave_a,eave_b,ridge_b,ridge_a,up,PAL_ROOF);
+        MeshQuad(out,eave_a,eave_b,ridge_b,ridge_a,up * -1.0f,PAL_TIMBER);
+    }
+    //A bucket on the rim, on the side its water is drawn from.
+    vec2 bucket = c - dir * (WELL_RADIUS - 0.02f) + side * 0.12f;
+    Beam(out,bucket - dir * 0.08f,bucket + dir * 0.08f,y + WELL_RING_HEIGHT,0.16f,0.16f,PAL_TIMBER);
 }
 
 #define TENT_LENGTH         1.25f   //along its ridge
@@ -1025,6 +1087,13 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         }
         //Nor a mine (stone_plan.md step 5): its portal is the worker's prop, drawn with its cart (ApplicationChasmMines.cpp).
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_MINE){
+            s[k] = 0;
+        }
+        //Nor a well (water_tools_plan.md): a ring, posts and a roof, drawn on its own (BuildWell) like the winch.
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_WELL){
+            if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+                BuildWell(w,v,out);
+            }
             s[k] = 0;
         }
         //Nor a bridge: once it stands it is a road over the water, drawn with the roads (RoadMesh).

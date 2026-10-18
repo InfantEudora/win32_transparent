@@ -306,6 +306,7 @@ const char* ChasmKindLabel(int kind, bool f_plural){
         case ZONE_KIND_ROPEWALK:    return f_plural ? "ropewalks" : "ropewalk";
         case ZONE_KIND_STONECUTTER: return f_plural ? "stonecutters' huts" : "stonecutter's hut";
         case ZONE_KIND_MINE:        return f_plural ? "mines" : "mine";
+        case ZONE_KIND_WELL:        return f_plural ? "wells" : "well";
         default:                    return f_plural ? "buildings" : "building";
     }
 }

@@ -1,6 +1,6 @@
 ---
 name: chasm-zombies-plan
-description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; walls break next; guard-pulled-off-tower staffing issue open"
+description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; 3b guards hold their posts BUILT 2026-10-18 (tools/chasm_guard_test.py); walls break next"
 metadata:
   node_type: memory
   type: project
@@ -41,6 +41,8 @@ hit/miss by a hash of tick/shooter/zombie (never RRandom - [[rrand-shared-stream
 flight; person `draw`/`aim`; view plays Shoot by draw, `SHOOT_RELEASE` = `ARROW_RELEASE`. Replays bit-exact.
 **Open, flagged to user**: the job filling pulls an AUTOMATIC guard off his tower for another place (Lieve died
 climbing down mid-wave when the archer died); bite-induced pressing hunger sends people off posts.
+
+**Step 3b BUILT 2026-10-18** (the user's): every guard keeps his tower until RELEASED - `AssignJobs` keeps them as it keeps the hand-picked (posted + hand-picked first, then automatic, so a lowered count still drops automatic first); `ZombiesInRange` (Shooting.cpp: a zombie in FIGHT_REACH, or ShotTarget with NO arrows counted) stops a pressing need sending anyone posted off his post; `PackUp` (TakePost + GoHome) sends a guard with < NEEDS_PACK_WATER by the nearest water first, towers excluded (`SeekSupplyOf` f_towers). **The test: `python apps/chasm/tools/chasm_guard_test.py --port N`** against a DEBUG copy (replaces the map; flat test map, paused): shortage, death (Lieve), player, wave, pack, pack_errand - 5 failed before, all 6 pass after, ~1 min. Replays bit-exact. **Drinking between shots BUILT** (user's yes): `DrinkBetweenShots` (Shooting.cpp) holds the next Shoot turn for a 1 s drink when a whole water unit fits - tower water first, else pack; water only, food still waits. Test case `drink` (7 cases, all pass). The user is judging how shooting feels in the game first. Small findings stay as notes in the plan's "Noted, for later" list.
 
 **Next (each on the user's go-ahead)**: 4 walls break (time-to-break cost, flow field). Also open: fleeing/alarm,
 waves from the swamp, zombies' stop points spread round a target, arrows as tower stock.

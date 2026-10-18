@@ -1,6 +1,6 @@
 ---
 name: chasm-demo-menus
-description: "Chasm demo_plan ALL 7 steps built 2026-10-16 (menus, saves, recording for testers, Settings, discoveries unlocking tools, goals + death pop-up + end page)"
+description: "Chasm demo_plan FINISHED 2026-10-18, moved to apps/chasm/docs/done/ (shipped as 0.0.2); menus, saves, recording, Settings, discoveries, goals + end page"
 metadata:
   node_type: memory
   type: project
@@ -8,7 +8,12 @@ metadata:
   modified: 2026-10-18T10:53:52.737Z
 ---
 
-apps/chasm/docs/demo_plan.md steps 1, 2, 4 and 5 were BUILT by 2026-10-16:
+**FINISHED 2026-10-18.** Chasm 0.0.2 (commit 7de4696) went to testers and ran on all 10 machines, 2 of them Linux.
+The plan moved to `apps/chasm/docs/done/demo_plan.md`, the first plan in `done/` (a plan goes there once what it set out
+to do has shipped; built-but-growing plans stay in `docs/`). Its top lists what it left undone. The next demo milestone is
+finishing the DEFENCE ([[chasm-defence-plan]], [[chasm-zombies-plan]]); the user adds animations and tunes props in Blender.
+
+apps/chasm/docs/done/demo_plan.md steps 1, 2, 4 and 5 were BUILT by 2026-10-16:
 - the title scene with its diorama;
 - the pause menu and the save/load lists (ApplicationChasmMenu.cpp);
 - autosaves;

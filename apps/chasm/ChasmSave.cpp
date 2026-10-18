@@ -261,6 +261,10 @@ json ChasmSaveToJson(const ChasmSave& s){
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
                        {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},
                        {"kept",kept},{"ordered",ordered},{"plants",plants}};
+        //The endless wells (water_tools_plan.md), by building id - only once there is one.
+        if (!e.endless.empty()){
+            economy["endless_wells"] = e.endless;
+        }
         //What the mines have dug from each deposit (stone_plan.md step 5): [deposit, how much] - only once any has.
         if (!e.dug.empty()){
             json dug = json::array();
@@ -353,6 +357,10 @@ json ChasmSaveToJson(const ChasmSave& s){
     if (!castle.empty()){
         out["castle"] = castle;
     }
+    //A test map's kind (test_maps_plan.md) - only then, so a chasm save is exactly what it was before them.
+    if (!GridKindHasChasm(g.kind) && g.kind < GRID_KINDS){
+        out["grid"]["kind"] = grid_kind_names[g.kind];
+    }
     return out;
 }
 
@@ -377,6 +385,14 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     s.relax_passes_coarse = g.value("relax_passes_coarse",s.relax_passes_coarse);
     s.relax_passes_fine = g.value("relax_passes_fine",s.relax_passes_fine);
     s.relax_strength = g.value("relax_strength",s.relax_strength);
+    //No kind is the chasm: every save before test maps (test_maps_plan.md), and every chasm save since.
+    if (g.contains("kind")){
+        s.kind = GridKindByName(g["kind"].is_string() ? g["kind"].get<std::string>() : std::string());
+        if (s.kind < 0){
+            error = "a map of a kind this build does not know";
+            return false;
+        }
+    }
     out.world_hash = j.value("world_hash",std::string());
     for (const json& jb : j.value("buildings",json::array())){
         ZoneSavedBuilding b;
@@ -708,6 +724,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         for (const json& gc : e.value("guards",json::array())){
             out.economy.guards.push_back(std::make_pair(gc[0].get<uint32_t>(),gc[1].get<int>()));
         }
+        for (const json& id : e.value("endless_wells",json::array())){
+            out.economy.endless.push_back(id.get<uint32_t>());
+        }
         //A save from before the kept numbers has none: the start's (Economy::Restore).
         std::pair<const char*,std::vector<std::pair<int,int>>*> kept_lists[] = {{"kept",&out.economy.kept},
                                                                                 {"ordered",&out.economy.ordered}};
@@ -857,6 +876,8 @@ std::vector<ChasmSaveEntry> ChasmSaveEntries(){
         if (economy.is_object() && economy.contains("people") && economy["people"].is_array()){
             e.people = (int)economy["people"].size();
         }
+        const json grid = j.value("grid",json::object());
+        e.f_test_map = grid.is_object() && grid.contains("kind");
         out.push_back(e);
     }
     std::sort(out.begin(),out.end(),[](const ChasmSaveEntry& a, const ChasmSaveEntry& b){

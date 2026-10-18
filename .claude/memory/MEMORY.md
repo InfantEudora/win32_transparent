@@ -1,127 +1,129 @@
-- [Project overview](project_overview.md) — what win32_transparent IS: hand-rolled C++17/OpenGL engine, 3-thread main/render/physics split (read this first)
-- [Threading model](threading_model.md) — coarse physics_mutex superseded by the SimCommand queue: UI submits, never waits; MCP reads via Scene::AtTickBoundary
-- [Deterministic sim plan](deterministic_sim_plan.md) — AGREED: tick-driven lockstep, all mutation via tick-stamped input events, MCP+UI are players; same-machine replay only; steps 1-6 done
-- [Tank yaw differential bug](tank_yaw_differential_bug.md) — OPEN: tank won't yaw on a same-direction track differential; most causes ruled out; next is an rp3d testbed repro
+- [Project overview](project_overview.md) — what win32_transparent IS: C++17/OpenGL engine, main/render/physics threads (read first)
+- [Threading model](threading_model.md) — SimCommand queue replaced physics_mutex: UI submits, never waits; MCP reads via AtTickBoundary
+- [Deterministic sim plan](deterministic_sim_plan.md) — AGREED: tick lockstep, all mutation via tick-stamped events; same-machine replay; steps 1-6 done
+- [Tank yaw differential bug](tank_yaw_differential_bug.md) — OPEN: no yaw on a same-direction track differential; next an rp3d testbed repro
 - [MCP native tools setup](mcp_native_tools_setup.md) — documented in-repo at docs/mcp_server.md; check there first
-- [Build toolchain location](build_toolchain_location.md) — g++/make at /c/msys64/mingw64, not on PATH; mingw32-make.exe; header deps tracked
-- [No /mcp slash command in VSCode ext](mcp_vscode_reconnect_limitation.md) — /mcp opens a panel that doesn't list locally-added servers
+- [Build toolchain location](build_toolchain_location.md) — g++/make at /c/msys64/mingw64, not on PATH; mingw32-make.exe
+- [No /mcp slash command in VSCode ext](mcp_vscode_reconnect_limitation.md) — /mcp's panel doesn't list locally-added servers
 - [tank-app MCP registration pending check](tank_mcp_registration_pending_check.md) — resolved: a restart fixed it
-- [rp3d local fork + patches](rp3d_local_fork_hinge_motor_patch.md) — libs/ rp3d carries 3 local patches + 1 PR (fork C:/code/reactphysics3d, CMake+Ninja); never overwrite with stock
-- [Tank roll-over root cause](tank_suspension_upright_torque_todo.md) — SOLVED: lever arms from body origin not centre of mass; no upright-torque workaround
-- [rp3d vehicle constraint plan](rp3d_vehicle_constraint_plan.md) — VehicleConstraint in the rp3d fork, wired into Tank/Buggy 2026-09-05; tools/vehicle_mcp.py baselines; anti-roll bar open
+- [rp3d local fork + patches](rp3d_local_fork_hinge_motor_patch.md) — libs/ rp3d has 3 local patches + 1 PR (fork C:/code/reactphysics3d); never stock
+- [Tank roll-over root cause](tank_suspension_upright_torque_todo.md) — SOLVED: lever arms from body origin, not centre of mass
+- [rp3d vehicle constraint plan](rp3d_vehicle_constraint_plan.md) — VehicleConstraint in the fork, in Tank/Buggy; tools/vehicle_mcp.py; anti-roll open
 - [Animation root-motion rewrite](animation_root_motion_rewrite.md) — swing-twist root motion + per-clip extract flags, AnimationGraph removed
 - [Running app is user-driven](running_app_is_user_driven.md) — unexplained motion in MCP telemetry is usually the user at the controls
 - [rp3d contact callback velocities](rp3d_contact_callback_velocities.md) — contacts reported BEFORE the solver; read velocity only on ContactStart
-- [Scene::AddObject during a tick](scene_addobject_during_tick.md) — AddObject from UpdatePhysicsState invalidates the range-for; stage it in RunSimulationTick
-- [rrand shared stream TODO](rrand_shared_stream_todo.md) — OPEN: one RRandom shared by sim + UI/MCP threads breaks replay; no design chosen, ask first
-- [Raymarch volume stage plan](raymarch_volume_stage_plan.md) — clouds as a material lit by all lights + 3D Beer shadow map; GLSL #include, PreRender, inverse_transform/glUniform/object-space traps
-- [Tetris agent engine audit](tetris_agent_engine_audit.md) — DONE: report docs/tetris_findings.md; core fixes for HasSyntheticHolds and AddMaterial
+- [Scene::AddObject during a tick](scene_addobject_during_tick.md) — breaks the range-for in UpdatePhysicsState; stage it in RunSimulationTick
+- [rrand shared stream TODO](rrand_shared_stream_todo.md) — OPEN: one RRandom shared by sim + UI/MCP breaks replay; ask before designing
+- [Raymarch volume stage plan](raymarch_volume_stage_plan.md) — clouds as a lit material + 3D Beer shadow map; GLSL #include, uniform traps
+- [Tetris agent engine audit](tetris_agent_engine_audit.md) — DONE: docs/tetris_findings.md; core fixes HasSyntheticHolds, AddMaterial
 - [Background app holds the pipe](background_app_stdout_pipe.md) — start test apps with >/dev/null 2>log </dev/null or a piped script hangs
 - [Shell heredoc limit](shell_heredoc_limit.md) — quote the delimiter; over ~30KB fails as a misleading ENAMETOOLONG
-- [Breakout agent run](breakout_agent_run.md) — second game-build audit; brief docs/breakout_agent_brief.md; findings should feed the backlog
-- [Asset layout plan](asset_layout_plan.md) — AGREED 2026-09-12: per-app assets + shared_assets, LoadFile resolver; docs/asset_layout_plan.md
-- [Shared build output coordination](shared_build_output_coordination.md) — ask before building when another agent is active; build/core is shared, one app at a time
+- [Breakout agent run](breakout_agent_run.md) — second game-build audit; docs/breakout_agent_brief.md; findings feed the backlog
+- [Asset layout plan](asset_layout_plan.md) — AGREED 2026-09-12: per-app assets + shared_assets, LoadFile resolver
+- [Shared build output coordination](shared_build_output_coordination.md) — ask before building when another agent is active; one app at a time
 - [Tank viewport black half](tank_viewport_offset_black_half.md) — Tank screenshots are half black BY DESIGN; judge the right half
-- [Per-app build layout](per_app_build_layout.md) — one exe per app under apps/<name>/, CONFIG=release, per-config object trees; READ before any build
-- [Touch input plan](touch_input_plan.md) — on-screen buttons (AddTouchButton) built on the Android port, not yet Windows; docs/touch_input_plan.md
-- [Android port merge](android_port_merge.md) — port at C:/code/android, upstream candidates (backlog 68-77), copy-then-reapply-with-asserts method
-- [Pinball stage 0 review + stage 1](pinball_stage0_review.md) — Table.h is the machine; run tools/pinball_plan.py + a paused trace after any move; rp3d traps at their defines
+- [Per-app build layout](per_app_build_layout.md) — one exe per app under apps/<name>/, CONFIG=release, per-config trees; READ before any build
+- [Touch input plan](touch_input_plan.md) — on-screen buttons (AddTouchButton) built on the Android port, not yet Windows
+- [Android port merge](android_port_merge.md) — port at C:/code/android, upstream candidates (backlog 68-77), copy-then-reapply-with-asserts
+- [Pinball stage 0 review + stage 1](pinball_stage0_review.md) — Table.h is the machine; tools/pinball_plan.py + a paused trace after any move
 - [testfx bench gotchas](testfx_bench_gotchas.md) — uniforms leaked across effects (fixed); sim_step at tick rate; reference view is low
-- [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass every pass, GatherInput only on ticks; one set of edge flags serves both
+- [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass every pass, GatherInput only on ticks; one set of edge flags
 - [lockd owner must be session id](lockd_owner_must_be_session_id.md) — any other owner string makes the hook refuse your own edits
 - [Bomber app](bomber_app.md) — apps/bomber bomberman; Maze holds the rules and `make rules` tests them with no engine
-- [Volumetric effect gotchas](volumetric_effect_gotchas.md) — sim_step wants num_ticks; a volume needs sun_intensity; shape terms relative to the feature
+- [Volumetric effect gotchas](volumetric_effect_gotchas.md) — sim_step wants num_ticks; a volume needs sun_intensity
 - [Ship orbit camera is the canonical one](ship_orbit_camera_canonical.md) — copy the orbit from ApplicationShip/Tank, never testfx
-- [Engine forward is -Z](engine_forward_is_minus_z.md) — settle orientation with object_get's world_forward; bracket screenshots with camera_get
+- [Engine forward is -Z](engine_forward_is_minus_z.md) — settle orientation with object_get's world_forward; bracket shots with camera_get
 - [Measuring GPU cost](measuring_gpu_cost.md) — vsync toggle + per-pass timings; in-shader counting for sub-pass questions
 - [GPU pass timers](gpu_pass_timers.md) — per-pass GL_TIME_ELAPSED; scopes never nest; 6-deep ring + `stale` flag
 - [Async picking readback](async_picking_readback.md) — pick readback 85us: FENCE before mapping and EXACT-format reads
-- [Animation state machine lives in Object](animation_state_machine_in_object.md) — blending on any Object; mid-blend retarget RETARGETS; TransitionToAnimation returns bool
+- [Animation state machine lives in Object](animation_state_machine_in_object.md) — blending on any Object; mid-blend retarget RETARGETS
 - [Skinned rig bone indexing](skinned_rig_bone_indexing.md) — bone index = position in skin.joints; multi-root rigs load every root
 - [Comment density ceiling](comment_density_ceiling.md) — one-liners on declarations, block comments for the type, no per-enum essays
-- [Release edges ignore focus](release_edge_ignores_focus.md) — clicks beside the window fire WasKeyReleased; gate the action on IsInputLive()
-- [USE_PHYSICS flag](use_physics_flag.md) — the one flag that changes shared core objects; own core tree; --gc-sections doesn't reclaim rp3d
+- [Release edges ignore focus](release_edge_ignores_focus.md) — clicks beside the window fire WasKeyReleased; gate on IsInputLive()
+- [USE_PHYSICS flag](use_physics_flag.md) — the one flag that changes shared core objects; own core tree
 - [Asset origin convention](asset_origin_convention.md) — Blender scene positions are ignored by the engine, armatures included
 - [Texture unit map](texture_unit_map.md) — core/TextureUnits.h + shaders/texture_units.glsl mirror; atlas rather than widen
-- [Archer app](archer_app.md) — side-view platformer prototype: Stage rules/view split, Puppet animation seam; what's built and parked
+- [Archer app](archer_app.md) — side-view platformer: Stage rules/view split, Puppet animation seam; built and parked
 - [AddPhysics leaves gravity off](addphysics_gravity_off.md) — SetGravityEnabled(true) or no friction, looks like the solver exploding
 - [Renderer::skinned_shader is NULL by default](renderer_skinned_shader_null.md) — assign it or skinned meshes silently don't draw
 - [Root yaw extraction](root_yaw_always_extracted.md) — Animation::extract_yaw_root_motion, opt in per clip or run cycles wag
-- [glTF sparse accessors](gltf_sparse_accessors.md) — GLTFLoader supports them (Blender shape keys); it logs at DEBUG_WARN
-- [Archer terrain plan](archer_terrain_plan.md) — marching cubes from the StageBlock blockout; round OUTWARD; continuous fields; never remesh in NewGame
+- [glTF sparse accessors](gltf_sparse_accessors.md) — GLTFLoader supports them (Blender shape keys); logs at DEBUG_WARN
+- [Archer terrain plan](archer_terrain_plan.md) — marching cubes from the StageBlock blockout; round OUTWARD; never remesh in NewGame
 - [OK to stop running apps](ok_to_stop_running_apps.md) — user allows killing a running app to relink or free a port; say so
-- [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform; vines + skinned rope built; growth + rope animation next
+- [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform; vines + skinned rope built; growth next
 - [Input recording](input_recording.md) — F9/F10 + input_record/input_replay, recordings/*.rec text, trim by editing begin/end
 - [Sign text anchors](sign_text_anchors.md) — text on props via parented Cube empties text_<n>; apps/archer/Sign.h
-- [Plant mechanics plan](plant_mechanics_plan.md) — AGREED: arm platforms, bounce pad, bending leaf, branch balance, arrow pegs; apps/archer/docs
+- [Plant mechanics plan](plant_mechanics_plan.md) — AGREED: arm platforms, bounce pad, bending leaf, branch balance, arrow pegs
 - [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — restore with ShowWindow(h,4) to check UI; posted clicks can't drive ImGui
-- [Wind system plan](wind_system_plan.md) — archer stream-function wind built with sway/leaves/streaks/fireflies; clouds left
+- [Wind system plan](wind_system_plan.md) — archer stream-function wind with sway/leaves/streaks/fireflies; clouds left
 - [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change don't build/run other apps; the user does
-- [Adaptive music plan](adaptive_music_plan.md) — apps/music is the designer (port 8767); player in core/Music*; games copy via `make publish`; archer and (2026-10-16) chasm play it - chasm: 3 players, clouds/chasm layers by the view
+- [Adaptive music plan](adaptive_music_plan.md) — apps/music designs (port 8767), core/Music* plays; `make publish`; archer + chasm play it
 - [Lock claim before build](lock_claim_before_build.md) — never build/run in the same parallel step as its #build/#port claim
-- [Cue plan](cue_plan.md) — archer event layer: SoundSystem buses, CueLog baselines, core/CueSystem; one CueSystem + bus per scene; cue panel next
-- [Bridge and crumble plan](bridge_crumble_plan.md) — archer rope bridges (overload snap, creak warnings) + crumbling rocks built; new blocks go LAST
-- [Vitals plan](vitals_plan.md) — archer exertion + fear -> breathing + heartbeat, sound only; blinks a third uncorrelated clock
+- [Cue plan](cue_plan.md) — archer event layer: SoundSystem buses, CueLog baselines, core/CueSystem; one per scene; cue panel next
+- [Bridge and crumble plan](bridge_crumble_plan.md) — archer rope bridges (snap, creaks) + crumbling rocks built; new blocks go LAST
+- [Vitals plan](vitals_plan.md) — archer exertion + fear -> breathing + heartbeat, sound only; blinks a third clock
 - [lockd lease lapses in long runs](lockd_lease_expires_in_long_runs.md) — fixed in code 2026-09-30; live only after the broker is rebuilt
 - [Archer grey slab is blockout](archer_level_grey_blockout.md) — the flat grey ground right of archer's world is undressed blockout
 - [Background work](background_work.md) — core/BackgroundWork.h + LatestResult<T>; async results must not reach the sim mid-run
 - [Blender export speed](blender_export_speed.md) — archer export 237 s -> 58 s with disable_viewport; tools/blender_export_profile.py
-- [Archer hair chains](archer_hair_chains.md) — 3D DynamicChains + wind; gravity and jolts trap hair; crown weighting artist fix pending
-- [Replay determinism plan](replay_determinism_plan.md) — archer replays bit-exact; archer_test recording, re-check after every game change (CLAUDE.md)
+- [Archer hair chains](archer_hair_chains.md) — 3D DynamicChains + wind; gravity and jolts trap hair; crown weighting fix pending
+- [Replay determinism plan](replay_determinism_plan.md) — archer replays bit-exact; archer_test re-checked after every game change
 - [Archer 3D aim + plane lock](archer_3d_aim_plane_lock.md) — cone sway, v3 arrows; a zero TurnInWorld still changes bits
-- [Archer fall animation](archer_fall_animation.md) — walk-off hands over to the fall, fall-pose overlay off; bench Rope scene x 23 y 100
+- [Archer fall animation](archer_fall_animation.md) — walk-off hands over to the fall; bench Rope scene x 23 y 100
 - [Archer water](archer_water.md) — waterfall: lighting.glsl split + Shader::f_lit; one discard kills early-z for a program
-- [Archer cave](archer_cave.md) — lighting-experiment cave, StageBiome, vignette + cave vision; one shadow map for all directional lights
-- [Coordinator + worker windows](coordinator_worker_windows.md) — user prefers briefing blank windows via ListAgents/SendMessage over subagents
+- [Archer cave](archer_cave.md) — lighting-experiment cave, StageBiome, vignette; one shadow map for all directional lights
+- [Coordinator + worker windows](coordinator_worker_windows.md) — user prefers briefing blank windows via ListAgents/SendMessage
 - [Archer model scale](archer_model_scale.md) — model_scale ~1.82, not 2.02; measure before sizing rules off glb pieces
 - [Prop atlas plan](prop_atlas_plan.md) — 11 Tripo textures -> one atlas; analysis tool built; swatch + pack + bake next
-- [Ogg Vorbis settings](ogg_vorbis_settings.md) — games ship .ogg (q-1, 32 kHz cap); core/AudioDecode at load; new SFX: `python tools/sound_ogg.py <app>` (trims speech/)
+- [Ogg Vorbis settings](ogg_vorbis_settings.md) — games ship .ogg (q-1, 32 kHz cap); new SFX: `python tools/sound_ogg.py <app>`
 - [ReadFileToString is disk-only](readfiletostring_disk_only.md) — misses baked assets in the ship exe; read disk then LoadFile
 - [Spider leg shape keys](spider_leg_shape_keys.md) — tools/blender_spider_legs.py tetrapod keys; Blender-scripting traps
 - [Blend edit in place OK](blend_edit_in_place_ok.md) — user keeps .blend backups; separate file still wise while Blender has it open
 - [Snake plan](snake_plan.md) — archer snakes drop from branches; steps 1-3 built, drop next
-- [Chasm game plan](chasm_game_plan.md) — apps/chasm colony sim on a Townscaper grid: zones, palette, replay-from-state; steps 1-10 + biomes + economy + rivers rework built; port 8769
-- [Core features over workarounds](core_features_over_workarounds.md) — missing general feature? add it to core (defaults unchanged), never an app-side fake
+- [Chasm game plan](chasm_game_plan.md) — apps/chasm colony sim on a Townscaper grid; steps 1-10, biomes, economy, rivers built; port 8769
+- [Core features over workarounds](core_features_over_workarounds.md) — missing general feature? add it to core (defaults unchanged)
 - [Solid custom shader flags](solid_custom_shader_flags.md) — opaque custom-shader mesh needs f_writes_gbuffer+f_lit+f_casts_shadow+f_solid
-- [Object::SetMesh releases the old mesh](object_setmesh_releases_old.md) — pooled meshes must be Retained or get freed (VAO spam, heap corruption)
-- [Chasm cliff kit](chasm_cliff_kit.md) — blender_chasm_cliffs.py: aigen_1 rift look (jagged, matching walls, spires); user feedback rules; uneditable mesh
-- [Chasm terrace columns](chasm_terrace_columns.md) — 2026-10-06 terrain as one column per plot, in Blender AND the game: one chasm + cracks, steps of 6, bare patches, no feature pinning; grid_plan.md "Columns"
-- [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/GL_RGBA32I and glClearNamedFramebufferuiv missing; define format constants locally, use signed int targets
-- [Line works plan](line_works_plan.md) — AGREED 2026-10-06: chasm roads/walls drag-previewed, built by idle villagers felling trees; waits on window 39
-- [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants); difficulty may retune later
-- [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: all 8 steps built (orders … guard tower, towers kept full, guards by hand + count); gatehouse wanted; chasm_select op hits finds chips; scouting (kept provisions, gather chip, messages) all built 2026-10-11
-- [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop defaults to AUTO after a day; add rows in ChasmIssues
-- [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes; figures are constant names
-- [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-3 BUILT (drop, take via SourceStock, builders move, card); step 5 holding->dropping BUILT 2026-10-18; finds next
-- [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; hut buildable without a lot; house Extend chip works the same way; sites selectable by patch + staked 2026-10-11
-- [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, full-time archers by precision, per-person archery; trainees SHOOT (Shoot clip, bow+quiver, arrows by skill) built 2026-10-11
-- [Chasm goods strip](chasm_goods_strip.md) — cards show stocks as strips: solid anyone's, hollow kept, striped reserved (a person's load too, 2026-10-18); task bar from EconomyTaskProgress
-- [Chasm goods plan](chasm_goods_plan.md) — AGREED 2026-10-10: food/water/materials/inputs categories, hemp crop, ropewalk (2-4 plots) makes rope; no starting rope; all 6 steps built and checked end to end; kept stock + make-more orders (provisions, rope) built 2026-10-10
-- [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs, skinned crowd costs; Walking/Idle/Shoot played, crossfaded; bone props via probe bind matrix (IntoBone), armature scale dropped (woman too tall, flagged)
-- [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" open questions
-- [Ramparts plan](ramparts_plan.md) — Chasm walk nodes are plot+layer; tower decks + debug castle built 2026-10-10; route_layer drives height; WalkJoin is the shared rule
-- [Chasm person picking](chasm_person_picking.md) — people picked by G-buffer readback + 8 px fallback; skinned outlines; pick-pixel pin; multi-select all 3 steps built (group, box, group orders spread by the rules)
-- [Minimised app took keystrokes](minimized_focus_leak.md) — FIXED 2026-10-18: WM_ACTIVATE isn't the foreground; HasFocus asks GetForegroundWindow + !IsIconic; verified both ways
-- [Chasm settlements](chasm_settlements.md) — 2026-10-11: territories by walk, reach by beds, any home keeps one; founding by tent + settle here BUILT; partners rejoin, lone house pairs, hut replaces camp woodcutter; children go with household, babies carried, orphans squeeze in (2026-10-12); one camp per colony
-- [Chasm stop work + ice](chasm_stop_work_and_ice.md) — 2026-10-12: workplaces stoppable (f_stopped); collector takes over camp drawer; posted cross ice with thaw warnings
-- [Chasm woodcutting](chasm_woodcutting.md) — only woodcutters fell (roads/walls/sites wait); camp 1 farmer + 1 woodcutter; logs 2/4/5; hut room by area; built 2026-10-11
-- [Chasm foraging](chasm_foraging.md) — BUILT 2026-10-12: fruit from bushes + oaks, camp picker, posted pick/draw menu; .blend differs from the glb, add props with --add --merge
-- [ImGui input race + crash reports](imgui_input_race_crash_report.md) — the rare i<Size assert was WndProc vs render thread on InputEventsQueue, FIXED 2026-10-12 (lock in WindowImGui.cpp); debug builds write build/crash_*.txt
-- [Chasm waterfalls](chasm_waterfalls.md) — 2026-10-12 brink + welded sheet + stage 2; camera dips under the rim only over balconies (since 2026-10-14), no shader hot-reload, river line runs 10 past lip
-- [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag: chasm as cracked-mud plates (pull-apart, slumps, islands); not ported, verdict pending
-- [Chasm zombies plan](chasm_zombies_plan.md) — user decided 2026-10-14; steps 1, 1b, 2, 3 BUILT (drop+chase, spacing, timed meals+fight, archers/guards shoot in the rules); walls break next
-- [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only, llm app only; step 0 done, 3B invents in calm states
-- [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble crates, PICK UP + water reach, stonecutter + boulders, deposits, the mine on O); what stone buys is later
-- [Chasm stone props](chasm_stone_props.md) — 2026-10-14: 10 stone props merged into chasm_props.glb (--add --merge); floatstone = palette row 10 PAL_MINERALS; portal faces +Z
-- [Chasm sound plan](chasm_sound_plan.md) — step 2 BUILT 2026-10-16: USE_SOUND, assets/cues/chasm.json, per-pass cues on the physics thread, ground listener in core, chasm_sound; work blows on per-person clocks; voices (leo/leah) answer picks + taken orders
-- [Chasm statistics](chasm_statistics.md) — v1 BUILT + confirmed 2026-10-16: EconomyEvent shared with sound, saved journal + day rows, Tab page, chasm_stats; events in wiki/events.md; camp pantries left out of NEEDS ATTENTION on purpose
-- [Chasm demo menus](chasm_demo_menus.md) — demo_plan all 7 steps built 2026-10-16 (menus, saves, recording, Settings, discoveries, goals + end page); pop-ups play mode only; four starts edited by the user
-- [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — every running copy shares the slots; user OK with tests overwriting them, no restore; never rely on autosaves in tests
-- [Chasm areas plan](chasm_areas_plan.md) — BUILT 2026-10-16: rivers/falls/biomes/plateau/forest found when first seen (EVENT_DISCOVERED), debug overlay, water loops faint under the clouds
-- [Linux port](linux_port_investigation.md) — chasm RUNS on Linux via X11 (2026-10-17), one-file ship binary; gamepads/MCP/ImGui open; no SDL/GLFW wanted; docs/linux_port_plan.md
-- [Chasm weather plan](chasm_weather_plan.md) — BUILT 2026-10-18: winter storm at the front (sway, snow + spindrift shader, gust stinger once, smoke/suspense/light/birds); core SetWindField XZ plane; user liked it; weather freezes in a pause like water/mist
-- [Chasm birds plan](chasm_birds_plan.md) — ALL 5 steps BUILT by 2026-10-18 (sound, seasons gather, title flock); birds stay over the clouds (user); menu_town needs a re-capture for title perches
-- [chasm_select: read op status](chasm_select_status_not_select.md) — op select returns a stale card after sim_step; cards draw only in play mode, restored window
-- [Chasm building size plan](chasm_building_size_plan.md) — BUILT 2026-10-18: footings, stone storeys 3+, workers by plots, heat rises, appeal + crowding; storey cost takes a LEVEL now
-- [archer_test baseline stale](archer_test_baseline_stale.md) — differs from tick 0 on a CLEAN HEAD (A/B 2026-10-18); not your change; --write is the user's call
-- [Worktree A/B build](worktree_ab_build.md) — HEAD in a worktree: copy libs/, 3rdparty/, the .rec; MAX_PATH under the scratchpad -> subst + CPLUS_INCLUDE_PATH
+- [Object::SetMesh releases the old mesh](object_setmesh_releases_old.md) — pooled meshes must be Retained or get freed
+- [Chasm cliff kit](chasm_cliff_kit.md) — blender_chasm_cliffs.py: aigen_1 rift look (jagged, matching walls, spires); user's rules
+- [Chasm terrace columns](chasm_terrace_columns.md) — terrain as one column per plot, Blender AND game: one chasm + cracks, steps of 6
+- [glad is trimmed](glad_trimmed.md) — GL_RGBA32UI/I and glClearNamedFramebufferuiv missing; define constants locally, signed targets
+- [Line works plan](line_works_plan.md) — AGREED 2026-10-06: roads/walls drag-previewed, built by idle villagers felling trees
+- [Tuning numbers are not rules](tuning_numbers_not_rules.md) — balance figures in docs = "current tuning" (one table, named constants)
+- [Chasm defence plan](chasm_defence_plan.md) — all 8 steps + scouting built by 2026-10-11 (orders, towers, guards by hand); gatehouse wanted
+- [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop AUTO after a day; rows in ChasmIssues
+- [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes
+- [Chasm crates plan](crates_plan.md) — steps 1-3 + step 5 (holding->dropping, 2026-10-18) BUILT; finds next
+- [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; Extend chip alike
+- [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, archers by precision; trainees SHOOT (bow, quiver, arrows by skill)
+- [Chasm goods strip](chasm_goods_strip.md) — stocks as strips: solid anyone's, hollow kept, striped reserved; task bar EconomyTaskProgress
+- [Chasm goods plan](chasm_goods_plan.md) — all 6 steps built: food/water/materials/inputs, hemp, ropewalk rope; kept stock + make-more orders
+- [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs; Walking/Idle/Shoot crossfaded; bone props via IntoBone
+- [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" questions
+- [Ramparts plan](ramparts_plan.md) — walk nodes are plot+layer; tower decks + debug castle built; WalkJoin is the shared rule
+- [Chasm person picking](chasm_person_picking.md) — G-buffer readback + 8 px fallback; skinned outlines; multi-select all 3 steps built
+- [Minimised app took keystrokes](minimized_focus_leak.md) — FIXED 2026-10-18: HasFocus asks GetForegroundWindow + !IsIconic
+- [Chasm settlements](chasm_settlements.md) — territories by walk, reach by beds; founding by tent built; households move together; one camp per colony
+- [Chasm stop work + ice](chasm_stop_work_and_ice.md) — workplaces stoppable (f_stopped); collector takes over camp drawer; posted cross ice
+- [Chasm woodcutting](chasm_woodcutting.md) — only woodcutters fell; camp 1 farmer + 1 woodcutter; logs 2/4/5; hut room by area
+- [Chasm foraging](chasm_foraging.md) — BUILT 2026-10-12: fruit from bushes + oaks, camp picker; add props with --add --merge
+- [ImGui input race + crash reports](imgui_input_race_crash_report.md) — i<Size assert was WndProc vs render thread, FIXED; build/crash_*.txt
+- [Chasm waterfalls](chasm_waterfalls.md) — brink + welded sheet + stage 2; camera under the rim only over balconies; no shader hot-reload
+- [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag: chasm as cracked-mud plates; not ported, verdict pending
+- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); walls break next
+- [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only; step 0 done
+- [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble, PICK UP, stonecutter, deposits, the mine on O)
+- [Chasm stone props](chasm_stone_props.md) — 10 stone props in chasm_props.glb (--add --merge); floatstone = PAL_MINERALS row 10
+- [Chasm sound plan](chasm_sound_plan.md) — step 2 BUILT: USE_SOUND, assets/cues/chasm.json, cues on the physics thread, chasm_sound; voices
+- [Chasm statistics](chasm_statistics.md) — v1 BUILT: EconomyEvent shared with sound, saved journal + day rows, Tab page, chasm_stats
+- [Chasm demo menus](chasm_demo_menus.md) — demo_plan FINISHED 2026-10-18 (0.0.2), in docs/done/; next milestone is finishing defence
+- [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — every running copy shares the slots; user OK with tests overwriting them
+- [Chasm areas plan](chasm_areas_plan.md) — BUILT: rivers/falls/biomes/plateau/forest found when first seen (EVENT_DISCOVERED)
+- [Linux port](linux_port_investigation.md) — chasm RUNS on Linux via X11 (2026-10-17); gamepads/MCP/ImGui open; no SDL/GLFW
+- [Chasm weather plan](chasm_weather_plan.md) — BUILT 2026-10-18: winter storm at the front; core SetWindField; freezes in a pause
+- [Chasm birds plan](chasm_birds_plan.md) — ALL 5 steps BUILT; birds stay over the clouds (user); title perches now come from the coded town
+- [chasm_select: read op status](chasm_select_status_not_select.md) — op select returns a stale card after sim_step; cards only in play mode
+- [Chasm building size plan](chasm_building_size_plan.md) — BUILT 2026-10-18: footings, stone storeys 3+, workers by plots, appeal + crowding
+- [archer_test baseline stale](archer_test_baseline_stale.md) — differs from tick 0 on a CLEAN HEAD (A/B 2026-10-18); --write is the user's call
+- [Worktree A/B build](worktree_ab_build.md) — HEAD in a worktree: copy libs/, 3rdparty/; MAX_PATH -> subst + CPLUS_INCLUDE_PATH
+- [Chasm test maps plan](chasm_test_maps_plan.md) — ALL 6 BUILT 2026-10-18: kind flat/title in GridSettings, add_person, coded title town; saves A/B unchanged
+- [Chasm water tools plan](chasm_water_tools_plan.md) — step 1 debug WELL BUILT 2026-10-18 (seeded water, endless by set_stock); rivers/ponds in GridSettings next

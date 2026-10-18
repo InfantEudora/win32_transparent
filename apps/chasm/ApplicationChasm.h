@@ -120,7 +120,7 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_SETTLE      26      //a person's card: sent into another settlement and there, he moves in without a tent
 #define OVERLAY_HIT_WORK_STOP   27      //a workplace's card: its work stopped, or set going again (stopping_work_plan.md)
 #define OVERLAY_HIT_FORAGE      28      //the right click's menu (foraging_plan.md): FORAGE_* by hand, 0 posted there, -1 its panel
-#define OVERLAY_HIT_PICK_UP     29      //a crate's card: the builders fetch it first, or back in the queue (stone_plan.md)
+#define OVERLAY_HIT_PICK_UP     29      //a crate's card: anyone free fetches it first, or back in the queue (stone_plan.md)
 #define OVERLAY_HIT_STATS       30      //the top bar's figures: the Statistics page (statistics_plan.md)
 #define OVERLAY_HIT_REPLAY_STOP 31      //the replay's bar: the replay stopped (demo_plan.md, step 4)
 #define OVERLAY_HIT_SITE_CANCEL 32      //a site's card: taken off whole, its goods left as a crate (construction_plan.md)
@@ -336,9 +336,14 @@ const char* ChasmNeedName(const EconomyWorker& k);
                                                         //[3] 1 a PLAY command's, held to the clouds
 #define CHASM_CMD_ZOMBIE            SIM_CMD_LAST+15     //zombies dropped (a debug edit, docs/zombies_plan.md): subtype the
                                                         //plot; value[0] how many - 0 takes every zombie off the map
-#define CHASM_CMD_PICK_UP           SIM_CMD_LAST+16     //a crate fetched first by the builders (docs/stone_plan.md): subtype
+#define CHASM_CMD_PICK_UP           SIM_CMD_LAST+16     //a crate fetched first by anyone free (docs/stone_plan.md): subtype
                                                         //the crate; value[0] 1 to pick it up, 0 back in the queue;
                                                         //value[1] 1 for a PLAY command, held to the clouds
+#define CHASM_CMD_PERSON            SIM_CMD_LAST+17     //a person put down (a debug edit, docs/test_maps_plan.md step 5):
+                                                        //subtype the plot; value[0] his home's building id, 0 none;
+                                                        //value[1] his age in days; value[2] his skills, four bits each
+                                                        //from SKILL_STRENGTH up, and his sex at bit 16 (1 a man, 2 a
+                                                        //woman) - 0 for any of them the seed's; value[3] his archery
 
 //What a left click does.
 enum ChasmTool{
@@ -363,6 +368,7 @@ enum ChasmTool{
     CHASM_TOOL_CASTLE,      //ramparts_plan.md: the debug castle's pieces, from the panel only - no key, never in play
     CHASM_TOOL_STONECUTTER, //stone_plan.md: a stonecutter's hut, a drag
     CHASM_TOOL_MINE,        //stone_plan.md step 5: a mine, a plot each, on a deposit
+    CHASM_TOOL_WELL,        //water_tools_plan.md: a debug well, a plot each - from the panel only, no key, never in play
     CHASM_TOOL_COUNT
 };
 
@@ -710,6 +716,16 @@ private:
     void SubmitForage(uint32_t person, int plot, int what, bool f_spread);  //any thread; refused as an order is
     void SubmitPickUp(uint32_t crate, bool f_on);               //any thread; refused as a debug crate is
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
+    /*
+        A PERSON PUT DOWN (docs/test_maps_plan.md, step 5; Economy::AddPerson): a debug edit, recorded - the People
+        panel's, chasm_economy's add_person. `skills` may be NULL; 0 for anything is the seed's, as a settler's.
+    */
+    SimCommand PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery);
+    void SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery);    //any thread
+    std::atomic<uint32_t> person_commands_done{0};
+    std::atomic<uint32_t> person_refusals{0};
+    std::atomic<uint32_t> person_last_made{0};  //the id the last one taken was given
+    std::string person_last_refusal;            //under grid_mutex, like zombie_last_refusal
     /*
         ZOMBIES (docs/zombies_plan.md, ApplicationChasmZombies.cpp): dropped by the debug tools - Z under the cursor, the
         panel, chasm_zombie - as CHASM_CMD_ZOMBIE, recorded. Their rules are the economy's (Economy.h, ZOMBIES); here is
@@ -1734,6 +1750,22 @@ private:
     UIMenuRect EndButtonAt(int item);           //any thread: an end button's place, from the window alone
     void DrawEndFoot(float s);                  //render thread, from DrawStats
     float DrawGoals(float s, float top);        //render thread, from DrawOverlay in play mode: returns its foot
+    /*
+        THE SWITCHES (ApplicationChasmGoals.cpp; debug builds): what play mode tells and stops for, each of which can be
+        turned off - a goal's notice (by its CHASM_GOAL_* as the bit), a death's pop-up, the colony lost's page, the demo
+        complete's. The viewer's, never recorded or saved; all on in a build without the panels.
+    */
+    #define CHASM_TRIGGER_DEATH     (CHASM_GOALS + 0)
+    #define CHASM_TRIGGER_LOST      (CHASM_GOALS + 1)
+    #define CHASM_TRIGGER_COMPLETE  (CHASM_GOALS + 2)
+    #define CHASM_TRIGGERS          (CHASM_GOALS + 3)
+    std::atomic<uint32_t> triggers_off{0};      //a bit a switch turned off
+    bool TriggerOn(int t) const{
+        return t < 0 || t >= CHASM_TRIGGERS || !(triggers_off.load() & (1u << t));
+    }
+    void SetTrigger(int t, bool f_on);
+    static const char* TriggerName(int t);      //chasm_menu's: winter, chasm, death, colony_lost, demo_complete
+    void RenderGoalsPanel();                    //debug builds: the goals and the ends, each with its switch
 #ifdef USE_MCP
     void RegisterStatsTools();
 #endif
@@ -1894,6 +1926,17 @@ private:
     std::string diorama_result;                 //the last request's outcome, for the tool
     int diorama_done = 0;                       //how many requests were served
     bool LoadDiorama(const std::string& name, std::string& error);     //render thread
+    bool LoadDioramaBytes(const uint8_t* data, size_t size, std::string& error);   //render thread: a capture's bytes
+    //What a capture takes round `centre`: the world as the player sees it, with DioramaMarkers. Render thread.
+    SceneCaptureOptions DioramaOptions(const vec3& centre, float radius);
+    /*
+        THE TITLE'S TOWN (TitleTown.h; test_maps_plan.md, step 6): made by code at start and captured into
+        `title_capture`, which CreateTitleScene loads - no file. Init, before the game's map: it is the world for that
+        moment, and the game's replaces it straight after. chasm_diorama's load of "town" puts it back.
+    */
+    #define TITLE_TOWN_NAME "town"
+    void BuildTitleTown();
+    std::vector<uint8_t> title_capture;
     void ServiceDiorama();                      //render thread, from PreRender
     void UpdateTitleView(float dt);             //physics thread: the camera round the diorama
     std::vector<SceneCaptureMarker> DioramaMarkers(const vec3& centre, float radius);  //render thread: chimneys and people

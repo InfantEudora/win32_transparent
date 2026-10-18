@@ -1,6 +1,6 @@
 # Bug Report Plan: sending a report from the game
 
-Proposed 2026-10-16; nothing built in the game yet. It follows on from `demo_plan.md` step 4 ("As built:
+Proposed 2026-10-16; nothing built in the game yet. It follows on from `done/demo_plan.md` step 4 ("As built:
 recording for testers"): Report a bug writes `reports/<date>_<time>/`, and today the tester has to get that
 folder to the user by themselves. The receiving end now exists - a page on the user's website that takes a
 report folder and a message, checks them and stores them. This plan is the game's half: sending the report

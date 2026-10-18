@@ -1,5 +1,6 @@
 #include "Forest.h"
 #include "Deposits.h"
+#include "TitleTown.h"
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +38,8 @@ const char* prop_asset_names[PROP_KIND_COUNT] = {
 #define REED_DEPTH          0.35f
 #define REED_CLUMP          9.0f    //world units over which reed beds come and go
 #define REED_FALL_CLEAR     25.0f
+#define FLAT_TREE_SHARE     0.12f   //a flat test map's plots with a tree (test_maps_plan.md)
+#define FLAT_OAK_SHARE      0.40f   //...of them oaks, the rest pines
 
 namespace {
 
@@ -145,6 +148,26 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
                Noise(p.x / FOREST_DETAIL,p.y / FOREST_DETAIL,seed + 7) * 0.25f;
     };
     out.core.assign(g.fine.pos.size(),0);
+    /*
+        A FLAT TEST MAP (test_maps_plan.md): trees at random and nothing else - no forests, rocks, boulders or ground
+        cover, so what a test puts down is all there is to see. Per plot from the same hash, so a test map always
+        grows the same trees, in the same order: the economy knows a tree by its index.
+    */
+    if (g.settings.kind == GRID_KIND_FLAT){
+        for (v = 0; v < (int)g.fine.pos.size(); v++){
+            if (!PlotIsFlat(g,picker,t,v) || Chance(seed,v,120) >= FLAT_TREE_SHARE){
+                continue;
+            }
+            int kind = (Chance(seed,v,121) < FLAT_OAK_SHARE) ? Pick(Chance(seed,v,122),PROP_OAK_A,oak_w,3)
+                                                             : Pick(Chance(seed,v,122),PROP_PINE_A,pine_w,4);
+            float a = Chance(seed,v,123) * 6.2831853f;
+            float r = std::sqrt(Chance(seed,v,124)) * PROP_JITTER;
+            Place(kind,g.fine.pos[v] + vec2(std::cos(a),std::sin(a)) * r,Chance(seed,v,125) * 6.2831853f,
+                  (0.85f + Chance(seed,v,126) * 0.30f) * TREE_SCALE);
+        }
+        out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+        return;
+    }
     for (v = 0; v < (int)g.fine.pos.size(); v++){
         //Before anything decides what grows here: the core is the forest's shape, not its trees (ForestData::core).
         out.core[v] = (patches(g.fine.pos[v]) > FOREST_CORE) ? 1 : 0;
@@ -394,6 +417,40 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             }
             int kind = (Chance(seed,v,salt + 3) < 0.55f) ? PROP_REEDS_A : PROP_REEDS_B;
             Place(kind,at,Chance(seed,v,salt + 4) * 6.2831853f,1.05f + Chance(seed,v,salt + 5) * 0.40f,dip);
+        }
+    }
+    /*
+        THE TITLE'S TOWN (TitleTown.h): the game's forest round it, but no tree, rock, stump or log inside its wall,
+        where they would stand in its yards and lanes - bushes and ground cover stay. Taken out after, by the cores
+        alone (TitleTownCentre), so the rest grows as on any map; the props keep their order, which the economy's
+        indices follow.
+    */
+    if (g.settings.kind == GRID_KIND_TITLE){
+        const vec2 c = TitleTownCentre(g,out.core);
+        const float clear = TITLE_TOWN_WALL + 1.0f;
+        std::vector<int> moved(out.props.size(),-1);
+        std::vector<PropInstance> kept;
+        kept.reserve(out.props.size());
+        for (size_t i = 0; i < out.props.size(); i++){
+            const PropInstance& p = out.props[i];
+            vec2 d(p.pos.x - c.x,p.pos.z - c.y);
+            bool f_tall = ForestIsTree(p.kind) || ForestIsRock(p.kind) || p.kind == PROP_STUMP || p.kind == PROP_LOG;
+            if (f_tall && d.dot(d) < clear * clear){
+                out.count[p.kind]--;
+                continue;
+            }
+            moved[i] = (int)kept.size();
+            kept.push_back(p);
+        }
+        out.props.swap(kept);
+        for (std::vector<int>& chunk : out.chunk_props){
+            std::vector<int> left;
+            for (int i : chunk){
+                if (moved[i] >= 0){
+                    left.push_back(moved[i]);
+                }
+            }
+            chunk.swap(left);
         }
     }
     out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();

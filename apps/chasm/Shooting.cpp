@@ -94,6 +94,54 @@ int Economy::ShotTarget(const EconomyWorker& k, const ZoneState& z, const std::v
 }
 
 /*
+    HELD BY ZOMBIES (step 3b, the user's): a zombie he could shoot at, or one he is fighting. One his arrows already have
+    counts too - else, the moment every zombie in sight was doomed by arrows in the air, he would be free to walk off
+    into the next.
+*/
+bool Economy::ZombiesInRange(const EconomyWorker& k, const ZoneState& z) const{
+    if (state.zombies.empty()){
+        return false;
+    }
+    if (ZombieNear(k,FIGHT_REACH)){
+        return true;
+    }
+    if (!Shooter(k,now)){
+        return false;
+    }
+    std::vector<int> none(state.zombies.size(),0);
+    float eye_ground = 0.0f;
+    return ShotTarget(k,z,none,eye_ground) >= 0;
+}
+
+/*
+    A DRINK BETWEEN SHOTS (step 3b, the user's): a meal waits while he shoots, and held on his post by the zombies he
+    shoots at, a guard went dry through a long wave with water on his back. So between two turns of the Shoot clip he
+    drinks, when a whole unit fits, from where he would at any other time (Needs): his tower's water, or with none
+    there his pack's. Water alone - a drink is a second, and a unit puts back half the bar; food is slower, worth less
+    a unit, and hunger kills slower, so a meal still waits for the wave to pass. Never with a zombie near enough to
+    fight (MEALS), when he would rather keep shooting.
+*/
+bool Economy::DrinkBetweenShots(EconomyWorker& k, const ZoneState& z){
+    if (EconomyMealOn(k)){
+        return k.meal_good == GOOD_WATER;
+    }
+    std::array<int,GOOD_COUNT>* from = &k.pack;
+    if (uint32_t tower = EconomyOnTower(state,z,k)){
+        if (state.stock[tower][GOOD_WATER] > 0){
+            from = &state.stock[tower];
+        }
+    }
+    //Water alone offered, so what Consume begins is a drink.
+    std::array<int,GOOD_COUNT> water{};
+    water[GOOD_WATER] = (*from)[GOOD_WATER];
+    if (!Consume(k,water)){
+        return false;
+    }
+    (*from)[GOOD_WATER] = water[GOOD_WATER];
+    return true;
+}
+
+/*
     A tick of ARROWS (Economy.h). The arrows first: one in the air flies on, a hit following its zombie, and comes down
     after its flight - a hit into its zombie, taking ARROW_HIT, a miss into the ground. A hit whose zombie fell before it
     got there comes down where it stood. The zombies the arrows felled go, and what was stuck in them with them.
@@ -169,6 +217,11 @@ void Economy::Shoot(const ZoneState& z){
         }
         if (j < 0 && k.draw < release){
             k.draw = 0;
+            k.aim = 0;
+            continue;
+        }
+        //Between his turns, a drink first if one fits (step 3b): the bow down for it, and the next turn after.
+        if (k.draw == 0 && DrinkBetweenShots(k,z)){
             k.aim = 0;
             continue;
         }

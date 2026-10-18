@@ -34,7 +34,8 @@ ground, never under the mountain; the islands have none: they wait for the zeppe
 - a [[Construction|building site]] takes stone off a pile as it would from a store;
 - the [[Builder|builders]] carry the piles on their [[Settlement|settlement's]] land to a store, as the last
   of their errands - a pile further out stays where it lies, unless the player puts it **PICK UP** on its
-  card: then a builder fetches it before building, from anywhere he can walk to and back without water ([[Crate|PICK UP]]);
+  card: then a builder, or anyone without a job, fetches it before building, from anywhere they can walk to and
+  back without water ([[Crate|PICK UP]]);
 - a stonecutter takes the piles within his reach first, before he breaks another rock;
 - nothing is built over one, and a pile is gone once it is empty.
 

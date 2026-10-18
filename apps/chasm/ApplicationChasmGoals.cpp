@@ -3,6 +3,9 @@
 #include "ChasmHud.h"
 #include "ChasmStats.h"
 #include "Window.h"
+#ifdef USE_IMGUI
+#include "imgui.h"
+#endif
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -19,6 +22,13 @@
     true, so a replay ends the same way and a load does not tell it again. THE VIEWER: the pop-ups and the end's page
     read those events as they come, as the notice line does, and pause the game the way the pause menu does - which
     changes nothing in the colony.
+
+    THE SWITCHES (debug builds; the user's, 2026-10-18): each of what the viewer tells or stops for can be turned off -
+    from the Goals panel, or chasm_menu's `triggers` - for testing, where a death or a lost colony is what is being looked
+    at rather than the end of the game: a goal's notice (and the winter's line in a death's pop-up), a death's pop-up,
+    the colony lost's page and its line over the build bar, the demo complete's page. The VIEWER's, as the pause menu
+    is: never recorded or saved. The rules still tell every goal and end into the journal, so the statistics, the
+    goals' panel and a replay are as they were.
 */
 #define GOALS_MET_COLOUR    UIColor(140,200,110)    //a goal met, on the panel and the end's page
 
@@ -70,6 +80,28 @@ std::string ChasmGoalNext(int goal, const EconomyState& e, const ChasmDiscoverie
         return "BUILD A WINCH";
     }
     return "LOWER SOMEONE DOWN";
+}
+
+const char* ApplicationChasm::TriggerName(int t){
+    switch (t){
+        case CHASM_GOAL_WINTER:         return "winter";
+        case CHASM_GOAL_CHASM:          return "chasm";
+        case CHASM_TRIGGER_DEATH:       return "death";
+        case CHASM_TRIGGER_LOST:        return "colony_lost";
+        case CHASM_TRIGGER_COMPLETE:    return "demo_complete";
+        default:                        return "?";
+    }
+}
+
+void ApplicationChasm::SetTrigger(int t, bool f_on){
+    if (t < 0 || t >= CHASM_TRIGGERS){
+        return;
+    }
+    if (f_on){
+        triggers_off.fetch_and(~(1u << t));
+    }else{
+        triggers_off.fetch_or(1u << t);
+    }
 }
 
 //Nobody left alive, and somebody dead: not a colony that never had anyone.
@@ -167,10 +199,11 @@ void ApplicationChasm::UpdateEnd(){
             f_lost = f_lost || ev.kind == EVENT_COLONY_LOST;
         }
         end_seen = e.events_made;
+        //Each held to its switch (THE SWITCHES, above): one turned off is told nowhere and stops nothing.
         if (PlayMode() && f_game_on.load() && !TitleShowing()){
-            if (f_lost){
+            if (f_lost && TriggerOn(CHASM_TRIGGER_LOST)){
                 end_pending = CHASM_END_LOST;
-            }else if (!deaths.empty()){
+            }else if (!deaths.empty() && TriggerOn(CHASM_TRIGGER_DEATH)){
                 std::string head = (deaths.size() == 1) ? "A villager died"
                                                        : std::to_string(deaths.size()) + " villagers died";
                 std::string detail;
@@ -187,15 +220,19 @@ void ApplicationChasm::UpdateEnd(){
                 if (deaths.size() > named){
                     detail += "\nand " + std::to_string(deaths.size() - named) + " more";
                 }
-                if (f_failed){
+                if (f_failed && TriggerOn(CHASM_GOAL_WINTER)){
                     detail += "\nThe first goal is failed: not everyone lived to see the second spring.";
                 }
                 OpenAsk(CHASM_ASK_DEATH,head,detail);
             }
-            if (f_complete && end_pending == CHASM_END_NONE){
+            if (f_complete && end_pending == CHASM_END_NONE && TriggerOn(CHASM_TRIGGER_COMPLETE)){
                 end_pending = CHASM_END_COMPLETE;
             }
         }
+    }
+    //...and an end waiting that was switched off since: dropped, not opened later.
+    if (end_pending != CHASM_END_NONE && !TriggerOn((end_pending == CHASM_END_LOST) ? CHASM_TRIGGER_LOST : CHASM_TRIGGER_COMPLETE)){
+        end_pending = CHASM_END_NONE;
     }
     if (end_pending != CHASM_END_NONE && ask_kind.load() == CHASM_ASK_NONE && !f_stats_open.load() && !f_pause_open.load()
         && !TitleShowing() && busy_action.kind == CHASM_ACT_NONE){
@@ -250,3 +287,49 @@ float ApplicationChasm::DrawGoals(float s, float top){
     }
     return p1.y + 8.0f * s;
 }
+
+#ifdef USE_IMGUI
+/*
+    The panel's GOALS (debug builds): every goal and end, how it stands, and its switch (THE SWITCHES, above) - ticked,
+    play mode tells it and stops for it as it always has; unticked, not.
+*/
+void ApplicationChasm::RenderGoalsPanel(){
+#ifdef DEBUG
+    if (!ImGui::CollapsingHeader("Goals")){
+        return;
+    }
+    ImGui::TextDisabled("what play mode tells and stops for - unticked, it does neither");
+    ImGui::TextDisabled("(the rules journal every goal and end either way)");
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ChasmDiscoveries> d = GetDiscoveries();
+    bool f_ours = e && d && e->world;
+    auto row = [&](int t, const std::string& label, const std::string& stands){
+        bool f_on = TriggerOn(t);
+        if (ImGui::Checkbox((label + "##trigger" + std::to_string(t)).c_str(),&f_on)){
+            SetTrigger(t,f_on);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s",stands.c_str());
+    };
+    for (int g = 0; g < CHASM_GOALS; g++){
+        std::string stands = "-";
+        if (f_ours){
+            int st = ChasmGoalState(g,*e,*d);
+            stands = (st == CHASM_GOAL_MET) ? "met" : (st == CHASM_GOAL_FAILED) ? "failed" : ChasmGoalNext(g,*e,*d);
+            std::transform(stands.begin(),stands.end(),stands.begin(),::tolower);
+        }
+        row(g,std::string("goal: ") + ChasmGoalTitle(g),stands);
+    }
+    row(CHASM_TRIGGER_DEATH,"a death: its pop-up, the game paused",f_ours ? std::to_string(e->dead.size()) + " dead" : "-");
+    row(CHASM_TRIGGER_LOST,"the colony lost: its page",f_ours ? (d->f_lost_told ? "told" : "not yet") : "-");
+    row(CHASM_TRIGGER_COMPLETE,"the demo complete: its page",f_ours ? (d->f_complete_told ? "told" : "not yet") : "-");
+    if (ImGui::SmallButton("All on##triggers")){
+        triggers_off = 0;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("All off##triggers")){
+        triggers_off = (1u << CHASM_TRIGGERS) - 1u;
+    }
+#endif
+}
+#endif

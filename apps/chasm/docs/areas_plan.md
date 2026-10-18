@@ -57,7 +57,7 @@ once into the world (`ChasmWorld::areas`):
 - **Seen when any of its ground is explored** - the floatstone seam's rule (`LookForSeams`). An area is a
   list of the exploration's cells; looking through the ones not yet seen costs a few thousand byte reads
   when the exploration changes.
-- **Read from the save** (`demo_plan.md`, "Discoveries"): which areas are seen is worked out again from the
+- **Read from the save** (`done/demo_plan.md`, "Discoveries"): which areas are seen is worked out again from the
   saved exploration after a load, so nothing new is saved and nothing is told twice.
 - **Not told at the landing:** what the settlers see on their first look is home, not a discovery.
 - **The chasm, its balconies and islands are not areas yet.** The chasm is the obvious next one - its
@@ -72,7 +72,7 @@ once into the world (`ChasmWorld::areas`):
   waterfall".
 - **Sound:** the first of its kind chimes with the notice, heard anywhere; any other is a chime near the
   view, as a tree felled is. Every event has the notification sound for now.
-- **Goals and unlocks** can be conditions on the areas seen (`demo_plan.md`).
+- **Goals and unlocks** can be conditions on the areas seen (`done/demo_plan.md`).
 
 ## The overlay
 

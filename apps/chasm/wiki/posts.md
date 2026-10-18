@@ -5,7 +5,7 @@ kind: people
 status: partial
 summary: The player can order a grown-up to stand on a plot. It becomes their job while it lasts, and they live off a pack they take along.
 plans: defence_plan.md > As built: step 1, orders; defence_plan.md > As built: step 2, the pack; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > Build order; defence_plan.md > Scouting, provisioned first; selection_plan.md > Several people selected (the user's, agreed 2026-10-11)
-code: Economy.cpp: Order TakePost GoToPost SpreadPost RePlace FillPack Unpack Needs Gather GatherSupplies Notice; Economy.h: EconomyCanOrder EconomyPostRoom ECONOMY_POST_ROOM NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS EconomyEvent
+code: Economy.cpp: Order TakePost GoToPost SpreadPost RePlace FillPack PackUp Unpack Needs Gather GatherSupplies Notice; Shooting.cpp: ZombiesInRange; Economy.h: EconomyCanOrder EconomyPostRoom ECONOMY_POST_ROOM NEEDS_PACK_WATER NEEDS_SCOUT_WATER NEEDS_SCOUT_FOOD ECONOMY_GATHER_STOPS EconomyEvent
 verified: 2026-10-18
 ---
 
@@ -30,9 +30,9 @@ reach (one each {ECONOMY_POST_ROOM} of a plot's area). Several on one plot stand
 - A job they had is **kept** but stands idle, so a [[Water collector|collector]] doesn't fill and their
   share of a [[Field|field]] doesn't grow. On release they go back to it. Someone jobless gets no job until
   released.
-- Their needs work as anyone's: a pressing one sends them to the nearest supply of their own settlement or on
-  unclaimed land - never another village's - their house counting as one, then back to the post. Any food will
-  do, [[Provisions|provisions]] too, nearest first. If cut off, they wait and try again.
+- Their needs work as anyone's: a pressing one sends them to the nearest supply of their settlement or unclaimed
+  land, their house counting as one, then back to the post; any food, [[Provisions|provisions]] too. If cut off,
+  they wait and try again. **Not with a [[Zombie|zombie]] in range** - one they could shoot or are fighting.
 
 ## The pack
 

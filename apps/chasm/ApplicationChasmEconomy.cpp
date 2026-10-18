@@ -257,6 +257,12 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Add(((uint64_t)id << 32) | (uint32_t)e.guards[id]);
         }
     }
+    //The endless wells (water_tools_plan.md) - only those, so a colony without one hashes as before.
+    for (size_t id = 1; id < e.endless.size(); id++){
+        if (e.endless[id]){
+            h.Add(((uint64_t)id << 32) | 0x3E11u);
+        }
+    }
     //What the colony keeps of its made goods, and the orders for more (goods_plan.md) - only once set, so a colony
     //that never set one hashes as before.
     for (int g = 0; g < GOOD_COUNT; g++){
@@ -342,7 +348,8 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         (settlements_plan.md) - his card's chips; refused as an order is;
       - someone sent to PICK a ripe plant or DRAW water by hand (foraging_plan.md) - the right click's menu; refused
         as an order is;
-      - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time.
+      - a CRATE put down (crates_plan.md), a debug edit - the panel's and the tool's - a good at a time;
+      - a PERSON put down (test_maps_plan.md, step 5), a debug edit - the People panel's and the tool's - one at a time.
 */
 void ApplicationChasm::RegisterEconomyCommands(){
     main_scene->RegisterCommandHandler(CHASM_CMD_NEEDS,
@@ -355,7 +362,9 @@ void ApplicationChasm::RegisterEconomyCommands(){
         });
     main_scene->RegisterCommandHandler(CHASM_CMD_STOCK,
         [this](const SimCommand& cmd) -> objectid_t {
-            if (economy.SetStock(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],cmd.value[2] != 0.0f)){
+            //value[3]: a WELL made endless (water_tools_plan.md) - 0 in recordings from before.
+            if (economy.SetStock(zones.State(),cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],cmd.value[2] != 0.0f,
+                                 cmd.value[3] != 0.0f)){
                 PublishEconomy();
             }
             stock_commands_done++;
@@ -585,6 +594,53 @@ void ApplicationChasm::RegisterEconomyCommands(){
             zombie_commands_done++;
             return OBJECTID_INVALID;
         });
+    //A PERSON put down (test_maps_plan.md, step 5): a debug edit, like the zombie - the People panel, chasm_economy.
+    main_scene->RegisterCommandHandler(CHASM_CMD_PERSON,
+        [this](const SimCommand& cmd) -> objectid_t {
+            uint32_t packed = (uint32_t)cmd.value[2];
+            int skills[SKILL_COUNT];
+            for (int sk = 0; sk < SKILL_COUNT; sk++){
+                skills[sk] = (int)((packed >> (4 * sk)) & 15u);
+            }
+            std::string why;
+            uint32_t made = 0;
+            if (economy.AddPerson((int)cmd.subtype,(uint32_t)cmd.value[0],(int)cmd.value[1],skills,(int)((packed >> 16) & 3u),
+                                  (int)cmd.value[3],zones.State(),walkers,&why,&made)){
+                person_last_made = made;
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    person_last_refusal = why;
+                }
+                person_refusals++;
+            }
+            person_commands_done++;
+            return OBJECTID_INVALID;
+        });
+}
+
+//Four bits a skill and two for his sex, well inside a float's exact integers.
+static_assert(SKILL_COUNT * 4 <= 16,"CHASM_CMD_PERSON packs the skills below bit 16");
+
+SimCommand ApplicationChasm::PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery){
+    uint32_t packed = (uint32_t)std::max(0,std::min(2,sex)) << 16;
+    for (int sk = 0; skills && sk < SKILL_COUNT; sk++){
+        packed |= (uint32_t)std::max(0,std::min(10,skills[sk])) << (4 * sk);
+    }
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_PERSON;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = (uint32_t)std::max(0,plot);
+    cmd.value[0] = (float)house;
+    cmd.value[1] = (float)std::max(0,age_days);
+    cmd.value[2] = (float)packed;
+    cmd.value[3] = (float)std::max(0,archery);
+    return cmd;
+}
+
+void ApplicationChasm::SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery){
+    main_scene->SubmitCommand(PersonCommand(plot,house,age_days,skills,sex,archery));
 }
 
 void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
@@ -1253,6 +1309,29 @@ void ApplicationChasm::RenderPeoplePanel(){
     if (ImGui::SmallButton("All hungry##people")){
         everyone(NEEDS_PRESSING_HEALTH / 2,-1);
     }
+#ifdef DEBUG
+    //A PERSON put down (test_maps_plan.md, step 5): on the selected plot, with nowhere to live, the rest the seed's.
+    GridPick selected = GetSelectedPick();
+    bool f_plot = selected.f_hit && selected.plot >= 0;
+    if (!f_plot){
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::SmallButton("Put one down on the selected plot##people")){
+        SubmitPerson(selected.plot,0,0,NULL,0,0);
+    }
+    if (!f_plot){
+        ImGui::EndDisabled();
+    }
+    std::string refusal;
+    {
+        std::lock_guard<std::mutex> lock(grid_mutex);
+        refusal = person_last_refusal;
+    }
+    if (!refusal.empty()){
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f,0.45f,0.35f,1.0f),"last refused: %s",refusal.c_str());
+    }
+#endif
     auto slider = [&](const char* id, uint32_t person, int bar, int now, int full){
         uint64_t key = ((uint64_t)person << 1) | (uint64_t)bar;
         auto it = needs_editing.find(key);
@@ -1333,7 +1412,13 @@ void ApplicationChasm::RegisterEconomyTools(){
         "`priority` shows in `sites`. op set_needs: person `person`'s health_days and/or water_days (held to their bars) "
         "set - a RECORDED debug edit (CHASM_CMD_NEEDS), the panel's villager list's. It lands before the "
         "tick's eating, so someone at home with food and water tops straight back up; health 0 kills only "
-        "someone who cannot eat on that tick. op order: person `person` is sent to the plot at x,z (or "
+        "someone who cannot eat on that tick. op add_person (docs/test_maps_plan.md, step 5): `count` people (default 1, "
+        "at most 20) put down on the plot at x,z (or `plot`) - ordinary villagers, grown up, who live by the rules from then "
+        "on: `house` a home that stands (a house's family joined; a camp's bed) or none - a family of his own with nowhere "
+        "to live, housed by the rules if a house is free; `female`, `age_years`, `skills` ({strength, precision, husbandry, "
+        "ingenuity}: 1-10) and `archery` (held to his precision's cap) - anything not given the seed's, as a settler's. A "
+        "RECORDED debug edit each (CHASM_CMD_PERSON), refused on the ground a zombie is; `made` lists the new ids. op order: "
+        "person `person` is sent to the plot at x,z (or "
         "`plot`) and stands there - his post, now his job (docs/defence_plan.md); `spread` true: as one of a group, "
         "the plot while it has room, else the nearest round it (give a group's nearest first, as the right click does); "
         "op release: he leaves it "
@@ -1349,8 +1434,9 @@ void ApplicationChasm::RegisterEconomyTools(){
         "there if one is; refused off open ground (docs/crates_plan.md). `crates` lists every crate lying "
         "about: id, plot, x, z, goods, origin (dropped, found, camp, rubble, broken - docs/stone_plan.md - or site: what a "
         "site taken off was brought), who put it down, "
-        "the day, pick_up and too_far (a builder turned it down: past ECONOMY_PICK_UP_WATER of a water bar's walk); a worker taking from one, or a builder moving it to a store (to_crate, lifting), names it "
-        "as `crate`. op pick_up: crate `crate` (an id) fetched first by the builders, from anywhere (`on`, default true), "
+        "the day, pick_up and too_far (the last to look turned it down: past ECONOMY_PICK_UP_WATER of a water bar's walk); a worker taking from one, or moving it to a store (to_crate, lifting), names it "
+        "as `crate`. op pick_up: crate `crate` (an id) fetched first by anyone free - builders and the jobless - from "
+        "anywhere (`on`, default true), "
         "or back in the queue - RECORDED (CHASM_CMD_PICK_UP), `refusal` for no such crate. op rocks - the rocks and "
         "boulders within `reach` (default 20) of x,z: prop, kind, plot, x, z, distance, stone, standing (stone_plan.md). "
         "op deposits - every DEPOSIT (stone_plan.md step 4): id, kind (seam, mountain, outcrop), good, holds (a number, or "
@@ -1361,7 +1447,9 @@ void ApplicationChasm::RegisterEconomyTools(){
         "seams, balconies and outcrops. "
         "op set_stock: the stock of building `building` (or the one at x,z; a camp's supplies) set to "
         "`contents` (goods by name and amount, e.g. {\"provisions\":6,\"wheat\":0}) - RECORDED debug edits "
-        "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead. `provisions` reports PROVISIONS (docs/defence_plan.md): how many "
+        "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead. A WELL (docs/water_tools_plan.md) "
+        "holds water alone, as much as the seed gives it when placed: `endless` true keeps it full for good, and its water "
+        "set, or `endless` false, makes it finite again; its stock shows `endless`. `provisions` reports PROVISIONS (docs/defence_plan.md): how many "
         "are still lacking beyond what is made, and what each builders' hut holds. STOCK KEPT (docs/goods_plan.md): op keep - "
         "the colony keeps `count` of made good `good` (provisions, rope) in its stores; op order_more - an order for `count` "
         "more of it, 0 cancelling the one running. Both RECORDED (CHASM_CMD_KEEP). `kept` reports each made good's kept "
@@ -1402,7 +1490,8 @@ void ApplicationChasm::RegisterEconomyTools(){
         "first, -1 on cells) or cell, x, z, stands (any of it), site (any still to build), storeys, site_storeys, "
         "site_cells, stopped (a stoppable workplace), places (a home's: its land's farmers), workers "
         "(id, name, job - a farmer's workplace is the home whose land he farms), settlement; a home's living and holds, "
-        "a camp's camp_places (its own woodcutter, water carrier and picker), a field's farmer; and `homeless`. "
+        "a camp's camp_places (its own woodcutter, water carrier and picker), a field's farmer, a well's water and endless; "
+        "and `homeless`. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -1415,12 +1504,19 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"contents",{{"type","object"},{"description","crate, set_stock: goods by name and amount"}}},
                 {"building",{{"type","integer"},{"description","set_stock, guard, guards: the building's id"}}},
                 {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
+                {"endless",{{"type","boolean"},{"description","set_stock: a well kept full for good, or finite again"}}},
                 {"on",{{"type","boolean"}}},
                 {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard, gather, take_tent, "
                                                             "pitch, settle, forage: the person's id"}}},
                 {"layer",{{"type","integer"},{"description","order: the layer of the plot he stands on, in half storeys - 0 its ground, "
                                                            "a castle deck's (ramparts_plan.md); default its top"}}},
-                {"count",{{"type","integer"},{"description","guards: how many guards the tower takes; keep, order_more: how many"}}},
+                {"count",{{"type","integer"},{"description","guards: how many guards the tower takes; keep, order_more: how many; "
+                                                            "add_person: how many people, 1 to 20"}}},
+                {"house",{{"type","integer"},{"description","add_person: the home's building id, 0 or none for nowhere to live"}}},
+                {"female",{{"type","boolean"},{"description","add_person: a woman (true) or a man (false); the seed's without"}}},
+                {"age_years",{{"type","number"},{"description","add_person: his age in game years, at least 2.5; the seed's without"}}},
+                {"skills",{{"type","object"},{"description","add_person: strength, precision, husbandry, ingenuity, 1-10 each"}}},
+                {"archery",{{"type","integer"},{"description","add_person: his archery experience (ARCHERY_FULL the most)"}}},
                 {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions or rope"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
@@ -1501,6 +1597,45 @@ void ApplicationChasm::RegisterEconomyTools(){
                 uint32_t before = needs_commands_done.load();
                 SubmitCommandAndWait(cmd);
                 result["ran"] = needs_commands_done.load() != before;
+            }else if (op == "add_person"){
+                //PEOPLE PUT DOWN (test_maps_plan.md, step 5): `count` of them, each its own recorded CHASM_CMD_PERSON.
+                int plot = args.value("plot",-1);
+                if (plot < 0 && args.contains("x") && args.contains("z")){
+                    GridPick p = w->picker->Pick(vec2(args["x"].get<float>(),args["z"].get<float>()));
+                    plot = p.f_hit ? p.plot : -1;
+                }
+                if (plot < 0){
+                    return json{{"error","add_person: no plot at x,z (or give `plot`)"}};
+                }
+                static const char* const skill_keys[SKILL_COUNT] = {"strength","precision","husbandry","ingenuity"};
+                int skills[SKILL_COUNT] = {};
+                const json given = args.value("skills",json::object());
+                for (int sk = 0; sk < SKILL_COUNT && given.is_object(); sk++){
+                    if (given.contains(skill_keys[sk]) && given[skill_keys[sk]].is_number()){
+                        skills[sk] = std::max(1,std::min(10,given[skill_keys[sk]].get<int>()));
+                    }
+                }
+                int sex = (args.contains("female") && args["female"].is_boolean()) ? (args["female"].get<bool>() ? 2 : 1) : 0;
+                int age_days = (args.contains("age_years") && args["age_years"].is_number())
+                               ? (int)std::lround(args["age_years"].get<double>() * (CALENDAR_YEAR_TICKS / CALENDAR_DAY_TICKS)) : 0;
+                uint32_t house = args.value("house",0u);
+                int archery = args.value("archery",0);
+                int count = std::max(1,std::min(20,args.value("count",1)));
+                json made = json::array();
+                std::string refusal;
+                for (int i = 0; i < count && refusal.empty(); i++){
+                    uint32_t refused = person_refusals.load();
+                    SubmitCommandAndWait(PersonCommand(plot,house,age_days,skills,sex,archery));
+                    if (person_refusals.load() != refused){
+                        std::lock_guard<std::mutex> lock(grid_mutex);
+                        refusal = person_last_refusal;
+                    }else{
+                        made.push_back(person_last_made.load());
+                    }
+                }
+                result["made"] = made;
+                result["refusal"] = refusal;
+                result["plot"] = plot;
             }else if (op == "set_stock"){
                 //A building's stock set (CHASM_CMD_STOCK), a good at a time: by `building` id, or the one at x,z.
                 uint32_t id = args.value("building",0u);
@@ -1513,18 +1648,39 @@ void ApplicationChasm::RegisterEconomyTools(){
                     return json{{"error","set_stock: no building (give `building` or x,z on one)"}};
                 }
                 json contents = args.value("contents",json::object());
+                const bool f_well = zs && id < zs->buildings.size() && zs->buildings[id].kind == ZONE_KIND_WELL;
+                std::vector<std::array<int,3>> sets;    //good, amount, a well made endless
                 for (auto it = contents.begin(); it != contents.end(); ++it){
                     int good = GoodByName(it.key());
                     if (good < 0){
                         return json{{"error","no such good: " + it.key()}};
                     }
+                    if (f_well && good != GOOD_WATER){
+                        return json{{"error","set_stock: a well holds water alone"}};
+                    }
+                    sets.push_back({good,it.value().get<int>(),0});
+                }
+                //A WELL (water_tools_plan.md): endless, kept full for good - or, with no water given, finite at what it holds.
+                if (args.contains("endless")){
+                    if (!f_well){
+                        return json{{"error","set_stock: only a well is endless"}};
+                    }
+                    if (args["endless"].get<bool>()){
+                        sets.assign(1,{GOOD_WATER,ECONOMY_WELL_ENDLESS,1});
+                    }else if (sets.empty()){
+                        std::shared_ptr<const EconomyState> before = GetEconomy();
+                        sets.push_back({GOOD_WATER,before ? EconomyStock(*before,id,GOOD_WATER) : 0,0});
+                    }
+                }
+                for (const std::array<int,3>& s : sets){
                     SimCommand cmd;
                     cmd.type = CHASM_CMD_STOCK;
                     cmd.flags = SIM_CMD_FLAG_RECORD;
                     cmd.subtype = id;
-                    cmd.value[0] = (float)good;
-                    cmd.value[1] = (float)it.value().get<int>();
+                    cmd.value[0] = (float)s[0];
+                    cmd.value[1] = (float)s[1];
                     cmd.value[2] = args.value("pantry",false) ? 1.0f : 0.0f;
+                    cmd.value[3] = (float)s[2];
                     SubmitCommandAndWait(cmd);
                 }
                 //A building placed on this very tick is not the economy's yet (its next tick takes it in).
@@ -1535,6 +1691,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 result["building"] = id;
                 result["stock"] = es ? StockJson(*es,id) : json::object();
+                if (f_well){
+                    result["endless"] = es && EconomyWellEndless(*es,id);
+                }
             }else if (op == "order" || op == "release"){
                 int plot = -1;
                 if (op == "order"){
@@ -1902,6 +2061,11 @@ void ApplicationChasm::RegisterEconomyTools(){
                     if (b.kind == ZONE_KIND_HOUSE || b.kind == ZONE_KIND_CAMP){
                         one["living"] = living[id];
                         one["holds"] = (id < es->capacity.size()) ? es->capacity[id] : 0;
+                    }
+                    //A WELL (water_tools_plan.md): its water left, and whether it is kept full.
+                    if (b.kind == ZONE_KIND_WELL){
+                        one["water"] = EconomyStock(*es,(uint32_t)id,GOOD_WATER);
+                        one["endless"] = EconomyWellEndless(*es,(uint32_t)id);
                     }
                     if (b.kind == ZONE_KIND_CAMP){
                         //THE CAMP'S OWN WORK (Economy.h): kept apart from `places`, which are its land's farmers.

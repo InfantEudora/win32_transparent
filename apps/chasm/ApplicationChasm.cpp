@@ -159,6 +159,8 @@ void ApplicationChasm::Init(void){
     LoadProps();
     BuildSwayMaterials();
     LoadingStep("the map");
+    //The title's town first, on a map of its own, captured for CreateTitleScene (test_maps_plan.md, step 6).
+    BuildTitleTown();
     RegenerateGrid(next_settings);
     //Init is the render thread before the physics thread exists, so the camera may be set here.
     FrameMap();
@@ -778,14 +780,25 @@ std::shared_ptr<const ZoneState> ApplicationChasm::GetZones(){
 void ApplicationChasm::EnsureZonesWorld(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     if (zones.GetWorld() != w){
+        //A test map (test_maps_plan.md) starts with nobody on it, and nothing under the clouds.
+        const bool f_chasm = w && GridKindHasChasm(w->grid->settings.kind);
         zones.Reset(w);
         PublishZones();
-        //A new map is a new colony: its first day of spring, and its settlers' camp, a tent each.
-        zones.PlaceStartCamp(EconomySettlerCount());
-        PublishZones();
+        //A new map is a new colony: its first day of spring, and its settlers' camp, a tent each - or the title's town.
+        if (f_chasm){
+            zones.PlaceStartCamp(EconomySettlerCount());
+            PublishZones();
+        }else if (w->grid->settings.kind == GRID_KIND_TITLE){
+            zones.PlaceTitleTown();
+            PublishZones();
+        }
         SetCalendar(0);
         //Nothing explored yet: the camp clears its own ground on the first tick (play_mode_plan.md).
         ResetExploration();
+        if (w && !f_chasm){
+            exploration.RevealAll();
+            PublishExploration();
+        }
     }
     if (economy.GetWorld() != w){
         economy.Reset(w);
@@ -1946,6 +1959,7 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_ROPEWALK:   return ZONE_KIND_ROPEWALK;
         case CHASM_TOOL_STONECUTTER: return ZONE_KIND_STONECUTTER;
         case CHASM_TOOL_MINE:       return ZONE_KIND_MINE;
+        case CHASM_TOOL_WELL:       return ZONE_KIND_WELL;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -2174,6 +2188,7 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
     snprintf(hash,sizeof(hash),"%016llx",(unsigned long long)g.Hash());
     return json{
         {"settings",{
+            {"kind",(s.kind >= 0 && s.kind < GRID_KINDS) ? grid_kind_names[s.kind] : "?"},
             {"seed",s.seed},
             {"target_fine_cells",s.target_fine_cells},
             {"aspect",s.aspect},
@@ -2833,6 +2848,9 @@ void ApplicationChasm::PreRender(void){
     if (TitleShowing()){
         static const auto t0 = std::chrono::steady_clock::now();
         renderer->motion_seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        //The palette is the title's too: a build that opens on the title has drawn no frame of the world, and the
+        //summer row its broadleaves' green sits on goes up only with the first fade - magenta until then.
+        UpdateSeasonPalette();
         UploadTitleBirds();
         ClearWeather();
         return;
@@ -3313,6 +3331,8 @@ void ApplicationChasm::RenderChasmPanel(){
         ImGui::SliderInt("relax coarse",&next_settings.relax_passes_coarse,0,200);
         ImGui::SliderInt("relax fine",&next_settings.relax_passes_fine,0,200);
         ImGui::SliderFloat("relax strength",&next_settings.relax_strength,0.0f,1.0f);
+        //The chasm, or a test map (test_maps_plan.md).
+        ImGui::Combo("kind",&next_settings.kind,grid_kind_names,GRID_KINDS);
         //"##run": the header above is also "Generate", and two items with one ID share their clicks.
         if (ImGui::Button("Generate##run")){
             RegenerateGrid(next_settings);
@@ -3483,6 +3503,9 @@ void ApplicationChasm::RenderChasmPanel(){
         ImGui::SameLine();
         if (ImGui::RadioButton("Stonecutter (M)##tool",tool == CHASM_TOOL_STONECUTTER)) tool = CHASM_TOOL_STONECUTTER;
         if (ImGui::RadioButton("Mine (O)##tool",tool == CHASM_TOOL_MINE)) tool = CHASM_TOOL_MINE;
+        ImGui::SameLine();
+        //A debug well (water_tools_plan.md), for test maps with no river: the panel's only - no key, no build bar, never in play.
+        if (ImGui::RadioButton("Well (debug)##tool",tool == CHASM_TOOL_WELL)) tool = CHASM_TOOL_WELL;
         if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Woodcutter (9)##tool",tool == CHASM_TOOL_WOODCUTTER)) tool = CHASM_TOOL_WOODCUTTER;
@@ -3554,6 +3577,7 @@ void ApplicationChasm::RenderChasmPanel(){
     RenderMusicPanel();
     RenderPeoplePanel();
     RenderZombiePanel();
+    RenderGoalsPanel();
 
     if (ImGui::CollapsingHeader("Save")){
         ImGui::InputText("name##save",save_name,sizeof(save_name));
@@ -3671,12 +3695,22 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"relax_passes_coarse",{{"type","integer"}}},
                 {"relax_passes_fine",{{"type","integer"}}},
                 {"relax_strength",{{"type","number"},{"description","0..1, how far toward its best-fit square a vertex moves per pass"}}},
+                {"kind",{{"type","string"},{"description","the map's kind (test_maps_plan.md): chasm, the game's; flat - a "
+                                                         "test map, flat and dry with no chasm and nobody on it; or title - "
+                                                         "the title's town (TitleTown.h), to look at in the world"}}},
                 {"defaults",{{"type","boolean"},{"description","start from the default settings instead of the current grid's"}}}
             }}
         },
         [this](const json& args) -> json {
             std::shared_ptr<const Grid> g = GetGrid();
             GridSettings s = (g && !args.value("defaults",false)) ? g->settings : GridSettings();
+            if (args.contains("kind")){
+                int kind = GridKindByName(args["kind"].is_string() ? args["kind"].get<std::string>() : std::string());
+                if (kind < 0){
+                    return json{{"error","kind is chasm, flat or title"}};
+                }
+                s.kind = kind;
+            }
             s.seed = args.value("seed",s.seed);
             s.target_fine_cells = std::max(100,std::min(2000000,args.value("target_fine_cells",s.target_fine_cells)));
             s.aspect = args.value("aspect",s.aspect);
@@ -4038,7 +4072,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open; for work_stop and range_stop: "
                                                         "stopped (default) or working"}}},
-                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk","stonecutter","mine"}},{"description","for build_* (default house)"}}},
+                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk","stonecutter","mine","well"}},{"description","for build_* (default house); a well is a debug tool, refused with play:true (water_tools_plan.md)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","hemp","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
@@ -4272,7 +4306,7 @@ void ApplicationChasm::RegisterMCPTools(){
             {"properties",{
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                                    "range","tower","ropewalk","castle","stonecutter","mine"}}}},
+                                                    "range","tower","ropewalk","castle","stonecutter","mine","well"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -4289,14 +4323,16 @@ void ApplicationChasm::RegisterMCPTools(){
             //2026-10-09) left a NULL at the end that every name was compared against: any call crashed.
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                   "range","tower","ropewalk","castle","stonecutter","mine"};
+                                   "range","tower","ropewalk","castle","stonecutter","mine","well"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             std::string t = args.value("tool",std::string());
             std::string locked;
             for (int i = 0; i < CHASM_TOOL_COUNT; i++){
-                //Play mode's tools still waiting for a discovery are refused, as their keys are (demo_plan.md step 6).
+                //Play mode's tools still waiting for a discovery are refused, as their keys are (demo_plan.md step 6) - and
+                //the debug well always (water_tools_plan.md).
                 if (t == names[i] && ToolLocked(i)){
-                    locked = std::string("not discovered yet: ") + ChasmDiscoveryName(ChasmToolNeeds(i));
+                    locked = (i == CHASM_TOOL_WELL) ? std::string("a debug tool, never in play mode")
+                                                    : std::string("not discovered yet: ") + ChasmDiscoveryName(ChasmToolNeeds(i));
                 }else if (t == names[i]){
                     paint_tool = i;
                     pick_version++;

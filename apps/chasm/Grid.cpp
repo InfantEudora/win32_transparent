@@ -537,10 +537,21 @@ uint64_t Fnv(uint64_t h, const void* data, size_t size){
 bool GridSettings::operator==(const GridSettings& o) const{
     return seed == o.seed && target_fine_cells == o.target_fine_cells && aspect == o.aspect &&
            triangle_side == o.triangle_side && relax_passes_coarse == o.relax_passes_coarse &&
-           relax_passes_fine == o.relax_passes_fine && relax_strength == o.relax_strength;
+           relax_passes_fine == o.relax_passes_fine && relax_strength == o.relax_strength && kind == o.kind;
 }
 
 const char* const grid_feature_names[GRID_FEATURE_KINDS] = {"rim","shard","column","ledge","balcony"};
+
+const char* const grid_kind_names[GRID_KINDS] = {"chasm","flat","title"};
+
+int GridKindByName(const std::string& name){
+    for (int k = 0; k < GRID_KINDS; k++){
+        if (name == grid_kind_names[k]){
+            return k;
+        }
+    }
+    return -1;
+}
 
 GridLine GridSmoothLine(const std::vector<vec2>& corners, bool f_closed, float spacing){
     return SmoothLine(corners,f_closed,spacing);
@@ -805,8 +816,11 @@ void Grid::Generate(const GridSettings& s){
         (TerrainMesh.cpp), so a rim is wherever the plots' heights change - jagged at a plot's size by
         design, and no edge of the grid has to follow it. The layout's lines are still appended, as
         data: the terrain reads its levels from them and the rivers their falls.
+
+        A test map has none (test_maps_plan.md). The layout draws from its own RRandom, so leaving it out
+        moves nothing in this grid's stream: a test map's grid is the chasm map's of the same settings.
     */
-    layout = GenerateChasmLayout(s.seed,vec2(x0,z0),vec2(x1,z1),T);
+    layout = GridKindHasChasm(s.kind) ? GenerateChasmLayout(s.seed,vec2(x0,z0),vec2(x1,z1),T) : ChasmLayout();
     feature_line_base = (int)lines.size();
     for (const GridFeature& f : layout.features){
         lines.push_back(f.line);
@@ -1149,8 +1163,12 @@ GridCheckReport RunGridChecks(const Grid& grid){
                  l.wanted[GRID_FEATURE_COLUMN],ends[GRID_RIVER_FALL] + ends[GRID_RIVER_EDGE],l.rivers_wanted,
                  l.f_river_small ? " (small)" : "",ends[GRID_RIVER_JOIN],l.branches_wanted,ends[GRID_RIVER_SINK],
                  (int)l.springs.size(),l.attempts,l.f_rifts_ok ? "" : " - NONE KEPT ITS SPACING",l.generate_ms);
-        //Home must have a balcony: it is the only floatstone before the first zeppelin.
-        add_result("layout",l.f_rifts_ok && l.rifts > 0 && l.balconies[1] > 0,false,buf);
+        //Home must have a balcony: it is the only floatstone before the first zeppelin. A test map has no chasm.
+        if (!GridKindHasChasm(grid.settings.kind)){
+            add_result("layout",true,true,"not a chasm map - no layout to check");
+        }else{
+            add_result("layout",l.f_rifts_ok && l.rifts > 0 && l.balconies[1] > 0,false,buf);
+        }
     }
 
     report.check_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();

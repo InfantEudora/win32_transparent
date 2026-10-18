@@ -4,7 +4,7 @@ aliases: goals, goal, demo, demo complete, the end, colony lost, death pop-up
 kind: systems
 status: built
 summary: Two goals - the first winter through with nobody dead, and the chasm reached - a pop-up for every death, and an end, the demo complete or the colony lost, on the statistics page.
-plans: demo_plan.md > The demo's goals; demo_plan.md > As built: the goals and the end (2026-10-16)
+plans: done/demo_plan.md > The demo's goals; done/demo_plan.md > As built: the goals and the end (2026-10-16)
 code: Economy.h: CHASM_GOAL_WINTER CHASM_GOAL_CHASM EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST; ApplicationChasmGoals.cpp: ChasmGoalState TickGoals UpdateEnd DrawGoals; ApplicationChasmStats.cpp: OpenEnd UpdateEndPage; Calendar.h: CALENDAR_YEAR_TICKS
 verified: 2026-10-16
 ---

@@ -76,6 +76,7 @@ struct ChasmSaveEntry{
     uint64_t calendar_tick = 0;
     int people = 0;
     int64_t written = 0;                //seconds since 1970
+    bool f_test_map = false;            //of a test map (test_maps_plan.md): never what Continue opens
 };
 std::vector<ChasmSaveEntry> ChasmSaveEntries();
 

@@ -264,6 +264,23 @@ ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, f
 GridLine GridSmoothLine(const std::vector<vec2>& corners, bool f_closed, float spacing);
 
 /*
+    WHAT KIND OF MAP (test_maps_plan.md): which generator the settings make a world with. The CHASM is
+    the game's. Every other kind is a TEST MAP made by code - this same grid, small, with no chasm in it,
+    and a start of its own in place of the camp and its settlers.
+
+    Part of the settings, never a flag of the app's: a load and every replay generate the world again
+    from the save's settings, so only what is in them comes back with it.
+*/
+#define GRID_KIND_CHASM     0
+#define GRID_KIND_FLAT      1       //flat and dry, trees at random, nobody: a system tested on its own
+#define GRID_KIND_TITLE     2       //the title's town (TitleTown.h): flat, the game's own forest round it
+#define GRID_KINDS          3
+extern const char* const grid_kind_names[GRID_KINDS];
+int GridKindByName(const std::string& name);    //-1 for none
+inline bool GridKindHasChasm(int kind){ return kind == GRID_KIND_CHASM; }
+inline bool GridKindHasHills(int kind){ return kind == GRID_KIND_CHASM; }
+
+/*
     The closest two lines come: every point of `a` against every segment of `b`. When they are the
     same line, pairs closer than `skip_arc` along it are not counted - a line is always close to
     itself nearby. `where` gets the point of `a` at the closest place.
@@ -286,6 +303,7 @@ struct GridSettings{
     //How far toward its best-fit square a vertex moves per pass, 0..1.
     float relax_strength = 0.5f;
     //The chasm's features are not settings: they follow from the seed (ChasmLayout).
+    int kind = GRID_KIND_CHASM;     //GRID_KIND_*; a save names it only when it is not the chasm
 
     bool operator==(const GridSettings& o) const;
 };

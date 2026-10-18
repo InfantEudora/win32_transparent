@@ -4,8 +4,8 @@ aliases: tower, towers, guard towers, guard, guards, ladder
 kind: buildings
 status: partial
 summary: A two-storey tower of logs in its junction's shape, a guard for each edge past two, built with water and provisions that become its stock - its guards' pantry, entered only by its ladder.
-plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: the tower tuned; defence_plan.md > As built: step 7, the towers kept; defence_plan.md > Guards by hand (step 8); defence_plan.md > Build order; ramparts_plan.md > Step 1: the tower's deck, a real node; zombies_plan.md > Step 3: guards shoot
-code: Zones.cpp: ZoneCanBuild ZoneTowerGuards ZoneTowerCorners ZoneTowerLadderOk ZoneTowerDefaultLadder ZoneIsLadderPlot; Walkers.cpp: EdgeOpen EnsureDecks WalkDeckLayers; Economy.cpp: AssignJobs Needs SeekSupplyOf TowerStoreyCost StoreyKept EconomyPostPoint EconomyOnTower KeepTowers TowerLeft EconomyTowerShort PostGuard SetGuards; Economy.h: ECONOMY_TOWER_WOOD ECONOMY_TOWER_WATER ECONOMY_TOWER_PROVISIONS ECONOMY_TOWER_GUARDS_PLACED WORKER_JOB_GUARD
+plans: defence_plan.md > The guard tower; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: the tower tuned; defence_plan.md > As built: step 7, the towers kept; defence_plan.md > Guards by hand (step 8); defence_plan.md > Build order; ramparts_plan.md > Step 1: the tower's deck, a real node; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts
+code: Zones.cpp: ZoneCanBuild ZoneTowerGuards ZoneTowerCorners ZoneTowerLadderOk ZoneTowerDefaultLadder ZoneIsLadderPlot; Walkers.cpp: EdgeOpen EnsureDecks WalkDeckLayers; Shooting.cpp: ZombiesInRange DrinkBetweenShots; Economy.cpp: AssignJobs Needs SeekSupplyOf PackUp TowerStoreyCost StoreyKept EconomyPostPoint EconomyOnTower KeepTowers TowerLeft EconomyTowerShort PostGuard SetGuards; Economy.h: ECONOMY_TOWER_WOOD ECONOMY_TOWER_WATER ECONOMY_TOWER_PROVISIONS ECONOMY_TOWER_GUARDS_PLACED WORKER_JOB_GUARD
 verified: 2026-10-18
 ---
 
@@ -36,22 +36,21 @@ of its own in the walk - a deck over its plot, up the ladder - so a walk to the 
 
 ## Its guards
 
-- **How many it takes** is the player's: chips on its card, 0 up to its places, and
-  {ECONOMY_TOWER_GUARDS_PLACED} when placed. Lowering it sends the extra guards home; at 0 it is unmanned,
-  still kept full, and nobody is missed at it.
-- Filled up to that like any workplace's - by **archery** first, what the archery range trained, then by
-  [[Skills|precision]].
-- **By hand**: a right click on it, with someone selected, posts him there over the game's pick, leaving his
-  job or order. With a place to spare it takes one more; full, he takes an automatic guard's place. The filling
-  never swaps him out. Refused for a child, the houseless, no way there, a site, or every place hand-picked.
-- **Released** - his own card's chip, or his chip on the tower's card - he goes home without the job, and the
-  tower takes one fewer, so nobody goes up in his place.
-- A guard lives as someone [[Posts|posted]] does: up the tower from home with his pack, never home while he has
-  the job, at a place of his own on the platform.
-- **The tower is his pantry**: he eats and drinks from its stock as at home; his pack is only for a kind the
-  tower has none of. Both empty, a pressing need sends him to the nearest supply and back up.
-- The tower pulled down, its guards lose the job and go home.
-- **They shoot** [[Zombie|zombies]] they can see from the platform, where none can reach them - further than from the ground.
+- **How many it takes** is the player's: chips on its card, 0 up to its places, {ECONOMY_TOWER_GUARDS_PLACED} when
+  placed. Lowering it sends the extra guards home; at 0 it is unmanned, still kept full, and nobody is missed at it.
+- Filled up to that by **archery** first, what the range trained, then [[Skills|precision]]. **Once up, a guard
+  keeps his tower** until released or the count is lowered: a shortage of people empties other workplaces first.
+- **By hand**: a right click on it, with someone selected, posts him there over the game's pick, leaving his job or
+  order - one more with a place to spare, else an automatic guard's place. Refused for a child, the houseless, no way
+  there, a site, or every place hand-picked.
+- **Released** - his card's chip, or his on the tower's card - he goes home jobless, and the tower takes one fewer.
+- A guard lives as someone [[Posts|posted]] does, at a place of his own on the platform. He climbs with
+  {NEEDS_PACK_WATER} water in his pack, by the nearest place with some first if he has less - never a tower.
+- **The tower is his pantry**: he eats and drinks from its stock as at home, his pack only for a kind it has none
+  of. Both empty, a pressing need sends him to the nearest supply and back up - **not while a zombie is in range**.
+  A meal waits while he shoots, but a drink he takes between shots, when a whole unit fits.
+- The tower pulled down, its guards lose the job and go home. **They shoot** [[Zombie|zombies]] they see from the
+  platform, where none can reach them - further than from the ground.
 
 Only posted people draw on it: villagers pass towers by, and no carrier, family or builder takes from one.
 

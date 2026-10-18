@@ -4,7 +4,7 @@ aliases: bird, flock, flocks, crows
 kind: world
 status: built
 summary: Black flocks that perch in the trees and fly up when someone walks near or a tree is felled. Only a look - they change nothing.
-plans: birds_plan.md > The one rule; birds_plan.md > Step 2 - flushed; birds_plan.md > Step 3 - the sounds; birds_plan.md > Step 4 - a few flocks across the map; birds_plan.md > Step 5 - a flock over the title scene; birds_plan.md > As built
+plans: birds_plan.md > The one rule; birds_plan.md > Step 2 - flushed; birds_plan.md > Step 3 - the sounds; birds_plan.md > Step 4 - a few flocks across the map; birds_plan.md > Step 5 - a flock over the title scene; birds_plan.md > As built; test_maps_plan.md > Step 6: the title's diorama, made by code
 code: Birds.h: BirdSky BIRD_KEY_UP BIRD_KEY_DOWN BIRD_KEY_FOLDED BIRD_VOICE_MAGPIE; Birds.cpp: StepFlock Scare NextRoost CallGap Gather; ApplicationChasmBirds.cpp: UploadBirds BirdScares HomeBirds PerchPoints BirdGather UploadTitleBirds BirdDioramaMarkers; ApplicationChasmSound.cpp: SignalBirds
 verified: 2026-10-18
 ---
@@ -62,9 +62,9 @@ in a pause. The cue table (`bird_call`, `birds_flush`) says what each one sounds
 
 ## On the title
 
-One flock of {BIRD_TITLE_FLOCK} flies over the title's town, silent, on the title's own clock. It perches in the
-town's trees when the diorama was captured with their perches; otherwise it circles and passes over. The
-town's walkers put it up.
+One flock of {BIRD_TITLE_FLOCK} flies over the title's town, silent, on the title's own clock, and perches in the
+town's trees: the town is made by code at start, its trees' perches with it (test_maps_plan.md). A diorama loaded
+from a file without perches has the flock circle and pass over instead. The town's walkers put it up.
 
 ## Planned
 

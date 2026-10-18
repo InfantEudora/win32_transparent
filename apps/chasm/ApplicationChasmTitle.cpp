@@ -6,6 +6,7 @@
 #include "ChasmHud.h"
 #include "ChasmStats.h"
 #include "ChasmVersion.h"
+#include "TitleTown.h"
 #include "Window.h"
 #include "Light.h"
 #include "ObjectAnimation.h"
@@ -43,7 +44,7 @@ static Debugger* debug = new Debugger("ChasmTitle",DEBUG_ALL);
 
 #define TITLE_MENU_TOP      0.45f       //the menu's first button, in window heights
 #define TITLE_SHADE         UIColor(0,0,0,110)      //over the world while a question is up
-#define TITLE_DIORAMA       "menu_town"             //assets/dioramas/<this>.scap: what the title shows
+#define TITLE_DIORAMA       "menu_town"             //chasm_diorama's file by default: assets/dioramas/<this>.scap
 #define TITLE_TURN          0.035f      //the camera's turn round the diorama, radians a second: three minutes a round
 #define TITLE_PITCH         0.50f       //...from this far above the horizon, about 29 degrees
 #define TITLE_DISTANCE      1.30f       //...and this many of the diorama's radius out
@@ -125,14 +126,91 @@ void ApplicationChasm::CreateTitleScene(){
     ask_menu.layout.width = 0.34f;
     ask_menu.layout.item_h = 0.058f;
 
-    std::string error;
-    if (!LoadDiorama(TITLE_DIORAMA,error)){
-        debug->Warn("The title has no diorama (%s): its menu over the sky\n",error.c_str());
+    //THE TITLE'S TOWN (test_maps_plan.md, step 6): made by code and captured at start (BuildTitleTown) - no file.
+    std::string error = "none was made";
+    if (title_capture.empty() || !LoadDioramaBytes(title_capture.data(),title_capture.size(),error)){
+        debug->Warn("The title has no town (%s): its menu over the sky\n",error.c_str());
     }
     UpdateTitleView(0.0f);
 }
 
-//RENDER THREAD (Init, or ServiceDiorama with the game showing): assets/dioramas/<name>.scap into the title's scene.
+/*
+    INIT, before the game's map: THE TITLE'S TOWN (TitleTown.h) made and captured. Its map is generated as the world, its
+    town put up by its kind's start (EnsureZonesWorld, Zones::PlaceTitleTown), the uploads a frame would run done once -
+    the ground, the buildings and yards, the forest, the range - and the capture taken as chasm_diorama takes one, with
+    the town's people as its markers. Init is the render thread before the physics thread exists, so all of it is this
+    thread's; nothing is ticked, saved or recorded, and the game's world replaces this one straight after.
+*/
+#define TITLE_TOWN_DATE     ((uint64_t)(CALENDAR_DAYS_PER_SEASON + 5) * CALENDAR_DAY_TICKS)   //midsummer: trees in full leaf
+
+void ApplicationChasm::BuildTitleTown(){
+    auto t0 = std::chrono::steady_clock::now();
+    GridSettings s;
+    s.kind = GRID_KIND_TITLE;
+    s.seed = TITLE_TOWN_SEED;
+    s.target_fine_cells = TITLE_TOWN_CELLS;
+    RegenerateGrid(s);
+    EnsureZonesWorld();
+    SetCalendar(TITLE_TOWN_DATE);
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    if (!w || !z || z->world != w){
+        return;
+    }
+    UploadTerrain();
+    UploadZones();
+    UploadForest();
+    UploadRange();
+    BuildBirdTrees(*w);         //the trees' perches, for the markers (BirdDioramaMarkers)
+    vec2 c = TitleTownCentre(*w);
+    vec3 centre(c.x,ViewGroundHeight(*w,c,0.0f),c.y);
+    SceneCaptureOptions o = DioramaOptions(centre,TITLE_TOWN_RADIUS);
+    for (const TitleTownPerson& p : TitleTownPeople(*w,*z)){
+        nlohmann::json d{{"figure",p.figure},{"forward",{p.forward.x,p.forward.y}},{"rate",1.0f},{"clip",p.clip},
+                         {"phase",p.phase},{"load",p.load},{"archer",p.f_archer}};
+        if (p.path.size() >= 2 && p.speed > 0.0f){
+            nlohmann::json path = nlohmann::json::array();
+            for (const vec3& q : p.path){
+                path.push_back({q.x,q.y,q.z});
+            }
+            d["path"] = path;
+            d["speed"] = p.speed;
+        }
+        o.markers.push_back(SceneCaptureMarker{"person",p.at,d.dump()});
+    }
+    SceneCaptureReport r;
+    title_capture.clear();
+    SceneCaptureWrite(*world_scene,*renderer,o,title_capture,&r);
+    debug->Info("The title's town: %i objects, %i triangles, %i instances, %i markers, %zu bytes, in %.1f ms\n",
+                r.objects,r.triangles,r.instances,r.markers,r.bytes,
+                std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
+SceneCaptureOptions ApplicationChasm::DioramaOptions(const vec3& centre, float radius){
+    //The world as the player sees it: not the cursor's marks, the selection's outlines or the debug views.
+    SceneCaptureOptions o;
+    o.centre = centre;
+    o.radius = radius;
+    //Nor the people, their loads, bows and arrows, which the diorama brings back alive from its markers, the
+    //range's arrows, frozen mid-flight, or the zombies.
+    o.markers = DioramaMarkers(centre,radius);
+    o.keep = [this](Object* obj){
+        static const char* const helpers[] = {"Pick View","Grid View","Selected","Outline","outline","Ghost","Cursor",
+                                              "Preview","Hover","Path","Worker ","Crowd","Range arrow","zombies"};
+        if (obj == pick_view){
+            return false;
+        }
+        for (const char* h : helpers){
+            if (obj->name.find(h) != std::string::npos){
+                return false;
+            }
+        }
+        return true;
+    };
+    return o;
+}
+
+//RENDER THREAD (ServiceDiorama with the game showing): assets/dioramas/<name>.scap into the title's scene.
 bool ApplicationChasm::LoadDiorama(const std::string& name, std::string& error){
     std::string asset = "dioramas/" + name + ".scap";
     size_t size = 0;
@@ -141,6 +219,11 @@ bool ApplicationChasm::LoadDiorama(const std::string& name, std::string& error){
         error = "no " + asset;
         return false;
     }
+    return LoadDioramaBytes(data,size,error);
+}
+
+//RENDER THREAD: a capture's bytes into the title's scene - the title's town (CreateTitleScene), or a file's.
+bool ApplicationChasm::LoadDioramaBytes(const uint8_t* data, size_t size, std::string& error){
     std::vector<Object*> made;
     SceneCaptureInfo info;
     if (!SceneCaptureLoad(data,size,*title_scene,*renderer,&made,&info,error)){
@@ -189,26 +272,7 @@ void ApplicationChasm::ServiceDiorama(){
     if (TitleShowing()){
         result = "the title is showing: continue to the game first";
     }else if (request == 1){
-        //The world as the player sees it: not the cursor's marks, the selection's outlines or the debug views.
-        SceneCaptureOptions o;
-        o.centre = centre;
-        o.radius = radius;
-        //Nor the people, their loads, bows and arrows, which the diorama brings back alive from its markers, the
-        //range's arrows, frozen mid-flight, or the zombies.
-        o.markers = DioramaMarkers(centre,radius);
-        o.keep = [this](Object* obj){
-            static const char* const helpers[] = {"Pick View","Grid View","Selected","Outline","outline","Ghost","Cursor",
-                                                  "Preview","Hover","Path","Worker ","Crowd","Range arrow","zombies"};
-            if (obj == pick_view){
-                return false;
-            }
-            for (const char* h : helpers){
-                if (obj->name.find(h) != std::string::npos){
-                    return false;
-                }
-            }
-            return true;
-        };
+        SceneCaptureOptions o = DioramaOptions(centre,radius);
         std::vector<uint8_t> bytes;
         SceneCaptureReport r;
         SceneCaptureWrite(*world_scene,*renderer,o,bytes,&r);
@@ -235,9 +299,16 @@ void ApplicationChasm::ServiceDiorama(){
         diorama_people.clear();
         title_bird_objects.clear();     //destroyed with the rest: none left to pose if the load below fails
         title_scene->DeleteDestroyedObjects();
-        ReleaseFile(("dioramas/" + name + ".scap").c_str());
         std::string error;
-        if (LoadDiorama(name,error)){
+        bool f_loaded = false;
+        //The title's own town, made at start (BuildTitleTown) - or a file's capture.
+        if (name == TITLE_TOWN_NAME){
+            f_loaded = !title_capture.empty() && LoadDioramaBytes(title_capture.data(),title_capture.size(),error);
+        }else{
+            ReleaseFile(("dioramas/" + name + ".scap").c_str());
+            f_loaded = LoadDiorama(name,error);
+        }
+        if (f_loaded){
             snprintf(buf,sizeof(buf),"loaded %s: %i objects round (%.1f, %.1f), radius %.1f",name.c_str(),
                      (int)diorama_objects.size(),diorama.centre.x,diorama.centre.z,diorama.radius);
             result = buf;
@@ -645,13 +716,15 @@ void ApplicationChasm::UpdateTitle(InputController* input){
             if (f_game_on.load()){
                 CloseTitle();
             }else{
-                //No colony yet: the newest save of every kind.
-                std::vector<ChasmSaveEntry> saves = ChasmSaveEntries();
-                if (!saves.empty()){
-                    MenuAction a;
-                    a.kind = CHASM_ACT_LOAD;
-                    a.name = saves[0].name;
-                    Busy(a);
+                //No colony yet: the newest save of every kind - of a colony, not a test map (test_maps_plan.md).
+                for (const ChasmSaveEntry& e : ChasmSaveEntries()){
+                    if (!e.f_test_map){
+                        MenuAction a;
+                        a.kind = CHASM_ACT_LOAD;
+                        a.name = e.name;
+                        Busy(a);
+                        break;
+                    }
                 }
             }
             break;
@@ -926,12 +999,32 @@ void ApplicationChasm::RegisterTitleTools(){
                 {"y",{{"type","number"}}},
                 {"z",{{"type","number"}}},
                 {"item",{{"type","integer"}}},
+                {"triggers",{{"type","object"},{"description","debug builds, with any op: what play mode tells and stops for, "
+                                                             "switched - winter and chasm (the goals' notices), death (its pop-up), "
+                                                             "colony_lost and demo_complete (their pages), true on and false off. "
+                                                             "The viewer's: never recorded or saved; the rules journal every goal "
+                                                             "and end either way. `triggers` in the reply says how each stands"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
         },
         [this](const json& args) -> json {
             std::string op = args.value("op",std::string("state"));
+#ifdef DEBUG
+            //THE SWITCHES (ApplicationChasmGoals.cpp), set before the op: {"death":false,"colony_lost":false}.
+            if (args.contains("triggers") && args["triggers"].is_object()){
+                for (auto it = args["triggers"].begin(); it != args["triggers"].end(); ++it){
+                    int found = -1;
+                    for (int t = 0; t < CHASM_TRIGGERS; t++){
+                        found = (it.key() == TriggerName(t)) ? t : found;
+                    }
+                    if (found < 0 || !it.value().is_boolean()){
+                        return json{{"error","triggers: winter, chasm, death, colony_lost or demo_complete, each true or false"}};
+                    }
+                    SetTrigger(found,it.value().get<bool>());
+                }
+            }
+#endif
             const float w = (float)main_window->width;
             const float h = (float)main_window->height;
             auto front = [this]() -> UIMenu& {
@@ -1053,6 +1146,11 @@ void ApplicationChasm::RegisterTitleTools(){
                 result["demo_complete"] = gd->f_complete_told;
                 result["colony_lost"] = gd->f_lost_told;
             }
+            json triggers = json::object();
+            for (int t = 0; t < CHASM_TRIGGERS; t++){
+                triggers[TriggerName(t)] = TriggerOn(t);
+            }
+            result["triggers"] = triggers;
             if (kind != CHASM_ASK_NONE){
                 result["question_text"] = text;
                 result["question_detail"] = detail;
@@ -1082,8 +1180,10 @@ void ApplicationChasm::RegisterTitleTools(){
         "THE TITLE'S DIORAMA (docs/demo_plan.md; core/SceneCapture.h). op capture: what the game's scene draws "
         "within `radius` (default 40, horizontal) of x,z - its ground, buildings, trees, water, smoke; not the "
         "cursor's marks, outlines or debug views; nothing skinned - written to assets/dioramas/<name>.scap (name "
-        "default menu_town), which the title loads at start and a ship build bakes in. op load: the title's "
-        "diorama replaced by <name>'s, without a restart. Both need the game showing (chasm_menu continue). "
+        "default menu_town), for looking at a real town in the title. The title itself shows ITS OWN TOWN, made by code "
+        "at start (docs/test_maps_plan.md step 6, TitleTown.h) - no file. op load: the title's diorama replaced by "
+        "<name>'s, without a restart; name \"town\" puts the title's own town back. Both need the game showing "
+        "(chasm_menu continue). "
         "Returns what was done - objects, triangles, instances, bytes - or why not.",
         json{
             {"type","object"},

@@ -141,7 +141,8 @@
 #define ZONE_KIND_ROPEWALK      12      //a long low shed: a ropemaker makes rope from hemp (docs/goods_plan.md)
 #define ZONE_KIND_STONECUTTER   13      //a stonecutter's hut: breaks the rocks round it for stone (docs/stone_plan.md)
 #define ZONE_KIND_MINE          14      //a mine: one plot on a deposit, dug into its wall, the mountain or an outcrop (stone_plan.md)
-#define ZONE_KIND_COUNT         15
+#define ZONE_KIND_WELL          15      //a debug well: one plot of water anyone may take, never a player's (water_tools_plan.md)
+#define ZONE_KIND_COUNT         16
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 //The most plots a building of `kind` may have - a field's or range's cells - 0 for no limit: a camp, a bridge.
@@ -155,15 +156,16 @@ inline int ZoneKindMaxPlots(int kind){
         case ZONE_KIND_RANGE:       return ZONE_RANGE_MAX_CELLS;
         case ZONE_KIND_WINCH:
         case ZONE_KIND_TOWER:
-        case ZONE_KIND_MINE:        return 1;
+        case ZONE_KIND_MINE:
+        case ZONE_KIND_WELL:        return 1;
         case ZONE_KIND_CAMP:
         case ZONE_KIND_BRIDGE:      return 0;
         default:                    return ZONE_BUILDING_MAX_PLOTS;
     }
 }
-//A kind that is only ever ONE plot, placed by a click and never dragged: a winch, a guard tower, a mine.
+//A kind that is only ever ONE plot, placed by a click and never dragged: a winch, a guard tower, a mine, a well.
 inline bool ZoneKindOnePlot(int kind){
-    return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE;
+    return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL;
 }
 //A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range painted like one.
 inline bool ZoneKindOnCells(int kind){
@@ -177,7 +179,7 @@ inline bool ZoneKindStoppable(int kind){
            || kind == ZONE_KIND_MINE;
 }
 //A kind drawn as a HOUSE BODY (BuildingMesh.cpp, BuildHouseCell): walls and a roof, storeys high - not a winch, a
-//camp, a bridge, a guard tower or a mine, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
+//camp, a bridge, a guard tower, a mine or a well, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
 inline bool ZoneKindHasBody(int kind){
     return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER
            || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_ROPEWALK
@@ -512,6 +514,8 @@ public:
         player's camp. Physics thread, on empty zones - a new map, not a load.
     */
     void PlaceStartCamp(int tents);
+    //The title's town (TitleTown.h): its roads, houses, palisade, fields and range, standing. As PlaceStartCamp.
+    void PlaceTitleTown();
 
     //The current state, read-only. Physics thread.
     const ZoneState& State() const { return state; }
