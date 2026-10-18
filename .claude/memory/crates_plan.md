@@ -1,11 +1,11 @@
 ---
 name: crates-plan
-description: "chasm crates (apps/chasm/docs/crates_plan.md) - AGREED 2026-10-09; step 1 BUILT same day (crate list, posted person's drop, debug spawn, drawn); steps 2-5 next"
+description: "chasm crates (apps/chasm/docs/crates_plan.md) - AGREED 2026-10-09; steps 1-3 BUILT 2026-10-09, step 5 (holding -> dropping, cancelled sites seen at once) BUILT 2026-10-18; step 4 (finds from the seed) open"
 metadata:
   node_type: memory
   type: project
   originSessionId: 47e6cba0-a787-423c-b97b-1ca2ffa6b50e
-  modified: 2026-10-09T18:41:34.652Z
+  modified: 2026-10-18T11:05:00.000Z
 ---
 
 Chasm crates, agreed with the user 2026-10-09 in `apps/chasm/docs/crates_plan.md`. The user's decisions: a
@@ -30,6 +30,12 @@ STEP 3 BUILT 2026-10-09 (the card): PLAY_PICK_CRATE picked like a person (CRATE_
 MakeCard, outline-only copies of the crate mesh for selected/hovered (CrateYaw shared). FETCH FIRST and the badge
 LEFT OPEN by the user. Next: step 4 (finds from the seed under the clouds), step 5 (holding -> dropping).
 Testing tip: in play mode chasm_view's target glides, so find a crate's pixel by scanning chasm_select op under.
+
+STEP 5 BUILT 2026-10-18 (the user's bug: 5 carriers held wood forever at a cancelled bridge - no store, and the camp
+takes no deliveries). TO_FETCH/TO_SITE check SiteAlive each look and turn; `deliver` ends in DropLoad + GoHome, as do
+leave_errand/AtWorkshop/AtRopewalk; the dead DropLoad. WORKER_HOLDING kept only for Replan's cut-off carrier (delivers
+next look). User chose "drop where he turned" over "carry back to the camp" ("good enough for now"). Repro on seed 31:
+bridge (162.46,-33.32)->(153.95,-41.025) is "under the clouds" until ~15,000 ticks into a fresh colony.
 
 **Why:** the user's fix for a posted carrier's load, and the small start of They Are Billions-style finds.
 **How to apply:** build in the plan's order, asking before each step; after any economy change run a replay

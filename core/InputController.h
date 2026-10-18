@@ -593,11 +593,27 @@ class InputController{
     void ReportPointerPosition(int2 screen_position);
     void ReportWindowPosition(int2 client_origin);
 
-    //False while another application is in the foreground. Input is not sampled then, so the
-    //simulation doesn't respond to keys pressed in whatever the user alt-tabbed to. Maintained
-    //from WM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUS in HandleMessage. Note ImGui does NOT come through
-    //here (imgui_impl_win32 has its own handler), so the debug UI is unaffected by this gate.
-    bool HasFocus(){ return f_has_focus; }
+    /*
+        False while another application is in the foreground, or this window is minimised. Input is
+        not sampled then, so the simulation doesn't respond to keys pressed in whatever the user
+        alt-tabbed to. Note ImGui does NOT come through here (imgui_impl_win32 has its own handler),
+        so the debug UI is unaffected by this gate.
+
+        ON WINDOWS IT ASKS THE OS, every call, rather than trusting the last message: foreground and
+        not iconic, and the flag set to match. Kept from WM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUS alone,
+        it was found true while another program was in front - a --minimized chasm took keys typed
+        in VS Code more than once (2026-10-11, 2026-10-18): a new map, the winch tool, a quit from
+        its title. Raw input delivers every keystroke on the machine, so this is the only thing
+        between them and the game, and a flag that can go stale is not enough.
+
+        WHY THE MESSAGES LIE, measured 2026-10-18: WM_ACTIVATE says this window became its THREAD'S
+        active window, which is not the same as the system's foreground. SetForegroundWindow on a
+        minimised chasm was refused by the foreground lock - the window never came to the front - and
+        still sent WA_ACTIVE; the flag went true and STAYED true after the front was handed back,
+        because a window that never had the foreground is never told it lost it. Two calls a key or a
+        mouse report, a microsecond or so.
+    */
+    bool HasFocus();
 
     /*
         THE predicate for "should this app act on input at all right now" - use this rather than
@@ -632,8 +648,8 @@ class InputController{
     //not always enough - WM_MOUSELEAVE has to be ASKED for, per entry, on the window it concerns.
     void HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
     /*
-        Sets the focus flag from whether `hWnd` really is the foreground window. Call once after
-        the window is first shown.
+        Sets the focus flag from whether `hWnd` really is the foreground window, and names it as the
+        window HasFocus asks the OS about from then on. Call once after the window is first shown.
 
         NEEDED BECAUSE f_has_focus STARTS TRUE and only WM_ACTIVATE / WM_SETFOCUS / WM_KILLFOCUS
         ever move it. A window that is shown and activated gets those, so the default is harmless;
@@ -934,7 +950,7 @@ public:
     //Application, so the setter has to be reachable from outside the class. X11 shows a
     //--minimized window unfocused from Window_x11.cpp, for the same reason.
 #endif
-    void SetFocused(bool focused);      //window thread; raises f_release_all_keys on focus loss
+    void SetFocused(bool focused);      //any thread (both flags atomic); raises f_release_all_keys on focus loss
 #if !defined(_WIN32)
 protected:
 #endif
@@ -1035,6 +1051,11 @@ protected:
     //Read on the physics thread every poll, written from the window thread, and only ever a plain
     //flag - atomic is enough and avoids taking the lock in the polling hot path.
     std::atomic<bool> f_has_focus{true};
+#if defined(_WIN32)
+    //The window whose focus this is - HasFocus asks the OS about it. NULL until SyncFocusWithWindow or a
+    //focus message names it, and until then the flag alone answers.
+    std::atomic<HWND> focus_window{NULL};
+#endif
     std::atomic<bool> f_raw_input_active{false};
     //Set when focus is lost. The next ApplyPendingEvents releases every held mapping, so a key
     //held down at the moment the user alt-tabs away cannot stay stuck - belt and braces next to

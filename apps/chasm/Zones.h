@@ -55,8 +55,10 @@
         (Economy): with none he fells nothing - he may still be built, as he could not before.
       - Not too steep (biomes_plan.md step 2): the ground may rise only so much across a plot (a road's
         limit is twice a house's) or a field's cell - ZONE_RISE_* in Zones.cpp. Not on the mountain.
-      - A house is at most ZONE_HOUSE_MAX_PLOTS plots, since it holds one family; a ropewalk at most
-        ZONE_ROPEWALK_MAX_PLOTS, past which a longer one makes no more rope (ZoneKindMaxPlots).
+      - A building is at most its kind's size (ZoneKindMaxPlots, the user's 2026-10-18): ZONE_BUILDING_MAX_PLOTS
+        for most - a house's one family, a ropewalk past which longer makes no more rope - a store
+        ZONE_STORE_MAX_PLOTS, a field ZONE_FIELD_MAX_CELLS cells; a drag that fills one goes on with the next.
+        A camp has no size (its tents are its settlement's one camp), a bridge spans what it spans.
       - At most a kind's own number of storeys (ZoneKindMaxStoreys).
       - A WATER COLLECTOR stands on the DRY plot at the edge of a river's wet bank (or a pool's): its own
         vertex dry, a corner of its cells wet. Its pipe reaches over the stones to the water (BuildingMesh),
@@ -115,8 +117,13 @@
 */
 
 #define ZONE_MAX_STOREYS        4       //the most of any kind - a house's
-#define ZONE_HOUSE_MAX_PLOTS    4
+//How big a building may be (ZoneKindMaxPlots; drag_plan.md, the user's 2026-10-18): a drag goes on with a new one past it.
+#define ZONE_BUILDING_MAX_PLOTS 4       //every kind a drag paints but these below
+#define ZONE_HOUSE_MAX_PLOTS    4       //one family
 #define ZONE_ROPEWALK_MAX_PLOTS 4       //goods_plan.md: it works from 2, and a 3rd and a 4th make more rope
+#define ZONE_STORE_MAX_PLOTS    6
+#define ZONE_FIELD_MAX_CELLS    8       //coarse cells
+#define ZONE_RANGE_MAX_CELLS    4
 
 //What a building is. Never renumber - saves and recordings name these by value.
 #define ZONE_KIND_NONE          0       //an id no longer in use
@@ -137,9 +144,26 @@
 #define ZONE_KIND_COUNT         15
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
-//The most plots a building of `kind` may have, 0 for no limit: a house's one family, a ropewalk's length.
+//The most plots a building of `kind` may have - a field's or range's cells - 0 for no limit: a camp, a bridge.
 inline int ZoneKindMaxPlots(int kind){
-    return (kind == ZONE_KIND_HOUSE) ? ZONE_HOUSE_MAX_PLOTS : (kind == ZONE_KIND_ROPEWALK) ? ZONE_ROPEWALK_MAX_PLOTS : 0;
+    switch (kind){
+        case ZONE_KIND_NONE:        return 0;
+        case ZONE_KIND_HOUSE:       return ZONE_HOUSE_MAX_PLOTS;
+        case ZONE_KIND_ROPEWALK:    return ZONE_ROPEWALK_MAX_PLOTS;
+        case ZONE_KIND_STORE:       return ZONE_STORE_MAX_PLOTS;
+        case ZONE_KIND_FIELD:       return ZONE_FIELD_MAX_CELLS;
+        case ZONE_KIND_RANGE:       return ZONE_RANGE_MAX_CELLS;
+        case ZONE_KIND_WINCH:
+        case ZONE_KIND_TOWER:
+        case ZONE_KIND_MINE:        return 1;
+        case ZONE_KIND_CAMP:
+        case ZONE_KIND_BRIDGE:      return 0;
+        default:                    return ZONE_BUILDING_MAX_PLOTS;
+    }
+}
+//A kind that is only ever ONE plot, placed by a click and never dragged: a winch, a guard tower, a mine.
+inline bool ZoneKindOnePlot(int kind){
+    return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE;
 }
 //A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range painted like one.
 inline bool ZoneKindOnCells(int kind){
@@ -447,6 +471,12 @@ class Zones{
 public:
     //Empty zones for `world`. Physics thread.
     void Reset(std::shared_ptr<const ChasmWorld> world);
+    /*
+        A published state taken up again, for commands to be run on a copy of it - a drag's preview (drag_plan.md), so
+        it shows what the rules will do with the commands its release sends. The world's coarse edges are worked out
+        only when the world is new to it. Any thread, on a Zones of its own.
+    */
+    void Adopt(const ZoneState& published);
     std::shared_ptr<const ChasmWorld> GetWorld() const { return state.world; }
 
     //Applies one command. True if anything changed; otherwise `last_refusal` says why not.

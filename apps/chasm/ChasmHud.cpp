@@ -253,7 +253,7 @@ float DrawHudStock(UIOverlay* o, const HudStock& st, float x, float top, float w
     for (int g : order){
         last = (st.goods[g] > 0) ? g : last;
     }
-    int style = st.f_kept ? STYLE_HOLLOW : STYLE_SOLID;
+    int style = st.f_load ? STYLE_STRIPED : st.f_kept ? STYLE_HOLLOW : STYLE_SOLID;
     int cum = 0;
     float end = x;      //where the last piece ended: a tiny good's minimum width pushes the next one on
     for (int g : order){

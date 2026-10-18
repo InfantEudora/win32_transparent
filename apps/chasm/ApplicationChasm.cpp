@@ -136,6 +136,7 @@ void ApplicationChasm::Init(void){
 
     BuildScene();
     LoadProps();
+    BuildSwayMaterials();
     RegenerateGrid(next_settings);
     //Init is the render thread before the physics thread exists, so the camera may be set here.
     FrameMap();
@@ -263,6 +264,7 @@ void ApplicationChasm::BuildScene(){
     BuildCloudScene();
     BuildHearthScene();
     BuildGhostScene();
+    BuildWeatherScene();
 
     pick_view = new Object();
     pick_view->name = "Pick View";
@@ -684,6 +686,14 @@ void ApplicationChasm::UpdatePick(){
         DropLine();
         f_line_dropped = true;
     }
+    //...and any other drag (drag_plan.md) the same way - by another tool taken up too, whose drag it is not.
+    if (area_drag != LINE_DRAG_NONE && paint_tool != drag_tool){
+        DropDrag();
+        area_drag = LINE_DRAG_NONE;
+    }else if (area_drag == LINE_DRAG_DRAWING && f_right){
+        DropDrag();
+        f_line_dropped = true;
+    }
     //Play mode's own selection, and its overlay taking the mouse where it is drawn (selection_plan.md).
     if (PlayMode()){
         UpdatePlayPick(hover,px,f_over_scene,f_clicked);
@@ -768,9 +778,9 @@ void ApplicationChasm::PublishZones(){
 
 uint32_t ApplicationChasm::PaintOwner(int tool){
     bool f_yard = tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT;
-    //A winch is one plot and a bridge is placed whole: with one selected, the tool still makes a new one.
+    //A winch, a tower or a mine is one plot and a bridge is placed whole: with one selected, the tool still makes a new one.
     int kind = ToolKind(tool);
-    bool f_extend = kind != ZONE_KIND_NONE && kind != ZONE_KIND_WINCH && kind != ZONE_KIND_BRIDGE;
+    bool f_extend = kind != ZONE_KIND_NONE && kind != ZONE_KIND_BRIDGE && !ZoneKindOnePlot(kind);
     if ((!f_yard && !f_extend) || !PlayMode()){
         return 0;
     }
@@ -811,6 +821,49 @@ void ApplicationChasm::SubmitZone(int op, int index, int kind, uint32_t stroke, 
     main_scene->SubmitCommand(cmd);
 }
 
+bool ApplicationChasm::ApplyZoneCommand(Zones& zones, const Exploration& ex, const EconomyState* e, int op, uint32_t index,
+                                        int value1, uint32_t stroke, bool f_play, uint32_t owner){
+    std::shared_ptr<const ChasmWorld> zw = zones.GetWorld();
+    if (e && e->world != zw){
+        e = NULL;
+    }
+    auto refuse = [&](const char* why){
+        zones.last_refusal = why;
+        zones.last_arch_lost = 0;
+        return false;
+    };
+    /*
+        A PLAY command (value[3]'s bit 0, play_mode_plan.md) is held to the clouds: none on ground not yet explored.
+        Every debug tool's command, and every recording made before play mode, has 0 there, so they paint as they
+        always did. A bridge has two ends, and neither may be under the clouds.
+    */
+    if (f_play && zw){
+        if (!ZoneCommandExploredIn(ex,*zw,op,(int)index) || (op == ZONE_OP_BRIDGE && !ZoneCommandExploredIn(ex,*zw,op,value1))){
+            return refuse("under the clouds");
+        }
+        //Nor over a crate (crates_plan.md, the user's): it has to be cleared away first. Play commands only, like the
+        //clouds; a debug placement goes ahead, and the crate under it is lost (Economy::LoseCoveredCrates).
+        if (e && EconomyCrateInTheWay(*e,*zw,op,(int)index,value1)){
+            return refuse("a crate lies there");
+        }
+        //Nor outside every settlement's territory (settlements_plan.md): play commands only, as for the clouds.
+        if (e && !EconomyCommandInTerritory(*e,*zw,op,(int)index)){
+            return refuse("outside the settlement");
+        }
+    }
+    /*
+        ONE CAMP TO A COLONY (settlements_plan.md, the user's 2026-10-12): a camp painted on an empty plot of a colony
+        that has one - in play or debug - is that camp's, wherever it stands, as a tent pitched there is
+        (EconomyColonyCamp; THE CAMP, Zones.h).
+    */
+    const ZoneState& z = zones.State();
+    if (!owner && (op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD) && value1 == ZONE_KIND_CAMP && e
+        && index < z.building.size() && !z.building[index]){
+        owner = EconomyColonyCamp(*e,z,(int)index);
+    }
+    return zones.Apply(op,index,value1,stroke,f_play,owner);
+}
+
 void ApplicationChasm::RegisterCommandHandlers(){
     /*
         The ONLY way the zones change. The op and the index travel in the command, so a recorded
@@ -820,50 +873,13 @@ void ApplicationChasm::RegisterCommandHandlers(){
     main_scene->RegisterCommandHandler(CHASM_CMD_ZONE,
         [this](const SimCommand& cmd) -> objectid_t {
             EnsureZonesWorld();
-            /*
-                A PLAY command (value[3]'s bit 0, play_mode_plan.md) is held to the clouds: none on ground
-                not yet explored. Every debug tool's command, and every recording made before play mode,
-                has 0 there, so they paint as they always did. Above that bit, a yard's owner (yards_plan.md).
-            */
+            //value[3]: the play flag, and above it a yard's owner (ZoneCommandValue3) - the rest is ApplyZoneCommand's.
             bool f_play = ZoneCommandPlay(cmd.value[3]);
             std::shared_ptr<const ChasmWorld> zw = zones.GetWorld();
-            bool f_clouded = f_play && zw && !ZoneCommandExplored(*zw,(int)cmd.value[0],(int)cmd.subtype);
-            //A bridge has two ends, and neither may be under the clouds.
-            if (f_play && zw && (int)cmd.value[0] == ZONE_OP_BRIDGE &&
-                !ZoneCommandExplored(*zw,ZONE_OP_BRIDGE,(int)cmd.value[1])){
-                f_clouded = true;
-            }
-            //Nor over a crate (crates_plan.md, the user's): it has to be cleared away first. Play commands only, like
-            //the clouds; a debug placement goes ahead, and the crate under it is lost (Economy::LoseCoveredCrates).
-            bool f_crate = !f_clouded && f_play && zw && economy.State().world == zw
-                           && EconomyCrateInTheWay(economy.State(),*zw,(int)cmd.value[0],(int)cmd.subtype,(int)cmd.value[1]);
-            //Nor outside every settlement's territory (settlements_plan.md): play commands only, as for the clouds.
-            bool f_outside = !f_clouded && !f_crate && f_play && zw && economy.State().world == zw
-                             && !EconomyCommandInTerritory(economy.State(),*zw,(int)cmd.value[0],(int)cmd.subtype);
-            if (f_clouded || f_crate || f_outside){
-                {
-                    std::lock_guard<std::mutex> lock(grid_mutex);
-                    zone_last_refusal = f_clouded ? "under the clouds" : f_crate ? "a crate lies there" : "outside the settlement";
-                    zone_last_arch_lost = 0;
-                }
-                zone_refusals++;
-                zone_commands_done++;
-                return OBJECTID_INVALID;
-            }
-            /*
-                ONE CAMP TO A COLONY (settlements_plan.md, the user's 2026-10-12): a camp painted on an empty plot of a
-                colony that has one - in play or debug - is that camp's, wherever it stands, as a tent pitched there is
-                (EconomyColonyCamp; THE CAMP, Zones.h).
-            */
-            uint32_t owner = ZoneCommandOwner(cmd.value[3]);
             int op = (int)cmd.value[0];
-            if (!owner && (op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD) && (int)cmd.value[1] == ZONE_KIND_CAMP
-                && zw && economy.State().world == zw && cmd.subtype < zones.State().building.size()
-                && !zones.State().building[cmd.subtype]){
-                owner = EconomyColonyCamp(economy.State(),zones.State(),(int)cmd.subtype);
-            }
-            bool f_changed = zones.Apply((int)cmd.value[0],cmd.subtype,(int)cmd.value[1],(uint32_t)cmd.value[2],
-                                         f_play,owner);
+            bool f_changed = ApplyZoneCommand(zones,exploration,(zw && economy.State().world == zw) ? &economy.State() : NULL,
+                                              op,cmd.subtype,(int)cmd.value[1],(uint32_t)cmd.value[2],f_play,
+                                              ZoneCommandOwner(cmd.value[3]));
             {
                 std::lock_guard<std::mutex> lock(grid_mutex);
                 zone_last_refusal = zones.last_refusal;
@@ -1142,8 +1158,9 @@ void ApplicationChasm::HashSimState(StateHash& h){
     reaches, once: a drag never stacks storeys, so sweeping across a street lays one floor and clicking
     raises it. With a building of the tool's kind selected, what it paints extends that one (PaintOwner).
     Erase takes the house off a plot if there is one, otherwise the field off its cell. The road and wall
-    tools draw a line instead and place it on release (UpdateLineDrag). `f_held` is the left button's, the
-    mouse's or a script's (UpdatePick).
+    tools draw a line instead and place it on release (UpdateLineDrag), and since 2026-10-18 so does every
+    other tool that paints (UpdateAreaDrag, drag_plan.md): what is left here is the one-plot kinds, a click
+    each, and the debug castle's pieces. `f_held` is the left button's, the mouse's or a script's (UpdatePick).
 */
 void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held){
     InputController* input = main_scene->inputcontroller;
@@ -1178,6 +1195,10 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         return;
     }
     bridge_from = -1;
+    if (DragTool(paint_tool)){
+        UpdateAreaDrag(hover,f_over_scene,f_clicked,f_held);
+        return;
+    }
     if (!f_held){
         paint_last_index = -1;
     }
@@ -1187,6 +1208,10 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
     bool f_shift = input->IsKeyDown(INPUT_SHIFT);
     int tool = paint_tool;
     int index = ChasmCellTool(tool) ? hover.coarse_quad : hover.plot;
+    //A winch, a tower, a mine is placed, never dragged (drag_plan.md): a click each, and holding on paints no more.
+    if (!f_clicked && ZoneKindOnePlot(ToolKind(tool))){
+        return;
+    }
     if (!f_clicked && index == paint_last_index){
         return;     //still on what the drag already painted
     }
@@ -1619,8 +1644,18 @@ void ApplicationChasm::UploadForest(){
                         o->name = (fruit >= 0) ? std::string(forest_fruit_names[fruit]) + " set"
                                 : std::string(prop_asset_names[k]) +
                                   ((s < PROP_KIND_COUNT) ? "" : std::string(" ") + ForestStageName(season_look_stage[s - PROP_KIND_COUNT])) + " set";
-                        //The GLB names a material it carries no image for; the palette is ours.
-                        o->SetMaterialSlot(0,palette_material);
+                        /*
+                            The GLB names a material it carries no image for; the palette is ours - a swaying kind's
+                            copy of it (ApplicationChasmWeather.cpp), and its fruit its plant's, so the two move as one.
+                        */
+                        int sways = k;
+                        for (int plant = 0; fruit >= 0 && plant < PROP_KIND_COUNT; plant++){
+                            if (ForestFruitMesh(plant) == fruit){
+                                sways = plant;
+                                break;
+                            }
+                        }
+                        o->SetMaterialSlot(0,PropMaterial(sways));
                         o->SetPickability(false);
                         o->SetVisualOnly(true);
                         //A plant's fruit is a few berries: no shadow worth the pass, as ground cover's.
@@ -1985,6 +2020,21 @@ void ApplicationChasm::UpdatePickView(){
             level_h = terrain.Height(v);
             p->PlotOutline(v,segs);
             emit(LinePlotAllowed(*w,*line_zones,ex.get(),f_erase,ground,v,NULL) ? PICK_PAINT_OK : PICK_PAINT_REFUSED);
+        }
+    }
+    //Any other drag (drag_plan.md): what its release sends, plot by plot or cell by cell, as the rules will take it.
+    if (const DragPlan* plan = CurrentDragPlan()){
+        for (size_t i = 0; i < plan->commands.size(); i++){
+            const DragCommand& c = plan->commands[i];
+            bool f_cell = c.op == ZONE_OP_FIELD_PAINT || c.op == ZONE_OP_RANGE_PAINT || c.op == ZONE_OP_FIELD_ERASE;
+            int at = f_cell ? g.fine.quads[c.index * 4].v[2] : c.index;     //a cell's middle vertex, for its height
+            level_h = terrain.Height(at);
+            if (f_cell){
+                p->CoarseOutline(c.index,segs);
+            }else{
+                p->PlotOutline(c.index,segs);
+            }
+            emit((plan->refused[i] || plan->f_erase || plan->tool == CHASM_TOOL_ERASE) ? PICK_PAINT_REFUSED : PICK_PAINT_OK);
         }
     }
     if (hover.f_hit){
@@ -2663,6 +2713,8 @@ void ApplicationChasm::UpdateView(void){
     }
     QuickKeys(input);
     UpdateCamera();
+    //The storm at the view (ApplicationChasmWeather.cpp), which the sun dims under.
+    UpdateWeather();
     UpdateSun();
     FollowSun();
     UpdateTimeKeys();
@@ -2750,6 +2802,8 @@ void ApplicationChasm::PreRender(void){
     if (TitleShowing()){
         static const auto t0 = std::chrono::steady_clock::now();
         renderer->motion_seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        UploadTitleBirds();
+        ClearWeather();
         return;
     }
     //The clock of everything the GPU animates: the simulation's, so a pause holds the mist still.
@@ -2758,6 +2812,7 @@ void ApplicationChasm::PreRender(void){
     UploadTerrain();
     UploadZones();
     UploadForest();
+    UploadWeather();
     UploadWater();
     UpdateMist();
     UploadWorkers();
@@ -3464,6 +3519,7 @@ void ApplicationChasm::RenderChasmPanel(){
 
     RenderTimePanel();
     RenderSunPanel();
+    RenderWeatherPanel();
     RenderMusicPanel();
     RenderPeoplePanel();
     RenderZombiePanel();
@@ -4177,7 +4233,8 @@ void ApplicationChasm::RegisterMCPTools(){
         "Pick the mouse's tool, as keys 1-0, H, C, J, G, R, T and K do: select, house, field, erase, garden, lot, road, store, "
         "woodcutter, water, winch, camp, bridge, builders, wall, range, tower, ropewalk. With a paint tool the hover outline goes green where a click would "
         "paint and red where the rules refuse - in play mode, the ghost of what it would place, and `cost` its price "
-        "tag as last drawn (empty for none; the ghost follows a frame behind, so ask again after moving the hover). "
+        "tag as last drawn (empty for none; the ghost follows a frame behind, so ask again after moving the hover) - "
+        "during a drag the whole of it, `drag_steps` the plots or cells it has crossed. "
         "hover_x/hover_z pin the hover to that point (a script has no mouse), until a call with hover_release.",
         json{
             {"type","object"},
@@ -4190,9 +4247,10 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
                 {"button",{{"type","string"},{"enum",{"down","up","mouse"}},
                            {"description","the left button at the pinned hover: down presses and holds it, up lets go, "
-                                          "mouse gives it back - with hover_x/hover_z between, a script's drag (the "
-                                          "road tool draws its line and places it on up). Allow a frame between calls."}}},
-                {"right_click",{{"type","boolean"},{"description","a right press: drops a road being drawn"}}}
+                                          "mouse gives it back - with hover_x/hover_z between, a script's drag (every "
+                                          "painting tool draws its trail and places it on up, docs/drag_plan.md; the "
+                                          "winch, tower and mine place on the click alone). Allow a frame between calls."}}},
+                {"right_click",{{"type","boolean"},{"description","a right press: drops a road or other drag being drawn"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -4236,16 +4294,19 @@ void ApplicationChasm::RegisterMCPTools(){
             int tool = paint_tool.load();
             int left = script_left.load();
             size_t line = 0;
+            size_t drag = 0;
             std::string cost;
             {
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 line = line_chain.size();
+                drag = drag_chain.size();
                 cost = ghost_cost_text;
             }
             json result{{"tool",(tool >= 0 && tool < CHASM_TOOL_COUNT) ? names[tool] : "?"},
                         {"hover_pinned",f_hover_pinned.load()},
                         {"button",(left < 0) ? "mouse" : (left ? "down" : "up")},
                         {"line_plots",line},
+                        {"drag_steps",drag},
                         {"cost",cost}};
             if (!locked.empty()){
                 result["refused"] = locked;

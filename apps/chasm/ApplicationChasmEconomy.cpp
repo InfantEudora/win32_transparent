@@ -366,7 +366,10 @@ void ApplicationChasm::RegisterEconomyCommands(){
             std::string why;
             //value[1]: the layer he is sent to, one up so a recording from before layers - 0 there - asks for the top.
             //value[2]: one of a group's (selection_plan.md, step 3), spread round the plot - 0 in recordings from before.
-            if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why,(int)cmd.value[1] - 1,cmd.value[2] != 0.0f)){
+            //value[3]: a PLAY command, held to the clouds as a zone command is - a tool's, and recordings from before, not.
+            const Exploration* clouds = (cmd.value[3] != 0.0f) ? &exploration : NULL;
+            if (economy.Order(cmd.subtype,(int)cmd.value[0],zones.State(),walkers,&why,(int)cmd.value[1] - 1,cmd.value[2] != 0.0f,
+                              clouds)){
                 PublishEconomy();
                 //Taken, so he answers (ApplicationChasmSound.cpp, Say) - a refused order is the refusal's sound alone.
                 Say(cmd.subtype,((int)cmd.value[0] >= 0) ? "sent" : "released",CHASM_SAY_ORDER);
@@ -496,11 +499,14 @@ void ApplicationChasm::RegisterEconomyCommands(){
             order_commands_done++;
             return OBJECTID_INVALID;
         });
-    //Picking a plant or drawing water by hand (foraging_plan.md): the right click's menu - refused as an order is.
+    //Picking a plant or drawing water by hand (foraging_plan.md): the right click's menu - refused as an order is, and a
+    //PLAY one (value[3]) under the clouds.
     main_scene->RegisterCommandHandler(CHASM_CMD_FORAGE,
         [this](const SimCommand& cmd) -> objectid_t {
             std::string why;
-            if (economy.Forage(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],zones.State(),walkers,&why,cmd.value[2] != 0.0f)){
+            const Exploration* clouds = (cmd.value[3] != 0.0f) ? &exploration : NULL;
+            if (economy.Forage(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],zones.State(),walkers,&why,cmd.value[2] != 0.0f,
+                               clouds)){
                 PublishEconomy();
                 Say(cmd.subtype,"forage",CHASM_SAY_ORDER,(int)cmd.value[1]);
             }else{
@@ -539,11 +545,19 @@ void ApplicationChasm::RegisterEconomyCommands(){
             crate_commands_done++;
             return OBJECTID_INVALID;
         });
-    //PICK UP (stone_plan.md): a crate's card's chip, the player's - refused only for a crate no longer there.
+    //PICK UP (stone_plan.md): a crate's card's chip, the player's - refused for a crate no longer there, and a PLAY one
+    //(value[1]) for a crate under the clouds, which play does not even let be selected (PlayPickUnder).
     main_scene->RegisterCommandHandler(CHASM_CMD_PICK_UP,
         [this](const SimCommand& cmd) -> objectid_t {
             std::string why;
-            if (economy.SetPickUp(cmd.subtype,cmd.value[0] != 0.0f,&why)){
+            bool f_hidden = false;
+            for (const EconomyCrate& c : economy.State().crates){
+                f_hidden = f_hidden || (cmd.value[1] != 0.0f && c.id == cmd.subtype && !exploration.Explored(c.pos));
+            }
+            if (f_hidden){
+                why = "under the clouds";
+            }
+            if (!f_hidden && economy.SetPickUp(cmd.subtype,cmd.value[0] != 0.0f,&why)){
                 PublishEconomy();
             }else{
                 {
@@ -591,6 +605,7 @@ void ApplicationChasm::SubmitOrder(uint32_t person, int plot, int layer, bool f_
     cmd.value[0] = (float)plot;     //a plot index, well inside a float's exact integers
     cmd.value[1] = (float)(layer + 1);
     cmd.value[2] = f_spread ? 1.0f : 0.0f;
+    cmd.value[3] = PlayMode() ? 1.0f : 0.0f;   //read by the view and carried in the command, as a zone command's
     main_scene->SubmitCommand(cmd);
 }
 
@@ -627,6 +642,7 @@ void ApplicationChasm::SubmitPickUp(uint32_t crate, bool f_on){
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = crate;
     cmd.value[0] = f_on ? 1.0f : 0.0f;
+    cmd.value[1] = PlayMode() ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -663,6 +679,7 @@ void ApplicationChasm::SubmitForage(uint32_t person, int plot, int what, bool f_
     cmd.value[0] = (float)plot;     //a plot index, well inside a float's exact integers
     cmd.value[1] = (float)what;
     cmd.value[2] = f_spread ? 1.0f : 0.0f;
+    cmd.value[3] = PlayMode() ? 1.0f : 0.0f;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -770,6 +787,12 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     }
     if (k.partner){
         j["couple_day"] = EconomyCoupleDay(k.id,k.partner);
+    }
+    //How far through a timed task (EconomyTaskProgress) - his card's bar - with the ticks it runs for.
+    float progress = EconomyTaskProgress(k);
+    if (progress >= 0.0f){
+        j["task_progress"] = std::round(progress * 1000.0f) / 1000.0f;
+        j["task_ticks"] = k.timer_full;
     }
     if (k.carry > 0){
         j["carrying"] = json{{GoodName(k.carry_good),k.carry}};
@@ -1396,6 +1419,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"spread",{{"type","boolean"},{"description","forage: one of a group's"}}},
                 {"reach",{{"type","number"},{"description","plants: how far from x,z, world units (default 20)"}}},
                 {"crate",{{"type","integer"},{"description","pick_up: the crate's id"}}},
+                {"play",{{"type","boolean"},{"description","order, forage, pick_up: as a PLAY command, held to the clouds - forage and "
+                                                          "pick_up refused under them, an order's refusal there only 'no way there' "
+                                                          "(default false: a debug command, as every tool's)"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -1519,6 +1545,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.value[0] = (float)plot;
                 cmd.value[1] = (float)(args.value("layer",-1) + 1);    //ramparts_plan.md: its top by default
                 cmd.value[2] = args.value("spread",false) ? 1.0f : 0.0f;  //one of a group: the plot, else the nearest round it
+                cmd.value[3] = args.value("play",false) ? 1.0f : 0.0f;
                 uint32_t before = order_commands_done.load();
                 uint32_t refused = order_refusals.load();
                 SubmitCommandAndWait(cmd);
@@ -1619,6 +1646,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.value[0] = (float)plot;
                 cmd.value[1] = (float)((what == "water") ? FORAGE_WATER : FORAGE_FRUIT);
                 cmd.value[2] = args.value("spread",false) ? 1.0f : 0.0f;
+                cmd.value[3] = args.value("play",false) ? 1.0f : 0.0f;
                 uint32_t before = order_commands_done.load();
                 uint32_t refused = order_refusals.load();
                 SubmitCommandAndWait(cmd);
@@ -1951,6 +1979,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.flags = SIM_CMD_FLAG_RECORD;
                 cmd.subtype = (uint32_t)std::max(0,args.value("crate",0));
                 cmd.value[0] = args.value("on",true) ? 1.0f : 0.0f;
+                cmd.value[1] = args.value("play",false) ? 1.0f : 0.0f;
                 uint32_t refused = crate_refusals.load();
                 SubmitCommandAndWait(cmd);
                 std::string refusal;

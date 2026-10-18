@@ -504,9 +504,47 @@ const char* SiteErrand(int phase, int good, bool f_tower = false){
     return phrases[i][std::max(0,std::min(2,phase)) + (f_tower ? 3 : 0)].c_str();
 }
 
+//A load on its way to a store, by name - "carrying beans to a store" - as a site's errand is: a store is given goods,
+//not "food". Made once a good, as SiteErrand's.
+const char* StoreErrand(int good){
+    static const std::vector<std::string> phrases = []{
+        std::vector<std::string> p(GOOD_COUNT + 1);
+        for (int g = -1; g < GOOD_COUNT; g++){
+            p[g + 1] = (g < 0) ? std::string("carrying to a store") : "carrying " + std::string(GoodName(g)) + " to a store";
+        }
+        return p;
+    }();
+    return phrases[(good >= 0 && good < GOOD_COUNT) ? good + 1 : 0].c_str();
+}
+
 //Whether his workplace is a camp - its own woodcutter's or water carrier's (Economy.h, THE CAMP'S OWN WORK).
 bool CampWork(const EconomyWorker& k, const ZoneState* z){
     return z && k.building && k.building < z->buildings.size() && z->buildings[k.building].kind == ZONE_KIND_CAMP;
+}
+
+/*
+    Where his LOAD is going, for its strip's header: "for a site", "for the camp"... Empty where that is not settled
+    yet - a log on his shoulder while he goes for a second, a load he still has on him while he eats - since where it
+    goes is looked for once he is done (Economy::TickWorker, deliver).
+*/
+std::string LoadFor(const EconomyWorker& k, const ZoneState& z){
+    if (k.site){
+        bool f_tower = !EconomyIsGroundSite(k.site) && k.site < z.buildings.size() && z.buildings[k.site].kind == ZONE_KIND_TOWER;
+        return f_tower ? "for a tower" : "for a site";
+    }
+    bool f_camp_home = k.house && k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_CAMP;
+    switch (k.state){
+        //Home - but a harvest of the camp's own land goes into its supplies, the colony's (PickHarvest: `store` the camp).
+        case WORKER_TO_PANTRY:  return (f_camp_home && k.store == k.house) ? "for the camp" : "for home";
+        case WORKER_TO_WORKSHOP:
+        case WORKER_MAKING:     return (k.job == WORKER_JOB_ROPEMAKER) ? "for the ropewalk" : "for the builders' hut";
+        case WORKER_TO_STORE:
+        case WORKER_UNLOADING:  return k.store ? "for a store" : CampWork(k,&z) ? "for the camp" : "for the woodpile";
+        //The camp's picker between plants: back to its door with them (pick_on).
+        case WORKER_TO_WORK:
+        case WORKER_WORKING:    return (k.job == WORKER_JOB_PICKER && CampWork(k,&z)) ? "for the camp" : "";
+        default:                return "";
+    }
 }
 
 /*
@@ -569,12 +607,17 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
                                      : (k.job == WORKER_JOB_MINER) ? "digging"
                                      : (k.prop < 0) ? "picking up"
                                      : (k.job == WORKER_JOB_STONECUTTER) ? "breaking a rock"
+                                     //Felling while the tree stands, then the log taken up - by the tree, not the time
+                                     //left: a strong woodcutter's last second of felling read as picking it up.
+                                     : (e && k.prop < (int)e->prop_state.size()) ? ((e->prop_state[k.prop] == PROP_STATE_STANDING)
+                                                                                    ? "felling" : "picking up a log")
                                      : (k.timer > (int)(ECONOMY_PICK_SECONDS * CALENDAR_TICKS_PER_SECOND)) ? "felling" : "picking up a log";
+        //Store 0 is no store: the camp's door for its own carriers, a woodcutter's woodpile (Economy::TickWorker, deliver).
         case WORKER_TO_STORE:   return (k.store == 0 && k.job == WORKER_JOB_WATER && CampWork(k,z)) ? "carrying water to the camp"
                                      : (k.store == 0 && k.job == WORKER_JOB_PICKER && CampWork(k,z)) ? "carrying fruit to the camp"
-                                     : (k.job == WORKER_JOB_MINER && k.carry_good == GOOD_FLOATSTONE) ? "carrying floatstone to a store"
-                                     : (k.job == WORKER_JOB_MINER) ? "carrying stone to a store"
-                                     : "carrying to a store";
+                                     : (k.store == 0 && k.job == WORKER_JOB_WOODCUTTER) ? (CampWork(k,z) ? "carrying wood to the camp"
+                                                                                                          : "carrying wood to the woodpile")
+                                     : StoreErrand(k.carry_good);
         case WORKER_UNLOADING:  return "unloading";
         case WORKER_TO_HOME:    return "going home";
         case WORKER_HOLDING:    return "waiting with a load";
@@ -601,7 +644,8 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         }
         case WORKER_SUPPLYING:  return (k.tent == ECONOMY_TENT_TO_TAKE && !EconomyPressing(k)) ? "packing a tent"
                                      : (k.gather > 0) ? "packing supplies" : "eating and drinking";
-        case WORKER_TO_GET:     return (k.carry_good == GOOD_WATER) ? "fetching water for home" : "fetching food for home";
+        case WORKER_TO_GET:     return (k.carry_good == GOOD_WATER) ? "fetching water for home"
+                                     : (k.carry_good == GOOD_WOOD) ? "fetching firewood for home" : "fetching food for home";
         case WORKER_GETTING:    return "picking up for home";
         case WORKER_TO_PANTRY:  return "taking it home";
         case WORKER_TO_SOW:     return "going to sow";
@@ -1138,9 +1182,9 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     }else if (k.job == WORKER_JOB_NONE && k.post >= 0){
         c.Text("No job - none is given while posted");
     }else if (k.job == WORKER_JOB_NONE){
-        c.Text("No job: carries wood for the builders");
+        c.Text("No job: carries for the building sites");     //whatever a site wants, not only wood (FindSiteWork)
     }else if (k.job == WORKER_JOB_BUILDER){
-        c.Text(Format("Builder at the builders' hut %u: carries wood to sites and builds",k.building));
+        c.Text(Format("Builder at the builders' hut %u: carries to sites and builds",k.building));
     }else if (k.job == WORKER_JOB_ARCHER){
         c.Text(Format("Trains at the archery range %u",k.building));
     }else if (k.job == WORKER_JOB_GUARD){
@@ -1159,7 +1203,10 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         }
         c.Text(Format("Farmer of %s land: %i field%s",LandName(z,e,k.building).c_str(),fields,fields == 1 ? "" : "s"));
     }else{
-        c.Text(Format("%s at %s %u",JobTitle(k.job),KindTitle(z.buildings[k.building].kind),k.building));
+        //"Woodcutter at the woodcutter's hut 3", as the builder's line says it - not a title mid-sentence.
+        std::string kind = KindTitle(z.buildings[k.building].kind);
+        kind[0] = (char)tolower(kind[0]);
+        c.Text(Format("%s at the %s %u",JobTitle(k.job),kind.c_str(),k.building));
     }
     /*
         WITH THE GROWN (settlements_plan.md, the user's 2026-10-12): a child going along with a grown-up of his household,
@@ -1263,13 +1310,31 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         l.stock.figure = Format("water %s days, food %s",days(water).c_str(),days(food).c_str());
         c.lines.push_back(l);
     }
+    /*
+        HOW FAR ALONG (selection_plan.md, the user's 2026-10-18): what he is doing, with a bar under it while that runs on
+        his timer - felling, building, drawing water - filling as he gets on with it (EconomyTaskProgress). Then his LOAD,
+        as a goods strip against what he can carry on this errand (EconomyLoadRoom), striped through: it is on its way
+        to a site, a store, the camp or his home's pantry, never his own - that is his pack, hollow, above.
+    */
     std::string doing = Doing(k,&z,&e);
-    if (k.carry > 0){
-        doing += Format(", with %i %s",k.carry,GoodName(k.carry_good));
-    }
     if (!doing.empty()){
         doing[0] = (char)toupper(doing[0]);
-        c.Text(doing,HUD_TEXT_DIM);
+        float progress = EconomyTaskProgress(k);
+        if (progress >= 0.0f){
+            c.Bar(doing,progress,HUD_TEXT_DIM);
+        }else{
+            c.Text(doing,HUD_TEXT_DIM);
+        }
+    }
+    if (k.carry > 0 && k.carry_good >= 0 && k.carry_good < GOOD_COUNT){
+        CardLine l;
+        l.type = CARD_STOCK;
+        l.stock.label = "Load";
+        l.stock.whose = LoadFor(k,z);
+        l.stock.goods[k.carry_good] = k.carry;
+        l.stock.room = EconomyLoadRoom(e,z,k);
+        l.stock.f_load = true;
+        c.lines.push_back(l);
     }
     /*
         A FIGHT (zombies_plan.md, step 2): a zombie within his reach - and so his MEAL waits, and none begins, while one
@@ -1344,7 +1409,7 @@ void YardLines(const ZoneState& z, uint32_t id, Card& c){
     CardLine add;
     add.type = CARD_CHOICE;
     add.choice_action = OVERLAY_HIT_TAKE_TOOL;
-    if (kind == ZONE_KIND_HOUSE && z.buildings[id].size < ZONE_HOUSE_MAX_PLOTS){
+    if (kind == ZONE_KIND_HOUSE && z.buildings[id].size < ZoneKindMaxPlots(kind)){
         add.choices.push_back(std::make_pair(std::string("Extend"),(int)CHASM_TOOL_HOUSE));
     }
     add.choices.push_back(std::make_pair(std::string("Add lot"),(int)CHASM_TOOL_LOT));
@@ -2515,7 +2580,8 @@ uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r,
 
 /*
     What is under the cursor in play mode: a person first, since he stands on a plot that would otherwise
-    win; then a crate, the nearest on screen within CRATE_PICK_PX of its middle (crates_plan.md); then the
+    win; then a crate, the nearest on screen within CRATE_PICK_PX of its middle (crates_plan.md) and not under
+    the clouds; then the
     building or field on the plot under the cursor - or a gate there, or a garden or lot being built.
 
     A PERSON BY HIS FIGURE (selection_plan.md, "Picked by the figure"). The people are pickable objects, so
@@ -2580,8 +2646,13 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
         if (out.kind != PLAY_PICK_NONE){
             return out;
         }
+        //...but none under the clouds: its card would tell what lies there, and PICK UP fetch it (the user's, 2026-10-18).
+        std::shared_ptr<const Exploration> ex = GetExploration();
         best = CRATE_PICK_PX * s;
         for (const EconomyCrate& c : e->crates){
+            if (ex && !ex->Explored(c.pos)){
+                continue;
+            }
             vec2 sp;
             if (ScreenOf(main_scene->camera,(float)main_window->width,(float)main_window->height,CrateMiddle(*w,c),sp)){
                 float d = (sp - at).length();
@@ -3313,7 +3384,10 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
             std::shared_ptr<const EconomyState> e = GetEconomy();
             bool f_fruit = false;
             bool f_water = false;
-            if (!tower && w && z && e && e->world == w && z->world == w && hover.plot < (int)w->terrain->wet.size()){
+            //Under the clouds no menu (the user's, 2026-10-18): what it offers would say what lies there. He is only sent.
+            std::shared_ptr<const Exploration> ex = GetExploration();
+            bool f_seen = !ex || (w && hover.plot < (int)w->grid->fine.pos.size() && ex->Explored(w->grid->fine.pos[hover.plot]));
+            if (f_seen && !tower && w && z && e && e->world == w && z->world == w && hover.plot < (int)w->terrain->wet.size()){
                 f_fruit = EconomyRipePlantOn(*e,hover.plot) >= 0;
                 f_water = w->terrain->wet[hover.plot] && !ZoneBridgeWalkable(*z,hover.plot);
             }
@@ -4556,6 +4630,9 @@ void ApplicationChasm::RegisterSelectTools(){
                         }
                         lines.push_back(json{{"stock",l.stock.label},{"whose",l.stock.whose},{"kept",l.stock.f_kept},
                                              {"room",l.stock.room},{"goods",goods},{"reserved",reserved}});
+                        if (l.stock.f_load){
+                            lines.back()["load"] = true;    //a person's load: striped through
+                        }
                     }else if (l.type == CARD_PERSON){
                         lines.push_back(json{{"person",l.person},{"text",l.text},{"pack",l.right}});
                     }else{

@@ -14,6 +14,8 @@
       SCATTER   every bird away from the scare on a line of its own, beating hard; then they flock again and
                 TRAVEL to a roost clear of where they were scared, which they keep away from for BIRD_WARY_S.
 
+    In the air, a flock GATHERS to the season's size: a few birds at a time fly in to join it, or one leaves.
+
     A bird in flight steers for its place round the anchor - a slot that drifts slowly - with a turn rate rather than
     a spring, so it banks round rather than snapping; birds too close push apart. Its wings beat in bursts and glide
     between them unless it is climbing, slow or scared. A bird comes down to its perch from above and flares before
@@ -57,6 +59,7 @@ float Mid(float lo, float hi, float r){
 void BirdSky::Reset(uint32_t s){
     seed = Mix(s ^ 0xB12D5u);
     next_id = 1;
+    next_bird = 1;
     flocks.clear();
     calls.clear();
 }
@@ -85,27 +88,58 @@ float BirdSky::SitTime(BirdFlock& f){
                                         : Mid(BIRD_RESTLESS_MIN_S,BIRD_RESTLESS_MAX_S,Draw(f,1));
 }
 
+//One bird of the flock calling, where it is: the app hears it or not (TakeCalls).
+void BirdSky::Call(BirdFlock& f, const Bird& b){
+    calls.push_back(BirdCall{BIRD_CALL_CAW,b.pos,b.id,f.voice});
+    f.calls++;
+}
+
+/*
+    A wanderer calls at the sitting rate in the air too: it is one to three birds and nearly always flying, and at a
+    flock's flying rate the two over the colony chattered every five seconds, drowning the crows (seen 2026-10-18).
+*/
+float BirdSky::CallGap(BirdFlock& f){
+    const bool f_seldom = (f.state == FLOCK_SETTLED) || (f.role == BIRD_ROLE_WANDER);
+    return f_seldom ? Mid(BIRD_CALL_SETTLED_MIN_S,BIRD_CALL_SETTLED_MAX_S,Draw(f,8))
+                    : Mid(BIRD_CALL_FLYING_MIN_S,BIRD_CALL_FLYING_MAX_S,Draw(f,8));
+}
+
+void BirdSky::MakeBird(BirdFlock& f, Bird& b, int index){
+    b.id = next_bird++;
+    b.rate = Mid(0.88f,1.12f,Draw(f,b.id));
+    //A ring round the anchor, wider for the later birds - a winter's flock is twice as many - and the golden angle,
+    //so no two line up.
+    float a = (float)index * 2.3999632f + Draw(f,b.id) * 0.5f;
+    float d = Mid(0.8f,2.4f,Draw(f,b.id)) * sqrtf(std::max(1.0f,(float)(index + 1) / 10.0f));
+    b.slot = vec2(sinf(a),cosf(a)) * d;
+    b.yaw = Draw(f,b.id) * 6.2831853f;
+    b.idle = Draw(f,b.id) * 4.0f;
+}
+
+int BirdSky::Wanted(const BirdWorld& w, const BirdFlock& f) const{
+    if (f.role == BIRD_ROLE_WANDER){
+        return f.size;
+    }
+    return std::max(1,(int)((float)f.size * w.gather + 0.5f));
+}
+
 bool BirdSky::AddFlock(const BirdWorld& w, const vec2& home, int count, int role){
     BirdFlock f;
     f.id = next_id++;
     f.home = home;
     f.role = role;
+    f.voice = (role == BIRD_ROLE_WANDER) ? BIRD_VOICE_MAGPIE : BIRD_VOICE_CROW;
     f.lift = (role == BIRD_ROLE_WANDER) ? Draw(f,5) * BIRD_WANDER_LIFT : 0.0f;
     BirdRoost r;
     if (!w.roost || !w.roost(home,BIRD_ROAM * 0.5f,std::vector<BirdScare>(),Mix(seed ^ f.id),r) || r.perches.empty()){
         return false;
     }
-    count = std::max(1,count);
-    for (int i = 0; i < count; i++){
+    //Made at the season's size, so a load in winter starts with winter's flocks rather than growing into them.
+    f.size = std::max(1,count);
+    const int n = Wanted(w,f);
+    for (int i = 0; i < n; i++){
         Bird b;
-        b.id = f.id * 64u + (uint32_t)i;
-        b.rate = Mid(0.88f,1.12f,Draw(f,b.id));
-        //A ring round the anchor, wider for the later birds: the golden angle, so no two line up.
-        float a = (float)i * 2.3999632f + Draw(f,b.id) * 0.5f;
-        float d = Mid(0.8f,2.4f,Draw(f,b.id));
-        b.slot = vec2(sinf(a),cosf(a)) * d;
-        b.yaw = Draw(f,b.id) * 6.2831853f;
-        b.idle = Draw(f,b.id) * 4.0f;
+        MakeBird(f,b,i);
         f.birds.push_back(b);
     }
     f.roost = r;
@@ -118,20 +152,56 @@ bool BirdSky::AddFlock(const BirdWorld& w, const vec2& home, int count, int role
     f.anchor = r.at + vec3(0.0f,2.0f,0.0f);
     f.state = FLOCK_SETTLED;
     f.timer = SitTime(f);
+    //Anywhere in a sit's gap, so the map's flocks made together do not all call together.
+    f.call = Draw(f,8) * BIRD_CALL_SETTLED_MAX_S;
     flocks.push_back(f);
     return true;
 }
 
-//Each bird its perch in the roost; more birds than perches double up a little apart.
+void BirdSky::AddFlockInAir(const BirdWorld& w, const vec2& home, int count, int role){
+    BirdFlock f;
+    f.id = next_id++;
+    f.home = home;
+    f.role = role;
+    f.voice = (role == BIRD_ROLE_WANDER) ? BIRD_VOICE_MAGPIE : BIRD_VOICE_CROW;
+    f.lift = (role == BIRD_ROLE_WANDER) ? Draw(f,5) * BIRD_WANDER_LIFT : 0.0f;
+    f.size = std::max(1,count);
+    float ground = w.ground ? w.ground(home) : 0.0f;
+    f.anchor = vec3(home.x,ground + w.tree_top + BIRD_CRUISE_CLEAR + f.lift,home.y);
+    f.heading = Draw(f,4) * 6.2831853f;
+    const vec3 way(sinf(f.heading),0.0f,cosf(f.heading));
+    const int n = Wanted(w,f);
+    for (int i = 0; i < n; i++){
+        Bird b;
+        MakeBird(f,b,i);
+        b.state = BIRD_FLYING;
+        b.fold = 0.0f;
+        b.pos = f.anchor + vec3(b.slot.x,0.0f,b.slot.y);
+        b.vel = way * BIRD_CRUISE_SPEED;
+        b.yaw = f.heading;
+        f.birds.push_back(b);
+    }
+    //On its way already: a roost if there is one, else a point in the sky.
+    f.roost.at = f.anchor;
+    f.state = FLOCK_TRAVEL;
+    NextRoost(w,f,std::vector<BirdScare>());
+    f.call = Draw(f,8) * BIRD_CALL_SETTLED_MAX_S;
+    flocks.push_back(f);
+}
+
+//Each bird its perch in the roost; more birds than perches double up a little apart. One leaving is not given one.
 void BirdSky::Settle(BirdFlock& f){
     const std::vector<BirdPerch>& p = f.roost.perches;
     if (p.empty()){
         return;
     }
-    for (size_t i = 0; i < f.birds.size(); i++){
-        Bird& b = f.birds[i];
+    size_t i = 0;
+    for (Bird& b : f.birds){
+        if (b.f_leaving){
+            continue;
+        }
         b.perch = p[i % p.size()];
-        float lap = (float)(i / p.size());
+        float lap = (float)(i++ / p.size());
         if (lap > 0.0f){
             float a = Draw(f,b.id) * 6.2831853f;
             b.perch.at += vec3(sinf(a),0.0f,cosf(a)) * (0.18f * lap);
@@ -152,10 +222,14 @@ void BirdSky::TakeOff(BirdFlock& f, float stagger){
 
 void BirdSky::Scare(const BirdWorld& w, BirdFlock& f, const BirdScare& s){
     const bool f_was_settled = (f.state == FLOCK_SETTLED);
-    //Nearest first: the order they go in.
+    //Nearest first: the order they go in. One already leaving goes on as it was.
     std::vector<std::pair<float,size_t>> order;
+    vec3 middle;
     for (size_t i = 0; i < f.birds.size(); i++){
-        order.push_back(std::make_pair((Flat(f.birds[i].pos) - s.at).length(),i));
+        if (!f.birds[i].f_leaving){
+            order.push_back(std::make_pair((Flat(f.birds[i].pos) - s.at).length(),i));
+            middle += f.birds[i].pos;
+        }
     }
     std::sort(order.begin(),order.end());
     const float n = (float)std::max<size_t>(1,order.size() - 1);
@@ -164,11 +238,7 @@ void BirdSky::Scare(const BirdWorld& w, BirdFlock& f, const BirdScare& s){
         little more by its own way from the scare. Every bird straight away from the scare scattered them like a burst
         shell when the scare was among them, which no flock does: they go up together and leave together.
     */
-    vec3 middle;
-    for (const Bird& b : f.birds){
-        middle += b.pos;
-    }
-    middle = middle / (float)std::max<size_t>(1,f.birds.size());
+    middle = middle / (float)std::max<size_t>(1,order.size());
     vec2 out = Flat(middle) - s.at;
     float way = (out.length() > 0.3f) ? atan2f(out.x,out.y) : Draw(f,4) * 6.2831853f;
     for (size_t k = 0; k < order.size(); k++){
@@ -186,16 +256,18 @@ void BirdSky::Scare(const BirdWorld& w, BirdFlock& f, const BirdScare& s){
         b.flee = vec2(sinf(a),cosf(a));
     }
     f.flushes++;
-    if (!f.birds.empty()){
+    if (!order.empty()){
         //The sentinel calls first; a flock that was sitting goes up with a burst of wings.
         const Bird& first = f.birds[order[0].second];
-        calls.push_back(BirdCall{BIRD_CALL_CAW,first.pos,first.id});
+        Call(f,first);
         if (f_was_settled){
-            calls.push_back(BirdCall{BIRD_CALL_FLUSH,middle,f.birds[0].id});
+            calls.push_back(BirdCall{BIRD_CALL_FLUSH,middle,f.birds[0].id,f.voice});
         }
     }
     f.state = FLOCK_SCATTER;
     f.timer = Mid(BIRD_SCATTER_MIN_S,BIRD_SCATTER_MAX_S,Draw(f,2));
+    //Another answers the sentinel a moment later - one bird alone has no one to, and calls again in the air.
+    f.call = (order.size() >= 2) ? Mid(BIRD_CALL_ANSWER_MIN_S,BIRD_CALL_ANSWER_MAX_S,Draw(f,8)) : CallGap(f);
     f.wary = BirdScare{s.at,s.reach * BIRD_WARY_REACH};
     f.wary_left = BIRD_WARY_S;
     (void)w;
@@ -204,7 +276,7 @@ void BirdSky::Scare(const BirdWorld& w, BirdFlock& f, const BirdScare& s){
 void BirdSky::Flush(const BirdWorld& w, const BirdScare& s){
     for (BirdFlock& f : flocks){
         for (const Bird& b : f.birds){
-            if ((Flat(b.pos) - s.at).length() <= s.reach){
+            if (!b.f_leaving && (Flat(b.pos) - s.at).length() <= s.reach){
                 Scare(w,f,s);
                 break;
             }
@@ -238,12 +310,23 @@ void BirdSky::NextRoost(const BirdWorld& w, BirdFlock& f, const std::vector<Bird
     }
     if (!f_found && w.roost && w.roost(f.home,roam,avoid,draw,r) && !r.perches.empty()){
         f.roost = r;
+        f_found = true;
     }else if (!f_found && w.roost && w.roost(Flat(f.anchor),roam * 2.0f,avoid,draw,r) && !r.perches.empty()){
         //Its woods felled: a new home in the nearest trees left.
         f.roost = r;
         f.home = Flat(r.at);
+        f_found = true;
     }
-    //None clear: back over the old roost, to try again from there. Setting off, the way it is already going, if any.
+    //No trees to be had at all (the title's diorama, captured with none): a point in the sky near home, at a tree's
+    //height, to circle and fly on from - it never comes down there (StepFlock, FLOCK_CIRCLE).
+    if (!f_found && w.sky_reach > 0.0f){
+        float a = Draw(f,14) * 6.2831853f;
+        vec2 p = f.home + vec2(sinf(a),cosf(a)) * (Mid(0.3f,1.0f,Draw(f,15)) * w.sky_reach);
+        f.roost = BirdRoost();
+        f.roost.at = vec3(p.x,(w.ground ? w.ground(p) : 0.0f) + w.tree_top,p.y);
+    }
+    //None clear in the world: back over the old roost, to try again from there. Setting off, the way it is already
+    //going, if any.
     if (f.state != FLOCK_TRAVEL){
         vec2 v = Flat(f.anchor_vel);
         vec2 to = Flat(f.roost.at) - Flat(f.anchor);
@@ -279,7 +362,7 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
         bool f_scared = false;
         for (const BirdScare& s : scares){
             for (const Bird& b : f.birds){
-                if ((Flat(b.pos) - s.at).length() <= s.reach){
+                if (!b.f_leaving && (Flat(b.pos) - s.at).length() <= s.reach){
                     Scare(w,f,s);
                     f_scared = true;
                     break;
@@ -291,7 +374,7 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
         }
         if (!f_scared && w.standing){
             for (const Bird& b : f.birds){
-                if (b.perch.tree >= 0 && !w.standing(b.perch.tree)){
+                if (!b.f_leaving && b.perch.tree >= 0 && !w.standing(b.perch.tree)){
                     Scare(w,f,BirdScare{Flat(b.perch.at),BIRD_REACH_FELLED});
                     f_scared = true;
                     break;
@@ -303,19 +386,25 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
             if (f.timer <= 0.0f){
                 NextRoost(w,f,scares);
                 TakeOff(f,1.2f);
-                if (Draw(f,3) < 0.5f && !f.birds.empty()){
-                    calls.push_back(BirdCall{BIRD_CALL_CAW,f.birds[0].pos,f.birds[0].id});
+                if (Draw(f,3) < BIRD_CALL_TAKEOFF && !f.birds.empty()){
+                    Call(f,f.birds[0]);
                 }
+                //Off: the next call is a flight's gap away, not what was left of the sit's.
+                f.call = CallGap(f);
             }
         }
     }else if (f.state == FLOCK_SCATTER){
         //The anchor goes with them, so that when they flock again it is where they are.
         vec3 middle;
+        int staying = 0;
         for (const Bird& b : f.birds){
-            middle += b.pos;
+            if (!b.f_leaving){
+                middle += b.pos;
+                staying++;
+            }
         }
-        if (!f.birds.empty()){
-            f.anchor = middle / (float)f.birds.size();
+        if (staying > 0){
+            f.anchor = middle / (float)staying;
         }
         f.timer -= dt;
         if (f.timer <= 0.0f){
@@ -370,10 +459,11 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
         f.timer -= dt;
         if (f.timer <= 0.0f){
             const bool f_fly_on = (f.role == BIRD_ROLE_WANDER) && Draw(f,7) < BIRD_WANDER_FLY_ON;
-            if (!f_fly_on && clear_of(Flat(f.roost.at)) && (!w.standing || f.roost.tree < 0 || w.standing(f.roost.tree))){
+            if (!f_fly_on && !f.roost.perches.empty() && clear_of(Flat(f.roost.at))
+                && (!w.standing || f.roost.tree < 0 || w.standing(f.roost.tree))){
                 Settle(f);
                 for (Bird& b : f.birds){
-                    b.state = BIRD_LANDING;
+                    b.state = b.f_leaving ? b.state : BIRD_LANDING;
                 }
                 f.state = FLOCK_SETTLED;
                 f.timer = SitTime(f);
@@ -382,6 +472,13 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
             }
         }
     }
+    //Now and then one of them calls, whatever the flock is doing - more often in the air (CallGap).
+    f.call -= dt;
+    if (f.call <= 0.0f && !f.birds.empty()){
+        Call(f,f.birds[(size_t)(Draw(f,9) * (float)f.birds.size()) % f.birds.size()]);
+        f.call = CallGap(f);
+    }
+    Gather(w,f,dt);
     f.anchor_vel = (f.anchor - was) / dt;
     if (w.ground){
         f.floor = w.ground(Flat(f.anchor)) + 0.5f;
@@ -390,6 +487,58 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
         StepBird(w,f,b,dt);
         StepWings(f,b,dt);
     }
+    //Gone: a leaving bird far enough off that no one sees it go.
+    f.birds.erase(std::remove_if(f.birds.begin(),f.birds.end(),[&](const Bird& b){
+        return b.f_leaving && (Flat(b.pos) - Flat(f.anchor)).length() > BIRD_LEAVE_FAR;
+    }),f.birds.end());
+}
+
+void BirdSky::Gather(const BirdWorld& w, BirdFlock& f, float dt){
+    f.join -= dt;
+    //Only in the air: a bird joining a flock in its tree would have to find a perch among them, and one leaving would
+    //go up alone and be taken for a scare.
+    if (f.join > 0.0f || (f.state != FLOCK_TRAVEL && f.state != FLOCK_CIRCLE)){
+        return;
+    }
+    int staying = 0;
+    for (const Bird& b : f.birds){
+        staying += b.f_leaving ? 0 : 1;
+    }
+    const int want = Wanted(w,f);
+    if (staying == want){
+        return;
+    }
+    f.join = Mid(BIRD_JOIN_GAP_MIN_S,BIRD_JOIN_GAP_MAX_S,Draw(f,10));
+    if (staying < want){
+        //A few together, from one way off the flock's edge, flying in at the cruise.
+        int n = std::min(want - staying,1 + (int)(Draw(f,11) * (float)BIRD_JOIN_GROUP));
+        float a = Draw(f,12) * 6.2831853f;
+        vec3 from = f.anchor + vec3(sinf(a) * BIRD_JOIN_FROM,1.5f,cosf(a) * BIRD_JOIN_FROM);
+        vec3 in = (f.anchor - from).normalize();
+        for (int k = 0; k < n; k++){
+            Bird b;
+            MakeBird(f,b,staying + k);
+            b.state = BIRD_FLYING;
+            b.fold = 0.0f;
+            b.pos = from + vec3(-in.z,0.0f,in.x) * ((float)k - 0.5f * (float)(n - 1)) * 0.9f;
+            b.vel = in * BIRD_CRUISE_SPEED;
+            b.yaw = atan2f(in.x,in.z);
+            f.birds.push_back(b);
+        }
+        return;
+    }
+    //One leaves - the last to come - off the way the flock is not going, so it is not taken for a straggler.
+    for (auto it = f.birds.rbegin(); it != f.birds.rend(); ++it){
+        if (!it->f_leaving){
+            float a = f.heading + 3.14159265f + (Draw(f,13) - 0.5f) * 2.0f;
+            it->f_leaving = true;
+            it->flee = vec2(sinf(a),cosf(a));
+            if (it->state == BIRD_LANDING){
+                it->state = BIRD_FLYING;
+            }
+            break;
+        }
+    }
 }
 
 void BirdSky::StepBird(const BirdWorld& w, BirdFlock& f, Bird& b, float dt){
@@ -397,7 +546,7 @@ void BirdSky::StepBird(const BirdWorld& w, BirdFlock& f, Bird& b, float dt){
     if (b.state == BIRD_PERCHED){
         b.vel = vec3();
         b.bank = 0.0f;
-        if (f.state != FLOCK_SETTLED){
+        if (f.state != FLOCK_SETTLED || b.f_leaving){
             b.delay -= dt;
             if (b.delay <= 0.0f){
                 //Up and off the way it faces, beating from the first stroke.
@@ -439,7 +588,13 @@ void BirdSky::StepBird(const BirdWorld& w, BirdFlock& f, Bird& b, float dt){
 
     vec3 want_vel;
     float agility = 2.5f;
-    if (b.state == BIRD_LANDING){
+    if (b.f_leaving){
+        //Off on its own way at the cruise, climbing a little, until it is far enough off to be gone.
+        want_vel = vec3(b.flee.x,0.2f,b.flee.y) * BIRD_CRUISE_SPEED;
+        if (b.state == BIRD_LANDING){
+            b.state = BIRD_FLYING;
+        }
+    }else if (b.state == BIRD_LANDING){
         //Down to it from above: aim over the perch by a share of the way still to go, slowing as it nears.
         vec3 to = b.perch.at - b.pos;
         float d = to.length();
@@ -562,12 +717,18 @@ void BirdSky::Poses(std::vector<BirdPose>& out) const{
             p.up = b.amp * std::max(0.0f,s) * spread;
             p.down = b.amp * std::max(0.0f,-s) * spread;
             p.folded = b.fold;
+            if (b.state == BIRD_PERCHED){
+                p.tree = b.perch.tree;
+                p.ride = 1.0f;
+            }
             //The flare: wings up and held over the last of the way down.
             if (b.state == BIRD_LANDING){
                 float d = (b.perch.at - b.pos).length();
                 if (d < 1.0f){
                     p.up = std::max(p.up,0.8f * (1.0f - d) * spread);
                     p.down *= d;
+                    p.tree = b.perch.tree;
+                    p.ride = 1.0f - d;
                 }
             }
             out.push_back(p);

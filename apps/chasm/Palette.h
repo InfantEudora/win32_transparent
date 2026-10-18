@@ -75,7 +75,8 @@
 #define PAL_LIP             4       //the plateau's edge along a cliff top
 #define PAL_ROCK_0          5       //four strata
 #define PAL_ROCK_COUNT      4
-#define PAL_FLOOR           9       //unused since the floor became the void (PAL_VOID)
+#define PAL_PATH_WORN       9       //a road's worn middle, a little lighter than PAL_PATH (RoadMesh.cpp); was the floor's,
+                                    //unused since the floor became the void (PAL_VOID)
 #define PAL_FLOOR_DARK      10
 #define PAL_EARTH           11      //the map's cut edge (the skirt)
 #define PAL_FIELD           12

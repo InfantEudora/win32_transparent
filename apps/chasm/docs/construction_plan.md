@@ -146,5 +146,7 @@ brought resources stored in a crate". BUILT the same day (`bridge_plan.md`, "Tre
 - **What it was brought is left where it stood**, as a crate of its own origin, `CRATE_SITE` ("A site's goods") -
   for any site gone, so the eraser taking a site's last plot does the same. `Derive` keeps, before it looks again,
   a dry plot of each site with goods in a settlement's land (a bridge's near end), as it keeps a camp's door.
-  Before, a site pulled down lost what was brought. A load on its way to it goes to a store, as before.
+  Before, a site pulled down lost what was brought. A load on its way to it goes to a store, as before - and
+  since 2026-10-18 at once, and down where he is if no store takes it (`crates_plan.md`, "As built: step 5"):
+  its carriers had walked on to where it had been and stood there holding the wood, for good with no store.
 - The history counts such a crate as held (`EconomyDayLevels`), as a camp's.

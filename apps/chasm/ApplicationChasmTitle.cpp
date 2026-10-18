@@ -153,6 +153,8 @@ bool ApplicationChasm::LoadDiorama(const std::string& name, std::string& error){
     diorama_objects = made;
     diorama = info;
     DioramaLife(info.markers);
+    //The clouds round it: not captured but the world's own puffs, made from its ground (ApplicationChasmExplore.cpp).
+    BuildDioramaClouds();
     //Its sun's shadow box round it, as FollowSun keeps the world's round the view - the whole of it, and no more.
     title_sun->viewport.zoom = std::max(20.0f,info.radius * 1.15f);
     title_sun->SetPosition(info.centre + sun_offset);
@@ -231,6 +233,7 @@ void ApplicationChasm::ServiceDiorama(){
         }
         diorama_objects.clear();
         diorama_people.clear();
+        title_bird_objects.clear();     //destroyed with the rest: none left to pose if the load below fails
         title_scene->DeleteDestroyedObjects();
         ReleaseFile(("dioramas/" + name + ".scap").c_str());
         std::string error;
@@ -249,7 +252,8 @@ void ApplicationChasm::ServiceDiorama(){
 
 /*
     RENDER THREAD, at a capture: what the diorama brings back alive, as MARKERS (core/SceneCapture.h) - a CHIMNEY for
-    every home's smoke, warm or not, since the title smokes in any season (HearthFixtures without heat); a PERSON for
+    every home's smoke, warm or not, since the title smokes in any season (HearthFixtures without heat); a PERCH for
+    each place a bird can sit in its standing trees (BirdDioramaMarkers); a PERSON for
     each one drawn now (UploadWorkers' figures), where he stands and faces, his clip and how far through it, what he
     carries, his bow - and a walker's way on, while it stays in the diorama, sampled on the ground.
 */
@@ -273,6 +277,8 @@ std::vector<SceneCaptureMarker> ApplicationChasm::DioramaMarkers(const vec3& cen
             out.push_back(SceneCaptureMarker{"chimney",t,""});
         }
     }
+    //A PERCH for each place a bird can sit in the trees, for the title's flock (ApplicationChasmBirds.cpp).
+    BirdDioramaMarkers(centre,radius,out);
     if (!e || e->world != w){
         return out;
     }
@@ -444,6 +450,8 @@ void ApplicationChasm::DioramaLife(const std::vector<SceneCaptureMarker>& marker
         diorama_people.push_back(p);
     }
     debug->Info("Diorama: smoke over %zu chimneys, %zu people\n",tops.size(),diorama_people.size());
+    //And a flock over it, in its trees if the capture marked their perches (ApplicationChasmBirds.cpp).
+    BuildTitleBirds(markers);
 }
 
 /*

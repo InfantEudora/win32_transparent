@@ -14,6 +14,13 @@
     "saw":           "sound/sawing_wood_1.ogg",
     "water_stream":  "sound/water_stream.ogg",
     "waterfall":     "sound/waterfall.ogg",
+    "bird_takeoff":  "sound/bird_takeoff.ogg",
+    "crow_1":        "sound/crows_1.ogg",
+    "crow_2":        "sound/crows_2.ogg",
+    "crow_3":        "sound/crows_3.ogg",
+    "magpie_1":      "sound/magpie_1.ogg",
+    "magpie_2":      "sound/magpie_2.ogg",
+    "magpie_3":      "sound/magpie_3.ogg",
 
     "leo_hi":           "sound/speech/taunts/leo_hi_s7.ogg",
     "leo_whatsup":      "sound/speech/taunts/leo_whatsup_s10.ogg",
@@ -42,7 +49,7 @@
   "buses": {
     "effects":  { "comment": "Everything but the music. Under the table's layer, sounds, whose gain is the settings' effects volume (ApplicationChasmMenu.cpp, ApplySettings)." },
     "world":    { "parent": "effects", "comment": "The colony's events at a place: a tree down, a storey up, a harvest - heard near the view." },
-    "activity": { "parent": "effects", "comment": "The people at work. Faded out and held while the world stands still - paused, the menu, the title, the statistics - and back in when it moves." },
+    "activity": { "parent": "effects", "comment": "The people at work, and the birds. Faded out and held while the world stands still - paused, the menu, the title, the statistics - and back in when it moves." },
     "ui":       { "parent": "effects", "comment": "Clicks, placing, refusals and the notices' chime. Never held: a click answers in a pause." },
     "ambience": { "parent": "effects", "comment": "The world's own sounds - the water. Plays on in a pause, since time stopping does not stop a river; faded out under the title." },
     "voice":    { "parent": "effects", "comment": "The people answering the player. Never held: an order given in a pause is answered there." }
@@ -130,6 +137,11 @@
       "signal": "discovered", "when": [ ["first", "==", 1], ["area", "==", 8] ],
       "actions": [ { "kind": "music", "stinger": "reveal" } ]
     },
+    "winter_gust": {
+      "comment": "THE BIG GUST (weather_plan.md): winter's storm front reaching the view, once a storm, as the trees bow and the snow drives across - the score's `gust` stinger, sent to the land's player as `reveal` is. The game signals it again only after the view has been out of the storm (ApplicationChasmWeather.cpp); x, z and storm (0..1 at the view) come with it.",
+      "signal": "gust",
+      "actions": [ { "kind": "music", "stinger": "gust" } ]
+    },
     "discovered": {
       "comment": "Any other area found - a second river - is not told, and chimes only near the view, where it was seen, as a tree felled does.",
       "signal": "discovered", "when": [ ["first", "==", 0], ["distance", "<", 48] ],
@@ -195,6 +207,28 @@
     "saw": {
       "comment": "A pair of saw strokes, a bout on its own. Long, so two at most at once.",
       "signal": "saw", "sounds": "saw", "bus": "activity", "gain": 0.7, "pitch_jitter": 0.04,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 2
+    },
+
+    "birds_flush": {
+      "comment": "THE BIRDS (birds_plan.md step 3): a flock that was sitting, scared up - the burst of wings, at its middle. Only within 48 of the listener (ApplicationChasmSound.cpp, SignalBirds), so no distance test here. One take, so pitched up to 8% either way. The colony's flocks follow the axe and are put up by it, which at 4x can be often: two at most at once.",
+      "signal": "birds_flush", "sounds": "bird_takeoff", "bus": "activity", "gain": 0.4, "pitch_jitter": 0.08,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 2
+    },
+    "bird_call_crow": {
+      "comment": "One bird calling: a BOUT of caws, not a single one - the takes are runs of three to five, kept as they are (the user's, 2026-10-18). When is the birds' own clock (Birds.h BIRD_CALL_*): now and then sitting, more often flying, and scared up the sentinel at once and a second answering. `voice` 0 is a crow: every flock but the wanderers. crows_1 is the loudest take by about 6 dB. Pitched up to 8% either way, so three takes sound like several birds. Three at most at once, never two starting together.",
+      "signal": "bird_call", "when": [["voice", "==", 0]], "sounds": ["crow_1", "crow_2", "crow_3"], "bus": "activity", "gain": 0.7, "pitch_jitter": 0.08, "gap": 10,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 3
+    },
+    "bird_call_magpie": {
+      "comment": "`voice` 1: the wanderers - ones, twos and threes - chatter as magpies (the user's, 2026-10-18), before magpies are a kind of their own. Quiet takes, about 10 dB under the crows', hence the gain.",
+      "signal": "bird_call", "when": [["voice", "==", 1]], "sounds": ["magpie_1", "magpie_2", "magpie_3"], "bus": "activity", "gain": 1.8, "pitch_jitter": 0.06, "gap": 10,
       "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
       "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
       "max_instances": 2

@@ -6,7 +6,7 @@ status: built
 summary: Holds goods for the whole colony. Beside a workplace it takes only that workplace's goods; on its own, whatever the player allows.
 plans: economy_plan.md > As built: the simulation; economy_plan.md > Decided; goods_plan.md > Step 5: the view by category
 code: Economy.cpp: Derive FindStore; Zones.h: ZoneBuilding; ChasmHud.h: HudGoodsGroup HUD_GROUP_COUNT
-verified: 2026-10-10
+verified: 2026-10-18
 ---
 
 ## What it takes
@@ -38,7 +38,7 @@ against everything they hold, since they have no room.
 
 ## Room
 
-A store holds its floor area (plot area x storeys) x {ECONOMY_STORE_ROOM} units, shared by every good in
+A store is at most {ZONE_STORE_MAX_PLOTS:#plots} - a longer drag goes on with another - and holds its floor area (plot area x storeys) x {ECONOMY_STORE_ROOM} units, shared by every good in
 it. It does nothing until it has been built ([[Construction]]).
 
 ## Who comes to it

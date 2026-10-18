@@ -6,10 +6,10 @@ status: built
 summary: Painted on coarse cells and farmed by the family whose land it is. Sown with a crop, grown through the warm seasons, harvested home first.
 plans: fields_plan.md > Decided; fields_plan.md > The frost; land_plan.md > As built; land_plan.md > Fair shares
 code: Economy.cpp: SettleLand LandPlaces Tending GoSow FetchHarvest PickHarvest EconomyFieldSowNow; Economy.h: EconomyField ECONOMY_CROP_GRACE ECONOMY_CAMP_FARMERS; ApplicationChasmIssues.cpp: ChasmIssues
-verified: 2026-10-16
+verified: 2026-10-18
 ---
 
-A field is painted over **coarse cells**, each on flat ground, and buildings keep a plot away from it.
+A field is dragged over **coarse cells**, at most {ZONE_FIELD_MAX_CELLS} to a field - a longer drag goes on with the next - each on flat ground, and buildings keep a plot away from it.
 Placed in play it is a [[Construction|building site]] first, at {ECONOMY_FIELD_WOOD_PER_CELL} [[Wood|wood]]
 a cell. Then it stands **empty** until it is sown. Cells vary in size, so its card shows its **size** as
 both: how many cells, and their area, which is what a harvest is counted from.

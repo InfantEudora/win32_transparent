@@ -31,9 +31,12 @@ class Renderer;
 //then the vec2 grid at offset 48).
 struct wind_header_t {
     float rect[4];      //x0, y0, 1/cell_x, 1/cell_y
-    int   size[4];      //width, height, enabled, unused
+    int   size[4];      //width, height, enabled, plane (WIND_PLANE_*)
     float params[4];    //time in seconds, unused x3
 };
+//Which world plane a wind field lies in - see Renderer::SetWindField. default.vert spells them too.
+#define WIND_PLANE_XY           0       //a side view's play plane (archer): x along, y up
+#define WIND_PLANE_XZ           1       //the ground, seen from above (chasm)
 
 //THE TEXTURE UNIT MAP - which pass owns which unit, and why they are packed the way they are.
 //Its own header because UIOverlay.h needs the same numbers and must not pull in all of this one.
@@ -395,6 +398,11 @@ class Renderer{
         of them; x and y interleaved. `time` is in seconds and drives the flutter on top of the bend
         - pass simulation time (tick * timestep) so a paused sim holds the plants still.
 
+        `plane` says which two world axes the grid's x and y are. WIND_PLANE_XY, the default, is a
+        side view's play plane, where y is up. WIND_PLANE_XZ is the ground seen from above: the
+        grid's y is world Z, plants are pushed along the wind across the ground, and they sway more
+        slowly, as what stands there is trees as much as grass (default.vert, WindBendGround).
+
         RENDER THREAD (it uploads). Call once per frame with the part of the field the camera can
         see; outside the grid there is no wind. ClearWindField switches it off, which is also the
         state every app starts in, so an app that never calls this pays nothing but one branch per
@@ -406,7 +414,7 @@ class Renderer{
         buffer sees the current field. default.vert is the only one that does.
     */
     void SetWindField(const float* velocity_xy, int width, int height, float x0, float y0,
-                      float cell_x, float cell_y, float time);
+                      float cell_x, float cell_y, float time, int plane = WIND_PLANE_XY);
 
     /*
         THE CLOCK OF ANIMATED INSTANCE SETS (Object::SetInstanceMotion), in seconds. Set it every frame

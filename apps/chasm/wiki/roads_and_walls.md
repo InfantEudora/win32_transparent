@@ -5,12 +5,13 @@ kind: buildings
 status: built
 summary: Drawn as lines, cleared by woodcutters and built by people without a job. Roads cost only work and double walking speed; walls cost wood too; a road through a wall is a gate whose door can be shut.
 plans: line_works_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11); defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner; arches_plan.md > As built: step 2, the floor; arches_plan.md > As built: step 3, built as a site; arches_plan.md > As built: step 4, losing it
-code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody
-verified: 2026-10-12
+code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody; RoadMesh.cpp: RoadCellFilled EdgeDressing EdgeBesideFill CellInTown BuildCobbles
+verified: 2026-10-18
 ---
 
 Roads and walls are drawn as a line in play, and each plot of the line is a site until it's built. A
-road never shares a plot with a building, and stops at the edge of a garden.
+road never shares a plot with a building, and stops at the edge of a garden. Roads laid side by side make one
+closed area - a cell with laid road on all four corners is road all over - and small dark stones and tufts of grass lie here and there along a road's edges. A road between grass is worn lighter down its middle, and a closed area beside a building is cobbled.
 
 ## Building them
 

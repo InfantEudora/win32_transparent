@@ -26,6 +26,7 @@
 #include "SceneCapture.h"
 #include "Settings.h"
 #include "CueSystem.h"
+#include "Weather.h"
 
 class SoundSystem;
 class MusicPlayer;
@@ -311,7 +312,8 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define CHASM_CMD_ORDER             SIM_CMD_LAST+4      //a person posted (docs/defence_plan.md): subtype his id;
                                                         //value[0] the plot he is sent to, -1 released; value[1]
                                                         //its layer + 1, 0 its top (ramparts_plan.md); value[2] 1
-                                                        //for one of a group's, spread round it (selection_plan.md)
+                                                        //for one of a group's, spread round it (selection_plan.md);
+                                                        //value[3] 1 for a PLAY command, held to the clouds
 #define CHASM_CMD_CRATE             SIM_CMD_LAST+5      //a crate put down (a debug edit, docs/crates_plan.md):
                                                         //subtype the plot; value[0] the good, value[1] how many
 #define CHASM_CMD_STOCK             SIM_CMD_LAST+6      //a building's stock of a good set (a debug edit): subtype
@@ -330,11 +332,13 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define CHASM_CMD_PITCH             SIM_CMD_LAST+12     //the tent he carries pitched where he stands: subtype the person
 #define CHASM_CMD_SETTLE            SIM_CMD_LAST+13     //sent into another settlement, he moves in without a tent: subtype the person
 #define CHASM_CMD_FORAGE            SIM_CMD_LAST+14     //sent to pick a plant or draw water by hand (docs/foraging_plan.md):
-                                                        //subtype the person; value[0] the plot, [1] FORAGE_*, [2] 1 a group's
+                                                        //subtype the person; value[0] the plot, [1] FORAGE_*, [2] 1 a group's,
+                                                        //[3] 1 a PLAY command's, held to the clouds
 #define CHASM_CMD_ZOMBIE            SIM_CMD_LAST+15     //zombies dropped (a debug edit, docs/zombies_plan.md): subtype the
                                                         //plot; value[0] how many - 0 takes every zombie off the map
 #define CHASM_CMD_PICK_UP           SIM_CMD_LAST+16     //a crate fetched first by the builders (docs/stone_plan.md): subtype
-                                                        //the crate; value[0] 1 to pick it up, 0 back in the queue
+                                                        //the crate; value[0] 1 to pick it up, 0 back in the queue;
+                                                        //value[1] 1 for a PLAY command, held to the clouds
 
 //What a left click does.
 enum ChasmTool{
@@ -579,6 +583,57 @@ private:
                          int plot, const char** why);
 
     /*
+        THE DRAG (docs/drag_plan.md, the user's 2026-10-18; ApplicationChasmRoads.cpp): every other tool that paints - a
+        building's, a yard's, a field's or range's, the eraser - draws its trail first as the road does and places it on
+        release, so what a drag makes is seen before it is made: a new house past the last one's size, red where the
+        rules refuse. While the button is held `drag_chain` is what the cursor has crossed - plots joined along fine
+        edges (LineStepTo), or a cell tool's coarse cells - and `drag_cells` the cells under the eraser. The preview and
+        the release run the very commands the release sends on a copy of the zones (PlanDrag), the rules' own way
+        (ApplyZoneCommand). Let go where it was pressed, it is a click, as it always was. A right press, or the tool put
+        down, drops it. The one-plot kinds (ZoneKindOnePlot) and the bridge are not dragged.
+    */
+    static bool DragTool(int tool);
+    int area_drag = LINE_DRAG_NONE;             //physics thread, as line_drag
+    std::vector<int> drag_chain;                //under pick_mutex
+    std::vector<int> drag_cells;                //under pick_mutex: the eraser's coarse cells, as the cursor reached them
+    int drag_tool = CHASM_TOOL_SELECT;          //under pick_mutex: the tool at the press
+    bool f_drag_erase = false;                  //under pick_mutex: Shift at the press - taking away
+    bool f_drag_moved = false;                  //under pick_mutex: gone past the plot it was pressed on, so not a click
+    uint32_t drag_owner = 0;                    //under pick_mutex: what it extends or paints a yard for (PaintOwner)
+    std::atomic<uint32_t> drag_version{0};
+    std::atomic<uint32_t> drag_refusals{0};     //bumped when a release leaves out what the rules refuse: the overlay says why
+    std::string drag_last_refusal;              //under grid_mutex
+    uint32_t drag_refusal_seen = 0;             //render thread: the last one shown
+    void UpdateAreaDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
+    void PlaceDrag();
+    void DropDrag();
+    struct DragCommand{
+        int op;
+        int index;
+        int value1;
+        uint32_t owner;
+    };
+    struct DragPlan{
+        std::vector<DragCommand> commands;      //what the release sends, in order
+        std::vector<uint8_t> refused;           //...each refused by the rules: left out, and drawn red
+        std::string why;                        //the first refusal
+        std::shared_ptr<const ZoneState> before;
+        Zones after;                            //the zones with all of it applied
+        int tool = CHASM_TOOL_SELECT;
+        bool f_erase = false;
+    };
+    //What a drag's release sends and what the rules make of it - on the published copies, any thread. False for none.
+    bool PlanDrag(int tool, const std::vector<int>& chain, const std::vector<int>& cells, bool f_erase, uint32_t owner,
+                  DragPlan& out);
+    //RENDER THREAD: the plan of the drag being drawn, worked out again only when it or what it applies to changes;
+    //NULL with none, or while it is still a click. `serial` moves with every new plan.
+    const DragPlan* CurrentDragPlan(uint32_t* serial = NULL);
+    DragPlan drag_plan;                         //render thread
+    bool f_drag_plan = false;
+    uint32_t drag_plan_serial = 0;
+    uint64_t drag_plan_key[6] = {};
+
+    /*
         --- Roads and walking (step 10, ApplicationChasmRoads.cpp; docs/roads_plan.md) ---------------
         A road is ground, painted through the zone commands. `walkers` is the plot graph the economy's
         people find their ways on (Walkers.h) - no state of its own beyond what follows from the world
@@ -757,8 +812,18 @@ private:
     void TickExploration();                     //physics thread, from RunSimulationTick
     void PublishExploration();                  //physics thread
     std::shared_ptr<const Exploration> GetExploration();
-    //Whether a zone command's plot or cell is explored - the rule a PLAY command is held to.
-    bool ZoneCommandExplored(const ChasmWorld& w, int op, int index);
+    //Whether a zone command's plot or cell is explored - the rule a PLAY command is held to - in `ex`, or the rules' own.
+    static bool ZoneCommandExploredIn(const Exploration& ex, const ChasmWorld& w, int op, int index);
+    bool ZoneCommandExplored(const ChasmWorld& w, int op, int index){ return ZoneCommandExploredIn(exploration,w,op,index); }
+    /*
+        A ZONE COMMAND AS THE RULES TAKE IT (CHASM_CMD_ZONE): a PLAY command's refusals before the zones see it - under
+        the clouds, over a crate, outside every settlement - the camp a camp plot joins, then Zones::Apply. The handler
+        runs it on the live zones and a drag's preview on a copy (DragPlan), so the preview is what the release does.
+        `e` the economy, NULL for none of this world. True if anything changed; else zones.last_refusal says why, or
+        is empty for nothing to do. Any thread, on a Zones of its own.
+    */
+    static bool ApplyZoneCommand(Zones& zones, const Exploration& ex, const EconomyState* e, int op, uint32_t index,
+                                 int value1, uint32_t stroke, bool f_play, uint32_t owner);
     std::atomic<bool> f_view_clouds{false};     //debug mode: the clouds drawn anyway (play mode always draws them)
     Mesh* cloud_meshes[2] = {};
     std::vector<Object*> cloud_sets;            //chunk * 2 + shade
@@ -777,10 +842,15 @@ private:
     std::shared_ptr<const ChasmWorld> cloud_lattice_world;
     void BuildCloudScene();                     //from BuildScene
     void UploadClouds();                        //render thread, from PreRender
+    void BuildDioramaClouds();                  //render thread, from LoadDiorama: the same clouds round the title's town
 
     //The hearths (needs_plan.md step 3, ApplicationChasmHearth.cpp): a warm home's chimney smoke and lit windows.
     Mesh* hearth_puff_mesh = NULL;
     Mesh* hearth_pane_mesh = NULL;
+    //Where the warm homes' smoke rises, and the way each column leans now (LeanSmoke, from the weather).
+    std::vector<vec3> hearth_tops;
+    std::vector<vec2> hearth_leans;
+    void LeanSmoke(const WeatherDate& date, float front, float strength);
     int smoke_material = -1;                    //the palette moving as core's INSTANCE_MOTION_LIFE
     int glow_material = -1;                     //...and unlit
     Object* hearth_smoke = NULL;
@@ -810,6 +880,7 @@ private:
         bool f_explored = false;
         bool f_settled = true;                  //inside a settlement's territory (settlements_plan.md)
         uint32_t line_version = 0;              //a road being drawn: its chain (0 with none)
+        uint32_t drag_serial = 0;               //any other drag (drag_plan.md): its plan (0 with none)
         int bridge_from = -1;                   //a bridge being dragged: the bank it starts from
         uint32_t owner = 0;                     //a yard being painted: the building it is for (yards_plan.md)
         uint32_t crates_version = 0;            //the crates, which nothing may be built over (crates_plan.md)
@@ -817,8 +888,8 @@ private:
         bool operator==(const GhostKey& o) const{
             return world == o.world && zones_version == o.zones_version && plot == o.plot && coarse == o.coarse
                    && tool == o.tool && f_explored == o.f_explored && f_settled == o.f_settled && line_version == o.line_version
-                   && bridge_from == o.bridge_from && owner == o.owner && crates_version == o.crates_version
-                   && felled_version == o.felled_version;
+                   && drag_serial == o.drag_serial && bridge_from == o.bridge_from && owner == o.owner
+                   && crates_version == o.crates_version && felled_version == o.felled_version;
         }
     };
     GhostKey ghost_built;
@@ -838,6 +909,7 @@ private:
     int cost_typical_plot = -1;                 //...its plot of the median area, the bar tip's "about"
     std::string ToolCostTip(int tool);          //render thread: the bar tip's words for a tool, empty for none
     void DrawCostTips(float s);                 //render thread, from DrawOverlay in play mode: the tag and the bar tip
+    void DrawToolTip(float s);                  //...the bar tip: the panel at the bottom (ApplicationChasmTime.cpp)
 
     /*
         --- The economy, drawn (ApplicationChasmWorkersView.cpp, and the forest and zones below) -----
@@ -957,6 +1029,7 @@ private:
     };
     std::mutex birds_mutex;
     std::vector<BirdRequest> bird_requests;
+    std::vector<BirdCall> bird_calls;               //made since the sound last took them (SignalBirds, physics thread)
     json birds_status;
     int bird_bench_key = -1;                        //-1 none; BIRD_KEY_*, 3 glide, 4 flapping
     vec3 bird_bench_at;
@@ -968,6 +1041,32 @@ private:
     void HomeBirds(const ChasmWorld& w, const EconomyState* e);    //...and once its economy is out, the flocks
     BirdWorld MakeBirdWorld(const ChasmWorld& w, const ZoneState* z, const EconomyState* e);
     void BirdScares(const ChasmWorld& w, const EconomyState* e, float dt, std::vector<BirdScare>& out);
+    bool BirdTreeStanding(const ChasmWorld& w, const ZoneState* z, const EconomyState* e, int tree);
+    void BirdTreePerches(const ChasmWorld& w, int tree, std::vector<BirdPerch>& out);
+    std::atomic<float> bird_gather_held{-1.0f};    //the tool's `gather`: a season's size held; 0 or less, the date's
+    float BirdGather();                             //the season's (Birds.h BIRD_GATHER_*), or the one held
+    /*
+        THE TITLE'S FLOCK (ApplicationChasmBirds.cpp, birds_plan.md step 5): over the diorama, on the title's clock,
+        silent. Its trees are the diorama's perch markers; with none it stays in the air. Render thread.
+    */
+    BirdSky title_birds;
+    std::vector<Object*> title_bird_objects;        //in diorama_objects too, so a reload takes them with it
+    struct TitleTree{
+        vec2 at;
+        float top = -1e30f;                         //its highest perch
+        std::vector<vec3> perches;
+    };
+    std::vector<TitleTree> title_trees;
+    float title_bird_ground = 0.0f;                 //the one level the flock flies over
+    float title_bird_top = 6.0f;                    //...and the tallest tree on it
+    std::chrono::steady_clock::time_point title_birds_last;
+    bool f_title_birds_clock = false;
+    int title_bird_status_frames = 0;
+    json title_birds_status;                        //for chasm_birds (birds_mutex)
+    void BirdDioramaMarkers(const vec3& centre, float radius, std::vector<SceneCaptureMarker>& out);    //at a capture
+    void BuildTitleBirds(const std::vector<SceneCaptureMarker>& markers);  //from DioramaLife
+    BirdWorld TitleBirdWorld();
+    void UploadTitleBirds();                        //from PreRender, the title showing
     //The woodcutters' log piles outside their huts (ApplicationChasmPiles.cpp). Render thread.
     Object* pile_set = NULL;
     std::shared_ptr<const ChasmWorld> pile_built_world;
@@ -1361,6 +1460,7 @@ private:
     ChasmSun sun_held;
     bool f_sun_held = false;
     float sun_turned[2] = {-1000.0f,-1000.0f};  //the elevation and azimuth sun_offset was last made from, in steps
+    float sun_storm = 0.0f;                     //the storm at the view, eased: the sun dims and cools under it
     ChasmSun SunNow() const { return f_sun_held ? sun_held : sun_dated; }
     void UpdateSun();                           //physics thread, from UpdateView, before FollowSun
 #ifdef USE_IMGUI
@@ -1369,6 +1469,77 @@ private:
 #ifdef USE_MCP
     json SunStatusJson();                       //chasm_time's `sun`, at a tick boundary...
     void SteerSun(const json& sun);             //...and its `sun` argument
+#endif
+
+    /*
+        --- The weather (docs/weather_plan.md; Weather.h, ApplicationChasmWeather.cpp) -------------------------
+        The physics thread measures the storm at the view and calls the big gust (UpdateWeather), and hands the
+        render thread the view; the render thread runs the weather clock, bakes the wind over the view for the
+        swaying trees and moves the snow (UploadWeather).
+    */
+    struct WeatherView{
+        vec2 at;                                //the view's centre on the ground
+        float ground = 0.0f;                    //...its height
+        float distance = 0.0f;                  //the camera's from it
+        uint32_t big = 0;                       //big gusts called so far
+    };
+    std::mutex weather_mutex;
+    WeatherView weather_view;                   //physics thread writes, render thread reads: under weather_mutex
+    std::atomic<float> weather_storm{0.0f};     //0..1 at the view
+    std::atomic<float> weather_d{0.0f};         //the view's distance south of the front's line
+    std::atomic<float> weather_held{-1.0f};     //a storm held over the view (the panel, chasm_time); < 0 the date's
+    std::atomic<float> weather_strength{1.0f};  //the wind's, 1 as tuned
+    std::atomic<bool> f_weather_gust_asked{false};
+    bool f_weather_armed = true;                //physics thread: the big gust may come
+    uint32_t weather_big_count = 0;             //physics thread
+    void UpdateWeather();                       //physics thread, from UpdateView after the camera
+    //Render thread:
+    double weather_seconds = 0.0;               //the weather clock: real seconds while the game runs, still in a pause
+    std::chrono::steady_clock::time_point weather_last;
+    WeatherBigGust weather_big;
+    uint32_t weather_big_seen = 0;
+    std::vector<float> weather_grid;
+    float weather_grid_x0 = 0.0f;               //...its first node, spacing and size, as handed to the renderer
+    float weather_grid_z0 = 0.0f;
+    float weather_grid_step = 1.0f;
+    int weather_grid_w = 0;
+    int weather_grid_h = 0;
+    bool f_weather_field = false;               //a wind field handed to the renderer
+    //How far the wind bends point `at` of prop `tree` this frame - default.vert's bend on the CPU, for a perched bird.
+    vec3 SwayOffset(int tree, const vec3& at);
+    //The spindrift: snow blown along the ground over the front's line - the snow's program again, in a band of flat
+    //cells on the ground (chasm_snow.vert, snow_band).
+    Shader* spindrift_shader = NULL;
+    int spindrift_shader_index = -1;
+    Mesh* spindrift_mesh = NULL;
+    Object* spindrift_set = NULL;
+    vec4 spindrift_key;                         //the view and the front its cells were laid out for
+    float spindrift_density = 0.0f;
+    vec2 spindrift_drift;
+    vec2 spindrift_wind;
+    void SetSpindriftUniforms();
+    float weather_bake_ms = 0.0f;
+    vec2 weather_view_wind;                     //the wind at the view's centre
+    int sway_material[PROP_KIND_COUNT];         //per prop kind, its swaying palette; -1 it stands still
+    void BuildSwayMaterials();                  //from Init, after LoadProps
+    int PropMaterial(int kind) const;           //the material a kind's forest sets are drawn with
+    void UploadWeather();                       //from PreRender
+    void ClearWeather();                        //...and from its title
+    Shader* snow_shader = NULL;
+    int snow_shader_index = -1;
+    Mesh* snow_mesh = NULL;
+    Object* snow_set = NULL;                    //one instance per lattice cell round the camera
+    float snow_density = 0.0f;                  //eased toward the storm at the view
+    vec2 snow_drift;                            //how far the wind has carried the flakes, wrapped to a cell
+    vec3 snow_centre;
+    void BuildWeatherScene();                   //from BuildScene
+    void SetSnowUniforms();
+#ifdef USE_IMGUI
+    void RenderWeatherPanel();
+#endif
+#ifdef USE_MCP
+    json WeatherStatusJson();                   //chasm_time's `weather`...
+    void SteerWeather(const json& weather);     //...and its `weather` argument
 #endif
 
     /*
@@ -1672,6 +1843,7 @@ private:
     bool f_music_shares_held = false;
     float music_share_held[CHASM_MUSIC_PLAYERS] = {};
     float music_mood_held[2] = {-1.0f,-1.0f};   //suspense and brightness, < 0 the score's own
+    float music_storm_suspense = -1.0f;         //the suspense the storm last asked for (weather_plan.md), < 0 none yet
     void SetupMusic();                          //Init, after SetupSound
     void UpdateMusic();                         //physics thread, every pass, from UpdateSound
     void MeasureMusicShares();
@@ -1690,6 +1862,7 @@ private:
     void PollCueTable();
     void SignalEvents();
     void SignalWork(bool f_live);
+    void SignalBirds(bool f_live);              //the flocks' calls, handed over by UploadBirds
     void SignalUI(const char* name);            //physics thread: a click, a tool taken up
 #ifdef USE_MCP
     void RegisterSoundTools();

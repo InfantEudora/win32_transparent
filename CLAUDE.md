@@ -264,6 +264,13 @@ in the game - what it does today, in a few lines - built into `apps/chasm/build/
 no longer exists. A retune needs nothing: pages show constants by name, read from the code. How to write
 a page: `apps/chasm/wiki/README.md`.
 
+**Don't rely on Chasm's autosaves while testing.** Every running copy writes the same three slots,
+`apps/chasm/saves/autosave_1..3.json`, oldest first. It autosaves on leaving a colony (`chasm_load` and
+New game count), on quitting and at each season's first dawn. A test copy beside the person's game
+writes over their slots, and they over yours. The user is fine with that (2026-10-18), since normally
+only one copy runs, so there is no need to restore them. For a state you need to keep, use a named save
+(`chasm_save`).
+
 ---
 
 ## Working alongside other agents

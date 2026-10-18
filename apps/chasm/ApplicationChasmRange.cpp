@@ -8,8 +8,9 @@ static Debugger* debug = new Debugger("ChasmRange",DEBUG_ALL);
 
 /*
     THE ARCHERY RANGES, DRAWN (docs/range_plan.md): on every built range cell a TARGET at its north side, a
-    row of HAY BALES behind it as the backstop and one at its side - where ZoneRangeCellAt puts them, the
-    rule the trainees stand by too - and ARROWS: in the air as a trainee looses them, then in the target or,
+    row of HAY BALES behind it as the backstop along the fence and one against the fence at its side - all inside
+    the cell's fence, by ZoneRangeCellAt's north, the rule the trainees stand by too - and ARROWS: in the air as a
+    trainee looses them, then in the target or,
     missed, in the ground behind it. Each kind is one instance set of chasm_props.glb's prop, or of a stand-in
     box built here until that prop is modelled: a name the GLB has is used as soon as it has it, nothing else
     changes. The ground under them is the zone mesh's (CropMesh).
@@ -19,9 +20,11 @@ static Debugger* debug = new Debugger("ChasmRange",DEBUG_ALL);
 
 const char* range_asset_names[RANGE_PROPS] = {"range_target","hay_bale","arrow","arrow_full"};
 
-#define RANGE_BALE_BACK     0.44f   //the backstop's bales, this much of the cell north of its middle
-#define RANGE_BALE_SPREAD   0.28f   //...and this far apart along the row
-#define RANGE_BALE_SIDE     0.36f   //the loose bale, this far east of the middle
+#define RANGE_BALE_SPREAD   0.28f   //the backstop's bales, this much of the cell's width apart along its row
+#define RANGE_BALE_IN       0.34f   //a bale's middle, in from the fence it stands against: half its depth and a gap
+#define RANGE_BALE_ROOM     0.30f   //...and at least this far in from any of the fence: about half its length
+#define RANGE_TARGET_GAP    0.50f   //the target, at least this far in front of the backstop's row
+#define RANGE_TARGET_ROOM   0.36f   //...and this far in from the fence: half its width and a little
 #define RANGE_BOSS_HEIGHT   0.74f   //the middle of a target's face, above its base (`range_target`)
 #define RANGE_BOSS_FRONT    0.14f   //...and its face, this far south of the target's origin (between its legs, behind)
 #define RANGE_FACE_HALF_W   0.30f   //an arrow this near its middle across, and
@@ -155,6 +158,70 @@ void FlightAt(const RangeShot& s, float t, vec3& point, vec3& dir){
         dir = d2 > 1e-4f ? s.to - s.via : s.via - s.from + vec3(0.0f,-4.0f * RANGE_ARROW_ARC * d1,0.0f);
     }
     dir.normalize();
+}
+
+/*
+    A RANGE CELL'S FENCE (the user's, 2026-10-18): its props stand inside it and along it. They were put at fixed
+    reaches north and east of the cell's middle, and on a cell turned to the grid's slant those reached past the
+    fence. `fence` is the coarse cell's outline as segments, as GridPicker::CoarseOutline gives it - the line its
+    fence is drawn on (BoundaryMesh).
+*/
+//Where a ray from `from` along `dir` first meets the fence, and which way that piece of it runs. False: it never does.
+bool FenceAhead(const std::vector<vec2>& fence, const vec2& from, const vec2& dir, vec2& hit, vec2& along){
+    float best = 1e30f;
+    for (size_t i = 0; i + 1 < fence.size(); i += 2){
+        vec2 a = fence[i];
+        vec2 e = fence[i + 1] - a;
+        float den = dir.x * e.y - dir.y * e.x;
+        if (std::fabs(den) < 1e-9f){
+            continue;
+        }
+        vec2 r = a - from;
+        float t = (r.x * e.y - r.y * e.x) / den;      //along the ray
+        float u = (r.x * dir.y - r.y * dir.x) / den;  //along the piece
+        if (t > 0.0f && u >= 0.0f && u <= 1.0f && t < best){
+            best = t;
+            hit = from + dir * t;
+            along = e * (1.0f / std::max(1e-6f,e.length()));
+        }
+    }
+    return best < 1e30f;
+}
+//How far p is inside the fence: from the nearest piece of it, negative outside.
+float InsideFence(const std::vector<vec2>& fence, const vec2& p){
+    float d = 1e30f;
+    bool f_in = false;
+    for (size_t i = 0; i + 1 < fence.size(); i += 2){
+        vec2 a = fence[i];
+        vec2 b = fence[i + 1];
+        vec2 e = b - a;
+        float len2 = e.dot(e);
+        float t = (len2 > 1e-12f) ? std::max(0.0f,std::min(1.0f,(p - a).dot(e) / len2)) : 0.0f;
+        d = std::min(d,(p - (a + e * t)).length());
+        if ((a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) * e.x / e.y){
+            f_in = !f_in;
+        }
+    }
+    return f_in ? d : -d;
+}
+//`at` moved toward `toward` until it is `room` inside the fence, a quarter of the way at a time. False: it never is.
+bool KeepInside(const std::vector<vec2>& fence, vec2& at, const vec2& toward, float room){
+    for (int i = 0; i < 8 && InsideFence(fence,at) < room; i++){
+        at = at + (toward - at) * 0.25f;
+    }
+    return InsideFence(fence,at) >= room;
+}
+//A prop against the piece of fence `hit` is on, which runs `along`: its middle `in` from it, toward `middle`.
+vec2 AgainstFence(const vec2& hit, const vec2& along, const vec2& middle, float in){
+    vec2 n(-along.y,along.x);
+    if (n.dot(middle - hit) < 0.0f){
+        n = n * -1.0f;
+    }
+    return hit + n * in;
+}
+//The turn about up that lays a prop's +x along `along` (x, z).
+float YawAlong(const vec2& along){
+    return atan2f(-along.y,along.x);
 }
 
 }
@@ -306,8 +373,8 @@ void ApplicationChasm::UploadRange(){
     }
 }
 
-//RENDER THREAD: the targets and bales of every built range cell, where ZoneRangeCellAt puts them; the targets kept
-//for the arrows.
+//RENDER THREAD: the targets and bales of every built range cell, inside its fence and north by ZoneRangeCellAt; the
+//targets kept for the arrows.
 void ApplicationChasm::BuildRangeProps(const ChasmWorld& cw, const ZoneState* z){
     const ChasmWorld* w = &cw;
     range_target_cell.clear();
@@ -335,15 +402,55 @@ void ApplicationChasm::BuildRangeProps(const ChasmWorld& cw, const ZoneState* z)
         //A turn of a few degrees each, by the cell, so a row of ranges is not stamped out of one mould.
         uint32_t hash = MeshHash((uint32_t)c,0x72616e67u);
         float wobble = ((float)(hash % 1000u) / 1000.0f - 0.5f) * 0.12f;
-        range_target_cell.push_back((int)c);
-        range_target_pos.push_back(place(0,ZoneRangeTarget(r),r.middle,wobble));
-        range_target_yaw.push_back(wobble);
-        range_target_back.push_back(r.size * (RANGE_BALE_BACK - ZONE_RANGE_TARGET));
-        vec2 back = r.centre + r.dir * (r.size * RANGE_BALE_BACK);
-        for (int b = -1; b <= 1; b++){
-            place(1,back + east * (r.size * RANGE_BALE_SPREAD * (float)b),r.middle,wobble * (float)(b + 2));
+        std::vector<vec2> fence;
+        w->picker->CoarseOutline((int)c,fence);
+        /*
+            THE BACKSTOP, along the fence the range shoots at: a bale where the way north from the middle meets the
+            fence, and one either side of it along that piece - each against whatever of the fence is behind it, so
+            on a cell turned to the slant the row turns with it - all kept clear of the fence's other sides. A bale
+            with no room is left out.
+        */
+        vec2 hit, along;
+        if (!FenceAhead(fence,r.centre,r.dir,hit,along)){
+            continue;
         }
-        place(1,r.centre + east * (r.size * RANGE_BALE_SIDE),r.middle,1.5708f + wobble);
+        if (along.dot(east) < 0.0f){
+            along = along * -1.0f;
+        }
+        vec2 back = AgainstFence(hit,along,r.centre,RANGE_BALE_IN);
+        vec2 out = (hit - back) * (1.0f / RANGE_BALE_IN);      //square out through that piece
+        KeepInside(fence,back,r.centre,RANGE_BALE_ROOM);
+        //The target where the rule has it, unless that is too near the backstop - a cell shallow to the north.
+        float reach = std::min(r.size * ZONE_RANGE_TARGET,(back - r.centre).dot(r.dir) - RANGE_TARGET_GAP);
+        vec2 target = r.centre + r.dir * std::max(0.0f,reach);
+        KeepInside(fence,target,r.centre,RANGE_TARGET_ROOM);
+        range_target_cell.push_back((int)c);
+        range_target_pos.push_back(place(0,target,r.middle,wobble));
+        range_target_yaw.push_back(wobble);
+        range_target_back.push_back(std::max(0.2f,(back - target).dot(r.dir)));
+        for (int b = -1; b <= 1; b++){
+            vec2 at = back;
+            vec2 run = along;
+            if (b != 0){
+                vec2 h;
+                if (!FenceAhead(fence,r.centre + along * (r.size * RANGE_BALE_SPREAD * (float)b),out,h,run)){
+                    continue;
+                }
+                at = AgainstFence(h,run,r.centre,RANGE_BALE_IN);
+                if (!KeepInside(fence,at,back,RANGE_BALE_ROOM)){
+                    continue;
+                }
+            }
+            place(1,at,r.middle,YawAlong(run) + wobble * (float)(b + 2));
+        }
+        //The loose bale, its long side against the fence east of the middle.
+        vec2 side, side_run;
+        if (FenceAhead(fence,r.centre,east,side,side_run)){
+            vec2 at = AgainstFence(side,side_run,r.centre,RANGE_BALE_IN);
+            if (KeepInside(fence,at,r.centre,RANGE_BALE_ROOM)){
+                place(1,at,r.middle,YawAlong(side_run) + wobble);
+            }
+        }
     }
     for (int k = 0; k < 2; k++){       //the arrows are UploadRange's
         bool f_any = !sets[k].empty();

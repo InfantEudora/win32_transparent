@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 2a27b5d5-13c2-4f25-8145-e56a2a256841
-  modified: 2026-10-17T15:11:30.368Z
+  modified: 2026-10-18T10:37:14.620Z
 ---
 
 Plan agreed 2026-10-17 (apps/chasm/docs/birds_plan.md - its "As built" section is the current state), for the demo:
@@ -37,9 +37,25 @@ Steps 1-2 + step 4's homes BUILT by me the same day, checked in a muted test cop
   (BIRD_TURN_RATE/WOBBLE). Step cost rose to 60-100 us/frame debug. User liked the birds ("looks very nice") and is
   gathering the sounds themselves.
 
+STEP 3 SOUND BUILT 2026-10-18 (user's takes crows_1..3 = runs of caws, magpie_1..3, bird_takeoff; no ravens).
+User's answers: WANDERERS = MAGPIES (BIRD_VOICE_MAGPIE), the rest crows; crow takes stay whole bouts; typo'd
+magpi_2/mapgie_3 renamed. Per-flock call clock (BIRD_CALL_*), sentinel + answer on a scare; bird_calls under
+birds_mutex -> SignalBirds (physics thread) -> rows bird_call_crow/_magpie/birds_flush on `activity`. My call:
+wanderers keep the sitting rate in flight (else magpies drowned the crows). Not yet listened to by the user.
+
 **Why:** birds must never draw from the shared RRandom or enter save/hash/recording ([[rrand-shared-stream-todo]]).
-**How to apply:** next per the plan: sound (step 3, BirdCall already made, dropped in UploadBirds), hide over clouds +
-seasons (4), title flock (5). Traps hit: `near` is a Windows macro (rename params); a heredoc'd Python writing C "\\n"
+USER 2026-10-18: birds STAY drawn and heard over the clouds - a deliberate clue to what lies beneath. Step 4's
+"hide under the clouds" is DROPPED; never add cloud culling to birds or their calls.
+
+STEPS 4 + 5 BUILT 2026-10-18 - ALL FIVE STEPS DONE. Seasons: BirdWorld::gather (BIRD_GATHER_AUTUMN 1.5 / WINTER 2,
+not wanderers), birds JOIN only in flight from BIRD_JOIN_FROM, LEAVE one at a time (Bird::f_leaving); bird ids from
+BirdSky::next_bird; `chasm_birds op gather value N` holds it. 157 birds = 51-72 us/frame debug, no LOD needed.
+Title: one flock of 9 (wanderer habits) stepped in PreRender's title branch (UploadTitleBirds), silent; captures now
+write `perch` markers (BirdDioramaMarkers); without them (today's menu_town) it lives in the air via
+BirdWorld::sky_reach. menu_town needs a RE-CAPTURE by the user (centre 244,-28 r 32) for perching. Woodcutter flush
+on the title skipped (no chop clip). Not yet listened to by the user.
+**How to apply:** the plan is done; what is left is the user's judging (sound gains, sizes, colour over dark pine)
+and the "ideas" list (zombie warning crows, ravens under the rim, field crows, magpies as a kind). Traps hit: `near` is a Windows macro (rename params); a heredoc'd Python writing C "\\n"
 gives a real newline (CLAUDE.md). Blender traps (worker, Blender 4.5): a new bmesh shape layer invalidates held BMVerts;
 bm.to_mesh drops shape layers (add keys with shape_key_add + foreach_set); glTF-imported objects use QUATERNION
 rotation. Related: [[chasm-sound-plan]], [[chasm-stone-props]], [[chasm-villager-animation]], [[chasm-demo-menus]],

@@ -186,7 +186,8 @@ Each frame, the view counts what is going on near the camera:
   season sections, and the rift wind is in its `chasm` section. The cue table does not play them a
   second time. **The exception is birds you can see** (`birds_plan.md`, the user's 2026-10-17): their
   calls and wing bursts are placed and timed by what the flock does, so they are cue-table events,
-  alongside the score's songbird beds.
+  alongside the score's songbird beds. *Built 2026-10-18: `bird_call` and `birds_flush` on the
+  `activity` bus, signalled by `SignalBirds` (`birds_plan.md`, step 3).*
 - **The music's camera share is the same kind of count.** The `clouds` and `chasm` players are faded
   in by how much of the view is unexplored ground and chasm. That share is worked out in the same pass
   over the view, when the music goes in.

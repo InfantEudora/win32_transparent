@@ -5,8 +5,8 @@ kind: world
 status: built
 summary: The map starts under clouds. People clear them by looking around as they go, and nothing can be placed under them in play.
 plans: play_mode_plan.md
-code: Exploration.h: EXPLORATION_CELL SIGHT_RANGE; Exploration.cpp; Economy.cpp: Order; ApplicationChasmExplore.cpp: LookForAreas
-verified: 2026-10-16
+code: Exploration.h: EXPLORATION_CELL SIGHT_RANGE; Exploration.cpp; Economy.cpp: Order Forage; ApplicationChasmExplore.cpp: LookForAreas; ApplicationChasmSelect.cpp: PlayPickUnder; ApplicationChasmBorders.cpp: DrawWalkTip
+verified: 2026-10-18
 ---
 
 A new map starts with nothing explored. The settlers at the [[Camp|camp]] look around on the first tick,
@@ -32,7 +32,11 @@ of the screen, and so is the first of each kind of [[Areas|area]] found - a rive
 ## The rule
 
 A building, field, road or anything else placed **in play** under unexplored ground is refused: "under
-the clouds". Debug tools are not held to it.
+the clouds". So is picking fruit or drawing water there ([[Fruit]]) - the right click offers no menu, and a
+group spreading to more plants takes none under them - and a [[Crate|crate]] there can't be selected or
+picked up. Debug tools are not held to any of it.
 
 An **order** is not held to it: a right click can send someone onto a plot under the clouds, and they
-clear it as they walk. That is the only way to scout on purpose ([[Posts]]).
+clear it as they walk. That is the only way to scout on purpose ([[Posts]]). Refused there, it says only
+"no way there", never the water or what stands. Nothing beside the cursor tells what lies under the clouds:
+the walk and the price tag say "Hidden under the clouds".

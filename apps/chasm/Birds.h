@@ -91,6 +91,36 @@
 #define BIRD_CIRCLE_RADIUS      5.0f    //over the next roost before coming down
 #define BIRD_CIRCLE_S           4.0f
 #define BIRD_STAGGER_S          0.4f    //scared: the nearest bird first, the last this much later
+/*
+    CALLS (birds_plan.md step 3): each flock on a clock of its own - now and then sitting, more often in the air - and
+    scared up, the sentinel at once and a second bird answering a moment later, so the two bouts overlap. A call is a
+    bout of caws or a chatter (the user's takes are runs, not single caws), so these are gaps between bouts.
+*/
+#define BIRD_CALL_SETTLED_MIN_S 15.0f
+#define BIRD_CALL_SETTLED_MAX_S 45.0f
+#define BIRD_CALL_FLYING_MIN_S  5.0f
+#define BIRD_CALL_FLYING_MAX_S  14.0f
+#define BIRD_CALL_ANSWER_MIN_S  0.4f
+#define BIRD_CALL_ANSWER_MAX_S  1.0f
+#define BIRD_CALL_TAKEOFF       0.5f    //the chance that a flock moving on of its own accord calls as it goes
+
+/*
+    SEASONS (step 4): crows gather in autumn and winter, so a flock grows to its own size times the season's GATHER
+    (BirdWorld::gather; the wanderers stay ones, twos and threes). Birds JOIN a flock in the air, a few at a time
+    flying in from off its edge, and LEAVE it one at a time when the gathering is over - a season turning is seen as
+    birds coming and going, never as a flock that has changed between two frames.
+*/
+#define BIRD_GATHER_AUTUMN      1.5f    //spring and summer are 1
+#define BIRD_GATHER_WINTER      2.0f
+#define BIRD_JOIN_FROM          35.0f   //how far off joining birds start...
+#define BIRD_JOIN_GROUP         3       //...up to this many together
+#define BIRD_JOIN_GAP_MIN_S     3.0f    //between one arrival or departure and the next
+#define BIRD_JOIN_GAP_MAX_S     10.0f
+#define BIRD_LEAVE_FAR          40.0f   //a leaving bird is gone this far from its flock
+
+//Whose calls a flock has: the table's rows pick the takes by it.
+#define BIRD_VOICE_CROW         0
+#define BIRD_VOICE_MAGPIE       1       //the wanderers', for now (the user's, 2026-10-18) - before magpies are a kind of their own
 
 //What the app knows and the birds ask.
 struct BirdPerch{
@@ -115,6 +145,12 @@ struct BirdWorld{
     std::function<bool(int tree)> standing;         //still standing and drawn: a felled tree puts its birds up
     float tree_top = 6.0f;                          //the tallest tree, which a travelling flock clears
     std::vector<vec2> lures;                        //trees woodcutters are at: where a colony flock goes
+    float gather = 1.0f;                            //the season's: a flock's size by its own (SEASONS above)
+    /*
+        With no roost to be had - over the title's diorama, captured with no perches - a flock flies on to a point in
+        the air within this of its home, and so passes over and on. 0, the world's: it waits over its last roost.
+    */
+    float sky_reach = 0.0f;
 };
 
 #define BIRD_PERCHED    0
@@ -149,12 +185,14 @@ struct Bird{
     BirdPerch perch;            //where it sits or is going to sit
     float idle = 0.0f;          //perched: seconds to its next fidget
     float look = 0.0f;          //...and the way its head is turned off its yaw
+    bool f_leaving = false;     //flying off along `flee`, no longer the flock's: gone at BIRD_LEAVE_FAR
 };
 
 struct BirdFlock{
     uint32_t id = 0;
     int state = FLOCK_SETTLED;
     int role = BIRD_ROLE_FOREST;
+    int voice = BIRD_VOICE_CROW;
     float heading = 0.0f;       //travelling: the anchor's way, radians about +Y from +Z
     float lift = 0.0f;          //how much higher than BIRD_CRUISE_CLEAR it flies: a wanderer's own
     vec2 home;                  //the forest it keeps to
@@ -167,8 +205,12 @@ struct BirdFlock{
     float circle = 0.0f;        //circling: the angle round the roost
     BirdScare wary;             //where it was last scared...
     float wary_left = 0.0f;     //...and how long it keeps away
+    float call = 0.0f;          //seconds to its next call
+    int size = 1;               //its own count, at a gather of 1
+    float join = 0.0f;          //seconds to the next bird joining or leaving
     uint32_t draws = 0;         //its count for the hash: each draw a new one
     uint32_t flushes = 0;       //times scared up, for the tool
+    uint32_t calls = 0;         //...and calls made
     std::vector<Bird> birds;
 };
 
@@ -179,6 +221,10 @@ struct BirdPose{
     float up = 0.0f;            //the shape keys' factors
     float down = 0.0f;
     float folded = 0.0f;
+    //The tree it sits on or is landing in, and how far it moves with it as the tree sways in the wind (weather_plan.md):
+    //1 perched, coming up to it over the last unit of a landing.
+    int tree = -1;
+    float ride = 0.0f;
 };
 
 //A moment a sound belongs to (birds_plan.md step 3): a flock going up, a bird calling.
@@ -188,13 +234,16 @@ struct BirdCall{
     int kind = BIRD_CALL_CAW;
     vec3 at;
     uint32_t bird = 0;          //who: a sound's instance, for its draws
+    int voice = BIRD_VOICE_CROW;
 };
 
 class BirdSky{
 public:
     void Reset(uint32_t seed);
-    //A flock of `count` settled in a roost near `home` - false where there is none.
+    //A flock of `count` (by the season's gather) settled in a roost near `home` - false where there is none.
     bool AddFlock(const BirdWorld& w, const vec2& home, int count, int role = BIRD_ROLE_FOREST);
+    //...or in the air over it, on its way to a roost or, with none, a point in the sky (BirdWorld::sky_reach).
+    void AddFlockInAir(const BirdWorld& w, const vec2& home, int count, int role = BIRD_ROLE_FOREST);
     //`dt` game seconds. `scares` are this step's: whoever is walking, chopping, or a tree just down.
     void Step(const BirdWorld& w, float dt, const std::vector<BirdScare>& scares);
     //Every flock in reach of `s` scared up now, whatever it is doing (the tool's `flush`).
@@ -208,10 +257,16 @@ public:
 private:
     uint32_t seed = 0;
     uint32_t next_id = 1;
+    uint32_t next_bird = 1;     //birds join and leave, so their ids are the sky's, not a place in a flock
     std::vector<BirdFlock> flocks;
     std::vector<BirdCall> calls;
     float Draw(BirdFlock& f, uint32_t salt);
+    void MakeBird(BirdFlock& f, Bird& b, int index);   //its own wingbeat, place round the anchor and way of facing
+    int Wanted(const BirdWorld& w, const BirdFlock& f) const;  //how many it should be now, by the season
+    void Gather(const BirdWorld& w, BirdFlock& f, float dt);  //in the air: a bird or a few joining, or one leaving
     float SitTime(BirdFlock& f);    //how long it stays settled this time: a wanderer's sits are short
+    void Call(BirdFlock& f, const Bird& b);
+    float CallGap(BirdFlock& f);    //to its next call, sitting or flying as it is now
     void Settle(BirdFlock& f);
     void TakeOff(BirdFlock& f, float stagger);
     void Scare(const BirdWorld& w, BirdFlock& f, const BirdScare& s);

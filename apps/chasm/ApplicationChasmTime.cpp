@@ -529,16 +529,133 @@ void ApplicationChasm::DrawOverlay(void){
     its own. A cell with no name is left empty. Returns the top of the grid, or of the BUILDING line
     over it: what stacks over them (DrawIssues) goes above that.
 */
+namespace {
+struct BarTool{ const char* key; const char* name; int tool; };
+const BarTool chasm_bar[] = {
+    {"1","HOUSE",CHASM_TOOL_HOUSE},{"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
+    {"8","STORE",CHASM_TOOL_STORE},{"0","WATER",CHASM_TOOL_WATER},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
+    {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
+    {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
+    {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
+    {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
+    {"3","ERASE",CHASM_TOOL_ERASE}};
+
+/*
+    THE TOOL'S TIP (the user's, 2026-10-18; drag_plan.md): what it is, and how it is placed - a drag that goes on with a
+    new building past each one's size, or a click for the one-plot kinds - in plain words, its sizes and storeys read
+    from the rules. Its price and its controls go under it (DrawToolTip).
+*/
+void ToolTipText(int tool, int kind, std::string& what, std::string& how, const char*& controls){
+    char buf[192];
+    int plots = ZoneKindMaxPlots(kind);
+    int storeys = ZoneKindMaxStoreys(kind);
+    controls = "Let go to build what's green - Right-click cancels - Shift+drag removes";
+    switch (tool){
+        case CHASM_TOOL_HOUSE:
+            what = "Home for one family. It keeps its own food, water and firewood; the bigger, the more.";
+            snprintf(buf,sizeof(buf),"Drag to lay a row of houses: a new one starts every %i plots. "
+                     "Click a house for a storey more, up to %i.",plots,storeys);
+            break;
+        case CHASM_TOOL_GARDEN:
+            what = "A walled garden for the house it touches.";
+            snprintf(buf,sizeof(buf),"Drag over the plots it should cover. Select a house first to make it that house's.");
+            break;
+        case CHASM_TOOL_LOT:
+            what = "A fenced yard for a house or a woodcutter's hut. A woodcutter stacks his woodpile on it.";
+            snprintf(buf,sizeof(buf),"Drag over the plots it should cover. Select the hut first to make it his.");
+            break;
+        case CHASM_TOOL_STORE:
+            what = "Holds goods for the whole colony. Next to a workplace it takes only that workplace's goods.";
+            snprintf(buf,sizeof(buf),"Drag for a store of up to %i plots; past that a new one starts. "
+                     "Click it for a storey more, up to %i.",plots,storeys);
+            break;
+        case CHASM_TOOL_WATER:
+            what = "A collector at the water's edge. It fills while it has a carrier, who takes the water to a store.";
+            snprintf(buf,sizeof(buf),"Only on the last dry plot of a bank. Drag along the bank for up to %i plots; "
+                     "the longer, the more it holds.",plots);
+            break;
+        case CHASM_TOOL_WOODCUTTER:
+            what = "The only one who fells trees, both for wood and to clear roads and building sites.";
+            snprintf(buf,sizeof(buf),"Drag for a hut of up to %i plots; more floor keeps more wood indoors. "
+                     "Click it for a storey more, up to %i.",plots,storeys);
+            break;
+        case CHASM_TOOL_FIELD:
+            what = "Farmed by the family whose land it is: sown, grown through the warm seasons, harvested home.";
+            snprintf(buf,sizeof(buf),"Drag over the large squares: up to %i to a field, then a new one starts. "
+                     "Buildings keep a plot away from it.",ZoneKindMaxPlots(ZONE_KIND_FIELD));
+            break;
+        case CHASM_TOOL_BUILDERS:
+            what = "A builder for every plot and storey. They build, make provisions and keep the towers stocked.";
+            snprintf(buf,sizeof(buf),"Drag for a hut of up to %i plots. Click it for a storey more, up to %i.",plots,storeys);
+            break;
+        case CHASM_TOOL_CAMP:
+            what = "Tents for anyone without a house, and the settlers' supplies. One camp per settlement.";
+            snprintf(buf,sizeof(buf),"Drag to pitch a tent on each plot. Outside every settlement it founds a new one.");
+            break;
+        case CHASM_TOOL_ROAD:
+            what = "People walk twice as fast on it. It costs only work: its trees are felled, then people without a job lay it.";
+            snprintf(buf,sizeof(buf),"Drag along the route; let go to lay what's green.");
+            controls = "Let go to build what's green - Right-click cancels - Shift+drag takes it up";
+            break;
+        case CHASM_TOOL_WALL:
+            what = "A palisade that stops walkers once it stands. Where a road crosses it, there's a gate.";
+            snprintf(buf,sizeof(buf),"Drag it like a road. Over a road it makes a gate whose door can be shut.");
+            controls = "Let go to build what's green - Right-click cancels - Shift+drag takes it up";
+            break;
+        case CHASM_TOOL_BRIDGE:
+            what = "Crosses a river from bank to bank, never a lake or the chasm. It's placed whole.";
+            snprintf(buf,sizeof(buf),"Press on a dry bank and let go on the other; it shows green when it can span the river.");
+            controls = "Let go on the far bank to build - Right-click puts the tool down";
+            break;
+        case CHASM_TOOL_WINCH:
+            what = "Takes people down to the balcony below and back up.";
+            snprintf(buf,sizeof(buf),"Not dragged: click to place one, on the rim right above a balcony. "
+                     "The preview shows where it lands.");
+            controls = "Click to place - Shift+click removes - Right-click puts the tool down";
+            break;
+        case CHASM_TOOL_RANGE:
+            what = "Archers train here all year, one trainee for each cell.";
+            snprintf(buf,sizeof(buf),"Drag over the large squares: up to %i to a range, then a new one starts.",
+                     ZoneKindMaxPlots(ZONE_KIND_RANGE));
+            break;
+        case CHASM_TOOL_TOWER:
+            what = "A guard tower, both storeys built at once. Its water and provisions are its guards' pantry.";
+            snprintf(buf,sizeof(buf),"Not dragged: click to place one. On a wall it takes the wall's place.");
+            controls = "Click to place - Shift+click removes - Right-click puts the tool down";
+            break;
+        case CHASM_TOOL_ROPEWALK:
+            snprintf(buf,sizeof(buf),"Makes rope from hemp. It works from %i plots, and a 3rd and 4th make it faster.",
+                     ECONOMY_ROPEWALK_MIN_PLOTS);
+            what = buf;
+            snprintf(buf,sizeof(buf),"Drag for a ropewalk of up to %i plots; past that, a new one starts.",plots);
+            break;
+        case CHASM_TOOL_STONECUTTER:
+            what = "Breaks the rocks around his hut for stone, starting with any boulder on a building site.";
+            snprintf(buf,sizeof(buf),"Drag for a hut of up to %i plots.",plots);
+            break;
+        case CHASM_TOOL_MINE:
+            what = "Digs floatstone or stone from a deposit: a seam's foot, the mountain's foot or an outcrop.";
+            snprintf(buf,sizeof(buf),"Not dragged: click to place one, on a deposit - it shows green only there.");
+            controls = "Click to place - Shift+click removes - Right-click puts the tool down";
+            break;
+        case CHASM_TOOL_ERASE:
+            what = "Removes a building's plot, a yard, a road or a field's cell. An erased site leaves what was brought as a crate.";
+            snprintf(buf,sizeof(buf),"Drag over what should go and it turns red; let go to erase it.");
+            controls = "Let go to erase what's red - Right-click cancels";
+            break;
+        default:
+            what.clear();
+            buf[0] = 0;
+            controls = "";
+            break;
+    }
+    how = buf;
+}
+}
+
 float ApplicationChasm::DrawBuildBar(float s){
-    struct BarTool{ const char* key; const char* name; int tool; };
-    static const BarTool bar[] = {
-        {"1","HOUSE",CHASM_TOOL_HOUSE},{"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
-        {"8","STORE",CHASM_TOOL_STORE},{"0","WATER",CHASM_TOOL_WATER},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
-        {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
-        {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
-        {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
-        {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
-        {"3","ERASE",CHASM_TOOL_ERASE}};
+    const BarTool* bar = chasm_bar;
+    const size_t bar_count = sizeof(chasm_bar) / sizeof(chasm_bar[0]);
     /*
         Only what has been DISCOVERED (demo_plan.md step 6): a tool still waiting for its discovery is left out, the
         rest closing up in the same order. One a discovery has just brought is marked NEW until it is first taken up;
@@ -554,9 +671,9 @@ float ApplicationChasm::DrawBuildBar(float s){
     tools_new |= ~locked & ~tools_known;
     tools_known = ~locked;
     std::vector<BarTool> shown;
-    for (const BarTool& b : bar){
-        if (!((locked >> b.tool) & 1u)){
-            shown.push_back(b);
+    for (size_t i = 0; i < bar_count; i++){
+        if (!((locked >> bar[i].tool) & 1u)){
+            shown.push_back(bar[i]);
         }
     }
     const int count = (int)shown.size();
@@ -628,6 +745,7 @@ float ApplicationChasm::DrawBuildBar(float s){
         uint32_t refusals = zone_refusals.load();
         uint32_t orders = order_refusals.load();
         uint32_t notices = arch_notices.load();
+        uint32_t drags = drag_refusals.load();     //a drag's release leaving out what the rules refuse (drag_plan.md)
         /*
             A GROUP's orders (selection_plan.md, "Several people selected"): their refusals held back until all of them
             are done, then one line for the lot - nothing if all were sent. Given up after a few seconds unanswered.
@@ -660,17 +778,20 @@ float ApplicationChasm::DrawBuildBar(float s){
             arch_notice_seen = notices;
             refusal_seen = refusals;
             order_refusal_seen = orders;
+            drag_refusal_seen = drags;
             refusal_since = now;
             refusal_shown = "the arch over the road came down with it";
             f_refusal_notice = true;
             refusal_seconds = 3.0f;
-        }else if (refusals != refusal_seen || orders != order_refusal_seen){
+        }else if (refusals != refusal_seen || orders != order_refusal_seen || drags != drag_refusal_seen){
             bool f_order = orders != order_refusal_seen;
+            bool f_drag = !f_order && drags != drag_refusal_seen;
             refusal_seen = refusals;
             order_refusal_seen = orders;
+            drag_refusal_seen = drags;
             refusal_since = now;
             std::lock_guard<std::mutex> lock(grid_mutex);
-            const std::string& why = f_order ? order_last_refusal : zone_last_refusal;
+            const std::string& why = f_order ? order_last_refusal : f_drag ? drag_last_refusal : zone_last_refusal;
             refusal_shown = why.empty() ? std::string() : (f_order ? "CAN'T SEND: " : "CAN'T BUILD: ") + why;
             f_refusal_notice = false;
             refusal_seconds = 3.0f;
@@ -908,6 +1029,86 @@ float ApplicationChasm::DrawBuildBar(float s){
 }
 
 /*
+    RENDER THREAD, from DrawCostTips: THE TOOL'S TIP, at the bottom (the user's, 2026-10-18) - left of the tools' grid,
+    level with its foot - for the tool the mouse is on there: its name and key, what it is and how it is placed
+    (ToolTipText), about what it costs (ToolCostTip), and its controls.
+*/
+void ApplicationChasm::DrawToolTip(float s){
+    int tool = bar_tip_tool;
+    const BarTool* b = NULL;
+    for (const BarTool& t : chasm_bar){
+        b = (t.tool == tool) ? &t : b;
+    }
+    if (!b){
+        return;
+    }
+    std::string what, how;
+    const char* controls = "";
+    ToolTipText(tool,ToolKind(tool),what,how,controls);
+    std::string price = ToolCostTip(tool);
+    struct Line{
+        std::string text;
+        float size;
+        uint32_t colour;
+        float after;        //the gap under it
+    };
+    const float pad = 14.0f * s;
+    //Wrapped at a reading width, and within what is left of the screen beside the grid - clear of the panels in the
+    //bottom left at the game's size.
+    float most = std::min(620.0f * s,build_bar_min.x - 10.0f * s - 16.0f * s - pad * 2.0f);
+    std::vector<Line> lines;
+    auto put = [&](const std::string& text, float size, uint32_t colour, float after){
+        std::string row;
+        size_t at = 0;
+        while (at <= text.size()){
+            size_t end = text.find(' ',at);
+            std::string word = text.substr(at,(end == std::string::npos) ? std::string::npos : end - at);
+            std::string longer = row.empty() ? word : row + " " + word;
+            if (!row.empty() && overlay->MeasureText(longer.c_str(),size).x > most){
+                lines.push_back(Line{row,size,colour,3.0f * s});
+                row = word;
+            }else{
+                row = longer;
+            }
+            if (end == std::string::npos){
+                break;
+            }
+            at = end + 1;
+        }
+        lines.push_back(Line{row,size,colour,after});
+    };
+    put(b->name,16.0f * s,HUD_TEXT,8.0f * s);
+    put(what,14.0f * s,HUD_TEXT,5.0f * s);
+    put(how,14.0f * s,HUD_TEXT,10.0f * s);
+    if (!price.empty()){
+        put(price,13.0f * s,HUD_AMBER,6.0f * s);
+    }
+    put(controls,12.0f * s,HUD_TEXT_DIM,0.0f);
+    float w = 0.0f;
+    float h = pad * 2.0f;
+    for (const Line& l : lines){
+        w = std::max(w,overlay->MeasureText(l.text.c_str(),l.size).x);
+        h += l.size + l.after;
+    }
+    w += pad * 2.0f;
+    vec2 p1(build_bar_min.x - 10.0f * s,build_bar_max.y);
+    vec2 p0(std::max(16.0f * s,p1.x - w),p1.y - h);
+    overlay->AddRect(p0,p1,10.0f * s,HudFaded(HUD_PANEL,235));
+    float y = p0.y + pad;
+    for (size_t i = 0; i < lines.size(); i++){
+        const Line& l = lines[i];
+        y += l.size;
+        overlay->AddText(l.text.c_str(),vec2(p0.x + pad,y),l.size,l.colour,UI_ALIGN_LEFT);
+        //The key beside the name, as the grid shows it.
+        if (i == 0){
+            float nx = overlay->MeasureText(l.text.c_str(),l.size).x;
+            overlay->AddText(b->key,vec2(p0.x + pad + nx + 8.0f * s,y),12.0f * s,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+        }
+        y += l.after;
+    }
+}
+
+/*
     RENDER THREAD, from DrawOverlay in play mode (builders_plan.md): in the bottom left corner, how many work
     at each job against its places - amber where a place stands empty, which with too few people is the
     newest workplace's - and the jobless, who carry wood and build too, and any away at a post (defence_plan.md).
@@ -1069,7 +1270,12 @@ void ApplicationChasm::RegisterTimeTools(){
         "up), azimuth (degrees from north, clockwise), kelvin (its warmth), brightness, colour, whether held - and "
         "the date's (seasons_plan.md, \"The sun\"); `sun` as an argument holds it - any of elevation (20-85), "
         "azimuth, kelvin, brightness, the date's for the rest - or {held:false} lets it follow the date again, as "
-        "the Sun panel does. A look only. include_screenshot as elsewhere.",
+        "the Sun panel does. A look only. The `weather` it returns (weather_plan.md) is the storm at the view (0-1), "
+        "the view's distance south of the snow front's line (negative: under the snow), the wind there, the snow's "
+        "thickness, the big gusts so far and whether the next may come; `weather` as an argument takes storm (0-1: "
+        "a storm held over the view, the front's line through it), held (false lets it go), strength (the wind's, 1 as "
+        "tuned) and gust (true: the big gust now, stinger and all) - as the Weather panel does. A look only. "
+        "include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
@@ -1079,6 +1285,7 @@ void ApplicationChasm::RegisterTimeTools(){
                 {"day_fraction",{{"type","number"}}},
                 {"snow_cover",{{"type","number"}}},
                 {"sun",{{"type","object"}}},
+                {"weather",{{"type","object"}}},
                 {"include_screenshot",{{"type","boolean"}}},
                 {"include_ui",{{"type","boolean"}}}
             }}
@@ -1108,18 +1315,26 @@ void ApplicationChasm::RegisterTimeTools(){
                 f_ran = calendar_commands_done.load() != before;
             }
             //The sun (ApplicationChasmSeasons.cpp): held or let go, and turned at once rather than on the next pass.
+            //And the weather (ApplicationChasmWeather.cpp), measured again at once.
             json sun;
+            json weather;
             main_scene->AtTickBoundary([&](){
+                if (args.contains("weather")){
+                    SteerWeather(args["weather"]);
+                }
+                UpdateWeather();
                 if (args.contains("sun")){
                     SteerSun(args["sun"]);
                 }
                 UpdateSun();
                 sun = SunStatusJson();
+                weather = WeatherStatusJson();
             });
             uint64_t tick = calendar_shown.load();
             CalendarDate d = CalendarDateOf(tick);
             json result{
                 {"sun",sun},
+                {"weather",weather},
                 {"tick",tick},
                 {"year",d.year},
                 {"season",CalendarSeasonName(d.season)},

@@ -1,5 +1,6 @@
 #include "ApplicationChasm.h"
 #include "Areas.h"
+#include "Debug.h"
 #include "Forest.h"
 #include "GridPick.h"
 #include "Terrain.h"
@@ -11,6 +12,8 @@
 #endif
 
 #include <cmath>
+
+static Debugger* debug = new Debugger("ChasmExplore",DEBUG_ALL);
 
 /*
     EXPLORATION AND THE CLOUDS (docs/play_mode_plan.md, steps 2-4).
@@ -40,6 +43,15 @@
 #define CLOUD_LIFT_VARY     1.4f    //and up to this much higher, so the top is lumpy
 #define CLOUD_EDGE          8.0f    //over this far from explored ground a puff is at full size
 #define CLOUD_FLAT          0.9f    //a puff's height against its width
+/*
+    ROUND THE TITLE'S DIORAMA (the user's, 2026-10-18): the bank begins this far in from its rim, small and sunk as at
+    an explored edge, is at full size past the rim, and runs this far out beyond it, thinning again at its far edge.
+    Its ground is read from the capture's terrain over a band just inside the rim, in sectors round it.
+*/
+#define CLOUD_RIM_INSIDE    4.0f
+#define CLOUD_RIM_OUTSIDE   22.0f
+#define CLOUD_RIM_BAND      6.0f
+#define CLOUD_RIM_SECTORS   72
 
 //--- The simulation ---------------------------------------------------------------------------------
 
@@ -444,8 +456,9 @@ std::shared_ptr<const Exploration> ApplicationChasm::GetExploration(){
     return exploration_snapshot;
 }
 
-//PHYSICS THREAD, from the zone command: the plot's point, or the middle of a field's coarse cell.
-bool ApplicationChasm::ZoneCommandExplored(const ChasmWorld& w, int op, int index){
+//From the zone command - the plot's point, or the middle of a field's coarse cell - on the rules' raster (the physics
+//thread's) or a published copy (a drag's preview).
+bool ApplicationChasm::ZoneCommandExploredIn(const Exploration& exploration, const ChasmWorld& w, int op, int index){
     const Grid& g = *w.grid;
     bool f_field = ZoneOpOnCell(op);
     vec2 p(0.0f,0.0f);
@@ -466,6 +479,38 @@ bool ApplicationChasm::ZoneCommandExplored(const ChasmWorld& w, int op, int inde
 }
 
 //--- The view ---------------------------------------------------------------------------------------
+
+namespace {
+
+//How far a puff is into the bank, 0 at its edge to 1 a CLOUD_EDGE in, eased: the share it has of its full size.
+float CloudEdge(float distance){
+    float s = std::max(0.0f,std::min(1.0f,distance / CLOUD_EDGE));
+    return s * s * (3.0f - 2.0f * s);
+}
+
+/*
+    ONE PUFF of the clouds, the same over the world and round the title's diorama: lattice point `p`, with its hash,
+    over `ground`, `s` into the bank (CloudEdge). Toward the bank's edge it shrinks a little and sinks into the ground,
+    so the bank slopes down to its edge rather than ending in a row of small balls. `shade` 0 the white, 1 the blue.
+*/
+MistPuff CloudPuff(uint32_t h, const vec2& p, float ground, float s, int& shade){
+    auto unit = [h](uint32_t salt){
+        return (float)(MeshHash(h,salt) & 0xFFFFFF) / (float)0x1000000;
+    };
+    MistPuff puff;
+    puff.radius = (CLOUD_RADIUS_MIN + (CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN) * unit(3)) * (0.7f + 0.3f * s);
+    float y = ground + CLOUD_LIFT + CLOUD_LIFT_VARY * unit(4) * s - puff.radius * 0.6f * (1.0f - s);
+    puff.pos = vec3(p.x,y,p.y);
+    puff.flat = CLOUD_FLAT;
+    puff.phase = unit(5);
+    puff.period = 14.0f + 8.0f * unit(6);
+    puff.bob = 0.25f;       //low: more and the underside lifts off the ground
+    puff.breath = 0.05f;
+    shade = (unit(7) < 0.7f) ? 0 : 1;
+    return puff;
+}
+
+}
 
 //RENDER THREAD, from BuildScene: two shades of puff, the foam's white and the frozen lip's blue-white.
 void ApplicationChasm::BuildCloudScene(){
@@ -565,32 +610,14 @@ void ApplicationChasm::UploadClouds(){
     if (f_show && ex && !ex->Empty()){
         for (const CloudSpot& spot : cloud_lattice){
             uint32_t h = spot.hash;
-            auto unit = [h](uint32_t salt){
-                return (float)(MeshHash(h,salt) & 0xFFFFFF) / (float)0x1000000;
-            };
             const vec2& p = spot.p;
             if (ex->Explored(p)){
                 continue;
             }
-            /*
-                Toward explored ground a puff shrinks a little and sinks into the ground: the bank
-                slopes down to its edge rather than ending in a row of small balls.
-            */
-            float d = ex->DistanceToExplored(p,CLOUD_EDGE);
-            float s = std::max(0.0f,std::min(1.0f,d / CLOUD_EDGE));
-            s = s * s * (3.0f - 2.0f * s);
             float ground = spot.ground;
-            MistPuff puff;
-            puff.radius = (CLOUD_RADIUS_MIN + (CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN) * unit(3)) *
-                          (0.7f + 0.3f * s);
-            float y = ground + CLOUD_LIFT + CLOUD_LIFT_VARY * unit(4) * s - puff.radius * 0.6f * (1.0f - s);
-            puff.pos = vec3(p.x,y,p.y);
-            puff.flat = CLOUD_FLAT;
-            puff.phase = unit(5);
-            puff.period = 14.0f + 8.0f * unit(6);
-            puff.bob = 0.25f;       //low: more and the underside lifts off the ground
-            puff.breath = 0.05f;
-            int shade = (unit(7) < 0.7f) ? 0 : 1;
+            int shade = 0;
+            MistPuff puff = CloudPuff(h,p,ground,CloudEdge(ex->DistanceToExplored(p,CLOUD_EDGE)),shade);
+            float y = puff.pos.y;
             int cx = std::max(0,std::min(mesh.chunks_x - 1,(int)((p.x - g.bounds_min.x) / TERRAIN_CHUNK_SIZE)));
             int cz = std::max(0,std::min(mesh.chunks_z - 1,(int)((p.y - g.bounds_min.y) / TERRAIN_CHUNK_SIZE)));
             size_t set = ((size_t)cz * mesh.chunks_x + cx) * 2 + shade;
@@ -630,6 +657,100 @@ void ApplicationChasm::UploadClouds(){
         o->SetInstanceMotion(std::move(motion[i]),MIST_MOTION_PAD);
         o->SetVisibility(f_any);
     }
+}
+
+/*
+    RENDER THREAD, from LoadDiorama: THE CLOUDS ROUND THE TITLE'S DIORAMA - the world's own puffs (CloudPuff), in a
+    ring at its rim, so the town on the title is a patch of explored land in the clouds and its cut edge is hidden. Not
+    captured: made whenever a diorama loads, from its own ground, so any diorama has them. They breathe on the title's
+    clock (PreRender's motion_seconds there), as the world's do on the game's.
+
+    Outside the rim there is no ground to lie on, so each puff sits on the rim's ground on its side: the highest of the
+    captured terrain in that sector of the band just inside the rim - over the chasm, where there is none, the level the
+    diorama was taken round, a lid as the world's clouds make over it.
+*/
+void ApplicationChasm::BuildDioramaClouds(){
+    if (!cloud_meshes[0] || !cloud_meshes[1] || puff_material < 0 || diorama.radius <= 0.0f){
+        return;
+    }
+    const vec2 c(diorama.centre.x,diorama.centre.z);
+    const float rim_r = diorama.radius;
+    const float two_pi = 6.2831853f;
+    auto sector = [&](const vec2& d){
+        float a = atan2f(d.y,d.x) + 3.14159265f;
+        return (int)(a / two_pi * (float)CLOUD_RIM_SECTORS) % CLOUD_RIM_SECTORS;
+    };
+    std::vector<float> rim(CLOUD_RIM_SECTORS,-1e30f);
+    for (Object* o : diorama_objects){
+        Mesh* m = o->GetMesh();
+        //The ground's own pieces, "Terrain <chunk>" as BuildScene names them: not the zones' overlays or the props.
+        if (!m || o->name.compare(0,8,"Terrain ") != 0){
+            continue;
+        }
+        for (const vertex& v : m->GetVertices()){
+            vec2 d(v.pos.x - c.x,v.pos.z - c.y);
+            float r = d.length();
+            //A little past the rim too: a triangle is captured by its middle, so its corners reach over.
+            if (r >= rim_r - CLOUD_RIM_BAND && r <= rim_r + 2.0f){
+                float& h = rim[sector(d)];
+                h = std::max(h,v.pos.y);
+            }
+        }
+    }
+    int bare = 0;
+    for (float& h : rim){
+        if (h < -1e29f){
+            h = diorama.centre.y;
+            bare++;
+        }
+    }
+    //A puff's ground: the highest of its sector and the two beside it, the world's "highest under its footprint".
+    auto ground_at = [&](const vec2& d){
+        int k = sector(d);
+        return std::max(rim[k],std::max(rim[(k + 1) % CLOUD_RIM_SECTORS],rim[(k + CLOUD_RIM_SECTORS - 1) % CLOUD_RIM_SECTORS]));
+    };
+    std::vector<fmat4> sets[2];
+    std::vector<vec4> motion[2];
+    const float inner = rim_r - CLOUD_RIM_INSIDE;
+    const float outer = rim_r + CLOUD_RIM_OUTSIDE;
+    const int n = (int)std::ceil(outer / CLOUD_SPACING) + 1;
+    for (int iz = -n; iz <= n; iz++){
+        for (int ix = -n; ix <= n; ix++){
+            uint32_t h = MeshHash((uint32_t)ix,(uint32_t)iz,0xD10Au);
+            float jx = (float)(MeshHash(h,1) & 0xFFFFFF) / (float)0x1000000;
+            float jz = (float)(MeshHash(h,2) & 0xFFFFFF) / (float)0x1000000;
+            vec2 d = vec2((float)ix,(float)iz) * CLOUD_SPACING + vec2(jx - 0.5f,jz - 0.5f) * (2.0f * CLOUD_JITTER);
+            float r = d.length();
+            if (r < inner || r > outer){
+                continue;
+            }
+            //Into the bank from whichever edge is nearer: the diorama's, or its own far one.
+            int shade = 0;
+            MistPuff puff = CloudPuff(h,c + d,ground_at(d),CloudEdge(std::min(r - inner,outer - r)),shade);
+            vec4 mv[2];
+            MistMotion(puff,mv);
+            sets[shade].push_back(MistRest(puff));
+            motion[shade].push_back(mv[0]);
+            motion[shade].push_back(mv[1]);
+        }
+    }
+    size_t puffs = sets[0].size() + sets[1].size();
+    for (int i = 0; i < 2; i++){
+        Object* o = new Object();
+        o->name = "Diorama clouds " + std::to_string(i);
+        o->SetMesh(cloud_meshes[i]);
+        o->SetMaterialSlot(0,puff_material);
+        o->SetVisualOnly(true);
+        o->SetPickability(false);
+        o->SetCastsShadow(true);
+        o->SetInstances(std::move(sets[i]));
+        o->SetInstanceMotion(std::move(motion[i]),MIST_MOTION_PAD);
+        o->SetVisibility(true);
+        title_scene->AddObject(o);
+        diorama_objects.push_back(o);
+    }
+    debug->Info("Diorama clouds: %zu puffs from %.0f to %.0f round (%.1f, %.1f), %i of %i rim sectors bare\n",puffs,inner,
+                outer,c.x,c.y,bare,CLOUD_RIM_SECTORS);
 }
 
 //--- The areas, for agents ------------------------------------------------------------------------

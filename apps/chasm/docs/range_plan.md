@@ -153,6 +153,13 @@ starting wood (40) and two fifths of its wheat (40). The figures below were meas
   - saved and loaded: everyone's archery back exactly; in winter, under the snow's first days, they trained on.
 - **Not checked by a run**: NOBODY AT THE RANGE (every test colony had people free), and the stand-ins (the GLB had
   the props).
+- **Props inside the fence** (the user's, 2026-10-18: some stood outside it). They were put at fixed reaches north
+  and east of the cell's middle, which on a cell turned to the grid's slant passed its fence. Now
+  (`BuildRangeProps`) the backstop lies along the fence the range shoots at - a bale where the way north from the
+  middle meets it, one either side along it, each against the piece behind it - the loose bale against the east
+  fence, and every prop is kept `RANGE_BALE_ROOM` / `RANGE_TARGET_ROOM` inside the cell's outline or left out. The
+  target stays where `ZoneRangeTarget` has it unless that is within `RANGE_TARGET_GAP` of the backstop. All view:
+  the trainees' line is the rule's, unchanged.
 - **Kinds and jobs taken**: `ZONE_KIND_RANGE` is 10 and `WORKER_JOB_ARCHER` 4; the guard tower (defence step 5) and
   its guard job come after them.
 

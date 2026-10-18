@@ -22,6 +22,52 @@
 #define STACK_FLUE_D        0.24f
 #define STACK_CAP           0.07f   //the flue's cap, a little wider all round
 #define FACE_OUT            0.012f  //windows and doors stand this far off their wall
+#define WALL_STRAIGHT_FROM  5       //an edge with a point of this many cells or more at an end takes a straight wall
+#define WALL_CROSSING_REACH 0.25f   //...crossing it no further than this of the edge from its midpoint, on a cell bent badly
+
+vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b){
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    if (a > b){
+        std::swap(a,b);
+    }
+    vec2 pa = g.fine.pos[a];
+    vec2 pb = g.fine.pos[b];
+    vec2 mid = (pa + pb) * 0.5f;
+    int na = picker.PlotQuadCount(a);
+    int nb = picker.PlotQuadCount(b);
+    if ((na < WALL_STRAIGHT_FROM && nb < WALL_STRAIGHT_FROM) || na <= 3 || nb <= 3){
+        return mid;
+    }
+    //The two cells either side of the edge, in index order; none across it on the map's edge.
+    int cells[2];
+    int found = 0;
+    for (int i = 0; i < na && found < 2; i++){
+        int q = picker.PlotQuadCorner(a,i) / 4;
+        const GridQuad& gq = g.fine.quads[q];
+        if (gq.v[0] == b || gq.v[1] == b || gq.v[2] == b || gq.v[3] == b){
+            cells[found++] = q;
+        }
+    }
+    if (found < 2){
+        return mid;
+    }
+    if (cells[0] > cells[1]){
+        std::swap(cells[0],cells[1]);
+    }
+    //pa + e t on the line from one centre to the other: t = (r x d) / (e x d).
+    vec2 c0 = g.FineQuadCentre(cells[0]);
+    vec2 d = g.FineQuadCentre(cells[1]) - c0;
+    vec2 e = pb - pa;
+    vec2 r = c0 - pa;
+    float den = e.x * d.y - e.y * d.x;
+    if (std::fabs(den) < 1e-9f){
+        return mid;
+    }
+    float t = (r.x * d.y - r.y * d.x) / den;
+    t = std::max(0.5f - WALL_CROSSING_REACH,std::min(0.5f + WALL_CROSSING_REACH,t));
+    return pa + e * t;
+}
 
 namespace {
 
@@ -473,7 +519,7 @@ bool LowestStandingPlot(const ChasmWorld& w, const ZoneState& z, int plot){
     A BUILDERS' HUT's yard (builders_plan.md): out by the wall toward its first open neighbour, a stack of
     three beams - two side by side and one on them - and a ladder leant against the wall up to the eaves.
     What tells it from the woodcutter's hut. Once a building, on its lowest standing plot. The wall toward
-    a neighbour sharing an edge runs through the edge's midpoint, so halfway there.
+    a neighbour sharing an edge crosses it at BuildingWallCrossing - halfway there, but on a star's edge.
 */
 void BuildBuildersYard(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
     const Terrain& t = *w.terrain;
@@ -496,7 +542,7 @@ void BuildBuildersYard(const ChasmWorld& w, const ZoneState& z, int plot, std::v
     }
     dir = dir * (1.0f / l);
     vec2 side(-dir.y,dir.x);
-    float wall = l * 0.5f;
+    float wall = (BuildingWallCrossing(w,plot,open) - p).length();
     float level = t.Height(plot);
     //The beams, along the wall.
     vec2 c = p + dir * (wall + 0.35f) + side * 0.4f;
@@ -1001,9 +1047,9 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         hi[k] = foot[k] + 2 * s[k];
     }
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
-    vec2 m[4];      //m[k] is the midpoint of edge k -> k+1
+    vec2 m[4];      //m[k] is where the walls cross edge k -> k+1: its midpoint, or straight on a star's (BuildingWallCrossing)
     for (int k = 0; k < 4; k++){
-        m[k] = (p[k] + p[(k + 1) % 4]) * 0.5f;
+        m[k] = BuildingWallCrossing(w,quad.v[k],quad.v[(k + 1) % 4]);
     }
     auto same = [&](int a, int b){
         return solid[a] && solid[b] && hi[a] == hi[b] && bid[a] == bid[b];
@@ -1041,7 +1087,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
 
         //--- The roof: the quarter P, M1, C, M0, each point at the eave or raised to the ridge ---
         //Raised where the house carries on past it at the same height: always over the plot's own
-        //vertex; at an edge midpoint when the corner across it is as tall; at the cell's centre when
+        //vertex; where the walls cross an edge when the corner across it is as tall; at the cell's centre when
         //all four corners are. Each point is decided by the corners it lies between and nothing
         //else, so the cells on either side of it agree.
         vec3 P(p[k].x,eave + ROOF_RISE,p[k].y);
@@ -1248,7 +1294,7 @@ bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at){
     the wall to past the walk, and to a plot's width either way along it - which no other building, road, garden
     or field draws in.
 */
-#define ROPEWALK_OUT            0.72f   //the walk's line, of the way from a ropewalk plot to the open one beside it: past the wall at half
+#define ROPEWALK_OUT            0.72f   //the walk's line, of the way from a ropewalk plot to the open one beside it: past the wall at half (or its crossing)
 #define ROPEWALK_HEIGHT         0.58f   //the strands, above the ground: waist-high on a villager (0.86)
 #define ROPEWALK_POST           0.07f   //the posts, square
 #define ROPEWALK_POST_EVERY     1.1f    //the longest stretch of strand between two
@@ -1434,7 +1480,8 @@ void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int
         WalkEnd e;
         e.plot = plot;
         e.open = open;
-        e.at = g.fine.pos[plot] + (g.fine.pos[open] - g.fine.pos[plot]) * ROPEWALK_OUT;
+        //As far past the wall as past a midpoint, wherever the wall crosses (BuildingWallCrossing).
+        e.at = BuildingWallCrossing(w,plot,open) + (g.fine.pos[open] - g.fine.pos[plot]) * (ROPEWALK_OUT - 0.5f);
         e.y = t.GroundHeight(e.at,t.Height(open));
         ends.push_back(e);
         return (int)ends.size() - 1;
@@ -1567,7 +1614,7 @@ void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int
     if (u.x < 0.0f){
         u = u * -1.0f;
     }
-    vec2 wall = g.fine.pos[yard_plot] + o * (reach * 0.5f);
+    vec2 wall = BuildingWallCrossing(w,yard_plot,yard_open);
     //The walk's far side, out from the wall - or with no walk past the yard, just clear of the sheaves.
     bool f_walk_here = false;
     for (const WalkEnd& e : ends){

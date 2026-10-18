@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: cd3eb3c1-f675-45da-b343-4593c448dd91
-  modified: 2026-10-09T18:06:19.905Z
+  modified: 2026-10-18T11:45:34.739Z
 ---
 
 BUILT 2026-10-09 (user approved a mockup first, then chose): every card that holds goods uses the GOODS STRIP
@@ -22,5 +22,7 @@ apps/chasm/docs/selection_plan.md "The goods strip".
 - Long cards (camp of settlers) move left of the bottom-right stack via build_stack_left.
 
 **Why:** the user wanted to see at a glance what is up for grabs vs. a house's or plot's own supplies.
-**How to apply:** any new place that holds goods (crate card, person's pack - still text) gets a HudStock row,
-not a text list. Related: [[chasm-game-plan]], [[crates-plan]].
+**How to apply:** any new place that holds goods gets a HudStock row, not a text list. 2026-10-18: a person's LOAD
+is a strip too, STRIPED through (HudStock::f_load, the user's "not intended for themselves"), against EconomyLoadRoom;
+the doing line gets a task bar from EconomyTaskProgress (every timer via EconomyStartTimer, timer_full saved, not
+hashed). Related: [[chasm-select-status-not-select]], [[chasm-game-plan]], [[crates-plan]].

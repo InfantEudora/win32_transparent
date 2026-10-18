@@ -182,7 +182,7 @@ nothing to correct. FETCH FIRST and the badge are still proposals, marked where 
   The person holding it can do no other work until something takes the load, and with no store at all
   that is forever. It is the same problem the posted carrier has.
 - **Now anyone holding a load that nobody takes puts it down** at once, by the same rules as a posted
-  person, and is free again. The farmer's leftover harvest becomes a crate on the way home, and the house
+  person, and is free again (BUILT 2026-10-18: "As built: step 5"). The farmer's leftover harvest becomes a crate on the way home, and the house
   fetches from it when it runs short, which is what the holding was waiting for. `WORKER_HOLDING` keeps
   its number, unused (states are never renumbered).
 - **The dead drop what they were carrying**, instead of it vanishing with them.
@@ -209,7 +209,7 @@ against each other.
 4. **Random crates**: placing them from the seed, finding them by sight, the overlay message, and their
    numbers. Tested over the 30 surveyed seeds: every map gets its few, none within the camp's first
    sight, and the same seed always gives the same crates.
-5. **Dropping instead of holding**, and the dead dropping their loads.
+5. **(BUILT 2026-10-18)** **Dropping instead of holding**, and the dead dropping their loads.
 
 ## Current tuning
 
@@ -389,3 +389,41 @@ A site taken off - its card's Cancel, or the eraser taking its last plot - leave
 where it stood, origin `CRATE_SITE` (5, "site"), titled "A site's goods": the user's, with Cancel
 (`construction_plan.md`, "Cancel"). The camp's goods (`CRATE_CAMP`) were the precedent. Counted as held in the
 statistics' history, as dropped loads and a camp's goods are.
+
+## As built: step 5, dropping instead of holding (2026-10-18)
+
+Found by the user: five people stood at the river with wood after a bridge was placed and cancelled, for good - the
+colony had no store, and the camp's supplies take nothing delivered. Every cancel did the same (a house checked
+too), and so would the eraser on a site, a site cut off by a re-plan, a job changed under a log.
+
+Files: `Economy.cpp` only (and the comment on `WORKER_HOLDING` in `Economy.h`). Nothing saved changes.
+
+- **A cancelled site is seen at once.** A carrier walking to the wood for a site (`WORKER_TO_FETCH`) or carrying to
+  it (`WORKER_TO_SITE`) asks at each look (`ECONOMY_LOOK_TICKS`) whether it is still there (`SiteAlive`): empty
+  handed he goes home, free; with a load he turns where he is - to a store, or down. He used to walk on to where the
+  site had been and only then look for somewhere to take it.
+- **Put down, never held.** `deliver` - a store that takes the load, a woodcutter's own pile - ends, with neither, in
+  `DropLoad` where he stands and home (`GoHome`, which sees to a pressing need first). The same for one taken off an
+  errand by a new job (`AssignJobs`, `leave_errand`), and for a builder or ropemaker whose workplace went while he
+  carried for it (`AtWorkshop`, `AtRopewalk`). So a farmer's harvest the pantry had no room for is a crate by the
+  house, which it fetches from when it runs short (`FetchHome` already took crates) - the food branch of holding,
+  which waited for exactly that, is gone.
+- **`WORKER_HOLDING` keeps its number** and one use: a person cut off by a re-plan with a load (`Replan`), or one
+  holding in a save from before, is put back to `deliver` at his next look. The user's save loaded so: the five
+  put their 25 wood down as one crate where they stood, and walked home.
+- **The dead** leave what they carried as a crate where they fell (`DropLoad` before they are struck off). The pack
+  of someone posted still goes with him.
+- Turned back carriers put down where they turned - several small crates along the way, rather than all of it
+  carried back to the camp (the user's choice, 2026-10-18: the simpler one, "good enough for now"). The next site's
+  carriers take from them as from any crate, and a builder moves them to a store once there is one.
+- **Tested** (seed 31, debug, minimised on its own port, sim paused and stepped):
+  - Before the change, the bug: a bridge over the stream west of the camp, cancelled while seven carriers brought
+    5 wood each - all walked on to its near end and held 35 wood there for 6,000 ticks; a house the same, two of them.
+  - After: the same bridge, cancelled 150 ticks after its carriers set out - within one look (25 ticks) all seven
+    were going home, their 40 wood in six crates (10, 10, 5, 5, 5, 5) where they had turned, nobody holding 1,800
+    ticks on. The house: both carriers likewise, 6 wood in two crates.
+  - A house placed after that: its carriers took the 1-wood crate's wood along with the camp's.
+  - A family moved into that house, and Elin lost the camp's woodcutting with a log on her: a crate of 2 wood
+    where she was, where she would have held it until a store stood.
+  - Replay: 1,051 ticks recorded - the bridge placed, carriers out, the cancel, the drop - replayed twice: every
+    tick's hash equal, nothing changed between ticks, the same six crates at the end as the run recorded.

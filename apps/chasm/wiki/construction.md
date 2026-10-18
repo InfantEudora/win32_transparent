@@ -4,9 +4,9 @@ aliases: building site, building sites, site, sites, builder, builders, builders
 kind: systems
 status: built
 summary: What the player places in play is a site, built a storey at a time from wood that people without a job, and builders, carry to it.
-plans: construction_plan.md > As built; construction_plan.md > Which site goes first; construction_plan.md > Cancel (the user, 2026-10-16); builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11)
-code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled Derive; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND CRATE_SITE; Zones.h: ZONE_OP_SITE_CANCEL ZONE_OP_FIELD_CANCEL; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips
-verified: 2026-10-17
+plans: construction_plan.md > As built; construction_plan.md > Which site goes first; construction_plan.md > Cancel (the user, 2026-10-16); builders_plan.md > As built; yards_plan.md > Noted; woodcutting_plan.md > Decided (the user, 2026-10-11); drag_plan.md > Decided (the user, 2026-10-17/18); drag_plan.md > As built (2026-10-18)
+code: Economy.cpp: FindSiteWork Build SiteNeed AssignJobs EconomyStoreyCost EconomyKindStoreyCost EconomyCellCost KeepTowers MakeProvisions MoveCrate SiteTreesStanding Felled Derive; Economy.h: WORKER_JOB_BUILDER ECONOMY_SITE_GROUND CRATE_SITE; Zones.h: ZONE_OP_SITE_CANCEL ZONE_OP_FIELD_CANCEL ZoneKindMaxPlots ZoneKindOnePlot; ApplicationChasmGhost.cpp: ToolCostTip DrawCostTips; ApplicationChasmRoads.cpp: PlanDrag PlaceDrag; ApplicationChasmTime.cpp: DrawToolTip ToolTipText
+verified: 2026-10-18
 ---
 
 ## Sites
@@ -28,14 +28,15 @@ painted on cells so much a cell (`EconomyCellCost`): a [[Guard tower|guard tower
 [[Provisions|provisions]], and keeps them as its stock. A [[Winch|winch]] takes [[Rope|rope]], which the colony has
 to make first. A storey stands only once all it takes of every good is there, and what it took is used up.
 **Cancel** on a site's card, while none of it stands, takes it off whole - a [[Bridge|bridge]] too - and what was
-brought is left where it stood as a [[Crate|crate]], "A site's goods"; so when the eraser takes its last plot.
+brought is left where it stood as a [[Crate|crate]], "A site's goods"; so when the eraser takes its last plot. Anyone
+on the way to it turns at once, their load to a [[Store|store]] or put down where they are.
 
 **A site over trees** waits for them: they stand until a [[Woodcutter]] fells them, the first he goes for,
 and nothing of it rises until the last is down - then at once, if it has all it takes. Its card counts them.
 
-**Before placing**, the tool in hand shows beside the cursor what a click would cost, by these same rules
-(`EconomyKindStoreyCost`), and the trees to fell first: a dragged line or bridge all of it, nothing for erasing,
-only HIDDEN UNDER THE CLOUDS under them. A tool hovered on the build bar shows about what a plot or cell of it costs.
+**Placing** is a drag: its trail is previewed - green where it will be built, red where the rules refuse - and placed on release, a new
+building past each one's size ({ZONE_BUILDING_MAX_PLOTS:#plots}, a store {ZONE_STORE_MAX_PLOTS}, a field {ZONE_FIELD_MAX_CELLS} cells); a click is a storey more. The winch, tower and mine are only clicked.
+By the cursor, what all of it costs and the trees to fell first (`EconomyKindStoreyCost`) - under the clouds only HIDDEN UNDER THE CLOUDS. A tool hovered on the build bar explains itself at the bottom.
 
 ## Who builds
 
@@ -65,5 +66,4 @@ Nearest by the walk, so a colony builds close together. Among errands within {EC
 units of the nearest, though, the one placed first goes first. A site the player marks **Build first**
 comes before everything, however far away. Roads and walls share this queue.
 
-The settlers' supplies hold {ECONOMY_START_WOOD} wood, so the first buildings go up before there is a
-woodcutter.
+The settlers' supplies hold {ECONOMY_START_WOOD} wood, so the first buildings go up before there is a woodcutter.

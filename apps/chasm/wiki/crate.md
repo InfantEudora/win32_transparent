@@ -3,18 +3,20 @@ title: Crate
 aliases: crates, find, finds
 kind: goods
 status: partial
-summary: Goods lying on the ground - the load of someone sent to a post - a store villagers take from, and builders carry off to a store.
-plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14)
+summary: Goods lying on the ground - the load of someone sent to a post, or one nobody would take - a store villagers take from, and builders carry off to a store.
+plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; crates_plan.md > As built: step 5, dropping instead of holding (2026-10-18); stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14)
 code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE CRATE_SITE ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble Derive; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
-verified: 2026-10-16
+verified: 2026-10-18
 ---
 
 A crate is goods lying on the ground. One appears when the player sends someone carrying a load to a [[Posts|post]]:
-the load is put down the moment the order is given. One is left where a [[Camp|camp]] stood when its last tent goes,
-holding its supplies and pantry ("A camp's goods"), and where a [[Construction|site]] was taken off, holding what was
-brought to it ("A site's goods"). **Rubble** is a crate too: piles of [[Stone|stone]] laid out with a new colony at
-the foot of the balconies' walls, or left where a [[Stonecutter|stonecutter]] broke a rock - drawn as broken stones,
-not a crate - and along a seam's foot, piles of its [[Floatstone|floatstone]], drawn as broken crystals: "Floatstone".
+the load is put down the moment the order is given. **Nobody holds a load nothing takes**: with no [[Store|store]] or
+woodpile for it, it is put down where they stand - a [[Construction|site's]] carriers' when it is cancelled, a
+farmer's when the house is full, the dead's. One is left where a [[Camp|camp]] stood when its last tent goes, holding
+its supplies and pantry ("A camp's goods"), and where a [[Construction|site]] was taken off, holding what was brought
+to it ("A site's goods"). **Rubble** is a crate too: piles of [[Stone|stone]] laid out with a new colony at the foot
+of the balconies' walls, or left where a [[Stonecutter|stonecutter]] broke a rock - drawn as broken stones, not a
+crate - and along a seam's foot, piles of its [[Floatstone|floatstone]], drawn as broken crystals: "Floatstone".
 
 ## Where the load goes
 
@@ -41,9 +43,9 @@ building and road work - a load ({ECONOMY_LOAD}) at a time, and only to a store 
 They fetch only crates on their own [[Settlement|settlement's]] land. Nobody without a job moves one, so with
 no builders' hut a crate is used where it lies.
 
-**PICK UP**, a chip on the card, puts a crate ahead of building: a builder fetches it after the guard towers
-and provisions, and from **anywhere** he can walk to, since the order is the player's - though still to a
-store of his own settlement. Pressed again, it goes back in the queue. With no builders, the card says so.
+**PICK UP**, a chip on the card, puts a crate ahead of building: a builder fetches it after the guard towers and
+provisions, from **anywhere** he can walk to, as the order is the player's - though to a store in his own settlement.
+Pressed again, it goes back in the queue. With no builders, the card says so; a crate under the clouds has none.
 
 But **not further than he can walk without water**, with a wide margin: a crate whose walk there and on to the
 store - by the way he would go, a [[Winch|winch]] and roads counted - takes more than
@@ -52,9 +54,8 @@ far to fetch. A store nearer to it brings it in reach.
 
 ## Building over it
 
-In play mode nothing may be built over a crate - a building, a garden, a lot, a wall, a field or a range:
-"a crate lies there", and the ghost shows red. A road may run under it. A debug placement goes ahead, and
-the crate is lost.
+In play mode nothing may be built over a crate - a building, a garden, a lot, a wall, a field or a range: "a crate
+lies there", and the ghost shows red. A road may run under it. A debug placement goes ahead, and the crate is lost.
 
 ## Seeing it
 
@@ -67,5 +68,4 @@ shows the crate on the selected plot and can put one down there; `chasm_economy`
 
 - [proposed] A badge over each crate on the map.
 - [idea] PICK UP for many at once - a box over a balcony's piles.
-- [planned] Anyone holding a load that nobody takes puts it down as a crate, and so do the dead.
 - [planned] A few crates placed on the map from the seed, under the clouds, found by exploring.

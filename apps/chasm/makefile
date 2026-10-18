@@ -55,6 +55,8 @@ APP_SRCS += Walkers.cpp
 APP_SRCS += Calendar.cpp
 APP_SRCS += ApplicationChasmTime.cpp
 APP_SRCS += ApplicationChasmSnow.cpp
+APP_SRCS += Weather.cpp
+APP_SRCS += ApplicationChasmWeather.cpp
 APP_SRCS += Economy.cpp
 APP_SRCS += ApplicationChasmEconomy.cpp
 APP_SRCS += ApplicationChasmWorkersView.cpp
@@ -86,8 +88,14 @@ USE_PHYSICS := 0
 #happens. The app compiles and runs silent with it at 0, the cues still deciding - see the USE_SOUND block in engine.mk.
 USE_SOUND := 1
 
+#The exe's icon and Details tab, on Windows - chasm.rc, and THE VERSION below for what it says.
+APP_RC := chasm.rc
+
 #The same two roots main.cpp declares, in the same order: this app's own (the palette) first.
 ASSET_ROOTS := assets $(ROOT)/shared_assets
+
+#The icon's picture, which nothing loads: it reaches the exe as chasm.ico, through chasm.rc.
+ASSET_PACK_FLAGS += --exclude "icon.png"
 
 ASSET_PACK_FLAGS += --exclude "fonts/CascadiaMono.ttf"
 ASSET_PACK_FLAGS += --exclude "fonts/mono_sdf.png"
@@ -129,3 +137,33 @@ CHASM_STAMP := $(OBJ_DIR)/version.stamp
 $(shell mkdir -p $(OBJ_DIR); [ "$$(cat $(CHASM_STAMP) 2>/dev/null)" = "$(CHASM_GIT) $(CHASM_DAY)" ] || echo "$(CHASM_GIT) $(CHASM_DAY)" > $(CHASM_STAMP))
 $(OBJ_DIR)/ChasmVersion.o: $(CHASM_STAMP)
 $(OBJ_DIR)/ChasmVersion.o: CFLAGS += -DCHASM_GIT=\"$(CHASM_GIT)\" -DCHASM_BUILD_DATE=\"$(CHASM_DAY)\"
+
+#AND THE SAME VERSION IN THE EXE'S OWN PROPERTIES (chasm.rc), so a crash report or a player's "which build is
+#this" can be answered from the file. The values go in a header written beside the objects, which the script
+#includes like any other, rather than as -D's handed on through windres to its preprocessor. The number is read
+#out of ChasmVersion.cpp so it is still set in one place - and since Windows also wants it as four numbers, it may
+#hold only digits and dots.
+ifeq ($(PLATFORM),windows)
+CHASM_VERSION := $(shell sed -n 's/^\#define CHASM_VERSION "\(.*\)"$$/\1/p' ChasmVersion.cpp)
+ifeq ($(CHASM_VERSION),)
+$(error could not read CHASM_VERSION out of ChasmVersion.cpp, which chasm.rc needs)
+endif
+CHASM_EMPTY :=
+CHASM_SPACE := $(CHASM_EMPTY) $(CHASM_EMPTY)
+CHASM_COMMA := ,
+#"0.0.1" -> 0,0,1,0
+CHASM_VERSION_NUM := $(subst $(CHASM_SPACE),$(CHASM_COMMA),$(wordlist 1,4,$(subst ., ,$(CHASM_VERSION)) 0 0 0 0))
+
+CHASM_RC_H := $(OBJ_DIR)/chasm_rc.h
+$(CHASM_RC_H): $(CHASM_STAMP) ChasmVersion.cpp makefile
+	@mkdir -p $(dir $@)
+	@echo '#define CHASM_RC_VERSION "$(CHASM_VERSION)"' > $@
+	@echo '#define CHASM_RC_VERSION_NUM $(CHASM_VERSION_NUM)' >> $@
+	@echo '#define CHASM_RC_PRODUCT_VERSION "$(CHASM_VERSION) ($(CHASM_GIT), $(CHASM_DAY))"' >> $@
+	@echo '#define CHASM_RC_EXE "$(notdir $(EXE))"' >> $@
+	@echo '#define CHASM_RC_FILEFLAGS $(if $(CONFIG_SUFFIX),0,VS_FF_DEBUG)' >> $@
+
+#What chasm.rc pulls in, which make cannot see for itself (WINDOWS RESOURCES in engine.mk).
+$(OBJ_DIR)/chasm.res.o: chasm.ico $(CHASM_RC_H)
+RC_FLAGS += -I$(OBJ_DIR)
+endif

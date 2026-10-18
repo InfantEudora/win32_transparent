@@ -76,15 +76,18 @@ layout (std430, binding = 5) buffer MorphBuffer{
 
 /*
 	THE WIND - Renderer::SetWindField fills it, material_t::wind_flex says who bends. A grid of
-	world X/Y velocities with its own mapping in the header, so nothing needs a uniform for it.
+	world velocities with its own mapping in the header, so nothing needs a uniform for it.
 	Always bound; enabled (wind_size.z) is 0 until an app sets a field. Mirrors wind_header_t.
 */
 layout (std430, binding = 7) readonly buffer WindBuffer{
 	vec4  wind_rect;	//x0, y0, 1/cell_x, 1/cell_y
-	ivec4 wind_size;	//width, height, enabled, unused
+	ivec4 wind_size;	//width, height, enabled, plane
 	vec4  wind_params;	//time in seconds, unused x3
 	vec2  wind_grid[];
 };
+//wind_size.w - Renderer.h's WIND_PLANE_*: a side view's X/Y, or the ground's X/Z.
+#define WIND_PLANE_XY	0
+#define WIND_PLANE_XZ	1
 
 /*
 	INSTANCE MOTION - Object::SetInstanceMotion and material_t::wind_mode from INSTANCE_MOTION_FIRST
@@ -188,9 +191,52 @@ vec3 WindSwing(vec3 world, vec3 origin, vec3 push){
 	return origin + normalize(r + push) * d;
 }
 
+/*
+	THE GROUND PLANE (WIND_PLANE_XZ): a wind across the ground, for a world seen from above, where
+	the rest of this file's wind is a side view's X/Y. The same bend by height squared and the same
+	swing; what changes is which way is which. The push runs ALONG the wind and the cross-sway
+	ACROSS it, both on the ground, where X/Y has them on x and through the slab. There is no
+	vertical wind to lift a leaf, so its lift is all flutter.
+
+	And SLOWER: what stands on the ground is trees as much as grass, and a tree sways at under a
+	beat a second - archer's 5.3 rad/s made a forest shiver. The flutter's phase lags a little
+	with height rather than archer's four radians a unit, which on a tree ten units tall ran
+	several waves up the trunk and turned it to jelly.
+*/
+vec3 WindBendGround(vec3 world, vec3 origin, float flex, int mode, float t, float phase){
+	vec2 wind = SampleWind(world.xz);
+	float speed = length(wind);
+	if (speed < 1e-4){
+		return world;
+	}
+	vec3 along = vec3(wind.x,0.0,wind.y) / speed;
+	vec3 across = vec3(-along.z,0.0,along.x);
+	if (mode == 1){
+		float d = length(world - origin);
+		float bend = flex * d * d;
+		float flap = sin(t * (7.0 + 0.3 * speed) + phase + d * 6.0);
+		vec3 push = along * (bend * speed * (0.6 + 0.5 * flap))
+		          + vec3(0.0,bend * speed * 0.6 * sin(t * 9.7 + phase * 1.3 + d * 5.0),0.0)
+		          + across * (bend * speed * 0.3 * sin(t * 5.1 + phase * 2.3));
+		return WindSwing(world,origin,clamp(push,vec3(-0.6 * d),vec3(0.6 * d)));
+	}
+	float h = world.y - origin.y;
+	if (h <= 0.0){
+		return world;
+	}
+	float flutter = 0.25 * sin(t * 2.3 + phase - 0.15 * h) + 0.1 * sin(t * 3.9 + phase * 1.7);
+	float bend = flex * h * h;
+	float push = clamp(bend * speed * (1.0 + flutter),-0.9 * h,0.9 * h);
+	float sway = clamp(bend * speed * 0.35 * sin(t * 1.9 + phase * 2.3),-0.5 * h,0.5 * h);
+	return WindSwing(world,origin,along * push + across * sway);
+}
+
 vec3 WindBend(vec3 world, vec3 origin, float flex, int mode){
 	float t = wind_params.x;
 	float phase = dot(origin,vec3(1.73,0.0,2.41));
+	if (wind_size.w == WIND_PLANE_XZ){
+		return WindBendGround(world,origin,flex,mode,t,phase);
+	}
 	vec2 wind = SampleWind(world.xy);
 	float speed = length(wind);
 	/*

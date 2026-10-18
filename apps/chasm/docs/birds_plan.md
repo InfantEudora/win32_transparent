@@ -27,8 +27,10 @@ a villager walks through the forest**. The user will gather the sounds: magpie, 
 
 ## As built (2026-10-17)
 
-**Steps 0, 1 and 2 are built, and step 4's homes across the map.** Sound (step 3), the clouds and seasons of
-step 4, and the title flock (step 5) are not. The game side is `Birds.{h,cpp}` (the flocks, engine-free) and
+**All five steps are built.** Steps 0-2 and step 4's homes were built on 2026-10-17. Step 3 (the sounds), step
+4's seasons and step 5 (the title flock) were built on 2026-10-18 (below). Birds over unexplored ground stay
+drawn and heard, on purpose (the user's, 2026-10-18; see step 4). Step 4's two levels of detail were not
+needed: the step stays under 0.1 ms a frame at a winter's size. The game side is `Birds.{h,cpp}` (the flocks, engine-free) and
 `ApplicationChasmBirds.cpp` (the world they're told about, the objects, the `chasm_birds` tool). The wiki page
 is `wiki/birds.md`. The figures are the constants in `Birds.h`; the tuning table below was the starting point.
 
@@ -78,9 +80,86 @@ is `wiki/birds.md`. The figures are the constants in `Birds.h`; the tuning table
 - Seen in game: at any moment 4-8 of the 8 are in the air, three of them over the colony's woods. The step
   costs 60-100 µs a frame in debug, up from 42-49.
 
+**Step 3, the sounds (2026-10-18).** The user's takes: `crows_1..3` (2-3 s each, runs of three to five caws),
+`magpie_1..3` (about 1 s of chatter) and `bird_takeoff` (a 1.7 s burst of wings). There were no ravens. Converted
+by `tools/sound_ogg.py`, with two misspelled names corrected (`magpi_2`, `mapgie_3`). The wavs are in
+`art_source/chasm/sound/`.
+
+- **The user's answers that day:** the wanderers chatter as **magpies** and every other flock caws as crows. The
+  crow takes stay **whole bouts**, not cut into single caws.
+- **Each flock calls on its own clock** (`BIRD_CALL_*`): 15-45 s apart sitting, 5-14 s apart flying. A scared
+  flock's sentinel calls at once and a second bird answers 0.4-1 s later, so the two bouts overlap. A sitting
+  flock that is scared also gives the wing burst.
+- **The hand-over:** calls are made on the render thread and passed to the physics thread in `bird_calls`, under
+  `birds_mutex`. `SignalBirds` signals `bird_call` (with `voice`, `BIRD_VOICE_*`) or `birds_flush`. It drops
+  calls more than `SOUND_BIRD_REACH` from the listener, and every call while the world is not live. Birds that are
+  not drawn make no calls.
+- **Rows** `birds_flush`, `bird_call_crow` and `bird_call_magpie` are on the `activity` bus, so they are held in
+  a pause. They fall off with distance, are panned and are pitch-jittered.
+  - The gains were set from the takes' measured levels. The magpies are about 10 dB quieter than the crows, so
+    they take gain 1.8.
+  - `crows_1` is about 6 dB louder than the other two takes, and `crows_3` leans 7 dB to the right. Both are
+    kept as they came.
+- **"Only the nearest few flocks" became a reach.** Calls are sparse, so `max_instances` on the rows caps how many
+  are heard at once.
+- **Mine, for the user to overrule:** wanderers call at the sitting rate even in the air. At the flying rate, the
+  two wanderers over the colony chattered every 5 s and took 10 of 14 calls. After the change, a muted test over
+  `village_year5`'s colony heard 7 crow and 7 magpie calls in 76 s.
+- **Checked on a muted test instance:**
+  - A flush caught two flocks 10 apart. It gave two wing bursts, one sentinel (the second was held back by the
+    row's gap) and two answers 0.48 s and 0.72 s later.
+  - With the game paused, no call was made in 20 s.
+  - Nobody has listened yet: gains and rates are first guesses.
+
+**Step 4, the seasons (2026-10-18).** Clouds were dropped (the user's; see step 4). What was built:
+
+- **A flock has its own `size`, and grows to it times `BirdWorld::gather`.** The gather is 1 in spring and
+  summer, `BIRD_GATHER_AUTUMN` 1.5 and `BIRD_GATHER_WINTER` 2.0. It is read from `calendar_shown` by
+  `BirdGather`. Wanderers keep their size.
+- **Birds join only in the air** (travelling or circling). Every `BIRD_JOIN_GAP_*`, one to three fly in
+  together from `BIRD_JOIN_FROM` off the flock's edge. When the gathering is over, birds leave one at a time,
+  the last to come first, away from the flock's heading. A leaving bird belongs to no roost, scare or flock
+  middle, and is gone at `BIRD_LEAVE_FAR`.
+- **A flock is made at the season's size.** So a load in winter starts with winter's flocks rather than
+  growing into them.
+- **Bird ids now come from the sky's own counter**, not a flock's slot. The ring of places round the anchor
+  widens with a flock's size, so a flock of twenty does not crowd.
+- **`chasm_birds op gather value N`** holds a gather for looking at it; 0 gives the date's again. The status
+  shows `gather`, and each flock's `size` and `leaving`.
+- **`BIRD_OBJECTS_MAX`** went from 200 to 256.
+- **Measured on the user's Seed 12 colony** in a muted test copy, with the gather held at 2:
+  - 96 birds became 157 in 90 s, with the step at 51-72 µs a frame in debug, against 57 µs before.
+  - Joins wait for a sitting flock to fly. In 90 s, 5 of 12 flocks reached their full winter size.
+  - Released back to 1, they shrank from 167 to 148 birds in 80 s, one bird at a time. A season is 7.5
+    minutes, so they keep up.
+- **Seen:** a flushed flock of 14 reads as a loose group over the pines, still hard to make out over dark
+  forest at that zoom.
+
+**Step 5, the title flock (2026-10-18).**
+
+- **One flock of `BIRD_TITLE_FLOCK` (9) over the diorama**, made with the wanderers' habits: short sits and
+  long flights. It is made in the air, so it shows from the first frame.
+  - It is stepped from `PreRender` while the title shows (`UploadTitleBirds`), by real time.
+  - It is silent: its calls are let go.
+  - Its objects are in `diorama_objects`, so a reload takes them with it.
+- **A capture now writes `perch` markers** (`BirdDioramaMarkers`): every standing tree's perches within the
+  radius, with the tree's number and base. The title makes roosts from them (`TitleBirdWorld`).
+- **A diorama without perch markers** (today's `menu_town`) gets a flock that lives in the air
+  (`BirdWorld::sky_reach`, `BIRD_TITLE_SKY` of the radius). It circles a point, flies to another and never
+  comes down. Seen over `menu_town`: crows with wings spread over the roofs and fields, moving on every 10-15
+  s within about 22 of the middle.
+- **With perch markers** (checked with a throwaway capture of the test copy's camp, then deleted): 722 perches
+  on 537 trees, most pines one at the tip. The flock came down within 10 s, sat about 14 s, flew on, circled
+  and came down again.
+- **The diorama's walkers scare it** (`BIRD_REACH_WALK`).
+- **The woodcutter's flush was not built.** A captured person's clip is `Walking`, `Idle` or `Shoot`, so a
+  woodcutter in a diorama stands idle. With no axe swinging, a flush there would come from nowhere.
+- **To give the title its perches, `menu_town` must be captured again**, the same way as before
+  (`chasm_diorama op capture`, its centre 244, -28 and radius 32). That is the user's to do: it is their
+  framing of their colony.
+
 **Not yet:**
 
-- The calls are made (`BirdCall`) but dropped until step 3.
 - There is no debug panel or view layer. The tool's `status` gives each flock's state, `flushes` and
   `scare_gap` (how near the nearest scare came, past its reach).
 
@@ -253,8 +332,11 @@ placed and timed by what they do, so they are events.
   apart, so a play view at its full zoom-out usually has one or two flocks in or near it.
 - **Simulated at two levels of detail.** Off screen, only the flock's centre moves and no per-bird flocking
   runs. A flock coming into view takes up full detail where it is.
-- **Under the clouds:** a flock over ground no one has explored is not drawn. This needs a check: a bird over
-  the edge of the clouds must not give away what lies beyond.
+- **Under the clouds: DROPPED (the user's, 2026-10-18).** The plan was to hide a flock over ground no one has
+  explored, so that no bird gave away what lies beyond. The user wants the opposite: "I actually like the
+  birds over the clouds. The sound and birds can be a small clue left intentionally to hint at what lies
+  beneath." So birds fly, perch and call over unexplored ground as anywhere else. A flock circling over the
+  clouds says there are trees under them.
 - **Seasons:** larger flocks in autumn and winter, which is when crows and rooks gather. Black birds on winter
   snow will read well.
 

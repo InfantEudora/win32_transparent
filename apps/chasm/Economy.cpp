@@ -390,6 +390,51 @@ float EconomySkillFactor(int skill){
     return 0.6f + 0.08f * (float)std::max(1,std::min(10,skill));
 }
 
+float EconomyTaskProgress(const EconomyWorker& k){
+    switch (k.state){
+        case WORKER_WORKING:
+        case WORKER_UNLOADING:
+        case WORKER_FETCHING:
+        case WORKER_BUILDING:
+        case WORKER_LAYING:
+        case WORKER_GETTING:
+        case WORKER_SOWING:
+        case WORKER_PLAYING:
+        case WORKER_TRAINING:
+        case WORKER_LIFTING:
+        case WORKER_TAKING_INPUT:
+        case WORKER_MAKING:
+            break;
+        case WORKER_ON_POST:
+            if (k.forage == FORAGE_NONE){
+                return -1.0f;   //only picking or drawing by hand there runs on the timer: a unit at a time
+            }
+            break;
+        default:
+            return -1.0f;
+    }
+    //A save from before timer_full, mid-task: no bar until his next one starts.
+    if (k.timer_full <= 0 || k.timer <= 0 || k.timer > k.timer_full){
+        return -1.0f;
+    }
+    return 1.0f - (float)k.timer / (float)k.timer_full;
+}
+
+int EconomyLoadRoom(const EconomyState& e, const ZoneState& z, const EconomyWorker& k){
+    //A load home to the pantry is a fetch, ECONOMY_LOAD for anyone (TakeHome): the rest are his work's.
+    bool f_work = k.state != WORKER_TO_PANTRY;
+    bool f_camp = k.building && k.building < z.buildings.size() && z.buildings[k.building].kind == ZONE_KIND_CAMP;
+    int room = ECONOMY_LOAD;
+    if (f_work && k.job == WORKER_JOB_WOODCUTTER && k.carry_good == GOOD_WOOD){
+        int log_wood = (k.building < e.log_wood.size() && e.log_wood[k.building] > 0) ? e.log_wood[k.building]
+                                                                                       : ECONOMY_WOOD_PER_TREE;
+        room = ECONOMY_WOODCUTTER_LOGS * log_wood;
+    }else if (f_work && f_camp && k.job == WORKER_JOB_WATER && k.carry_good == GOOD_WATER){
+        room = ECONOMY_CAMP_WATER_LOAD;
+    }
+    return std::max(room,k.carry);
+}
+
 //--- Lifelines (docs/lifeline_plan.md) -------------------------------------------------------------
 
 int EconomyAgeAt(int64_t born, uint64_t tick){
@@ -1844,16 +1889,17 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
         return z.buildings[id].kind == ZONE_KIND_HOUSE || z.buildings[id].kind == ZONE_KIND_CAMP;
     };
     //Off an errand for his old job: home - or, with a load on him (a woodcutter's first log, out for a second),
-    //to a store with it, holding it if none takes it. Home with it, it was neither put down nor carried on.
+    //to a store with it, put down where he is if none takes it (crates_plan.md, step 5). Home with it, it was
+    //neither put down nor carried on.
     auto leave_errand = [&](EconomyWorker& k){
         k.prop = -1;
-        if (k.carry > 0){
-            if (!FindStore(k,z,walkers)){
-                k.state = WORKER_HOLDING;
-            }
-        }else{
-            GoHome(k,z,walkers);
+        if (k.carry > 0 && FindStore(k,z,walkers)){
+            return;
         }
+        if (k.carry > 0){
+            DropLoad(k,z);
+        }
+        GoHome(k,z,walkers);
     };
     std::vector<int> people(z.buildings.size() + 1,0);     //by settlement: the employable not yet counted to a place
     auto home_of = [&](const EconomyWorker& k){
@@ -3473,7 +3519,7 @@ void Economy::Replan(const ZoneState& z, Walkers& walkers){
             StopWhereHeIs(k);
             k.state = (EconomyPosted(k) && k.carry <= 0) ? WORKER_ON_POST : (k.carry > 0) ? WORKER_HOLDING : WORKER_AT_HOME;
             k.prop = -1;
-            k.site = 0;         //a carrier cut off from his site gives it up; what he holds goes to a store
+            k.site = 0;         //a carrier cut off from his site gives it up; what he holds to a store, or put down
             if (k.carry <= 0){
                 k.carry_good = -1;  //one fetching home names the kind he was after, holding nothing yet
             }
@@ -3733,7 +3779,7 @@ void Economy::BreakRock(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     k.carry_good = GOOD_STONE;
     k.carry = 0;
     k.state = WORKER_LIFTING;
-    k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+    EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
 }
 
 //--- Foraging (docs/foraging_plan.md) --------------------------------------------------------------
@@ -4101,7 +4147,7 @@ void Economy::TakePost(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     k.site = 0;
     k.store = 0;
     k.stint = 0;
-    k.timer = 0;
+    EconomyStartTimer(k,0);
     if (k.carry <= 0){
         k.carry = 0;
         k.carry_good = -1;      //one fetching home names the kind he was after, holding nothing yet
@@ -4306,7 +4352,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     if (k.job == WORKER_JOB_WOODCUTTER && pile_room > 0 && k.building && k.building < home_plot.size()){
         pile = (k.building < pile_door.size() && pile_door[k.building] >= 0) ? pile_door[k.building] : home_plot[k.building];
     }
-    //He has a load: to a store that takes it, or - a woodcutter's wood - to his woodpile. Holding it if neither.
+    /*
+        He has a load: to a store that takes it, or - a woodcutter's wood - to his woodpile. With neither he puts it down
+        where he stands, a crate (DropLoad), and is free (crates_plan.md, step 5). He used to hold it until something
+        took it - with no store at all, for good: a site's carriers stood at a cancelled bridge with its wood.
+    */
     auto deliver = [&](){
         if (FindStore(k,z,walkers)){
             return;
@@ -4318,7 +4368,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 return;
             }
         }
-        k.state = WORKER_HOLDING;
+        DropLoad(k,z);
+        GoHome(k,z,walkers);
     };
     //Somewhere that takes `amount` wood whole: a store with the room, or his pile.
     auto wood_room = [&](int amount){
@@ -4526,12 +4577,12 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (Arrived(k)){
                 if (k.prop < 0){
                     k.state = WORKER_WORKING;       //at his workplace, to pick up a load - or at the water's edge, to draw one
-                    k.timer = f_draws ? SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS * ECONOMY_CAMP_WATER_LOAD)
-                                      : SecondsToTicks(ECONOMY_PICK_SECONDS);
+                    EconomyStartTimer(k,f_draws ? SecondsToTicks(ECONOMY_CAMP_WATER_SECONDS * ECONOMY_CAMP_WATER_LOAD)
+                                                : SecondsToTicks(ECONOMY_PICK_SECONDS));
                     //...or at the rock of his mine, to dig a load out of it at his pace.
                     if (k.job == WORKER_JOB_MINER){
                         int left = EconomyDepositLeft(state,MineDepositAt(k.building));
-                        k.timer = SecondsToTicks(ECONOMY_MINE_SECONDS * (float)std::max(1,std::min(ECONOMY_LOAD,left)) / pace);
+                        EconomyStartTimer(k,SecondsToTicks(ECONOMY_MINE_SECONDS * (float)std::max(1,std::min(ECONOMY_LOAD,left)) / pace));
                     }
                     break;
                 }
@@ -4541,7 +4592,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     int n = std::min(FruitOn(k.prop),ECONOMY_LOAD - std::max(0,k.carry));
                     if (n > 0){
                         k.state = WORKER_WORKING;
-                        k.timer = SecondsToTicks(FORAGE_PICK_SECONDS * (float)n / pace);
+                        EconomyStartTimer(k,SecondsToTicks(FORAGE_PICK_SECONDS * (float)n / pace));
                     }else{
                         pick_on();
                     }
@@ -4562,7 +4613,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     int kind = state.world->forest->props[k.prop].kind;
                     float work = (k.job == WORKER_JOB_STONECUTTER) ? ECONOMY_BREAK_SECONDS * (float)ForestRockStone(kind)
                                                                    : ECONOMY_FELL_SECONDS;
-                    k.timer = (ps == PROP_STATE_STANDING) ? SecondsToTicks(work / pace) : SecondsToTicks(ECONOMY_PICK_SECONDS);
+                    EconomyStartTimer(k,(ps == PROP_STATE_STANDING) ? SecondsToTicks(work / pace) : SecondsToTicks(ECONOMY_PICK_SECONDS));
                 }
             }
             break;
@@ -4589,7 +4640,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     k.store = 0;
                     k.state = WORKER_TO_STORE;
                 }else{
-                    deliver();      //cut off from the camp: a store that takes it, or he holds it
+                    deliver();      //cut off from the camp: a store that takes it, or he puts it down
                 }
                 break;
             }
@@ -4651,7 +4702,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     Event(EVENT_TREE_FELLED,k.id,0,tree.plot,vec2(tree.pos.x,tree.pos.z),k.prop);
                 }
                 Felled(z,k.prop);
-                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
             }else if (state.prop_state[k.prop] == PROP_STATE_LOG){
                 state.prop_state[k.prop] = PROP_STATE_STUMP;
                 state.felled_version++;
@@ -4682,7 +4733,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_UNLOADING;
-                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
             }
             break;
         case WORKER_UNLOADING:{
@@ -4732,7 +4783,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_PLAYING;
-                k.timer = SecondsToTicks(LIFE_PLAY_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(LIFE_PLAY_SECONDS));
             }
             break;
         case WORKER_PLAYING:
@@ -4751,7 +4802,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_ON_POST;
-                k.timer = 0;        //FORAGING by hand: begins on the post (below)
+                EconomyStartTimer(k,0); //FORAGING by hand: begins on the post (below)
             }
             break;
         case WORKER_ON_POST:
@@ -4771,7 +4822,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }
                 if (k.timer <= 0){
                     if (ForageWant(k) > 0){
-                        k.timer = ForageUnitTicks(k);
+                        EconomyStartTimer(k,ForageUnitTicks(k));
                     }else{
                         k.forage = FORAGE_NONE;
                     }
@@ -4798,7 +4849,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_TRAINING;
-                k.timer = SecondsToTicks(ECONOMY_TRAIN_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_TRAIN_SECONDS));
             }
             break;
         case WORKER_TRAINING:{
@@ -4820,22 +4871,14 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             break;
         }
         case WORKER_HOLDING:
-            //Holding a load: a store that takes it, or room on his pile, whichever comes first; else, for food,
-            //his own house once it is short of food again (HomeShort) and not ahead of the colony (FairShare) - a
-            //harvest left over when the pantry filled while he walked (land_plan.md) was held for good. Only
-            //then, so it never crowds out the water; and
-            //never wood, which would fill the pantry. With none, a pressing need is not left to kill him where
-            //he stands; he takes the load along.
+            /*
+                No longer a state anyone stays in (crates_plan.md, step 5): one cut off with a load by a re-plan
+                (Replan), or holding one in a save from before. At his next look a store or his pile, else it is put
+                down (deliver) - a farmer's harvest the pantry had no room for too, which the house fetches from the
+                crate when it runs short (FetchHome) rather than him standing there until it did.
+            */
             if (f_look){
                 deliver();
-                if (k.state == WORKER_HOLDING && k.carry_good >= 0 && (GOODS_FOOD & GOOD_BIT(k.carry_good))
-                    && (HomeShort(k,z,NULL) & GOODS_FOOD) && !HomeAhead(k,z) && RouteHome(k,z,walkers)){
-                    k.store = 0;
-                    k.state = WORKER_TO_PANTRY;
-                }
-                if (k.state == WORKER_HOLDING){
-                    SeekSupply(k,z,walkers);
-                }
             }
             break;
         //--- Moving a crate (crates_plan.md) ---
@@ -4843,7 +4886,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_LIFTING;
-                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
             }
             break;
         case WORKER_LIFTING:{
@@ -4892,7 +4935,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_TAKING_INPUT;
-                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
             }
             break;
         case WORKER_TAKING_INPUT:{
@@ -4959,10 +5002,17 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             AtWorkshop(k,z,walkers,pace);
             break;
         case WORKER_TO_FETCH:
+            //His site gone while he walks - cancelled, erased: he sees it at his next look rather than at the wood.
+            if (f_look && !SiteAlive(z,k.site)){
+                k.site = 0;
+                k.carry_good = -1;
+                GoHome(k,z,walkers);
+                break;
+            }
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_FETCHING;
-                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
             }
             break;
         case WORKER_FETCHING:{
@@ -4996,6 +5046,16 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             break;
         }
         case WORKER_TO_SITE:
+            /*
+                His site gone while he carries to it: he sees it at his next look and turns, his load to a store or put
+                down where he is (deliver). He used to walk on to where it had been - and, with no store taking wood,
+                stand there holding it (the user's, 2026-10-18: five people at a cancelled bridge).
+            */
+            if (f_look && !SiteAlive(z,k.site)){
+                k.site = 0;
+                deliver();
+                break;
+            }
             Walk(k,dt);
             if (Arrived(k)){
                 uint32_t id = k.site;
@@ -5029,7 +5089,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     k.carry = 0;
                     k.carry_good = -1;
                     k.state = WORKER_BUILDING;
-                    k.timer = SecondsToTicks(ECONOMY_BUILD_SECONDS / pace);
+                    EconomyStartTimer(k,SecondsToTicks(ECONOMY_BUILD_SECONDS / pace));
                 }else{
                     //Pulled down, or finished by other hands, while he walked: the load goes to a store.
                     k.site = 0;
@@ -5066,7 +5126,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 break;
             }
             k.state = WORKER_LAYING;
-            k.timer = SecondsToTicks(ECONOMY_LAY_SECONDS / pace);
+            EconomyStartTimer(k,SecondsToTicks(ECONOMY_LAY_SECONDS / pace));
             break;
         }
         case WORKER_CLEARING:
@@ -5098,7 +5158,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_SUPPLYING;
-                k.timer = 1;        //his first meal on the next tick: the meals are the time it takes (MEALS)
+                EconomyStartTimer(k,1); //his first meal on the next tick: the meals are the time it takes (MEALS)
             }
             break;
         case WORKER_SUPPLYING:
@@ -5108,7 +5168,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             }
             //No meal with a zombie near (MEALS): he waits it out here, rather than go hungry and come straight back.
             if (ZombieNear(k,NEEDS_MEAL_SAFE)){
-                k.timer = ZOMBIE_LOOK_TICKS;
+                EconomyStartTimer(k,ZOMBIE_LOOK_TICKS);
                 break;
             }
             //The next unit, while one more fits - from what is there now (others may have been quicker), as he would
@@ -5132,7 +5192,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 && z.buildings[k.store].kind == ZONE_KIND_WATER && k.store < home_plot.size() && home_plot[k.store] >= 0
                 && !UnderSnow(*state.world,state.world->grid->fine.pos[home_plot[k.store]],tick)
                 && std::any_of(state.workers.begin(),state.workers.end(),[&](const EconomyWorker& o){ return o.building == k.store; })){
-                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
                 break;
             }
             {
@@ -5174,7 +5234,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     break;
                 }
                 if (k.carry > 0){
-                    deliver();          //the load he was holding, or another try at it
+                    deliver();          //a load still on him: to a store, or put down
                     break;
                 }
                 /*
@@ -5204,7 +5264,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             Walk(k,dt);
             if (Arrived(k)){
                 k.state = WORKER_GETTING;
-                k.timer = SecondsToTicks(ECONOMY_PICK_SECONDS);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
             }
             break;
         case WORKER_GETTING:{
@@ -5267,7 +5327,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 //The field of his land he came to sow is `store` (land_plan.md).
                 int cells = (k.store < cells_of.size()) ? std::max(1,(int)cells_of[k.store].size()) : 1;
                 k.state = WORKER_SOWING;
-                k.timer = SecondsToTicks(ECONOMY_SOW_SECONDS * (float)cells / pace);
+                EconomyStartTimer(k,SecondsToTicks(ECONOMY_SOW_SECONDS * (float)cells / pace));
             }
             break;
         case WORKER_SOWING:{
@@ -5977,7 +6037,7 @@ void Economy::IceHome(const ZoneState& z, Walkers& walkers){
 }
 
 bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walkers, std::string* why, int layer,
-                    bool f_spread){
+                    bool f_spread, const Exploration* clouds){
     auto refuse = [&](const char* reason){
         if (why){
             *why = reason;
@@ -6026,14 +6086,16 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
     if (plot >= (int)z.ground.size() || plot >= (int)w.grid->fine.pos.size()){
         return refuse("no such plot");
     }
+    //Under the clouds he may be sent - it is how they are pushed back - but why not is never more than no way there.
+    bool f_hidden = clouds && !clouds->Explored(w.grid->fine.pos[plot]);
     int kind = z.KindOf(plot);
     if (z.ground[plot] == ZONE_GROUND_WALL || ZoneGateShut(z,plot)
         || (kind != ZONE_KIND_NONE && kind != ZONE_KIND_CAMP && !ZoneBridgeWalkable(z,plot))){
-        return refuse("something stands there");
+        return refuse(f_hidden ? "no way there" : "something stands there");
     }
     //Over the ice he may go in winter (Walkers, ICE), but not stand on it: the thaw would leave him in the river.
     if (w.terrain->wet[plot] && !ZoneBridgeWalkable(z,plot)){
-        return refuse("on the water");
+        return refuse(f_hidden ? "no way there" : "on the water");
     }
     walkers.SetSeason(now);     //an order between ticks: the ice as it is now
     //On the debug castle (ramparts_plan.md) he stands on top - its deck, which only the posted walk.
@@ -6123,7 +6185,7 @@ bool Economy::Gather(uint32_t person, bool f_on, const ZoneState& z, Walkers& wa
     FORAGE_SPREAD_REACH; drawing, they share the edge out as a group's posts do.
 */
 bool Economy::Forage(uint32_t person, int plot, int what, const ZoneState& z, Walkers& walkers, std::string* why,
-                     bool f_spread){
+                     bool f_spread, const Exploration* clouds){
     auto refuse = [&](const char* reason){
         if (why){
             *why = reason;
@@ -6149,6 +6211,13 @@ bool Economy::Forage(uint32_t person, int plot, int what, const ZoneState& z, Wa
     if (plot < 0 || plot >= (int)z.ground.size() || plot >= (int)w.grid->fine.pos.size()){
         return refuse("no such plot");
     }
+    //A PLAY command (`clouds`) forages nothing hidden - its menu is not even offered there, the view's own rule.
+    auto hidden = [&](const vec2& p){
+        return clouds && !clouds->Explored(p);
+    };
+    if (hidden(w.grid->fine.pos[plot])){
+        return refuse("under the clouds");
+    }
     int to = -1;
     bool f_spread_post = false;
     if (what == FORAGE_FRUIT){
@@ -6165,7 +6234,7 @@ bool Economy::Forage(uint32_t person, int plot, int what, const ZoneState& z, Wa
             for (int i : plants){
                 const PropInstance& p = props[i];
                 float d = (vec2(p.pos.x,p.pos.z) - origin).length();
-                if (d > best || (plant >= 0 && d >= best) || FruitOn(i) <= 0){
+                if (d > best || (plant >= 0 && d >= best) || FruitOn(i) <= 0 || hidden(vec2(p.pos.x,p.pos.z))){
                     continue;       //the lower index on a tie: plants are in index order
                 }
                 bool f_taken = false;
@@ -6205,12 +6274,12 @@ bool Economy::Forage(uint32_t person, int plot, int what, const ZoneState& z, Wa
     if (!PlotOurs(*k,to)){
         return refuse("another settlement's land");
     }
-    if (!Order(person,to,z,walkers,why,-1,f_spread_post)){
+    if (!Order(person,to,z,walkers,why,-1,f_spread_post,clouds)){
         return false;
     }
     k->forage = what;
     if (k->state == WORKER_TO_POST || k->state == WORKER_ON_POST){
-        k->timer = 0;       //begun afresh once he stands there - never a pressing need's meal, which has its own timer
+        EconomyStartTimer(*k,0); //begun afresh once he stands there - never a pressing need's meal, which has its own timer
     }
     state.version++;
     return true;
@@ -7414,7 +7483,7 @@ int Economy::FirewoodFair(const ZoneState& z, uint32_t h) const{
 /*
     Every person, every tick, after his round has moved on: a tick of water gone, and of health - three
     while dry - then a meal and a drink if he stands at home, and from his pack while he has one. Health at
-    nothing: he dies. He is struck from the colony with whatever he carried, his pack too; his family stays in
+    nothing: he dies. He is struck from the colony, what he carried left as a crate, his pack with him; his family stays in
     its house, and on this same tick his job is given out again, and a house left empty taken by a family
     waiting for one.
 */
@@ -7508,6 +7577,10 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         d.tick = tick;
         d.cause = f_bitten ? NEEDS_DIED_ZOMBIE : EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD
                                                                                        : NEEDS_DIED_HUNGER;
+        //What he carried is left where he fell, a crate (crates_plan.md, step 5) - it went with him before.
+        if (k.carry > 0){
+            DropLoad(k,z);
+        }
         state.dead.push_back(d);
         Event(EVENT_DIED,d.id,k.house,-1,EconomyBody(k),d.cause);
     }
@@ -9235,11 +9308,13 @@ bool Economy::MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walk
 void Economy::AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace){
     uint32_t h = k.building;
     if (k.job != WORKER_JOB_BUILDER || !Workshop(z,stands,h)){
-        if (k.carry > 0 && !FindStore(k,z,walkers)){
-            k.state = WORKER_HOLDING;
-        }else if (k.carry <= 0){
-            GoHome(k,z,walkers);
+        if (k.carry > 0 && FindStore(k,z,walkers)){
+            return;
         }
+        if (k.carry > 0){
+            DropLoad(k,z);      //none takes it: put down (crates_plan.md, step 5)
+        }
+        GoHome(k,z,walkers);
         return;
     }
     std::array<int,GOOD_COUNT>& hut = state.stock[h];
@@ -9256,7 +9331,7 @@ void Economy::AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         hut[GOOD_WHEAT]--;
         hut[GOOD_BEANS]--;
         k.state = WORKER_MAKING;
-        k.timer = SecondsToTicks(ECONOMY_PROVISION_SECONDS / pace);
+        EconomyStartTimer(k,SecondsToTicks(ECONOMY_PROVISION_SECONDS / pace));
         state.version++;
         return;
     }
@@ -9359,11 +9434,13 @@ void Economy::AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     uint32_t h = k.building;
     float length = (k.job == WORKER_JOB_ROPEMAKER) ? EconomyRopewalkPace(z,h) : 0.0f;
     if (length <= 0.0f || h >= state.stock.size()){
-        if (k.carry > 0 && !FindStore(k,z,walkers)){
-            k.state = WORKER_HOLDING;
-        }else if (k.carry <= 0){
-            GoHome(k,z,walkers);
+        if (k.carry > 0 && FindStore(k,z,walkers)){
+            return;
         }
+        if (k.carry > 0){
+            DropLoad(k,z);      //none takes it: put down (crates_plan.md, step 5)
+        }
+        GoHome(k,z,walkers);
         return;
     }
     std::array<int,GOOD_COUNT>& own = state.stock[h];
@@ -9378,7 +9455,7 @@ void Economy::AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         own[GOOD_HEMP] -= ECONOMY_ROPE_HEMP;
         k.carry_good = GOOD_ROPE;       //what he is making (WORKER_MAKING) - nothing carried
         k.state = WORKER_MAKING;
-        k.timer = SecondsToTicks(ECONOMY_ROPE_SECONDS / (pace * length));
+        EconomyStartTimer(k,SecondsToTicks(ECONOMY_ROPE_SECONDS / (pace * length)));
         state.version++;
         return;
     }

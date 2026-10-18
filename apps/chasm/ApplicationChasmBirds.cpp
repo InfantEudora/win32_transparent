@@ -34,9 +34,12 @@ static Debugger* debug = new Debugger("ChasmBirds",DEBUG_ALL);
     DRAWN as one Object per bird, all on one mesh, so the renderer draws every bird in one instanced call a pass,
     each with its own wings: the shape keys' factors are per object (instance_data), worked on the GPU. Not an
     instance set, whose instances share the owner's factors - the whole flock would beat in step.
+
+    HEARD through the cue table, like any sound of the game: the flocks' calls are handed over in bird_calls, which the
+    physics thread takes once a pass (ApplicationChasmSound.cpp, SignalBirds) - what each sounds like is the table's.
 */
 
-#define BIRD_OBJECTS_MAX        200
+#define BIRD_OBJECTS_MAX        256     //a winter's flocks are twice their size (BIRD_GATHER_WINTER)
 #define BIRD_DRAW_SCALE         1.0f    //modelled at the size drawn (birds_plan.md: about half a villager)
 #define BIRD_TREE_CELL          8.0f    //world units a side of a cell of trees
 #define BIRD_PERCHES_PER_LOOK   6
@@ -49,6 +52,7 @@ static Debugger* debug = new Debugger("ChasmBirds",DEBUG_ALL);
 #define BIRD_LURE_MEMORY_S      90.0f   //how long a felling site draws the colony's flocks after the axe was last there
 #define BIRD_LURE_MERGE         6.0f    //felling sites this close are one
 #define BIRD_LURES_MAX          16
+#define BIRD_CALLS_HELD         64      //calls waiting for the sound to take them
 
 namespace {
 
@@ -125,6 +129,22 @@ std::vector<vec3> PerchPoints(const Mesh* m, float& top){
         }
     }
     return out;
+}
+
+//A bird's object where its pose says, wings and all, and shown.
+void PoseBird(Object* o, const BirdPose& p){
+    o->SetPosition(p.pos,false);
+    o->SetRotation(p.turn,false);
+    o->SetShapekey(BIRD_KEY_UP,p.up);
+    o->SetShapekey(BIRD_KEY_DOWN,p.down);
+    o->SetShapekey(BIRD_KEY_FOLDED,p.folded);
+    o->SetVisibility(true);
+}
+
+//A number from a marker's JSON, or `or_else` - with JSON_NOEXCEPTION a wrong type would abort the app.
+float JsonNumber(const json& j, const char* key, float or_else){
+    json v = j.value(key,json());
+    return v.is_number() ? v.get<float>() : or_else;
 }
 
 }
@@ -303,43 +323,63 @@ void ApplicationChasm::HomeBirds(const ChasmWorld& w, const EconomyState* e){
                 f_colony ? "" : " (none: no colony)",(int)wanderers.size());
 }
 
-//What the birds ask of the world this frame: the ground, the roosts, which trees still stand.
+//Still standing and drawn: not felled (the economy's prop state) and not hidden under a house or a field.
+bool ApplicationChasm::BirdTreeStanding(const ChasmWorld& w, const ZoneState* z, const EconomyState* e, int tree){
+    const ForestData& f = *w.forest;
+    if (tree < 0 || (size_t)tree >= f.props.size()){
+        return false;
+    }
+    if (e && (size_t)tree < e->prop_state.size() && e->prop_state[tree] != PROP_STATE_STANDING){
+        return false;
+    }
+    return !PropHidden(f.props[tree],z);
+}
+
+//A tree's perches in the world: its look's points, turned and scaled as the tree is drawn (RebuildPropChunk).
+void ApplicationChasm::BirdTreePerches(const ChasmWorld& w, int tree, std::vector<BirdPerch>& out){
+    const PropInstance& p = w.forest->props[tree];
+    int set = p.kind;
+    if (ForestSeasonal(p.kind) != FOREST_SEASONAL_NONE && (size_t)tree < forest_prop_stage.size()){
+        set = season_look_set[p.kind][forest_prop_stage[tree]];
+    }
+    if (set < 0 || (size_t)set >= bird_perch_local.size()){
+        set = p.kind;
+    }
+    quat turn(vec3(0.0f,1.0f,0.0f),p.yaw);
+    for (const vec3& l : bird_perch_local[set]){
+        if ((int)out.size() >= BIRD_ROOST_PERCHES){
+            return;
+        }
+        out.push_back(BirdPerch{p.pos + turn * (l * p.scale),tree});
+    }
+}
+
+//The season's gathering (Birds.h, SEASONS): by the date shown, or as the tool holds it.
+float ApplicationChasm::BirdGather(){
+    float held = bird_gather_held.load();
+    if (held > 0.0f){
+        return held;
+    }
+    int season = CalendarDateOf(calendar_shown.load()).season;
+    return (season == SEASON_WINTER) ? BIRD_GATHER_WINTER : (season == SEASON_AUTUMN) ? BIRD_GATHER_AUTUMN : 1.0f;
+}
+
+//What the birds ask of the world this frame: the ground, the roosts, which trees still stand, the season.
 BirdWorld ApplicationChasm::MakeBirdWorld(const ChasmWorld& w, const ZoneState* z, const EconomyState* e){
     BirdWorld bw;
     bw.tree_top = bird_tree_top;
+    bw.gather = BirdGather();
     const ChasmWorld* wp = &w;
     bw.ground = [wp](const vec2& p){
         GridPick pick = wp->picker->Pick(p);
         return pick.f_hit ? wp->terrain->GroundHeight(p,wp->terrain->Height(pick.plot)) : 0.0f;
     };
     auto standing = [this,wp,z,e](int tree){
-        const ForestData& f = *wp->forest;
-        if (tree < 0 || (size_t)tree >= f.props.size()){
-            return false;
-        }
-        if (e && (size_t)tree < e->prop_state.size() && e->prop_state[tree] != PROP_STATE_STANDING){
-            return false;
-        }
-        return !PropHidden(f.props[tree],z);
+        return BirdTreeStanding(*wp,z,e,tree);
     };
     bw.standing = standing;
-    //A tree's perches in the world: its look's points, turned and scaled as the tree is drawn (RebuildPropChunk).
     auto perches_of = [this,wp](int tree, std::vector<BirdPerch>& out){
-        const PropInstance& p = wp->forest->props[tree];
-        int set = p.kind;
-        if (ForestSeasonal(p.kind) != FOREST_SEASONAL_NONE && (size_t)tree < forest_prop_stage.size()){
-            set = season_look_set[p.kind][forest_prop_stage[tree]];
-        }
-        if (set < 0 || (size_t)set >= bird_perch_local.size()){
-            set = p.kind;
-        }
-        quat turn(vec3(0.0f,1.0f,0.0f),p.yaw);
-        for (const vec3& l : bird_perch_local[set]){
-            if ((int)out.size() >= BIRD_ROOST_PERCHES){
-                return;
-            }
-            out.push_back(BirdPerch{p.pos + turn * (l * p.scale),tree});
-        }
+        BirdTreePerches(*wp,tree,out);
     };
     bw.roost = [this,wp,standing,perches_of](const vec2& centre, float reach, const std::vector<BirdScare>& avoid,
                                              uint32_t draw, BirdRoost& out){
@@ -546,9 +586,16 @@ void ApplicationChasm::UploadBirds(){
     //What the step cost this frame, scares and all, eased for the tool to read.
     float step_us = std::chrono::duration<float,std::micro>(std::chrono::steady_clock::now() - step_t0).count();
     birds_step_us += (step_us - birds_step_us) * 0.05f;
-    //Sound is step 3 (birds_plan.md): until then the calls are let go.
+    //The calls, for the sound to take on the physics thread (SignalBirds) - none from birds not drawn.
     std::vector<BirdCall> calls;
     birds.TakeCalls(calls);
+    if (!calls.empty() && f_view_birds){
+        std::lock_guard<std::mutex> lock(birds_mutex);
+        //Not taken for a while - the physics thread held up - they are let go rather than piled up and heard late.
+        if (bird_calls.size() + calls.size() <= BIRD_CALLS_HELD){
+            bird_calls.insert(bird_calls.end(),calls.begin(),calls.end());
+        }
+    }
 
     std::vector<BirdPose> poses;
     if (f_view_birds){
@@ -580,13 +627,12 @@ void ApplicationChasm::UploadBirds(){
     for (size_t i = 0; i < bird_objects.size(); i++){
         Object* o = bird_objects[i];
         if (i < shown){
-            const BirdPose& p = poses[i];
-            o->SetPosition(p.pos,false);
-            o->SetRotation(p.turn,false);
-            o->SetShapekey(BIRD_KEY_UP,p.up);
-            o->SetShapekey(BIRD_KEY_DOWN,p.down);
-            o->SetShapekey(BIRD_KEY_FOLDED,p.folded);
-            o->SetVisibility(true);
+            //A bird in a tree rides it as the wind bends it (weather_plan.md) - the bend at its feet, this frame's.
+            BirdPose pose = poses[i];
+            if (pose.tree >= 0 && pose.ride > 0.0f){
+                pose.pos = pose.pos + SwayOffset(pose.tree,pose.pos) * pose.ride;
+            }
+            PoseBird(o,pose);
         }else if (i == bird_objects.size() - 1 && bench_key >= 0){
             static const auto t0 = std::chrono::steady_clock::now();
             float t = std::chrono::duration<float>(now - t0).count();
@@ -612,8 +658,10 @@ void ApplicationChasm::UploadBirds(){
         json flocks = json::array();
         for (const BirdFlock& f : birds.Flocks()){
             int perched = 0;
+            int leaving = 0;
             for (const Bird& b : f.birds){
                 perched += (b.state == BIRD_PERCHED) ? 1 : 0;
+                leaving += b.f_leaving ? 1 : 0;
             }
             //How near the nearest scare came to it this frame, past its reach: what tuning a reach is about.
             float nearest = -1.0f;
@@ -622,19 +670,234 @@ void ApplicationChasm::UploadBirds(){
                 nearest = (nearest < 0.0f || d < nearest) ? std::max(0.0f,d) : nearest;
             }
             flocks.push_back(json{{"id",f.id},{"state",states[f.state & 3]},{"birds",(int)f.birds.size()},
+                                  {"size",f.size},{"leaving",leaving},
                                   {"perched",perched},{"anchor",{f.anchor.x,f.anchor.y,f.anchor.z}},
                                   {"roost_tree",f.roost.tree},{"perches",(int)f.roost.perches.size()},
                                   {"home",{f.home.x,f.home.y}},{"timer",f.timer},{"wary_s",f.wary_left},
                                   {"flushes",f.flushes},{"scare_gap",nearest},
-                                  {"role",roles[f.role % 3]}});
+                                  {"role",roles[f.role % 3]},{"voice",f.voice == BIRD_VOICE_MAGPIE ? "magpie" : "crow"},
+                                  {"calls",f.calls},{"next_call_s",f.call}});
         }
         json status{{"flocks",flocks},{"birds",birds.Count()},{"objects",(int)bird_objects.size()},
                     {"shape_keys",bird_mesh->num_morph_targets},{"tree_top",bird_tree_top},
                     {"scares",(int)scares.size()},{"live",f_live},{"speed",physics_time_factor},
+                    {"gather",bw.gather},{"gather_held",bird_gather_held.load() > 0.0f},
                     {"shown",f_view_birds.load()},{"colony",{birds_colony.x,birds_colony.y}},
                     {"lures",(int)bird_lures.size()},{"step_us",birds_step_us}};
         std::lock_guard<std::mutex> lock(birds_mutex);
         birds_status = status;
+    }
+}
+
+/*
+    THE TITLE'S FLOCK (birds_plan.md step 5): one flock over the diorama, the same Birds.{h,cpp} - stepped from
+    PreRender as the world's are, on the title's own clock (real time: the title never pauses), and SILENT, since the
+    title has its music and the world's buses are held under it.
+
+    Its trees are the diorama's PERCH markers, which a capture writes (BirdDioramaMarkers) - a diorama has no forest to
+    ask. Without them, as in a diorama captured before 2026-10-18, the flock lives in the air (BirdWorld::sky_reach):
+    it circles and passes over the town and never comes down. The diorama's walkers put it up when they pass under it,
+    as anyone walking does in the world.
+*/
+#define BIRD_TITLE_FLOCK        9
+#define BIRD_TITLE_SKY          0.7f        //of the diorama's radius: how far from its middle a flock with no trees flies
+#define BIRD_TITLE_SEED         0x7171E5u   //its own: the title is the same every time
+
+//RENDER THREAD, at a capture (DioramaMarkers): each standing tree's perches within the radius, its number and base.
+void ApplicationChasm::BirdDioramaMarkers(const vec3& centre, float radius, std::vector<SceneCaptureMarker>& out){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w || !w->forest || bird_perch_local.empty()){
+        return;
+    }
+    std::shared_ptr<const ZoneState> z = GetZones();
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    const ZoneState* zp = (z && z->world == w) ? z.get() : NULL;
+    const EconomyState* ep = (e && e->world == w) ? e.get() : NULL;
+    const ForestData& f = *w->forest;
+    int trees = 0;
+    for (size_t i = 0; i < f.props.size(); i++){
+        const PropInstance& p = f.props[i];
+        float dx = p.pos.x - centre.x;
+        float dz = p.pos.z - centre.z;
+        if (!ForestIsTree(p.kind) || dx * dx + dz * dz > radius * radius || !BirdTreeStanding(*w,zp,ep,(int)i)){
+            continue;
+        }
+        std::vector<BirdPerch> perches;
+        BirdTreePerches(*w,(int)i,perches);
+        if (perches.empty()){
+            continue;
+        }
+        std::string d = json{{"tree",trees++},{"x",p.pos.x},{"z",p.pos.z},{"ground",p.pos.y}}.dump();
+        for (const BirdPerch& b : perches){
+            out.push_back(SceneCaptureMarker{"perch",b.at,d});
+        }
+    }
+}
+
+/*
+    RENDER THREAD, from DioramaLife: the diorama's trees from its perch markers, and the flock - made in the air, so
+    the title shows it flying from the first frame. Its ground is the highest a tree or a person stands on: one level
+    for the whole diorama, which a flock flying over can never dip into.
+*/
+void ApplicationChasm::BuildTitleBirds(const std::vector<SceneCaptureMarker>& markers){
+    title_trees.clear();
+    title_bird_objects.clear();     //the last diorama's went with it (ServiceDiorama)
+    title_birds.Reset(BIRD_TITLE_SEED);
+    f_title_birds_clock = false;
+    if (!bird_mesh){
+        return;
+    }
+    bool f_ground = false;
+    float ground = diorama.centre.y;
+    float top = 0.0f;
+    std::map<int,size_t> index;
+    for (const SceneCaptureMarker& m : markers){
+        if (m.kind == "person"){
+            ground = f_ground ? std::max(ground,m.at.y) : m.at.y;
+            f_ground = true;
+            continue;
+        }
+        if (m.kind != "perch"){
+            continue;
+        }
+        json d = json::parse(m.data,nullptr,false);
+        if (d.is_discarded() || !d.is_object()){
+            continue;
+        }
+        int tree = (int)JsonNumber(d,"tree",-1.0f);
+        float base = JsonNumber(d,"ground",m.at.y);
+        auto it = index.find(tree);
+        if (it == index.end()){
+            it = index.insert(std::make_pair(tree,title_trees.size())).first;
+            TitleTree t;
+            t.at = vec2(JsonNumber(d,"x",m.at.x),JsonNumber(d,"z",m.at.z));
+            title_trees.push_back(t);
+        }
+        TitleTree& t = title_trees[it->second];
+        t.perches.push_back(m.at);
+        t.top = std::max(t.top,m.at.y);
+        ground = f_ground ? std::max(ground,base) : base;
+        f_ground = true;
+        top = std::max(top,m.at.y - base);
+    }
+    title_bird_ground = ground;
+    title_bird_top = (top > 0.0f) ? top : bird_tree_top;
+    BirdWorld bw = TitleBirdWorld();
+    title_birds.AddFlockInAir(bw,vec2(diorama.centre.x,diorama.centre.z),BIRD_TITLE_FLOCK,BIRD_ROLE_WANDER);
+    for (int i = 0; i < title_birds.Count(); i++){
+        Object* o = new Object();
+        o->name = "Title bird " + std::to_string(i);
+        o->SetMesh(bird_mesh);
+        o->SetMaterialSlot(0,palette_material);
+        o->SetPickability(false);
+        o->SetVisualOnly(true);
+        o->SetVisibility(false);
+        o->SetScale(vec3(BIRD_DRAW_SCALE,BIRD_DRAW_SCALE,BIRD_DRAW_SCALE));
+        title_scene->AddObject(o);
+        diorama_objects.push_back(o);
+        title_bird_objects.push_back(o);
+    }
+    debug->Info("Title birds: %i over the diorama, %zu trees to perch in%s\n",title_birds.Count(),title_trees.size(),
+                title_trees.empty() ? " (none captured: they stay in the air)" : "");
+}
+
+//The diorama as the title's flock asks it: a level ground, its trees as roosts, and the sky to fly on to.
+BirdWorld ApplicationChasm::TitleBirdWorld(){
+    BirdWorld bw;
+    bw.tree_top = title_bird_top;
+    bw.sky_reach = BIRD_TITLE_SKY * ((diorama.radius > 0.0f) ? diorama.radius : 30.0f);
+    const float ground = title_bird_ground;
+    bw.ground = [ground](const vec2&){
+        return ground;
+    };
+    bw.roost = [this](const vec2& centre, float reach, const std::vector<BirdScare>& avoid, uint32_t draw, BirdRoost& out){
+        std::vector<int> found;
+        for (size_t t = 0; t < title_trees.size(); t++){
+            const vec2& at = title_trees[t].at;
+            bool f_clear = (at - centre).length() <= reach;
+            for (const BirdScare& s : avoid){
+                f_clear = f_clear && (at - s.at).length() > s.reach;
+            }
+            if (f_clear){
+                found.push_back((int)t);
+            }
+        }
+        if (found.empty()){
+            return false;
+        }
+        int tree = found[draw % (uint32_t)found.size()];
+        const TitleTree& t = title_trees[tree];
+        out.tree = tree;
+        out.at = vec3(t.at.x,t.top,t.at.y);
+        out.perches.clear();
+        //Its perches first, then its neighbours', so a flock sits over two or three trees as in the world.
+        for (size_t n = 0; n < title_trees.size() + 1; n++){
+            int i = (n == 0) ? tree : (int)n - 1;
+            if (n > 0 && (i == tree || (title_trees[i].at - t.at).length() > BIRD_ROOST_SPREAD)){
+                continue;
+            }
+            for (const vec3& p : title_trees[i].perches){
+                if ((int)out.perches.size() < BIRD_ROOST_PERCHES){
+                    out.perches.push_back(BirdPerch{p,i});
+                }
+            }
+        }
+        return true;
+    };
+    return bw;
+}
+
+//RENDER THREAD, from PreRender while the title shows: the flock stepped by real time, its calls let go, and posed.
+void ApplicationChasm::UploadTitleBirds(){
+    if (title_bird_objects.empty()){
+        return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    float dt = f_title_birds_clock ? std::min(std::chrono::duration<float>(now - title_birds_last).count(),BIRD_FRAME_MAX_S)
+                                   : 0.0f;
+    title_birds_last = now;
+    f_title_birds_clock = true;
+    BirdWorld bw = TitleBirdWorld();
+    std::vector<BirdScare> scares;
+    for (const DioramaPerson& p : diorama_people){
+        if (!p.path.empty() && p.ws.figure){
+            vec3 at = p.ws.figure->GetPosition();
+            scares.push_back(BirdScare{vec2(at.x,at.z),BIRD_REACH_WALK});
+        }
+    }
+    if (dt > 0.0f){
+        int steps = std::min(BIRD_STEPS_MAX,std::max(1,(int)ceilf(dt / BIRD_STEP_S)));
+        for (int i = 0; i < steps; i++){
+            title_birds.Step(bw,dt / (float)steps,scares);
+        }
+    }
+    std::vector<BirdCall> calls;
+    title_birds.TakeCalls(calls);
+    std::vector<BirdPose> poses;
+    if (f_view_birds){
+        title_birds.Poses(poses);
+    }
+    for (size_t i = 0; i < title_bird_objects.size(); i++){
+        if (i < poses.size()){
+            PoseBird(title_bird_objects[i],poses[i]);
+        }else{
+            title_bird_objects[i]->SetVisibility(false);
+        }
+    }
+    if (++title_bird_status_frames >= 10 && !title_birds.Flocks().empty()){
+        title_bird_status_frames = 0;
+        static const char* states[] = {"settled","travel","circle","scatter"};
+        const BirdFlock& f = title_birds.Flocks()[0];
+        int perched = 0;
+        for (const Bird& b : f.birds){
+            perched += (b.state == BIRD_PERCHED) ? 1 : 0;
+        }
+        json status{{"birds",(int)f.birds.size()},{"state",states[f.state & 3]},{"perched",perched},
+                    {"anchor",{f.anchor.x,f.anchor.y,f.anchor.z}},{"roost_tree",f.roost.tree},
+                    {"trees",(int)title_trees.size()},{"flushes",f.flushes},{"walkers",(int)scares.size()},
+                    {"ground",title_bird_ground},{"tree_top",title_bird_top}};
+        std::lock_guard<std::mutex> lock(birds_mutex);
+        title_birds_status = status;
     }
 }
 
@@ -643,7 +906,11 @@ void ApplicationChasm::RegisterBirdTools(){
     MCPServer::Get()->RegisterTool("chasm_birds",
         "The birds (birds_plan.md, ApplicationChasmBirds.cpp) - VIEW, never state: flocks homed in the forests, perched "
         "in the trees, moving on now and then, scared up by anyone walking near, an axe at a tree or a tree felled. "
-        "op status (default): each flock's state, birds, anchor, roost; the scares this frame. op spawn: a flock of "
+        "op status (default): each flock's state, birds, its own size and how many are leaving, anchor, roost, voice "
+        "(crow, or magpie for a wanderer), calls made and seconds to its next; the scares this frame; the season's "
+        "`gather` (flocks grow to their size times it, in the air: 1 spring and summer, more in autumn and winter); and "
+        "`title`, the title's flock over its diorama. op gather: holds `value` as the gather (0 or less: the date's "
+        "again), for seeing a winter's flocks without waiting for one. op spawn: a flock of "
         "`count` near x,z (default the camera target), living by `role`. op flush: scares every flock within `reach` (default the axe's) "
         "of x,z, as if someone were there. op clear: no flocks. op reset: the map's flocks made again at their homes. "
         "op bench: one bird at x,z (default the camera target, `height` over the ground, default 1.5), turning slowly, "
@@ -653,7 +920,9 @@ void ApplicationChasm::RegisterBirdTools(){
         json{
             {"type","object"},
             {"properties",{
-                {"op",{{"type","string"},{"enum",json::array({"status","spawn","flush","clear","reset","bench","show","hide"})}}},
+                {"op",{{"type","string"},{"enum",json::array({"status","spawn","flush","clear","reset","bench","show","hide",
+                                                                "gather"})}}},
+                {"value",{{"type","number"},{"description","gather: the gather held, 0 or less the date's"}}},
                 {"x",{{"type","number"}}},
                 {"z",{{"type","number"}}},
                 {"count",{{"type","integer"},{"description","spawn: birds in the flock (default 7)"}}},
@@ -679,6 +948,11 @@ void ApplicationChasm::RegisterBirdTools(){
             if (op == "status"){
                 std::lock_guard<std::mutex> lock(birds_mutex);
                 result = birds_status;
+                result["title"] = title_birds_status;
+            }else if (op == "gather"){
+                float value = args.value("value",0.0f);
+                bird_gather_held = (value > 0.0f) ? value : -1.0f;
+                result = json{{"op","gather"},{"held",value > 0.0f ? json(value) : json("the date's")}};
             }else if (op == "spawn" || op == "flush" || op == "clear" || op == "reset"){
                 BirdRequest r;
                 r.op = (op == "spawn") ? BIRD_REQUEST_SPAWN : (op == "flush") ? BIRD_REQUEST_FLUSH

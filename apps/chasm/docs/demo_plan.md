@@ -421,6 +421,25 @@ as good a town as any").
   - The smoke is the hearths' as it is: thin puffs that swell as they rise. A thicker column for the
     title would be a tuning of its own.
 
+## As built: the diorama's clouds and birds (2026-10-18)
+
+- **Clouds round the rim** (the user's: "not by exporting it from a running game, but reusing the same
+  clouds ... just at the rim of the diorama"). `BuildDioramaClouds` in `ApplicationChasmExplore.cpp` runs
+  whenever a diorama loads. It works with any capture, `menu_town` as it is, and needs no re-capture.
+  - The ring is the world's own puffs: `CloudPuff`, the recipe taken out of `UploadClouds`, which now
+    calls it.
+  - The bank starts `CLOUD_RIM_INSIDE` in from the rim, small and sunk as at an explored edge. It is at
+    full size past the rim and runs `CLOUD_RIM_OUTSIDE` beyond it, thinning at its far edge.
+  - The puffs breathe on the title's clock.
+  - Each sits on the rim's ground on its side: the highest captured `Terrain` vertex in that sector of a
+    band just inside the rim. Over the chasm there is no such ground, so the bank lies at the capture's
+    level.
+  - Seen round `menu_town`: 330 puffs, every sector with ground. The town is a clearing in the cloud bank
+    from every side as the camera turns, and the cut edge is hidden.
+  - The near side of the ring is below the frame at the title's framing, so only the far half shows.
+- **A flock over the town:** `birds_plan.md` step 5. Captures now carry `perch` markers, and `menu_town`
+  needs capturing again for the flock to land.
+
 ## As built: the pause menu, saves and New game (2026-10-16)
 
 Steps 1 and 2, at the user's go-ahead, in `ApplicationChasmMenu.cpp` (new) with the title's file.

@@ -52,6 +52,8 @@ static Debugger* debug = new Debugger("ChasmMusic",DEBUG_ALL);
 #define MUSIC_LAYER_REST_S      4.0f
 //What the game sent the music, kept for the Music panel and chasm_sound: the last this many.
 #define MUSIC_SENT_KEPT         12
+//The suspense in winter's storm at full (weather_plan.md), from the score's own. Current tuning.
+#define MUSIC_STORM_SUSPENSE    0.75f
 
 namespace {
 
@@ -255,6 +257,27 @@ void ApplicationChasm::UpdateMusic(){
         e.name = section;
         music[CHASM_MUSIC_LAND]->Post(e);
         MusicSend("section " + section + (music_section_held.empty() ? " - the season" : " - held"));
+    }
+    /*
+        THE STORM (weather_plan.md, C): the suspense rises with the storm at the view and falls back to the score's own
+        after it, so winter's snow wind and low wind swell, its cold strings come in, and the serene winter is the score
+        at calm. The engine eases the beds itself. The Music panel's hold wins; let go, the storm takes over again.
+    */
+    if (music_mood_held[0] < 0.0f){
+        const MusicParams own;
+        float s = own.suspense + (MUSIC_STORM_SUSPENSE - own.suspense) * weather_storm.load();
+        if (std::fabs(s - music_storm_suspense) > 0.005f){
+            music_storm_suspense = s;
+            for (int i = 0; i < CHASM_MUSIC_PLAYERS; i++){
+                if (music[i]){
+                    MusicParams p = music[i]->GetParams();
+                    p.suspense = s;
+                    music[i]->SetParams(p);
+                }
+            }
+        }
+    }else{
+        music_storm_suspense = -1.0f;
     }
     //The layers only while the world shows: under the title, the land alone.
     const bool f_shown = !TitleShowing() && world_scene && main_scene == world_scene;

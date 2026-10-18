@@ -4,9 +4,9 @@ aliases: people, settler, settlers, villager, villagers, worker, workers
 kind: people
 status: built
 summary: Everyone in the colony, each with a family, a home, four skills, a job, and two bars that must not run out.
-plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries; zombies_plan.md > Step 1b: spacing out
-code: Economy.h: EconomyWorker EconomySkillFactor EconomyBody; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood; Spacing.cpp: SpaceOut
-verified: 2026-10-14
+plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries; selection_plan.md > How far along; zombies_plan.md > Step 1b: spacing out
+code: Economy.h: EconomyWorker EconomySkillFactor EconomyBody EconomyStartTimer EconomyTaskProgress EconomyLoadRoom; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood FindSiteWork; Spacing.cpp: SpaceOut
+verified: 2026-10-18
 ---
 
 The colony is the **settlers** it starts with, a few families waiting at the [[Camp]], and nobody else.
@@ -34,7 +34,7 @@ The job's skill sets the **pace** of the work (felling, sowing, building): avera
 that, slower below (`EconomySkillFactor`). Empty-handed everyone walks alike; with a load, the
 stronger walk faster ([[Skills]]).
 
-Anyone without a job carries wood to [[Construction|building sites]], and clears and lays
+Anyone without a job carries whatever [[Construction|building sites]] want, and clears and lays
 [[Road|roads]]. The player can **order** a grown-up to stand on a [[Posts|post]]; that is their job until
 they are released. A load they are carrying when the order comes is put down as a [[Crate|crate]].
 
@@ -64,7 +64,10 @@ Who they are, their home and job, what they are doing, their two bars and their 
 [[Posts|pack]] has it as a goods strip, the way a [[Store|store's]] card shows what it holds - hollow, their own,
 with what it is worth in days at the right ("water 12 days, food 10").
 
+Work done on the spot - felling, building, sowing, drawing water - has a **bar** filling under what they are
+doing. What they **carry** is a strip too, **striped** as reserved goods are, since it is on its way somewhere
+("Load - for a site"), against what that errand carries: {ECONOMY_LOAD}, a woodcutter two logs.
+
 ## Planned
 
 - [planned] Births, old age, and couples moving into a free house as a new family.
-- [planned] Their load as a goods strip too, in place of the ", with 4 wood" after what they are doing.

@@ -6,10 +6,10 @@ status: built
 summary: A shed at the water's edge that fills with water while it has a carrier, who takes it to a store a load at a time.
 plans: economy_plan.md > Production; bridge_plan.md > As built; woodcutting_plan.md > The collector's hold (the user's, 2026-10-11); stopping_work_plan.md > Decided (the user, 2026-10-12)
 code: Zones.h: ZONE_KIND_WATER ZoneKindMaxStoreys ZoneKindStoppable; Economy.cpp: Tick FetchFromWorkplace SeekSupply EconomyCollectorRoom; Economy.h: WORKER_JOB_WATER
-verified: 2026-10-12
+verified: 2026-10-18
 ---
 
-The player paints it on the **last dry plot at the edge of a river's or a pool's wet bank**, and its pipe
+The player drags it along the **last dry plots at the edge of a river's or a pool's wet bank**, at most {ZONE_BUILDING_MAX_PLOTS:#plots}, and its pipe
 reaches over the stones to the water. It is one storey high.
 
 ## Filling

@@ -2587,7 +2587,7 @@ bool Renderer::InitSSBO(){
 }
 
 void Renderer::SetWindField(const float* velocity_xy, int width, int height, float x0, float y0,
-                            float cell_x, float cell_y, float time){
+                            float cell_x, float cell_y, float time, int plane){
     if (!velocity_xy || (width < 2) || (height < 2) || (cell_x <= 0.0f) || (cell_y <= 0.0f)){
         ClearWindField();
         return;
@@ -2600,6 +2600,7 @@ void Renderer::SetWindField(const float* velocity_xy, int width, int height, flo
     header.size[0] = width;
     header.size[1] = height;
     header.size[2] = 1;
+    header.size[3] = plane;
     header.params[0] = time;
     size_t grid = sizeof(float) * 2 * (size_t)width * (size_t)height;
     //Respecified every frame rather than sub-updated: the driver can hand back fresh storage

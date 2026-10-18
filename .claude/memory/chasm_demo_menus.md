@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 7a3c3850-95bd-4a10-bf9a-4f6563ca8e67
-  modified: 2026-10-16T20:36:28.181Z
+  modified: 2026-10-18T10:53:52.737Z
 ---
 
 apps/chasm/docs/demo_plan.md steps 1, 2, 4 and 5 were BUILT by 2026-10-16:
@@ -50,5 +50,8 @@ Pop-ups and the end page appear in PLAY MODE only. Agents driving debug mode are
 - Always recording is on only in builds without the panels. In a debug build it would take over the `input_record` an agent starts, so there it is a checkbox.
 - The user often plays `build/chasm_nophysics.exe` while I test. If the link fails with Permission denied, rename the running exe aside rather than stopping it.
 - Stop my own test instance by its process id, found from the port with netstat.
+- 2026-10-18: the title's diorama has the world's CLOUDS in a ring at its rim (BuildDioramaClouds, ApplicationChasmExplore.cpp,
+  CloudPuff shared with UploadClouds) - made on load from the capture's Terrain vertices, never captured - and a bird flock
+  ([[chasm-birds-plan]] step 5). A test copy left on the TITLE once quit by itself and autosaved: see [[minimized-focus-leak]].
 
 Related: [[chasm-game-plan]], [[chasm-statistics]], [[input-recording]].

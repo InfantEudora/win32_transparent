@@ -3,13 +3,44 @@
 #include "MeshBuild.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <map>
 
 #define ROAD_HALF_WIDTH     0.5f    //world units either side of the centre line: a road about a metre wide
 #define ROAD_LIFT           0.05f   //above the ground's relief - over a garden's 0.04, never beside one
 #define ROAD_CURVE_STEPS    6       //segments in a two-edge vertex's curve
 #define ROAD_JOINT_SIDES    8       //a junction's or a dead end's round joint
 #define ROAD_MAX_NEIGHBOURS 8       //a fine vertex meets at most 6 edges (Grid.cpp checks 3-6)
+#define ROAD_FILL_PIECES    4       //a cell road all round, cut this many ways each way to lie on the relief
+//The STONES along a road's edges (the user's, 2026-10-18): a place for one every step, a few of them taken.
+#define ROAD_STONE_STEP     0.45f
+#define ROAD_STONE_CHANCE   18      //percent of the places
+#define ROAD_STONE_MIN      0.06f   //a stone's radius, by its hash, between these
+#define ROAD_STONE_MAX      0.12f
+#define ROAD_STONE_HEIGHT   0.06f   //its top over the road, at most
+#define ROAD_STONE_BEYOND   0.22f   //how far past the edge the ground is looked at: road there too, no border
+//The WORN MIDDLE (the user's, 2026-10-18): a lighter band down a road's centre, where the feet go - a road between
+//grass only: along or inside a closed area (RoadCellFilled) there is no one line to wear.
+#define ROAD_WORN_HALF      0.20f
+#define ROAD_WORN_LIFT      0.006f  //over the road
+//GRASS creeping in at the edges: a tuft at a few of the places along them, its blades in the grass props' colours
+//(PAL_LEAF, PAL_LEAF_LIGHT), so it turns with the seasons as they do.
+#define ROAD_GRASS_STEP     0.38f
+#define ROAD_GRASS_CHANCE   26      //percent of the places
+#define ROAD_GRASS_BLADES   6
+#define ROAD_GRASS_HEIGHT   0.24f   //a blade's, at most
+#define ROAD_GRASS_BLADE_W  0.03f   //half a blade's width at its foot
+//COBBLES: a filled cell beside a building - a square in the town - laid with stones, in a little grid of its own.
+#define ROAD_COBBLE_LATTICE 3       //the lattice a cell's stones grow from (CobbleGrid), so many squares a side: ~44 stones
+#define ROAD_COBBLE_SQUARES 40      //percent of its squares that may be merged back whole; the rest only across to a neighbour
+#define ROAD_COBBLE_RELAX   25      //passes toward squares, as the map's own (GridSquareFit)
+#define ROAD_COBBLE_GAP     0.14f   //of a stone's size, left round it: the road shows in the joints
+#define ROAD_COBBLE_RIM     0.07f   //the road left showing round a square's cobbles, inside the road's own edge (CobblePatch)
+#define ROAD_COBBLE_SAMPLES 12      //points along a side of a cell's patch: a multiple of the lattice's 2 x 3 edge cuts
+#define ROAD_COBBLE_BLEND   0.3f    //of a side, at each end, over which it turns from square out to the corner's way
+#define ROAD_COBBLE_LIFT    0.012f  //over the road, about
+#define ROAD_TOWN_REACH     400     //the most cells of a closed area looked through for a building beside it
 //A bridge's plots (bridge_plan.md): the road's own shape, as a timber deck on piles.
 #define DECK_THICK          0.12f
 #define DECK_HALF_WIDTH     0.52f
@@ -531,6 +562,539 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
     }
 }
 
+/*
+    A CELL ROAD ALL ROUND (the user's, 2026-10-18): its four corners laid road - two roads side by side, a square of
+    them - so its four edges are road, and the patch of grass they ringed is road too. Not a bridge's: a deck over
+    the water.
+*/
+bool RoadCellFilled(const ZoneState& z, const GridQuad& q){
+    return ZoneRoadLaid(z,q.v[0]) && ZoneRoadLaid(z,q.v[1]) && ZoneRoadLaid(z,q.v[2]) && ZoneRoadLaid(z,q.v[3]);
+}
+
+//...drawn whole at the road's height, in pieces that each lie on the ground's relief as the road's own do.
+void BuildRoadFill(const ChasmWorld& w, const GridQuad& q, std::vector<vertex>& out){
+    vec2 p[4];
+    for (int k = 0; k < 4; k++){
+        p[k] = w.grid->fine.pos[q.v[k]];
+    }
+    const float level = w.terrain->Height(q.v[0]);
+    auto at = [&](float s, float t){
+        vec2 x = MeshBilinear(p,s,t);
+        return vec3(x.x,w.terrain->GroundHeight(x,level) + ROAD_LIFT,x.y);
+    };
+    const float step = 1.0f / ROAD_FILL_PIECES;
+    for (int i = 0; i < ROAD_FILL_PIECES; i++){
+        for (int j = 0; j < ROAD_FILL_PIECES; j++){
+            float s = i * step, t = j * step;
+            MeshQuad(out,at(s,t),at(s + step,t),at(s + step,t + step),at(s,t + step),vec3(0.0f,1.0f,0.0f),PAL_PATH);
+        }
+    }
+}
+
+//Whether `p` is road: within the half width of a laid road's centre line, or in a filled cell. RoadNear's lines, so
+//a standing wall's count too - no stones against a palisade.
+bool OnRoad(const ChasmWorld& w, const ZoneState& z, const vec2& p){
+    GridPick g = w.picker->Pick(p);
+    if (!g.f_hit){
+        return false;
+    }
+    if (g.fine_quad >= 0 && RoadCellFilled(z,w.grid->fine.quads[g.fine_quad])){
+        return true;
+    }
+    return RoadNear(w,z,g.plot,p,ROAD_HALF_WIDTH,true);
+}
+
+//A pebble lying at `at`: a low cone over an uneven ring, turned and shaped by `hash`.
+void Stone(std::vector<vertex>& out, const vec3& at, float r, float h, uint32_t hash, int column){
+    const int sides = 5;
+    float turn = (float)(hash % 360) * 0.0174533f;
+    vec3 ring[sides];
+    for (int k = 0; k < sides; k++){
+        float a = turn + 6.2831853f * k / sides;
+        float rr = r * (0.75f + 0.5f * (float)((hash >> (k * 3 + 9)) & 7) / 7.0f);
+        ring[k] = vec3(at.x + cosf(a) * rr,at.y + 0.004f,at.z + sinf(a) * rr);
+    }
+    vec3 top(at.x,at.y + h,at.z);
+    for (int k = 0; k < sides; k++){
+        vec3 mid = (ring[k] + ring[(k + 1) % sides]) * 0.5f;
+        MeshTri(out,ring[k],ring[(k + 1) % sides],top,vec3(mid.x - at.x,r,mid.z - at.z),column);
+    }
+}
+
+/*
+    THE ROAD'S EDGE, where it meets the grass (the user's, 2026-10-18): what lies along it - stones, grass creeping
+    in - at places a step apart along its sides, none where it runs on into more road, a junction's other arm or a
+    filled cell (OnRoad, a step past the edge). `edges` are the road's sides as polylines, each with the centre line
+    it runs beside, the way out from the road being away from its nearest point; the places along each and which of
+    them take something go by the vertex's hash and a salt of each kind's own, so a road always looks the same.
+*/
+struct RoadEdge{
+    std::vector<vec2> pts;
+    std::vector<vec2> centre;   //one point for a round cap, out from its middle
+};
+vec2 NearestOn(const std::vector<vec2>& line, const vec2& p){
+    if (line.size() == 1){
+        return line[0];
+    }
+    vec2 best = line[0];
+    float best_d = 1e30f;
+    for (size_t i = 1; i < line.size(); i++){
+        vec2 d = line[i] - line[i - 1];
+        float len2 = d.dot(d);
+        float t = (len2 > 1e-9f) ? std::max(0.0f,std::min(1.0f,(p - line[i - 1]).dot(d) / len2)) : 0.0f;
+        vec2 q = line[i - 1] + d * t;
+        if ((p - q).length() < best_d){
+            best_d = (p - q).length();
+            best = q;
+        }
+    }
+    return best;
+}
+//`f(p, out, hash)` at each place along `edges` that `chance` percent of them take, where the road meets the grass.
+template <class F>
+void ForEdgePlaces(const ChasmWorld& w, const ZoneState& z, int v, const std::vector<RoadEdge>& edges, float step,
+                   uint32_t salt, int chance, F f){
+    for (size_t e = 0; e < edges.size(); e++){
+        const RoadEdge& edge = edges[e];
+        float along = 0.0f;
+        float next = step * 0.5f;
+        int place = 0;
+        for (size_t i = 1; i < edge.pts.size(); i++){
+            vec2 a = edge.pts[i - 1];
+            vec2 b = edge.pts[i];
+            float len = (b - a).length();
+            while (next <= along + len){
+                vec2 p = a + (b - a) * ((next - along) / std::max(1e-6f,len));
+                next += step;
+                uint32_t hash = MeshHash((uint32_t)v,(uint32_t)(e * 64 + place),salt);
+                place++;
+                if (hash % 100 >= (uint32_t)chance){
+                    continue;
+                }
+                vec2 o = Unit(p - NearestOn(edge.centre,p));
+                if (o.length() < 0.5f || OnRoad(w,z,p + o * ROAD_STONE_BEYOND)){
+                    continue;
+                }
+                f(p,o,hash);
+            }
+            along += len;
+        }
+    }
+}
+
+//A tuft of grass at `at`: blades leaning out from its middle, each a thin triangle seen from both sides.
+void Tuft(std::vector<vertex>& out, const vec3& at, uint32_t hash){
+    for (int b = 0; b < ROAD_GRASS_BLADES; b++){
+        uint32_t hb = MeshHash(hash,(uint32_t)b,0x6B1D);
+        float a = (float)(hb % 628) / 100.0f;
+        float from = 0.05f * (float)((hb >> 10) & 255) / 255.0f;
+        vec3 foot(at.x + cosf(a) * from,at.y,at.z + sinf(a) * from);
+        float tall = ROAD_GRASS_HEIGHT * (0.45f + 0.55f * (float)((hb >> 18) & 255) / 255.0f);
+        vec3 tip(foot.x + cosf(a) * tall * 0.3f,at.y + tall,foot.z + sinf(a) * tall * 0.3f);
+        vec3 across(-sinf(a) * ROAD_GRASS_BLADE_W,0.0f,cosf(a) * ROAD_GRASS_BLADE_W);
+        vec3 face(cosf(a),0.3f,sinf(a));
+        int column = ((hb >> 26) & 1) ? PAL_LEAF : PAL_LEAF_LIGHT;
+        MeshTri(out,foot - across,foot + across,tip,face,column);
+        MeshTri(out,foot - across,foot + across,tip,face * -1.0f,column);
+    }
+}
+
+//What lies along a road's edges: the stones, and the grass creeping in over its rim.
+void EdgeDressing(const ChasmWorld& w, const ZoneState& z, int v, float level, const std::vector<RoadEdge>& edges,
+                  std::vector<vertex>& out){
+    ForEdgePlaces(w,z,v,edges,ROAD_STONE_STEP,0x570E,ROAD_STONE_CHANCE,[&](const vec2& p, const vec2& o, uint32_t hash){
+        float r = ROAD_STONE_MIN + (ROAD_STONE_MAX - ROAD_STONE_MIN) * (float)((hash >> 8) & 255) / 255.0f;
+        float h = ROAD_STONE_HEIGHT * (0.5f + 0.5f * (float)((hash >> 16) & 255) / 255.0f);
+        vec2 s = p - o * (r * 0.6f);
+        Stone(out,vec3(s.x,w.terrain->GroundHeight(s,level) + ROAD_LIFT,s.y),r,h,hash,((hash >> 24) & 1) ? PAL_EARTH : PAL_BARK);
+    });
+    ForEdgePlaces(w,z,v,edges,ROAD_GRASS_STEP,0x6A55,ROAD_GRASS_CHANCE,[&](const vec2& p, const vec2& o, uint32_t hash){
+        vec2 s = p - o * 0.03f;     //its foot just over the rim, onto the road
+        Tuft(out,vec3(s.x,w.terrain->GroundHeight(s,level) + ROAD_LIFT,s.y),hash);
+    });
+}
+
+//Whether the edge a - b has a filled cell on either side: it is along a closed area or inside one, and wears no
+//middle of its own (ROAD_WORN_HALF).
+bool EdgeBesideFill(const ChasmWorld& w, const ZoneState& z, int a, int b){
+    const GridPicker& p = *w.picker;
+    for (int i = 0; i < p.PlotQuadCount(a); i++){
+        int qc = p.PlotQuadCorner(a,i);
+        const GridQuad& q = w.grid->fine.quads[qc / 4];
+        int k = qc % 4;
+        if ((q.v[(k + 1) % 4] == b || q.v[(k + 3) % 4] == b) && RoadCellFilled(z,q)){
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    COBBLES (the user's, 2026-10-18): a closed area - its filled cells joined by an edge - with a building beside any
+    of it, one with walls and a roof (ZoneKindHasBody: a house, a store, a workshop, not a camp's tents), is a square
+    in the town, and all of it is laid with stones rather than trodden earth: a little grid of them over each cell
+    (CobbleGrid), the road showing in the joints, each a stone's grey by its hash. A building put beside it redraws the chunk it is in, so
+    a square across a chunk's border may lag on its far side until that chunk is next drawn.
+*/
+bool CellInTown(const ChasmWorld& w, const ZoneState& z, const GridQuad& q){
+    for (int k = 0; k < 4; k++){
+        int nb[ROAD_MAX_NEIGHBOURS];
+        int n = ZonePlotNeighbours(w,q.v[k],nb,ROAD_MAX_NEIGHBOURS);
+        for (int i = 0; i < n; i++){
+            const ZoneBuilding* b = z.BuildingOf(nb[i]);
+            if (b && ZoneKindHasBody(b->kind)){
+                return true;
+            }
+        }
+    }
+    return false;
+}
+bool AreaInTown(const ChasmWorld& w, const ZoneState& z, int fine_quad){
+    const GridPicker& picker = *w.picker;
+    std::vector<int> open(1,fine_quad);
+    std::vector<int> seen(1,fine_quad);
+    while (!open.empty() && seen.size() < ROAD_TOWN_REACH){
+        int at = open.back();
+        open.pop_back();
+        const GridQuad& q = w.grid->fine.quads[at];
+        if (CellInTown(w,z,q)){
+            return true;
+        }
+        //The filled cells across its edges.
+        for (int k = 0; k < 4; k++){
+            int a = q.v[k];
+            int b = q.v[(k + 1) % 4];
+            for (int i = 0; i < picker.PlotQuadCount(a); i++){
+                int other = picker.PlotQuadCorner(a,i) / 4;
+                const GridQuad& o = w.grid->fine.quads[other];
+                bool f_across = other != at && (o.v[0] == b || o.v[1] == b || o.v[2] == b || o.v[3] == b);
+                if (f_across && RoadCellFilled(z,o) && std::find(seen.begin(),seen.end(),other) == seen.end()){
+                    seen.push_back(other);
+                    open.push_back(other);
+                }
+            }
+        }
+    }
+    return false;
+}
+//The cell across side k (corner k to k + 1) of fine cell `fine_quad`, or -1 at the map's edge.
+int CellAcross(const ChasmWorld& w, int fine_quad, int k){
+    const GridPicker& picker = *w.picker;
+    const GridQuad& q = w.grid->fine.quads[fine_quad];
+    int a = q.v[k];
+    int b = q.v[(k + 1) % 4];
+    for (int i = 0; i < picker.PlotQuadCount(a); i++){
+        int other = picker.PlotQuadCorner(a,i) / 4;
+        const GridQuad& o = w.grid->fine.quads[other];
+        if (other != fine_quad && (o.v[0] == b || o.v[1] == b || o.v[2] == b || o.v[3] == b)){
+            return other;
+        }
+    }
+    return -1;
+}
+
+/*
+    A CELL'S PATCH OF COBBLES, OUT TO THE ROAD ROUND IT (the user's, 2026-10-18: the stones filled the cell's square
+    while the road under them curved round it). Its four sides: where the cell across is filled too, the straight
+    line the two cells share; where it is not - the square's outline - the road's own edge, ROAD_COBBLE_RIM inside
+    where the road drawn along that side ends, which is ROAD_HALF_WIDTH from its centre lines (RoadCentreLine). So
+    round a corner the patch curves as the road does, rounds a junction's joint, and where another road leaves the
+    square it stops straight across its mouth, no further out than the road's own half width.
+
+    A corner on the outline is pushed out the same way, along a line every cell round it agrees on - away from the
+    middle of the filled cells there - so two cells' patches meet at it; the sides lean toward that line near their
+    ends. A point inside is the Coons patch of the four sides.
+*/
+struct CobblePatch{
+    vec2 corner[4];
+    std::vector<vec2> side[4];      //side k, corner k to corner k + 1, at ROAD_COBBLE_SAMPLES + 1 points
+
+    vec2 Side(int k, float t) const{
+        float f = std::max(0.0f,std::min(1.0f,t)) * ROAD_COBBLE_SAMPLES;
+        int i = std::min(ROAD_COBBLE_SAMPLES - 1,(int)f);
+        return side[k][i] + (side[k][i + 1] - side[k][i]) * (f - (float)i);
+    }
+    //(0, 0) at corner 0, (1, 0) corner 1, (1, 1) corner 2, (0, 1) corner 3 - MeshBilinear's order.
+    vec2 At(float u, float v) const{
+        vec2 bilinear = corner[0] * ((1.0f - u) * (1.0f - v)) + corner[1] * (u * (1.0f - v)) + corner[2] * (u * v)
+                      + corner[3] * ((1.0f - u) * v);
+        return Side(0,u) * (1.0f - v) + Side(2,1.0f - u) * v + Side(3,1.0f - v) * (1.0f - u) + Side(1,v) * u - bilinear;
+    }
+};
+CobblePatch CobblePatchOf(const ChasmWorld& w, const ZoneState& z, int fine_quad){
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    const GridQuad& q = g.fine.quads[fine_quad];
+    vec2 p[4];
+    vec2 middle(0.0f,0.0f);
+    for (int k = 0; k < 4; k++){
+        p[k] = g.fine.pos[q.v[k]];
+        middle = middle + p[k] * 0.25f;
+    }
+    //The road's centre lines near the cell: every laid road vertex of the cells round its corners - all that can reach
+    //a point out to its half width beyond them, and the same near a corner whichever cell round it asks.
+    std::vector<int> verts;
+    for (int k = 0; k < 4; k++){
+        for (int i = 0; i < picker.PlotQuadCount(q.v[k]); i++){
+            const GridQuad& c = g.fine.quads[picker.PlotQuadCorner(q.v[k],i) / 4];
+            for (int j = 0; j < 4; j++){
+                if (ZoneRoadLaid(z,c.v[j]) && std::find(verts.begin(),verts.end(),c.v[j]) == verts.end()){
+                    verts.push_back(c.v[j]);
+                }
+            }
+        }
+    }
+    std::vector<vec2> lines, one;
+    for (int v : verts){
+        RoadCentreLine(w,z,v,one);      //which clears what it is given
+        lines.insert(lines.end(),one.begin(),one.end());
+    }
+    const float reach = ROAD_HALF_WIDTH - ROAD_COBBLE_RIM;
+    auto on_road = [&](const vec2& x){
+        for (size_t s = 0; s + 1 < lines.size(); s += 2){
+            if (SegmentDistance(x,lines[s],lines[s + 1]) <= reach){
+                return true;
+            }
+        }
+        return false;
+    };
+    //As far out from `from` along `dir` as the road goes, to `reach` at most; not at all where it is already past it.
+    auto push = [&](const vec2& from, const vec2& dir){
+        if (!on_road(from)){
+            return from;
+        }
+        if (on_road(from + dir * reach)){
+            return from + dir * reach;
+        }
+        float lo = 0.0f, hi = reach;
+        for (int i = 0; i < 12; i++){
+            float m = (lo + hi) * 0.5f;
+            if (on_road(from + dir * m)){
+                lo = m;
+            }else{
+                hi = m;
+            }
+        }
+        return from + dir * lo;
+    };
+    //Each corner: kept where every cell round it is filled, else pushed out from the middle of those that are.
+    bool f_out[4];
+    vec2 dir[4];
+    for (int k = 0; k < 4; k++){
+        int v = q.v[k];
+        vec2 filled(0.0f,0.0f);
+        int n_filled = 0;
+        for (int i = 0; i < picker.PlotQuadCount(v); i++){
+            int c = picker.PlotQuadCorner(v,i) / 4;
+            if (RoadCellFilled(z,g.fine.quads[c])){
+                filled = filled + g.FineQuadCentre(c);
+                n_filled++;
+            }
+        }
+        f_out[k] = n_filled < picker.PlotQuadCount(v) && n_filled > 0;
+        dir[k] = f_out[k] ? Unit(p[k] - filled * (1.0f / n_filled)) : vec2(0.0f,0.0f);
+        f_out[k] = f_out[k] && dir[k].length() > 0.5f;
+    }
+    CobblePatch patch;
+    for (int k = 0; k < 4; k++){
+        patch.corner[k] = f_out[k] ? push(p[k],dir[k]) : p[k];
+    }
+    for (int k = 0; k < 4; k++){
+        int k1 = (k + 1) % 4;
+        int across = CellAcross(w,fine_quad,k);
+        bool f_outline = (across < 0 || !RoadCellFilled(z,g.fine.quads[across])) && f_out[k] && f_out[k1];
+        vec2 along = p[k1] - p[k];
+        vec2 normal(-along.y,along.x);
+        if (normal.dot(p[k] - middle) < 0.0f){
+            normal = normal * -1.0f;
+        }
+        normal = Unit(normal);
+        for (int i = 0; i <= ROAD_COBBLE_SAMPLES; i++){
+            float t = (float)i / ROAD_COBBLE_SAMPLES;
+            if (i == 0 || i == ROAD_COBBLE_SAMPLES){
+                patch.side[k].push_back(patch.corner[i == 0 ? k : k1]);
+            }else if (!f_outline){
+                patch.side[k].push_back(patch.corner[k] + (patch.corner[k1] - patch.corner[k]) * t);
+            }else{
+                float w0 = std::max(0.0f,1.0f - t / ROAD_COBBLE_BLEND);
+                float w1 = std::max(0.0f,1.0f - (1.0f - t) / ROAD_COBBLE_BLEND);
+                vec2 d = Unit(normal * (1.0f - w0 - w1) + dir[k] * w0 + dir[k1] * w1);
+                patch.side[k].push_back(push(p[k] + along * t,d));
+            }
+        }
+    }
+    return patch;
+}
+
+/*
+    ONE CELL'S STONES, LAID AS THE MAP IS (the user's, 2026-10-18: a straight grid of them read as a chequerboard). A
+    little grid of their own, made the way Grid.cpp makes the map's: a lattice of triangles over the cell - its
+    squares, each cut along a diagonal by the hash - neighbours merged at random into quads wherever the two come out
+    convex, every piece split into quads through its edges' midpoints and its middle, and the inside relaxed toward
+    squares (GridSquareFit). So the stones lie in no rows. Laid over the cell's patch (CobblePatch), whose edge holds
+    still and is cut the same from either side, so two cells' stones meet along it joint to joint. `quads` is four
+    corners a stone, wound as the cell is.
+*/
+void CobbleGrid(const CobblePatch& patch, uint32_t seed, std::vector<vec2>& pos, std::vector<int>& quads){
+    const int N = ROAD_COBBLE_LATTICE;
+    std::vector<vec2> uv;       //where each point is in the cell: p[0] at (0, 0), p[2] at (1, 1)
+    for (int j = 0; j <= N; j++){
+        for (int i = 0; i <= N; i++){
+            uv.push_back(vec2((float)i / N,(float)j / N));
+        }
+    }
+    auto lattice = [&](int i, int j){ return j * (N + 1) + i; };
+    std::vector<std::array<int,3>> tris;
+    for (int j = 0; j < N; j++){
+        for (int i = 0; i < N; i++){
+            int a = lattice(i,j), b = lattice(i + 1,j), c = lattice(i + 1,j + 1), d = lattice(i,j + 1);
+            if (MeshHash(seed,(uint32_t)(j * N + i),0xD1A6) & 1){
+                tris.push_back({{a,b,c}});
+                tris.push_back({{a,c,d}});
+            }else{
+                tris.push_back({{a,b,d}});
+                tris.push_back({{b,c,d}});
+            }
+        }
+    }
+    /*
+        The merge, in an order of the hash's: each triangle with the first neighbour still free that makes a convex quad
+        with it - one with no corner near straight, which would leave a stone with a corner missing. The other half of
+        its own square only for ROAD_COBBLE_SQUARES of them: that pair is always convex, so taken freely it puts nearly
+        every square back and the cell is a plain grid of stones again - the chequerboard (seen, 2026-10-18).
+    */
+    std::vector<int> order(tris.size());
+    for (size_t i = 0; i < order.size(); i++){
+        order[i] = (int)i;
+    }
+    for (size_t i = order.size() - 1; i > 0; i--){
+        std::swap(order[i],order[MeshHash(seed,(uint32_t)i,0x5EED) % (uint32_t)(i + 1)]);
+    }
+    auto cross = [](const vec2& a, const vec2& b){ return a.x * b.y - a.y * b.x; };
+    std::vector<bool> used(tris.size(),false);
+    std::vector<std::vector<int>> pieces;
+    for (int t : order){
+        if (used[t]){
+            continue;
+        }
+        const std::array<int,3>& A = tris[t];
+        int first = (int)(MeshHash(seed,(uint32_t)t,0x3E6E) % 3);
+        for (int s = 0; s < 3 && !used[t]; s++){
+            int k = (first + s) % 3;
+            int u = A[k], v = A[(k + 1) % 3], x = A[(k + 2) % 3];
+            for (size_t o = 0; o < tris.size() && !used[t]; o++){
+                if (used[o] || (int)o == t){
+                    continue;
+                }
+                if ((int)o / 2 == t / 2 && MeshHash(seed,(uint32_t)(t / 2),0x5A) % 100 >= ROAD_COBBLE_SQUARES){
+                    continue;       //its own square's other half (two triangles a square, in order)
+                }
+                const std::array<int,3>& B = tris[o];
+                for (int m = 0; m < 3; m++){
+                    if (B[m] != v || B[(m + 1) % 3] != u){
+                        continue;
+                    }
+                    int q[4] = {u,B[(m + 2) % 3],v,x};
+                    bool f_convex = true;
+                    for (int c = 0; c < 4; c++){
+                        vec2 e0 = uv[q[(c + 1) % 4]] - uv[q[c]];
+                        vec2 e1 = uv[q[(c + 2) % 4]] - uv[q[(c + 1) % 4]];
+                        f_convex = f_convex && cross(e0,e1) > 0.2f * e0.length() * e1.length();
+                    }
+                    if (f_convex){
+                        pieces.push_back(std::vector<int>(q,q + 4));
+                        used[t] = true;
+                        used[o] = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!used[t]){
+            used[t] = true;
+            pieces.push_back(std::vector<int>(A.begin(),A.end()));
+        }
+    }
+    //Every piece into quads: from each corner, to its edges' midpoints and the piece's middle.
+    std::map<std::pair<int,int>,int> mids;
+    auto mid = [&](int a, int b){
+        std::pair<int,int> key(std::min(a,b),std::max(a,b));
+        auto it = mids.find(key);
+        if (it != mids.end()){
+            return it->second;
+        }
+        uv.push_back((uv[a] + uv[b]) * 0.5f);
+        mids[key] = (int)uv.size() - 1;
+        return (int)uv.size() - 1;
+    };
+    quads.clear();
+    for (const std::vector<int>& piece : pieces){
+        int n = (int)piece.size();
+        vec2 c(0.0f,0.0f);
+        for (int v : piece){
+            c = c + uv[v];
+        }
+        uv.push_back(c * (1.0f / n));
+        int middle = (int)uv.size() - 1;
+        for (int k = 0; k < n; k++){
+            int next = mid(piece[k],piece[(k + 1) % n]);
+            int prev = mid(piece[(k + n - 1) % n],piece[k]);
+            quads.push_back(piece[k]);
+            quads.push_back(next);
+            quads.push_back(middle);
+            quads.push_back(prev);
+        }
+    }
+    //Into the world, and the inside relaxed; the patch's edge stays.
+    pos.resize(uv.size());
+    std::vector<bool> f_edge(uv.size());
+    for (size_t i = 0; i < uv.size(); i++){
+        pos[i] = patch.At(uv[i].x,uv[i].y);
+        f_edge[i] = uv[i].x <= 0.0f || uv[i].x >= 1.0f || uv[i].y <= 0.0f || uv[i].y >= 1.0f;
+    }
+    std::vector<vec2> sum(pos.size());
+    std::vector<int> count(pos.size());
+    for (int pass = 0; pass < ROAD_COBBLE_RELAX; pass++){
+        std::fill(sum.begin(),sum.end(),vec2(0.0f,0.0f));
+        std::fill(count.begin(),count.end(),0);
+        for (size_t q = 0; q + 3 < quads.size(); q += 4){
+            vec2 c[4], target[4];
+            for (int k = 0; k < 4; k++){
+                c[k] = pos[quads[q + k]];
+            }
+            GridSquareFit(c,target);
+            for (int k = 0; k < 4; k++){
+                sum[quads[q + k]] = sum[quads[q + k]] + target[k];
+                count[quads[q + k]]++;
+            }
+        }
+        for (size_t i = 0; i < pos.size(); i++){
+            if (!f_edge[i] && count[i] > 0){
+                pos[i] = pos[i] + (sum[i] * (1.0f / count[i]) - pos[i]) * 0.5f;
+            }
+        }
+    }
+}
+void BuildCobbles(const ChasmWorld& w, const ZoneState& z, const GridQuad& q, int fine_quad, std::vector<vertex>& out){
+    const float level = w.terrain->Height(q.v[0]);
+    std::vector<vec2> pos;
+    std::vector<int> quads;
+    CobbleGrid(CobblePatchOf(w,z,fine_quad),MeshHash((uint32_t)fine_quad,0xC0B1),pos,quads);
+    for (size_t s = 0; s + 3 < quads.size(); s += 4){
+        uint32_t hash = MeshHash((uint32_t)fine_quad,(uint32_t)(s / 4),0xC0B1);
+        float lift = ROAD_LIFT + ROAD_COBBLE_LIFT * (0.7f + 0.6f * (float)((hash >> 8) & 255) / 255.0f);
+        vec2 middle = (pos[quads[s]] + pos[quads[s + 1]] + pos[quads[s + 2]] + pos[quads[s + 3]]) * 0.25f;
+        vec3 c[4];
+        for (int k = 0; k < 4; k++){
+            vec2 x = middle + (pos[quads[s + k]] - middle) * (1.0f - ROAD_COBBLE_GAP);
+            c[k] = vec3(x.x,w.terrain->GroundHeight(x,level) + lift,x.y);
+        }
+        int pick = (int)(hash % 100);
+        int column = (pick < 60) ? PAL_STONE_LIGHT : (pick < 92) ? PAL_STONE : PAL_STONE_DARK;
+        MeshQuad(out,c[0],c[1],c[2],c[3],vec3(0.0f,1.0f,0.0f),column);
+    }
+}
+
 }
 
 void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
@@ -541,6 +1105,12 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
     const int column = PAL_PATH;
     const float h = ROAD_HALF_WIDTH;
     std::vector<vec2> segs;
+    if (RoadCellFilled(z,quad)){
+        BuildRoadFill(w,quad,out);
+        if (AreaInTown(w,z,fine_quad)){
+            BuildCobbles(w,z,quad,fine_quad,out);
+        }
+    }
 
     for (int k = 0; k < 4; k++){
         int v = quad.v[k];
@@ -644,7 +1214,12 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
         auto at = [level,&terrain](const vec2& q){
             return vec3(q.x,terrain.GroundHeight(q,level) + ROAD_LIFT,q.y);
         };
-        int n = RoadCentreLine(w,z,v,segs);
+        auto worn_at = [level,&terrain](const vec2& q){
+            return vec3(q.x,terrain.GroundHeight(q,level) + ROAD_LIFT + ROAD_WORN_LIFT,q.y);
+        };
+        int nb[ROAD_MAX_NEIGHBOURS];
+        int n = RoadNeighbours(w,z,v,nb);
+        LineThrough(w,v,nb,n,segs);
         if (!f_road && n == 0){
             continue;   //enclosed ground with no gate onto it: no path to draw
         }
@@ -662,21 +1237,34 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
                 centre.push_back(segs[i * 2 + 1]);
             }
             vec2 a = centre.front(), b = centre.back();
-            std::vector<vec2> left(centre.size()), right(centre.size());
+            std::vector<vec2> left(centre.size()), right(centre.size()), sides(centre.size());
             for (size_t i = 0; i < centre.size(); i++){
                 float t = (float)i / (float)(centre.size() - 1);
                 //The curve's derivative: 2(1-t)(c-a) + 2t(b-c).
                 vec2 d = Unit((c - a) * (1.0f - t) + (b - c) * t);
-                vec2 side(-d.y,d.x);
-                left[i] = centre[i] + side * h;
-                right[i] = centre[i] - side * h;
+                sides[i] = vec2(-d.y,d.x);
+                left[i] = centre[i] + sides[i] * h;
+                right[i] = centre[i] - sides[i] * h;
             }
             for (size_t i = 0; i + 1 < centre.size(); i++){
                 MeshQuad(out,at(left[i]),at(left[i + 1]),at(right[i + 1]),at(right[i]),up,column);
             }
+            //Its worn middle, the same curve narrower - unless it runs along a closed area.
+            if (f_road && !EdgeBesideFill(w,z,v,nb[0]) && !EdgeBesideFill(w,z,v,nb[1])){
+                for (size_t i = 0; i + 1 < centre.size(); i++){
+                    MeshQuad(out,worn_at(centre[i] + sides[i] * ROAD_WORN_HALF),worn_at(centre[i + 1] + sides[i + 1] * ROAD_WORN_HALF),
+                             worn_at(centre[i + 1] - sides[i + 1] * ROAD_WORN_HALF),worn_at(centre[i] - sides[i] * ROAD_WORN_HALF),
+                             up,PAL_PATH_WORN);
+                }
+            }
+            if (f_road){
+                EdgeDressing(w,z,v,level,{RoadEdge{left,centre},RoadEdge{right,centre}},out);
+            }
             continue;
         }
-        //A spoke to each midpoint, square-ended there.
+        //A spoke to each midpoint, square-ended there, and its worn middle where it runs between grass.
+        std::vector<RoadEdge> sides;
+        bool f_worn = false;
         for (size_t i = 0; i + 1 < segs.size(); i += 2){
             vec2 d = Unit(segs[i + 1] - segs[i]);
             if (d.length() < 0.5f){
@@ -685,15 +1273,37 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
             vec2 side(-d.y,d.x);
             MeshQuad(out,at(segs[i] + side * h),at(segs[i + 1] + side * h),at(segs[i + 1] - side * h),
                      at(segs[i] - side * h),up,column);
+            if (f_road && !EdgeBesideFill(w,z,v,nb[i / 2])){
+                const float wh = ROAD_WORN_HALF;
+                MeshQuad(out,worn_at(segs[i] + side * wh),worn_at(segs[i + 1] + side * wh),worn_at(segs[i + 1] - side * wh),
+                         worn_at(segs[i] - side * wh),up,PAL_PATH_WORN);
+                f_worn = true;
+            }
+            sides.push_back(RoadEdge{{segs[i] + side * h,segs[i + 1] + side * h},{segs[i],segs[i + 1]}});
+            sides.push_back(RoadEdge{{segs[i] - side * h,segs[i + 1] - side * h},{segs[i],segs[i + 1]}});
         }
         //The joint: a round patch over the spokes' inner ends. Drawn over them, not cut against them -
         //it is the same colour on the same ground, so the overlap cannot show.
+        RoadEdge cap{{},{c}};      //a dead end's or a lone plot's round end, out from its middle
         for (int i = 0; i < ROAD_JOINT_SIDES; i++){
             float a0 = 6.2831853f * i / ROAD_JOINT_SIDES;
             float a1 = 6.2831853f * (i + 1) / ROAD_JOINT_SIDES;
             vec2 p0 = c + vec2(cosf(a0),sinf(a0)) * h;
             vec2 p1 = c + vec2(cosf(a1),sinf(a1)) * h;
             MeshTri(out,at(c),at(p0),at(p1),up,column);
+            cap.pts.push_back(p0);
+            //...and the worn middle's own joint, so its spokes - or a dead end's one - meet round.
+            if (f_worn){
+                MeshTri(out,worn_at(c),worn_at(c + vec2(cosf(a0),sinf(a0)) * ROAD_WORN_HALF),
+                        worn_at(c + vec2(cosf(a1),sinf(a1)) * ROAD_WORN_HALF),up,PAL_PATH_WORN);
+            }
+        }
+        if (n <= 1){
+            cap.pts.push_back(cap.pts.front());
+            sides.push_back(cap);
+        }
+        if (f_road){
+            EdgeDressing(w,z,v,level,sides,out);
         }
     }
 }

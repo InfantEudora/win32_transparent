@@ -203,7 +203,10 @@ void Window::RegisterWindowClasses(){
     wc.cbClsExtra = 0;
     wc.cbWndExtra = 0;
     wc.hInstance = NULL;
-    wc.hIcon = NULL; // LoadIcon(0, IDI_APPLICATION);
+    //The exe's own icon, resource ID 1 (WINDOWS RESOURCES in engine.mk): the title bar and Alt-Tab take it from the
+    //class, not from the file. An app without one gets NULL from both, which is what this was before.
+    HINSTANCE exe = GetModuleHandleA(NULL);
+    wc.hIcon = LoadIconA(exe, MAKEINTRESOURCEA(1));
     /*
         NOT NULL, which is what this was. A NULL class cursor means Win32 sets no cursor at all
         over the client area: DefWindowProc answers WM_SETCURSOR/HTCLIENT by calling SetCursor with
@@ -220,7 +223,8 @@ void Window::RegisterWindowClasses(){
     wc.hbrBackground = NULL;
     wc.lpszMenuName = NULL;
     wc.lpszClassName = "MainWindowClass";
-    wc.hIconSm = 0;
+    //The 16-pixel picture rather than Windows shrinking the 32.
+    wc.hIconSm = (HICON)LoadImageA(exe, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
 
     if (!RegisterClassExA(&wc)){
         debug->Fatal("Failed to register GLLayeredWindowClass\n");
@@ -576,7 +580,8 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
             }
             break;
         case WM_ACTIVATE:
-            if(LOWORD(wParam) == WA_INACTIVE ){
+            //Activated while minimised (the high word) is not focus - InputController::HasFocus says why.
+            if(LOWORD(wParam) == WA_INACTIVE || HIWORD(wParam) != 0){
                 wnd->f_has_focus = false;
                 //debug->Info("WM_ACTIVATE: Inactive\n");
             }else{
@@ -609,7 +614,7 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
             //debug->Info("WM_MOUSELEAVE wParam= %li\n",wParam);
         break;
         case WM_SETFOCUS:
-            wnd->f_has_focus = true;
+            wnd->f_has_focus = !IsIconic(hWnd);
             //debug->Info("WM_SETFOCUS\n");
         break ;
         case WM_KILLFOCUS:
@@ -621,6 +626,8 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         break;
         case WM_SIZE:
             debug->Info("WM_SIZE received\n");
+            //Minimised is never focused; restored, it is if it is in front (the activation may have come first).
+            wnd->f_has_focus = (wParam != SIZE_MINIMIZED) && GetForegroundWindow() == hWnd;
             if(wParam == SIZE_MINIMIZED){
                 debug->Info("Window Minimized.\n");
             }else{

@@ -278,6 +278,11 @@ static const ChasmSun sun_seasons[CALENDAR_SEASONS] = {
 */
 #define SUN_ELEVATION_MIN       20.0f
 #define SUN_ELEVATION_MAX       85.0f
+//Under the storm at full: this share dimmer and this many kelvin colder; eased by this share a pass, so about two
+//seconds, and a pan across the front is not a flicker. Current tuning.
+#define SUN_STORM_DIM           0.30f
+#define SUN_STORM_COOL          1500.0f
+#define SUN_STORM_EASE          0.01f
 
 ChasmSun ChasmSunOf(uint64_t tick, int* from, int* to, float* t){
     CalendarDate d = CalendarDateOf(tick);
@@ -352,6 +357,12 @@ void ApplicationChasm::UpdateSun(){
     }
     sun_dated = ChasmSunOf(calendar_shown.load());
     ChasmSun now = SunNow();
+    //Under winter's storm (weather_plan.md, D) a shade dimmer and colder, and clear again as it passes. A held sun is held.
+    sun_storm += (weather_storm.load() - sun_storm) * SUN_STORM_EASE;
+    if (!f_sun_held){
+        now.brightness *= 1.0f - SUN_STORM_DIM * sun_storm;
+        now.kelvin += SUN_STORM_COOL * sun_storm;
+    }
     float e = roundf(std::max(SUN_ELEVATION_MIN,std::min(SUN_ELEVATION_MAX,now.elevation)) / SUN_TURN_STEP) * SUN_TURN_STEP;
     float a = roundf(now.azimuth / SUN_TURN_STEP) * SUN_TURN_STEP;
     if (e != sun_turned[0] || a != sun_turned[1]){
@@ -415,8 +426,11 @@ json ApplicationChasm::SunStatusJson(){
     };
     ChasmSun now = SunNow();
     vec3 c = sun ? sun->color : ChasmSunColour(now.kelvin);
+    //As it shines: under the storm too (UpdateSun), which a held sun is not.
+    float storm = f_sun_held ? 0.0f : sun_storm;
     return json{{"held",f_sun_held},{"elevation",r(sun_turned[0],100.0f)},{"azimuth",r(sun_turned[1],100.0f)},
-                {"kelvin",r(now.kelvin,1.0f)},{"brightness",r(now.brightness,100.0f)},
+                {"kelvin",r(now.kelvin + SUN_STORM_COOL * storm,1.0f)},
+                {"brightness",r(sun ? sun->brightness : now.brightness,100.0f)},{"storm",r(storm,100.0f)},
                 {"colour",json::array({r(c.x,1000.0f),r(c.y,1000.0f),r(c.z,1000.0f)})},
                 {"dated",json{{"elevation",r(sun_dated.elevation,100.0f)},{"kelvin",r(sun_dated.kelvin,1.0f)},
                               {"brightness",r(sun_dated.brightness,100.0f)}}}};

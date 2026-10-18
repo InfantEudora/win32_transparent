@@ -27,7 +27,8 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
       - the player's commands answered: "placed", "erased", "refused";
       - the HUD: "click";
       - THE PEOPLE'S VOICES: a person picked out or given an order answers - "picked", "sent" and the rest (Say);
-      - WORK IN HAND: "chop", "hammer", "chisel", "saw" - a blow at a time, from clocks of the workers' own (below).
+      - WORK IN HAND: "chop", "hammer", "chisel", "saw" - a blow at a time, from clocks of the workers' own (below);
+      - THE BIRDS: "bird_call" and "birds_flush", as the flocks make them (SignalBirds).
 
     ON THE PHYSICS THREAD, ONCE A PASS, paused or not (UpdateSound, from the top of UpdateView). The cues' clock is
     the count of passes, which is real time: 4x is four ticks inside one pass, so a blow keeps its rhythm and a
@@ -74,6 +75,8 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
 #define SOUND_BUILD_CHISEL_SHARE    0.25f
 #define SOUND_BUILD_REST_MIN        0.9f
 #define SOUND_BUILD_REST_MAX        2.0f
+//THE BIRDS' CALLS are heard within this of the listener, as the work is; how many at once is the table's.
+#define SOUND_BIRD_REACH            48.0f
 
 /*
     THE WATER HEARD (areas_plan.md): a loop opens when its nearest water is within OPEN of the listener and closes past
@@ -228,6 +231,7 @@ void ApplicationChasm::UpdateSound(){
     cues.SetListener(camera_target.x,camera_target.z,cam_distance * SOUND_LISTENER_HEIGHT,cosf(cam_yaw),-sinf(cam_yaw));
     SignalEvents();
     SignalWork(f_live);
+    SignalBirds(f_live);
     SignalWater();
     SignalVoice();
     UpdateMusic();
@@ -509,6 +513,39 @@ void ApplicationChasm::SignalWork(bool f_live){
             gap += SOUND_BUILD_REST_MIN + (SOUND_BUILD_REST_MAX - SOUND_BUILD_REST_MIN) * Draw(b.person,b.blows,work_clock,6);
         }
         b.next = work_clock + Passes(gap);
+    }
+}
+
+/*
+    THE BIRDS' CALLS (birds_plan.md step 3), made on the render thread as the flocks step (UploadBirds) and taken here:
+    "bird_call" for one bird's bout, with its `voice` (BIRD_VOICE_*: the rows pick crows or magpies by it), and
+    "birds_flush" for a sitting flock scared up, at its middle. When they call is the birds' own clock (Birds.h,
+    BIRD_CALL_*), which is the game's - so 4x calls four times as often, and the table's gaps keep that in hand.
+
+    Only those within reach of the listener: past it the table's curves are silent, and a silent play still takes a
+    voice. And none while the world stands still: the birds have stopped with it, and a call signalled onto the held
+    bus would be heard when the game goes on, late.
+*/
+void ApplicationChasm::SignalBirds(bool f_live){
+    std::vector<BirdCall> calls;
+    {
+        std::lock_guard<std::mutex> lock(birds_mutex);
+        calls.swap(bird_calls);
+    }
+    if (!f_live){
+        return;
+    }
+    const float height = cam_distance * SOUND_LISTENER_HEIGHT;
+    for (const BirdCall& c : calls){
+        float dx = c.at.x - camera_target.x;
+        float dz = c.at.z - camera_target.z;
+        if (sqrtf(dx * dx + dz * dz + height * height) > SOUND_BIRD_REACH){
+            continue;
+        }
+        CuePayload p;
+        p.Set("x",c.at.x).Set("z",c.at.z).Set("voice",(float)c.voice);
+        //The bird's id as the instance: two calling on one pass draw two takes and two pitches.
+        cues.Signal((c.kind == BIRD_CALL_FLUSH) ? "birds_flush" : "bird_call",p,(int)c.bird);
     }
 }
 

@@ -6,10 +6,10 @@ status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
 plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted; selection_plan.md > Selecting someone indoors
 code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn
-verified: 2026-10-11
+verified: 2026-10-18
 ---
 
-The player paints a house over at most {ZONE_HOUSE_MAX_PLOTS:#plots} and gives it storeys
+The player drags out houses - a new one every {ZONE_HOUSE_MAX_PLOTS:#plots}, as the preview shows ([[Construction|placing]]) - and gives them storeys
 (`ZoneKindMaxStoreys`): a click on a house is a storey more, a drag never is. It starts as a
 [[Construction|building site]] and is built a storey at a time, and a storey does nothing until it stands.
 

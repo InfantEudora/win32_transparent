@@ -7,10 +7,10 @@ summary: The only one who fells trees. Works from a hut or from the camp, fells 
 plans: economy_plan.md > The woodcutter: logs first; woodcutting_plan.md > Decided (the user, 2026-10-11); woodcutting_plan.md > As built (2026-10-11); yards_plan.md > Noted
 code: Economy.cpp: TickWorker FindTree WoodNear TreesInTheWay FetchFromWorkplace FindStore Felled AssignJobs EconomySkillFactor RouteTo; Economy.h: WORKER_JOB_WOODCUTTER; Walkers.h: WALK_WHO_ICE
 tuning: ECONOMY_PICK_SECONDS
-verified: 2026-10-16
+verified: 2026-10-18
 ---
 
-A job at a **woodcutter's hut**, which the player paints, or at the [[Camp|camp]], which has one
+A job at a **woodcutter's hut**, which the player drags out over at most {ZONE_BUILDING_MAX_PLOTS:#plots}, or at the [[Camp|camp]], which has one
 woodcutter's place of its own until a hut stands in its [[Settlement|settlement]]: the hut takes it over. **Only a woodcutter fells a tree**: a [[Roads and walls|road]], a wall or a
 [[Construction|site]] with a tree in its way waits for one. A hut's card can **stop work**: it fells nothing
 then, its woodcutter goes free, and the camp's woodcutter does not come back.
@@ -56,7 +56,7 @@ Every round starts and ends at the woodcutter's [[House|house]], or tent.
 3. **A second log**, if one lies within {ECONOMY_LOG_PAIR_REACH} and there is room for both: at most
    {ECONOMY_WOODCUTTER_LOGS:#logs} a trip.
 4. **Deliver** to the nearest store that takes wood and has room, or else into the hut and onto its lot.
-   If neither has room, the woodcutter waits, holding the wood.
+   If neither has room, the wood is put down as a [[Crate|crate]] where the woodcutter stands.
 5. **Home**, then the next round.
 
 A site whose last tree is felled goes up at once, if all it takes is there.

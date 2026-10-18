@@ -297,7 +297,7 @@ void InputController::SetRawInputActive(bool active){
 void InputController::SubmitSystemKey(uint32_t system_keycode, bool down){
     //Unfocused, a key going down is somebody typing in another application. A key coming UP is
     //always honoured, so anything already held can still release.
-    if (down && !f_has_focus){
+    if (down && !HasFocus()){
         return;
     }
 
@@ -329,7 +329,7 @@ void InputController::SubmitSystemKey(uint32_t system_keycode, bool down){
 //outright cannot leave anything stuck. Scripted input is unaffected - AdvanceSyntheticHolds writes
 //into pending_events directly and never comes through here.
 void InputController::SubmitAxisDelta(uint32_t mapped_keycode, int32_t delta){
-    if (delta == 0 || !f_has_focus){
+    if (delta == 0 || !HasFocus()){
         return;
     }
     InputEvent e;
@@ -369,7 +369,7 @@ void InputController::PollDevices(){
     //replay would lose every held key a pass after pressing it. Raw input is event-driven and has
     //no such diff, which is why only this fallback needs the exception.
     if (!f_raw_input_active && !f_replaying){
-        bool sample_keys = f_has_focus;
+        bool sample_keys = HasFocus();
         for (KeyMap& map: keymap){
             if (map.system_keycode == 0){
                 continue;   //the mouse axes and wheel have no system key to poll
@@ -1163,7 +1163,7 @@ void InputController::PollGamepad(){
         return;
     }
 
-    if (!f_has_focus){
+    if (!HasFocus()){
         //Same rule as the keyboard: another application is in front, so this is not our input.
         for (int i=0;i<GAMEPAD_MAX_ANALOG_VALUES;i++){
             analog_values[i] = 0;
@@ -1391,9 +1391,25 @@ void InputController::SetFocused(bool focused){
     }
 }
 
+bool InputController::HasFocus(){
+#if defined(_WIN32)
+    //The OS's answer, not the last message's (see the declaration). The flag is set to match through
+    //SetFocused, so a loss found here releases what is held exactly as WM_KILLFOCUS's would.
+    HWND w = focus_window.load();
+    if (w){
+        bool now = (GetForegroundWindow() == w) && !IsIconic(w);
+        if (now != f_has_focus.load()){
+            SetFocused(now);
+        }
+    }
+#endif
+    return f_has_focus;
+}
+
 #if defined(_WIN32)
 void InputController::SyncFocusWithWindow(HWND hWnd){
-    SetFocused(hWnd && GetForegroundWindow() == hWnd);
+    focus_window = hWnd;
+    SetFocused(hWnd && GetForegroundWindow() == hWnd && !IsIconic(hWnd));
 }
 #endif
 
@@ -1610,14 +1626,26 @@ void InputController::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
     }else if (msg == WM_ACTIVATE){
         //Losing the foreground stops the simulation seeing key presses at all, and releases
         //anything still held. ImGui is unaffected; it has its own Win32 handler.
-        bool focused = (LOWORD(wParam) != WA_INACTIVE);
+        //Activated WHILE MINIMISED (the high word) is not focus: nobody means keys for a game they cannot
+        //see. Nor is every WA_ACTIVE the foreground - HasFocus checks that, and says why.
+        focus_window = hWnd;
+        bool focused = (LOWORD(wParam) != WA_INACTIVE) && HIWORD(wParam) == 0;
         SetFocused(focused);
         if (!focused){
             ReleaseAllTouchPointers();
         }
-        debug->Trace("WM_ACTIVATE focus=%i\n",(int)f_has_focus);
+        debug->Trace("WM_ACTIVATE focus=%i minimised=%i\n",(int)f_has_focus,(int)(HIWORD(wParam) != 0));
     }else if (msg == WM_SETFOCUS){
-        SetFocused(true);
+        focus_window = hWnd;
+        SetFocused(!IsIconic(hWnd));
+    }else if (msg == WM_SIZE){
+        //Minimised: no longer ours, though Windows may leave it the active window. Restored: ours again if it is
+        //in front - an activation that came while it was still minimised was not counted (WM_ACTIVATE above).
+        bool focused = (wParam != SIZE_MINIMIZED) && GetForegroundWindow() == hWnd;
+        SetFocused(focused);
+        if (!focused){
+            ReleaseAllTouchPointers();
+        }
     }else if (msg == WM_KILLFOCUS){
         SetFocused(false);
         /*

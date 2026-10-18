@@ -4,9 +4,9 @@ aliases: calendar, season, winter, spring, summer, autumn, snow, year, day, days
 kind: world
 status: built
 summary: A year of four seasons of ten days each. Winter's snow sweeps down from the north, stopping fields and water collectors and calling for firewood.
-plans: gameplay_plan.md > P1, the calendar; seasons_plan.md > Decided; seasons_plan.md > Crossing the ice (the user's, 2026-10-12); seasons_plan.md > The sun through the year (the user's, 2026-10-17)
-code: Calendar.h: CalendarDateOf CalendarSnowCover CalendarSnowAt; Seasons.h: ForestSeasonal; Walkers.h: SetSeason Frozen FrozenInWinter WALK_WHO_ICE; Economy.cpp: IceHome EconomyIceDays RouteTo; ApplicationChasm.h: ChasmSunOf ChasmSunColour
-verified: 2026-10-17
+plans: gameplay_plan.md > P1, the calendar; seasons_plan.md > Decided; seasons_plan.md > Crossing the ice (the user's, 2026-10-12); seasons_plan.md > The sun through the year (the user's, 2026-10-17); weather_plan.md > Decided (the user, 2026-10-18)
+code: Calendar.h: CalendarDateOf CalendarSnowCover CalendarSnowAt; Seasons.h: ForestSeasonal; Walkers.h: SetSeason Frozen FrozenInWinter WALK_WHO_ICE; Economy.cpp: IceHome EconomyIceDays RouteTo; ApplicationChasm.h: ChasmSunOf ChasmSunColour; Weather.h: WeatherDateOf WeatherNear WeatherWind; ApplicationChasmWeather.cpp: UpdateWeather UploadWeather
+verified: 2026-10-18
 ---
 
 The calendar is one count of ticks since the colony's first dawn. A day lasts
@@ -21,6 +21,17 @@ days, sweeps south through winter's first four, holds there, and melts back nort
 five. At its furthest it covers {CALENDAR_SNOW_REACH} of the map's depth from the north edge, so the swamp
 and the desert in the south never see it. The front wanders north and south along its length rather than
 running straight. **The first spring has no snow**: there was no winter before the colony.
+
+## The weather
+
+A look and a sound only; nothing in the game obeys it. A storm travels with the snow's front while it moves:
+felt {WEATHER_AHEAD} ahead of its line, at its height within {WEATHER_BAND} of it, gone {WEATHER_BEHIND}
+into the snow. Snow falls only there, thickest as the front comes into view, and the wind blows from the
+north-west. [[Tree|Trees]] and bushes bend in it, hardest along the front's line, with gusts rolling
+through; once, as the front reaches the view, a big gust goes through with the music's gust, flushing the
+[[Birds|birds]]. The chimneys' smoke leans with the wind, and stands straight up in winter's still air
+after. The music turns tense under the storm and the sun dims. Autumn has a light breeze that sways the
+trees; spring and summer are still.
 
 ## What winter changes
 

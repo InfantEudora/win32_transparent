@@ -1,0 +1,44 @@
+//CHASM'S WINDOWS RESOURCES: the icon and the version block the Properties dialog's Details tab reads. windres
+//compiles this into an object that links like any other - APP_RC in engine.mk.
+//
+//The version comes from chasm_rc.h, which the makefile writes into the object folder from ChasmVersion.cpp's
+//number, the commit and the day (THE VERSION there) - so the exe says what the title screen says.
+
+#include <winver.h>
+#include "chasm_rc.h"
+
+//ID 1, the one core/Window.cpp loads for the window and the one Explorer shows for the exe. Made from
+//assets/icon.png by tools/png_to_ico.py - run it again after changing the picture.
+1 ICON "chasm.ico"
+
+1 VERSIONINFO
+FILEVERSION     CHASM_RC_VERSION_NUM
+PRODUCTVERSION  CHASM_RC_VERSION_NUM
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       CHASM_RC_FILEFLAGS
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        //US English, Unicode - the pair VarFileInfo names below.
+        BLOCK "040904B0"
+        BEGIN
+            //FileDescription is also the name Task Manager lists the process under.
+            VALUE "FileDescription",  "Chasm"
+            VALUE "ProductName",      "Chasm"
+            VALUE "InternalName",     "chasm"
+            VALUE "OriginalFilename", CHASM_RC_EXE
+            VALUE "FileVersion",      CHASM_RC_VERSION
+            //The Details tab shows this one as text and FileVersion as the four numbers above, so the commit
+            //goes here, where it can be read.
+            VALUE "ProductVersion",   CHASM_RC_PRODUCT_VERSION
+            //No CompanyName or LegalCopyright yet: they wait on the name to put in them.
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

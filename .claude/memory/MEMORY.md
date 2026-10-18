@@ -92,16 +92,16 @@
 - [Chasm defence plan](chasm_defence_plan.md) — AGREED 2026-10-09: all 8 steps built (orders … guard tower, towers kept full, guards by hand + count); gatehouse wanted; chasm_select op hits finds chips; scouting (kept provisions, gather chip, messages) all built 2026-10-11
 - [Chasm issues panel](chasm_issues_panel.md) — NEEDS ATTENTION top-5 over the build grid; crop defaults to AUTO after a day; add rows in ChasmIssues
 - [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes; figures are constant names
-- [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-3 BUILT (drop, take via SourceStock, builders move, card); finds and holding->dropping next
+- [Chasm crates plan](crates_plan.md) — AGREED 2026-10-09; steps 1-3 BUILT (drop, take via SourceStock, builders move, card); step 5 holding->dropping BUILT 2026-10-18; finds next
 - [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; hut buildable without a lot; house Extend chip works the same way; sites selectable by patch + staked 2026-10-11
 - [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, full-time archers by precision, per-person archery; trainees SHOOT (Shoot clip, bow+quiver, arrows by skill) built 2026-10-11
-- [Chasm goods strip](chasm_goods_strip.md) — cards show stocks as strips: solid anyone's, hollow kept, striped reserved; HudGoodColour per good
+- [Chasm goods strip](chasm_goods_strip.md) — cards show stocks as strips: solid anyone's, hollow kept, striped reserved (a person's load too, 2026-10-18); task bar from EconomyTaskProgress
 - [Chasm goods plan](chasm_goods_plan.md) — AGREED 2026-10-10: food/water/materials/inputs categories, hemp crop, ropewalk (2-4 plots) makes rope; no starting rope; all 6 steps built and checked end to end; kept stock + make-more orders (provisions, rope) built 2026-10-10
 - [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs, skinned crowd costs; Walking/Idle/Shoot played, crossfaded; bone props via probe bind matrix (IntoBone), armature scale dropped (woman too tall, flagged)
 - [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" open questions
 - [Ramparts plan](ramparts_plan.md) — Chasm walk nodes are plot+layer; tower decks + debug castle built 2026-10-10; route_layer drives height; WalkJoin is the shared rule
 - [Chasm person picking](chasm_person_picking.md) — people picked by G-buffer readback + 8 px fallback; skinned outlines; pick-pixel pin; multi-select all 3 steps built (group, box, group orders spread by the rules)
-- [Minimised app took keystrokes](minimized_focus_leak.md) — OPEN: a --minimized chasm once had input_focused true and obeyed VS Code typing; check input_focused
+- [Minimised app took keystrokes](minimized_focus_leak.md) — FIXED 2026-10-18: WM_ACTIVATE isn't the foreground; HasFocus asks GetForegroundWindow + !IsIconic; verified both ways
 - [Chasm settlements](chasm_settlements.md) — 2026-10-11: territories by walk, reach by beds, any home keeps one; founding by tent + settle here BUILT; partners rejoin, lone house pairs, hut replaces camp woodcutter; children go with household, babies carried, orphans squeeze in (2026-10-12); one camp per colony
 - [Chasm stop work + ice](chasm_stop_work_and_ice.md) — 2026-10-12: workplaces stoppable (f_stopped); collector takes over camp drawer; posted cross ice with thaw warnings
 - [Chasm woodcutting](chasm_woodcutting.md) — only woodcutters fell (roads/walls/sites wait); camp 1 farmer + 1 woodcutter; logs 2/4/5; hut room by area; built 2026-10-11
@@ -116,7 +116,9 @@
 - [Chasm sound plan](chasm_sound_plan.md) — step 2 BUILT 2026-10-16: USE_SOUND, assets/cues/chasm.json, per-pass cues on the physics thread, ground listener in core, chasm_sound; work blows on per-person clocks; voices (leo/leah) answer picks + taken orders
 - [Chasm statistics](chasm_statistics.md) — v1 BUILT + confirmed 2026-10-16: EconomyEvent shared with sound, saved journal + day rows, Tab page, chasm_stats; events in wiki/events.md; camp pantries left out of NEEDS ATTENTION on purpose
 - [Chasm demo menus](chasm_demo_menus.md) — demo_plan all 7 steps built 2026-10-16 (menus, saves, recording, Settings, discoveries, goals + end page); pop-ups play mode only; four starts edited by the user
-- [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — chasm_load in a test instance overwrites the user's untracked autosave slots; back them up first
+- [Chasm test instance autosaves](chasm_test_instance_autosaves.md) — every running copy shares the slots; user OK with tests overwriting them, no restore; never rely on autosaves in tests
 - [Chasm areas plan](chasm_areas_plan.md) — BUILT 2026-10-16: rivers/falls/biomes/plateau/forest found when first seen (EVENT_DISCOVERED), debug overlay, water loops faint under the clouds
 - [Linux port](linux_port_investigation.md) — chasm RUNS on Linux via X11 (2026-10-17), one-file ship binary; gamepads/MCP/ImGui open; no SDL/GLFW wanted; docs/linux_port_plan.md
-- [Chasm birds plan](chasm_birds_plan.md) — steps 0-2 BUILT 2026-10-17: shape-keyed `bird`, Birds.{h,cpp} + chasm_birds tool; colony flocks follow the axe (my call); sound/clouds/title next
+- [Chasm weather plan](chasm_weather_plan.md) — BUILT 2026-10-18: winter storm at the front (sway, snow + spindrift shader, gust stinger once, smoke/suspense/light/birds); core SetWindField XZ plane; user liked it; weather freezes in a pause like water/mist
+- [Chasm birds plan](chasm_birds_plan.md) — ALL 5 steps BUILT by 2026-10-18 (sound, seasons gather, title flock); birds stay over the clouds (user); menu_town needs a re-capture for title perches
+- [chasm_select: read op status](chasm_select_status_not_select.md) — op select returns a stale card after sim_step; cards draw only in play mode, restored window

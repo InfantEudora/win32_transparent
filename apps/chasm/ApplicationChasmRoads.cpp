@@ -19,8 +19,9 @@
 /*
     Roads, the app's side (step 10, docs/roads_plan.md). A road is ground, painted by the zone commands
     and drawn by the zone mesh; what is here is the road TOOL - a line drawn freehand and placed on
-    release (docs/line_works_plan.md) - its tool for scripts, and the people's stand-in figure. The
-    debug walker that proved the pathfinding lived here until 2026-10-07 (Walkers.h).
+    release (docs/line_works_plan.md) - and since 2026-10-18 the same DRAG for every other tool that paints
+    (docs/drag_plan.md), its tool for scripts, and the people's stand-in figure. The debug walker that
+    proved the pathfinding lived here until 2026-10-07 (Walkers.h).
 */
 
 static Debugger* debug = new Debugger("ChasmRoads",DEBUG_ALL);
@@ -239,6 +240,310 @@ void ApplicationChasm::DropLine(){
     line_chain.clear();
     line_version++;
     pick_version++;
+}
+
+//--- The drag: every other painting tool, drawn and then placed (docs/drag_plan.md) ---------------------
+
+bool ApplicationChasm::DragTool(int tool){
+    if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || tool == CHASM_TOOL_ERASE || ChasmCellTool(tool)){
+        return true;
+    }
+    int kind = ToolKind(tool);
+    return kind != ZONE_KIND_NONE && kind != ZONE_KIND_BRIDGE && !ZoneKindOnePlot(kind);
+}
+
+static vec2 CoarseCentre(const ChasmWorld& w, int c){
+    return (w.grid->FineQuadCentre(c * 4) + w.grid->FineQuadCentre(c * 4 + 2)) * 0.5f;
+}
+
+/*
+    Coarse cell `to`, the cursor at `at`, onto the end of a cell tool's chain: as LineStepTo, back onto one of its last
+    cells cuts it back there; a jump of the cursor brings the cells along the way, as a slower drag would have crossed
+    them. A diagonal step is the rules' to join (Zones::Apply brings the cell between).
+*/
+static void CellStepTo(const ChasmWorld& w, std::vector<int>& chain, int to, const vec2& at){
+    if (to < 0){
+        return;
+    }
+    if (chain.empty()){
+        chain.push_back(to);
+        return;
+    }
+    if (to == chain.back()){
+        return;
+    }
+    size_t back_to = (chain.size() > LINE_BACK_MOST) ? chain.size() - 1 - LINE_BACK_MOST : 0;
+    for (size_t i = chain.size() - 1; i-- > back_to;){
+        if (chain[i] == to){
+            chain.resize(i + 1);
+            return;
+        }
+    }
+    vec2 from = CoarseCentre(w,chain.back());
+    int steps = std::min(LINE_WALK_MOST,(int)((at - from).length() / 0.5f));
+    for (int i = 1; i < steps; i++){
+        GridPick g = w.picker->Pick(from + (at - from) * ((float)i / steps));
+        if (g.f_hit && g.coarse_quad >= 0 && g.coarse_quad != chain.back() && g.coarse_quad != to){
+            chain.push_back(g.coarse_quad);
+        }
+    }
+    chain.push_back(to);
+}
+
+/*
+    PHYSICS THREAD, from UpdatePaint with a drag tool (DragTool): pressed, the drag starts on the plot - or a cell tool's
+    cell - under the cursor, Shift making it one that takes away; held, what the cursor crosses goes onto it; let go,
+    it is placed (PlaceDrag). Dropped (DropDrag, a right press), nothing more until the button is up.
+*/
+void ApplicationChasm::UpdateAreaDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (area_drag == LINE_DRAG_DROPPED){
+        if (!f_held){
+            area_drag = LINE_DRAG_NONE;
+        }
+        return;
+    }
+    if (area_drag == LINE_DRAG_NONE){
+        if (!f_clicked || !f_over_scene || !hover.f_hit || !w){
+            return;
+        }
+        int tool = paint_tool;
+        uint32_t owner = PaintOwner(tool);      //before the lock: it takes pick_mutex itself
+        area_drag = LINE_DRAG_DRAWING;
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        drag_chain.assign(1,ChasmCellTool(tool) ? hover.coarse_quad : hover.plot);
+        drag_cells.assign(1,hover.coarse_quad);
+        drag_tool = tool;
+        f_drag_erase = main_scene->inputcontroller->IsKeyDown(INPUT_SHIFT);
+        f_drag_moved = false;
+        drag_owner = owner;
+        drag_version++;
+        pick_version++;
+        return;
+    }
+    if (!f_held){
+        PlaceDrag();
+        return;
+    }
+    if (!f_over_scene || !hover.f_hit || !w){
+        return;     //off the map, or over the overlay: the drag waits where it was
+    }
+    std::lock_guard<std::mutex> lock(pick_mutex);
+    std::vector<int> was = drag_chain;
+    if (ChasmCellTool(drag_tool)){
+        CellStepTo(*w,drag_chain,hover.coarse_quad,hover.at);
+    }else{
+        LineStepTo(*w,drag_chain,hover.plot);
+    }
+    bool f_changed = drag_chain != was;
+    if (drag_tool == CHASM_TOOL_ERASE && hover.coarse_quad >= 0
+        && std::find(drag_cells.begin(),drag_cells.end(),hover.coarse_quad) == drag_cells.end()){
+        drag_cells.push_back(hover.coarse_quad);
+        f_changed = true;
+    }
+    if (f_changed){
+        f_drag_moved = f_drag_moved || drag_chain.size() > 1 || drag_cells.size() > 1;
+        drag_version++;
+        pick_version++;
+    }
+}
+
+/*
+    The commands a drag's release sends, in the order drawn, each plot or cell once: a building's plots painted as one
+    stroke - which joins them into a building until it is full, then goes on with the next - a yard's, a field's or a
+    range's likewise; taking away (Shift), what is there of the tool's sort; the eraser, whatever stands on each plot
+    and the fields under it. Then each run on a copy of the zones as the rules run it, to see what it does.
+*/
+bool ApplicationChasm::PlanDrag(int tool, const std::vector<int>& chain, const std::vector<int>& cells, bool f_erase,
+                                uint32_t owner, DragPlan& out){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    out.commands.clear();
+    out.refused.clear();
+    out.why.clear();
+    out.tool = tool;
+    out.f_erase = f_erase;
+    if (!w || !z || z->world != w || chain.empty()){
+        return false;
+    }
+    out.before = z;
+    std::vector<int> seen;
+    auto once = [&](int i){
+        if (i < 0 || std::find(seen.begin(),seen.end(),i) != seen.end()){
+            return false;
+        }
+        seen.push_back(i);
+        return true;
+    };
+    auto add = [&](int op, int index, int value1, uint32_t by){
+        out.commands.push_back(DragCommand{op,index,value1,by});
+    };
+    int kind = ToolKind(tool);
+    if (tool == CHASM_TOOL_ERASE){
+        for (int v : chain){
+            if (!once(v) || v >= (int)z->building.size()){
+                continue;
+            }
+            if (ZoneCastleShape(*z,v) != ZONE_CASTLE_NONE){
+                add(ZONE_OP_CASTLE,v,0,0);      //the castle's stone first: an arch stands over the road under it
+            }else if (z->storeys[v]){
+                add(ZONE_OP_BUILD_ERASE,v,0,0);
+            }else if (z->ground[v]){
+                add(ZONE_OP_GROUND_ERASE,v,0,0);
+            }
+        }
+        seen.clear();
+        for (int c : cells){
+            if (once(c) && c < (int)z->field.size() && z->field[c]){
+                add(ZONE_OP_FIELD_ERASE,c,0,0);
+            }
+        }
+    }else if (ChasmCellTool(tool)){
+        int paint = (tool == CHASM_TOOL_RANGE) ? ZONE_OP_RANGE_PAINT : ZONE_OP_FIELD_PAINT;
+        for (int c : chain){
+            if (once(c) && c < (int)z->field.size() && (!f_erase || z->field[c])){
+                add(f_erase ? ZONE_OP_FIELD_ERASE : paint,c,0,0);
+            }
+        }
+    }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT){
+        int ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT;
+        for (int v : chain){
+            if (once(v) && v < (int)z->ground.size() && (!f_erase || z->ground[v])){
+                add(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT,v,ground,f_erase ? 0 : owner);
+            }
+        }
+    }else if (kind != ZONE_KIND_NONE){
+        for (int v : chain){
+            if (once(v) && v < (int)z->building.size() && (!f_erase || z->building[v])){
+                add(f_erase ? ZONE_OP_BUILD_ERASE : ZONE_OP_BUILD_PAINT,v,kind,f_erase ? 0 : owner);
+            }
+        }
+    }
+    //On the copy, with a stroke of its own: any but the last applied, so the first command starts a new one.
+    std::shared_ptr<const Exploration> exs = GetExploration();
+    static const Exploration none;      //nothing to go by: all of it explored
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    out.after.Adopt(*z);
+    uint32_t stroke = (z->stroke % 0x3FFFFFu) + 1;
+    bool f_play = PlayMode();
+    for (const DragCommand& c : out.commands){
+        bool f_changed = ApplyZoneCommand(out.after,exs ? *exs : none,(e && e->world == w) ? e.get() : NULL,
+                                          c.op,(uint32_t)c.index,c.value1,stroke,f_play,c.owner);
+        bool f_refused = !f_changed && !out.after.last_refusal.empty();
+        out.refused.push_back(f_refused ? 1 : 0);
+        if (f_refused && out.why.empty()){
+            out.why = out.after.last_refusal;
+        }
+    }
+    return true;
+}
+
+/*
+    Let go: a click - never past the plot it was pressed on - is what a click always was: one storey more on a building
+    or a new one, one off it with Shift, a plot of yard or a field's cell. A drag goes out as ONE stroke of what PlanDrag
+    found the rules take, in the order drawn; what they refuse is left out, so a row of houses goes on past a plot too
+    steep, and the overlay says why (drag_last_refusal) - sent itself, a refusal would be cleared by what follows it.
+*/
+void ApplicationChasm::PlaceDrag(){
+    std::vector<int> chain;
+    std::vector<int> cells;
+    int tool;
+    bool f_erase, f_moved;
+    uint32_t owner;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        chain.swap(drag_chain);
+        cells.swap(drag_cells);
+        tool = drag_tool;
+        f_erase = f_drag_erase;
+        f_moved = f_drag_moved;
+        owner = drag_owner;
+        drag_version++;
+        pick_version++;
+    }
+    area_drag = LINE_DRAG_NONE;
+    if (chain.empty()){
+        return;
+    }
+    paint_stroke = (paint_stroke + 1) & 0x3FFFFF;
+    int kind = ToolKind(tool);
+    if (!f_moved && tool != CHASM_TOOL_ERASE){
+        int at = chain[0];
+        if (ChasmCellTool(tool)){
+            SubmitZone(f_erase ? ZONE_OP_FIELD_ERASE : (tool == CHASM_TOOL_RANGE) ? ZONE_OP_RANGE_PAINT : ZONE_OP_FIELD_PAINT,at,0,
+                       paint_stroke);
+        }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT){
+            SubmitZone(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT,at,
+                       (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT,paint_stroke,f_erase ? 0 : owner);
+        }else{
+            SubmitZone(f_erase ? ZONE_OP_BUILD_REMOVE : ZONE_OP_BUILD_ADD,at,kind,paint_stroke,f_erase ? 0 : owner);
+        }
+        return;
+    }
+    DragPlan plan;
+    if (!PlanDrag(tool,chain,cells,f_erase,owner,plan)){
+        return;
+    }
+    for (size_t i = 0; i < plan.commands.size(); i++){
+        if (!plan.refused[i]){
+            const DragCommand& c = plan.commands[i];
+            SubmitZone(c.op,c.index,c.value1,paint_stroke,c.owner);
+        }
+    }
+    if (!plan.why.empty()){
+        {
+            std::lock_guard<std::mutex> lock(grid_mutex);
+            drag_last_refusal = plan.why;
+        }
+        drag_refusals++;
+    }
+}
+
+//A right press, or the tool put down: the drag is gone, and nothing is placed.
+void ApplicationChasm::DropDrag(){
+    area_drag = LINE_DRAG_DROPPED;
+    std::lock_guard<std::mutex> lock(pick_mutex);
+    drag_chain.clear();
+    drag_cells.clear();
+    drag_version++;
+    pick_version++;
+}
+
+const ApplicationChasm::DragPlan* ApplicationChasm::CurrentDragPlan(uint32_t* serial){
+    std::vector<int> chain, cells;
+    int tool;
+    bool f_erase, f_moved;
+    uint32_t owner, version;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        if (drag_chain.empty() || !f_drag_moved){
+            f_drag_plan = false;
+            return NULL;
+        }
+        chain = drag_chain;
+        cells = drag_cells;
+        tool = drag_tool;
+        f_erase = f_drag_erase;
+        f_moved = f_drag_moved;
+        owner = drag_owner;
+        version = drag_version.load();
+    }
+    (void)f_moved;
+    //What the plan depends on beyond the drag: the zones, the explored ground, the crates and territories, the mode.
+    std::shared_ptr<const ZoneState> z = GetZones();
+    std::shared_ptr<const Exploration> ex = GetExploration();
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    uint64_t key[6] = {(uint64_t)version,(uint64_t)(uintptr_t)z.get(),(uint64_t)(z ? z->version : 0),(uint64_t)(uintptr_t)ex.get(),
+                       e ? ((uint64_t)e->crates_version << 32 | e->zones_version) : 0,(uint64_t)PlayMode()};
+    if (!f_drag_plan || !std::equal(key,key + 6,drag_plan_key)){
+        std::copy(key,key + 6,drag_plan_key);
+        f_drag_plan = PlanDrag(tool,chain,cells,f_erase,owner,drag_plan);
+        drag_plan_serial++;
+    }
+    if (serial){
+        *serial = drag_plan_serial;
+    }
+    return f_drag_plan ? &drag_plan : NULL;
 }
 
 //--- The view --------------------------------------------------------------------------------------

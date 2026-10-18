@@ -893,10 +893,22 @@ bool ZoneBridgeChain(const ChasmWorld& w, const ZoneState& z, int from, int to, 
     return true;
 }
 
-//Why a building of `kind` takes no more plots (ZoneKindMaxPlots).
+//Why a building of `kind` takes no more plots (ZoneKindMaxPlots) - in words, so a number changed there is changed here.
 static const char* FullRefusal(int kind){
-    return (kind == ZONE_KIND_ROPEWALK) ? "a ropewalk is at most four plots - longer makes no more rope"
-                                        : "a house is at most four plots - one family";
+    static_assert(ZONE_BUILDING_MAX_PLOTS == 4 && ZONE_HOUSE_MAX_PLOTS == 4 && ZONE_ROPEWALK_MAX_PLOTS == 4
+                  && ZONE_STORE_MAX_PLOTS == 6 && ZONE_FIELD_MAX_CELLS == 8 && ZONE_RANGE_MAX_CELLS == 4,
+                  "the sizes in words below");
+    switch (kind){
+        case ZONE_KIND_HOUSE:       return "a house is at most four plots - one family";
+        case ZONE_KIND_ROPEWALK:    return "a ropewalk is at most four plots - longer makes no more rope";
+        case ZONE_KIND_STORE:       return "a store is at most six plots";
+        case ZONE_KIND_FIELD:       return "a field is at most eight cells";
+        case ZONE_KIND_RANGE:       return "a range is at most four cells";
+        case ZONE_KIND_WINCH:       return "a winch is one plot";
+        case ZONE_KIND_TOWER:       return "a tower is one plot";
+        case ZONE_KIND_MINE:        return "a mine is one plot";
+        default:                    return "a building is at most four plots";
+    }
 }
 
 bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, uint32_t joining, const char** why){
@@ -1712,6 +1724,15 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     RefreshArches(false);
 }
 
+void Zones::Adopt(const ZoneState& published){
+    if (state.world != published.world || coarse_across.empty()){
+        Reset(published.world);
+    }
+    state = published;
+    last_refusal.clear();
+    last_arch_lost = 0;
+}
+
 #define ZONE_PITCH_STROKE   0x7FFFFEu   //a stroke number no drag reaches: a pitched tent joins no building by it
 
 bool Zones::PitchTent(int plot, uint32_t camp){
@@ -1985,7 +2006,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 break;
             }
             //An empty plot: on with the stroke's building where it is joined to it and has room, or a
-            //new one - a stroke that jumps a gap, or has filled a house, goes on with the next.
+            //new one - a stroke that jumps a gap, or has filled its building (ZoneKindMaxPlots), goes on with the next.
             //A winch is a plot of its own: a stroke of them makes one each.
             //A building named in the command is extended or nothing: a plot that cannot join it is refused.
             if (owner && !ZoneCanExtend(w,state,plot,kind,owner,&why)){
@@ -2089,6 +2110,11 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 return false;
             }
             uint32_t joining = stroke_target(cell_kind);
+            //Full (ZoneKindMaxPlots), the stroke goes on with a new one, as a house's does.
+            int most = ZoneKindMaxPlots(cell_kind);
+            if (joining && most && state.buildings[joining].size >= most){
+                joining = 0;
+            }
             //A diagonal step, as for buildings: through a cell beside both, the first that can be a field.
             if (joining && !cell_touches(c,joining)){
                 int bridge = -1;
@@ -2098,7 +2124,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                         bridge = n;
                     }
                 }
-                if (bridge >= 0 && ZoneCanField(w,state,c,NULL)){
+                if (bridge >= 0 && (!most || state.buildings[joining].size + 2 <= most) && ZoneCanField(w,state,c,NULL)){
                     state.field[bridge] = joining;
                     state.field_built[bridge] = f_play ? 0 : 1;
                     state.buildings[joining].size++;
@@ -3054,7 +3080,7 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
     /*
         The buildings themselves: each id's count matches what names it, everything naming it is of
         one kind on one side - plots for buildings, cells for fields - every building is ONE piece,
-        and a house is within its plots.
+        and each within its kind's size (ZoneKindMaxPlots).
     */
     std::vector<int> counted(z.buildings.size(),0);
     int broken = 0;
@@ -3078,7 +3104,7 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
     }
     int live = 0;
     int in_pieces = 0;
-    int big_houses = 0;
+    int too_big = 0;
     std::vector<uint8_t> seen;
     for (uint32_t id = 1; id < z.buildings.size(); id++){
         const ZoneBuilding& b = z.buildings[id];
@@ -3090,8 +3116,8 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
             continue;
         }
         live++;
-        if (b.kind == ZONE_KIND_HOUSE && b.size > ZONE_HOUSE_MAX_PLOTS){
-            big_houses++;
+        if (ZoneKindMaxPlots(b.kind) && b.size > ZoneKindMaxPlots(b.kind)){
+            too_big++;
         }
         //One piece: a flood from its first element reaches all of it - but a camp, whose tents need not touch.
         if (b.kind == ZONE_KIND_CAMP){
@@ -3153,9 +3179,9 @@ void RunZoneChecks(const ChasmWorld& w, const ZoneState& z, GridCheckReport& rep
         }
     }
     snprintf(buf,sizeof(buf),"%i buildings and fields on %i plots and %i cells, %i ground plots; %i break a rule, "
-             "%i miscounted, %i in pieces, %i houses too big",live,z.built_plots,z.field_cells,z.grounds,bad,broken,
-             in_pieces,big_houses);
-    r.f_pass = (bad == 0 && broken == 0 && in_pieces == 0 && big_houses == 0);
+             "%i miscounted, %i in pieces, %i too big",live,z.built_plots,z.field_cells,z.grounds,bad,broken,
+             in_pieces,too_big);
+    r.f_pass = (bad == 0 && broken == 0 && in_pieces == 0 && too_big == 0);
     r.detail = buf;
     report.results.push_back(r);
     if (!r.f_pass){

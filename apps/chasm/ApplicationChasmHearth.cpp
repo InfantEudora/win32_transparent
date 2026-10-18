@@ -28,6 +28,9 @@ static Debugger* debug = new Debugger("ChasmHearth",DEBUG_ALL);
 #define HEARTH_WANDER       0.10f   //how far each puff starts from the last
 #define HEARTH_FIRE_UP      0.25f   //a camp fire's smoke starts this far above its ground
 #define HEARTH_PANE_OUT     0.004f  //a lit pane stands this far in front of the pane it lights
+#define HEARTH_WIND_LEAN    0.75f   //...and leans this much more over a life for each unit a second of wind (LeanSmoke)...
+#define HEARTH_LEAN_MOST    5.0f    //...up to this, so the big gust bends a column over rather than scattering it
+#define HEARTH_LEAN_STEP    0.03f   //a column's lean is moved when it has changed by this much
 
 //RENDER THREAD, from BuildScene: the smoke's puff and the two materials - the palette moving as LIFE, and unlit.
 void ApplicationChasm::BuildHearthScene(){
@@ -113,6 +116,9 @@ void ApplicationChasm::UploadHearth(){
     bool f_smoke = !tops.empty();
     SetSmoke(hearth_smoke,tops);
     hearth_smoke->SetVisibility(f_smoke);
+    //For the weather to lean (LeanSmoke): the columns just made lean as SetSmoke made them, which it will move from.
+    hearth_tops = tops;
+    hearth_leans.clear();
     if (!panes.empty()){
         hearth_pane_mesh->SetMeshData(panes.data(),(int)panes.size());
     }
@@ -187,20 +193,83 @@ void ApplicationChasm::HearthFixtures(const ChasmWorld& w, const ZoneState& z, c
     }
 }
 
-//Object `o` - an instance set of the puff, in the smoke material - made the smoke rising from `tops`.
-void ApplicationChasm::SetSmoke(Object* o, const std::vector<vec3>& tops){
-    std::vector<fmat4> puffs;
-    std::vector<vec4> motion;
-    for (const vec3& top : tops){
+/*
+    The puffs' motion for smoke rising from `tops`, each column leaning by its `leans` (world units over a life), or by
+    HEARTH_DRIFT where none is given; `pad` how far the motion takes a puff from where it is born.
+*/
+static void SmokeMotion(const std::vector<vec3>& tops, const std::vector<vec2>* leans, std::vector<vec4>& motion,
+                        float& pad){
+    motion.clear();
+    float lean_most = HEARTH_DRIFT_X + HEARTH_DRIFT_Z;
+    for (size_t t = 0; t < tops.size(); t++){
+        const vec3& top = tops[t];
         //A column: the puffs a fifth of a life apart, the whole column offset by the spot's hash so no two
         //chimneys breathe together.
         float offset = (float)(MeshHash((uint32_t)std::lround(top.x * 16.0f),(uint32_t)std::lround(top.z * 16.0f)) % 1000) / 1000.0f;
+        vec2 lean = (leans && t < leans->size()) ? (*leans)[t] : vec2(HEARTH_DRIFT_X,HEARTH_DRIFT_Z);
+        lean_most = std::max(lean_most,std::fabs(lean.x) + std::fabs(lean.y));
         for (int i = 0; i < HEARTH_PUFFS; i++){
-            puffs.push_back(Object::ComposeTransformScale(top,quat(vec3(0.0f,1.0f,0.0f),0.0f),vec3(HEARTH_SIZE,HEARTH_SIZE,HEARTH_SIZE)));
             motion.push_back(vec4(std::fmod(offset + (float)i / HEARTH_PUFFS,1.0f),HEARTH_LIFE,HEARTH_RISE,HEARTH_GROW));
-            motion.push_back(vec4(HEARTH_DRIFT_X,HEARTH_DRIFT_Z,HEARTH_WANDER,0.0f));
+            motion.push_back(vec4(lean.x,lean.y,HEARTH_WANDER,0.0f));
         }
     }
+    pad = HEARTH_RISE + lean_most + HEARTH_WANDER + HEARTH_SIZE;
+}
+
+//Object `o` - an instance set of the puff, in the smoke material - made the smoke rising from `tops`.
+void ApplicationChasm::SetSmoke(Object* o, const std::vector<vec3>& tops){
+    std::vector<fmat4> puffs;
+    for (const vec3& top : tops){
+        for (int i = 0; i < HEARTH_PUFFS; i++){
+            puffs.push_back(Object::ComposeTransformScale(top,quat(vec3(0.0f,1.0f,0.0f),0.0f),vec3(HEARTH_SIZE,HEARTH_SIZE,HEARTH_SIZE)));
+        }
+    }
+    std::vector<vec4> motion;
+    float pad = 0.0f;
+    SmokeMotion(tops,NULL,motion,pad);
     o->SetInstances(std::move(puffs));
-    o->SetInstanceMotion(std::move(motion),HEARTH_RISE + HEARTH_DRIFT_X + HEARTH_DRIFT_Z + HEARTH_WANDER + HEARTH_SIZE);
+    o->SetInstanceMotion(std::move(motion),pad);
+}
+
+/*
+    RENDER THREAD, from UploadWeather (weather_plan.md, A): the colony's smoke leaning with the wind at each chimney -
+    hard over in the storm - and in winter's still air after it, standing straight up. HEARTH_DRIFT is a light air every
+    other season has: it dies away over winter's first day and comes back over spring's (the first spring, which had no
+    winter before it, starts with it). Moved only when a column's lean has changed enough to see.
+*/
+void ApplicationChasm::LeanSmoke(const WeatherDate& date, float front, float strength){
+    if (!hearth_smoke || hearth_tops.empty()){
+        return;
+    }
+    CalendarDate d = CalendarDateOf(calendar_shown.load());
+    float days = d.season_fraction * (float)CALENDAR_DAYS_PER_SEASON;
+    auto ease = [](float x){
+        float t = std::max(0.0f,std::min(1.0f,x));
+        return t * t * (3.0f - 2.0f * t);
+    };
+    float still = (d.season == SEASON_WINTER) ? ease(days)
+                : (d.season == SEASON_SPRING && d.year > 1) ? 1.0f - ease(days) : 0.0f;
+    std::vector<vec2> leans(hearth_tops.size());
+    float moved = (hearth_leans.size() == leans.size()) ? 0.0f : 1.0f;
+    for (size_t t = 0; t < hearth_tops.size(); t++){
+        const vec3& top = hearth_tops[t];
+        vec2 wind = WeatherWind(date,front,weather_big,vec2(top.x,top.z),weather_seconds,strength);
+        vec2 blown = wind * HEARTH_WIND_LEAN;
+        float l = blown.length();
+        if (l > HEARTH_LEAN_MOST){
+            blown = blown * (HEARTH_LEAN_MOST / l);
+        }
+        leans[t] = vec2(HEARTH_DRIFT_X,HEARTH_DRIFT_Z) * (1.0f - still) + blown;
+        if (t < hearth_leans.size()){
+            moved = std::max(moved,std::fabs(leans[t].x - hearth_leans[t].x) + std::fabs(leans[t].y - hearth_leans[t].y));
+        }
+    }
+    if (moved < HEARTH_LEAN_STEP){
+        return;
+    }
+    hearth_leans = leans;
+    std::vector<vec4> motion;
+    float pad = 0.0f;
+    SmokeMotion(hearth_tops,&hearth_leans,motion,pad);
+    hearth_smoke->SetInstanceMotion(std::move(motion),pad);
 }

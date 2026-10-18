@@ -149,13 +149,12 @@ naming each good and how many (`ChasmHud.h` / `ChasmHud.cpp`: `HudStock`, `DrawH
   its swatch.
 - **A card too long to end above the bottom right stack** (NEEDS ATTENTION and the tools) moves to its left
   (`build_stack_left`), as the jobs overview rises over it. A camp full of settlers does this.
-- `chasm_select` reports a goods line as `{"stock", "whose", "kept", "room", "goods", "reserved"}`.
+- `chasm_select` reports a goods line as `{"stock", "whose", "kept", "room", "goods", "reserved"}`, and a
+  person's load with `"load": true` as well.
 - Checked in play 2026-10-09 on a village round the start camp, stocks set with `chasm_economy set_stock`:
   every card above, a camp's 5 wheat reserved by a girl fetching home drawn striped.
 
 **Open:**
-- A person's load is still text (", with 4 wood"); the pack is a strip since 2026-10-11 - see the next heading.
-  (A crate's card has had its strip since crates step 3.)
 - The mouse wheel over the card still zooms the camera.
 - A pin kept at the bottom edge can sit under a corner panel; the badges draw over the panels.
 - A person standing inside his own outlined workplace (a woodcutter at his hut's door) loses his outline to
@@ -186,6 +185,41 @@ while it holds something; it replaces the "Pack:" line. **No room**, as proposed
 count, and the header's right says what it is worth in days, "water 12 days, food 10" (a unit of water is
 `NEEDS_WATER_WORTH`, food by `EconomyPackFood`). Seen on a scout's full pack, 6 water and 5 beans. **The load is
 still text**, not asked for this time.
+
+**As built (2026-10-18): the load** - the user asked for it in **the reserved goods' stripes**, "so it's clear that it's
+not intended for themselves" - which settles the proposal above the other way: not hollow or solid by where it goes,
+but striped through, key swatch too (`HudStock::f_load`). A load is goods already spoken for, which is what the
+stripes mean on every other card. The rest:
+
+- **Header**: "Load - for a site", "for a tower", "for a store", "for the camp", "for the woodpile", "for home",
+  "for the ropewalk", "for the builders' hut" (`LoadFor`). Empty where it is not decided yet - a log on his
+  shoulder while he goes for a second, or a load still on him while he eats - since the rules choose a store only
+  when he sets off with it (`deliver`).
+- **Measured against what he can carry on this errand** (`EconomyLoadRoom`): a woodcutter two logs of his
+  workplace's (8 at a hut, 10 at one with a loft, 4 at the camp), the camp's water carrier `ECONOMY_CAMP_WATER_LOAD`, anyone else
+  `ECONOMY_LOAD`. So the camp's picker shows "1 of 5" as he goes on to the next bush. A woodcutter taking wood
+  from his own pile carries one log, and still shows it as 4 of 8: what he could carry, not what he meant to.
+- **Only while he has something on him** (`carry > 0`). It replaces ", with 4 wood" after what he is doing.
+- Checked 2026-10-18 on `saves/camp_3` and `saves/save_20261018_123527`, every card read each 25 ticks over two
+  days: woodcutters to the woodpile and to a store, a collector's water carrier, the camp's picker between bushes,
+  people fetching home, children at play.
+
+### How far along (the user's, 2026-10-18)
+
+The user: a progress bar on a selected person's card that shows **how far they are in their current task**.
+
+**As built**: the line saying what he is doing gets a bar under it while that runs on his timer - felling,
+picking up a log, unloading, building, laying a road, sowing, drawing water, picking fruit, digging, making
+rope or provisions, lifting from a crate, training, playing - filling as he gets on with it. Walking has no bar.
+
+- From the rules, not guessed by the card: every timer is started through `EconomyStartTimer`, which keeps where
+  it began in `EconomyWorker::timer_full`, and `EconomyTaskProgress` gives 0..1 (or -1: no bar). `timer_full`
+  is saved, so a loaded game shows the bar at once; it is never hashed and no rule reads it.
+- **Not while eating and drinking** (`WORKER_SUPPLYING`): the meal has had its own bar since zombies step 2.
+- **Picking or drawing by hand** fills once a unit (a fruit, a unit of water), since the rules time them one at a
+  time; the camp's picker's bar fills once for the whole plant, and its water carrier's once for the load.
+- `chasm_economy`'s workers report it as `task_progress` and `task_ticks`.
+- Checked 2026-10-18 the same way as the load, plus someone sent to pick a bush and to draw water by hand.
 
 ### Selecting someone indoors, from their house's card (the user's, 2026-10-10)
 

@@ -76,7 +76,8 @@ GoodsMask HudGoodsGroupMask(int group);
     camp's supplies, a woodpile, a house nobody lives in; HOLLOW, kept - a lived-in house's own, a camp's
     larder, a field's harvest for its land's family, a site's; STRIPED, of either, what somebody is already
     on his way to take (Economy::GoodFree's reservations, EconomyReserved). Without a room the goods share
-    the whole strip.
+    the whole strip. A person's LOAD (the user's, 2026-10-18) is striped through, key and all: goods already on
+    their way, to a site, a store, the camp - never his own, which is his pack's hollow.
 */
 struct HudStock{
     std::string label;                          //"Pantry", "Holds", "Harvest"
@@ -86,6 +87,7 @@ struct HudStock{
     int room = 0;                               //0: none
     bool f_kept = false;
     std::string figure;                         //at the header's right in place of "12 of 16": a group's part of a stock
+    bool f_load = false;                        //a person's load: all of it striped
 };
 //Its natural width, the key on one line; its height at `width`, the key wrapping to fit; drawn from `top`
 //(the top of its line, as a card counts them) at `width`, returning that height.

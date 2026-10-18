@@ -29,6 +29,21 @@
 #define ZONE_STOREY_HEIGHT  1.3f    //world units - a fine cell (about one house) is 2 across
 
 /*
+    WHERE A BUILDING'S WALL CROSSES the fine edge between neighbouring plots a and b, either way round (the user's,
+    2026-10-18). A plot's ground is the quarters of the cells round it, in to each edge's midpoint and out to each
+    cell's centre - and round a point of five or six cells that is a STAR, the midpoints drawn in past the line
+    between the centres, while a site's frame (BuildSite) stands on the centres and is straight. So on an edge with
+    such a point at either end a wall runs straight from centre to centre, crossing the edge where that line does,
+    and the house stands in its frame's shape. Elsewhere at the midpoint: round a point of three cells the
+    midpoints stand OUT past the centres' line, and straightened the house would be a small sharp triangle; on the
+    fours that are most of the grid the two all but agree.
+
+    Worked the same from either side, so the cells either side of an edge agree on its point to the bit and the
+    houses either side of it meet.
+*/
+vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b);
+
+/*
     What of a house the view lights up while it is warm (needs_plan.md, step 3): its chimney's top, where
     its smoke rises, and its windows' panes, which glow. BuildHouseCell reports them when asked, so they are
     where the mesh put them.

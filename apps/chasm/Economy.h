@@ -14,6 +14,7 @@
 #include "Zones.h"
 
 class Walkers;
+class Exploration;
 struct PropInstance;
 
 /*
@@ -604,7 +605,7 @@ inline bool EconomyStageJob(int job){
 #define WORKER_TO_STORE         3       //carrying - to a store, or (store 0) to his hut's pile
 #define WORKER_UNLOADING        4       //putting the load down (timer)
 #define WORKER_TO_HOME          5       //walking back to his house (or the camp)
-#define WORKER_HOLDING          6       //carrying, and neither a store nor his pile will take it: waiting
+#define WORKER_HOLDING          6       //carrying, cut off by a re-plan: at his next look a store, or put down (crates step 5)
 #define WORKER_TO_FETCH         7       //idle, walking to goods (`store`; the kind `carry_good`, carry 0) for a construction (`site`)
 #define WORKER_FETCHING         8       //picking it up (timer)
 #define WORKER_TO_SITE          9       //carrying it to the site
@@ -724,6 +725,7 @@ struct EconomyWorker{
     int carry_good = -1;
     int carry = 0;
     int timer = 0;              //ticks left of WORKING or UNLOADING
+    int timer_full = 0;         //...and what it started at (EconomyStartTimer): his card's task bar, never a rule
     int stint = 0;              //road work: the pieces done on this trip (ECONOMY_ROAD_STINT)
     /*
         The route: points on the ground plane (x, world z), walked from route[seg] to route[seg + 1],
@@ -757,6 +759,16 @@ struct EconomyWorker{
     uint32_t with = 0;                  //WITH THE GROWN: who a child goes along with, or a baby is carried by, 0 none
                                         //(Economy::WithTheGrown) - a baby's kept until its mother is home again
 };
+
+//Starts a timed part of his round: `timer` counts down from `ticks`, and `timer_full` keeps where it began, so his
+//card can show how far he has got (selection_plan.md, "How far along"). Every timer is started through this.
+inline void EconomyStartTimer(EconomyWorker& k, int ticks){
+    k.timer = ticks;
+    k.timer_full = ticks;
+}
+//How far through his timed task he is, 0..1 - or -1 when nothing he is doing runs on the timer. Not while eating and
+//drinking (WORKER_SUPPLYING): the meal has its own bar, and that state's timer only paces the waiting.
+float EconomyTaskProgress(const EconomyWorker& k);
 
 //The most archery he can reach: a tenth of ARCHERY_FULL a point of precision (range_plan.md).
 inline int EconomyArcheryCap(const EconomyWorker& k){
@@ -1337,9 +1349,11 @@ public:
         nobody by that id, a child, nothing open to stand on, no way there. `f_spread`, one of a GROUP's orders
         (selection_plan.md, "Several people selected", step 3): onto the plot while it has room (EconomyPostRoom), else
         the nearest open plot round it with room that he can walk to (SpreadPost) - the group's orders come nearest first.
+        `clouds`, a PLAY order's (NULL a tool's): sent under them he still goes, but what stops him there is told only as
+        no way there - the water or a cliff would give the hidden ground away.
     */
     bool Order(uint32_t person, int plot, const ZoneState& z, Walkers& walkers, std::string* why, int layer = -1,
-               bool f_spread = false);
+               bool f_spread = false, const Exploration* clouds = NULL);
     /*
         GATHERING (POSTS, CHASM_CMD_GATHER): person `person`, ordered out, fills a scout's pack before his post - or with
         f_on false goes straight on. He sets out on the tick that follows, as for an order. False, and `why` says it,
@@ -1373,9 +1387,10 @@ public:
         the edge of the water on `plot` to draw it (FORAGE_WATER) - an order to stand there (Order), and a one-off once
         he is: into his pack, and he stands on. `f_spread`, one of a group's: the nearest ripe plant to the one clicked
         that none of them is sent to, or the edge's room shared out as a group's posts are. False, and `why` says it.
+        `clouds`, a PLAY command's (NULL a tool's): nothing under them - not the plot clicked, nor a plant a group spreads to.
     */
     bool Forage(uint32_t person, int plot, int what, const ZoneState& z, Walkers& walkers, std::string* why,
-                bool f_spread = false);
+                bool f_spread = false, const Exploration* clouds = NULL);
     /*
         GUARDS BY HAND (POSTS, step 8; CHASM_CMD_GUARD): person `person` made a guard of tower `tower` by the
         player - a right click - over an automatic pick; or with `tower` 0 released from his tower, its count
@@ -1835,6 +1850,10 @@ int EconomyDepositLeft(const EconomyState& e, int d);
 //The skill a job leans on, and how fast a worker with `skill` of it works: 1 at 5, 1.4 at 10, 0.68 at 1.
 int EconomyJobSkill(int job);
 float EconomySkillFactor(int skill);
+//What he can carry on the errand he is on, which his card's load is measured against: a woodcutter two logs of his
+//workplace's (ECONOMY_WOODCUTTER_LOGS), the camp's water carrier ECONOMY_CAMP_WATER_LOAD, anyone else ECONOMY_LOAD -
+//and never less than he has on him.
+int EconomyLoadRoom(const EconomyState& e, const ZoneState& z, const EconomyWorker& k);
 //How many settlers a new colony starts with - its camp has a tent for each.
 int EconomySettlerCount();
 //A person's name, from his id and his surname: for the panel and the tools.

@@ -23,6 +23,13 @@
     A vertex is drawn by one chunk only, the one its first plot quad is in (RoadVertexOwner), so a
     road across a chunk border is neither doubled nor lost. View only, like everything ZoneMesh.h calls.
 
+    A CELL ROAD ALL ROUND - its four corners laid road, two roads side by side or a square of them - is
+    road all over rather than a ring round a patch of grass, so roads laid together make a closed area
+    (the user's, 2026-10-18). And small dark-brown STONES lie here and there along the road's edges where
+    it meets the grass, with GRASS creeping in over the rim: by the vertex's hash, never where the road runs
+    on into more road. A road between grass has a lighter WORN MIDDLE (PAL_PATH_WORN); a closed area has
+    none, and one beside a building - a square in the town - is laid with COBBLES.
+
     A PLANNED road plot (painted in play, not yet laid - docs/line_works_plan.md) is no road yet: it is
     drawn as a surveyor's stake at its vertex with a cord out to each edge it will take.
 

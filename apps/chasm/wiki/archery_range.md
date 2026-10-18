@@ -7,10 +7,10 @@ summary: Painted on coarse cells like a field. A trainee a cell trains there ful
 plans: range_plan.md > Decided; range_plan.md > As built; range_plan.md > Shooting; range_plan.md > Later; zombies_plan.md > Step 3: guards shoot
 code: Economy.cpp: GoTrain EconomyCellCost AssignJobs; Economy.h: WORKER_JOB_ARCHER EconomyArcheryCap ARCHERY_FULL; Zones.h: ZONE_KIND_RANGE ZoneKindOnCells; ApplicationChasmRange.cpp: ShotClockOf ShotOf
 tuning: ARCHERY_PER_TICK, RANGE_SPREAD_NOVICE, RANGE_SPREAD_MASTER
-verified: 2026-10-14
+verified: 2026-10-18
 ---
 
-Archers are the first people the colony trains, and they train here. A range is painted over **coarse
+Archers are the first people the colony trains, and they train here. A range is dragged over at most {ZONE_RANGE_MAX_CELLS} **coarse
 cells**, each on flat ground, as a [[Field|field]] is, and buildings keep a plot away from it. Standing, it
 is fenced, trodden earth with a target at each cell's north side and hay bales behind: every range shoots
 north.

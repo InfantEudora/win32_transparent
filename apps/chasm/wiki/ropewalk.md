@@ -6,15 +6,15 @@ status: built
 summary: A long low shed where a ropemaker makes rope from hemp. It works from 2 plots, and a 3rd and 4th make it faster.
 plans: goods_plan.md > Decided; goods_plan.md > The ropewalk; goods_plan.md > Step 3: the ropewalk; goods_plan.md > The ropewalk's props; goods_plan.md > Kept in stock, and made to order
 code: Zones.h: ZONE_KIND_ROPEWALK ZONE_ROPEWALK_MAX_PLOTS ZoneKindMaxPlots; Economy.h: ECONOMY_ROPE_HEMP ECONOMY_ROPE_SECONDS ECONOMY_ROPEWALK_MIN_PLOTS ECONOMY_ROPEWALK_PILE ECONOMY_KEPT_START; Economy.cpp: MakeRope AtRopewalk EconomyRopewalkPace WorkplaceMakes FetchFromWorkplace KeptShort; BuildingMesh.cpp: BuildRopewalkYard
-verified: 2026-10-12
+verified: 2026-10-18
 ---
 
-Where [[Rope|rope]] is made, from [[Hemp|hemp]]. It is painted over plots like any building (key K), one
-storey high, at most {ZONE_ROPEWALK_MAX_PLOTS:#plots}, and built as a [[Construction|site]].
+Where [[Rope|rope]] is made, from [[Hemp|hemp]]. It is dragged over plots like any building (key K), one
+storey high, at most {ZONE_ROPEWALK_MAX_PLOTS:#plots} - a longer drag goes on with another - and built as a [[Construction|site]].
 
 ## Its length
 
-- **It works from {ECONOMY_ROPEWALK_MIN_PLOTS:#plots}.** A drag lays one plot at a time, so a one-plot
+- **It works from {ECONOMY_ROPEWALK_MIN_PLOTS:#plots}.** A click lays one plot, so a one-plot
   ropewalk can be placed, but it takes no ropemaker: its card says it is too short, and NEEDS ATTENTION
   lists it. A ropewalk still being built is not too short, only unfinished.
 - **Longer is faster**, for the same one ropemaker: rope is made at x1 on 2 plots, x1.5 on 3 and x2 on 4.

@@ -6,10 +6,10 @@ status: built
 summary: One plot on a deposit - a floatstone seam's foot, the mountain's foot, an outcrop - where a miner digs floatstone or stone a load at a time and carries it to a store. A seam is dug out at last; the mountain and the outcrops never are.
 plans: stone_plan.md > 5. The mine; stone_plan.md > As built: step 5 (2026-10-15)
 code: Zones.h: ZONE_KIND_MINE; Zones.cpp: MineIsBuildable; Economy.h: WORKER_JOB_MINER ECONOMY_MINE_SECONDS ECONOMY_MINE_STONE ECONOMY_MINE_FACE; Economy.cpp: GoDig DugOut EconomyDepositLeft; Deposits.cpp: DepositDigWay; ApplicationChasmMines.cpp: UploadMines
-verified: 2026-10-15
+verified: 2026-10-18
 ---
 
-A mine is one plot, one storey, painted with its tool (**O**). It costs a storey's [[Wood|wood]] and
+A mine is one plot, one storey, placed with a click of its tool (**O**) - never dragged. It costs a storey's [[Wood|wood]] and
 **{ECONOMY_MINE_STONE} [[Stone|stone]]**, and waits for that stone as any [[Construction|site]] does.
 
 ## Where it goes

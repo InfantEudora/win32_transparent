@@ -12,6 +12,7 @@
 # and optionally:
 #
 #     USE_SOUND := 1               link OpenAL (see the block below)
+#     APP_RC    := chasm.rc        the exe's icon and version info, on Windows (WINDOWS RESOURCES below)
 #
 # CONFIG picks the build configuration and is passed on the command line, not set by an
 # app - it is a property of the build you are doing, not of the app you are doing it to:
@@ -677,6 +678,36 @@ APP_OBJS := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(APP_SRCS))
 ASM_OBJS := $(patsubst %.S,$(OBJ_DIR)/%.o,$(APP_ASM))
 
 #---------------------------------------------------------------------------------------
+# WINDOWS RESOURCES - the exe's icon, and what its Properties dialog says about it
+#
+# An app opts in with a resource script of its own, named in its makefile before this file
+# is included:
+#
+#     APP_RC := chasm.rc
+#
+# windres compiles it into $(OBJ_DIR) and it links like any other object. Without one an exe
+# carries only the manifest MinGW links into everything (run as the invoking user, Vista to
+# 10), so Explorer shows the generic program icon and the Details tab is empty.
+#
+# THE ICON IS ID 1, by convention rather than by any rule of Windows': core/Window.cpp loads
+# ID 1 for the window class, and Explorer shows the lowest-numbered icon for the file. An app
+# without one gets NULL there, which is what every window had before this existed.
+#
+# PER APP AND NOT SHARED, like the baked asset table: one app's icon linked into another is
+# the silent mix-up the CORE_CFLAGS line exists to prevent. So the object goes in $(OBJ_DIR),
+# and RC_FLAGS is the app's for whatever -I or -D its script needs.
+#
+# WHAT IS NOT TRACKED: windres has no -MMD, so an icon or header the script pulls in is not
+# a prerequisite on its own. The app names them, as apps/chasm/makefile does.
+#
+# Windows only. Linux has no resource section; an X11 window icon would be _NET_WM_ICON, set
+# at run time, and nothing sets one yet.
+#---------------------------------------------------------------------------------------
+ifeq ($(PLATFORM),windows)
+RC_OBJS := $(patsubst %.rc,$(OBJ_DIR)/%.res.o,$(APP_RC))
+endif
+
+#---------------------------------------------------------------------------------------
 # Header dependency tracking
 #
 # Every compile also writes a .d file next to its object listing the project headers it
@@ -714,7 +745,7 @@ default: $(EXE)
 #where a library has not been built yet.
 ENGINE_LIBS := $(wildcard $(LIBS_DIR)/*.a)
 
-$(EXE): $(APP_OBJS) $(ASM_OBJS) $(CORE_OBJS) $(ENGINE_LIBS)
+$(EXE): $(APP_OBJS) $(ASM_OBJS) $(RC_OBJS) $(CORE_OBJS) $(ENGINE_LIBS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $^ -o $@ $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS) $(if $(CONFIG_SUFFIX),$(RLINK))
 	@echo "Built $@ ($(CONFIG))"
@@ -728,6 +759,12 @@ $(OBJ_DIR)/%.o: %.cpp
 $(OBJ_DIR)/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@
+
+#A resource script - see WINDOWS RESOURCES. The .o extension is what makes windres write a
+#linkable COFF object rather than a .res.
+$(OBJ_DIR)/%.res.o: %.rc
+	@mkdir -p $(dir $@)
+	windres $(RC_FLAGS) -i $< -o $@
 
 #CORE_CFLAGS, not CFLAGS - these objects are shared between apps. See the note above it.
 $(CORE_BUILD_DIR)/%.o: $(ROOT)/%.cpp

@@ -25,6 +25,10 @@
     itself: a plot the line may not take carries a negative u, which chasm_ghost.frag tints red whatever
     the ghost's tint - so one mesh, one object, and the outline green while any of it will be placed.
 
+    ANY OTHER DRAG (docs/drag_plan.md) is what the rules make of the commands its release will send, run on a
+    copy of the zones (PlanDrag): the buildings it makes or grows, each apart from the next, a yard's plots, a
+    field's cells - every other building a shade darker - and red where the rules refuse.
+
     A BRIDGE (docs/bridge_plan.md) is tiles too: before the press, the bank it would start from; dragged,
     the whole chain to the cursor, all one colour, since the rules are the whole bridge's (ZoneBridgeChain)
     and neither end may be under the clouds. Over the water a tile lies at the deck's height, where the
@@ -103,6 +107,23 @@ void GhostBuildingPlot(const ChasmWorld& w, const ZoneState& z, int plot, int ki
     const GridPicker& p = *w.picker;
     for (int i = 0; i < p.PlotQuadCount(plot); i++){
         BuildHouseCell(w,only,p.PlotQuadCorner(plot,i) / 4,out);
+    }
+}
+
+//Several of a kind, as a drag's price tag counts them: "2 HOUSES".
+const char* KindPlural(int kind){
+    switch (kind){
+        case ZONE_KIND_HOUSE:       return "HOUSES";
+        case ZONE_KIND_STORE:       return "STORES";
+        case ZONE_KIND_WATER:       return "COLLECTORS";
+        case ZONE_KIND_FIELD:       return "FIELDS";
+        case ZONE_KIND_RANGE:       return "RANGES";
+        case ZONE_KIND_ROPEWALK:    return "ROPEWALKS";
+        case ZONE_KIND_CAMP:        return "CAMPS";
+        case ZONE_KIND_WOODCUTTER:
+        case ZONE_KIND_BUILDERS:
+        case ZONE_KIND_STONECUTTER: return "HUTS";
+        default:                    return "BUILDINGS";
     }
 }
 
@@ -192,7 +213,11 @@ void ApplicationChasm::UpdateGhost(){
     bool f_line = !chain.empty();
     int from = (tool == CHASM_TOOL_BRIDGE) ? bridge_from.load() : -1;
     bool f_tool = tool != CHASM_TOOL_SELECT;
-    bool f_show = PlayMode() && f_tool && (hover.f_hit || f_line) && w && zs && zs->world == w;
+    //Any other drag being drawn (drag_plan.md): what its release will make, as the rules made it on their copy.
+    uint32_t plan_serial = 0;
+    const DragPlan* plan = (PlayMode() && f_tool) ? CurrentDragPlan(&plan_serial) : NULL;
+    bool f_area = plan != NULL;
+    bool f_show = PlayMode() && f_tool && (hover.f_hit || f_line || f_area) && w && zs && zs->world == w;
     if (!f_show){
         if (ghost->IsVisible()){
             ghost->SetVisibility(false);
@@ -223,6 +248,7 @@ void ApplicationChasm::UpdateGhost(){
         }
     }
     key.line_version = f_line ? line_at : 0;
+    key.drag_serial = f_area ? plan_serial : 0;
     key.bridge_from = from;
     key.owner = PaintOwner(tool);       //a yard being painted: whose (yards_plan.md)
     //Nothing is put over a crate in play (crates_plan.md): red where the zone command would refuse it.
@@ -267,7 +293,8 @@ void ApplicationChasm::UpdateGhost(){
     std::array<int,GOOD_COUNT> cost{};
     bool f_cost = false;
     const char* lead = NULL;
-    const char* note = NULL;    //said after it all: a bridge's trees no woodcutter gets to
+    const char* note = NULL;    //said after it all: a bridge's trees no woodcutter gets to, a drag's size
+    std::string area_note;
     int plots = 1;
     int trees = 0;
     int room_more = -1;         //a woodcutter's hut: the wood it would keep indoors the more, a collector its water; -1 neither
@@ -308,6 +335,169 @@ void ApplicationChasm::UpdateGhost(){
         }
         f_cost = laid > 0;
         plots = laid;
+    }else if (f_area){
+        /*
+            A DRAG (drag_plan.md): what the rules made of its commands on their copy, against the zones as they are. Each
+            new plot of a building drawn as it will stand, with only what the drag makes or grows standing, so the
+            buildings it makes are apart from each other; a yard's plots; a field's or range's cells, every other one
+            it makes a shade darker so where one ends and the next begins shows. What the rules refuse, red - taken
+            away, all of it. And its price, all of it.
+        */
+        const ZoneState& a = plan->after.State();
+        bool f_cells = ChasmCellTool(plan->tool);
+        if (plan->f_erase || plan->tool == CHASM_TOOL_ERASE){
+            for (size_t i = 0; i < plan->commands.size(); i++){
+                const DragCommand& c = plan->commands[i];
+                if (plan->refused[i]){
+                    continue;
+                }
+                if (c.op == ZONE_OP_BUILD_ERASE && z.building[c.index]){
+                    uint32_t on = z.building[c.index];
+                    GhostBuildingPlot(cw,z,c.index,z.buildings[on].kind,z.storeys[c.index],on,verts);
+                }else if (c.op == ZONE_OP_FIELD_ERASE){
+                    GhostCellTile(cw,c.index,verts);
+                }else{
+                    GhostPlotTile(cw,c.index,verts);
+                }
+            }
+        }else{
+            std::vector<uint32_t> made;     //the buildings it makes or grows, in the order met
+            auto made_index = [&](uint32_t id){
+                size_t k = std::find(made.begin(),made.end(),id) - made.begin();
+                if (k == made.size()){
+                    made.push_back(id);
+                }
+                return k;
+            };
+            int placed = 0;
+            float floor_more = 0.0f;
+            int made_kind = ZONE_KIND_NONE;
+            if (f_cells){
+                made_kind = (plan->tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD;
+                std::vector<int> fresh;
+                for (size_t c = 0; c < a.field.size(); c++){
+                    if (a.field[c] && a.field[c] != z.field[c]){
+                        fresh.push_back((int)c);
+                        made_index(a.field[c]);
+                    }
+                }
+                //In the order the drag made them - new ids are handed out so - for the shade to take turns along it.
+                std::sort(made.begin(),made.end());
+                for (int c : fresh){
+                    size_t first = verts.size();
+                    GhostCellTile(cw,c,verts);
+                    if (made_index(a.field[c]) % 2 == 1){
+                        for (size_t j = first; j < verts.size(); j++){
+                            verts[j].uv = vec2(2.0f,2.0f);      //chasm_ghost.frag: the darker shade
+                        }
+                    }
+                    for (int g = 0; g < GOOD_COUNT; g++){
+                        cost[g] += EconomyCellCost(made_kind,g);
+                    }
+                    trees += trees_on(-1,c);
+                    placed++;
+                }
+            }else if (plan->tool == CHASM_TOOL_GARDEN || plan->tool == CHASM_TOOL_LOT){
+                int ground = (plan->tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT;
+                for (size_t v = 0; v < a.ground.size(); v++){
+                    if (a.ground[v] == ground && z.ground[v] != ground){
+                        GhostPlotTile(cw,(int)v,verts);
+                        cost[GOOD_WOOD] += EconomyGroundKindCost(cw,ground,(int)v);
+                        trees += ZoneEnclosesGround(ground) ? trees_on((int)v,-1) : 0;
+                        placed++;
+                    }
+                }
+            }else{
+                made_kind = kind;
+                //Only what the drag makes or grows stands in the copy drawn from - every plot of it, so a building it
+                //extends is drawn joined to what it had - and only the cells round its new plots are drawn.
+                ZoneState only;
+                only.world = a.world;
+                only.buildings = a.buildings;
+                only.building.assign(a.building.size(),0);
+                only.storeys.assign(a.storeys.size(),0);
+                only.standing.assign(a.standing.size(),0);
+                only.ground = a.ground;
+                only.ground_built = a.ground_built;
+                only.gate = a.gate;
+                only.field.assign(a.field.size(),0);
+                std::vector<int> quads;
+                for (size_t v = 0; v < a.building.size(); v++){
+                    if (!a.building[v] || a.building[v] == z.building[v]){
+                        continue;
+                    }
+                    made_index(a.building[v]);
+                    for (int g = 0; g < GOOD_COUNT; g++){
+                        cost[g] += a.storeys[v] * EconomyKindStoreyCost(cw,kind,(int)v,g);
+                    }
+                    trees += trees_on((int)v,-1);
+                    floor_more += a.storeys[v] * cw.picker->PlotArea((int)v);
+                    placed++;
+                    for (int i = 0; i < cw.picker->PlotQuadCount((int)v); i++){
+                        int q = cw.picker->PlotQuadCorner((int)v,i) / 4;
+                        if (std::find(quads.begin(),quads.end(),q) == quads.end()){
+                            quads.push_back(q);
+                        }
+                    }
+                }
+                std::sort(made.begin(),made.end());     //in the order the drag made them, as for cells
+                for (size_t v = 0; v < a.building.size(); v++){
+                    if (a.building[v] && std::find(made.begin(),made.end(),a.building[v]) != made.end()){
+                        only.building[v] = a.building[v];
+                        only.storeys[v] = a.storeys[v];
+                        only.standing[v] = a.storeys[v];
+                    }
+                }
+                for (int q : quads){
+                    size_t first = verts.size();
+                    BuildHouseCell(cw,only,q,verts);
+                    //A cell all of one of them: the darker shade for every other one.
+                    const GridQuad& fq = cw.grid->fine.quads[q];
+                    uint32_t one = 0;
+                    bool f_one = true;
+                    for (int k = 0; k < 4; k++){
+                        uint32_t b = only.building[fq.v[k]];
+                        f_one = f_one && (!b || !one || b == one);
+                        one = b ? b : one;
+                    }
+                    if (f_one && one && made_index(one) % 2 == 1){
+                        for (size_t j = first; j < verts.size(); j++){
+                            verts[j].uv = vec2(2.0f,2.0f);
+                        }
+                    }
+                }
+                //A hut's or a collector's room: one of them made or grown, as for a click.
+                if (made.size() == 1 && (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER)){
+                    uint32_t grown = (made[0] < z.buildings.size() && z.buildings[made[0]].size > 0) ? made[0] : 0;
+                    room_more = room_gain(kind,grown,floor_more);
+                    f_room_new = grown == 0;
+                    room_kind = kind;
+                }
+            }
+            f_ok = placed > 0;
+            f_cost = placed > 0;
+            //Its size: plots or cells, and how many buildings when more than one.
+            const char* unit = f_cells ? "CELL" : "PLOT";
+            area_note = " - " + ((made.size() > 1) ? std::to_string(made.size()) + " " + KindPlural(made_kind) + ", " : std::string())
+                        + std::to_string(placed) + " " + unit + (placed == 1 ? "" : "S");
+            note = area_note.c_str();
+        }
+        //What the rules refuse: red, plot by plot or cell by cell.
+        for (size_t i = 0; i < plan->commands.size() && !plan->f_erase && plan->tool != CHASM_TOOL_ERASE; i++){
+            if (!plan->refused[i]){
+                continue;
+            }
+            const DragCommand& c = plan->commands[i];
+            size_t first = verts.size();
+            if (f_cells){
+                GhostCellTile(cw,c.index,verts);
+            }else{
+                GhostPlotTile(cw,c.index,verts);
+            }
+            for (size_t j = first; j < verts.size(); j++){
+                verts[j].uv = vec2(-1.0f,-1.0f);
+            }
+        }
     }else if (tool == CHASM_TOOL_BRIDGE){
         //Not yet pressed, or back over where it was: the bank it would start from, dry and free.
         std::vector<int> span;
@@ -450,8 +640,9 @@ void ApplicationChasm::UpdateGhost(){
         }
         f_ok = false;
     }
-    //Play mode's own rule (play_mode_plan.md): nothing is placed under the clouds - a line asks it per plot.
-    if (!f_line && (!key.f_explored || !key.f_settled) && tool != CHASM_TOOL_ERASE){
+    //Play mode's own rule (play_mode_plan.md): nothing is placed under the clouds - a line asks it per plot, a drag's plan
+    //per command.
+    if (!f_line && !f_area && (!key.f_explored || !key.f_settled) && tool != CHASM_TOOL_ERASE){
         f_ok = false;
     }
     {
@@ -471,7 +662,7 @@ void ApplicationChasm::UpdateGhost(){
         }
         //Under the clouds the tag says only that (the user's, 2026-10-17): the trees to fell, the room, the ice a bridge
         //waits for are the hidden ground's, and gave it away. A line is held to them per plot, so it keeps its tag.
-        if (!f_line && !key.f_explored && tool != CHASM_TOOL_ERASE && !verts.empty()){
+        if (!f_line && !f_area && !key.f_explored && tool != CHASM_TOOL_ERASE && !verts.empty()){
             ghost_cost_text = "HIDDEN UNDER THE CLOUDS";
         }
     }
@@ -569,13 +760,9 @@ void ApplicationChasm::DrawCostTips(float s){
         overlay->AddRect(t0,t1,7.0f * s,HudFaded(HUD_PANEL,225));
         overlay->AddText(text.c_str(),vec2(t0.x + side,t0.y + 17.0f * s),size,colour,UI_ALIGN_LEFT);
     };
-    //On the bar: to its left, level with the tool's cell, clear of what stacks over the bar.
+    //On the bar: the tool's tip, at the bottom beside it, its price in it (DrawToolTip).
     if (bar_tip_tool >= 0){
-        std::string tip = ToolCostTip(bar_tip_tool);
-        if (!tip.empty()){
-            float w = overlay->MeasureText(tip.c_str(),size).x + side * 2.0f;
-            tag(tip,vec2(build_bar_min.x - 8.0f * s - w,(bar_tip_a.y + bar_tip_b.y) * 0.5f - h * 0.5f),HUD_TEXT);
-        }
+        DrawToolTip(s);
         return;
     }
     std::string text;

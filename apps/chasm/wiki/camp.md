@@ -6,7 +6,7 @@ status: built
 summary: Tents and fires where the settlers start. It is home to anyone without a house, and holds the settlers' supplies for the whole colony beside a pantry of its own.
 plans: people_plan.md > As built; needs_plan.md > As built: step 2; land_plan.md > As built; woodcutting_plan.md > Decided (the user, 2026-10-11); settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6
 code: Zones.h: ZoneStartCampPlot ZoneCampTents ZONE_CAMP_FIRE_EVERY ZoneCampFireTent; Economy.cpp: HouseFamilies Derive FetchHome Heat OpenPantries HomeHeld AssignJobs LandPlaces EconomyColonyCamp Settle; Economy.h: pantry
-verified: 2026-10-14
+verified: 2026-10-18
 ---
 
 A new map starts with one camp, just big enough for the settlers. The game puts it on the best spot it
@@ -17,7 +17,7 @@ needn't touch, and a camp outside every settlement founds another. Every tent co
 
 ## Living there
 
-A camp is built like a house, one storey high. **Every plot is a tent**, and a camp holds **one person to a
+A camp is built like a house, one storey high. **Every plot is a tent** - a drag pitches one on each, with no limit - and a camp holds **one person to a
 tent**, from any number of families. Its fires are props around the tents, never in a tent's place: about
 one in {ZONE_CAMP_FIRE_EVERY} spots of open ground beside a tent at the camp's edge has one, with a log to
 sit on. A tent hemmed in by other tents has no room for a fire.

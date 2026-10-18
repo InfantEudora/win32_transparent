@@ -137,3 +137,44 @@ walker's rules), `BuildingMesh.cpp` (arches), `BoundaryMesh.cpp` (gates), `Appli
 - A gate has no doors.
 - The road's colour is the town ground's (no free palette column).
 - The walker figure moves at the tick rate: no interpolation between ticks.
+
+## The look: closed areas and stones (the user's, 2026-10-18)
+
+- **Roads side by side make a closed area.** Two roads a plot apart drew every edge of the cells between
+  them, and each cell's middle stayed grass: a ladder of holes. A cell whose four corners are all laid road
+  (`RoadCellFilled`) is now road all over, drawn at the road's height in pieces that follow the relief
+  (`BuildRoadFill`). A square of road plots is a square of road. Bridges are left out: a deck, not ground.
+- **Stones along the edges.** Small dark-brown pebbles (`PAL_EARTH` and `PAL_BARK`, a low five-sided cone)
+  here and there along a road's sides where it meets the grass (`BorderStones`): a place every
+  `ROAD_STONE_STEP`, `ROAD_STONE_CHANCE` percent of them taken, by the vertex's hash, and none where a step
+  past the edge is road again - a junction's other arm, a filled cell, a wall's line.
+- **Not filled**: a grass plot ringed by road where two roads drift two plots apart, whose cells do not have
+  four road corners - it stays a hole. Filling those too is open (it would need the props on such a plot
+  hidden as well).
+- **A worn middle, grass at the edges, cobbles in town** (the user's, 2026-10-18, from the ideas offered with the
+  above):
+  - A road between grass has a lighter band down its centre line, `ROAD_WORN_HALF` either side, in
+    `PAL_PATH_WORN` - palette column 9, the floor's until the floor became the void, now each row's path
+    lightened by a seventh (the frozen row's too, which snow samples). None along or inside a closed area
+    (`EdgeBesideFill`): there is no one line to wear there.
+  - Tufts of grass creep in over the rim (`Tuft`, `EdgeDressing`) at the places the stones use, with a salt of
+    their own: a few thin blades in the grass props' own cells, `PAL_LEAF` and `PAL_LEAF_LIGHT`, so they turn
+    with the seasons as the meadow's tufts do. Not more on roads less walked: nothing counts the walking yet.
+  - A closed area beside a building with walls and a roof (`ZoneKindHasBody` - a house, a store, a workshop, not
+    a camp's tents) is a square in the town, laid with stones in the stone greys (`CellInTown`, `BuildCobbles`),
+    the road showing in the joints.
+  - **The stones in no rows** (the user's, 2026-10-18: a straight 6 x 6 grid a cell read as a chequerboard). Each
+    cell's are a little grid of their own made the way the map's is (`CobbleGrid`): `ROAD_COBBLE_LATTICE` squares a
+    side cut into triangles, neighbours merged at random into convex quads - a square's own two halves back together
+    only `ROAD_COBBLE_SQUARES` percent of the time, since that pair always fits and taken freely it rebuilt the plain
+    grid - everything split into quads and the inside relaxed toward squares by the map's own `GridSquareFit`, about
+    forty-four stones a cell. The patch's edge holds still, cut in sixths from either side, so neighbouring cells'
+    stones meet joint to joint.
+  - **Out to the road's curve** (the user's, 2026-10-18: the stones filled the cell's square on a road that curved
+    round it). A cell's patch (`CobblePatchOf`) keeps a side it shares with another filled cell straight; a side on
+    the square's outline goes out to the road's own edge, `ROAD_COBBLE_RIM` inside where the road drawn along it
+    ends (its centre lines at `ROAD_HALF_WIDTH`) and never further out than that - so it curves round a corner as the
+    road does, rounds a junction's joint, and stops straight across the mouth of a road that leaves the square. A
+    corner on the outline goes out along the line away from the middle of the filled cells round it, which every
+    cell there works out alike, so patches meet; the stones are laid over the Coons patch of the four sides.
+    `RoadCentreLine` clears what it is given, so the lines of several vertices are gathered one at a time.
