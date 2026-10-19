@@ -178,6 +178,9 @@ const char* EconomyEventName(int kind){
         case EVENT_GOAL_FAILED:         return "goal_failed";
         case EVENT_DEMO_COMPLETE:       return "demo_complete";
         case EVENT_COLONY_LOST:         return "colony_lost";
+        case EVENT_WALL_BROKEN:         return "wall_broken";
+        case EVENT_GATE_BROKEN:         return "gate_broken";
+        case EVENT_BREACHED:            return "breached";
         default:                        return "unknown";
     }
 }
@@ -200,7 +203,8 @@ bool EconomyJournaled(int kind){
            || kind == EVENT_SETTLED || kind == EVENT_SEAM_SEEN || kind == EVENT_DISCOVERED || kind == EVENT_FROST_TOOK
            || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING || kind == EVENT_BOULDER_FOUND
            || kind == EVENT_BALCONY_REACHED || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED
-           || kind == EVENT_DEMO_COMPLETE || kind == EVENT_COLONY_LOST;
+           || kind == EVENT_DEMO_COMPLETE || kind == EVENT_COLONY_LOST
+           || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED;
 }
 
 bool EconomyCounted(int kind){
@@ -1155,6 +1159,9 @@ void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
     field_raises.clear();
     crop_defaults.clear();
     tents_packed.clear();
+    ground_breaks.clear();
+    gate_breaks.clear();
+    f_zombies_replan = false;
     tents_of.clear();       //a camp gone leaves its goods by what was one at the last Derive: none before the first
     share_of.clear();
     field_pace.clear();
@@ -5902,6 +5909,8 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     field_raises.clear();
     crop_defaults.clear();
     tents_packed.clear();
+    ground_breaks.clear();
+    gate_breaks.clear();
     if (f_resettle && z.version == state.zones_version){
         //A save from before land (Restore): its land settled and its farmers taken on, on its first tick. No
         //re-plan - nothing on the ground changed, so everyone walks on as saved.
@@ -6075,6 +6084,8 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     }
     //ZOMBIES (zombies_plan.md): after everyone has moved, so each goes for where its target is now.
     TickZombies(z,walkers,tick,dt,f_zones_moved);
+    //WALLS BREAK: those at what stops them hit it, once they have walked - before the spacing, which moves no route.
+    ZombiesHit(z);
     //SPACING: every body stood apart from its neighbours, once all of them have moved.
     SpaceOut(z,dt);
     //ARROWS: those in the air come down, and the archers loose more - before the fight, so one shot down bites nobody.
@@ -9846,6 +9857,7 @@ EconomySaved EconomySaveState(const EconomyState& state){
     s.next_person = state.next_person;
     s.dead = state.dead;
     s.zombies = state.zombies;
+    s.harm = state.harm;
     s.next_zombie = state.next_zombie;
     s.arrows = state.arrows;
     s.history = state.history;
@@ -9977,6 +9989,7 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     state.crates_version++;
     //ZOMBIES on their routes, as the people are. A save from before them has none.
     state.zombies = saved.zombies;
+    state.harm = saved.harm;
     state.next_zombie = saved.next_zombie;
     for (const EconomyZombie& m : state.zombies){
         state.next_zombie = std::max(state.next_zombie,m.id + 1);

@@ -538,7 +538,7 @@ bool GridSettings::operator==(const GridSettings& o) const{
     return seed == o.seed && target_fine_cells == o.target_fine_cells && aspect == o.aspect &&
            triangle_side == o.triangle_side && relax_passes_coarse == o.relax_passes_coarse &&
            relax_passes_fine == o.relax_passes_fine && relax_strength == o.relax_strength && kind == o.kind &&
-           water == o.water;
+           water == o.water && relief == o.relief;
 }
 
 const char* const grid_feature_names[GRID_FEATURE_KINDS] = {"rim","shard","column","ledge","balcony"};
@@ -825,6 +825,7 @@ void Grid::Generate(const GridSettings& s){
     //Water placed by hand (water_tools_plan.md), rivers after the layout's own and its ponds: data, as the layout's
     //rivers are - and hashed with them (Hash). None in the settings adds nothing.
     ChasmPlaceWater(layout,s.water,vec2(x0,z0),vec2(x1,z1));
+    ChasmPlaceRelief(layout,s.relief);
     feature_line_base = (int)lines.size();
     for (const GridFeature& f : layout.features){
         lines.push_back(f.line);
@@ -933,6 +934,12 @@ uint64_t Grid::Hash() const{
     for (const ChasmLayout::Pond& k : layout.ponds){
         h = Fnv(h,&k.centre,sizeof(k.centre));
         h = Fnv(h,&k.radius,sizeof(k.radius));
+    }
+    //...and the height painted by hand (water_tools_plan.md step 5).
+    for (const GridReliefStroke& r : layout.relief_strokes){
+        h = Fnv(h,r.points.data(),r.points.size() * sizeof(vec2));
+        h = Fnv(h,&r.radius,sizeof(r.radius));
+        h = Fnv(h,&r.height,sizeof(r.height));
     }
     return h;
 }

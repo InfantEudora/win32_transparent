@@ -53,6 +53,41 @@ struct GridWater{
 };
 
 /*
+    HEIGHT PAINTED BY HAND (water_tools_plan.md step 5): strokes that raise or lower the relief, part of the settings
+    as the water is. A stroke of one point is a hill (a hollow, lowered); of several, a ridge (a valley) along them.
+    Its height is at its line, falling off smoothly to nothing at its radius; strokes add up. Terrain::BuildRelief adds
+    them before the rivers flatten the relief, on the plateau only, as all relief is.
+*/
+#define GRID_RELIEF_HEIGHT          6.0f    //unless given
+#define GRID_RELIEF_HIGHEST         20.0f   //either way (the user's): the generated hills reach 14
+#define GRID_RELIEF_RADIUS          12.0f   //unless given: about six plots out from its line
+#define GRID_RELIEF_NARROWEST       4.0f    //two of the relief's 2-unit raster cells
+#define GRID_RELIEF_WIDEST          60.0f
+
+struct GridReliefStroke{
+    std::vector<vec2> points;           //world x and z
+    float radius = GRID_RELIEF_RADIUS;
+    float height = GRID_RELIEF_HEIGHT;  //up, or down below 0
+    bool operator==(const GridReliefStroke& o) const{
+        if (radius != o.radius || height != o.height || points.size() != o.points.size()){
+            return false;
+        }
+        for (size_t i = 0; i < points.size(); i++){
+            if (points[i].x != o.points[i].x || points[i].y != o.points[i].y){
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+struct GridRelief{
+    std::vector<GridReliefStroke> strokes;
+    bool Empty() const { return strokes.empty(); }
+    bool operator==(const GridRelief& o) const { return strokes == o.strokes; }
+};
+
+/*
     The placed water onto `layout`, after its own rivers - so a chasm map's keep their indices, and with them their
     width's wander and their lakes, which the terrain seeds by index. The map is lo..hi. How a river ENDS is read from
     where it was drawn: over a RIM (a chasm map's) it FALLS at the first it crosses; ending at the map's EDGE it runs
@@ -63,5 +98,7 @@ struct ChasmLayout;
 void ChasmPlaceWater(ChasmLayout& layout, const GridWater& water, const vec2& lo, const vec2& hi);
 //Whether a pond's water and bank stay on the plateau: inside the map, off every rim and crack, south of the mountain.
 bool ChasmPondFits(const ChasmLayout& layout, const vec2& centre, float radius, const vec2& lo, const vec2& hi);
+//The painted strokes onto `layout`, each held to the limits above; a stroke with no point is left out.
+void ChasmPlaceRelief(ChasmLayout& layout, const GridRelief& relief);
 
 #endif

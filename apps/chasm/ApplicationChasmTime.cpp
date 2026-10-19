@@ -648,6 +648,11 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
             snprintf(buf,sizeof(buf),"Drag from its source along its course. Let go and the map is made again with it.");
             controls = "Let go to place - the debug panel lists the water, to take it away";
             break;
+        case CHASM_TOOL_HEIGHT:
+            what = "Debug height: the ground raised, or lowered below 0, smoothly out to the radius. Strokes add up.";
+            snprintf(buf,sizeof(buf),"Click for a hill, drag for a ridge. Let go and the map is made again with it.");
+            controls = "Let go to paint - the debug panel lists the strokes, to undo them";
+            break;
         case CHASM_TOOL_POND:
             what = "A debug pond: still water pressed into the plateau, clear of rims, cracks, the mountain and the edge.";
             snprintf(buf,sizeof(buf),"Drag out from its middle to its water's edge. Let go and the map is made again with it.");
@@ -857,6 +862,7 @@ float ApplicationChasm::DrawBuildBar(float s){
                                 || kind == EVENT_SEAM_SEEN || (kind == EVENT_DISCOVERED && (ne->events[i].what & 1))
                                 || kind == EVENT_FROST_TOOK || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING
                                 || kind == EVENT_BOULDER_FOUND || kind == EVENT_BALCONY_REACHED
+                                || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED
                                 || (kind == EVENT_BUILDING_FINISHED && discovery_of(ne->events[i]) >= 0)
                                 || ((kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED) && TriggerOn(ne->events[i].amount));
                 newest = f_notice ? &ne->events[i] : newest;
@@ -884,6 +890,10 @@ float ApplicationChasm::DrawBuildBar(float s){
                              : (n.kind == EVENT_GREW_UP) ? name + " has grown up"
                              : (n.kind == EVENT_BOULDER_FOUND) ? name + " has found a boulder"
                              : (n.kind == EVENT_BALCONY_REACHED) ? name + " has reached a balcony"
+                             //WALLS BREAK (zombies_plan.md step 4): what the zombies broke through.
+                             : (n.kind == EVENT_WALL_BROKEN) ? std::string("the zombies have broken the wall")
+                             : (n.kind == EVENT_GATE_BROKEN) ? std::string("the zombies have broken a gate")
+                             : (n.kind == EVENT_BREACHED) ? std::string("the zombies have broken into a ") + ChasmKindLabel(n.amount,false)
                              : (n.kind == EVENT_BUILDING_FINISHED) ? std::string(n.amount == ZONE_KIND_WINCH ? "the first winch"
                                                                                                          : "the builders' hut")
                                                                      + " is finished"

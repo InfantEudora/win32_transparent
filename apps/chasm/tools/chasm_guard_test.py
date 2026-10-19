@@ -44,12 +44,27 @@ ARCHER = {"skills": {"precision": 9, "strength": 5, "ingenuity": 5, "husbandry":
 GUARD = {"skills": {"precision": 6, "strength": 5, "ingenuity": 5, "husbandry": 5}, "archery": 300000}
 
 
+def read_only(name, args):
+    """A question, not a command: safe to ask twice."""
+    op = (args or {}).get("op")
+    return (name == "chasm_economy" and op in (None, "status", "buildings")) or (name == "chasm_zombie" and op in (None, "status")) \
+        or name in ("chasm_pick", "chasm_time", "chasm_grid")
+
+
 def call(name, args=None):
     req = urllib.request.Request("http://127.0.0.1:%d/mcp" % PORT,
                                  data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                                   "params": {"name": name, "arguments": args or {}}}).encode(),
                                  headers={"Content-Type": "application/json"})
-    r = json.loads(urllib.request.urlopen(req, timeout=300).read())
+    #Now and then one request of the thousands a run makes is never answered, while the app goes on answering the next
+    #(seen 2026-10-18/19, with the game idle). A question is asked again; a command waits it out, since it may have run.
+    for attempt in range(3):
+        try:
+            r = json.loads(urllib.request.urlopen(req, timeout=30 if read_only(name, args) else 300).read())
+            break
+        except OSError:
+            if attempt == 2 or not read_only(name, args):
+                raise
     if "error" in r:
         raise RuntimeError("%s: %s" % (name, r["error"]))
     out = json.loads(r["result"]["content"][0]["text"])

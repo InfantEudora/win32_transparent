@@ -2481,3 +2481,15 @@ void ChasmPlaceWater(ChasmLayout& layout, const GridWater& water, const vec2& lo
         }
     }
 }
+
+void ChasmPlaceRelief(ChasmLayout& layout, const GridRelief& relief){
+    for (const GridReliefStroke& s : relief.strokes){
+        if (s.points.empty()){
+            continue;
+        }
+        GridReliefStroke r = s;
+        r.radius = std::max(GRID_RELIEF_NARROWEST,std::min(GRID_RELIEF_WIDEST,s.radius));
+        r.height = std::max(-GRID_RELIEF_HIGHEST,std::min(GRID_RELIEF_HIGHEST,s.height));
+        layout.relief_strokes.push_back(r);
+    }
+}

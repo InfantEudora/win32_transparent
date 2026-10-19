@@ -1,6 +1,6 @@
 ---
 name: chasm-zombies-plan
-description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; 3b guards hold their posts BUILT 2026-10-18 (tools/chasm_guard_test.py); steps 4 walls break + 5 alarm DECIDED 2026-10-18"
+description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; 3b guards hold their posts BUILT 2026-10-18 (tools/chasm_guard_test.py); step 4a done, 4b BUILT 2026-10-19 (walls/gates/houses broken, scratch clip); 4c-4e + 5 alarm next"
 metadata:
   node_type: memory
   type: project
@@ -48,7 +48,11 @@ climbing down mid-wave when the archer died); bite-induced pressing hunger sends
 
 **4a DONE 2026-10-18, no rule change**: `tools/chasm_wall_test.py` (ring, gate_shut, gate_open control, through) on flat test maps - walls and shut gates stop zombies (they go LOST), and nothing reaches through: nearest body across a palisade 4.40 vs FIGHT_REACH 1.0, since bodies stand on plot points/walks and a palisade is a plot wide. A 'nothing between' rule for bites/blows was weighed and LEFT OUT; re-ask with `through` in 4b. add_person people on a test map log a ChasmStats check error each dawn (not born/settled) - for the test maps window.
 
-**Next (each on the user's go-ahead)**: 4b (breaking as a route cost, harm, breaches). Older list: 4 walls break (time-to-break cost, flow field). Also open: fleeing/alarm,
+**4b BUILT 2026-10-19** (+ the user's `Zombie_Scratch` clip, played while biting or hitting): WalkBreaks (Walkers.h) makes EdgeOpen cost a zombie the seconds left of a standing palisade plot / shut gate / standing house, climb 3 s over fences; the first such thing ends its route (stands IN a wall/gate plot's cell, 0.8 off its point; outside a house), ZombiesHit adds a tick a tick (<= ZOMBIE_HITTERS 4), state.harm (saved "harm", zombie "hit") -> ZONE_OP_GROUND_BREAK (wall back to a site) / gate opened + BROKEN (shut refused in ApplyZoneCommand) / house BREACHED (CanGetAt: people indoors reachable). Events wall_broken/gate_broken/house_breached. TRAP fixed: a zombie standing in the wall cell re-planned FROM the wall plot and walked through free - now it keeps its way while hitting and plans from the neighbour. tools/chasm_wall_test.py = 7 cases (ring, gate_shut, gate_open, round, house, fence, through), house case needs a REAL gap (a lone corner plot's neighbours join without it). Only houses breach - other buildings stay shut (flagged). Broken plots are rebuilt by the line works (jobless) until 4c.
+
+**2026-10-19, every building's DOOR breachable** (the user's): ZoneKindHasDoor (house, store, woodcutter, water, builders, ropewalk, stonecutter, mine, well; NOT camp/winch/bridge/tower); renamed HARM_DOOR, ZOMBIE_BREACH_DOOR, EconomyBreached, WalkBreaks::DoorLeft, EVENT_BREACHED "breached" (amount = kind, ChasmKindLabel in the texts). **4d SOUND built**: ApplicationChasmSound.cpp SignalZombies - `zombie_strike` (bluntstrike_wood_1/2) once per scratch turn at 0.8 s (the clip's one swipe), clock in ECONOMY TICKS from the view's id phase; `punch` (punch_1-3) on each bite/blow the rules land (bite/swing count going up). Encoded the five with sound_ogg's settings ONLY (speech/warning wavs are someone else's). Open for the user: bites every 0.5 s vs one swipe per 2.29 s. `near` is a Windows macro - never a variable name. Test scripts retry read-only MCP calls (an occasional request is never answered).
+
+**Next (each on the user's go-ahead)**: 4c (repair by builders, no zombies about, the crate), 4d's look, 4e (flow field). Older list: 4 walls break (time-to-break cost, flow field). Also open: fleeing/alarm,
 waves from the swamp, zombies' stop points spread round a target, arrows as tower stock.
 
 **Why:** the colony is 12 people with no immigration, so combat is designed to be won by placement, not by

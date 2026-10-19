@@ -21,6 +21,11 @@
     "magpie_1":      "sound/magpie_1.ogg",
     "magpie_2":      "sound/magpie_2.ogg",
     "magpie_3":      "sound/magpie_3.ogg",
+    "punch_1":       "sound/punch_1.ogg",
+    "punch_2":       "sound/punch_2.ogg",
+    "punch_3":       "sound/punch_3.ogg",
+    "strike_1":      "sound/bluntstrike_wood_1.ogg",
+    "strike_2":      "sound/bluntstrike_wood_2.ogg",
 
     "leo_hi":           "sound/speech/taunts/leo_hi_s7.ogg",
     "leo_whatsup":      "sound/speech/taunts/leo_whatsup_s10.ogg",
@@ -113,6 +118,16 @@
     },
     "balcony_reached": {
       "signal": "balcony_reached", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "wall_broken": {
+      "comment": "WALLS BREAK (zombies_plan.md step 4): the chime for now, as every event has; step 4d wants a thud for each blow and a breaking for these.",
+      "signal": "wall_broken", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "gate_broken": {
+      "signal": "gate_broken", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "breached": {
+      "signal": "breached", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
     },
     "goal_met": {
       "comment": "THE DEMO'S GOALS AND ITS END (demo_plan.md step 7): the chime for now, as every event has; sound_plan.md wants stingers for these, from the score.",
@@ -210,6 +225,21 @@
       "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
       "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
       "max_instances": 2
+    },
+
+    "zombie_strike": {
+      "comment": "WALLS BREAK (zombies_plan.md step 4d): a zombie's blow at a palisade, a gate or a door - once a turn of its scratch, as its arms come down (ApplicationChasmSound.cpp, SignalZombies). `what` is HARM_*: 1 a palisade, 2 a gate, 3 a door, for rows of their own one day. Two takes (the user's, 2026-10-19), pitched up to 6% either way; the nearest four striking are heard. The takes are some 6 dB louder than the axe's, hence the gain.",
+      "signal": "zombie_strike", "sounds": ["strike_1", "strike_2"], "bus": "activity", "gain": 0.35, "pitch_jitter": 0.06,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 4
+    },
+    "punch": {
+      "comment": "A FIGHT (zombies_plan.md step 2): a bite landing, or a person's blow, each as the rules land it - `by` 0 a zombie's, 1 a person's. Three takes (the user's, 2026-10-19), pitched up to 8% either way; four at most at once, so a crowd round one man is a scuffle, not a drum roll.",
+      "signal": "punch", "sounds": ["punch_1", "punch_2", "punch_3"], "bus": "activity", "gain": 0.4, "pitch_jitter": 0.08,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 4
     },
 
     "birds_flush": {

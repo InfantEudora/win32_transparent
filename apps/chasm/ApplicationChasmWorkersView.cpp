@@ -91,12 +91,21 @@ const char* gear_asset_names[GEAR_ASSETS] = {"bow","quiver"};
     made for (Animation::LinkObjects), another rig's channel - is played as turns only, since its positions
     are that rig's bone offsets and would stretch this one to its proportions. A rig's own channels keep
     theirs, the hips' bob with them. The zombies' too (ApplicationChasmZombies.cpp).
+
+    The borrowed positions are REPLACED by the bone's own rest position, not switched off: a clip that writes
+    no position leaves the bone where the last clip put it (Object::SwitchToAnimation keeps the pose), so a
+    zombie out of its scratch, hips 15-30 cm down, would have kept the crouch through a borrowed walk with its
+    feet in the ground. Holding the rest also gives a crossfade into the clip a position to blend to. Each
+    skeleton loads its own copy of a clip, so these keys are this rig's alone.
 */
 void KeepOwnPositions(Animation* clip){
     for (ObjectAnimation* track : clip->object_animations){
         Bone* bone = dynamic_cast<Bone*>(track->target);
         if (bone && bone->node_index != track->target_node){
-            clip->SetPositionUpdates(track,false);
+            for (ObjectAnimationKeyFrame* key : track->keyframes){
+                key->position = bone->reference_position;
+                key->f_position = true;
+            }
         }
     }
 }

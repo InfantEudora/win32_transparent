@@ -104,6 +104,13 @@ void ApplicationChasm::TickEconomy(){
     for (int plot : economy.TentsPacked()){
         f_raised = zones.Apply(ZONE_OP_BUILD_ERASE,(uint32_t)plot) || f_raised;
     }
+    //WALLS BREAK (zombies_plan.md step 4): palisade plots the zombies broke, wall sites again; gates broken, hanging open.
+    for (int plot : economy.GroundBreaks()){
+        f_raised = zones.Apply(ZONE_OP_GROUND_BREAK,(uint32_t)plot) || f_raised;
+    }
+    for (int plot : economy.GateBreaks()){
+        f_raised = zones.Apply(ZONE_OP_GATE_SHUT,(uint32_t)plot,0) || f_raised;
+    }
     if (f_raised){
         PublishZones();
     }
@@ -287,6 +294,20 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Bytes(&len,sizeof(len));
             h.Bytes(m.route.data(),m.route.size() * sizeof(vec2));
             h.Bytes(m.speed.data(),m.speed.size() * sizeof(float));
+            //What its way is stopped by (walls break, step 4) - only while it has one.
+            if (m.hit){
+                uint32_t hit[2] = {m.hit,m.hit_id};
+                h.Bytes(hit,sizeof(hit));
+            }
+        }
+        //The harm to walls, gates and houses (step 4) - only while there is any.
+        if (!e.harm.empty()){
+            n = (uint32_t)e.harm.size();
+            h.Add(((uint64_t)n << 32) | 0xB4EAu);
+            for (const EconomyHarm& m : e.harm){
+                uint32_t row[3] = {m.what,m.id,(uint32_t)m.ticks};
+                h.Bytes(row,sizeof(row));
+            }
         }
         //Their arrows (step 3): who at what, a hit or not, the flight, where from and to - only once there are any.
         if (!e.arrows.empty()){

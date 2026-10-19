@@ -8,8 +8,8 @@ both for setting a scenario up:
   can make it endless.
 - **Water placed by hand**: rivers and ponds drawn onto the map, as part of the map itself.
 
-All four steps built and checked 2026-10-18 - the well, placed rivers, ponds and the panel's river and pond tools
-(as built under each).
+All five steps built and checked - the well, placed rivers, ponds and the panel's river and pond tools on
+2026-10-18, and height painted by hand on 2026-10-19 (as built under each).
 
 ## Decided (the user, 2026-10-18)
 
@@ -21,6 +21,9 @@ All four steps built and checked 2026-10-18 - the well, placed rivers, ponds and
   a new map each time is fine.
 - **On every kind of map**, the chasm's too: the code is the same, and on a chasm map it starts a new colony as
   on any other.
+- **Height painted by hand too** (2026-10-19, step 5): smooth hills only - the relief, raised and lowered - not
+  cliffs, which are the chasm's levels and a far bigger thing. No flatten mode for now. A stroke's height is held
+  to +-20 (the generated hills reach 14, the mountain about 50).
 
 ## The well
 
@@ -244,6 +247,9 @@ for `test_maps_plan.md`), so a new map per pond is no wait.
 
 ### As built: step 4, the tools (2026-10-18)
 
+*Since step 5 the code below is `ApplicationChasmMapTools.cpp`'s: `UpdateWaterDrag` is `UpdateMapDrag`, `PlaceWater`
+`RemakeMap`, `RenderWaterTools` `RenderMapTools`, `WATER_DRAG_STEP` `MAP_DRAG_STEP`.*
+
 - **`CHASM_TOOL_RIVER` and `CHASM_TOOL_POND`**: "River (debug)" and "Pond (debug)" beside the well on the panel's Paint
   tools, locked in play (`ToolsLocked`; `chasm_tool` says "a debug tool, never in play mode"). `chasm_tool` takes
   `river` and `pond`, so a script drags them with `hover_x`/`hover_z` and `button`.
@@ -279,6 +285,68 @@ which plots get a tree, so every felled tree, stump and fruit a save holds would
 them means a forest placed without regard to placed water and filtered wherever it is drawn or used - every
 reader of the forest. Not until a test needs it: a scenario made by a script is made again by running it.
 
+## Height painted by hand (step 5)
+
+Height already matters to what a test tries: a higher post sees and shoots further and the ground between blocks a
+shot (`Shooting.cpp`, the sight's raster); slopes slow walkers and shut them out past `WALKER_STEEPEST`; a house
+wants its plot within `ZONE_RISE_HOUSE`. So a test map with hills has high ground, cover and choke points.
+
+- **Strokes in the settings**, beside the water and for the same reasons - `GridSettings::relief`, each stroke its
+  points, a radius and a signed height. A click is a hill (a hollow when lowered); a drag is a ridge (a valley)
+  along its line, falling off smoothly to its radius. Strokes add up, so painting over a hill raises it more. In
+  the save's `"grid"` block only when there are any; copied into the layout and hashed with the water.
+- **In the relief, before the rivers flatten it**: a river drawn through a painted hill cuts its valley, and a pond
+  still lies level. On the plateau only, as all relief is. A kind without hills gets a raster when it has a stroke.
+- **Lowering keeps off the rims** of a chasm map: a deep valley at a rim would put the plateau's ground under the
+  balcony below it and turn its wall inside out, so a stroke's lowering fades out near the rift. Raising does not -
+  the generated hills reach the rims already.
+- **The tool**: "Height (debug)" beside River and Pond, with the height and radius on the panel; its preview the
+  line and its reach; on release the map is made again. The panel lists the strokes, each with an x, and has "undo
+  the last stroke". `chasm_generate` takes `relief`.
+- *Done when* hills and valleys painted on a flat map stand where drawn, at their heights; a river drawn through a
+  hill cuts it; walkers and buildings keep to the slope rules on them; a save, a load and a replay give the same;
+  and the A/B finds nothing changed on a map without strokes.
+
+### As built: step 5 (2026-10-19)
+
+- **The settings**: `GridSettings::relief`, a `GridRelief` of `GridReliefStroke`s (`GridWater.h`) - points, radius
+  (`GRID_RELIEF_RADIUS` 12 unless given, held to 4..60) and height (6 unless given, held to `GRID_RELIEF_HIGHEST`
+  20 either way). In `operator==`; the save's `"grid"` block holds `"relief":{"strokes":[...]}` only when there are
+  any (`GridReliefToJson` / `FromJson`, which `chasm_generate`'s `relief` takes too); `chasm_grid` reports it.
+  `ChasmPlaceRelief` copies the strokes, held to their limits, into `ChasmLayout::relief_strokes`, hashed there.
+- **The relief** (`BuildRelief`): a raster whenever there are strokes; each stroke adds over the cells it reaches
+  its height times `1 - SmoothStep(0, radius, distance to its line)`; lowering faded out within
+  `RELIEF_PAINT_RIM_CLEAR` (16) of the rift. Then, after the generated relief's own river fade, the painted relief
+  is faded along rivers too - but over `RELIEF_PAINT_RIVER_FADE` (8) past the wet margin, not the hills' 24: **found
+  on the first try**, a ridge of 8 drawn across a river came out 1.3 high ten units from it, the river flattening
+  most of a 150-unit map. With 8 the river cuts a valley through the ridge. Ponds after both, as before.
+- **The tool**: `CHASM_TOOL_HEIGHT`, "Height (debug)" beside River and Pond, locked in play. The tools' code moved
+  to `ApplicationChasmMapTools.cpp` and became the MAP tools: `UpdateMapDrag` (a click is a one-point stroke, a drag
+  takes a point every `MAP_DRAG_STEP`), `RemakeMap` (the water and the relief together), `RenderMapTools` (under the
+  height tool: height and radius, the strokes with an x each, "Undo the last stroke", "Take all the strokes away").
+  The preview: the stroke's line and its reach at the radius, green raising, blue lowering. `chasm_tool` takes
+  `width`, `height` and `radius` - the panel's sliders, for a script. The Generate section keeps the strokes as it
+  keeps the water.
+- *Checked* (debug, a copy on port 8777):
+  - Flat map seed 5: a hill of 12 (radius 14) stood 11.7 at its top, 6.7 at half its radius, 0.15 at its foot; a
+    valley of -6 at -5.7; a gentle hill of 6 (radius 20) at 6.0, 3.1 at half its radius; a ridge of 8 at 8.0 - and,
+    with a river drawn across it, 6.6 ten units from the river, the river's cut through it about 0 (wet at the water).
+  - A house refused on the steep hill, even at its top ("too steep": a 12-high peak of radius 14 drops about 1.4
+    across a plot), taken on the gentle hill's top. A person ordered onto the steep hill's top: "no way there"; onto
+    a plain on the same side, the steep hill's outer flank and the gentle hill: taken.
+  - By `chasm_tool`: a click at height 10, radius 12 made a one-point hill (top 9.65); a drag at -5, radius 8 a
+    five-point valley (-4.64), its preview blue while held. The user also painted strokes by hand in the test window.
+  - On the default chasm map, a valley of -20 (radius 20) at a balcony's end of the rim: 2 units in from the rim
+    9.12 to 9.08, 6 in 7.67 to 6.89, 12 in 4.31 to -1.0, at the stroke's middle -12 - the plateau at the rim kept.
+  - Saved, another map generated, loaded: the same world hash, a re-save byte for byte the save. A recording on a
+    map with rivers, three strokes and a collector, replayed twice from a chasm map: rebuilt each time, the traces
+    equal on all 1,503 ticks.
+  - **The A/B**: A = today's tree with step 5's map-facing edits undone in a copy - the relief, `operator==`, the
+    hash, `ChasmPlaceRelief`'s call, the save's read and write - and the tools' code and the stroke type kept, so it
+    builds; `diff -r` showing nothing else. `chasm_seed_sweep.py 1 60` identical on A and B and to the steps
+    before; all 18 saves the same world hash and the 36 files byte for byte the same; the 6,000-tick replay from
+    `village_year5` with zombies equal on all 6,001 ticks, on the same final hash as every run before.
+
 ## Steps
 
 1. **The well**: the kind, the tool, the fill from the seed, `FetchFrom` and `KeepTowers`, endless by `set_stock`,
@@ -300,7 +368,10 @@ reader of the forest. Not until a test needs it: a scenario made by a script is 
 4. **The tools**: river and pond on the panel, their previews, the list.
    *Done when* a river and a pond drawn by hand make the same map as `chasm_generate` given the same water.
 
-Step 1 and steps 2-4 do not depend on each other.
+5. **Height**: the strokes in the settings, the layout and the relief; the Height tool, its preview and its list
+   (above, "Height painted by hand").
+
+Step 1 and steps 2-4 do not depend on each other; step 5 follows step 4's tools.
 
 ## Current tuning
 
@@ -312,7 +383,11 @@ Step 1 and steps 2-4 do not depend on each other.
 | `GRID_POND_BANK` | 3, the rise past the water's edge |
 | `GRID_PLACED_POND_RADIUS` | 6 unless given, held to 2..30 (`GRID_PLACED_POND_SMALLEST`, `_LARGEST`) |
 | `GRID_PLACED_RIVER_WIDTH` | 4, the panel's to start with, between a branch's 2.2-3.4 and a river's 5-7.5; held to 1.5..12 |
-| `WATER_DRAG_STEP` | 3: the river tool takes a point each time the cursor has gone this far |
+| `MAP_DRAG_STEP` | 3: the river and height tools take a point each time the cursor has gone this far |
+| `GRID_RELIEF_HEIGHT`, `_HIGHEST` | 6 to start with, held to +-20 (the user's) |
+| `GRID_RELIEF_RADIUS` | 12 to start with, held to 4..60 (`GRID_RELIEF_NARROWEST`, `_WIDEST`) |
+| `RELIEF_PAINT_RIVER_FADE` | 8: painted height fades out along a river over this past its wet margin (the hills' is 24) |
+| `RELIEF_PAINT_RIM_CLEAR` | 16: height painted down fades out within this of the rift |
 
 ## Later
 

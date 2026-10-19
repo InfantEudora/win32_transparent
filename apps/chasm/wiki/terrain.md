@@ -4,9 +4,9 @@ aliases: level, levels, plateau, island, islands, balcony, balconies, chasm, cha
 kind: world
 status: partial
 summary: Ground at heights in steps (the plateau, balconies on the chasm's walls, islands in it, and the floor under the clouds), framed by biomes, with slope and water limiting what goes where.
-plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces
-code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE; Walkers.h: WALKER_SLOPE_COST
-verified: 2026-10-09
+plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces; water_tools_plan.md > Height painted by hand
+code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief
+verified: 2026-10-19
 ---
 
 One valley, split down the middle by the **chasm**. Every [[Cells and plots|plot]] has a height in whole
@@ -39,6 +39,9 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
   {ZONE_RISE_HOUSE} across it, a road's {ZONE_RISE_ROAD}, a field's cell {ZONE_RISE_FIELD}. Nothing stands
   half over a cliff.
 - Walking uphill is slower: speed divided by 1 + {WALKER_SLOPE_COST} x the grade.
+- **Height painted by hand** (debug, for test maps): the panel's Height tool, or `chasm_generate`'s `relief`, raises
+  or lowers the ground by up to {GRID_RELIEF_HIGHEST} - a hill a click, a ridge a drag - each a new map. A river
+  drawn through it cuts it; lowering keeps off the chasm's rims.
 
 ## Planned
 

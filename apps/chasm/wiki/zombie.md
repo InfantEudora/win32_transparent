@@ -4,29 +4,30 @@ aliases: zombies, enemy, enemies, the threat
 kind: systems
 status: partial
 summary: The colony's enemy. For now dropped by debug tools only, a zombie walks after the nearest person it can get to and bites him; a grown-up fights back, and archers and guards shoot it.
-plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts
-code: Spacing.cpp: SpaceOut; Economy.h: EconomyZombie EconomyFightPace ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights; Shooting.cpp: Shoot ShotTarget ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel
-verified: 2026-10-18
+plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4b
+code: Spacing.cpp: SpaceOut; Economy.h: EconomyZombie EconomyFightPace ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights ZombiesHit ForgetHarm CanGetAt; Economy.h: ZOMBIE_BREAK_WALL ZOMBIE_BREAK_GATE ZOMBIE_BREACH_DOOR ZOMBIE_CLIMB_SECONDS ZOMBIE_HITTERS EconomyHarm; Walkers.h: WalkBreaks; Shooting.cpp: Shoot ShotTarget ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel; ApplicationChasmSound.cpp: SignalZombies; Zones.h: ZoneKindHasDoor
+verified: 2026-10-19
 ---
 
-A zombie goes for **people only**. Walls, gates and buildings are only what stands in its way. There are no
-waves yet: zombies come only by the debug tools, in debug builds - **Z** drops one on the plot under the cursor,
-the panel's **Zombies** section a number on the selected plot (or clears them all), and the `chasm_zombie` tool.
-Each is a recorded command. At most {ZOMBIE_SPAWN_MOST} at once; refused where a [[Posts|post]] would be.
+A zombie goes for **people only**: walls, gates and houses are only what stands in its way. No waves yet - zombies
+come by the debug tools, in debug builds: **Z** drops one under the cursor, the panel's **Zombies** section a number on
+the selected plot (or clears them all), `chasm_zombie` too; recorded, at most {ZOMBIE_SPAWN_MOST} at once, never on a wall.
 
 ## Whom it goes for
 
-The **nearest person out of doors and on the ground**, by the straight line: never someone indoors, a baby in
-its mother's arms, or a [[Guard tower|guard]] up on his tower's platform. The nearest {ZOMBIE_TRIES} are
-tried until one can be walked to. It looks again every {ZOMBIE_LOOK_TICKS:seconds}, each on a tick of its own,
-so it switches to whoever is nearest as people move. With nobody it can get to, it stands, and looks only one
-time in {ZOMBIE_LOST_LOOKS}. Anything built or taken down sends every one after someone looking again at once.
+The **nearest person out of doors and on the ground**, by the straight line - or indoors in a breached house -
+but never a baby in its mother's arms or a [[Guard tower|guard]] on his tower. The nearest {ZOMBIE_TRIES} are tried
+until one can be walked to, again every {ZOMBIE_LOOK_TICKS:seconds}, each on a tick of its own; with nobody to get to it
+stands, looking one time in {ZOMBIE_LOST_LOOKS}. Anything built, taken down or broken sends all looking again.
 
 ## How it walks
 
-As a [[Person|person]] does: straight where the line is clear, otherwise along the grid by the villagers'
-rules - so a standing [[Roads and walls|wall]] or a shut gate stops it - but never up onto a deck. At
-{ZOMBIE_PACE} of a person's speed, so anyone outwalks one. It stops {ZOMBIE_REACH} short of him, and goes after
+As a [[Person|person]] does: straight where the line is clear, otherwise along the grid by the villagers' rules,
+never up onto a deck - and what stands in its way it **breaks**, where that is quicker than going round: a standing
+[[Roads and walls|palisade]] plot in {ZOMBIE_BREAK_WALL:#seconds} of hitting, a shut gate's door in
+{ZOMBIE_BREAK_GATE:#seconds} (the weak point), any building's door in {ZOMBIE_BREACH_DOOR:#seconds}, then walked
+through; at most {ZOMBIE_HITTERS} hit one thing at once. A garden's wall or a lot's fence it climbs, in
+{ZOMBIE_CLIMB_SECONDS:#seconds}. At {ZOMBIE_PACE} of a person's speed, so anyone outwalks one. It stops {ZOMBIE_REACH} short of him, and goes after
 him again once he is {ZOMBIE_REPLAN} further off. Zombies keep apart as people do, so several round one person
 stand in a ring; a zombie is pushed out of a person's room, {SPACING_BODY}, never the other way.
 
@@ -54,15 +55,14 @@ someone [[Posts|posted]] stays on his post however thirsty, and a [[Guard tower|
 
 ## On screen
 
-The props file's `zombie` figure at the people's scale, rigged as they are and turned along its walk: the man's walk
-while it walks, at its pace so its feet are planted, and his idle standing by whom it is after, toward him - biting
-too, which has no clip of its own yet. Not drawn under the clouds. A person's card says "Fighting a zombie" or
-"Shooting at a zombie". Arrows fly from the bow, stay stuck in a zombie until it falls, and lie where they missed for {ARROW_LIE_SECONDS:#seconds}.
+The props file's `zombie` at the people's scale, rigged as they are: the man's walk at its pace, feet planted, his idle
+standing, and its own scratch when it bites or hits what it breaks, facing it - a blunt strike heard on its swipe, and a
+punch as each bite and blow lands. Not drawn under the clouds. A card says
+"Fighting a zombie" or "Shooting at a zombie". Arrows stay stuck in a zombie until it falls; misses lie {ARROW_LIE_SECONDS:#seconds}.
 
 ## Planned
 
-- [proposed] Arrows as a tower's stock, kept full by the builders; the ballista.
-- [planned] **Walls break** (step 4): walls and gates cost a zombie time to break rather than stopping it.
+- [planned] Repairs by the builders with no zombies about; the stakes falling and a thud a blow; whom to go for by the way there (steps 4c-4e).
 - [proposed] **Waves from the swamp**, none while it is frozen; people fleeing and the alarm; the swamp's haze
   thickening before a wave; fields trampled; winter raids on the frozen swamp.
-- [proposed] A zombie's own clips: a bite, a shamble.
+- [proposed] Arrows as a tower's stock, kept full by the builders; the ballista; a shamble of its own.

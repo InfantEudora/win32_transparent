@@ -322,6 +322,7 @@ enum ZoneOp{
     ZONE_OP_RANGE_STOP,     //coarse cell: the same for its range, which stands on cells
     ZONE_OP_SITE_CANCEL,    //plot: its building taken off whole, while nothing of it stands - a site's Cancel (construction_plan.md)
     ZONE_OP_FIELD_CANCEL,   //coarse cell: the same for its field's or range's site
+    ZONE_OP_GROUND_BREAK,   //plot: its standing palisade broken by zombies - a wall site again (zombies_plan.md step 4)
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's or a range's) rather than a plot.
@@ -801,6 +802,15 @@ bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys);
     that still carries the piece over it. `why` says why not.
 */
 bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, const char** why);
+
+//A building with a DOOR, which zombies breach (zombies_plan.md step 4; the user's, 2026-10-19: every building's door):
+//every kind gone into at a door - not a camp, a winch or a bridge, which are walked through, nor a guard tower, which is
+//got onto by its ladder; a field and a range stand on cells.
+inline bool ZoneKindHasDoor(int kind){
+    return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER
+        || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_ROPEWALK || kind == ZONE_KIND_STONECUTTER
+        || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL;
+}
 
 //Closed to walkers - never walked onto, nor through: a standing wall plot, a shut gate, or a castle's solid stone
 //(Walkers, the economy's straight walks).

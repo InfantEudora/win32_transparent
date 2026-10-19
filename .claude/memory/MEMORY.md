@@ -109,7 +109,7 @@
 - [ImGui input race + crash reports](imgui_input_race_crash_report.md) — i<Size assert was WndProc vs render thread, FIXED; build/crash_*.txt
 - [Chasm waterfalls](chasm_waterfalls.md) — brink + welded sheet + stage 2; camera under the rim only over balconies; no shader hot-reload
 - [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag cracked-mud plates; ported 2026-10-18 as map kind `cracks` (MudCracks.cpp)
-- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); 4 walls break + 5 alarm decided 2026-10-18; 4a done (tools/chasm_wall_test.py), 4b next
+- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); 4a, 4b BUILT 2026-10-19 (walls/gates/every door broken, scratch clip, strike+punch sounds, tools/chasm_wall_test.py); 4c, 4d look, 4e, alarm next
 - [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only; step 0 done
 - [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble, PICK UP, stonecutter, deposits, the mine on O)
 - [Chasm stone props](chasm_stone_props.md) — 10 stone props in chasm_props.glb (--add --merge); floatstone = PAL_MINERALS row 10
@@ -126,5 +126,6 @@
 - [archer_test baseline stale](archer_test_baseline_stale.md) — differs from tick 0 on a CLEAN HEAD (A/B 2026-10-18); --write is the user's call
 - [Worktree A/B build](worktree_ab_build.md) — HEAD in a worktree, OR (uncommitted work from others) an app-folder copy with your edits undone
 - [Chasm test maps plan](chasm_test_maps_plan.md) — ALL 6 BUILT 2026-10-18: kind flat/title (+cracks) in GridSettings, add_person, coded title town; saves A/B unchanged
-- [Chasm water tools plan](chasm_water_tools_plan.md) — ALL 4 steps BUILT 2026-10-18: debug WELL, placed rivers + ponds (chasm_generate water), River/Pond panel tools
+- [Chasm water tools plan](chasm_water_tools_plan.md) — ALL 5 steps BUILT: debug WELL, placed rivers + ponds, River/Pond tools, painted HEIGHT (2026-10-19); chasm_generate water/relief
+- [Chasm clip channels + export](chasm_clip_channels_export.md) — unsampled export ships keyed channels only; missing channel = stale bone; blender_action_report.py
 - [Null MCP argument aborts](mcp_null_arg_aborts.md) — chasm tool given a JSON null (house:null) died with no crash report; omit the key or pass 0

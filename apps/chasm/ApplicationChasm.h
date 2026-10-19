@@ -370,7 +370,8 @@ enum ChasmTool{
     CHASM_TOOL_MINE,        //stone_plan.md step 5: a mine, a plot each, on a deposit
     CHASM_TOOL_WELL,        //water_tools_plan.md: a debug well, a plot each - from the panel only, no key, never in play
     CHASM_TOOL_RIVER,       //water_tools_plan.md: a river dragged from its source - the panel's only, never in play
-    CHASM_TOOL_POND,        //...and a pond dragged out from its middle; each a new map (UpdateWaterDrag)
+    CHASM_TOOL_POND,        //...and a pond dragged out from its middle; each a new map (UpdateMapDrag)
+    CHASM_TOOL_HEIGHT,      //water_tools_plan.md step 5: the ground raised or lowered along a drag, a hill a click
     CHASM_TOOL_COUNT
 };
 
@@ -583,21 +584,24 @@ private:
     int line_ground = ZONE_GROUND_ROAD;         //under pick_mutex: what the line lays - its tool's, at the press
     std::atomic<uint32_t> line_version{0};
     /*
-        THE WATER TOOLS (docs/water_tools_plan.md, ApplicationChasmWater.cpp), debug only and never in play. The RIVER
-        tool's drag lays a course, a point every WATER_DRAG_STEP the cursor goes; the POND tool's is a middle and the
-        edge it is dragged out to. Let go, the water joins the world's settings and the map is made again (PlaceWater):
-        a new map, as Generate makes, not a recorded command. `water_drag` is written by the physics thread and read by
-        the pick view under pick_mutex; a river's middle and edges are drawn there at the panel's width, a pond's water
-        and bank green, or red where it would not fit.
+        THE MAP TOOLS (docs/water_tools_plan.md, ApplicationChasmMapTools.cpp), debug only and never in play. The RIVER
+        and HEIGHT tools' drag lays a line, a point every MAP_DRAG_STEP the cursor goes (a height stroke may be the one
+        point of a click); the POND tool's is a middle and the edge it is dragged out to. Let go, the water or the
+        stroke joins the world's settings and the map is made again (RemakeMap): a new map, as Generate makes, not a
+        recorded command. `map_drag` is written by the physics thread and read by the pick view under pick_mutex,
+        which draws a river's middle and edges at the panel's width, a stroke's line and its reach, a pond's water and
+        bank - green, a stroke lowering blue, a pond red where it would not fit.
     */
-    std::vector<vec2> water_drag;               //under pick_mutex: the course so far, or a pond's middle and edge
-    bool f_water_dragging = false;              //physics thread: a drag of either is under way
+    std::vector<vec2> map_drag;                 //under pick_mutex: the line so far, or a pond's middle and edge
+    bool f_map_dragging = false;                //physics thread: a drag of one of them is under way
     std::atomic<float> water_river_width{GRID_PLACED_RIVER_WIDTH};  //the panel's, for the next river
-    std::string water_status;                   //under pick_mutex: what the last placing or taking away came to
-    void UpdateWaterDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
-    //The world's settings again with `water` instead: a new map. False, with `why`, while a recording runs.
-    bool PlaceWater(const GridWater& water, std::string& why);
-    void RenderWaterTools();                    //debug builds: the river's width, the water there is, each to take away
+    std::atomic<float> relief_height{GRID_RELIEF_HEIGHT};           //...and the next stroke's, up or down
+    std::atomic<float> relief_radius{GRID_RELIEF_RADIUS};
+    std::string map_status;                     //under pick_mutex: what the last placing or taking away came to
+    void UpdateMapDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
+    //The world's settings again with `water` and `relief` instead: a new map. False, with `why`, while recording.
+    bool RemakeMap(const GridWater& water, const GridRelief& relief, std::string& why);
+    void RenderMapTools();                      //debug builds: the tools' sizes, what there is, each to take away
     void UpdateLineDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
     void PlaceLine();
     void DropLine();
@@ -1861,6 +1865,23 @@ private:
     std::vector<WorkBeat> work_beats;
     uint64_t work_clock = 0;                    //passes the world has been live: frozen in a pause, so no blows pile up
     /*
+        THE ZOMBIES HEARD (zombies_plan.md step 4d): a zombie at what it breaks STRIKES it once a turn of its scratch, at
+        the clip's swipe - on the rules' ticks, as the clip itself is played, its clock started as its hitting began at
+        the phase the view starts the clip at, so the blow is heard as its arms come down, at any speed. And a fight's
+        PUNCHES, each as the rules land it: a zombie's bite count, or a person's swing, starting again from the top.
+    */
+    struct StrikeBeat{
+        uint32_t zombie = 0;
+        double next = 0.0;          //the economy's tick of its next strike
+        vec2 at;                    //where it stands (x, world z)
+        int what = 0;               //HARM_*: what it strikes
+    };
+    std::vector<StrikeBeat> strike_beats;
+    std::vector<std::pair<uint32_t,int>> bites_seen;    //each zombie's bite count at the last pass
+    std::vector<std::pair<uint32_t,int>> swings_seen;   //...and each person's swing
+    const ChasmWorld* zombies_heard_world = nullptr;    //the map they were seen on: ids start again on another
+    std::atomic<float> zombie_scratch_seconds{0.0f};    //Zombie_Scratch's length, from the rig (BuildZombieSkin); 0 none
+    /*
         THE WATER HEARD (areas_plan.md): a river's loop and a waterfall's, each open while its nearest water is within
         reach, following how far that is and how much of it is under the clouds - eased, so water coming into sight
         swells rather than jumps.
@@ -1949,6 +1970,7 @@ private:
     void SignalEvents();
     void SignalWork(bool f_live);
     void SignalBirds(bool f_live);              //the flocks' calls, handed over by UploadBirds
+    void SignalZombies(bool f_live);            //their strikes at what they break, and a fight's punches
     void SignalUI(const char* name);            //physics thread: a click, a tool taken up
 #ifdef USE_MCP
     void RegisterSoundTools();

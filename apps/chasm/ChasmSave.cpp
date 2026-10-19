@@ -282,9 +282,14 @@ json ChasmSaveToJson(const ChasmSave& s){
                 for (const vec2& p : m.route){
                     route.push_back(json::array({p.x,p.y}));
                 }
-                zombies.push_back(json{{"id",m.id},{"target",m.target},{"lost",m.f_lost},{"health",m.health},{"bite",m.bite},
-                                       {"pos",json::array({m.pos.x,m.pos.y})},{"off",json::array({m.off.x,m.off.y})},
-                                       {"route",route},{"speed",m.speed},{"seg",m.seg},{"along",m.along}});
+                json zj = json{{"id",m.id},{"target",m.target},{"lost",m.f_lost},{"health",m.health},{"bite",m.bite},
+                               {"pos",json::array({m.pos.x,m.pos.y})},{"off",json::array({m.off.x,m.off.y})},
+                               {"route",route},{"speed",m.speed},{"seg",m.seg},{"along",m.along}};
+                //WALLS BREAK (step 4): what its way is stopped by, [HARM_*, plot or building] - only while it has one.
+                if (m.hit){
+                    zj["hit"] = json::array({(int)m.hit,m.hit_id});
+                }
+                zombies.push_back(zj);
             }
             economy["zombies"] = zombies;
             economy["next_zombie"] = e.next_zombie;
@@ -300,6 +305,15 @@ json ChasmSaveToJson(const ChasmSave& s){
             if (!arrows.empty()){
                 economy["arrows"] = arrows;
             }
+        }
+        //WALLS BREAK (zombies_plan.md step 4): what zombies have taken off each thing, [HARM_*, plot or building, ticks]
+        //- only while there is any, so a save without it is as before.
+        if (!e.harm.empty()){
+            json harm = json::array();
+            for (const EconomyHarm& h : e.harm){
+                harm.push_back(json::array({(int)h.what,h.id,h.ticks}));
+            }
+            economy["harm"] = harm;
         }
         /*
             THE HISTORY (statistics_plan.md): where it began, the journal - an event a line, [tick, kind, person,
@@ -365,7 +379,53 @@ json ChasmSaveToJson(const ChasmSave& s){
     if (!g.water.Empty()){
         out["grid"]["water"] = GridWaterToJson(g.water);
     }
+    if (!g.relief.Empty()){
+        out["grid"]["relief"] = GridReliefToJson(g.relief);
+    }
     return out;
+}
+
+json GridReliefToJson(const GridRelief& r){
+    json strokes = json::array();
+    for (const GridReliefStroke& s : r.strokes){
+        json points = json::array();
+        for (const vec2& p : s.points){
+            points.push_back(json::array({p.x,p.y}));
+        }
+        strokes.push_back(json{{"points",points},{"radius",s.radius},{"height",s.height}});
+    }
+    return json{{"strokes",strokes}};
+}
+
+bool GridReliefFromJson(const json& j, GridRelief& out, std::string& error){
+    out = GridRelief();
+    if (j.is_null()){
+        return true;        //none
+    }
+    const json& strokes = j.is_object() ? j.value("strokes",json::array()) : json();
+    if (!strokes.is_array()){
+        error = "relief is an object: {\"strokes\":[{\"points\":[[x,z],...],\"radius\":r,\"height\":h}]}";
+        return false;
+    }
+    for (const json& js : strokes){
+        GridReliefStroke s;
+        const json& points = js.is_object() ? js.value("points",json::array()) : json();
+        if (!points.is_array() || points.empty()){
+            error = "a relief stroke takes one point or more, each [x,z]";
+            return false;
+        }
+        for (const json& p : points){
+            if (!p.is_array() || p.size() != 2 || !p[0].is_number() || !p[1].is_number()){
+                error = "a relief stroke's point is [x,z]";
+                return false;
+            }
+            s.points.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
+        }
+        s.radius = js.value("radius",s.radius);
+        s.height = js.value("height",s.height);
+        out.strokes.push_back(s);
+    }
+    return true;
 }
 
 json GridWaterToJson(const GridWater& w){
@@ -464,6 +524,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     }
     //No water is none placed by hand: every save before it (water_tools_plan.md), and every one since without any.
     if (g.contains("water") && !GridWaterFromJson(g["water"],s.water,error)){
+        return false;
+    }
+    if (g.contains("relief") && !GridReliefFromJson(g["relief"],s.relief,error)){
         return false;
     }
     out.world_hash = j.value("world_hash",std::string());
@@ -717,6 +780,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             m.speed = mj.value("speed",std::vector<float>());
             m.seg = mj.value("seg",0);
             m.along = mj.value("along",0.0f);
+            if (mj.contains("hit") && mj["hit"].is_array() && mj["hit"].size() == 2){
+                m.hit = (uint8_t)mj["hit"][0].get<int>();
+                m.hit_id = mj["hit"][1].get<uint32_t>();
+            }
             if (m.route.empty() || m.speed.size() + 1 != m.route.size()){
                 m.route.assign(1,m.pos);
                 m.speed.clear();
@@ -742,6 +809,20 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             a.lie = aj.value("lie",0);
             out.economy.arrows.push_back(a);
         }
+        //Absent before walls broke (step 4), and with none harmed. Kept in what and id order, as the rules keep it.
+        for (const json& hj : e.value("harm",json::array())){
+            if (!hj.is_array() || hj.size() != 3){
+                continue;
+            }
+            EconomyHarm h;
+            h.what = (uint8_t)hj[0].get<int>();
+            h.id = hj[1].get<uint32_t>();
+            h.ticks = hj[2].get<int>();
+            out.economy.harm.push_back(h);
+        }
+        std::sort(out.economy.harm.begin(),out.economy.harm.end(),[](const EconomyHarm& a, const EconomyHarm& b){
+            return (a.what != b.what) ? a.what < b.what : a.id < b.id;
+        });
         //THE HISTORY. A save from before it has none, and the history begins at its load (Economy::Restore).
         if (e.contains("history") && e["history"].is_object()){
             const json& hj = e["history"];

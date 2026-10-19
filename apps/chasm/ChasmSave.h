@@ -50,6 +50,10 @@ bool ChasmSaveFromJson(const nlohmann::json& j, ChasmSave& out, std::string& err
 //river's width and a pond's radius too. False, with `error`, if malformed.
 nlohmann::json GridWaterToJson(const GridWater& w);
 bool GridWaterFromJson(const nlohmann::json& j, GridWater& out, std::string& error);
+//...and the height painted by hand: {"strokes":[{"points":[[x,z],...],"radius":r,"height":h}]}, the radius and height
+//optional. False, with `error`, if malformed.
+nlohmann::json GridReliefToJson(const GridRelief& r);
+bool GridReliefFromJson(const nlohmann::json& j, GridRelief& out, std::string& error);
 
 /*
     THE GAME'S FOLDERS - saves/, recordings/, reports/ - found from the exe, as main.cpp finds the assets, never from

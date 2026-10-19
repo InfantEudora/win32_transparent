@@ -344,7 +344,10 @@ uint32_t JournalColour(int kind){
         case EVENT_GOAL_MET:
         case EVENT_DEMO_COMPLETE:       return HUD_SELECT;
         case EVENT_GOAL_FAILED:
-        case EVENT_COLONY_LOST:         return HUD_DANGER;
+        case EVENT_COLONY_LOST:
+        case EVENT_WALL_BROKEN:
+        case EVENT_GATE_BROKEN:
+        case EVENT_BREACHED:            return HUD_DANGER;
         default:                        return HUD_TEXT_DIM;
     }
 }

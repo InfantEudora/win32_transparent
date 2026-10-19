@@ -2,7 +2,7 @@
 
 //THE NUMBER, raised by hand when the user says so. Only this file and the exe's version resource are rebuilt for
 //it: the makefile reads it from here for chasm.rc, which also wants it as numbers - so digits and dots only.
-#define CHASM_VERSION "0.0.2"
+#define CHASM_VERSION "0.0.3"
 
 //The makefile's (THE VERSION there): passed in for this file alone. Built without it - another build system - the
 //compiler's own date stands in, and the commit is not known.

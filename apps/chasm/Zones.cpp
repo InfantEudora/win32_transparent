@@ -36,6 +36,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_RANGE_STOP:    return "range_stop";
         case ZONE_OP_SITE_CANCEL:   return "site_cancel";
         case ZONE_OP_FIELD_CANCEL:  return "field_cancel";
+        case ZONE_OP_GROUND_BREAK:  return "ground_break";
         default:                   return "none";
     }
 }
@@ -2534,6 +2535,20 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             touch_road(plot);       //its wall, a gate where a road meets it, the road's curve and verge
             break;
         }
+        case ZONE_OP_GROUND_BREAK:{
+            /*
+                A palisade plot the zombies broke (zombies_plan.md step 4): back to a wall SITE - planned, staked out,
+                open ground - as a wall still to build is, so the line's other plots end against a gap and the line
+                works build it again. Only one that stands.
+            */
+            if (plot < 0 || plot >= (int)state.ground.size() || !ZoneWallStands(state,plot)){
+                last_refusal = "no standing wall there";
+                return false;
+            }
+            state.ground_built[plot] = 0;
+            touch_road(plot);
+            break;
+        }
         case ZONE_OP_SITE_PRIORITY:{
             //The player's "build this first" (construction_plan.md). Only a site can be put first; any
             //building can be put back, so a flag never sticks where the card no longer offers it.
@@ -2709,7 +2724,7 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
     }
     //The builders' raises are no placement: an arch they bring about is a site, as a storey a player adds is.
     last_arch_lost = RefreshArches(!f_play && op != ZONE_OP_BUILD_RAISE && op != ZONE_OP_GROUND_RAISE
-                                   && op != ZONE_OP_FIELD_RAISE);
+                                   && op != ZONE_OP_FIELD_RAISE && op != ZONE_OP_GROUND_BREAK);
     if (op == ZONE_OP_BUILD_ADD || op == ZONE_OP_BUILD_REMOVE || op == ZONE_OP_BUILD_ERASE || op == ZONE_OP_BUILD_RAISE
         || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_SITE_CANCEL || op == ZONE_OP_FIELD_CANCEL){
         SettlePriorities();

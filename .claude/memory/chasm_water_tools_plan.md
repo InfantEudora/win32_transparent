@@ -1,6 +1,6 @@
 ---
 name: chasm-water-tools-plan
-description: "Chasm wells + placed water for test maps - ALL 4 steps BUILT 2026-10-18 (well, rivers, ponds, River/Pond debug tools), A/B clean; apps/chasm/docs/water_tools_plan.md"
+description: "Chasm test-map tools - ALL 5 steps BUILT (well, rivers, ponds, River/Pond tools 2026-10-18; painted HEIGHT 2026-10-19), A/B clean; apps/chasm/docs/water_tools_plan.md"
 metadata:
   node_type: memory
   type: project
@@ -26,6 +26,11 @@ Plan: `apps/chasm/docs/water_tools_plan.md` (decided with the user 2026-10-18; a
   cursor every 3 units; PlaceWater regenerates on release (refused while recording); preview in the pick view;
   RenderWaterTools lists/removes water (NOT seen on screen - ImGui can't be scrolled by script). The panel's
   next_settings.water follows the map, so Generate/N keep water; New game/title start with none.
+- **Height - step 5 BUILT 2026-10-19** (user: smooth raise/lower only, +-20, no cliffs, no flatten): GridSettings::relief
+  strokes {points,radius,height} -> ChasmLayout::relief_strokes (ChasmPlaceRelief), hashed; BuildRelief adds them
+  with their OWN river fade RELIEF_PAINT_RIVER_FADE 8 (the hills' 24 flattened a small map) and lowering faded near
+  the rift. Tools moved to ApplicationChasmMapTools.cpp: UpdateMapDrag / RemakeMap / RenderMapTools; chasm_tool
+  takes width/height/radius (the panel's sliders, for scripts).
 - **Placed water, the design**: `GridSettings::water` (rivers + ponds) beside `kind`, saved only when
   non-empty, appended into the layout in Grid::Generate, hashed. Rivers = GridRiverLine (EDGE/JOIN/SINK by where
   drawn). Ponds = the swamp's pools generalised (bowl in the relief; the two biome==SWAMP checks widened).

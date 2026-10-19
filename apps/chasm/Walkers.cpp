@@ -280,8 +280,12 @@ float Walkers::EdgeLength(int a, int b) const{
 }
 
 //Whether a walk from `from` to `to` may use the edge a -> b.
-bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int who) const{
+bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int who, const WalkBreaks* breaks,
+                       float* extra) const{
     const Terrain& t = *world->terrain;
+    if (extra){
+        *extra = 0.0f;
+    }
     if (!t.SameGround(a,b)){
         //A cliff - unless a winch rides it, with its landing clear (or the walk ending on it).
         if (!IsLink(a,b)){
@@ -316,11 +320,20 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int w
         return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_CAMP || ZoneBridgeWalkable(z,v)
             || (kind == ZONE_KIND_BRIDGE && (who == WALK_WHO_POSTED || who == WALK_WHO_ICE) && Frozen(v));
     };
-    if (z.storeys[b] > 0 && b != to && !passage(b)){
+    //A ZOMBIE'S WAY (`breaks`): a building with a door is a door to breach, not a wall - entered at the cost of
+    //breaching it, nothing once it is, and walked through after. A tower stays shut to it: it has a ladder, not a door.
+    auto house = [&](int v){
+        return breaks && ZoneKindHasDoor(z.KindOf(v)) && z.standing[v] > 0;
+    };
+    if (z.storeys[b] > 0 && b != to && !passage(b) && !house(b)){
         return false;
     }
-    if (z.storeys[a] > 0 && a != from && !passage(a)){
+    if (z.storeys[a] > 0 && a != from && !passage(a) && !house(a)){
         return false;
+    }
+    float cost = 0.0f;
+    if (house(b) && z.building[b] != z.building[a]){
+        cost += breaks->DoorLeft(z.building[b]);
     }
     //A guard tower is got onto and off only by its LADDER, its door (defence_plan.md): from the plot the ladder
     //stands toward, and back to it - its site's builders too. One left with none (loaded with no side open) is
@@ -333,12 +346,28 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int w
     //A standing palisade is never walked onto, nor through; off one only by someone the builders raised
     //it round, where his walk starts (Zones.h, WALLS). A gate is road, and open - unless its door is shut
     //(defence_plan.md), when it is the palisade's: off it only for someone it was shut on.
-    if (ZoneShutToWalkers(z,b) || (ZoneShutToWalkers(z,a) && a != from)){
-        return false;
+    //A zombie's way through either is breaking it; a castle's stone it never breaks.
+    bool f_shut_b = ZoneShutToWalkers(z,b);
+    if (f_shut_b || (ZoneShutToWalkers(z,a) && a != from)){
+        if (!breaks || ZoneCastleShuts(z,a) || ZoneCastleShuts(z,b)){
+            return false;
+        }
+        if (f_shut_b){
+            cost += ZoneWallStands(z,b) ? breaks->WallLeft(b) : breaks->GateLeft(b);
+        }
     }
-    //A garden's wall or a lot's fence is crossed at its gate and nowhere else.
-    if (ZoneBoundaryBetween(z,a,b) == ZONE_BOUNDARY_NONE || ZoneGateBetween(*world,z,a,b)){
+    auto open = [&](float seconds){
+        if (extra){
+            *extra = seconds;
+        }
         return true;
+    };
+    //A garden's wall or a lot's fence is crossed at its gate and nowhere else - but climbed by a zombie, slowly.
+    if (ZoneBoundaryBetween(z,a,b) == ZONE_BOUNDARY_NONE || ZoneGateBetween(*world,z,a,b)){
+        return open(cost);
+    }
+    if (breaks){
+        return open(cost + breaks->ClimbSeconds());
     }
     /*
         SHUT IN A YARD: out over it, never in, for someone whose walk starts inside one. Nobody is meant to be
@@ -388,7 +417,7 @@ float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
     cheapest. The open set is ordered by estimate and then by node index, and neighbours come in the graph's
     fixed order, so the same question always gets the same path.
 */
-std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to, int who) const{
+std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to, int who, const WalkBreaks* breaks) const{
     std::vector<int> path;
     if (!graph || from < 0 || to < 0){
         return path;
@@ -430,10 +459,11 @@ std::vector<int> Walkers::FindPath(const ZoneState& z, int from, int to, int who
         if (v < n){
             for (int i = graph->start[v]; i < graph->start[v + 1]; i++){
                 int u = graph->next[i];
-                if (closed[u] || !EdgeOpen(z,v,u,from_ground,to_ground,who)){
+                float extra = 0.0f;
+                if (closed[u] || !EdgeOpen(z,v,u,from_ground,to_ground,who,breaks,&extra)){
                     continue;
                 }
-                float c = cost[v] + graph->length[i] / EdgeSpeed(z,v,u);
+                float c = cost[v] + graph->length[i] / EdgeSpeed(z,v,u) + extra;     //a zombie's breaking too
                 if (c < cost[u]){
                     cost[u] = c;
                     came[u] = v;
@@ -504,7 +534,7 @@ WalkPlace Walkers::GoalPlace(const ZoneState& z, int to, int who, int to_layer){
 
 //The economy's people (Economy.h) walk these: the same graph, rules and A* the debug walker had.
 bool Walkers::PlanRoute(const ZoneState& z, WalkPlace from, int to, int who, std::vector<WalkPlace>& places,
-                        std::vector<float>& speeds, int to_layer){
+                        std::vector<float>& speeds, int to_layer, const WalkBreaks* breaks){
     places.clear();
     speeds.clear();
     if (!world || world != z.world){
@@ -528,7 +558,7 @@ bool Walkers::PlanRoute(const ZoneState& z, WalkPlace from, int to, int who, std
     }
     WalkPlace goal = GoalPlace(z,to,who,to_layer);
     int end = (goal.layer != WALK_GROUND) ? DeckNode(goal.plot,goal.layer) : to;
-    std::vector<int> path = FindPath(z,start,end,who);
+    std::vector<int> path = FindPath(z,start,end,who,breaks);
     for (size_t i = 0; i < path.size(); i++){
         WalkPlace p;
         p.plot = (path[i] < n) ? path[i] : decks[path[i] - n].plot;

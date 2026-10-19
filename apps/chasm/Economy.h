@@ -943,7 +943,10 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
 #define EVENT_GOAL_FAILED       19      //...or failed: `person` the death that failed it
 #define EVENT_DEMO_COMPLETE     20      //both of the demo's goals decided; `amount` how many were met
 #define EVENT_COLONY_LOST       21      //nobody left alive: `person` the last to die
-#define EVENT_COUNT             22
+#define EVENT_WALL_BROKEN       22      //zombies broke the palisade on `plot` (zombies_plan.md step 4)
+#define EVENT_GATE_BROKEN       23      //...the door of the gate on `plot`
+#define EVENT_BREACHED          24      //...into `building`, its door breached at `plot`; `amount` its kind
+#define EVENT_COUNT             25
 //The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
 //chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
 #define CHASM_GOAL_WINTER       0
@@ -1039,6 +1042,25 @@ void EconomyForestCleared(const EconomyState& e, int& felled, int& broken);
 #define FIGHT_HIT               10      //hit points a blow takes, at an average pace
 #define FIGHT_SWING_SECONDS     0.5f    //...and how often he strikes, at it
 /*
+    WALLS BREAK (zombies_plan.md step 4; the user's, 2026-10-18): what stands in a zombie's way costs it time instead of
+    stopping it. Its way is planned through a standing palisade plot, a shut gate or a building's door (ZoneKindHasDoor:
+    every building's, the user's 2026-10-19) at the cost of breaking it (Walkers.h, WalkBreaks), and at one it HITS it -
+    a tick of its strength a tick, at most ZOMBIE_HITTERS at one thing at once. A palisade plot broken goes back to a
+    wall site; a gate broken hangs open, BROKEN until repaired; a building is BREACHED, not broken, and then walked
+    through - and whoever is indoors there can be got at. A garden's wall or a
+    lot's fence is climbed, slowly, and takes no harm. The gate is the weak point. Strengths in zombie-seconds: tuning.
+*/
+#define ZOMBIE_BREAK_WALL       60.0f   //a palisade plot
+#define ZOMBIE_BREAK_GATE       30.0f   //a gate's door: the weak point, where the towers go
+#define ZOMBIE_BREACH_DOOR      10.0f   //a building's door: far sooner than a wall, and then passable
+#define ZOMBIE_CLIMB_SECONDS    3.0f    //over a garden's wall or a lot's fence
+#define ZOMBIE_HITTERS          4       //at one thing at once, the most that hit it - as many as stand at it
+#define ZOMBIE_HIT_STAND        0.8f    //how far off a palisade's or a gate's plot point it stands to hit it
+#define ZOMBIE_DOOR_STAND       0.35f   //...and a building's: this far out past half the edge it comes in on, at its wall
+#define HARM_WALL               1       //what harm is to (EconomyHarm): a palisade plot, `id` its plot...
+#define HARM_GATE               2       //...a gate's door, its plot...
+#define HARM_DOOR               3       //...or a building's door, its building
+/*
     ARROWS (zombies_plan.md, step 3; the user's 2026-10-14): anyone with a bow - an archer or a guard - who is grown and
     STANDS, on his post (a tower's platform among them) or on the range's line, shoots at the nearest zombie he can SEE:
     within his sight's reach and over the ground between (ExplorationSight::Clear), from his eye - on a platform, from its
@@ -1081,7 +1103,25 @@ struct EconomyZombie{
     std::vector<float> speed;
     int seg = 0;
     float along = 0.0f;
+    //WALLS BREAK: what its way is stopped by, walked up to and then hit once its route is done - HARM_*, 0 none.
+    uint8_t hit = 0;
+    uint32_t hit_id = 0;
 };
+//...hitting it now: at the end of its route, with something to break.
+inline bool EconomyZombieHitting(const EconomyZombie& m){
+    return m.hit != 0 && m.seg + 1 >= (int)m.route.size();
+}
+//WALLS BREAK (above): what zombies have taken off one thing's strength, in ticks - kept only while there is any. A
+//palisade plot's until it breaks; a gate's and a door's on past it, as BROKEN and BREACHED, until repaired.
+struct EconomyHarm{
+    uint8_t what = 0;           //HARM_*
+    uint32_t id = 0;            //a plot, or a building
+    int ticks = 0;
+};
+int EconomyHarmStrength(int what);                                      //in ticks
+int EconomyHarmOf(const EconomyState& e, int what, uint32_t id);        //...taken off it, 0 none
+bool EconomyBreached(const EconomyState& e, uint32_t building);
+bool EconomyGateBroken(const EconomyState& e, int plot);
 //Which way a zombie faces: along its route, or the way its last leg went.
 vec2 EconomyZombieFacing(const EconomyZombie& m);
 /*
@@ -1183,6 +1223,7 @@ struct EconomyState{
     std::vector<EconomyZombie> zombies;                 //ZOMBIES, in id order
     uint32_t next_zombie = 1;
     std::vector<EconomyArrow> arrows;                   //ARROWS, in the order loosed
+    std::vector<EconomyHarm> harm;                      //WALLS BREAK, by what and id
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<GoodsMask> accepts;
     std::vector<GoodsMask> attached;                      //the goods of the workplaces a store is next to
@@ -1353,6 +1394,7 @@ struct EconomySaved{
     std::vector<EconomyZombie> zombies;
     uint32_t next_zombie = 1;
     std::vector<EconomyArrow> arrows;
+    std::vector<EconomyHarm> harm;
     bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
     EconomyHistory history;
     bool f_history = false;             //...a save from before the history has none: it begins at the load
@@ -1509,6 +1551,9 @@ public:
     const std::vector<int>& CropDefaults() const { return crop_defaults; }
     //The tents packed this tick - the app takes their plots out of their camps (ZONE_OP_BUILD_ERASE).
     const std::vector<int>& TentsPacked() const { return tents_packed; }
+    //WALLS BREAK: the palisade plots zombies broke this tick (ZONE_OP_GROUND_BREAK), and the gates (opened).
+    const std::vector<int>& GroundBreaks() const { return ground_breaks; }
+    const std::vector<int>& GateBreaks() const { return gate_breaks; }
     //The standing trees in a planned road's or wall's way, to be felled before it is laid or built. Physics
     //thread - or a tool between ticks (Scene::AtTickBoundary), which is how chasm_economy lists them.
     void RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const;
@@ -1520,6 +1565,9 @@ private:
     std::vector<int> field_raises;
     std::vector<int> crop_defaults;
     std::vector<int> tents_packed;
+    std::vector<int> ground_breaks;
+    std::vector<int> gate_breaks;
+    bool f_zombies_replan = false;              //something broken or breached: every zombie looks again next tick
     /*
         PICK UP's reach, remembered (MoveCrate): one person's verdict on a crate - too far or not - while nothing it rests
         on has changed: he stands where he did, the zones are as they were, the same store would take it. Otherwise two
@@ -1728,6 +1776,12 @@ private:
     int ShotTarget(const EconomyWorker& k, const ZoneState& z, const std::vector<int>& coming, float& eye_ground) const;
     //A zombie's body within `within` of his: no meal then (MEALS).
     bool ZombieNear(const EconomyWorker& k, float within) const;
+    //Whom a zombie can get at (EconomyReachable) - and indoors in a BREACHED house, which is no cover (step 5).
+    bool CanGetAt(const EconomyWorker& k) const;
+    //WALLS BREAK: every zombie at what stops it hits it, and what breaks is broken (ground_breaks, gate_breaks, events).
+    void ZombiesHit(const ZoneState& z);
+    //...harm to what no longer stands, or is no longer what it was, forgotten - after the zones change.
+    void ForgetHarm(const ZoneState& z);
     //A zombie he could shoot at - in his sight, doomed by arrows on their way or not - or one he is fighting: he
     //keeps his post through a pressing need while there is one (zombies_plan.md step 3b).
     bool ZombiesInRange(const EconomyWorker& k, const ZoneState& z) const;

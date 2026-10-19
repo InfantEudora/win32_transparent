@@ -683,6 +683,9 @@ float SmoothStep(float e0, float e1, float x){
 
 }
 
+#define RELIEF_PAINT_RIM_CLEAR  16.0f   //height painted DOWN fades out within this of the rift (BuildRelief)
+#define RELIEF_PAINT_RIVER_FADE 8.0f    //...and all of it along a river, past its wet margin: a valley, not a plain
+
 /*
     THE RELIEF, made once per world on a 2-unit raster. Three parts, all of position alone:
 
@@ -701,9 +704,9 @@ void Terrain::BuildRelief(const Grid& g){
     const uint32_t seed = g.settings.seed;
     relief_seed = seed;
     //A kind without hills (Grid.h, GRID_KIND_*) is flat: with no relief, Relief reads 0 everywhere - unless it has a
-    //pond placed by hand, pressed into a raster of nothing else.
+    //pond placed or height painted by hand, in a raster of nothing else.
     const bool f_hills = GridKindHasHills(g.settings.kind);
-    if (!f_hills && g.layout.ponds.empty()){
+    if (!f_hills && g.layout.ponds.empty() && g.layout.relief_strokes.empty()){
         relief.clear();
         relief_w = 0;
         relief_h = 0;
@@ -716,6 +719,52 @@ void Terrain::BuildRelief(const Grid& g){
     relief_h = (int)std::ceil(size.y / relief_cell) + 2;
     relief.assign((size_t)relief_w * relief_h,0.0f);
     relief_max = 0.0f;
+    /*
+        HEIGHT PAINTED BY HAND (water_tools_plan.md step 5), each stroke over the cells it reaches: its height at its
+        line, falling off smoothly to nothing at its radius; strokes add up. Lowering fades out within
+        RELIEF_PAINT_RIM_CLEAR of a chasm map's rift: a valley at a rim would put the plateau's ground under the balcony
+        below and turn its wall inside out. Raising does not - the generated hills reach the rims already.
+    */
+    std::vector<float> painted;
+    if (!g.layout.relief_strokes.empty()){
+        painted.assign(relief.size(),0.0f);
+        for (const GridReliefStroke& r : g.layout.relief_strokes){
+            vec2 lo = r.points[0];
+            vec2 hi = r.points[0];
+            for (const vec2& q : r.points){
+                lo = vec2(std::min(lo.x,q.x),std::min(lo.y,q.y));
+                hi = vec2(std::max(hi.x,q.x),std::max(hi.y,q.y));
+            }
+            int i0 = std::max(0,(int)std::floor((lo.x - r.radius - relief_origin.x) / relief_cell));
+            int i1 = std::min(relief_w - 1,(int)std::ceil((hi.x + r.radius - relief_origin.x) / relief_cell));
+            int j0 = std::max(0,(int)std::floor((lo.y - r.radius - relief_origin.y) / relief_cell));
+            int j1 = std::min(relief_h - 1,(int)std::ceil((hi.y + r.radius - relief_origin.y) / relief_cell));
+            for (int j = j0; j <= j1; j++){
+                for (int i = i0; i <= i1; i++){
+                    vec2 p = relief_origin + vec2(i * relief_cell,j * relief_cell);
+                    float d = (p - r.points[0]).length();
+                    for (size_t k = 0; k + 1 < r.points.size(); k++){
+                        vec2 ab = r.points[k + 1] - r.points[k];
+                        float len2 = ab.dot(ab);
+                        float t = (len2 > 1e-12f) ? std::max(0.0f,std::min(1.0f,(p - r.points[k]).dot(ab) / len2)) : 0.0f;
+                        d = std::min(d,(p - (r.points[k] + ab * t)).length());
+                    }
+                    if (d < r.radius){
+                        painted[(size_t)j * relief_w + i] += r.height * (1.0f - SmoothStep(0.0f,r.radius,d));
+                    }
+                }
+            }
+        }
+        for (int j = 0; j < relief_h; j++){
+            for (int i = 0; i < relief_w; i++){
+                float& v = painted[(size_t)j * relief_w + i];
+                if (v < 0.0f){
+                    v *= SmoothStep(0.0f,RELIEF_PAINT_RIM_CLEAR,
+                                    ChasmRiftDistance(g.layout,relief_origin + vec2(i * relief_cell,j * relief_cell)));
+                }
+            }
+        }
+    }
     for (int j = 0; j < relief_h; j++){
         for (int i = 0; i < relief_w; i++){
             vec2 p = relief_origin + vec2(i * relief_cell,j * relief_cell);
@@ -767,8 +816,15 @@ void Terrain::BuildRelief(const Grid& g){
             //Flat along rivers.
             float river = SmoothStep(TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN,
                                      TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + RELIEF_RIVER_FADE,EdgeDistance(p));
-            h *= river;
             h = f_hills ? h : 0.0f;
+            h *= river;
+            //...and the height painted by hand, faded along the rivers too - a river drawn through a painted hill cuts
+            //it - but over RELIEF_PAINT_RIVER_FADE: the hills' 24 flattened most of a small test map round a river.
+            if (!painted.empty()){
+                h += painted[(size_t)j * relief_w + i] * SmoothStep(TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN,
+                                                                    TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + RELIEF_PAINT_RIVER_FADE,
+                                                                    EdgeDistance(p));
+            }
             /*
                 PONDS placed by hand (water_tools_plan.md): the relief fades out round each over RELIEF_RIVER_FADE, as
                 along a river, so a pond on a hill lies level; then its bowl is pressed in - TERRAIN_POND_DEPTH under

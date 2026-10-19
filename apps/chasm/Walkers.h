@@ -110,6 +110,20 @@ int WalkJoin(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int 
 int WalkJoinAny(const ChasmWorld& w, const ZoneState& z, int a, int la, int b);
 
 /*
+    A ZOMBIE'S WAY (zombies_plan.md, step 4): what stands in a walk's way costs a zombie time instead of stopping it - a
+    standing palisade plot or a shut gate to break, a building's door to breach (ZoneKindHasDoor), a garden's wall or a
+    lot's fence to climb.
+    The walkers know where those are; the economy knows how much of each is left, in seconds of one zombie at it.
+*/
+struct WalkBreaks{
+    virtual ~WalkBreaks(){}
+    virtual float WallLeft(int plot) const = 0;
+    virtual float GateLeft(int plot) const = 0;
+    virtual float DoorLeft(uint32_t building) const = 0;    //0 once it is breached: walked through
+    virtual float ClimbSeconds() const = 0;
+};
+
+/*
     The plot graph of one world: CSR adjacency of the fine level, with each edge's length. Built once
     per world and immutable, like the rest of what is generated.
 */
@@ -129,10 +143,11 @@ public:
         The grid's way from where a walk starts to plot `to` - the economy's people (Economy.h): the places in
         order, both ends included, and each edge's speed. It ends on `to`'s layer `to_layer` if he may walk it,
         else on its top deck he may walk, or its ground (GoalPlace). One starting on a deck only the posted walk
-        gets off it whoever he is. False, and both empty, when there is no way.
+        gets off it whoever he is. False, and both empty, when there is no way. A zombie's walk with `breaks` goes
+        through what it can break, at the cost of breaking it (WalkBreaks).
     */
     bool PlanRoute(const ZoneState& z, WalkPlace from, int to, int who, std::vector<WalkPlace>& places,
-                   std::vector<float>& speeds, int to_layer = -1);
+                   std::vector<float>& speeds, int to_layer = -1, const WalkBreaks* breaks = NULL);
     /*
         Where a walk by `who` to plot `to` ends: its layer `to_layer` when it has that place and he may walk it - the
         ground under an arch, the deck a click was on (ramparts_plan.md) - else its top deck he may walk, or its ground.
@@ -201,8 +216,10 @@ private:
     int DeckNode(int plot, int layer) const;
     bool JoinOpen(const ZoneState& z, const Join& j, int who, int from, int to) const;
     //A* between two nodes; the nodes in order, both ends included. Empty when there is no way.
-    std::vector<int> FindPath(const ZoneState& z, int from, int to, int who) const;
-    bool EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int who = WALK_WHO_VILLAGER) const;
+    std::vector<int> FindPath(const ZoneState& z, int from, int to, int who, const WalkBreaks* breaks = NULL) const;
+    //With `breaks`, a zombie's: open through what it can break or climb, its seconds added to `extra`.
+    bool EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int who = WALK_WHO_VILLAGER,
+                  const WalkBreaks* breaks = NULL, float* extra = NULL) const;
     bool GroundEnterable(const ZoneState& z, int v, int from, int to, int who = WALK_WHO_VILLAGER) const;
     float EdgeSpeed(const ZoneState& z, int a, int b) const;
     float EdgeLength(int a, int b) const;

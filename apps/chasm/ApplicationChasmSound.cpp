@@ -28,7 +28,9 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
       - the HUD: "click";
       - THE PEOPLE'S VOICES: a person picked out or given an order answers - "picked", "sent" and the rest (Say);
       - WORK IN HAND: "chop", "hammer", "chisel", "saw" - a blow at a time, from clocks of the workers' own (below);
-      - THE BIRDS: "bird_call" and "birds_flush", as the flocks make them (SignalBirds).
+      - THE BIRDS: "bird_call" and "birds_flush", as the flocks make them (SignalBirds);
+      - THE ZOMBIES: "zombie_strike" at what one breaks, on its scratch's swipe, and "punch" as a fight's bites and
+        blows land (SignalZombies).
 
     ON THE PHYSICS THREAD, ONCE A PASS, paused or not (UpdateSound, from the top of UpdateView). The cues' clock is
     the count of passes, which is real time: 4x is four ticks inside one pass, so a blow keeps its rhythm and a
@@ -77,6 +79,11 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
 #define SOUND_BUILD_REST_MAX        2.0f
 //THE BIRDS' CALLS are heard within this of the listener, as the work is; how many at once is the table's.
 #define SOUND_BIRD_REACH            48.0f
+//THE ZOMBIES HEARD: a strike at what one breaks, on its scratch's swipe - SOUND_STRIKE_AT into Zombie_Scratch, its one
+//swipe, where both arms turn quickest (read off the props file, 2026-10-19) - the nearest few heard, within the work's reach.
+#define SOUND_STRIKE_NEAREST        4
+#define SOUND_STRIKE_AT             0.8f
+#define SOUND_STRIKE_SECONDS        2.29f   //a turn of the scratch, while the rig's own clip is not known
 
 /*
     THE WATER HEARD (areas_plan.md): a loop opens when its nearest water is within OPEN of the listener and closes past
@@ -232,6 +239,7 @@ void ApplicationChasm::UpdateSound(){
     SignalEvents();
     SignalWork(f_live);
     SignalBirds(f_live);
+    SignalZombies(f_live);
     SignalWater();
     SignalVoice();
     UpdateMusic();
@@ -514,6 +522,123 @@ void ApplicationChasm::SignalWork(bool f_live){
         }
         b.next = work_clock + Passes(gap);
     }
+}
+
+/*
+    THE ZOMBIES HEARD (ApplicationChasm.h; zombies_plan.md step 4d). A STRIKE at what a zombie breaks - a palisade, a gate,
+    a door - once a turn of its scratch, as its arms come down: the clip's one swipe, SOUND_STRIKE_AT into it. Counted in
+    the rules' ticks, as the clip is played, so the blow stays on the swipe at 4x and stops with it in a pause; its first
+    from the phase the view starts the clip at (UploadZombieSkins), the moment its hitting is seen. The nearest few
+    striking are heard. A PUNCH as a fight's bite or blow lands - a zombie's bite count, or a person's swing, starting
+    again from the top between two passes - at the one who struck.
+*/
+void ApplicationChasm::SignalZombies(bool f_live){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    if (!e || !e->world || e->world.get() != zombies_heard_world){
+        strike_beats.clear();
+        bites_seen.clear();
+        swings_seen.clear();
+        zombies_heard_world = e ? e->world.get() : nullptr;
+    }
+    if (!f_live || !e || !e->world){
+        return;
+    }
+    const float height = cam_distance * SOUND_LISTENER_HEIGHT;
+    auto heard_at = [&](const vec2& at, float* d){
+        float dx = at.x - camera_target.x;
+        float dz = at.y - camera_target.z;
+        *d = sqrtf(dx * dx + dz * dz + height * height);
+        return *d <= SOUND_WORK_REACH;
+    };
+    //STRIKES: the nearest few at what they break, each on its own turn of the clip.
+    float turn = zombie_scratch_seconds.load();
+    turn = (turn > 0.1f) ? turn : SOUND_STRIKE_SECONDS;
+    const double turn_ticks = (double)turn * CALENDAR_TICKS_PER_SECOND;
+    struct Heard{
+        uint32_t zombie;
+        float distance;
+        vec2 at;
+        int what;
+    };
+    std::vector<Heard> heard;
+    for (const EconomyZombie& m : e->zombies){
+        float d = 0.0f;
+        vec2 at = EconomyBody(m);
+        if (EconomyZombieHitting(m) && heard_at(at,&d)){
+            heard.push_back(Heard{m.id,d,at,m.hit});
+        }
+    }
+    std::sort(heard.begin(),heard.end(),[](const Heard& a, const Heard& b){
+        return (a.distance != b.distance) ? a.distance < b.distance : a.zombie < b.zombie;
+    });
+    std::vector<StrikeBeat> kept;
+    for (size_t i = 0; i < heard.size() && i < SOUND_STRIKE_NEAREST; i++){
+        const Heard& h = heard[i];
+        StrikeBeat b;
+        auto it = std::find_if(strike_beats.begin(),strike_beats.end(),[&](const StrikeBeat& o){ return o.zombie == h.zombie; });
+        if (it != strike_beats.end()){
+            b = *it;
+        }else{
+            //The view starts its scratch this far through (UploadZombieSkins' phase): its swipe is this far on.
+            float phase = fmodf((float)h.zombie * 0.618034f,1.0f);
+            float to = fmodf(SOUND_STRIKE_AT - phase * turn + turn,turn);
+            b.zombie = h.zombie;
+            b.next = (double)e->tick + (double)to * CALENDAR_TICKS_PER_SECOND;
+        }
+        b.at = h.at;
+        b.what = h.what;
+        kept.push_back(b);
+    }
+    strike_beats.swap(kept);
+    for (StrikeBeat& b : strike_beats){
+        if ((double)e->tick < b.next){
+            continue;
+        }
+        CuePayload p;
+        p.Set("x",b.at.x).Set("z",b.at.y).Set("what",(float)b.what);
+        cues.Signal("zombie_strike",p,(int)b.zombie);
+        while (b.next <= (double)e->tick){
+            b.next += turn_ticks;
+        }
+    }
+    //PUNCHES: each bite and blow as the rules land it - a count that went up since the last pass started again.
+    auto before = [](const std::vector<std::pair<uint32_t,int>>& seen, uint32_t id){
+        for (const auto& s : seen){
+            if (s.first == id){
+                return s.second;
+            }
+        }
+        return 0;
+    };
+    std::vector<std::pair<uint32_t,int>> bites;
+    for (const EconomyZombie& m : e->zombies){
+        bites.push_back(std::make_pair(m.id,m.bite));
+        int was = before(bites_seen,m.id);
+        float d = 0.0f;
+        vec2 at = EconomyBody(m);
+        if (was > 0 && m.bite > was && heard_at(at,&d)){
+            CuePayload p;
+            p.Set("x",at.x).Set("z",at.y).Set("by",0.0f);
+            cues.Signal("punch",p,(int)m.id);
+        }
+    }
+    std::vector<std::pair<uint32_t,int>> swings;
+    for (const EconomyWorker& k : e->workers){
+        if (k.swing <= 0){
+            continue;
+        }
+        swings.push_back(std::make_pair(k.id,k.swing));
+        int was = before(swings_seen,k.id);
+        float d = 0.0f;
+        vec2 at = EconomyBody(k);
+        if (was > 0 && k.swing > was && heard_at(at,&d)){
+            CuePayload p;
+            p.Set("x",at.x).Set("z",at.y).Set("by",1.0f);
+            cues.Signal("punch",p,(int)(k.id + 0x10000u));
+        }
+    }
+    bites_seen.swap(bites);
+    swings_seen.swap(swings);
 }
 
 /*

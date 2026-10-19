@@ -19,7 +19,8 @@ static Debugger* debug = new Debugger("ChasmZombies",DEBUG_ALL);
 
     DRAWN: the props file's `zombie` at the people's scale. RIGGED (2026-10-18: `zombie_armature`, a copy of the
     man's), as the people are - a skeleton per zombie sharing the one skinned mesh, walking the man's walk while its
-    route has a leg left, at that leg's speed, and standing in his idle otherwise (ApplicationChasmWorkersView.cpp).
+    route has a leg left, at that leg's speed, and standing in his idle otherwise (ApplicationChasmWorkersView.cpp) - and
+    in its own Zombie_Scratch when it attacks: a bite, or a blow at what it is breaking (zombies_plan.md step 4).
     Without a rig, one instance set for all of them, rebuilt every frame there are any, and it glides. Either way not
     drawn under the clouds where they are shown, so one comes out of them as it walks in.
 */
@@ -30,12 +31,15 @@ static Debugger* debug = new Debugger("ChasmZombies",DEBUG_ALL);
 #define ZOMBIE_CLIP_NONE    0       //the rig's bind pose, and nothing to sample each tick
 #define ZOMBIE_CLIP_WALK    1
 #define ZOMBIE_CLIP_IDLE    2
+#define ZOMBIE_CLIP_SCRATCH 3
 #define ZOMBIE_WALK_CLIP    "Walking"
 #define ZOMBIE_IDLE_CLIP    "Idle"  //stood in when the file has one (f_worker_idle_clip); the bind pose otherwise
+#define ZOMBIE_SCRATCH_CLIP "Zombie_Scratch"    //its own, its one attack: a bite, a blow at a wall, a gate, a door
 #define ZOMBIE_CLIP_BLEND   0.25f   //seconds a change of clip crossfades over, as a person's
 #define ZOMBIE_WALK_SPEED   0.81f   //its walk's pace for a rig without feet named as the man's: his
 
-//ApplicationChasmWorkersView.cpp: a borrowed track played as turns only, and a walk's pace from the rig's own feet.
+//ApplicationChasmWorkersView.cpp: a borrowed track played as turns at the rig's own rest position, and a walk's pace
+//from the rig's own feet.
 void KeepOwnPositions(Animation* clip);
 float MeasureWalkSpeed(Skeleton* probe, Animation* walk);
 
@@ -69,6 +73,10 @@ void ApplicationChasm::BuildZombieSkin(){
         measured = MeasureWalkSpeed(probe,walk);
     }
     zombie_walk_speed = (measured > 0.01f) ? measured : ZOMBIE_WALK_SPEED;
+    //Its scratch's length, for the strikes heard on its swipe (ApplicationChasmSound.cpp, SignalZombies). A one-off too.
+    if (Animation* scratch = gltfloader.LoadAnimation(ZOMBIE_SCRATCH_CLIP)){
+        zombie_scratch_seconds = scratch->duration;
+    }
     debug->Info("'%s' is rigged (%s, %i bones): drawn skinned, walking %.2f units a second at rate 1%s\n",
                 CHASM_ZOMBIE_ASSET,skin.c_str(),probe->num_bones,zombie_walk_speed,
                 measured > 0.01f ? "" : " (not measured: no feet named as the man's)");
@@ -89,7 +97,7 @@ Object* ApplicationChasm::BuildZombieSkeleton(size_t n){
     s->SetVisibility(false);
     s->SetScale(vec3(ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE));
     //Its own channels where the clip has them (the export keys Walking on zombie_armature too), the man's by name else.
-    const char* names[2] = {ZOMBIE_WALK_CLIP,f_worker_idle_clip ? ZOMBIE_IDLE_CLIP : NULL};
+    const char* names[3] = {ZOMBIE_WALK_CLIP,f_worker_idle_clip ? ZOMBIE_IDLE_CLIP : NULL,ZOMBIE_SCRATCH_CLIP};
     for (const char* name : names){
         Animation* clip = name ? gltfloader.LoadAnimation(name) : NULL;
         if (!clip){
@@ -169,8 +177,9 @@ void ApplicationChasm::UploadZombies(){
         }
         float ground = w->terrain->GroundHeight(body,w->terrain->Height(p.plot));
         vec2 facing = EconomyZombieFacing(m);
-        //Stood by whom it is after - pushed round him by the others (SPACING) - it faces him, not the way it came.
-        if (m.target && m.seg >= (int)m.route.size() - 1){
+        //Stood by whom it is after - pushed round him by the others (SPACING) - it faces him, not the way it came. At
+        //something it hits it faces that: its last leg's way, which ends at it (walls break, zombies_plan.md step 4).
+        if (m.target && m.seg >= (int)m.route.size() - 1 && !m.hit){
             for (const EconomyWorker& k : e->workers){
                 vec2 to = EconomyBody(k) - body;
                 if (k.id == m.target && to.length() > 1e-3f){
@@ -330,10 +339,13 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
         s->SetPosition(shown[i].at,false);
         s->SetRotation(shown[i].turn,false);
         s->SetVisibility(true);
-        //Walking while its route has a leg left, at that leg's speed, so its feet are planted; standing otherwise -
-        //biting too, which has no clip of its own yet. Each on its own step.
+        //Walking while its route has a leg left, at that leg's speed, so its feet are planted; SCRATCHING while whom it
+        //is after is in its reach (its bite counting down) or at something it is breaking; standing otherwise. Each on
+        //its own step.
         float phase = fmodf((float)m.id * 0.618034f,1.0f);
-        if (m.seg + 1 < (int)m.route.size() && m.seg < (int)m.speed.size()){
+        if (m.bite > 0 || EconomyZombieHitting(m)){
+            set_clip(slot[i],ZOMBIE_CLIP_SCRATCH,1.0f,phase);
+        }else if (m.seg + 1 < (int)m.route.size() && m.seg < (int)m.speed.size()){
             set_clip(slot[i],ZOMBIE_CLIP_WALK,m.speed[m.seg] / zombie_walk_speed,phase);
         }else{
             set_clip(slot[i],f_worker_idle_clip ? ZOMBIE_CLIP_IDLE : ZOMBIE_CLIP_NONE,1.0f,phase);
@@ -351,7 +363,12 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
             Object* s = z.figure;
             if (c.clip != z.clip){
                 Animation* clip = (c.clip == ZOMBIE_CLIP_WALK) ? s->FindAnimation(ZOMBIE_WALK_CLIP)
-                                : (c.clip == ZOMBIE_CLIP_IDLE) ? s->FindAnimation(ZOMBIE_IDLE_CLIP) : NULL;
+                                : (c.clip == ZOMBIE_CLIP_IDLE) ? s->FindAnimation(ZOMBIE_IDLE_CLIP)
+                                : (c.clip == ZOMBIE_CLIP_SCRATCH) ? s->FindAnimation(ZOMBIE_SCRATCH_CLIP) : NULL;
+                //A props file without the scratch: its idle instead, as before the clip came.
+                if (!clip && c.clip == ZOMBIE_CLIP_SCRATCH && f_worker_idle_clip){
+                    clip = s->FindAnimation(ZOMBIE_IDLE_CLIP);
+                }
                 //A crossfade from one clip to another, as a person's; to none or from none, at once.
                 if (!clip || z.clip == ZOMBIE_CLIP_NONE || !s->TransitionToAnimation(clip)){
                     s->SwitchToAnimation(clip);
@@ -450,7 +467,10 @@ void ApplicationChasm::RegisterZombieTools(){
         "status (default): every zombie - id, x, z, plot, its body's `off` from its route, `health` (hit points), "
         "`next_bite_ticks` (0 none in reach), its target (person id and name, 0 none) and how far he is - route to route "
         "and `body_distance` - whether it is walking, and `lost` (it could get to none of the nearest at its last look, so "
-        "looks less often).",
+        "looks less often). WALLS BREAK (step 4): a zombie's way goes through a standing palisade plot, a shut gate or a "
+        "building's door at the cost of breaking it; `hit` names what stops it - what (wall, gate, door), id (a plot, or "
+        "a building), `hitting` (at it now), harm_s and strength_s in seconds of one zombie. `harm` lists every thing harmed "
+        "so far, with `broken` (a gate's door) or `breached` (a building's) once it is.",
         json{
             {"type","object"},
             {"properties",{
@@ -508,12 +528,20 @@ void ApplicationChasm::RegisterZombieTools(){
                 return result;
             }
             auto round2 = [](float v){ return std::round(v * 100.0f) / 100.0f; };
+            auto harm_name = [](int what){
+                return (what == HARM_WALL) ? "wall" : (what == HARM_GATE) ? "gate" : (what == HARM_DOOR) ? "door" : "?";
+            };
             json list = json::array();
             for (const EconomyZombie& m : e->zombies){
                 GridPick p = w->picker->Pick(m.pos);
                 json j{{"id",m.id},{"x",round2(m.pos.x)},{"z",round2(m.pos.y)},{"plot",p.f_hit ? p.plot : -1},
                        {"off",json::array({round2(m.off.x),round2(m.off.y)})},{"health",m.health},{"next_bite_ticks",m.bite},
                        {"target",m.target},{"walking",m.seg < (int)m.route.size() - 1},{"lost",m.f_lost}};
+                if (m.hit){
+                    j["hit"] = json{{"what",harm_name(m.hit)},{"id",m.hit_id},{"hitting",EconomyZombieHitting(m)},
+                                    {"harm_s",round2(EconomyHarmOf(*e,m.hit,m.hit_id) / (float)CALENDAR_TICKS_PER_SECOND)},
+                                    {"strength_s",round2(EconomyHarmStrength(m.hit) / (float)CALENDAR_TICKS_PER_SECOND)}};
+                }
                 for (const EconomyWorker& k : e->workers){
                     if (k.id == m.target){
                         j["target_name"] = EconomyPersonName(k);
@@ -538,6 +566,18 @@ void ApplicationChasm::RegisterZombieTools(){
                 arrows.push_back(j);
             }
             result["arrows"] = arrows;
+            //WALLS BREAK (step 4): what has been harmed, and how far.
+            json harm = json::array();
+            for (const EconomyHarm& h : e->harm){
+                int strength = EconomyHarmStrength(h.what);
+                json j{{"what",harm_name(h.what)},{"id",h.id},{"harm_s",round2(h.ticks / (float)CALENDAR_TICKS_PER_SECOND)},
+                       {"strength_s",round2(strength / (float)CALENDAR_TICKS_PER_SECOND)}};
+                if (h.ticks >= strength){
+                    j[(h.what == HARM_DOOR) ? "breached" : "broken"] = true;
+                }
+                harm.push_back(j);
+            }
+            result["harm"] = harm;
             result["count"] = (int)e->zombies.size();
             result["next_id"] = e->next_zombie;
             return result;

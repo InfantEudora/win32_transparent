@@ -73,6 +73,13 @@ static Debugger* debug = new Debugger("ChasmWeather",DEBUG_ALL);
 #define SNOW_STREAK             0.05f   //longer along their motion by this per unit a second of it
 #define SNOW_NEAR               2.0f    //faded out this close to the lens
 #define SNOW_EASE_S             1.0f    //the snow's thickness follows the storm over about this long
+/*
+    The snow's and the spindrift's drift wrap at this many of their cells, and each flake goes with it at a share of
+    the wind in steps of one over it (chasm_snow.vert, snow_drift_steps): a wrap then carries every flake a whole number
+    of cells, which wrapping it back into its cell undoes. Wrapped at ONE cell, with shares anywhere from 0.85 to 1.15,
+    each wrap jumped every flake up to 0.15 of a cell at once - the snow stuttering every few seconds (2026-10-19).
+*/
+#define SNOW_DRIFT_STEPS        32
 
 namespace {
 
@@ -408,8 +415,9 @@ void ApplicationChasm::UploadWeather(){
     float drift_want = f_line ? date.active * std::max(0.0f,std::min(1.0f,lift)) : 0.0f;
     spindrift_density += (drift_want - spindrift_density) * std::min(1.0f,dt / SNOW_EASE_S);
     vec2 blown = spindrift_wind * (SPINDRIFT_CARRY * run);
-    spindrift_drift = vec2(std::fmod(spindrift_drift.x + blown.x + 100.0f * SPINDRIFT_CELL,SPINDRIFT_CELL),
-                           std::fmod(spindrift_drift.y + blown.y + 100.0f * SPINDRIFT_CELL,SPINDRIFT_CELL));
+    const float spindrift_wrap = SPINDRIFT_CELL * SNOW_DRIFT_STEPS;
+    spindrift_drift = vec2(std::fmod(spindrift_drift.x + blown.x + spindrift_wrap,spindrift_wrap),
+                           std::fmod(spindrift_drift.y + blown.y + spindrift_wrap,spindrift_wrap));
     if (spindrift_set && (spindrift_density < 0.002f || !world || !world->terrain || !world->picker)){
         if (spindrift_set->IsVisible()){
             spindrift_set->SetVisibility(false);
@@ -447,7 +455,8 @@ void ApplicationChasm::UploadWeather(){
     float storm = date.active * WeatherNear(v.at.y - WeatherFrontLine(front,v.at.x));
     snow_density += (storm - snow_density) * std::min(1.0f,dt / SNOW_EASE_S);
     vec2 drift = weather_view_wind * (SNOW_DRIFT * run);
-    snow_drift = vec2(std::fmod(snow_drift.x + drift.x + SNOW_CELL,SNOW_CELL),std::fmod(snow_drift.y + drift.y + SNOW_CELL,SNOW_CELL));
+    const float snow_wrap = SNOW_CELL * SNOW_DRIFT_STEPS;
+    snow_drift = vec2(std::fmod(snow_drift.x + drift.x + snow_wrap,snow_wrap),std::fmod(snow_drift.y + drift.y + snow_wrap,snow_wrap));
     if (!snow_set){
         return;
     }
@@ -504,6 +513,7 @@ void ApplicationChasm::SetSpindriftUniforms(){
     spindrift_shader->Setfloat("snow_fall",SPINDRIFT_FALL);
     spindrift_shader->Setfloat("snow_size",SPINDRIFT_SIZE);
     spindrift_shader->Setvec2("snow_drift",spindrift_drift);
+    spindrift_shader->Setfloat("snow_drift_steps",(float)SNOW_DRIFT_STEPS);
     spindrift_shader->Setvec2("snow_wind",spindrift_wind);
     spindrift_shader->Setfloat("snow_carry",SPINDRIFT_CARRY);
     spindrift_shader->Setfloat("snow_gust_lag",SNOW_GUST_LAG);
@@ -523,6 +533,7 @@ void ApplicationChasm::SetSnowUniforms(){
     snow_shader->Setfloat("snow_fall",SNOW_FALL);
     snow_shader->Setfloat("snow_size",SNOW_SIZE);
     snow_shader->Setvec2("snow_drift",snow_drift);
+    snow_shader->Setfloat("snow_drift_steps",(float)SNOW_DRIFT_STEPS);
     snow_shader->Setvec2("snow_wind",weather_view_wind);
     snow_shader->Setfloat("snow_carry",SNOW_DRIFT);
     snow_shader->Setfloat("snow_gust_lag",SNOW_GUST_LAG);

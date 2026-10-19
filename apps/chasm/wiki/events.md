@@ -5,8 +5,8 @@ kind: systems
 status: partial
 summary: The moments the rules tell of - a birth, a harvest, a waterfall found - made once, and read by the notice line, the statistics and the sound.
 plans: sound_plan.md > The events; sound_plan.md > Game events: one record, many readers; statistics_plan.md > As built: version 1 (2026-10-16); areas_plan.md > The discovered event
-code: Economy.h: EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED EVENT_FROST_TOOK EVENT_GREW_UP EVENT_EXPECTING EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted Lifelines ChancesOfChildren; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas LookForFirsts; ApplicationChasmSound.cpp: SignalEvents
-verified: 2026-10-16
+code: Economy.h: EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED EVENT_FROST_TOOK EVENT_GREW_UP EVENT_EXPECTING EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST EVENT_WALL_BROKEN EVENT_GATE_BROKEN EVENT_BREACHED ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted Lifelines ChancesOfChildren; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas LookForFirsts; ApplicationChasmSound.cpp: SignalEvents
+verified: 2026-10-19
 ---
 
 An **event** is a moment in the colony, made once by the rules as it happens, so a replay makes the same ones on
@@ -33,6 +33,7 @@ tree down, a storey up, a harvest) only near the view.
 | Frost took | winter's first day takes a [[Field|field's]] crop still growing | journal; one notice for all of them |
 | Goal met, goal failed | one of [[The demo's goals|the demo's goals]] decided | journal, notice |
 | Demo complete | both goals decided | journal; the end's page |
+| Wall broken, gate broken, breached | [[Zombie|zombies]] broke a palisade plot, a gate's door, or into a building | journal, notice |
 | Colony lost | the last person dies | journal; the end's page |
 | Tree felled | a [[Woodcutter|woodcutter]] fells a [[Tree|tree]] | counted |
 | Rock broken | a [[Stonecutter|stonecutter]] breaks a rock or a boulder | counted |

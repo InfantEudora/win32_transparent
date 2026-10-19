@@ -24,6 +24,7 @@ APP_SRCS += ChasmHud.cpp
 APP_SRCS += ApplicationChasmIssues.cpp
 APP_SRCS += ApplicationChasmBridge.cpp
 APP_SRCS += ApplicationChasmWater.cpp
+APP_SRCS += ApplicationChasmMapTools.cpp
 APP_SRCS += ApplicationChasmSeasons.cpp
 APP_SRCS += ApplicationChasmHearth.cpp
 APP_SRCS += ApplicationChasmTitle.cpp

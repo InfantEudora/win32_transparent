@@ -371,6 +371,12 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
             return buf;
         case EVENT_COLONY_LOST:
             return "The colony was lost";
+        case EVENT_WALL_BROKEN:
+            return "Zombies broke the wall";
+        case EVENT_GATE_BROKEN:
+            return "Zombies broke a gate";
+        case EVENT_BREACHED:
+            return std::string("Zombies broke into a ") + ChasmKindLabel(ev.amount,false);
         case EVENT_TREE_FELLED:
             return who + " felled a tree";
         case EVENT_ROCK_BROKEN:

@@ -53,7 +53,8 @@ uniform vec3  snow_centre;     //the point the snow is seen round...
 uniform float snow_reach;      //...out to this far
 uniform float snow_fall;       //units a second
 uniform float snow_size;       //a flake's half width
-uniform vec2  snow_drift;      //how far the wind has carried the flakes, wrapped to the cell
+uniform vec2  snow_drift;      //how far the wind has carried the flakes, wrapped to snow_drift_steps cells...
+uniform float snow_drift_steps = 32.0;     //...and a flake's share of it is a whole number over this
 uniform vec2  snow_wind;       //the wind at the view
 uniform float snow_carry;      //...the share of it a flake goes with
 uniform float snow_gust_lag;
@@ -98,7 +99,10 @@ void main(){
     float speed = mix(0.8,1.25,normal.y) * snow_fall;
     vec3 p = position * size;
     p.y -= speed * t;
-    p.xz += snow_drift * mix(0.85,1.15,normal.z);
+    //Its own share of the drift, in whole steps: the drift wraps at that many cells, so a wrap moves the flake whole
+    //cells, which the mod below takes back out. A share between steps jumped every flake at once as the drift wrapped.
+    float share = floor(mix(0.85,1.15,normal.z) * snow_drift_steps + 0.5) / snow_drift_steps;
+    p.xz += snow_drift * share;
     p.x += 0.35 * sin(t * (0.6 + 0.5 * tangent.x) + 6.2832 * normal.z);
     p.z += 0.35 * sin(t * (0.5 + 0.5 * tangent.y) + 6.2832 * tangent.x);
     vec3 local = mod(p,size);

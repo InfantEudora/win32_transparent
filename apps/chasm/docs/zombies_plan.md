@@ -480,9 +480,10 @@ in the guard test's way, and by a replay:
    2026-10-18, below - both hold, with no change to the rules.*
 2. **4b**: breaking as a cost of the way; hitting; the harm saved and hashed; broken plots, broken gates and breached
    houses; the events. Cases: a short wall walked round; a closed ring broken at its gate; a house on the ring breached
-   before its gate; a fence climbed; the times as the strengths say.
+   before its gate; a fence climbed; the times as the strengths say. *Done 2026-10-19, with the zombie's scratch
+   clip (the user's), below.*
 3. **4c**: repair and rebuilding by the builders, only with no zombie near; the crate.
-4. **4d**: the look and the sound.
+4. **4d**: the look and the sound. *The sound done 2026-10-19 (below); the look to come.*
 5. **4e**: the flow field, if not already in 4b.
 
 ## As built: step 4a (2026-10-18)
@@ -512,6 +513,100 @@ then, not reached over.
 All four ran twice with the same figures to the tick. Seen along the way, for `test_maps_plan.md`: a flat map with
 people put down by `add_person` logs a statistics check error every dawn - "row day 0: 2 people, but the day before's
 0, 0 born and 0 dead make 0" - since the people the command adds are neither born nor settled in the journal.
+
+## As built: step 4b (2026-10-19)
+
+Files: `Walkers.*` (`WalkBreaks`; `EdgeOpen`, `FindPath` and `PlanRoute` taking it), `Zones.*` (`ZONE_OP_GROUND_BREAK`,
+appended), `Economy.*` (the strengths, `EconomyHarm` and the state's `harm`, a zombie's `hit`, the three events,
+`GroundBreaks`/`GateBreaks`, `ZombiesHit` in the tick after `TickZombies`), `Zombies.cpp` (`ZombieBreaks`, the route,
+`ZombiesHit`, `ForgetHarm`, `CanGetAt`), `ChasmSave.cpp` and the hash (`"harm"`, a zombie's `"hit"` - each only while
+there is any), `ApplicationChasmEconomy.cpp` (the breaks applied to the zones), `ApplicationChasm.cpp` (a broken door
+refuses to shut), `ApplicationChasmZombies.cpp` (the scratch, the tool), the notice line, the journal, the cue table, the
+wiki's zombie, house, roads-and-walls and events pages.
+
+- **The way**: a zombie's walk is planned with `WalkBreaks`, which the economy answers - so `EdgeOpen` lets it through a
+  standing palisade plot, a shut gate or a house (one that stands) at the seconds left of it, and over a garden's wall or
+  a lot's fence at `ZOMBIE_CLIMB_SECONDS`. Every other building, a castle's stone, a tower and its ladder stay shut.
+- **At it**: the first such thing on the way ends the walk - ZOMBIE_HIT_STAND off a palisade's or a gate's plot point,
+  close to its stakes, or just outside a house's wall - and at the end of its walk it hits: a tick of strength a tick,
+  the first `ZOMBIE_HITTERS` at one thing by id. A zombie at what it breaks keeps that way until something changes.
+- **Broken**: a palisade plot goes back to a wall site (`ZONE_OP_GROUND_BREAK`, as a laid road goes up) and its harm is
+  forgotten; a gate's door is opened (`ZONE_OP_GATE_SHUT` 0) and its harm kept at strength - BROKEN, and a shut refused,
+  "its door is broken"; a house is BREACHED, walked through from then on, and whoever is indoors there `CanGetAt`.
+  Each is an event - `wall_broken`, `gate_broken`, `house_breached` - journaled, told on the notice line ("the zombies
+  have broken the wall"), chimed. Every zombie looks again on the next tick. Harm to what has gone - a plot taken down,
+  a gate's road taken up, a house erased - is forgotten as the zones change.
+- **The scratch** (the user's, 2026-10-19: `Zombie_Scratch`, its one attack): played, at rate 1 and on its own step,
+  while whom it is after is within reach (its bite counting down) or at what it breaks - facing that, along its last
+  leg, rather than its target behind the wall. A props file without the clip stands it in its idle.
+- **Found on the way, and fixed**: the first build let zombies through a wall for nothing. To touch its stakes a zombie
+  stands inside the palisade plot's own cell, and at its next look - every half second - it planned again from that
+  plot; a walk may always leave the plot it starts on, so its way ran on through the wall. Now a zombie at what it
+  breaks keeps its way, and one stood in what stops it plans from the neighbour it came from.
+- **The test**, `tools/chasm_wall_test.py`, now 4b's - seven cases, all passing (about 2.5 minutes):
+  - `ring`: wall plot 2649 broken at tick 2,110 - three at it, its harm rising 3.00 s a second, 20 s from the first blow -
+    and in at 2,290;
+  - `gate_shut`: the gate broken, not the wall, at 1,124, twice as fast; shut again: "its door is broken";
+  - `gate_open`: in through it at 720, fought at 1,140, nothing broken - the control;
+  - `round`: a palisade 8 long between them walked round, nothing broken;
+  - `house`: two of the west wall's plots taken out - a real gap a villager walks through - and a house of three plots
+    over it, someone living in it: the house breached in 10/3 s by three at it, and then all three after the one
+    indoors. (The first setup swapped a single plot for the house; its neighbours in the line met without it, so the
+    house sat outside the ring and the zombies rightly broke the wall behind it - 60 s, against 10 and 60.)
+  - `fence`: someone in a house's garden nobody else can walk into - the zombie climbed in, nothing harmed;
+  - `through`: three breaking the plot in front of a man standing behind it: nearest body 3.91 against `FIGHT_REACH`
+    1.0, nobody fought until it broke - so still no rule needed, as 4a found.
+  The guard test's seven cases pass with their figures unchanged.
+- **Checked**: recorded from a state with three zombies already hitting a shut gate - harm and `hit` in the save the
+  recording starts from - through the break, the way in and the fight, 2,400 ticks: two replays equal on every tick,
+  nothing changed between ticks, and both ended where the run did. Screenshots: three at a gate, crouched against its
+  door, clawing, their pose changing frame to frame.
+- **Not checked**: the notice line's words and the breached events' chime, by eye or ear; the scratch while biting (the
+  same choice in the view, by `bite`); a gate two plots wide (either plot's break opens both, as the door's shutting
+  does); a lot's fence (a garden's only); a chasm map.
+- **For later** (4c-4e): a broken plot is a wall site like any, so for now the line works rebuild it - the jobless, even
+  mid-wave - until 4c makes it the builders' with no zombie about, with the crate of half its wood; nothing is repaired
+  yet, so a gate stays broken. Stakes and doors are drawn whole however harmed (4d). Whom a zombie goes for is still by
+  the straight line (4e): breaking makes nearly everyone reachable, so it goes for whoever is nearest, walls or not.
+- **For the user**: only houses are breached. A store, a workshop, a builders' hut stays shut to zombies like a castle,
+  so a ring of them is a wall nothing breaks. *Answered the next day: every building's door (below).*
+
+## As built: every building's door, and the sound of it (2026-10-19)
+
+**Every door** (the user's, 2026-10-19: "all doors in buildings should be breachable"). `ZoneKindHasDoor` (Zones.h) names
+the kinds gone into at a door - a house, a store, a woodcutter's, stonecutter's and builders' hut, a water collector, a
+ropewalk, a mine, a well - and the walkers, the route and the hitting ask it where they asked for a house. Not a camp, a
+winch or a standing bridge, walked through already, and not a guard tower: its ladder is its door, and zombies climb
+nothing. Renamed with it: `HARM_DOOR`, `ZOMBIE_BREACH_DOOR`, `ZOMBIE_DOOR_STAND`, `EconomyBreached`, `WalkBreaks::DoorLeft`,
+and the event `EVENT_BREACHED`, "breached", its `amount` the building's kind - so the notice line says "the zombies have
+broken into a store" and the journal "Zombies broke into a builders' hut" (`ChasmKindLabel`). People are indoors only at
+home, so "whoever is indoors there can be got at" is still a home's. An eighth case, `store`: a store of three plots in the
+ring's gap - breached by three in 3.3 s, the zombies in at tick 1,560; the other seven as before.
+
+**The sound** (step 4d, half of it; the user's files, 2026-10-19), from `ApplicationChasmSound.cpp`'s `SignalZombies`, the
+work sounds' way - the rules say what is happening, the cue table what it sounds like:
+- **`zombie_strike`** (`bluntstrike_wood_1`, `_2`): a zombie at what it breaks strikes once a turn of its scratch, at its
+  swipe - 0.8 s into `Zombie_Scratch`, where both arms turn quickest (read off the props file: one swipe a 2.29 s turn).
+  Its clock counts the rules' ticks, as the clip is played, and starts at the phase the view starts the clip at
+  (`UploadZombieSkins`), so the blow lands as the arms come down, at 4x too, and stops in a pause. The nearest four.
+- **`punch`** (`punch_1`-`_3`): a fight's bite or blow, each on the pass the rules land it - a zombie's `bite`, or a
+  person's `swing`, counting from the top again. Within the work's reach; four at once at most.
+- Encoded as `tools/sound_ogg.py` does, the five alone (the speech takes beside them, `speech/warning/`, are another piece
+  of work): 265 KB of wav to 28 KB, the wavs kept in `art_source/chasm/sound/`. Gains 0.35 and 0.4: the takes are 5-7 dB
+  louder at their loudest than the axe's, and a fight should carry over a felling.
+- *Checked*, a gate attacked live with the camera on it: each of three zombies struck every 115 ticks, a turn, staggered by
+  its phase, the two takes alternating; the gate's chime as it broke; then the punches as the fight inside went - about ten
+  a second, three zombies on one man and his blows. *Not checked by ear*: I have none.
+- **For the user**: a bite lands every `ZOMBIE_BITE_SECONDS` (0.5) while the scratch swipes once in 2.29 s, so the punches
+  run four times as fast as the arms. Either the clip or the cadence could give - the rules' 3-second fight was tuned
+  before the clip existed.
+
+Still to do of 4d: the look - stakes leaning and falling as a palisade is harmed, a gate's door hanging, a breached door
+standing open.
+
+Seen while testing, not the game's: now and then one request of the thousands a test run makes is never answered (three
+times in two days), while the app goes on answering the next - the sim idle, no crash. Read-only questions in both test
+scripts now time out after 30 s and are asked again; commands still wait, since one may have run.
 
 ## Step 5: the alarm (the user's, 2026-10-18)
 
