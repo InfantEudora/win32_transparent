@@ -181,6 +181,8 @@ const char* EconomyEventName(int kind){
         case EVENT_WALL_BROKEN:         return "wall_broken";
         case EVENT_GATE_BROKEN:         return "gate_broken";
         case EVENT_BREACHED:            return "breached";
+        case EVENT_ZOMBIE_FELLED:       return "zombie_felled";
+        case EVENT_RANKED:              return "ranked";
         default:                        return "unknown";
     }
 }
@@ -195,20 +197,71 @@ int EconomyEventByName(const std::string& name){
 }
 
 //What is worth remembering one by one: who came and went, grew up and was expected, what was reaped, raised and lost
-//to the frost, where the colony spread, and what it found - not what happens tens of times a day, which the ledger
-//counts, nor the scouts' troubles. The DISCOVERIES (demo_plan.md) are read from here, so what they need is kept -
-//and the demo's goals and its end, each made once, by whether the journal has it yet.
+//to the frost, where the colony spread, what it found, and who rose a rank - not what happens tens of times a day,
+//which the ledger counts, nor the scouts' troubles. The DISCOVERIES (demo_plan.md) are read from here, so what they
+//need is kept - and the demo's goals and its end, each made once, by whether the journal has it yet.
 bool EconomyJournaled(int kind){
     return kind == EVENT_BORN || kind == EVENT_DIED || kind == EVENT_HARVEST || kind == EVENT_BUILDING_FINISHED
            || kind == EVENT_SETTLED || kind == EVENT_SEAM_SEEN || kind == EVENT_DISCOVERED || kind == EVENT_FROST_TOOK
            || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING || kind == EVENT_BOULDER_FOUND
            || kind == EVENT_BALCONY_REACHED || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED
            || kind == EVENT_DEMO_COMPLETE || kind == EVENT_COLONY_LOST
-           || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED;
+           || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED || kind == EVENT_RANKED;
+}
+
+//--- Kills and ranks (Economy.h, KILLS and RANKS; ranks_plan.md) ----------------------------------------------------
+
+/*
+    By rank, none first: the kills each takes - a kill a rank for now (the user's, 2026-10-19), to test with, each its
+    own so any one can be set apart later - how much quicker it fights, and the percent of its arrows' hits that kill
+    outright. Current tuning, in ranks_plan.md's table.
+*/
+const int rank_kills[RANK_COUNT] = {0,1,2,3};
+const float rank_pace[RANK_COUNT] = {1.0f,1.05f,1.1f,1.15f};
+const int rank_one_shot[RANK_COUNT] = {0,10,20,30};
+
+int EconomyRank(const std::array<int,KILL_HOWS>& kills){
+    int total = EconomyKills(kills);
+    int rank = RANK_NONE;
+    for (int r = RANK_NONE + 1; r < RANK_COUNT; r++){
+        rank = (total >= rank_kills[r]) ? r : rank;
+    }
+    return rank;
+}
+
+const char* EconomyRankName(int rank){
+    switch (rank){
+        case RANK_BLOODED:      return "Blooded";
+        case RANK_VETERAN:      return "Veteran";
+        case RANK_CHAMPION:     return "Champion";
+        default:                return "";
+    }
+}
+
+int EconomyRankKills(int rank){
+    return (rank > RANK_NONE && rank < RANK_COUNT) ? rank_kills[rank] : 0;
+}
+
+float EconomyRankPace(int rank){
+    return (rank > RANK_NONE && rank < RANK_COUNT) ? rank_pace[rank] : 1.0f;
+}
+
+int EconomyRankOneShot(int rank){
+    return (rank > RANK_NONE && rank < RANK_COUNT) ? rank_one_shot[rank] : 0;
+}
+
+std::string EconomyKillsTold(const std::array<int,KILL_HOWS>& kills){
+    int total = EconomyKills(kills);
+    if (total <= 0){
+        return std::string();
+    }
+    int rank = EconomyRank(kills);
+    return (rank > RANK_NONE ? std::string(", ") + EconomyRankName(rank) : std::string())
+           + ", " + std::to_string(total) + (total == 1 ? " kill" : " kills");
 }
 
 bool EconomyCounted(int kind){
-    return kind == EVENT_TREE_FELLED || kind == EVENT_ROCK_BROKEN || kind == EVENT_STOREY_RAISED;
+    return kind == EVENT_TREE_FELLED || kind == EVENT_ROCK_BROKEN || kind == EVENT_STOREY_RAISED || kind == EVENT_ZOMBIE_FELLED;
 }
 
 /*
@@ -294,6 +347,7 @@ void Economy::Event(EconomyEvent ev, uint64_t tick){
     today.felled += (ev.kind == EVENT_TREE_FELLED) ? 1 : 0;
     today.broken += (ev.kind == EVENT_ROCK_BROKEN) ? 1 : 0;
     today.storeys += (ev.kind == EVENT_STOREY_RAISED) ? 1 : 0;
+    today.zombies += (ev.kind == EVENT_ZOMBIE_FELLED) ? 1 : 0;
     state.version++;
 }
 
@@ -1279,7 +1333,7 @@ void Economy::MakeSettlers(){
     and skills, from his id - so one put down with nothing named is any settler. Then housed and staffed at once, as
     one settling here is (SettleHere), so the rules take him up on the next tick rather than at the zones' next change.
 */
-bool Economy::AddPerson(int plot, uint32_t house, int age_days, const int skills[SKILL_COUNT], int sex, int archery,
+bool Economy::AddPerson(int plot, uint32_t house, int age_days, const int skills[SKILL_COUNT], int sex, int archery, int kills,
                         const ZoneState& z, Walkers& walkers, std::string* why, uint32_t* made){
     auto refuse = [&](const char* text){
         if (why){
@@ -1341,6 +1395,9 @@ bool Economy::AddPerson(int plot, uint32_t house, int age_days, const int skills
         k.skills[sk] = (uint8_t)((s > 0) ? std::min(10,s) : (int)(1 + Mix(seed,id * 8 + 1 + sk) % 10));
     }
     k.archery = std::max(0,std::min(archery,EconomyArcheryCap(k)));
+    //His kills, for his rank: brought with him, so the history counts them apart from the zombies it saw killed.
+    k.kills[KILL_BOW] = std::max(0,kills);
+    state.history.kills_from += k.kills[KILL_BOW];
     k.pos = w.grid->fine.pos[plot];
     k.route.assign(1,k.pos);
     state.workers.push_back(k);     //the newest id: still in id order
@@ -7883,6 +7940,7 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         d.tick = tick;
         d.cause = f_bitten ? NEEDS_DIED_ZOMBIE : EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD
                                                                                        : NEEDS_DIED_HUNGER;
+        d.kills = k.kills;
         //What he carried is left where he fell, a crate (crates_plan.md, step 5) - it went with him before.
         if (k.carry > 0){
             DropLoad(k,z);

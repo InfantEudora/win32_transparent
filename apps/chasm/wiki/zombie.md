@@ -37,7 +37,7 @@ Within {FIGHT_REACH} of whom it is after, it **bites** him every {ZOMBIE_BITE_SE
 {ZOMBIE_BITE:days} of [[Health|health]] - and a grown-up within that reach of a zombie **hits back** at the
 nearest every {FIGHT_SWING_SECONDS:#seconds}, for {FIGHT_HIT} of its {ZOMBIE_HEALTH} hit points: both by his
 strength and ingenuity together (`EconomyFightPace`), harder and more often for a strong, clever one. Each side's
-first blow comes a whole interval after it is in reach; a zombie at 0 falls, by that blow, and lies a few days ([[The fallen]]). A child is bitten and
+first blow comes a whole interval after it is in reach; a zombie at 0 falls, by that blow - its striker's [[Kills|kill]], as the last arrow is its archer's - and lies a few days ([[The fallen]]). A child is bitten and
 does not fight. No meal begins, nor goes on, with a zombie near, so nothing eaten heals a fight. An average person
 at full health kills one in about 3 seconds; hungry, or against two, he dies first. Nobody flees or stops work yet.
 

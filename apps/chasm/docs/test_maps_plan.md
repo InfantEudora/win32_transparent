@@ -215,7 +215,8 @@ that break (`zombies_plan.md` step 4) - both are the zombies plan's.
   `archery`, `count` up to 20; `made` lists the ids, `refusal` says why not); the People panel's "Put one down on
   the selected plot" (debug builds) - homeless, the rest the seed's.
 - **Posted where put down** (2026-10-19, the user's, for testing archery): `add_person` `post: true`, and the People
-  panel's "Put an archer down" (precision 10, its slider's archery, posted). A bit in the command's packed value
+  panel's "Put an archer down" (precision 10, its slider's archery, posted) - and the X key, the same archer on the
+  plot under the cursor, in either mode, as Z drops a zombie (debug builds only). A bit in the command's packed value
   (`PERSON_POSTED`, clear in older recordings): the handler orders him onto his own plot (`Economy::Order`, spread
   as a group's) on the same tick, so the staffing never hands him work. With archery he carries a bow
   (`EconomyCarriesBow`) and is a posted archer - range_plan.md, "The bow follows training".

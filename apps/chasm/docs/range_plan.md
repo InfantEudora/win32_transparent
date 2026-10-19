@@ -250,8 +250,8 @@ a posted archer. Other arms by trade may follow the same way later (a farmer's p
   beside his pail. A bow on the back while hands are full would be the view's next step.
 
 **For testing** (test_maps_plan.md, step 5): the People panel's **Put an archer down** - precision 10, the
-archery its slider says (1-100%), posted where he is put down, so the staffing never gives him work.
-`chasm_economy` `add_person` takes `post: true` for the same. The People table's **pack water** and **pack prov.**
+archery its slider says (1-100%), posted where he is put down, so the staffing never gives him work. **X** puts
+the same archer on the plot under the cursor, in play mode too, as Z drops a zombie (debug builds only). `chasm_economy` `add_person` takes `post: true` for the same. The People table's **pack water** and **pack prov.**
 columns set what he carries, in units up to a scout's (6 and 3) - `set_needs` `pack_water` / `pack_provisions` -
 recorded on `CHASM_CMD_NEEDS`, its new values one up so older recordings leave the pack alone.
 

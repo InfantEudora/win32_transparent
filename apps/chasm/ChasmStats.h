@@ -36,6 +36,7 @@ struct ChasmStatsTotals{
     int felled = 0;
     int broken = 0;
     int storeys = 0;
+    int zombies = 0;                //killed (KILLS)
 };
 ChasmStatsTotals ChasmStatsSum(const EconomyHistory& h);
 
@@ -77,6 +78,8 @@ ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z);
     THE CHECK (statistics_plan.md, "Check it three ways"): the history against the state it was kept beside -
       - the journal's deaths are the dead since it began, and its births everyone born in the colony since;
       - the trees felled and rocks broken it counted are the forest's, less what was down when it began;
+      - the zombies killed it counted, and the kills people were put down with, are the kills of the living and the
+        dead (KILLS: nobody had any before it);
       - each row's people are the row before's, and that day's births less its deaths - across a gap the date
         was set over, nothing is compared.
     Empty when all agree; else a line for each that does not.

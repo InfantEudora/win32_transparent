@@ -60,9 +60,9 @@ the colony records the cause: hunger, thirst or cold.
 
 ## Their card
 
-By the name, age and job ("Age 25 - Woodcutter / posted"); under it family, home, workplace, what they are doing,
-two bars and skills. A [[Posts|pack]] is a goods strip, as a [[Store|store's]] card shows what it holds - hollow,
-their own, with what it is worth in days at the right ("water 12 days, food 10").
+By the name, age and job ("Age 25 - Woodcutter / posted"), a [[Kills|rank]] first once they have one ("Veteran, age 25 - ..."); under it family, home, workplace, what they are doing,
+two bars, skills, [[Archery range|archery]] once trained and [[Kills|kills]] once any. A [[Posts|pack]] is a goods strip,
+as a [[Store|store's]] card shows what it holds - hollow, their own, with what it is worth in days at the right ("water 12 days, food 10").
 
 Work done on the spot - felling, building, sowing, drawing water - has a **bar** filling under what they are
 doing. What they **carry** is a strip too, **striped** as reserved goods are, since it is on its way somewhere

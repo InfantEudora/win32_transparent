@@ -123,6 +123,10 @@
     "balcony_reached": {
       "signal": "balcony_reached", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
     },
+    "ranked": {
+      "comment": "RANKS (ranks_plan.md step 2): someone risen a rank by a kill, told on the notice line - the chime for now, as the colony's own are.",
+      "signal": "ranked", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
     "wall_broken": {
       "comment": "WALLS BREAK (zombies_plan.md step 4): the chime for now, as every event has; step 4d wants a thud for each blow and a breaking for these.",
       "signal": "wall_broken", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150

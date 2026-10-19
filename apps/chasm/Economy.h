@@ -732,6 +732,35 @@ int EconomyCoupleDay(uint32_t a, uint32_t b);
 #define LIFE_COUPLE_ROOM        2       //what a house must hold for a couple to move in
 
 /*
+    KILLS (ranks_plan.md, the user's 2026-10-19): the zombies a person felled, by bow and by hand, counted apart. A
+    zombie's kill is whoever's hit took the last of its health - no shares, no assists - and an arrow still in the air
+    when its archer dies counts on his record among the dead. Only ever added to; his rank (RANKS, below) is worked out
+    from them all together.
+*/
+#define KILL_BOW                0
+#define KILL_HAND               1
+#define KILL_HOWS               2
+/*
+    RANKS (ranks_plan.md, the user's 2026-10-19): worked out from all his KILLS together, never kept - so never lost.
+    Each rank takes a count of kills of its own (rank_kills, Economy.cpp), so any one can be set apart from the rest.
+    A rank makes him a little QUICKER in a fight - a shot's turn shorter, his blows sooner but no harder (rank_pace) -
+    and gives his arrows a chance that a HIT kills outright (rank_one_shot, percent), decided as it leaves the bow.
+    Tuning, every figure.
+*/
+#define RANK_NONE               0
+#define RANK_BLOODED            1
+#define RANK_VETERAN            2
+#define RANK_CHAMPION           3
+#define RANK_COUNT              4
+int EconomyRank(const std::array<int,KILL_HOWS>& kills);   //the highest rank his kills reach, RANK_NONE below the first
+const char* EconomyRankName(int rank);      //"Blooded", "Veteran", "Champion" - "" for none
+int EconomyRankKills(int rank);             //the kills a rank takes...
+float EconomyRankPace(int rank);            //...how much quicker it fights, 1 for none...
+int EconomyRankOneShot(int rank);           //...and the percent of its arrows' hits that kill outright
+//", Veteran, 3 kills" after a name - the rank and the kills, for the dead's lines; "" with none.
+std::string EconomyKillsTold(const std::array<int,KILL_HOWS>& kills);
+
+/*
     A PERSON, and what he is doing. Who he is: an id (from 1, never reused), a family, the house the
     family lives in (0: at the camp), when he was born and to whom, his base skills. What he does: his job
     and its workplace, and where he is in his round.
@@ -788,7 +817,8 @@ struct EconomyWorker{
     int tent = 0;                       //TAKING A TENT (SETTLEMENTS): ECONOMY_TENT_*
     int forage = FORAGE_NONE;           //FORAGING by hand: what he is to do at his post - its units on `timer`
     int archery = 0;                    //ARCHERY (TRAINING, above): experience, of ARCHERY_FULL - kept when he stops
-    bool f_chosen = false;              //a guard posted BY HAND (POSTS, step 8): kept ahead of the auto-fill
+    std::array<int,KILL_HOWS> kills = {};   //KILLS (above): the zombies he felled, by KILL_BOW and KILL_HAND
+    bool f_chosen = false;             //a guard posted BY HAND (POSTS, step 8): kept ahead of the auto-fill
     uint32_t with = 0;                  //WITH THE GROWN: who a child goes along with, or a baby is carried by, 0 none
                                         //(Economy::WithTheGrown) - a baby's kept until its mother is home again
 };
@@ -806,6 +836,11 @@ float EconomyTaskProgress(const EconomyWorker& k);
 //The most archery he can reach: a tenth of ARCHERY_FULL a point of precision (range_plan.md).
 inline int EconomyArcheryCap(const EconomyWorker& k){
     return (int)k.skills[SKILL_PRECISION] * (ARCHERY_FULL / 10);
+}
+
+//All the zombies felled, by bow and by hand together - a person's or one of the dead's (KILLS).
+inline int EconomyKills(const std::array<int,KILL_HOWS>& kills){
+    return kills[KILL_BOW] + kills[KILL_HAND];
 }
 
 //A BOW on him, wherever he goes (the user's, 2026-10-19): anyone trained at the range, at any work - a farmer too - and a
@@ -854,6 +889,7 @@ struct EconomyDeath{
     uint32_t father = 0;
     uint64_t tick = 0;          //the calendar's
     int cause = NEEDS_DIED_HUNGER;
+    std::array<int,KILL_HOWS> kills = {};   //KILLS: his, kept - and one more for an arrow of his that fells after him
 };
 
 /*
@@ -954,7 +990,9 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
 #define EVENT_WALL_BROKEN       22      //zombies broke the palisade on `plot` (zombies_plan.md step 4)
 #define EVENT_GATE_BROKEN       23      //...the door of the gate on `plot`
 #define EVENT_BREACHED          24      //...into `building`, its door breached at `plot`; `amount` its kind
-#define EVENT_COUNT             25
+#define EVENT_ZOMBIE_FELLED     25      //`person` killed a zombie (KILLS), `amount` how: KILL_BOW or KILL_HAND
+#define EVENT_RANKED            26      //`person` rose to rank `amount` (RANKS) by that kill
+#define EVENT_COUNT             27
 //The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
 //chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
 #define CHASM_GOAL_WINTER       0
@@ -981,7 +1019,7 @@ int EconomyEventByName(const std::string& name);    //...and back, -1 for none
         written by Economy::Event itself, so the journal and the telling cannot disagree;
       - THE LEDGER: a row a day. The levels at its end - the people by stage and every good the colony has, wherever
         it lies (EconomyDayLevels) - and what happened too often to remember one by one, counted: trees
-        felled, rocks broken, storeys raised. A day closes on the first tick of the next, before anything of that
+        felled, rocks broken, storeys raised, zombies killed. A day closes on the first tick of the next, before anything of that
         tick has happened, so a row's people are its births and deaths on from the row before, exactly.
     Totals are worked out from these when shown, never kept beside them, so they cannot disagree either. Nothing
     is folded away: a year is CALENDAR_SEASONS * CALENDAR_DAYS_PER_SEASON rows. Hashed as a trace part of its own
@@ -995,6 +1033,7 @@ struct EconomyDay{
     int felled = 0;                             //over it: EVENT_TREE_FELLED
     int broken = 0;                             //EVENT_ROCK_BROKEN
     int storeys = 0;                            //EVENT_STOREY_RAISED
+    int zombies = 0;                            //EVENT_ZOMBIE_FELLED
 };
 struct EconomyHistory{
     /*
@@ -1006,7 +1045,8 @@ struct EconomyHistory{
     EconomyDay start;
     int felled_from = 0;
     int broken_from = 0;
-    std::vector<EconomyEvent> journal;          //in the order made
+    int kills_from = 0;                         //KILLS people were PUT DOWN with (AddPerson), no zombie of its own
+    std::vector<EconomyEvent> journal;         //in the order made
     std::vector<EconomyDay> days;               //THE LEDGER, a row a day closed, oldest first
     EconomyDay today;                           //counting since the day began; its levels filled as it closes
 };
@@ -1180,7 +1220,8 @@ bool EconomyReachable(const EconomyWorker& k, uint64_t tick);
 struct EconomyArrow{
     uint32_t by = 0;            //who loosed it, a person's id
     uint32_t zombie = 0;        //at which zombie - gone once that falls
-    bool f_hit = false;         //...and whether it hits it: decided as it leaves the bow
+    bool f_hit = false;         //...and whether it hits it: decided as it leaves the bow...
+    bool f_fells = false;       //...and a hit that kills it outright, whatever is left of it (RANKS)
     vec3 from;                  //where it left the bow (x, height, world z)
     vec3 to;                    //where it goes: a hit's place on its zombie, followed as it walks; a miss's in the ground
     vec2 at;                    //a hit: where in the zombie - across and up from its chest, as it came at it
@@ -1191,6 +1232,10 @@ struct EconomyArrow{
 //In the air still.
 inline bool EconomyArrowFlying(const EconomyArrow& a){
     return a.flown < a.ticks;
+}
+//What a hit takes off its zombie: ARROW_HIT, or all of it from a hit that kills outright (RANKS).
+inline int EconomyArrowHarm(const EconomyArrow& a){
+    return a.f_fells ? ZOMBIE_HEALTH : ARROW_HIT;
 }
 
 /*
@@ -1567,10 +1612,11 @@ public:
         `plot`, grown up, who lives by the rules from then on - housed, given work, eating as anyone does. `house` a home
         that stands, whose family he joins (a camp's: a family of his own there), or 0 - a family of his own with
         nowhere to live, housed by the rules as anyone homeless is. 0 for `age_days`, a skill or `sex` is the seed's, as
-        a settler's; `sex` 1 a man, 2 a woman. Refused on the ground a zombie is (EconomyDropRefusal), and for a child or
-        a home that is not one. `made` gets his id.
+        a settler's; `sex` 1 a man, 2 a woman. `kills` by bow, as a tested archer's, for his RANK - counted in the
+        history's kills_from, since no zombie of its own gave them. Refused on the ground a zombie is
+        (EconomyDropRefusal), and for a child or a home that is not one. `made` gets his id.
     */
-    bool AddPerson(int plot, uint32_t house, int age_days, const int skills[SKILL_COUNT], int sex, int archery,
+    bool AddPerson(int plot, uint32_t house, int age_days, const int skills[SKILL_COUNT], int sex, int archery, int kills,
                    const ZoneState& z, Walkers& walkers, std::string* why, uint32_t* made = NULL);
     //A SEAM SEEN (EVENT_SEAM_SEEN): told by the app's exploration, which is what knows a seam has come into sight.
     void SeamSeen(uint32_t person){ Notice(EVENT_SEAM_SEEN,person,GOOD_BIT(GOOD_FLOATSTONE)); }
@@ -1820,6 +1866,9 @@ private:
     //pushed - NULL for no blow - and the fallen whose time is up gone, each tick.
     void ZombieFalls(const EconomyZombie& m, const vec2& struck);
     void PersonFalls(const EconomyWorker& k, const vec2* struck);
+    //KILLS (above): zombie `m` felled by person `by`'s hit, KILL_BOW or KILL_HAND - counted on him, or on his record
+    //among the dead, and told (EVENT_ZOMBIE_FELLED).
+    void ZombieKilled(const EconomyZombie& m, uint32_t by, int how);
     void TickFallen();
     //ARROWS (above, Shooting.cpp): the arrows a tick on - landing, and the zombies they fell gone - then every archer's
     //turn of his bow, an arrow loosed at its release. Before the fight, so a zombie shot down bites nobody.

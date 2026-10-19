@@ -756,8 +756,9 @@ void ApplicationChasm::DrawStats(float s){
         }
         struct Tile{ const char* label; int value; };
         const Tile tiles[] = {{"BORN",totals.born},{"DIED",totals.died},{"HARVESTED",harvested},{"TREES FELLED",totals.felled},
-                              {"BUILT",totals.finished}};
-        const int tile_count = (int)(sizeof(tiles) / sizeof(tiles[0]));
+                              {"BUILT",totals.finished},{"ZOMBIES KILLED",totals.zombies}};
+        //The last, zombies killed (KILLS), only once there were any: a colony that never met one is not told of them.
+        const int tile_count = (int)(sizeof(tiles) / sizeof(tiles[0])) - ((totals.zombies > 0) ? 0 : 1);
         float tg = 8.0f * s;
         float tw = (x1 - x0 - tg * (tile_count - 1)) / tile_count;
         float th = 50.0f * s;
@@ -905,7 +906,7 @@ json DayJson(const EconomyDay& d){
     return json{{"day",d.day},{"people",json{{"babies",d.people[LIFE_BABY]},{"children",d.people[LIFE_CHILD]},
                                              {"young",d.people[LIFE_YOUNG]},{"adults",d.people[LIFE_ADULT]}}},
                 {"held",held},{"food_days",food},{"water_days",water},{"felled",d.felled},{"broken",d.broken},
-                {"storeys",d.storeys}};
+                {"storeys",d.storeys},{"zombies",d.zombies}};
 }
 
 //A cause of death as a key: "a zombie" is the words' (EconomyDeathCause), not a name.
@@ -934,13 +935,13 @@ void ApplicationChasm::RegisterStatsTools(){
         "by stage, expecting, in_camp, homes, beds, goods held anywhere, food_days and water_days for everyone at their "
         "shares, buildings standing and being built by kind, settlements, the dead by cause); `totals` since the history "
         "began, summed from the journal and the ledger now (born, died and of what, harvests and what they gave, buildings "
-        "finished by kind, settlements founded, seams seen, trees felled, rocks broken, storeys raised); `seasons` (born, "
-        "died, harvested, felled - each season from the first); `from` (the tick it began: 0 a colony's landing, else the "
-        "load of a save from before it), `start`, `today` and the last `days` ledger rows (default all, a row a day: day, "
-        "people by stage, held, food_days, water_days, felled, broken, storeys); the last `journal` lines (default 40, -1 "
-        "all: tick, date, kind, person, building, plot, x, z, what, amount, text); and `check` - empty, or what in the "
-        "history disagrees with the state it was kept beside (statistics_plan.md: the dead, the born, the forest, each "
-        "row's people). op open / op close: the page, over the game paused under it - as Tab does. `page` says whether it "
+        "finished by kind, settlements founded, seams seen, trees felled, rocks broken, storeys raised, zombies killed); "
+        "`seasons` (born, died, harvested, felled - each season from the first); `from` (the tick it began: 0 a colony's "
+        "landing, else the load of a save from before it), `start`, `today` and the last `days` ledger rows (default all, "
+        "a row a day: day, people by stage, held, food_days, water_days, felled, broken, storeys, zombies); the last "
+        "`journal` lines (default 40, -1 all: tick, date, kind, person, building, plot, x, z, what, amount, text); and "
+        "`check` - empty, or what in the history disagrees with the state it was kept beside (statistics_plan.md: the "
+        "dead, the born, the forest, the zombies killed against everyone's kills, each row's people). op open / op close: the page, over the game paused under it - as Tab does. `page` says whether it "
         "is up. include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -993,6 +994,7 @@ void ApplicationChasm::RegisterStatsTools(){
             now.erase("felled");
             now.erase("broken");
             now.erase("storeys");
+            now.erase("zombies");
             now["day"] = (int)(e->tick / CALENDAR_DAY_TICKS);
             now["date"] = ChasmStatsDate(e->tick);
             now["total"] = n.people;
@@ -1021,7 +1023,7 @@ void ApplicationChasm::RegisterStatsTools(){
             }
             json totals{{"born",t.born},{"died",t.died},{"died_of",died_of},{"harvests",t.harvests},{"harvested",harvested},
                         {"finished",t.finished},{"finished_kind",finished},{"settled",t.settled},{"seams_seen",t.seams},
-                        {"felled",t.felled},{"broken",t.broken},{"storeys",t.storeys}};
+                        {"felled",t.felled},{"broken",t.broken},{"storeys",t.storeys},{"zombies",t.zombies}};
             json seasons = json::array();
             for (const ChasmStatsSeason& se : ChasmStatsSeasons(h)){
                 seasons.push_back(json{{"season",se.season},{"name",ChasmStatsSeasonName(se.season)},{"born",se.born},
@@ -1045,7 +1047,7 @@ void ApplicationChasm::RegisterStatsTools(){
             }
             //The calendar's tick, as a save keeps it - the economy's own is its last tick's, one short of it after a tick.
             json result{{"page",f_stats_open.load()},{"tick",calendar_shown.load()},{"from",h.from},{"felled_from",h.felled_from},
-                        {"broken_from",h.broken_from},{"now",now},{"totals",totals},{"seasons",seasons},
+                        {"broken_from",h.broken_from},{"kills_from",h.kills_from},{"now",now},{"totals",totals},{"seasons",seasons},
                         {"start",DayJson(h.start)},{"today",DayJson(h.today)},{"day_count",h.days.size()},{"days",days},
                         {"journal_count",h.journal.size()},{"journal",journal},{"check",check}};
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));

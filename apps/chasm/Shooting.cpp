@@ -79,7 +79,8 @@ int ReleaseOf(int turn){
 */
 int EconomyShotTicks(const EconomyWorker& k, uint64_t tick){
     float skill = std::max(0.0f,std::min(1.0f,(float)k.archery / (float)ARCHERY_FULL));
-    float seconds = ARROW_SHOT_SECONDS + (ARROW_SHOT_MASTER - ARROW_SHOT_SECONDS) * skill;
+    //...and a RANK quicker still (RANKS).
+    float seconds = (ARROW_SHOT_SECONDS + (ARROW_SHOT_MASTER - ARROW_SHOT_SECONDS) * skill) / EconomyRankPace(EconomyRank(k.kills));
     float u = (float)(ShotHash(tick,k.id,0) >> 8) / 16777216.0f;
     return Ticks(seconds * (1.0f + ARROW_SHOT_JITTER * (2.0f * u - 1.0f)));
 }
@@ -202,10 +203,12 @@ void Economy::Shoot(const ZoneState& z){
             if (a.f_hit){
                 EconomyZombie& m = state.zombies[j];
                 bool f_alive = m.health > 0;
-                m.health -= ARROW_HIT;
-                //THE FALLEN (zombies_plan.md, step 6): the arrow that fells it pushes it the way it flew.
+                m.health -= EconomyArrowHarm(a);
+                //THE FALLEN (zombies_plan.md, step 6): the arrow that fells it pushes it the way it flew - and is the
+                //kill of whoever loosed it (KILLS).
                 if (f_alive && m.health <= 0){
                     ZombieFalls(m,vec2(a.to.x - a.from.x,a.to.z - a.from.z));
+                    ZombieKilled(m,a.by,KILL_BOW);
                 }
             }else{
                 a.lie = Ticks(ARROW_LIE_SECONDS);
@@ -224,7 +227,7 @@ void Economy::Shoot(const ZoneState& z){
     for (const EconomyArrow& a : state.arrows){
         int j = index_of(a.zombie);
         if (EconomyArrowFlying(a) && a.f_hit && j >= 0){
-            coming[(size_t)j] += ARROW_HIT;
+            coming[(size_t)j] += EconomyArrowHarm(a);
         }
     }
     for (EconomyWorker& k : state.workers){
@@ -287,7 +290,11 @@ void Economy::Shoot(const ZoneState& z){
         vec3 pass = Into(w,m,a.from,a.at);
         if (a.f_hit){
             a.to = pass;
-            coming[(size_t)j] += ARROW_HIT;
+            //A RANK's hit may kill outright (RANKS): a number of its own, the zombie's id turned over, apart from the
+            //scatter's and the pace's - and counted against it at once, so nobody shoots at what it will fell.
+            int one_shot = EconomyRankOneShot(EconomyRank(k.kills));
+            a.f_fells = one_shot > 0 && (int)(ShotHash(now,k.id,~m.id) % 100u) < one_shot;
+            coming[(size_t)j] += EconomyArrowHarm(a);
         }else{
             float ground = GroundAt(w,EconomyBody(m));
             vec2 down;

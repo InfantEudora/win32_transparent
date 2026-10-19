@@ -302,6 +302,7 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define INPUT_CHASM_QUICK_LOAD     INPUT_LAST+35     //F8: ...and loading it
 #define INPUT_CHASM_REPORT         INPUT_LAST+36     //F12: Report a bug (demo_plan.md, step 4)
 #define INPUT_CHASM_FPS            INPUT_LAST+37     //F11: the frame rate shown or hidden (the `show_fps` setting)
+#define INPUT_CHASM_ARCHER         INPUT_LAST+38     //X: a posted archer on the plot under the cursor, debug builds, as Z's zombie
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -767,17 +768,19 @@ private:
     /*
         A PERSON PUT DOWN (docs/test_maps_plan.md, step 5; Economy::AddPerson): a debug edit, recorded - the People
         panel's, chasm_economy's add_person. `skills` may be NULL; 0 for anything is the seed's, as a settler's.
-        f_post: ordered to stand where he is put down, out of the staffing - with archery, a posted archer.
+        f_post: ordered to stand where he is put down, out of the staffing - with archery, a posted archer. `kills` by
+        bow, for his RANK (ranks_plan.md), held to 31.
     */
     SimCommand PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
-                             bool f_post = false);
+                             bool f_post = false, int kills = 0);
     void SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
-                      bool f_post = false);     //any thread
+                      bool f_post = false, int kills = 0);      //any thread
     std::atomic<uint32_t> person_commands_done{0};
     std::atomic<uint32_t> person_refusals{0};
     std::atomic<uint32_t> person_last_made{0};  //the id the last one taken was given
     std::string person_last_refusal;            //under grid_mutex, like zombie_last_refusal
-    int person_archer_percent = 100;            //the People panel's archer put down: his archery, % of ARCHERY_FULL
+    int person_archer_percent = 100;            //the People panel's archer put down, and X's: his archery, % of ARCHERY_FULL...
+    int person_archer_kills = 0;                //...and his kills, for his rank
     /*
         ZOMBIES (docs/zombies_plan.md, ApplicationChasmZombies.cpp): dropped by the debug tools - Z under the cursor, the
         panel, chasm_zombie - as CHASM_CMD_ZOMBIE, recorded. Their rules are the economy's (Economy.h, ZOMBIES); here is

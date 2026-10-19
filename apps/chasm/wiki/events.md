@@ -4,14 +4,14 @@ aliases: event, notice, notices
 kind: systems
 status: partial
 summary: The moments the rules tell of - a birth, a harvest, a waterfall found - made once, and read by the notice line, the statistics and the sound.
-plans: sound_plan.md > The events; sound_plan.md > Game events: one record, many readers; statistics_plan.md > As built: version 1 (2026-10-16); areas_plan.md > The discovered event
-code: Economy.h: EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED EVENT_FROST_TOOK EVENT_GREW_UP EVENT_EXPECTING EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST EVENT_WALL_BROKEN EVENT_GATE_BROKEN EVENT_BREACHED ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted Lifelines ChancesOfChildren; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas LookForFirsts; ApplicationChasmSound.cpp: SignalEvents
+plans: sound_plan.md > The events; sound_plan.md > Game events: one record, many readers; statistics_plan.md > As built: version 1 (2026-10-16); areas_plan.md > The discovered event; ranks_plan.md > As built: step 1, kills (2026-10-19)
+code: Economy.h: EVENT_ZOMBIE_FELLED EVENT_RANKED EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED EVENT_FROST_TOOK EVENT_GREW_UP EVENT_EXPECTING EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST EVENT_WALL_BROKEN EVENT_GATE_BROKEN EVENT_BREACHED ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted Lifelines ChancesOfChildren; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas LookForFirsts; ApplicationChasmSound.cpp: SignalEvents
 verified: 2026-10-19
 ---
 
 An **event** is a moment in the colony, made once by the rules as it happens, so a replay makes the same ones on
 the same ticks. Everything that tells of it reads that one record: the notice line at the bottom of the screen,
-the [[Statistics|statistics]] and the sound. Every event has a sound for now - the notification chime: the
+the [[Statistics|statistics]] and the sound. Nearly every event has a sound for now - the notification chime: the
 colony's own (a birth, a death, a settlement, a notice) heard anywhere, one at a time; what happens at a place (a
 tree down, a storey up, a harvest) only near the view.
 
@@ -38,6 +38,7 @@ tree down, a storey up, a harvest) only near the view.
 | Tree felled | a [[Woodcutter|woodcutter]] fells a [[Tree|tree]] | counted |
 | Rock broken | a [[Stonecutter|stonecutter]] breaks a rock or a boulder | counted |
 | Storey raised | the builders finish a storey | counted |
+| Zombie killed, rank risen | someone's hit takes the last of a [[Zombie|zombie's]] health, by bow or by hand: their [[Kills|kill]] - and with it, at a rank's count, their next [[Kills|rank]] | killed: counted, no sound; risen: journal, notice |
 | Nothing to take | someone told to gather finds no food or water anywhere they can get to ([[Posts|posts]]) | notice |
 | Ran out | someone sent out runs out of water, food or both in their pack | notice |
 | No tent | someone told to take a tent finds none to spare | notice |
@@ -61,5 +62,4 @@ first builders' hut and the first winch finished are told too, for that.
 ## Planned
 
 - [proposed] A couple housed, a crop chosen by AUTO, a road or wall laid, a stock reached, a deposit dug out, a gate
-  shut or opened, an arch down, the season and the snow (sound_plan.md).
-- [proposed] Zombies: one coming, a bite, a blow, one down, an arrow loosed or hitting.
+  shut or opened, an arch down, the season and the snow (sound_plan.md); a zombie coming, a bite, a blow, an arrow loosed or hitting.

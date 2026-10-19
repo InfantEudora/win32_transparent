@@ -1121,6 +1121,12 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     bool f_along = with && !EconomyCanOrder(k,e.tick);
     bool f_posted = k.post >= 0 && !f_along;
     c.subtitle = Format("Age %i - %s%s",EconomyAgeAt(k.born,e.tick),JobTitle(k.job),f_posted ? " / posted" : "");
+    //His RANK (ranks_plan.md) first, by the name: "Veteran, age 25 - Guard".
+    int rank = EconomyRank(k.kills);
+    if (rank > RANK_NONE){
+        c.subtitle = Format("%s, age %i - %s%s",EconomyRankName(rank),EconomyAgeAt(k.born,e.tick),JobTitle(k.job),
+                            f_posted ? " / posted" : "");
+    }
     /*
         LIFELINES (lifeline_plan.md): stage, the birthday, whose child, and the children - living, then the dead.
     */
@@ -1391,6 +1397,17 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         int cap = EconomyArcheryCap(k);
         c.Bar(Format("Archery %i%% (of %i%%)",(int)(k.archery * 100LL / ARCHERY_FULL),(int)(cap * 100LL / ARCHERY_FULL)),
               (float)k.archery / ARCHERY_FULL);
+    }
+    //KILLS (ranks_plan.md): the zombies he felled, once he has - how, when he has done both - and what the next RANK takes.
+    int kills = EconomyKills(k.kills);
+    std::string next;
+    if (rank + 1 < RANK_COUNT){
+        next = Format(" - %s at %i",EconomyRankName(rank + 1),EconomyRankKills(rank + 1));
+    }
+    if (kills > 0 && k.kills[KILL_BOW] > 0 && k.kills[KILL_HAND] > 0){
+        c.Text(Format("Kills %i: %i by bow, %i by hand%s",kills,k.kills[KILL_BOW],k.kills[KILL_HAND],next.c_str()));
+    }else if (kills > 0){
+        c.Text(Format("Kills %i, by %s%s",kills,(k.kills[KILL_BOW] > 0) ? "bow" : "hand",next.c_str()));
     }
     (void)e;
 }

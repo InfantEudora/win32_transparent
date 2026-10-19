@@ -186,12 +186,19 @@ json ChasmSaveToJson(const ChasmSave& s){
             if (k.draw > 0){
                 workers.back()["draw"] = json::array({k.draw,k.aim,k.draw_turn});
             }
+            //The zombies he felled (KILLS, ranks_plan.md): [by bow, by hand] - only once he has some.
+            if (EconomyKills(k.kills) > 0){
+                workers.back()["kills"] = json::array({k.kills[KILL_BOW],k.kills[KILL_HAND]});
+            }
         }
         //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father,
-        //surname.
+        //surname - and the zombies they felled, by bow and by hand, only when they did (KILLS).
         json dead = json::array();
         for (const EconomyDeath& d : e.dead){
             dead.push_back(json::array({d.id,d.family,d.f_female,d.born,d.tick,d.cause,d.mother,d.father,d.surname}));
+            if (EconomyKills(d.kills) > 0){
+                dead.back().push_back(json::array({d.kills[KILL_BOW],d.kills[KILL_HAND]}));
+            }
         }
         json fields = json::array();
         //[building, crop growing, grown, sown, yield %, last crop harvested (fields_plan.md), owner (land_plan.md),
@@ -301,6 +308,10 @@ json ChasmSaveToJson(const ChasmSave& s){
                                       {"from",json::array({a.from.x,a.from.y,a.from.z})},
                                       {"to",json::array({a.to.x,a.to.y,a.to.z})},{"at",json::array({a.at.x,a.at.y})},
                                       {"ticks",a.ticks},{"flown",a.flown},{"lie",a.lie}});
+                //A rank's hit that kills outright (RANKS) - only then.
+                if (a.f_fells){
+                    arrows.back()["fells"] = true;
+                }
             }
             if (!arrows.empty()){
                 economy["arrows"] = arrows;
@@ -328,7 +339,8 @@ json ChasmSaveToJson(const ChasmSave& s){
         /*
             THE HISTORY (statistics_plan.md): where it began, the journal - an event a line, [tick, kind, person,
             building, plot, what, amount, x, z], its kind a number (Economy.h never renumbers them) - and the ledger:
-            a day a line, [day, people by stage, goods held by name, felled, broken, storeys], today's so far too.
+            a day a line, [day, people by stage, goods held by name, felled, broken, storeys], today's so far too -
+            and the zombies killed after them, on a day there were any (KILLS).
         */
         auto day_json = [](const EconomyDay& d){
             json held = json::object();
@@ -337,7 +349,11 @@ json ChasmSaveToJson(const ChasmSave& s){
                     held[GoodName(g)] = d.held[g];
                 }
             }
-            return json::array({d.day,d.people,held,d.felled,d.broken,d.storeys});
+            json row = json::array({d.day,d.people,held,d.felled,d.broken,d.storeys});
+            if (d.zombies > 0){
+                row.push_back(d.zombies);
+            }
+            return row;
         };
         const EconomyHistory& h = e.history;
         json journal = json::array();
@@ -351,6 +367,10 @@ json ChasmSaveToJson(const ChasmSave& s){
         if (e.f_history){
             economy["history"] = json{{"from",h.from},{"start",day_json(h.start)},{"felled_from",h.felled_from},
                                       {"broken_from",h.broken_from},{"journal",journal},{"days",days},{"today",day_json(h.today)}};
+            //The kills people were put down with (RANKS, debug) - only when some were.
+            if (h.kills_from > 0){
+                economy["history"]["kills_from"] = h.kills_from;
+            }
         }
     }
     //The debug castle (ramparts_plan.md): plot and piece - only with some, so a save without one is as before.
@@ -671,6 +691,12 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         for (const json& pl : e.value("plants",json::array())){
             out.economy.plants.push_back(std::array<int,3>{pl[0].get<int>(),pl[1].get<int>(),pl[2].get<int>()});
         }
+        //KILLS (ranks_plan.md): a person's or one of the dead's [by bow, by hand].
+        auto read_kills = [](const json& kj, std::array<int,KILL_HOWS>& kills){
+            for (int how = 0; kj.is_array() && how < KILL_HOWS && how < (int)kj.size(); how++){
+                kills[how] = kj[how].is_number_integer() ? kj[how].get<int>() : 0;
+            }
+        };
         //"people" since P4; "workers" before, the stand-ins - read, and dropped by Economy::Restore.
         json people = e.contains("people") ? e["people"] : e.value("workers",json::array());
         for (const json& wk : people){
@@ -741,6 +767,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.with = wk.value("with",0u);       //settlements_plan.md: nobody young went along before
             k.archery = wk.value("archery",0);  //range_plan.md: nobody had trained before ranges
             k.f_chosen = wk.value("chosen",false);      //defence_plan.md step 8: no guard was posted by hand before
+            //KILLS (ranks_plan.md): [by bow, by hand], kept once he had any - nobody had any before.
+            if (wk.contains("kills")){
+                read_kills(wk["kills"],k.kills);
+            }
             if (wk.contains("pack") && wk["pack"].is_object()){
                 for (auto it = wk["pack"].begin(); it != wk["pack"].end(); ++it){
                     int g = GoodByName(it.key());
@@ -773,6 +803,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             d.cause = dj[5].get<int>();
             d.mother = dj[6].get<uint32_t>();
             d.father = dj[7].get<uint32_t>();
+            if (dj.size() > 9){
+                read_kills(dj[9],d.kills);
+            }
             d.surname = (uint8_t)((dj.size() > 8) ? dj[8].get<int>() : EconomySettlerSurname(d.family));
             out.economy.dead.push_back(d);
         }
@@ -860,6 +893,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             a.by = aj.value("by",0u);
             a.zombie = aj.value("zombie",0u);
             a.f_hit = aj.value("hit",false);
+            a.f_fells = aj.value("fells",false);    //RANKS: none before them
             if (aj.contains("from") && aj.contains("to") && aj.contains("at")){
                 a.from = vec3(aj["from"][0].get<float>(),aj["from"][1].get<float>(),aj["from"][2].get<float>());
                 a.to = vec3(aj["to"][0].get<float>(),aj["to"][1].get<float>(),aj["to"][2].get<float>());
@@ -922,11 +956,13 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
                 d.felled = dj[3].get<int>();
                 d.broken = dj[4].get<int>();
                 d.storeys = dj[5].get<int>();
+                d.zombies = (dj.size() > 6 && dj[6].is_number_integer()) ? dj[6].get<int>() : 0;     //KILLS: none before
                 return true;
             };
             h.from = hj.value("from",(uint64_t)0);
             h.felled_from = hj.value("felled_from",0);
             h.broken_from = hj.value("broken_from",0);
+            h.kills_from = hj.value("kills_from",0);
             read_day(hj.value("start",json()),h.start);
             read_day(hj.value("today",json()),h.today);
             for (const json& ej : hj.value("journal",json::array())){

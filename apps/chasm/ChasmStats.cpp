@@ -63,6 +63,7 @@ ChasmStatsTotals ChasmStatsSum(const EconomyHistory& h){
         t.felled += d.felled;
         t.broken += d.broken;
         t.storeys += d.storeys;
+        t.zombies += d.zombies;
     };
     for (const EconomyDay& d : h.days){
         add(d);
@@ -218,6 +219,18 @@ std::vector<std::string> ChasmStatsCheck(const EconomyState& e){
         snprintf(buf,sizeof(buf),"rocks: %i broken when it began and %i since, but %i are broken",h.broken_from,t.broken,broken);
         out.push_back(buf);
     }
+    int kills = 0;
+    for (const EconomyWorker& k : e.workers){
+        kills += EconomyKills(k.kills);
+    }
+    for (const EconomyDeath& d : e.dead){
+        kills += EconomyKills(d.kills);
+    }
+    if (h.kills_from + t.zombies != kills){
+        snprintf(buf,sizeof(buf),"zombies: %i kills put down with people and %i killed, but the living and the dead have %i",
+                 h.kills_from,t.zombies,kills);
+        out.push_back(buf);
+    }
     //Each row on from the one before - the start's first - and the colony now on from the last.
     auto heads = [](const EconomyDay& d){
         int n = 0;
@@ -330,8 +343,16 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
         case EVENT_BORN:
             return who + " was born";
         case EVENT_DIED:
+            //...his rank before his name, as the dead keep it (ranks_plan.md): "Veteran Jelle De Wit died of thirst". Not
+            //his kills - the page's column would cut the cause off; the pop-up and the death line have room for them.
+            for (const EconomyDeath& d : e.dead){
+                int rank = EconomyRank(d.kills);
+                who = (d.id == ev.person && rank > RANK_NONE) ? std::string(EconomyRankName(rank)) + " " + who : who;
+            }
             return (ev.amount == NEEDS_DIED_ZOMBIE) ? who + " was killed by a zombie"
                                                     : who + " died of " + EconomyDeathCause(ev.amount);
+        case EVENT_RANKED:
+            return who + " rose to " + EconomyRankName(ev.amount);
         case EVENT_HARVEST:
             snprintf(buf,sizeof(buf),"Harvested %i %s",ev.amount,good.c_str());
             return buf;
@@ -381,6 +402,8 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
             return who + " felled a tree";
         case EVENT_ROCK_BROKEN:
             return who + " broke a rock";
+        case EVENT_ZOMBIE_FELLED:
+            return who + ((ev.amount == KILL_HAND) ? " killed a zombie by hand" : " shot a zombie down");
         case EVENT_STOREY_RAISED:
             return "A storey of " + WithArticle(ChasmKindLabel(ev.amount,false)) + " went up";
         case EVENT_NOTHING_TO_TAKE:

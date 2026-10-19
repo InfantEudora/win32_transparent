@@ -140,6 +140,38 @@ void Economy::PersonFalls(const EconomyWorker& k, const vec2* struck){
     state.version++;
 }
 
+/*
+    KILLS (ranks_plan.md): counted on whoever's hit felled it, or on his record among the dead when his arrow landed
+    after him, and told where it fell - for the day's count (THE HISTORY) and the sound to come. Told only once counted,
+    so the kills and the count agree (ChasmStatsCheck). A kill that takes the living to a new RANK is told as well; the
+    dead's rank is read from their kills all the same, but nobody rises after his death.
+*/
+void Economy::ZombieKilled(const EconomyZombie& m, uint32_t by, int how){
+    if (how < 0 || how >= KILL_HOWS){
+        return;
+    }
+    std::array<int,KILL_HOWS>* kills = NULL;
+    const EconomyWorker* living = NULL;
+    for (EconomyWorker& k : state.workers){
+        if (k.id == by){
+            kills = &k.kills;
+            living = &k;
+        }
+    }
+    for (EconomyDeath& d : state.dead){
+        kills = (!kills && d.id == by) ? &d.kills : kills;
+    }
+    if (!kills){
+        return;
+    }
+    int rank = EconomyRank(*kills);
+    (*kills)[how]++;
+    Event(EVENT_ZOMBIE_FELLED,by,0,-1,EconomyBody(m),how);
+    if (living && EconomyRank(*kills) > rank){
+        Event(EVENT_RANKED,by,0,-1,EconomyBody(*living),EconomyRank(*kills));
+    }
+}
+
 void Economy::TickFallen(){
     size_t before = state.fallen.size();
     state.fallen.erase(std::remove_if(state.fallen.begin(),state.fallen.end(),[&](const EconomyFallen& f){
@@ -526,8 +558,8 @@ bool Economy::ZombieNear(const EconomyWorker& k, float within) const{
     bite, and every grown-up with a zombie within that reach counts down to his next blow at the nearest. A count starts
     a whole interval off as they come within reach, and starts again whenever they part. All the bites and blows are
     found first and dealt after, so nobody strikes first; a person bitten to death still lands the blow he had coming.
-    Then the zombies at 0 fall (THE FALLEN, by the last blow), and whom a bite took the last of are named for Needs
-    (bitten_dead, with the way that bite pushed him).
+    Then the zombies at 0 fall (THE FALLEN, by the last blow, which is its striker's kill - KILLS), and whom a bite
+    took the last of are named for Needs (bitten_dead, with the way that bite pushed him).
 */
 void Economy::Fights(){
     //None left - the last fell, or all were cleared: nobody fights on.
@@ -545,7 +577,8 @@ void Economy::Fights(){
     }
     std::vector<std::pair<size_t,vec2>> bites;          //by worker index, one for each bite, and where it came from
     std::vector<int> blows(state.zombies.size(),0);     //by zombie, the hit points it loses...
-    std::vector<vec2> blown(state.zombies.size());      //...and the way the last blow pushed it (THE FALLEN)
+    std::vector<vec2> blown(state.zombies.size());      //...and the way the last blow pushed it (THE FALLEN)...
+    std::vector<uint32_t> striker(state.zombies.size(),0);  //...and who struck that blow: the kill, if it falls (KILLS)
     for (EconomyZombie& m : state.zombies){
         int i = (m.target < index_of.size()) ? index_of[m.target] : -1;
         if (i < 0 || !CanGetAt(state.workers[i]) || (EconomyBody(state.workers[i]) - EconomyBody(m)).length() > FIGHT_REACH){
@@ -578,12 +611,15 @@ void Economy::Fights(){
             continue;
         }
         float pace = EconomyFightPace(k);
+        //His RANK makes his blows come sooner, no harder (RANKS).
+        float swing = FIGHT_SWING_SECONDS / (pace * EconomyRankPace(EconomyRank(k.kills)));
         if (k.swing <= 0){
-            k.swing = Ticks(FIGHT_SWING_SECONDS / pace);
+            k.swing = Ticks(swing);
         }else if (--k.swing == 0){
-            k.swing = Ticks(FIGHT_SWING_SECONDS / pace);
+            k.swing = Ticks(swing);
             blows[near] += (int)std::lround(FIGHT_HIT * pace);
             blown[near] = EconomyBody(state.zombies[near]) - EconomyBody(k);
+            striker[near] = k.id;
         }
     }
     for (const std::pair<size_t,vec2>& b : bites){
@@ -601,6 +637,7 @@ void Economy::Fights(){
         m.health -= blows[j];
         if (f_alive && m.health <= 0){
             ZombieFalls(m,blown[j]);
+            ZombieKilled(m,striker[j],KILL_HAND);
         }
     }
     state.zombies.erase(std::remove_if(state.zombies.begin(),state.zombies.end(),[](const EconomyZombie& m){

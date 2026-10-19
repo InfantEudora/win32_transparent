@@ -25,10 +25,10 @@
 
     THE SWITCHES (debug builds; the user's, 2026-10-18): each of what the viewer tells or stops for can be turned off -
     from the Goals panel, or chasm_menu's `triggers` - for testing, where a death or a lost colony is what is being looked
-    at rather than the end of the game: a goal's notice (and the winter's line in a death's pop-up), a death's pop-up,
-    the colony lost's page and its line over the build bar, the demo complete's page. The VIEWER's, as the pause menu
-    is: never recorded or saved. The rules still tell every goal and end into the journal, so the statistics, the
-    goals' panel and a replay are as they were.
+    at rather than the end of the game: a goal's row on the GOALS panel and its notice (and the winter's line in a
+    death's pop-up), a death's pop-up, the colony lost's page and its line over the build bar, the demo complete's
+    page. The VIEWER's, as the pause menu is: never recorded or saved. The rules still tell every goal and end into the
+    journal, so the statistics, the end's page and a replay are as they were.
 */
 #define GOALS_MET_COLOUR    UIColor(140,200,110)    //a goal met, on the panel and the end's page
 
@@ -211,7 +211,8 @@ void ApplicationChasm::UpdateEnd(){
                 for (size_t i = 0; i < deaths.size() && i < named; i++){
                     std::string name = "Someone";
                     for (const EconomyDeath& x : e.dead){
-                        name = (x.id == deaths[i]->person) ? EconomyDeathName(x) : name;
+                        //...with his rank and kills (ranks_plan.md): "Jelle De Wit, Veteran, 2 kills, killed by a zombie".
+                        name = (x.id == deaths[i]->person) ? EconomyDeathName(x) + EconomyKillsTold(x.kills) : name;
                     }
                     int cause = deaths[i]->amount;
                     detail += (detail.empty() ? "" : "\n") + name
@@ -244,7 +245,8 @@ void ApplicationChasm::UpdateEnd(){
 /*
     RENDER THREAD, from DrawOverlay in play mode: the GOALS panel at the top left, under `top` - each goal with its mark
     in its state's colour (dim in progress, green met, red failed) and at its right what it wants next, or MET or
-    FAILED. Its look is NEEDS ATTENTION's. Returns its foot, or `top` with nothing drawn.
+    FAILED. Its look is NEEDS ATTENTION's. A goal switched off (THE SWITCHES) has no row, and with none left there is
+    no panel. Returns its foot, or `top` with nothing drawn.
 */
 float ApplicationChasm::DrawGoals(float s, float top){
     std::shared_ptr<const EconomyState> e = GetEconomy();
@@ -263,21 +265,31 @@ float ApplicationChasm::DrawGoals(float s, float top){
     std::string text[CHASM_GOALS];
     std::string value[CHASM_GOALS];
     int state[CHASM_GOALS];
+    int shown[CHASM_GOALS];
+    int rows = 0;
     float w = 0.0f;
     for (int g = 0; g < CHASM_GOALS; g++){
+        if (!TriggerOn(g)){
+            continue;
+        }
+        shown[rows++] = g;
         state[g] = ChasmGoalState(g,*e,*d);
         text[g] = GoalCaps(g);
         value[g] = (state[g] == CHASM_GOAL_MET) ? "MET" : (state[g] == CHASM_GOAL_FAILED) ? "FAILED" : ChasmGoalNext(g,*e,*d);
         w = std::max(w,pad * 2.0f + mark + mark_gap + overlay->MeasureText(text[g].c_str(),size).x + col_gap
                        + overlay->MeasureText(value[g].c_str(),size).x);
     }
+    if (!rows){
+        return top;
+    }
     vec2 p0(16.0f * s,top);
-    vec2 p1(p0.x + w,p0.y + pad * 0.8f + title_h + line_h * CHASM_GOALS + pad * 0.4f);
+    vec2 p1(p0.x + w,p0.y + pad * 0.8f + title_h + line_h * rows + pad * 0.4f);
     overlay->AddRect(p0,p1,9.0f * s,HUD_PANEL);
     overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
-    overlay->AddText("THE DEMO'S GOALS",vec2(p0.x + pad,p0.y + pad * 0.8f + 11.0f * s),title_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
-    for (int g = 0; g < CHASM_GOALS; g++){
-        float mid = p0.y + pad * 0.8f + title_h + line_h * (float)g + line_h * 0.5f;
+    overlay->AddText("GOALS",vec2(p0.x + pad,p0.y + pad * 0.8f + 11.0f * s),title_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+    for (int r = 0; r < rows; r++){
+        int g = shown[r];
+        float mid = p0.y + pad * 0.8f + title_h + line_h * (float)r + line_h * 0.5f;
         uint32_t colour = (state[g] == CHASM_GOAL_MET) ? GOALS_MET_COLOUR : (state[g] == CHASM_GOAL_FAILED) ? HUD_DANGER : HUD_TEXT_DIM;
         overlay->AddRect(vec2(p0.x + pad,mid - mark * 0.5f),vec2(p0.x + pad + mark,mid + mark * 0.5f),mark * 0.5f,colour);
         overlay->AddText(text[g].c_str(),vec2(p0.x + pad + mark + mark_gap,mid + 5.0f * s),size,
@@ -291,14 +303,14 @@ float ApplicationChasm::DrawGoals(float s, float top){
 #ifdef USE_IMGUI
 /*
     The panel's GOALS (debug builds): every goal and end, how it stands, and its switch (THE SWITCHES, above) - ticked,
-    play mode tells it and stops for it as it always has; unticked, not.
+    play mode shows it, tells it and stops for it as it always has; unticked, none of those.
 */
 void ApplicationChasm::RenderGoalsPanel(){
 #ifdef DEBUG
     if (!ImGui::CollapsingHeader("Goals")){
         return;
     }
-    ImGui::TextDisabled("what play mode tells and stops for - unticked, it does neither");
+    ImGui::TextDisabled("what play mode shows, tells and stops for - unticked, none of it");
     ImGui::TextDisabled("(the rules journal every goal and end either way)");
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ChasmDiscoveries> d = GetDiscoveries();

@@ -604,6 +604,9 @@ void ApplicationChasm::RegisterZombieTools(){
             for (const EconomyArrow& a : e->arrows){
                 json j{{"by",a.by},{"zombie",a.zombie},{"hit",a.f_hit},{"flown",a.flown},{"ticks",a.ticks},
                        {"distance",round2((a.to - a.from).length())},{"to",json::array({round2(a.to.x),round2(a.to.y),round2(a.to.z)})}};
+                if (a.f_fells){
+                    j["fells"] = true;      //a rank's hit that kills outright (RANKS)
+                }
                 if (!EconomyArrowFlying(a)){
                     j["landed"] = a.f_hit ? "stuck" : "ground";
                     if (!a.f_hit){

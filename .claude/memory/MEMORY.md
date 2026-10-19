@@ -130,4 +130,6 @@
 - [Chasm water tools plan](chasm_water_tools_plan.md) — ALL 6 steps BUILT: debug WELL, placed rivers + ponds, River/Pond tools, painted HEIGHT and CLIFFS on plots (2026-10-19); chasm_generate water/relief/cliffs
 - [Chasm clip channels + export](chasm_clip_channels_export.md) — unsampled export ships keyed channels only; missing channel = stale bone; blender_action_report.py; each rig a SEPARATE same-named animation - load with LoadAnimation(name,true)
 - [Null MCP argument aborts](mcp_null_arg_aborts.md) — chasm tool given a JSON null (house:null) died with no crash report; omit the key or pass 0
-- [Chasm ranks plan](chasm_ranks_plan.md) — kills by bow/hand, rank from all kills (Blooded/Veteran/Champion), never lost, fight pace + arrow one-shot; DECIDED 2026-10-19, not built
+- [Chasm ranks plan](chasm_ranks_plan.md) — BOTH STEPS BUILT 2026-10-19: kills + ranks (a kill each for now, rank_kills table), pace + one-shot; chasm_kills_test.py
+- [Farside space game concept](farside_space_game_concept.md) — apps/farside/docs/README.md; DECIDED waterline, sensors for player+AI, continuous altitude; scale bench first
+- [Chasm modes plan](chasm_modes_plan.md) — Tutorial/Demo/Free play; track one-at-a-time, tells only; step 0 (GOALS panel honours switches) built 2026-10-19

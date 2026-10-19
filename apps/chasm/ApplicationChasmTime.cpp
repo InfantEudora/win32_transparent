@@ -868,6 +868,7 @@ float ApplicationChasm::DrawBuildBar(float s){
                                 || kind == EVENT_FROST_TOOK || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING
                                 || kind == EVENT_BOULDER_FOUND || kind == EVENT_BALCONY_REACHED
                                 || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED
+                                || kind == EVENT_RANKED
                                 || (kind == EVENT_BUILDING_FINISHED && discovery_of(ne->events[i]) >= 0)
                                 || ((kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED) && TriggerOn(ne->events[i].amount));
                 newest = f_notice ? &ne->events[i] : newest;
@@ -899,6 +900,8 @@ float ApplicationChasm::DrawBuildBar(float s){
                              : (n.kind == EVENT_WALL_BROKEN) ? std::string("the zombies have broken the wall")
                              : (n.kind == EVENT_GATE_BROKEN) ? std::string("the zombies have broken a gate")
                              : (n.kind == EVENT_BREACHED) ? std::string("the zombies have broken into a ") + ChasmKindLabel(n.amount,false)
+                             //RANKS (ranks_plan.md): risen by a kill.
+                             : (n.kind == EVENT_RANKED) ? name + " has risen to " + EconomyRankName(n.amount)
                              : (n.kind == EVENT_BUILDING_FINISHED) ? std::string(n.amount == ZONE_KIND_WINCH ? "the first winch"
                                                                                                          : "the builders' hut")
                                                                      + " is finished"
@@ -976,8 +979,10 @@ float ApplicationChasm::DrawBuildBar(float s){
                 const char* of = (d.cause == NEEDS_DIED_THIRST) ? "thirst" : (d.cause == NEEDS_DIED_COLD) ? "cold" : "hunger";
                 int more = (int)(n - deaths_seen) - 1;
                 //Bitten (zombies_plan.md, step 2): killed, not died of.
-                death_shown = EconomyDeathName(d) + ((d.cause == NEEDS_DIED_ZOMBIE) ? std::string(" was killed by a zombie")
-                                                                                    : " died of " + std::string(of))
+                //...and his rank and kills (ranks_plan.md): "Jelle De Wit, Veteran, 2 kills, was killed by a zombie".
+                std::string fame = EconomyKillsTold(d.kills);
+                death_shown = EconomyDeathName(d) + fame + (fame.empty() ? "" : ",")
+                              + ((d.cause == NEEDS_DIED_ZOMBIE) ? std::string(" was killed by a zombie") : " died of " + std::string(of))
                               + (more > 0 ? " (and " + std::to_string(more) + " more)" : std::string());
                 std::transform(death_shown.begin(),death_shown.end(),death_shown.begin(),::toupper);
                 death_since = now;

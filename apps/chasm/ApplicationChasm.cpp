@@ -385,8 +385,10 @@ void ApplicationChasm::SetupInput(){
     view_key(VK_OEM_MINUS,INPUT_CHASM_SLOWER);
     view_key(VK_OEM_PLUS,INPUT_CHASM_FASTER);
 #ifdef DEBUG
-    //A debug tool, in either mode: the key is the viewer's, the zombie it drops a recorded command (zombies_plan.md).
+    //Debug tools, in either mode: the keys are the viewer's, the zombie and the archer they put down recorded commands
+    //(zombies_plan.md, test_maps_plan.md step 5).
     view_key('Z',INPUT_CHASM_ZOMBIE);
+    view_key('X',INPUT_CHASM_ARCHER);
 #endif
 #endif
 }
@@ -2963,6 +2965,17 @@ void ApplicationChasm::UpdateView(void){
         GridPick h = GetHoverPick();
         if (h.f_hit && h.plot >= 0){
             SubmitZombies(h.plot,1);
+        }
+    }
+    //...and X an archer to shoot them: the People panel's "Put an archer down" by key - the best eye, the archery its
+    //slider says, posted there. The same three lines as the button's; a change to what a test archer is wants both.
+    //The slider is the panel's, read here under the physics_mutex it is written under.
+    if (input->WasKeyPressed(INPUT_CHASM_ARCHER) && KeysLive()){
+        GridPick h = GetHoverPick();
+        if (h.f_hit && h.plot >= 0){
+            int skills[SKILL_COUNT] = {};
+            skills[SKILL_PRECISION] = 10;
+            SubmitPerson(h.plot,0,0,skills,0,person_archer_percent * (ARCHERY_FULL / 100),true,person_archer_kills);
         }
     }
 #endif

@@ -23,6 +23,10 @@
 //In CHASM_CMD_PERSON's packed value, over the skills and his sex (PersonCommand): ordered to stand where he is put down.
 //Clear in recordings from before it.
 static const uint32_t PERSON_POSTED = 1u << 18;
+//...and over that, the kills he is put down with (RANKS): five bits, at most PERSON_KILLS_MOST - still under a float's
+//exact 2^24. Clear in recordings from before them.
+static const int PERSON_KILLS_SHIFT = 19;
+static const int PERSON_KILLS_MOST = 31;
 
 std::shared_ptr<const EconomyState> ApplicationChasm::GetEconomy(){
     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -229,13 +233,21 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         if (k.archery){
             h.Add(((uint64_t)k.id << 32) | (uint32_t)k.archery);
         }
+        //The zombies he felled (KILLS, ranks_plan.md) - likewise only once he has any.
+        if (EconomyKills(k.kills) > 0){
+            int32_t kills[3] = {(int32_t)k.id,k.kills[KILL_BOW],k.kills[KILL_HAND]};
+            h.Bytes(kills,sizeof(kills));
+        }
     }
-    //The dead (needs_plan.md): who, when, of what.
+    //The dead (needs_plan.md): who, when, of what - and what they felled, when they did.
     n = (uint32_t)e.dead.size();
     h.Bytes(&n,sizeof(n));
     for (const EconomyDeath& d : e.dead){
         uint64_t death[7] = {d.id,d.tick,(uint64_t)d.cause,(uint64_t)d.born,d.mother,d.father,d.surname};
         h.Bytes(death,sizeof(death));
+        if (EconomyKills(d.kills) > 0){
+            h.Bytes(d.kills.data(),sizeof(int) * KILL_HOWS);
+        }
     }
     for (const EconomyField& f : e.fields){
         int32_t pair[9] = {(int32_t)f.building,f.crop,f.grown,(int32_t)f.f_sown,f.yield,f.last,(int32_t)f.owner,f.frost,f.wait};
@@ -322,6 +334,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
                 h.Bytes(head,sizeof(head));
                 float where[8] = {a.from.x,a.from.y,a.from.z,a.to.x,a.to.y,a.to.z,a.at.x,a.at.y};
                 h.Bytes(where,sizeof(where));
+                //A rank's hit that kills outright (RANKS) - only then, so arrows without hash as before.
+                if (a.f_fells){
+                    h.Add(((uint64_t)a.by << 32) | 0xF0E115u);
+                }
             }
         }
     }
@@ -350,9 +366,17 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(counts,sizeof(counts));
         h.Bytes(d.people.data(),sizeof(int) * ECONOMY_STAGES);
         h.Bytes(d.held.data(),sizeof(int) * GOOD_COUNT);
+        //Zombies killed (KILLS) only on a day with some, so a history without them hashes as before.
+        if (d.zombies > 0){
+            h.Bytes(&d.zombies,sizeof(d.zombies));
+        }
     };
     uint64_t head[5] = {hist.from,hist.journal.size(),hist.days.size(),(uint64_t)hist.felled_from,(uint64_t)hist.broken_from};
     h.Bytes(head,sizeof(head));
+    //Kills people were put down with (RANKS) - only when some were.
+    if (hist.kills_from > 0){
+        h.Bytes(&hist.kills_from,sizeof(hist.kills_from));
+    }
     day(hist.start);
     day(hist.today);
     const size_t tail = 16;
@@ -645,8 +669,9 @@ void ApplicationChasm::RegisterEconomyCommands(){
             }
             std::string why;
             uint32_t made = 0;
+            int kills = (int)((packed >> PERSON_KILLS_SHIFT) & (uint32_t)PERSON_KILLS_MOST);
             if (economy.AddPerson((int)cmd.subtype,(uint32_t)cmd.value[0],(int)cmd.value[1],skills,(int)((packed >> 16) & 3u),
-                                  (int)cmd.value[3],zones.State(),walkers,&why,&made)){
+                                  (int)cmd.value[3],kills,zones.State(),walkers,&why,&made)){
                 person_last_made = made;
                 //Several put down on one plot stand round it, as a group ordered there does.
                 if ((packed & PERSON_POSTED) && !economy.Order(made,(int)cmd.subtype,zones.State(),walkers,&why,-1,true)){
@@ -666,12 +691,14 @@ void ApplicationChasm::RegisterEconomyCommands(){
         });
 }
 
-//Four bits a skill, two for his sex and PERSON_POSTED, well inside a float's exact integers.
+//Four bits a skill, two for his sex, PERSON_POSTED and five for his kills, inside a float's exact integers.
 static_assert(SKILL_COUNT * 4 <= 16,"CHASM_CMD_PERSON packs the skills below bit 16");
+static_assert(((uint32_t)PERSON_KILLS_MOST << PERSON_KILLS_SHIFT) < (1u << 24),"CHASM_CMD_PERSON's kills past a float's exact integers");
 
 SimCommand ApplicationChasm::PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
-                                           bool f_post){
-    uint32_t packed = ((uint32_t)std::max(0,std::min(2,sex)) << 16) | (f_post ? PERSON_POSTED : 0u);
+                                           bool f_post, int kills){
+    uint32_t packed = ((uint32_t)std::max(0,std::min(2,sex)) << 16) | (f_post ? PERSON_POSTED : 0u)
+                      | ((uint32_t)std::max(0,std::min(PERSON_KILLS_MOST,kills)) << PERSON_KILLS_SHIFT);
     for (int sk = 0; skills && sk < SKILL_COUNT; sk++){
         packed |= (uint32_t)std::max(0,std::min(10,skills[sk])) << (4 * sk);
     }
@@ -687,8 +714,8 @@ SimCommand ApplicationChasm::PersonCommand(int plot, uint32_t house, int age_day
 }
 
 void ApplicationChasm::SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
-                                    bool f_post){
-    main_scene->SubmitCommand(PersonCommand(plot,house,age_days,skills,sex,archery,f_post));
+                                    bool f_post, int kills){
+    main_scene->SubmitCommand(PersonCommand(plot,house,age_days,skills,sex,archery,f_post,kills));
 }
 
 void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
@@ -986,6 +1013,11 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (k.archery || k.job == WORKER_JOB_ARCHER){
         j["archery"] = json{{"percent",std::round(k.archery * 10000.0 / ARCHERY_FULL) / 100.0},
                             {"cap",std::round(EconomyArcheryCap(k) * 100.0 / ARCHERY_FULL)}};
+    }
+    //The zombies he felled (KILLS, ranks_plan.md), once he has any, and the rank they make.
+    if (EconomyKills(k.kills) > 0){
+        j["kills"] = json{{"bow",k.kills[KILL_BOW]},{"hand",k.kills[KILL_HAND]}};
+        j["rank"] = EconomyRankName(EconomyRank(k.kills));
     }
     return j;
 }
@@ -1381,7 +1413,7 @@ void ApplicationChasm::RenderPeoplePanel(){
     if (ImGui::SmallButton("Put an archer down##people")){
         int skills[SKILL_COUNT] = {};
         skills[SKILL_PRECISION] = 10;
-        SubmitPerson(selected.plot,0,0,skills,0,person_archer_percent * (ARCHERY_FULL / 100),true);
+        SubmitPerson(selected.plot,0,0,skills,0,person_archer_percent * (ARCHERY_FULL / 100),true,person_archer_kills);
     }
     if (!f_plot){
         ImGui::EndDisabled();
@@ -1389,6 +1421,12 @@ void ApplicationChasm::RenderPeoplePanel(){
     ImGui::SameLine();
     ImGui::SetNextItemWidth(90.0f);
     ImGui::SliderInt("archery##people_archer",&person_archer_percent,1,100,"%d%%");
+    //...and the kills he comes with, for his RANK (ranks_plan.md): the rank they make shown beside it.
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderInt("kills##people_archer_kills",&person_archer_kills,0,PERSON_KILLS_MOST);
+    std::array<int,KILL_HOWS> kills_given = {person_archer_kills,0};
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s",EconomyRank(kills_given) > RANK_NONE ? EconomyRankName(EconomyRank(kills_given)) : "no rank");
     std::string refusal;
     {
         std::lock_guard<std::mutex> lock(grid_mutex);
@@ -1509,6 +1547,7 @@ void ApplicationChasm::RegisterEconomyTools(){
         "on: `house` a home that stands (a house's family joined; a camp's bed) or none - a family of his own with nowhere "
         "to live, housed by the rules if a house is free; `female`, `age_years`, `skills` ({strength, precision, husbandry, "
         "ingenuity}: 1-10) and `archery` (held to his precision's cap) - anything not given the seed's, as a settler's; "
+        "`kills` (by bow, 0-31) for his rank, counted in the history's kills_from; "
         "`post` true: each ordered to stand there at once (spread round it, as op order with `spread`), out of the staffing - "
         "with archery (anyone trained carries a bow) a posted archer who shoots zombies in sight. A "
         "RECORDED debug edit each (CHASM_CMD_PERSON), refused on the ground a zombie is; `made` lists the new ids. op order: "
@@ -1611,6 +1650,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"age_years",{{"type","number"},{"description","add_person: his age in game years, at least 2.5; the seed's without"}}},
                 {"skills",{{"type","object"},{"description","add_person: strength, precision, husbandry, ingenuity, 1-10 each"}}},
                 {"archery",{{"type","integer"},{"description","add_person: his archery experience (ARCHERY_FULL the most)"}}},
+                {"kills",{{"type","integer"},{"description","add_person: zombies he has killed, by bow, 0-31 - his rank (ranks_plan.md)"}}},
                 {"post",{{"type","boolean"},{"description","add_person: ordered to stand where put down, out of the staffing; "
                                                          "with archery, a posted archer"}}},
                 {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions or rope"}}},
@@ -1716,13 +1756,14 @@ void ApplicationChasm::RegisterEconomyTools(){
                                ? (int)std::lround(args["age_years"].get<double>() * (CALENDAR_YEAR_TICKS / CALENDAR_DAY_TICKS)) : 0;
                 uint32_t house = args.value("house",0u);
                 int archery = args.value("archery",0);
+                int kills = std::max(0,std::min(PERSON_KILLS_MOST,args.value("kills",0)));
                 bool f_post = args.value("post",false);
                 int count = std::max(1,std::min(20,args.value("count",1)));
                 json made = json::array();
                 std::string refusal;
                 for (int i = 0; i < count && refusal.empty(); i++){
                     uint32_t refused = person_refusals.load();
-                    SubmitCommandAndWait(PersonCommand(plot,house,age_days,skills,sex,archery,f_post));
+                    SubmitCommandAndWait(PersonCommand(plot,house,age_days,skills,sex,archery,f_post,kills));
                     if (person_refusals.load() != refused){
                         std::lock_guard<std::mutex> lock(grid_mutex);
                         refusal = person_last_refusal;
@@ -2689,6 +2730,10 @@ void ApplicationChasm::RegisterEconomyTools(){
                 dead.push_back(json{{"id",d.id},{"name",EconomyDeathName(d)},{"age",EconomyAgeAt(d.born,d.tick)},
                                     {"mother",d.mother},{"father",d.father},
                                     {"day",(double)d.tick / CALENDAR_DAY_TICKS},{"cause",EconomyDeathCause(d.cause)}});
+                if (EconomyKills(d.kills) > 0){
+                    dead.back()["kills"] = json{{"bow",d.kills[KILL_BOW]},{"hand",d.kills[KILL_HAND]}};
+                    dead.back()["rank"] = EconomyRankName(EconomyRank(d.kills));
+                }
             }
             result["dead"] = dead;
             if (e->camp_plot >= 0){
