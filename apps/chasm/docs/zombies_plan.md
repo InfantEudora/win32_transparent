@@ -16,6 +16,8 @@ tick change it.
 - **The dead do not rise.**
 - **Waves of TENS**, not thousands: a colony starts with one or two archers.
 - **The figure is `zombie` in `chasm_props.glb`**, unrigged and with no clips for now. It gets the man's clips later.
+  *Done 2026-10-18:* rigged by the user (`zombie_armature`, a copy of the man's), drawn skinned with his Walking and
+  Idle (`ApplicationChasmZombies.cpp`, UploadZombieSkins).
 - **A debug tool first** (the user's, 2026-10-13): zombies dropped into the scene as it is, the way the colony itself
   was grown - one scene extended until it plays.
 
@@ -57,10 +59,12 @@ Billions (a cascade of the infected).
    3b. **Guards hold their posts** - kept until released, held by zombies in range, a pack of water each (the user's,
    2026-10-18, below).
 4. **Walls break**: a wall's and a gate's strength, the way's cost of breaking them, and a broken palisade plot a
-   gap to build again like any line work.
+   gap to build again like any line work - houses breached, fences climbed, builders repairing (the user's,
+   2026-10-18, below).
+5. **The alarm**: the gates shut and everyone not on guard hiding in his house (the user's, 2026-10-18, below).
 
 After step 3 the user judges whether shooting reads from the camera, and how one guard against one zombie feels.
-Waves from the swamp on the calendar, people fleeing and the alarm, the warnings and trampled fields come after.
+Waves from the swamp on the calendar, people fleeing, the warnings and trampled fields come after.
 
 ### Step 1: a zombie, dropped by debug
 
@@ -413,6 +417,131 @@ Files: `Economy.cpp` (`AssignJobs`' keeping, `PackUp` and its two callers `TakeP
   differently, as it should; an ordered archer held by zombies (the same `ON_POST` path, not run); a guard's pack stop
   in a settlement whose only water is a collector.
 
+## Step 4: walls break (the user's, 2026-10-18)
+
+Talked through after step 3b. Today a standing palisade plot, a shut gate and every building are CLOSED to a zombie, as
+to a villager: a colony walled in with its gates shut cannot be touched, and its zombies stand LOST outside. This step
+makes them obstacles that cost TIME instead - "a wall is time, and time under fire is kills" (Proposed, above).
+
+**Decided** (the user, 2026-10-18):
+
+- **A gate is weaker than a palisade plot** - the deliberate weak point, and so the place for towers (and for the
+  gatehouse, `defence_plan.md`, "Open").
+- **Houses are BREACHED, not broken**: in far less time than a wall, and then passable to zombies. Nothing of the house
+  comes down.
+- **A garden's wall and a lot's fence are a slow crossing** for a zombie - climbed, not broken.
+- **Only builders repair**, and only with no zombies about: a wall, a gate, a breached house. Not the jobless, who
+  build line works today.
+- **Gate jams** - crowd pressure slowing people where they are packed (step 1b) - are left for later.
+
+**Proposed with it** (tuning, all of it, to be measured on test maps):
+
+- **Breaking is a cost on the way, not a wall.** A zombie's walk (`WALK_WHO_ZOMBIE`) may enter a standing palisade
+  plot, a shut gate or a house at the cost of its strength left, in seconds, on top of the walk - where today
+  `EdgeOpen` shuts it. The route search already adds seconds edge by edge (`EdgeSpeed`: roads fast, fields and the
+  swamp slow), so round-if-shorter, through-an-open-gate and the-weakest-place-if-all-is-shut all come out of the one
+  search. A zombie walks about a unit a second, so one that a palisade plot holds for a minute goes round any stretch
+  of wall it can pass in less than about 58 units: a short wall is walked round, and only a closed ring is broken.
+- **Strength, in zombie-seconds**, a named constant each: a palisade plot `ZOMBIE_BREAK_WALL` 60, a gate
+  `ZOMBIE_BREAK_GATE` 30, a house `ZOMBIE_BREACH_HOUSE` 10. A garden's wall or lot's fence costs `ZOMBIE_CLIMB_SECONDS`
+  3 to cross and takes no harm. Against them: two guards drop a zombie about every 10 s, so a gate holds one zombie
+  easily and loses to four.
+- **Hitting**: a zombie whose next step is a closed thing, and within reach of it, stands and hits it - a second of
+  strength a second. Several at one face add up, but only as many as stand there after spacing (step 1b) - three or
+  four - so a crowd at a gate breaks it sooner without ten of them doing it ten times as fast.
+- **The harm is the rules'**: per palisade plot, per gate and per house, what has been taken off its strength - saved
+  and hashed only while there is any, as the zombies are. Built from scratch, a plot is whole.
+- **Broken**: a palisade plot at 0 goes back to a wall SITE - unbuilt, so open ground, as a planned wall is - through
+  the zones the way a laid road is raised (`ground_raises`, `ZONE_OP_GROUND_RAISE`), and half its wood
+  (`ECONOMY_WALL_WOOD`) is left on it as a crate (origin `broken`). A gate at 0 is open, its door broken. A house at
+  0 is BREACHED: passable to zombies, a flag on the building, until repaired. The breach is told -
+  `EVENT_WALL_BROKEN`, `EVENT_GATE_BROKEN`, `EVENT_HOUSE_BREACHED` - for the notice line, the journal and the cues.
+- **Repaired by builders**, an errand after keeping the towers full and before building, and only with no zombie
+  within `ECONOMY_REPAIR_SAFE` (25 units, about a tower's sight) of it: a harmed plot or gate made whole again, and a
+  breached house shut, for a builder's time at his pace; a broken plot rebuilt as a wall site, its wood carried - the
+  crate it left first. The jobless never repair (the user's), and the line works' other plots go on as today.
+- **Whom it goes for, by the way there.** Today a zombie tries the four people nearest by the straight line; with
+  breaking, almost everyone is reachable at some cost, so it would go for the one nearest behind the wall over a
+  woodcutter outside it. A **flow field** (Proposed, above) settles both that and a wave's cost: one search outward
+  from every person a zombie can get at, by the zombies' costs, on a fixed cadence - every plot then knows its time
+  to the nearest person, and each zombie walks downhill. Built in this step, or with the waves at the latest.
+- **Nothing reaches through a wall.** A bite and a blow ask only that two bodies be within `FIGHT_REACH`; a zombie
+  pressed against a palisade must not bite someone the other side of it. Checked first.
+- **Seen and heard**: a palisade plot's stakes lean and drop out as its harm grows, a gate's door hangs, a breached
+  house's door stands open (the view, from the rules' harm); a thud on the cue table for each blow, and the
+  breaches told as events.
+- **Not in this step**: a tower is never breached (its ground is reached only by its ladder, and zombies never climb);
+  the camp, a winch and a standing bridge are open ground already; moats (water dug) and the ballista are later.
+
+**Build order**, each tested before the next on flat test maps (`test_maps_plan.md`) by a `tools/chasm_wall_test.py`
+in the guard test's way, and by a replay:
+
+1. **4a**: a standing wall and a shut gate stop a zombie today (never checked), and nothing reaches through one. *Done
+   2026-10-18, below - both hold, with no change to the rules.*
+2. **4b**: breaking as a cost of the way; hitting; the harm saved and hashed; broken plots, broken gates and breached
+   houses; the events. Cases: a short wall walked round; a closed ring broken at its gate; a house on the ring breached
+   before its gate; a fence climbed; the times as the strengths say.
+3. **4c**: repair and rebuilding by the builders, only with no zombie near; the crate.
+4. **4d**: the look and the sound.
+5. **4e**: the flow field, if not already in 4b.
+
+## As built: step 4a (2026-10-18)
+
+Nothing in the rules changed: what 4a asked holds today. New: `tools/chasm_wall_test.py`, in the guard test's way -
+`python apps/chasm/tools/chasm_wall_test.py --port <port>` against a DEBUG copy (it replaces the map), each case on a
+flat test map (seed 5, 4,000 cells) with a ring of palisade 28 by 20 drawn by `chasm_road`, run paused, about 80 s in
+all. Before any zombie is dropped it asks the walkers' own A* (`chasm_pick` with a `to`) that the ring is closed, or
+that the road's gate opens it, so a pass is never a ring with a gap.
+
+- `ring`: three zombies dropped outside, one person inside - all three LOST, none inside, nobody bitten, 1,500 ticks.
+- `gate_shut`: a road through the west wall, its gate shut - the same.
+- `gate_open`: its gate open - the control: one came in through it at tick 720 and was fought at 1,140, so the ring
+  and the fight are real and a quiet `ring` means something.
+- `through`: a man on the plot nearest the inside of the north wall; outside, a runner ordered along it, its line
+  stepping between z 9 and 12 on this grid, his walk hugging it, three zombies after him. Nobody fought; the nearest
+  any zombie came to the man was **4.40 units** against `FIGHT_REACH` 1.0.
+
+**Why nothing reaches through, by the grid and not by a rule**: a body stands on a plot's point or on the walk between
+two, off it by at most `SPACING_MOST`, and a palisade is a whole plot wide - so with one between them two bodies are
+the wall plot and a plot's walk on either side apart, about four units. A rule that a bite and a blow need nothing
+between the bodies (the straight-walk test without its water and fields) was weighed and left out: nothing in the game
+today can bring two bodies within reach across a palisade or a shut gate. `through` is kept to ask again in 4b, when a
+zombie first stands against a wall to hit it - and a fence, a line between two plots with no width, is climbed from
+then, not reached over.
+
+All four ran twice with the same figures to the tick. Seen along the way, for `test_maps_plan.md`: a flat map with
+people put down by `add_person` logs a statistics check error every dawn - "row day 0: 2 people, but the day before's
+0, 0 born and 0 dead make 0" - since the people the command adds are neither born nor settled in the journal.
+
+## Step 5: the alarm (the user's, 2026-10-18)
+
+Agreed with step 4: today a gate is shut one at a time from its card, and nobody takes cover. The alarm was agreed in
+`defence_plan.md` ("Later") as one button that sends everyone with a post to it and shuts the gates.
+
+**Decided** (the user, 2026-10-18): **with the alarm, everyone who is not on guard hides in his house.**
+
+**Proposed with it:**
+
+- **One recorded command**, on and off (`CHASM_CMD_ALARM`): a button on the top bar in play, a key, and a tool op.
+- **Alarm**: every gate shut - the alarm remembers which it shut, so the all-clear opens only those; the guards are on
+  their towers already (step 3b) and the ordered stay on their posts; EVERYONE ELSE goes home and indoors - work
+  dropped where it stands, a load put down as a crate as for an order, children and babies with their families -
+  trainees too, unless posted.
+- **No house**: a camp's tents are no cover (a camp is open ground), so a camp's people and the homeless crowd into
+  the nearest house of their settlement with room, as the CRAMMED do (`settlements_plan.md`); with none, they stay
+  at the camp.
+- **Hiding**: they eat and drink from their home's pantry as at any time; a pressing need does not send anyone out
+  while the alarm is on - stocking the houses before a wave is the player's part.
+- **All clear**: the gates the alarm shut open, and everyone goes back to what he does.
+- **A breached house is no cover** (decided, the user, 2026-10-18). Today nobody indoors can be reached. With this
+  step the people in a house become reachable once it is breached, and zombies go for those hiding inside at the cost
+  of breaching it - so hiding buys time under the guards' fire rather than safety, and keeping zombies off the houses
+  is the defence's job. Grown-ups inside fight back as anywhere (step 2). Without it the alarm would make a colony
+  untouchable - its zombies standing lost round shut doors while the guards picked them off.
+- **Later**: an alarm the colony sounds itself - crows over the swamp, a guard who sees the first zombie.
+
+The waves from the swamp come after step 5, with the calendar.
+
 ## Noted, for later (2026-10-18)
 
 The smaller things found along the way, kept here so they can be picked up later or left. None is planned.
@@ -420,10 +549,10 @@ The smaller things found along the way, kept here so they can be picked up later
 - **Shots and sight** pass through trees and walls; a guard on a tower sees no further for exploration, only for
   shooting; arrows never run out.
 - **Zombies on one person** all stop on one point and spread only by their offsets, so past five or six they crowd
-  within `SPACING_MOST` of it. A crowd does not queue (step 4 may want it, at a gate).
+  within `SPACING_MOST` of it. A crowd does not queue: gate jams are left for later (the user, 2026-10-18).
 - **A zombie lost behind a palisade** within `NEEDS_MEAL_SAFE` of someone keeps him from eating, though it cannot
   reach him.
-- **Someone indoors is safe**: whether zombies wait at the door or break in is open.
+- **Someone indoors is safe**: settled - houses are breached (step 4), and a breached house is no cover (step 5).
 - **"Run out" notices** (`defence_plan.md`, the two messages): with several posted near home, one every eight days or so
   each may say too much.
 - **Cold on a post in winter** (`defence_plan.md`, "Open").

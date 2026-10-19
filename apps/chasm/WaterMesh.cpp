@@ -607,19 +607,24 @@ void BuildWaterMesh(const Grid& g, const Terrain& t, WaterMeshData& out){
         }
     }
 
-    //--- The swamp's pools ---------------------------------------------------------------------------
+    //--- The swamp's pools, and the ponds placed by hand (water_tools_plan.md) - the same still water -------------
     for (int q = 0; q < (int)g.fine.quads.size(); q++){
         const GridQuad& quad = g.fine.quads[q];
         bool f_pool = false;
+        bool f_pond = false;        //a pond's cell: clear water, drawn apart (WaterMeshData::ponds)
         bool f_plateau = true;
         for (int k = 0; k < 4; k++){
             int v = quad.v[k];
+            bool f_under = t.ground[v] < TERRAIN_WATER_Y;
+            bool f_in_pond = v < (int)t.pond.size() && t.pond[v];
             f_plateau = f_plateau && t.level[v] == TERRAIN_PLATEAU;
-            f_pool = f_pool || (t.biome[v] == TERRAIN_BIOME_SWAMP && t.ground[v] < TERRAIN_WATER_Y);
+            f_pool = f_pool || ((t.biome[v] == TERRAIN_BIOME_SWAMP || f_in_pond) && f_under);
+            f_pond = f_pond || (f_in_pond && f_under);
         }
         if (!f_plateau || !f_pool){
             continue;
         }
+        std::vector<vertex>& into = f_pond ? out.ponds : out.pools;
         vec3 c[4];
         vec2 uv[4];
         for (int k = 0; k < 4; k++){
@@ -629,8 +634,8 @@ void BuildWaterMesh(const Grid& g, const Terrain& t, WaterMeshData& out){
             //constant one ruled them into stripes), and stay clear of the river edges' darkening.
             uv[k] = vec2(0.5f * std::sin(p.x * 0.13f + p.y * 0.05f),p.y + p.x * 0.3f);
         }
-        WaterTri(out.pools,c[0],uv[0],c[1],uv[1],c[2],uv[2],up);
-        WaterTri(out.pools,c[0],uv[0],c[2],uv[2],c[3],uv[3],up);
+        WaterTri(into,c[0],uv[0],c[1],uv[1],c[2],uv[2],up);
+        WaterTri(into,c[0],uv[0],c[2],uv[2],c[3],uv[3],up);
     }
 
     //--- The falls: hung from their brinks ----------------------------------------------------------

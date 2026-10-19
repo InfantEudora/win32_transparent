@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 0d964184-f477-47d6-845e-a14ed3a2d9dd
-  modified: 2026-10-14T18:17:34.064Z
+  modified: 2026-10-18T20:10:35.853Z
 ---
 
 2026-10-10: aiming at 100-200 villagers + zombie waves on screen. Shape keys (the spider way) were
@@ -77,3 +77,19 @@ rig. The script's `--force` settings were updated to include them. See [[chasm-g
 **The user, 2026-10-14:** every character gets a rig, and they all share the same animations. The .blend and
 the export hold just three clips (Idle, Shoot, Walking). So rig edits in the .blend that a whole export would
 ship (the female rig, Idle's keys) are intended, not a trap to route around. Related: [[chasm-stone-plan]].
+
+**Zombie rig 2026-10-18:** `zombie_armature` (x -5, copy of the man's) weights the `zombie` mesh (476/476 verts),
+but the user fitted it with Apply Pose as Rest, so its REST is the zombie's pose (forearms 61-69 deg, hands up to
+75 deg off the man's; own bone lengths). Advised: unpose the MESH - Copy Rotation (world) per bone to
+male_armature in Rest Position, apply the Armature modifier, Apply Pose as Rest, new modifier. In game the borrowed
+clips are absolute rotations, so a different rest should still animate; it bites in Blender (actions are
+rest-relative). The zombie is still drawn static in game (ApplicationChasm.cpp, "unrigged for now").
+
+**Zombie drawn skinned 2026-10-18 evening:** the user re-exported with the rest UNPOSED (zombie_armature's bone
+rotations equal the man's again, own bone lengths; armature still at x -5). The export keys Walking on female + zombie
+rigs and Shoot on male + zombie; Idle on male only (the zombie borrows it by name, rotation-only). The man still binds
+Walking from the woman's channels (first by name), as at HEAD. Built: `ApplicationChasmZombies.cpp` BuildZombieSkin
+(probe, walk 0.90 u/s at rate 1) + UploadZombieSkins - a skeleton per zombie kept BY ID (slots reused, never by index),
+Walking at speed[seg]/pace, Idle standing/biting, named "zombies N" so the diorama skips them. KeepOwnPositions and
+MeasureWalkSpeed left WorkersView's anon namespace for it. Checked in game (port 8774, flat map): walking stride,
+idle, clear + respawn 6 (4 slots reused, 2 made). No bite clip yet. See [[asset-origin-convention]].

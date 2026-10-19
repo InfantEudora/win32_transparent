@@ -113,6 +113,9 @@ extern const TerrainLevel terrain_levels[TERRAIN_NUM_LEVELS];
 #define SWAMP_HUMMOCK           1.20f   //how far hummocks rise and pools sink either side of it
 #define SWAMP_HUMMOCK_SIZE      15.0f   //hummock to hummock
 #define SWAMP_SHORE             0.20f   //ground this little above the water is still too wet to use
+//A POND placed by hand (water_tools_plan.md, GridWater.h): its middle this far under the water, as deep as the swamp's
+//pools go, rising to the water at its radius and back to the plateau over GRID_POND_BANK past it (BuildRelief).
+#define TERRAIN_POND_DEPTH      1.0f
 //The desert (step 5): dunes, gentle enough to build between.
 #define DUNE_BASE               0.4f
 #define DUNE_HEIGHT             3.2f
@@ -208,6 +211,9 @@ public:
     std::vector<float> ground;
     float relief_max = 0.0f;
     int swamp_pool_count = 0;       //swamp vertices wet by its pools
+    //Per fine vertex: on the plateau within a placed pond's reach (its water and bank) - the swamp's pool rules there.
+    std::vector<uint8_t> pond;
+    int pond_wet_count = 0;         //...and wet by it
     //The height above which gentle mountain ground is snow (step 5).
     float SnowLine(const vec2& p) const;
     uint32_t relief_seed = 0;
@@ -254,6 +260,8 @@ private:
     void BuildMouths(const Grid& g);
     //The heights in steps, then the kinds they make (Terrain.h, THE TERRAIN). After the rivers.
     void BuildHeights(const Grid& g, const std::vector<GridLine>& features);
+    //The heights' last pass on every kind of map: saddles joined, and every pit but the chasm filled.
+    void SettleHeights(const Grid& g, const std::vector<std::vector<int>>& nbr);
     int FringeSteps(const Grid& g, const vec2& p, uint32_t salt) const;
     void BuildKinds(const Grid& g);
 

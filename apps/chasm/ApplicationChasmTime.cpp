@@ -643,6 +643,16 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
             snprintf(buf,sizeof(buf),"Not dragged: click to place one wherever a house could stand. It stands at once.");
             controls = "Click to place - Shift+click removes - Right-click puts the tool down";
             break;
+        case CHASM_TOOL_RIVER:
+            what = "A debug river: it runs off the map's edge, joins a river, falls over a rim or sinks, by where it ends.";
+            snprintf(buf,sizeof(buf),"Drag from its source along its course. Let go and the map is made again with it.");
+            controls = "Let go to place - the debug panel lists the water, to take it away";
+            break;
+        case CHASM_TOOL_POND:
+            what = "A debug pond: still water pressed into the plateau, clear of rims, cracks, the mountain and the edge.";
+            snprintf(buf,sizeof(buf),"Drag out from its middle to its water's edge. Let go and the map is made again with it.");
+            controls = "Let go to place - the debug panel lists the water, to take it away";
+            break;
         case CHASM_TOOL_ERASE:
             what = "Removes a building's plot, a yard, a road or a field's cell. An erased site leaves what was brought as a crate.";
             snprintf(buf,sizeof(buf),"Drag over what should go and it turns red; let go to erase it.");

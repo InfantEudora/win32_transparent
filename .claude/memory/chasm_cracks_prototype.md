@@ -1,11 +1,11 @@
 ---
 name: chasm-cracks-prototype
-description: "2026-10-12 testfx shader chasm_cracks.frag: the chasm shaped like cracked mud (plates, pull-apart matching walls, slumped-plate balconies); prototype only, not ported; user verdict pending"
+description: "testfx shader chasm_cracks.frag (cracked-mud plates, pull-apart walls); PORTED 2026-10-18 as map kind cracks (MudCracks.cpp), terrain only; user verdict on the in-game look pending"
 metadata:
   node_type: memory
   type: project
   originSessionId: 867763b5-a94c-4688-a457-ce2b30a93ddb
-  modified: 2026-10-13T09:15:51.187Z
+  modified: 2026-10-18T20:00:00.000Z
 ---
 
 Asked for a more natural chasm shape based on `art_source/chasm/cracked_desert.jpg`, tried in testfx.
@@ -26,7 +26,17 @@ when the height changed, strata walls, steam under DECK_H inside the block. Shee
 
 Also fixed that session: `shadertoy_lightning.frag` lacked `#include "shadertoy_main.glsl"` (no main()).
 
+2026-10-18 PORTED as a TEST map kind, not the default generator (user asked for "a new map type"):
+`GRID_KIND_CRACKS` "cracks", `apps/chasm/MudCracks.{h,cpp}` = shader Sample() mode 0 minus colour-only
+parts, user's bench uniforms as CRACKS_* constants (plate 30, jitter 1.15, warp -0.14, rift_open 36.16,
+rift_tip 1.11 = runs off the north edge, ...). Bench seed -7 = `chasm_generate {"kind":"cracks","seed":-7}`.
+Terrain::BuildHeights samples it per plot then SettleHeights (saddles+pits, split out unchanged).
+The bench's map depth follows its WINDOW (540x337.5 at 1280x800) vs the game's 544x305, so in-game
+shapes differ from the user's screenshot; to compare like for like render the port at 540x337.5 zoom
+1.13 (a scratch tool did; matched). Pit fill removes crack_far cracks and sub-plot crack ends.
+Write-up: test_maps_plan.md "After: the cracks kind".
+
 **Why:** the spine + noise distance field gives blobby rims; the photo's look is plates.
-**How to apply:** nothing in apps/chasm uses it yet. A port would evaluate the field per plot in
-Terrain::BuildHeights and needs falls, ChasmRiftDistance, mountain tongue and sides-whole re-plumbed:
-a big change, ask first. Related: [[chasm-terrace-columns]], [[chasm-cliff-kit]], [[testfx-bench-gotchas]].
+**How to apply:** making it the DEFAULT generator is still the big change - falls, rivers, mountain
+tongue, sides-whole all key off ChasmLayout; ask first. Shader quirk kept on purpose: `far` uses
+1.3*warp, so a negative warp shrinks the reach test (rare floor holes possible). Related: [[chasm-terrace-columns]], [[chasm-cliff-kit]], [[testfx-bench-gotchas]].

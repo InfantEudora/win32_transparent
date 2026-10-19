@@ -41,7 +41,7 @@
 - [Comment density ceiling](comment_density_ceiling.md) — one-liners on declarations, block comments for the type, no per-enum essays
 - [Release edges ignore focus](release_edge_ignores_focus.md) — clicks beside the window fire WasKeyReleased; gate on IsInputLive()
 - [USE_PHYSICS flag](use_physics_flag.md) — the one flag that changes shared core objects; own core tree
-- [Asset origin convention](asset_origin_convention.md) — Blender scene positions are ignored by the engine, armatures included
+- [Asset origin convention](asset_origin_convention.md) — Blender positions ignored, armatures included; static loads of skinned meshes cleared too
 - [Texture unit map](texture_unit_map.md) — core/TextureUnits.h + shaders/texture_units.glsl mirror; atlas rather than widen
 - [Archer app](archer_app.md) — side-view platformer: Stage rules/view split, Puppet animation seam; built and parked
 - [AddPhysics leaves gravity off](addphysics_gravity_off.md) — SetGravityEnabled(true) or no friction, looks like the solver exploding
@@ -97,7 +97,7 @@
 - [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, archers by precision; trainees SHOOT (bow, quiver, arrows by skill)
 - [Chasm goods strip](chasm_goods_strip.md) — stocks as strips: solid anyone's, hollow kept, striped reserved; task bar EconomyTaskProgress
 - [Chasm goods plan](chasm_goods_plan.md) — all 6 steps built: food/water/materials/inputs, hemp, ropewalk rope; kept stock + make-more orders
-- [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs; Walking/Idle/Shoot crossfaded; bone props via IntoBone
+- [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs; Walking/Idle/Shoot crossfaded; bone props via IntoBone; zombie skinned too (by id)
 - [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" questions
 - [Ramparts plan](ramparts_plan.md) — walk nodes are plot+layer; tower decks + debug castle built; WalkJoin is the shared rule
 - [Chasm person picking](chasm_person_picking.md) — G-buffer readback + 8 px fallback; skinned outlines; multi-select all 3 steps built
@@ -108,8 +108,8 @@
 - [Chasm foraging](chasm_foraging.md) — BUILT 2026-10-12: fruit from bushes + oaks, camp picker; add props with --add --merge
 - [ImGui input race + crash reports](imgui_input_race_crash_report.md) — i<Size assert was WndProc vs render thread, FIXED; build/crash_*.txt
 - [Chasm waterfalls](chasm_waterfalls.md) — brink + welded sheet + stage 2; camera under the rim only over balconies; no shader hot-reload
-- [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag: chasm as cracked-mud plates; not ported, verdict pending
-- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); walls break next
+- [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag cracked-mud plates; ported 2026-10-18 as map kind `cracks` (MudCracks.cpp)
+- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); 4 walls break + 5 alarm decided 2026-10-18; 4a done (tools/chasm_wall_test.py), 4b next
 - [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only; step 0 done
 - [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble, PICK UP, stonecutter, deposits, the mine on O)
 - [Chasm stone props](chasm_stone_props.md) — 10 stone props in chasm_props.glb (--add --merge); floatstone = PAL_MINERALS row 10
@@ -124,6 +124,7 @@
 - [chasm_select: read op status](chasm_select_status_not_select.md) — op select returns a stale card after sim_step; cards only in play mode
 - [Chasm building size plan](chasm_building_size_plan.md) — BUILT 2026-10-18: footings, stone storeys 3+, workers by plots, appeal + crowding
 - [archer_test baseline stale](archer_test_baseline_stale.md) — differs from tick 0 on a CLEAN HEAD (A/B 2026-10-18); --write is the user's call
-- [Worktree A/B build](worktree_ab_build.md) — HEAD in a worktree: copy libs/, 3rdparty/; MAX_PATH -> subst + CPLUS_INCLUDE_PATH
-- [Chasm test maps plan](chasm_test_maps_plan.md) — ALL 6 BUILT 2026-10-18: kind flat/title in GridSettings, add_person, coded title town; saves A/B unchanged
-- [Chasm water tools plan](chasm_water_tools_plan.md) — step 1 debug WELL BUILT 2026-10-18 (seeded water, endless by set_stock); rivers/ponds in GridSettings next
+- [Worktree A/B build](worktree_ab_build.md) — HEAD in a worktree, OR (uncommitted work from others) an app-folder copy with your edits undone
+- [Chasm test maps plan](chasm_test_maps_plan.md) — ALL 6 BUILT 2026-10-18: kind flat/title (+cracks) in GridSettings, add_person, coded title town; saves A/B unchanged
+- [Chasm water tools plan](chasm_water_tools_plan.md) — ALL 4 steps BUILT 2026-10-18: debug WELL, placed rivers + ponds (chasm_generate water), River/Pond panel tools
+- [Null MCP argument aborts](mcp_null_arg_aborts.md) — chasm tool given a JSON null (house:null) died with no crash report; omit the key or pass 0

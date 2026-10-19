@@ -1,5 +1,6 @@
 #include "Terrain.h"
 #include "TerrainMesh.h"
+#include "MudCracks.h"
 
 #include <algorithm>
 #include <chrono>
@@ -163,16 +164,27 @@ void Terrain::Build(const Grid& g, const std::vector<GridLine>& features){
     for (size_t v = 0; v < n; v++){
         ground[v] = GroundHeight(g.fine.pos[v],Height((int)v));
     }
+    //A placed POND's reach (water_tools_plan.md): plateau plots within its bank, where its pool rules hold below.
+    pond.assign(n,0);
+    for (size_t v = 0; v < n && !g.layout.ponds.empty(); v++){
+        for (const ChasmLayout::Pond& k : g.layout.ponds){
+            if (steps[v] == 0 && (g.fine.pos[v] - k.centre).length() < k.radius + GRID_POND_BANK){
+                pond[v] = 1;
+            }
+        }
+    }
     //The swamp's pools: ground under the water, or barely out of it, is wet like a river's bank -
-    //nothing is built or grown there, and no walker crosses it (until there are causeways).
+    //nothing is built or grown there, and no walker crosses it (until there are causeways). A pond's the same.
     swamp_pool_count = 0;
+    pond_wet_count = 0;
     for (size_t v = 0; v < n; v++){
-        if (biome[v] == TERRAIN_BIOME_SWAMP && ground[v] < TERRAIN_WATER_Y + SWAMP_SHORE){
+        if ((biome[v] == TERRAIN_BIOME_SWAMP || pond[v]) && ground[v] < TERRAIN_WATER_Y + SWAMP_SHORE){
             if (!wet[v]){
                 wet[v] = 1;
                 wet_count++;
             }
-            swamp_pool_count++;
+            swamp_pool_count += (biome[v] == TERRAIN_BIOME_SWAMP) ? 1 : 0;
+            pond_wet_count += pond[v];
         }
     }
     build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -230,6 +242,22 @@ void Terrain::BuildHeights(const Grid& g, const std::vector<GridLine>& features)
     const uint32_t salt = g.settings.seed * 0x9E3779B1u;
     level.assign(n,TERRAIN_PLATEAU);
     steps.assign(n,0);
+    std::vector<std::vector<int>> nbr(n);
+    for (const std::pair<int,int>& e : g.fine.edges){
+        nbr[e.first].push_back(e.second);
+        nbr[e.second].push_back(e.first);
+    }
+
+    //A cracked-mud map (MudCracks.h) has no layout: its own field gives every plot its height, and then the
+    //saddles and pits are settled as on any map.
+    if (g.settings.kind == GRID_KIND_CRACKS){
+        MudCracks mud(g.settings.seed,g.bounds_min,g.bounds_max);
+        for (size_t v = 0; v < n; v++){
+            steps[v] = (uint8_t)mud.Steps(g.fine.pos[v]);
+        }
+        SettleHeights(g,nbr);
+        return;
+    }
 
     //--- From the layout's lines: the rims bound the chasm; islands and balconies stand in it --------
     CrossingTable rims;
@@ -280,11 +308,6 @@ void Terrain::BuildHeights(const Grid& g, const std::vector<GridLine>& features)
         }
     }
 
-    std::vector<std::vector<int>> nbr(n);
-    for (const std::pair<int,int>& e : g.fine.edges){
-        nbr[e.first].push_back(e.second);
-        nbr[e.second].push_back(e.first);
-    }
     auto noise = [&](int v, float wavelength, uint32_t k){ return Noise01(g.fine.pos[v],wavelength,salt + k); };
     auto near_fall = [&](int v, float reach){
         for (const TerrainFall& f : falls){
@@ -424,7 +447,11 @@ void Terrain::BuildHeights(const Grid& g, const std::vector<GridLine>& features)
             }
         }
     }
+    SettleHeights(g,nbr);
+}
 
+void Terrain::SettleHeights(const Grid& g, const std::vector<std::vector<int>>& nbr){
+    size_t n = g.fine.pos.size();
     //--- Saddles and pits, until neither changes anything --------------------------------------------
     /*
         SADDLES: two high corners diagonal across a quad and two low ones would stand four walls on one
@@ -673,8 +700,10 @@ float SmoothStep(float e0, float e1, float x){
 void Terrain::BuildRelief(const Grid& g){
     const uint32_t seed = g.settings.seed;
     relief_seed = seed;
-    //A kind without hills (Grid.h, GRID_KIND_*) is flat: with no relief, Relief reads 0 everywhere.
-    if (!GridKindHasHills(g.settings.kind)){
+    //A kind without hills (Grid.h, GRID_KIND_*) is flat: with no relief, Relief reads 0 everywhere - unless it has a
+    //pond placed by hand, pressed into a raster of nothing else.
+    const bool f_hills = GridKindHasHills(g.settings.kind);
+    if (!f_hills && g.layout.ponds.empty()){
         relief.clear();
         relief_w = 0;
         relief_h = 0;
@@ -739,6 +768,23 @@ void Terrain::BuildRelief(const Grid& g){
             float river = SmoothStep(TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN,
                                      TERRAIN_RIVER_BANK + TERRAIN_WET_MARGIN + RELIEF_RIVER_FADE,EdgeDistance(p));
             h *= river;
+            h = f_hills ? h : 0.0f;
+            /*
+                PONDS placed by hand (water_tools_plan.md): the relief fades out round each over RELIEF_RIVER_FADE, as
+                along a river, so a pond on a hill lies level; then its bowl is pressed in - TERRAIN_POND_DEPTH under
+                the water over its middle half, up to the water at its radius and back to the plateau over
+                GRID_POND_BANK. The water's flat surface and the ground cross at its shore (WaterMesh, POOLS).
+            */
+            for (const ChasmLayout::Pond& k : g.layout.ponds){
+                float d = (p - k.centre).length();
+                float reach = k.radius + GRID_POND_BANK;
+                h *= SmoothStep(reach,reach + RELIEF_RIVER_FADE,d);
+                if (d < reach){
+                    float bowl = (d < k.radius) ? TERRAIN_WATER_Y - TERRAIN_POND_DEPTH * SmoothStep(k.radius,k.radius * 0.5f,d)
+                                                : TERRAIN_WATER_Y * (1.0f - SmoothStep(k.radius,reach,d));
+                    h = std::min(h,bowl);
+                }
+            }
             relief[(size_t)j * relief_w + i] = h;
             relief_max = std::max(relief_max,h);
         }

@@ -537,12 +537,13 @@ uint64_t Fnv(uint64_t h, const void* data, size_t size){
 bool GridSettings::operator==(const GridSettings& o) const{
     return seed == o.seed && target_fine_cells == o.target_fine_cells && aspect == o.aspect &&
            triangle_side == o.triangle_side && relax_passes_coarse == o.relax_passes_coarse &&
-           relax_passes_fine == o.relax_passes_fine && relax_strength == o.relax_strength && kind == o.kind;
+           relax_passes_fine == o.relax_passes_fine && relax_strength == o.relax_strength && kind == o.kind &&
+           water == o.water;
 }
 
 const char* const grid_feature_names[GRID_FEATURE_KINDS] = {"rim","shard","column","ledge","balcony"};
 
-const char* const grid_kind_names[GRID_KINDS] = {"chasm","flat","title"};
+const char* const grid_kind_names[GRID_KINDS] = {"chasm","flat","title","cracks"};
 
 int GridKindByName(const std::string& name){
     for (int k = 0; k < GRID_KINDS; k++){
@@ -821,6 +822,9 @@ void Grid::Generate(const GridSettings& s){
         moves nothing in this grid's stream: a test map's grid is the chasm map's of the same settings.
     */
     layout = GridKindHasChasm(s.kind) ? GenerateChasmLayout(s.seed,vec2(x0,z0),vec2(x1,z1),T) : ChasmLayout();
+    //Water placed by hand (water_tools_plan.md), rivers after the layout's own and its ponds: data, as the layout's
+    //rivers are - and hashed with them (Hash). None in the settings adds nothing.
+    ChasmPlaceWater(layout,s.water,vec2(x0,z0),vec2(x1,z1));
     feature_line_base = (int)lines.size();
     for (const GridFeature& f : layout.features){
         lines.push_back(f.line);
@@ -924,6 +928,11 @@ uint64_t Grid::Hash() const{
         h = Fnv(h,&s.band,sizeof(s.band));
         h = Fnv(h,&s.width,sizeof(s.width));
         h = Fnv(h,&s.stream,sizeof(s.stream));
+    }
+    //Ponds placed by hand (water_tools_plan.md), likewise data beside the grid - none adds nothing.
+    for (const ChasmLayout::Pond& k : layout.ponds){
+        h = Fnv(h,&k.centre,sizeof(k.centre));
+        h = Fnv(h,&k.radius,sizeof(k.radius));
     }
     return h;
 }

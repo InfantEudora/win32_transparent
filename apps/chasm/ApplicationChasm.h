@@ -369,6 +369,8 @@ enum ChasmTool{
     CHASM_TOOL_STONECUTTER, //stone_plan.md: a stonecutter's hut, a drag
     CHASM_TOOL_MINE,        //stone_plan.md step 5: a mine, a plot each, on a deposit
     CHASM_TOOL_WELL,        //water_tools_plan.md: a debug well, a plot each - from the panel only, no key, never in play
+    CHASM_TOOL_RIVER,       //water_tools_plan.md: a river dragged from its source - the panel's only, never in play
+    CHASM_TOOL_POND,        //...and a pond dragged out from its middle; each a new map (UpdateWaterDrag)
     CHASM_TOOL_COUNT
 };
 
@@ -580,6 +582,22 @@ private:
     bool f_line_erase = false;                  //under pick_mutex: a shift-drag, taking road (or wall) up
     int line_ground = ZONE_GROUND_ROAD;         //under pick_mutex: what the line lays - its tool's, at the press
     std::atomic<uint32_t> line_version{0};
+    /*
+        THE WATER TOOLS (docs/water_tools_plan.md, ApplicationChasmWater.cpp), debug only and never in play. The RIVER
+        tool's drag lays a course, a point every WATER_DRAG_STEP the cursor goes; the POND tool's is a middle and the
+        edge it is dragged out to. Let go, the water joins the world's settings and the map is made again (PlaceWater):
+        a new map, as Generate makes, not a recorded command. `water_drag` is written by the physics thread and read by
+        the pick view under pick_mutex; a river's middle and edges are drawn there at the panel's width, a pond's water
+        and bank green, or red where it would not fit.
+    */
+    std::vector<vec2> water_drag;               //under pick_mutex: the course so far, or a pond's middle and edge
+    bool f_water_dragging = false;              //physics thread: a drag of either is under way
+    std::atomic<float> water_river_width{GRID_PLACED_RIVER_WIDTH};  //the panel's, for the next river
+    std::string water_status;                   //under pick_mutex: what the last placing or taking away came to
+    void UpdateWaterDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
+    //The world's settings again with `water` instead: a new map. False, with `why`, while a recording runs.
+    bool PlaceWater(const GridWater& water, std::string& why);
+    void RenderWaterTools();                    //debug builds: the river's width, the water there is, each to take away
     void UpdateLineDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
     void PlaceLine();
     void DropLine();
@@ -729,7 +747,8 @@ private:
     /*
         ZOMBIES (docs/zombies_plan.md, ApplicationChasmZombies.cpp): dropped by the debug tools - Z under the cursor, the
         panel, chasm_zombie - as CHASM_CMD_ZOMBIE, recorded. Their rules are the economy's (Economy.h, ZOMBIES); here is
-        the command, the tools and how they are drawn: the props file's `zombie`, one instance set for all of them.
+        the command, the tools and how they are drawn: the props file's `zombie` - rigged, as the people are, else one
+        instance set for all of them.
     */
     void SubmitZombies(int plot, int count);                    //any thread; count 0 clears them all
     std::atomic<uint32_t> zombie_commands_done{0};
@@ -739,6 +758,29 @@ private:
     Object* zombie_set = NULL;
     bool f_zombie_loaded = false;               //LoadProps found it
     void UploadZombies();                       //render thread, from PreRender
+    /*
+        RIGGED - its node bound to a skin, as the man's is - it is drawn as the people are: per zombie a Skeleton sharing
+        the one skinned mesh, playing the man's clips by bone name. Each is kept for one zombie by its id, so a zombie
+        keeps its step when another falls. Render thread.
+    */
+    struct ZombieSkin{
+        Object* figure = NULL;                  //the Skeleton
+        uint32_t id = 0;                        //the zombie it draws, 0 none
+        int clip = 0;                           //ZOMBIE_CLIP_*, as last set
+        float rate = 1.0f;
+    };
+    std::string zombie_skin_name;               //its skin, "" while the figure is not rigged
+    Mesh* zombie_skin_mesh = NULL;
+    float zombie_walk_speed = 0.0f;             //world units a second its walk carries it at rate 1
+    std::vector<ZombieSkin> zombie_skins;
+    void BuildZombieSkin();                     //from LoadProps: its rig, its skinned mesh and its pace
+    Object* BuildZombieSkeleton(size_t n);      //the n'th zombie's skeleton and clips, in no scene
+    struct ZombieShown{                         //a zombie drawn this frame
+        const EconomyZombie* m;
+        vec3 at;                                //where it stands
+        quat turn;                              //...and which way it faces
+    };
+    void UploadZombieSkins(const std::vector<ZombieShown>& shown);  //from UploadZombies, when it is rigged
     //Their ARROWS (step 3), the range's props: in the air (`arrow_full`), and stuck in a zombie or lying (`arrow`).
     Object* zombie_arrow_set[2] = {};
     bool f_zombie_arrows_shown = false;
@@ -1299,6 +1341,12 @@ private:
     int water_pool_shader_index = -1;
     Object* water_pools = NULL;
     void SetWaterPoolUniforms();
+    //Ponds placed by hand (water_tools_plan.md): standing water too, but clear - the rivers' colours at the pools'
+    //stillness - so a program of their own again.
+    Shader* water_pond_shader = NULL;
+    int water_pond_shader_index = -1;
+    Object* water_ponds = NULL;
+    void SetWaterPondUniforms();
     vec3 swamp_haze = vec3(0.77f,0.80f,0.75f);     //the palette's swamp-mist cell, read in BuildScene
     Object* water_sheets = NULL;
     std::shared_ptr<const ChasmWorld> water_built_world;

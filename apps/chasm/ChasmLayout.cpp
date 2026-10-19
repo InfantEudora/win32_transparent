@@ -1,4 +1,5 @@
 #include "Grid.h"
+#include "GridWater.h"
 
 #include <algorithm>
 #include <chrono>
@@ -2320,4 +2321,163 @@ ChasmLayout GenerateChasmLayout(uint32_t seed, const vec2& lo, const vec2& hi, f
     PlaceSouth(seed,lo,hi,out);
     out.generate_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
     return out;
+}
+
+//--- Water placed by hand (water_tools_plan.md) -----------------------------------------------------
+
+#define PLACED_RIVER_SPACING    4.0f    //its course resampled every so far through its points, for the terrain to round
+#define PLACED_RIVER_EDGE       6.0f    //an end this near the map's edge, or past it, is on the edge: about three plots
+#define PLACED_RIVER_PAST       10.0f   //...and carried this far past it - or past a fall's lip - as the layout's own are
+#define PLACED_POND_CLEAR       2.0f    //a pond's bank this far clear of the map's edge, a rim, a crack and the mountain
+#define PLACED_POND_SAMPLES     24      //points round each of its rings looked at
+namespace {
+
+//Where segments a0-a1 and b0-b1 cross, as the share of the way along a; false if they do not.
+bool PlacedCross(const vec2& a0, const vec2& a1, const vec2& b0, const vec2& b1, float& t){
+    vec2 r = a1 - a0;
+    vec2 s = b1 - b0;
+    float d = r.x * s.y - r.y * s.x;
+    if (std::fabs(d) < 1e-9f){
+        return false;
+    }
+    vec2 w = b0 - a0;
+    t = (w.x * s.y - w.y * s.x) / d;
+    float u = (w.x * r.y - w.y * r.x) / d;
+    return t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f;
+}
+
+//How far inside the map lo..hi p is (negative outside), and the nearest point on its edge with the way out there.
+float PlacedEdge(const vec2& p, const vec2& lo, const vec2& hi, vec2& on, vec2& out){
+    const float d[4] = {p.x - lo.x,hi.x - p.x,p.y - lo.y,hi.y - p.y};
+    int k = 0;
+    for (int i = 1; i < 4; i++){
+        k = (d[i] < d[k]) ? i : k;
+    }
+    vec2 q(std::max(lo.x,std::min(hi.x,p.x)),std::max(lo.y,std::min(hi.y,p.y)));
+    const vec2 outs[4] = {vec2(-1.0f,0.0f),vec2(1.0f,0.0f),vec2(0.0f,-1.0f),vec2(0.0f,1.0f)};
+    on = (k == 0) ? vec2(lo.x,q.y) : (k == 1) ? vec2(hi.x,q.y) : (k == 2) ? vec2(q.x,lo.y) : vec2(q.x,hi.y);
+    out = outs[k];
+    return d[k];
+}
+
+}
+
+bool ChasmPondFits(const ChasmLayout& layout, const vec2& centre, float radius, const vec2& lo, const vec2& hi){
+    const float reach = radius + GRID_POND_BANK + PLACED_POND_CLEAR;
+    if (centre.x - reach < lo.x || centre.x + reach > hi.x || centre.y - reach < lo.y || centre.y + reach > hi.y){
+        return false;
+    }
+    //Its middle and two rings out to its bank: off the rift, south of the mountain's foot, clear of every crack.
+    for (int ring = 0; ring <= 2; ring++){
+        float r = reach * 0.5f * (float)ring;
+        for (int i = 0; i < (ring ? PLACED_POND_SAMPLES : 1); i++){
+            float a = 6.2831853f * (float)i / (float)PLACED_POND_SAMPLES;
+            vec2 p = centre + vec2(std::cos(a),std::sin(a)) * r;
+            if (ChasmRiftDistance(layout,p) < PLACED_POND_CLEAR || p.y < ChasmMountainFootAt(layout,p.x)){
+                return false;
+            }
+            for (const ChasmLayout::Crack& c : layout.cracks){
+                for (size_t k = 0; k + 1 < c.points.size(); k++){
+                    vec2 ab = c.points[k + 1] - c.points[k];
+                    float len2 = ab.dot(ab);
+                    float t = (len2 > 1e-12f) ? std::max(0.0f,std::min(1.0f,(p - c.points[k]).dot(ab) / len2)) : 0.0f;
+                    if ((p - (c.points[k] + ab * t)).length() < c.half_width + PLACED_POND_CLEAR){
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+void ChasmPlaceWater(ChasmLayout& layout, const GridWater& water, const vec2& lo, const vec2& hi){
+    size_t first = layout.rivers.size();
+    //Each a course first, through its points, smooth and dense as the layout's own are; a SINK until found otherwise.
+    for (const GridPlacedRiver& p : water.rivers){
+        GridRiverLine r;
+        r.width = std::max(GRID_PLACED_RIVER_NARROWEST,std::min(GRID_PLACED_RIVER_WIDEST,p.width));
+        r.end = GRID_RIVER_SINK;
+        if (p.points.size() >= 2){
+            r.points = GridSmoothLine(p.points,false,PLACED_RIVER_SPACING).points;
+        }
+        layout.rivers.push_back(r);
+    }
+    //Then how each ends, against every other river's course - the layout's, and the placed ones before it as ended.
+    for (size_t i = first; i < layout.rivers.size(); i++){
+        GridRiverLine& r = layout.rivers[i];
+        if (r.points.size() < 2){
+            continue;       //one point is no course: nothing is drawn of it
+        }
+        vec2 on, out;
+        //A source on the map's edge comes in from past it.
+        if (PlacedEdge(r.points.front(),lo,hi,on,out) < PLACED_RIVER_EDGE){
+            r.points.insert(r.points.begin(),on + out * PLACED_RIVER_PAST);
+        }
+        //Over a RIM (a chasm map's): it FALLS at the first it crosses, as the layout's rivers do (Terrain::BuildRivers).
+        bool f_fall = false;
+        for (size_t s = 0; s + 1 < r.points.size() && !f_fall; s++){
+            float best = 2.0f;
+            for (const GridFeature& f : layout.features){
+                for (size_t j = 0; f.kind == GRID_FEATURE_RIM && j + 1 < f.line.points.size(); j++){
+                    float t;
+                    if (PlacedCross(r.points[s],r.points[s + 1],f.line.points[j],f.line.points[j + 1],t)){
+                        best = std::min(best,t);
+                    }
+                }
+            }
+            if (best <= 1.0f){
+                vec2 dir = r.points[s + 1] - r.points[s];
+                vec2 lip = r.points[s] + dir * best;
+                dir.normalize();
+                r.points.resize(s + 1);
+                r.points.push_back(lip);
+                r.points.push_back(lip + dir * PLACED_RIVER_PAST);
+                r.end = GRID_RIVER_FALL;
+                f_fall = true;
+            }
+        }
+        if (f_fall){
+            continue;
+        }
+        //Off the map's EDGE...
+        if (PlacedEdge(r.points.back(),lo,hi,on,out) < PLACED_RIVER_EDGE){
+            r.points.push_back(on + out * PLACED_RIVER_PAST);
+            r.end = GRID_RIVER_EDGE;
+            continue;
+        }
+        //...or into another river's WATER, its last point put on that river's course, the nearest such...
+        float best = 1e30f;
+        for (size_t j = 0; j < layout.rivers.size(); j++){
+            const GridRiverLine& o = layout.rivers[j];
+            for (size_t k = 0; j != i && k + 1 < o.points.size(); k++){
+                vec2 ab = o.points[k + 1] - o.points[k];
+                float len2 = ab.dot(ab);
+                float t = (len2 > 1e-12f) ? std::max(0.0f,std::min(1.0f,(r.points.back() - o.points[k]).dot(ab) / len2)) : 0.0f;
+                vec2 q = o.points[k] + ab * t;
+                float d = (r.points.back() - q).length();
+                if (d < o.width * 0.5f && d < best){
+                    best = d;
+                    r.end = GRID_RIVER_JOIN;
+                    r.joins = (int)j;
+                    on = q;
+                }
+            }
+        }
+        if (r.end == GRID_RIVER_JOIN){
+            r.points.back() = on;
+        }
+        //...or else it SINKS into a swallow hole where it stops, as it was made.
+    }
+    //Each pond where it fits on the plateau; one that does not is left out, and counted for the tools to say so.
+    for (const GridPlacedPond& k : water.ponds){
+        ChasmLayout::Pond p;
+        p.centre = k.centre;
+        p.radius = std::max(GRID_PLACED_POND_SMALLEST,std::min(GRID_PLACED_POND_LARGEST,k.radius));
+        if (ChasmPondFits(layout,p.centre,p.radius,lo,hi)){
+            layout.ponds.push_back(p);
+        }else{
+            layout.ponds_dropped++;
+        }
+    }
 }

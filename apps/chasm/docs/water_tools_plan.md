@@ -8,7 +8,8 @@ both for setting a scenario up:
   can make it endless.
 - **Water placed by hand**: rivers and ponds drawn onto the map, as part of the map itself.
 
-Step 1, the well, built and checked 2026-10-18 (as built under "The well"); steps 2-4, the water, not yet.
+All four steps built and checked 2026-10-18 - the well, placed rivers, ponds and the panel's river and pond tools
+(as built under each).
 
 ## Decided (the user, 2026-10-18)
 
@@ -142,6 +143,43 @@ follows from where it was drawn:
 This is the hand-made river that `test_maps_plan.md` step 6 left out of the title's town as untried. Once it
 works, the town can have one.
 
+### As built: step 2, rivers (2026-10-18)
+
+- **The settings**: `GridSettings::water`, a `GridWater` (`GridWater.h`) - each `GridPlacedRiver` its points and a
+  width (`GRID_PLACED_RIVER_WIDTH` 4 unless given, held to 1.5..12). In `operator==`. The save's `"grid"` block
+  holds it as `"water"` only when there is any, through `GridWaterToJson` / `GridWaterFromJson` (`ChasmSave.h`),
+  which `chasm_generate` takes too; `chasm_grid` reports it under `settings`, and its `river_list` marks each
+  river `placed`.
+- **Into the layout**: `Grid::Generate` calls `ChasmPlaceRivers` (`ChasmLayout.cpp`) right after the layout is
+  made - the chasm's or a test kind's empty one - so the placed rivers come after the layout's own and a chasm
+  map's rivers keep their indices (their wander and lakes are seeded by index). Each is first made a course
+  through its points, `GridSmoothLine` every `PLACED_RIVER_SPACING`; then its ends: a source within
+  `PLACED_RIVER_EDGE` of the map's edge comes in from `PLACED_RIVER_PAST` beyond it; the first RIM it crosses makes
+  it a FALL, its line ended `PLACED_RIVER_PAST` past the lip; else an end at the edge an EDGE river; else an end
+  inside another river's water (its layout width) a JOIN, the last point put on that river's course; else a
+  SINK. `Grid::Hash` already covered `layout.rivers`, so nothing else was needed for the world hash.
+- **Nothing else changed**: `Terrain::BuildRivers` was written for hand-placed lines already (Chaikin's corners,
+  ends kept), and everything past it - wet, banks, water, swallow hole, falls, bridges, collectors - reads it.
+- *Checked* (debug, a copy on port 8777; A = today's tree without this step, built from a copy of the app folder
+  with the step's edits undone and diffed to show nothing else):
+  - Flat map seed 5 (4,000 cells, 152 x 83) with a river from the west edge to the east, a stream from the north
+    edge stopping inland and a branch into the river: they came out `river_off_edge`, `stream` and `branch`
+    (joins 0), 1,007 of 3,941 plots wet. From above: the river edge to edge, the branch's streaks blending in at
+    the confluence, the stream ending in its swallow hole, trees off the banks.
+  - A collector refused on the wet bank (3 plots), placed on the first dry one, staffed from a house nearby and
+    full (5) after 1,500 ticks; a bridge across the river, 15.9 long over 9 wet plots.
+  - Saved, a different map generated, loaded: the world hash back to `d2e40ff7a478d295`, a re-save byte for byte
+    the save. A 1,500-tick recording on the river map, replayed twice from a chasm map: the river map remade each
+    time (the same hash, its three placed rivers) and the traces equal on all 1,503 ticks.
+  - On the default chasm map (seed 12, its hash `3782e0fcc63d838d` unchanged without water), a river drawn from the
+    east edge westward fell at the rim: brink, sheet and streaks as the generated falls. **It fell onto a
+    balcony**, the untried case, and the sheet passes through the balcony's deck: the generator never puts a fall
+    there, and a placed river does not refuse it yet.
+  - The A/B: `chasm_seed_sweep.py 1 60` identical line for line on A and B, no failures; all 18 saves loaded with
+    the same world hash in both and the 36 files (at once, and after 3,000 ticks) the same byte for byte; 6,000
+    ticks recorded on A from `village_year5`, six zombies dropped halfway, replayed on A and B - equal on all
+    6,001 ticks.
+
 ### Ponds
 
 A pond is a centre and a radius, the radius being its water's edge.
@@ -155,6 +193,38 @@ A pond is a centre and a radius, the radius being its water's edge.
   (`WaterMesh`). A per-vertex `Terrain::pond` says which vertices a pond reaches.
 - **Only on the plateau.** A pond reaching a rim, a wall or the mountain is refused: the pools are drawn only on
   plateau cells.
+
+### As built: step 3, ponds (2026-10-18)
+
+- **The settings**: `GridWater::ponds`, each a `GridPlacedPond` - its middle and its radius to the water's edge
+  (`GRID_PLACED_POND_RADIUS` 6 unless given, held to 2..30). In the JSON as `"ponds":[{"x","z","radius"}]`.
+  `ChasmPlaceRivers` became `ChasmPlaceWater`: after the rivers, each pond that fits goes into `ChasmLayout::ponds`,
+  hashed with the rivers (`Grid::Hash`); one that does not is left out and counted (`ponds_dropped`), and
+  `chasm_grid` lists both (`pond_list`, `ponds_dropped`).
+- **Fits** (`ChasmPondFits`, shared by the layout and the tool's preview): its middle and two rings out to
+  `GRID_POND_BANK` plus `PLACED_POND_CLEAR` past its water inside the map, off the rift (`ChasmRiftDistance`), south
+  of the mountain's foot and clear of every crack.
+- **The ground**: in `BuildRelief`, after the rivers' fade, the relief fades out round each pond over
+  `RELIEF_RIVER_FADE`, then the bowl is pressed in - `TERRAIN_POND_DEPTH` (1) under the water over its middle half,
+  up to the water at its radius, back to the plateau over `GRID_POND_BANK` (3). A kind without hills gets a raster
+  only when it has a pond, zero but for the bowls.
+- **The water**: `Terrain::pond` marks the plateau plots within a pond's reach, and the swamp's two rules take "in
+  the swamp or a pond" - wet under the water and `SWAMP_SHORE` above it (`pond_wet_count`), and a cell under the
+  water drawn. **Drawn apart**, though (`WaterMeshData::ponds`, `water_ponds`, `SetWaterPondUniforms`): the first
+  ponds came out the swamp's murky green under its haze; a pond is the rivers' clear blue at the pools' stillness
+  (`WATER_POND_FLOW`), the same shader as a program of its own.
+- *Checked* (debug, a copy on port 8777):
+  - The flat map seed 5 with the three rivers and three ponds: two drawn, the third - against the east edge - left
+    out; wet plots 1,007 to 1,098. A house refused in a pond ("too close to water"); a collector refused on its wet
+    shore and placed on the first dry plot, 9 from the middle of a pond of 7, staffed from a house, full after
+    1,500 ticks.
+  - On the chasm map (seed 12) a pond of 7 on the plateau's highest temperate ground (11.9): its middle pressed to
+    -1.57 and wet, the rings at 4 and 6 under the water, its shore at 8, the ground back at the plateau's level by
+    10 and rising through the fade (about 1 at 14, 6 to 7 at 24 against 11 to 12 before) - the pond level in a
+    hollow of the hill, reeds round it.
+  - Saved, another map generated, loaded: the world hash the same, a re-save byte for byte the save. A 1,500-tick
+    recording on the map with rivers and ponds, replayed twice from another map: rebuilt each time (its hash, three
+    rivers, two ponds), the traces equal on all 1,503 ticks.
 
 ### The tools
 
@@ -171,6 +241,35 @@ A pond is a centre and a radius, the radius being its water's edge.
 
 A 4,000-cell test map generates in about 20 ms in debug (grid 11.9, levels 2.0, mesh 4.2, forest 0.3, measured
 for `test_maps_plan.md`), so a new map per pond is no wait.
+
+### As built: step 4, the tools (2026-10-18)
+
+- **`CHASM_TOOL_RIVER` and `CHASM_TOOL_POND`**: "River (debug)" and "Pond (debug)" beside the well on the panel's Paint
+  tools, locked in play (`ToolsLocked`; `chasm_tool` says "a debug tool, never in play mode"). `chasm_tool` takes
+  `river` and `pond`, so a script drags them with `hover_x`/`hover_z` and `button`.
+- **The drag** (`UpdateWaterDrag`, from `UpdatePaint`, the physics thread): not the road's plot chain after all but
+  the cursor's own course - a point every `WATER_DRAG_STEP` (3) - since the terrain rounds a river's line itself; a
+  pond's middle and the edge it is dragged to. On release `PlaceWater`: the world's settings with the water added,
+  `RegenerateGrid` there and then, as the N key does; refused while `input_record` runs, a river of one point, a
+  pond under `GRID_PLACED_POND_SMALLEST` or one that does not fit.
+- **The preview** (the pick view): a river's middle and its two edges at the panel's width, a pond's water's edge and
+  its bank, green - a pond red where it would not fit.
+- **The panel** (`RenderWaterTools`, under either tool): the next river's width, each placed river (its points, its
+  width, how it came to end) and pond (a note if it was left out), each with an x to take it away, "Take all the
+  water away", and what the last placing came to. The Generate section's own settings keep the map's water, so
+  Generate, the seed buttons and N do too, as `chasm_generate` does; New game and the title start from none.
+- *Checked* (debug, a copy on port 8777, by `chasm_tool` drags):
+  - A river dragged from the west edge to the east: placed as `river_off_edge` at the panel's 4, its 13 points kept;
+    the preview its three lines across the map while held.
+  - A pond dragged out to 7: placed, drawn the rivers' clear blue with a foam rim; one dragged against the east edge:
+    its circles red, and refused on release. A pond dragged while recording: refused, the world hash the same.
+  - In play mode `river`, `pond` and `well` all refused; in debug mode taken.
+  - **Not seen**: the panel's water list. Its Paint section was scrolled out of the window, and ImGui cannot be
+    scrolled or clicked by a script; its buttons call the same `PlaceWater` the tools do.
+- **The A/B** (steps 3 and 4 together; A = today's tree without them, from a copy of the app folder with their edits
+  undone, `diff -r` showing nothing else): `chasm_seed_sweep.py 1 60` identical on A and B - and to step 2's; all 18
+  saves the same world hash in both and the 36 files byte for byte the same; 6,000 ticks recorded on A from
+  `village_year5` with six zombies dropped, replayed on A and B - equal on all 6,001 ticks, ending on step 2's hash.
 
 ### Why not keep the colony
 
@@ -209,9 +308,11 @@ Step 1 and steps 2-4 do not depend on each other.
 |---|---|
 | `ECONOMY_WELL_WATER_MIN`, `_MAX` | 100 and 200. A unit is two days of an adult's water, so ten people draw a well dry in 20 to 40 days |
 | `ECONOMY_WELL_ENDLESS` | 40, the settlers' water: what an endless well is kept at |
-| `POND_DEPTH` | about 1, as deep as the swamp's pools |
-| `POND_BANK` | 3, the rise past the water's edge |
-| A placed river's width | 4 from the panel, between a branch's 2.2-3.4 and a river's 5-7.5 |
+| `TERRAIN_POND_DEPTH` | 1, as deep as the swamp's pools |
+| `GRID_POND_BANK` | 3, the rise past the water's edge |
+| `GRID_PLACED_POND_RADIUS` | 6 unless given, held to 2..30 (`GRID_PLACED_POND_SMALLEST`, `_LARGEST`) |
+| `GRID_PLACED_RIVER_WIDTH` | 4, the panel's to start with, between a branch's 2.2-3.4 and a river's 5-7.5; held to 1.5..12 |
+| `WATER_DRAG_STEP` | 3: the river tool takes a point each time the cursor has gone this far |
 
 ## Later
 

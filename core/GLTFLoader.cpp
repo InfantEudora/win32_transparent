@@ -1372,6 +1372,38 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
     }
 
+    /*
+        A SKINNED node loaded as a plain mesh comes back at the origin, as every other mesh does.
+
+        Ignoring the node's transform is what puts a static prop there, and it does nothing for a skinned
+        one: the exporter writes a skinned mesh's vertices in SCENE space, so they carry wherever its armature
+        stood in the .blend - chasm's zombie at x -5. Drawn skinned, that cancels out (see GetSkeleton). Drawn
+        plain, it did not, and the figure stood five units off its object. So the armature's transform is
+        taken back out here, all of it, which leaves the vertices exactly where the skinned draw puts them at
+        its bind pose: one figure, the same either way. The skinned load keeps the file's space, which the
+        inverse bind matrices are written against.
+    */
+    if (!skinned && node->skin > -1){
+        fmat4 to_rig = ArmatureTransform(node->skin);
+        to_rig.inverse_transform();
+        const vec3 origin = to_rig * vec3(0.0f,0.0f,0.0f);
+        auto turn = [&](vec3& d, bool f_unit){
+            d = to_rig * d - origin;
+            if (f_unit && d.length() > 1e-12f){
+                d.normalize();
+            }
+        };
+        for (vertex& v : verts){
+            v.pos = to_rig * v.pos;
+            turn(v.normal,true);
+            turn(v.tangent,true);
+        }
+        for (morph_vertex& m : morph_verts){
+            turn(m.pos,false);
+            turn(m.normal,false);
+        }
+    }
+
     size_t final_vertex_count = skinned ? skinned_verts.size() : verts.size();
     debug->Info("Loaded %i vertices. Loaded %i materials\n",final_vertex_count,materials.size());
     debug->Info("Loaded %i associated morph_target vertices.\n",morph_verts.size());
@@ -1614,6 +1646,42 @@ int GLTFLoader::ParentNodeOf(int node_index){
         }
     }
     return -1;
+}
+
+/*
+    Where a skin's rig stood in the file: the transform of what its first root joint hangs from - the armature
+    node and anything above it - composed up to the scene's root. Identity when the joint is itself a root.
+*/
+fmat4 GLTFLoader::ArmatureTransform(int skin_index){
+    fmat4 m;
+    m.identity();
+    if (skin_index < 0 || skin_index >= (int)model.skins.size()){
+        return m;
+    }
+    const std::vector<int>& joints = model.skins.at(skin_index).joints;
+    int root = joints.empty() ? -1 : joints.at(0);
+    for (int up = (root >= 0) ? ParentNodeOf(root) : -1; up >= 0 && JointIndexOf(joints,up) >= 0; up = ParentNodeOf(up)){
+        root = up;
+    }
+    for (int p = (root >= 0) ? ParentNodeOf(root) : -1; p >= 0; p = ParentNodeOf(p)){
+        const tinygltf::Node& n = model.nodes.at(p);
+        fmat4 local;
+        if (n.matrix.size() == 16){
+            float f[16];
+            for (int i = 0; i < 16; i++){
+                f[i] = (float)n.matrix[i];
+            }
+            memcpy(&local,f,sizeof(fmat4));     //column-major, as Getfmat4 reads an accessor's
+        }else{
+            vec3 t = (n.translation.size() == 3) ? vec3(n.translation[0],n.translation[1],n.translation[2]) : vec3(0.0f,0.0f,0.0f);
+            quat r = (n.rotation.size() == 4) ? quat(n.rotation[0],n.rotation[1],n.rotation[2],n.rotation[3])
+                                              : quat(0.0f,0.0f,0.0f,1.0f);
+            vec3 s = (n.scale.size() == 3) ? vec3(n.scale[0],n.scale[1],n.scale[2]) : vec3(1.0f,1.0f,1.0f);
+            local = Object::ComposeTransformScale(t,r,s);
+        }
+        m = m * local;      //a child's world is its local times its parent's (Object::GetWorldTransformScaleMatrix)
+    }
+    return m;
 }
 
 Bone* GLTFLoader::GetBone(int node_index, const std::vector<int>& joints, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager){

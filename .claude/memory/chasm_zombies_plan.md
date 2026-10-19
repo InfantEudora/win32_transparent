@@ -1,6 +1,6 @@
 ---
 name: chasm-zombies-plan
-description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; 3b guards hold their posts BUILT 2026-10-18 (tools/chasm_guard_test.py); walls break next"
+description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; 3b guards hold their posts BUILT 2026-10-18 (tools/chasm_guard_test.py); steps 4 walls break + 5 alarm DECIDED 2026-10-18"
 metadata:
   node_type: memory
   type: project
@@ -10,7 +10,7 @@ metadata:
 
 Talked through 2026-10-13/14. **The user's decisions** (2026-10-14): damage off the HEALTH bar (no second bar, to
 start); zombies go for PEOPLE ONLY; the dead do NOT rise; waves of TENS (a colony has 1-2 archers early); the
-figure is `zombie` in chasm_props.glb, unrigged, no clips yet (gets the man's later); start from a DEBUG TOOL
+figure is `zombie` in chasm_props.glb, unrigged at first - rigged and drawn skinned with the man's Walking + Idle 2026-10-18 ([[chasm-villager-animation]]); start from a DEBUG TOOL
 dropping zombies into the running scene.
 
 **Step 1 BUILT 2026-10-14**: `EconomyZombie` in `EconomyState::zombies` (rules in `Zombies.cpp` as Economy
@@ -44,7 +44,11 @@ climbing down mid-wave when the archer died); bite-induced pressing hunger sends
 
 **Step 3b BUILT 2026-10-18** (the user's): every guard keeps his tower until RELEASED - `AssignJobs` keeps them as it keeps the hand-picked (posted + hand-picked first, then automatic, so a lowered count still drops automatic first); `ZombiesInRange` (Shooting.cpp: a zombie in FIGHT_REACH, or ShotTarget with NO arrows counted) stops a pressing need sending anyone posted off his post; `PackUp` (TakePost + GoHome) sends a guard with < NEEDS_PACK_WATER by the nearest water first, towers excluded (`SeekSupplyOf` f_towers). **The test: `python apps/chasm/tools/chasm_guard_test.py --port N`** against a DEBUG copy (replaces the map; flat test map, paused): shortage, death (Lieve), player, wave, pack, pack_errand - 5 failed before, all 6 pass after, ~1 min. Replays bit-exact. **Drinking between shots BUILT** (user's yes): `DrinkBetweenShots` (Shooting.cpp) holds the next Shoot turn for a 1 s drink when a whole water unit fits - tower water first, else pack; water only, food still waits. Test case `drink` (7 cases, all pass). The user is judging how shooting feels in the game first. Small findings stay as notes in the plan's "Noted, for later" list.
 
-**Next (each on the user's go-ahead)**: 4 walls break (time-to-break cost, flow field). Also open: fleeing/alarm,
+**Steps 4 + 5 DECIDED 2026-10-18, not built** (zombies_plan.md "Step 4: walls break", "Step 5: the alarm"): the user's - gate WEAKER than a palisade plot; houses BREACHED not broken (far less time, then passable to zombies); garden walls/lot fences a SLOW crossing (climbed, unharmed); ONLY BUILDERS repair, only with no zombies about; the ALARM shuts the gates and everyone not on guard HIDES in his house; gate jams for people later. My proposals in the plan: breaking as a route COST in seconds (EdgeOpen -> cost for WALK_WHO_ZOMBIE), strengths in zombie-seconds (wall 60, gate 30, house 10, climb 3), harm saved/hashed while any, a broken plot back to a wall site via the zones (like ground_raises) leaving half its wood as a crate, a FLOW FIELD for targets by walking time, sub-steps 4a-4e with tools/chasm_wall_test.py. The user, 2026-10-18: people in a BREACHED house ARE reachable (hiding buys time, not safety).
+
+**4a DONE 2026-10-18, no rule change**: `tools/chasm_wall_test.py` (ring, gate_shut, gate_open control, through) on flat test maps - walls and shut gates stop zombies (they go LOST), and nothing reaches through: nearest body across a palisade 4.40 vs FIGHT_REACH 1.0, since bodies stand on plot points/walks and a palisade is a plot wide. A 'nothing between' rule for bites/blows was weighed and LEFT OUT; re-ask with `through` in 4b. add_person people on a test map log a ChasmStats check error each dawn (not born/settled) - for the test maps window.
+
+**Next (each on the user's go-ahead)**: 4b (breaking as a route cost, harm, breaches). Older list: 4 walls break (time-to-break cost, flow field). Also open: fleeing/alarm,
 waves from the swamp, zombies' stop points spread round a target, arrows as tower stock.
 
 **Why:** the colony is 12 people with no immigration, so combat is designed to be won by placement, not by

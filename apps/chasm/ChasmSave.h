@@ -45,6 +45,11 @@ struct ChasmSave{
 
 nlohmann::json ChasmSaveToJson(const ChasmSave& s);
 bool ChasmSaveFromJson(const nlohmann::json& j, ChasmSave& out, std::string& error);
+//Water placed by hand (GridWater.h) as the save's "grid" block and chasm_generate hold it:
+//{"rivers":[{"points":[[x,z],...],"width":w}],"ponds":[{"x":x,"z":z,"radius":r}]} - either list may be left out, a
+//river's width and a pond's radius too. False, with `error`, if malformed.
+nlohmann::json GridWaterToJson(const GridWater& w);
+bool GridWaterFromJson(const nlohmann::json& j, GridWater& out, std::string& error);
 
 /*
     THE GAME'S FOLDERS - saves/, recordings/, reports/ - found from the exe, as main.cpp finds the assets, never from

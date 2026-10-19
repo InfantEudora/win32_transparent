@@ -62,6 +62,9 @@ struct WaterMeshData{
         world's z - the streaks just drift.
     */
     std::vector<vertex> pools;
+    //PONDS placed by hand (water_tools_plan.md): the same cells, where a pond's bowl dips under the water - apart from
+    //the swamp's, since a pond is clear water, a river's blue, not a swamp's murk (ApplicationChasmWater.cpp).
+    std::vector<vertex> ponds;
     float build_ms = 0.0f;
 };
 

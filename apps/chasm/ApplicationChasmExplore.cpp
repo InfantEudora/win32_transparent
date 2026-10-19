@@ -251,8 +251,9 @@ uint32_t ApplicationChasm::ToolsLocked() const{
         return 0;
     }
     uint32_t found = discovered_mask.load();
-    uint32_t locked = 1u << CHASM_TOOL_WELL;        //a debug tool (water_tools_plan.md): never in play
-    static_assert(CHASM_TOOL_WELL < 32,"a tool's bit in the mask");
+    //The debug tools of water_tools_plan.md: never in play.
+    uint32_t locked = (1u << CHASM_TOOL_WELL) | (1u << CHASM_TOOL_RIVER) | (1u << CHASM_TOOL_POND);
+    static_assert(CHASM_TOOL_COUNT <= 32,"a tool's bit in the mask");
     for (int t = 0; t < CHASM_TOOL_COUNT && t < 32; t++){
         int need = ChasmToolNeeds(t);
         if (need >= 0 && !(found & (1u << need))){

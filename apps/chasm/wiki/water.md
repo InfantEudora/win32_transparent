@@ -1,11 +1,11 @@
 ---
 title: Water
-aliases: river, rivers, pool, pools
+aliases: river, rivers, pool, pools, pond, ponds
 kind: goods
 status: built
 summary: Drawn from rivers and pools by water collectors. Everyone drinks it, and nothing else quenches thirst.
-plans: economy_plan.md > Production; needs_plan.md > Current tuning
-code: Economy.h: NEEDS_WATER_WORTH ECONOMY_WATER_ROOM; Economy.cpp: Consume EconomyCollectorRoom
+plans: economy_plan.md > Production; needs_plan.md > Current tuning; water_tools_plan.md > As built: step 4, the tools
+code: Economy.h: NEEDS_WATER_WORTH ECONOMY_WATER_ROOM; Economy.cpp: Consume EconomyCollectorRoom; GridWater.h: ChasmPlaceWater ChasmPondFits
 verified: 2026-10-18
 ---
 
@@ -23,3 +23,7 @@ verified: 2026-10-18
 
 The river's wet bank and stones can't be walked or built on. Bridges cross rivers - and in winter the
 [[Posts|posted]] cross the ice ([[Seasons]]); nothing crosses the chasm on foot.
+
+**Placed by hand** (debug, for test maps): the panel's River and Pond tools, or `chasm_generate`'s `water`, add
+rivers and ponds to the map's settings - each a new map. A placed river is a river like any other, ending where it
+was drawn; a pond is still, clear water pressed into the plateau, a pool's rules round it.

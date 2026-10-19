@@ -1,6 +1,6 @@
 ---
 name: chasm-water-tools-plan
-description: "Chasm wells + placed water for test maps - step 1 (debug WELL) BUILT 2026-10-18, A/B clean; steps 2-4 (rivers/ponds in GridSettings) next; apps/chasm/docs/water_tools_plan.md"
+description: "Chasm wells + placed water for test maps - ALL 4 steps BUILT 2026-10-18 (well, rivers, ponds, River/Pond debug tools), A/B clean; apps/chasm/docs/water_tools_plan.md"
 metadata:
   node_type: memory
   type: project
@@ -15,7 +15,18 @@ Plan: `apps/chasm/docs/water_tools_plan.md` (decided with the user 2026-10-18; a
   FetchFrom + KeepTowers take from it, SeekSupplyOf needed nothing. Endless only via `set_stock endless:true`
   (EconomyState::endless, CHASM_CMD_STOCK value[3], saved as "endless_wells" only when present). Look = BuildWell,
   offset off the plot point so drinkers stand beside it. wiki/well.md.
-- **Placed water - steps 2-4, not built**: `GridSettings::water` (rivers + ponds) beside `kind`, saved only when
+- **Placed rivers - step 2 BUILT 2026-10-18**: GridWater.h + ChasmPlaceRivers (ChasmLayout.cpp), called in Grid::Generate
+  right after the layout; save `grid.water` only when non-empty; chasm_generate `water`, chasm_grid river_list `placed`.
+  A fall onto a BALCONY passes through its deck (not refused yet).
+- **Ponds - step 3 BUILT**: GridWater::ponds -> ChasmLayout::ponds via ChasmPlaceWater (renamed from ChasmPlaceRivers);
+  ChasmPondFits drops ones off the plateau (ponds_dropped). Bowl in BuildRelief after the river fade; Terrain::pond
+  mask widens the swamp's wet + pool rules. Drawn APART (WaterMeshData::ponds, water_ponds, SetWaterPondUniforms):
+  the swamp pool shader is murky green, a pond is the rivers' blue at pool stillness.
+- **Tools - step 4 BUILT**: CHASM_TOOL_RIVER/POND on the debug panel (locked in play); UpdateWaterDrag samples the
+  cursor every 3 units; PlaceWater regenerates on release (refused while recording); preview in the pick view;
+  RenderWaterTools lists/removes water (NOT seen on screen - ImGui can't be scrolled by script). The panel's
+  next_settings.water follows the map, so Generate/N keep water; New game/title start with none.
+- **Placed water, the design**: `GridSettings::water` (rivers + ponds) beside `kind`, saved only when
   non-empty, appended into the layout in Grid::Generate, hashed. Rivers = GridRiverLine (EDGE/JOIN/SINK by where
   drawn). Ponds = the swamp's pools generalised (bowl in the relief; the two biome==SWAMP checks widened).
   Placing water REGENERATES the map = a new colony (user OK: water only at a scenario's start). Chasm maps too.

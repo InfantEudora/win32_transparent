@@ -361,7 +361,76 @@ json ChasmSaveToJson(const ChasmSave& s){
     if (!GridKindHasChasm(g.kind) && g.kind < GRID_KINDS){
         out["grid"]["kind"] = grid_kind_names[g.kind];
     }
+    //Water placed by hand (water_tools_plan.md) - likewise only when there is any.
+    if (!g.water.Empty()){
+        out["grid"]["water"] = GridWaterToJson(g.water);
+    }
     return out;
+}
+
+json GridWaterToJson(const GridWater& w){
+    json rivers = json::array();
+    for (const GridPlacedRiver& r : w.rivers){
+        json points = json::array();
+        for (const vec2& p : r.points){
+            points.push_back(json::array({p.x,p.y}));
+        }
+        rivers.push_back(json{{"points",points},{"width",r.width}});
+    }
+    json ponds = json::array();
+    for (const GridPlacedPond& k : w.ponds){
+        ponds.push_back(json{{"x",k.centre.x},{"z",k.centre.y},{"radius",k.radius}});
+    }
+    return json{{"rivers",rivers},{"ponds",ponds}};
+}
+
+bool GridWaterFromJson(const json& j, GridWater& out, std::string& error){
+    out = GridWater();
+    if (j.is_null()){
+        return true;        //none
+    }
+    if (!j.is_object()){
+        error = "water is an object: {\"rivers\":[{\"points\":[[x,z],...],\"width\":w}]}";
+        return false;
+    }
+    const json& rivers = j.value("rivers",json::array());
+    if (!rivers.is_array()){
+        error = "water.rivers is a list";
+        return false;
+    }
+    for (const json& jr : rivers){
+        GridPlacedRiver r;
+        const json& points = jr.is_object() ? jr.value("points",json::array()) : json();
+        if (!points.is_array() || points.size() < 2){
+            error = "a placed river takes two points or more, each [x,z]";
+            return false;
+        }
+        for (const json& p : points){
+            if (!p.is_array() || p.size() != 2 || !p[0].is_number() || !p[1].is_number()){
+                error = "a placed river's point is [x,z]";
+                return false;
+            }
+            r.points.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
+        }
+        r.width = jr.value("width",r.width);
+        out.rivers.push_back(r);
+    }
+    const json& ponds = j.value("ponds",json::array());
+    if (!ponds.is_array()){
+        error = "water.ponds is a list";
+        return false;
+    }
+    for (const json& jk : ponds){
+        if (!jk.is_object() || !jk.contains("x") || !jk.contains("z") || !jk["x"].is_number() || !jk["z"].is_number()){
+            error = "a placed pond is {\"x\":x,\"z\":z,\"radius\":r} - its radius optional";
+            return false;
+        }
+        GridPlacedPond k;
+        k.centre = vec2(jk["x"].get<float>(),jk["z"].get<float>());
+        k.radius = jk.value("radius",k.radius);
+        out.ponds.push_back(k);
+    }
+    return true;
 }
 
 bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
@@ -392,6 +461,10 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             error = "a map of a kind this build does not know";
             return false;
         }
+    }
+    //No water is none placed by hand: every save before it (water_tools_plan.md), and every one since without any.
+    if (g.contains("water") && !GridWaterFromJson(g["water"],s.water,error)){
+        return false;
     }
     out.world_hash = j.value("world_hash",std::string());
     for (const json& jb : j.value("buildings",json::array())){

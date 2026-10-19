@@ -86,17 +86,11 @@ const char* gear_asset_names[GEAR_ASSETS] = {"bow","quiver"};
 #define WORKER_FOOT_R       "Foot.R"
 #define WORKER_WALK_SPEED   0.81f
 
-namespace {
-
-//The bone each load rides on: the log, the sack and the tent on the spine, which the shoulders and back move
-//with; the pail in the right hand. A rig without the bone carries the load on its root, still.
-const char* load_bone_names[WORKER_LOADS] = {NULL,"Spine","Spine","Hand.R","Spine"};
-
 /*
     After Object::AddAnimation: a track this rig BORROWED - bound by name to a bone of a node it was not
     made for (Animation::LinkObjects), another rig's channel - is played as turns only, since its positions
     are that rig's bone offsets and would stretch this one to its proportions. A rig's own channels keep
-    theirs, the hips' bob with them.
+    theirs, the hips' bob with them. The zombies' too (ApplicationChasmZombies.cpp).
 */
 void KeepOwnPositions(Animation* clip){
     for (ObjectAnimation* track : clip->object_animations){
@@ -110,7 +104,8 @@ void KeepOwnPositions(Animation* clip){
 /*
     World units a second `walk` carries this rig at rate 1, posed on a skeleton that is in no scene: each
     foot swings fore and aft about one step, and a cycle is two - so the two feet's ranges, at the drawn
-    scale, over the clip's length. 0 when the rig has no feet by those names.
+    scale (the people's, which the zombies share), over the clip's length. 0 when the rig has no feet by
+    those names.
 */
 float MeasureWalkSpeed(Skeleton* probe, Animation* walk){
     Bone* feet[2] = {probe->FindBone(WORKER_FOOT_L),probe->FindBone(WORKER_FOOT_R)};
@@ -131,6 +126,12 @@ float MeasureWalkSpeed(Skeleton* probe, Animation* walk){
     }
     return ((hi[0] - lo[0]) + (hi[1] - lo[1])) * PERSON_MODEL_SCALE / walk->duration;
 }
+
+namespace {
+
+//The bone each load rides on: the log, the sack and the tent on the spine, which the shoulders and back move
+//with; the pail in the right hand. A rig without the bone carries the load on its root, still.
+const char* load_bone_names[WORKER_LOADS] = {NULL,"Spine","Spine","Hand.R","Spine"};
 
 //An axis-aligned box from lo to hi, flat-shaded.
 void Box(std::vector<vertex>& out, const vec3& lo, const vec3& hi, int column){
@@ -486,22 +487,12 @@ void ApplicationChasm::BuildWorkerScene(){
         worker_skin_mesh[f] = mesh;
         worker_skin_name[f] = skin;
         /*
-            HOW TALL IT IS DRAWN, which is not how tall its vertices are. They are in the file's space, the armature's
-            place and scale in them; the skin draws them by a bone's bind matrix after its inverse bind matrix, which
-            leaves the armature out (GLTFLoader::GetSkeleton) - the same change for every bone at the bind pose, so
-            any one will do. The woman's armature is scaled 0.83 in the file: her vertices are 1.73 tall, and she is
-            drawn 2.09. Her loads and her kit are fitted to what is drawn.
+            HOW TALL IT IS DRAWN: its static mesh's height, which GLTFLoader loads as the skin draws it at the bind
+            pose - the armature's place and scale in the file taken out (GetMeshFromNode, GetSkeleton). The woman's
+            armature is scaled 0.83 in the file: in it she is 1.73 tall, and she is drawn 2.09. Her loads and her kit
+            are fitted to what is drawn.
         */
-        std::vector<Bone*> bones;
-        probe->GetAllBones(probe,bones);
-        Mesh* figure = assetmanager->GetMeshFromAsset(person_asset_names[f]);
-        float drawn = 0.0f;
-        if (!bones.empty() && figure){
-            fmat4 bind = bones[0]->GetWorldTransformScaleMatrix();
-            for (const vertex& v : figure->GetVertices()){
-                drawn = fmaxf(drawn,(bind * (bones[0]->inverse_bind_matrix * v.pos)).y);
-            }
-        }
+        float drawn = height(assetmanager->GetMeshFromAsset(person_asset_names[f]));
         if (f == PERSON_ADULT_MALE && drawn > 0.0f){
             man_drawn = drawn;
         }

@@ -313,6 +313,27 @@ should list every goal and let each be turned off so it does not trigger.
   panel seen in a throwaway build with its section moved to the top.
 - Session only: a restart puts every switch back on.
 
+## After: the cracks kind (2026-10-18)
+
+The user's: the cracked-mud chasm from testfx (`chasm_cracks.frag`, mode 0, pull-apart) with their bench settings,
+as a map kind, to see what that generation looks like in the game - the terrain only, no mountain or biomes yet.
+Not a shader in the game: the same field in C++, reproducible from the seed.
+
+- **`GRID_KIND_CRACKS`** (`"cracks"`): a test kind like the others (no layout, no camp, nobody, all explored, no
+  autosave), so the chasm-only checks are skipped and the game's forest grows on it as on the title's map.
+- **`MudCracks.h`** is the shader's `Sample()` without what only colours it (hairlines, rubble, the lip), sampled
+  once per plot in `Terrain::BuildHeights`; then `Terrain::SettleHeights` - the saddle and pit pass every map
+  ends with, moved out of `BuildHeights` unchanged - and the kinds as on any map. The bench's uniforms are named
+  constants at the top of `MudCracks.cpp`; the bench's seed -7 is `chasm_generate {"kind":"cracks","seed":-7}`.
+- **What the game makes of it**: a crack narrower than about a plot falls apart into separate plots, and every pit
+  but the chasm is filled - so the shallow cracks away from the rift (`crack_far`) and the cracks' thin ends go, and
+  what is left near the rift is trenches a plot or two wide. The rift runs off the north edge (`rift_tip` 1.11).
+- *Checked* (debug, port 8769): against the bench at its own map size (540 x 337.5, zoom 1.13) the shapes match
+  the user's screenshot - islands, slumped plates, crack network. Seed -7 on the 50k map: plateau 40,056 plots,
+  balcony 1,669, island 1,124, bare 156, floor 7,796; 407 pit plots filled, 77 saddles raised; one chasm; each side
+  one region with 4 pockets cut off (285 plots). Levels 82-87 ms in debug against the chasm map's 107. The same seed
+  twice, another between, gave a pixel-identical frame; the field alone is bit-identical at -O0, -Og and -O3.
+
 ## Order and size
 
 Steps 1-3 are a few hundred lines over about eight files, the grid, terrain, forest, zones, economy, save,

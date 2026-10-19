@@ -6,20 +6,102 @@
 #include "MCPServer.h"
 #endif
 #include "AssetManager.h"
+#include "Debug.h"
 #include <algorithm>
 #include <math.h>
+
+static Debugger* debug = new Debugger("ChasmZombies",DEBUG_ALL);
 
 /*
     ZOMBIES IN THE APP (docs/zombies_plan.md, step 1): the debug tools that drop them - Z under the cursor, the panel,
     the chasm_zombie tool - each a recorded CHASM_CMD_ZOMBIE, and the zombies drawn. Their rules are the economy's
     (Economy.h, ZOMBIES; Zombies.cpp).
 
-    DRAWN: the props file's `zombie` at the people's scale, one instance set for all of them, rebuilt every frame
-    there are any - they move every tick. Unrigged and with no clips for now (the user's): it glides. Not drawn under
-    the clouds where they are shown, so one comes out of them as it walks in.
+    DRAWN: the props file's `zombie` at the people's scale. RIGGED (2026-10-18: `zombie_armature`, a copy of the
+    man's), as the people are - a skeleton per zombie sharing the one skinned mesh, walking the man's walk while its
+    route has a leg left, at that leg's speed, and standing in his idle otherwise (ApplicationChasmWorkersView.cpp).
+    Without a rig, one instance set for all of them, rebuilt every frame there are any, and it glides. Either way not
+    drawn under the clouds where they are shown, so one comes out of them as it walks in.
 */
 
 #define ZOMBIE_MODEL_SCALE  0.46f   //the people's (PERSON_MODEL_SCALE): modelled as tall as the man, 1.85
+
+//Its clips, the man's, by their names in the props file - nothing of his bow.
+#define ZOMBIE_CLIP_NONE    0       //the rig's bind pose, and nothing to sample each tick
+#define ZOMBIE_CLIP_WALK    1
+#define ZOMBIE_CLIP_IDLE    2
+#define ZOMBIE_WALK_CLIP    "Walking"
+#define ZOMBIE_IDLE_CLIP    "Idle"  //stood in when the file has one (f_worker_idle_clip); the bind pose otherwise
+#define ZOMBIE_CLIP_BLEND   0.25f   //seconds a change of clip crossfades over, as a person's
+#define ZOMBIE_WALK_SPEED   0.81f   //its walk's pace for a rig without feet named as the man's: his
+
+//ApplicationChasmWorkersView.cpp: a borrowed track played as turns only, and a walk's pace from the rig's own feet.
+void KeepOwnPositions(Animation* clip);
+float MeasureWalkSpeed(Skeleton* probe, Animation* walk);
+
+/*
+    RENDER THREAD, from LoadProps: the zombie's rig, if its node has one - the skinned mesh every zombie shares, and the
+    pace its walk carries it at, from its own feet as the people's is. Its vertices are in the file's space, where
+    zombie_armature stood (x -5); the skin takes that back out, as it does the woman's (GLTFLoader::GetSkeleton).
+*/
+void ApplicationChasm::BuildZombieSkin(){
+    std::string skin = gltfloader.GetNodeSkinName(CHASM_ZOMBIE_ASSET);
+    if (skin.empty()){
+        debug->Info("'%s' has no rig - zombies are drawn static\n",CHASM_ZOMBIE_ASSET);
+        return;
+    }
+    Mesh* mesh = gltfloader.GetMeshFromNode(CHASM_ZOMBIE_ASSET,NULL,true);
+    Skeleton* probe = (mesh && mesh->IsSkinnedMesh()) ? gltfloader.GetSkeleton(skin.c_str(),assetmanager) : NULL;
+    if (!probe){
+        debug->Warn("'%s' has the skin '%s' but no skinned mesh or skeleton loads - drawn static\n",
+                    CHASM_ZOMBIE_ASSET,skin.c_str());
+        return;
+    }
+    mesh->Retain();     //held for good, as the people's are: every zombie's skeleton wears it
+    zombie_skin_mesh = mesh;
+    zombie_skin_name = skin;
+    Animation* walk = gltfloader.LoadAnimation(ZOMBIE_WALK_CLIP);
+    float measured = 0.0f;
+    if (walk){
+        walk->looped = true;
+        probe->AddAnimation(walk);
+        KeepOwnPositions(walk);
+        measured = MeasureWalkSpeed(probe,walk);
+    }
+    zombie_walk_speed = (measured > 0.01f) ? measured : ZOMBIE_WALK_SPEED;
+    debug->Info("'%s' is rigged (%s, %i bones): drawn skinned, walking %.2f units a second at rate 1%s\n",
+                CHASM_ZOMBIE_ASSET,skin.c_str(),probe->num_bones,zombie_walk_speed,
+                measured > 0.01f ? "" : " (not measured: no feet named as the man's)");
+    delete probe;   //never in the scene; its clip is left, a one-off
+}
+
+//The n'th zombie skeleton, wearing the shared mesh, with its own copy of each clip - hidden, in no scene yet.
+Object* ApplicationChasm::BuildZombieSkeleton(size_t n){
+    Skeleton* s = gltfloader.GetSkeleton(zombie_skin_name.c_str(),assetmanager);
+    if (!s){
+        return NULL;
+    }
+    s->name = "zombies " + std::to_string(n);      //"zombies": what the title's diorama leaves out (DioramaOptions)
+    s->SetMesh(zombie_skin_mesh);
+    s->SetMaterialSlot(0,palette_material);
+    s->SetPickability(false);
+    s->SetVisualOnly(true);
+    s->SetVisibility(false);
+    s->SetScale(vec3(ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE));
+    //Its own channels where the clip has them (the export keys Walking on zombie_armature too), the man's by name else.
+    const char* names[2] = {ZOMBIE_WALK_CLIP,f_worker_idle_clip ? ZOMBIE_IDLE_CLIP : NULL};
+    for (const char* name : names){
+        Animation* clip = name ? gltfloader.LoadAnimation(name) : NULL;
+        if (!clip){
+            continue;
+        }
+        clip->looped = true;
+        s->AddAnimation(clip);
+        KeepOwnPositions(clip);
+    }
+    s->animation_transition_time_max = ZOMBIE_CLIP_BLEND;
+    return s;
+}
 
 void ApplicationChasm::SubmitZombies(int plot, int count){
     SimCommand cmd;
@@ -73,8 +155,8 @@ void ApplicationChasm::UploadZombies(){
     auto hidden = [&](const vec2& p){
         return ex && !ex->Empty() && !ex->Explored(p);
     };
-    std::vector<fmat4> zombies;
-    std::vector<std::pair<uint32_t,vec3>> feet;     //the ones drawn: id, where it stands - for the arrows in them
+    std::vector<ZombieShown> drawn;
+    std::vector<std::pair<uint32_t,vec3>> feet;     //...and by id, for the arrows in them
     for (size_t i = 0; f_ours && i < e->zombies.size(); i++){
         const EconomyZombie& m = e->zombies[i];
         vec2 body = EconomyBody(m);     //SPACING: where it stands, off its route
@@ -96,15 +178,19 @@ void ApplicationChasm::UploadZombies(){
                 }
             }
         }
-        zombies.push_back(Object::ComposeTransformScale(vec3(body.x,ground,body.y),
-                                                        quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),
-                                                        vec3(ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE)));
+        drawn.push_back({&m,vec3(body.x,ground,body.y),quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y))});
         feet.emplace_back(m.id,vec3(body.x,ground,body.y));
     }
-    if (!zombies.empty() || zombie_set->IsVisible()){
-        bool f_any = !zombies.empty();
+    if (zombie_skin_mesh){
+        UploadZombieSkins(drawn);
+    }else if (!drawn.empty() || zombie_set->IsVisible()){
+        std::vector<fmat4> zombies;
+        for (const ZombieShown& d : drawn){
+            zombies.push_back(Object::ComposeTransformScale(d.at,d.turn,
+                                                            vec3(ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE)));
+        }
         zombie_set->SetInstances(std::move(zombies));
-        zombie_set->SetVisibility(f_any);
+        zombie_set->SetVisibility(!drawn.empty());
     }
 
     /*
@@ -171,6 +257,114 @@ void ApplicationChasm::UploadZombies(){
         zombie_arrow_set[0]->SetInstances(std::move(flying));
         zombie_arrow_set[1]->SetInstances(std::move(stuck));
     }
+}
+
+/*
+    RENDER THREAD, from UploadZombies once the zombie is rigged. Each zombie drawn keeps the skeleton it had, found by its
+    id; one without takes a free one, or one is made. The rest - fallen, cleared, or gone under the clouds - are hidden
+    and given no clip, which costs a tick nothing. As UploadWorkers does: placed here every frame, while a change of clip
+    is set under the tick's lock, since the physics thread's tick is what plays it, and only when it changes.
+*/
+void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
+    const size_t none = (size_t)-1;
+    std::vector<size_t> slot(shown.size(),none);
+    for (size_t s = 0; s < zombie_skins.size(); s++){
+        bool f_kept = false;
+        for (size_t i = 0; i < shown.size() && !f_kept; i++){
+            if (zombie_skins[s].id == shown[i].m->id){
+                slot[i] = s;
+                f_kept = true;
+            }
+        }
+        if (!f_kept){
+            zombie_skins[s].id = 0;
+        }
+    }
+    std::vector<Object*> made;
+    size_t free_slot = 0;
+    for (size_t i = 0; i < shown.size(); i++){
+        if (slot[i] != none){
+            continue;
+        }
+        while (free_slot < zombie_skins.size() && zombie_skins[free_slot].id != 0){
+            free_slot++;
+        }
+        if (free_slot == zombie_skins.size()){
+            ZombieSkin z;
+            z.figure = BuildZombieSkeleton(zombie_skins.size());
+            if (!z.figure){
+                break;      //its rig loaded at Init, so this does not happen; the rest go undrawn if it does
+            }
+            made.push_back(z.figure);
+            zombie_skins.push_back(z);
+        }
+        zombie_skins[free_slot].id = shown[i].m->id;
+        slot[i] = free_slot;
+    }
+
+    struct ClipChange{
+        size_t slot;
+        int clip;
+        float rate;
+        float phase;
+    };
+    std::vector<ClipChange> changes;
+    auto set_clip = [&](size_t s, int clip, float rate, float phase){
+        const ZombieSkin& z = zombie_skins[s];
+        if (clip != z.clip || fabsf(rate - z.rate) > 0.01f * z.rate){
+            changes.push_back({s,clip,rate,phase});
+        }
+    };
+    for (size_t s = 0; s < zombie_skins.size(); s++){
+        if (zombie_skins[s].id == 0){
+            zombie_skins[s].figure->SetVisibility(false);
+            set_clip(s,ZOMBIE_CLIP_NONE,1.0f,0.0f);
+        }
+    }
+    for (size_t i = 0; i < shown.size(); i++){
+        if (slot[i] == none){
+            continue;
+        }
+        const EconomyZombie& m = *shown[i].m;
+        Object* s = zombie_skins[slot[i]].figure;
+        s->SetPosition(shown[i].at,false);
+        s->SetRotation(shown[i].turn,false);
+        s->SetVisibility(true);
+        //Walking while its route has a leg left, at that leg's speed, so its feet are planted; standing otherwise -
+        //biting too, which has no clip of its own yet. Each on its own step.
+        float phase = fmodf((float)m.id * 0.618034f,1.0f);
+        if (m.seg + 1 < (int)m.route.size() && m.seg < (int)m.speed.size()){
+            set_clip(slot[i],ZOMBIE_CLIP_WALK,m.speed[m.seg] / zombie_walk_speed,phase);
+        }else{
+            set_clip(slot[i],f_worker_idle_clip ? ZOMBIE_CLIP_IDLE : ZOMBIE_CLIP_NONE,1.0f,phase);
+        }
+    }
+    if (made.empty() && changes.empty()){
+        return;
+    }
+    world_scene->AtTickBoundary([&](){
+        for (Object* s : made){
+            world_scene->AddObject(s);
+        }
+        for (const ClipChange& c : changes){
+            ZombieSkin& z = zombie_skins[c.slot];
+            Object* s = z.figure;
+            if (c.clip != z.clip){
+                Animation* clip = (c.clip == ZOMBIE_CLIP_WALK) ? s->FindAnimation(ZOMBIE_WALK_CLIP)
+                                : (c.clip == ZOMBIE_CLIP_IDLE) ? s->FindAnimation(ZOMBIE_IDLE_CLIP) : NULL;
+                //A crossfade from one clip to another, as a person's; to none or from none, at once.
+                if (!clip || z.clip == ZOMBIE_CLIP_NONE || !s->TransitionToAnimation(clip)){
+                    s->SwitchToAnimation(clip);
+                }
+                if (clip){
+                    clip->time_index = c.phase * clip->duration;
+                }
+                z.clip = c.clip;
+            }
+            s->SetAnimationRate(c.rate);
+            z.rate = c.rate;
+        }
+    });
 }
 
 #ifdef USE_IMGUI

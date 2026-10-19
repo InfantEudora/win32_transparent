@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 #include "type_vec2.h"
+#include "GridWater.h"
 
 /*
     THE GROUND EVERYTHING IS BUILT ON: a Townscaper-style irregular quad grid, at two levels.
@@ -231,6 +232,13 @@ struct ChasmLayout{
     Region desert;
     vec2 main_tip;                          //the main rift's spine's end
     float main_mouth_x = 0.0f;              //where the main rift leaves the south edge
+    //PONDS placed by hand (GridWater.h, ChasmPlaceWater): still water the terrain presses into the plateau.
+    struct Pond{
+        vec2 centre;
+        float radius = 6.0f;                //to its water's edge
+    };
+    std::vector<Pond> ponds;
+    int ponds_dropped = 0;                  //placed where one does not fit on the plateau (ChasmPondFits), and left out
     float generate_ms = 0.0f;
 };
 
@@ -274,7 +282,8 @@ GridLine GridSmoothLine(const std::vector<vec2>& corners, bool f_closed, float s
 #define GRID_KIND_CHASM     0
 #define GRID_KIND_FLAT      1       //flat and dry, trees at random, nobody: a system tested on its own
 #define GRID_KIND_TITLE     2       //the title's town (TitleTown.h): flat, the game's own forest round it
-#define GRID_KINDS          3
+#define GRID_KIND_CRACKS    3       //the chasm as cracked mud (MudCracks.h): its terrain only, no layout, nobody
+#define GRID_KINDS          4
 extern const char* const grid_kind_names[GRID_KINDS];
 int GridKindByName(const std::string& name);    //-1 for none
 inline bool GridKindHasChasm(int kind){ return kind == GRID_KIND_CHASM; }
@@ -304,6 +313,7 @@ struct GridSettings{
     float relax_strength = 0.5f;
     //The chasm's features are not settings: they follow from the seed (ChasmLayout).
     int kind = GRID_KIND_CHASM;     //GRID_KIND_*; a save names it only when it is not the chasm
+    GridWater water;                //rivers placed by hand (GridWater.h); a save holds them only when there are any
 
     bool operator==(const GridSettings& o) const;
 };

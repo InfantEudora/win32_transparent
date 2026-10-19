@@ -86,8 +86,10 @@ private:
     int                     GetAccesorTypeSize(const tinygltf::Accessor& accessor);
     tinygltf::Node*         FindNode(std::string node_name);
     //The node that lists node_index among its children, or -1 when it is a root of the scene.
-    //See GetSkeleton, which is the only thing that needs to walk UPWARDS.
+    //See GetSkeleton and ArmatureTransform, the only things that need to walk UPWARDS.
     int                     ParentNodeOf(int node_index);
+    //Where a skin's armature stood in the file, up to the scene's root: what a plain load of a skinned mesh takes out.
+    fmat4                   ArmatureTransform(int skin_index);
     tinygltf::Skin*         FindSkin(std::string skin_name);
     tinygltf::Animation*    FindAnimation(std::string skin_name);
     void                    LoadInverseBindMatrices(std::vector<fmat4>& matrices, int accesor_index);

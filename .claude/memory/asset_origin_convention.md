@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: c39cca72-76bf-40ae-b38c-9a45ea3638fd
-  modified: 2026-09-18T22:14:19.490Z
+  modified: 2026-10-18T20:10:37.106Z
 ---
 
 One source .blend/.glb holds many models, **laid out side by side so the artist can see them all at
@@ -26,6 +26,12 @@ as Objects, which made the rig spec-correct and the game wrong: the offset stopp
 and, living in the skeleton's local space, rotated with the actor — bomber's enemies drew a tile off
 their square and turning them changed which side. Only `enemy_armature` (z +1.280) exposed it;
 `character_armature` and `turd_armature` sit at the origin, so the test data could not express it.
+
+**Static loads of skinned meshes too (2026-10-18, user: "all loaded with the position cleared"):** the exporter
+bakes the armature's place into a skinned mesh's vertices, so ignoring the node did nothing for a PLAIN load of one
+(chasm's zombie stood 5 units off). `GetMeshFromNode(..., skinned=false)` on a skinned node now applies
+inverse(`ArmatureTransform`) - translation, rotation AND scale - so the static mesh equals the skinned draw at bind
+pose. Only chasm's woman + zombie and grid's rigs have armatures off the origin, and grid loads its rigs skinned.
 
 The reasoning is written out at length in `GetSkeleton` in core/GLTFLoader.cpp. Related:
 [[skinned-rig-bone-indexing]], [[android-port-merge]].

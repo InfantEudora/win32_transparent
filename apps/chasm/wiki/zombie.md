@@ -54,10 +54,10 @@ someone [[Posts|posted]] stays on his post however thirsty, and a [[Guard tower|
 
 ## On screen
 
-The props file's `zombie` figure, at the people's scale, turned along its walk - and standing by whom it is after,
-toward him. It has no clips yet and glides. Not drawn under the clouds. A person's card says "Fighting a zombie"
-or "Shooting at a zombie". Arrows fly from the bow, stay stuck in a zombie until it falls, and lie where they missed
-for {ARROW_LIE_SECONDS:#seconds}.
+The props file's `zombie` figure at the people's scale, rigged as they are and turned along its walk: the man's walk
+while it walks, at its pace so its feet are planted, and his idle standing by whom it is after, toward him - biting
+too, which has no clip of its own yet. Not drawn under the clouds. A person's card says "Fighting a zombie" or
+"Shooting at a zombie". Arrows fly from the bow, stay stuck in a zombie until it falls, and lie where they missed for {ARROW_LIE_SECONDS:#seconds}.
 
 ## Planned
 
@@ -65,4 +65,4 @@ for {ARROW_LIE_SECONDS:#seconds}.
 - [planned] **Walls break** (step 4): walls and gates cost a zombie time to break rather than stopping it.
 - [proposed] **Waves from the swamp**, none while it is frozen; people fleeing and the alarm; the swamp's haze
   thickening before a wave; fields trampled; winter raids on the frozen swamp.
-- [planned] The man's clips on the zombie figure, once it is rigged.
+- [proposed] A zombie's own clips: a bite, a shamble.
