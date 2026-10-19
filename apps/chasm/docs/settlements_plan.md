@@ -220,9 +220,12 @@ Built 2026-10-11:
     in - first an empty house that holds them, then a camp with room. Standing in none, it looks anywhere, as before.
   - **Squeezing in**: still with nowhere, it squeezes into a house or camp of that settlement, over its room if need
     be: the one with the most room to spare that they can walk to.
-  - **Moving out**: families sharing a house past its room wait for an empty house that holds them, the largest
-    first, and stop waiting once the house is no longer over its room. A family alone in a house that has outgrown
-    it is left as it was.
+  - **Moving out**: families sharing a house wait for an empty house that holds them, the largest first, and stop
+    waiting once no other family lives there. A family alone in a house that has outgrown it is left as it was.
+    - **Revised 2026-10-19** (the user's): this was "sharing a house past its room", so families squeezed into a
+      house big enough for all of them never moved out. Four lone archers in `saves/archers_test.json`, with four
+      houses placed one at a time in debug, all stayed in the first one (6 beds) while three stood empty. Orphans
+      taken in don't count as another family: their hosts moving out would only have them follow.
   - **No home left** in the settlement means no settlement: they wait at the start camp's spot, as before.
 
 **Checked** in a copied exe on 8774, the default seed:

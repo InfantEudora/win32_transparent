@@ -1721,11 +1721,6 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
         uint32_t s = (f < family_settled.size()) ? family_settled[f] : EconomySettlementOf(state,family_house[f]);
         return (!family_house[f] && !s) || s == EconomySettlementOf(state,(uint32_t)id);
     };
-    //...and one CRAMMED into a house with another family (below) waits for one of its own.
-    auto crammed = [&](uint32_t f){
-        uint32_t h = family_house[f];
-        return is_house(h) && living[h] > state.capacity[h] && living[h] > family_size[f];
-    };
     //ON THE ROAD (Economy.h, TAKING A TENT): a family of nobody but tent carriers, with no home - it pitches its own
     //where it likes, so none is found for it.
     std::vector<uint8_t> family_road(family_size.size(),1);
@@ -1774,6 +1769,22 @@ void Economy::HouseFamilies(const ZoneState& z, Walkers& walkers){
             move(f,(uint32_t)best);
         }
     }
+    //...and one CRAMMED into a house with another family (below) waits for one of its own, whether or not the house
+    //holds them all (the user's 2026-10-19: four lone archers squeezed into the first of four houses stayed there).
+    //Orphans it took in (above) are no other family: they live from it, and would only follow it out.
+    auto crammed = [&](uint32_t f){
+        uint32_t h = family_house[f];
+        if (!is_house(h) || living[h] <= family_size[f]){
+            return false;
+        }
+        int others = living[h] - family_size[f];
+        for (uint32_t o = 1; o < family_size.size(); o++){
+            if (o != f && family_house[o] == h && orphans(o)){
+                others -= family_size[o];
+            }
+        }
+        return others > 0;
+    };
     /*
         Into a house: every family without one - with no home, in a camp, or crammed - the largest first. Each
         takes the smallest empty house that holds all of them and that they can walk to (the lower id on a tie).
@@ -6092,8 +6103,11 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     Shoot(z);
     //A FIGHT: the bites and blows from where they all stand now - its dead struck off by Needs, a cause of their own.
     bitten_dead.clear();
+    bitten_struck.clear();
     Fights();
     Needs(z,walkers,tick);
+    //THE FALLEN: whoever fell long enough ago is gone.
+    TickFallen();
     //ICE: who would be cut off by the thaw, for their cards - a second's look is soon enough for a risk of days.
     if (tick % (uint64_t)ECONOMY_ICE_LOOK_TICKS == 0){
         IceHome(z,walkers);
@@ -6249,7 +6263,7 @@ bool Economy::SetStock(const ZoneState& z, uint32_t id, int good, int amount, bo
     return true;
 }
 
-bool Economy::SetNeeds(uint32_t person, int health, int water){
+bool Economy::SetNeeds(uint32_t person, int health, int water, int pack_water, int pack_provisions){
     for (EconomyWorker& k : state.workers){
         if (k.id != person){
             continue;
@@ -6259,6 +6273,12 @@ bool Economy::SetNeeds(uint32_t person, int health, int water){
         }
         if (water >= 0){
             k.water = std::min(water,NEEDS_WATER_FULL);
+        }
+        if (pack_water >= 0){
+            k.pack[GOOD_WATER] = std::min(pack_water,NEEDS_SCOUT_WATER);
+        }
+        if (pack_provisions >= 0){
+            k.pack[GOOD_PROVISIONS] = std::min(pack_provisions,NEEDS_SCOUT_FOOD / EconomyFoodWorth(GOOD_PROVISIONS));
         }
         state.version++;
         return true;
@@ -7867,6 +7887,14 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         if (k.carry > 0){
             DropLoad(k,z);
         }
+        //...and he lies there a while (THE FALLEN, zombies_plan.md step 6): by the bite that killed him, else no blow.
+        const vec2* struck = NULL;
+        for (const std::pair<uint32_t,vec2>& b : bitten_struck){
+            if (f_bitten && b.first == k.id){
+                struck = &b.second;
+            }
+        }
+        PersonFalls(k,struck);
         state.dead.push_back(d);
         Event(EVENT_DIED,d.id,k.house,-1,EconomyBody(k),d.cause);
     }
@@ -9858,6 +9886,7 @@ EconomySaved EconomySaveState(const EconomyState& state){
     s.dead = state.dead;
     s.zombies = state.zombies;
     s.harm = state.harm;
+    s.fallen = state.fallen;
     s.next_zombie = state.next_zombie;
     s.arrows = state.arrows;
     s.history = state.history;
@@ -9990,9 +10019,13 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     //ZOMBIES on their routes, as the people are. A save from before them has none.
     state.zombies = saved.zombies;
     state.harm = saved.harm;
+    state.fallen = saved.fallen;    //THE FALLEN lying where they fell, as long as they had left
     state.next_zombie = saved.next_zombie;
     for (const EconomyZombie& m : state.zombies){
         state.next_zombie = std::max(state.next_zombie,m.id + 1);
+    }
+    for (const EconomyFallen& f : state.fallen){
+        state.next_zombie = f.f_person ? state.next_zombie : std::max(state.next_zombie,f.id + 1);
     }
     state.arrows = saved.arrows;    //ARROWS in the air and come down, as they were
     Derive(z,walkers,false);

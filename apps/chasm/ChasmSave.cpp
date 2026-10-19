@@ -182,9 +182,9 @@ json ChasmSaveToJson(const ChasmSave& s){
             if (k.swing > 0){
                 workers.back()["swing"] = k.swing;
             }
-            //Shooting (ARROWS, step 3): [ticks into his turn, the zombie he aims at] - only while he does.
+            //Shooting (ARROWS, step 3): [ticks into his turn, the zombie he aims at, the turn's length] - only while he does.
             if (k.draw > 0){
-                workers.back()["draw"] = json::array({k.draw,k.aim});
+                workers.back()["draw"] = json::array({k.draw,k.aim,k.draw_turn});
             }
         }
         //The colony's dead (needs_plan.md): id, family, female, born, the tick they died on, of what, mother, father,
@@ -315,6 +315,16 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
             economy["harm"] = harm;
         }
+        //THE FALLEN (zombies_plan.md step 6): who lies where he fell, which way, since when - only while anyone does.
+        if (!e.fallen.empty()){
+            json fallen = json::array();
+            for (const EconomyFallen& f : e.fallen){
+                fallen.push_back(json{{"id",f.id},{"person",f.f_person},{"back",f.f_back},{"indoors",f.f_indoors},
+                                      {"layer",(int)f.layer},{"house",f.house},{"pos",json::array({f.pos.x,f.pos.y})},
+                                      {"facing",json::array({f.facing.x,f.facing.y})},{"tick",f.tick}});
+            }
+            economy["fallen"] = fallen;
+        }
         /*
             THE HISTORY (statistics_plan.md): where it began, the journal - an event a line, [tick, kind, person,
             building, plot, what, amount, x, z], its kind a number (Economy.h never renumbers them) - and the ledger:
@@ -382,7 +392,53 @@ json ChasmSaveToJson(const ChasmSave& s){
     if (!g.relief.Empty()){
         out["grid"]["relief"] = GridReliefToJson(g.relief);
     }
+    if (!g.cliffs.Empty()){
+        out["grid"]["cliffs"] = GridCliffsToJson(g.cliffs);
+    }
     return out;
+}
+
+json GridCliffsToJson(const GridCliffs& c){
+    json strokes = json::array();
+    for (const GridCliffStroke& s : c.strokes){
+        json points = json::array();
+        for (const vec2& p : s.points){
+            points.push_back(json::array({p.x,p.y}));
+        }
+        strokes.push_back(json{{"points",points},{"width",s.width},{"depth",s.depth}});
+    }
+    return json{{"strokes",strokes}};
+}
+
+bool GridCliffsFromJson(const json& j, GridCliffs& out, std::string& error){
+    out = GridCliffs();
+    if (j.is_null()){
+        return true;        //none
+    }
+    const json& strokes = j.is_object() ? j.value("strokes",json::array()) : json();
+    if (!strokes.is_array()){
+        error = "cliffs is an object: {\"strokes\":[{\"points\":[[x,z],...],\"width\":w,\"depth\":d}]}";
+        return false;
+    }
+    for (const json& js : strokes){
+        GridCliffStroke s;
+        const json& points = js.is_object() ? js.value("points",json::array()) : json();
+        if (!points.is_array() || points.empty()){
+            error = "a cliff stroke takes one point or more, each [x,z]";
+            return false;
+        }
+        for (const json& p : points){
+            if (!p.is_array() || p.size() != 2 || !p[0].is_number() || !p[1].is_number()){
+                error = "a cliff stroke's point is [x,z]";
+                return false;
+            }
+            s.points.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
+        }
+        s.width = js.value("width",s.width);
+        s.depth = js.value("depth",s.depth);
+        out.strokes.push_back(s);
+    }
+    return true;
 }
 
 json GridReliefToJson(const GridRelief& r){
@@ -529,6 +585,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     if (g.contains("relief") && !GridReliefFromJson(g["relief"],s.relief,error)){
         return false;
     }
+    if (g.contains("cliffs") && !GridCliffsFromJson(g["cliffs"],s.cliffs,error)){
+        return false;
+    }
     out.world_hash = j.value("world_hash",std::string());
     for (const json& jb : j.value("buildings",json::array())){
         ZoneSavedBuilding b;
@@ -664,9 +723,11 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
                 k.meal_worth = wk["meal"][2].get<int>();
             }
             k.swing = wk.value("swing",0);
-            if (wk.contains("draw") && wk["draw"].is_array() && wk["draw"].size() == 2){
+            //Without a length (a save from before THE PACE), the turn begins again on the next tick.
+            if (wk.contains("draw") && wk["draw"].is_array() && wk["draw"].size() >= 2){
                 k.draw = wk["draw"][0].get<int>();
                 k.aim = wk["draw"][1].get<uint32_t>();
+                k.draw_turn = (wk["draw"].size() >= 3) ? wk["draw"][2].get<int>() : 0;
             }
             k.f_indoors = wk.value("indoors",false);
             //A save from before needs (needs_plan.md): everyone fed and watered.
@@ -823,6 +884,23 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         std::sort(out.economy.harm.begin(),out.economy.harm.end(),[](const EconomyHarm& a, const EconomyHarm& b){
             return (a.what != b.what) ? a.what < b.what : a.id < b.id;
         });
+        //Absent before the fallen (step 6), and with nobody lying.
+        for (const json& fj : e.value("fallen",json::array())){
+            if (!fj.contains("pos") || !fj.contains("facing")){
+                continue;
+            }
+            EconomyFallen f;
+            f.id = fj.value("id",0u);
+            f.f_person = fj.value("person",false);
+            f.f_back = fj.value("back",false);
+            f.f_indoors = fj.value("indoors",false);
+            f.layer = (int8_t)fj.value("layer",0);
+            f.house = fj.value("house",0u);
+            f.pos = vec2(fj["pos"][0].get<float>(),fj["pos"][1].get<float>());
+            f.facing = vec2(fj["facing"][0].get<float>(),fj["facing"][1].get<float>());
+            f.tick = fj.value("tick",(uint64_t)0);
+            out.economy.fallen.push_back(f);
+        }
         //THE HISTORY. A save from before it has none, and the history begins at its load (Economy::Restore).
         if (e.contains("history") && e["history"].is_object()){
             const json& hj = e["history"];

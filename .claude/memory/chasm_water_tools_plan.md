@@ -1,11 +1,11 @@
 ---
 name: chasm-water-tools-plan
-description: "Chasm test-map tools - ALL 5 steps BUILT (well, rivers, ponds, River/Pond tools 2026-10-18; painted HEIGHT 2026-10-19), A/B clean; apps/chasm/docs/water_tools_plan.md"
+description: "Chasm test-map tools - ALL 6 steps BUILT (well, rivers, ponds, River/Pond tools 2026-10-18; painted HEIGHT and CLIFFS on plots 2026-10-19), A/B clean; apps/chasm/docs/water_tools_plan.md"
 metadata:
   node_type: memory
   type: project
   originSessionId: 80068f08-caf2-4476-8759-ffd8a85ffc3a
-  modified: 2026-10-18T17:55:30.487Z
+  modified: 2026-10-19T11:46:29.387Z
 ---
 
 Plan: `apps/chasm/docs/water_tools_plan.md` (decided with the user 2026-10-18; as-built notes under each step).
@@ -31,6 +31,13 @@ Plan: `apps/chasm/docs/water_tools_plan.md` (decided with the user 2026-10-18; a
   with their OWN river fade RELIEF_PAINT_RIVER_FADE 8 (the hills' 24 flattened a small map) and lowering faded near
   the rift. Tools moved to ApplicationChasmMapTools.cpp: UpdateMapDrag / RemakeMap / RenderMapTools; chasm_tool
   takes width/height/radius (the panel's sliders, for scripts).
+- **Cliffs - step 6 BUILT 2026-10-19** (user's idea: paint PLOTS like a road; down only 1-4 steps; winch the only way
+  across; width slider 1-5): GridSettings::cliffs strokes {points = the chain's plot positions, width, depth} ->
+  ChasmLayout::cliff_strokes, hashed. Terrain::PaintCliffs before SettleHeights sets steps on cliff_open plots
+  (generated plateau, dry, off edge/mountain/pond); painted pieces exempt from pit filling. TerrainCliffPlots = nearest
+  plot per point, WALKED along fine edges (corner-only touches are saddles = a leaking moat), + band by real plot
+  spacing from a smoothed line. Relief lowering now fades near EVERY drop's foot (was the rift field only).
+  Tool = road's LineStepTo drag (made non-static). Map drags now dropped by right press / another tool (DropMapDrag).
 - **Placed water, the design**: `GridSettings::water` (rivers + ponds) beside `kind`, saved only when
   non-empty, appended into the layout in Grid::Generate, hashed. Rivers = GridRiverLine (EDGE/JOIN/SINK by where
   drawn). Ponds = the swamp's pools generalised (bowl in the relief; the two biome==SWAMP checks widened).

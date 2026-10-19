@@ -6,7 +6,7 @@ status: built
 summary: Everyone in the colony, each with a family, a home, four skills, a job, and two bars that must not run out.
 plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries; selection_plan.md > How far along; zombies_plan.md > Step 1b: spacing out
 code: Economy.h: EconomyWorker EconomySkillFactor EconomyBody EconomyStartTimer EconomyTaskProgress EconomyLoadRoom; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood FindSiteWork; Spacing.cpp: SpaceOut
-verified: 2026-10-18
+verified: 2026-10-19
 ---
 
 The colony is the **settlers** it starts with, a few families waiting at the [[Camp]], and nobody else.
@@ -60,9 +60,9 @@ the colony records the cause: hunger, thirst or cold.
 
 ## Their card
 
-Who they are, their home and job, what they are doing, their two bars and their skills. A person with a
-[[Posts|pack]] has it as a goods strip, the way a [[Store|store's]] card shows what it holds - hollow, their own,
-with what it is worth in days at the right ("water 12 days, food 10").
+By the name, age and job ("Age 25 - Woodcutter / posted"); under it family, home, workplace, what they are doing,
+two bars and skills. A [[Posts|pack]] is a goods strip, as a [[Store|store's]] card shows what it holds - hollow,
+their own, with what it is worth in days at the right ("water 12 days, food 10").
 
 Work done on the spot - felling, building, sowing, drawing water - has a **bar** filling under what they are
 doing. What they **carry** is a strip too, **striped** as reserved goods are, since it is on its way somewhere

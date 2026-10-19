@@ -37,6 +37,10 @@
     the gates beside each - drawn as a PALISADE of sharpened logs once a plot stands, a taller stake
     while it is planned. Where a wall meets a gate (a road plot it runs through) it ends in a tall post
     at the edge's midpoint, and the gate's plot hangs a crossbeam from post to post over the road.
+
+    HARMED by zombies (zombies_plan.md, step 4d), as the rules' harm says in ZoneMesh.h's steps: a palisade's logs
+    lean away from the blows, and drop; a BROKEN plot - a wall site again - is drawn as its fallen logs and stumps, not
+    a stake. A gate's door gives and sags as it is hit, and hangs askew once broken. The jambs always stand.
 */
 
 //How near a road's centre line no prop stands: half its width and a canopy. The view hides what is
@@ -44,8 +48,10 @@
 #define ROAD_PROP_CLEARANCE     1.3f
 
 //Draws the road vertices this fine cell owns - laid roads and standing bridges, and planned roads' stakes -
-//and its wall vertices: palisades, stakes, gates' crossbeams.
-void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out);
+//and its wall vertices: palisades, stakes, gates' crossbeams - harmed as `harm` says (ZoneMesh.h), if given.
+struct ZoneHarmLook;
+void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
+                   const ZoneHarmLook* harm = NULL);
 
 //Whether p, standing in plot `plot`, is within `clearance` of a laid road's centre line, or a standing
 //wall's - what the forest gives way to, so no tree stands on a road or leans over it, nor grows through a

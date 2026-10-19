@@ -6,7 +6,7 @@ status: partial
 summary: People sent out take a tent from a camp and pitch it where they stand. It becomes their home, and outside every settlement it founds a new one.
 plans: settlements_plan.md > Founding: decided; settlements_plan.md > Founding: as built, step 4; settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6; settlements_plan.md > Founding: steps
 code: Economy.h: ECONOMY_PITCH_RINGS ECONOMY_TENT_CARRIED EVENT_NO_TENT; Economy.cpp: TakeTent TentToPack GoForTent PitchSpot Pitched SettleHere CampSpare OwnHousehold PartnerLivingIn GoesWith WithTheGrown BringAlong HouseFamilies; Zones.h: PitchTent
-verified: 2026-10-14
+verified: 2026-10-19
 ---
 
 A new [[Settlement|settlement]] is founded by taking a tent out of a [[Camp|camp]] and pitching it somewhere
@@ -14,7 +14,7 @@ outside every settlement.
 
 ## Taking a tent
 
-Send people out with an order ([[Posts|posts]]) and press **Take a tent** on their card - "Take a tent each" for a
+Send people out with an order ([[Posts|posts]]) and press **Pack a Tent** on their card - "Pack Tents" for a
 group. On their way, before any gathering, they go to the nearest camp with a tent to spare and pack the tent nearest
 them, and that tent comes out of the camp. From another camp, a tent somebody sleeps in isn't spare; their own camp's tents its
 people may always take, however crowded it is. They fill their pack there as on a gathering stop, and carry the

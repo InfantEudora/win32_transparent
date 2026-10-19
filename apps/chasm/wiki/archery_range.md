@@ -5,9 +5,9 @@ kind: buildings
 status: built
 summary: Painted on coarse cells like a field. A trainee a cell trains there full time, all year, and their archery grows toward what their precision allows.
 plans: range_plan.md > Decided; range_plan.md > As built; range_plan.md > Shooting; range_plan.md > Later; zombies_plan.md > Step 3: guards shoot
-code: Economy.cpp: GoTrain EconomyCellCost AssignJobs; Economy.h: WORKER_JOB_ARCHER EconomyArcheryCap ARCHERY_FULL; Zones.h: ZONE_KIND_RANGE ZoneKindOnCells; ApplicationChasmRange.cpp: ShotClockOf ShotOf
-tuning: ARCHERY_PER_TICK, RANGE_SPREAD_NOVICE, RANGE_SPREAD_MASTER
-verified: 2026-10-18
+code: Economy.cpp: GoTrain EconomyCellCost AssignJobs; Economy.h: WORKER_JOB_ARCHER EconomyArcheryCap EconomyCarriesBow ARCHERY_FULL EconomyShotTicks; Zones.h: ZONE_KIND_RANGE ZoneKindOnCells; ApplicationChasmRange.cpp: ShotClockOf ShotOf
+tuning: ARCHERY_PER_TICK, RANGE_SPREAD_NOVICE, RANGE_SPREAD_MASTER, ARROW_SHOT_SECONDS, ARROW_SHOT_MASTER, ARROW_SHOT_JITTER
+verified: 2026-10-19
 ---
 
 Archers are the first people the colony trains, and they train here. A range is dragged over at most {ZONE_RANGE_MAX_CELLS} **coarse
@@ -41,9 +41,15 @@ the scatter narrows with archery, from {RANGE_SPREAD_NOVICE} with none to {RANGE
 goes home. It is all for show: shots change nothing, and archery grows the same either way.
 
 With a [[Zombie|zombie]] in sight the trainee shoots at it instead, for real - their stint waits, and resumes once
-there is nothing left to shoot. Archery decides how often those arrows hit.
+there is nothing left to shoot. Archery decides how often those arrows hit, and **how quickly they come**: a shot
+takes {ARROW_SHOT_SECONDS:#seconds} with no archery and {ARROW_SHOT_MASTER:#seconds} with all of it, and each one
+up to {= ARROW_SHOT_JITTER * 100}% longer or shorter than that (`EconomyShotTicks`), so archers side by side never loose
+together. Practice at the targets keeps the clip's own speed.
 
-An archer, and a [[Guard tower|guard]], carries a bow and a quiver wherever they go.
+**Anyone who has trained here carries a bow** and a quiver wherever they go, whatever their work - a farmer
+too - as do a trainee from their first stint and a [[Guard tower|guard]] (`EconomyCarriesBow`). They shoot
+only where they stand to: on the line, on a tower, or **ordered to a post** - so anyone trained, sent out, is
+a posted archer.
 
 ## Archery
 

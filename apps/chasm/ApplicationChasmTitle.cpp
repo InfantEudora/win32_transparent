@@ -1163,7 +1163,12 @@ void ApplicationChasm::RegisterTitleTools(){
                                {"window_fullscreen",main_window->f_fullscreen},{"master_applied",sound_volume.load()},
                                {"ui_size",settings.GetFloat("ui_size")},
                                {"ui_scale",HudUiScale((float)main_window->height,settings.GetFloat("ui_size"))},
-                               {"music_applied",music_volume.load()},{"effects_applied",effects_volume.load()}};
+                               {"music_applied",music_volume.load()},{"effects_applied",effects_volume.load()},
+                               {"show_fps",settings.GetBool("show_fps")},{"fps_shown",f_show_fps.load()},
+                               //Saved in every build, applied only in one without the panels (ApplicationChasm::Init).
+                               {"always_record",settings.GetBool("always_record")},
+                               {"always_recording",f_always_record.load()},
+                               {"recording",main_window->inputcontroller->IsRecording()}};
 #ifdef USE_SOUND
             //...and read back from the buses themselves.
             if (soundsystem && soundsystem->f_initialised){

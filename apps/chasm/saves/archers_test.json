@@ -1,0 +1,310 @@
+{
+ "buildings": [],
+ "calendar": 34,
+ "chasm_save": 2,
+ "economy": {
+  "crates": [],
+  "dead": [],
+  "felled": [],
+  "fields": [],
+  "ground_sites": [],
+  "guards": [],
+  "heat": [],
+  "history": {
+   "broken_from": 0,
+   "days": [],
+   "felled_from": 0,
+   "from": 0,
+   "journal": [],
+   "start": [
+    0,
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    {},
+    0,
+    0,
+    0
+   ],
+   "today": [
+    0,
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    {},
+    0,
+    0,
+    0
+   ]
+  },
+  "kept": {
+   "provisions": 0,
+   "rope": 0
+  },
+  "next_crate": 1,
+  "next_person": 5,
+  "ordered": {},
+  "pantries": [],
+  "people": [
+   {
+    "along": 0.0,
+    "archery": 250000,
+    "born": -2159999,
+    "building": 0,
+    "carry": 0,
+    "carry_good": -1,
+    "chosen": false,
+    "due": 0,
+    "family": 1,
+    "father": 0,
+    "female": true,
+    "health": 15718,
+    "house": 0,
+    "id": 1,
+    "indoors": false,
+    "job": -1,
+    "mother": 0,
+    "pack": {
+     "provisions": 3,
+     "water": 6
+    },
+    "partner": 0,
+    "pos": [
+     -3.605020046234131,
+     -1.2369468212127686
+    ],
+    "post": 2430,
+    "prop": -1,
+    "route": [
+     [
+      -3.605020046234131,
+      -1.2369468212127686
+     ],
+     [
+      -3.605020046234131,
+      -1.2369468212127686
+     ]
+    ],
+    "seg": 1,
+    "site": 0,
+    "skills": [
+     5,
+     10,
+     5,
+     6
+    ],
+    "speed": [
+     1.600000023841858
+    ],
+    "state": 24,
+    "stint": 0,
+    "store": 0,
+    "surname": 15,
+    "timer": 0,
+    "timer_full": 0,
+    "water": 8968
+   },
+   {
+    "along": 0.0,
+    "archery": 500000,
+    "born": -2339999,
+    "building": 0,
+    "carry": 0,
+    "carry_good": -1,
+    "chosen": false,
+    "due": 0,
+    "family": 2,
+    "father": 0,
+    "female": true,
+    "health": 15718,
+    "house": 0,
+    "id": 2,
+    "indoors": false,
+    "job": -1,
+    "mother": 0,
+    "pack": {
+     "provisions": 3,
+     "water": 6
+    },
+    "partner": 0,
+    "pos": [
+     -2.630141019821167,
+     0.9838343858718872
+    ],
+    "post": 2652,
+    "prop": -1,
+    "route": [
+     [
+      -2.630141019821167,
+      0.9838343858718872
+     ],
+     [
+      -2.630141019821167,
+      0.9838343858718872
+     ]
+    ],
+    "seg": 1,
+    "site": 0,
+    "skills": [
+     10,
+     10,
+     5,
+     6
+    ],
+    "speed": [
+     1.600000023841858
+    ],
+    "state": 24,
+    "stint": 0,
+    "store": 0,
+    "surname": 26,
+    "timer": 0,
+    "timer_full": 0,
+    "water": 8968
+   },
+   {
+    "along": 0.0,
+    "archery": 750000,
+    "born": -2339999,
+    "building": 0,
+    "carry": 0,
+    "carry_good": -1,
+    "chosen": false,
+    "due": 0,
+    "family": 3,
+    "father": 0,
+    "female": false,
+    "health": 15718,
+    "house": 0,
+    "id": 3,
+    "indoors": false,
+    "job": -1,
+    "mother": 0,
+    "pack": {
+     "provisions": 3,
+     "water": 6
+    },
+    "partner": 0,
+    "pos": [
+     -3.295987367630005,
+     2.605955123901367
+    ],
+    "post": 689,
+    "prop": -1,
+    "route": [
+     [
+      -3.295987367630005,
+      2.605955123901367
+     ],
+     [
+      -3.295987367630005,
+      2.605955123901367
+     ]
+    ],
+    "seg": 1,
+    "site": 0,
+    "skills": [
+     10,
+     10,
+     9,
+     1
+    ],
+    "speed": [
+     1.600000023841858
+    ],
+    "state": 24,
+    "stint": 0,
+    "store": 0,
+    "surname": 9,
+    "timer": 0,
+    "timer_full": 0,
+    "water": 8968
+   },
+   {
+    "along": 0.0,
+    "archery": 1000000,
+    "born": -2879999,
+    "building": 0,
+    "carry": 0,
+    "carry_good": -1,
+    "chosen": false,
+    "due": 0,
+    "family": 4,
+    "father": 0,
+    "female": false,
+    "health": 15718,
+    "house": 0,
+    "id": 4,
+    "indoors": false,
+    "job": -1,
+    "mother": 0,
+    "pack": {
+     "provisions": 3,
+     "water": 6
+    },
+    "partner": 0,
+    "pos": [
+     -2.3714096546173096,
+     4.829787254333496
+    ],
+    "post": 2657,
+    "prop": -1,
+    "route": [
+     [
+      -2.3714096546173096,
+      4.829787254333496
+     ],
+     [
+      -2.3714096546173096,
+      4.829787254333496
+     ]
+    ],
+    "seg": 1,
+    "site": 0,
+    "skills": [
+     4,
+     10,
+     10,
+     5
+    ],
+    "speed": [
+     1.600000023841858
+    ],
+    "state": 24,
+    "stint": 0,
+    "store": 0,
+    "surname": 20,
+    "timer": 0,
+    "timer_full": 0,
+    "water": 8968
+   }
+  ],
+  "plants": [],
+  "sites": [],
+  "stocks": []
+ },
+ "explored": "77x43 0 3311",
+ "grid": {
+  "aspect": 1.7777777910232544,
+  "kind": "flat",
+  "relax_passes_coarse": 40,
+  "relax_passes_fine": 40,
+  "relax_strength": 0.5,
+  "seed": 5,
+  "target_fine_cells": 4000,
+  "triangle_side": 8.0
+ },
+ "grounds": [],
+ "next_building": 1,
+ "stroke": [
+  0,
+  0
+ ],
+ "world_hash": "dc71866ed8e62108"
+}

@@ -28,7 +28,8 @@ archer_face's MouthOpen (value 0.4) was exported as a 40%-open mouth. tools/blen
 exports with the file's saved settings after baking pre-Armature modifiers per key (never saves the
 .blend); shared settings code in tools/blender_gltf_saved.py. Engine side was already fine: skinned
 shader applies morph targets. Character panel "Face" -> mouth open (ARCHER_FACE_KEY_MOUTH_OPEN = 0).
-IN-BLENDER VERSION: tools/blender_gltf_keep_shape_keys.py is an add-on (install from disk) using the glTF
+IN-BLENDER VERSION: tools/blender_gltf_fixes.py (was blender_gltf_keep_shape_keys.py until 2026-10-19, now one
+add-on for all our exporter fixes, see [[gltf-fixes-addon]]) is an add-on (install from disk) using the glTF
 exporter's own user-extension hooks - pre_export_hook swaps in a baked mesh with keys, post_export_hook
 (plus a bpy.app.timers fail-safe) swaps back; dialog section via io_scene_gltf2.exporter_extension_layout_draw.
 Verified headless: scene identical after export, face output byte-identical to blender_export_glb.py.

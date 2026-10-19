@@ -2493,3 +2493,15 @@ void ChasmPlaceRelief(ChasmLayout& layout, const GridRelief& relief){
         layout.relief_strokes.push_back(r);
     }
 }
+
+void ChasmPlaceCliffs(ChasmLayout& layout, const GridCliffs& cliffs){
+    for (const GridCliffStroke& s : cliffs.strokes){
+        if (s.points.empty()){
+            continue;
+        }
+        GridCliffStroke c = s;
+        c.width = std::max(1,std::min(GRID_CLIFF_WIDEST,s.width));
+        c.depth = std::max(0,std::min(GRID_CLIFF_DEEPEST,s.depth));
+        layout.cliff_strokes.push_back(c);
+    }
+}

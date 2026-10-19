@@ -30,7 +30,9 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
       - WORK IN HAND: "chop", "hammer", "chisel", "saw" - a blow at a time, from clocks of the workers' own (below);
       - THE BIRDS: "bird_call" and "birds_flush", as the flocks make them (SignalBirds);
       - THE ZOMBIES: "zombie_strike" at what one breaks, on its scratch's swipe, and "punch" as a fight's bites and
-        blows land (SignalZombies).
+        blows land (SignalZombies);
+      - THE BOWS: the scope "bow_drawn" from a shot's nock to its release, "arrow_loose" at the release, and for an
+        arrow at a zombie "arrow_miss" forecast onto where it comes down, or "arrow_hit" as it goes in (SignalShooting).
 
     ON THE PHYSICS THREAD, ONCE A PASS, paused or not (UpdateSound, from the top of UpdateView). The cues' clock is
     the count of passes, which is real time: 4x is four ticks inside one pass, so a blow keeps its rhythm and a
@@ -84,6 +86,8 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
 #define SOUND_STRIKE_NEAREST        4
 #define SOUND_STRIKE_AT             0.8f
 #define SOUND_STRIKE_SECONDS        2.29f   //a turn of the scratch, while the rig's own clip is not known
+//THE BOWS HEARD: the nearest this many archers drawing, within the work's reach - a range of twenty is a few bows, not a choir.
+#define SOUND_BOW_NEAREST           6
 
 /*
     THE WATER HEARD (areas_plan.md): a loop opens when its nearest water is within OPEN of the listener and closes past
@@ -134,6 +138,15 @@ const char* WorkKindName(int kind){
 
 const char* BoutName(int bout){
     return (bout == CHASM_BOUT_SAW) ? "saw" : (bout == CHASM_BOUT_CHISEL) ? "chisel" : "hammer";
+}
+
+//An arrow's own number for its scope - who loosed it, and on which tick: the rules give arrows no id.
+int ArrowInstance(uint32_t by, uint64_t loosed){
+    uint32_t h = by * 0x9E3779B1u ^ (uint32_t)loosed * 0x85EBCA77u ^ (uint32_t)(loosed >> 32) * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    return (int)(h & 0x7FFFFFFFu);
 }
 
 } //namespace
@@ -240,6 +253,7 @@ void ApplicationChasm::UpdateSound(){
     SignalWork(f_live);
     SignalBirds(f_live);
     SignalZombies(f_live);
+    SignalShooting(f_live);
     SignalWater();
     SignalVoice();
     UpdateMusic();
@@ -639,6 +653,168 @@ void ApplicationChasm::SignalZombies(bool f_live){
     }
     bites_seen.swap(bites);
     swings_seen.swap(swings);
+}
+
+/*
+    THE BOWS HEARD (range_plan.md, "Sounds"). An archer's turn of the Shoot clip, read as the view plays it: at a zombie by
+    the rules' count (draw, draw_turn), at the straw on the line by his shot clock (ShotClockOf). From its NOCK the bow
+    is drawn - the scope "bow_drawn", his id, open, and the creak with it; at its RELEASE "arrow_loose", on the rules'
+    own tick for an arrow at a zombie, and the scope ends, which cuts the creak. A turn given up before its release
+    (nothing left to shoot at) ends it too. Come into earshot partway through a turn, what has passed is not played late.
+    The nearest few drawing are heard, within the work's reach.
+    THE ARROWS at zombies, the rules' (EconomyArrow): each in the air a scope "arrow" of its own. A miss is forecast every
+    pass - "arrow_miss", `in` the passes until it comes down at this speed - so the table lands its swoosh's loudest part
+    there; a hit is "arrow_hit" once, where it went in, on the pass it does. The range's practice arrows are the view's
+    alone (ApplicationChasmRange.cpp): there only the bow is heard.
+*/
+void ApplicationChasm::SignalShooting(bool f_live){
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    if (!e || !e->world || e->world.get() != bows_heard_world){
+        for (const BowBeat& b : bow_beats){
+            if (b.f_open){
+                cues.EndScope("bow_drawn",(int)b.person);
+            }
+        }
+        for (const ArrowHeard& a : arrows_heard){
+            cues.EndScope("arrow",a.instance);
+        }
+        bow_beats.clear();
+        arrows_heard.clear();
+        bows_heard_world = e ? e->world.get() : nullptr;
+    }
+    //Held in a pause, as the clip is: the scopes stay open, and the bus holds what is playing.
+    if (!f_live || !e || !e->world){
+        return;
+    }
+    const float height = cam_distance * SOUND_LISTENER_HEIGHT;
+    auto distance_to = [&](const vec2& at){
+        float dx = at.x - camera_target.x;
+        float dz = at.y - camera_target.z;
+        return sqrtf(dx * dx + dz * dz + height * height);
+    };
+    //THE BOWS: who is in a turn, how far into it, and where its nock and release fall - in ticks at a zombie, in
+    //seconds at the straw.
+    struct Drawing{
+        uint32_t person;
+        float distance;
+        vec2 at;
+        uint64_t turn;
+        float into;
+        float nock;
+        float release;
+    };
+    std::vector<Drawing> drawing;
+    for (const EconomyWorker& k : e->workers){
+        Drawing d;
+        ShotClock clock;
+        if (k.draw > 0 && k.draw_turn > 0){
+            d.turn = e->tick - (uint64_t)k.draw;
+            d.into = (float)k.draw;
+            d.nock = SHOOT_NOCK * (float)k.draw_turn;
+            //The rules' release tick (Shooting.cpp, ReleaseOf), so the loose is heard as the arrow leaves.
+            d.release = (float)std::max(1,std::min(k.draw_turn,(int)std::lround(SHOOT_RELEASE * (float)k.draw_turn)));
+        }else if (ShotClockOf(k,e->tick,clock) && clock.cycle > 0.0f){
+            int n = std::max(0,std::min(clock.shots - 1,(int)(clock.elapsed / clock.cycle)));
+            d.turn = (1ull << 63) | (clock.start << 5) | (uint64_t)n;
+            d.into = clock.elapsed - (float)n * clock.cycle;
+            d.nock = SHOOT_NOCK * clock.cycle;
+            d.release = SHOOT_RELEASE * clock.cycle;
+        }else{
+            continue;
+        }
+        d.person = k.id;
+        d.at = EconomyBody(k);
+        d.distance = distance_to(d.at);
+        if (d.distance <= SOUND_WORK_REACH){
+            drawing.push_back(d);
+        }
+    }
+    std::sort(drawing.begin(),drawing.end(),[](const Drawing& a, const Drawing& b){
+        return (a.distance != b.distance) ? a.distance < b.distance : a.person < b.person;
+    });
+    std::vector<BowBeat> kept;
+    for (size_t i = 0; i < drawing.size() && i < SOUND_BOW_NEAREST; i++){
+        const Drawing& d = drawing[i];
+        auto it = std::find_if(bow_beats.begin(),bow_beats.end(),[&](const BowBeat& o){ return o.person == d.person; });
+        BowBeat b;
+        if (it != bow_beats.end() && it->turn == d.turn){
+            b = *it;
+        }else{
+            if (it != bow_beats.end() && it->f_open){
+                cues.EndScope("bow_drawn",(int)d.person);
+            }
+            b.person = d.person;
+            b.turn = d.turn;
+            b.f_drawn = d.into >= d.nock;
+            b.f_loosed = d.into >= d.release;
+        }
+        CuePayload p;
+        p.Set("x",d.at.x).Set("z",d.at.y);
+        if (!b.f_drawn && d.into >= d.nock){
+            cues.BeginScope("bow_drawn",(int)d.person,p);
+            b.f_drawn = true;
+            b.f_open = true;
+        }
+        if (!b.f_loosed && d.into >= d.release){
+            if (b.f_open){
+                cues.EndScope("bow_drawn",(int)d.person);
+                b.f_open = false;
+            }
+            cues.Signal("arrow_loose",p,(int)d.person);
+            b.f_loosed = true;
+        }
+        kept.push_back(b);
+    }
+    //No longer drawing, or out of earshot: a creak still on is cut.
+    for (const BowBeat& b : bow_beats){
+        bool f_kept = std::any_of(kept.begin(),kept.end(),[&](const BowBeat& o){ return o.person == b.person; });
+        if (b.f_open && !f_kept){
+            cues.EndScope("bow_drawn",(int)b.person);
+        }
+    }
+    bow_beats.swap(kept);
+
+    //THE ARROWS at zombies: a forecast in passes, the cues' clock - a tick a pass at 1x, four at 4x.
+    const float ticks_a_pass = std::max(1.0f,physics_time_factor);
+    std::vector<ArrowHeard> flying;
+    for (const EconomyArrow& a : e->arrows){
+        if (!EconomyArrowFlying(a)){
+            continue;
+        }
+        ArrowHeard h;
+        h.instance = ArrowInstance(a.by,e->tick - (uint64_t)a.flown);
+        h.f_hit = a.f_hit;
+        h.to = vec2(a.to.x,a.to.z);
+        bool f_heard = std::any_of(arrows_heard.begin(),arrows_heard.end(),[&](const ArrowHeard& o){
+            return o.instance == h.instance;
+        });
+        if (!f_heard && distance_to(h.to) > SOUND_WORK_REACH){
+            continue;
+        }
+        if (!f_heard){
+            cues.BeginScope("arrow",h.instance);
+        }
+        if (!a.f_hit){
+            CuePayload p;
+            p.Set("in",(float)(a.ticks - a.flown) / ticks_a_pass).Set("x",h.to.x).Set("z",h.to.y);
+            cues.Signal("arrow_miss",p,h.instance);
+        }
+        flying.push_back(h);
+    }
+    //In the air at the last pass and not now: down - or gone, a hit that felled its zombie.
+    for (const ArrowHeard& h : arrows_heard){
+        bool f_flying = std::any_of(flying.begin(),flying.end(),[&](const ArrowHeard& o){ return o.instance == h.instance; });
+        if (f_flying){
+            continue;
+        }
+        if (h.f_hit){
+            CuePayload p;
+            p.Set("x",h.to.x).Set("z",h.to.y);
+            cues.Signal("arrow_hit",p,h.instance);
+        }
+        cues.EndScope("arrow",h.instance);
+    }
+    arrows_heard.swap(flying);
 }
 
 /*

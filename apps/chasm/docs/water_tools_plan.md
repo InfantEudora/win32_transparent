@@ -8,8 +8,8 @@ both for setting a scenario up:
   can make it endless.
 - **Water placed by hand**: rivers and ponds drawn onto the map, as part of the map itself.
 
-All five steps built and checked - the well, placed rivers, ponds and the panel's river and pond tools on
-2026-10-18, and height painted by hand on 2026-10-19 (as built under each).
+All six steps built and checked - the well, placed rivers, ponds and the panel's river and pond tools on
+2026-10-18, height and cliffs painted by hand on 2026-10-19 (as built under each).
 
 ## Decided (the user, 2026-10-18)
 
@@ -24,6 +24,10 @@ All five steps built and checked - the well, placed rivers, ponds and the panel'
 - **Height painted by hand too** (2026-10-19, step 5): smooth hills only - the relief, raised and lowered - not
   cliffs, which are the chasm's levels and a far bigger thing. No flatten mode for now. A stroke's height is held
   to +-20 (the generated hills reach 14, the mountain about 50).
+- **Cliffs after all** (2026-10-19, step 6), the user's idea: painted on PLOTS with the road's drag, which makes
+  them the same kind of edit as a road rather than lines in the chasm's layout - the terrain is one column per plot
+  already. **Down only**, 1 to 4 steps. **A winch is the only way across**, as at a balcony: no ramps or stairs, the
+  rules unchanged. **A width slider**, 1 to 5 plots.
 
 ## The well
 
@@ -347,6 +351,100 @@ wants its plot within `ZONE_RISE_HOUSE`. So a test map with hills has high groun
     before; all 18 saves the same world hash and the 36 files byte for byte the same; the 6,000-tick replay from
     `village_year5` with zombies equal on all 6,001 ticks, on the same final hash as every run before.
 
+## Cliffs painted by hand (step 6)
+
+A cliff is not a line in the layout. Every plot already stands as a column at a whole number of steps
+(`Terrain.h`, `grid_plan.md` "Columns"), and a wall stands wherever two neighbours differ; the cracked-mud map
+(`MudCracks.h`) makes its whole terrain that way with no layout at all. So painting plots onto levels is an edit of
+the road's kind, and nearly everything a cliff needs follows from the heights:
+
+- **Walls**: the terrain mesh draws one, with its strata, turf and soil, wherever neighbouring plots differ.
+- **Walking**: nobody crosses a step, zombies included (`Terrain::SameGround`), except by a winch.
+- **Kinds** (`BuildKinds`): a lowered patch of `TERRAIN_MIN_PATCH` plots or more beside the plateau is a balcony, so
+  a winch reaches it; a smaller one is bare rock.
+- **Building**: a footprint stands on one height, so nothing straddles a cliff.
+- **Combat**: sight and an arrow's reach go by the ground's height (`Shooting.cpp`), so a cliff's top sees and
+  shoots further, and the cliff hides what is behind it.
+
+What it needs:
+
+- **Strokes in the settings**, beside the water and the relief: `GridSettings::cliffs`, each stroke the positions
+  of the plots its drag crossed, a width in plots and a depth in steps. Positions rather than plot numbers, so a
+  stroke outlives a new seed as the water does. Saved only when there are any, copied into the layout, hashed.
+- **The plots a stroke takes** (`TerrainCliffPlots`): the plot nearest each point - on the grid it was painted on,
+  its chain exactly - and past a width of one every plot within half the width of the line through them. The
+  preview and the terrain ask the same function.
+- **In the heights** (`Terrain::BuildHeights`), after every generated one and before they settle: each stroke sets
+  its plots to its depth, a later stroke over an earlier one; depth 0 takes painted plots back up. Only plots the
+  generator left at the plateau's height, dry, off the map's edge, the mountain and a pond's reach - so the chasm's
+  own plots, its crumbling rim and its cracks stay, and a river keeps its ground: a terrace painted across one stops
+  at its wet margin, and the river crosses on its own banks.
+- **Kept from the pits' filling**: the terrain fills every sunken piece but the biggest, for the cracks' stray ends;
+  a piece with a painted plot in it is there on purpose.
+- **The road's drag**: plots joined along fine edges (`LineStepTo`). Two lowered plots meeting only at a corner are
+  a saddle, which the terrain joins back up (`SettleHeights`) - a diagonal moat drawn plot by plot would leak there.
+- **Lowering keeps off every drop**: step 5's guard measured from the rift; a valley painted beside a painted cliff,
+  or a crack, could sink the plateau below the ground under it the same way. It now fades height painted down within
+  `RELIEF_PAINT_RIM_CLEAR` of the foot of every drop, measured from the plots below the plateau beside it.
+- **The tool**: "Cliff (debug)" beside Height, locked in play: a road's drag, its band drawn plot by plot - blue going
+  down, green taken back up, red not taken - and before the press the brush under the cursor. Depth (0..4) and width
+  (1..5) on the panel, the strokes listed with an x each, "Undo the last stroke". `chasm_generate` takes `cliffs`;
+  `chasm_tool` takes `depth`, and `width` as plots with the cliff tool in hand.
+- *Done when* cliffs painted on a flat map stand at their depths with walls round them, a one-plot trench stops
+  walkers and a winch takes them down, a river keeps its ground through a painted terrace, nothing is filled back, a
+  save, a load and a replay give the same, and the A/B finds nothing changed on a map without strokes.
+
+### As built: step 6 (2026-10-19)
+
+- **The settings**: `GridSettings::cliffs`, a `GridCliffs` of `GridCliffStroke`s (`GridWater.h`) - points, width
+  (`GRID_CLIFF_WIDTH` 1 unless given, held to 1..`GRID_CLIFF_WIDEST` 5) and depth (`GRID_CLIFF_DEPTH` 1, held to
+  0..`GRID_CLIFF_DEEPEST` 4). In `operator==`; the save's `"grid"` block holds `"cliffs":{"strokes":[...]}` only when
+  there are any (`GridCliffsToJson` / `FromJson`, `chasm_generate`'s `cliffs` too). `ChasmPlaceCliffs` copies them,
+  held, into `ChasmLayout::cliff_strokes`, hashed there. `chasm_grid`'s `layout.cliffs`: strokes, plots painted,
+  plots refused.
+- **The plots** (`TerrainCliffPlots`): the plot nearest each point; from one point's plot to the next, walked along
+  fine edges as `LineStepTo` walks a jump - **added after the first try**, since a stroke given by script, as corners,
+  would have met itself at a corner and leaked; past a width of one, every plot within half the width of the line
+  through the points, smoothed over two points either side, a plot across being the map's area over its plots -
+  **changed after the first try**: a lattice quarter (2) and the chain's staircase made width 3 about 3.8 plots across.
+- **The heights** (`Terrain::PaintCliffs`, before `SettleHeights`, on the cracked-mud map too): `cliff_open` per plot,
+  then each stroke's open plots set to its depth; `cliff` per plot what they came to. `SettleHeights` keeps a piece
+  with a painted plot in it. The relief's guard (`BuildRelief`): height painted down fades out within
+  `RELIEF_PAINT_RIM_CLEAR` of every plot below the plateau beside a plateau plot.
+- **The tool**: `CHASM_TOOL_CLIFF`, "Cliff (debug)" beside Height, locked in play; `ChasmMapTool` names the four map
+  tools. `UpdateCliffDrag` keeps `cliff_chain` (by `LineStepTo`, no longer static) and `cliff_band` for the preview;
+  with no drag the pick view draws the band of the plot under the cursor, the brush. `CliffPlotTaken` colours it. On
+  release, a stroke that takes no plot is turned down with why. The panel: depth and width, the strokes with an x
+  each, the plots painted and refused, "Undo the last stroke", "Take all the cliffs away". `chasm_tool` takes `depth`,
+  and `width` as plots with the cliff tool in hand; its result has `cliff_depth`, `cliff_width`, `cliff_plots`.
+- **Found on the way**: a map tool's drag was never dropped - a tool put down mid-drag left it, to be placed the next
+  time the tool was taken up. Now a right press or another tool drops it (`DropMapDrag`), as a road's.
+- *Checked* (debug, a copy on port 8777, flat map seed 5, 4,000 cells):
+  - A one-plot L dragged by `chasm_tool`: 41 plots at -6 (balcony), walls, turf and soil along both sides; the
+    plateau beside it at 0. Held, the band blue.
+  - A ring one plot wide: two people put inside, ordered out - "no way there" three times; within it, taken. With a
+    winch on each side of the moat, both walked out: down, along the moat, up. The map then had 114 plots painted,
+    the L's 41 and the ring's 73: two pieces, both kept - the pits' filling would have left the ring alone.
+  - Width 3 at depth 2: -12; a depth-0 stroke over part of it cut a gap back to the plateau. Widths 1-5 on a straight
+    50-unit drag: 1.4 (the chain), 2.4, 3.3, 4.3 and 5.2 plots across.
+  - A river drawn across the terrace: its wet plots refused (33), the terrace stopping at its margin either side, the
+    river on its own ground.
+  - The default chasm map: a stroke from the plateau over the rim, width 3 depth 2 - 58 plots painted, 21 refused
+    (the rim's and the chasm's), joined to the balcony below at the same depth, drawn like one of the cracks. A
+    valley of -15 painted beside it: 2 units from the cliff the plateau at 5.9 (1.2 with no cliff), 13 units off -7.8
+    (-9.1), away from it the same to the tenth.
+  - Dropped by another tool and by a right press: 12 plots held, nothing placed. A ring given by script as its four
+    corners: 74 plots, and no way out. Out of range: depth 9 held to 4, width 0 to 1; in play "a debug tool".
+  - Saved, another map generated, loaded: the same world hash; a re-save byte for byte the save. A recording on a map
+    with a moat, a terrace, a river, two winches and three orders, replayed twice from a chasm map: rebuilt each time,
+    the traces equal on all 1,506 ticks.
+  - **The A/B**, both from one snapshot of the tree, since two other sessions were changing it meanwhile: two copies
+    of the app folder, A with step 6's map-facing edits undone - the painting, the pits' exemption, the relief's guard,
+    `operator==`, the hash, `ChasmPlaceCliffs`'s call, the save's read and write - `diff -r` showing nothing else.
+    `chasm_seed_sweep.py 1 60` identical on A and B and to step 5's, no failures; all 18 saves the same world hash and
+    the 36 files byte for byte the same; the 6,000-tick replay from `village_year5` with zombies equal on all 6,001
+    ticks (its final hash not step 5's: the other sessions' work since moves it, on both sides alike).
+
 ## Steps
 
 1. **The well**: the kind, the tool, the fill from the seed, `FetchFrom` and `KeepTowers`, endless by `set_stock`,
@@ -370,8 +468,10 @@ wants its plot within `ZONE_RISE_HOUSE`. So a test map with hills has high groun
 
 5. **Height**: the strokes in the settings, the layout and the relief; the Height tool, its preview and its list
    (above, "Height painted by hand").
+6. **Cliffs**: the strokes in the settings, the layout and the heights; the Cliff tool on the road's drag, its
+   preview and its list (above, "Cliffs painted by hand").
 
-Step 1 and steps 2-4 do not depend on each other; step 5 follows step 4's tools.
+Step 1 and steps 2-4 do not depend on each other; steps 5 and 6 follow step 4's tools.
 
 ## Current tuning
 
@@ -387,7 +487,9 @@ Step 1 and steps 2-4 do not depend on each other; step 5 follows step 4's tools.
 | `GRID_RELIEF_HEIGHT`, `_HIGHEST` | 6 to start with, held to +-20 (the user's) |
 | `GRID_RELIEF_RADIUS` | 12 to start with, held to 4..60 (`GRID_RELIEF_NARROWEST`, `_WIDEST`) |
 | `RELIEF_PAINT_RIVER_FADE` | 8: painted height fades out along a river over this past its wet margin (the hills' is 24) |
-| `RELIEF_PAINT_RIM_CLEAR` | 16: height painted down fades out within this of the rift |
+| `RELIEF_PAINT_RIM_CLEAR` | 16: height painted down fades out within this of a drop's foot (the rift's until step 6) |
+| `GRID_CLIFF_DEPTH`, `_DEEPEST` | 1 step (6) to start with, held to 0..4; 4 is -24, well above the cloud deck at -39 |
+| `GRID_CLIFF_WIDTH`, `_WIDEST` | 1 plot to start with, held to 1..5 |
 
 ## Later
 

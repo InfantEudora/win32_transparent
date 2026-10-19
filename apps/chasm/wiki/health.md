@@ -6,7 +6,7 @@ status: built
 summary: Health is the food meter. It lasts {NEEDS_HEALTH_FULL:days} from full, food puts it back, and at zero the person dies.
 plans: needs_plan.md > Decided; needs_plan.md > The model; needs_plan.md > Current tuning; needs_plan.md > As built: step 5, deaths told; zombies_plan.md > Step 2: meals, and a fight
 code: Economy.h: NEEDS_HEALTH_FULL EconomyFoodWorth EconomyPressing EconomyMealOn NEEDS_DIED_ZOMBIE; Economy.cpp: Needs Consume NextMeal MealTick EatAndDrink EatingAtHome SeekSupply; Zombies.cpp: ZombieNear Fights; ApplicationChasmSelect.cpp: BADGE_LOW_HEALTH
-verified: 2026-10-14
+verified: 2026-10-19
 ---
 
 Every [[Person|person]] has a health bar, and there is no separate hunger bar. Health drops by one every
@@ -44,7 +44,7 @@ under way waits while it is - unless they are indoors, or up on a tower, where n
 A [[Zombie|zombie's]] bite takes {ZOMBIE_BITE:days} of health, so a fight is fought with whatever health a
 person has: a hungry one goes down sooner.
 
-At zero health a person dies. The colony records the cause: **a zombie** if a bite took the last of it,
+At zero health a person dies, and falls ([[The fallen]]). The colony records the cause: **a zombie** if a bite took the last of it,
 whatever there was to eat; else **thirst** if they were dry, **cold** if they were cold, and **hunger**
 otherwise. Their family keeps the house, and their job is given out again on the same tick. Nobody arrives
 to replace them, so starving is the first way to lose.

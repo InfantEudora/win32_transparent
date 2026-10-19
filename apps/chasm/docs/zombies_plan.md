@@ -483,7 +483,7 @@ in the guard test's way, and by a replay:
    before its gate; a fence climbed; the times as the strengths say. *Done 2026-10-19, with the zombie's scratch
    clip (the user's), below.*
 3. **4c**: repair and rebuilding by the builders, only with no zombie near; the crate.
-4. **4d**: the look and the sound. *The sound done 2026-10-19 (below); the look to come.*
+4. **4d**: the look and the sound. *Both done 2026-10-19 (below).*
 5. **4e**: the flow field, if not already in 4b.
 
 ## As built: step 4a (2026-10-18)
@@ -599,14 +599,58 @@ work sounds' way - the rules say what is happening, the cue table what it sounds
   a second, three zombies on one man and his blows. *Not checked by ear*: I have none.
 - **For the user**: a bite lands every `ZOMBIE_BITE_SECONDS` (0.5) while the scratch swipes once in 2.29 s, so the punches
   run four times as fast as the arms. Either the clip or the cadence could give - the rules' 3-second fight was tuned
-  before the clip existed.
+  before the clip existed. *Answered: the sounds' timing and interval are fine for now (the user, 2026-10-19).*
 
 Still to do of 4d: the look - stakes leaning and falling as a palisade is harmed, a gate's door hanging, a breached door
-standing open.
+standing open. *Done the same day, below.*
 
 Seen while testing, not the game's: now and then one request of the thousands a test run makes is never answered (three
 times in two days), while the app goes on answering the next - the sim idle, no crash. Read-only questions in both test
 scripts now time out after 30 s and are asked again; commands still wait, since one may have run.
+
+## As built: step 4d, the look (2026-10-19)
+
+Files: `ZoneMesh.*` (`ZoneHarmLook`, `ZoneHarmLookOf`, `ZoneHarmChunks`), `RoadMesh.*` (`HarmedLog`, the palisade and the
+gate harmed), `BuildingMesh.*` (`BreachedDoor`), `MeshBuild.h` (`MeshTurn`, `MeshShift`), `ApplicationChasm.*` (the look
+worked out in `UploadZones`), `Zombies.cpp` (a broken plot's harm kept), the wall test's `ring`.
+
+- **The way to the mesh**: the harm is the economy's, and the zone chunks are built from the zones - so it goes the way a
+  field's growth stage goes (`zone_field_stage`): each frame `UploadZones` works out the LOOK of the harm, in
+  `ZONE_HARM_STEPS` (8) - steps 1-7 harmed, 8 broken or breached - and rebuilds the chunks under any mark whose step
+  moved, and its neighbours' (a gate's beam hangs from the plots beside it). A wall plot is rebuilt at most eight times
+  on its way down; a door once, when it is breached. Each wall or gate mark keeps WHERE THE BLOWS CAME FROM - the middle
+  of the zombies hitting it when it was first seen harmed, kept as long as the mark - so what gives, gives away from them
+  without the look moving as they shuffle. With none seen (a save loaded mid-break), one way for the plot by its hash.
+- **A palisade plot**, each log by its own hash: it leans away from the blows by `WALL_LEAN_MOST` (26 degrees) times the
+  harm, times a share of its own (30-100%); past `WALL_FALL_FROM` (35%) of the harm logs start to lie on the ground, two
+  in five of them by the last step. BROKEN, it is drawn as what is left - all its logs down but
+  `WALL_STUMPS` (30%) snapped off as stumps - where it was a surveyor's stake before. Its jambs always stand, so a gate's
+  beam beside a broken plot still hangs (`BuildGate` takes a broken neighbour as standing).
+- **A gate's door**, shut and hit: each leaf swings in on its hinge away from the blows, up to `GATE_GIVE` (14 degrees),
+  its far end sagging `GATE_SAG`. BROKEN: each hangs askew that way, swung 40-92 degrees and dropped 13-23 degrees at the
+  far end, lifted off the ground at its hinge - by its hash, so the two never match.
+- **A building's door**, BREACHED: the doorway goes dark (`PAL_VOID`) and its leaf stands open out of it, 72-106 degrees
+  about one jamb, sagging a little - every door the building has. One drawn with no door (by the walls' hash, about one
+  house in ten) shows nothing.
+- **The rules, one change**: a broken palisade plot now keeps its harm at its strength while it is a wall site, as a gate's
+  and a door's do - so the view can tell a broken plot from a planned one, and 4c will need it to know what the builders
+  rebuild. Built again (by the line works, until 4c), it stands whole and its harm is forgotten; erased, too. Saved and
+  hashed as before; the route never asks a site's strength. The wall test's `ring` checks both: the plot kept as broken,
+  and whole once a debug paint builds it again.
+- **Found on the way, and fixed**: the test map's gate is TWO plots on the slant, its door drawn in four pieces - each
+  plot a piece from its jamb and one from the meeting - with the zombies hitting only one of them, standing along the
+  line of its leaf. Drawn first by each piece's own line, one leaf bowed in and the other out, the broken door hung
+  outward toward the zombies, and the second plot drew its leaves as an ordinary open gate. Now a gate plot takes its
+  neighbour's mark (the door is one, as its shutting is), every piece a plot draws turns with the leaf hung at its one
+  jamb, and the side comes from the chord, as for the palisade.
+- **Checked**, on flat test maps, by screenshots from the side, from either side and from straight above
+  (`look_4d.py`, a scratch script): a palisade plot at 30, 60 and 90% and broken - its logs leaning in, then down in,
+  then a gap of stumps and fallen logs the zombies walk in over; a gate at 50 and 90% and broken, both leaves bowed in,
+  then hanging in; a store's and a house's doors breached, every one open outward on a black doorway. The wall test's
+  eight cases pass (`ring` with its new checks), the guard test's seven with their figures as before; a replay across a
+  palisade break, recorded from three zombies already at it, equal on every tick twice and ending where the run did.
+- **Not checked**: a harmed gate between a tower and a wall, or three plots wide; a palisade corner (a plot of three
+  lines) harmed; how it reads in play at the game's distance and light - the user's eye.
 
 ## Step 5: the alarm (the user's, 2026-10-18)
 
@@ -636,6 +680,99 @@ Agreed with step 4: today a gate is shut one at a time from its card, and nobody
 - **Later**: an alarm the colony sounds itself - crows over the swamp, a guard who sees the first zombie.
 
 The waves from the swamp come after step 5, with the calendar.
+
+## Step 6: the fallen (the user's, 2026-10-19)
+
+The user's new clips, on all three rigs (the man's, the woman's, the zombie's): `Die_Backward` (3.0 s) and `Die_Forward`
+(3.4 s), each ending flat on the ground with the hips about half a unit from where he stood, the way he fell. Today a
+zombie at 0 is gone on that tick, and so is a person who dies.
+
+**Decided** (the user, 2026-10-19, on my proposal):
+
+- **Which way**: by the blow that killed him - struck from the FRONT he falls backward, from behind forward - and he
+  keeps the way he faced: no turn to fall square away from the blow.
+- **A zombie lies three days** - two lying still, the last one SINKING into the ground - and is then gone. While it
+  lies, the CROWS may come down on it.
+- **A person falls too, by the same clips, and sinks after a few seconds**; from where he sinks the props file's `angel`
+  appears and floats up.
+
+**Proposed with it** (mine; tuning to be judged in game):
+
+- **The fallen are the rules'**: a short record each - who, where his body stood, the way he faced, which way he fell,
+  the tick - saved and hashed only while there is any, as the zombies are, and dropped when its time is up. So a save
+  keeps its dead, a replay is exact, and the crows (the view) and anything later can ask where they are.
+- **The blow**: an arrow's flight, a person's blow from where he stands, a zombie's bite from where it stands - the
+  last that tick if several. Against the way he faced as drawn (a zombie stood by whom it is after faces him; an archer
+  faces whom he aims at): along it, struck from behind, forward; else backward. A person who dies of hunger, thirst or
+  cold has no blow, and falls forward, a collapse. One who dies indoors leaves no body: his angel rises from his house.
+- **Times**: `FALLEN_ZOMBIE_DAYS` 3, its last `FALLEN_ZOMBIE_SINK_DAYS` 1 sinking; a person `FALLEN_PERSON_LIE_SECONDS`
+  6 from his fall (the clip and a few seconds still), sinking over `FALLEN_PERSON_SINK_SECONDS` 3, his angel rising over
+  `FALLEN_PERSON_ANGEL_SECONDS` 6 - and then the record goes.
+- **Drawn**: a zombie keeps its skeleton, crossfading into its fall and holding the clip's last frame; a person's body
+  is a skeleton of its own (the people's are matched to the workers by place, and his is someone else's next tick).
+  The children's figures have no rig, so a child's tips over whole. Sinking is the body lowered into the ground. Arrows
+  stuck in a zombie still go as it falls - kept in the body they would have to ride its bones.
+- **The crows**: a body lying still is a roost - perches on the ground round it and a few on it - that a flock moving
+  on may take over a tree near it; they peck there (a head-down tilt of the bird, no new shape key) and go up as anyone
+  comes near, as from a tree. Not once it sinks.
+
+**Build order**: the rules with a test (`tools/chasm_fallen_test.py`: the way each falls, the times); the zombies' fall
+and sinking; the people's, with the angel; the crows.
+
+## As built: step 6 (2026-10-19)
+
+Files: `Economy.h` (`EconomyFallen`, the `FALLEN_*` times, `EconomyFallenSinking`/`Rising`, `EconomyZombieLooks`,
+`EconomyWorkerLooks`), `Zombies.cpp` (`ZombieFalls`, `PersonFalls`, `TickFallen`, the blows' ways in `Fights`),
+`Shooting.cpp` (an arrow's), `Economy.cpp` (a person's in `Needs`; the tick; capture and restore), `ChasmSave.cpp`
+(`"fallen"`), the hash (tag `0xFA11E`), `ApplicationChasmZombies.cpp` (the fall clips, the bodies, the tool's `fallen`),
+`ApplicationChasmWorkersView.cpp` (`UploadFallen`: the people's bodies and the angels), `ApplicationChasm.*` (the
+angel loaded, `FALL_*_CLIP`, `FALLEN_SINK_DEPTH`), `Birds.*` and `ApplicationChasmBirds.cpp` (CARRION).
+
+- **The rules**: a zombie at 0 - by an arrow, the way it flew; by a blow, from where the striker stands - and a person
+  at 0 - by a bite, from where the zombie stands; hunger, thirst or cold, no blow - leave a record as they go. Backward
+  when the blow is against the way he faced, else forward. The facing is the one drawn, now the rules' own
+  (`EconomyZombieLooks`, `EconomyWorkerLooks`) so view and fall cannot disagree. Kept `EconomyFallenTicks`, then gone;
+  saved and hashed only while anyone lies. The debug "clear all" takes the zombies' bodies with them, not the people's.
+- **Found on the way**: a person fighting by hand faced along his route, not the zombie at him, so one bitten from the
+  front could fall forward. He now faces the nearest zombie in reach while his blow counts down - the view and the fall
+  alike; no rule reads it. And the economy's snapshot is only taken again when something in it changes: with nobody
+  left moving its tick stands still while the dead go on sinking, so the bodies, the angels and the tool go by the
+  calendar as it is now (`calendar_shown`).
+- **Drawn**: a zombie keeps its skeleton by its id and crossfades into `Die_Forward` or `Die_Backward`, played once and
+  held at its last frame; a person gets a skeleton of his own from a pool (his figure at the age he died, by his
+  `EconomyDeath`) and starts his fall at once - from where his own stood, a pop of at most the first frame. One loaded
+  or come out of the clouds starts as far into the clip as he has lain, so already down. A child's figure has no rig and
+  tips over whole in 0.8 s. Sinking lowers the body by `FALLEN_SINK_DEPTH`, 0.15: the clips lay the hips at the ground,
+  so a body lying stands only a tenth of a unit off it (0.6 and 0.3 hid it in the first part of the sink). The ANGEL
+  appears as the body has sunk, swelling in, rising 3 units over its 6 s and half a turn, and shrinks out; from one who
+  died indoors, from over his roof.
+- **The crows**: `BirdWorld::carrion`, the zombies' bodies lying still 4 s after the fall and before they sink, each its
+  middle (0.45 along the way it fell) and its line. A flock moving on, not a wanderer, takes the nearest body within 40
+  units clear of its scares 70% of the time, over the trees: nine perches - three on the body, six in a ring round it on
+  the ground - and there more of its fidgets are pecks (`BIRD_PECK_*`: nose down and up, 0.4 s). Anyone near puts it up
+  as from a tree; the body sinking, it moves on unhurried. The chasm_birds status names a flock's `roost_carrion`.
+- **The test**, `tools/chasm_fallen_test.py`, six cases, all passing: `front` (backward, facing its killer; still at 2
+  days, half sunk at 2.5, gone at 3), `behind` (an arrow in the back from the guard's tower: forward), `bitten`
+  (backward, by the bite; lying, sinking, the angel, gone at 15 s), `starved` (forward), `indoors` (no body, the angel),
+  `saved` (lying as it was after a save and a load). The wall test's eight and the guard test's seven pass, the guard's
+  figures those of the archers' pace that day (1,825 and 1,925 ticks), so the fight's facing moved no rule. Replays across
+  a person's death and across a zombie's fall: equal on every tick twice, ending where the run did.
+- **Checked by eye**, screenshots: a zombie on its back, feet to the man who felled it; a man bitten down, half sunk, the
+  angel rising from the spot with its shadow under it; seven crows down round a zombie's body 14 s after being put up
+  nearby, pecking. The birds keep the game's clock and a stepped pause does not move them: that check ran unpaused.
+- **Not checked**: a death on a tower's platform (the body on the deck, sinking through it); a child's tip; the angel over
+  a roof; how the crows read at the game's distance; a flock leaving a sinking body (in the code, not watched).
+- **For the user**: the sinking depth, the angel's rise and size, and how often crows take a body are all tuning. Arrows
+  stuck in a zombie still go as it falls.
+- **Fixed after (the user saw it, 2026-10-19)**: fallen zombies and women lay flat at standing hip height, their shadows
+  apart from them. The export writes each rig's copy of a clip as an animation of its own under the one name, and
+  `GLTFLoader::LoadAnimation` read only the first, the man's: the woman and the zombie BORROWED every clip, played
+  rotation-only at their rest positions (`KeepOwnPositions`), so the fall turned the body flat and its hips stayed up.
+  It was so for every clip since the per-rig export (HEAD's file too); only a fall shows it this much. Core gained
+  `LoadAnimation(name, f_every_copy)` (default as before - dozer's three `EngineIdle`s, on three parts, are the only
+  other repeated name and still play the first), and Chasm loads every rig clip with it, so `LinkObjects` binds each
+  rig to its own copy. Low side shots, before and after: the zombie at hip height, then down; the woman and the man
+  down. The walk speeds measure the same (0.79, 0.76, 0.76); the zombie's own scratch now crouches. Fallen test 6/6.
 
 ## Noted, for later (2026-10-18)
 

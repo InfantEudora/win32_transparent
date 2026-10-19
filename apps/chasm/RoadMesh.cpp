@@ -1,5 +1,6 @@
 #include "RoadMesh.h"
 #include "BuildingMesh.h"
+#include "ZoneMesh.h"
 #include "MeshBuild.h"
 
 #include <algorithm>
@@ -341,6 +342,20 @@ void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
 #define WALL_DOOR_GAP       0.03f   //between the two leaves of a shut door
 #define WALL_STAKE_HEIGHT   0.95f   //a planned wall's stake: taller than a road's, so the two read apart
 #define WALL_STAKE_TIE      0.70f
+//HARMED by zombies (zombies_plan.md, step 4d), each log by its own hash. Radians, and shares of a plot's strength.
+#define WALL_LEAN_MOST      0.45f   //a log leans at most this far, just before the plot breaks...
+#define WALL_FALL_FROM      0.35f   //...and logs come down from this much harm on...
+#define WALL_FALL_SHARE     0.75f   //...this share more of them for each share more of it
+#define WALL_DOWN           1.48f   //a fallen log: all but flat
+#define WALL_STUMPS         0.30f   //of a broken plot's logs, these stand on snapped off...
+#define WALL_STUMP_LOW      0.20f   //...between these heights
+#define WALL_STUMP_HIGH     0.60f
+#define GATE_GIVE           0.24f   //a shut gate's door, just before it breaks: its leaves swung in this far...
+#define GATE_SAG            0.07f   //...and their far ends dropped this far
+#define GATE_HANG_SWING     0.70f   //a broken gate's leaf hangs swung in this far, and up to GATE_HANG_SWING_MORE more...
+#define GATE_HANG_SWING_MORE 0.90f
+#define GATE_HANG_SAG       0.22f   //...dropped at its far end this far, and up to GATE_HANG_SAG_MORE more
+#define GATE_HANG_SAG_MORE  0.18f
 
 //A sharpened log standing at p on ground y0: a square post and a four-sided tip.
 void Log(std::vector<vertex>& out, const vec2& p, float y0, float height, float width, int column){
@@ -353,6 +368,54 @@ void Log(std::vector<vertex>& out, const vec2& p, float y0, float height, float 
     for (int i = 0; i < 4; i++){
         vec3 mid = (c[i] + c[(i + 1) % 4]) * 0.5f;
         MeshTri(out,c[i],c[(i + 1) % 4],apex,vec3(mid.x - p.x,0.3f,mid.z - p.y),column);
+    }
+}
+
+//A hash's bits as a share, 0 to 1: three of them from one hash, by `which`.
+float HashShare(uint32_t hash, int which){
+    return (float)((hash >> (which * 10)) % 1000) / 1000.0f;
+}
+
+//`v` on the ground plane turned by `a` radians about up, as MeshTurn turns it.
+vec2 TurnOnGround(const vec2& v, float a){
+    float c = std::cos(a);
+    float s = std::sin(a);
+    return vec2(v.x * c + v.y * s,-v.x * s + v.y * c);
+}
+
+/*
+    A LOG OF A HARMED PALISADE (zombies_plan.md, step 4d), standing at p on ground y0 - or not: `f` is the plot's harm,
+    0 whole to 1 broken, and `away` the way the blows push, unit, on the ground. Each log by its own hash: it leans that
+    way by its share of the harm, and past its own point it is down on the ground, roughly that way. Once the plot is
+    broken all are down but a few, snapped off.
+*/
+void HarmedLog(std::vector<vertex>& out, const vec2& p, float y0, float height, float width, int column,
+               const vec2& away, float f, uint32_t hash){
+    float lean = HashShare(hash,0);
+    float fall = HashShare(hash,1);
+    float yaw = HashShare(hash,2) - 0.5f;
+    const vec3 up(0.0f,1.0f,0.0f);
+    size_t first = out.size();
+    if (f >= 1.0f && fall < WALL_STUMPS){
+        float top = WALL_STUMP_LOW + (WALL_STUMP_HIGH - WALL_STUMP_LOW) * lean;
+        Bar(out,vec3(p.x,y0 - WALL_LOG_SINK,p.y),vec3(p.x,y0 + top,p.y),width,column);
+        vec2 to = TurnOnGround(away,yaw * 2.0f);
+        MeshTurn(out,first,vec3(p.x,y0,p.y),up.cross(vec3(to.x,0.0f,to.y)),0.25f * lean);
+        return;
+    }
+    bool f_down = f >= 1.0f || fall < (f - WALL_FALL_FROM) * WALL_FALL_SHARE;
+    if (f_down){
+        //Laid along the ground, half its width up: tipped over about its foot.
+        float lift = width * 0.5f;
+        Log(out,p,y0 + lift,height,width,column);
+        vec2 to = TurnOnGround(away,yaw * 1.4f);
+        MeshTurn(out,first,vec3(p.x,y0 + lift,p.y),up.cross(vec3(to.x,0.0f,to.y)),WALL_DOWN + 0.08f * lean);
+        return;
+    }
+    Log(out,p,y0,height,width,column);
+    if (f > 0.0f){
+        vec2 to = TurnOnGround(away,yaw * 0.6f);
+        MeshTurn(out,first,vec3(p.x,y0,p.y),up.cross(vec3(to.x,0.0f,to.y)),WALL_LEAN_MOST * f * (0.3f + 0.7f * lean));
     }
 }
 
@@ -386,8 +449,11 @@ void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
     logs at the middles of equal steps along each piece, so two plots' logs meet at a midpoint without a
     doubled one. A thicker log at the vertex where the line does not run straight through. Toward a gate
     the piece ends in a tall post at the midpoint - the jamb - and the crossbeam is the gate's (BuildGate).
+    HARMED (`harm`, step 4d), its logs lean and drop away from the blows (HarmedLog); BROKEN, a wall site again, it is
+    drawn here too, as what is left of it. Its jambs stand either way.
 */
-void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
+void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out,
+                   const ZoneHarmMark* harm = NULL){
     const std::vector<vec2>& pos = w.grid->fine.pos;
     const float level = w.terrain->Height(v);
     auto ground = [&](const vec2& p){
@@ -395,6 +461,30 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
     };
     int nb[ROAD_MAX_NEIGHBOURS];
     int n = WallNeighbours(w,z,v,nb);
+    //Which way the blows push a log standing at `at` in a line running across `side`: to the side of the wall away from
+    //where they came from - by the plot's chord, the line between its neighbours in the wall, since the zombies stand
+    //off its point and may stand along a bend of it - or with that not known, one way for the whole plot by its hash.
+    const float f = harm ? std::min(1.0f,(float)harm->step / ZONE_HARM_STEPS) : 0.0f;
+    const float turn = HashShare(MeshHash((uint32_t)v,0xFA11u),0) * 6.2831853f;
+    vec2 push(std::cos(turn),std::sin(turn));
+    if (harm && harm->f_from){
+        push = pos[v] - harm->from;
+        if (n == 2){
+            vec2 d = pos[nb[1]] - pos[nb[0]];
+            vec2 across(-d.y,d.x);
+            push = (across.dot(push) < 0.0f) ? -across : across;
+        }
+    }
+    auto away = [&](vec2 side){
+        if (side.length() < 1e-6f){
+            side = push;
+        }
+        if (side.length() < 1e-6f){
+            return vec2(1.0f,0.0f);
+        }
+        side.normalize();
+        return (side.dot(push) < 0.0f) ? -side : side;
+    };
     std::vector<vec2> segs;
     LineThrough(w,v,nb,n,segs);
     //The pieces as polylines, with the neighbour at each end (-1 at the vertex).
@@ -413,7 +503,8 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
         for (int i = 0; i < n; i++){
             pieces.push_back(Piece{{segs[i * 2],segs[i * 2 + 1]},-1,nb[i]});
         }
-        Log(out,pos[v],ground(pos[v]),WALL_LOG_HEIGHT + WALL_LOG_JITTER,WALL_LOG_W * 1.4f,PAL_BARK);
+        HarmedLog(out,pos[v],ground(pos[v]),WALL_LOG_HEIGHT + WALL_LOG_JITTER,WALL_LOG_W * 1.4f,PAL_BARK,
+                  away(vec2()),f,MeshHash((uint32_t)v,0xC0u));
     }
     /*
         Against a GUARD TOWER (defence_plan.md) the piece runs on past the midpoint to the tower's wall, which stands
@@ -470,9 +561,11 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
                 seg++;
             }
             float t = (s - along[seg - 1]) / std::max(1e-6f,along[seg] - along[seg - 1]);
-            vec2 at = p.pts[seg - 1] + (p.pts[seg] - p.pts[seg - 1]) * t;
+            vec2 d = p.pts[seg] - p.pts[seg - 1];
+            vec2 at = p.pts[seg - 1] + d * t;
             float jitter = (float)(MeshHash((uint32_t)v,(uint32_t)pi,(uint32_t)i) % 100) / 100.0f;
-            Log(out,at,ground(at),WALL_LOG_HEIGHT + jitter * WALL_LOG_JITTER,WALL_LOG_W,PAL_BARK);
+            HarmedLog(out,at,ground(at),WALL_LOG_HEIGHT + jitter * WALL_LOG_JITTER,WALL_LOG_W,PAL_BARK,
+                      away(vec2(-d.y,d.x)),f,MeshHash((uint32_t)v,(uint32_t)pi + 64u,(uint32_t)i));
         }
     }
 }
@@ -508,15 +601,20 @@ void DoorLeaf(const ChasmWorld& w, float level, const vec2& hinge, const vec2& e
     there across the road; OPEN, each is swung back about its jamb to lie along the road - both to the same
     side of the wall, by a fixed direction, so the two of a gate never fold opposite ways. Between the two plots
     of a gate on the slant there is no jamb: shut, the leaves run on to their meeting; open, nothing hangs there.
+    HARMED (`harm`, step 4d), a shut door's leaves give on their hinges away from the blows, their far ends sagging;
+    BROKEN, each hangs that way askew, by its hash, half off its hinges.
 */
-void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<vertex>& out){
+void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<vertex>& out,
+               const ZoneHarmLook* harm = NULL){
     const std::vector<vec2>& pos = w.grid->fine.pos;
     int nb[ROAD_MAX_NEIGHBOURS];
     int n = WallNeighbours(w,z,g,nb);
     bool f_wall = false;
     for (int i = 0; i < n; i++){
         if (z.ground[nb[i]] == ZONE_GROUND_WALL){
-            if (!ZoneWallStands(z,nb[i])){
+            //A broken plot beside it keeps its jamb (BuildPalisade), so the beam still has a post to hang from.
+            const ZoneHarmMark* broken = harm ? harm->Wall(nb[i]) : NULL;
+            if (!ZoneWallStands(z,nb[i]) && !(broken && broken->step >= ZONE_HARM_STEPS)){
                 return;
             }
             f_wall = true;
@@ -538,6 +636,44 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
         }
     }
     bool f_shut = ZoneGateShut(z,g);
+    //HARMED (step 4d): its mark - or, of a gate two plots wide on the slant, the other plot's: the door is one.
+    const ZoneHarmMark* hit = harm ? harm->Gate(g) : NULL;
+    for (int i = 0; i < n && harm && !hit; i++){
+        if (z.gate[nb[i]]){
+            hit = harm->Gate(nb[i]);
+        }
+    }
+    bool f_broken = hit && hit->step >= ZONE_HARM_STEPS && !f_shut;
+    float f = (hit && f_shut) ? std::min(1.0f,(float)hit->step / ZONE_HARM_STEPS) : 0.0f;
+    auto jamb_at = [&](int i){
+        return z.ground[nb[i]] == ZONE_GROUND_WALL || z.KindOf(nb[i]) == ZONE_KIND_TOWER;
+    };
+    /*
+        Harmed, each leaf turns as one about its jamb's hinge. A piece this plot draws with no jamb of its own is the far
+        part of the leaf hung at the plot's one jamb (a gate on the slant), and turns with it; with no one jamb it stands
+        as it is. Swung along the road to the side of the wall away from the blows - by the gate's chord, the line between
+        its neighbours, as a palisade's logs are, since the zombies stand off its point and may stand along a bend of the
+        wall - or with that not known, the open door's way.
+    */
+    int one_jamb = -1;
+    int jambs = 0;
+    for (int i = 0; i < n; i++){
+        if (jamb_at(i)){
+            one_jamb = i;
+            jambs++;
+        }
+    }
+    one_jamb = (jambs == 1) ? one_jamb : -1;
+    vec2 push(0.6f,0.8f);
+    if (hit && hit->f_from){
+        push = c - hit->from;
+        if (n == 2){
+            vec2 d = pos[nb[1]] - pos[nb[0]];
+            vec2 across(-d.y,d.x);
+            push = (across.dot(push) < 0.0f) ? -across : across;
+        }
+    }
+    const vec3 up(0.0f,1.0f,0.0f);
     for (int i = 0; i < n; i++){
         vec2 mid = (c + pos[nb[i]]) * 0.5f;
         vec2 in = c - mid;
@@ -546,11 +682,36 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
             continue;
         }
         in = in * (1.0f / half);
-        bool f_jamb = z.ground[nb[i]] == ZONE_GROUND_WALL || z.KindOf(nb[i]) == ZONE_KIND_TOWER;
+        bool f_jamb = jamb_at(i);
         //From the jamb's inner face - or, with no jamb, from the meeting with the next plot's leaf.
         vec2 hinge = mid + in * (f_jamb ? WALL_GATE_POST_W * 0.5f : 0.0f);
         float reach = half - (f_jamb ? WALL_GATE_POST_W * 0.5f : 0.0f) - WALL_DOOR_GAP * 0.5f;
-        if (f_shut){
+        int hung = f_jamb ? i : one_jamb;      //the jamb the leaf this piece is part of hangs from
+        if (hung >= 0 && (f > 0.0f || f_broken)){
+            //Built shut, then turned on its hinge: its far end dropped, then swung along the road away from the blows.
+            vec2 jamb_mid = (c + pos[nb[hung]]) * 0.5f;
+            vec2 shuts = c - jamb_mid;          //the way the leaf runs from its hinge, shut
+            float span = shuts.length();
+            if (span < 1e-4f){
+                continue;
+            }
+            shuts = shuts * (1.0f / span);
+            vec2 at = jamb_mid + shuts * (WALL_GATE_POST_W * 0.5f);
+            size_t first = out.size();
+            DoorLeaf(w,level,hinge,hinge + in * reach,g,i,out);
+            uint32_t hash = MeshHash((uint32_t)g,(uint32_t)hung,0x6A7Eu);
+            float swing = f_broken ? GATE_HANG_SWING + GATE_HANG_SWING_MORE * HashShare(hash,0)
+                                   : GATE_GIVE * f * (0.7f + 0.3f * HashShare(hash,0));
+            float sag = f_broken ? GATE_HANG_SAG + GATE_HANG_SAG_MORE * HashShare(hash,1) : GATE_SAG * f;
+            vec3 pivot(at.x,w.terrain->GroundHeight(at,level),at.y);
+            MeshTurn(out,first,pivot,up.cross(vec3(shuts.x,0.0f,shuts.y)),sag);
+            //About up a turn takes `shuts` toward (shuts.y, -shuts.x).
+            MeshTurn(out,first,pivot,up,(push.dot(vec2(shuts.y,-shuts.x)) > 0.0f) ? swing : -swing);
+            if (f_broken){
+                //Hung from its top hinge: its far end down near the ground, its near end lifted off it.
+                MeshShift(out,first,vec3(0.0f,span * std::sin(sag) * 0.8f,0.0f));
+            }
+        }else if (f_shut){
             DoorLeaf(w,level,hinge,hinge + in * reach,g,i,out);
         }else if (f_jamb){
             vec2 side(-in.y,in.x);
@@ -1097,7 +1258,8 @@ void BuildCobbles(const ChasmWorld& w, const ZoneState& z, const GridQuad& q, in
 
 }
 
-void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out){
+void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
+                   const ZoneHarmLook* harm){
     const Grid& g = *w.grid;
     const GridQuad& quad = g.fine.quads[fine_quad];
     const vec3 up(0.0f,1.0f,0.0f);
@@ -1118,12 +1280,20 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
         //its crossbeam - the road itself is drawn below like any other.
         if (z.ground[v] == ZONE_GROUND_WALL || z.gate[v]){
             if (RoadVertexOwner(w,v) == fine_quad){
+                //Harmed by zombies (step 4d): a broken plot is a wall site again, drawn as what is left of it. One
+                //standing at its strength has been built again, as whole, the moment before the rules forget it.
+                const ZoneHarmMark* hit = harm ? harm->Wall(v) : NULL;
+                bool f_broken = hit && hit->step >= ZONE_HARM_STEPS;
                 if (ZoneWallPlanned(z,v)){
-                    BuildWallStake(w,z,v,out);
+                    if (f_broken){
+                        BuildPalisade(w,z,v,out,hit);
+                    }else{
+                        BuildWallStake(w,z,v,out);
+                    }
                 }else if (ZoneWallStands(z,v)){
-                    BuildPalisade(w,z,v,out);
+                    BuildPalisade(w,z,v,out,f_broken ? NULL : hit);
                 }else{
-                    BuildGate(w,z,v,out);
+                    BuildGate(w,z,v,out,harm);
                 }
             }
             if (z.ground[v] == ZONE_GROUND_WALL){

@@ -1,8 +1,15 @@
-"""Blender add-on: glTF export keeps shape keys on meshes with modifiers.
+"""Blender add-on: our fixes to Blender's glTF exporter, one add-on for all of them.
 
 INSTALL: Edit > Preferences > Add-ons > (the dropdown, top right) Install from Disk... > this file,
-then tick it. After that it works inside the ordinary File > Export > glTF 2.0 dialog, with your
-remembered settings; the dialog gains a section "Keep shape keys through modifiers", on by default.
+then tick it. After that it works inside the ordinary File > Export > glTF 2.0 dialog and a
+collection's exporter, with your remembered settings; the dialog gains a section "glTF fixes" with a
+switch for each, all on by default. It REPLACES "glTF: keep shape keys through modifiers"
+(tools/blender_gltf_keep_shape_keys.py, its first fix, moved in here 2026-10-19): remove that one.
+
+A new quirk found in the exporter goes in here as one more fix: its own switch, its own hook, and a
+section below on what the stock exporter does and why.
+
+--- 1. KEEP SHAPE KEYS THROUGH MODIFIERS ------------------------------------------------------------
 
 WHY: with "Apply Modifiers" on, Blender's glTF exporter DROPS EVERY SHAPE KEY of a mesh that has any
 modifier besides Armature, and bakes the keys' current values into the mesh instead - the add-on
@@ -31,19 +38,39 @@ A key that changes the vertex count through the modifiers (a Mirror merges by di
 evaluation, so a key that moves a seam vertex off the seam can split it) cannot be rebuilt on one
 mesh; that object is left alone, exported the old way, and the export's log says which key.
 
-The same bake, headless, for the command line: tools/blender_export_glb.py.
+--- 2. START AT 0, UNSAMPLED -------------------------------------------------------------------------
+
+WHY: "Set All glTF Animation Starting at 0" (export_anim_slide_to_zero) does nothing while "Sampling
+Animations" is off. The exporter works out how far each action is to slide (animation/action.py,
+add_slide_data), but only its SAMPLED path applies it (sampled/*/sampler.py, k.frame -= slide); the
+unsampled one (animation/fcurves/) writes every key at its own frame's time. Found 2026-10-19 on
+chasm_props.blend, exported unsampled so tools/blender_retarget.py's reduced keys survive: every clip,
+keyed from Blender's frame 1, started at 1/24 s in the .glb - and the engine holds a clip's first key
+until then, a frame's freeze at the start of every loop.
+
+HOW, gather_gltf_hook - once every animation is gathered, before any is written - while the option
+is on: each animation whose earliest key is past 0 has all its key times moved back by that much, as
+the sampled path does (but from the keys, not the action's frame range). One already at 0 - a sampled
+one - is left as it is. The exporter shares key times between samplers (gather_accessor is cached),
+so a moved one is a copy: never the original another animation may still read.
+
+Headless, for the command line: tools/blender_export_glb.py (its own shape-key bake; this add-on for
+the rest).
 """
 
 bl_info = {
-    "name": "glTF: keep shape keys through modifiers",
+    "name": "glTF export fixes",
     "author": "win32_transparent",
-    "version": (1, 0, 0),
+    "version": (2, 0, 0),
     "blender": (4, 2, 0),
     "location": "File > Export > glTF 2.0 - its own section in the dialog",
-    "description": "Exports shape keys of meshes with a Mirror (or other) modifier, which the stock "
-                   "glTF exporter drops when Apply Modifiers is on",
+    "description": "Our fixes to the stock glTF exporter: shape keys kept through modifiers, and "
+                   "'Starting at 0' when exporting unsampled",
     "category": "Import-Export",
 }
+
+import array
+import copy
 
 import bpy
 
@@ -166,29 +193,83 @@ def _restore_all():
 
 class _Log:
     """The export's own log when there is one (its messages pop up after the export), else print."""
-    def __init__(self, export_settings):
+    def __init__(self, export_settings, fix):
         self.log = export_settings.get('log')
+        self.fix = fix
 
     def info(self, message):
-        print("[keep shape keys] " + message)
+        print("[%s] %s" % (self.fix, message))
         if self.log:
-            self.log.info("keep shape keys: " + message)
+            self.log.info("%s: %s" % (self.fix, message))
 
     def warning(self, message):
-        print("[keep shape keys] WARNING " + message)
+        print("[%s] WARNING %s" % (self.fix, message))
         if self.log:
-            self.log.warning("keep shape keys: " + message, popup=True)
+            self.log.warning("%s: %s" % (self.fix, message), popup=True)
+
+
+#--- 2. Start at 0, unsampled ---------------------------------------------------------------------
+def _times(accessor):
+    """An input accessor's key times, as the exporter packed them (array 'f', BinaryData.from_list)."""
+    return array.array('f', accessor.buffer_view.data[:4 * accessor.count]).tolist()
+
+
+def _moved_back(accessor, by, made):
+    """A copy of `accessor` with every time `by` seconds earlier - one copy per (original, shift)."""
+    key = (id(accessor), by)
+    if key not in made:
+        moved = copy.copy(accessor)
+        times = array.array('f', [max(0.0, t - by) for t in _times(accessor)])
+        moved.buffer_view = type(accessor.buffer_view)(times.tobytes(), accessor.buffer_view.bufferViewTarget)
+        #Bounds as stored - single precision - so they match the data exactly.
+        moved.min = [min(times)]
+        moved.max = [max(times)]
+        made[key] = moved
+    return made[key]
+
+
+def start_at_zero(animations, log):
+    """Moves every animation whose earliest key is past 0 back to it. See the module's notes."""
+    #Each one's start, read before anything moves: samplers, and their key times, may be shared. From the
+    #times as stored, not the accessor's min - a double, which would leave the first key a hair past 0.
+    starts = []
+    for anim in animations:
+        firsts = [min(_times(s.input)) for s in anim.samplers if s.input is not None and s.input.count]
+        starts.append(min(firsts) if firsts else 0.0)
+    made = {}
+    done = {}           #id(sampler) -> (the shift it was given, its input before it)
+    moved = 0
+    for anim, start in zip(animations, starts):
+        if start <= 0.0:
+            continue
+        for i, sampler in enumerate(anim.samplers):
+            if sampler.input is None:
+                continue
+            if id(sampler) in done:
+                shift, original = done[id(sampler)]
+                if shift != start:
+                    #The same sampler in another animation that starts elsewhere: this one gets its own
+                    #(channels name samplers by their index in the animation, so the copy slots in).
+                    own = copy.copy(sampler)
+                    own.input = _moved_back(original, start, made)
+                    anim.samplers[i] = own
+                continue
+            done[id(sampler)] = (start, sampler.input)
+            sampler.input = _moved_back(sampler.input, start, made)
+        moved += 1
+        log.info("%s: moved back %.4f s to start at 0" % (anim.name, start))
+    return moved
 
 
 class glTF2ExportUserExtension:
     def __init__(self):
-        #Built by the exporter at the start of every export, so this is the live scene's setting.
-        self.properties = bpy.context.scene.gltf_keep_shape_keys
+        #Built by the exporter at the start of every export, so these are the live scene's settings.
+        self.properties = bpy.context.scene.gltf_fixes
 
     def pre_export_hook(self, export_settings):
-        if not self.properties.enabled:
+        if not self.properties.keep_shape_keys:
             return
-        log = _Log(export_settings)
+        log = _Log(export_settings, "keep shape keys")
         #Nothing is dropped when modifiers are not applied, and nothing is wanted without morphs.
         if not export_settings.get('gltf_apply') or not export_settings.get('gltf_morph'):
             return
@@ -208,39 +289,58 @@ class glTF2ExportUserExtension:
     def post_export_hook(self, export_settings):
         _restore_all()
 
+    def gather_gltf_hook(self, active_scene_idx, scenes, animations, export_settings):
+        #Only where the stock exporter left it undone: a sampled animation was slid already, and is at 0.
+        if not self.properties.start_at_zero or not export_settings.get('gltf_anim_slide_to_zero'):
+            return
+        start_at_zero(animations, _Log(export_settings, "start at 0"))
+
 
 #--- Settings, saved in the .blend with the scene -------------------------------------------------
-class KeepShapeKeysProperties(bpy.types.PropertyGroup):
-    enabled: bpy.props.BoolProperty(
+class GltfFixesProperties(bpy.types.PropertyGroup):
+    keep_shape_keys: bpy.props.BoolProperty(
         name="Keep shape keys through modifiers",
         description="Bake a mesh's modifiers before its Armature (a Mirror, say) into the export with its "
                     "shape keys, instead of the stock exporter dropping the keys. The scene is put back "
                     "exactly as it was afterwards",
         default=True)
+    start_at_zero: bpy.props.BoolProperty(
+        name="Start at 0 unsampled too",
+        description="Make 'Set All glTF Animation Starting at 0' work with Sampling Animations off, which the "
+                    "stock exporter ignores there: each animation's keys are moved back so its first is at 0",
+        default=True)
 
 
 def draw_export(context, layout):
-    header, body = layout.panel("GLTF_keep_shape_keys_exporter", default_closed=True)
-    header.use_property_split = False
-    header.prop(context.scene.gltf_keep_shape_keys, "enabled")
+    header, body = layout.panel("GLTF_fixes_exporter", default_closed=True)
+    header.label(text="glTF fixes")
     if body is not None:
-        body.label(text="Needs Apply Modifiers and Shape Keys on.")
+        fixes = context.scene.gltf_fixes
+        body.prop(fixes, "keep_shape_keys")
+        body.label(text="  needs Apply Modifiers and Shape Keys on")
+        body.prop(fixes, "start_at_zero")
+        body.label(text="  needs 'Set All glTF Animation Starting at 0' on")
         body.label(text="The .blend is not changed.")
 
 
 def register():
-    bpy.utils.register_class(KeepShapeKeysProperties)
-    bpy.types.Scene.gltf_keep_shape_keys = bpy.props.PointerProperty(type=KeepShapeKeysProperties)
+    bpy.utils.register_class(GltfFixesProperties)
+    bpy.types.Scene.gltf_fixes = bpy.props.PointerProperty(type=GltfFixesProperties)
     from io_scene_gltf2 import exporter_extension_layout_draw
-    exporter_extension_layout_draw["Keep shape keys through modifiers"] = draw_export
+    exporter_extension_layout_draw["glTF fixes"] = draw_export
+    #The first fix used to be an add-on of its own. Both on, the second bake finds nothing left to do, but
+    #the dialog shows two switches for one fix and only one of them does anything.
+    if "blender_gltf_keep_shape_keys" in bpy.context.preferences.addons:
+        print("[glTF fixes] the old 'keep shape keys through modifiers' add-on is enabled too - remove it, "
+              "this one replaces it")
 
 
 def unregister():
     _restore_all()
     try:
         from io_scene_gltf2 import exporter_extension_layout_draw
-        exporter_extension_layout_draw.pop("Keep shape keys through modifiers", None)
+        exporter_extension_layout_draw.pop("glTF fixes", None)
     except ImportError:
         pass
-    del bpy.types.Scene.gltf_keep_shape_keys
-    bpy.utils.unregister_class(KeepShapeKeysProperties)
+    del bpy.types.Scene.gltf_fixes
+    bpy.utils.unregister_class(GltfFixesProperties)

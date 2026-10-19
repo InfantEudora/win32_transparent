@@ -566,3 +566,11 @@ The pair, checked the next day in a muted instance: a group of two men and two w
 leah line together at -0.3 and +0.3; three men - two different leo lines; a pick of one cut both of a pair,
 and a pair cut one; the four sent by a right click - one each, either side; one sent - one line, near the
 middle where he stood.
+
+## The bows (2026-10-19)
+
+Archer's bow creak, loose and swoosh on Chasm's archers - see range_plan.md, "Sounds", for what is heard when.
+`SignalShooting` (ApplicationChasmSound.cpp) reports per pass, after the zombies: the scope `bow_drawn` (his id) from a
+Shoot turn's nock to its release, `arrow_loose` at the release, and for each arrow at a zombie a scope `arrow` with
+`arrow_miss` forecast onto where a miss comes down, or `arrow_hit` once where a hit goes in. Rows `bow_drawn`,
+`arrow_loose`, `arrow_miss` and `arrow_hit` (the user's own take) in assets/cues/chasm.json.

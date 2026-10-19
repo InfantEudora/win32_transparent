@@ -41,7 +41,7 @@ static Debugger* debug = new Debugger("ChasmRoads",DEBUG_ALL);
     the cursor need not pass over again. Further back than that it is the line coming round to itself (a
     wall closing a ring), and goes on.
 */
-static void LineStepTo(const ChasmWorld& w, std::vector<int>& chain, int to){
+void LineStepTo(const ChasmWorld& w, std::vector<int>& chain, int to){
     if (chain.empty()){
         chain.push_back(to);
         return;

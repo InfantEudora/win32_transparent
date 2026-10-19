@@ -1428,7 +1428,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
 }
 
 //Somehow load an animation somewhere
-Animation* GLTFLoader::LoadAnimation(const char* animation_name){
+Animation* GLTFLoader::LoadAnimation(const char* animation_name, bool f_every_copy){
     //First, we lookup the node.
     tinygltf::Animation* gltf_animation = FindAnimation(animation_name);
     if (!gltf_animation){
@@ -1454,8 +1454,20 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
 
     float largest_frame_time = 0.0f;
 
+    //The first of the name, then with f_every_copy each other of it (GLTFLoader.h): their channels are read as
+    //one, each from its own animation's samplers.
+    std::vector<std::pair<tinygltf::Animation*,tinygltf::AnimationChannel*>> channels;
+    for (tinygltf::Animation& copy : model.animations){
+        if (&copy == gltf_animation || (f_every_copy && copy.name.compare(animation_name) == 0 && !copy.samplers.empty())){
+            for (tinygltf::AnimationChannel& channel : copy.channels){
+                channels.emplace_back(&copy,&channel);
+            }
+        }
+    }
+
     int channel_index = -1;
-    for (tinygltf::AnimationChannel& channel: gltf_animation->channels){
+    for (auto& [source, channel_of] : channels){
+        tinygltf::AnimationChannel& channel = *channel_of;
         channel_index++;
         tinygltf::Node& target_node = model.nodes.at(channel.target_node);
         debug->Trace("Channel %2i : sampler = %i node = %i (%s) target_path=%s\n",channel_index,channel.sampler,channel.target_node,target_node.name.c_str()
@@ -1494,7 +1506,7 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
             debug->Trace("Updating Existing ObjectAnimation\n");
         }
 
-        tinygltf::AnimationSampler& sampler = gltf_animation->samplers.at(channel.sampler);
+        tinygltf::AnimationSampler& sampler = source->samplers.at(channel.sampler);
         tinygltf::Accessor& input_accessor = model.accessors.at(sampler.input);
         tinygltf::Accessor& output_accessor = model.accessors.at(sampler.output);
         debug->Trace(" -> Sampler input (accessor Time) = %3i type_size = %i byte_stride = %i\n",sampler.input,GetAccesorTypeSize(input_accessor),input_accessor.ByteStride(model.bufferViews[input_accessor.bufferView]));

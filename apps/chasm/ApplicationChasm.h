@@ -301,6 +301,7 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define INPUT_CHASM_QUICK_SAVE     INPUT_LAST+34     //F5: a quick save (demo_plan.md)
 #define INPUT_CHASM_QUICK_LOAD     INPUT_LAST+35     //F8: ...and loading it
 #define INPUT_CHASM_REPORT         INPUT_LAST+36     //F12: Report a bug (demo_plan.md, step 4)
+#define INPUT_CHASM_FPS            INPUT_LAST+37     //F11: the frame rate shown or hidden (the `show_fps` setting)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -308,7 +309,8 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define CHASM_CMD_WALKER            SIM_CMD_LAST+1      //RETIRED with the debug walker (2026-10-07): never reuse
 #define CHASM_CMD_CALENDAR          SIM_CMD_LAST+2      //sets the date: subtype the day, value[0] the tick in it
 #define CHASM_CMD_NEEDS             SIM_CMD_LAST+3      //a person's needs set (a debug edit): subtype his id;
-                                                        //value[0] health, value[1] water, in ticks - -1 leaves it
+                                                        //value[0] health, value[1] water, in ticks - -1 leaves it;
+                                                        //value[2], value[3] his pack's water, provisions, one up
 #define CHASM_CMD_ORDER             SIM_CMD_LAST+4      //a person posted (docs/defence_plan.md): subtype his id;
                                                         //value[0] the plot he is sent to, -1 released; value[1]
                                                         //its layer + 1, 0 its top (ramparts_plan.md); value[2] 1
@@ -372,8 +374,14 @@ enum ChasmTool{
     CHASM_TOOL_RIVER,       //water_tools_plan.md: a river dragged from its source - the panel's only, never in play
     CHASM_TOOL_POND,        //...and a pond dragged out from its middle; each a new map (UpdateMapDrag)
     CHASM_TOOL_HEIGHT,      //water_tools_plan.md step 5: the ground raised or lowered along a drag, a hill a click
+    CHASM_TOOL_CLIFF,       //...step 6: plots set below the plateau along a drag, as a road is drawn
     CHASM_TOOL_COUNT
 };
+
+//The debug map tools (water_tools_plan.md): each placing makes a new map (UpdateMapDrag) - the panel's only, never in play.
+inline bool ChasmMapTool(int tool){
+    return tool == CHASM_TOOL_RIVER || tool == CHASM_TOOL_POND || tool == CHASM_TOOL_HEIGHT || tool == CHASM_TOOL_CLIFF;
+}
 
 //The tools that paint COARSE CELLS rather than plots: the field, and the range painted like one.
 inline bool ChasmCellTool(int tool){
@@ -387,6 +395,9 @@ inline bool ChasmLineTool(int tool){
 inline int ChasmLineGround(int tool){
     return (tool == CHASM_TOOL_WALL) ? ZONE_GROUND_WALL : ZONE_GROUND_ROAD;
 }
+
+//Plot `to` onto the end of a drag's chain, joined to its last plot along fine edges (ApplicationChasmRoads.cpp).
+void LineStepTo(const ChasmWorld& w, std::vector<int>& chain, int to);
 
 class ApplicationChasm : public Application{
 public:
@@ -594,13 +605,27 @@ private:
     */
     std::vector<vec2> map_drag;                 //under pick_mutex: the line so far, or a pond's middle and edge
     bool f_map_dragging = false;                //physics thread: a drag of one of them is under way
+    int map_drag_tool = CHASM_TOOL_SELECT;      //physics thread: the tool it was pressed with - another drops it (DropMapDrag)
     std::atomic<float> water_river_width{GRID_PLACED_RIVER_WIDTH};  //the panel's, for the next river
     std::atomic<float> relief_height{GRID_RELIEF_HEIGHT};           //...and the next stroke's, up or down
     std::atomic<float> relief_radius{GRID_RELIEF_RADIUS};
+    /*
+        The CLIFF tool's drag (step 6) is a road's: `cliff_chain` the plots crossed, joined along fine edges (LineStepTo),
+        and `cliff_band` the plots the stroke would paint at the panel's width (TerrainCliffPlots) - drawn blue where
+        they would go down, green where a depth of 0 takes painting back, red where nothing would change.
+    */
+    std::vector<int> cliff_chain;               //under pick_mutex
+    std::vector<int> cliff_band;                //under pick_mutex
+    std::atomic<int> cliff_depth{GRID_CLIFF_DEPTH};
+    std::atomic<int> cliff_width{GRID_CLIFF_WIDTH};
     std::string map_status;                     //under pick_mutex: what the last placing or taking away came to
     void UpdateMapDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
-    //The world's settings again with `water` and `relief` instead: a new map. False, with `why`, while recording.
-    bool RemakeMap(const GridWater& water, const GridRelief& relief, std::string& why);
+    void UpdateCliffDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
+    void DropMapDrag();                         //a right press, or the tool put down: nothing placed
+    //Whether a cliff stroke of `depth` takes plot v: one open to it, or at 0 one painted before. The preview's colour.
+    static bool CliffPlotTaken(const Terrain& t, int v, int depth);
+    //The world's settings again with these placed by hand instead: a new map. False, with `why`, while recording.
+    bool RemakeMap(const GridWater& water, const GridRelief& relief, const GridCliffs& cliffs, std::string& why);
     void RenderMapTools();                      //debug builds: the tools' sizes, what there is, each to take away
     void UpdateLineDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held);
     void PlaceLine();
@@ -725,7 +750,8 @@ private:
     std::shared_ptr<const EconomyState> GetEconomy();
     void HashEconomy(StateHash& h);
     void RegisterEconomyCommands();
-    void SubmitNeeds(uint32_t person, int health, int water);  //any thread; -1 leaves one as it is
+    //Any thread; -1 leaves one as it is. The pack's water and provisions in units (Economy::SetNeeds).
+    void SubmitNeeds(uint32_t person, int health, int water, int pack_water = -1, int pack_provisions = -1);
     //Any thread; plot -1 releases him, layer -1 its top; f_spread for one of a group's (Economy::Order).
     void SubmitOrder(uint32_t person, int plot, int layer = -1, bool f_spread = false);
     void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
@@ -741,13 +767,17 @@ private:
     /*
         A PERSON PUT DOWN (docs/test_maps_plan.md, step 5; Economy::AddPerson): a debug edit, recorded - the People
         panel's, chasm_economy's add_person. `skills` may be NULL; 0 for anything is the seed's, as a settler's.
+        f_post: ordered to stand where he is put down, out of the staffing - with archery, a posted archer.
     */
-    SimCommand PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery);
-    void SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery);    //any thread
+    SimCommand PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
+                             bool f_post = false);
+    void SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
+                      bool f_post = false);     //any thread
     std::atomic<uint32_t> person_commands_done{0};
     std::atomic<uint32_t> person_refusals{0};
     std::atomic<uint32_t> person_last_made{0};  //the id the last one taken was given
     std::string person_last_refusal;            //under grid_mutex, like zombie_last_refusal
+    int person_archer_percent = 100;            //the People panel's archer put down: his archery, % of ARCHERY_FULL
     /*
         ZOMBIES (docs/zombies_plan.md, ApplicationChasmZombies.cpp): dropped by the debug tools - Z under the cursor, the
         panel, chasm_zombie - as CHASM_CMD_ZOMBIE, recorded. Their rules are the economy's (Economy.h, ZOMBIES); here is
@@ -780,10 +810,24 @@ private:
     void BuildZombieSkin();                     //from LoadProps: its rig, its skinned mesh and its pace
     Object* BuildZombieSkeleton(size_t n);      //the n'th zombie's skeleton and clips, in no scene
     struct ZombieShown{                         //a zombie drawn this frame
-        const EconomyZombie* m;
-        vec3 at;                                //where it stands
+        uint32_t id = 0;
+        const EconomyZombie* m = NULL;          //standing...
+        const EconomyFallen* fallen = NULL;     //...or fallen (zombies_plan.md step 6)
+        float fallen_s = 0.0f;                  //...this long ago
+        vec3 at;                                //where it stands, or lies
         quat turn;                              //...and which way it faces
     };
+    /*
+        THE FALLEN (zombies_plan.md, step 6): the user's clips, on every rig - falling, and then lying, held at the last
+        frame - and how far under the ground a body has gone once it has sunk.
+    */
+    #define FALL_FORWARD_CLIP   "Die_Forward"
+    #define FALL_BACKWARD_CLIP  "Die_Backward"
+    #define FALLEN_SINK_DEPTH   0.15f       //the clips lay the hips at the ground: a body lying stands a tenth of a unit off it
+    //...and the angel that rises from where a person sank (the props file's `angel`).
+    #define CHASM_ANGEL_ASSET "angel"
+    bool f_angel_loaded = false;                //LoadProps found it
+    Object* angel_set = NULL;                   //every angel rising, an instance each
     void UploadZombieSkins(const std::vector<ZombieShown>& shown);  //from UploadZombies, when it is rigged
     //Their ARROWS (step 3), the range's props: in the air (`arrow_full`), and stuck in a zombie or lying (`arrow`).
     Object* zombie_arrow_set[2] = {};
@@ -800,7 +844,7 @@ private:
     void RenderSelectedStore(int plot);         //what the selected store takes, to be set there
     void RenderSelectedCrate(int plot);         //the crate on the selected plot, or one to put down there
     void RenderPeoplePanel();                   //the villagers, their health and water to be set
-    std::map<uint64_t,float> needs_editing;     //render thread: a slider being dragged, by person and bar
+    std::map<uint64_t,float> needs_editing;     //render thread: a slider being dragged, by person and bar (or pack)
     int crate_edit_good = 0;                    //render thread: what the panel's crate holds, and how much
     int crate_edit_amount = 10;
 #endif
@@ -1021,6 +1065,17 @@ private:
     void UploadWorkers();                           //from PreRender
     Object* BuildPersonSkin(WorkerSkin& ws, const std::string& name, int f);    //his skeleton, clips and kit, in no scene
     void PlaceBow(WorkerSkin& ws, int figure, const vec3& forward, std::vector<fmat4>* hand_arrows);
+    //THE FALLEN (zombies_plan.md step 6): a person's body - a skeleton of its own, since his own is the next worker's by
+    //place - or a child's still figure, tipped over whole. Kept by his id while he lies.
+    struct FallenFigure{
+        uint32_t id = 0;                            //the person, 0 none
+        int figure = -1;                            //PERSON_*
+        WorkerSkin ws;                              //its figure built once, as that figure
+        Object* still = NULL;                       //a figure with no rig
+        int clip = 0;                               //0 none, 1 forward, 2 backward
+    };
+    std::vector<FallenFigure> fallen_figures;
+    void UploadFallen();                            //render thread, from PreRender: the people's bodies and their angels
     /*
         THE CROWD BENCH (ApplicationChasmCrowdBench.cpp): a measurement, not a feature - skinned
         adult_male figures walking in place around the camera target, sharing one mesh, to find what
@@ -1376,6 +1431,7 @@ private:
     std::vector<Object*> zone_chunks;
     std::vector<uint32_t> zone_chunk_built;     //render thread: chunk_version each was built at
     std::vector<uint8_t> zone_field_stage;      //render thread: per building id, the stage a field was drawn at
+    ZoneHarmLook zone_harm_look;                //render thread: the zombies' harm as last drawn (ZoneMesh.h)
     std::shared_ptr<const ChasmWorld> zone_built_world;
     void UploadZones();
 
@@ -1723,8 +1779,9 @@ private:
     /*
         RECORDING FOR TESTERS (ApplicationChasmRecord.cpp; demo_plan.md step 4): always recording, afresh from every
         autosave, so a bug can be reported after it happened; Report a bug, a folder of everything that run needs; and
-        the recordings replayed from the title, with a bar to stop them. Always recording is a tester's build's: in a
-        build with the panels it would take over the input_record an agent starts, so there it is the panel's to set.
+        the recordings replayed from the title, with a bar to stop them. Always recording is a tester's build's, and
+        their setting (`always_record`, on unless they turn it off): in a build with the panels it would take over the
+        input_record an agent starts, so there it is the panel's to set and the setting is not read.
     */
     struct RecordingEntry{
         std::string path;
@@ -1746,11 +1803,13 @@ private:
     std::vector<RecordingEntry> RecordingEntries();
     std::string RecordingLabel(const RecordingEntry& e);
     void RecordFromHere();                      //physics thread: a fresh recording, if always recording
+    void SetAlwaysRecord(bool f_on);            //physics thread: the setting switched - started or stopped now
     void ServiceRecording();                    //physics thread, every pass: a replay ended, a quit waiting, a report
     void Quit();                                //physics thread: the colony autosaved, the recording saved, then gone
     void StartReport();                         //physics thread
     void WriteReport(const std::string& dir, bool f_recording, uint32_t recordings_before, int frames_before);
-    float DrawRecording(float s, float top);    //render thread, from DrawOverlay: REC, or the replay's bar
+    float DrawRecording(float s, float top);    //render thread, from DrawOverlay: REC, or the replay's bar - and the fps
+    float DrawFrameRate(float s, float left, float top);    //render thread, from DrawRecording, beside it
     void DrawInputRecordingBadge() override {}  //Chasm's own, DrawRecording, clear of the top bar
     /*
         THE PLAYER'S SETTINGS (ApplicationChasmMenu.cpp; demo_plan.md step 3): archer's - anti-aliasing, the three
@@ -1760,6 +1819,7 @@ private:
     uint32_t settings_applied = 0xFFFFFFFFu;    //physics thread: the store's revision last applied - none yet
     std::atomic<float> music_volume{1.0f};      //the `music` bus, over the score's players
     std::atomic<float> effects_volume{1.0f};    //the cue table's layer (sounds_bus): every sound but the music
+    std::atomic<bool> f_show_fps{true};         //`show_fps`, for the render thread: the frame rate by REC
     void LoadSettings();                        //the constructor: before the window, for "start full screen"
     void ApplySettings();                       //physics thread, every pass from UpdateView
 #ifdef USE_IMGUI
@@ -1882,6 +1942,25 @@ private:
     const ChasmWorld* zombies_heard_world = nullptr;    //the map they were seen on: ids start again on another
     std::atomic<float> zombie_scratch_seconds{0.0f};    //Zombie_Scratch's length, from the rig (BuildZombieSkin); 0 none
     /*
+        THE BOWS HEARD (range_plan.md, "Sounds"): an archer's turn of the Shoot clip, at a zombie or at the straw - its
+        creak from the nock to the release, and the loose - and each arrow at a zombie from the loose to where it comes down.
+    */
+    struct BowBeat{
+        uint32_t person = 0;
+        uint64_t turn = 0;          //which turn: the rules' tick it began, or (top bit set) his stint's and its shot
+        bool f_drawn = false;       //past its nock...
+        bool f_open = false;        //...its creak on: the scope "bow_drawn" open
+        bool f_loosed = false;      //its arrow away
+    };
+    std::vector<BowBeat> bow_beats;
+    struct ArrowHeard{
+        int instance = 0;           //its scope's: who loosed it, and when
+        bool f_hit = false;         //going in, at the last pass...
+        vec2 to;                    //...where (x, world z)
+    };
+    std::vector<ArrowHeard> arrows_heard;               //the arrows in the air at the last pass
+    const ChasmWorld* bows_heard_world = nullptr;       //the map they were heard on: ids start again on another
+    /*
         THE WATER HEARD (areas_plan.md): a river's loop and a waterfall's, each open while its nearest water is within
         reach, following how far that is and how much of it is under the clouds - eased, so water coming into sight
         swells rather than jumps.
@@ -1971,6 +2050,7 @@ private:
     void SignalWork(bool f_live);
     void SignalBirds(bool f_live);              //the flocks' calls, handed over by UploadBirds
     void SignalZombies(bool f_live);            //their strikes at what they break, and a fight's punches
+    void SignalShooting(bool f_live);           //the bows drawn and loosed, and the arrows at zombies coming down
     void SignalUI(const char* name);            //physics thread: a click, a tool taken up
 #ifdef USE_MCP
     void RegisterSoundTools();

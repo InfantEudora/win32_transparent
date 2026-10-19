@@ -240,6 +240,7 @@ struct ChasmLayout{
     std::vector<Pond> ponds;
     int ponds_dropped = 0;                  //placed where one does not fit on the plateau (ChasmPondFits), and left out
     std::vector<GridReliefStroke> relief_strokes;   //HEIGHT painted by hand (ChasmPlaceRelief): Terrain::BuildRelief adds it
+    std::vector<GridCliffStroke> cliff_strokes;     //CLIFFS painted by hand (ChasmPlaceCliffs): Terrain::BuildHeights sets them
     float generate_ms = 0.0f;
 };
 
@@ -316,6 +317,7 @@ struct GridSettings{
     int kind = GRID_KIND_CHASM;     //GRID_KIND_*; a save names it only when it is not the chasm
     GridWater water;                //rivers placed by hand (GridWater.h); a save holds them only when there are any
     GridRelief relief;              //...and height painted by hand, the same way
+    GridCliffs cliffs;              //...and cliffs
 
     bool operator==(const GridSettings& o) const;
 };

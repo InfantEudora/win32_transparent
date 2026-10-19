@@ -937,7 +937,7 @@ void FindRelatedPlaces(const PlayPick& p, const ZoneState& z, const EconomyState
 #define CARD_TEXT   0
 #define CARD_BAR    1
 #define CARD_CHIPS  2
-#define CARD_TOGGLE 3       //a site's "Build first"; a posted person's "Release", "Gather supplies first" (own choice_action)
+#define CARD_TOGGLE 3       //a site's "Build first"; a posted person's "Release", "Grab Supplies" (own choice_action) - in a row
 #define CARD_CHOICE 4       //a row of chips, one of them lit: a field's crops (fields_plan.md)
 #define CARD_STOCK  5       //a goods strip (the user's, 2026-10-09)
 #define CARD_PERSON 6       //a group's row: his badge, his line, `right` at its end, and an x taking him out of the group
@@ -964,6 +964,7 @@ std::string CropTitle(int crop){
 }
 struct Card{
     std::string title;
+    std::string subtitle;           //at the title's right, by the close mark: a person's age and job
     std::vector<CardLine> lines;
     void Text(const std::string& t, uint32_t colour = HUD_TEXT){
         CardLine l;
@@ -1113,12 +1114,20 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     (void)w;
     c.title = EconomyPersonName(k);
     /*
-        LIFELINES (lifeline_plan.md): age and stage, the birthday, whose child, and the children - living, then
-        the dead.
+        AGE AND JOB at the title's right (the user's, 2026-10-19): "Age 25 - Woodcutter", and " / posted" while he is,
+        so the job's line below says only where - and a posted person with no job needs no line at all.
+    */
+    const EconomyWorker* with = k.with ? PersonById(e,k.with) : NULL;
+    bool f_along = with && !EconomyCanOrder(k,e.tick);
+    bool f_posted = k.post >= 0 && !f_along;
+    c.subtitle = Format("Age %i - %s%s",EconomyAgeAt(k.born,e.tick),JobTitle(k.job),f_posted ? " / posted" : "");
+    /*
+        LIFELINES (lifeline_plan.md): stage, the birthday, whose child, and the children - living, then the dead.
     */
     int stage = EconomyStageAt(k.born,e.tick);
-    c.Text(Format("Age %i, %s - birthday %s",EconomyAgeAt(k.born,e.tick),EconomyStageName(stage),
-                  EconomyBirthdayName(k.born).c_str()),HUD_TEXT_DIM);
+    std::string stage_name = EconomyStageName(stage);
+    stage_name[0] = (char)toupper(stage_name[0]);
+    c.Text(Format("%s - birthday %s",stage_name.c_str(),EconomyBirthdayName(k.born).c_str()),HUD_TEXT_DIM);
     std::string mother = FirstNameOf(e,k.mother);
     std::string father = FirstNameOf(e,k.father);
     if (!mother.empty() || !father.empty()){
@@ -1185,16 +1194,14 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         }
         int days = (int)std::max<int64_t>(0,(left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
         c.Text(Format("Caring for her baby - back to work in %i day%s",days,days == 1 ? "" : "s"));
-    }else if (k.job == WORKER_JOB_NONE && k.post >= 0){
-        c.Text("No job - none is given while posted");
     }else if (k.job == WORKER_JOB_NONE){
-        c.Text("No job: carries for the building sites");     //whatever a site wants, not only wood (FindSiteWork)
+        //"No job" at the top says it all (the user's): what he carries for the sites shows in what he is doing.
     }else if (k.job == WORKER_JOB_BUILDER){
-        c.Text(Format("Builder at the builders' hut %u: carries to sites and builds",k.building));
+        c.Text(Format("At the builders' hut %u: carries to sites and builds",k.building));
     }else if (k.job == WORKER_JOB_ARCHER){
         c.Text(Format("Trains at the archery range %u",k.building));
     }else if (k.job == WORKER_JOB_GUARD){
-        c.Text(Format("Guard on the tower %u%s: lives on its stock",k.building,k.f_chosen ? ", posted by hand" : ""));
+        c.Text(Format("On the tower %u%s: lives on its stock",k.building,k.f_chosen ? ", posted by hand" : ""));
         //Released (step 8): home, and the tower takes one fewer, so nobody goes up for him.
         CardLine release;
         release.type = CARD_TOGGLE;
@@ -1207,20 +1214,18 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         for (uint32_t farmer : e.farmer_of){
             fields += (farmer == k.id) ? 1 : 0;
         }
-        c.Text(Format("Farmer of %s land: %i field%s",LandName(z,e,k.building).c_str(),fields,fields == 1 ? "" : "s"));
+        c.Text(Format("Farms %s land: %i field%s",LandName(z,e,k.building).c_str(),fields,fields == 1 ? "" : "s"));
     }else{
-        //"Woodcutter at the woodcutter's hut 3", as the builder's line says it - not a title mid-sentence.
+        //"At the woodcutter's hut 3", as the builder's line says it - not a title mid-sentence.
         std::string kind = KindTitle(z.buildings[k.building].kind);
         kind[0] = (char)tolower(kind[0]);
-        c.Text(Format("%s at the %s %u",JobTitle(k.job),kind.c_str(),k.building));
+        c.Text(Format("At the %s %u",kind.c_str(),k.building));
     }
     /*
         WITH THE GROWN (settlements_plan.md, the user's 2026-10-12): a child going along with a grown-up of his household,
         or a baby carried by its mother - the game's order, never the player's, so none of the posted chips below
         (Economy::WithTheGrown). And on the grown-up's card, who goes with them.
     */
-    const EconomyWorker* with = k.with ? PersonById(e,k.with) : NULL;
-    bool f_along = with && !EconomyCanOrder(k,e.tick);
     if (f_along && k.job != WORKER_JOB_BABY){
         c.Text(Format("Going with %s",EconomyPersonName(*with).c_str()),HUD_AMBER);     //a baby: "carried by its mother" (Doing)
     }
@@ -1240,14 +1245,12 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         c.Text(taking + ((!taking.empty() && !carrying.empty()) ? ", " : "") + carrying,HUD_AMBER);
     }
     /*
-        POSTED (defence_plan.md): the post is the job while it lasts; work there was waits, its place kept.
-        The Release chip ends it (OVERLAY_HIT_RELEASE, a recorded order).
+        POSTED (defence_plan.md): the post is the job while it lasts - "/ posted" at the top; work there was waits, its
+        place kept. The Release chip ends it (OVERLAY_HIT_RELEASE, a recorded order), on one row with the other two.
     */
-    if (k.post >= 0 && !f_along){
+    if (f_posted){
         if (k.job >= 0){
-            c.Text("Posted - this work waits until released",HUD_AMBER);
-        }else{
-            c.Text("Posted",HUD_AMBER);
+            c.Text("The work waits until released",HUD_AMBER);
         }
         //ICE (seasons_plan.md): his only way home over the ice - cut off once it thaws (Economy::IceHome).
         for (const std::pair<uint32_t,int>& ice : e.ice_home){
@@ -1265,7 +1268,7 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         //command, pressed again to go straight on (OVERLAY_HIT_GATHER).
         CardLine gather;
         gather.type = CARD_TOGGLE;
-        gather.text = "Gather supplies first";
+        gather.text = "Grab Supplies";
         gather.chips_on = (k.gather > 0) ? 1 : 0;
         gather.choice_action = OVERLAY_HIT_GATHER;
         c.lines.push_back(gather);
@@ -1273,7 +1276,7 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         if (k.tent != ECONOMY_TENT_CARRIED){
             CardLine tent;
             tent.type = CARD_TOGGLE;
-            tent.text = "Take a tent";
+            tent.text = "Pack a Tent";
             tent.chips_on = (k.tent == ECONOMY_TENT_TO_TAKE) ? 1 : 0;
             tent.choice_action = OVERLAY_HIT_TENT;
             c.lines.push_back(tent);
@@ -1309,8 +1312,7 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         float food = (float)EconomyPackFood(k) / CALENDAR_DAY_TICKS;
         CardLine l;
         l.type = CARD_STOCK;
-        l.stock.label = "Pack";
-        l.stock.whose = k.f_female ? "her own" : "his own";
+        l.stock.label = "Packed:";      //his own goes without saying (the user's): it is hollow, as kept stock is
         l.stock.goods = k.pack;
         l.stock.f_kept = true;
         l.stock.figure = Format("water %s days, food %s",days(water).c_str(),days(food).c_str());
@@ -1327,9 +1329,9 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         doing[0] = (char)toupper(doing[0]);
         float progress = EconomyTaskProgress(k);
         if (progress >= 0.0f){
-            c.Bar(doing,progress,HUD_TEXT_DIM);
+            c.Bar(doing,progress);
         }else{
-            c.Text(doing,HUD_TEXT_DIM);
+            c.Text(doing);
         }
     }
     if (k.carry > 0 && k.carry_good >= 0 && k.carry_good < GOOD_COUNT){
@@ -2333,7 +2335,7 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
 /*
     A GROUP'S CARD (selection_plan.md, "Several people selected"): a row each - his badge, name, job and what he is
     doing, dimmed at home, and how long his pack lasts - each a click away from being selected alone, or an x from
-    leaving the group. Then, for everyone posted among them, Release, Gather supplies first and Take a tent each: each
+    leaving the group. Then, for everyone posted among them, Release, Grab Supplies and Pack Tents, on one row: each
     person's own command, as on his card, lit while all of them are at it; and for those carrying a tent, Pitch.
 */
 void GroupCard(const ZoneState& z, const EconomyState& e, const std::vector<uint32_t>& group, Card& c){
@@ -2382,7 +2384,7 @@ void GroupCard(const ZoneState& z, const EconomyState& e, const std::vector<uint
         c.lines.push_back(release);
         CardLine gather;
         gather.type = CARD_TOGGLE;
-        gather.text = "Gather supplies first";
+        gather.text = "Grab Supplies";      //the person card's words (the user's, 2026-10-19)
         gather.chips_on = (gathering == posted) ? 1 : 0;
         gather.choice_action = OVERLAY_HIT_GATHER;
         c.lines.push_back(gather);
@@ -2390,7 +2392,7 @@ void GroupCard(const ZoneState& z, const EconomyState& e, const std::vector<uint
         if (tentless > 0){
             CardLine tent;
             tent.type = CARD_TOGGLE;
-            tent.text = "Take a tent each";
+            tent.text = "Pack Tents";       //"Pack a Tent" on his card: one each
             tent.chips_on = (taking == tentless) ? 1 : 0;
             tent.choice_action = OVERLAY_HIT_TENT;
             c.lines.push_back(tent);
@@ -4085,6 +4087,12 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     const float badge = BADGE_RADIUS * s;
     const float drop_w = 22.0f * s;            //...and its x, at the right
     float card_w = CARD_W * s;
+    //The title, and at its right the subtitle, clear of the close mark.
+    float head_w = overlay->MeasureText(card.title.c_str(),title_size).x + pad * 2.0f + 30.0f * s;
+    if (!card.subtitle.empty()){
+        head_w += overlay->MeasureText(card.subtitle.c_str(),text_size).x + 16.0f * s;
+    }
+    card_w = std::max(card_w,head_w);
     for (const CardLine& l : card.lines){
         //A long line widens the card rather than running off it - and so does a row of chips, and a group's row.
         float before = (l.type == CARD_PERSON) ? badge * 2.0f + 8.0f * s : 0.0f;
@@ -4161,10 +4169,32 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     auto goods_rows = [&](){
         return chip_rows(card_w - pad * 2.0f,[](int,int,float,int){});
     };
-    float h = pad + 26.0f * s;
-    for (const CardLine& l : card.lines){
+    /*
+        Toggles one after another share a row while they fit (the user's, 2026-10-19): a posted person's Release, Grab
+        Supplies and Pack a Tent side by side. Each one's x along its row, and whether it starts one.
+    */
+    std::vector<float> toggle_x(card.lines.size(),0.0f);
+    std::vector<char> f_toggle_row(card.lines.size(),1);
+    float run = 0.0f;
+    for (size_t i = 0; i < card.lines.size(); i++){
+        if (card.lines[i].type != CARD_TOGGLE){
+            continue;
+        }
+        float w = chip_w(card.lines[i].text.c_str());
+        if (i > 0 && card.lines[i - 1].type == CARD_TOGGLE && run + w <= card_w - pad * 2.0f){
+            toggle_x[i] = run;
+            f_toggle_row[i] = 0;
+        }else{
+            run = 0.0f;
+        }
+        run += w + chip_gap;
+    }
+    float h = pad + 30.0f * s;
+    for (size_t i = 0; i < card.lines.size(); i++){
+        const CardLine& l = card.lines[i];
         h += (l.type == CARD_BAR) ? bar_h : (l.type == CARD_CHIPS) ? chips_h * goods_rows()
-           : (l.type == CARD_TOGGLE || l.type == CARD_CHOICE) ? chips_h
+           : (l.type == CARD_TOGGLE) ? (f_toggle_row[i] ? chips_h : 0.0f)
+           : (l.type == CARD_CHOICE) ? chips_h
            : (l.type == CARD_STOCK) ? HudStockHeight(overlay,l.stock,card_w - pad * 2.0f,s)
            : (l.type == CARD_PERSON) ? row_h : line_h;
     }
@@ -4181,17 +4211,21 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
     vec2 c0(right - card_w,128.0f * s);
     vec2 c1(right,c0.y + h);
     overlay->AddRect(c0,c1,10.0f * s,HUD_PANEL);
-    overlay->AddRect(vec2(c0.x,c0.y),vec2(c0.x + 4.0f * s,c1.y),2.0f * s,HUD_SELECT);
     overlay_hits_drawing.push_back(OverlayHit{c0,c1,OVERLAY_HIT_BLOCK,0});
     float y = c0.y + pad + 14.0f * s;
     overlay->AddText(card.title.c_str(),vec2(c0.x + pad,y),title_size,HUD_TEXT,UI_ALIGN_LEFT);
-    //The close mark, top right.
+    //The close mark, top right, and the subtitle before it.
     vec2 x0(c1.x - pad - 14.0f * s,c0.y + pad - 4.0f * s);
     vec2 x1(c1.x - pad + 2.0f * s,x0.y + 16.0f * s);
     overlay->AddLine(x0 + vec2(3.0f * s,3.0f * s),x1 - vec2(3.0f * s,3.0f * s),2.0f * s,HUD_TEXT_DIM);
     overlay->AddLine(vec2(x1.x - 3.0f * s,x0.y + 3.0f * s),vec2(x0.x + 3.0f * s,x1.y - 3.0f * s),2.0f * s,HUD_TEXT_DIM);
     overlay_hits_drawing.push_back(OverlayHit{x0 - vec2(4.0f * s,4.0f * s),x1 + vec2(4.0f * s,4.0f * s),OVERLAY_HIT_CLOSE,0});
-    y += 12.0f * s;
+    if (!card.subtitle.empty()){
+        overlay->AddText(card.subtitle.c_str(),vec2(x0.x - 10.0f * s,y),text_size,HUD_TEXT_DIM,UI_ALIGN_RIGHT);
+    }
+    //The selection's orange as a rule under the title (the user's, 2026-10-19), where it was the card's left edge.
+    overlay->AddRect(vec2(c0.x + pad,y + 8.0f * s),vec2(c1.x - pad,y + 10.0f * s),1.0f * s,HUD_SELECT);
+    y += 16.0f * s;
     /*
         A chip: lit while on; a click turns it over (not while it is fixed). Returns where the next one goes.
         A GOOD's chip is its colour (HudGoodColour): lit, filled with it and ticked; off, its swatch before
@@ -4227,7 +4261,8 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
         }
         return k1.x + 6.0f * s;
     };
-    for (const CardLine& l : card.lines){
+    for (size_t i = 0; i < card.lines.size(); i++){
+        const CardLine& l = card.lines[i];
         if (l.type == CARD_TEXT){
             y += line_h;
             if (l.person){
@@ -4275,8 +4310,9 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             overlay->AddRect(b0,b1,2.0f * s,HudFaded(HUD_TEXT,45));
             overlay->AddRect(b0,vec2(b0.x + (b1.x - b0.x) * l.bar,b1.y),2.0f * s,HudFaded(l.colour,210));
         }else if (l.type == CARD_TOGGLE){
-            y += chips_h;
-            chip(c0.x + pad,l.text.c_str(),l.chips_on != 0,l.f_locked,l.choice_action ? l.choice_action : OVERLAY_HIT_SITE_FIRST,0);
+            y += f_toggle_row[i] ? chips_h : 0.0f;
+            chip(c0.x + pad + toggle_x[i],l.text.c_str(),l.chips_on != 0,l.f_locked,
+                 l.choice_action ? l.choice_action : OVERLAY_HIT_SITE_FIRST,0);
         }else if (l.type == CARD_CHOICE){
             //One chip per choice, the one in force lit; a click on another chooses it.
             y += chips_h;
@@ -4682,7 +4718,7 @@ void ApplicationChasm::RegisterSelectTools(){
                         lines.push_back(l.type == CARD_BAR ? json{{"text",l.text},{"bar",l.bar}} : json(l.text));
                     }
                 }
-                result["card"] = json{{"title",card.title},{"lines",lines}};
+                result["card"] = json{{"title",card.title},{"subtitle",card.subtitle},{"lines",lines}};
             }
             if (ep){
                 std::vector<uint32_t> related;

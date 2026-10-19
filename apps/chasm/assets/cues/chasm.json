@@ -26,6 +26,10 @@
     "punch_3":       "sound/punch_3.ogg",
     "strike_1":      "sound/bluntstrike_wood_1.ogg",
     "strike_2":      "sound/bluntstrike_wood_2.ogg",
+    "bow_tension":   "sound/bow_tension.ogg",
+    "arrow_leave":   "sound/arrow_leave.ogg",
+    "arrow_swoosh":  "sound/arrow_swoosh.ogg",
+    "arrow_hit":     "sound/arrow_hit.ogg",
 
     "leo_hi":           "sound/speech/taunts/leo_hi_s7.ogg",
     "leo_whatsup":      "sound/speech/taunts/leo_whatsup_s10.ogg",
@@ -237,6 +241,34 @@
     "punch": {
       "comment": "A FIGHT (zombies_plan.md step 2): a bite landing, or a person's blow, each as the rules land it - `by` 0 a zombie's, 1 a person's. Three takes (the user's, 2026-10-19), pitched up to 8% either way; four at most at once, so a crowd round one man is a scuffle, not a drum roll.",
       "signal": "punch", "sounds": ["punch_1", "punch_2", "punch_3"], "bus": "activity", "gain": 0.4, "pitch_jitter": 0.08,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 4
+    },
+    "bow_drawn": {
+      "comment": "THE BOWS (ApplicationChasmSound.cpp, SignalShooting): archer's creak (apps/archer, 2026-10-19), from a shot's nock - the arrow on the string - to its release, cut the moment the string goes, or when he gives the shot up. Any turn of the Shoot clip: at a zombie, or at the straw on the range's line. The nearest six drawing are heard; pitched a little, so a line of them is not one bow.",
+      "begin": "bow_drawn", "sounds": "bow_tension", "on_end": "stop", "bus": "activity", "gain": 0.45, "pitch_jitter": 0.05,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 4
+    },
+    "arrow_loose": {
+      "comment": "The string going: on the very tick an arrow at a zombie leaves the bow, and on the clip's release at the straw. Archer's take.",
+      "signal": "arrow_loose", "sounds": "arrow_leave", "bus": "activity", "gain": 0.6, "pitch_jitter": 0.06,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 6
+    },
+    "arrow_miss": {
+      "comment": "An arrow at a zombie that MISSES: archer's swoosh, its loudest part landing where the arrow comes down - `in` is the passes until then, sent every pass of the flight (forecast); once an arrow. Heard from where it lands. A hit is arrow_hit's. The range's practice arrows are not heard.",
+      "signal": "arrow_miss", "forecast": "in", "scope": "arrow", "once": true, "sounds": "arrow_swoosh", "bus": "activity", "gain": 0.5,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 4
+    },
+    "arrow_hit": {
+      "comment": "An arrow at a zombie going IN (the user's take, 2026-10-19): once an arrow, where it hit, on the pass it does - the third that fells one too. Pitched a little, so a volley is not one thud.",
+      "signal": "arrow_hit", "sounds": "arrow_hit", "bus": "activity", "gain": 0.5, "pitch_jitter": 0.06,
       "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
       "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
       "max_instances": 4

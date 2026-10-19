@@ -1,11 +1,11 @@
 ---
 title: Terrain
-aliases: level, levels, plateau, island, islands, balcony, balconies, chasm, chasm floor, biome, biomes, mountain, swamp, desert, pocket, slope, wet
+aliases: level, levels, plateau, island, islands, balcony, balconies, chasm, chasm floor, biome, biomes, mountain, swamp, desert, pocket, slope, wet, cliff, cliffs
 kind: world
 status: partial
 summary: Ground at heights in steps (the plateau, balconies on the chasm's walls, islands in it, and the floor under the clouds), framed by biomes, with slope and water limiting what goes where.
-plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces; water_tools_plan.md > Height painted by hand
-code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief
+plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces; water_tools_plan.md > Height painted by hand; water_tools_plan.md > Cliffs painted by hand
+code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable TerrainCliffPlots; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief GRID_CLIFF_DEEPEST ChasmPlaceCliffs
 verified: 2026-10-19
 ---
 
@@ -41,7 +41,11 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
 - Walking uphill is slower: speed divided by 1 + {WALKER_SLOPE_COST} x the grade.
 - **Height painted by hand** (debug, for test maps): the panel's Height tool, or `chasm_generate`'s `relief`, raises
   or lowers the ground by up to {GRID_RELIEF_HIGHEST} - a hill a click, a ridge a drag - each a new map. A river
-  drawn through it cuts it; lowering keeps off the chasm's rims.
+  drawn through it cuts it; lowering keeps off every drop.
+- **Cliffs painted by hand** (debug, for test maps): the panel's Cliff tool, or `chasm_generate`'s `cliffs`, sets
+  plots down by 1 to {GRID_CLIFF_DEEPEST} steps, drawn as a road is and up to {GRID_CLIFF_WIDEST} plots wide - each a
+  new map. They are the chasm's own kind of ground: walls round them, a balcony or bare rock by size, crossed only by
+  a [[Winch|winch]]. Only on the plateau's dry ground: a river keeps its own, crossing a painted terrace on its banks.
 
 ## Planned
 

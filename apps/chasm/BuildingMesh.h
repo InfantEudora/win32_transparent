@@ -87,8 +87,10 @@ bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at);
 void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int coils, int sheaves,
                        std::vector<vertex>& out);
 
-//`fixtures`, if given, gets the houses' chimneys and panes this cell builds.
+//`fixtures`, if given, gets the houses' chimneys and panes this cell builds. `harm` (ZoneMesh.h), if given: a
+//BREACHED building's doors stand open on the dark (zombies_plan.md, step 4d).
+struct ZoneHarmLook;
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
-                    BuildingFixtures* fixtures = NULL);
+                    BuildingFixtures* fixtures = NULL, const ZoneHarmLook* harm = NULL);
 
 #endif

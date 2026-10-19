@@ -118,6 +118,21 @@
 #define BIRD_JOIN_GAP_MAX_S     10.0f
 #define BIRD_LEAVE_FAR          40.0f   //a leaving bird is gone this far from its flock
 
+/*
+    CARRION (zombies_plan.md step 6, the user's 2026-10-19): crows come down on the dead. A body lying still
+    (BirdWorld::carrion) near a flock moving on wins over the trees more often than not; the flock comes down on the
+    ground round it and a few on it, and pecks there. It goes up as anyone comes near, as from a tree, and moves on once
+    the body is no longer lying still. Not the wanderers.
+*/
+#define BIRD_CARRION_REACH      40.0f   //from the flock, the furthest body it comes down on
+#define BIRD_CARRION_TAKE       0.7f    //the chance a flock moving on takes a body in reach over the trees
+#define BIRD_CARRION_RING       0.6f    //its perches on the ground round the body's middle, about this far off...
+#define BIRD_CARRION_ON         0.16f   //...and a few on it, this high over the ground
+#define BIRD_CARRION_PERCHES    9       //...in all
+#define BIRD_PECK_S             0.4f    //a peck: the head down and up again
+#define BIRD_PECK_SHARE         0.55f   //of a feeding bird's fidgets
+#define BIRD_PECK_DOWN          0.9f    //radians, nose down, at the bottom of a peck
+
 //Whose calls a flock has: the table's rows pick the takes by it.
 #define BIRD_VOICE_CROW         0
 #define BIRD_VOICE_MAGPIE       1       //the wanderers', for now (the user's, 2026-10-18) - before magpies are a kind of their own
@@ -131,6 +146,13 @@ struct BirdRoost{
     int tree = -1;              //the tree settled on...
     vec3 at;                    //...its top
     std::vector<BirdPerch> perches;     //its perches and its neighbours': where the flock comes down
+    uint32_t carrion = 0;       //CARRION: the body it is down on instead, 0 a tree's (its perches on the ground)
+};
+//A body lying still, for the crows (CARRION above).
+struct BirdCarrion{
+    uint32_t id = 0;            //the app's, never 0
+    vec2 at;                    //its middle
+    vec2 along;                 //...and the way it lies, unit, feet to head
 };
 //Something that puts a flock up: a point, and how near it reaches.
 struct BirdScare{
@@ -145,6 +167,7 @@ struct BirdWorld{
     std::function<bool(int tree)> standing;         //still standing and drawn: a felled tree puts its birds up
     float tree_top = 6.0f;                          //the tallest tree, which a travelling flock clears
     std::vector<vec2> lures;                        //trees woodcutters are at: where a colony flock goes
+    std::vector<BirdCarrion> carrion;               //the dead lying still: where a flock may come down instead
     float gather = 1.0f;                            //the season's: a flock's size by its own (SEASONS above)
     /*
         With no roost to be had - over the title's diorama, captured with no perches - a flock flies on to a point in
@@ -185,6 +208,7 @@ struct Bird{
     BirdPerch perch;            //where it sits or is going to sit
     float idle = 0.0f;          //perched: seconds to its next fidget
     float look = 0.0f;          //...and the way its head is turned off its yaw
+    float peck = 0.0f;          //...feeding on carrion: seconds of a peck left
     bool f_leaving = false;     //flying off along `flee`, no longer the flock's: gone at BIRD_LEAVE_FAR
 };
 

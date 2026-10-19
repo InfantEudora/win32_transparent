@@ -23,6 +23,133 @@ vec2 EconomyZombieFacing(const EconomyZombie& m){
     return vec2(0.0f,1.0f);
 }
 
+vec2 EconomyZombieLooks(const EconomyState& e, const EconomyZombie& m){
+    //Stood by whom it is after - pushed round him by the others (SPACING) - it faces him, not the way it came. At
+    //something it hits it faces that: its last leg's way, which ends at it (walls break, step 4).
+    if (m.target && m.seg >= (int)m.route.size() - 1 && !m.hit){
+        for (const EconomyWorker& k : e.workers){
+            vec2 to = EconomyBody(k) - EconomyBody(m);
+            if (k.id == m.target && to.length() > 1e-3f){
+                return to * (1.0f / to.length());
+            }
+        }
+    }
+    return EconomyZombieFacing(m);
+}
+
+vec2 EconomyWorkerLooks(const EconomyState& e, const EconomyWorker& k){
+    //Shooting at a zombie (step 3): he faces it, and the Shoot clip turns him side-on by itself.
+    if (k.aim){
+        for (const EconomyZombie& m : e.zombies){
+            vec2 to = EconomyBody(m) - EconomyBody(k);
+            if (m.id == k.aim && to.length() > 1e-3f){
+                return to * (1.0f / to.length());
+            }
+        }
+    }
+    //Fighting one by hand (step 2, his blow counting down): he faces the nearest in reach, the one he strikes at - and
+    //so falls back from a bite from it (step 6).
+    if (k.swing > 0){
+        float nearest = FIGHT_REACH;
+        vec2 to_it;
+        for (const EconomyZombie& m : e.zombies){
+            vec2 to = EconomyBody(m) - EconomyBody(k);
+            float d = to.length();
+            if (d <= nearest && d > 1e-3f){
+                nearest = d;
+                to_it = to * (1.0f / d);
+            }
+        }
+        if (to_it.dot(to_it) > 0.5f){
+            return to_it;
+        }
+    }
+    vec2 facing = EconomyWorkerFacing(k);
+    return (facing.dot(facing) < 1e-8f) ? vec2(0.0f,1.0f) : facing;
+}
+
+//--- The fallen (Economy.h) -------------------------------------------------------------------------------------------
+
+namespace {
+
+uint64_t SecondsTicks(float seconds){
+    return (uint64_t)std::max(1L,std::lround(seconds * CALENDAR_TICKS_PER_SECOND));
+}
+
+}
+
+uint64_t EconomyFallenTicks(const EconomyFallen& f){
+    if (!f.f_person){
+        return (uint64_t)FALLEN_ZOMBIE_DAYS * CALENDAR_DAY_TICKS;
+    }
+    return SecondsTicks(FALLEN_PERSON_LIE_SECONDS + FALLEN_PERSON_SINK_SECONDS + FALLEN_PERSON_ANGEL_SECONDS);
+}
+
+float EconomyFallenSinking(const EconomyFallen& f, uint64_t now){
+    uint64_t age = (now > f.tick) ? now - f.tick : 0;
+    uint64_t from = f.f_person ? SecondsTicks(FALLEN_PERSON_LIE_SECONDS)
+                               : (uint64_t)(FALLEN_ZOMBIE_DAYS - FALLEN_ZOMBIE_SINK_DAYS) * CALENDAR_DAY_TICKS;
+    uint64_t over = f.f_person ? SecondsTicks(FALLEN_PERSON_SINK_SECONDS) : (uint64_t)FALLEN_ZOMBIE_SINK_DAYS * CALENDAR_DAY_TICKS;
+    if (age <= from){
+        return 0.0f;
+    }
+    return std::min(1.0f,(float)(age - from) / (float)over);
+}
+
+float EconomyFallenRising(const EconomyFallen& f, uint64_t now){
+    if (!f.f_person){
+        return -1.0f;
+    }
+    uint64_t age = (now > f.tick) ? now - f.tick : 0;
+    //Indoors there is no body to sink: the angel rises from the house once he would have.
+    uint64_t from = SecondsTicks(FALLEN_PERSON_LIE_SECONDS + FALLEN_PERSON_SINK_SECONDS);
+    if (age < from){
+        return -1.0f;
+    }
+    return std::min(1.0f,(float)(age - from) / (float)SecondsTicks(FALLEN_PERSON_ANGEL_SECONDS));
+}
+
+/*
+    Which way he falls: struck along the way he faced - from behind - forward, against it backward; with no blow, forward,
+    a collapse. He keeps facing that way (the user's): the clip carries him down along it.
+*/
+void Economy::ZombieFalls(const EconomyZombie& m, const vec2& struck){
+    EconomyFallen f;
+    f.id = m.id;
+    f.pos = EconomyBody(m);
+    f.facing = EconomyZombieLooks(state,m);
+    f.f_back = struck.dot(f.facing) < 0.0f;
+    f.layer = WALK_GROUND;
+    f.tick = now;
+    state.fallen.push_back(f);
+    state.version++;
+}
+
+void Economy::PersonFalls(const EconomyWorker& k, const vec2* struck){
+    EconomyFallen f;
+    f.id = k.id;
+    f.f_person = true;
+    f.pos = EconomyBody(k);
+    f.facing = EconomyWorkerLooks(state,k);
+    f.f_back = struck && struck->dot(f.facing) < 0.0f;
+    f.f_indoors = EconomyIndoors(k);
+    f.house = f.f_indoors ? k.house : 0;
+    f.layer = (int8_t)EconomyWorkerLayer(k);
+    f.tick = now;
+    state.fallen.push_back(f);
+    state.version++;
+}
+
+void Economy::TickFallen(){
+    size_t before = state.fallen.size();
+    state.fallen.erase(std::remove_if(state.fallen.begin(),state.fallen.end(),[&](const EconomyFallen& f){
+        return now >= f.tick + EconomyFallenTicks(f);
+    }),state.fallen.end());
+    if (state.fallen.size() != before){
+        state.version++;
+    }
+}
+
 float EconomyFightPace(const EconomyWorker& k){
     return 0.5f * (EconomySkillFactor(k.skills[SKILL_STRENGTH]) + EconomySkillFactor(k.skills[SKILL_INGENUITY]));
 }
@@ -142,8 +269,13 @@ bool Economy::SpawnZombies(int plot, int count, const ZoneState& z, std::string*
         return refuse("no world");
     }
     if (count <= 0){
-        //Every one off the map. Ids go on from where they were: never reused.
-        if (!state.zombies.empty()){
+        //Every one off the map, and the fallen ones with them (step 6) - the people's dead are left. Ids go on from where
+        //they were: never reused.
+        size_t lying = state.fallen.size();
+        state.fallen.erase(std::remove_if(state.fallen.begin(),state.fallen.end(),[](const EconomyFallen& f){
+            return !f.f_person;
+        }),state.fallen.end());
+        if (!state.zombies.empty() || state.fallen.size() != lying){
             state.zombies.clear();
             state.version++;
         }
@@ -394,7 +526,8 @@ bool Economy::ZombieNear(const EconomyWorker& k, float within) const{
     bite, and every grown-up with a zombie within that reach counts down to his next blow at the nearest. A count starts
     a whole interval off as they come within reach, and starts again whenever they part. All the bites and blows are
     found first and dealt after, so nobody strikes first; a person bitten to death still lands the blow he had coming.
-    Then the zombies at 0 fall, and whom a bite took the last of are named for Needs (bitten_dead).
+    Then the zombies at 0 fall (THE FALLEN, by the last blow), and whom a bite took the last of are named for Needs
+    (bitten_dead, with the way that bite pushed him).
 */
 void Economy::Fights(){
     //None left - the last fell, or all were cleared: nobody fights on.
@@ -410,8 +543,9 @@ void Economy::Fights(){
             index_of[state.workers[i].id] = (int)i;
         }
     }
-    std::vector<size_t> bites;                          //by worker index, one for each bite
-    std::vector<int> blows(state.zombies.size(),0);     //by zombie, the hit points it loses
+    std::vector<std::pair<size_t,vec2>> bites;          //by worker index, one for each bite, and where it came from
+    std::vector<int> blows(state.zombies.size(),0);     //by zombie, the hit points it loses...
+    std::vector<vec2> blown(state.zombies.size());      //...and the way the last blow pushed it (THE FALLEN)
     for (EconomyZombie& m : state.zombies){
         int i = (m.target < index_of.size()) ? index_of[m.target] : -1;
         if (i < 0 || !CanGetAt(state.workers[i]) || (EconomyBody(state.workers[i]) - EconomyBody(m)).length() > FIGHT_REACH){
@@ -422,7 +556,7 @@ void Economy::Fights(){
             m.bite = Ticks(ZOMBIE_BITE_SECONDS);
         }else if (--m.bite == 0){
             m.bite = Ticks(ZOMBIE_BITE_SECONDS);
-            bites.push_back((size_t)i);
+            bites.emplace_back((size_t)i,EconomyBody(m));
         }
     }
     for (EconomyWorker& k : state.workers){
@@ -449,18 +583,25 @@ void Economy::Fights(){
         }else if (--k.swing == 0){
             k.swing = Ticks(FIGHT_SWING_SECONDS / pace);
             blows[near] += (int)std::lround(FIGHT_HIT * pace);
+            blown[near] = EconomyBody(state.zombies[near]) - EconomyBody(k);
         }
     }
-    for (size_t i : bites){
-        EconomyWorker& k = state.workers[i];
+    for (const std::pair<size_t,vec2>& b : bites){
+        EconomyWorker& k = state.workers[b.first];
         k.health -= ZOMBIE_BITE;
         if (k.health <= 0 && std::find(bitten_dead.begin(),bitten_dead.end(),k.id) == bitten_dead.end()){
             k.health = 0;
             bitten_dead.push_back(k.id);
+            bitten_struck.emplace_back(k.id,EconomyBody(k) - b.second);
         }
     }
     for (size_t j = 0; j < state.zombies.size(); j++){
-        state.zombies[j].health -= blows[j];
+        EconomyZombie& m = state.zombies[j];
+        bool f_alive = m.health > 0;
+        m.health -= blows[j];
+        if (f_alive && m.health <= 0){
+            ZombieFalls(m,blown[j]);
+        }
     }
     state.zombies.erase(std::remove_if(state.zombies.begin(),state.zombies.end(),[](const EconomyZombie& m){
         return m.health <= 0;
@@ -470,9 +611,10 @@ void Economy::Fights(){
 /*
     WALLS BREAK (Economy.h), a tick of it: every zombie at the end of its walk with something to break hits it - in id
     order, the first ZOMBIE_HITTERS at one thing and the rest standing by - a tick of its strength each. What reaches
-    its strength breaks: a palisade plot goes back to a site (ground_breaks), and its harm with it; a gate's door hangs
-    open (gate_breaks), BROKEN; a house is BREACHED. Each is told, and every zombie looks again on the next tick, when
-    the zones have changed. One whose thing no longer stops it - broken by others, opened, taken down - looks again too.
+    its strength breaks: a palisade plot goes back to a site (ground_breaks), BROKEN; a gate's door hangs open
+    (gate_breaks), BROKEN; a house is BREACHED - each keeping its harm at its strength to say so. Each is told, and
+    every zombie looks again on the next tick, when the zones have changed. One whose thing no longer stops it - broken
+    by others, opened, taken down - looks again too.
 */
 void Economy::ZombiesHit(const ZoneState& z){
     if (state.zombies.empty()){
@@ -537,9 +679,6 @@ void Economy::ZombiesHit(const ZoneState& z){
     for (const Thing& b : broke){
         if (b.first == HARM_WALL){
             ground_breaks.push_back((int)b.second);
-            state.harm.erase(std::remove_if(state.harm.begin(),state.harm.end(),[&](const EconomyHarm& h){
-                return h.what == HARM_WALL && h.id == b.second;
-            }),state.harm.end());
             Event(EVENT_WALL_BROKEN,0,0,(int)b.second,w.grid->fine.pos[b.second]);
         }else if (b.first == HARM_GATE){
             gate_breaks.push_back((int)b.second);
@@ -559,12 +698,20 @@ void Economy::ZombiesHit(const ZoneState& z){
     }
 }
 
-//Harm to what is no longer there to harm - a palisade plot taken down or unbuilt, a gate's road taken up, a house gone.
+/*
+    Harm to what is no longer there to harm - a palisade plot taken down or unbuilt, a gate's road taken up, a house gone
+    - and a BROKEN palisade plot's once it stands again: built anew, it is whole (zombies_plan.md, step 4d; until 4c
+    makes that the builders', the line works build it as any wall site).
+*/
 void Economy::ForgetHarm(const ZoneState& z){
     size_t before = state.harm.size();
     state.harm.erase(std::remove_if(state.harm.begin(),state.harm.end(),[&](const EconomyHarm& h){
         if (h.what == HARM_WALL){
-            return !(h.id < z.ground.size() && ZoneWallStands(z,(int)h.id));
+            if (!(h.id < z.ground.size() && z.ground[h.id] == ZONE_GROUND_WALL)){
+                return true;
+            }
+            bool f_stands = ZoneWallStands(z,(int)h.id);
+            return (h.ticks >= EconomyHarmStrength(HARM_WALL)) ? f_stands : !f_stands;
         }
         if (h.what == HARM_GATE){
             return !(h.id < z.gate.size() && z.gate[h.id] != ZONE_GATE_NONE);

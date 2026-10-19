@@ -20,6 +20,10 @@
     and setting it - the panel's building info and the chasm_economy tool. The rules are Economy.h's.
 */
 
+//In CHASM_CMD_PERSON's packed value, over the skills and his sex (PersonCommand): ordered to stand where he is put down.
+//Clear in recordings from before it.
+static const uint32_t PERSON_POSTED = 1u << 18;
+
 std::shared_ptr<const EconomyState> ApplicationChasm::GetEconomy(){
     std::lock_guard<std::mutex> lock(grid_mutex);
     return economy_snapshot;
@@ -215,7 +219,7 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         }
         //His turn of the bow at a zombie (ARROWS, step 3) - only while he shoots, likewise.
         if (k.draw > 0){
-            int32_t shot[3] = {(int32_t)k.id,k.draw,(int32_t)k.aim};
+            int32_t shot[4] = {(int32_t)k.id,k.draw,k.draw_turn,(int32_t)k.aim};
             h.Bytes(shot,sizeof(shot));
         }
         int32_t needs[2] = {k.health,k.water};
@@ -321,6 +325,18 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             }
         }
     }
+    //THE FALLEN (zombies_plan.md step 6), zombies' and people's - only while anyone lies, so a colony with none hashes as before.
+    if (!e.fallen.empty()){
+        n = (uint32_t)e.fallen.size();
+        h.Add(((uint64_t)n << 32) | 0xFA11Eu);
+        for (const EconomyFallen& f : e.fallen){
+            uint32_t head[6] = {f.id,(uint32_t)f.f_person | ((uint32_t)f.f_back << 1) | ((uint32_t)f.f_indoors << 2),
+                                (uint32_t)(int32_t)f.layer,f.house,(uint32_t)f.tick,(uint32_t)(f.tick >> 32)};
+            h.Bytes(head,sizeof(head));
+            float where[4] = {f.pos.x,f.pos.y,f.facing.x,f.facing.y};
+            h.Bytes(where,sizeof(where));
+        }
+    }
     /*
         THE HISTORY (statistics_plan.md), a part of its own so a replay that parts there says so. Its TAIL: the journal
         and the ledger are only ever added to, so with the state traced every tick an entry that differs differs on the
@@ -375,7 +391,9 @@ void ApplicationChasm::HashEconomy(StateHash& h){
 void ApplicationChasm::RegisterEconomyCommands(){
     main_scene->RegisterCommandHandler(CHASM_CMD_NEEDS,
         [this](const SimCommand& cmd) -> objectid_t {
-            if (economy.SetNeeds(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1])){
+            //value[2], value[3]: his pack's water and provisions, one up so a recording from before packs - 0 there -
+            //leaves them as they are.
+            if (economy.SetNeeds(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],(int)cmd.value[2] - 1,(int)cmd.value[3] - 1)){
                 PublishEconomy();
             }
             needs_commands_done++;
@@ -615,7 +633,9 @@ void ApplicationChasm::RegisterEconomyCommands(){
             zombie_commands_done++;
             return OBJECTID_INVALID;
         });
-    //A PERSON put down (test_maps_plan.md, step 5): a debug edit, like the zombie - the People panel, chasm_economy.
+    //A PERSON put down (test_maps_plan.md, step 5): a debug edit, like the zombie - the People panel, chasm_economy. POSTED,
+    //he is ordered to stand there on the same tick (Economy::Order), so the staffing never hands him work: trained, an
+    //archer to test with.
     main_scene->RegisterCommandHandler(CHASM_CMD_PERSON,
         [this](const SimCommand& cmd) -> objectid_t {
             uint32_t packed = (uint32_t)cmd.value[2];
@@ -628,6 +648,11 @@ void ApplicationChasm::RegisterEconomyCommands(){
             if (economy.AddPerson((int)cmd.subtype,(uint32_t)cmd.value[0],(int)cmd.value[1],skills,(int)((packed >> 16) & 3u),
                                   (int)cmd.value[3],zones.State(),walkers,&why,&made)){
                 person_last_made = made;
+                //Several put down on one plot stand round it, as a group ordered there does.
+                if ((packed & PERSON_POSTED) && !economy.Order(made,(int)cmd.subtype,zones.State(),walkers,&why,-1,true)){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    person_last_refusal = "put down, but not posted: " + why;
+                }
                 PublishEconomy();
             }else{
                 {
@@ -641,11 +666,12 @@ void ApplicationChasm::RegisterEconomyCommands(){
         });
 }
 
-//Four bits a skill and two for his sex, well inside a float's exact integers.
+//Four bits a skill, two for his sex and PERSON_POSTED, well inside a float's exact integers.
 static_assert(SKILL_COUNT * 4 <= 16,"CHASM_CMD_PERSON packs the skills below bit 16");
 
-SimCommand ApplicationChasm::PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery){
-    uint32_t packed = (uint32_t)std::max(0,std::min(2,sex)) << 16;
+SimCommand ApplicationChasm::PersonCommand(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
+                                           bool f_post){
+    uint32_t packed = ((uint32_t)std::max(0,std::min(2,sex)) << 16) | (f_post ? PERSON_POSTED : 0u);
     for (int sk = 0; skills && sk < SKILL_COUNT; sk++){
         packed |= (uint32_t)std::max(0,std::min(10,skills[sk])) << (4 * sk);
     }
@@ -660,8 +686,9 @@ SimCommand ApplicationChasm::PersonCommand(int plot, uint32_t house, int age_day
     return cmd;
 }
 
-void ApplicationChasm::SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery){
-    main_scene->SubmitCommand(PersonCommand(plot,house,age_days,skills,sex,archery));
+void ApplicationChasm::SubmitPerson(int plot, uint32_t house, int age_days, const int* skills, int sex, int archery,
+                                    bool f_post){
+    main_scene->SubmitCommand(PersonCommand(plot,house,age_days,skills,sex,archery,f_post));
 }
 
 void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
@@ -770,14 +797,21 @@ void ApplicationChasm::SubmitKeep(int good, int count, bool f_order){
     main_scene->SubmitCommand(cmd);
 }
 
-void ApplicationChasm::SubmitNeeds(uint32_t person, int health, int water){
+//CHASM_CMD_NEEDS: -1 leaves any of them as it is - the pack's stored one up (the handler).
+static SimCommand NeedsCommand(uint32_t person, int health, int water, int pack_water, int pack_provisions){
     SimCommand cmd;
     cmd.type = CHASM_CMD_NEEDS;
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
     cmd.value[0] = (float)health;   //ticks, well inside a float's exact integers
     cmd.value[1] = (float)water;
-    main_scene->SubmitCommand(cmd);
+    cmd.value[2] = (float)(std::max(-1,pack_water) + 1);
+    cmd.value[3] = (float)(std::max(-1,pack_provisions) + 1);
+    return cmd;
+}
+
+void ApplicationChasm::SubmitNeeds(uint32_t person, int health, int water, int pack_water, int pack_provisions){
+    main_scene->SubmitCommand(NeedsCommand(person,health,water,pack_water,pack_provisions));
 }
 
 namespace {
@@ -845,7 +879,8 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
         j["meal"] = json{{"good",GoodName(k.meal_good)},{"ticks_left",k.meal_ticks},{"worth_left",k.meal_worth}};
     }
     if (k.draw > 0){
-        j["shooting"] = json{{"zombie",k.aim},{"turn_ticks",k.draw}};     //ARROWS (step 3): at which, how far into his turn
+        //ARROWS (step 3): at which, how far into his turn, and how long that turn is (THE PACE)
+        j["shooting"] = json{{"zombie",k.aim},{"turn_ticks",k.draw},{"turn_length",k.draw_turn}};
     }
     if (k.swing > 0){
         j["fighting"] = true;
@@ -1293,7 +1328,8 @@ void ApplicationChasm::RenderSelectedCrate(int plot){
 
 /*
     THE PEOPLE (needs_plan.md): every villager - name, age, job, what he is doing - with his health and
-    water as sliders in days, to put a colony on the edge without waiting days for it. A slider is the
+    water as sliders in days, to put a colony on the edge without waiting days for it, and his PACK's water and
+    provisions in units (POSTS), to try a post's supplies without fetching them. A slider is the
     panel's own while it is dragged (needs_editing) and goes out as ONE recorded CHASM_CMD_NEEDS when it is
     let go, so a drag is one edit in a recording rather than one a frame; ctrl-click types a value. The
     buttons set everyone at once. A name goes amber while his need is pressing, red while he is dry.
@@ -1340,9 +1376,19 @@ void ApplicationChasm::RenderPeoplePanel(){
     if (ImGui::SmallButton("Put one down on the selected plot##people")){
         SubmitPerson(selected.plot,0,0,NULL,0,0);
     }
+    //...or an ARCHER to test shooting with (the user's, 2026-10-19): the best eye, the archery the slider says, and posted
+    //there at once, so he stands and shoots and the staffing never hands him other work. His card's release frees him.
+    if (ImGui::SmallButton("Put an archer down##people")){
+        int skills[SKILL_COUNT] = {};
+        skills[SKILL_PRECISION] = 10;
+        SubmitPerson(selected.plot,0,0,skills,0,person_archer_percent * (ARCHERY_FULL / 100),true);
+    }
     if (!f_plot){
         ImGui::EndDisabled();
     }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderInt("archery##people_archer",&person_archer_percent,1,100,"%d%%");
     std::string refusal;
     {
         std::lock_guard<std::mutex> lock(grid_mutex);
@@ -1353,8 +1399,9 @@ void ApplicationChasm::RenderPeoplePanel(){
         ImGui::TextColored(ImVec4(1.0f,0.45f,0.35f,1.0f),"last refused: %s",refusal.c_str());
     }
 #endif
+    //Bars 0 health and 1 water, in days; 2 and 3 his pack's water and provisions, in units.
     auto slider = [&](const char* id, uint32_t person, int bar, int now, int full){
-        uint64_t key = ((uint64_t)person << 1) | (uint64_t)bar;
+        uint64_t key = ((uint64_t)person << 2) | (uint64_t)bar;
         auto it = needs_editing.find(key);
         float v = (it != needs_editing.end()) ? it->second : now / day;
         ImGui::SetNextItemWidth(-FLT_MIN);
@@ -1370,14 +1417,33 @@ void ApplicationChasm::RenderPeoplePanel(){
             needs_editing.erase(key);
         }
     };
+    auto pack_slider = [&](const char* id, uint32_t person, int bar, int now, int most){
+        uint64_t key = ((uint64_t)person << 2) | (uint64_t)bar;
+        auto it = needs_editing.find(key);
+        int v = (it != needs_editing.end()) ? (int)it->second : now;
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderInt(id,&v,0,most);
+        if (ImGui::IsItemActive()){
+            needs_editing[key] = (float)v;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()){
+            SubmitNeeds(person,-1,-1,(bar == 2) ? v : -1,(bar == 3) ? v : -1);
+        }
+        if (!ImGui::IsItemActive()){
+            needs_editing.erase(key);
+        }
+    };
+    const int most_provisions = NEEDS_SCOUT_FOOD / EconomyFoodWorth(GOOD_PROVISIONS);     //as SetNeeds holds them
     ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
-    if (ImGui::BeginTable("people##table",6,flags)){
+    if (ImGui::BeginTable("people##table",8,flags)){
         ImGui::TableSetupColumn("name",ImGuiTableColumnFlags_WidthStretch,1.6f);
         ImGui::TableSetupColumn("age",ImGuiTableColumnFlags_WidthStretch,0.4f);
         ImGui::TableSetupColumn("job",ImGuiTableColumnFlags_WidthStretch,1.0f);
         ImGui::TableSetupColumn("doing",ImGuiTableColumnFlags_WidthStretch,1.0f);
         ImGui::TableSetupColumn("health",ImGuiTableColumnFlags_WidthStretch,1.3f);
         ImGui::TableSetupColumn("water",ImGuiTableColumnFlags_WidthStretch,1.3f);
+        ImGui::TableSetupColumn("pack water",ImGuiTableColumnFlags_WidthStretch,0.8f);
+        ImGui::TableSetupColumn("pack prov.",ImGuiTableColumnFlags_WidthStretch,0.8f);
         ImGui::TableHeadersRow();
         for (const EconomyWorker& k : e->workers){
             ImGui::PushID((int)k.id);
@@ -1397,6 +1463,10 @@ void ApplicationChasm::RenderPeoplePanel(){
             slider("##health",k.id,0,k.health,NEEDS_HEALTH_FULL);
             ImGui::TableNextColumn();
             slider("##water",k.id,1,k.water,NEEDS_WATER_FULL);
+            ImGui::TableNextColumn();
+            pack_slider("##pack_water",k.id,2,k.pack[GOOD_WATER],NEEDS_SCOUT_WATER);
+            ImGui::TableNextColumn();
+            pack_slider("##pack_provisions",k.id,3,k.pack[GOOD_PROVISIONS],most_provisions);
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -1430,14 +1500,17 @@ void ApplicationChasm::RegisterEconomyTools(){
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
         "plot) goes first (`on`, default true) or back in the queue - recorded the same way; a site's "
-        "`priority` shows in `sites`. op set_needs: person `person`'s health_days and/or water_days (held to their bars) "
+        "`priority` shows in `sites`. op set_needs: person `person`'s health_days and/or water_days (held to their bars), "
+        "and his pack's pack_water and/or pack_provisions in units (held to a scout's, 6 and 3), "
         "set - a RECORDED debug edit (CHASM_CMD_NEEDS), the panel's villager list's. It lands before the "
         "tick's eating, so someone at home with food and water tops straight back up; health 0 kills only "
         "someone who cannot eat on that tick. op add_person (docs/test_maps_plan.md, step 5): `count` people (default 1, "
         "at most 20) put down on the plot at x,z (or `plot`) - ordinary villagers, grown up, who live by the rules from then "
         "on: `house` a home that stands (a house's family joined; a camp's bed) or none - a family of his own with nowhere "
         "to live, housed by the rules if a house is free; `female`, `age_years`, `skills` ({strength, precision, husbandry, "
-        "ingenuity}: 1-10) and `archery` (held to his precision's cap) - anything not given the seed's, as a settler's. A "
+        "ingenuity}: 1-10) and `archery` (held to his precision's cap) - anything not given the seed's, as a settler's; "
+        "`post` true: each ordered to stand there at once (spread round it, as op order with `spread`), out of the staffing - "
+        "with archery (anyone trained carries a bow) a posted archer who shoots zombies in sight. A "
         "RECORDED debug edit each (CHASM_CMD_PERSON), refused on the ground a zombie is; `made` lists the new ids. op order: "
         "person `person` is sent to the plot at x,z (or "
         "`plot`) and stands there - his post, now his job (docs/defence_plan.md); `spread` true: as one of a group, "
@@ -1538,9 +1611,13 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"age_years",{{"type","number"},{"description","add_person: his age in game years, at least 2.5; the seed's without"}}},
                 {"skills",{{"type","object"},{"description","add_person: strength, precision, husbandry, ingenuity, 1-10 each"}}},
                 {"archery",{{"type","integer"},{"description","add_person: his archery experience (ARCHERY_FULL the most)"}}},
+                {"post",{{"type","boolean"},{"description","add_person: ordered to stand where put down, out of the staffing; "
+                                                         "with archery, a posted archer"}}},
                 {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions or rope"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
+                {"pack_water",{{"type","integer"},{"description","set_needs: units of water in his pack"}}},
+                {"pack_provisions",{{"type","integer"},{"description","set_needs: provisions in his pack"}}},
                 {"what",{{"type","string"},{"description","forage: fruit or water"}}},
                 {"spread",{{"type","boolean"},{"description","forage: one of a group's"}}},
                 {"reach",{{"type","number"},{"description","plants: how far from x,z, world units (default 20)"}}},
@@ -1609,14 +1686,12 @@ void ApplicationChasm::RegisterEconomyTools(){
                 auto ticks = [&](const char* name){
                     return args.contains(name) ? (int)std::lround(args[name].get<double>() * CALENDAR_DAY_TICKS) : -1;
                 };
-                SimCommand cmd;
-                cmd.type = CHASM_CMD_NEEDS;
-                cmd.flags = SIM_CMD_FLAG_RECORD;
-                cmd.subtype = (uint32_t)args.value("person",0);
-                cmd.value[0] = (float)ticks("health_days");
-                cmd.value[1] = (float)ticks("water_days");
+                auto units = [&](const char* name){
+                    return (args.contains(name) && args[name].is_number()) ? std::max(0,args[name].get<int>()) : -1;
+                };
                 uint32_t before = needs_commands_done.load();
-                SubmitCommandAndWait(cmd);
+                SubmitCommandAndWait(NeedsCommand((uint32_t)args.value("person",0),ticks("health_days"),ticks("water_days"),
+                                                  units("pack_water"),units("pack_provisions")));
                 result["ran"] = needs_commands_done.load() != before;
             }else if (op == "add_person"){
                 //PEOPLE PUT DOWN (test_maps_plan.md, step 5): `count` of them, each its own recorded CHASM_CMD_PERSON.
@@ -1641,12 +1716,13 @@ void ApplicationChasm::RegisterEconomyTools(){
                                ? (int)std::lround(args["age_years"].get<double>() * (CALENDAR_YEAR_TICKS / CALENDAR_DAY_TICKS)) : 0;
                 uint32_t house = args.value("house",0u);
                 int archery = args.value("archery",0);
+                bool f_post = args.value("post",false);
                 int count = std::max(1,std::min(20,args.value("count",1)));
                 json made = json::array();
                 std::string refusal;
                 for (int i = 0; i < count && refusal.empty(); i++){
                     uint32_t refused = person_refusals.load();
-                    SubmitCommandAndWait(PersonCommand(plot,house,age_days,skills,sex,archery));
+                    SubmitCommandAndWait(PersonCommand(plot,house,age_days,skills,sex,archery,f_post));
                     if (person_refusals.load() != refused){
                         std::lock_guard<std::mutex> lock(grid_mutex);
                         refusal = person_last_refusal;

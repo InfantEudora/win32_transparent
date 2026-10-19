@@ -653,6 +653,11 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
             snprintf(buf,sizeof(buf),"Click for a hill, drag for a ridge. Let go and the map is made again with it.");
             controls = "Let go to paint - the debug panel lists the strokes, to undo them";
             break;
+        case CHASM_TOOL_CLIFF:
+            what = "Debug cliffs: plots set down in steps below the plateau, walls round them. Only a winch crosses one.";
+            snprintf(buf,sizeof(buf),"Drag as a road, at the panel's width and depth. Let go and the map is made again with it.");
+            controls = "Let go to paint - the debug panel lists the strokes, to undo them";
+            break;
         case CHASM_TOOL_POND:
             what = "A debug pond: still water pressed into the plateau, clear of rims, cracks, the mountain and the edge.";
             snprintf(buf,sizeof(buf),"Drag out from its middle to its water's edge. Let go and the map is made again with it.");

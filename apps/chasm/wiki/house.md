@@ -4,7 +4,7 @@ aliases: home, homes
 kind: buildings
 status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
-plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted; selection_plan.md > Selecting someone indoors; building_size_plan.md > Decided (the user, 2026-10-18); zombies_plan.md > Step 4: walls break
+plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted; selection_plan.md > Selecting someone indoors; building_size_plan.md > Decided (the user, 2026-10-18); zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4d, the look
 code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock EconomyCrowdedPace EconomyHouseAppeal; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn EconomyBreached ZOMBIE_BREACH_DOOR
 verified: 2026-10-19
 ---
@@ -31,8 +31,8 @@ down goes back to a camp with room for them.
 
 **Crammed.** A family left with no home at all, and no camp with room for them, squeezes into a house or
 camp of the [[Settlement|settlement]] they are standing in, even past its room: the one with the most room
-to spare. Families crammed in together move out, the largest first, as soon as an empty house holds them.
-With no home left in the settlement, they wait where the settlers first camped.
+to spare. Families sharing a house move out, the largest first, as soon as an empty house holds them, room or
+not (orphans taken in stay). With no home left in the settlement, they wait where the settlers first camped.
 
 Every round starts and ends at the house, so where it stands decides who gets which job
 ([[Person|jobs]]) and how quick their rounds are. Its card lists the family, dimmed while indoors. **A
@@ -61,7 +61,8 @@ side by other buildings, walls or water is **shut in**. No family moves into it,
 living there can't get out until the player clears a plot beside it. Its card warns about it.
 
 **Zombies breach** its door in {ZOMBIE_BREACH_DOOR:#seconds} of hitting, as any building's ([[Zombie|zombies]]): nothing of
-it comes down, but they walk through it from then on, and whoever is indoors there can be got at.
+it comes down, but they walk through it from then on, and whoever is indoors there can be got at. Its doors stand
+open on the dark.
 
 ## Planned
 

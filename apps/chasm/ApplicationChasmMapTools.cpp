@@ -1,6 +1,6 @@
 /*
-    THE MAP TOOLS (docs/water_tools_plan.md steps 4 and 5): rivers, ponds and height placed by hand on the debug panel.
-    Each is part of the map's settings (GridWater.h), so placing one makes the map again - see the block in
+    THE MAP TOOLS (docs/water_tools_plan.md steps 4 to 6): rivers, ponds, height and cliffs placed by hand on the debug
+    panel. Each is part of the map's settings (GridWater.h), so placing one makes the map again - see the block in
     ApplicationChasm.h.
 */
 #include "ApplicationChasm.h"
@@ -16,10 +16,15 @@
     PHYSICS THREAD, from UpdatePaint with a map tool in hand. A press starts the drag where it lands - a river's source,
     a stroke's first point, a pond's middle; held, a river or a stroke takes a point every MAP_DRAG_STEP and a pond's
     edge follows the cursor; let go, it is added (RemakeMap) - here, on the physics thread with the pass's lock held,
-    as the N key makes a new map - or turned down, and the panel says why.
+    as the N key makes a new map - or turned down, and the panel says why. A right press, or another tool taken up,
+    drops it (DropMapDrag), as it drops a road.
 */
 void ApplicationChasm::UpdateMapDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held){
     const int tool = paint_tool;
+    if (tool == CHASM_TOOL_CLIFF){
+        UpdateCliffDrag(hover,f_over_scene,f_clicked,f_held);
+        return;
+    }
     const bool f_line = tool == CHASM_TOOL_RIVER || tool == CHASM_TOOL_HEIGHT;
     const bool f_on = f_over_scene && hover.f_hit;
     std::vector<vec2> drag;
@@ -31,6 +36,7 @@ void ApplicationChasm::UpdateMapDrag(const GridPick& hover, bool f_over_scene, b
     if (f_clicked && f_on){
         drag.assign(f_line ? 1 : 2,hover.at);
         f_map_dragging = true;
+        map_drag_tool = tool;
         f_changed = true;
     }else if (f_held && f_map_dragging && f_on){
         if (f_line && (hover.at - drag.back()).length() >= MAP_DRAG_STEP){
@@ -81,7 +87,7 @@ void ApplicationChasm::UpdateMapDrag(const GridPick& hover, bool f_over_scene, b
                 water.ponds.push_back(k);
             }
         }
-        if (why.empty() && RemakeMap(water,relief,why)){
+        if (why.empty() && RemakeMap(water,relief,g ? g->settings.cliffs : GridCliffs(),why)){
             why = (tool == CHASM_TOOL_RIVER) ? "river placed: a new map" : (tool == CHASM_TOOL_HEIGHT) ? "stroke painted: a new map"
                                                                                                     : "pond placed: a new map";
         }
@@ -98,7 +104,96 @@ void ApplicationChasm::UpdateMapDrag(const GridPick& hover, bool f_over_scene, b
     }
 }
 
-bool ApplicationChasm::RemakeMap(const GridWater& water, const GridRelief& relief, std::string& why){
+/*
+    PHYSICS THREAD: the CLIFF tool's drag (step 6), a road's. Pressed, the chain starts at the plot under the cursor;
+    held, each plot the cursor reaches is walked onto it along fine edges (LineStepTo), so two plots of a stroke never
+    meet only at a corner, where the terrain would join the plateau across them (SettleHeights) and a moat would leak;
+    let go, the stroke is the chain's plots at the panel's width and depth, and the map is made again - unless it would
+    take no plot, and the panel says why. Each change works out the band again for the preview.
+*/
+void ApplicationChasm::UpdateCliffDrag(const GridPick& hover, bool f_over_scene, bool f_clicked, bool f_held){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!w){
+        return;
+    }
+    const bool f_on = f_over_scene && hover.f_hit && hover.plot >= 0;
+    std::vector<int> chain;
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        chain = cliff_chain;
+    }
+    auto stroke_of = [&](const std::vector<int>& c){
+        GridCliffStroke s;
+        for (int v : c){
+            s.points.push_back(w->grid->fine.pos[v]);
+        }
+        s.width = cliff_width.load();
+        s.depth = cliff_depth.load();
+        return s;
+    };
+    bool f_changed = false;
+    if (f_clicked && f_on){
+        chain.assign(1,hover.plot);
+        f_map_dragging = true;
+        map_drag_tool = CHASM_TOOL_CLIFF;
+        f_changed = true;
+    }else if (f_held && f_map_dragging && f_on && !chain.empty() && hover.plot != chain.back()){
+        LineStepTo(*w,chain,hover.plot);
+        f_changed = true;
+    }else if (!f_held && f_map_dragging){
+        std::string why;
+        GridCliffStroke s = stroke_of(chain);
+        std::vector<int> band;
+        TerrainCliffPlots(*w->grid,s,band);
+        int taken = 0;
+        for (int v : band){
+            taken += CliffPlotTaken(*w->terrain,v,s.depth) ? 1 : 0;
+        }
+        if (taken == 0){
+            why = (s.depth > 0) ? "a cliff is painted on the plateau's dry ground, off the map's edge, the mountain and a pond"
+                                : "a depth of 0 takes painted cliffs back up: none here";
+        }else{
+            GridCliffs cliffs = w->grid->settings.cliffs;
+            cliffs.strokes.push_back(s);
+            if (RemakeMap(w->grid->settings.water,w->grid->settings.relief,cliffs,why)){
+                why = (s.depth > 0) ? "cliff painted: a new map" : "cliff taken back up: a new map";
+            }
+        }
+        chain.clear();
+        f_map_dragging = false;
+        f_changed = true;
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        map_status = why;
+    }
+    if (f_changed){
+        std::vector<int> band;
+        if (!chain.empty()){
+            TerrainCliffPlots(*w->grid,stroke_of(chain),band);
+        }
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        cliff_chain = chain;
+        cliff_band = band;
+        pick_version++;
+    }
+}
+
+void ApplicationChasm::DropMapDrag(){
+    f_map_dragging = false;
+    std::lock_guard<std::mutex> lock(pick_mutex);
+    map_drag.clear();
+    cliff_chain.clear();
+    cliff_band.clear();
+    pick_version++;
+}
+
+bool ApplicationChasm::CliffPlotTaken(const Terrain& t, int v, int depth){
+    if (v < 0 || v >= (int)t.cliff_open.size() || !t.cliff_open[v]){
+        return false;
+    }
+    return depth > 0 || t.cliff[v] > 0;
+}
+
+bool ApplicationChasm::RemakeMap(const GridWater& water, const GridRelief& relief, const GridCliffs& cliffs, std::string& why){
     //A new map in the middle of a recording would leave it nothing to replay against.
     if (main_scene->inputcontroller->IsRecording()){
         why = "not while recording: it makes a new map";
@@ -112,14 +207,16 @@ bool ApplicationChasm::RemakeMap(const GridWater& water, const GridRelief& relie
     GridSettings s = g->settings;
     s.water = water;
     s.relief = relief;
+    s.cliffs = cliffs;
     RegenerateGrid(s);
     return true;
 }
 
 /*
-    DEBUG PANEL, under the map tools: the river's width or the stroke's height and radius, and what this map has - for
-    the river and pond tools its water (each river by how it came to end, each pond by where it lies), for the height
-    tool its strokes - each with a button to take it away, which makes the map again.
+    DEBUG PANEL, under the map tools: the river's width, the stroke's height and radius or the cliff's depth and width,
+    and what this map has - for the river and pond tools its water (each river by how it came to end, each pond by where
+    it lies), for the height and cliff tools their strokes - each with a button to take it away, which makes the map
+    again.
 */
 void ApplicationChasm::RenderMapTools(){
 #ifdef USE_IMGUI
@@ -130,10 +227,61 @@ void ApplicationChasm::RenderMapTools(){
     const int tool = paint_tool;
     const GridWater& water = g->settings.water;
     const GridRelief& relief = g->settings.relief;
+    const GridCliffs& cliffs = g->settings.cliffs;
     GridWater water_after = water;
     GridRelief relief_after = relief;
+    GridCliffs cliffs_after = cliffs;
     bool f_change = false;
-    if (tool == CHASM_TOOL_HEIGHT){
+    if (tool == CHASM_TOOL_CLIFF){
+        int depth = cliff_depth.load();
+        int width = cliff_width.load();
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::SliderInt("depth##cliff",&depth,0,GRID_CLIFF_DEEPEST,(depth == 0) ? "0: back up" : (depth == 1) ? "1 step"
+                                                                                                         : "%d steps")){
+            cliff_depth = depth;
+            pick_version++;     //the brush under the cursor, in its new colour
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::SliderInt("width##cliff",&width,1,GRID_CLIFF_WIDEST,(width == 1) ? "1 plot" : "%d plots")){
+            cliff_width = width;
+            pick_version++;
+        }
+        ImGui::TextDisabled("drag as a road: each step %.0f down, 0 takes painted plots back up; each makes the map again",
+                            TERRAIN_STEP);
+        for (size_t i = 0; i < cliffs.strokes.size(); i++){
+            ImGui::PushID((int)i);
+            if (ImGui::SmallButton("x##cliff") && !f_change){
+                cliffs_after.strokes.erase(cliffs_after.strokes.begin() + i);
+                f_change = true;
+            }
+            ImGui::SameLine();
+            const GridCliffStroke& s = cliffs.strokes[i];
+            char how[24] = "back up";
+            if (s.depth > 0){
+                snprintf(how,sizeof(how),"%d step%s down",s.depth,(s.depth == 1) ? "" : "s");
+            }
+            ImGui::Text("cliff %zu: %zu plots along, %d wide, %s, from %.0f, %.0f",i + 1,s.points.size(),s.width,how,
+                        s.points.front().x,s.points.front().y);
+            ImGui::PopID();
+        }
+        std::shared_ptr<const ChasmWorld> w = GetWorld();
+        if (w && w->grid == g && !cliffs.Empty()){
+            ImGui::TextDisabled("%d plots below the plateau; %d of the strokes' plots not open to a cliff",w->terrain->cliff_plots,
+                                w->terrain->cliff_refused);
+        }
+        if (!cliffs.Empty() && ImGui::Button("Undo the last stroke##cliff") && !f_change){
+            cliffs_after.strokes.pop_back();
+            f_change = true;
+        }
+        if (!cliffs.Empty()){
+            ImGui::SameLine();
+        }
+        if (!cliffs.Empty() && ImGui::Button("Take all the cliffs away##cliff") && !f_change){
+            cliffs_after = GridCliffs();
+            f_change = true;
+        }
+    }else if (tool == CHASM_TOOL_HEIGHT){
         float height = relief_height.load();
         float radius = relief_radius.load();
         ImGui::SetNextItemWidth(160.0f);
@@ -216,7 +364,7 @@ void ApplicationChasm::RenderMapTools(){
     }
     std::string status;
     if (f_change){
-        bool f_done = RemakeMap(water_after,relief_after,status);
+        bool f_done = RemakeMap(water_after,relief_after,cliffs_after,status);
         std::lock_guard<std::mutex> lock(pick_mutex);
         map_status = f_done ? "taken away: a new map" : status;
     }

@@ -122,7 +122,8 @@ void ApplicationChasm::Init(void){
     //default, and a skinned mesh without it draws nothing and says nothing - see apps/bomber.
     renderer->skinned_shader = new Shader(shader_skinned_vert_name,shader_lit_frag_name);
 
-    main_window->Resize(1440,810);
+    //main_window->Resize(1440,900);
+    main_window->Resize(1920,1080);
 
     /*
         THE LOADING SCREEN (core's, Application::BeginLoading - archer's, on black): LOADING, a bar and the step under
@@ -189,12 +190,13 @@ void ApplicationChasm::Init(void){
 #endif
     /*
         RECORDING FOR TESTERS (ApplicationChasmRecord.cpp): recordings beside the saves, found from the exe as they are;
-        and always recording in a build without the panels - the one testers get. With the panels it would take over
-        the recording an agent starts with input_record, so there the panel turns it on.
+        and always recording in a build without the panels - the one testers get - unless they have turned it off in
+        Settings. With the panels it would take over the recording an agent starts with input_record, so there the
+        panel turns it on and the setting is not read.
     */
     recordings_dir = ChasmFolder("recordings");
 #ifndef USE_IMGUI
-    f_always_record = true;
+    f_always_record = settings.GetBool("always_record");
 #endif
     colony_name = "Seed " + std::to_string(next_settings.seed);
     LoadingStep("the title");
@@ -354,6 +356,7 @@ void ApplicationChasm::SetupInput(){
     view_key(VK_F5,INPUT_CHASM_QUICK_SAVE);       //F9 and F10 are core's recording
     view_key(VK_F8,INPUT_CHASM_QUICK_LOAD);
     view_key(VK_F12,INPUT_CHASM_REPORT);
+    view_key(VK_F11,INPUT_CHASM_FPS);
     view_key('F',INPUT_CHASM_FRAME);
     view_key('N',INPUT_CHASM_NEXT_SEED);
     view_key('B',INPUT_CHASM_PREVIOUS_SEED);
@@ -726,6 +729,11 @@ void ApplicationChasm::UpdatePick(){
     }else if (area_drag == LINE_DRAG_DRAWING && f_right){
         DropDrag();
         f_line_dropped = true;
+    }
+    //...and a map tool's (water_tools_plan.md), whose release makes a new map - so never one left over from a tool put down.
+    if (f_map_dragging && (paint_tool != map_drag_tool || f_right)){
+        DropMapDrag();
+        f_line_dropped = f_line_dropped || f_right;
     }
     //Play mode's own selection, and its overlay taking the mouse where it is drawn (selection_plan.md).
     if (PlayMode()){
@@ -1234,9 +1242,9 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         UpdateLineDrag(hover,f_over_scene,f_clicked,f_held);
         return;
     }
-    //The debug map tools (water_tools_plan.md): a river's course, a pond's size or a height stroke, placed on release
-    //as a new map.
-    if (paint_tool == CHASM_TOOL_RIVER || paint_tool == CHASM_TOOL_POND || paint_tool == CHASM_TOOL_HEIGHT){
+    //The debug map tools (water_tools_plan.md): a river's course, a pond's size, a height stroke or a cliff, placed on
+    //release as a new map.
+    if (ChasmMapTool(paint_tool)){
         UpdateMapDrag(hover,f_over_scene,f_clicked,f_held);
         return;
     }
@@ -1414,6 +1422,19 @@ void ApplicationChasm::UploadZones(){
         }
     }
     zone_field_stage = stage;
+    /*
+        What the zombies have done (zombies_plan.md, step 4d) is economy state too, drawn the same way: its look in steps
+        (ZoneMesh.h), and the chunks under whatever moved a step rebuilt with the rest.
+    */
+    if (f_new_world){
+        zone_harm_look = ZoneHarmLook();
+    }
+    ZoneHarmLook harm;
+    if (e && e->world == w){
+        ZoneHarmLookOf(*e,&zone_harm_look,harm);
+    }
+    ZoneHarmChunks(*w,*z,zone_harm_look,harm,f_restage);
+    zone_harm_look = harm;
     std::vector<vertex> verts;
     for (size_t i = 0; i < n; i++){
         uint32_t v = z->chunk_version[i];
@@ -1423,7 +1444,7 @@ void ApplicationChasm::UploadZones(){
             continue;
         }
         zone_chunk_built[i] = v;
-        BuildZoneChunk(*w,*z,(int)i,verts,&zone_field_stage);
+        BuildZoneChunk(*w,*z,(int)i,verts,&zone_field_stage,&zone_harm_look);
         if (verts.empty()){
             zone_chunks[i]->SetVisibility(false);
         }else{
@@ -1451,6 +1472,7 @@ void ApplicationChasm::LoadProps(){
         names.push_back(mine);      //the mine's props (stone_plan.md step 5)
     }
     names.push_back(CHASM_ZOMBIE_ASSET);
+    names.push_back(CHASM_ANGEL_ASSET);      //zombies_plan.md step 6: rising from where a person sank
     names.push_back(CHASM_BIRD_ASSET);       //birds_plan.md: its shape keys come with it
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
     GetAssetsFromGLTF(names);
@@ -1510,6 +1532,11 @@ void ApplicationChasm::LoadProps(){
         BuildZombieSkin();
     }else{
         debug->Warn("'%s' not in chasm_props.glb - zombies will not be drawn\n",CHASM_ZOMBIE_ASSET);
+    }
+    //...and the angel (step 6), drawn as a figure too.
+    f_angel_loaded = assetmanager->GetMeshFromAsset(CHASM_ANGEL_ASSET) != NULL;
+    if (!f_angel_loaded){
+        debug->Warn("'%s' not in chasm_props.glb - no angel rises from the dead\n",CHASM_ANGEL_ASSET);
     }
     //The archery range's props (range_plan.md): the GLB's where it has them, stand-ins where not.
     BuildRangeScene();
@@ -2140,6 +2167,31 @@ void ApplicationChasm::UpdatePickView(){
         }
         emit(colour);
     }
+    /*
+        The CLIFF tool (step 6): during its drag the plots the stroke would paint - blue going down, green taken back up
+        at a depth of 0, red where it would not take them (TerrainCliffPlots, CliffPlotTaken); before the press the same
+        for a stroke of the one plot under the cursor, so the width shows as a brush.
+    */
+    if (map_tool == CHASM_TOOL_CLIFF){
+        std::vector<int> band;
+        {
+            std::lock_guard<std::mutex> lock(pick_mutex);
+            band = cliff_band;
+        }
+        int depth = cliff_depth.load();
+        if (band.empty() && hover.f_hit && hover.plot >= 0){
+            GridCliffStroke s;
+            s.points.push_back(g.fine.pos[hover.plot]);
+            s.width = cliff_width.load();
+            s.depth = depth;
+            TerrainCliffPlots(g,s,band);
+        }
+        for (int v : band){
+            level_h = terrain.Height(v);
+            p->PlotOutline(v,segs);
+            emit(!CliffPlotTaken(terrain,v,depth) ? PICK_PAINT_REFUSED : (depth > 0) ? PICK_HOVER_COARSE : PICK_PAINT_OK);
+        }
+    }
     //Any other drag (drag_plan.md): what its release sends, plot by plot or cell by cell, as the rules will take it.
     if (const DragPlan* plan = CurrentDragPlan()){
         for (size_t i = 0; i < plan->commands.size(); i++){
@@ -2264,6 +2316,13 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
         balconies.push_back(json{{"side",f.side > 0 ? "east" : "west"},{"start",{a.x,a.y}},{"end",{b.x,b.y}},
                                  {"middle",{m.x,m.y}}});
     }
+    //The cliffs painted by hand (water_tools_plan.md step 6): what they came to, on the terrain made from this grid.
+    json cliffs{{"strokes",g.layout.cliff_strokes.size()}};
+    std::shared_ptr<const ChasmWorld> world = GetWorld();
+    if (world && world->grid.get() == &g){
+        cliffs["plots"] = world->terrain->cliff_plots;
+        cliffs["refused"] = world->terrain->cliff_refused;
+    }
     const GridSettings& s = g.settings;
     char hash[32];
     snprintf(hash,sizeof(hash),"%016llx",(unsigned long long)g.Hash());
@@ -2278,7 +2337,8 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
             {"relax_passes_fine",s.relax_passes_fine},
             {"relax_strength",s.relax_strength},
             {"water",GridWaterToJson(s.water)},
-            {"relief",GridReliefToJson(s.relief)}
+            {"relief",GridReliefToJson(s.relief)},
+            {"cliffs",GridCliffsToJson(s.cliffs)}
         }},
         {"lattice_triangles",g.num_lattice_triangles},
         {"leftover_triangles",g.num_leftover_triangles},
@@ -2306,6 +2366,7 @@ json ApplicationChasm::GridStatsJson(const Grid& g){
             {"spring_list",springs},
             {"pond_list",ponds},
             {"ponds_dropped",g.layout.ponds_dropped},
+            {"cliffs",cliffs},
             {"attempts",g.layout.attempts},
             {"layout_ms",g.layout.generate_ms}
         }}
@@ -2956,6 +3017,7 @@ void ApplicationChasm::PreRender(void){
     UploadCrates();
     UploadMines();
     UploadZombies();
+    UploadFallen();
     UploadRange();
     UploadRopewalks();
     UploadBorders();
@@ -3410,6 +3472,7 @@ void ApplicationChasm::RenderChasmPanel(){
         if (g){
             next_settings.water = g->settings.water;
             next_settings.relief = g->settings.relief;
+            next_settings.cliffs = g->settings.cliffs;
         }
         int seed = (int)next_settings.seed;
         if (ImGui::InputInt("seed",&seed)){
@@ -3604,7 +3667,9 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Pond (debug)##tool",tool == CHASM_TOOL_POND)) tool = CHASM_TOOL_POND;
         ImGui::SameLine();
         if (ImGui::RadioButton("Height (debug)##tool",tool == CHASM_TOOL_HEIGHT)) tool = CHASM_TOOL_HEIGHT;
-        if (tool == CHASM_TOOL_RIVER || tool == CHASM_TOOL_POND || tool == CHASM_TOOL_HEIGHT){
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Cliff (debug)##tool",tool == CHASM_TOOL_CLIFF)) tool = CHASM_TOOL_CLIFF;
+        if (ChasmMapTool(tool)){
             RenderMapTools();
         }
         if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
@@ -3816,7 +3881,16 @@ void ApplicationChasm::RegisterMCPTools(){
                                                            "- one point a hill, several a ridge along them; height -20..20 (below 0 "
                                                            "a hollow or a valley), radius 4..60, falling off smoothly; strokes add "
                                                            "up; {} for none. On the plateau, before the rivers flatten it; lowering "
-                                                           "fades out near a rim. Kept until given again, as the water is"}}}
+                                                           "fades out near a drop. Kept until given again, as the water is"}}},
+                {"cliffs",{{"type","object"},{"description","cliffs painted by hand (docs/water_tools_plan.md step 6), the whole "
+                                                           "of them: {\"strokes\":[{\"points\":[[x,z],...],\"width\":1,\"depth\":1}]} "
+                                                           "- the plot nearest each point, and at a width past 1 (plots across, "
+                                                           "1..5) every plot within half of it of the line through them, set to "
+                                                           "depth steps of 6 below the plateau (1..4; 0 takes earlier strokes' "
+                                                           "plots back up), later strokes over earlier ones; {} for none. Only "
+                                                           "the plateau's dry plots, off the map's edge, the mountain and a pond; "
+                                                           "chasm_grid's layout.cliffs says what they came to. Kept until given "
+                                                           "again, as the water is"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -3831,6 +3905,12 @@ void ApplicationChasm::RegisterMCPTools(){
             if (args.contains("relief")){
                 std::string error;
                 if (!GridReliefFromJson(args["relief"],s.relief,error)){
+                    return json{{"error",error}};
+                }
+            }
+            if (args.contains("cliffs")){
+                std::string error;
+                if (!GridCliffsFromJson(args["cliffs"],s.cliffs,error)){
                     return json{{"error",error}};
                 }
             }
@@ -4427,8 +4507,8 @@ void ApplicationChasm::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("chasm_tool",
         "Pick the mouse's tool, as keys 1-0, H, C, J, G, R, T and K do: select, house, field, erase, garden, lot, road, store, "
         "woodcutter, water, winch, camp, bridge, builders, wall, range, tower, ropewalk - and the debug panel's castle, well, river, "
-        "pond and height, never in play (water_tools_plan.md: `width`, `height` and `radius` set the map tools' sizes, as the "
-        "panel's sliders do). With a paint tool the hover outline goes green where a click would "
+        "pond, height and cliff, never in play (water_tools_plan.md: `width`, `height`, `radius` and `depth` set the map tools' "
+        "sizes, as the panel's sliders do). With a paint tool the hover outline goes green where a click would "
         "paint and red where the rules refuse - in play mode, the ghost of what it would place, and `cost` its price "
         "tag as last drawn (empty for none; the ghost follows a frame behind, so ask again after moving the hover) - "
         "during a drag the whole of it, `drag_steps` the plots or cells it has crossed. "
@@ -4439,7 +4519,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
                                                     "range","tower","ropewalk","castle","stonecutter","mine","well",
-                                                    "river","pond","height"}}}},
+                                                    "river","pond","height","cliff"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -4450,9 +4530,12 @@ void ApplicationChasm::RegisterMCPTools(){
                                           "winch, tower and mine place on the click alone). Allow a frame between calls."}}},
                 {"right_click",{{"type","boolean"},{"description","a right press: drops a road or other drag being drawn"}}},
                 {"width",{{"type","number"},{"description","the river tool's width for the next river, as the panel's slider "
-                                                         "(water_tools_plan.md)"}}},
+                                                         "(water_tools_plan.md) - or, with the cliff tool in hand (picked in this "
+                                                         "call or before), the next cliff's width in plots, 1..5"}}},
                 {"height",{{"type","number"},{"description","the height tool's height for the next stroke, -20..20"}}},
-                {"radius",{{"type","number"},{"description","...and its radius, 4..60"}}}
+                {"radius",{{"type","number"},{"description","...and its radius, 4..60"}}},
+                {"depth",{{"type","integer"},{"description","the cliff tool's depth for the next stroke, in steps below the "
+                                                         "plateau: 1..4, or 0 to take painted cliffs back up"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -4460,11 +4543,22 @@ void ApplicationChasm::RegisterMCPTools(){
             //2026-10-09) left a NULL at the end that every name was compared against: any call crashed.
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
-                                   "range","tower","ropewalk","castle","stonecutter","mine","well","river","pond","height"};
+                                   "range","tower","ropewalk","castle","stonecutter","mine","well","river","pond","height",
+                                   "cliff"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
-            //The map tools' sizes (water_tools_plan.md), the panel's sliders' for a script.
-            if (args.contains("width") && args["width"].is_number()){
+            //The map tools' sizes (water_tools_plan.md), the panel's sliders' for a script - `width` the cliff's in plots
+            //when that is the tool in hand, else the river's.
+            bool f_cliff = args.value("tool",std::string()) == "cliff" ||
+                           (!args.contains("tool") && paint_tool.load() == CHASM_TOOL_CLIFF);
+            if (args.contains("width") && args["width"].is_number() && f_cliff){
+                cliff_width = std::max(1,std::min(GRID_CLIFF_WIDEST,(int)std::lround(args["width"].get<float>())));
+                pick_version++;
+            }else if (args.contains("width") && args["width"].is_number()){
                 water_river_width = std::max(GRID_PLACED_RIVER_NARROWEST,std::min(GRID_PLACED_RIVER_WIDEST,args["width"].get<float>()));
+            }
+            if (args.contains("depth") && args["depth"].is_number()){
+                cliff_depth = std::max(0,std::min(GRID_CLIFF_DEEPEST,(int)std::lround(args["depth"].get<float>())));
+                pick_version++;
             }
             if (args.contains("height") && args["height"].is_number()){
                 relief_height = std::max(-GRID_RELIEF_HIGHEST,std::min(GRID_RELIEF_HIGHEST,args["height"].get<float>()));
@@ -4478,7 +4572,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 //Play mode's tools still waiting for a discovery are refused, as their keys are (demo_plan.md step 6) - and
                 //the debug well always (water_tools_plan.md).
                 if (t == names[i] && ToolLocked(i)){
-                    locked = (i == CHASM_TOOL_WELL || i == CHASM_TOOL_RIVER || i == CHASM_TOOL_POND || i == CHASM_TOOL_HEIGHT)
+                    locked = (i == CHASM_TOOL_WELL || ChasmMapTool(i))
                                  ? std::string("a debug tool, never in play mode")
                                                     : std::string("not discovered yet: ") + ChasmDiscoveryName(ChasmToolNeeds(i));
                 }else if (t == names[i]){
@@ -4510,11 +4604,13 @@ void ApplicationChasm::RegisterMCPTools(){
             int left = script_left.load();
             size_t line = 0;
             size_t drag = 0;
+            size_t band = 0;
             std::string cost;
             {
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 line = line_chain.size();
                 drag = drag_chain.size();
+                band = cliff_band.size();
                 cost = ghost_cost_text;
             }
             json result{{"tool",(tool >= 0 && tool < CHASM_TOOL_COUNT) ? names[tool] : "?"},
@@ -4523,6 +4619,12 @@ void ApplicationChasm::RegisterMCPTools(){
                         {"line_plots",line},
                         {"drag_steps",drag},
                         {"cost",cost}};
+            //The cliff tool's sizes, and during its drag the plots the stroke would paint (water_tools_plan.md step 6).
+            if (tool == CHASM_TOOL_CLIFF){
+                result["cliff_depth"] = cliff_depth.load();
+                result["cliff_width"] = cliff_width.load();
+                result["cliff_plots"] = band;
+            }
             if (!locked.empty()){
                 result["refused"] = locked;
             }

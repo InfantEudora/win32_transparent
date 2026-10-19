@@ -4,8 +4,8 @@ aliases: road, roads, wall, walls, palisade, gate, gates, gate door
 kind: buildings
 status: built
 summary: Drawn as lines, cleared by woodcutters and built by people without a job. Roads cost only work and double walking speed; walls cost wood too; a road through a wall is a gate whose door can be shut.
-plans: line_works_plan.md > As built; zombies_plan.md > Step 4: walls break; woodcutting_plan.md > Decided (the user, 2026-10-11); defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner; arches_plan.md > As built: step 2, the floor; arches_plan.md > As built: step 3, built as a site; arches_plan.md > As built: step 4, losing it
-code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody; RoadMesh.cpp: RoadCellFilled EdgeDressing EdgeBesideFill CellInTown BuildCobbles
+plans: line_works_plan.md > As built; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4d, the look; woodcutting_plan.md > Decided (the user, 2026-10-11); defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner; arches_plan.md > As built: step 2, the floor; arches_plan.md > As built: step 3, built as a site; arches_plan.md > As built: step 4, losing it
+code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody; RoadMesh.cpp: RoadCellFilled EdgeDressing EdgeBesideFill CellInTown BuildCobbles HarmedLog BuildGate; ZoneMesh.h: ZoneHarmLook
 verified: 2026-10-19
 ---
 
@@ -38,8 +38,9 @@ clear they walk straight; otherwise they follow the grid, choosing the quickest 
 - A gate's door can be **shut** from its card. Then nobody walks through, the colony's own people
   included. Everyone walking re-plans, and whoever is cut off waits until it opens. Nobody can be ordered
   onto a shut gate ([[Posts]]).
-- [[Zombie|Zombies]] **break** them: a palisade plot in {ZOMBIE_BREAK_WALL:#seconds} of hitting, a shut gate's door in
-  {ZOMBIE_BREAK_GATE:#seconds}. A broken plot is a wall site again; a broken door hangs open and won't shut.
+- [[Zombie|Zombies]] **break** them: a palisade plot in {ZOMBIE_BREAK_WALL:#seconds} of hitting, its logs leaning away and
+  dropping as it goes, a shut gate's door in {ZOMBIE_BREAK_GATE:#seconds}, giving on its hinges. A broken plot lies in
+  fallen logs and stumps, a wall site again until built; a broken door hangs askew and won't shut.
 - Each built wall or gate plot grows its [[Settlement|settlement's]] land {ECONOMY_SETTLEMENT_WALL} units of walking
   round itself, so a wall carries the border with it. A road doesn't.
 

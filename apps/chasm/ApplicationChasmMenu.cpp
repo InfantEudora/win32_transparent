@@ -82,6 +82,8 @@ enum{
     SETTINGS_ITEM_EFFECTS,
     SETTINGS_ITEM_FULLSCREEN,
     SETTINGS_ITEM_UI_SIZE,
+    SETTINGS_ITEM_FPS,
+    SETTINGS_ITEM_RECORD,
     SCREEN_ITEM_ROW = 100,      //+ the row: a map in CHASM_STARTS, or a save in screen_saves
 };
 
@@ -237,11 +239,12 @@ void ApplicationChasm::BuildScreen(){
     screen_menu.layout.width = (screen == CHASM_SCREEN_NEW) ? 0.62f : 1.05f;
     if (screen == CHASM_SCREEN_SETTINGS){
         //From the store, so the screen always shows what is saved - archer's settings, without its Controls: there
-        //are no keys to map yet, and no pad to play with.
-        screen_menu.layout.top = 0.34f;
+        //are no keys to map yet, and no pad to play with. Higher and tighter than the other lists, so all eight rows
+        //and Back stay on screen up to the 130% interface in the window Chasm opens in.
+        screen_menu.layout.top = 0.20f;
         screen_menu.layout.width = 0.84f;
-        screen_menu.layout.item_h = 0.060f;
-        screen_menu.layout.gap = 0.012f;
+        screen_menu.layout.item_h = 0.052f;
+        screen_menu.layout.gap = 0.008f;
         const int msaa = settings.GetInt("msaa");
         screen_menu.AddChoice("Anti-aliasing",{"Off","4x","16x"},(msaa <= 1) ? 0 : ((msaa <= 8) ? 1 : 2),SETTINGS_ITEM_MSAA);
         screen_menu.AddSlider("Master volume",settings.GetFloat("volume_master"),0.0f,1.0f,0.05f,SETTINGS_ITEM_MASTER);
@@ -257,6 +260,11 @@ void ApplicationChasm::BuildScreen(){
                        < fabsf(HUD_UI_SIZE_STEPS[size_at] - settings.GetFloat("ui_size"))) ? i : size_at;
         }
         screen_menu.AddChoice("Interface size",sizes,size_at,SETTINGS_ITEM_UI_SIZE);
+        screen_menu.AddToggle("Show frame rate (F11)",settings.GetBool("show_fps"),SETTINGS_ITEM_FPS);
+#ifndef USE_IMGUI
+        //Only where the setting is read: with the panels, always recording is the panel's (ApplicationChasm::Init).
+        screen_menu.AddToggle("Record for bug reports",settings.GetBool("always_record"),SETTINGS_ITEM_RECORD);
+#endif
     }else if (screen == CHASM_SCREEN_NEW){
         for (int i = 0; i < CHASM_START_COUNT; i++){
             std::string label = std::string(CHASM_STARTS[i].name) + " - " + SizeName(CHASM_STARTS[i].fine_cells);
@@ -315,6 +323,8 @@ bool ApplicationChasm::UpdateScreen(InputController* input){
             case SETTINGS_ITEM_EFFECTS:     settings.SetFloat("volume_effects",it.value); break;
             case SETTINGS_ITEM_FULLSCREEN:  settings.SetBool("fullscreen",it.f_on); break;
             case SETTINGS_ITEM_UI_SIZE:     settings.SetFloat("ui_size",HUD_UI_SIZE_STEPS[std::max(0,std::min(HUD_UI_SIZES - 1,it.choice))]); break;
+            case SETTINGS_ITEM_FPS:         settings.SetBool("show_fps",it.f_on); break;
+            case SETTINGS_ITEM_RECORD:      settings.SetBool("always_record",it.f_on); break;
         }
         if (!settings.Save()){
             debug->Err("Could not save the settings to %s\n",settings.Path().c_str());
@@ -610,13 +620,25 @@ void ApplicationChasm::UpdateAutosave(){
 }
 
 //PHYSICS THREAD, from UpdateView in the game: F5 saves, F8 loads it again - no question, which is what they are for -
-//and F12 reports a bug (ApplicationChasmRecord.cpp).
+//F12 reports a bug (ApplicationChasmRecord.cpp), and F11 shows or hides the frame rate.
 void ApplicationChasm::QuickKeys(InputController* input){
     bool f_save = input->WasKeyPressed(INPUT_CHASM_QUICK_SAVE);
     bool f_load = input->WasKeyPressed(INPUT_CHASM_QUICK_LOAD);
     bool f_report = input->WasKeyPressed(INPUT_CHASM_REPORT);
+    bool f_fps = input->WasKeyPressed(INPUT_CHASM_FPS);
     if (!KeysLive()){
         return;
+    }
+    if (f_fps){
+        //The setting itself, saved as the Settings row saves it: the next run starts the same, and the row agrees.
+        bool f_on = !settings.GetBool("show_fps");
+        settings.SetBool("show_fps",f_on);
+        if (!settings.Save()){
+            debug->Err("Could not save the settings to %s\n",settings.Path().c_str());
+        }
+        if (!f_on){
+            ShowNote("Frame rate hidden - F11 shows it again");
+        }
     }
     if (f_report){
         StartReport();
@@ -645,9 +667,11 @@ void ApplicationChasm::ShowNote(const std::string& note){
 
 /*
     THE PLAYER'S SETTINGS (demo_plan.md step 3; core/Settings.h): archer's - anti-aliasing, the master, music and effects
-    volumes, and starting full screen - in settings.json beside the exe, from disk only, never a baked asset. Read in
-    the constructor, so "start full screen" is known before the window is made. The volumes default to 1, so a first
-    run sounds as the cue table and the score were mixed.
+    volumes, and starting full screen - with the interface's size, the frame rate shown and always recording, in
+    settings.json beside the exe, from disk only, never a baked asset. Read in the constructor, so "start full screen"
+    is known before the window is made. The volumes default to 1, so a first run sounds as the cue table and the
+    score were mixed; the frame rate and the recording default to on (the user's, 2026-10-19), so a tester's report
+    has a recording and a screenshot says how the game ran.
 */
 void ApplicationChasm::LoadSettings(){
     settings.DeclareBool("fullscreen",false);
@@ -656,6 +680,8 @@ void ApplicationChasm::LoadSettings(){
     settings.DeclareFloat("volume_music",1.0f,0.0f,1.0f);
     settings.DeclareFloat("volume_effects",1.0f,0.0f,1.0f);
     settings.DeclareFloat("ui_size",1.0f,HUD_UI_SIZE_STEPS[0],HUD_UI_SIZE_STEPS[HUD_UI_SIZES - 1]);     //ChasmHud.h
+    settings.DeclareBool("show_fps",true);
+    settings.DeclareBool("always_record",true);     //read only by a build without the panels (ApplicationChasm::Init)
     std::string report;
     bool f_loaded = settings.Load(GetExecutableDirectory() + "/settings.json",&report);
     if (!report.empty()){
@@ -682,6 +708,10 @@ void ApplicationChasm::ApplySettings(){
         if (renderer && renderer->aa_samples != msaa){
             renderer->RequestAASamples(msaa);
         }
+        f_show_fps = settings.GetBool("show_fps");
+#ifndef USE_IMGUI
+        SetAlwaysRecord(settings.GetBool("always_record"));
+#endif
     }
 #ifdef USE_SOUND
     if (soundsystem && soundsystem->f_initialised){

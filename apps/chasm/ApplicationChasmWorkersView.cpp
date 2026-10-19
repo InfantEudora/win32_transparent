@@ -25,9 +25,9 @@ static Debugger* debug = new Debugger("ChasmPeople",DEBUG_ALL);
     2026-10-10) - is drawn SKINNED instead: per person a Skeleton of that rig sharing the figure's one skinned mesh,
     so they still draw in one instanced call per pass, walking while his route has a leg left and standing
     otherwise. What he carries is a child of the bone that carries it, so a pail swings with his arm. A
-    figure without a rig stays static, as above, until it gets one; nothing here names the rig. An archer
-    (range_plan.md "Shooting") carries a bow and a quiver, and on the line plays the Shoot clip by his
-    stint's clock; his arrows, in flight and landed, are the range's (ApplicationChasmRange.cpp).
+    figure without a rig stays static, as above, until it gets one; nothing here names the rig. Anyone with
+    a bow (EconomyCarriesBow; range_plan.md "Shooting") carries it and a quiver, and on the line plays the
+    Shoot clip by his stint's clock; his arrows, in flight and landed, are the range's (ApplicationChasmRange.cpp).
 
     Measured with the crowd bench (ApplicationChasmCrowdBench.cpp, 2026-10-10): a skinned figure costs about
     2.3 us a tick and 7 us a frame of CPU, a static one next to nothing - so a person standing hidden indoors
@@ -97,6 +97,10 @@ const char* gear_asset_names[GEAR_ASSETS] = {"bow","quiver"};
     zombie out of its scratch, hips 15-30 cm down, would have kept the crouch through a borrowed walk with its
     feet in the ground. Holding the rest also gives a crossfade into the clip a position to blend to. Each
     skeleton loads its own copy of a clip, so these keys are this rig's alone.
+
+    Every clip is loaded with all its rigs' copies (LoadAnimation's f_every_copy): the export writes each rig's
+    as an animation of its own under the one name, and the first alone is the man's - so the woman and the zombie
+    borrowed everything, and fallen, lay flat at standing hip height.
 */
 void KeepOwnPositions(Animation* clip){
     for (ObjectAnimation* track : clip->object_animations){
@@ -529,7 +533,7 @@ void ApplicationChasm::BuildWorkerScene(){
         IntoBone(kit,probe->FindBone("Spine"),fit);
         worker_skin_quiver[f] = RetainedMesh(kit);
         //The walk's pace, from this rig's own feet with the clip as a person of it will play it.
-        Animation* walk = gltfloader.LoadAnimation(WORKER_WALK_CLIP);
+        Animation* walk = gltfloader.LoadAnimation(WORKER_WALK_CLIP,true);
         float measured = 0.0f;
         if (walk){
             walk->looped = true;
@@ -539,7 +543,7 @@ void ApplicationChasm::BuildWorkerScene(){
         }
         worker_walk_speed[f] = measured > 0.01f ? measured : WORKER_WALK_SPEED;
         //Where his arrow leaves the bow: his left palm at the release, posed as a person of this rig plays the clip.
-        Animation* shoot = f_worker_shoot_clip ? gltfloader.LoadAnimation(WORKER_SHOOT_CLIP) : NULL;
+        Animation* shoot = f_worker_shoot_clip ? gltfloader.LoadAnimation(WORKER_SHOOT_CLIP,true) : NULL;
         Bone* forearm = probe->FindBone("Arm.Lower.L");
         Bone* hand = probe->FindBone("Hand.L");
         if (shoot && forearm && hand){
@@ -584,7 +588,7 @@ Object* ApplicationChasm::BuildPersonSkin(WorkerSkin& ws, const std::string& nam
     const char* names[3] = {WORKER_WALK_CLIP,f_worker_idle_clip ? WORKER_IDLE_CLIP : NULL,
                             f_worker_shoot_clip ? WORKER_SHOOT_CLIP : NULL};
     for (const char* name : names){
-        Animation* clip = name ? gltfloader.LoadAnimation(name) : NULL;
+        Animation* clip = name ? gltfloader.LoadAnimation(name,true) : NULL;
         if (!clip){
             continue;
         }
@@ -846,19 +850,9 @@ void ApplicationChasm::UploadWorkers(){
             float phase = seconds * WORKER_CHOP_RATE + (float)i * 0.37f;
             y += WORKER_CHOP_BOB * fabsf(sinf(phase * 3.1415927f));
         }
-        vec2 facing = EconomyWorkerFacing(k);
-        if (facing.dot(facing) < 1e-8f){
-            facing = vec2(0.0f,1.0f);
-        }
-        //Shooting at a zombie (zombies_plan.md, step 3): he faces it, and the Shoot clip turns him side-on by itself.
-        if (k.aim){
-            for (const EconomyZombie& m : e->zombies){
-                vec2 to = EconomyBody(m) - EconomyBody(k);
-                if (m.id == k.aim && to.length() > 1e-3f){
-                    facing = to * (1.0f / to.length());
-                }
-            }
-        }
+        //Along his route, or at the zombie he shoots at (zombies_plan.md, step 3) - the Shoot clip turns him side-on by
+        //itself. The rules' rule, which his fall goes by too.
+        vec2 facing = EconomyWorkerLooks(*e,k);
         vec2 body = EconomyBody(k);     //SPACING: where he stands, off his route
         shown->SetPosition(vec3(body.x,y,body.y),false);
         shown->SetRotation(quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),false);
@@ -878,9 +872,9 @@ void ApplicationChasm::UploadWorkers(){
                 ws->load[l]->SetVisibility(l == load);
             }
         }
-        //An archer carries his bow and quiver wherever he goes (range_plan.md "Shooting"), and a guard is the
-        //tower's archer.
-        bool f_archer = k.job == WORKER_JOB_ARCHER || k.job == WORKER_JOB_GUARD;
+        //A bow and quiver wherever he goes (range_plan.md "Shooting"): anyone trained at the range, at any work,
+        //as the rules arm him (EconomyCarriesBow).
+        bool f_archer = EconomyCarriesBow(k);
         show_kit(*ws,f_archer);
         for (Object* kit : {ws->bow,ws->quiver}){
             if (kit){
@@ -896,10 +890,13 @@ void ApplicationChasm::UploadWorkers(){
         ShotClock shots;
         if (k.seg + 1 < (int)k.route.size() && k.seg < (int)k.speed.size()){
             set_clip(*ws,WORKER_CLIP_WALK,k.speed[k.seg] / worker_walk_speed[f],phase);
-        }else if (f_worker_shoot_clip && worker_shoot_seconds > 0.0f && k.draw > 0){
+        }else if (f_worker_shoot_clip && worker_shoot_seconds > 0.0f && k.draw > 0 && k.draw_turn > 0){
             //A turn of his bow at a zombie (step 3), by the rules' count: his arrow leaves at its release, as they loose it.
-            float turn = (float)CALENDAR_TICKS_PER_SECOND * ARROW_SHOT_SECONDS;
-            set_clip(*ws,WORKER_CLIP_SHOOT,worker_shoot_seconds / ARROW_SHOT_SECONDS,fmodf((float)k.draw / turn,1.0f),~0ull);
+            //Each turn has its own length (EconomyShotTicks), so the clip runs at that turn's rate and is put back in step
+            //as each begins - its clock the tick it began.
+            float turn = (float)k.draw_turn;
+            set_clip(*ws,WORKER_CLIP_SHOOT,worker_shoot_seconds * (float)CALENDAR_TICKS_PER_SECOND / turn,
+                     fmodf((float)k.draw / turn,1.0f),e->tick - (uint64_t)k.draw);
         }else if (f_worker_shoot_clip && worker_shoot_seconds > 0.0f && ShotClockOf(k,e->tick,shots)){
             set_clip(*ws,WORKER_CLIP_SHOOT,worker_shoot_seconds / shots.cycle,fmodf(shots.elapsed / shots.cycle,1.0f),
                      shots.start);
@@ -959,4 +956,228 @@ void ApplicationChasm::UploadWorkers(){
             }
         });
     }
+}
+
+/*
+    THE FALLEN (zombies_plan.md, step 6; the user's 2026-10-19), the people's. Each down where he fell on a body of its
+    own, kept by his id - his own skeleton is the next worker's by place on this very tick - in his figure at the age he
+    died, facing the way he faced, falling the way the rules say by the user's clips and lying at their last frame; a
+    child's figure has no rig and tips over whole. He sinks after a few seconds, and from where he sank the props file's
+    angel appears, rises, turning slowly, and is gone; one who died at home leaves no body, and his angel rises from over
+    his roof. All by the calendar as it is now - the economy's snapshot is only taken again when something in it changes.
+    Under the clouds, as the living, nothing.
+*/
+#define FALLEN_TIP_SECONDS  0.8f    //a figure with no rig tips over in this
+#define ANGEL_RISE          3.0f    //world units the angel rises over its time
+#define ANGEL_OVER_ROOF     0.4f    //...from this far over the roof of the house of one who died indoors
+#define ANGEL_SWELL         0.15f   //the share of its time it takes to appear, and to go at the end
+#define ANGEL_TURNS         0.5f    //turns about up over its rise
+#define ANGEL_FEET          1.05f   //its feet below its middle, in the file's units (the angel's own: -1.05 to 0.91)
+
+void ApplicationChasm::UploadFallen(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    std::shared_ptr<const ZoneState> z = GetZones();
+    bool f_ours = w && e && e->world == w;
+    if (!angel_set && f_angel_loaded){
+        world_scene->AtTickBoundary([&](){
+            angel_set = assetmanager->GetObjectFromAsset(CHASM_ANGEL_ASSET);
+            if (angel_set){
+                angel_set->name = "angels";
+                angel_set->SetMaterialSlot(0,palette_material);
+                angel_set->SetPickability(false);
+                angel_set->SetVisualOnly(true);
+                angel_set->SetInstances(std::vector<fmat4>());
+                angel_set->SetVisibility(false);
+                world_scene->AddObject(angel_set);
+            }
+        });
+    }
+    std::shared_ptr<const Exploration> ex = (PlayMode() || f_view_clouds) ? GetExploration() : nullptr;
+    auto hidden = [&](const vec2& p){
+        return ex && !ex->Empty() && !ex->Explored(p);
+    };
+    const uint64_t now = f_ours ? std::max(e->tick,calendar_shown.load()) : 0;
+    const vec3 up(0.0f,1.0f,0.0f);
+    //Where his body lies, on the ground or a tower's platform: its height, or false off the map.
+    auto lying_at = [&](const EconomyFallen& f, float& y, int& plot){
+        GridPick p = w->picker->Pick(f.pos);
+        if (!p.f_hit || p.plot < 0){
+            return false;
+        }
+        plot = p.plot;
+        y = (f.layer != WALK_GROUND && z && z->world == w) ? BuildingLayerHeight(*w,*z,p.plot,f.layer)
+                                                         : w->terrain->GroundHeight(f.pos,w->terrain->Height(p.plot));
+        return true;
+    };
+
+    //The bodies wanted this frame: his record, the figure he died as, where.
+    struct Body{
+        const EconomyFallen* f;
+        int figure;
+        vec3 at;
+        float seconds;              //since he fell
+    };
+    std::vector<Body> bodies;
+    std::vector<fmat4> angels;
+    for (size_t i = 0; f_ours && i < e->fallen.size(); i++){
+        const EconomyFallen& f = e->fallen[i];
+        if (!f.f_person || hidden(f.pos)){
+            continue;
+        }
+        float y = 0.0f;
+        int plot = -1;
+        if (!lying_at(f,y,plot)){
+            continue;
+        }
+        float seconds = (float)(now - std::min(now,f.tick)) / (float)CALENDAR_TICKS_PER_SECOND;
+        float sunk = EconomyFallenSinking(f,now);
+        if (!f.f_indoors && sunk < 1.0f){
+            int figure = PERSON_ADULT_MALE;
+            for (const EconomyDeath& d : e->dead){
+                if (d.id == f.id){
+                    figure = (EconomyStageAt(d.born,f.tick) < LIFE_YOUNG ? PERSON_KID_MALE : PERSON_ADULT_MALE) + (d.f_female ? 1 : 0);
+                }
+            }
+            bodies.push_back({&f,figure,vec3(f.pos.x,y - sunk * FALLEN_SINK_DEPTH,f.pos.y),seconds});
+        }
+        float r = EconomyFallenRising(f,now);
+        if (r >= 0.0f && r < 1.0f){
+            float from = y;
+            if (f.f_indoors && z && z->world == w && plot < (int)z->standing.size()){
+                from = y + (float)z->standing[plot] * ZONE_STOREY_HEIGHT + 0.85f + ANGEL_OVER_ROOF;
+            }
+            float swell = std::min(1.0f,std::min(r,1.0f - r) / ANGEL_SWELL);
+            float scale = PERSON_MODEL_SCALE * swell;
+            if (scale > 1e-3f){
+                float yaw = atan2f(f.facing.x,f.facing.y) + r * ANGEL_TURNS * 6.2831853f;
+                vec3 at(f.pos.x,from + r * ANGEL_RISE + ANGEL_FEET * scale,f.pos.y);
+                angels.push_back(Object::ComposeTransformScale(at,quat(up,yaw),vec3(scale,scale,scale)));
+            }
+        }
+    }
+    if (angel_set && (!angels.empty() || angel_set->IsVisible())){
+        angel_set->SetVisibility(!angels.empty());
+        angel_set->SetInstances(std::move(angels));
+    }
+
+    //Each body keeps the figure it had by his id; the rest are freed, hidden. A new one takes a free figure of his kind.
+    const size_t none = (size_t)-1;
+    std::vector<size_t> slot(bodies.size(),none);
+    for (size_t s = 0; s < fallen_figures.size(); s++){
+        bool f_kept = false;
+        for (size_t i = 0; i < bodies.size() && !f_kept; i++){
+            if (fallen_figures[s].id == bodies[i].f->id && fallen_figures[s].figure == bodies[i].figure){
+                slot[i] = s;
+                f_kept = true;
+            }
+        }
+        if (!f_kept){
+            fallen_figures[s].id = 0;
+        }
+    }
+    std::vector<Object*> made;
+    for (size_t i = 0; i < bodies.size(); i++){
+        if (slot[i] != none){
+            continue;
+        }
+        size_t s = 0;
+        while (s < fallen_figures.size() && (fallen_figures[s].id != 0 || fallen_figures[s].figure != bodies[i].figure)){
+            s++;
+        }
+        if (s == fallen_figures.size()){
+            FallenFigure ff;
+            ff.figure = bodies[i].figure;
+            std::string name = "Fallen " + std::to_string(s);
+            if (worker_skin_mesh[ff.figure]){
+                ff.ws.figure = BuildPersonSkin(ff.ws,name,ff.figure);
+                if (ff.ws.figure){
+                    ff.ws.figure->SetPickability(false);
+                    for (const char* clip_name : {FALL_FORWARD_CLIP,FALL_BACKWARD_CLIP}){
+                        if (Animation* clip = gltfloader.LoadAnimation(clip_name,true)){
+                            clip->looped = false;
+                            ff.ws.figure->AddAnimation(clip);
+                            KeepOwnPositions(clip);
+                        }
+                    }
+                    made.push_back(ff.ws.figure);
+                }
+                if (ff.ws.bow){
+                    made.push_back(ff.ws.bow);
+                }
+            }
+            if (!ff.ws.figure){
+                ff.still = new Object();
+                ff.still->name = name;
+                ff.still->SetMesh(worker_meshes[ff.figure * WORKER_LOADS + LOAD_NONE]);
+                ff.still->SetMaterialSlot(0,palette_material);
+                ff.still->SetPickability(false);
+                ff.still->SetVisualOnly(true);
+                ff.still->SetVisibility(false);
+                made.push_back(ff.still);
+            }
+            fallen_figures.push_back(ff);
+        }
+        fallen_figures[s].id = bodies[i].f->id;
+        slot[i] = s;
+    }
+
+    struct FallChange{
+        FallenFigure* ff;
+        int clip;
+        float seconds;
+    };
+    std::vector<FallChange> changes;
+    for (FallenFigure& ff : fallen_figures){
+        if (ff.id == 0){
+            for (Object* o : {ff.ws.figure,ff.still}){
+                if (o){
+                    o->SetVisibility(false);
+                }
+            }
+            if (ff.ws.figure && ff.clip != 0){
+                changes.push_back({&ff,0,0.0f});
+            }
+        }
+    }
+    for (size_t i = 0; i < bodies.size(); i++){
+        FallenFigure& ff = fallen_figures[slot[i]];
+        const Body& b = bodies[i];
+        quat turn(up,atan2f(b.f->facing.x,b.f->facing.y));
+        if (ff.ws.figure){
+            ff.ws.figure->SetPosition(b.at,false);
+            ff.ws.figure->SetRotation(turn,false);
+            ff.ws.figure->SetVisibility(true);
+            int clip = b.f->f_back ? 2 : 1;
+            if (clip != ff.clip){
+                changes.push_back({&ff,clip,b.seconds});
+            }
+        }else if (ff.still){
+            //Over about his feet, face down or on his back, the way the rules say he fell.
+            float tip = std::min(1.0f,b.seconds / FALLEN_TIP_SECONDS) * 1.5707963f;
+            ff.still->SetPosition(b.at,false);
+            ff.still->SetRotation(turn * quat(vec3(1.0f,0.0f,0.0f),b.f->f_back ? -tip : tip),false);
+            ff.still->SetVisibility(true);
+        }
+    }
+    if (made.empty() && changes.empty()){
+        return;
+    }
+    world_scene->AtTickBoundary([&](){
+        for (Object* o : made){
+            world_scene->AddObject(o);
+        }
+        //His fall from as long ago as he fell, at once - this figure was standing in no clip - and held at its end.
+        for (const FallChange& c : changes){
+            Object* s = c.ff->ws.figure;
+            Animation* clip = (c.clip == 1) ? s->FindAnimation(FALL_FORWARD_CLIP)
+                            : (c.clip == 2) ? s->FindAnimation(FALL_BACKWARD_CLIP) : NULL;
+            s->SwitchToAnimation(clip);
+            if (clip){
+                clip->time_index = std::min(c.seconds,clip->duration);
+            }
+            s->SetAnimationRate(1.0f);
+            c.ff->clip = c.clip;
+        }
+    });
 }

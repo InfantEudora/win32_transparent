@@ -1620,7 +1620,8 @@ EXPORT_SETTINGS = dict(
     #Keys as they are, not one per frame: tools/blender_retarget.py writes clips already reduced to
     #the LINEAR keys the engine's slerp needs, and sampling would put every frame back. Unsampled
     #keys keep their frame's time - the exporter only slides a clip to zero when it samples - so a
-    #clip is keyed from frame 0.
+    #clip keyed from frame 1, Blender's default and this file's convention (the user's, 2026-10-19),
+    #starts at 1/fps in the .glb.
     export_force_sampling=False,
     export_skins=True,
     export_morph=True,                  #the bird's wings (shape keys); nothing else has any

@@ -44,6 +44,10 @@ static Debugger* debug = new Debugger("ChasmBirds",DEBUG_ALL);
 #define BIRD_TREE_CELL          8.0f    //world units a side of a cell of trees
 #define BIRD_PERCHES_PER_LOOK   6
 #define BIRD_ROOST_SPREAD       3.0f    //trees this near the roost's share its perches
+//CARRION (Birds.h; zombies_plan.md step 6): a fallen zombie's middle, from where it stood, along the way it fell - the
+//user's clips end with the hips about this far off - and how long after its fall it is down to be fed on.
+#define BIRD_CARRION_MIDDLE     0.45f
+#define BIRD_CARRION_AFTER_S    4.0f
 #define BIRD_ROOST_PERCHES      18
 #define BIRD_STEP_S             (1.0f / 30.0f)
 #define BIRD_STEPS_MAX          8
@@ -433,6 +437,18 @@ BirdWorld ApplicationChasm::MakeBirdWorld(const ChasmWorld& w, const ZoneState* 
         });
         return true;
     };
+    //CARRION: the zombies' dead lying still, once down - not yet sinking - by the calendar as it is now.
+    if (e && e->world.get() == &w){
+        const uint64_t now = std::max(e->tick,calendar_shown.load());
+        const uint64_t after = (uint64_t)(BIRD_CARRION_AFTER_S * CALENDAR_TICKS_PER_SECOND);
+        for (const EconomyFallen& f : e->fallen){
+            if (f.f_person || now < f.tick + after || EconomyFallenSinking(f,now) > 0.0f){
+                continue;
+            }
+            vec2 along = f.f_back ? f.facing * -1.0f : f.facing;
+            bw.carrion.push_back(BirdCarrion{f.id,f.pos + along * BIRD_CARRION_MIDDLE,along});
+        }
+    }
     return bw;
 }
 
@@ -672,7 +688,7 @@ void ApplicationChasm::UploadBirds(){
             flocks.push_back(json{{"id",f.id},{"state",states[f.state & 3]},{"birds",(int)f.birds.size()},
                                   {"size",f.size},{"leaving",leaving},
                                   {"perched",perched},{"anchor",{f.anchor.x,f.anchor.y,f.anchor.z}},
-                                  {"roost_tree",f.roost.tree},{"perches",(int)f.roost.perches.size()},
+                                  {"roost_tree",f.roost.tree},{"roost_carrion",f.roost.carrion},{"perches",(int)f.roost.perches.size()},
                                   {"home",{f.home.x,f.home.y}},{"timer",f.timer},{"wary_s",f.wary_left},
                                   {"flushes",f.flushes},{"scare_gap",nearest},
                                   {"role",roles[f.role % 3]},{"voice",f.voice == BIRD_VOICE_MAGPIE ? "magpie" : "crow"},

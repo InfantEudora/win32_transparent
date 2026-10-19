@@ -29,12 +29,18 @@ error saying which key.
 
 Also on by default, and output-identical (checked 2026-09-28, see blender_export_profile.py):
 export_optimize_disable_viewport, which took the archer export from 237 s to 58 s.
+
+THE REST OF OUR EXPORTER FIXES come from the add-on, tools/blender_gltf_fixes.py - "Starting at 0" made
+to work unsampled among them. The exporter only calls the hooks of ENABLED add-ons, so this script
+switches it on for the run when it is not already, and off again after; its shape-key half is
+switched off here, since the bake above already did that work.
 """
 
 import os
 import sys
 import time
 
+import addon_utils
 import bpy
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -137,10 +143,25 @@ for obj in candidates:
     else:
         print("  %-24s %s (modifiers were %s)" % (obj.name, result, names))
 
+#--- The add-on's fixes -----------------------------------------------------------------------
+FIXES = "blender_gltf_fixes"
+f_fixes_here = FIXES not in bpy.context.preferences.addons
+if f_fixes_here:
+    addon_utils.enable(FIXES, default_set=True)
+f_fixes = hasattr(bpy.context.scene, "gltf_fixes")
+if f_fixes:
+    bpy.context.scene.gltf_fixes.keep_shape_keys = False
+print("\n=== FIXES: %s" % ("tools/blender_gltf_fixes.py, %s" % ("enabled for this run" if f_fixes_here else "installed")
+                           if f_fixes else "NOT LOADED - exported as the stock exporter does"))
+
 #--- Export -----------------------------------------------------------------------------------
 print("\n=== EXPORT -> %s" % OUT)
 start = time.perf_counter()
-result = bpy.ops.export_scene.gltf(**settings)
+try:
+    result = bpy.ops.export_scene.gltf(**settings)
+finally:
+    if f_fixes_here and f_fixes:
+        addon_utils.disable(FIXES, default_set=True)
 print("  %s in %.1f s, %.1f MB" % (result, time.perf_counter() - start,
       os.path.getsize(OUT) / 1e6 if os.path.exists(OUT) else 0.0))
 print("  (the .blend was not saved)")

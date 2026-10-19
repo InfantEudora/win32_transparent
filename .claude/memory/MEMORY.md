@@ -25,7 +25,6 @@
 - [Per-app build layout](per_app_build_layout.md) — one exe per app under apps/<name>/, CONFIG=release, per-config trees; READ before any build
 - [Touch input plan](touch_input_plan.md) — on-screen buttons (AddTouchButton) built on the Android port, not yet Windows
 - [Android port merge](android_port_merge.md) — port at C:/code/android, upstream candidates (backlog 68-77), copy-then-reapply-with-asserts
-- [Pinball stage 0 review + stage 1](pinball_stage0_review.md) — Table.h is the machine; tools/pinball_plan.py + a paused trace after any move
 - [testfx bench gotchas](testfx_bench_gotchas.md) — uniforms leaked across effects (fixed); sim_step at tick rate; reference view is low
 - [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass every pass, GatherInput only on ticks; one set of edge flags
 - [lockd owner must be session id](lockd_owner_must_be_session_id.md) — any other owner string makes the hook refuse your own edits
@@ -94,7 +93,9 @@
 - [Chasm wiki](chasm_wiki.md) — apps/chasm/wiki/*.md -> build/wiki.html (tools/chasm_wiki.py); update a page when a mechanic changes
 - [Chasm crates plan](crates_plan.md) — steps 1-3 + step 5 (holding->dropping, 2026-10-18) BUILT; finds next
 - [Chasm yards](chasm_yards.md) — gardens/lots owned by a house or woodcutter (ground_owner); select then paint; Extend chip alike
-- [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, archers by precision; trainees SHOOT (bow, quiver, arrows by skill)
+- [Chasm archery range](chasm_range.md) — ZONE_KIND_RANGE on cells, archers by precision; trainees SHOOT; bow follows TRAINING; shot pace; bow + arrow sounds (hit is the user's take); saves/archers_test.json
+- [Header edit mid-build](header_edit_mid_build_stale_objects.md) — another agent's build across your header edit leaves stale objects make keeps; crash with garbage `this`
+- [glTF fixes add-on](gltf_fixes_addon.md) — tools/blender_gltf_fixes.py: ALL our Blender exporter fixes (shape keys, start-at-0 unsampled); new quirks go here
 - [Chasm goods strip](chasm_goods_strip.md) — stocks as strips: solid anyone's, hollow kept, striped reserved; task bar EconomyTaskProgress
 - [Chasm goods plan](chasm_goods_plan.md) — all 6 steps built: food/water/materials/inputs, hemp, ropewalk rope; kept stock + make-more orders
 - [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs; Walking/Idle/Shoot crossfaded; bone props via IntoBone; zombie skinned too (by id)
@@ -109,7 +110,7 @@
 - [ImGui input race + crash reports](imgui_input_race_crash_report.md) — i<Size assert was WndProc vs render thread, FIXED; build/crash_*.txt
 - [Chasm waterfalls](chasm_waterfalls.md) — brink + welded sheet + stage 2; camera under the rim only over balconies; no shader hot-reload
 - [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag cracked-mud plates; ported 2026-10-18 as map kind `cracks` (MudCracks.cpp)
-- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); 4a, 4b BUILT 2026-10-19 (walls/gates/every door broken, scratch clip, strike+punch sounds, tools/chasm_wall_test.py); 4c, 4d look, 4e, alarm next
+- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); 4a, 4b, 4d BUILT 2026-10-19 (walls/gates/every door broken, scratch clip, strike+punch sounds, harmed look via ZoneHarmLook, tools/chasm_wall_test.py); 6 the fallen BUILT (death clips, angels, crows; tools/chasm_fallen_test.py); 4c, 4e, alarm next
 - [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only; step 0 done
 - [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble, PICK UP, stonecutter, deposits, the mine on O)
 - [Chasm stone props](chasm_stone_props.md) — 10 stone props in chasm_props.glb (--add --merge); floatstone = PAL_MINERALS row 10
@@ -126,6 +127,7 @@
 - [archer_test baseline stale](archer_test_baseline_stale.md) — differs from tick 0 on a CLEAN HEAD (A/B 2026-10-18); --write is the user's call
 - [Worktree A/B build](worktree_ab_build.md) — HEAD in a worktree, OR (uncommitted work from others) an app-folder copy with your edits undone
 - [Chasm test maps plan](chasm_test_maps_plan.md) — ALL 6 BUILT 2026-10-18: kind flat/title (+cracks) in GridSettings, add_person, coded title town; saves A/B unchanged
-- [Chasm water tools plan](chasm_water_tools_plan.md) — ALL 5 steps BUILT: debug WELL, placed rivers + ponds, River/Pond tools, painted HEIGHT (2026-10-19); chasm_generate water/relief
-- [Chasm clip channels + export](chasm_clip_channels_export.md) — unsampled export ships keyed channels only; missing channel = stale bone; blender_action_report.py
+- [Chasm water tools plan](chasm_water_tools_plan.md) — ALL 6 steps BUILT: debug WELL, placed rivers + ponds, River/Pond tools, painted HEIGHT and CLIFFS on plots (2026-10-19); chasm_generate water/relief/cliffs
+- [Chasm clip channels + export](chasm_clip_channels_export.md) — unsampled export ships keyed channels only; missing channel = stale bone; blender_action_report.py; each rig a SEPARATE same-named animation - load with LoadAnimation(name,true)
 - [Null MCP argument aborts](mcp_null_arg_aborts.md) — chasm tool given a JSON null (house:null) died with no crash report; omit the key or pass 0
+- [Chasm ranks plan](chasm_ranks_plan.md) — kills by bow/hand, rank from all kills (Blooded/Veteran/Champion), never lost, fight pace + arrow one-shot; DECIDED 2026-10-19, not built

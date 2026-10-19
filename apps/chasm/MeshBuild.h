@@ -2,6 +2,7 @@
 #define _CHASM_MESH_BUILD_H_
 
 #include <algorithm>
+#include <cmath>
 #include <stdint.h>
 #include <vector>
 #include "type_vertex.h"
@@ -81,6 +82,29 @@ inline void MeshCord(std::vector<vertex>& out, const vec3& a, const vec3& b, int
     vec3 side(a.z - b.z,0.0f,b.x - a.x);
     MeshQuad(out,a - drop,b - drop,b + drop,a + drop,side,column);
     MeshQuad(out,b - drop,a - drop,a + drop,b + drop,side * -1.0f,column);
+}
+
+//Turns what was built from `first` on by `angle` (radians) about the line through `pivot` along the unit `axis` - a
+//log knocked askew, a door on its hinge - its normals with it. The right hand's way: a quarter turn about up takes
+//+x to -z.
+inline void MeshTurn(std::vector<vertex>& out, size_t first, const vec3& pivot, const vec3& axis, float angle){
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+    auto turn = [&](const vec3& v){
+        return v * c + axis.cross(v) * s + axis * (axis.dot(v) * (1.0f - c));
+    };
+    for (size_t i = first; i < out.size(); i++){
+        out[i].pos = pivot + turn(out[i].pos - pivot);
+        out[i].normal = turn(out[i].normal);
+        out[i].tangent = turn(out[i].tangent);
+    }
+}
+
+//...and moves it by `by`.
+inline void MeshShift(std::vector<vertex>& out, size_t first, const vec3& by){
+    for (size_t i = first; i < out.size(); i++){
+        out[i].pos = out[i].pos + by;
+    }
 }
 
 //A well-mixed hash, for choices that must depend on a place and nothing else.

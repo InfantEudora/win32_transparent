@@ -4,8 +4,8 @@ aliases: zombies, enemy, enemies, the threat
 kind: systems
 status: partial
 summary: The colony's enemy. For now dropped by debug tools only, a zombie walks after the nearest person it can get to and bites him; a grown-up fights back, and archers and guards shoot it.
-plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4b
-code: Spacing.cpp: SpaceOut; Economy.h: EconomyZombie EconomyFightPace ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights ZombiesHit ForgetHarm CanGetAt; Economy.h: ZOMBIE_BREAK_WALL ZOMBIE_BREAK_GATE ZOMBIE_BREACH_DOOR ZOMBIE_CLIMB_SECONDS ZOMBIE_HITTERS EconomyHarm; Walkers.h: WalkBreaks; Shooting.cpp: Shoot ShotTarget ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel; ApplicationChasmSound.cpp: SignalZombies; Zones.h: ZoneKindHasDoor
+plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4b; zombies_plan.md > As built: step 4d, the look
+code: Spacing.cpp: SpaceOut; Economy.h: EconomyZombie EconomyFightPace EconomyCarriesBow ARROW_SHOT_MASTER ARROW_SHOT_JITTER ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights ZombiesHit ForgetHarm CanGetAt; Economy.h: ZOMBIE_BREAK_WALL ZOMBIE_BREAK_GATE ZOMBIE_BREACH_DOOR ZOMBIE_CLIMB_SECONDS ZOMBIE_HITTERS EconomyHarm; Walkers.h: WalkBreaks; Shooting.cpp: Shoot ShotTarget EconomyShotTicks ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel; ApplicationChasmSound.cpp: SignalZombies; Zones.h: ZoneKindHasDoor
 verified: 2026-10-19
 ---
 
@@ -37,16 +37,16 @@ Within {FIGHT_REACH} of whom it is after, it **bites** him every {ZOMBIE_BITE_SE
 {ZOMBIE_BITE:days} of [[Health|health]] - and a grown-up within that reach of a zombie **hits back** at the
 nearest every {FIGHT_SWING_SECONDS:#seconds}, for {FIGHT_HIT} of its {ZOMBIE_HEALTH} hit points: both by his
 strength and ingenuity together (`EconomyFightPace`), harder and more often for a strong, clever one. Each side's
-first blow comes a whole interval after it is in reach; a zombie at 0 falls and is gone. A child is bitten and
+first blow comes a whole interval after it is in reach; a zombie at 0 falls, by that blow, and lies a few days ([[The fallen]]). A child is bitten and
 does not fight. No meal begins, nor goes on, with a zombie near, so nothing eaten heals a fight. An average person
 at full health kills one in about 3 seconds; hungry, or against two, he dies first. Nobody flees or stops work yet.
 
 ## Shot at
 
-Anyone grown with a bow - an [[Archery range|archer]] or a [[Guard tower|guard]] - who **stands**, on a
-[[Posts|post]], a tower's platform or the range's line, shoots the **nearest zombie they can see**: over the ground
+Anyone grown with a bow - anyone trained at the [[Archery range|range]], whatever their work, and every
+[[Guard tower|guard]] (`EconomyCarriesBow`) - who **stands**, on a [[Posts|post]], a tower's platform or the range's line, shoots the **nearest zombie they can see**: over the ground
 between, as far as [[Exploration|sight]] reaches, so further from a tower. Walls and trees do not stop it. A shot is a
-turn of the Shoot clip, {ARROW_SHOT_SECONDS:#seconds}; a trainee's stint and a meal wait meanwhile, a drink is taken between turns. The arrow flies at
+turn of the Shoot clip, {ARROW_SHOT_SECONDS:#seconds} with no archery down to {ARROW_SHOT_MASTER:#seconds} with all of it, each turn up to {= ARROW_SHOT_JITTER * 100}% longer or shorter (`EconomyShotTicks`); a trainee's stint and a meal wait meanwhile, a drink is taken between turns. The arrow flies at
 {ARROW_SPEED} units a second and hits or misses by a scatter that widens with the distance and narrows with archery,
 {ARROW_SPREAD_NOVICE} to {ARROW_SPREAD_MASTER} a unit; a hit takes {ARROW_HIT}. None goes at a zombie the arrows in
 the air will fell. With one within {FIGHT_REACH}, they fight it by hand instead. A trained archer usually drops one
@@ -57,12 +57,12 @@ someone [[Posts|posted]] stays on his post however thirsty, and a [[Guard tower|
 
 The props file's `zombie` at the people's scale, rigged as they are: the man's walk at its pace, feet planted, his idle
 standing, and its own scratch when it bites or hits what it breaks, facing it - a blunt strike heard on its swipe, and a
-punch as each bite and blow lands. Not drawn under the clouds. A card says
+punch as each bite and blow lands; what it breaks gives as it goes ([[Roads and walls|walls]], [[House|doors]]). Not drawn under the clouds. A card says
 "Fighting a zombie" or "Shooting at a zombie". Arrows stay stuck in a zombie until it falls; misses lie {ARROW_LIE_SECONDS:#seconds}.
 
 ## Planned
 
-- [planned] Repairs by the builders with no zombies about; the stakes falling and a thud a blow; whom to go for by the way there (steps 4c-4e).
+- [planned] Repairs by the builders with no zombies about; whom to go for by the way there (steps 4c, 4e).
 - [proposed] **Waves from the swamp**, none while it is frozen; people fleeing and the alarm; the swamp's haze
   thickening before a wave; fields trampled; winter raids on the frozen swamp.
 - [proposed] Arrows as a tower's stock, kept full by the builders; the ballista; a shamble of its own.

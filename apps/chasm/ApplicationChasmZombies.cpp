@@ -32,6 +32,8 @@ static Debugger* debug = new Debugger("ChasmZombies",DEBUG_ALL);
 #define ZOMBIE_CLIP_WALK    1
 #define ZOMBIE_CLIP_IDLE    2
 #define ZOMBIE_CLIP_SCRATCH 3
+#define ZOMBIE_CLIP_FALL_FORWARD    4       //THE FALLEN (step 6): played once, held at its last frame
+#define ZOMBIE_CLIP_FALL_BACKWARD   5
 #define ZOMBIE_WALK_CLIP    "Walking"
 #define ZOMBIE_IDLE_CLIP    "Idle"  //stood in when the file has one (f_worker_idle_clip); the bind pose otherwise
 #define ZOMBIE_SCRATCH_CLIP "Zombie_Scratch"    //its own, its one attack: a bite, a blow at a wall, a gate, a door
@@ -64,7 +66,7 @@ void ApplicationChasm::BuildZombieSkin(){
     mesh->Retain();     //held for good, as the people's are: every zombie's skeleton wears it
     zombie_skin_mesh = mesh;
     zombie_skin_name = skin;
-    Animation* walk = gltfloader.LoadAnimation(ZOMBIE_WALK_CLIP);
+    Animation* walk = gltfloader.LoadAnimation(ZOMBIE_WALK_CLIP,true);
     float measured = 0.0f;
     if (walk){
         walk->looped = true;
@@ -74,7 +76,7 @@ void ApplicationChasm::BuildZombieSkin(){
     }
     zombie_walk_speed = (measured > 0.01f) ? measured : ZOMBIE_WALK_SPEED;
     //Its scratch's length, for the strikes heard on its swipe (ApplicationChasmSound.cpp, SignalZombies). A one-off too.
-    if (Animation* scratch = gltfloader.LoadAnimation(ZOMBIE_SCRATCH_CLIP)){
+    if (Animation* scratch = gltfloader.LoadAnimation(ZOMBIE_SCRATCH_CLIP,true)){
         zombie_scratch_seconds = scratch->duration;
     }
     debug->Info("'%s' is rigged (%s, %i bones): drawn skinned, walking %.2f units a second at rate 1%s\n",
@@ -99,13 +101,21 @@ Object* ApplicationChasm::BuildZombieSkeleton(size_t n){
     //Its own channels where the clip has them (the export keys Walking on zombie_armature too), the man's by name else.
     const char* names[3] = {ZOMBIE_WALK_CLIP,f_worker_idle_clip ? ZOMBIE_IDLE_CLIP : NULL,ZOMBIE_SCRATCH_CLIP};
     for (const char* name : names){
-        Animation* clip = name ? gltfloader.LoadAnimation(name) : NULL;
+        Animation* clip = name ? gltfloader.LoadAnimation(name,true) : NULL;
         if (!clip){
             continue;
         }
         clip->looped = true;
         s->AddAnimation(clip);
         KeepOwnPositions(clip);
+    }
+    //...and its falls (step 6), once through: a clip not looped stops on its last frame, so it lies as it ends.
+    for (const char* name : {FALL_FORWARD_CLIP,FALL_BACKWARD_CLIP}){
+        if (Animation* clip = gltfloader.LoadAnimation(name,true)){
+            clip->looped = false;
+            s->AddAnimation(clip);
+            KeepOwnPositions(clip);
+        }
     }
     s->animation_transition_time_max = ZOMBIE_CLIP_BLEND;
     return s;
@@ -176,26 +186,52 @@ void ApplicationChasm::UploadZombies(){
             continue;
         }
         float ground = w->terrain->GroundHeight(body,w->terrain->Height(p.plot));
-        vec2 facing = EconomyZombieFacing(m);
-        //Stood by whom it is after - pushed round him by the others (SPACING) - it faces him, not the way it came. At
-        //something it hits it faces that: its last leg's way, which ends at it (walls break, zombies_plan.md step 4).
-        if (m.target && m.seg >= (int)m.route.size() - 1 && !m.hit){
-            for (const EconomyWorker& k : e->workers){
-                vec2 to = EconomyBody(k) - body;
-                if (k.id == m.target && to.length() > 1e-3f){
-                    facing = to * (1.0f / to.length());
-                }
-            }
-        }
-        drawn.push_back({&m,vec3(body.x,ground,body.y),quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y))});
+        //Stood by whom it is after it faces him; at something it hits, that - the rules' rule, which its fall goes by too.
+        vec2 facing = EconomyZombieLooks(*e,m);
+        ZombieShown d;
+        d.id = m.id;
+        d.m = &m;
+        d.at = vec3(body.x,ground,body.y);
+        d.turn = quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y));
+        drawn.push_back(d);
         feet.emplace_back(m.id,vec3(body.x,ground,body.y));
+    }
+    /*
+        THE FALLEN (step 6): a zombie down where it fell, facing the way it faced - its skeleton the one it had standing,
+        by its id, crossfading into its fall - and lowered into the ground as it sinks, by the calendar as it is now: the
+        economy's snapshot is only taken again when something in it changes.
+    */
+    const uint64_t now = f_ours ? std::max(e->tick,calendar_shown.load()) : 0;
+    for (size_t i = 0; f_ours && i < e->fallen.size(); i++){
+        const EconomyFallen& f = e->fallen[i];
+        float sunk = EconomyFallenSinking(f,now);
+        if (f.f_person || sunk >= 1.0f || hidden(f.pos)){
+            continue;
+        }
+        GridPick p = w->picker->Pick(f.pos);
+        if (!p.f_hit || p.plot < 0){
+            continue;
+        }
+        float ground = w->terrain->GroundHeight(f.pos,w->terrain->Height(p.plot));
+        ZombieShown d;
+        d.id = f.id;
+        d.fallen = &f;
+        d.fallen_s = (float)(now - std::min(now,f.tick)) / (float)CALENDAR_TICKS_PER_SECOND;
+        d.at = vec3(f.pos.x,ground - sunk * FALLEN_SINK_DEPTH,f.pos.y);
+        d.turn = quat(vec3(0.0f,1.0f,0.0f),atan2f(f.facing.x,f.facing.y));
+        drawn.push_back(d);
     }
     if (zombie_skin_mesh){
         UploadZombieSkins(drawn);
     }else if (!drawn.empty() || zombie_set->IsVisible()){
         std::vector<fmat4> zombies;
         for (const ZombieShown& d : drawn){
-            zombies.push_back(Object::ComposeTransformScale(d.at,d.turn,
+            //No rig, no clip: a fallen one tipped over whole about its feet, face down or on its back.
+            quat turn = d.turn;
+            if (d.fallen){
+                turn = d.turn * quat(vec3(1.0f,0.0f,0.0f),d.fallen->f_back ? -1.5707963f : 1.5707963f);
+            }
+            zombies.push_back(Object::ComposeTransformScale(d.at,turn,
                                                             vec3(ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE,ZOMBIE_MODEL_SCALE)));
         }
         zombie_set->SetInstances(std::move(zombies));
@@ -280,7 +316,7 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
     for (size_t s = 0; s < zombie_skins.size(); s++){
         bool f_kept = false;
         for (size_t i = 0; i < shown.size() && !f_kept; i++){
-            if (zombie_skins[s].id == shown[i].m->id){
+            if (zombie_skins[s].id == shown[i].id){
                 slot[i] = s;
                 f_kept = true;
             }
@@ -307,7 +343,7 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
             made.push_back(z.figure);
             zombie_skins.push_back(z);
         }
-        zombie_skins[free_slot].id = shown[i].m->id;
+        zombie_skins[free_slot].id = shown[i].id;
         slot[i] = free_slot;
     }
 
@@ -315,7 +351,7 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
         size_t slot;
         int clip;
         float rate;
-        float phase;
+        float phase;        //of a turn of a looped clip; of a fall, the seconds since it fell
     };
     std::vector<ClipChange> changes;
     auto set_clip = [&](size_t s, int clip, float rate, float phase){
@@ -323,6 +359,9 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
         if (clip != z.clip || fabsf(rate - z.rate) > 0.01f * z.rate){
             changes.push_back({s,clip,rate,phase});
         }
+    };
+    auto falls = [](int clip){
+        return clip == ZOMBIE_CLIP_FALL_FORWARD || clip == ZOMBIE_CLIP_FALL_BACKWARD;
     };
     for (size_t s = 0; s < zombie_skins.size(); s++){
         if (zombie_skins[s].id == 0){
@@ -334,11 +373,17 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
         if (slot[i] == none){
             continue;
         }
-        const EconomyZombie& m = *shown[i].m;
         Object* s = zombie_skins[slot[i]].figure;
         s->SetPosition(shown[i].at,false);
         s->SetRotation(shown[i].turn,false);
         s->SetVisibility(true);
+        //FALLEN (step 6): its fall, from as long ago as it fell - from the start as it goes down, at its end (lying)
+        //for one come out of the clouds or loaded.
+        if (const EconomyFallen* f = shown[i].fallen){
+            set_clip(slot[i],f->f_back ? ZOMBIE_CLIP_FALL_BACKWARD : ZOMBIE_CLIP_FALL_FORWARD,1.0f,shown[i].fallen_s);
+            continue;
+        }
+        const EconomyZombie& m = *shown[i].m;
         //Walking while its route has a leg left, at that leg's speed, so its feet are planted; SCRATCHING while whom it
         //is after is in its reach (its bite counting down) or at something it is breaking; standing otherwise. Each on
         //its own step.
@@ -364,7 +409,9 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
             if (c.clip != z.clip){
                 Animation* clip = (c.clip == ZOMBIE_CLIP_WALK) ? s->FindAnimation(ZOMBIE_WALK_CLIP)
                                 : (c.clip == ZOMBIE_CLIP_IDLE) ? s->FindAnimation(ZOMBIE_IDLE_CLIP)
-                                : (c.clip == ZOMBIE_CLIP_SCRATCH) ? s->FindAnimation(ZOMBIE_SCRATCH_CLIP) : NULL;
+                                : (c.clip == ZOMBIE_CLIP_SCRATCH) ? s->FindAnimation(ZOMBIE_SCRATCH_CLIP)
+                                : (c.clip == ZOMBIE_CLIP_FALL_FORWARD) ? s->FindAnimation(FALL_FORWARD_CLIP)
+                                : (c.clip == ZOMBIE_CLIP_FALL_BACKWARD) ? s->FindAnimation(FALL_BACKWARD_CLIP) : NULL;
                 //A props file without the scratch: its idle instead, as before the clip came.
                 if (!clip && c.clip == ZOMBIE_CLIP_SCRATCH && f_worker_idle_clip){
                     clip = s->FindAnimation(ZOMBIE_IDLE_CLIP);
@@ -374,7 +421,7 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
                     s->SwitchToAnimation(clip);
                 }
                 if (clip){
-                    clip->time_index = c.phase * clip->duration;
+                    clip->time_index = falls(c.clip) ? std::min(c.phase,clip->duration) : c.phase * clip->duration;
                 }
                 z.clip = c.clip;
             }
@@ -578,6 +625,28 @@ void ApplicationChasm::RegisterZombieTools(){
                 harm.push_back(j);
             }
             result["harm"] = harm;
+            /*
+                THE FALLEN (step 6): who lies where, which way he fell and how far on he is - sinking, and a person's angel.
+                By the calendar as it is now: the economy's snapshot is only taken again when something in it changes, and
+                with nobody left moving its tick stands still while the dead go on sinking.
+            */
+            json fallen = json::array();
+            const uint64_t now = std::max(e->tick,calendar_shown.load());
+            for (const EconomyFallen& f : e->fallen){
+                uint64_t age = (now > f.tick) ? now - f.tick : 0;
+                uint64_t keep = EconomyFallenTicks(f);
+                json j{{"id",f.id},{"person",f.f_person},{"fell",f.f_back ? "backward" : "forward"},
+                       {"x",round2(f.pos.x)},{"z",round2(f.pos.y)},{"facing",json::array({round2(f.facing.x),round2(f.facing.y)})},
+                       {"age_s",round2(age / (float)CALENDAR_TICKS_PER_SECOND)},
+                       {"left_s",round2((keep > age ? keep - age : 0) / (float)CALENDAR_TICKS_PER_SECOND)},
+                       {"sinking",round2(EconomyFallenSinking(f,now))}};
+                if (f.f_person){
+                    j["rising"] = round2(EconomyFallenRising(f,now));
+                    j["indoors"] = f.f_indoors;
+                }
+                fallen.push_back(j);
+            }
+            result["fallen"] = fallen;
             result["count"] = (int)e->zombies.size();
             result["next_id"] = e->next_zombie;
             return result;

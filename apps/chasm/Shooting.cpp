@@ -34,11 +34,12 @@ float StandGround(const ChasmWorld& w, const ZoneState& z, const EconomyWorker& 
 }
 
 /*
-    Who shoots: someone grown with a bow - an archer, or a guard, the tower's archer (range_plan.md "Shooting") - out of
-    doors and STANDING: on his post, a tower's platform among them, or on the range's line. One walking walks on.
+    Who shoots: someone grown with a bow (EconomyCarriesBow) - anyone trained at the range, whatever his job, a trainee,
+    or a guard, the tower's archer - out of doors and STANDING: on his post, a tower's platform among them, or on the
+    range's line. So a trained farmer ordered out is a posted archer. One walking walks on.
 */
 bool Shooter(const EconomyWorker& k, uint64_t tick){
-    bool f_bow = k.job == WORKER_JOB_ARCHER || k.job == WORKER_JOB_GUARD;
+    bool f_bow = EconomyCarriesBow(k);
     bool f_stands = (k.state == WORKER_ON_POST || k.state == WORKER_TRAINING) && k.seg + 1 >= (int)k.route.size();
     return f_bow && f_stands && !EconomyIndoors(k) && EconomyCanOrder(k,tick);
 }
@@ -64,6 +65,23 @@ uint32_t ShotHash(uint64_t tick, uint32_t by, uint32_t zombie){
     return h;
 }
 
+//A turn's release, ARROW_RELEASE into it: the clip's beat, on a whole tick within it.
+int ReleaseOf(int turn){
+    return std::max(1,std::min(turn,(int)std::lround(ARROW_RELEASE * (float)turn)));
+}
+
+}
+
+/*
+    THE PACE (the user's, 2026-10-19): the more archery, the quicker his turn, and each turn off that by up to
+    ARROW_SHOT_JITTER either way - so two archers who see a zombie on the same tick do not loose on the same tick, nor fall
+    back into step after. The hash is a shot's, for zombie 0, which no zombie is.
+*/
+int EconomyShotTicks(const EconomyWorker& k, uint64_t tick){
+    float skill = std::max(0.0f,std::min(1.0f,(float)k.archery / (float)ARCHERY_FULL));
+    float seconds = ARROW_SHOT_SECONDS + (ARROW_SHOT_MASTER - ARROW_SHOT_SECONDS) * skill;
+    float u = (float)(ShotHash(tick,k.id,0) >> 8) / 16777216.0f;
+    return Ticks(seconds * (1.0f + ARROW_SHOT_JITTER * (2.0f * u - 1.0f)));
 }
 
 int Economy::ShotTarget(const EconomyWorker& k, const ZoneState& z, const std::vector<int>& coming, float& eye_ground) const{
@@ -144,7 +162,8 @@ bool Economy::DrinkBetweenShots(EconomyWorker& k, const ZoneState& z){
 /*
     A tick of ARROWS (Economy.h). The arrows first: one in the air flies on, a hit following its zombie, and comes down
     after its flight - a hit into its zombie, taking ARROW_HIT, a miss into the ground. A hit whose zombie fell before it
-    got there comes down where it stood. The zombies the arrows felled go, and what was stuck in them with them.
+    got there comes down where it stood. The zombies the arrows felled go - fallen, the way the arrow flew - and what
+    was stuck in them with them.
     Then the archers: each counts on through his turn of the Shoot clip while he has someone to shoot at, and looses at
     its release at whom he aims at then. With nobody left before the release his bow comes down; after it, the turn
     plays out. All in id order, and an arrow loosed counts at once against the next archer's choice.
@@ -153,6 +172,7 @@ void Economy::Shoot(const ZoneState& z){
     if (state.zombies.empty() && state.arrows.empty()){
         for (EconomyWorker& k : state.workers){
             k.draw = 0;
+            k.draw_turn = 0;
             k.aim = 0;
         }
         return;
@@ -180,7 +200,13 @@ void Economy::Shoot(const ZoneState& z){
         }
         if (++a.flown >= a.ticks){
             if (a.f_hit){
-                state.zombies[j].health -= ARROW_HIT;
+                EconomyZombie& m = state.zombies[j];
+                bool f_alive = m.health > 0;
+                m.health -= ARROW_HIT;
+                //THE FALLEN (zombies_plan.md, step 6): the arrow that fells it pushes it the way it flew.
+                if (f_alive && m.health <= 0){
+                    ZombieFalls(m,vec2(a.to.x - a.from.x,a.to.z - a.from.z));
+                }
             }else{
                 a.lie = Ticks(ARROW_LIE_SECONDS);
             }
@@ -201,22 +227,23 @@ void Economy::Shoot(const ZoneState& z){
             coming[(size_t)j] += ARROW_HIT;
         }
     }
-    const int turn = Ticks(ARROW_SHOT_SECONDS);
-    const int release = std::max(1,std::min(turn,(int)std::lround(ARROW_RELEASE * (float)turn)));
     for (EconomyWorker& k : state.workers){
         //One within his reach is fought by hand (A FIGHT), not shot at.
         if (state.zombies.empty() || !Shooter(k,now) || ZombieNear(k,FIGHT_REACH)){
             k.draw = 0;
+            k.draw_turn = 0;
             k.aim = 0;
             continue;
         }
         float eye_ground = 0.0f;
         int j = ShotTarget(k,z,coming,eye_ground);
-        if (k.draw >= turn){
+        if (k.draw >= k.draw_turn){
             k.draw = 0;
+            k.draw_turn = 0;
         }
-        if (j < 0 && k.draw < release){
+        if (j < 0 && k.draw < ReleaseOf(k.draw_turn)){
             k.draw = 0;
+            k.draw_turn = 0;
             k.aim = 0;
             continue;
         }
@@ -225,13 +252,17 @@ void Economy::Shoot(const ZoneState& z){
             k.aim = 0;
             continue;
         }
+        //A turn begun: its length fixed now (THE PACE), so its release is one tick whatever his archery does meanwhile.
+        if (k.draw == 0){
+            k.draw_turn = EconomyShotTicks(k,now);
+        }
         k.draw++;
         if (j < 0){
             continue;
         }
         const EconomyZombie& m = state.zombies[(size_t)j];
         k.aim = m.id;
-        if (k.draw != release){
+        if (k.draw != ReleaseOf(k.draw_turn)){
             continue;
         }
         /*

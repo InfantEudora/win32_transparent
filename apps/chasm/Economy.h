@@ -779,6 +779,7 @@ struct EconomyWorker{
     int meal_worth = 0;                 //...and what it has still to give, health or water
     int swing = 0;                      //A FIGHT (ZOMBIES): ticks until his next blow, while a zombie is within reach
     int draw = 0;                       //ARROWS (ZOMBIES): ticks into his turn of the Shoot clip while he shoots, 0 not...
+    int draw_turn = 0;                  //...the ticks that turn takes, set as it begins (EconomyShotTicks)...
     uint32_t aim = 0;                   //...and the zombie he shoots at, 0 none
     int post = -1;                      //his POST (above): the plot he was sent to stand on, -1 none
     int post_layer = -1;                //...and its layer he was sent to (ramparts_plan.md): -1 its top, 0 its ground
@@ -805,6 +806,13 @@ float EconomyTaskProgress(const EconomyWorker& k);
 //The most archery he can reach: a tenth of ARCHERY_FULL a point of precision (range_plan.md).
 inline int EconomyArcheryCap(const EconomyWorker& k){
     return (int)k.skills[SKILL_PRECISION] * (ARCHERY_FULL / 10);
+}
+
+//A BOW on him, wherever he goes (the user's, 2026-10-19): anyone trained at the range, at any work - a farmer too - and a
+//trainee or a guard before any archery. He shoots only where he stands to (Shooting.cpp): ordered out, a posted archer.
+//Other arms by trade (a farmer's pitchfork, a woodcutter's axe) would be asked here too.
+inline bool EconomyCarriesBow(const EconomyWorker& k){
+    return k.archery > 0 || k.job == WORKER_JOB_ARCHER || k.job == WORKER_JOB_GUARD;
 }
 
 //POSTED (POSTS): living on a post rather than at home - under an order, or a GUARD while he has the job. An order
@@ -1046,9 +1054,9 @@ void EconomyForestCleared(const EconomyState& e, int& felled, int& broken);
     stopping it. Its way is planned through a standing palisade plot, a shut gate or a building's door (ZoneKindHasDoor:
     every building's, the user's 2026-10-19) at the cost of breaking it (Walkers.h, WalkBreaks), and at one it HITS it -
     a tick of its strength a tick, at most ZOMBIE_HITTERS at one thing at once. A palisade plot broken goes back to a
-    wall site; a gate broken hangs open, BROKEN until repaired; a building is BREACHED, not broken, and then walked
-    through - and whoever is indoors there can be got at. A garden's wall or a
-    lot's fence is climbed, slowly, and takes no harm. The gate is the weak point. Strengths in zombie-seconds: tuning.
+    wall site, BROKEN until built again; a gate broken hangs open, BROKEN until repaired; a building is BREACHED, not
+    broken, and then walked through - and whoever is indoors there can be got at. A garden's wall or a lot's fence is
+    climbed, slowly, and takes no harm. The gate is the weak point. Strengths in zombie-seconds: tuning.
 */
 #define ZOMBIE_BREAK_WALL       60.0f   //a palisade plot
 #define ZOMBIE_BREAK_GATE       30.0f   //a gate's door: the weak point, where the towers go
@@ -1061,19 +1069,22 @@ void EconomyForestCleared(const EconomyState& e, int& felled, int& broken);
 #define HARM_GATE               2       //...a gate's door, its plot...
 #define HARM_DOOR               3       //...or a building's door, its building
 /*
-    ARROWS (zombies_plan.md, step 3; the user's 2026-10-14): anyone with a bow - an archer or a guard - who is grown and
+    ARROWS (zombies_plan.md, step 3; the user's 2026-10-14): anyone with a bow (EconomyCarriesBow) who is grown and
     STANDS, on his post (a tower's platform among them) or on the range's line, shoots at the nearest zombie he can SEE:
     within his sight's reach and over the ground between (ExplorationSight::Clear), from his eye - on a platform, from its
     height, so he sees and shoots further. Not at one the arrows already in the air will fell. A shot is a turn of the
-    Shoot clip, ARROW_SHOT_SECONDS, its arrow leaving the bow ARROW_RELEASE into it at the one he aims at then; a trainee
-    stops training while he shoots. Where it goes is a scatter each way, ARROW_SPREAD_* a unit of distance by his
+    Shoot clip, its arrow leaving the bow ARROW_RELEASE into it at the one he aims at then; a trainee stops training while
+    he shoots. Its PACE (the user's, 2026-10-19) is his archery's - ARROW_SHOT_SECONDS with none, ARROW_SHOT_MASTER with
+    all of it - and each turn a little longer or shorter than that, so archers side by side fall out of step. Where it goes is a scatter each way, ARROW_SPREAD_* a unit of distance by his
     archery, from a hash of the tick, him and the zombie - inside its body it HITS, for ARROW_HIT, once it has flown
     there at ARROW_SPEED, following it as it walks. A hit stays stuck in the zombie until it falls; a miss lies in the
     ground ARROW_LIE_SECONDS. With a zombie within FIGHT_REACH of him he fights it by hand instead (A FIGHT). Arrows
     without end, for now. Tuning, like the rest.
 */
-#define ARROW_SHOT_SECONDS      5.0f    //a turn of the Shoot clip: a shot (the user's)
-#define ARROW_RELEASE           0.78f   //...its arrow leaving the bow this far into it - the clip's beat (SHOOT_RELEASE)
+#define ARROW_SHOT_SECONDS      5.0f    //a turn of the Shoot clip, a shot, with no archery: the clip at its own speed...
+#define ARROW_SHOT_MASTER       3.5f    //...with all of it...
+#define ARROW_SHOT_JITTER       0.1f    //...and each turn up to this share of that longer or shorter
+#define ARROW_RELEASE           0.78f   //its arrow leaving the bow this far into a turn - the clip's beat (SHOOT_RELEASE)
 #define ARROW_SPEED             16.0f   //world units a second in the air
 #define ARROW_HIT               20      //of a zombie's ZOMBIE_HEALTH: three fell one
 #define ARROW_SPREAD_NOVICE     0.03f   //the scatter, one standard deviation each way, a unit of distance: no archery...
@@ -1084,6 +1095,9 @@ void EconomyForestCleared(const EconomyState& e, int& felled, int& broken);
 #define ARROW_BOW               0.65f   //his bow over his own: where an arrow leaves from
 #define ARROW_MISS_ON           1.43f   //a miss comes down this far past the zombie for every unit it passed over the ground
 #define ARROW_LIE_SECONDS       10.0f   //...and lies there this long
+//The ticks a turn of his bow takes when begun on `tick`: by his archery, then off that by a hash of him and the tick -
+//never RRandom (Shooting.cpp).
+int EconomyShotTicks(const EconomyWorker& k, uint64_t tick);
 
 struct EconomyZombie{
     uint32_t id = 0;            //from 1, never reused
@@ -1111,8 +1125,9 @@ struct EconomyZombie{
 inline bool EconomyZombieHitting(const EconomyZombie& m){
     return m.hit != 0 && m.seg + 1 >= (int)m.route.size();
 }
-//WALLS BREAK (above): what zombies have taken off one thing's strength, in ticks - kept only while there is any. A
-//palisade plot's until it breaks; a gate's and a door's on past it, as BROKEN and BREACHED, until repaired.
+//WALLS BREAK (above): what zombies have taken off one thing's strength, in ticks - kept only while there is any, and
+//on at its strength once it gives, as BROKEN or BREACHED: a palisade plot's until it is built again, a gate's and a
+//door's until repaired.
 struct EconomyHarm{
     uint8_t what = 0;           //HARM_*
     uint32_t id = 0;            //a plot, or a building
@@ -1124,6 +1139,37 @@ bool EconomyBreached(const EconomyState& e, uint32_t building);
 bool EconomyGateBroken(const EconomyState& e, int plot);
 //Which way a zombie faces: along its route, or the way its last leg went.
 vec2 EconomyZombieFacing(const EconomyZombie& m);
+//...and as it is drawn: stood by whom it is after, at him, unless it is at something it breaks (EconomyZombieFacing then).
+vec2 EconomyZombieLooks(const EconomyState& e, const EconomyZombie& m);
+//A person as drawn: along his route (EconomyWorkerFacing), or at the zombie he aims at.
+vec2 EconomyWorkerLooks(const EconomyState& e, const EconomyWorker& k);
+/*
+    THE FALLEN (zombies_plan.md, step 6; the user's 2026-10-19): a zombie or a person just dead, lying where he fell - by
+    the blow that killed him, struck from the front backward, from behind forward, by no blow (hunger, thirst, cold)
+    forward - and kept a while, then gone. A zombie lies FALLEN_ZOMBIE_DAYS, sinking into the ground over the last
+    FALLEN_ZOMBIE_SINK_DAYS of them, a roost for the crows until then; a person lies a few seconds, sinks, and an angel
+    rises from where he sank - or, dead at home indoors, from his house. The rules keep and drop the record; how it is
+    drawn is the view's, by its age (EconomyFallenSinking, EconomyFallenRising).
+*/
+#define FALLEN_ZOMBIE_DAYS          3
+#define FALLEN_ZOMBIE_SINK_DAYS     1
+#define FALLEN_PERSON_LIE_SECONDS   6.0f    //from his fall: the clip, and a few seconds still
+#define FALLEN_PERSON_SINK_SECONDS  3.0f
+#define FALLEN_PERSON_ANGEL_SECONDS 6.0f    //his angel rising, once he has sunk
+struct EconomyFallen{
+    uint32_t id = 0;            //the zombie's, or the person's (his EconomyDeath, for who he was)
+    bool f_person = false;
+    bool f_back = false;        //fell backward
+    bool f_indoors = false;     //a person dead at home: no body, his angel rising from his house
+    int8_t layer = 0;           //WALK_* his body lies on: a tower's platform, else the ground
+    uint32_t house = 0;         //...the house, indoors
+    vec2 pos;                   //where his body stood (EconomyBody)
+    vec2 facing;                //the way he faced as drawn (EconomyZombieLooks, EconomyWorkerLooks): forward
+    uint64_t tick = 0;          //as he fell
+};
+uint64_t EconomyFallenTicks(const EconomyFallen& f);                    //how long the record is kept, from its tick
+float EconomyFallenSinking(const EconomyFallen& f, uint64_t now);       //0 lying still, to 1 sunk
+float EconomyFallenRising(const EconomyFallen& f, uint64_t now);        //a person's angel: -1 not yet, then 0 to 1
 /*
     Whom a zombie can get at: anyone out of doors and on the ground - not someone indoors, nor a baby in its mother's
     arms (with her, and she is the one out there), nor a guard up on his tower's platform, which it cannot climb.
@@ -1224,6 +1270,7 @@ struct EconomyState{
     uint32_t next_zombie = 1;
     std::vector<EconomyArrow> arrows;                   //ARROWS, in the order loosed
     std::vector<EconomyHarm> harm;                      //WALLS BREAK, by what and id
+    std::vector<EconomyFallen> fallen;                  //THE FALLEN, in the order they fell
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<GoodsMask> accepts;
     std::vector<GoodsMask> attached;                      //the goods of the workplaces a store is next to
@@ -1395,6 +1442,7 @@ struct EconomySaved{
     uint32_t next_zombie = 1;
     std::vector<EconomyArrow> arrows;
     std::vector<EconomyHarm> harm;
+    std::vector<EconomyFallen> fallen;
     bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
     EconomyHistory history;
     bool f_history = false;             //...a save from before the history has none: it begins at the load
@@ -1419,7 +1467,8 @@ public:
     //A debug edit (the panel's villager list, CHASM_CMD_NEEDS): a person's health and water in ticks, each
     //held to its bar; -1 leaves one as it is. Applied before the tick's needs, so someone at home with food
     //and water eats and drinks straight back up; health 0 kills only someone who cannot. False with no such person.
-    bool SetNeeds(uint32_t person, int health, int water);
+    //His PACK's water and provisions too, in units, held to a scout's (NEEDS_SCOUT_*): what a post is lived on.
+    bool SetNeeds(uint32_t person, int health, int water, int pack_water = -1, int pack_provisions = -1);
     //A debug edit (CHASM_CMD_STOCK, the tool's set_stock): building `id`'s stock of `good` set to `amount` - a
     //camp's supplies, or with f_pantry its pantry. For putting provisions in a store, or emptying one, without
     //waiting for it. A WELL holds water alone: `f_endless` makes it endless, and an amount without it finite again.
@@ -1766,6 +1815,12 @@ private:
     //gone, and whom a bite took the last of named in bitten_dead, for Needs to strike off.
     void Fights();
     std::vector<uint32_t> bitten_dead;          //this tick's, cleared as it starts
+    std::vector<std::pair<uint32_t,vec2>> bitten_struck;    //...with the way the bite that took the last pushed each
+    //THE FALLEN (above, Zombies.cpp): a zombie or a person who falls now, `struck` the way the blow that killed him
+    //pushed - NULL for no blow - and the fallen whose time is up gone, each tick.
+    void ZombieFalls(const EconomyZombie& m, const vec2& struck);
+    void PersonFalls(const EconomyWorker& k, const vec2* struck);
+    void TickFallen();
     //ARROWS (above, Shooting.cpp): the arrows a tick on - landing, and the zombies they fell gone - then every archer's
     //turn of his bow, an arrow loosed at its release. Before the fight, so a zombie shot down bites nobody.
     void Shoot(const ZoneState& z);

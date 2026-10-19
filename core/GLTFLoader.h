@@ -44,7 +44,10 @@ public:
     //running counter, which only matched while every rig was one chain. Returns NULL if the node
     //is not a joint of that skin.
     Bone*                       GetBone(int node_index, const std::vector<int>& joints, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
-    Animation*                  LoadAnimation(const char* animation_name);
+    //The file's first animation of that name. A file can hold several of one name - Blender's exporter writes
+    //an action that is on several rigs as one glTF animation per rig - and `f_every_copy` reads them all into
+    //one Animation, each track still aimed at its own node, so LinkObjects binds every rig to its own copy.
+    Animation*                  LoadAnimation(const char* animation_name, bool f_every_copy = false);
 
     vec3                        GetNodePosition(const char* node_name);
     quat                        GetNodeRotation(const char* node_name);

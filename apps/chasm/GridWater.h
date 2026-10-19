@@ -88,6 +88,41 @@ struct GridRelief{
 };
 
 /*
+    CLIFFS PAINTED BY HAND (water_tools_plan.md step 6): plots set to a depth below the plateau, in whole steps, part of
+    the settings as the relief is. A stroke is the chain of plots a drag crossed, joined along fine edges as a road's
+    is, kept as their positions so it outlives a new seed as the water does - and its width, in plots across; its depth
+    0 takes earlier strokes back to the plateau. Terrain::BuildHeights sets them, a later stroke over an earlier one,
+    on the plateau's dry plots only (TerrainCliffPlots, Terrain::cliff_open). Down only (the user, 2026-10-19).
+*/
+#define GRID_CLIFF_DEPTH            1       //steps, unless given: one stratum, TERRAIN_STEP
+#define GRID_CLIFF_DEEPEST          4       //-24, well clear of the cloud deck
+#define GRID_CLIFF_WIDTH            1       //plots across, unless given
+#define GRID_CLIFF_WIDEST           5
+
+struct GridCliffStroke{
+    std::vector<vec2> points;           //world x and z: the painted chain's plots
+    int width = GRID_CLIFF_WIDTH;
+    int depth = GRID_CLIFF_DEPTH;
+    bool operator==(const GridCliffStroke& o) const{
+        if (width != o.width || depth != o.depth || points.size() != o.points.size()){
+            return false;
+        }
+        for (size_t i = 0; i < points.size(); i++){
+            if (points[i].x != o.points[i].x || points[i].y != o.points[i].y){
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+struct GridCliffs{
+    std::vector<GridCliffStroke> strokes;
+    bool Empty() const { return strokes.empty(); }
+    bool operator==(const GridCliffs& o) const { return strokes == o.strokes; }
+};
+
+/*
     The placed water onto `layout`, after its own rivers - so a chasm map's keep their indices, and with them their
     width's wander and their lakes, which the terrain seeds by index. The map is lo..hi. How a river ENDS is read from
     where it was drawn: over a RIM (a chasm map's) it FALLS at the first it crosses; ending at the map's EDGE it runs
@@ -100,5 +135,7 @@ void ChasmPlaceWater(ChasmLayout& layout, const GridWater& water, const vec2& lo
 bool ChasmPondFits(const ChasmLayout& layout, const vec2& centre, float radius, const vec2& lo, const vec2& hi);
 //The painted strokes onto `layout`, each held to the limits above; a stroke with no point is left out.
 void ChasmPlaceRelief(ChasmLayout& layout, const GridRelief& relief);
+//...and the painted cliffs, the same way.
+void ChasmPlaceCliffs(ChasmLayout& layout, const GridCliffs& cliffs);
 
 #endif

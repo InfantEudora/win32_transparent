@@ -46,10 +46,14 @@ CHECK. The reduced clip is played back by forward kinematics against the full on
 distance any bone's tip strays is reported in world units. That is the number to judge a tolerance
 by: per-bone angles add up down a chain, a hip error moves everything below it.
 
-EXPORT. The action goes on the target in a muted NLA track of its own name: with two armatures in
+EXPORT. The action goes on the target in a muted NLA track of its own name, its keys in a SLOT of its own name (4.4+:
+pick that slot beside the action in the Action Editor to see them); with two armatures in
 the file the glTF exporter writes only each one's active action and NLA strips. The export must
 have "Always Sample Animations" OFF (export_force_sampling=False), or every frame comes back. Keys
-start at frame 0: unsampled, a key's time is its frame's, and slide-to-zero only works when sampling.
+start at frame 1 (--first-frame), Blender's default and the convention of every clip in the chasm file
+(the user's, 2026-10-19). Unsampled, a key's time is its frame's - slide-to-zero only works when sampling -
+so in the .glb such a clip starts at 1/fps, as every hand-made one does (measured on the 2026-10-19 16:40
+export: 0.0417 s at 24 fps).
 In-game the clip is 5.0 s, 7.3 KB; it loads in chasm (checked 2026-10-11).
 """
 
@@ -250,7 +254,13 @@ def write_action(tgt, name, first_frame, local, kept, root, root_loc):
     act = bpy.data.actions.new(name)
     act.use_fake_user = True
     keep = (ad.action, getattr(ad, "action_slot", None))
+    #4.4+: a slot of the clip's own name, made before the action is assigned. Left to Blender, assigning it reuses
+    #the name of the slot the target last played - the new keys landed in a slot called "Walking" (2026-10-19) and
+    #the Action Editor showed an empty clip under the clip's own name.
+    own = act.slots.new(id_type="OBJECT", name=name) if hasattr(act, "slots") else None
     ad.action = act
+    if own is not None:
+        ad.action_slot = own
 
     def curve(path, index, group):
         if hasattr(act, "fcurve_ensure_for_datablock"):     #4.4+: layered actions with slots
@@ -298,6 +308,7 @@ def main():
     ap.add_argument("--range", type=float, nargs=2, metavar=("FIRST", "LAST"), help="source frames")
     ap.add_argument("--tol", type=float, default=2.0, help="base tolerance, degrees")
     ap.add_argument("--tol-loc", type=float, default=0.005, help="Hips location tolerance")
+    ap.add_argument("--first-frame", type=int, default=1, help="the frame the clip's first key lands on")
     ap.add_argument("--save", action="store_true", help="save the .blend")
     args = ap.parse_args(argv)
 
@@ -349,9 +360,8 @@ def main():
     if not args.save:
         print("dry run: nothing written (--save writes the action and saves the .blend)")
         return
-    #Frame 0, not Blender's usual 1: the exporter writes unsampled keys at their own frame's time and
-    #only slides a clip to zero when it samples, so a clip keyed from 1 starts 1/fps late in the game.
-    write_action(tgt, args.name, 0, local, kept, root, root_loc)
+    #Frame 1 by default, Blender's own and the file's other clips': keyed alike, they start alike in the .glb.
+    write_action(tgt, args.name, args.first_frame, local, kept, root, root_loc)
     bpy.ops.wm.save_mainfile()
     print("saved %s with action %s on %s" % (bpy.data.filepath, args.name, tgt.name))
 

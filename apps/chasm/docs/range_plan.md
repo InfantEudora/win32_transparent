@@ -232,3 +232,83 @@ with no clip and no kit.
 **Not checked**: an arrow caught in the air in a screenshot (a flight is about 11 ticks of each 250); an archer
 walking with his bow; the woman's log after the IntoBone fix, close up. The stand-in quiver is brown on brown
 tunics and hard to see.
+
+## The bow follows training (2026-10-19)
+
+The user's: **once someone has trained, they always have a bow on them, even as a farmer** - and posted, they are
+a posted archer. Other arms by trade may follow the same way later (a farmer's pitchfork, a woodcutter's axe).
+
+- **`EconomyCarriesBow`** (Economy.h), the one test for both the rules (`Shooter`, Shooting.cpp) and the view (the
+  kit in `UploadWorkers`): any archery at all, or the ARCHER or GUARD job - a trainee or a guard before any
+  archery. Before, it was the two jobs alone, written out in both places.
+- **Shooting is unchanged otherwise**: only someone STANDING shoots - on a post, a tower or the line. A trained
+  farmer in his field carries his bow and does not shoot; ordered to a post he does, and step 3b's
+  `ZombiesInRange` keeps him there while a zombie is in his sight.
+- No new state: `archery` and `post` were already saved and hashed. A replay changes only where someone trained is
+  ordered out.
+- **Flagged, not changed**: the bow is in the LEFT PALM whatever he carries, so a trained water carrier holds it
+  beside his pail. A bow on the back while hands are full would be the view's next step.
+
+**For testing** (test_maps_plan.md, step 5): the People panel's **Put an archer down** - precision 10, the
+archery its slider says (1-100%), posted where he is put down, so the staffing never gives him work.
+`chasm_economy` `add_person` takes `post: true` for the same. The People table's **pack water** and **pack prov.**
+columns set what he carries, in units up to a scout's (6 and 3) - `set_needs` `pack_water` / `pack_provisions` -
+recorded on `CHASM_CMD_NEEDS`, its new values one up so older recordings leave the pack alone.
+
+**Checked** (debug copy on 8778, flat map seed 5, paused and stepped): put down posted, job none, on his post and
+staying there; one zombie dropped 20 away fell to three hits, a shot each 250-tick Shoot turn, still 9 away; a
+screenshot of him at full draw, bow and quiver on, his job none. A lone archer with three zombies 11 away died
+after one kill - balance, not this change. `chasm_guard_test.py` 7 of 7 passed. A recording with him put down and
+a wave, replayed twice: the traces equal on all 1,516 ticks.
+
+## The pace (2026-10-19)
+
+The user's: a better archer shoots QUICKER, not only straighter, and a little randomness so archers do not all loose
+together. Rules, not an event: each turn of the Shoot clip at a zombie gets its length as it begins
+(`EconomyShotTicks`, Shooting.cpp) - `ARROW_SHOT_SECONDS` (5.0 s, the clip at its own speed) with no archery down to
+`ARROW_SHOT_MASTER` (3.5 s) with all of it, then up to `ARROW_SHOT_JITTER` (10%) either way by the shot hash of him and
+the tick it begins (never RRandom). Kept for that turn as `EconomyWorker::draw_turn` - saved in the worker's `draw`
+array and hashed with the shot - so the release is still one exact tick, `ARROW_RELEASE` into it, whatever his archery
+does meanwhile. The view plays the clip at the turn's rate and puts it back in step at each turn's start (its clock the
+tick the turn began). Tuning, the three numbers.
+
+- **Practice on the line is unchanged**: `ShotClockOf` (view only) still shoots at the clip's own speed. It could
+  follow the same pace, but a trainee's archery grows during a stint, so the shots-per-stint count would now and then
+  change mid-stint and the arrows in the target jump - left out.
+- **Checked** (debug copy on 8780, flat map seed 5): turns measured 265/248 ticks at 10% archery (242 expected),
+  208/197/200 at 50% (212), 184/168/167 at 100% (175); two equal archers (60%) side by side loosed their first arrows
+  46 ticks apart. A master two ticks before his release is at full draw on a 184-tick turn. The pack set, held to 6
+  and 3, and left as it was by a set_needs without it. `chasm_guard_test.py` 7 of 7 (its waves now 1,825 and 1,925
+  ticks, from 2,750 and 2,550). A recording with two archers, a pack edit and a wave, replayed twice: traces equal on
+  all 1,516 ticks.
+
+## Sounds (2026-10-19)
+
+The user's: archer's bow sounds on our archers - the creak of the draw and the loose; its landing thud is too cartoony
+for here, its swoosh does for a MISS; a HIT gets a sound of the user's own, to come. All presentation: the cue table
+(assets/cues/chasm.json) and `SignalShooting` (ApplicationChasmSound.cpp, the physics thread once a pass, as the
+zombies' sounds) - no rule, state, hash or recording changes.
+
+- **The files** are archer's own `.ogg`s, copied as they are: `bow_tension`, `arrow_leave`, `arrow_swoosh`.
+- **The bow**, any turn of the Shoot clip - at a zombie by the rules' `draw`/`draw_turn`, at the straw by the shot clock:
+  from the clip's `SHOOT_NOCK` the scope `bow_drawn` (his id) is open and the creak plays (`on_end: stop`); at the
+  release - the rules' own tick for an arrow at a zombie - the scope ends, cutting it, and `arrow_loose` plays. A turn
+  given up before its release ends the scope too. The nearest `SOUND_BOW_NEAREST` (6) drawing within the work's reach
+  are heard; one coming into earshot mid-turn plays nothing late.
+- **The arrows at zombies**, each a scope `arrow` of its own (the rules give arrows no id: who loosed it and when). A
+  miss signals `arrow_miss` every pass of its flight with `in` the passes until it comes down (ticks over
+  `physics_time_factor`), and the row's `forecast` lands the swoosh's loudest part there, once. A hit signals
+  `arrow_hit` once, where it went in, as it does - an arrow that fells its zombie is gone that very tick, so where it
+  was going is kept from the pass before. Its sound is the user's own take, `arrow_hit.ogg` (added the same day),
+  a plain row with a little pitch - checked live in a muted copy: one play for each hit.
+- **Not heard**: practice arrows on the range (the view's alone, ApplicationChasmRange.cpp) - only the bow there.
+- Gains (0.45 creak, 0.6 loose, 0.5 swoosh, all on `activity`, pitched a little) are first guesses for the ear.
+- **Checked** (a muted debug copy, live at 1x): two archers' creaks begun on the nock and cut on the pass the loose
+  played, about 1.8 s apart at 90% archery; swooshes about 0.4 s before each miss came down; with a throwaway probe
+  row (since removed), `arrow_hit` once for each of six hits.
+
+**A test save, `saves/archers_test.json`**: the flat test map (seed 5), four archers posted in a loose line with open
+ground to the west - 25, 50, 75 and 100% archery, precision 10, packs full (6 water, 3 provisions) - and nothing
+else: no houses, no store, no zombies. Load it and drop zombies to the west (Z, or the Zombies panel). Checked: loaded
+on another map, all four back on their posts with their packs and archery, and shooting at three dropped 20 away.
+Like every save it is not migrated, so a rule change may one day refuse it; make it again with `add_person` `post`.

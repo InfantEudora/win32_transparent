@@ -20,8 +20,9 @@
     whatever went wrong, the run since the last autosave is on disk, and a tester can report a bug after it happened.
     A recording's start state is a save (CaptureRecordingState), so each file replays on its own. They are core's
     recordings with a name of their own, chasm_auto_<date>_<time>.rec, and only AUTO_RECORDINGS_KEPT of them are kept:
-    a person's own (F9, input_record) are never touched. Off in a build with the panels, where it would take over the
-    recording an agent starts with input_record; the panel's Save header turns it on there.
+    a person's own (F9, input_record) are never touched. On by default, and the tester's to turn off (Settings,
+    "Record for bug reports"). Off in a build with the panels, where it would take over the recording an agent starts
+    with input_record; the panel's Save header turns it on there.
 
     REPORT A BUG (the pause menu, F12) writes reports/<date>_<time>/, ready to zip and send: the recording up to now -
     which starts from the last autosave, so carries it - the colony now, a screenshot, the log and the last run's,
@@ -101,6 +102,26 @@ void ApplicationChasm::RecordFromHere(){
     //By name, which is by date: the oldest first.
     for (size_t i = 0; i + AUTO_RECORDINGS_KEPT <= kept.size(); i++){
         remove((recordings_dir + "/" + kept[i]).c_str());
+    }
+}
+
+/*
+    PHYSICS THREAD, from ApplySettings: "Record for bug reports" switched. On, a colony in play is recorded from here,
+    as entering it would have been - on the title, entering one starts it. Off, the automatic recording running is
+    saved and stopped; a person's own (F9) is theirs to stop.
+*/
+void ApplicationChasm::SetAlwaysRecord(bool f_on){
+    if (f_on == f_always_record.load()){
+        return;
+    }
+    f_always_record = f_on;
+    debug->Info("Always recording %s\n",f_on ? "on" : "off");
+    if (f_on){
+        if (f_game_on.load() && !TitleShowing()){
+            RecordFromHere();
+        }
+    }else if (main_window->inputcontroller->IsRecording() && recording_stem == AUTO_RECORDING_STEM){
+        RequestRecordingStop();
     }
 }
 
@@ -335,49 +356,79 @@ std::string ApplicationChasm::RecordingLabel(const RecordingEntry& e){
 
 /*
     RENDER THREAD, from DrawOverlay with the HUD: top left, clear of the top bar - REC and how long, while recording;
-    while replaying, the replay's bar: how far through, and Stop. Its pause and speed are the calendar's. At `top`, under
-    the goals' panel; returns where the next of the top left's goes - `top` with nothing drawn.
+    while replaying, the replay's bar: how far through, and Stop. Its pause and speed are the calendar's. The frame rate
+    beside either, or in their place with neither (DrawFrameRate). At `top`, under the goals' panel; returns where the
+    next of the top left's goes - `top` with nothing drawn.
 */
 float ApplicationChasm::DrawRecording(float s, float top){
     InputController* input = main_window->inputcontroller;
     bool f_rec = input->IsRecording();
     bool f_rep = input->IsReplaying();
-    if (!f_rec && !f_rep){
-        return top;
-    }
     float tps = (physics_tps > 0.0f) ? physics_tps : 50.0f;
     vec2 p0(16.0f * s,top);
-    if (!f_rep){
+    vec2 p1 = p0;       //nothing drawn yet
+    if (f_rep){
+        float at = (float)input->GetReplayPosition();
+        float end = (float)input->GetReplayEnd();
+        p1 = vec2(p0.x + 330.0f * s,p0.y + 58.0f * s);
+        overlay->AddRect(p0,p1,12.0f * s,HUD_PANEL);
+        overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
+        std::string text = "REPLAY  " + Clock(at / tps) + " / " + Clock(end / tps);
+        overlay->AddText(text.c_str(),vec2(p0.x + 16.0f * s,p0.y + 26.0f * s),17.0f * s,HUD_TEXT,UI_ALIGN_LEFT);
+        //How far through, under it.
+        vec2 l0(p0.x + 16.0f * s,p0.y + 40.0f * s);
+        vec2 l1(p1.x - 96.0f * s,l0.y + 4.0f * s);
+        float k = (end > 0.0f) ? std::min(1.0f,std::max(0.0f,at / end)) : 0.0f;
+        overlay->AddRect(l0,l1,2.0f * s,UIColor(255,255,255,40));
+        overlay->AddRect(l0,vec2(l0.x + (l1.x - l0.x) * k,l1.y),2.0f * s,HUD_SELECT);
+        //Stop, lit under the mouse.
+        vec2 b0(p1.x - 80.0f * s,p0.y + 12.0f * s);
+        vec2 b1(p1.x - 12.0f * s,p1.y - 12.0f * s);
+        vec2 mouse((float)overlay_mouse_x.load(),(float)overlay_mouse_y.load());
+        bool f_over = mouse.x >= b0.x && mouse.x <= b1.x && mouse.y >= b0.y && mouse.y <= b1.y;
+        overlay->AddRect(b0,b1,6.0f * s,f_over ? UIColor(255,255,255,60) : UIColor(255,255,255,24));
+        overlay->AddText("STOP",vec2((b0.x + b1.x) * 0.5f,b0.y + 22.0f * s),15.0f * s,HUD_TEXT,UI_ALIGN_CENTER);
+        overlay_hits_drawing.push_back(OverlayHit{b0,b1,OVERLAY_HIT_REPLAY_STOP,0});
+    }else if (f_rec){
         std::string text = "REC  " + Clock((float)input->GetRecordingTicks() / tps);
         vec2 size = overlay->MeasureText(text.c_str(),15.0f * s);
-        vec2 p1(p0.x + size.x + 40.0f * s,p0.y + 28.0f * s);
+        p1 = vec2(p0.x + size.x + 40.0f * s,p0.y + 28.0f * s);
         overlay->AddRect(p0,p1,14.0f * s,HUD_PANEL);
         vec2 dot(p0.x + 14.0f * s,(p0.y + p1.y) * 0.5f);
         float r = 4.5f * s;
         overlay->AddRect(dot - vec2(r,r),dot + vec2(r,r),r,UIColor(226,60,50,255));
         overlay->AddText(text.c_str(),vec2(p0.x + 26.0f * s,p0.y + 19.5f * s),15.0f * s,HUD_TEXT_DIM,UI_ALIGN_LEFT);
-        return p1.y + 8.0f * s;
     }
-    float at = (float)input->GetReplayPosition();
-    float end = (float)input->GetReplayEnd();
-    vec2 p1(p0.x + 330.0f * s,p0.y + 58.0f * s);
-    overlay->AddRect(p0,p1,12.0f * s,HUD_PANEL);
-    overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
-    std::string text = "REPLAY  " + Clock(at / tps) + " / " + Clock(end / tps);
-    overlay->AddText(text.c_str(),vec2(p0.x + 16.0f * s,p0.y + 26.0f * s),17.0f * s,HUD_TEXT,UI_ALIGN_LEFT);
-    //How far through, under it.
-    vec2 l0(p0.x + 16.0f * s,p0.y + 40.0f * s);
-    vec2 l1(p1.x - 96.0f * s,l0.y + 4.0f * s);
-    float k = (end > 0.0f) ? std::min(1.0f,std::max(0.0f,at / end)) : 0.0f;
-    overlay->AddRect(l0,l1,2.0f * s,UIColor(255,255,255,40));
-    overlay->AddRect(l0,vec2(l0.x + (l1.x - l0.x) * k,l1.y),2.0f * s,HUD_SELECT);
-    //Stop, lit under the mouse.
-    vec2 b0(p1.x - 80.0f * s,p0.y + 12.0f * s);
-    vec2 b1(p1.x - 12.0f * s,p1.y - 12.0f * s);
-    vec2 mouse((float)overlay_mouse_x.load(),(float)overlay_mouse_y.load());
-    bool f_over = mouse.x >= b0.x && mouse.x <= b1.x && mouse.y >= b0.y && mouse.y <= b1.y;
-    overlay->AddRect(b0,b1,6.0f * s,f_over ? UIColor(255,255,255,60) : UIColor(255,255,255,24));
-    overlay->AddText("STOP",vec2((b0.x + b1.x) * 0.5f,b0.y + 22.0f * s),15.0f * s,HUD_TEXT,UI_ALIGN_CENTER);
-    overlay_hits_drawing.push_back(OverlayHit{b0,b1,OVERLAY_HIT_REPLAY_STOP,0});
-    return p1.y + 8.0f * s;
+    float bottom = std::max(p1.y,DrawFrameRate(s,(p1.x > p0.x) ? p1.x + 8.0f * s : p0.x,top));
+    return (bottom > top) ? bottom + 8.0f * s : top;
+}
+
+/*
+    RENDER THREAD, from DrawRecording: the frame rate, in a pill of REC's height and style - archer's slip
+    (DrawFrameRateHud): the rate being shown, and dimmer beside it the rate the frame's own work would allow without
+    vsync, both core's (Application::GetFramesPerSecond, GetUncappedFramesPerSecond, which say what each is made of).
+    Its left edge at `left`; returns its bottom - `top` while it is hidden (the `show_fps` setting, F11).
+*/
+float ApplicationChasm::DrawFrameRate(float s, float left, float top){
+    if (!f_show_fps.load()){
+        return top;
+    }
+    const float size = 15.0f * s;
+    char shown[32], uncapped[32];
+    snprintf(shown,sizeof(shown),"%.0f fps",GetFramesPerSecond());
+    //0 is core saying it has no estimate it would stand behind - not yet, or a stale GPU timer.
+    const float unc = GetUncappedFramesPerSecond();
+    if (unc > 0.0f){
+        snprintf(uncapped,sizeof(uncapped),"%.0f max",unc);
+    }else{
+        snprintf(uncapped,sizeof(uncapped),"-- max");
+    }
+    const float gap = 10.0f * s;
+    const float shown_w = overlay->MeasureText(shown,size).x;
+    vec2 p0(left,top);
+    vec2 p1(left + 14.0f * s + shown_w + gap + overlay->MeasureText(uncapped,size).x + 14.0f * s,top + 28.0f * s);
+    overlay->AddRect(p0,p1,14.0f * s,HUD_PANEL);
+    overlay->AddText(shown,vec2(p0.x + 14.0f * s,p0.y + 19.5f * s),size,HUD_TEXT,UI_ALIGN_LEFT);
+    overlay->AddText(uncapped,vec2(p0.x + 14.0f * s + shown_w + gap,p0.y + 19.5f * s),size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+    return p1.y;
 }

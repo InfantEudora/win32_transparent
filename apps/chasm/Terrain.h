@@ -237,6 +237,16 @@ public:
     //How far p is past the nearest river's water edge (negative in the water; large far from every river).
     float WaterEdgeDistance(const vec2& p) const { return EdgeDistance(p); }
 
+    /*
+        CLIFFS PAINTED BY HAND (water_tools_plan.md step 6, PaintCliffs), per fine vertex: whether a stroke may paint
+        it - ground the generator left at the plateau's height, dry, off the map's edge, the mountain and a pond's
+        reach - and the depth in steps it came to, 0 for none (or joined back up by a saddle).
+    */
+    std::vector<uint8_t> cliff_open;
+    std::vector<uint8_t> cliff;
+    int cliff_plots = 0;            //painted below the plateau
+    int cliff_refused = 0;          //a stroke's plots not open to it, over all strokes
+
     int level_count[TERRAIN_NUM_LEVELS] = {};
     int saddles_joined = 0;         //plots raised so no quad has a high diagonal over a low one
     int pits_filled = 0;            //plots below the rim but cut off from the chasm, filled back up
@@ -260,7 +270,9 @@ private:
     void BuildMouths(const Grid& g);
     //The heights in steps, then the kinds they make (Terrain.h, THE TERRAIN). After the rivers.
     void BuildHeights(const Grid& g, const std::vector<GridLine>& features);
-    //The heights' last pass on every kind of map: saddles joined, and every pit but the chasm filled.
+    //The cliffs painted by hand, after the generated heights and before they settle.
+    void PaintCliffs(const Grid& g);
+    //The heights' last pass on every kind of map: saddles joined, and every pit but the chasm - and a painted one - filled.
     void SettleHeights(const Grid& g, const std::vector<std::vector<int>>& nbr);
     int FringeSteps(const Grid& g, const vec2& p, uint32_t salt) const;
     void BuildKinds(const Grid& g);
@@ -282,6 +294,14 @@ std::vector<GridLine> TerrainFeatureLines(const Grid& g);
 //The level a feature line's own vertices stand on, its high side: plateau for a rim, shard level
 //for everything closed that stands in the chasm.
 uint8_t TerrainLevelOfKind(int kind);
+
+/*
+    The plots a painted cliff stroke (GridWater.h) takes, in plot order: the plot nearest each of its points, joined
+    point to point along fine edges as the road's drag joins them - its chain, exactly, on the grid it was dragged on -
+    and past a width of one every plot within half its width of the line through them, smoothed, in plots across on
+    average. The drag's preview and BuildHeights both ask it, so the drag shows what the map gets.
+*/
+void TerrainCliffPlots(const Grid& g, const GridCliffStroke& s, std::vector<int>& plots);
 
 #ifdef DEBUG
 //The terrain's own checks, added to the grid's report (README.md, "Checks live in the app").

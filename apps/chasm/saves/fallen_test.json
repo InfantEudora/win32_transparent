@@ -1,0 +1,184 @@
+{
+ "buildings": [
+  {
+   "id": 1,
+   "kind": "house",
+   "plots": [
+    [
+     2427,
+     2
+    ]
+   ]
+  },
+  {
+   "id": 2,
+   "kind": "store",
+   "plots": [
+    [
+     635,
+     1
+    ]
+   ]
+  }
+ ],
+ "calendar": 1727,
+ "chasm_save": 2,
+ "economy": {
+  "crates": [],
+  "dead": [],
+  "fallen": [
+   {
+    "back": true,
+    "facing": [
+     -0.9973461031913757,
+     -0.07280666381120682
+    ],
+    "house": 0,
+    "id": 1,
+    "indoors": false,
+    "layer": 0,
+    "person": false,
+    "pos": [
+     20.340173721313477,
+     9.881291389465332
+    ],
+    "tick": 597
+   }
+  ],
+  "felled": [],
+  "fields": [],
+  "ground_sites": [],
+  "guards": [],
+  "heat": [],
+  "history": {
+   "broken_from": 0,
+   "days": [],
+   "felled_from": 0,
+   "from": 0,
+   "journal": [],
+   "start": [
+    0,
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    {},
+    0,
+    0,
+    0
+   ],
+   "today": [
+    0,
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    {},
+    0,
+    0,
+    0
+   ]
+  },
+  "kept": {
+   "provisions": 0,
+   "rope": 0
+  },
+  "next_crate": 1,
+  "next_person": 2,
+  "next_zombie": 2,
+  "ordered": {},
+  "pantries": [],
+  "people": [
+   {
+    "along": 0.0,
+    "archery": 0,
+    "born": -2159993,
+    "building": 0,
+    "carry": 0,
+    "carry_good": -1,
+    "chosen": false,
+    "due": 0,
+    "family": 1,
+    "father": 0,
+    "female": false,
+    "health": 5031,
+    "house": 1,
+    "id": 1,
+    "indoors": false,
+    "job": -1,
+    "mother": 0,
+    "pack": {},
+    "partner": 0,
+    "pos": [
+     19.74176597595215,
+     9.837607383728027
+    ],
+    "post": 699,
+    "prop": -1,
+    "route": [
+     [
+      19.74176597595215,
+      9.837607383728027
+     ],
+     [
+      19.74176597595215,
+      9.837607383728027
+     ]
+    ],
+    "seg": 1,
+    "site": 0,
+    "skills": [
+     8,
+     5,
+     5,
+     6
+    ],
+    "speed": [
+     1.600000023841858
+    ],
+    "state": 24,
+    "stint": 0,
+    "store": 0,
+    "surname": 15,
+    "timer": 0,
+    "timer_full": 0,
+    "water": 7281
+   }
+  ],
+  "plants": [],
+  "sites": [],
+  "stocks": [
+   {
+    "building": 2,
+    "goods": {
+     "beans": 20,
+     "water": 60,
+     "wheat": 40
+    }
+   }
+  ],
+  "zombies": []
+ },
+ "explored": "77x43 0 3311",
+ "grid": {
+  "aspect": 1.7777777910232544,
+  "kind": "flat",
+  "relax_passes_coarse": 40,
+  "relax_passes_fine": 40,
+  "relax_strength": 0.5,
+  "seed": 5,
+  "target_fine_cells": 4000,
+  "triangle_side": 8.0
+ },
+ "grounds": [],
+ "next_building": 3,
+ "stroke": [
+  0,
+  2
+ ],
+ "world_hash": "dc71866ed8e62108"
+}

@@ -3,7 +3,8 @@ Chasm's wall test (zombies_plan.md, "Step 4: walls break"): each case built on a
 from nothing - a palisade ring, someone inside it, zombies outside - and run paused, tick by tick, so a case is the
 same every time. Step 4b, walls that break:
 
-    ring        a closed ring of palisade: the zombies break a plot of it - at the rate their number says - and come in
+    ring        a closed ring of palisade: the zombies break a plot of it - at the rate their number says - and come in;
+                the plot is kept as broken until it is built again (step 4d)
     gate_shut   the ring with a road through it, its gate shut: they break the GATE, the weak point, and not the wall,
                 twice as fast; the broken door will not shut again
     gate_open   ...its gate open: they walk in through it and break nothing - the control
@@ -236,9 +237,24 @@ def case_ring():
     b = breaks()
     r = rate(s, "wall")
     kinds = sorted(set(k for _, k, _, _ in b))
-    ok = kinds == ["wall_broken"] and s["inside"] is not None and r is not None and abs(r[0] - r[1]) < 0.05
-    return ok, "broke: %s; hitting a wall %s at a time, its harm rising %s s a second; inside at tick %s, fought at %s" % (
-        b, s["most_hitting"], "%.2f" % r[0] if r else "?", s["inside"], s["fought"])
+    #Broken, the plot keeps its harm at its strength while it is a wall site (step 4d: drawn as what is left of it);
+    #built again - a debug paint over a site builds it - it is whole.
+    kept = whole = None
+    broken = [ev for ev in economy()["events"]["last"] if ev["kind"] == "wall_broken"]
+    if broken:
+        plot = broken[0]["plot"]
+        marks = lambda: [h for h in zombie_status().get("harm", []) if h["what"] == "wall" and h["id"] == plot]
+        kept = any(h.get("broken") for h in marks())
+        x, z = broken[0]["x"], broken[0]["z"]
+        call("chasm_road", {"ground": "wall", "x0": x, "z0": z, "x1": x, "z1": z})
+        step(5)
+        p = call("chasm_pick", {"x": x, "z": z})
+        whole = p.get("zone_ground") == "wall" and p.get("zone_ground_built") is True and not marks()
+    ok = kinds == ["wall_broken"] and s["inside"] is not None and r is not None and abs(r[0] - r[1]) < 0.05 \
+        and kept and whole
+    return ok, "broke: %s; hitting a wall %s at a time, its harm rising %s s a second; inside at tick %s, fought at %s; " \
+               "kept as broken: %s; built again, whole: %s" % (
+        b, s["most_hitting"], "%.2f" % r[0] if r else "?", s["inside"], s["fought"], kept, whole)
 
 
 def case_gate_shut():

@@ -1,4 +1,5 @@
 #include "BuildingMesh.h"
+#include "ZoneMesh.h"
 #include "MeshBuild.h"
 
 #include <algorithm>
@@ -391,6 +392,45 @@ void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3&
         WallSlab(out,c,dir,out2,outward,-half_w - w - SILL_OVERHANG,half_w + w + SILL_OVERHANG,
                  y0 - SILL_H,y0,SILL_DEPTH,surround_column);
     }
+}
+
+/*
+    A BREACHED door (zombies_plan.md, step 4d): the doorway Opening drew, `half_w` either side of the middle of a->b
+    from y0 to y1, gone dark - and its leaf standing open out of it, turned out about one jamb (which, by `hash`) and
+    hanging a little off its hinges.
+*/
+#define DOOR_LEAF_THICK     0.05f
+#define DOOR_OPEN_SWING     1.25f   //radians out from the wall, and up to DOOR_OPEN_SWING_MORE more, by its hash
+#define DOOR_OPEN_SWING_MORE 0.60f
+#define DOOR_OPEN_SAG       0.07f   //its far end dropped, radians
+
+void BreachedDoor(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3& outward, float half_w,
+                  float y0, float y1, int column, uint32_t hash){
+    vec2 dir = b - a;
+    float len = dir.length();
+    if (len < 1e-4f){
+        return;
+    }
+    dir = dir / len;
+    half_w = std::min(half_w,len * 0.38f);      //as Opening has it
+    vec2 c = (a + b) * 0.5f;
+    vec2 out2(outward.x,outward.z);
+    vec2 l = c - dir * half_w + out2 * (FACE_OUT * 2.0f);
+    vec2 r = c + dir * half_w + out2 * (FACE_OUT * 2.0f);
+    MeshQuad(out,vec3(l.x,y0,l.y),vec3(r.x,y0,r.y),vec3(r.x,y1,r.y),vec3(l.x,y1,l.y),outward,PAL_VOID,PAL_EFFECTS);
+    //The leaf: built shut across the doorway just in front of it, then turned on its hinge.
+    bool f_left = (hash & 1) != 0;
+    vec2 hinge = (f_left ? l : r) + out2 * (DOOR_LEAF_THICK * 0.5f);
+    vec2 across = f_left ? dir : -dir;
+    size_t first = out.size();
+    Beam(out,hinge,hinge + across * (2.0f * half_w),y0,y1 - y0,DOOR_LEAF_THICK,column);
+    const vec3 up(0.0f,1.0f,0.0f);
+    vec3 pivot(hinge.x,y0,hinge.y);
+    MeshTurn(out,first,pivot,up.cross(vec3(across.x,0.0f,across.y)),DOOR_OPEN_SAG);
+    //About up a turn takes `across` toward (across.y, -across.x): out of the wall, whichever side that is.
+    float swing = DOOR_OPEN_SWING + DOOR_OPEN_SWING_MORE * (float)((hash >> 1) % 100) / 100.0f;
+    MeshTurn(out,first,pivot,up,(out2.dot(vec2(across.y,-across.x)) > 0.0f) ? swing : -swing);
+    MeshShift(out,first,vec3(0.0f,2.0f * half_w * std::sin(DOOR_OPEN_SAG) * 0.5f,0.0f));
 }
 
 //A beam of square section from a at height ya to b at height yb: a pipe running down a slope.
@@ -1005,7 +1045,7 @@ void BuildArchSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vecto
 }
 
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
-                    BuildingFixtures* fixtures){
+                    BuildingFixtures* fixtures, const ZoneHarmLook* harm){
     const Grid& g = *w.grid;
     const Terrain& t = *w.terrain;
     const GridPicker& picker = *w.picker;
@@ -1244,8 +1284,11 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                     uint32_t wall_hash = MeshHash((uint32_t)plot,(uint32_t)fine_quad,(uint32_t)e);
                     bool f_door = (st == 0) && (f_into_arch || wall_hash % (uint32_t)kl.door_chance == 0);
                     if (f_door){
-                        Opening(out,a,b,outward,0.5f,kl.door_w * 0.5f,floor_y,floor_y + DOOR_H,
-                                (kl.wall == PAL_BARK_DARK) ? PAL_STONE_DARK : PAL_BARK_DARK,kl.wall,false);
+                        int door = (kl.wall == PAL_BARK_DARK) ? PAL_STONE_DARK : PAL_BARK_DARK;
+                        Opening(out,a,b,outward,0.5f,kl.door_w * 0.5f,floor_y,floor_y + DOOR_H,door,kl.wall,false);
+                        if (harm && harm->Breached(bid[k])){
+                            BreachedDoor(out,a,b,outward,kl.door_w * 0.5f,floor_y,floor_y + DOOR_H,door,wall_hash >> 16);
+                        }
                     }else if ((wall_hash >> 8) % (uint32_t)kl.window_every == 0){
                         float y0 = floor_y + ZONE_STOREY_HEIGHT * WINDOW_SILL;
                         BuildingPane pane;

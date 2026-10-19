@@ -6,7 +6,7 @@ status: built
 summary: Black flocks that perch in the trees and fly up when someone walks near or a tree is felled. Only a look - they change nothing.
 plans: birds_plan.md > The one rule; birds_plan.md > Step 2 - flushed; birds_plan.md > Step 3 - the sounds; birds_plan.md > Step 4 - a few flocks across the map; birds_plan.md > Step 5 - a flock over the title scene; birds_plan.md > As built; test_maps_plan.md > Step 6: the title's diorama, made by code
 code: Birds.h: BirdSky BIRD_KEY_UP BIRD_KEY_DOWN BIRD_KEY_FOLDED BIRD_VOICE_MAGPIE; Birds.cpp: StepFlock Scare NextRoost CallGap Gather; ApplicationChasmBirds.cpp: UploadBirds BirdScares HomeBirds PerchPoints BirdGather UploadTitleBirds BirdDioramaMarkers; ApplicationChasmSound.cpp: SignalBirds
-verified: 2026-10-18
+verified: 2026-10-19
 ---
 
 Flocks of {BIRD_FLOCK_MIN} to {BIRD_FLOCK_MAX} black birds live in the forests. They are **view, not
@@ -26,7 +26,7 @@ tree or one built over is no perch. Every so often, after {BIRD_RESTLESS_MIN_S} 
 
 **The colony's flocks follow the axe.** Moving on, they settle within {BIRD_LURE_REACH} of a tree a
 [[Woodcutter|woodcutter]] has felled at lately, if there is one, and that becomes their home. If their
-woods are all felled, they find a new home in the nearest trees left.
+woods are all felled, they find a new home in the nearest trees left. **Crows come down on the dead**: a zombie's body lying still is often taken over the trees, and pecked at ([[The fallen]]).
 
 **They are seen and heard over unexplored ground too**, on purpose: a flock over the clouds is a hint that there
 are trees under them.

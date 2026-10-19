@@ -54,6 +54,40 @@ float Mid(float lo, float hi, float r){
     return lo + (hi - lo) * r;
 }
 
+//CARRION (Birds.h): whether the body `id` still lies there to feed on.
+bool CarrionLying(const BirdWorld& w, uint32_t id){
+    for (const BirdCarrion& c : w.carrion){
+        if (c.id == id){
+            return true;
+        }
+    }
+    return false;
+}
+
+//...and a roost on it: perches on the ground in a ring round its middle, by the body's id so it is the same ring each
+//time, and a few along it - its chest, its legs.
+void CarrionRoost(const BirdWorld& w, const BirdCarrion& c, BirdRoost& out){
+    auto ground = [&](const vec2& p){
+        return w.ground ? w.ground(p) : 0.0f;
+    };
+    out = BirdRoost();
+    out.carrion = c.id;
+    out.at = vec3(c.at.x,ground(c.at) + 0.3f,c.at.y);
+    const int on = 3;
+    for (int i = 0; i < on; i++){
+        vec2 p = c.at + c.along * (0.28f * (float)(i - 1));
+        out.perches.push_back(BirdPerch{vec3(p.x,ground(p) + BIRD_CARRION_ON,p.y),-1});
+    }
+    uint32_t h = Mix(c.id * 0x9E3779B9u);
+    for (int i = on; i < BIRD_CARRION_PERCHES; i++){
+        h = Mix(h + (uint32_t)i);
+        float a = 6.2831853f * ((float)(i - on) + (float)(h & 255u) / 512.0f) / (float)(BIRD_CARRION_PERCHES - on);
+        float r = BIRD_CARRION_RING * (0.8f + 0.5f * (float)((h >> 8) & 255u) / 255.0f);
+        vec2 p = c.at + vec2(sinf(a),cosf(a)) * r;
+        out.perches.push_back(BirdPerch{vec3(p.x,ground(p) + 0.02f,p.y),-1});
+    }
+}
+
 }
 
 void BirdSky::Reset(uint32_t s){
@@ -292,15 +326,35 @@ void BirdSky::NextRoost(const BirdWorld& w, BirdFlock& f, const std::vector<Bird
     }
     //Restless - or a wanderer flying on - it moves on rather than settling where it sat; a wanderer goes far.
     const bool f_wander = (f.role == BIRD_ROLE_WANDER);
-    if (f.roost.tree >= 0 && (f.state == FLOCK_SETTLED || f.state == FLOCK_CIRCLE)){
+    if ((f.roost.tree >= 0 || f.roost.carrion) && (f.state == FLOCK_SETTLED || f.state == FLOCK_CIRCLE)){
         avoid.push_back(BirdScare{Flat(f.roost.at),f_wander ? BIRD_WANDER_AWAY : 6.0f});
     }
     const float roam = f_wander ? BIRD_WANDER_ROAM : BIRD_ROAM;
     BirdRoost r;
     uint32_t draw = Mix(seed ^ f.id ^ (f.draws++ * 0x27D4EB2Du));
     bool f_found = false;
+    //CARRION: a body lying still in reach, more often than not - the nearest clear of what scares them.
+    if (!f_wander && !w.carrion.empty() && Draw(f,16) < BIRD_CARRION_TAKE){
+        const BirdCarrion* best = NULL;
+        float nearest = BIRD_CARRION_REACH;
+        for (const BirdCarrion& c : w.carrion){
+            float d = (c.at - Flat(f.anchor)).length();
+            bool f_clear = true;
+            for (const BirdScare& s : avoid){
+                f_clear = f_clear && (c.at - s.at).length() > s.reach;
+            }
+            if (f_clear && d <= nearest){
+                nearest = d;
+                best = &c;
+            }
+        }
+        if (best){
+            CarrionRoost(w,*best,f.roost);
+            f_found = true;
+        }
+    }
     //A colony flock follows the axe: near one of the trees being felled, which becomes its home.
-    if (f.role == BIRD_ROLE_COLONY && !w.lures.empty()){
+    if (!f_found && f.role == BIRD_ROLE_COLONY && !w.lures.empty()){
         const vec2& lure = w.lures[draw % (uint32_t)w.lures.size()];
         if (w.roost && w.roost(lure,BIRD_LURE_REACH,avoid,draw,r) && !r.perches.empty()){
             f.roost = r;
@@ -381,6 +435,10 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
                 }
             }
         }
+        //CARRION: its body no longer lying still - sinking, or gone - and they are done here: off now, unhurried.
+        if (!f_scared && f.roost.carrion && !CarrionLying(w,f.roost.carrion)){
+            f.timer = std::min(f.timer,0.0f);
+        }
         if (!f_scared){
             f.timer -= dt;
             if (f.timer <= 0.0f){
@@ -414,7 +472,8 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
         //A roost someone has come under since: another - looked for once a second, not every step, while none is clear.
         f.timer -= dt;
         if (f.timer <= 0.0f
-            && (!clear_of(Flat(f.roost.at)) || (w.standing && f.roost.tree >= 0 && !w.standing(f.roost.tree)))){
+            && (!clear_of(Flat(f.roost.at)) || (w.standing && f.roost.tree >= 0 && !w.standing(f.roost.tree))
+                || (f.roost.carrion && !CarrionLying(w,f.roost.carrion)))){
             NextRoost(w,f,scares);
             f.timer = 1.0f;
         }
@@ -460,7 +519,8 @@ void BirdSky::StepFlock(const BirdWorld& w, BirdFlock& f, float dt, const std::v
         if (f.timer <= 0.0f){
             const bool f_fly_on = (f.role == BIRD_ROLE_WANDER) && Draw(f,7) < BIRD_WANDER_FLY_ON;
             if (!f_fly_on && !f.roost.perches.empty() && clear_of(Flat(f.roost.at))
-                && (!w.standing || f.roost.tree < 0 || w.standing(f.roost.tree))){
+                && (!w.standing || f.roost.tree < 0 || w.standing(f.roost.tree))
+                && (!f.roost.carrion || CarrionLying(w,f.roost.carrion))){
                 Settle(f);
                 for (Bird& b : f.birds){
                     b.state = b.f_leaving ? b.state : BIRD_LANDING;
@@ -558,12 +618,18 @@ void BirdSky::StepBird(const BirdWorld& w, BirdFlock& f, Bird& b, float dt){
             }
             return;
         }
-        //Fidgeting: mostly a look round, now and then a turn on the spot or a hop to a free perch.
+        //Fidgeting: mostly a look round, now and then a turn on the spot or a hop to a free perch - and down on carrion,
+        //more often than not a peck at it.
+        b.peck = std::max(0.0f,b.peck - dt);
         b.idle -= dt;
         if (b.idle <= 0.0f){
-            b.idle = Mid(1.5f,6.0f,Draw(f,b.id));
+            const bool f_feeding = f.roost.carrion != 0;
+            b.idle = f_feeding ? Mid(0.5f,2.0f,Draw(f,b.id)) : Mid(1.5f,6.0f,Draw(f,b.id));
             float r = Draw(f,b.id);
-            if (r < 0.6f){
+            if (f_feeding && r < BIRD_PECK_SHARE){
+                b.peck = BIRD_PECK_S;
+                b.look = 0.0f;
+            }else if (r < 0.6f){
                 b.look = (Draw(f,b.id) - 0.5f) * 1.6f;
             }else if (r < 0.85f){
                 b.yaw += (Draw(f,b.id) - 0.5f) * 2.4f;
@@ -708,6 +774,9 @@ void BirdSky::Poses(std::vector<BirdPose>& out) const{
             if (b.state != BIRD_PERCHED){
                 float speed = b.vel.length();
                 pitch = (speed > 0.01f) ? Clamp(b.vel.y / speed,-0.6f,0.6f) * 0.5f : 0.0f;
+            }else if (b.peck > 0.0f){
+                //A peck (CARRION): nose down and up again.
+                pitch = -BIRD_PECK_DOWN * sinf(3.14159265f * (1.0f - b.peck / BIRD_PECK_S));
             }
             //Nose up is a turn about +X the negative way: +Z toward +Y.
             p.turn = quat(vec3(0.0f,1.0f,0.0f),b.yaw + b.look) * quat(vec3(1.0f,0.0f,0.0f),-pitch)

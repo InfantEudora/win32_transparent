@@ -112,6 +112,9 @@ how the first generation leaves.
 - **Has no more children**, whatever the count.
 - **Dies of old age between 38 and 43**, the year from a hash of the person - a new cause of death beside
   hunger, thirst and cold (`NEEDS_DIED_*`). Drawn with the adult figures (an old figure could come later).
+- **An old veteran teaches** (the user's, 2026-10-19, from `ranks_plan.md`). Someone with a rank stops working as
+  everyone does at 36, but can take a place at an archery range as its teacher. Trainees at a range with a teacher
+  gain archery faster, never past their own cap. A step of its own, after old age and ranks.
 
 ## Families and parents
 
@@ -268,6 +271,7 @@ Each step is its own small feature, playable and checked before the next.
 6. **Skills growing**: towards the house's trade, and callings.
 7. **Crowding** (`people_plan.md`, `needs_plan.md`): a house past its room costs everyone in it. Births
    are what make it happen.
+8. **The old veteran teaching** at the range (Old, above): after step 4 and the ranks (`ranks_plan.md`).
 
 ## As built: step 1 (2026-10-09)
 

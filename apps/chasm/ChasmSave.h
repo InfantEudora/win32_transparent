@@ -54,6 +54,10 @@ bool GridWaterFromJson(const nlohmann::json& j, GridWater& out, std::string& err
 //optional. False, with `error`, if malformed.
 nlohmann::json GridReliefToJson(const GridRelief& r);
 bool GridReliefFromJson(const nlohmann::json& j, GridRelief& out, std::string& error);
+//...and the cliffs painted by hand: {"strokes":[{"points":[[x,z],...],"width":w,"depth":d}]}, the width (plots across)
+//and depth (steps down) optional. False, with `error`, if malformed.
+nlohmann::json GridCliffsToJson(const GridCliffs& c);
+bool GridCliffsFromJson(const nlohmann::json& j, GridCliffs& out, std::string& error);
 
 /*
     THE GAME'S FOLDERS - saves/, recordings/, reports/ - found from the exe, as main.cpp finds the assets, never from

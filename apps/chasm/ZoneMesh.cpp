@@ -5,6 +5,8 @@
 #include "BoundaryMesh.h"
 #include "RoadMesh.h"
 #include "CastleMesh.h"
+#include "TerrainMesh.h"
+#include "Economy.h"
 
 #include <algorithm>
 
@@ -67,8 +69,130 @@ void GroundSiteCell(const ChasmWorld& w, const ZoneState& z, int q, std::vector<
 
 }
 
+//--- What the zombies have done (ZoneMesh.h) ----------------------------------------------------------------------------
+
+namespace {
+
+const ZoneHarmMark* FindMark(const std::vector<ZoneHarmMark>& marks, uint32_t id){
+    auto it = std::lower_bound(marks.begin(),marks.end(),id,[](const ZoneHarmMark& m, uint32_t i){ return m.id < i; });
+    return (it != marks.end() && it->id == id) ? &*it : NULL;
+}
+
+}
+
+const ZoneHarmMark* ZoneHarmLook::Wall(int plot) const{
+    return (plot >= 0) ? FindMark(walls,(uint32_t)plot) : NULL;
+}
+
+const ZoneHarmMark* ZoneHarmLook::Gate(int plot) const{
+    return (plot >= 0) ? FindMark(gates,(uint32_t)plot) : NULL;
+}
+
+bool ZoneHarmLook::Breached(uint32_t building) const{
+    return FindMark(doors,building) != NULL;
+}
+
+void ZoneHarmLookOf(const EconomyState& e, const ZoneHarmLook* before, ZoneHarmLook& out){
+    out.walls.clear();
+    out.gates.clear();
+    out.doors.clear();
+    //The rules keep their harm by what and then id, so each list comes out by id.
+    for (const EconomyHarm& h : e.harm){
+        int strength = EconomyHarmStrength(h.what);
+        ZoneHarmMark m;
+        m.id = h.id;
+        m.step = (h.ticks >= strength) ? ZONE_HARM_STEPS
+                                       : 1 + (int)((int64_t)h.ticks * (ZONE_HARM_STEPS - 1) / strength);
+        if (h.what == HARM_DOOR){
+            if (m.step == ZONE_HARM_STEPS){
+                out.doors.push_back(m);
+            }
+            continue;
+        }
+        const ZoneHarmMark* was = !before ? NULL : (h.what == HARM_WALL) ? before->Wall((int)h.id) : before->Gate((int)h.id);
+        if (was && was->f_from){
+            m.f_from = true;
+            m.from = was->from;
+        }else{
+            //Where the zombies hitting it stand: the side its blows come from.
+            vec2 sum;
+            int n = 0;
+            for (const EconomyZombie& z : e.zombies){
+                if (z.hit == h.what && z.hit_id == h.id && EconomyZombieHitting(z)){
+                    sum = sum + z.pos;
+                    n++;
+                }
+            }
+            if (n > 0){
+                m.f_from = true;
+                m.from = sum * (1.0f / n);
+            }
+        }
+        ((h.what == HARM_WALL) ? out.walls : out.gates).push_back(m);
+    }
+}
+
+void ZoneHarmChunks(const ChasmWorld& w, const ZoneState& z, const ZoneHarmLook& a, const ZoneHarmLook& b,
+                    std::vector<uint8_t>& f_chunk){
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    auto mark_plot = [&](int v){
+        if (v < 0 || v >= (int)g.fine.pos.size()){
+            return;
+        }
+        for (int i = 0; i < picker.PlotQuadCount(v); i++){
+            int chunk = TerrainChunkOfQuad(g,*w.mesh,picker.PlotQuadCorner(v,i) / 4);
+            if (chunk >= 0 && chunk < (int)f_chunk.size()){
+                f_chunk[chunk] = 1;
+            }
+        }
+    };
+    //A plot's palisade or gate, and its neighbours': a gate's crossbeam hangs from a broken plot's jamb.
+    auto mark_line = [&](uint32_t v){
+        mark_plot((int)v);
+        int nb[8];
+        int n = ZonePlotNeighbours(w,(int)v,nb,8);
+        for (int i = 0; i < n; i++){
+            mark_plot(nb[i]);
+        }
+    };
+    //Each mark in one list and not the other, or drawn differently, is a change. Both lists are by id.
+    auto differ = [](const std::vector<ZoneHarmMark>& x, const std::vector<ZoneHarmMark>& y, std::vector<uint32_t>& ids){
+        size_t i = 0, j = 0;
+        while (i < x.size() || j < y.size()){
+            if (j == y.size() || (i < x.size() && x[i].id < y[j].id)){
+                ids.push_back(x[i++].id);
+            }else if (i == x.size() || y[j].id < x[i].id){
+                ids.push_back(y[j++].id);
+            }else{
+                if (x[i].step != y[j].step || x[i].f_from != y[j].f_from){
+                    ids.push_back(x[i].id);
+                }
+                i++;
+                j++;
+            }
+        }
+    };
+    std::vector<uint32_t> ids;
+    differ(a.walls,b.walls,ids);
+    differ(a.gates,b.gates,ids);
+    for (uint32_t v : ids){
+        mark_line(v);
+    }
+    ids.clear();
+    differ(a.doors,b.doors,ids);
+    if (!ids.empty()){
+        //A building's plots are not listed anywhere but on the plots: rare enough to look for.
+        for (size_t v = 0; v < z.building.size(); v++){
+            if (z.building[v] && std::find(ids.begin(),ids.end(),z.building[v]) != ids.end()){
+                mark_plot((int)v);
+            }
+        }
+    }
+}
+
 void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out,
-                    const std::vector<uint8_t>* field_stage){
+                    const std::vector<uint8_t>* field_stage, const ZoneHarmLook* harm){
     out.clear();
     if (chunk < 0 || chunk >= (int)w.mesh->chunks.size()){
         return;
@@ -104,7 +228,7 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
             GroundSiteCell(w,z,q,out);
         }
         if (f_road || f_ground){    //f_ground: the path just inside a gate
-            BuildRoadCell(w,z,q,out);
+            BuildRoadCell(w,z,q,out,harm);
         }
         if (z.field[quad.parent]){
             uint32_t id = z.field[quad.parent];
@@ -112,7 +236,7 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
             BuildFieldCell(w,z,q,stage,out);
         }
         if (f_house){
-            BuildHouseCell(w,z,q,out);
+            BuildHouseCell(w,z,q,out,NULL,harm);
         }
         if (f_house || f_ground || z.field[quad.parent]){
             BuildBoundaryCell(w,z,q,out);

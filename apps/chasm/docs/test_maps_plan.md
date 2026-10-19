@@ -214,6 +214,11 @@ that break (`zombies_plan.md` step 4) - both are the zombies plan's.
 - **Tools**: `chasm_economy` op `add_person` (x,z or plot; `house`, `female`, `age_years`, `skills` by name,
   `archery`, `count` up to 20; `made` lists the ids, `refusal` says why not); the People panel's "Put one down on
   the selected plot" (debug builds) - homeless, the rest the seed's.
+- **Posted where put down** (2026-10-19, the user's, for testing archery): `add_person` `post: true`, and the People
+  panel's "Put an archer down" (precision 10, its slider's archery, posted). A bit in the command's packed value
+  (`PERSON_POSTED`, clear in older recordings): the handler orders him onto his own plot (`Economy::Order`, spread
+  as a group's) on the same tick, so the staffing never hands him work. With archery he carries a bow
+  (`EconomyCarriesBow`) and is a posted archer - range_plan.md, "The bow follows training".
 - *Checked* (debug, 8771, flat map seed 5):
   - A house of two storeys, a store stocked by `set_stock` (40 wheat, 20 beans, 60 water), a guard tower and a range;
     two put into the house with precision 9 and archery 900 - one family, both De Wit - and three homeless. The rules

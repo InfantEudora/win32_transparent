@@ -249,12 +249,13 @@ void Terrain::BuildHeights(const Grid& g, const std::vector<GridLine>& features)
     }
 
     //A cracked-mud map (MudCracks.h) has no layout: its own field gives every plot its height, and then the
-    //saddles and pits are settled as on any map.
+    //cliffs are painted and the saddles and pits settled as on any map.
     if (g.settings.kind == GRID_KIND_CRACKS){
         MudCracks mud(g.settings.seed,g.bounds_min,g.bounds_max);
         for (size_t v = 0; v < n; v++){
             steps[v] = (uint8_t)mud.Steps(g.fine.pos[v]);
         }
+        PaintCliffs(g);
         SettleHeights(g,nbr);
         return;
     }
@@ -447,7 +448,164 @@ void Terrain::BuildHeights(const Grid& g, const std::vector<GridLine>& features)
             }
         }
     }
+    PaintCliffs(g);
     SettleHeights(g,nbr);
+}
+
+/*
+    CLIFFS PAINTED BY HAND (water_tools_plan.md step 6), after every generated height: each stroke sets the plots it
+    takes (TerrainCliffPlots) to its depth, in order, so a later stroke wins - depth 0 takes an earlier one's back up.
+    Only plots open to it (cliff_open), so the chasm's own plots, its crumbling rim and its cracks stay as they were, and
+    a river or a pond cuts through a painted terrace as through a hill. Its plots are kept from the pits' filling
+    (SettleHeights), which is there for a crack's stray ends, not for a pit painted on purpose.
+*/
+void Terrain::PaintCliffs(const Grid& g){
+    size_t n = g.fine.pos.size();
+    cliff_open.assign(n,0);
+    cliff.assign(n,0);
+    cliff_refused = 0;
+    for (size_t v = 0; v < n; v++){
+        const vec2& p = g.fine.pos[v];
+        bool f_open = steps[v] == 0 && !wet[v] && !g.fine.f_boundary[v] && p.y >= ChasmMountainFootAt(g.layout,p.x);
+        for (size_t k = 0; k < g.layout.ponds.size() && f_open; k++){
+            f_open = (p - g.layout.ponds[k].centre).length() >= g.layout.ponds[k].radius + GRID_POND_BANK;
+        }
+        cliff_open[v] = f_open ? 1 : 0;
+    }
+    std::vector<int> plots;
+    for (const GridCliffStroke& s : g.layout.cliff_strokes){
+        TerrainCliffPlots(g,s,plots);
+        for (int v : plots){
+            if (!cliff_open[v]){
+                cliff_refused++;
+                continue;
+            }
+            steps[v] = (uint8_t)s.depth;
+            cliff[v] = (uint8_t)s.depth;
+        }
+    }
+}
+
+void TerrainCliffPlots(const Grid& g, const GridCliffStroke& s, std::vector<int>& plots){
+    plots.clear();
+    if (s.points.empty()){
+        return;
+    }
+    const std::vector<vec2>& pos = g.fine.pos;
+    //A plot across, on average: the map's area over its plots. A band of half the width either side of a line then
+    //holds `width` plots across, on average, the grid being irregular.
+    const vec2 size = g.bounds_max - g.bounds_min;
+    const float across = std::sqrt(size.x * size.y / (float)std::max<size_t>(1,pos.size()));
+    const float half = (s.width > 1) ? 0.5f * across * (float)s.width : 0.0f;
+    vec2 lo = s.points[0];
+    vec2 hi = s.points[0];
+    for (const vec2& q : s.points){
+        lo = vec2(std::min(lo.x,q.x),std::min(lo.y,q.y));
+        hi = vec2(std::max(hi.x,q.x),std::max(hi.y,q.y));
+    }
+    //Every plot that could be nearest a point or inside the band: a couple of plots past the box is margin enough.
+    const float pad = half + 2.0f * across;
+    std::vector<int> near;
+    for (size_t v = 0; v < pos.size(); v++){
+        const vec2& p = pos[v];
+        if (p.x >= lo.x - pad && p.x <= hi.x + pad && p.y >= lo.y - pad && p.y <= hi.y + pad){
+            near.push_back((int)v);
+        }
+    }
+    if (near.empty()){
+        return;
+    }
+    //The fine edges between them, by their index in `near`.
+    std::vector<int> local(pos.size(),-1);
+    for (size_t i = 0; i < near.size(); i++){
+        local[near[i]] = (int)i;
+    }
+    std::vector<std::vector<int>> nbr(near.size());
+    for (const std::pair<int,int>& e : g.fine.edges){
+        if (local[e.first] >= 0 && local[e.second] >= 0){
+            nbr[local[e.first]].push_back(local[e.second]);
+            nbr[local[e.second]].push_back(local[e.first]);
+        }
+    }
+    std::vector<uint8_t> take(near.size(),0);
+    int last = -1;
+    for (const vec2& q : s.points){
+        int best = 0;
+        float best_d = 1e30f;
+        for (size_t i = 0; i < near.size(); i++){
+            vec2 d = pos[near[i]] - q;
+            if (d.dot(d) < best_d){
+                best_d = d.dot(d);
+                best = (int)i;
+            }
+        }
+        /*
+            From the last point's plot to this one's along fine edges, as the road's drag walks a jump (LineStepTo): of
+            the neighbours nearer it, the one nearest the straight line. A stroke dragged on this grid is joined already;
+            one given by script, or painted on another seed, would otherwise meet itself only at a corner, where the
+            terrain joins the plateau back across (SettleHeights).
+        */
+        int at = last;
+        const vec2 a = (last >= 0) ? pos[near[last]] : vec2(0.0f,0.0f);
+        const vec2 ab = pos[near[best]] - a;
+        const float ab2 = std::max(1e-6f,ab.dot(ab));
+        for (int step = 0; at >= 0 && at != best && step < 64; step++){
+            int next = -1;
+            float next_off = 0.0f;
+            float here = (pos[near[at]] - pos[near[best]]).length();
+            for (int u : nbr[at]){
+                const vec2& p = pos[near[u]];
+                if ((p - pos[near[best]]).length() >= here){
+                    continue;
+                }
+                float t = std::max(0.0f,std::min(1.0f,(p - a).dot(ab) / ab2));
+                float off = (p - (a + ab * t)).length();
+                if (next < 0 || off < next_off){
+                    next = u;
+                    next_off = off;
+                }
+            }
+            if (next < 0){
+                break;
+            }
+            at = next;
+            take[at] = 1;
+        }
+        take[best] = 1;
+        last = best;
+    }
+    if (half > 0.0f){
+        //The line the band is measured from: the points smoothed over two either side, so the staircase a chain makes
+        //along the grid's edges does not widen it. The ends stay where they are.
+        const int m = (int)s.points.size();
+        std::vector<vec2> line(m);
+        for (int i = 0; i < m; i++){
+            int k = std::min(std::min(i,m - 1 - i),2);
+            vec2 sum(0.0f,0.0f);
+            for (int j = -k; j <= k; j++){
+                sum = sum + s.points[i + j];
+            }
+            line[i] = sum * (1.0f / (float)(2 * k + 1));
+        }
+        for (size_t i = 0; i < near.size(); i++){
+            const vec2& p = pos[near[i]];
+            float d = (p - line[0]).length();
+            for (int k = 0; k + 1 < m && d >= half; k++){
+                vec2 ab = line[k + 1] - line[k];
+                float len2 = ab.dot(ab);
+                float t = (len2 > 1e-12f) ? std::max(0.0f,std::min(1.0f,(p - line[k]).dot(ab) / len2)) : 0.0f;
+                d = std::min(d,(p - (line[k] + ab * t)).length());
+            }
+            if (d < half){
+                take[i] = 1;
+            }
+        }
+    }
+    for (size_t i = 0; i < near.size(); i++){
+        if (take[i]){
+            plots.push_back(near[i]);
+        }
+    }
 }
 
 void Terrain::SettleHeights(const Grid& g, const std::vector<std::vector<int>>& nbr){
@@ -520,9 +678,16 @@ void Terrain::SettleHeights(const Grid& g, const std::vector<std::vector<int>>& 
             piece_size.push_back(size);
         }
         int chasm = (int)(std::max_element(piece_size.begin(),piece_size.end()) - piece_size.begin());
+        //A piece with a cliff painted in it is there on purpose (PaintCliffs), and stays.
+        std::vector<uint8_t> painted(piece_size.size(),0);
+        for (size_t v = 0; v < n; v++){
+            if (piece[v] >= 0 && cliff[v]){
+                painted[piece[v]] = 1;
+            }
+        }
         int filled = 0;
         for (size_t v = 0; v < n; v++){
-            if (piece[v] >= 0 && piece[v] != chasm){
+            if (piece[v] >= 0 && piece[v] != chasm && !painted[piece[v]]){
                 steps[v] = 0;
                 filled++;
             }
@@ -531,6 +696,12 @@ void Terrain::SettleHeights(const Grid& g, const std::vector<std::vector<int>>& 
         if (raised == 0 && filled == 0){
             break;
         }
+    }
+    //What the painted cliffs came to: a saddle may have joined one of their plots back up, wholly or partly.
+    cliff_plots = 0;
+    for (size_t v = 0; v < n; v++){
+        cliff[v] = cliff[v] ? steps[v] : 0;
+        cliff_plots += cliff[v] ? 1 : 0;
     }
 }
 
@@ -683,7 +854,7 @@ float SmoothStep(float e0, float e1, float x){
 
 }
 
-#define RELIEF_PAINT_RIM_CLEAR  16.0f   //height painted DOWN fades out within this of the rift (BuildRelief)
+#define RELIEF_PAINT_RIM_CLEAR  16.0f   //height painted DOWN fades out within this of a drop's foot (BuildRelief)
 #define RELIEF_PAINT_RIVER_FADE 8.0f    //...and all of it along a river, past its wet margin: a valley, not a plain
 
 /*
@@ -722,8 +893,10 @@ void Terrain::BuildRelief(const Grid& g){
     /*
         HEIGHT PAINTED BY HAND (water_tools_plan.md step 5), each stroke over the cells it reaches: its height at its
         line, falling off smoothly to nothing at its radius; strokes add up. Lowering fades out within
-        RELIEF_PAINT_RIM_CLEAR of a chasm map's rift: a valley at a rim would put the plateau's ground under the balcony
-        below and turn its wall inside out. Raising does not - the generated hills reach the rims already.
+        RELIEF_PAINT_RIM_CLEAR of every drop - the chasm's rims, its cracks, a cliff painted by hand (step 6): a valley
+        there would put the plateau's ground under the ground below and turn its wall inside out. Measured from the
+        plots at the foot of each, below the plateau beside a plot of it. Raising does not fade - the generated hills
+        reach the rims already.
     */
     std::vector<float> painted;
     if (!g.layout.relief_strokes.empty()){
@@ -755,12 +928,36 @@ void Terrain::BuildRelief(const Grid& g){
                 }
             }
         }
-        for (int j = 0; j < relief_h; j++){
-            for (int i = 0; i < relief_w; i++){
-                float& v = painted[(size_t)j * relief_w + i];
-                if (v < 0.0f){
-                    v *= SmoothStep(0.0f,RELIEF_PAINT_RIM_CLEAR,
-                                    ChasmRiftDistance(g.layout,relief_origin + vec2(i * relief_cell,j * relief_cell)));
+        bool f_lowers = false;
+        for (const GridReliefStroke& r : g.layout.relief_strokes){
+            f_lowers = f_lowers || r.height < 0.0f;
+        }
+        if (f_lowers){
+            std::vector<float> clear(relief.size(),RELIEF_PAINT_RIM_CLEAR);
+            std::vector<uint8_t> foot(g.fine.pos.size(),0);
+            for (const std::pair<int,int>& e : g.fine.edges){
+                if ((steps[e.first] == 0) != (steps[e.second] == 0)){
+                    foot[(steps[e.first] == 0) ? e.second : e.first] = 1;
+                }
+            }
+            const int reach = (int)std::ceil(RELIEF_PAINT_RIM_CLEAR / relief_cell);
+            for (size_t v = 0; v < foot.size(); v++){
+                if (!foot[v]){
+                    continue;
+                }
+                const vec2& q = g.fine.pos[v];
+                int ci = (int)std::lround((q.x - relief_origin.x) / relief_cell);
+                int cj = (int)std::lround((q.y - relief_origin.y) / relief_cell);
+                for (int j = std::max(0,cj - reach); j <= std::min(relief_h - 1,cj + reach); j++){
+                    for (int i = std::max(0,ci - reach); i <= std::min(relief_w - 1,ci + reach); i++){
+                        float& c = clear[(size_t)j * relief_w + i];
+                        c = std::min(c,(relief_origin + vec2(i * relief_cell,j * relief_cell) - q).length());
+                    }
+                }
+            }
+            for (size_t k = 0; k < painted.size(); k++){
+                if (painted[k] < 0.0f){
+                    painted[k] *= SmoothStep(0.0f,RELIEF_PAINT_RIM_CLEAR,clear[k]);
                 }
             }
         }
