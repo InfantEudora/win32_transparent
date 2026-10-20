@@ -1,7 +1,11 @@
 # Lifelines
 
-Talked through with the user 2026-10-09; steps 1 (families and ageing) and 2 (births) BUILT the same day - see "As built"
-at the end. Until then the colony was the settlers it started with: ten adults whose ages never changed and
+Talked through with the user 2026-10-09. **Status (2026-10-21)**: steps 1 (families and ageing) and 2 (births) BUILT
+2026-10-09, step 3 (couples) and the shares 2026-10-10, step 4 (old age) 2026-10-21 - see "As built" at the end; step 7
+(crowding) BUILT 2026-10-18 as `building_size_plan.md`'s appeal and crowding. Open: 4b (widows pairing again, NEXT),
+5, 6 and 8.
+
+Before this plan the colony was the settlers it started with: ten adults whose ages never changed and
 who had no parents (`people_plan.md`). This plan
 gives people a whole life - expected, born, cared for, playing, working, growing old - and gives everyone
 a mother and a father, which the skills passed on (`gameplay_plan.md`, "Children") need and which the
@@ -39,6 +43,14 @@ from a hash of the world's seed and the people's ids, the way the settlers' ages
 - **Parents and couples as proposed** (below): everyone keeps a mother and a father, and a couple forms
   when two grown people of different families move into a free house together. The other proposals of
   the first draft were accepted as they stood.
+
+## Decided (the user, 2026-10-21)
+
+- **A widowed adult can pair again**, as long as the woman can have another child. See Couples.
+- **Old age as planned in Old** (below): a stage and a job of its own, dying at home, the old not guarding.
+- **Old age is a long-game feature.** The settlers keep their ages (couples 24 to 32), so in play nobody grows
+  old for the first 2 to 6 hours. It is checked with a stored save that has an old person in it, not by
+  bringing an old settler along.
 
 ## The time scale
 
@@ -112,6 +124,16 @@ how the first generation leaves.
 - **Has no more children**, whatever the count.
 - **Dies of old age between 38 and 43**, the year from a hash of the person - a new cause of death beside
   hunger, thirst and cold (`NEEDS_DIED_*`). Drawn with the adult figures (an old figure could come later).
+- **Decided 2026-10-21** (the user's "perfect plan"):
+  - **A stage and a job of its own**: `LIFE_OLD`, a fifth stage, and `WORKER_JOB_OLD`, a job of a stage of life
+    below none like playing and caring (`EconomyStageJob`). So the job hand-out, the builders' wood, road work and
+    everything else that looks for an idle grown-up passes them by on its own.
+  - **Their walks are the children's play walks.** For the house's errands they count as idle, like a caring
+    mother, so the others leave the errands to them.
+  - **The old do not guard**: no post, no tower, no fighting.
+  - **They die at home**: the death waits for them to be home once their day has come, as a birth waits for the
+    mother. A death indoors leaves no body, only the angel rising from the house (`zombies_plan.md`, step 6).
+  - **Checked with a stored save** with an old person in it (Decided, 2026-10-21).
 - **An old Expert teaches** (the user's, 2026-10-19, from `ranks_plan.md`). Someone with a rank stops working as
   everyone does at 36, but can take a place at an archery range as its teacher. Trainees at a range with a teacher
   gain archery faster, never past their own cap. A step of its own, after old age and ranks.
@@ -164,6 +186,11 @@ Three families, twelve people: ten grown and two children.
   `gameplay_plan.md` wants ("a growing population turns into building work").
 - **Their children take one of the two surnames**, picked by a hash of the couple.
 - **The settler couples are couples from the start.**
+- **A widowed adult can pair again** (the user's, 2026-10-21; step 4b), as long as the woman can have another
+  child: fewer than `LIFE_CHILDREN_MOST` children, the dead counted, and not old. Until then a widow kept her late
+  husband as `partner`, and so stayed single. The test is the woman's whoever was widowed, so it also stops an old
+  single woman pairing. Open for the step: whether a widowed parent's children still growing up go along into the
+  new house, as a household does when it moves (`settlements_plan.md`).
 - **When several could pair**: the eldest unpaired adult first, with the eldest who can pair with them, the
   lower id on a tie. Families that have outgrown their house move into a free house that holds them all
   first (`Economy::HouseFamilies`, as today), and couples take what is still free.
@@ -183,8 +210,9 @@ Three families, twelve people: ten grown and two children.
   expanding (the user's, 2026-10-09), which makes "a crowded house" a row for the issues panel
   (`issues_plan.md`; the session building that panel was told).
 - **Room makes a child likelier** (the user's, same day): the year's chance is higher in a house with a
-  place to spare than in a full one (`LIFE_BIRTH_ROOM`, `LIFE_BIRTH_FULL`, tuning). A house's APPEAL, later,
-  will raise it further - which gives the gardens a use.
+  place to spare than in a full one, and lower again in a crowded one (`LIFE_BIRTH_ROOM`, `LIFE_BIRTH_FULL`,
+  `LIFE_BIRTH_CROWDED`, tuning). A house's APPEAL - its storeys and its garden - raises it further, which gives
+  the gardens a use (`EconomyBirthChance`, `building_size_plan.md`, built 2026-10-18).
 - **The baby** gets the next person id, the couple's surname, and a first name from the woman's or the
   man's list by sex.
 
@@ -237,7 +265,7 @@ First guesses, except where marked. Tuning, not rules: each becomes a named cons
 | Young adult | 2 years (the user's) |
 | Old | from 36 |
 | Dying of old age | between 38 and 43 ("around 40", the user's) |
-| A couple's chance of a child, each year | 1 in 2 with a place to spare in the house, 1 in 4 in a full one |
+| A couple's chance of a child, each year | 50% with a place to spare in the house, 25% full, 10% crowded; plus the house's appeal: 5% a storey over the first, 8% for the first garden plot and each next half the one before (`building_size_plan.md`) |
 | A mother's most children | 4 |
 | Taking after a parent, per skill | 7 in 10 |
 | Growing towards the house's trade | a point a birthday, as child and young adult |
@@ -250,8 +278,12 @@ or so; four children take a mother about eight years.
 
 ## Open questions
 
-1. **A widowed adult**: free to form a couple again, bringing their children into the new house? Left out
-   for now, in the spirit of the orphans: a widowed adult stays single.
+1. ~~**A widowed adult**: free to form a couple again?~~ **Decided 2026-10-21**: yes, as long as the woman can have
+   another child (Couples). Still open: whether their children growing up go along into the new house.
+2. **The old when their household moves** (found building step 4): the old are never sent out, so they cannot go to
+   another settlement - a family moving away leaves its grandparent behind, alone in the old home, and the children
+   go with their parents (`GoesWith` no longer counts the old as one who stays). Should the old go along with their
+   household as a child does (WITH THE GROWN)? Left as it is until the user says.
 
 ## Build order
 
@@ -266,11 +298,14 @@ Each step is its own small feature, playable and checked before the next.
    that starts out expecting. Babies' skills random until step 5.
 3. **(BUILT 2026-10-10)** **Couples**: grown people of two families pairing into a free house, a new family; surnames kept per
    person.
-4. **Old age**: stopping work at 36, the walks, still running errands, dying of it.
+4. **(BUILT 2026-10-21)** **Old age**: stopping work at 36, the walks, still running errands, not guarding, dying of
+   it at home (Old, decided 2026-10-21). Checked with a stored save with old people in it, `saves/old_age_test.json`.
+4b. **(NEXT)** **Widows pairing again**, as long as the woman can have another child (Couples, decided 2026-10-21).
 5. **Skills passed on**: taking after the parents, at birth and for the settlers' grown children.
 6. **Skills growing**: towards the house's trade, and callings.
-7. **Crowding** (`people_plan.md`, `needs_plan.md`): a house past its room costs everyone in it. Births
-   are what make it happen.
+7. **(BUILT 2026-10-18, as `building_size_plan.md`'s appeal and crowding)** **Crowding** (`people_plan.md`,
+   `needs_plan.md`): a house past its room costs everyone in it - they work slower (`LIFE_CROWDED_PACE`) and
+   its birth chance starts lower (`LIFE_BIRTH_CROWDED`). Births are what make it happen.
 8. **The old Expert teaching** at the range (Old, above): after step 4 and the ranks (`ranks_plan.md`).
 
 ## As built: step 1 (2026-10-09)
@@ -457,3 +492,58 @@ Files: `Economy.*` (A SHARE in `Economy.h`, `LIFE_SHARE_*`, `EconomyShare`; `Mou
   day): an adult, a child and the baby set to 3 days of water - above where anyone drinks - and 900 ticks on, their
   bars fell 0.40, 0.30 and 0.20 days. A 400-tick recording with the baby and the children in it: two replays
   identical.
+
+## As built: step 4, old age (2026-10-21)
+
+Files: `Economy.*` (OLD AGE in `Economy.h`: `LIFE_OLD`, `WORKER_JOB_OLD`, `LIFE_DIES_FROM`, `LIFE_DIES_SPAN`,
+`EconomyLifespan`, `NEEDS_DIED_OLD_AGE`, `EVENT_GREW_OLD`; the retiring at the top of `AssignJobs`, the dying in
+`Needs`, `EconomyCanOrder` and `EconomyWhyNotOrdered`, `GoesWith`), `ApplicationChasmSelect.cpp` (the card, the
+badge), `ApplicationChasmEconomy.cpp` (`chasm_economy`), `ApplicationChasmStats.cpp` and `ChasmStats.*` (the people
+line, the rows, the causes), `ApplicationChasmTime.cpp` (the notice, the death line), `assets/cues/chasm.json`
+(`grew_old`).
+
+- **A fifth stage**, `LIFE_OLD`, from `LIFE_OLD_TICKS` (36) - worked out from `born` like the rest, never saved. The
+  ledger's rows count it (`ECONOMY_STAGES` 5); a save's rows of four load with nobody old.
+- **Retiring**: anyone old with a job still - grown old this tick, a mother whose caring year ends past 36, a save's -
+  has it taken at the top of `AssignJobs`, before any place is kept, so the order fills it on the same tick
+  (`Lifelines` asks for the hand-out whenever there is one). On his way to work or at it he goes home, a load to its
+  store first (`leave_errand`); a guard and a trainee come down by themselves once the job is gone; an order he is
+  under is released (`Order` with no plot). His job is then `WORKER_JOB_OLD`, below none, so everything that looks
+  for an idle grown-up - the sites, the roads, PICK UP - passes him by.
+- **At home**: the house's errands as a caring mother runs them - idle for `FetchHome`, so the others leave them to
+  him, and a meal at a store brings a load home - and otherwise the children's walk (`GoPlay`).
+- **Never sent out, never fighting**: `EconomyCanOrder` is a young adult or an adult now, so the old are refused an
+  order ("too old", `EconomyWhyNotOrdered`, where it said "too young" for everyone), are not picked on screen, and
+  neither shoot nor fight back - a zombie still bites them. Two things follow from the same test:
+  - **A child goes along with its parents** when they leave (`GoesWith`), the old not counting as a grown-up who
+    stays - so a household moving to another settlement leaves its grandparent behind (Open questions, 2).
+  - **The old do not pair**: COUPLES' adult is `LIFE_ADULT`, which they no longer are.
+- **Dying**, in `Needs` beside the bitten: old, his lifespan reached (`EconomyLifespan`: `LIFE_DIES_FROM` and a hash
+  of the seed and his id over `LIFE_DIES_SPAN` - 38 to 43, the slot `id * 8 + 7` the settlers' hashes left free), and
+  standing at home (`WORKER_AT_HOME` and `AtHome`). The cause is `NEEDS_DIED_OLD_AGE`, "old age". Indoors, so no body
+  and only the angel over the roof (THE FALLEN); in a camp, whose tents are out of doors, he would fall by his tent.
+- **Shown**: "Age 37 - Retired"; "Old - birthday autumn 5"; "Too old to work: runs the house's errands, and walks
+  near home" - never how long he has left; a walking-stick badge; the house card's "Wessel Veen, 41 - Retired". The
+  notice "... has grown old, and works no more" with the chime (`grew_old`); the journal's "grew old" and "died of
+  old age". The statistics: "n old" first in the people line once there are any, `old` in a row, the deaths of old
+  age. `chasm_economy`: `people.old`, and for the old `dies_in_days`, for a test to wait on.
+- **The test save, `saves/old_age_test.json`** (the user's idea): `village_year5` (seed 12, 18 people) with Evi
+  Wever (37, her day 94 days off) and Wessel Veen (41, his day 3 days in) put into the Wevers' and the Veens'
+  houses, and Jelle De Wit's birth tick moved so the woodcutter turns 36 a day and a half in. Load it to see old age
+  without hours of play. Its statistics check reads 20 people against the history's 18: the two were put down
+  (`add_person`), never born in it, as on every test map.
+- **The test, `tools/chasm_old_age_test.py`**: eight cases, all PASS (debug, a copy on 8772, paused and stepped):
+  - **retire**: Jelle at 36 - job old on that tick, his place at the woodcutter's hut taken by Dirk, the journal's
+    "Jelle De Wit grew old", home with no work on the way.
+  - **errands**: Evi's house set dry - she fetched (to_get, getting, to_pantry), walked (to_play, playing), never
+    worked.
+  - **death**: Wessel died of old age at 41, on the tick his day came, at home and indoors, fallen indoors; the
+    journal's "Wessel Veen died of old age".
+  - **home_first**: someone of 43 put down away from his house walked home alive for 597 ticks and fell indoors.
+  - **orders**: an order to Evi refused, "too old"; a man posted a day short of 36 released at 36 and home.
+  - **guard**: on the guard test's flat map, a tower's guard two days short of 36 came down and went home with his
+    pack, and the spare went up.
+  - **saved**: the old's jobs and birth ticks the same after a save and a load.
+  - **replay**: 7,876 ticks across Jelle's retiring and Wessel's death, replayed twice - equal on every tick.
+- **Not checked by a run**: a mother whose caring year ends past 36; a death in a camp's tent; an old person in a
+  household that moves.

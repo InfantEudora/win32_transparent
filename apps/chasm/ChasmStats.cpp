@@ -10,7 +10,7 @@
 void ChasmStatsDays(const EconomyDay& row, float& food, float& water){
     //Everyone at their SHARE (Economy.h), as ChasmDaysHeld counts them: a baby half an adult, a child three quarters.
     int mouths = row.people[LIFE_BABY] * LIFE_SHARE_BABY + row.people[LIFE_CHILD] * LIFE_SHARE_CHILD
-                 + (row.people[LIFE_YOUNG] + row.people[LIFE_ADULT]) * LIFE_SHARE_FULL;
+                 + (row.people[LIFE_YOUNG] + row.people[LIFE_ADULT] + row.people[LIFE_OLD]) * LIFE_SHARE_FULL;
     //Nobody to feed - a lost colony (demo_plan.md step 7) - has no days of anything: not the whole store for one.
     if (mouths == 0){
         food = 0.0f;
@@ -376,6 +376,8 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
             return std::string("The frost took a field of ") + ZoneCropName(ev.amount);
         case EVENT_GREW_UP:
             return who + " grew up";
+        case EVENT_GREW_OLD:
+            return who + " grew old";
         case EVENT_EXPECTING:
             return who + " was expecting a child";
         case EVENT_BOULDER_FOUND:

@@ -865,7 +865,7 @@ float ApplicationChasm::DrawBuildBar(float s){
                 //waterfall, not the second.
                 bool f_notice = kind == EVENT_NOTHING_TO_TAKE || kind == EVENT_RAN_OUT || kind == EVENT_NO_TENT
                                 || kind == EVENT_SEAM_SEEN || (kind == EVENT_DISCOVERED && (ne->events[i].what & 1))
-                                || kind == EVENT_FROST_TOOK || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING
+                                || kind == EVENT_FROST_TOOK || kind == EVENT_GREW_UP || kind == EVENT_GREW_OLD || kind == EVENT_EXPECTING
                                 || kind == EVENT_BOULDER_FOUND || kind == EVENT_BALCONY_REACHED
                                 || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED
                                 || kind == EVENT_RANKED
@@ -894,6 +894,7 @@ float ApplicationChasm::DrawBuildBar(float s){
                              : (n.kind == EVENT_NO_TENT) ? "no tent to spare for " + name + " to take"
                              : (n.kind == EVENT_SEAM_SEEN) ? name + " has seen floatstone in a balcony's wall"
                              : (n.kind == EVENT_GREW_UP) ? name + " has grown up"
+                             : (n.kind == EVENT_GREW_OLD) ? name + " has grown old, and works no more"
                              : (n.kind == EVENT_BOULDER_FOUND) ? name + " has found a boulder"
                              : (n.kind == EVENT_BALCONY_REACHED) ? name + " has reached a balcony"
                              //WALLS BREAK (zombies_plan.md step 4): what the zombies broke through.
@@ -976,7 +977,7 @@ float ApplicationChasm::DrawBuildBar(float s){
         if (n > deaths_seen){
             const EconomyDeath& d = de->dead.back();
             if (de->tick < d.tick + CALENDAR_DAY_TICKS / 2){
-                const char* of = (d.cause == NEEDS_DIED_THIRST) ? "thirst" : (d.cause == NEEDS_DIED_COLD) ? "cold" : "hunger";
+                const char* of = EconomyDeathCause(d.cause);
                 int more = (int)(n - deaths_seen) - 1;
                 //Bitten (zombies_plan.md, step 2): killed, not died of.
                 //...and his rank and kills (ranks_plan.md): "Jelle De Wit, Expert, 2 kills, was killed by a zombie".

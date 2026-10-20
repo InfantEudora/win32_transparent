@@ -89,6 +89,7 @@ const char* EconomyJobName(int job){
         case WORKER_JOB_PLAYING:    return "playing";
         case WORKER_JOB_BABY:       return "baby";
         case WORKER_JOB_CARING:     return "caring";
+        case WORKER_JOB_OLD:        return "old";
         default:                    return "?";
     }
 }
@@ -183,6 +184,7 @@ const char* EconomyEventName(int kind){
         case EVENT_BREACHED:            return "breached";
         case EVENT_ZOMBIE_FELLED:       return "zombie_felled";
         case EVENT_RANKED:              return "ranked";
+        case EVENT_GREW_OLD:            return "grew_old";
         default:                        return "unknown";
     }
 }
@@ -196,7 +198,7 @@ int EconomyEventByName(const std::string& name){
     return -1;
 }
 
-//What is worth remembering one by one: who came and went, grew up and was expected, what was reaped, raised and lost
+//What is worth remembering one by one: who came and went, grew up or old and was expected, what was reaped, raised and lost
 //to the frost, where the colony spread, what it found, and who rose a rank - not what happens tens of times a day,
 //which the ledger counts, nor the scouts' troubles. The DISCOVERIES (demo_plan.md) are read from here, so what they
 //need is kept - and the demo's goals and its end, each made once, by whether the journal has it yet.
@@ -206,7 +208,8 @@ bool EconomyJournaled(int kind){
            || kind == EVENT_GREW_UP || kind == EVENT_EXPECTING || kind == EVENT_BOULDER_FOUND
            || kind == EVENT_BALCONY_REACHED || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED
            || kind == EVENT_DEMO_COMPLETE || kind == EVENT_COLONY_LOST
-           || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED || kind == EVENT_RANKED;
+           || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED || kind == EVENT_RANKED
+           || kind == EVENT_GREW_OLD;
 }
 
 //--- Kills and ranks (Economy.h, KILLS and RANKS; ranks_plan.md) ----------------------------------------------------
@@ -493,6 +496,10 @@ int EconomyLoadRoom(const EconomyState& e, const ZoneState& z, const EconomyWork
     return std::max(room,k.carry);
 }
 
+namespace {
+uint32_t Mix(uint32_t a, uint32_t b);      //below, with the settlers it was written for
+}
+
 //--- Lifelines (docs/lifeline_plan.md) -------------------------------------------------------------
 
 int EconomyAgeAt(int64_t born, uint64_t tick){
@@ -503,7 +510,11 @@ int EconomyAgeAt(int64_t born, uint64_t tick){
 int EconomyStageAt(int64_t born, uint64_t tick){
     int64_t lived = (int64_t)tick - born;
     return (lived < LIFE_BABY_TICKS) ? LIFE_BABY : (lived < LIFE_CHILD_TICKS) ? LIFE_CHILD
-         : (lived < LIFE_YOUNG_TICKS) ? LIFE_YOUNG : LIFE_ADULT;
+         : (lived < LIFE_YOUNG_TICKS) ? LIFE_YOUNG : (lived < LIFE_OLD_TICKS) ? LIFE_ADULT : LIFE_OLD;
+}
+
+int64_t EconomyLifespan(uint32_t seed, uint32_t id){
+    return (int64_t)LIFE_DIES_FROM + (int64_t)(Mix(seed,id * 8 + 7) % (uint32_t)LIFE_DIES_SPAN);
 }
 
 int EconomyShare(int64_t born, uint64_t tick){
@@ -517,6 +528,7 @@ const char* EconomyStageName(int stage){
         case LIFE_CHILD:    return "child";
         case LIFE_YOUNG:    return "young adult";
         case LIFE_ADULT:    return "adult";
+        case LIFE_OLD:      return "old";
         default:            return "?";
     }
 }
@@ -749,10 +761,6 @@ int EconomyTowerStock(const ChasmWorld& w, int plot, int good){
     return ZoneTowerGuards(w,plot) * per;
 }
 
-namespace {
-uint32_t Mix(uint32_t a, uint32_t b);      //below, with the settlers it was written for
-}
-
 int EconomyWellWater(const ChasmWorld& w, int plot){
     uint32_t h = Mix(Mix(w.grid->settings.seed,(uint32_t)plot),0x3E11u);
     return ECONOMY_WELL_WATER_MIN + (int)(h % (uint32_t)(ECONOMY_WELL_WATER_MAX - ECONOMY_WELL_WATER_MIN + 1));
@@ -796,7 +804,12 @@ uint32_t EconomyOnTower(const EconomyState& e, const ZoneState& z, const Economy
 }
 
 bool EconomyCanOrder(const EconomyWorker& k, uint64_t tick){
-    return EconomyStageAt(k.born,tick) >= LIFE_YOUNG;
+    int stage = EconomyStageAt(k.born,tick);
+    return stage == LIFE_YOUNG || stage == LIFE_ADULT;
+}
+
+const char* EconomyWhyNotOrdered(const EconomyWorker& k, uint64_t tick){
+    return (EconomyStageAt(k.born,tick) == LIFE_OLD) ? "too old" : "too young";
 }
 
 int EconomyPackFood(const EconomyWorker& k){
@@ -1420,14 +1433,17 @@ bool Economy::AddPerson(int plot, uint32_t house, int age_days, const int skills
     LIFELINES, a tick of them. A mother caring with no baby of hers left a baby - grown into a child, or dead -
     is free again; a baby a year old plays; a child of 2 1/2 is a young adult (out playing, he finishes and comes
     home first); a young adult turning ADULT may pair (COUPLES), so a house standing empty is offered again on
-    that tick rather than at the next change. And BIRTHS: an expecting mother's child is born the first time she
-    is home after it is due - never pulled from her work - at her side, indoors (in a camp, in her tent), and she
-    is caring from then. The child's surname is one of its parents' (EconomyCoupleSurname).
+    that tick rather than at the next change; and anyone OLD with a job still - grown old this tick, a mother's
+    caring year ended past 36, a save's - has it taken by AssignJobs, on this tick too (OLD AGE). And BIRTHS: an
+    expecting mother's child is born the first time she is home after it is due - never pulled from her work - at
+    her side, indoors (in a camp, in her tent), and she is caring from then. The child's surname is one of its
+    parents' (EconomyCoupleSurname).
 */
 bool Economy::Lifelines(uint64_t tick, bool& f_house){
     bool f_jobs = false;
     f_house = false;
     std::vector<const EconomyWorker*> grown;    //GREW UP on this tick: a young adult, told once the loop is done
+    std::vector<const EconomyWorker*> aged;     //...and GREW OLD
     for (EconomyWorker& k : state.workers){
         int stage = EconomyStageAt(k.born,tick);
         if (k.job == WORKER_JOB_BABY && stage >= LIFE_CHILD){
@@ -1444,9 +1460,16 @@ bool Economy::Lifelines(uint64_t tick, bool& f_house){
         if (stage == LIFE_ADULT && tick > 0 && EconomyStageAt(k.born,tick - 1) < LIFE_ADULT && !k.partner){
             f_house = true;
         }
+        if (stage == LIFE_OLD && tick > 0 && EconomyStageAt(k.born,tick - 1) < LIFE_OLD){
+            aged.push_back(&k);
+        }
+        f_jobs = f_jobs || (stage == LIFE_OLD && !EconomyStageJob(k.job));
     }
     for (const EconomyWorker* k : grown){
         Event(EVENT_GREW_UP,k->id,k->house,-1,k->pos);
+    }
+    for (const EconomyWorker* k : aged){
+        Event(EVENT_GREW_OLD,k->id,k->house,-1,k->pos);
     }
     for (EconomyWorker& m : state.workers){
         if (m.job == WORKER_JOB_CARING && std::none_of(state.workers.begin(),state.workers.end(),[&](const EconomyWorker& o){
@@ -1510,8 +1533,7 @@ void Economy::ChancesOfChildren(const ZoneState& z, uint64_t tick){
         return NULL;
     };
     auto of_age = [&](const EconomyWorker& k){
-        int64_t lived = (int64_t)tick - k.born;
-        return EconomyStageAt(k.born,tick) == LIFE_ADULT && lived < LIFE_OLD_TICKS;
+        return EconomyStageAt(k.born,tick) == LIFE_ADULT;      //grown, and not yet old
     };
     for (EconomyWorker& m : state.workers){
         if (!m.f_female || !m.partner || m.due || m.job == WORKER_JOB_CARING){
@@ -1545,7 +1567,7 @@ void Economy::ChancesOfChildren(const ZoneState& z, uint64_t tick){
     PLAYING (lifeline_plan.md): a child at home goes out now and then - on one look in LIFE_PLAY_LOOKS, from a
     hash of him and the look - to a plot a step or two from home that nothing stands on, or among a camp's
     tents (open ground, as the walkers have it), plays there a while (WORKER_PLAYING) and comes home. Only
-    where he can walk to; otherwise he stays in.
+    where he can walk to; otherwise he stays in. The old take the same walk (OLD AGE).
 */
 bool Economy::GoPlay(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t tick){
     uint32_t look = (uint32_t)(tick / ECONOMY_LOOK_TICKS);
@@ -2125,6 +2147,28 @@ void Economy::AssignJobs(const ZoneState& z, Walkers& walkers){
         }
         GoHome(k,z,walkers);
     };
+    /*
+        OLD AGE (Economy.h): whoever is old and has a job still gives it up before anything is kept, so his place is free
+        for the order below as a caring mother's is, and he is no place's again. On his way to his work or at it, he goes
+        home - a load on him to its store first. A guard comes down from his tower, and a trainee off the line, by
+        themselves once the job is gone. An order he is under ends here: the old do not guard.
+    */
+    for (EconomyWorker& k : state.workers){
+        if (EconomyStageAt(k.born,state.tick) != LIFE_OLD || EconomyStageJob(k.job)){
+            continue;
+        }
+        if (k.post >= 0){
+            Order(k.id,-1,z,walkers,NULL);
+        }
+        if (k.job != WORKER_JOB_NONE && (k.state == WORKER_TO_WORK || k.state == WORKER_WORKING
+                                         || k.state == WORKER_TO_SOW || k.state == WORKER_SOWING)){
+            leave_errand(k);
+        }
+        k.job = WORKER_JOB_OLD;
+        k.building = 0;
+        k.f_chosen = false;
+        state.version++;
+    }
     std::vector<int> people(z.buildings.size() + 1,0);     //by settlement: the employable not yet counted to a place
     auto home_of = [&](const EconomyWorker& k){
         return std::min<size_t>(EconomyPersonSettlement(state,k),z.buildings.size());
@@ -4795,6 +4839,12 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (k.job == WORKER_JOB_CARING){
                 break;
             }
+            //The old: the house's errands, above, and otherwise a walk round the house now and then, as a child
+            //plays (OLD AGE).
+            if (k.job == WORKER_JOB_OLD){
+                GoPlay(k,z,walkers,tick);
+                break;
+            }
             //A builder, as a caretaker (defence_plan.md): the guard towers kept full first, then provisions wanted,
             //then building - the user's order (KeepTowers, MakeProvisions).
             if (k.job == WORKER_JOB_BUILDER && (KeepTowers(k,z,walkers) || MakeProvisions(k,z,walkers))){
@@ -5556,9 +5606,10 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     store, a camp's supplies, a collector, his own land's field (the user's, 2026-10-09: it was only
                     a store or the camp, and only for a house already short) - whenever his house has room under its
                     top-up, the scarcest kind first, as far as TakeHome allows: a field's fair share, firewood's.
-                    Not a child: errands are for the grown (LIFELINES).
+                    Not a child: errands are for the grown (LIFELINES), the old among them.
                 */
-                if ((from < z.buildings.size() || EconomyIsCrateStore(from)) && (!EconomyStageJob(k.job) || k.job == WORKER_JOB_CARING)
+                if ((from < z.buildings.size() || EconomyIsCrateStore(from))
+                    && (!EconomyStageJob(k.job) || k.job == WORKER_JOB_CARING || k.job == WORKER_JOB_OLD)
                     && FetchFrom(k,z,from)){
                     GoodsMask first = 0;
                     HomeShort(k,z,&first);
@@ -6194,6 +6245,7 @@ const char* EconomyDeathCause(int cause){
         case NEEDS_DIED_THIRST: return "thirst";
         case NEEDS_DIED_COLD:   return "cold";
         case NEEDS_DIED_ZOMBIE: return "a zombie";
+        case NEEDS_DIED_OLD_AGE: return "old age";
         default:                return "?";
     }
 }
@@ -6437,7 +6489,7 @@ bool Economy::Order(uint32_t person, int plot, const ZoneState& z, Walkers& walk
         return true;
     }
     if (!EconomyCanOrder(*k,now)){
-        return refuse("too young");
+        return refuse(EconomyWhyNotOrdered(*k,now));
     }
     if (plot >= (int)z.ground.size() || plot >= (int)w.grid->fine.pos.size()){
         return refuse("no such plot");
@@ -6506,7 +6558,7 @@ bool Economy::Gather(uint32_t person, bool f_on, const ZoneState& z, Walkers& wa
         }
         if (!EconomyCanOrder(k,now)){
             if (why){
-                *why = "too young";     //a child gathers as the grown-up he goes with does (below)
+                *why = EconomyWhyNotOrdered(k,now);     //a child gathers as the grown-up he goes with does (below)
             }
             return false;
         }
@@ -6561,7 +6613,7 @@ bool Economy::Forage(uint32_t person, int plot, int what, const ZoneState& z, Wa
         return refuse("nobody by that id");
     }
     if (!EconomyCanOrder(*k,now)){
-        return refuse("too young");
+        return refuse(EconomyWhyNotOrdered(*k,now));
     }
     const ChasmWorld& w = *state.world;
     if (plot < 0 || plot >= (int)z.ground.size() || plot >= (int)w.grid->fine.pos.size()){
@@ -6662,7 +6714,7 @@ bool Economy::TakeTent(uint32_t person, bool f_on, const ZoneState& z, Walkers& 
             return refuse("already carrying a tent");
         }
         if (f_on && !EconomyCanOrder(k,now)){
-            return refuse("too young");     //a child shares his grown-ups' tents (WITH THE GROWN)
+            return refuse(EconomyWhyNotOrdered(k,now));     //a child shares his grown-ups' tents (WITH THE GROWN)
         }
         if (f_on && k.post < 0){
             return refuse("not sent out");
@@ -6902,8 +6954,9 @@ const EconomyWorker* Economy::PartnerLivingIn(const EconomyWorker& k, uint32_t s
 /*
     WITH THE GROWN (Economy.h; settlements_plan.md, the user's 2026-10-12: "they'd have to come with. They'll need
     protection from an archer further along in the game"). A CHILD goes along when every grown-up of its household - a
-    young adult counts - is LEAVING it: carrying or taking a tent, or posted onto another settlement's ground, where
-    Settle here is offered. With one of them staying the children stay too, as with a partner left behind. Beside its
+    young adult counts, the old do not, since they are never sent out (OLD AGE) - is LEAVING it: carrying or taking a
+    tent, or posted onto another settlement's ground, where Settle here is offered. With one of them staying the
+    children stay too, as with a partner left behind. Beside its
     mother if she is one of them, else its father, else the eldest (the lower id on a tie). A BABY always goes with its
     mother (the user's): carried whenever she is posted, and from then until she is home again - `with` remembers it,
     since a baby in a camp often stands off its own tent and could not be told from one out with her.
@@ -6925,10 +6978,10 @@ uint32_t Economy::GoesWith(const EconomyWorker& k) const{
     const EconomyWorker* lead = NULL;
     int lead_rank = 0;
     for (const EconomyWorker& o : state.workers){
-        if (o.family != k.family || o.id == k.id || EconomyStageAt(o.born,now) < LIFE_YOUNG){
+        if (o.family != k.family || o.id == k.id || !EconomyCanOrder(o,now)){
             continue;
         }
-        uint32_t there = (o.post >= 0 && o.post < (int)state.settlement.size()) ? state.settlement[o.post] : 0;
+        uint32_t there =(o.post >= 0 && o.post < (int)state.settlement.size()) ? state.settlement[o.post] : 0;
         bool f_leaving = o.post >= 0 && (o.tent != ECONOMY_TENT_NONE || (there && there != EconomyPersonSettlement(state,o)));
         if (!f_leaving){
             return 0;       //one of them stays: so do the children
@@ -7049,7 +7102,7 @@ bool Economy::SettleHere(uint32_t person, const ZoneState& z, Walkers& walkers, 
         return refuse("nobody by that id");
     }
     if (!EconomyCanOrder(*k,now)){
-        return refuse("too young");     //a child goes with his grown-ups (WITH THE GROWN), and settles with them
+        return refuse(EconomyWhyNotOrdered(*k,now));     //a child goes with his grown-ups (WITH THE GROWN), and settles with them
     }
     uint32_t there = (k->post >= 0 && k->post < (int)state.settlement.size()) ? state.settlement[k->post] : 0;
     if (!there || there == EconomyPersonSettlement(state,*k)){
@@ -7255,7 +7308,7 @@ bool Economy::PostGuard(uint32_t person, uint32_t tower, const ZoneState& z, Wal
         return true;
     }
     if (!EconomyCanOrder(*k,now) || k->job == WORKER_JOB_PLAYING || k->job == WORKER_JOB_BABY){
-        return refuse("too young");
+        return refuse(EconomyWhyNotOrdered(*k,now));
     }
     if (k->job == WORKER_JOB_CARING){
         return refuse("caring for her baby");
@@ -7576,9 +7629,9 @@ bool Economy::FetchHome(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     if (!short_of){
         return false;
     }
-    //Idle for this: no job - or a mother caring for her baby (BIRTHS), home anyway.
+    //Idle for this: no job - or a mother caring for her baby (BIRTHS), or the old (OLD AGE), home anyway.
     auto idle = [](const EconomyWorker& x){
-        return x.job == WORKER_JOB_NONE || x.job == WORKER_JOB_CARING;
+        return x.job == WORKER_JOB_NONE || x.job == WORKER_JOB_CARING || x.job == WORKER_JOB_OLD;
     };
     for (const EconomyWorker& o : state.workers){
         if (&o == &k || o.house != k.house){
@@ -7846,10 +7899,12 @@ int Economy::FirewoodFair(const ZoneState& z, uint32_t h) const{
     while dry - then a meal and a drink if he stands at home, and from his pack while he has one. Health at
     nothing: he dies. He is struck from the colony, what he carried left as a crate, his pack with him; his family stays in
     its house, and on this same tick his job is given out again, and a house left empty taken by a family
-    waiting for one.
+    waiting for one. OLD AGE: one whose day has come dies the same way the first time he stands at home.
 */
 void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
     bool f_died = false;
+    const uint32_t seed = state.world->grid->settings.seed;
+    std::vector<uint32_t> aged_dead;    //OLD AGE: his day come, and home - by id, as the bitten are
     for (EconomyWorker& k : state.workers){
         //His SHARE (Economy.h): his bars fall on that many ticks in four - a baby's on two, by his id so that
         //a house's babies do not all fall on the same ticks. Eating and drinking then follow, a unit as one fits.
@@ -7861,6 +7916,13 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         }
         //Bitten to death this tick (A FIGHT): struck off below, whatever there is to eat.
         if (std::find(bitten_dead.begin(),bitten_dead.end(),k.id) != bitten_dead.end()){
+            f_died = true;
+            continue;
+        }
+        //OLD AGE: never out on an errand or a walk - home, as a birth waits for its mother.
+        if (EconomyStageAt(k.born,tick) == LIFE_OLD && (int64_t)tick - k.born >= EconomyLifespan(seed,k.id)
+            && k.state == WORKER_AT_HOME && AtHome(k)){
+            aged_dead.push_back(k.id);
             f_died = true;
             continue;
         }
@@ -7923,7 +7985,8 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
     std::vector<EconomyWorker> living;
     for (EconomyWorker& k : state.workers){
         bool f_bitten = std::find(bitten_dead.begin(),bitten_dead.end(),k.id) != bitten_dead.end();
-        if (k.health > 0 && !f_bitten){
+        bool f_aged = std::find(aged_dead.begin(),aged_dead.end(),k.id) != aged_dead.end();
+        if (k.health > 0 && !f_bitten && !f_aged){
             living.push_back(std::move(k));
             continue;
         }
@@ -7936,8 +7999,8 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
         d.mother = k.mother;
         d.father = k.father;
         d.tick = tick;
-        d.cause = f_bitten ? NEEDS_DIED_ZOMBIE : EconomyDry(k) ? NEEDS_DIED_THIRST : EconomyCold(state,k) ? NEEDS_DIED_COLD
-                                                                                       : NEEDS_DIED_HUNGER;
+        d.cause = f_bitten ? NEEDS_DIED_ZOMBIE : f_aged ? NEEDS_DIED_OLD_AGE : EconomyDry(k) ? NEEDS_DIED_THIRST
+                : EconomyCold(state,k) ? NEEDS_DIED_COLD : NEEDS_DIED_HUNGER;
         d.kills = k.kills;
         //What he carried is left where he fell, a crate (crates_plan.md, step 5) - it went with him before.
         if (k.carry > 0){

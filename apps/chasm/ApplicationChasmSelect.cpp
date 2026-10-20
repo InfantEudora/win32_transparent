@@ -265,6 +265,13 @@ void DrawBabyIcon(UIOverlay* o, const vec2& c, float s){
     o->AddRect(face - vec2(r,r),face + vec2(r,r),r,ICON_WOOD_END);
 }
 
+//The old's walking stick (lifeline_plan.md, OLD AGE): a shaft, its crook over the top and a little way down the left.
+void DrawCaneIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddLine(p(1.6f,-2.6f),p(1.6f,6.0f),1.9f * s,ICON_WOOD);
+    o->AddArc(p(-0.6f,-2.6f),2.2f * s,1.5708f,-2.3f,1.9f * s,ICON_WOOD);
+}
+
 /*
     A PERSON'S BADGE (the user's, 2026-10-07): one over everyone out of doors - his job on a dark disc, and
     round it a ring that is his health, full at full and running back to twelve o'clock as it goes. While he
@@ -311,6 +318,7 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
         case WORKER_JOB_PLAYING:    DrawBallIcon(o,c,is); break;
         case WORKER_JOB_BABY:
         case WORKER_JOB_CARING:     DrawBabyIcon(o,c,is); break;
+        case WORKER_JOB_OLD:        DrawCaneIcon(o,c,is); break;
         default:                    DrawLogIcon(o,c,is); break;
     }
 }
@@ -717,6 +725,7 @@ const char* JobTitle(int job){
         case WORKER_JOB_PLAYING:    return "Child";
         case WORKER_JOB_BABY:       return "Baby";
         case WORKER_JOB_CARING:     return "Caring";
+        case WORKER_JOB_OLD:        return "Retired";
         default:                    return "No job";
     }
 }
@@ -1200,6 +1209,9 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
         }
         int days = (int)std::max<int64_t>(0,(left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
         c.Text(Format("Caring for her baby - back to work in %i day%s",days,days == 1 ? "" : "s"));
+    }else if (k.job == WORKER_JOB_OLD){
+        //OLD AGE: never how long he has left - the player learns that as the colony does.
+        c.Text("Too old to work: runs the house's errands, and walks near home");
     }else if (k.job == WORKER_JOB_NONE){
         //"No job" at the top says it all (the user's): what he carries for the sites shows in what he is doing.
     }else if (k.job == WORKER_JOB_BUILDER){

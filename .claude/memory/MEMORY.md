@@ -132,4 +132,5 @@
 - [Null MCP argument aborts](mcp_null_arg_aborts.md) — chasm tool given a JSON null (house:null) died with no crash report; omit the key or pass 0
 - [Chasm ranks plan](chasm_ranks_plan.md) — BOTH STEPS BUILT 2026-10-19: kills + ranks (a kill each for now, rank_kills table), pace + one-shot; chasm_kills_test.py
 - [Farside space game concept](farside_space_game_concept.md) — apps/farside: waterline, sensors for player+AI, continuous altitude DECIDED; scale bench BUILT (port 8770)
+- [Chasm lifelines plan](chasm_lifelines_plan.md) — steps 1-4 + crowding BUILT (old age 2026-10-21); widows pairing (woman can still have a child) NEXT; saves/old_age_test.json + chasm_old_age_test.py
 - [Chasm modes plan](chasm_modes_plan.md) — Tutorial/Demo/Free play; track one-at-a-time, tells only; step 0 (GOALS panel honours switches) built 2026-10-19

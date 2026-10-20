@@ -3,10 +3,10 @@ title: Lifelines
 aliases: age, ages, birth, births, baby, babies, child, children, couple, couples, expecting
 kind: people
 status: partial
-summary: People are born, grow up a stage at a time, and couples have children, with one chance a year each.
+summary: People are born, grow up a stage at a time, have children, one chance a year a couple, and grow old and die of it.
 plans: lifeline_plan.md > The stages; lifeline_plan.md > As built: shares; lifeline_plan.md > As built: step 1; lifeline_plan.md > As built: step 2, births; lifeline_plan.md > As built: step 3, couples; building_size_plan.md > Decided (the user, 2026-10-18)
 code: Economy.h: EconomyStageAt EconomyCoupleDay WORKER_JOB_CARING LIFE_COUPLE_ROOM EconomyShare; Economy.cpp: Lifelines ChancesOfChildren MakeSettlers HouseFamilies EconomyRelated EconomyCoupleSurname EconomyBirthChance EconomyHouseAppeal
-verified: 2026-10-18
+verified: 2026-10-21
 ---
 
 Every [[Person|person]] has a birthday and is a year older on it each game year ([[Seasons]]). The
@@ -20,18 +20,19 @@ mother is already expecting.
 | Baby | {LIFE_BABY_TICKS:years} | {LIFE_SHARE_BABY} quarters of an adult's | Indoors in its mother's care. Does nothing, and never goes for food or water itself: its family's [[Fetching home|fetching]] feeds it |
 | Child | {LIFE_CHILD_TICKS:years} | {LIFE_SHARE_CHILD} quarters | Goes out to play near home now and then. No job, no errands, no building |
 | Young adult | {LIFE_YOUNG_TICKS:years} | a whole share | Works like anyone |
-| Adult | | a whole share | Works, and may have children |
+| Adult | {LIFE_OLD_TICKS:years} | a whole share | Works, and may have children |
+| Old | dies at {LIFE_DIES_FROM:years} or a few years on | a whole share | No work: the house's errands, and a walk now and then ([[Old age]]) |
 
 A house's fetching and its fair share of food count each mouth at its share, so a family with a baby fetches
 for half a person more, not a whole one. Its room counts heads: a baby still takes a place.
 
-When a child grows up, jobs are handed out again on that tick, so a free place is taken at once.
+When a child grows up, or someone grows old, jobs are handed out again on that tick, so a free place is taken at once.
 
 ## Couples
 
-A **couple** forms when two grown people move into a free [[House|house]] together and start a new family
-there. Families that need a house get first pick; any house still empty that holds {LIFE_COUPLE_ROOM} goes
-to a couple:
+A **couple** forms when two grown people move into a free [[House|house]] together and start a new family there -
+so a new house is a new couple, and a new couple brings children. Families that need a house get first pick; any
+house still empty that holds {LIFE_COUPLE_ROOM} goes to a couple:
 
 - an adult man and an adult woman, both single, from different families;
 - not related: neither is the other's parent or grandparent, and they share no parent or grandparent;
@@ -43,8 +44,6 @@ with them. Nobody setting out with a tent pairs off.
 This is checked whenever a house is finished, someone dies, or someone turns adult, so an empty house is
 taken the moment a pair exists. Everyone keeps their own surname. A couple's children take one of the two,
 and the house goes by that name ("the Wever family's"). Someone whose partner has died stays single.
-
-So a new house is a new couple, and a new couple brings children.
 
 ## Births
 
@@ -70,5 +69,5 @@ home with the most room to spare. They live from its pantry until one of them is
 
 ## Planned
 
-- [planned] Old age: stopping work, going for walks, still running errands, and dying of it.
+- [planned] Someone widowed pairing off again, as long as the woman can still have a child.
 - Skills passed on from the parents, and growing with work, are on [[Skills]].

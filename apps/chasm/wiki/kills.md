@@ -5,7 +5,7 @@ kind: people
 status: partial
 summary: The zombies a person killed, by bow and by hand - whoever's hit took the last of its health - and the rank they make: Novice, Expert, Master, never lost.
 plans: ranks_plan.md > Decided; ranks_plan.md > Proposed; ranks_plan.md > As built: step 1, kills (2026-10-19); ranks_plan.md > As built: step 2, ranks (2026-10-19)
-code: Economy.h: KILL_BOW KILL_HAND EconomyKills EconomyWorker EconomyDeath EVENT_ZOMBIE_FELLED EVENT_RANKED ZOMBIE_HEALTH ARROW_HIT RANK_Novice RANK_Expert RANK_Master EconomyArrowHarm; Economy.cpp: EconomyRank EconomyKillsTold AddPerson; Zombies.cpp: ZombieKilled Fights; Shooting.cpp: Shoot EconomyShotTicks; ChasmStats.cpp: ChasmStatsCheck
+code: Economy.h: KILL_BOW KILL_HAND EconomyKills EconomyWorker EconomyDeath EVENT_ZOMBIE_FELLED EVENT_RANKED ZOMBIE_HEALTH ARROW_HIT RANK_NOVICE RANK_EXPERT RANK_MASTER EconomyArrowHarm; Economy.cpp: EconomyRank EconomyKillsTold AddPerson; Zombies.cpp: ZombieKilled Fights; Shooting.cpp: Shoot EconomyShotTicks; ChasmStats.cpp: ChasmStatsCheck
 verified: 2026-10-19
 ---
 
@@ -25,9 +25,9 @@ A **rank** comes from all the kills together, bow and hand - worked out from the
 
 | Rank | Kills | Pace in a fight | An arrow's hit kills outright |
 |---|---|---|---|
-| Novice | {rank_kills[RANK_Novice]} | x{rank_pace[RANK_Novice]} | {rank_one_shot[RANK_Novice]}% |
-| Expert | {rank_kills[RANK_Expert]} | x{rank_pace[RANK_Expert]} | {rank_one_shot[RANK_Expert]}% |
-| Master | {rank_kills[RANK_Master]} | x{rank_pace[RANK_Master]} | {rank_one_shot[RANK_Master]}% |
+| Novice | {rank_kills[RANK_NOVICE]} | x{rank_pace[RANK_NOVICE]} | {rank_one_shot[RANK_NOVICE]}% |
+| Expert | {rank_kills[RANK_EXPERT]} | x{rank_pace[RANK_EXPERT]} | {rank_one_shot[RANK_EXPERT]}% |
+| Master | {rank_kills[RANK_MASTER]} | x{rank_pace[RANK_MASTER]} | {rank_one_shot[RANK_MASTER]}% |
 
 - **Pace**: a shot's turn is shorter by it, and blows by hand come sooner - no harder.
 - **Killing outright** is decided as the arrow leaves the bow, for a hit only. Nobody shoots again at a zombie such an

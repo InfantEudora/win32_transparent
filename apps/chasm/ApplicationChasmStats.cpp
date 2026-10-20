@@ -337,6 +337,7 @@ uint32_t JournalColour(int kind){
         case EVENT_SEAM_SEEN:           return HudGoodColour(GOOD_FLOATSTONE);
         case EVENT_DISCOVERED:          return UIColor(120,190,230);
         case EVENT_GREW_UP:
+        case EVENT_GREW_OLD:
         case EVENT_EXPECTING:           return UIColor(156,204,112);
         case EVENT_FROST_TOOK:          return UIColor(200,224,240);
         case EVENT_BOULDER_FOUND:       return HudGoodColour(GOOD_STONE);
@@ -655,7 +656,9 @@ void ApplicationChasm::DrawStats(float s){
         overlay->AddText(now.people == 1 ? "PERSON" : "PEOPLE",vec2(x + big_w + 10.0f * s,y + 26.0f * s),text,HUD_TEXT_DIM,
                          UI_ALIGN_LEFT);
         y += 38.0f * s;
-        snprintf(buf,sizeof(buf),"%i adult%s, %i young, %i child%s, %i bab%s",now.row.people[LIFE_ADULT],
+        //The old only once there are any (OLD AGE, lifeline_plan.md): hours into a game, so not a "0 old" until then.
+        std::string old = now.row.people[LIFE_OLD] ? std::to_string(now.row.people[LIFE_OLD]) + " old, " : std::string();
+        snprintf(buf,sizeof(buf),"%s%i adult%s, %i young, %i child%s, %i bab%s",old.c_str(),now.row.people[LIFE_ADULT],
                  now.row.people[LIFE_ADULT] == 1 ? "" : "s",now.row.people[LIFE_YOUNG],now.row.people[LIFE_CHILD],
                  now.row.people[LIFE_CHILD] == 1 ? "" : "ren",now.row.people[LIFE_BABY],now.row.people[LIFE_BABY] == 1 ? "y" : "ies");
         overlay->AddText(Fit(overlay,buf,small,l.a1 - x).c_str(),vec2(x,y),small,HUD_TEXT_DIM,UI_ALIGN_LEFT);
@@ -904,7 +907,8 @@ json DayJson(const EconomyDay& d){
     float water = 0.0f;
     ChasmStatsDays(d,food,water);
     return json{{"day",d.day},{"people",json{{"babies",d.people[LIFE_BABY]},{"children",d.people[LIFE_CHILD]},
-                                             {"young",d.people[LIFE_YOUNG]},{"adults",d.people[LIFE_ADULT]}}},
+                                             {"young",d.people[LIFE_YOUNG]},{"adults",d.people[LIFE_ADULT]},
+                                             {"old",d.people[LIFE_OLD]}}},
                 {"held",held},{"food_days",food},{"water_days",water},{"felled",d.felled},{"broken",d.broken},
                 {"storeys",d.storeys},{"zombies",d.zombies}};
 }

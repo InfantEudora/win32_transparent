@@ -111,6 +111,10 @@
       "comment": "Told on the notice line since 2026-10-16 (demo_plan.md step 6), so heard anywhere as the rest of the colony's own: someone grown up, a couple expecting, the frost taking a field (an event a field: skipped while the group sounds, so a winter's turn chimes once), the first boulder and the first on a balcony.",
       "signal": "grew_up", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
     },
+    "grew_old": {
+      "comment": "Someone grown old (lifeline_plan.md, step 4): told on the notice line, as growing up is.",
+      "signal": "grew_old", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
     "expecting": {
       "signal": "expecting", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
     },

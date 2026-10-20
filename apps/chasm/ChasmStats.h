@@ -16,7 +16,7 @@
     agrees with the state it was kept beside.
 */
 
-#define CHASM_STATS_CAUSES  4       //NEEDS_DIED_HUNGER .. NEEDS_DIED_ZOMBIE
+#define CHASM_STATS_CAUSES  5       //NEEDS_DIED_HUNGER .. NEEDS_DIED_OLD_AGE
 
 //Days of food (GOODS_FOOD: provisions are the posted people's) and of water that a row's goods hold for its people
 //at their shares - the figure the charts draw, and the page's now from a row made of the state as it stands.

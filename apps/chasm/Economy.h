@@ -583,6 +583,7 @@ int EconomyFoodWorth(int good);
 #define NEEDS_DIED_THIRST           1       //dry when his health ran out
 #define NEEDS_DIED_COLD             2       //cold (and not dry) when it did
 #define NEEDS_DIED_ZOMBIE           3       //a zombie's bite took the last of it (zombies_plan.md, step 2)
+#define NEEDS_DIED_OLD_AGE          4       //his day come, at home (OLD AGE, lifeline_plan.md step 4)
 const char* EconomyDeathCause(int cause);
 
 //The base skills (gameplay_plan.md, "People" - the proposal; names may change). Never renumber.
@@ -615,6 +616,7 @@ const char* SkillName(int skill);
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
 #define WORKER_JOB_CARING       -4      //its mother, that year: at home but for the house's errands
+#define WORKER_JOB_OLD          -5      //the old (OLD AGE): the house's errands, and a walk round it now and then
 inline bool EconomyStageJob(int job){
     return job < WORKER_JOB_NONE;
 }
@@ -658,13 +660,15 @@ inline bool EconomyStageJob(int job){
     LIFELINES (docs/lifeline_plan.md, step 1). A person is BORN on a calendar tick - a settler before the
     colony's first, so `born` is signed - and is a year older on that day every year: his AGE, in game years.
     How long ago decides his STAGE: a BABY for a year, then a CHILD whose job is PLAYING (WORKER_JOB_PLAYING),
-    then a YOUNG ADULT, who works like anyone, then an ADULT. A child is free for a job's place the tick he
-    grows up (Economy::Tick). Everyone keeps a MOTHER and a FATHER, and so do the dead, so the tree outlives
-    the people in it. The stages' lengths are the user's; tuning like the rest (lifeline_plan.md).
+    then a YOUNG ADULT, who works like anyone, then an ADULT, and at last OLD (OLD AGE, below). A child is free
+    for a job's place the tick he grows up (Economy::Tick). Everyone keeps a MOTHER and a FATHER, and so do the
+    dead, so the tree outlives the people in it. The stages' lengths are the user's; tuning like the rest
+    (lifeline_plan.md).
 */
 #define LIFE_BABY_TICKS         (CALENDAR_YEAR_TICKS)              //a baby for a year
 #define LIFE_CHILD_TICKS        (CALENDAR_YEAR_TICKS * 5 / 2)      //a child until 2 1/2: a year and a half of playing
 #define LIFE_YOUNG_TICKS        (CALENDAR_YEAR_TICKS * 9 / 2)      //a young adult two years more, then an adult
+#define LIFE_OLD_TICKS          (CALENDAR_YEAR_TICKS * 36)         //...and old from 36: no more work, nor children
 #define LIFE_PLAY_LOOKS         60      //a child at home goes out to play on one look in this many: every 30 s or so
 #define LIFE_PLAY_SECONDS       4.0f    //and plays there this long before going home
 //The stages, worked out from `born` and never saved.
@@ -672,6 +676,7 @@ inline bool EconomyStageJob(int job){
 #define LIFE_CHILD              1
 #define LIFE_YOUNG              2       //a young adult
 #define LIFE_ADULT              3
+#define LIFE_OLD                4
 //Age in whole years at `tick` (0 before birth), the stage then and its name, and the birthday's day of the year.
 int EconomyAgeAt(int64_t born, uint64_t tick);
 int EconomyStageAt(int64_t born, uint64_t tick);
@@ -691,6 +696,19 @@ std::string EconomyBirthdayName(int64_t born);      //"summer 4"
 int EconomyShare(int64_t born, uint64_t tick);
 
 /*
+    OLD AGE (step 4; the user's, 2026-10-21). At LIFE_OLD_TICKS he is OLD, his job WORKER_JOB_OLD: AssignJobs takes his
+    place from him at once, as a caring mother's, and he is given none again. Nor an order, a post or a fight - the old
+    do not guard (EconomyCanOrder), and one under an order is released. He runs the house's errands like anyone without
+    a job, and walks round the house now and then as a child plays. He DIES of it the first time he is home once his
+    day has come - his lifespan, from a hash of the seed and his id - as a birth waits for its mother to be home: so
+    indoors, with no body, only his angel over the roof (THE FALLEN). A long-game rule: the settler couples come at 24
+    to 32, so the first grows old 2 to 6 hours in.
+*/
+#define LIFE_DIES_FROM          (CALENDAR_YEAR_TICKS * 38)         //the earliest anyone dies of old age...
+#define LIFE_DIES_SPAN          (CALENDAR_YEAR_TICKS * 5)          //...and the years it is spread over: by 43, "around 40"
+int64_t EconomyLifespan(uint32_t seed, uint32_t id);    //ticks from his birth to the day he dies of old age
+
+/*
     BIRTHS (step 2). A COUPLE (`partner`; the settlers' couples from the start) has one chance a year of a
     child, at dawn on the couple's own day of the year (EconomyCoupleDay) - in a house of their own, warm that
     day, both fed, both adults and neither old, she neither expecting nor caring, and her children so far, the
@@ -703,7 +721,6 @@ int EconomyShare(int64_t born, uint64_t tick);
 */
 #define LIFE_EXPECTING_TICKS    (CALENDAR_YEAR_TICKS / 2)          //from the chance to the birth (the user's)
 #define LIFE_CHILDREN_MOST      4                                   //a mother's children, a settler's counted
-#define LIFE_OLD_TICKS          (CALENDAR_YEAR_TICKS * 36)         //no more once either is this old (old age itself: step 4)
 #define LIFE_BIRTH_ROOM         50      //percent a year, with a place to spare in the house
 #define LIFE_BIRTH_FULL         25      //...and with none
 /*
@@ -722,7 +739,7 @@ int EconomyCoupleDay(uint32_t a, uint32_t b);
 
 /*
     COUPLES (step 3). A couple forms when two grown people move into a free house together (HouseFamilies): an
-    adult man and an adult woman, of different families, not related (EconomyRelated), neither in a couple - a
+    adult man and an adult woman - not old - of different families, not related (EconomyRelated), neither in a couple - a
     widow stays single, her husband still hers. They found a NEW FAMILY there, each keeping their own SURNAME
     (`surname`, given at birth), and their children take one of the two (EconomyCoupleSurname). The families
     that need a house take theirs first; the couples what is still free - the eldest unpaired adult first, with
@@ -856,8 +873,10 @@ inline bool EconomyCarriesBow(const EconomyWorker& k){
 inline bool EconomyPosted(const EconomyWorker& k){
     return k.post >= 0 || k.job == WORKER_JOB_GUARD;
 }
-//Old enough to be sent to a post: a young adult or older (LIFELINES).
+//Of an age to be sent to a post, and to fight: a young adult or an adult, never a child nor the old (LIFELINES).
 bool EconomyCanOrder(const EconomyWorker& k, uint64_t tick);
+//Why not, for a refusal: "too old" or "too young".
+const char* EconomyWhyNotOrdered(const EconomyWorker& k, uint64_t tick);
 //The food in his pack, by the health it gives (ticks).
 int EconomyPackFood(const EconomyWorker& k);
 
@@ -993,7 +1012,8 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
 #define EVENT_BREACHED          24      //...into `building`, its door breached at `plot`; `amount` its kind
 #define EVENT_ZOMBIE_FELLED     25      //`person` killed a zombie (KILLS), `amount` how: KILL_BOW or KILL_HAND
 #define EVENT_RANKED            26      //`person` rose to rank `amount` (RANKS) by that kill
-#define EVENT_COUNT             27
+#define EVENT_GREW_OLD          27      //`person` is old (OLD AGE): his work given up, from now on at home
+#define EVENT_COUNT             28
 //The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
 //chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
 #define CHASM_GOAL_WINTER       0
@@ -1026,7 +1046,7 @@ int EconomyEventByName(const std::string& name);    //...and back, -1 for none
     is folded away: a year is CALENDAR_SEASONS * CALENDAR_DAYS_PER_SEASON rows. Hashed as a trace part of its own
     ("history"), its tail only - it is only ever added to.
 */
-#define ECONOMY_STAGES          4       //LIFE_BABY .. LIFE_ADULT: a ledger row's people
+#define ECONOMY_STAGES          5       //LIFE_BABY .. LIFE_OLD: a ledger row's people
 struct EconomyDay{
     int day = 0;                                //the calendar's day (tick / CALENDAR_DAY_TICKS)
     std::array<int,ECONOMY_STAGES> people = {}; //at its end, by stage
@@ -1941,7 +1961,7 @@ private:
     //The people: the settlers a new colony starts with; families into houses; workers into workplaces.
     void FindCamp();
     void MakeSettlers();
-    //A child at home: out to a plot or two away to play, now and then. True if he set off.
+    //A child at home, or the old: out to a plot or two away to play or for a walk, now and then. True if he set off.
     bool GoPlay(EconomyWorker& k, const ZoneState& z, Walkers& walkers, uint64_t tick);
     //LIFELINES, a tick of them: the stages moving on and the births. True when the places want sharing out again;
     //`f_house` when someone came of age to pair (COUPLES), so the free houses want sharing out too.

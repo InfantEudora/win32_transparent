@@ -911,6 +911,12 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (EconomyDry(k)){
         j["dry"] = true;
     }
+    //OLD AGE (lifeline_plan.md step 4): the days until his day comes, for a test to wait on - never on his card. He dies
+    //the first time he is home after it, so 0 means once home.
+    if (e && e->world && EconomyStageAt(k.born,tick) == LIFE_OLD){
+        int64_t left = k.born + EconomyLifespan(e->world->grid->settings.seed,k.id) - (int64_t)tick;
+        j["dies_in_days"] = std::max(0.0,std::round(left * 100.0 / CALENDAR_DAY_TICKS) / 100.0);
+    }
     //Where his body stands off his route (SPACING, zombies_plan.md): x, z above are the route's.
     if (k.off.x != 0.0f || k.off.y != 0.0f){
         j["off"] = json::array({std::round(k.off.x * 1000.0f) / 1000.0f,std::round(k.off.y * 1000.0f) / 1000.0f});
@@ -2614,6 +2620,7 @@ void ApplicationChasm::RegisterEconomyTools(){
             int babies = 0;
             int expecting = 0;
             int caring = 0;
+            int old = 0;
             for (const EconomyWorker& k : e->workers){
                 housed += k.house ? 1 : 0;
                 employed += (k.job >= 0) ? 1 : 0;
@@ -2622,10 +2629,12 @@ void ApplicationChasm::RegisterEconomyTools(){
                 babies += (k.job == WORKER_JOB_BABY) ? 1 : 0;
                 expecting += k.due ? 1 : 0;
                 caring += (k.job == WORKER_JOB_CARING) ? 1 : 0;
+                old += (k.job == WORKER_JOB_OLD) ? 1 : 0;
             }
             //Posted (defence_plan.md): standing at a post; a job they had still counts in `working`, its place kept.
             result["people"] = json{{"total",e->workers.size()},{"housed",housed},{"working",employed},
                                     {"children",playing},{"babies",babies},{"expecting",expecting},{"caring",caring},
+                                    {"old",old},
                                     {"posted",posted},{"camp_plot",e->camp_plot},{"in_camp",ChasmInCamp(*z,*e)}};
             /*
                 The HUD's figures (apps/llm/docs/void_plan.md), from the same functions the panels draw with: the days of
