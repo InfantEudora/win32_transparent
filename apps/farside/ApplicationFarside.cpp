@@ -90,11 +90,13 @@ Scene* ApplicationFarside::CreateBenchScene(){
     scene->inputcontroller->AddKeyMap('F',INPUT_DESCEND);
     scene->inputcontroller->AddKeyMap(VK_NEXT,INPUT_DESCEND);
 
-    //Straight down, captured from the one lookat that defines it - a lookat along the world up
-    //axis is degenerate, so this call's result is the only definition of "overhead" there is.
-    //The same trick as ApplicationShip::CreateEmptyScene.
+    //Straight down, captured once. A lookat along the world up axis is degenerate, so the screen's
+    //up is given explicitly: -z is up the screen and +x is to the right, which is what every
+    //"from screen-up, clockwise" angle in BenchSettings assumes. Left to the lookat to choose, the
+    //picture came out turned half round.
+    vec3 screen_up = vec3(0,0,-1);
     scene->camera->SetPosition(vec3(0,25,0));
-    scene->camera->SetLookAt(vec3(0,0,0));
+    scene->camera->SetLookAt(vec3(0,0,0),&screen_up);
     overhead_rotation = scene->camera->GetRotation();
     scene->camera->SetupPerspective(renderer->width,renderer->height,settings.fov_deg,0.5f,1500.0f);
     return scene;
@@ -828,34 +830,31 @@ void ApplicationFarside::DrawOverlay(){
         std::lock_guard<std::mutex> lock(hud_mutex);
         h = hud;
     }
+    //Top middle: the debug panels take the left and right edges.
     const float size = 17.0f;
     const float step = 23.0f;
-    float x = 16.0f;
-    float y = (float)main_window->height - 6.0f * step - 12.0f;
+    float x = (float)main_window->width * 0.5f;
+    float y = 46.0f;
     uint32_t title = UIColor(140,200,255);
     uint32_t text = UIColor(210,220,230);
     uint32_t seen = UIColor(90,255,110);
     uint32_t hidden = UIColor(255,90,70);
     char line[200];
 
-    overlay->AddText("FARSIDE SCALE BENCH",vec2(x,y),size,title);
+    overlay->AddText("FARSIDE SCALE BENCH",vec2(x,y),size,title,UI_ALIGN_CENTER);
     y += step;
-    snprintf(line,sizeof(line),"height %.1f (asked %.1f)   ground %.1f   ceiling %.1f",
-             h.height,h.height_set,h.ground,h.ceiling);
-    overlay->AddText(line,vec2(x,y),size,text);
+    snprintf(line,sizeof(line),"height %.1f (asked %.1f)   ground %.1f   ceiling %.1f   speed %.1f   %s",
+             h.height,h.height_set,h.ground,h.ceiling,h.speed,h.f_landed ? "LANDED" : "flying");
+    overlay->AddText(line,vec2(x,y),size,text,UI_ALIGN_CENTER);
     y += step;
-    snprintf(line,sizeof(line),"speed %.1f lengths/s   %s",h.speed,h.f_landed ? "LANDED" : "flying");
-    overlay->AddText(line,vec2(x,y),size,text);
-    y += step;
-    const char* post_names[2] = {"edge post","top post"};
-    for (int i = 0; i < 2; i++){
-        snprintf(line,sizeof(line),"%s: %s",post_names[i],h.f_seen[i] ? "SEES YOU" : "hidden");
-        overlay->AddText(line,vec2(x,y),size,h.f_seen[i] ? seen : hidden);
-        y += step;
-    }
     snprintf(line,sizeof(line),"ship %.0f px long   screen %.0f lengths tall   planet %.0f%% of screen height",
              h.ship_px,h.view_lengths,h.planet_screen * 100.0f);
-    overlay->AddText(line,vec2(x,y),size,text);
+    overlay->AddText(line,vec2(x,y),size,text,UI_ALIGN_CENTER);
+    y += step;
+    snprintf(line,sizeof(line),"edge post: %s",h.f_seen[0] ? "SEES YOU" : "hidden");
+    overlay->AddText(line,vec2(x - 12.0f,y),size,h.f_seen[0] ? seen : hidden,UI_ALIGN_RIGHT);
+    snprintf(line,sizeof(line),"top post: %s",h.f_seen[1] ? "SEES YOU" : "hidden");
+    overlay->AddText(line,vec2(x + 12.0f,y),size,h.f_seen[1] ? seen : hidden,UI_ALIGN_LEFT);
 
     overlay->AddText("W/S thrust   A/D turn   R/F or wheel: altitude   land: descend to 0, slowly",
                      vec2((float)main_window->width - 16.0f,(float)main_window->height - 16.0f),
@@ -978,7 +977,8 @@ bool ApplicationFarside::ApplyPreset(const std::string& name){
         ship.position = body.centre + body.rotation * ship.landed_local;
     };
     if (name == "start"){
-        flying(-36.0f,14.0f,-90.0f,2.0f);
+        //Close enough that the planet is in view, heading for it.
+        flying(-28.0f,10.0f,-90.0f,2.0f);
     }else if (name == "low"){
         flying(-30.0f,6.0f,-90.0f,0.5f);
     }else if (name == "landed"){
@@ -990,10 +990,23 @@ bool ApplicationFarside::ApplyPreset(const std::string& name){
     }else if (name == "cruise"){
         flying(0.0f,30.0f,-90.0f,ceiling);
     }else if (name == "starcom"){
-        //The framing of the reference screenshot: the planet about 70% of the screen's height.
-        float want = settings.planet_radius * 2.0f / 0.7f;
-        float t = (want - settings.view_ground) / fmaxf(settings.view_ceiling - settings.view_ground,1e-3f);
-        flying(-4.0f,6.0f,-60.0f,clamp(t,0.0f,1.0f) * ceiling);
+        //The framing of the reference screenshot: the planet's outline 70% of the screen's height.
+        //The outline is the planet's equator, well below the ship, so the camera distance that
+        //frames it depends on how high the ship sits - which depends on the zoom asked for. A few
+        //rounds of that loop settle it.
+        float x = -4.0f;
+        float z = 6.0f;
+        float tan_half = tanf(toradians(settings.fov_deg) * 0.5f);
+        float planet_y = field.spheres[SPHERE_PLANET].centre.y;
+        float planet_distance = settings.planet_radius * 2.0f / 0.7f * 0.5f / tan_half;
+        float span = fmaxf(settings.view_ceiling - settings.view_ground,1e-3f);
+        float t = 0.5f;
+        for (int i = 0; i < 8; i++){
+            float ship_y = fminf(field.Ground(x,z).height + t * ceiling,ceiling);
+            float lengths = 2.0f * (planet_distance - (ship_y - planet_y)) * tan_half;
+            t = clamp((lengths - settings.view_ground) / span,0.0f,1.0f);
+        }
+        flying(x,z,-60.0f,t * ceiling);
     }else{
         return false;
     }
@@ -1006,7 +1019,18 @@ void ApplicationFarside::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
 
+    //On the right the first time; imgui.ini remembers wherever it is moved to after that.
+    ImGui::SetNextWindowPos(ImVec2((float)main_window->width - 400.0f,40.0f),ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(390.0f,(float)main_window->height - 80.0f),ImGuiCond_FirstUseEver);
     ImGui::Begin("Bench");
+    //A window first made while the app was minimised gets saved a few pixels across - ImGui had no
+    //display to size it to - and imgui.ini brings it back that way every run, past FirstUseEver.
+    if (ImGui::GetWindowSize().x < 200.0f || ImGui::GetWindowSize().y < 200.0f){
+        ImGui::SetWindowPos(ImVec2((float)main_window->width - 400.0f,40.0f));
+        ImGui::SetWindowSize(ImVec2(390.0f,(float)main_window->height - 80.0f));
+    }
+    //Narrow sliders, so the names beside them fit.
+    ImGui::PushItemWidth(170.0f);
     const char* presets[] = {"start","low","landed","landed_near","cruise","starcom"};
     ImGui::TextDisabled("Put the ship at:");
     for (int i = 0; i < 6; i++){
@@ -1039,6 +1063,7 @@ void ApplicationFarside::DrawImGuiUI(){
     ImGui::RadioButton("top post",&settings.overlay_post,1);
     ImGui::SameLine();
     ImGui::RadioButton("none",&settings.overlay_post,-1);
+    ImGui::PopItemWidth();
     ImGui::End();
 }
 #endif

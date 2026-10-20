@@ -1,6 +1,6 @@
 ---
 name: chasm-ranks-plan
-description: "Chasm kills + ranks (apps/chasm/docs/ranks_plan.md): BOTH STEPS BUILT 2026-10-19 - kills by bow/hand, ranks Blooded/Veteran/Champion at a kill each for now (rank_kills table), fight pace + arrow one-shot; perks the user's to think over"
+description: "Chasm kills + ranks (apps/chasm/docs/ranks_plan.md): BOTH STEPS BUILT 2026-10-19 - kills by bow/hand, ranks Novice/Expert/Master at a kill each for now (rank_kills table), fight pace + arrow one-shot; perks the user's to think over"
 metadata:
   node_type: memory
   type: project
@@ -11,12 +11,12 @@ metadata:
 The user's decisions, 2026-10-19 (first "RPG elements"):
 - Kills counted per person, by bow AND by hand, both shown; credit = the hit that fells (no assists).
 - RANK from kills alone, ALL kills together; NEVER lost (worked out from kills each time, never stored).
-- Ranks Blooded, Veteran, Champion. A KILL A RANK FOR NOW (1/2/3) to test faster - but each rank keeps its own
+- Ranks Novice, Expert, Master. A KILL A RANK FOR NOW (1/2/3) to test faster - but each rank keeps its own
   entry in `rank_kills` (Economy.cpp) so any can get a different requirement later.
 - A rank gives only: slightly quicker FIGHT pace (shot turns + the INTERVAL of hand blows, not their harm, not
   walking) and a chance a HIT ARROW kills outright (arrows only). Perks (target choice, nerve, steadying, a choice at
   a rank) the user "will think about" - kept under the plan's "Later".
-- "Old veteran teaches at the range" is in lifeline_plan.md ("Old" + build step 8), after old age.
+- "Old Expert teaches at the range" is in lifeline_plan.md ("Old" + build step 8), after old age.
 - The ELDER is NOT part of this plan: the user named it only as an example of a status/property on a character.
 
 **As built** (plan "As built: step 1" and "step 2"): `EconomyWorker/EconomyDeath::kills` [KILL_BOW, KILL_HAND];

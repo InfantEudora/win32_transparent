@@ -11,7 +11,8 @@ Talked through 2026-10-19. **Decided the same day:**
 - **One sensor rule** for the player and the AI.
 - **A continuous altitude.**
 
-Sections marked *proposal* are still to discuss. **Nothing is built.**
+Sections marked *proposal* are still to discuss. **The scale bench is built** (last section); no game
+is.
 
 **The first goal is the scale, not a game.** Everything below depends on how big a planet is
 against a ship and how much of it fits on screen. The first build is a bench that answers that by
@@ -266,37 +267,94 @@ resolves a thousandth of a ship length.
   after this one.
 - **Core:** the deferred renderer and shadow maps, rp3d raycasts, deterministic ticks with replays,
   and MCP for driving and tuning a running app.
-- **Not built yet:** a planet shader (the lit sphere, a terminator, an atmosphere rim, clouds, night
-  lights) and the line-of-sight queries.
+- **Built for the bench (2026-10-19):** a planet shader (a lit surface turning with the body, relief,
+  clouds and an atmosphere rim), the halo, and the line-of-sight queries. Not built: night lights.
 
 ---
 
-## First step: the scale bench
+## The scale bench *(built 2026-10-19)*
 
-A greybox app with no game in it. Once it is agreed, this section becomes its own plan.
+A greybox app with no game in it, built to answer the scale question by flying it.
 
-1. **The app.** `apps/farside` with a makefile, `main.cpp` and an `Application`, following `ship`'s
-   layout. A top-down perspective camera that follows the ship, with its zoom following the altitude.
-2. **Bodies.** One planet (lit sphere, procedural surface, terminator, atmosphere rim), one moon on
-   an orbit, an asteroid cluster, a capital-ship hull, a station and a wreck.
-3. **The ship.** `ship`'s handling, plus a continuous altitude:
-   - a climb/descend input;
-   - its height above the ground held while flying;
-   - landing at 0 where the slope allows.
-4. **Line-of-sight debug.**
-   - A post on the cap draws its line to the player's ship: green when it sees the ship, red when
-     not.
-   - An overlay shades the region the post can see at the ship's current height, on the cap and on
-     the plane.
-5. **Sliders.** In ImGui and as an MCP tool: R, `d`, turn period, tilt, ship size, camera FOV, the
-   zoom on the ground and at the ceiling, the low-flight height and the ceiling. Screenshot presets
-   at each zoom, to set beside the Starcom shot.
+```bash
+export PATH="/c/msys64/mingw64/bin:$PATH"
+cd apps/farside && mingw32-make.exe -j8
+./build/farside_nophysics.exe --minimized --mcp-port 8770 2>stderr.log &
+```
 
-**Done when:**
+**What is in it:**
 
-- R, `d`, the camera and the ceiling are picked.
-- The waterline model has a shape we like on screen. The thing to watch is the band below the
-  waterline: does it read as part of the ball, or as a strange skirt?
+- One planet sunk to `d` = 0.6 R, turning once in 10 minutes, with an atmosphere halo.
+- A moon on a 6-minute orbit.
+- An asteroid cluster, a capital-ship hull, a station and a wreck with debris.
+- Two defence posts on the planet: one near the cap's edge, which turns with the planet, and one on
+  the top.
+- The ship, with continuous altitude, landing and take-off.
+
+**Controls:** W/S thrust, A/D turn, R/F or the mouse wheel for altitude. Descend to 0, slowly, on
+ground under 35° to land; climb to take off.
+
+**The Bench panel** has every number as a slider, plus buttons that put the ship at comparison
+spots:
+
+| Spot | Where |
+|---|---|
+| `start` | In the plane, heading for the planet. |
+| `low` | Just above the plane. |
+| `landed` | On the far side of the cap from the edge post. |
+| `landed_near` | Beside the edge post. |
+| `cruise` | At the ceiling. |
+| `starcom` | Framed so the planet fills 70% of the screen, as in the reference shot. |
+
+**The debug picture:**
+
+- Each post's line to the ship: green when it sees the ship, red when it doesn't.
+- An orange outline around the region the chosen post can see, at the ship's current height.
+- The waterline circles.
+- A drop line from the ship to the ground.
+
+The HUD reads the scale off live: the ship's length in pixels, how many ship lengths the screen is
+tall, and the planet's share of the screen's height.
+
+**MCP tools** (port 8770):
+
+- `farside_status`: the bench's current state.
+- `farside_set`: changes any setting, applies a spot, or places the ship by hand.
+- `farside_hold`: flies the ship as a player would.
+
+**Code:**
+
+- `Field.h`: the geometry (ground, line of sight, push-out).
+- `Flight.h`: the ship.
+- `ApplicationFarside`: the scene, view and tools.
+- `assets/shaders/farside_planet.frag`: the surface, lit by the engine's sun and shadows.
+- `assets/shaders/farside_halo.frag`: the halo.
+
+The ship and asteroid models are borrowed from `apps/ship/assets/meshes/ships.glb` through an extra
+asset root; `main.cpp` says why it is not in `shared_assets`.
+
+**First readings, at the defaults, in a 900-pixel-high window:**
+
+| View | Screen height | Ship on screen | Planet on screen |
+|---|---|---|---|
+| Landed | 24 ship lengths | 38 px long | about 1.3 screens tall |
+| `starcom` framing | 45 lengths at the ship | 20 px | 70% of the screen height |
+| Cruise (ceiling) | 72 ship lengths | 13 px | under half the screen height |
+
+Starcom's own ship is about 30 px at that window height, because its planet is half the size of
+ours relative to the ship.
+
+**The hiding rules came out as the doc predicted:**
+
+- Landed about 20° from the pole, the ship is hidden from the top post.
+- Climbing to 2.2 lengths there brings it over that post's horizon.
+- The top post cannot see a ship flying low in the plane.
+- The edge post sees only its own side.
+
+**Still to decide, by flying it:**
+
+- R, `d`, the camera and the ceiling.
+- Whether the band below the waterline reads as part of the ball or as a strange skirt.
 
 ---
 

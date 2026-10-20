@@ -175,6 +175,10 @@ json ChasmSaveToJson(const ChasmSave& s){
             if (k.off.x != 0.0f || k.off.y != 0.0f){
                 workers.back()["off"] = json::array({k.off.x,k.off.y});
             }
+            //...and the pace the one ahead of him lets him walk at (following, step 1c) - only while it is not his own.
+            if (k.crowd != 1.0f){
+                workers.back()["crowd"] = k.crowd;
+            }
             //A meal under way (MEALS): [good, ticks to go, worth still to give]; a fight's next blow (zombies_plan.md, step 2).
             if (EconomyMealOn(k)){
                 workers.back()["meal"] = json::array({k.meal_good,k.meal_ticks,k.meal_worth});
@@ -292,9 +296,18 @@ json ChasmSaveToJson(const ChasmSave& s){
                 json zj = json{{"id",m.id},{"target",m.target},{"lost",m.f_lost},{"health",m.health},{"bite",m.bite},
                                {"pos",json::array({m.pos.x,m.pos.y})},{"off",json::array({m.off.x,m.off.y})},
                                {"route",route},{"speed",m.speed},{"seg",m.seg},{"along",m.along}};
-                //WALLS BREAK (step 4): what its way is stopped by, [HARM_*, plot or building] - only while it has one.
+                //WALLS BREAK (step 4): what its way is stopped by, [HARM_*, plot or building, where it was to stand x, z,
+                //the point it came to it from x, z] - only while it has one.
                 if (m.hit){
-                    zj["hit"] = json::array({(int)m.hit,m.hit_id});
+                    zj["hit"] = json::array({(int)m.hit,m.hit_id,m.aim.x,m.aim.y,m.from.x,m.from.y});
+                }
+                //A CROWD KEEPS ITS ROOM (step 1c): its place's ring or row, and its pace behind one ahead - only when
+                //it has them.
+                if (m.ring >= 0){
+                    zj["ring"] = (int)m.ring;
+                }
+                if (m.crowd != 1.0f){
+                    zj["crowd"] = m.crowd;
                 }
                 zombies.push_back(zj);
             }
@@ -742,6 +755,8 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             if (wk.contains("off")){
                 k.off = vec2(wk["off"][0].get<float>(),wk["off"][1].get<float>());
             }
+            k.crowd = wk.value("crowd",1.0f);       //following (step 1c): his own pace, before it
+
             //MEALS and A FIGHT (zombies_plan.md, step 2): none under way, before them.
             if (wk.contains("meal") && wk["meal"].is_array() && wk["meal"].size() == 3){
                 k.meal_good = wk["meal"][0].get<int>();
@@ -874,16 +889,26 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             m.speed = mj.value("speed",std::vector<float>());
             m.seg = mj.value("seg",0);
             m.along = mj.value("along",0.0f);
-            if (mj.contains("hit") && mj["hit"].is_array() && mj["hit"].size() == 2){
-                m.hit = (uint8_t)mj["hit"][0].get<int>();
-                m.hit_id = mj["hit"][1].get<uint32_t>();
-            }
             if (m.route.empty() || m.speed.size() + 1 != m.route.size()){
                 m.route.assign(1,m.pos);
                 m.speed.clear();
                 m.seg = 0;
                 m.along = 0.0f;
             }
+            if (mj.contains("hit") && mj["hit"].is_array() && mj["hit"].size() >= 2){
+                m.hit = (uint8_t)mj["hit"][0].get<int>();
+                m.hit_id = mj["hit"][1].get<uint32_t>();
+                //Where it stands to hit it and the way it came (step 1c): before them, the ends of its route.
+                if (mj["hit"].size() == 6){
+                    m.aim = vec2(mj["hit"][2].get<float>(),mj["hit"][3].get<float>());
+                    m.from = vec2(mj["hit"][4].get<float>(),mj["hit"][5].get<float>());
+                }else{
+                    m.aim = m.route.back();
+                    m.from = (m.route.size() >= 2) ? m.route[m.route.size() - 2] : m.pos;
+                }
+            }
+            m.ring = (int8_t)mj.value("ring",-1);   //A CROWD KEEPS ITS ROOM (step 1c): none before
+            m.crowd = mj.value("crowd",1.0f);
             out.economy.zombies.push_back(m);
         }
         out.economy.next_zombie = e.value("next_zombie",1u);

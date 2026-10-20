@@ -1,11 +1,11 @@
 ---
 title: Kills
-aliases: kill, kill count, rank, ranks, veteran, veterans, blooded, champion
+aliases: kill, kill count, rank, ranks, Expert, Experts, Novice, Master
 kind: people
 status: partial
-summary: The zombies a person killed, by bow and by hand - whoever's hit took the last of its health - and the rank they make: Blooded, Veteran, Champion, never lost.
+summary: The zombies a person killed, by bow and by hand - whoever's hit took the last of its health - and the rank they make: Novice, Expert, Master, never lost.
 plans: ranks_plan.md > Decided; ranks_plan.md > Proposed; ranks_plan.md > As built: step 1, kills (2026-10-19); ranks_plan.md > As built: step 2, ranks (2026-10-19)
-code: Economy.h: KILL_BOW KILL_HAND EconomyKills EconomyWorker EconomyDeath EVENT_ZOMBIE_FELLED EVENT_RANKED ZOMBIE_HEALTH ARROW_HIT RANK_BLOODED RANK_VETERAN RANK_CHAMPION EconomyArrowHarm; Economy.cpp: EconomyRank EconomyKillsTold AddPerson; Zombies.cpp: ZombieKilled Fights; Shooting.cpp: Shoot EconomyShotTicks; ChasmStats.cpp: ChasmStatsCheck
+code: Economy.h: KILL_BOW KILL_HAND EconomyKills EconomyWorker EconomyDeath EVENT_ZOMBIE_FELLED EVENT_RANKED ZOMBIE_HEALTH ARROW_HIT RANK_Novice RANK_Expert RANK_Master EconomyArrowHarm; Economy.cpp: EconomyRank EconomyKillsTold AddPerson; Zombies.cpp: ZombieKilled Fights; Shooting.cpp: Shoot EconomyShotTicks; ChasmStats.cpp: ChasmStatsCheck
 verified: 2026-10-19
 ---
 
@@ -25,9 +25,9 @@ A **rank** comes from all the kills together, bow and hand - worked out from the
 
 | Rank | Kills | Pace in a fight | An arrow's hit kills outright |
 |---|---|---|---|
-| Blooded | {rank_kills[RANK_BLOODED]} | x{rank_pace[RANK_BLOODED]} | {rank_one_shot[RANK_BLOODED]}% |
-| Veteran | {rank_kills[RANK_VETERAN]} | x{rank_pace[RANK_VETERAN]} | {rank_one_shot[RANK_VETERAN]}% |
-| Champion | {rank_kills[RANK_CHAMPION]} | x{rank_pace[RANK_CHAMPION]} | {rank_one_shot[RANK_CHAMPION]}% |
+| Novice | {rank_kills[RANK_Novice]} | x{rank_pace[RANK_Novice]} | {rank_one_shot[RANK_Novice]}% |
+| Expert | {rank_kills[RANK_Expert]} | x{rank_pace[RANK_Expert]} | {rank_one_shot[RANK_Expert]}% |
+| Master | {rank_kills[RANK_Master]} | x{rank_pace[RANK_Master]} | {rank_one_shot[RANK_Master]}% |
 
 - **Pace**: a shot's turn is shorter by it, and blows by hand come sooner - no harder.
 - **Killing outright** is decided as the arrow leaves the bow, for a hit only. Nobody shoots again at a zombie such an
@@ -37,10 +37,10 @@ A **rank** comes from all the kills together, bow and hand - worked out from the
 
 ## On screen
 
-- **[[Person|A person's card]]**: the rank first by the name ("Veteran, age 24 - Guard"); under archery, the kills
-  and what the next rank takes - "Kills 2: 1 by bow, 1 by hand - Champion at 3", or "Kills 2, by bow - ...".
-- **A death**: the pop-up and the red line give the rank and the kills - "Jelle De Wit, Veteran, 2 kills, of
-  thirst"; the journal, the rank only - "Veteran Jelle De Wit died of thirst".
+- **[[Person|A person's card]]**: the rank first by the name ("Expert, age 24 - Guard"); under archery, the kills
+  and what the next rank takes - "Kills 2: 1 by bow, 1 by hand - Master at 3", or "Kills 2, by bow - ...".
+- **A death**: the pop-up and the red line give the rank and the kills - "Jelle De Wit, Expert, 2 kills, of
+  thirst"; the journal, the rank only - "Expert Jelle De Wit died of thirst".
 - **The [[Statistics|statistics]]** count the zombies killed each day, and the page shows their total once there
   has been one. Its check: the zombies killed, and the kills people were put down with, are everyone's kills.
 - A kill is an event too, counted, with no sound of its own: the arrow's hit or the punch is heard.
@@ -49,4 +49,4 @@ A **rank** comes from all the kills together, bow and hand - worked out from the
 ## Planned
 
 - [idea] Perks by rank: choosing the most dangerous target, nerve when the alarm comes, steadying those near.
-- [planned] An old veteran teaching at the [[Archery range|range]] once the old stop work ([[Lifelines]]).
+- [planned] An old Expert teaching at the [[Archery range|range]] once the old stop work ([[Lifelines]]).

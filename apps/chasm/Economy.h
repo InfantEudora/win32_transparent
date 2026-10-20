@@ -748,16 +748,16 @@ int EconomyCoupleDay(uint32_t a, uint32_t b);
     Tuning, every figure.
 */
 #define RANK_NONE               0
-#define RANK_BLOODED            1
-#define RANK_VETERAN            2
-#define RANK_CHAMPION           3
+#define RANK_NOVICE             1
+#define RANK_EXPERT             2
+#define RANK_MASTER             3
 #define RANK_COUNT              4
 int EconomyRank(const std::array<int,KILL_HOWS>& kills);   //the highest rank his kills reach, RANK_NONE below the first
-const char* EconomyRankName(int rank);      //"Blooded", "Veteran", "Champion" - "" for none
+const char* EconomyRankName(int rank);      //"Novice", "Expert", "Master" - "" for none
 int EconomyRankKills(int rank);             //the kills a rank takes...
 float EconomyRankPace(int rank);            //...how much quicker it fights, 1 for none...
 int EconomyRankOneShot(int rank);           //...and the percent of its arrows' hits that kill outright
-//", Veteran, 3 kills" after a name - the rank and the kills, for the dead's lines; "" with none.
+//", Expert, 3 kills" after a name - the rank and the kills, for the dead's lines; "" with none.
 std::string EconomyKillsTold(const std::array<int,KILL_HOWS>& kills);
 
 /*
@@ -800,6 +800,7 @@ struct EconomyWorker{
     float along = 0.0f;
     vec2 pos;                   //where he stands now - kept, so a re-plan starts from exactly here
     vec2 off;                   //SPACING: where his body stands off that, pushed by those near him (EconomyBody)
+    float crowd = 1.0f;         //...and the pace one walking just ahead of him lets him walk at: 1 free (following)
     bool f_indoors = false;     //in his house (or tent): arrived home, and not set out since
     int health = NEEDS_HEALTH_FULL;     //ticks of life left (NEEDS, above)
     int water = NEEDS_WATER_FULL;       //ticks until he is dry
@@ -1073,7 +1074,7 @@ void EconomyForestCleared(const EconomyState& e, int& felled, int& broken);
 #define ZOMBIE_REPLAN           0.4f    //...and after him again once he is this far from where its walk ends: in reach
 #define ZOMBIE_TRIES            4       //the nearest this many people tried for a way to, at a look
 #define ZOMBIE_LOST_LOOKS       4       //...and with none of them to be got to, a look only one time in this many
-#define ZOMBIE_SPAWN_SPREAD     0.25f   //several dropped on one plot: this far apart, outward from its point
+#define ZOMBIE_SPAWN_SPREAD     0.4f    //several dropped on one plot: the spiral out from its point, SPACING_RADIUS apart
 #define ZOMBIE_SPAWN_MOST       40      //the most one command drops: a wave is tens
 /*
     A FIGHT (zombies_plan.md, step 2; the user's 2026-10-14): both sides hit. A zombie within FIGHT_REACH of whom it is
@@ -1108,6 +1109,24 @@ void EconomyForestCleared(const EconomyState& e, int& felled, int& broken);
 #define HARM_WALL               1       //what harm is to (EconomyHarm): a palisade plot, `id` its plot...
 #define HARM_GATE               2       //...a gate's door, its plot...
 #define HARM_DOOR               3       //...or a building's door, its building
+/*
+    A CROWD KEEPS ITS ROOM (zombies_plan.md, step 1c; the user's, 2026-10-20). Whom a zombie goes for counts the crowd
+    already there - ZOMBIE_CROWDED for every zombie after him nearer him than it is - so a wave shares itself out over
+    the people near instead of all going for the nearest. And at him each has a PLACE of its own, handed out every tick
+    (ZombiePlaces): rings round him ZOMBIE_SLOT_GAP apart, the first at ZOMBIE_REACH, where it bites from, the others
+    out of reach, waiting their turn - or at what it breaks, rows across the way it came, ZOMBIE_HITTERS and one more a
+    row back, the first row the ones that hit it. Whoever is nearest a place takes it, an inner ring before an outer by
+    ZOMBIE_RING_COST, and one keeps the place it holds by ZOMBIE_SLOT_KEEP, so as one falls the nearest of the next
+    ring steps in. Tuning, like the rest.
+*/
+#define ZOMBIE_CROWDED          1.0f    //world units further it would go for someone than queue behind one more zombie
+#define ZOMBIE_KEEP_TARGET      1.5f    //...and its own target counts this much nearer - more than one zombie's worth,
+                                        //or one turning tips the next: no turning between two alike
+#define ZOMBIE_SLOT_GAP         0.62f   //between places, round a ring and from ring to ring: just over SPACING_RADIUS
+#define ZOMBIE_SLOT_RINGS       6       //the most rings of places round one person, or rows at one thing
+#define ZOMBIE_RING_COST        3.0f    //world units further it would walk round to a place a ring further in
+#define ZOMBIE_SLOT_KEEP        0.5f    //...and the place it holds counts this much nearer
+#define ZOMBIE_SLOT_SLACK       0.1f    //stood, it walks to its place again once that is this far off
 /*
     ARROWS (zombies_plan.md, step 3; the user's 2026-10-14): anyone with a bow (EconomyCarriesBow) who is grown and
     STANDS, on his post (a tower's platform among them) or on the range's line, shoots at the nearest zombie he can SEE:
@@ -1152,18 +1171,23 @@ struct EconomyZombie{
     int bite = 0;               //...and ticks until its next bite, while whom it is after is within reach
     vec2 pos;
     vec2 off;                   //SPACING: where its body stands off that, pushed by the zombies near it (EconomyBody)
+    float crowd = 1.0f;         //...and the pace one walking just ahead of it lets it walk at: 1 free (following)
     //Its route, as a person's (EconomyWorker): route[seg] to route[seg + 1], `along` down that leg - all on the ground.
     std::vector<vec2> route;
     std::vector<float> speed;
     int seg = 0;
     float along = 0.0f;
-    //WALLS BREAK: what its way is stopped by, walked up to and then hit once its route is done - HARM_*, 0 none.
+    //WALLS BREAK: what its way is stopped by, walked up to and then hit once its route is done - HARM_*, 0 none...
     uint8_t hit = 0;
     uint32_t hit_id = 0;
+    vec2 aim;                   //...where its walk to it was planned to end, stood at it...
+    vec2 from;                  //...and the point of the plot it came to it from: the way it hits it from
+    //A CROWD KEEPS ITS ROOM: the ring round whom it is after, or the row at what it breaks, of its place - -1 none.
+    int8_t ring = -1;
 };
-//...hitting it now: at the end of its route, with something to break.
+//...hitting it now: at the end of its route, with something to break - in the front row, or with no place at all.
 inline bool EconomyZombieHitting(const EconomyZombie& m){
-    return m.hit != 0 && m.seg + 1 >= (int)m.route.size();
+    return m.hit != 0 && m.ring <= 0 && m.seg + 1 >= (int)m.route.size();
 }
 //WALLS BREAK (above): what zombies have taken off one thing's strength, in ticks - kept only while there is any, and
 //on at its strength once it gives, as BROKEN or BREACHED: a palisade plot's until it is built again, a gate's and a
@@ -1264,8 +1288,30 @@ inline int EconomyArrowHarm(const EconomyArrow& a){
 #define SPACING_RETURN          0.6f    //of the offset, a second, it drifts back toward the route
 #define SPACING_SETTLE          4.0f    //...and, taking no part, settles back at
 #define SPACING_MOST            0.45f   //the furthest a body stands off its route
+/*
+    FOLLOWING (zombies_plan.md, step 1c): one of his kind WALKING HIS WAY straight ahead within SPACING_FOLLOW slows him
+    - all but stopped at SPACING_FOLLOW_CLOSEST, never below SPACING_FOLLOW_SLOWEST - so a column on one route strings
+    out as a queue instead of walking inside itself. `crowd` is that pace, for his next tick's walk and his walk clip.
+    He never waits behind one standing or coming at him: those he leans round, so a queue cannot jam - only slowed to
+    SPACING_PASS_SLOWEST while he passes one standing right in his way. One walking slower than SPACING_OVERTAKE of his
+    pace he leans round too, and passes, rather than following him all the way.
+*/
+#define SPACING_FOLLOW          0.9f    //world units ahead he begins to slow
+#define SPACING_FOLLOW_CLOSEST  0.3f    //...and is all but stopped at: slower than whoever he follows, so he drops back
+#define SPACING_FOLLOW_SLOWEST  0.05f   //...of his pace: never stopped, so nobody waits on anybody for good
+#define SPACING_FOLLOW_SAME     0.5f    //...walking his way: their ways' cosine at least this, within 60 degrees
+#define SPACING_FOLLOW_WIDE     0.45f   //...and no further aside of his line than this: a body's width, in his way
+#define SPACING_OVERTAKE        0.9f    //one ahead walking slower than this of his pace he leans round, as one coming
+#define SPACING_PASS_SLOWEST    0.4f    //...and leaning round one standing in his way, within SPACING_RADIUS, his pace
 inline vec2 EconomyBody(const EconomyWorker& k){
     return k.pos + k.off;
+}
+//His pace under a load (the user's, 2026-10-11): by his strength, whatever his job, average at 5 - 1 with nothing.
+inline float EconomyCarryPace(const EconomyWorker& k){
+    if (k.carry <= 0){
+        return 1.0f;
+    }
+    return 1.0f + ECONOMY_CARRY_STRENGTH * (float)(std::max(1,std::min(10,(int)k.skills[SKILL_STRENGTH])) - 5);
 }
 inline vec2 EconomyBody(const EconomyZombie& m){
     return m.pos + m.off;
@@ -1855,6 +1901,9 @@ private:
     bool ZombieLook(EconomyZombie& m, const ZoneState& z, Walkers& walkers, bool f_replan);
     //...and its way to `to` from where it stands, as a person's (RouteTo). False, the route as it was, with none.
     bool ZombieRouteTo(EconomyZombie& m, const ZoneState& z, Walkers& walkers, const vec2& to);
+    //A CROWD KEEPS ITS ROOM (above): every zombie's place, round whom it is after or at what it breaks, and its walk
+    //ended there - after the looks, before the walks.
+    void ZombiePlaces(const ZoneState& z);
     //SPACING (above, Spacing.cpp): every body's offset a tick on, pushed by its neighbours - after everyone has moved.
     void SpaceOut(const ZoneState& z, float dt);
     //A FIGHT (above, Zombies.cpp): every bite and blow of this tick, from where everyone stands now; the zombies at 0

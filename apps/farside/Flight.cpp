@@ -94,9 +94,12 @@ void StepFlight(ShipState& s, const FlightInput& in, const Field& field, const F
     s.ground = field.Ground(s.position.x,s.position.z);
     s.height = s.position.y - s.ground.height;
 
-    //Landing: asked all the way down, slow, low, on a body, and not too steep.
+    //Landing: asked all the way down, slow, low, on a body, and not too steep. "Low" is measured
+    //along the surface's normal - the ground pushes along it, so on a slope the ship rests
+    //clearance/cos(slope) above the surface straight down, and a vertical test would never pass.
     float slope_deg = acosf(clamp(s.ground.normal.y,-1.0f,1.0f)) * 180.0f / TYPE_PI;
-    if (s.height_set <= 0.0f && s.ground.sphere >= 0 && s.height <= t.clearance + 0.05f &&
+    float off_surface = s.height * s.ground.normal.y;
+    if (s.height_set <= 0.0f && s.ground.sphere >= 0 && off_surface <= t.clearance + 0.05f &&
         s.velocity.length() < t.land_speed && slope_deg <= t.land_slope_deg){
         const FieldSphere& body = field.spheres[s.ground.sphere];
         vec3 up = s.ground.normal;

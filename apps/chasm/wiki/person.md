@@ -4,9 +4,9 @@ aliases: people, settler, settlers, villager, villagers, worker, workers
 kind: people
 status: built
 summary: Everyone in the colony, each with a family, a home, four skills, a job, and two bars that must not run out.
-plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries; selection_plan.md > How far along; zombies_plan.md > Step 1b: spacing out
-code: Economy.h: EconomyWorker EconomySkillFactor EconomyBody EconomyStartTimer EconomyTaskProgress EconomyLoadRoom; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood FindSiteWork; Spacing.cpp: SpaceOut
-verified: 2026-10-19
+plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries; selection_plan.md > How far along; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 1c: a crowd keeps its room
+code: Economy.h: EconomyWorker EconomySkillFactor EconomyBody EconomyCarryPace EconomyStartTimer EconomyTaskProgress EconomyLoadRoom; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood FindSiteWork; Spacing.cpp: SpaceOut
+verified: 2026-10-20
 ---
 
 The colony is the **settlers** it starts with, a few families waiting at the [[Camp]], and nobody else.
@@ -46,11 +46,8 @@ their job. People walk straight across open ground, and follow the grid where so
 
 ## Keeping apart
 
-Out of doors, people keep apart from one another: everyone within {SPACING_RADIUS} of someone is pushed off his
-route, at most {SPACING_MOST}, and drifts back onto it once nobody is near. Walking, he only steps aside, so a group on
-one path walks side by side; meeting someone, or someone standing in his way, within {SPACING_AHEAD} ahead, he keeps
-to his right. Never onto water, a wall, a building or a field. His route and where he is counted stay as they were;
-only where his body stands moves. A [[Zombie|zombie]] is kept out of his room as well, never the other way.
+Out of doors, people keep apart from one another, keep to the right meeting someone, and queue behind someone walking
+their way - only the body moves, never the route ([[Crowds]]). A [[Zombie|zombie]] is kept out of his room as well.
 
 ## Needs
 
@@ -60,7 +57,7 @@ the colony records the cause: hunger, thirst or cold.
 
 ## Their card
 
-By the name, age and job ("Age 25 - Woodcutter / posted"), a [[Kills|rank]] first once they have one ("Veteran, age 25 - ..."); under it family, home, workplace, what they are doing,
+By the name, age and job ("Age 25 - Woodcutter / posted"), a [[Kills|rank]] first once they have one ("Expert, age 25 - ..."); under it family, home, workplace, what they are doing,
 two bars, skills, [[Archery range|archery]] once trained and [[Kills|kills]] once any. A [[Posts|pack]] is a goods strip,
 as a [[Store|store's]] card shows what it holds - hollow, their own, with what it is worth in days at the right ("water 12 days, food 10").
 

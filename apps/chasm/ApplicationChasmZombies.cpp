@@ -384,14 +384,14 @@ void ApplicationChasm::UploadZombieSkins(const std::vector<ZombieShown>& shown){
             continue;
         }
         const EconomyZombie& m = *shown[i].m;
-        //Walking while its route has a leg left, at that leg's speed, so its feet are planted; SCRATCHING while whom it
-        //is after is in its reach (its bite counting down) or at something it is breaking; standing otherwise. Each on
-        //its own step.
+        //Walking while its route has a leg left, at that leg's speed - slowed behind one ahead (following) - so its feet
+        //are planted; SCRATCHING while whom it is after is in its reach (its bite counting down) or at something it is
+        //breaking; standing otherwise. Each on its own step.
         float phase = fmodf((float)m.id * 0.618034f,1.0f);
         if (m.bite > 0 || EconomyZombieHitting(m)){
             set_clip(slot[i],ZOMBIE_CLIP_SCRATCH,1.0f,phase);
         }else if (m.seg + 1 < (int)m.route.size() && m.seg < (int)m.speed.size()){
-            set_clip(slot[i],ZOMBIE_CLIP_WALK,m.speed[m.seg] / zombie_walk_speed,phase);
+            set_clip(slot[i],ZOMBIE_CLIP_WALK,m.speed[m.seg] * m.crowd / zombie_walk_speed,phase);
         }else{
             set_clip(slot[i],f_worker_idle_clip ? ZOMBIE_CLIP_IDLE : ZOMBIE_CLIP_NONE,1.0f,phase);
         }
@@ -514,7 +514,9 @@ void ApplicationChasm::RegisterZombieTools(){
         "status (default): every zombie - id, x, z, plot, its body's `off` from its route, `health` (hit points), "
         "`next_bite_ticks` (0 none in reach), its target (person id and name, 0 none) and how far he is - route to route "
         "and `body_distance` - whether it is walking, and `lost` (it could get to none of the nearest at its last look, so "
-        "looks less often). WALLS BREAK (step 4): a zombie's way goes through a standing palisade plot, a shut gate or a "
+        "looks less often). A CROWD KEEPS ITS ROOM (step 1c): `ring`, its place's ring round whom it is after (0 the one "
+        "it bites from) or row at what it breaks (0 the one that hits), -1 none; `end`, where its walk ends now - its "
+        "place; `crowd`, its pace behind one walking ahead of it, 1 free. WALLS BREAK (step 4): a zombie's way goes through a standing palisade plot, a shut gate or a "
         "building's door at the cost of breaking it; `hit` names what stops it - what (wall, gate, door), id (a plot, or "
         "a building), `hitting` (at it now), harm_s and strength_s in seconds of one zombie. `harm` lists every thing harmed "
         "so far, with `broken` (a gate's door) or `breached` (a building's) once it is.",
@@ -583,7 +585,9 @@ void ApplicationChasm::RegisterZombieTools(){
                 GridPick p = w->picker->Pick(m.pos);
                 json j{{"id",m.id},{"x",round2(m.pos.x)},{"z",round2(m.pos.y)},{"plot",p.f_hit ? p.plot : -1},
                        {"off",json::array({round2(m.off.x),round2(m.off.y)})},{"health",m.health},{"next_bite_ticks",m.bite},
-                       {"target",m.target},{"walking",m.seg < (int)m.route.size() - 1},{"lost",m.f_lost}};
+                       {"target",m.target},{"walking",m.seg < (int)m.route.size() - 1},{"lost",m.f_lost},
+                       {"ring",m.ring},{"crowd",round2(m.crowd)},
+                       {"end",json::array({round2(m.route.back().x),round2(m.route.back().y)})}};
                 if (m.hit){
                     j["hit"] = json{{"what",harm_name(m.hit)},{"id",m.hit_id},{"hitting",EconomyZombieHitting(m)},
                                     {"harm_s",round2(EconomyHarmOf(*e,m.hit,m.hit_id) / (float)CALENDAR_TICKS_PER_SECOND)},

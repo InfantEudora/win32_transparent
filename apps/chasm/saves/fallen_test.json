@@ -21,7 +21,7 @@
    ]
   }
  ],
- "calendar": 1727,
+ "calendar": 1747,
  "chasm_save": 2,
  "economy": {
   "crates": [],
@@ -30,8 +30,8 @@
    {
     "back": true,
     "facing": [
-     -0.9973461031913757,
-     -0.07280666381120682
+     -0.9999999403953552,
+     0.0
     ],
     "house": 0,
     "id": 1,
@@ -39,10 +39,10 @@
     "layer": 0,
     "person": false,
     "pos": [
-     20.340173721313477,
-     9.881291389465332
+     20.341766357421875,
+     9.837607383728027
     ],
-    "tick": 597
+    "tick": 612
    }
   ],
   "felled": [],
@@ -57,7 +57,7 @@
    "from": 0,
    "journal": [
     [
-     597,
+     612,
      26,
      1,
      0,
@@ -118,7 +118,7 @@
     "family": 1,
     "father": 0,
     "female": false,
-    "health": 5031,
+    "health": 5011,
     "house": 1,
     "id": 1,
     "indoors": false,
@@ -163,7 +163,7 @@
     "surname": 15,
     "timer": 0,
     "timer_full": 0,
-    "water": 7281
+    "water": 7261
    }
   ],
   "plants": [],

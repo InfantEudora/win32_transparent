@@ -1,11 +1,11 @@
 ---
 name: chasm-zombies-plan
-description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; 3b guards hold their posts BUILT 2026-10-18 (tools/chasm_guard_test.py); step 4a done, 4b + 4d BUILT 2026-10-19 (walls/gates/every door broken, scratch clip, sounds, the harmed look); 6 THE FALLEN BUILT 2026-10-19 (death clips, bodies, angels, crows on carrion); 4c, 4e + 5 alarm next"
+description: "Chasm zombies (apps/chasm/docs/zombies_plan.md): user decided 2026-10-14; steps 1, 1b, 2, 3 (drop+chase, spacing, timed meals+fight, archers/guards shoot) BUILT; 1c crowd (target sharing, attack slots, following) BUILT 2026-10-20; 3b guards hold their posts BUILT 2026-10-18 (tools/chasm_guard_test.py); step 4a done, 4b + 4d BUILT 2026-10-19 (walls/gates/every door broken, scratch clip, sounds, the harmed look); 6 THE FALLEN BUILT 2026-10-19 (death clips, bodies, angels, crows on carrion); 4c, 4e + 5 alarm next"
 metadata:
   node_type: memory
   type: project
   originSessionId: f701fae2-aaab-4d87-a065-27df7cdd3f2c
-  modified: 2026-10-14T10:32:02.659Z
+  modified: 2026-10-20T18:55:21.466Z
 ---
 
 Talked through 2026-10-13/14. **The user's decisions** (2026-10-14): damage off the HEALTH bar (no second bar, to
@@ -56,8 +56,10 @@ climbing down mid-wave when the archer died); bite-induced pressing hunger sends
 
 **Step 6 THE FALLEN BUILT 2026-10-19** (the user's: Die_Forward/Die_Backward on all 3 rigs; fall by the killing blow - from the front backward, keep facing; zombie lies 3 days, sinks the last; a person sinks after a few seconds and the props' `angel` rises): rules record EconomyFallen (saved "fallen", hashed 0xFA11E) by ZombieFalls/PersonFalls/TickFallen; facing shared via EconomyZombieLooks/EconomyWorkerLooks (a hand-fighter now faces the zombie). View: zombies keep their skeleton by id; people get a FallenFigure pool (worker skins are by INDEX); kids tip over; FALLEN_SINK_DEPTH 0.15 (clips lay the hips AT the ground). TRAPS: the economy snapshot's tick freezes when nothing changes - view/tools use calendar_shown; birds don't move under sim_pause+sim_step - test them unpaused; a flush's reach is a scare the next roost avoids. Crows: BirdWorld::carrion, 70% within 40 units, pecks. tools/chasm_fallen_test.py 6 cases.
 
+**Step 1c A CROWD KEEPS ITS ROOM BUILT 2026-10-20** (the user's, after 20+ zombies clumped on saves/archers_test.json; all three suggestions approved, incl. the two fight changes): (1) target SHARING in ZombieLook - score = distance + ZOMBIE_CROWDED per zombie after him nearer him, own target ZOMBIE_KEEP_TARGET nearer (must exceed CROWDED or targets churn: 86 switches/8 s at 0.5); (2) attack SLOTS - `ZombiePlaces` every tick between looks and walks: rings round a person (first at ZOMBIE_REACH = biters), rows at what it breaks (front row only hits: EconomyZombieHitting checks ring<=0), greedy cheapest (distance + ZOMBIE_RING_COST/ring - ZOMBIE_SLOT_KEEP held), places validated by EconomyStraightClear from the target/`from`; `EndAt` moves the route's end; (3) FOLLOWING in SpaceOut (`Follow`) - `crowd` pace on worker+zombie (saved/hashed, walk clip rate too), only behind one walking AWAY (else mutual crawl), ~0 at contact, slowed passing a stander, overtakes slower (SPACING_OVERTAKE). Measured: 21/3 on one archer -> ~6 each; walking min 0.04 -> ~0.4-0.5; fight 0.01 -> 0.43+. All 4 chasm tests pass, replays bit-exact. New wiki page wiki/crowds.md (zombie/person pages were at the 45-line cap). Left: a broken gate funnels 20 through one plot (gate jam, later); brief crossings early in a drop.
+
 **Next (each on the user's go-ahead)**: 4c (repair by builders, no zombies about, the crate), 4e (flow field). Older list: 4 walls break (time-to-break cost, flow field). Also open: fleeing/alarm,
-waves from the swamp, zombies' stop points spread round a target, arrows as tower stock.
+waves from the swamp, arrows as tower stock.
 
 **Why:** the colony is 12 people with no immigration, so combat is designed to be won by placement, not by
 trading lives (Stronghold/Bad North, not They Are Billions).

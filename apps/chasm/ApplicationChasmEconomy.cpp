@@ -213,6 +213,11 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Add(((uint64_t)k.id << 32) | 0x0FF5u);
             h.Bytes(&k.off,sizeof(k.off));
         }
+        //...and his pace behind one ahead (following, step 1c) - only while it is not his own, likewise.
+        if (k.crowd != 1.0f){
+            h.Add(((uint64_t)k.id << 32) | 0xC40Du);
+            h.Bytes(&k.crowd,sizeof(k.crowd));
+        }
         //A meal under way (MEALS) and a fight's next blow (step 2) - only while there is one, likewise.
         if (EconomyMealOn(k)){
             int32_t meal[4] = {(int32_t)k.id,k.meal_good,k.meal_ticks,k.meal_worth};
@@ -310,10 +315,19 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Bytes(&len,sizeof(len));
             h.Bytes(m.route.data(),m.route.size() * sizeof(vec2));
             h.Bytes(m.speed.data(),m.speed.size() * sizeof(float));
-            //What its way is stopped by (walls break, step 4) - only while it has one.
+            //What its way is stopped by (walls break, step 4), where it was to stand at it and the way it came - only
+            //while it has one.
             if (m.hit){
                 uint32_t hit[2] = {m.hit,m.hit_id};
                 h.Bytes(hit,sizeof(hit));
+                h.Bytes(&m.aim,sizeof(m.aim));
+                h.Bytes(&m.from,sizeof(m.from));
+            }
+            //Its place's ring and its pace behind one ahead (step 1c) - only when it has them.
+            if (m.ring >= 0 || m.crowd != 1.0f){
+                int32_t ring = m.ring;
+                h.Bytes(&ring,sizeof(ring));
+                h.Bytes(&m.crowd,sizeof(m.crowd));
             }
         }
         //The harm to walls, gates and houses (step 4) - only while there is any.
@@ -900,6 +914,10 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     //Where his body stands off his route (SPACING, zombies_plan.md): x, z above are the route's.
     if (k.off.x != 0.0f || k.off.y != 0.0f){
         j["off"] = json::array({std::round(k.off.x * 1000.0f) / 1000.0f,std::round(k.off.y * 1000.0f) / 1000.0f});
+    }
+    //...and the pace one walking ahead of him lets him walk at (following, step 1c), while he is slowed.
+    if (k.crowd != 1.0f){
+        j["crowd"] = std::round(k.crowd * 1000.0f) / 1000.0f;
     }
     //A meal under way (MEALS) - what, the ticks to go, what it has still to give - and a fight (zombies_plan.md, step 2).
     if (EconomyMealOn(k)){

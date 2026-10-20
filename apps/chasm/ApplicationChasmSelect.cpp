@@ -1121,7 +1121,7 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
     bool f_along = with && !EconomyCanOrder(k,e.tick);
     bool f_posted = k.post >= 0 && !f_along;
     c.subtitle = Format("Age %i - %s%s",EconomyAgeAt(k.born,e.tick),JobTitle(k.job),f_posted ? " / posted" : "");
-    //His RANK (ranks_plan.md) first, by the name: "Veteran, age 25 - Guard".
+    //His RANK (ranks_plan.md) first, by the name: "Expert, age 25 - Guard".
     int rank = EconomyRank(k.kills);
     if (rank > RANK_NONE){
         c.subtitle = Format("%s, age %i - %s%s",EconomyRankName(rank),EconomyAgeAt(k.born,e.tick),JobTitle(k.job),

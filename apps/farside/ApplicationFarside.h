@@ -51,10 +51,11 @@ struct BenchSettings{
     float ceiling_margin = 2.0f;
     //The star, in the plane's terms: azimuth from screen-up (-z) clockwise, elevation above the
     //plane.
+    //High enough to light a cap that faces the camera; at 10 degrees it was barely lit at all.
     float sun_azimuth_deg = 40.0f;
-    float sun_elevation_deg = 10.0f;
+    float sun_elevation_deg = 30.0f;
     float sun_brightness = 6.0f;
-    float ambient = 0.04f;
+    float ambient = 0.05f;
     //The debug picture.
     bool f_sight_lines = true;              //each post's line to the ship, green seen, red hidden
     int overlay_post = 0;                   //whose visible region is outlined: 0 edge, 1 top, -1 none

@@ -884,12 +884,12 @@ void ApplicationChasm::UploadWorkers(){
         if (f_archer && ws->bow){
             archers.push_back({ws,f,vec3(facing.x,0.0f,facing.y)});
         }
-        //Walking while his route has a leg left, at that leg's speed; on the line, shooting by his stint's clock;
-        //standing otherwise. Each on his own step.
+        //Walking while his route has a leg left, at that leg's speed - slowed behind one ahead (following); on the line,
+        //shooting by his stint's clock; standing otherwise. Each on his own step.
         float phase = fmodf((float)k.id * 0.618034f,1.0f);
         ShotClock shots;
         if (k.seg + 1 < (int)k.route.size() && k.seg < (int)k.speed.size()){
-            set_clip(*ws,WORKER_CLIP_WALK,k.speed[k.seg] / worker_walk_speed[f],phase);
+            set_clip(*ws,WORKER_CLIP_WALK,k.speed[k.seg] * k.crowd / worker_walk_speed[f],phase);
         }else if (f_worker_shoot_clip && worker_shoot_seconds > 0.0f && k.draw > 0 && k.draw_turn > 0){
             //A turn of his bow at a zombie (step 3), by the rules' count: his arrow leaves at its release, as they loose it.
             //Each turn has its own length (EconomyShotTicks), so the clip runs at that turn's rate and is put back in step

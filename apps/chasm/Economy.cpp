@@ -231,9 +231,9 @@ int EconomyRank(const std::array<int,KILL_HOWS>& kills){
 
 const char* EconomyRankName(int rank){
     switch (rank){
-        case RANK_BLOODED:      return "Blooded";
-        case RANK_VETERAN:      return "Veteran";
-        case RANK_CHAMPION:     return "Champion";
+        case RANK_NOVICE:      return "Novice";
+        case RANK_EXPERT:      return "Expert";
+        case RANK_MASTER:     return "Master";
         default:                return "";
     }
 }
@@ -3707,15 +3707,13 @@ void Economy::Walk(EconomyWorker& k, float dt){
     float left = dt;
     //Under a load anyone walks by his strength, whatever his job (the user's, 2026-10-11), average at 5: a round
     //is mostly walking, so a woodcutter's felling faster alone made his strength count for little.
-    float carry_pace = 1.0f;
-    if (k.carry > 0){
-        carry_pace += ECONOMY_CARRY_STRENGTH * (float)(std::max(1,std::min(10,(int)k.skills[SKILL_STRENGTH])) - 5);
-    }
+    float carry_pace = EconomyCarryPace(k);
     while (k.seg < (int)k.route.size() - 1 && left > 0.0f){
         vec2 a = k.route[k.seg];
         vec2 b = k.route[k.seg + 1];
         float len = (b - a).length();
-        float v = std::max(0.05f,k.speed[k.seg] * carry_pace);
+        //...and slowed behind someone walking his way just ahead (SPACING, following).
+        float v = std::max(0.05f,k.speed[k.seg] * carry_pace * k.crowd);
         float need = (len - k.along) / v;
         if (need <= left){
             left -= need;

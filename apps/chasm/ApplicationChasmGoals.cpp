@@ -211,7 +211,7 @@ void ApplicationChasm::UpdateEnd(){
                 for (size_t i = 0; i < deaths.size() && i < named; i++){
                     std::string name = "Someone";
                     for (const EconomyDeath& x : e.dead){
-                        //...with his rank and kills (ranks_plan.md): "Jelle De Wit, Veteran, 2 kills, killed by a zombie".
+                        //...with his rank and kills (ranks_plan.md): "Jelle De Wit, Expert, 2 kills, killed by a zombie".
                         name = (x.id == deaths[i]->person) ? EconomyDeathName(x) + EconomyKillsTold(x.kills) : name;
                     }
                     int cause = deaths[i]->amount;

@@ -108,9 +108,12 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   than the blob costs.
 
 - **One exe per app.** Each app is a folder under `apps/` with its own `makefile`, `main.cpp`,
-  `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the nineteen
-  apps are `animation archer bomber breakout chasm dozer grid isoanimation llm music ocpp pinball
-  ship sim tank testfx tetris tileset ui`.
+  `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the twenty
+  apps are `animation archer bomber breakout chasm dozer farside grid isoanimation llm music ocpp
+  pinball ship sim tank testfx tetris tileset ui`.
+
+  `farside` is the scale bench for a top-down space game where planets are places you land on
+  (port 8770 by convention); its design notes are `apps/farside/docs/README.md`.
 
   `llm` is a bench for a small language model (Ministral 3) run in GL compute shaders, driven by
   `llm_*` MCP tools; the model files and the CPU reference live in the separate llama_c project.

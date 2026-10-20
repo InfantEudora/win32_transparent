@@ -52,6 +52,8 @@ Billions (a cascade of the infected).
 
 1. **A zombie, dropped by debug** - it walks to the nearest person (below).
    1b. **Spacing out** - people and zombies stand apart from their own kind, on the way and where they stop (below).
+   1c. **A crowd keeps its room** - a wave shares itself out, each zombie has a place of its own round whom it is
+   after, and a walker slows behind one ahead of him (the user's, 2026-10-20, below).
 2. **It bites**: next to someone, his health goes down at a cadence. People do not react yet. (Built as a fight:
    both sides hit - below.)
 3. **Guards shoot**: a tower's guards and the posted archers shoot a zombie in range and in sight; a zombie has a
@@ -115,6 +117,46 @@ stands, not from its route.
 
 What it does NOT do yet: make a crowd queue. Bodies squeeze, and still all get where they are going. A gate that
 jams - crowd pressure slowing walkers where they are packed - is for step 4, when walls break.
+
+### Step 1c: a crowd keeps its room (the user's, 2026-10-20)
+
+Seen on `saves/archers_test.json` with 20 and more zombies: they clump and stand inside one another. Measured before
+any change - 24 dropped 15 units east of the four archers, paused and stepped: 21 of the 24 went for one archer; on
+the way the nearest two bodies were 0.04-0.10 apart, up to 12 pairs within 0.3 (a figure is 0.5 across); the routes
+of those stood at one archer ended within 0.00-0.03 of each other; and an offset was at `SPACING_MOST` in every sample,
+spacing at full stretch and losing. Two causes, both in step 1b's own "For later":
+
+- **Every zombie after one person is sent to ONE point** - his position, `ZOMBIE_REACH` short along its last leg - and
+  every one at one wall to one stand. Spacing only pushes a body off its route by up to `SPACING_MOST`, so all of them
+  must fit within 0.45 of that point: about six do. A group of the posted never has this, as each has a place of its
+  own (`EconomyPostPoint`).
+- **A walker is pushed only across his way, never back**, so a column on one route walks at most two abreast in its
+  0.9-wide lane and the rest walk inside each other: nothing parts them along the way, at one pace.
+
+Agreed with the user, all three, and that two of them change a fight:
+
+- **A wave shares itself out.** Whom a zombie goes for counts the crowd already there: `ZOMBIE_CROWDED` of distance for
+  every zombie after him that is nearer him than it is - the queue ahead of it - so the ones behind go for the next
+  person, and a wave spreads over the defenders instead of one archer drawing nearly all of it. Its own target counts
+  `ZOMBIE_KEEP_TARGET` nearer, so it does not turn between two alike. Still by the straight line: the flow field
+  (step 4e) would put the time there in place of the distance. *Changes a fight*: no longer one person against all.
+- **A place of its own round whom it is after** (attack slots, as action games surround a player). Rings round him,
+  `ZOMBIE_SLOT_GAP` apart: the first at `ZOMBIE_REACH`, where it bites from, the next ones further out and out of
+  `FIGHT_REACH`, waiting their turn. At what it breaks, rows across the way it came, the first row its
+  `ZOMBIE_HITTERS`, the rest queued behind. Places are handed out every tick, nearest first: whoever is nearest a
+  place takes it, an inner ring before an outer one by `ZOMBIE_RING_COST`, and one keeps the place it holds by
+  `ZOMBIE_SLOT_KEEP` - so as one falls, the nearest of the next ring steps in. A place counts only where its route
+  could take it from him - `EconomyStraightClear` from where he stands, or from the plot it hits from - on open
+  ground, nearer nobody else than `ZOMBIE_REACH`, and not on a place another target's zombie holds. Its walk ends at
+  its place, and stood, it walks to it once it is `ZOMBIE_SLOT_SLACK` off. With no place at all, it ends as before.
+  *Changes a fight*: at most the first ring - six - bite one person at once.
+- **A walker slows behind one ahead of him** instead of walking into him (following, as traffic and crowds do): one of
+  his kind walking his way within `SPACING_FOLLOW` straight ahead slows him, to `SPACING_FOLLOW_SLOWEST` at
+  `SPACING_FOLLOW_CLOSEST`, so a column strings out as a queue. His `crowd`, a pace, is the rules' - saved and hashed -
+  and the walk clip runs at it too, so the feet stay planted. People and zombies alike. Never for one standing or
+  coming at him, which he still leans round (1b), so a queue cannot jam.
+- **Dropped apart**: the spawn's spiral, `ZOMBIE_SPAWN_SPREAD`, wide enough that no two of a drop start inside each
+  other.
 
 ### Step 2: meals, and a fight (the user's, 2026-10-14)
 
@@ -248,7 +290,61 @@ economy's hash (likewise), `ApplicationChasmWorkersView.cpp` (`WorkerHeight` and
   outline on a body well off its route, by eye.
 - **For later**: zombies after one person all stop on ONE point and only spread by their offsets, so past five or six
   they crowd within `SPACING_MOST` of it - each could stop at a place of its own round him, as a group's posts do.
-  And a crowd still does not queue (above).
+  And a crowd still does not queue (above). *Both done in step 1c, 2026-10-20 (below).*
+
+## As built: step 1c, a crowd keeps its room (2026-10-20)
+
+Files: `Zombies.cpp` (`ZombiePlaces` new, with `RingPlaces`, `RowPlaces` and `EndAt`; the look's crowd and its keep;
+`TickZombies` now every look, then the places, then every walk; a hit's `aim` and `from`; the spawn's spiral),
+`Spacing.cpp` (`Follow`; `Lean` passing one slower; each body's `crowd` written back), `Economy.h` (a person's and a
+zombie's `crowd`, a zombie's `aim`, `from` and `ring`, `EconomyZombieHitting` only for the front row, `EconomyCarryPace`
+taken out of `Walk`, the `ZOMBIE_*` and `SPACING_FOLLOW*` tuning), `Economy.cpp` (`Walk` at `crowd`), `ChasmSave.cpp`
+and the hash (`"crowd"` and `"ring"` only when they are not the default; a hit's `[what, id, aim, from]`),
+`ApplicationChasmZombies.cpp` and `ApplicationChasmWorkersView.cpp` (the walk clip at `crowd`; the tool's `ring`,
+`end`, `crowd`), `ApplicationChasmEconomy.cpp` (a worker's `crowd`), the wiki's zombie and person pages.
+
+- **As planned**, with these found on the way:
+  - **Its own target counts more than one zombie's worth** (`ZOMBIE_KEEP_TARGET` 1.5 against `ZOMBIE_CROWDED` 1.0).
+    At 0.5, one zombie turning tipped the next: 86 target changes in 8 s among 24, lines crossing all over the pack.
+    At 1.5, 8 to 15 - nearly all in the first second, as the wave shares itself out.
+  - **Following only one walking away from him.** Two whose ways met each had the other ahead, and slowed each other
+    to a crawl side by side; now neither follows, and they are pushed apart across their ways.
+  - **All but stopped at contact** (`SPACING_FOLLOW_CLOSEST` 0.3, `SPACING_FOLLOW_SLOWEST` 0.05): at a floor of 0.2, one
+    right behind another slowed to 0.2 never dropped back, and stood inside him at 0.09.
+  - **Slowed passing one standing in his way** (`SPACING_PASS_SLOWEST`): walking a queue to his place at a gate, a
+    zombie slipped through those stood in it at full pace before the pushes could part them (0.11 apart).
+  - **Overtaking**: a person behind someone slower - a carrier under a heavy load - leans round and passes him
+    (`SPACING_OVERTAKE`), rather than following him to the end of the road.
+  - **The front row only hits** what it breaks (`EconomyZombieHitting`), so the queue behind stands and waits, idle,
+    instead of clawing the air.
+  - **The spawn's spiral** starts half a turn out and is `ZOMBIE_SPAWN_SPREAD` 0.4: the first two of a drop started 0.25
+    apart, and the closest of 24 now 0.62.
+- **How the places are handed out** (`ZombiePlaces`, every tick after the looks): the zombies grouped by whom they are
+  after, or what they break - people first, then what is broken, each in id order. Round a person, rings of places
+  from where he stands; at a thing, rows across the way its lowest id came. Every zombie and place costed - the
+  distance, `ZOMBIE_RING_COST` a ring out, less `ZOMBIE_SLOT_KEEP` for the one it holds - and the cheapest taken
+  first, a place asked whether it is to be had only as it is reached. Enough rings for a first ring's worth to spare,
+  and more if refusals leave anyone without. Its walk then ends at its place (`EndAt`).
+- **Checked** (debug, a copy on 8769, paused and stepped; the scripts in the session's scratchpad):
+  - `archers_test`, 24 dropped 15 east - the case that showed it. Before -> after: the wave on the four archers 21/3 ->
+    6/7/6/5; on the way, the closest two 0.04-0.10 -> 0.24-0.46 in the first 7 s and about 0.5 after, pairs within 0.3
+    up to 12 -> at most 1; round the archers 0.01 -> 0.43-0.77, none within 0.5; the last archer's 16 as 6 in the
+    first ring and 10 in the second. Screenshots: the pack walking apart, the wave splitting four ways, rings
+    clawing round each archer;
+  - 20 at a shut gate on the wall test's map: 3 in the front row hitting (its fourth place refused, in the wall's line),
+    the rest in rows 1-4, at least 0.25 apart while queued; broken at about 10 s, as three should;
+  - `chasm_wall_test.py` (8), `chasm_guard_test.py` (7), `chasm_fallen_test.py` (6) and `chasm_kills_test.py` (10, its
+    replay among them) all pass. The wall test's times moved a few ticks with the spawn's spiral; its rates are the
+    same - 3 at a time, 3.00 s a second;
+  - a recording of the 24 on `archers_test`, 1,200 ticks: two replays equal on every tick, nothing changed between
+    ticks, both ending as the run did; saved mid-walk with 4 slowed and places held, loaded and run on 300 ticks: the
+    same as running straight on;
+  - `village`, 13 people, 3,000 ticks: someone slowed in 0.8% of samples, the longest 60 ticks - nobody held up.
+- **Not checked**: a breached house's door with a crowd at it (rows as at a gate, by the same code); a person walking
+  away from a ring, by eye; a chasm map with cliffs close round a target.
+- **For later**: when the gate breaks, twenty pour through a plot-wide gap and squeeze (0.13 apart): the gate that
+  jams (1b, above) is still to come. Two after different people still cross inside the first seconds of a drop,
+  briefly 0.2-0.3 apart - whom it goes for is blind to where in the wave it walks.
 
 ## As built: step 2, meals and the fight (2026-10-14)
 

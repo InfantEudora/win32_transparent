@@ -38,7 +38,7 @@ uniform vec4  body_inverse[MAX_BODIES];     //world to the body's frame, as a qu
 uniform float body_radius[MAX_BODIES];
 uniform int   body_style[MAX_BODIES];       //0 a dry rocky planet, 1 a grey moon
 uniform vec3  sun_direction = vec3(0.0,1.0,0.0);   //toward the sun
-uniform float relief_height = 0.8;          //world units the noise's tallest bump stands
+uniform float relief_height = 1.2;          //world units the noise's tallest bump stands
 uniform vec3  atmosphere_colour = vec3(0.35,0.62,1.0);
 uniform float cloud_cover = 0.5;
 
@@ -92,9 +92,9 @@ vec3 PlanetSurface(vec3 p, float w, out float height, out float clouds){
     float highland = smoothstep(0.46,0.62,continents);
     height = continents * 0.6 + detail * 0.25 + ridge * 0.4 * highland;
 
-    vec3 rust = vec3(0.34,0.16,0.09);
-    vec3 sand = vec3(0.70,0.55,0.37);
-    vec3 dark = vec3(0.15,0.12,0.10);
+    vec3 rust = vec3(0.42,0.20,0.11);
+    vec3 sand = vec3(0.80,0.64,0.44);
+    vec3 dark = vec3(0.12,0.10,0.09);
     vec3 water = vec3(0.04,0.09,0.15);
     vec3 c = mix(rust,sand,smoothstep(0.40,0.58,continents + (detail - 0.5) * 0.25));
     c = mix(c,dark,smoothstep(0.35,0.75,ridge * highland));
@@ -134,8 +134,9 @@ void main(){
     }
     float radius = body_radius[b];
     vec3 dir = normalize(Rotate(body_inverse[b],vposition - body_centre[b]));
-    //One noise unit is nine ship lengths of surface, whatever the body's size.
-    vec3 p = dir * radius / 9.0;
+    //One noise unit is six ship lengths of surface, whatever the body's size - a 20-radius planet
+    //gets a handful of continents across its cap, as the reference screenshot's does.
+    vec3 p = dir * radius / 6.0;
     float w = length(fwidth(p));
 
     float height = 0.0;

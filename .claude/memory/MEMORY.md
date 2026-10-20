@@ -110,7 +110,7 @@
 - [ImGui input race + crash reports](imgui_input_race_crash_report.md) — i<Size assert was WndProc vs render thread, FIXED; build/crash_*.txt
 - [Chasm waterfalls](chasm_waterfalls.md) — brink + welded sheet + stage 2; camera under the rim only over balconies; no shader hot-reload
 - [Chasm cracks prototype](chasm_cracks_prototype.md) — testfx chasm_cracks.frag cracked-mud plates; ported 2026-10-18 as map kind `cracks` (MudCracks.cpp)
-- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 2, 3, 3b BUILT (3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); 4a, 4b, 4d BUILT 2026-10-19 (walls/gates/every door broken, scratch clip, strike+punch sounds, harmed look via ZoneHarmLook, tools/chasm_wall_test.py); 6 the fallen BUILT (death clips, angels, crows; tools/chasm_fallen_test.py); 4c, 4e, alarm next
+- [Chasm zombies plan](chasm_zombies_plan.md) — steps 1, 1b, 1c, 2, 3, 3b BUILT (1c 2026-10-20: wave shares targets, attack slots in ZombiePlaces, following/queueing; 3b 2026-10-18: guards hold their posts, tools/chasm_guard_test.py, a drink between shots); 4a, 4b, 4d BUILT 2026-10-19 (walls/gates/every door broken, scratch clip, strike+punch sounds, harmed look via ZoneHarmLook, tools/chasm_wall_test.py); 6 the fallen BUILT (death clips, angels, crows; tools/chasm_fallen_test.py); 4c, 4e, alarm next
 - [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only; step 0 done
 - [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble, PICK UP, stonecutter, deposits, the mine on O)
 - [Chasm stone props](chasm_stone_props.md) — 10 stone props in chasm_props.glb (--add --merge); floatstone = PAL_MINERALS row 10
@@ -131,5 +131,5 @@
 - [Chasm clip channels + export](chasm_clip_channels_export.md) — unsampled export ships keyed channels only; missing channel = stale bone; blender_action_report.py; each rig a SEPARATE same-named animation - load with LoadAnimation(name,true)
 - [Null MCP argument aborts](mcp_null_arg_aborts.md) — chasm tool given a JSON null (house:null) died with no crash report; omit the key or pass 0
 - [Chasm ranks plan](chasm_ranks_plan.md) — BOTH STEPS BUILT 2026-10-19: kills + ranks (a kill each for now, rank_kills table), pace + one-shot; chasm_kills_test.py
-- [Farside space game concept](farside_space_game_concept.md) — apps/farside/docs/README.md; DECIDED waterline, sensors for player+AI, continuous altitude; scale bench first
+- [Farside space game concept](farside_space_game_concept.md) — apps/farside: waterline, sensors for player+AI, continuous altitude DECIDED; scale bench BUILT (port 8770)
 - [Chasm modes plan](chasm_modes_plan.md) — Tutorial/Demo/Free play; track one-at-a-time, tells only; step 0 (GOALS panel honours switches) built 2026-10-19

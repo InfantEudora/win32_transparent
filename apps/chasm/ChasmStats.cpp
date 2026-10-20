@@ -343,7 +343,7 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
         case EVENT_BORN:
             return who + " was born";
         case EVENT_DIED:
-            //...his rank before his name, as the dead keep it (ranks_plan.md): "Veteran Jelle De Wit died of thirst". Not
+            //...his rank before his name, as the dead keep it (ranks_plan.md): "Expert Jelle De Wit died of thirst". Not
             //his kills - the page's column would cut the cause off; the pop-up and the death line have room for them.
             for (const EconomyDeath& d : e.dead){
                 int rank = EconomyRank(d.kills);

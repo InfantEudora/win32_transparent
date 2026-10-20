@@ -979,7 +979,7 @@ float ApplicationChasm::DrawBuildBar(float s){
                 const char* of = (d.cause == NEEDS_DIED_THIRST) ? "thirst" : (d.cause == NEEDS_DIED_COLD) ? "cold" : "hunger";
                 int more = (int)(n - deaths_seen) - 1;
                 //Bitten (zombies_plan.md, step 2): killed, not died of.
-                //...and his rank and kills (ranks_plan.md): "Jelle De Wit, Veteran, 2 kills, was killed by a zombie".
+                //...and his rank and kills (ranks_plan.md): "Jelle De Wit, Expert, 2 kills, was killed by a zombie".
                 std::string fame = EconomyKillsTold(d.kills);
                 death_shown = EconomyDeathName(d) + fame + (fame.empty() ? "" : ",")
                               + ((d.cause == NEEDS_DIED_ZOMBIE) ? std::string(" was killed by a zombie") : " died of " + std::string(of))

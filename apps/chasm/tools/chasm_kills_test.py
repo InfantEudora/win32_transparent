@@ -13,9 +13,9 @@ bow and by hand, a zombie's kill is whoever's hit took the last of its health - 
     ranks       an archer kills zombies one at a time: a rank a kill as the table has them, each told in the journal,
                 his card saying it by his name
     given       someone put down with kills: his rank at once, counted in the history's kills_from, and on from there
-    pace        a Champion and an archer with no rank, the same archery, through a wave: the Champion's turns shorter
+    pace        a Master and an archer with no rank, the same archery, through a wave: the Master's turns shorter
                 by his rank's pace, on average (each turn is jittered)
-    one_shot    a Champion through a wave: hits that kill outright, nobody shooting at a zombie one of them will fell,
+    one_shot    a Master through a wave: hits that kill outright, nobody shooting at a zombie one of them will fell,
                 and one saved and loaded in the air
     replay      a fight with a ranked archer recorded, then replayed twice: the two traces equal on every tick, the
                 kills where the run left them
@@ -41,7 +41,7 @@ import chasm_guard_test as g
 
 ZOMBIE_HEALTH = 60                  #ZOMBIE_HEALTH
 ARROW_HIT = 20                      #ARROW_HIT
-RANKS = ["", "Blooded", "Veteran", "Champion"]     #EconomyRankName, by rank
+RANKS = ["", "Novice", "Expert", "Master"]     #EconomyRankName, by rank
 RANK_KILLS = [0, 1, 2, 3]           #rank_kills (Economy.cpp)
 RANK_PACE = [1.0, 1.05, 1.1, 1.15]  #rank_pace
 
@@ -320,8 +320,8 @@ def case_pace():
     want = plain / RANK_PACE[3]
     hand_plain = hand_fight(0)
     hand_champ = hand_fight(RANK_KILLS[3])
-    ok, detail = tally("first turn of the bow %d ticks with no rank, %d as a Champion (the pace says %.1f); a fight by "
-                       "hand %d ticks with no rank, %d as a Champion" % (plain, champ, want, hand_plain, hand_champ))
+    ok, detail = tally("first turn of the bow %d ticks with no rank, %d as a Master (the pace says %.1f); a fight by "
+                       "hand %d ticks with no rank, %d as a Master" % (plain, champ, want, hand_plain, hand_champ))
     return ok and abs(champ - want) <= 1.0 and hand_champ < hand_plain, detail
 
 
@@ -386,7 +386,7 @@ def trace():
 
 def case_replay():
     g.fresh(False)
-    #A Veteran: his pace and his hits that kill outright in the replay too.
+    #A Expert: his pace and his hits that kill outright in the replay too.
     posted(OPEN, kills=RANK_KILLS[2], **ARCHER)
     posted((OPEN[0], OPEN[1] + 2.0), **FIGHTER)
     #A recording of its own from here: any running one stopped first (the demo's always-on recording).

@@ -5,7 +5,7 @@ kill, by bow and by hand, and enough kills earn a RANK. Nothing is built yet.
 
 The colony is about twelve people and nobody arrives (`zombies_plan.md`: won by placement, not by trading lives), so
 a rank is not a ladder of bigger numbers. It marks someone who has been through the fights, and makes them worth
-keeping alive. The rank from kills is They Are Billions' veterancy, where units rise by what they have killed.
+keeping alive. The rank from kills is They Are Billions' Expertcy, where units rise by what they have killed.
 
 ## Decided (the user, 2026-10-19)
 
@@ -18,10 +18,10 @@ keeping alive. The rank from kills is They Are Billions' veterancy, where units 
   ONE-SHOT KILL. The perks talked about (below, "Later") are the user's to think over.
   - **The speed is the pace of fighting**: shots and blows by hand come quicker. Walking stays as it is.
   - **The one-shot kill is an arrow's**, not a blow's.
-- **The ranks are Blooded, Veteran and Champion.** Not an archer's names alone, since kills by hand count too.
+- **The ranks are Novice, Expert and Master.** Not an archer's names alone, since kills by hand count too.
 - **A kill a rank for now**, to test them faster - but each rank keeps a count of its own, so any one can be given a
   different requirement later.
-- **The old veteran teaching at the range** belongs with old age: `lifeline_plan.md`, "Old".
+- **The old Expert teaching at the range** belongs with old age: `lifeline_plan.md`, "Old".
 
 ## Proposed
 
@@ -73,8 +73,8 @@ keeping alive. The rank from kills is They Are Billions' veterancy, where units 
 
 - **The person's card**: the rank by the name, and a line for the kills - "Kills 12: 9 by bow, 3 by hand".
 - **Rising a rank** is an event, `EVENT_RANKED` (appended), journaled and on the notice line ("JELLE IS A
-  VETERAN - 15 KILLS").
-- **A death**: the pop-up and the journal name the rank and the kills - "Jelle, Veteran, 15 kills, was killed by a
+  Expert - 15 KILLS").
+- **A death**: the pop-up and the journal name the rank and the kills - "Jelle, Expert, 15 kills, was killed by a
   zombie".
 - **Debug and tools**: the People panel's "Put an archer down" gets a kills slider, through its command as the
   archery slider is, so replays hold; `add_person` takes `kills`; `chasm_economy` lists kills and rank.
@@ -85,13 +85,13 @@ First guesses. Tuning, not rules: each becomes a named constant.
 
 | What | Value |
 |---|---|
-| The ranks | Blooded, Veteran and Champion, at 1, 2 and 3 kills (`rank_kills`, Economy.cpp) - **a kill a rank for now**, the user's (2026-10-19), to test with; each rank has its own entry, so any one can be set apart later. First proposed: 5, 15 and 40 |
+| The ranks | Novice, Expert and Master, at 1, 2 and 3 kills (`rank_kills`, Economy.cpp) - **a kill a rank for now**, the user's (2026-10-19), to test with; each rank has its own entry, so any one can be set apart later. First proposed: 5, 15 and 40 |
 | Pace, by rank | 5%, 10%, 15% quicker (`rank_pace`): a master archer's 3.5 s turn becomes about 3.3, 3.2 and 3.0 s |
 | A one-shot kill, of a hit, by rank | 10%, 20%, 30% (`rank_one_shot`) |
 
 Arithmetic from the current tuning: three hits fell a zombie (`ARROW_HIT` of `ZOMBIE_HEALTH`), so with the one-shot
 chances a ranked archer needs about 2.7, 2.4 and 2.2 hits of their own. At a kill a rank, anyone who kills three
-zombies is a Champion. At the first proposal's 5, 15 and 40, with waves of tens two or three a year
+zombies is a Master. At the first proposal's 5, 15 and 40, with waves of tens two or three a year
 (`gameplay_plan.md`), three archers sharing some 20 to 30 kills a year would reach the first rank within the first
 year, the second in the second or third, and the third would be a lifetime's.
 
@@ -112,12 +112,12 @@ number, and each comes from one of the games Chasm draws on.
 - **Choosing a target.** A beginner shoots the nearest zombie; someone with a rank shoots the most dangerous - the
   one biting a person, or breaking a gate.
 - **Nerve.** With the alarm and fleeing (`zombies_plan.md`, step 5), a beginner posted alone may break and run when
-  a zombie comes near; a veteran holds. Who goes on the far tower becomes a choice.
+  a zombie comes near; a Expert holds. Who goes on the far tower becomes a choice.
 - **Steadying those near.** Archers within a few plots of the highest rank shoot quicker or tighter, so where they
   stand matters - placement again.
 - **A choice at a rank** (Bad North, where a commander takes a path as they rise): a longbow, seeing and shooting
   further from a tower, or quick hands, shooting faster.
-- **The old veteran teaches** - agreed, in `lifeline_plan.md`, "Old".
+- **The old Expert teaches** - agreed, in `lifeline_plan.md`, "Old".
 - **A mark on the figure** for a rank - a feather, a sash - once there is a look for it.
 
 ## As built: step 1, kills (2026-10-19)
@@ -172,7 +172,7 @@ As proposed, with one change, marked.
 The user's, the same day: **a kill a rank for now**, to test with, each rank's count its own so any one can be set
 apart later. As proposed otherwise, with two changes, marked.
 
-- **The ranks**: `RANK_NONE` .. `RANK_CHAMPION` (`Economy.h`, RANKS); the tables `rank_kills`, `rank_pace` and
+- **The ranks**: `RANK_NONE` .. `RANK_Master` (`Economy.h`, RANKS); the tables `rank_kills`, `rank_pace` and
   `rank_one_shot` in `Economy.cpp`, an entry a rank; `EconomyRank` (the highest rank the kills reach),
   `EconomyRankName`, `EconomyRankKills`, `EconomyRankPace`, `EconomyRankOneShot`. Worked out from the kills every
   time, never kept: nothing new is saved for a person, and a rank cannot be lost.
@@ -186,12 +186,12 @@ apart later. As proposed otherwise, with two changes, marked.
   hashed only when set.
 - **Rising**: `EVENT_RANKED` (26, "ranked"), `person` and the new rank in `amount`, made by `ZombieKilled` when a
   kill takes the living to a new rank - never for the dead, though their rank is read from their kills all the same.
-  Journaled ("Jelle De Wit rose to Veteran"), on the notice line ("Jelle De Wit has risen to Veteran"), with the
+  Journaled ("Jelle De Wit rose to Expert"), on the notice line ("Jelle De Wit has risen to Expert"), with the
   notice chime (a cue row `ranked` in `assets/cues/chasm.json`).
-- **Shown**: the card's subtitle starts with the rank ("Veteran, age 24 - Guard"); its kills line says what the next
-  rank takes ("Kills 2, by bow - Champion at 3"). A death: `EconomyKillsTold` - the pop-up "Jelle De Wit, Veteran,
+- **Shown**: the card's subtitle starts with the rank ("Expert, age 24 - Guard"); its kills line says what the next
+  rank takes ("Kills 2, by bow - Master at 3"). A death: `EconomyKillsTold` - the pop-up "Jelle De Wit, Expert,
   2 kills, of thirst" and the red line the same. **Changed from the plan**: the journal has only the rank, before the
-  name - "Veteran Jelle De Wit died of thirst" - since its column cut the longer line off before the cause.
+  name - "Expert Jelle De Wit died of thirst" - since its column cut the longer line off before the cause.
   `chasm_economy`: `rank` beside `kills`, on a person and on the dead; `chasm_zombie`: `fells` on an arrow.
 - **Kills given by the debug tools**: `add_person`'s `kills` (by bow, 0-31) and a kills slider beside the People
   panel's "Put an archer down" (and X), the rank they make shown beside it. They ride CHASM_CMD_PERSON's packed value,
@@ -199,20 +199,20 @@ apart later. As proposed otherwise, with two changes, marked.
   history's new `kills_from` - saved and hashed only when above 0 - so the statistics' check still holds: the zombies
   killed and the kills given are everyone's kills.
 - **Checked** (debug, a copy on port 8775): `tools/chasm_kills_test.py`, ten cases now, all pass -
-  - `ranks`: three zombies one at a time - after each, 1 kill Blooded, 2 Veteran, 3 Champion; the journal's three
-    lines in order; his card "Champion, age 24 - No job / posted";
-  - `given`: put down with 2 kills, a Veteran at once; one zombie more, a Champion, one journal line; kills_from 2;
+  - `ranks`: three zombies one at a time - after each, 1 kill Novice, 2 Expert, 3 Master; the journal's three
+    lines in order; his card "Master, age 24 - No job / posted";
+  - `given`: put down with 2 kills, a Expert at once; one zombie more, a Master, one journal line; kills_from 2;
   - `pace`: the first turn of the bow on the same map, the same tick and so the same jitter - 194 ticks with no rank,
-    169 as a Champion, where 194 / 1.15 is 168.7; a fight by hand 272 ticks against 257;
-  - `one_shot`: a Champion through eight zombies one at a time - six hits flagged to kill outright, two of them on a
+    169 as a Master, where 194 / 1.15 is 168.7; a fight by hand 272 ticks against 257;
+  - `one_shot`: a Master through eight zombies one at a time - six hits flagged to kill outright, two of them on a
     zombie at full health; no arrow loosed at a zombie one of them was already flying at; one saved and loaded in
     the air, still flagged;
-  - `replay` now with a Veteran: two replays equal on all 1,501 ticks, nothing changed between ticks;
+  - `replay` now with a Expert: two replays equal on all 1,501 ticks, nothing changed between ticks;
   - the five step 1 cases as before.
   - The fallen test's six cases, the guard test's seven and the wall test's eight pass. The guard test's waves end
     sooner, as they should with guards rising by their kills: 1,575 ticks (1,825 before), the drink case 1,825 (1,925).
   - `autosave_1.json` loaded and saved again at once: the same but for the autosave's `meta`.
-  - Screenshots: the card and the notice line as a Blooded archer rose to Veteran; the death pop-up and the red
-    line for a Veteran; the journal's line for him.
+  - Screenshots: the card and the notice line as a Novice archer rose to Expert; the death pop-up and the red
+    line for a Expert; the journal's line for him.
 - **Not checked**: the People panel's slider by hand (ImGui cannot be driven from the tools; `add_person` rides the
   same command); the notice chime by ear; a release build.

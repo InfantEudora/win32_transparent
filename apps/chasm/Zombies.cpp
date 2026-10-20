@@ -251,14 +251,14 @@ void StopZombie(EconomyZombie& m){
     m.along = 0.0f;
 }
 
-//A tick of its walk - Economy::Walk's, with no load to carry.
+//A tick of its walk - Economy::Walk's, with no load to carry, and slowed behind one ahead of it (SPACING, following).
 void WalkZombie(EconomyZombie& m, float dt){
     float left = dt;
     while (m.seg < (int)m.route.size() - 1 && left > 0.0f){
         vec2 a = m.route[m.seg];
         vec2 b = m.route[m.seg + 1];
         float len = (b - a).length();
-        float v = std::max(0.05f,m.speed[m.seg]);
+        float v = std::max(0.05f,m.speed[m.seg] * m.crowd);
         float need = (len - m.along) / v;
         if (need <= left){
             left -= need;
@@ -321,11 +321,12 @@ bool Economy::SpawnZombies(int plot, int count, const ZoneState& z, std::string*
     if (const char* bad = EconomyDropRefusal(w,z,plot)){
         return refuse(bad);
     }
-    //Out from the plot's point along the golden angle's spiral, so no two stand on one spot.
+    //Out from the plot's point along the golden angle's spiral, so no two stand on one spot - the first half a turn
+    //out too, or it and the second would start inside each other.
     vec2 at = w.grid->fine.pos[plot];
     int n = std::min(count,(int)ZOMBIE_SPAWN_MOST);
     for (int i = 0; i < n; i++){
-        float r = ZOMBIE_SPAWN_SPREAD * std::sqrt((float)i);
+        float r = ZOMBIE_SPAWN_SPREAD * std::sqrt((float)i + 0.5f);
         float a = 2.3999632f * (float)i;
         EconomyZombie m;
         m.id = state.next_zombie++;
@@ -356,29 +357,56 @@ void Economy::TickZombies(const ZoneState& z, Walkers& walkers, uint64_t tick, f
         if ((tick + m.id) % every == 0 || f_replan){
             ZombieLook(m,z,walkers,f_replan);
         }
+    }
+    //A CROWD KEEPS ITS ROOM: each its place, from whom they are all after and where they all stand - then they walk.
+    ZombiePlaces(z);
+    for (EconomyZombie& m : state.zombies){
         WalkZombie(m,dt);
     }
     state.version++;    //they move every tick - the view redraws them
 }
 
+namespace {
+
+//A CROWD KEEPS ITS ROOM: how far out ring `ring` of the places round a person is - the first where it bites from.
+float RingRadius(int ring){
+    return ZOMBIE_REACH + ZOMBIE_SLOT_GAP * (float)std::max(0,ring);
+}
+
+}
+
 bool Economy::ZombieLook(EconomyZombie& m, const ZoneState& z, Walkers& walkers, bool f_replan){
-    //Whom it may go for: whom it can get at (EconomyReachable), nearest first by the straight line; on a tie the lower id, as
-    //the people are kept in id order.
+    /*
+        Whom it may go for: whom it can get at (EconomyReachable), by the straight line - and by the crowd there (A CROWD
+        KEEPS ITS ROOM): ZOMBIE_CROWDED for every zombie after him nearer him than it is, the queue it would stand at the
+        back of, and its own target ZOMBIE_KEEP_TARGET nearer. The best few tried until one can be walked to; on a tie the
+        lower id, as the people are kept in id order.
+    */
     std::vector<std::pair<float,size_t>> near;
     for (size_t i = 0; i < state.workers.size(); i++){
         const EconomyWorker& k = state.workers[i];
         if (!CanGetAt(k)){
             continue;
         }
-        near.push_back(std::make_pair((k.pos - m.pos).length(),i));
+        float d = (k.pos - m.pos).length();
+        int ahead = 0;
+        for (const EconomyZombie& o : state.zombies){
+            if (&o != &m && o.target == k.id){
+                float od = (k.pos - o.pos).length();
+                ahead += (od < d || (od == d && o.id < m.id)) ? 1 : 0;
+            }
+        }
+        float score = d + ZOMBIE_CROWDED * (float)ahead - ((k.id == m.target) ? ZOMBIE_KEEP_TARGET : 0.0f);
+        near.push_back(std::make_pair(score,i));
     }
     size_t tries = std::min(near.size(),(size_t)ZOMBIE_TRIES);
     std::partial_sort(near.begin(),near.begin() + tries,near.end());
     for (size_t t = 0; t < tries; t++){
         const EconomyWorker& k = state.workers[near[t].second];
-        //Still after him, and its walk still ends by him - or at what it is breaking on its way to him: on as it was.
+        //Still after him, and its walk still ends by him - at its place round him, which follows him (ZombiePlaces) - or
+        //at what it is breaking on its way to him: on as it was.
         if (k.id == m.target && !f_replan && !m.route.empty()
-            && ((m.route.back() - k.pos).length() <= ZOMBIE_REACH + ZOMBIE_REPLAN || m.hit)){
+            && ((m.route.back() - k.pos).length() <= RingRadius(m.ring) + ZOMBIE_REPLAN || m.hit)){
             m.f_lost = false;
             return true;
         }
@@ -414,6 +442,8 @@ bool Economy::ZombieRouteTo(EconomyZombie& m, const ZoneState& z, Walkers& walke
     route.push_back(m.pos);
     uint8_t hit = 0;
     uint32_t hit_id = 0;
+    vec2 stand;
+    vec2 hit_from;
     //What stops it (WALLS BREAK, below): a standing palisade plot, a shut gate, a building's door not yet breached.
     auto stops = [&](int v){
         return ZoneWallStands(z,v) || ZoneGateShut(z,v)
@@ -455,7 +485,6 @@ bool Economy::ZombieRouteTo(EconomyZombie& m, const ZoneState& z, Walkers& walke
             goes in at - ends its walk there, to hit it: at a palisade or a gate ZOMBIE_HIT_STAND off its plot's point,
             at a house's wall half the edge out and a little more. Broken, everyone looks again, and walks on through.
         */
-        vec2 stand;
         size_t end = places.size();
         for (size_t i = 1; i < places.size() && !hit; i++){
             int a = places[i - 1].plot;
@@ -477,6 +506,7 @@ bool Economy::ZombieRouteTo(EconomyZombie& m, const ZoneState& z, Walkers& walke
                 float l = std::max(1e-3f,(pa - pb).length());
                 float r = (hit == HARM_DOOR) ? 0.5f * l + ZOMBIE_DOOR_STAND : ZOMBIE_HIT_STAND;
                 stand = pb + (pa - pb) * std::min(1.0f,r / l);
+                hit_from = pa;
             }
         }
         places.resize(end);
@@ -515,6 +545,8 @@ bool Economy::ZombieRouteTo(EconomyZombie& m, const ZoneState& z, Walkers& walke
     }
     m.hit = hit;
     m.hit_id = hit_id;
+    m.aim = hit ? stand : vec2();
+    m.from = hit ? hit_from : vec2();
     float cut = hit ? 0.0f : ZOMBIE_REACH;      //at what it hits, right up to it
     while (route.size() >= 2 && cut > 0.0f){
         vec2 a = route[route.size() - 2];
@@ -534,6 +566,260 @@ bool Economy::ZombieRouteTo(EconomyZombie& m, const ZoneState& z, Walkers& walke
     m.seg = 0;
     m.along = 0.0f;
     return true;
+}
+
+namespace {
+
+//A place (A CROWD KEEPS ITS ROOM): where, its ring or row, whether it is to be had, and which of its group took it.
+struct Place{
+    vec2 at;
+    int ring = 0;
+    int ok = -1;            //-1 not yet asked
+    int taken = -1;
+};
+
+//...a zombie and a place, what the one costs the other.
+struct PlaceCost{
+    float cost;
+    uint32_t id;
+    int place;
+    int member;
+};
+
+//The places of ring `ring` round `centre`, evenly round it - every other ring half a place on, so that none lines up
+//with the ring inside it.
+void RingPlaces(const vec2& centre, int ring, std::vector<Place>& out){
+    float r = RingRadius(ring);
+    int n = std::max(1,(int)(6.2831853f * r / ZOMBIE_SLOT_GAP));
+    for (int i = 0; i < n; i++){
+        float a = 6.2831853f * ((float)i + ((ring & 1) ? 0.5f : 0.0f)) / (float)n;
+        Place p;
+        p.at = centre + vec2(std::cos(a),std::sin(a)) * r;
+        p.ring = ring;
+        out.push_back(p);
+    }
+}
+
+//...and of row `row` at what it breaks: across `back` - from it toward where they came from - and `row` places further
+//back than where the first stands, ZOMBIE_HITTERS in the first and one more every row behind, so that the rows stagger.
+void RowPlaces(const vec2& aim, const vec2& back, int row, std::vector<Place>& out){
+    vec2 across(-back.y,back.x);
+    int n = ZOMBIE_HITTERS + row;
+    for (int i = 0; i < n; i++){
+        Place p;
+        p.at = aim + back * (ZOMBIE_SLOT_GAP * (float)row) + across * (ZOMBIE_SLOT_GAP * ((float)i - 0.5f * (float)(n - 1)));
+        p.ring = row;
+        out.push_back(p);
+    }
+}
+
+/*
+    Its walk ended at its place `at`, wherever its route lets it go straight there: its last leg's end moved - that leg
+    from where it is now, if it is on it, so it is moved nowhere - and the turn before that cut where it can go straight
+    on from the leg before, not round by his plot's point beyond him. Stood, it walks there once it is ZOMBIE_SLOT_SLACK
+    off. `end_plot`, a plot the walk may end in though it stops a walker: the palisade it hits.
+*/
+void EndAt(EconomyZombie& m, const vec2& at, const ChasmWorld& w, const ZoneState& z, int end_plot){
+    int last = (int)m.route.size() - 1;
+    if (last < 0 || (m.route[last] - at).length() < 1e-4f){
+        return;
+    }
+    auto clear = [&](const vec2& a){
+        GridPick p = w.picker->Pick(a);
+        return p.f_hit && p.plot >= 0 && EconomyStraightClear(w,z,a,at,p.plot,end_plot);
+    };
+    if (m.seg >= last){
+        if ((at - m.pos).length() >= ZOMBIE_SLOT_SLACK && clear(m.pos)){
+            m.route.assign(1,m.pos);
+            m.route.push_back(at);
+            m.speed.assign(1,ECONOMY_WORKER_SPEED * ZOMBIE_PACE);
+            m.seg = 0;
+            m.along = 0.0f;
+        }
+        return;
+    }
+    if (m.seg >= last - 2){
+        m.route[m.seg] = m.pos;
+        m.along = 0.0f;
+    }
+    if (last >= 2 && m.seg <= last - 2 && clear(m.route[last - 2])){
+        m.route.erase(m.route.begin() + (last - 1));
+        m.speed.erase(m.speed.begin() + (last - 1));
+        m.route[last - 1] = at;
+        return;
+    }
+    if (clear(m.route[last - 1])){
+        m.route[last] = at;
+    }
+}
+
+}
+
+/*
+    A CROWD KEEPS ITS ROOM (Economy.h), a tick of it: every zombie a place of its own, handed out afresh from where they
+    all stand now, so a crowd reshapes as its people move and its zombies fall. Round whom it is after, rings of them,
+    from where he stands; at what it breaks, rows across the way its lowest id came. Each target's places go to its
+    zombies cheapest first - the way there, an inner ring before an outer, the one held kept - and are had only where a
+    walk could take it from him (or from the plot it hits from), on open ground, nearer nobody else than its reach, and
+    not on a place another target's zombies took this tick: people first, then what is broken, each in id order. With
+    none, a zombie keeps the end its walk was planned to.
+*/
+void Economy::ZombiePlaces(const ZoneState& z){
+    const ChasmWorld& w = *state.world;
+    std::vector<int> was(state.zombies.size());
+    for (size_t i = 0; i < state.zombies.size(); i++){
+        was[i] = state.zombies[i].ring;
+        state.zombies[i].ring = -1;
+    }
+    //Whom each is after or what it breaks, [HARM_* << 32 | id, its index] - people (0) first, everyone in id order.
+    std::vector<std::pair<uint64_t,size_t>> groups;
+    for (size_t i = 0; i < state.zombies.size(); i++){
+        const EconomyZombie& m = state.zombies[i];
+        if (m.hit){
+            groups.emplace_back(((uint64_t)m.hit << 32) | m.hit_id,i);
+        }else if (m.target){
+            groups.emplace_back((uint64_t)m.target,i);
+        }
+    }
+    if (groups.empty()){
+        return;
+    }
+    std::sort(groups.begin(),groups.end());
+    //Where everyone out of doors on the ground stands, whom no place may be on.
+    std::vector<std::pair<uint32_t,vec2>> people;
+    for (const EconomyWorker& k : state.workers){
+        if (EconomyReachable(k,now)){
+            people.emplace_back(k.id,k.pos);
+        }
+    }
+    std::vector<vec2> taken;        //this tick's places, every target's
+    std::vector<Place> places;
+    std::vector<PlaceCost> costs;
+    std::vector<size_t> members;
+    for (size_t g = 0; g < groups.size(); ){
+        uint64_t key = groups[g].first;
+        members.clear();
+        for (; g < groups.size() && groups[g].first == key; g++){
+            members.push_back(groups[g].second);
+        }
+        //What it is laid out round, and what a walk to a place is tested from.
+        bool f_rows = (key >> 32) != 0;
+        uint32_t person = f_rows ? 0 : (uint32_t)key;
+        int end_plot = -1;
+        vec2 base;
+        vec2 aim;
+        vec2 back;
+        if (!f_rows){
+            const EconomyWorker* k = NULL;
+            for (const EconomyWorker& o : state.workers){
+                k = (o.id == person) ? &o : k;
+            }
+            if (!k || !CanGetAt(*k)){
+                continue;
+            }
+            base = k->pos;
+        }else{
+            const EconomyZombie& f = state.zombies[members[0]];
+            back = f.from - f.aim;
+            if (back.length() < 1e-3f){
+                back = vec2() - EconomyZombieFacing(f);
+            }
+            if (back.length() < 1e-3f){
+                continue;
+            }
+            back = back * (1.0f / back.length());
+            aim = f.aim;
+            base = f.from;
+            int what = (int)(key >> 32);
+            end_plot = (what == HARM_WALL || what == HARM_GATE) ? (int)(uint32_t)key : -1;
+        }
+        GridPick here = w.picker->Pick(base);
+        if (!here.f_hit || here.plot < 0){
+            continue;
+        }
+        auto open = [&](const Place& p){
+            for (const std::pair<uint32_t,vec2>& o : people){
+                if (o.first != person && (o.second - p.at).length() < ZOMBIE_REACH){
+                    return false;
+                }
+            }
+            for (const vec2& t : taken){
+                if ((t - p.at).length() < 0.9f * ZOMBIE_SLOT_GAP){
+                    return false;
+                }
+            }
+            return EconomyStraightClear(w,z,base,p.at,here.plot,end_plot);
+        };
+        places.clear();
+        std::vector<int> got(members.size(),-1);
+        size_t left = members.size();
+        size_t first = 0;           //the first ring's places: as many as are kept to spare to choose from
+        int rings = 0;
+        while (left > 0 && rings < ZOMBIE_SLOT_RINGS){
+            //Rings added until there are places enough to choose from - the first ring's worth over - then handed out.
+            size_t free = 0;
+            do{
+                if (f_rows){
+                    RowPlaces(aim,back,rings,places);
+                }else{
+                    RingPlaces(base,rings,places);
+                }
+                first = (rings == 0) ? places.size() : first;
+                rings++;
+                free = 0;
+                for (const Place& p : places){
+                    free += (p.taken < 0 && p.ok != 0) ? 1 : 0;
+                }
+            }while (rings < ZOMBIE_SLOT_RINGS && free < left + first);
+            costs.clear();
+            for (size_t a = 0; a < members.size(); a++){
+                if (got[a] >= 0){
+                    continue;
+                }
+                const EconomyZombie& m = state.zombies[members[a]];
+                for (size_t b = 0; b < places.size(); b++){
+                    const Place& p = places[b];
+                    if (p.taken >= 0 || p.ok == 0){
+                        continue;
+                    }
+                    bool f_held = was[members[a]] == p.ring && (m.route.back() - p.at).length() < 0.5f * ZOMBIE_SLOT_GAP;
+                    float cost = (m.pos - p.at).length() + ZOMBIE_RING_COST * (float)p.ring - (f_held ? ZOMBIE_SLOT_KEEP : 0.0f);
+                    costs.push_back(PlaceCost{cost,m.id,(int)b,(int)a});
+                }
+            }
+            std::sort(costs.begin(),costs.end(),[](const PlaceCost& x, const PlaceCost& y){
+                if (x.cost != y.cost){
+                    return x.cost < y.cost;
+                }
+                return (x.id != y.id) ? x.id < y.id : x.place < y.place;
+            });
+            for (const PlaceCost& c : costs){
+                Place& p = places[c.place];
+                if (got[c.member] >= 0 || p.taken >= 0){
+                    continue;
+                }
+                if (p.ok < 0){
+                    p.ok = open(p) ? 1 : 0;
+                }
+                if (p.ok == 0){
+                    continue;
+                }
+                p.taken = c.member;
+                got[c.member] = c.place;
+                left--;
+            }
+        }
+        for (size_t a = 0; a < members.size(); a++){
+            if (got[a] < 0){
+                continue;
+            }
+            EconomyZombie& m = state.zombies[members[a]];
+            const Place& p = places[got[a]];
+            m.ring = (int8_t)p.ring;
+            EndAt(m,p.at,w,z,end_plot);
+            taken.push_back(p.at);
+        }
+    }
 }
 
 /*
