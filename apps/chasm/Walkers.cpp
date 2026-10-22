@@ -306,8 +306,20 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int w
     if (t.Mountain(a) || t.Mountain(b)){
         return false;   //the north mountain, which nothing crosses (biomes_plan.md)
     }
-    //Too steep to walk: past a rise of WALKER_STEEPEST over the edge's run (step 2's relief).
-    if (std::fabs(t.ground[b] - t.ground[a]) > WALKER_STEEPEST * EdgeLength(a,b)){
+    /*
+        TERRACES (terraces_plan.md stage 2): a retaining wall is crossed only as a stair, between two roads
+        (ZoneTerraceStep) - and a zombie keeps off a terrace altogether, for now (the user's, 2026-10-21).
+    */
+    if (who == WALK_WHO_ZOMBIE && ZoneTerraceStands(z,b) && b != from){
+        return false;
+    }
+    int step = ZoneTerraceStep(*world,z,a,b);
+    if (step == ZONE_STEP_WALL){
+        return false;
+    }
+    //Too steep to walk: past a rise of WALKER_STEEPEST over the edge's run (step 2's relief) - a terrace's top its ground.
+    if (step != ZONE_STEP_STAIR
+        && std::fabs(ZoneGroundAt(*world,z,b) - ZoneGroundAt(*world,z,a)) > WALKER_STEEPEST * EdgeLength(a,b)){
         return false;
     }
     //A house is walked into only where the walk ends, and out of only where it starts. A winch is
@@ -404,10 +416,13 @@ float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
     }else if (world->terrain->biome[a] == TERRAIN_BIOME_SWAMP && world->terrain->biome[b] == TERRAIN_BIOME_SWAMP){
         speed = WALKER_SPEED_SWAMP;     //off a road the swamp is mud
     }
+    //A stair up a terrace's wall (terraces_plan.md stage 2), at a stair's pace.
+    if (ZoneTerraceStep(*world,z,a,b) == ZONE_STEP_STAIR){
+        return WALKER_SPEED_STAIR;
+    }
     //Slower up and down a slope, by how steep it is - never faster, so A*'s estimate (the straight
     //line at road speed) still never overestimates.
-    const Terrain& t = *world->terrain;
-    float grade = std::fabs(t.ground[b] - t.ground[a]) / std::max(1e-3f,EdgeLength(a,b));
+    float grade = std::fabs(ZoneGroundAt(*world,z,b) - ZoneGroundAt(*world,z,a)) / std::max(1e-3f,EdgeLength(a,b));
     return speed / (1.0f + WALKER_SLOPE_COST * grade);
 }
 

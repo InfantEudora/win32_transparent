@@ -31,6 +31,15 @@ static Debugger* debug = new Debugger("ChasmHearth",DEBUG_ALL);
 #define HEARTH_WIND_LEAN    0.75f   //...and leans this much more over a life for each unit a second of wind (LeanSmoke)...
 #define HEARTH_LEAN_MOST    5.0f    //...up to this, so the big gust bends a column over rather than scattering it
 #define HEARTH_LEAN_STEP    0.03f   //a column's lean is moved when it has changed by this much
+//A steam collector's plume (steam_plan.md): a chimney's column bigger, rising higher, so it reads over the mist below.
+#define STEAM_PUFFS         6
+#define STEAM_LIFE          5.5f
+#define STEAM_RISE          5.0f
+#define STEAM_GROW          0.6f
+#define STEAM_SIZE          0.55f
+#define STEAM_DRIFT_X       0.6f
+#define STEAM_DRIFT_Z       0.35f
+#define STEAM_WANDER        0.18f
 
 //RENDER THREAD, from BuildScene: the smoke's puff and the two materials - the palette moving as LIFE, and unlit.
 void ApplicationChasm::BuildHearthScene(){
@@ -39,6 +48,13 @@ void ApplicationChasm::BuildHearthScene(){
     hearth_puff_mesh = new Mesh();
     hearth_puff_mesh->SetMeshData(verts.data(),(int)verts.size());
     hearth_puff_mesh->Retain();     //held for good - see object_setmesh_releases_old
+    //...and the steam collectors' plumes, the same puff in the falls' white foam (steam_plan.md) - the mist's own colours
+    //are greys, and the plume was lost against the mist below.
+    verts.clear();
+    BuildPuffMesh(31u,PAL_FOAM,PAL_EFFECTS,verts);
+    steam_puff_mesh = new Mesh();
+    steam_puff_mesh->SetMeshData(verts.data(),(int)verts.size());
+    steam_puff_mesh->Retain();
     Material* palette = renderer->GetMaterial(palette_material);
     if (!palette){
         debug->Err("No palette material - no smoke or lit windows\n");
@@ -229,6 +245,87 @@ void ApplicationChasm::SetSmoke(Object* o, const std::vector<vec3>& tops){
     SmokeMotion(tops,NULL,motion,pad);
     o->SetInstances(std::move(puffs));
     o->SetInstanceMotion(std::move(motion),pad);
+}
+
+/*
+    THE STEAM COLLECTORS' PLUMES (steam_plan.md): a white column from each hood while its collector gathers - worked by
+    its carrier, not stopped, not full - so one at work is told at a glance from one standing idle. The chimneys' puffs
+    and motion, bigger and higher (STEAM_*), in a white puff, rebuilt only when WHICH hoods plume changes, so a column is not started
+    again with every unit gathered. They do not lean in the wind yet (LeanSmoke leans the chimneys'). View only.
+*/
+void ApplicationChasm::UploadSteamPlumes(){
+    if (!steam_puff_mesh || smoke_material < 0){
+        return;
+    }
+    if (!steam_plumes){
+        world_scene->AtTickBoundary([&](){
+            steam_plumes = new Object();
+            steam_plumes->name = "Steam plumes";
+            steam_plumes->SetMesh(steam_puff_mesh);
+            steam_plumes->SetMaterialSlot(0,smoke_material);
+            steam_plumes->SetVisualOnly(true);
+            steam_plumes->SetPickability(false);
+            steam_plumes->SetCastsShadow(false);
+            steam_plumes->SetInstances(std::vector<fmat4>());
+            steam_plumes->SetVisibility(false);
+            world_scene->AddObject(steam_plumes);
+        });
+    }
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const ZoneState> zs = GetZones();
+    std::shared_ptr<const EconomyState> es = GetEconomy();
+    bool f_ready = w && zs && es && zs->world == w && es->world == w;
+    std::vector<int> plots;
+    if (f_ready){
+        const ZoneState& z = *zs;
+        const EconomyState& e = *es;
+        std::vector<uint8_t> worked(z.buildings.size(),0);
+        for (const EconomyWorker& k : e.workers){
+            if (k.building && k.building < worked.size() && k.post < 0 && k.job == WORKER_JOB_STEAM){
+                worked[k.building] = 1;
+            }
+        }
+        for (size_t v = 0; v < z.building.size(); v++){
+            uint32_t id = z.building[v];
+            if (!id || id >= z.buildings.size() || z.buildings[id].kind != ZONE_KIND_STEAM || !worked[id]
+                || z.buildings[id].f_stopped || z.standing[v] == 0){
+                continue;
+            }
+            int room = (id < e.water_room.size()) ? e.water_room[id] : 0;
+            if (id < e.stock.size() && e.stock[id][GOOD_STEAM] >= room){
+                continue;       //full: it gathers nothing until its carrier comes
+            }
+            plots.push_back((int)v);
+        }
+    }
+    uint64_t key = f_ready ? (uint64_t)(uintptr_t)w.get() * 0x9E3779B97F4A7C15ull : 0;
+    for (int v : plots){
+        key = (key ^ (uint64_t)v) * 0x100000001B3ull;
+    }
+    if (key == steam_built_key){
+        return;
+    }
+    steam_built_key = key;
+    std::vector<vec3> tops;
+    for (int v : plots){
+        vec3 top;
+        if (SteamHoodTop(*w,v,top)){
+            tops.push_back(top);
+        }
+    }
+    std::vector<fmat4> puffs;
+    std::vector<vec4> motion;
+    for (const vec3& top : tops){
+        float offset = (float)(MeshHash((uint32_t)std::lround(top.x * 16.0f),(uint32_t)std::lround(top.z * 16.0f)) % 1000) / 1000.0f;
+        for (int i = 0; i < STEAM_PUFFS; i++){
+            puffs.push_back(Object::ComposeTransformScale(top,quat(vec3(0.0f,1.0f,0.0f),0.0f),vec3(STEAM_SIZE,STEAM_SIZE,STEAM_SIZE)));
+            motion.push_back(vec4(std::fmod(offset + (float)i / STEAM_PUFFS,1.0f),STEAM_LIFE,STEAM_RISE,STEAM_GROW));
+            motion.push_back(vec4(STEAM_DRIFT_X,STEAM_DRIFT_Z,STEAM_WANDER,0.0f));
+        }
+    }
+    steam_plumes->SetInstances(std::move(puffs));
+    steam_plumes->SetInstanceMotion(std::move(motion),STEAM_RISE + STEAM_DRIFT_X + STEAM_DRIFT_Z + STEAM_WANDER + STEAM_SIZE);
+    steam_plumes->SetVisibility(!tops.empty());
 }
 
 /*

@@ -18,7 +18,8 @@ Talked through the same day: the proposal in chat, the user's answers to its fou
 - **Rope wearing out** (a winch's rope replaced now and then): **later**, kept as an idea.
 - **Four categories: FOOD, WATER, MATERIALS, INPUTS.**
   - **Coal is an INPUT**: what is burned, used up, or made into a product - a continuous process.
-  - **Leather is a MATERIAL**: the zeppelin is built from it.
+  - **Leather is a MATERIAL**: the zeppelin is built from it. *Since 2026-10-21 the envelope is hemp canvas
+    instead (`steam_plan.md`); leather is left for later.*
   - **Upkeep makes a material an input too**: maintaining a winch, or repairing a zeppelin, would use up
     rope and leather, and there they are inputs.
 - **The proposals below were agreed as they stand** (the user, 2026-10-10) - the categories' rule, hemp's

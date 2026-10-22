@@ -140,13 +140,12 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
     int k = fine_quad - cell * 4;   //which child: fine quads 4c..4c+3 are coarse cell c's, in corner order
     const vec3 up(0.0f,1.0f,0.0f);
 
-    float level = w.terrain->Height(quad.v[0]);
     vec2 p[4];
     float h[4];
     vec3 base[4];
     for (int i = 0; i < 4; i++){
         p[i] = g.fine.pos[quad.v[i]];
-        h[i] = w.terrain->GroundHeight(p[i],level) + FIELD_LIFT;
+        h[i] = ZoneGroundHeight(w,z,quad.v[i],p[i]) + FIELD_LIFT;      //a terrace's top, if it lies on one
         base[i] = vec3(p[i].x,h[i],p[i].y);
     }
     /*

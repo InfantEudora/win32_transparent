@@ -4,9 +4,9 @@ aliases: level, levels, plateau, island, islands, balcony, balconies, chasm, cha
 kind: world
 status: partial
 summary: Ground at heights in steps (the plateau, balconies on the chasm's walls, islands in it, and the floor under the clouds), framed by biomes, with slope and water limiting what goes where.
-plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces; water_tools_plan.md > Height painted by hand; water_tools_plan.md > Cliffs painted by hand
-code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable TerrainCliffPlots; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief GRID_CLIFF_DEEPEST ChasmPlaceCliffs
-verified: 2026-10-19
+plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces; terraces_plan.md > Stage 1: foundations under buildings; water_tools_plan.md > Height painted by hand; water_tools_plan.md > Cliffs painted by hand
+code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable TerrainCliffPlots; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE ZONE_RISE_FOUNDATION ZoneLandSays ZoneNeedsFoundation; Zones.h: ZoneKindTakesFoundation; BuildingMesh.cpp: BuildingFootHalves FOOTING_DEPTH; ApplicationChasmGhost.cpp: UpdateSlopeGrid SLOPE_GRID_RADIUS; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief GRID_CLIFF_DEEPEST ChasmPlaceCliffs
+verified: 2026-10-22
 ---
 
 One valley, split down the middle by the **chasm**. Every [[Cells and plots|plot]] has a height in whole
@@ -38,6 +38,16 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
 - Ground rises gently in hills and steeply in the mountain's crags. A building's plot may rise at most
   {ZONE_RISE_HOUSE} across it, a road's {ZONE_RISE_ROAD}, a field's cell {ZONE_RISE_FIELD}. Nothing stands
   half over a cliff.
+- **Foundations**: a building drawn as a house, not a collector, may stand on up to {ZONE_RISE_FOUNDATION} of
+  rise (one storey: hills, not crags) on a stone foundation it gets by itself - its floor built up to the highest
+  ground under its walls, nothing dug in, the plinth showing downhill. The ground storey then takes
+  {ECONOMY_FOUNDATION_STONE} stone a unit of area and of rise, shown on the price tag. A [[Terrace|terrace]] levels it.
+- **The slope grid** shows it, since gentle-looking ground often isn't: in play, with a tool in hand, every plot
+  within {SLOPE_GRID_RADIUS} world units of the cursor - every cell, for a field or a range - is outlined green
+  where the land lets that tool stand, amber where only on a foundation, red where not (too steep even so, by a
+  cliff or the water), fading out. What is built there is the [[Construction|ghost]]'s to say. The water, the
+  mountain and anything under the clouds get no grid, nor do the tools whose place is their own (collectors,
+  winch, mine, bridge).
 - Walking uphill is slower: speed divided by 1 + {WALKER_SLOPE_COST} x the grade.
 - **Height painted by hand** (debug, for test maps): the panel's Height tool, or `chasm_generate`'s `relief`, raises
   or lowers the ground by up to {GRID_RELIEF_HIGHEST} - a hill a click, a ridge a drag - each a new map. A river

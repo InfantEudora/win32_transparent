@@ -41,6 +41,7 @@ struct ChasmSave{
     EconomySaved economy;                               //stocks, felled trees, workers, fields (Economy.h); absent in older saves
     std::string explored;                               //Exploration::ToString (play_mode_plan.md); absent in older saves, which load all explored
     std::vector<std::pair<int,int>> castle;             //the debug castle's pieces, plot and ZoneCastlePiece in the order painted - an arch over a piece after it (ramparts_plan.md); absent with none
+    std::vector<ZoneSavedTerrace> terraces;             //plot, top in storeys, built (terraces_plan.md stage 2); absent with none
 };
 
 nlohmann::json ChasmSaveToJson(const ChasmSave& s);
@@ -82,7 +83,7 @@ int64_t ChasmSaveWritten(const std::string& name);     //the file's time, second
 */
 struct ChasmSaveEntry{
     std::string name;                   //the bare name ChasmSaveRead takes
-    std::string title;                  //"Seed 12 - year 2, summer 4", or the file's name
+    std::string title;                  //"Seed 12 - year 2, summer 4"; a name given by hand leads: "village - year 2, summer 4"
     std::string kind;                   //"save", "auto", "quick", or empty with no meta
     std::string colony;
     std::string build;                  //the build that wrote it

@@ -304,7 +304,7 @@ int RoadVertexOwner(const ChasmWorld& w, int v){
 void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
     const std::vector<vec2>& pos = w.grid->fine.pos;
     const vec2 c = pos[v];
-    float y0 = w.terrain->GroundHeight(c,w.terrain->Height(v));
+    float y0 = ZoneGroundHeight(w,z,v,c);
     Bar(out,vec3(c.x,y0 - STAKE_SINK,c.y),vec3(c.x,y0 + STAKE_HEIGHT,c.y),STAKE_THICK,PAL_TIMBER);
     Bar(out,vec3(c.x,y0 + STAKE_HEIGHT - STAKE_RIBBON,c.y),vec3(c.x,y0 + STAKE_HEIGHT + 0.01f,c.y),
         STAKE_THICK * 1.6f,PAL_ACCENT);
@@ -318,8 +318,8 @@ void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
             continue;
         }
         vec2 mid = (c + pos[u]) * 0.5f;
-        float ground_mid = w.terrain->GroundHeight(mid,w.terrain->Height(v));
-        float y_mid = f_planned ? (tie.y + w.terrain->GroundHeight(pos[u],w.terrain->Height(u)) + STAKE_TIE) * 0.5f
+        float ground_mid = ZoneGroundHeight(w,z,v,mid);
+        float y_mid = f_planned ? (tie.y + ZoneGroundHeight(w,z,u,pos[u]) + STAKE_TIE) * 0.5f
                                 : ground_mid + ROAD_LIFT;
         Bar(out,tie,vec3(mid.x,y_mid,mid.y),STAKE_CORD,PAL_WALL);
     }
@@ -427,7 +427,7 @@ void HarmedLog(std::vector<vertex>& out, const vec2& p, float y0, float height, 
 void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
     const std::vector<vec2>& pos = w.grid->fine.pos;
     const vec2 c = pos[v];
-    float y0 = w.terrain->GroundHeight(c,w.terrain->Height(v));
+    float y0 = ZoneGroundHeight(w,z,v,c);
     Bar(out,vec3(c.x,y0 - STAKE_SINK,c.y),vec3(c.x,y0 + WALL_STAKE_HEIGHT,c.y),STAKE_THICK * 1.3f,PAL_TIMBER);
     Bar(out,vec3(c.x,y0 + WALL_STAKE_HEIGHT - STAKE_RIBBON,c.y),vec3(c.x,y0 + WALL_STAKE_HEIGHT + 0.01f,c.y),
         STAKE_THICK * 2.0f,PAL_ACCENT);
@@ -437,8 +437,8 @@ void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
     for (int i = 0; i < n; i++){
         int u = nb[i];
         vec2 mid = (c + pos[u]) * 0.5f;
-        float y_mid = ZoneWallPlanned(z,u) ? (tie.y + w.terrain->GroundHeight(pos[u],w.terrain->Height(u)) + WALL_STAKE_TIE) * 0.5f
-                                           : w.terrain->GroundHeight(mid,w.terrain->Height(v)) + WALL_STAKE_TIE;
+        float y_mid = ZoneWallPlanned(z,u) ? (tie.y + ZoneGroundHeight(w,z,u,pos[u]) + WALL_STAKE_TIE) * 0.5f
+                                           : ZoneGroundHeight(w,z,v,mid) + WALL_STAKE_TIE;
         Bar(out,tie,vec3(mid.x,y_mid,mid.y),STAKE_CORD,PAL_WALL);
     }
 }
@@ -455,9 +455,8 @@ void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
 void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out,
                    const ZoneHarmMark* harm = NULL){
     const std::vector<vec2>& pos = w.grid->fine.pos;
-    const float level = w.terrain->Height(v);
     auto ground = [&](const vec2& p){
-        return w.terrain->GroundHeight(p,level);
+        return ZoneGroundHeight(w,z,v,p);     //a terrace's top, if it stands on one (terraces_plan.md)
     };
     int nb[ROAD_MAX_NEIGHBOURS];
     int n = WallNeighbours(w,z,v,nb);
@@ -571,7 +570,7 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
 }
 
 //A gate door's leaf: sharpened logs from `hinge` to `end` on the gate's ground level, and two battens across.
-void DoorLeaf(const ChasmWorld& w, float level, const vec2& hinge, const vec2& end, int g, int leaf,
+void DoorLeaf(const ChasmWorld& w, const ZoneState& z, const vec2& hinge, const vec2& end, int g, int leaf,
               std::vector<vertex>& out){
     float len = (end - hinge).length();
     if (len < WALL_DOOR_LOG_W){
@@ -581,7 +580,7 @@ void DoorLeaf(const ChasmWorld& w, float level, const vec2& hinge, const vec2& e
     float lowest = 1e30f;
     for (int i = 0; i < logs; i++){
         vec2 at = hinge + (end - hinge) * (((float)i + 0.5f) / logs);
-        float y0 = w.terrain->GroundHeight(at,level);
+        float y0 = ZoneGroundHeight(w,z,g,at);
         lowest = std::min(lowest,y0);
         float jitter = (float)(MeshHash((uint32_t)g,(uint32_t)(leaf + 16),(uint32_t)i) % 100) / 100.0f;
         Log(out,at,y0,WALL_DOOR_HEIGHT + jitter * WALL_LOG_JITTER * 0.5f,WALL_DOOR_LOG_W,PAL_TIMBER);
@@ -623,9 +622,8 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
     if (!f_wall || n < 2){
         return;
     }
-    const float level = w.terrain->Height(g);
     auto top = [&](const vec2& p){
-        return vec3(p.x,w.terrain->GroundHeight(p,level) + WALL_GATE_HEIGHT - WALL_GATE_BEAM * 0.5f,p.y);
+        return vec3(p.x,ZoneGroundHeight(w,z,g,p) + WALL_GATE_HEIGHT - WALL_GATE_BEAM * 0.5f,p.y);
     };
     const vec2 c = pos[g];
     if (n == 2){
@@ -698,12 +696,12 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
             shuts = shuts * (1.0f / span);
             vec2 at = jamb_mid + shuts * (WALL_GATE_POST_W * 0.5f);
             size_t first = out.size();
-            DoorLeaf(w,level,hinge,hinge + in * reach,g,i,out);
+            DoorLeaf(w,z,hinge,hinge + in * reach,g,i,out);
             uint32_t hash = MeshHash((uint32_t)g,(uint32_t)hung,0x6A7Eu);
             float swing = f_broken ? GATE_HANG_SWING + GATE_HANG_SWING_MORE * HashShare(hash,0)
                                    : GATE_GIVE * f * (0.7f + 0.3f * HashShare(hash,0));
             float sag = f_broken ? GATE_HANG_SAG + GATE_HANG_SAG_MORE * HashShare(hash,1) : GATE_SAG * f;
-            vec3 pivot(at.x,w.terrain->GroundHeight(at,level),at.y);
+            vec3 pivot(at.x,ZoneGroundHeight(w,z,g,at),at.y);
             MeshTurn(out,first,pivot,up.cross(vec3(shuts.x,0.0f,shuts.y)),sag);
             //About up a turn takes `shuts` toward (shuts.y, -shuts.x).
             MeshTurn(out,first,pivot,up,(push.dot(vec2(shuts.y,-shuts.x)) > 0.0f) ? swing : -swing);
@@ -712,13 +710,13 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
                 MeshShift(out,first,vec3(0.0f,span * std::sin(sag) * 0.8f,0.0f));
             }
         }else if (f_shut){
-            DoorLeaf(w,level,hinge,hinge + in * reach,g,i,out);
+            DoorLeaf(w,z,hinge,hinge + in * reach,g,i,out);
         }else if (f_jamb){
             vec2 side(-in.y,in.x);
             if (side.x * 0.6f + side.y * 0.8f < 0.0f){
                 side = side * -1.0f;
             }
-            DoorLeaf(w,level,hinge + side * (WALL_DOOR_LOG_W * 0.6f),hinge + side * (WALL_DOOR_LOG_W * 0.6f + reach),g,i,out);
+            DoorLeaf(w,z,hinge + side * (WALL_DOOR_LOG_W * 0.6f),hinge + side * (WALL_DOOR_LOG_W * 0.6f + reach),g,i,out);
         }
     }
 }
@@ -733,21 +731,68 @@ bool RoadCellFilled(const ZoneState& z, const GridQuad& q){
 }
 
 //...drawn whole at the road's height, in pieces that each lie on the ground's relief as the road's own do.
-void BuildRoadFill(const ChasmWorld& w, const GridQuad& q, std::vector<vertex>& out){
+void BuildRoadFill(const ChasmWorld& w, const ZoneState& z, const GridQuad& q, std::vector<vertex>& out){
     vec2 p[4];
     for (int k = 0; k < 4; k++){
         p[k] = w.grid->fine.pos[q.v[k]];
     }
-    const float level = w.terrain->Height(q.v[0]);
+    //Each piece on the ground of the corner whose quarter it lies in - a terrace's top, if that one is (terraces_plan.md).
+    int plot = q.v[0];
     auto at = [&](float s, float t){
         vec2 x = MeshBilinear(p,s,t);
-        return vec3(x.x,w.terrain->GroundHeight(x,level) + ROAD_LIFT,x.y);
+        return vec3(x.x,ZoneGroundHeight(w,z,plot,x) + ROAD_LIFT,x.y);
     };
     const float step = 1.0f / ROAD_FILL_PIECES;
     for (int i = 0; i < ROAD_FILL_PIECES; i++){
         for (int j = 0; j < ROAD_FILL_PIECES; j++){
             float s = i * step, t = j * step;
+            float sm = s + step * 0.5f, tm = t + step * 0.5f;
+            plot = q.v[(sm < 0.5f) ? ((tm < 0.5f) ? 0 : 3) : ((tm < 0.5f) ? 1 : 2)];
             MeshQuad(out,at(s,t),at(s + step,t),at(s + step,t + step),at(s,t + step),vec3(0.0f,1.0f,0.0f),PAL_PATH);
+        }
+    }
+}
+
+/*
+    A STAIR up a terrace's wall (terraces_plan.md stage 2): where road plot v's road runs on to a road on a terrace above
+    it (ZONE_STEP_STAIR), steps from the wall's head down to v's road, over v's half of the edge between them - where the
+    walkers go down it (RouteHeight) - as wide as the road, in the terrace's stone. Each step a block down into the ground.
+*/
+#define ROAD_STAIR_RISE     0.2f
+
+void RoadStairs(const ChasmWorld& w, const ZoneState& z, int v, const int* nb, int n, float half_width,
+                std::vector<vertex>& out){
+    const vec2 c = w.grid->fine.pos[v];
+    float low = ZoneGroundAt(w,z,v);
+    for (int i = 0; i < n; i++){
+        int u = nb[i];
+        if (ZoneTerraceStep(w,z,v,u) != ZONE_STEP_STAIR || ZoneGroundAt(w,z,u) <= low){
+            continue;
+        }
+        float high = ZoneGroundAt(w,z,u);
+        vec2 m = (c + w.grid->fine.pos[u]) * 0.5f;
+        vec2 run = c - m;
+        float len = run.length();
+        if (len < 1e-4f){
+            continue;
+        }
+        vec2 d = run * (1.0f / len);
+        vec2 side(-d.y * half_width,d.x * half_width);
+        int steps = std::max(1,(int)std::ceil((high - low) / ROAD_STAIR_RISE));
+        float rise = (high - low) / steps;
+        float tread = len / steps;
+        for (int k = 0; k < steps; k++){
+            vec2 p0 = m + d * (tread * k);
+            vec2 p1 = m + d * (tread * (k + 1));
+            float top = high - rise * (k + 1) + ROAD_LIFT;
+            float foot = std::min(ZoneGroundHeight(w,z,v,p0),ZoneGroundHeight(w,z,v,p1)) - 0.05f;
+            vec3 a0(p0.x - side.x,top,p0.y - side.y), a1(p0.x + side.x,top,p0.y + side.y);
+            vec3 b0(p1.x - side.x,top,p1.y - side.y), b1(p1.x + side.x,top,p1.y + side.y);
+            auto down = [&](const vec3& q){ return vec3(q.x,foot,q.z); };
+            MeshQuad(out,a0,a1,b1,b0,vec3(0.0f,1.0f,0.0f),PAL_STONE_LIGHT);
+            MeshQuad(out,down(b0),down(b1),b1,b0,vec3(d.x,0.0f,d.y),PAL_STONE_LIGHT);           //its riser, facing down the stair
+            MeshQuad(out,down(a0),down(b0),b0,a0,vec3(-side.x,0.0f,-side.y),PAL_STONE);
+            MeshQuad(out,down(a1),down(b1),b1,a1,vec3(side.x,0.0f,side.y),PAL_STONE);
         }
     }
 }
@@ -867,11 +912,11 @@ void EdgeDressing(const ChasmWorld& w, const ZoneState& z, int v, float level, c
         float r = ROAD_STONE_MIN + (ROAD_STONE_MAX - ROAD_STONE_MIN) * (float)((hash >> 8) & 255) / 255.0f;
         float h = ROAD_STONE_HEIGHT * (0.5f + 0.5f * (float)((hash >> 16) & 255) / 255.0f);
         vec2 s = p - o * (r * 0.6f);
-        Stone(out,vec3(s.x,w.terrain->GroundHeight(s,level) + ROAD_LIFT,s.y),r,h,hash,((hash >> 24) & 1) ? PAL_EARTH : PAL_BARK);
+        Stone(out,vec3(s.x,ZoneGroundHeight(w,z,v,s) + ROAD_LIFT,s.y),r,h,hash,((hash >> 24) & 1) ? PAL_EARTH : PAL_BARK);
     });
     ForEdgePlaces(w,z,v,edges,ROAD_GRASS_STEP,0x6A55,ROAD_GRASS_CHANCE,[&](const vec2& p, const vec2& o, uint32_t hash){
         vec2 s = p - o * 0.03f;     //its foot just over the rim, onto the road
-        Tuft(out,vec3(s.x,w.terrain->GroundHeight(s,level) + ROAD_LIFT,s.y),hash);
+        Tuft(out,vec3(s.x,ZoneGroundHeight(w,z,v,s) + ROAD_LIFT,s.y),hash);
     });
 }
 
@@ -1237,7 +1282,6 @@ void CobbleGrid(const CobblePatch& patch, uint32_t seed, std::vector<vec2>& pos,
     }
 }
 void BuildCobbles(const ChasmWorld& w, const ZoneState& z, const GridQuad& q, int fine_quad, std::vector<vertex>& out){
-    const float level = w.terrain->Height(q.v[0]);
     std::vector<vec2> pos;
     std::vector<int> quads;
     CobbleGrid(CobblePatchOf(w,z,fine_quad),MeshHash((uint32_t)fine_quad,0xC0B1),pos,quads);
@@ -1245,10 +1289,17 @@ void BuildCobbles(const ChasmWorld& w, const ZoneState& z, const GridQuad& q, in
         uint32_t hash = MeshHash((uint32_t)fine_quad,(uint32_t)(s / 4),0xC0B1);
         float lift = ROAD_LIFT + ROAD_COBBLE_LIFT * (0.7f + 0.6f * (float)((hash >> 8) & 255) / 255.0f);
         vec2 middle = (pos[quads[s]] + pos[quads[s + 1]] + pos[quads[s + 2]] + pos[quads[s + 3]]) * 0.25f;
+        //On the ground of the plot nearest it - a terrace's top, if it is one (terraces_plan.md).
+        int plot = q.v[0];
+        for (int k = 1; k < 4; k++){
+            if ((w.grid->fine.pos[q.v[k]] - middle).length() < (w.grid->fine.pos[plot] - middle).length()){
+                plot = q.v[k];
+            }
+        }
         vec3 c[4];
         for (int k = 0; k < 4; k++){
             vec2 x = middle + (pos[quads[s + k]] - middle) * (1.0f - ROAD_COBBLE_GAP);
-            c[k] = vec3(x.x,w.terrain->GroundHeight(x,level) + lift,x.y);
+            c[k] = vec3(x.x,ZoneGroundHeight(w,z,plot,x) + lift,x.y);
         }
         int pick = (int)(hash % 100);
         int column = (pick < 60) ? PAL_STONE_LIGHT : (pick < 92) ? PAL_STONE : PAL_STONE_DARK;
@@ -1268,7 +1319,7 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
     const float h = ROAD_HALF_WIDTH;
     std::vector<vec2> segs;
     if (RoadCellFilled(z,quad)){
-        BuildRoadFill(w,quad,out);
+        BuildRoadFill(w,z,quad,out);
         if (AreaInTown(w,z,fine_quad)){
             BuildCobbles(w,z,quad,fine_quad,out);
         }
@@ -1327,7 +1378,7 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
                     return deck;
                 }
                 vec2 mid = (c + g.fine.pos[u]) * 0.5f;
-                float road = w.terrain->GroundHeight(mid,w.terrain->Height(v)) + ROAD_LIFT;
+                float road = ZoneGroundHeight(w,z,v,mid) + ROAD_LIFT;
                 return deck + (road - deck) * f;
             };
             if (n == 2){
@@ -1380,18 +1431,21 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
         }
         //A road plot is flat all round (Zones.h), so the whole road here is on v's level.
         float level = w.terrain->Height(v);
-        const Terrain& terrain = *w.terrain;
-        auto at = [level,&terrain](const vec2& q){
-            return vec3(q.x,terrain.GroundHeight(q,level) + ROAD_LIFT,q.y);
+        //On its ground: a terrace's top, if it stands on one (terraces_plan.md).
+        auto at = [&](const vec2& q){
+            return vec3(q.x,ZoneGroundHeight(w,z,v,q) + ROAD_LIFT,q.y);
         };
-        auto worn_at = [level,&terrain](const vec2& q){
-            return vec3(q.x,terrain.GroundHeight(q,level) + ROAD_LIFT + ROAD_WORN_LIFT,q.y);
+        auto worn_at = [&](const vec2& q){
+            return vec3(q.x,ZoneGroundHeight(w,z,v,q) + ROAD_LIFT + ROAD_WORN_LIFT,q.y);
         };
         int nb[ROAD_MAX_NEIGHBOURS];
         int n = RoadNeighbours(w,z,v,nb);
         LineThrough(w,v,nb,n,segs);
         if (!f_road && n == 0){
             continue;   //enclosed ground with no gate onto it: no path to draw
+        }
+        if (f_road){
+            RoadStairs(w,z,v,nb,n,h,out);
         }
         const vec2 c = g.fine.pos[v];
         if (n == 2){

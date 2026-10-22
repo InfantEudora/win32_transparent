@@ -26,8 +26,6 @@
     doors, windows and chimneys (kind_looks in BuildingMesh.cpp).
 */
 
-#define ZONE_STOREY_HEIGHT  1.3f    //world units - a fine cell (about one house) is 2 across
-
 /*
     WHERE A BUILDING'S WALL CROSSES the fine edge between neighbouring plots a and b, either way round (the user's,
     2026-10-18). A plot's ground is the quarters of the cells round it, in to each edge's midpoint and out to each
@@ -42,6 +40,15 @@
     houses either side of it meet.
 */
 vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b);
+
+/*
+    THE FLOOR a building on `plot` stands on, in half storeys from y = 0 (BuildHouseCell's `foot`): its ground rounded to
+    the nearest - so a row on a gentle slope shares a roof - or on a FOUNDATION (terraces_plan.md: a `kind` that needs
+    one there) the highest ground under its walls rounded UP, so the stone plinth is built up all round and nothing is
+    dug into the hill - or on a TERRACE that stands, its top. Every height drawn or picked off a building's floor goes by
+    it. `kind` is what stands there - ZONE_KIND_NONE for an arch's road, which keeps its ground.
+*/
+int BuildingFootHalves(const ChasmWorld& w, const ZoneState& z, int kind, int plot);
 
 /*
     What of a house the view lights up while it is warm (needs_plan.md, step 3): its chimney's top, where
@@ -89,6 +96,9 @@ void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int
 
 //`fixtures`, if given, gets the houses' chimneys and panes this cell builds. `harm` (ZoneMesh.h), if given: a
 //BREACHED building's doors stand open on the dark (zombies_plan.md, step 4d).
+//Where a steam collector's plot's hood lets its steam go, the top of its neck (steam_plan.md): false where it has no drop.
+bool SteamHoodTop(const ChasmWorld& w, int plot, vec3& top);
+
 struct ZoneHarmLook;
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
                     BuildingFixtures* fixtures = NULL, const ZoneHarmLook* harm = NULL);

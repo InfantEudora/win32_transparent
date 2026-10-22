@@ -106,13 +106,26 @@ std::vector<ChasmStatsSeason> ChasmStatsSeasons(const EconomyHistory& h){
     return out;
 }
 
-ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z){
+ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z, uint32_t colony){
     ChasmStatsNow n;
     EconomyDayLevels(e,e.tick,n.row);
+    //BY COLONY: its own row of the levels - none, all nothing - and its own people, buildings and dead below.
+    if (colony){
+        EconomyDay mine;
+        for (const EconomyDay& r : n.row.colonies){
+            mine = (r.colony == colony) ? r : mine;
+        }
+        mine.day = n.row.day;
+        n.row = mine;
+    }
+    auto ours = [&](uint32_t id){ return !colony || EconomyColonyNumber(e,EconomySettlementOf(e,id)) == colony; };
     ChasmStatsDays(n.row,n.food_days,n.water_days);
-    n.people = (int)e.workers.size();
     std::vector<int> living(z.buildings.size(),0);
     for (const EconomyWorker& k : e.workers){
+        if (colony && EconomyColonyNumber(e,EconomyPersonLand(e,k)) != colony){
+            continue;
+        }
+        n.people++;
         n.expecting += k.due ? 1 : 0;
         n.in_camp += (k.house == 0 || (k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_CAMP)) ? 1 : 0;
         if (k.house < living.size()){
@@ -122,9 +135,13 @@ ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z){
     //What stands and what is still to build, by building, in one pass over the plots and the cells.
     std::vector<uint8_t> stands(z.buildings.size(),0);
     std::vector<uint8_t> site(z.buildings.size(),0);
+    std::vector<uint8_t> mine(z.buildings.size(),0);
+    for (size_t id = 1; id < z.buildings.size(); id++){
+        mine[id] = ours((uint32_t)id) ? 1 : 0;
+    }
     for (size_t v = 0; v < z.building.size(); v++){
         uint32_t id = z.building[v];
-        if (!id || id >= z.buildings.size()){
+        if (!id || id >= z.buildings.size() || !mine[id]){
             continue;
         }
         stands[id] |= (z.standing[v] > 0) ? 1 : 0;
@@ -133,7 +150,7 @@ ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z){
     }
     for (size_t c = 0; c < z.field.size(); c++){
         uint32_t id = z.field[c];
-        if (!id || id >= z.buildings.size()){
+        if (!id || id >= z.buildings.size() || !mine[id]){
             continue;
         }
         stands[id] |= z.field_built[c] ? 1 : 0;
@@ -141,7 +158,7 @@ ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z){
     }
     for (size_t id = 1; id < z.buildings.size(); id++){
         int kind = z.buildings[id].kind;
-        if (z.buildings[id].size <= 0 || kind <= ZONE_KIND_NONE || kind >= ZONE_KIND_COUNT){
+        if (z.buildings[id].size <= 0 || kind <= ZONE_KIND_NONE || kind >= ZONE_KIND_COUNT || !mine[id]){
             continue;
         }
         if (site[id]){
@@ -151,23 +168,108 @@ ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z){
         }
         n.houses += (kind == ZONE_KIND_HOUSE && stands[id] && living[id] > 0) ? 1 : 0;
     }
-    for (const EconomyDeath& d : e.dead){
-        n.dead++;
-        if (d.cause >= 0 && d.cause < CHASM_STATS_CAUSES){
-            n.dead_of[d.cause]++;
+    //The dead: every one the colony remembers - a colony's, the deaths its journal has, since its rows began.
+    if (colony){
+        for (const EconomyEvent& ev : e.history.journal){
+            if (ev.kind == EVENT_DIED && ev.colony == colony){
+                n.dead++;
+                if (ev.amount >= 0 && ev.amount < CHASM_STATS_CAUSES){
+                    n.dead_of[ev.amount]++;
+                }
+            }
+        }
+    }else{
+        for (const EconomyDeath& d : e.dead){
+            n.dead++;
+            if (d.cause >= 0 && d.cause < CHASM_STATS_CAUSES){
+                n.dead_of[d.cause]++;
+            }
         }
     }
     for (const EconomySettlement& st : e.settlements){
         ChasmStatsSettlement one;
         one.id = st.id;
+        one.colony = st.colony;
         one.beds = st.beds;
         for (const EconomyWorker& k : e.workers){
             one.people += (EconomyPersonSettlement(e,k) == st.id) ? 1 : 0;
         }
-        n.beds += st.beds;
+        n.beds += (!colony || st.colony == colony) ? st.beds : 0;
         n.settlements.push_back(one);
     }
     return n;
+}
+
+EconomyHistory ChasmColonyHistory(const EconomyHistory& h, uint32_t colony){
+    EconomyHistory c;
+    auto row_of = [&](const EconomyDay& d, EconomyDay& out){
+        for (const EconomyDay& r : d.colonies){
+            if (r.colony == colony){
+                out = r;
+                out.day = d.day;
+                return true;
+            }
+        }
+        return false;
+    };
+    EconomyDay r;
+    bool f_started = row_of(h.start,r);
+    if (f_started){
+        c.start = r;
+        c.from = h.from;
+    }
+    for (const EconomyDay& d : h.days){
+        if (!row_of(d,r)){
+            continue;
+        }
+        //Founded on that day, or kept by colony only since: its first row's levels where it begins, its counts not.
+        if (!f_started){
+            c.start = r;
+            c.start.felled = c.start.broken = c.start.storeys = c.start.zombies = 0;
+            c.from = (uint64_t)std::max(0,d.day) * CALENDAR_DAY_TICKS;
+            f_started = true;
+        }
+        c.days.push_back(r);
+    }
+    if (!row_of(h.today,c.today)){
+        c.today = EconomyDay();
+    }
+    c.today.day = h.today.day;
+    if (!f_started){
+        c.start.day = h.today.day;
+        c.from = (uint64_t)std::max(0,h.today.day) * CALENDAR_DAY_TICKS;
+    }
+    for (const EconomyEvent& ev : h.journal){
+        if (ev.colony == colony){
+            c.journal.push_back(ev);
+        }
+    }
+    return c;
+}
+
+std::vector<uint32_t> ChasmStatsColonies(const EconomyState& e){
+    std::vector<uint32_t> out;
+    auto add = [&](uint32_t colony){
+        if (colony && std::find(out.begin(),out.end(),colony) == out.end()){
+            out.push_back(colony);
+        }
+    };
+    for (const EconomySettlement& st : e.settlements){
+        add(st.colony);
+    }
+    const EconomyHistory& h = e.history;
+    for (const EconomyDay* d : {&h.start,&h.today}){
+        for (const EconomyDay& r : d->colonies){
+            add(r.colony);
+        }
+    }
+    for (const EconomyDay& d : h.days){
+        for (const EconomyDay& r : d.colonies){
+            add(r.colony);
+        }
+    }
+    std::sort(out.begin(),out.end());
+    return out;
 }
 
 std::vector<std::string> ChasmStatsCheck(const EconomyState& e){
@@ -261,6 +363,52 @@ std::vector<std::string> ChasmStatsCheck(const EconomyState& e){
     EconomyDay now = h.today;
     EconomyDayLevels(e,e.tick,now);
     follows(*before,f_start,now,"today,");
+    /*
+        BY COLONY (settlements_plan.md, step 4): each row's colonies and nobody's add up to it - its people and goods,
+        where it has levels, and its counts. A row from before has none to add.
+    */
+    auto adds_up = [&](const EconomyDay& d, bool f_levels, const char* what){
+        if (d.colonies.empty()){
+            return;
+        }
+        EconomyDay sum;
+        for (const EconomyDay& r : d.colonies){
+            for (int s = 0; s < ECONOMY_STAGES; s++){
+                sum.people[s] += r.people[s];
+            }
+            for (int g = 0; g < GOOD_COUNT; g++){
+                sum.held[g] += r.held[g];
+            }
+            sum.felled += r.felled;
+            sum.broken += r.broken;
+            sum.storeys += r.storeys;
+            sum.zombies += r.zombies;
+        }
+        bool f_counts = sum.felled == d.felled && sum.broken == d.broken && sum.storeys == d.storeys && sum.zombies == d.zombies;
+        bool f_level = !f_levels || (sum.people == d.people && sum.held == d.held);
+        if (!f_counts || !f_level){
+            auto total = [](const EconomyDay& x){
+                int people = 0;
+                int held = 0;
+                for (int p : x.people){
+                    people += p;
+                }
+                for (int g : x.held){
+                    held += g;
+                }
+                return std::to_string(people) + " people, " + std::to_string(held) + " goods, "
+                       + std::to_string(x.felled + x.broken + x.storeys + x.zombies) + " counted";
+            };
+            snprintf(buf,sizeof(buf),"%s day %i: its colonies' rows add up to %s - the whole's are %s",what,d.day,
+                     total(sum).c_str(),total(d).c_str());
+            out.push_back(buf);
+        }
+    };
+    adds_up(h.start,true,"start,");
+    for (const EconomyDay& d : h.days){
+        adds_up(d,true,"row");
+    }
+    adds_up(now,true,"today,");
     //The journal in the order made.
     for (size_t i = 1; i < h.journal.size(); i++){
         if (h.journal[i].tick < h.journal[i - 1].tick){
@@ -320,6 +468,8 @@ const char* ChasmKindLabel(int kind, bool f_plural){
         case ZONE_KIND_STONECUTTER: return f_plural ? "stonecutters' huts" : "stonecutter's hut";
         case ZONE_KIND_MINE:        return f_plural ? "mines" : "mine";
         case ZONE_KIND_WELL:        return f_plural ? "wells" : "well";
+        case ZONE_KIND_STEAM:       return f_plural ? "steam collectors" : "steam collector";
+        case ZONE_KIND_CONDENSER:   return f_plural ? "condensers" : "condenser";
         default:                    return f_plural ? "buildings" : "building";
     }
 }

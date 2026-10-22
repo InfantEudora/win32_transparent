@@ -1,6 +1,7 @@
 #include "BoundaryMesh.h"
 #include "MeshBuild.h"
 
+#include <algorithm>
 #include <cmath>
 
 //Garden wall: stone, a hedge riding on it, stone posts at its ends.
@@ -33,9 +34,10 @@
 
 namespace {
 
-//The ground a wall stands on: the world's, relief and all (Terrain::GroundHeight).
-float GroundAt(const ChasmWorld& w, const vec2& p, float level){
-    return w.terrain->GroundHeight(p,level);
+//The ground a wall between plots a and b stands on: the world's, relief and all (Terrain::GroundHeight) - or a terrace's
+//top (terraces_plan.md): of the two sides the higher, so a wall along a terrace's edge stands on its coping.
+float GroundAt(const ChasmWorld& w, const ZoneState& z, int a, int b, const vec2& p){
+    return std::max(ZoneGroundHeight(w,z,a,p),ZoneGroundHeight(w,z,b,p));
 }
 
 /*
@@ -116,8 +118,6 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         p[k] = g.fine.pos[quad.v[k]];
     }
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
-    //Walls only stand on flat ground (ground zones need it), so any corner gives the level.
-    float level = w.terrain->Height(quad.v[0]);
 
     //--- Plot boundaries: the segment m_k -> centre, between corner k's plot and corner k+1's -----
     bool f_post_at_centre = false;
@@ -128,7 +128,9 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
             continue;
         }
         vec2 mid = (p[k] + p[(k + 1) % 4]) * 0.5f;
-        float yc = GroundAt(w,centre,level) - FOOTING;
+        int va = quad.v[k];
+        int vb = quad.v[(k + 1) % 4];
+        float yc = GroundAt(w,z,va,vb,centre) - FOOTING;
         //The midpoint is shared with the cell across edge k: of the two, the lower index builds the post.
         int across = QuadAcross(w,fine_quad,k);
         bool f_post_at_mid = (across < 0 || fine_quad < across);
@@ -143,7 +145,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
             float len = d.length();
             vec2 dir = d / std::max(1e-6f,len);
             vec2 jamb = mid + dir * std::min(GATE_HALF,len * GATE_MAX_SHARE);
-            float yj = GroundAt(w,jamb,level) - FOOTING;
+            float yj = GroundAt(w,z,va,vb,jamb) - FOOTING;
             if (kind == ZONE_BOUNDARY_GARDEN_WALL){
                 Post(out,jamb,yj,GATE_PILLAR_HEIGHT + FOOTING,GATE_PILLAR_W,PAL_STONE);
             }else{
@@ -154,7 +156,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
             mid = jamb;             //the rest of the segment is wall as usual, from the jamb in
             f_post_at_mid = false;  //the jamb is the post
         }
-        float ym = GroundAt(w,mid,level) - FOOTING;
+        float ym = GroundAt(w,z,va,vb,mid) - FOOTING;
         if (kind == ZONE_BOUNDARY_GARDEN_WALL){
             Beam(out,mid,centre,ym,yc,WALL_HEIGHT + FOOTING,WALL_THICK,PAL_STONE_LIGHT);
             Beam(out,mid,centre,ym + WALL_HEIGHT + FOOTING,yc + WALL_HEIGHT + FOOTING,HEDGE_HEIGHT,HEDGE_THICK,PAL_BUSH);
@@ -169,7 +171,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
                 float t = (float)i / stakes;
                 vec2 at = mid + d * t;
                 float jitter = (float)(MeshHash((uint32_t)fine_quad,(uint32_t)k,(uint32_t)i) % 100) / 100.0f;
-                Stake(out,at,GroundAt(w,at,level) - FOOTING,STAKE_HEIGHT + FOOTING + jitter * 0.07f,PAL_BARK);
+                Stake(out,at,GroundAt(w,z,va,vb,at) - FOOTING,STAKE_HEIGHT + FOOTING + jitter * 0.07f,PAL_BARK);
             }
             if (f_post_at_mid){
                 Stake(out,mid,ym,STAKE_HEIGHT + FOOTING + 0.05f,PAL_BARK);
@@ -179,7 +181,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         centre_kind = std::max(centre_kind,kind);
     }
     if (f_post_at_centre){
-        float yc = GroundAt(w,centre,level) - FOOTING;
+        float yc = std::max(GroundAt(w,z,quad.v[0],quad.v[1],centre),GroundAt(w,z,quad.v[2],quad.v[3],centre)) - FOOTING;
         if (centre_kind == ZONE_BOUNDARY_GARDEN_WALL){
             Post(out,centre,yc,WALL_POST_HEIGHT + FOOTING,WALL_POST_W,PAL_STONE);
         }else{
@@ -214,7 +216,9 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         //posts go at even spacing from the coarse corner, so the two halves of a coarse edge line up.
         float len = (b - a).length();
         int posts = std::max(1,(int)std::ceil(len / FENCE_POST_SPACING));
-        float ya = GroundAt(w,a,level), yb = GroundAt(w,b,level);
+        int va = quad.v[e];
+        int vb = quad.v[(e + 1) % 4];
+        float ya = GroundAt(w,z,va,vb,a), yb = GroundAt(w,z,va,vb,b);
         for (int i = 0; i <= posts; i++){
             float t = (float)i / posts;
             //The coarse corner's post is built by the child whose edge 0 starts there; the midpoint's
@@ -223,7 +227,7 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
                 continue;
             }
             vec2 at = a + (b - a) * t;
-            Post(out,at,GroundAt(w,at,level) - FOOTING,FENCE_HEIGHT + FOOTING,FENCE_POST_W,PAL_TIMBER);
+            Post(out,at,GroundAt(w,z,va,vb,at) - FOOTING,FENCE_HEIGHT + FOOTING,FENCE_POST_W,PAL_TIMBER);
         }
         for (int r = 0; r < 2; r++){
             float rail_y = FENCE_HEIGHT * (r == 0 ? 0.45f : 0.85f);

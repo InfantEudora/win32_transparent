@@ -134,6 +134,8 @@ What follows from it:
   settlements that grow larger, we might break it up." The page and the history stay the colony's; the settlements
   appear only in NOW, with their people and beds. (Rows per settlement would need a settlement id that lasts: today's
   is its oldest home's, which changes when that home goes.)
+  *Built 2026-10-22* (the user, 2026-10-21: "the totals, as well as per colony"): a colony number that lasts, rows and
+  journal lines by colony, and the page's chips - `settlements_plan.md`, steps 1 and 4.
 - **Discoveries** belong to the audio work under way (`areas_plan.md`, `EVENT_DISCOVERED`), not to this plan.
 
 ## Open questions

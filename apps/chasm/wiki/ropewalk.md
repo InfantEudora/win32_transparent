@@ -6,7 +6,7 @@ status: built
 summary: A long low shed where a ropemaker makes rope from hemp. It works from 2 plots, and a 3rd and 4th make it faster.
 plans: goods_plan.md > Decided; goods_plan.md > The ropewalk; goods_plan.md > Step 3: the ropewalk; goods_plan.md > The ropewalk's props; goods_plan.md > Kept in stock, and made to order
 code: Zones.h: ZONE_KIND_ROPEWALK ZONE_ROPEWALK_MAX_PLOTS ZoneKindMaxPlots; Economy.h: ECONOMY_ROPE_HEMP ECONOMY_ROPE_SECONDS ECONOMY_ROPEWALK_MIN_PLOTS ECONOMY_ROPEWALK_PILE ECONOMY_KEPT_START; Economy.cpp: MakeRope AtRopewalk EconomyRopewalkPace WorkplaceMakes FetchFromWorkplace KeptShort; BuildingMesh.cpp: BuildRopewalkYard
-verified: 2026-10-18
+verified: 2026-10-22
 ---
 
 Where [[Rope|rope]] is made, from [[Hemp|hemp]]. It is dragged over plots like any building (key K), one
@@ -37,9 +37,9 @@ Its card can **stop work**: it takes no ropemaker then, and makes nothing, until
 
 ## Kept in the stores
 
-Its card sets **how much rope the colony keeps** in its stores and the camp's supplies: 0, 5, 10, 20 or 40 - the
-colony's one number, shown on every ropewalk. Only that much goes to the stores; the rest waits at the ropewalk,
-up to its pile, and then he stops. It starts at {ECONOMY_KEPT_START}, so by default no rope goes to a store and
+Its card sets **how much rope its colony keeps** in its stores and camp's supplies: 0, 5, 10, 20 or 40 - each
+[[Settlement|colony]] its own number, shown on every ropewalk of it. Only that much goes to its stores; the rest
+waits at the ropewalk, up to its pile, and then he stops. It starts at {ECONOMY_KEPT_START}, so by default no rope goes to a store and
 the stores never fill with it: sites take theirs from the pile.
 
 **Make more, once**: 5 or 10 more than the stores hold now, or than the kept number if that is higher, as for

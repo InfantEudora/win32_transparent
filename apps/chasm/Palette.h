@@ -58,6 +58,12 @@
 #define PAL_BIRD_SHEEN      1       //its blue-black back and upper wing
 #define PAL_BIRD_BEAK       2       //its beak and legs, a dark grey
 #define PAL_MAGPIE_WHITE    3       //an off-white, for magpies, the second kind (not modelled yet)
+//Not a biome either: worked metal, the same in every biome and season and never snowed on - the steam works' brass
+//(steam_plan.md), so a hood or a condenser's tank reads as machinery on any ground.
+#define PAL_METALS          12
+#define PAL_BRASS_LIGHT     0       //columns in the metals row: brass catching the light...
+#define PAL_BRASS           1
+#define PAL_BRASS_DARK      2       //...to tarnished
 //Not a biome: colours that are the same in every one - the chasm's mist and the falls' foam (Mist.h).
 #define PAL_EFFECTS         15
 #define PAL_MIST_LIGHT      0       //columns in the effects row

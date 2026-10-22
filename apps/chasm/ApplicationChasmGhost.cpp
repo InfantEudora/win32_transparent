@@ -54,20 +54,19 @@ static const vec3 GHOST_REFUSED(1.0f,0.35f,0.30f);
 namespace {
 
 //The quarters of the cells round plot v - its own ground - laid on the ground just over it (ZoneMesh.h).
-void GhostPlotTile(const ChasmWorld& w, int v, std::vector<vertex>& out){
-    BuildPlotTile(w,v,GHOST_LIFT,out);
+void GhostPlotTile(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
+    BuildPlotTile(w,z,v,GHOST_LIFT,out);
 }
 
 //A coarse cell - a field's - as its four fine cells, on the ground.
-void GhostCellTile(const ChasmWorld& w, int coarse, std::vector<vertex>& out){
+void GhostCellTile(const ChasmWorld& w, const ZoneState& z, int coarse, std::vector<vertex>& out){
     const Grid& g = *w.grid;
     for (int k = 0; k < 4; k++){
         const GridQuad& q = g.fine.quads[coarse * 4 + k];
-        float level = w.terrain->Height(q.v[0]);
         vec3 c[4];
         for (int j = 0; j < 4; j++){
             vec2 x = g.fine.pos[q.v[j]];
-            c[j] = vec3(x.x,w.terrain->GroundHeight(x,level) + GHOST_LIFT,x.y);
+            c[j] = vec3(x.x,ZoneGroundHeight(w,z,q.v[j],x) + GHOST_LIFT,x.y);
         }
         MeshQuad(out,c[0],c[1],c[2],c[3],vec3(0.0f,1.0f,0.0f),PAL_FIELD);
     }
@@ -99,6 +98,8 @@ void GhostBuildingPlot(const ChasmWorld& w, const ZoneState& z, int plot, int ki
     only.standing.assign(z.standing.size(),0);
     only.ground = z.ground;
     only.ground_built = z.ground_built;
+    only.terrace = z.terrace;               //what it stands on (terraces_plan.md)
+    only.terrace_built = z.terrace_built;
     only.gate = z.gate;     //a guard tower's ladder goes on a side no wall or gate runs off (BuildTower)
     only.field.assign(z.field.size(),0);
     only.building[plot] = id;
@@ -116,6 +117,8 @@ const char* KindPlural(int kind){
         case ZONE_KIND_HOUSE:       return "HOUSES";
         case ZONE_KIND_STORE:       return "STORES";
         case ZONE_KIND_WATER:       return "COLLECTORS";
+        case ZONE_KIND_STEAM:       return "STEAM COLLECTORS";
+        case ZONE_KIND_CONDENSER:   return "CONDENSERS";
         case ZONE_KIND_FIELD:       return "FIELDS";
         case ZONE_KIND_RANGE:       return "RANGES";
         case ZONE_KIND_ROPEWALK:    return "ROPEWALKS";
@@ -155,12 +158,16 @@ std::string CostTag(const std::array<int,GOOD_COUNT>& cost, const char* lead, in
 
 }
 
-//RENDER THREAD, from BuildScene: the see-through program - default.vert, lit like any surface.
+//RENDER THREAD, from BuildScene: the see-through programs - default.vert, lit like any surface.
 void ApplicationChasm::BuildGhostScene(){
     ghost_shader = new Shader("shaders/default.vert","shaders/chasm_ghost.frag");
     ghost_shader->f_lit = true;
     ghost_shader->uniform_callback = std::bind(&ApplicationChasm::SetGhostUniforms,this);
     ghost_shader_index = renderer->AddCustomShader(ghost_shader);
+    slope_shader = new Shader("shaders/default.vert","shaders/chasm_slope.frag");
+    slope_shader->f_lit = true;
+    slope_shader->uniform_callback = std::bind(&ApplicationChasm::SetSlopeUniforms,this);
+    slope_shader_index = renderer->AddCustomShader(slope_shader);
 }
 
 void ApplicationChasm::SetGhostUniforms(){
@@ -260,11 +267,12 @@ void ApplicationChasm::UpdateGhost(){
     auto trees_on = [&](int at_plot, int at_cell){
         return (es && es->world == w) ? EconomyTreesOn(*w,*es,at_plot,at_cell) : 0;
     };
-    //...and what a woodcutter's hut or a water collector `owner` (0 a new one) of `kind` would keep the more for `more`
-    //floor, once all of it stands: a hut none for the floor he works in (EconomyHutRoom), a collector a load at the
-    //least (EconomyCollectorRoom) - a new one's all of it.
+    //...and what a woodcutter's hut or a water or steam collector `owner` (0 a new one) of `kind` would keep the more for
+    //`more` floor, once all of it stands: a hut none for the floor he works in (EconomyHutRoom), a collector a load at
+    //the least (EconomyCollectorRoom) - a new one's all of it.
     auto room_gain = [&](int room_kind, uint32_t owner, float more){
-        int (*room)(float) = (room_kind == ZONE_KIND_WATER) ? EconomyCollectorRoom : EconomyHutRoom;
+        int (*room)(float) = (room_kind == ZONE_KIND_WATER || room_kind == ZONE_KIND_STEAM || room_kind == ZONE_KIND_CONDENSER)
+                             ? EconomyCollectorRoom : EconomyHutRoom;
         if (!owner){
             return room(more);
         }
@@ -315,7 +323,7 @@ void ApplicationChasm::UpdateGhost(){
                 continue;
             }
             size_t first = verts.size();
-            GhostPlotTile(cw,v,verts);
+            GhostPlotTile(cw,z,v,verts);
             if (f_erase_line){
                 continue;
             }
@@ -355,9 +363,9 @@ void ApplicationChasm::UpdateGhost(){
                     uint32_t on = z.building[c.index];
                     GhostBuildingPlot(cw,z,c.index,z.buildings[on].kind,z.storeys[c.index],on,verts);
                 }else if (c.op == ZONE_OP_FIELD_ERASE){
-                    GhostCellTile(cw,c.index,verts);
+                    GhostCellTile(cw,z,c.index,verts);
                 }else{
-                    GhostPlotTile(cw,c.index,verts);
+                    GhostPlotTile(cw,z,c.index,verts);
                 }
             }
         }else{
@@ -370,6 +378,7 @@ void ApplicationChasm::UpdateGhost(){
                 return k;
             };
             int placed = 0;
+            int founded = 0;            //...of its plots, on a foundation (terraces_plan.md)
             float floor_more = 0.0f;
             int made_kind = ZONE_KIND_NONE;
             if (f_cells){
@@ -385,7 +394,7 @@ void ApplicationChasm::UpdateGhost(){
                 std::sort(made.begin(),made.end());
                 for (int c : fresh){
                     size_t first = verts.size();
-                    GhostCellTile(cw,c,verts);
+                    GhostCellTile(cw,z,c,verts);
                     if (made_index(a.field[c]) % 2 == 1){
                         for (size_t j = first; j < verts.size(); j++){
                             verts[j].uv = vec2(2.0f,2.0f);      //chasm_ghost.frag: the darker shade
@@ -397,11 +406,21 @@ void ApplicationChasm::UpdateGhost(){
                     trees += trees_on(-1,c);
                     placed++;
                 }
+            }else if (plan->tool == CHASM_TOOL_TERRACE){
+                //A terrace (terraces_plan.md stage 2): each new plot of it as a tile at its top - one height, all of it.
+                for (size_t v = 0; v < a.terrace.size(); v++){
+                    if (ZoneTerraced(a,(int)v) && !ZoneTerraced(z,(int)v)){
+                        BuildPlotTile(cw,z,(int)v,GHOST_LIFT,verts,ZoneTerraceTop(a,(int)v) + GHOST_LIFT);
+                        cost[GOOD_STONE] += EconomyTerraceStone(cw,(int)v,a.terrace[v]);
+                        trees += trees_on((int)v,-1);
+                        placed++;
+                    }
+                }
             }else if (plan->tool == CHASM_TOOL_GARDEN || plan->tool == CHASM_TOOL_LOT){
                 int ground = (plan->tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT;
                 for (size_t v = 0; v < a.ground.size(); v++){
                     if (a.ground[v] == ground && z.ground[v] != ground){
-                        GhostPlotTile(cw,(int)v,verts);
+                        GhostPlotTile(cw,z,(int)v,verts);
                         cost[GOOD_WOOD] += EconomyGroundKindCost(cw,ground,(int)v);
                         trees += ZoneEnclosesGround(ground) ? trees_on((int)v,-1) : 0;
                         placed++;
@@ -419,6 +438,8 @@ void ApplicationChasm::UpdateGhost(){
                 only.standing.assign(a.standing.size(),0);
                 only.ground = a.ground;
                 only.ground_built = a.ground_built;
+                only.terrace = a.terrace;
+                only.terrace_built = a.terrace_built;
                 only.gate = a.gate;
                 only.field.assign(a.field.size(),0);
                 std::vector<int> quads;
@@ -428,11 +449,12 @@ void ApplicationChasm::UpdateGhost(){
                     }
                     made_index(a.building[v]);
                     for (int g = 0; g < GOOD_COUNT; g++){
-                        cost[g] += EconomyKindStoreysCost(cw,kind,(int)v,g,0,a.storeys[v]);
+                        cost[g] += EconomyKindStoreysCost(cw,a,kind,(int)v,g,0,a.storeys[v]);
                     }
                     trees += trees_on((int)v,-1);
                     floor_more += a.storeys[v] * cw.picker->PlotArea((int)v);
                     placed++;
+                    founded += ZoneNeedsFoundation(cw,a,kind,(int)v) ? 1 : 0;
                     for (int i = 0; i < cw.picker->PlotQuadCount((int)v); i++){
                         int q = cw.picker->PlotQuadCorner((int)v,i) / 4;
                         if (std::find(quads.begin(),quads.end(),q) == quads.end()){
@@ -467,7 +489,8 @@ void ApplicationChasm::UpdateGhost(){
                     }
                 }
                 //A hut's or a collector's room: one of them made or grown, as for a click.
-                if (made.size() == 1 && (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER)){
+                if (made.size() == 1 && (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER || kind == ZONE_KIND_STEAM
+                                         || kind == ZONE_KIND_CONDENSER)){
                     uint32_t grown = (made[0] < z.buildings.size() && z.buildings[made[0]].size > 0) ? made[0] : 0;
                     room_more = room_gain(kind,grown,floor_more);
                     f_room_new = grown == 0;
@@ -480,6 +503,9 @@ void ApplicationChasm::UpdateGhost(){
             const char* unit = f_cells ? "CELL" : "PLOT";
             area_note = " - " + ((made.size() > 1) ? std::to_string(made.size()) + " " + KindPlural(made_kind) + ", " : std::string())
                         + std::to_string(placed) + " " + unit + (placed == 1 ? "" : "S");
+            if (founded > 0){
+                area_note += ", " + std::to_string(founded) + " ON A FOUNDATION";
+            }
             note = area_note.c_str();
         }
         //What the rules refuse: red, plot by plot or cell by cell.
@@ -490,9 +516,9 @@ void ApplicationChasm::UpdateGhost(){
             const DragCommand& c = plan->commands[i];
             size_t first = verts.size();
             if (f_cells){
-                GhostCellTile(cw,c.index,verts);
+                GhostCellTile(cw,z,c.index,verts);
             }else{
-                GhostPlotTile(cw,c.index,verts);
+                GhostPlotTile(cw,z,c.index,verts);
             }
             for (size_t j = first; j < verts.size(); j++){
                 verts[j].uv = vec2(-1.0f,-1.0f);
@@ -508,7 +534,7 @@ void ApplicationChasm::UpdateGhost(){
             f_ok = !cw.terrain->wet[plot] && ZoneCanBuild(cw,z,plot,ZONE_KIND_BRIDGE,0,NULL);
         }
         for (int v : span){
-            BuildPlotTile(cw,v,GHOST_LIFT,verts,terrain_levels[cw.terrain->level[v]].height + ZONE_BRIDGE_DECK);
+            BuildPlotTile(cw,z,v,GHOST_LIFT,verts,terrain_levels[cw.terrain->level[v]].height + ZONE_BRIDGE_DECK);
         }
         //Dragged across: the whole bridge's cost, its deck's storey a plot.
         if (from >= 0 && from != plot && span.size() > 1){
@@ -521,7 +547,7 @@ void ApplicationChasm::UpdateGhost(){
             bool f_unreached = false;
             for (int v : span){
                 for (int g = 0; g < GOOD_COUNT; g++){
-                    cost[g] += EconomyKindStoreysCost(cw,ZONE_KIND_BRIDGE,v,g,0,ZoneKindPaintStoreys(ZONE_KIND_BRIDGE));
+                    cost[g] += EconomyKindStoreysCost(cw,z,ZONE_KIND_BRIDGE,v,g,0,ZoneKindPaintStoreys(ZONE_KIND_BRIDGE));
                 }
                 int on = trees_on(v,-1);
                 trees += on;
@@ -558,7 +584,7 @@ void ApplicationChasm::UpdateGhost(){
                    && !crate_in_way(ZONE_OP_BUILD_ADD,plot,0);
             GhostBuildingPlot(cw,z,plot,kind,ZoneKindPaintStoreys(kind),0,verts);
             for (int g = 0; g < GOOD_COUNT; g++){
-                cost[g] = EconomyKindStoreysCost(cw,kind,plot,g,0,ZoneKindPaintStoreys(kind));
+                cost[g] = EconomyKindStoreysCost(cw,z,kind,plot,g,0,ZoneKindPaintStoreys(kind));
             }
             trees = trees_on(plot,-1);
             float floor_more = ZoneKindPaintStoreys(kind) * cw.picker->PlotArea(plot);
@@ -573,7 +599,7 @@ void ApplicationChasm::UpdateGhost(){
                 int corner = f_beside ? -1 : ZoneJoinCorner(cw,z,plot,kind,key.owner);
                 if (corner >= 0){
                     for (int g = 0; g < GOOD_COUNT; g++){
-                        cost[g] += EconomyKindStoreyCost(cw,kind,corner,g,1);
+                        cost[g] += EconomyKindStoreyCost(cw,z,kind,corner,g,1);
                     }
                     plots = 2;
                     trees += trees_on(corner,-1);
@@ -581,19 +607,53 @@ void ApplicationChasm::UpdateGhost(){
                 }
             }
             f_cost = true;
-            if (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER){
+            //Its stone is in the cost already (EconomyKindStoreyCost): the tag says what it is for.
+            note = ZoneNeedsFoundation(cw,z,kind,plot) ? " - ON A FOUNDATION" : NULL;
+            if (kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER){
                 room_more = room_gain(kind,key.owner,floor_more);
                 f_room_new = key.owner == 0;
                 room_kind = kind;
             }
         }
         if (shown == ZONE_KIND_WINCH){
-            GhostPlotTile(cw,plot,verts);
+            GhostPlotTile(cw,z,plot,verts);
             int landing = ZoneWinchLanding(cw,plot);
             if (landing >= 0){
-                GhostPlotTile(cw,landing,verts);
+                GhostPlotTile(cw,z,landing,verts);
             }
         }
+    }else if (tool == CHASM_TOOL_TERRACE){
+        /*
+            A TERRACE (terraces_plan.md stage 2), by the square: its nine plots' tiles at the top a terrace from here alone
+            would have - or the terrace it would extend, since a drag started on one does. Each plot the rules refuse red
+            (a negative u, chasm_ghost.frag), the ghost green while any of it would be placed.
+        */
+        std::vector<int> square;
+        ZoneCellPlots(cw,hover.coarse_quad,square);
+        int top = ZoneTerraceTopOver(cw,z,square,(int)square.size());
+        int placed = 0;
+        for (int v : square){
+            bool f_there = ZoneTerraced(z,v);
+            bool f_can = top != ZONE_NO_TERRACE && (f_there ? z.terrace[v] == top : ZoneCanTerrace(cw,z,v,top,NULL));
+            size_t first = verts.size();
+            if (top != ZONE_NO_TERRACE){
+                BuildPlotTile(cw,z,v,GHOST_LIFT,verts,(float)top * ZONE_STOREY_HEIGHT + GHOST_LIFT);
+            }else{
+                GhostPlotTile(cw,z,v,verts);
+            }
+            if (!f_can){
+                for (size_t i = first; i < verts.size(); i++){
+                    verts[i].uv = vec2(-1.0f,-1.0f);
+                }
+            }else if (!f_there){
+                cost[GOOD_STONE] += EconomyTerraceStone(cw,v,top);
+                trees += trees_on(v,-1);
+                placed++;
+            }
+            f_ok = f_ok || f_can;
+        }
+        f_cost = placed > 0;
+        plots = placed;
     }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || ChasmLineTool(tool)){
         int ground = (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : (tool == CHASM_TOOL_LOT) ? ZONE_GROUND_LOT
                                                                      : ChasmLineGround(tool);
@@ -608,7 +668,7 @@ void ApplicationChasm::UpdateGhost(){
         bool f_own = z.ground[plot] == ground && ZoneGroundOwner(z,plot) == key.owner;
         f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL))
                && !crate_in_way(ZONE_OP_GROUND_PAINT,plot,ground);
-        GhostPlotTile(cw,plot,verts);
+        GhostPlotTile(cw,z,plot,verts);
         //A plot of it - not over its own ground, which is only claimed, nor a wall over a road, which only gates it.
         if (z.ground[plot] != ground && !(ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)){
             cost[GOOD_WOOD] = EconomyGroundKindCost(cw,ground,plot);
@@ -619,7 +679,7 @@ void ApplicationChasm::UpdateGhost(){
     }else if (f_field){
         f_ok = (z.field[hover.coarse_quad] || ZoneCanField(cw,z,hover.coarse_quad,NULL))
                && !crate_in_way(ZONE_OP_FIELD_PAINT,hover.coarse_quad,0);
-        GhostCellTile(cw,hover.coarse_quad,verts);
+        GhostCellTile(cw,z,hover.coarse_quad,verts);
         if (!z.field[hover.coarse_quad]){
             int cell_kind = (tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD;
             for (int g = 0; g < GOOD_COUNT; g++){
@@ -634,9 +694,9 @@ void ApplicationChasm::UpdateGhost(){
             uint32_t on = z.building[plot];
             GhostBuildingPlot(cw,z,plot,z.buildings[on].kind,z.storeys[plot],on,verts);
         }else if (z.ground[plot]){
-            GhostPlotTile(cw,plot,verts);
+            GhostPlotTile(cw,z,plot,verts);
         }else if (z.field[hover.coarse_quad]){
-            GhostCellTile(cw,hover.coarse_quad,verts);
+            GhostCellTile(cw,z,hover.coarse_quad,verts);
         }
         f_ok = false;
     }
@@ -650,9 +710,11 @@ void ApplicationChasm::UpdateGhost(){
         ghost_cost_text = (f_cost && !verts.empty()) ? CostTag(cost,lead,plots,trees) : std::string();
         //What a woodcutter's hut keeps indoors for it (woodcutting_plan.md): none for the floor he works in; what a
         //collector holds, a load at the least.
-        if (!ghost_cost_text.empty() && room_more >= 0 && room_kind == ZONE_KIND_WATER){
-            ghost_cost_text += (room_more == 0) ? std::string(" - HOLDS NO MORE WATER")
-                             : " - HOLDS " + std::to_string(room_more) + (f_room_new ? " WATER" : " MORE WATER");
+        if (!ghost_cost_text.empty() && room_more >= 0
+            && (room_kind == ZONE_KIND_WATER || room_kind == ZONE_KIND_STEAM || room_kind == ZONE_KIND_CONDENSER)){
+            std::string what = (room_kind == ZONE_KIND_STEAM) ? "STEAM" : "WATER";
+            ghost_cost_text += (room_more == 0) ? " - HOLDS NO MORE " + what
+                             : " - HOLDS " + std::to_string(room_more) + (f_room_new ? " " : " MORE ") + what;
         }else if (!ghost_cost_text.empty() && room_more >= 0){
             ghost_cost_text += (room_more == 0) ? (f_room_new ? " - TOO SMALL TO KEEP WOOD" : " - KEEPS NO MORE WOOD")
                              : " - KEEPS " + std::to_string(room_more) + (f_room_new ? " WOOD INDOORS" : " MORE WOOD");
@@ -681,6 +743,245 @@ void ApplicationChasm::UpdateGhost(){
     vec3 c = f_ok ? GHOST_OK : GHOST_REFUSED;
     ghost->SetOutline(vec4(c.x,c.y,c.z,1.0f));
     ghost->SetVisibility(true);
+}
+
+/*
+    THE SLOPE GRID (the user's, 2026-10-21). The ghost says yes or no to the one plot under the cursor, and the
+    ground round it looks open and gentle - on the starting map much of it is too steep to build on, which nothing
+    showed until a click was refused. So while a tool is in hand, the plots round the cursor out to SLOPE_GRID_RADIUS
+    - a field's cells for the field and the range - are outlined as the ghost's tile is: green where the land lets
+    the tool stand, AMBER where its building stands only on a foundation, which costs stone (terraces_plan.md), red
+    where it does not stand at all - amber and red filled in faintly too. It fades out toward its edge, a patch
+    round the cursor rather than a second map.
+
+    The LAND's say, not the whole rules': ZoneLandSays, or ZoneCanField on an empty ZoneState - one ground, dry,
+    off the mountain, and not too steep for the tool (a road's slope for a road or a wall, a house's for the rest).
+    What is built or laid there is the ghost's to say, and shows by itself. The tools whose ground is a place of its
+    own - a water collector's bank, a steam collector's drop, a winch's rim, a mine's seam, a bridge's river - have no
+    grid: the land's rule would be the wrong one. Ground that is no place to build at all - the water, the mountain, the chasm floor, a
+    bare ledge, the map's edge - is left out rather than drawn red: that shows by itself too. Nothing under the
+    clouds, which would give the hidden ground away.
+
+    Each outline lies a little in from its tile's edge, so two neighbours' lines run side by side, each its own
+    colour. The corners it runs between are the ground mesh's own (TerrainMesh's fans), so a straight piece
+    between them lies on the ground; a cell's is laid on each of its corners' own ground, half an edge at a time.
+*/
+#define SLOPE_GRID_RADIUS   14.0f       //world units round the plot or cell under the cursor: four cells, seven plots or so
+#define SLOPE_GRID_FULL     0.4f        //...at full strength out to this share of it, fading to nothing at its edge
+#define SLOPE_GRID_INSET    0.10f       //an outline's corners, in toward its tile's middle - world units
+#define SLOPE_GRID_WIDTH    0.09f       //...and its width
+#define SLOPE_GRID_FILL     0.30f       //an amber or red tile's fill, a share of its outline's strength
+#define SLOPE_GRID_ALPHA    0.85f
+static const vec3 SLOPE_FOUNDATION(1.0f,0.72f,0.22f);
+
+#define SLOPE_RULE_NONE     -1
+#define SLOPE_RULE_PLOT     0           //ZoneLandSays: a building's, a garden's or a lot's
+#define SLOPE_RULE_ROAD     1           //...a road's or a wall's
+#define SLOPE_RULE_CELL     2           //ZoneCanField: a field's or a range's cell
+
+namespace {
+
+//A strip SLOPE_GRID_WIDTH wide along the ground from a to b, on plot `plot`'s ground; `uv` as chasm_slope.frag reads it.
+void SlopeStrip(const ChasmWorld& w, const ZoneState& z, int plot, vec2 a, vec2 b, const vec2& uv, std::vector<vertex>& out){
+    vec2 d = b - a;
+    float len = d.length();
+    if (len < 1e-4f){
+        return;
+    }
+    d = d * (1.0f / len);
+    //On past both ends by half its width, so the pieces of an outline meet at its corners.
+    a = a - d * (SLOPE_GRID_WIDTH * 0.5f);
+    b = b + d * (SLOPE_GRID_WIDTH * 0.5f);
+    vec2 side = vec2(-d.y,d.x) * (SLOPE_GRID_WIDTH * 0.5f);
+    auto at = [&](const vec2& x){
+        return vec3(x.x,ZoneGroundHeight(w,z,plot,x) + GHOST_LIFT,x.y);
+    };
+    size_t first = out.size();
+    MeshQuad(out,at(a - side),at(b - side),at(b + side),at(a + side),vec3(0.0f,1.0f,0.0f),PAL_PATH);
+    for (size_t i = first; i < out.size(); i++){
+        out[i].uv = uv;
+    }
+}
+
+//`p` moved SLOPE_GRID_INSET toward `middle`.
+vec2 SlopeInset(const vec2& p, const vec2& middle){
+    vec2 d = middle - p;
+    float len = d.length();
+    return (len > SLOPE_GRID_INSET * 2.0f) ? p + d * (SLOPE_GRID_INSET / len) : p;
+}
+
+}
+
+void ApplicationChasm::SetSlopeUniforms(){
+    slope_shader->Setvec3("slope_ok",GHOST_OK);
+    slope_shader->Setvec3("slope_refused",GHOST_REFUSED);
+    slope_shader->Setvec3("slope_foundation",SLOPE_FOUNDATION);
+    slope_shader->Setfloat("slope_alpha",SLOPE_GRID_ALPHA);
+    //Over what stands, never into the depth buffer, as the ghost.
+    glDepthMask(GL_FALSE);
+}
+
+//RENDER THREAD, every frame, after UpdateGhost: built again only when the plot or cell it is round, the rule, the map or
+//what is explored changes.
+void ApplicationChasm::UpdateSlopeGrid(){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (!slope_grid){
+        if (!w || slope_shader_index < 0){
+            return;
+        }
+        world_scene->AtTickBoundary([&](){
+            slope_grid = new Object();
+            slope_grid->name = "SlopeGrid";
+            Mesh* mesh = new Mesh();
+            mesh->num_materials = 1;
+            slope_grid->SetMesh(mesh);
+            slope_grid->SetMaterialSlot(0,palette_material);
+            slope_grid->SetVisualOnly(true);
+            slope_grid->SetPickability(false);
+            slope_grid->SetCastsShadow(false);
+            slope_grid->SetVisibility(false);
+            world_scene->AddObject(slope_grid);
+        });
+    }
+    int tool = paint_tool;
+    int kind = ToolKind(tool);
+    int rule = ChasmCellTool(tool) ? SLOPE_RULE_CELL : ChasmLineTool(tool) ? SLOPE_RULE_ROAD
+             : (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT) ? SLOPE_RULE_PLOT
+             : (kind == ZONE_KIND_NONE || kind == ZONE_KIND_WATER || kind == ZONE_KIND_WINCH || kind == ZONE_KIND_MINE
+                || kind == ZONE_KIND_BRIDGE || kind == ZONE_KIND_STEAM) ? SLOPE_RULE_NONE : SLOPE_RULE_PLOT;
+    GridPick hover = GetHoverPick();
+    std::shared_ptr<const Exploration> ex = GetExploration();
+    std::shared_ptr<const ZoneState> zs = GetZones();      //its terraces, which are level ground (terraces_plan.md)
+    SlopeKey key;
+    if (PlayMode() && rule != SLOPE_RULE_NONE && hover.f_hit && w && zs && zs->world == w){
+        key.world = w.get();
+        key.zones_version = zs->version;
+        key.explored = ex.get();
+        key.explored_version = ex ? ex->version : 0;
+        key.at = (rule == SLOPE_RULE_CELL) ? hover.coarse_quad : hover.plot;
+        key.rule = rule;
+        key.kind = (rule == SLOPE_RULE_PLOT) ? kind : ZONE_KIND_NONE;     //whether it takes a foundation
+    }
+    if (key == slope_built){
+        return;
+    }
+    slope_built = key;
+    int counts[3] = {0,0,0};    //ZONE_LAND_*'s order: refused, allowed, on a foundation
+    std::vector<vertex> verts;
+    if (key.at >= 0){
+        const ChasmWorld& cw = *w;
+        const ZoneState& z = *zs;
+        const Grid& g = *cw.grid;
+        const Terrain& t = *cw.terrain;
+        //Ground to build on at all: the rest is left out (above).
+        auto open = [&](int v){
+            return !g.fine.f_boundary[v] && t.Buildable(v) && !t.wet[v] && !t.Mountain(v)
+                   && (!ex || ex->Explored(g.fine.pos[v]));
+        };
+        auto strength = [](float d){
+            float x = std::max(0.0f,std::min(1.0f,(d - SLOPE_GRID_RADIUS * SLOPE_GRID_FULL) / (SLOPE_GRID_RADIUS * (1.0f - SLOPE_GRID_FULL))));
+            return 1.0f - x * x * (3.0f - 2.0f * x);
+        };
+        if (rule == SLOPE_RULE_CELL){
+            //The land's say: nothing built or laid - but its terraces, level ground made of it.
+            ZoneState none;
+            none.terrace = z.terrace;
+            none.terrace_built = z.terrace_built;
+            auto cell_centre = [&](int c){
+                return (g.FineQuadCentre(c * 4) + g.FineQuadCentre(c * 4 + 2)) * 0.5f;
+            };
+            vec2 from = cell_centre(key.at);
+            for (int c = 0; c < (int)g.coarse.quads.size(); c++){
+                float d = (cell_centre(c) - from).length();
+                if (d > SLOPE_GRID_RADIUS){
+                    continue;
+                }
+                ZoneRangeCell cell = ZoneRangeCellAt(cw,c);
+                if (!open(cell.middle)){
+                    continue;
+                }
+                bool f_ok = ZoneCanField(cw,none,c,NULL);
+                counts[f_ok ? ZONE_LAND_ALLOWED : ZONE_LAND_REFUSED]++;
+                float s = strength(d);
+                vec2 uv(f_ok ? 0.0f : -1.0f,s);
+                //Its outline: of each of its four fine cells, the two sides away from its middle, half a side at a time.
+                for (int q = c * 4; q < c * 4 + 4; q++){
+                    const GridQuad& fq = g.fine.quads[q];
+                    for (int k = 0; k < 4; k++){
+                        int a = fq.v[k];
+                        int b = fq.v[(k + 1) % 4];
+                        if (a == cell.middle || b == cell.middle){
+                            continue;
+                        }
+                        vec2 pa = SlopeInset(g.fine.pos[a],cell.centre);
+                        vec2 pb = SlopeInset(g.fine.pos[b],cell.centre);
+                        vec2 half = SlopeInset((g.fine.pos[a] + g.fine.pos[b]) * 0.5f,cell.centre);
+                        SlopeStrip(cw,z,a,pa,half,uv,verts);
+                        SlopeStrip(cw,z,b,half,pb,uv,verts);
+                    }
+                }
+                if (!f_ok){
+                    size_t first = verts.size();
+                    GhostCellTile(cw,z,c,verts);
+                    for (size_t i = first; i < verts.size(); i++){
+                        verts[i].uv = vec2(-1.0f,s * SLOPE_GRID_FILL);
+                    }
+                }
+            }
+        }else{
+            const GridPicker& p = *cw.picker;
+            vec2 from = g.fine.pos[key.at];
+            for (int v = 0; v < (int)g.fine.pos.size(); v++){
+                float d = (g.fine.pos[v] - from).length();
+                if (d > SLOPE_GRID_RADIUS || !open(v)){
+                    continue;
+                }
+                int says = ZoneLandSays(cw,z,v,key.kind,rule == SLOPE_RULE_ROAD,NULL);
+                counts[says]++;
+                float s = strength(d);
+                //chasm_slope.frag: u 0 green, past 1 amber, under 0 red.
+                float u = (says == ZONE_LAND_ALLOWED) ? 0.0f : (says == ZONE_LAND_FOUNDATION) ? 2.0f : -1.0f;
+                vec2 uv(u,s);
+                //Its outline: in each cell round it, from the middle of one side, by the cell's middle, to the next's
+                //(BuildPlotTile's quarter, less the plot's own corner).
+                const vec2& at = g.fine.pos[v];
+                float level = t.Height(v);
+                for (int i = 0; i < p.PlotQuadCount(v); i++){
+                    int qc = p.PlotQuadCorner(v,i);
+                    const GridQuad& q = g.fine.quads[qc / 4];
+                    int k = qc % 4;
+                    vec2 centre = SlopeInset(g.FineQuadCentre(qc / 4),at);
+                    vec2 side_b = SlopeInset((at + g.fine.pos[q.v[(k + 1) % 4]]) * 0.5f,at);
+                    vec2 side_d = SlopeInset((at + g.fine.pos[q.v[(k + 3) % 4]]) * 0.5f,at);
+                    SlopeStrip(cw,z,v,side_b,centre,uv,verts);
+                    SlopeStrip(cw,z,v,centre,side_d,uv,verts);
+                }
+                if (says != ZONE_LAND_ALLOWED){
+                    size_t first = verts.size();
+                    GhostPlotTile(cw,z,v,verts);
+                    for (size_t i = first; i < verts.size(); i++){
+                        verts[i].uv = vec2(u,s * SLOPE_GRID_FILL);
+                    }
+                }
+            }
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        for (int i = 0; i < 3; i++){
+            slope_counts[i] = counts[i];
+        }
+    }
+    if (verts.empty()){
+        slope_grid->SetVisibility(false);
+        return;
+    }
+    Mesh* mesh = slope_grid->GetMesh();
+    mesh->SetMeshData(verts.data(),(int)verts.size());
+    //SetMeshData puts a mesh back to MESH_MODE_NORMAL, so the shader tag goes after it.
+    mesh->mesh_mode = MESH_MODE_SHADER;
+    mesh->custom_shader_index = slope_shader_index;
+    slope_grid->SetVisibility(true);
 }
 
 /*
@@ -736,7 +1037,7 @@ std::string ApplicationChasm::ToolCostTip(int tool){
         return std::string();
     }
     for (int g = 0; g < GOOD_COUNT; g++){
-        cost[g] = EconomyKindStoreysCost(*w,kind,v,g,0,ZoneKindPaintStoreys(kind));
+        cost[g] = EconomyKindStoreysCost(*w,ZoneState(),kind,v,g,0,ZoneKindPaintStoreys(kind));
     }
     if (kind == ZONE_KIND_TOWER){
         int places = std::max(1,ZoneTowerGuards(*w,v));

@@ -368,6 +368,7 @@ void ApplicationChasm::OpenStats(){
         f_stats_paused_game = true;
     }
     stats_scroll = 0;
+    stats_colony = 0;       //all of them, each time it opens (BY COLONY)
     f_stats_open = true;
     debug->Info("Statistics page\n");
 }
@@ -429,6 +430,19 @@ bool ApplicationChasm::UpdateStats(InputController* input){
     bool f_on_close = f_in && px.x >= l.close0.x && px.x <= l.close1.x && px.y >= l.close0.y && px.y <= l.close1.y;
     if ((f_live && (f_tab || f_escape)) || (f_click && f_on_close && !UIWantsMouse())){
         CloseStats();
+    }
+    //BY COLONY (settlements_plan.md step 4): a chip by the title - all of them, or one colony - where DrawStats drew it;
+    //pressed by the mouse, or by chasm_select's op press, which the play mode's picking under the page never takes.
+    OverlayHit hit;
+    if (f_script_press.exchange(false)){
+        std::lock_guard<std::mutex> lock(pick_mutex);
+        px = script_press_px;
+        f_click = true;
+        f_in = true;
+    }
+    if (f_click && f_in && !UIWantsMouse() && OverlayHitAt(px,&hit) && hit.action == OVERLAY_HIT_STATS_COLONY){
+        stats_colony = (uint32_t)std::max(0,hit.value);
+        stats_scroll = 0;
     }
     return true;
 }
@@ -590,7 +604,17 @@ void ApplicationChasm::DrawStats(float s){
     StatsLayout l = StatsLayoutOf(w,h,s,end != CHASM_END_NONE);
     overlay->AddRect(l.p0,l.p1,14.0f * s,STATS_PANEL);
     vec2 mouse((float)overlay_mouse_x.load(),(float)overlay_mouse_y.load());
-    const char* title = (end == CHASM_END_COMPLETE) ? "DEMO COMPLETE" : (end == CHASM_END_LOST) ? "THE COLONY IS LOST" : "THE COLONY";
+    /*
+        BY COLONY (settlements_plan.md, step 4): with more than one colony in the history, the page shows all of them or
+        one, chosen by the chips beside the title - its own history (ChasmColonyHistory) read as the whole's is. An end's
+        page is the whole colony's.
+    */
+    std::vector<uint32_t> colonies = (e && end == CHASM_END_NONE) ? ChasmStatsColonies(*e) : std::vector<uint32_t>();
+    uint32_t colony = stats_colony.load();
+    colony = (colonies.size() > 1 && std::find(colonies.begin(),colonies.end(),colony) != colonies.end()) ? colony : 0;
+    std::string colony_title = "COLONY " + std::to_string(colony);
+    const char* title = (end == CHASM_END_COMPLETE) ? "DEMO COMPLETE" : (end == CHASM_END_LOST) ? "THE COLONY IS LOST"
+                      : colony ? colony_title.c_str() : "THE COLONY";
     if (end == CHASM_END_NONE){
         //The close mark: an X in a square, lit under the mouse.
         bool f_over_close = mouse.x >= l.close0.x && mouse.x <= l.close1.x && mouse.y >= l.close0.y && mouse.y <= l.close1.y;
@@ -608,13 +632,27 @@ void ApplicationChasm::DrawStats(float s){
         overlay->AddText("no colony",vec2((l.p0.x + l.p1.x) * 0.5f,(l.top + l.bottom) * 0.5f),16.0f * s,HUD_TEXT_DIM,UI_ALIGN_CENTER);
         return;
     }
-    const EconomyHistory& hist = e->history;
+    EconomyHistory colony_hist;
+    if (colony){
+        colony_hist = ChasmColonyHistory(e->history,colony);
+    }
+    const EconomyHistory& hist = colony ? colony_hist : e->history;
+    /*
+        A colony not there when the history began - its start has no row of it - goes back to its first row: FOUNDED then,
+        or, in a history kept from before the colonies were counted (a start with no colonies' rows), KEPT SINCE then.
+    */
+    const std::vector<EconomyDay>& at_start = e->history.start.colonies;
+    bool f_later = colony && std::none_of(at_start.begin(),at_start.end(),[&](const EconomyDay& r){ return r.colony == colony; });
+    bool f_founded = f_later && !at_start.empty();
     //Its date, and how long the history goes back: the landing's, or the load of a save from before it was kept.
+    float chips_x = l.a0;
     {
         std::string since = ChasmStatsDate(e->tick);
         char buf[96];
         int lived = (int)((e->tick - std::min(e->tick,hist.from)) / CALENDAR_DAY_TICKS);
-        if (hist.from == 0){
+        if (f_founded){
+            snprintf(buf,sizeof(buf),"   -   FOUNDED %s",ChasmStatsDate(hist.from).c_str());
+        }else if (hist.from == 0 && !f_later){
             snprintf(buf,sizeof(buf),"   -   %i DAY%s SINCE THE LANDING",lived,lived == 1 ? "" : "S");
         }else{
             snprintf(buf,sizeof(buf),"   -   KEPT SINCE %s",ChasmStatsDate(hist.from).c_str());
@@ -622,8 +660,29 @@ void ApplicationChasm::DrawStats(float s){
         since += buf;
         float title_w = overlay->MeasureText(title,26.0f * s).x;
         overlay->AddText(since.c_str(),vec2(l.a0 + title_w + 18.0f * s,l.p0.y + 41.0f * s),13.0f * s,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+        chips_x = l.a0 + title_w + 18.0f * s + overlay->MeasureText(since.c_str(),13.0f * s).x + 28.0f * s;
     }
-    ChasmStatsNow now = ChasmStatsNowOf(*e,*z);
+    //The chips: ALL, then each colony by its number - the one shown lit, each a press.
+    if (colonies.size() > 1){
+        const float chip_text = 12.0f * s;
+        const float chip_pad = 10.0f * s;
+        float x = chips_x;
+        float y0 = l.p0.y + 25.0f * s;
+        float y1 = y0 + 22.0f * s;
+        for (size_t i = 0; i <= colonies.size(); i++){
+            uint32_t c = (i == 0) ? 0 : colonies[i - 1];
+            std::string label = (c == 0) ? std::string("ALL") : "COLONY " + std::to_string(c);
+            float cw = overlay->MeasureText(label.c_str(),chip_text).x + chip_pad * 2.0f;
+            bool f_on = c == colony;
+            bool f_over = mouse.x >= x && mouse.x <= x + cw && mouse.y >= y0 && mouse.y <= y1;
+            overlay->AddRect(vec2(x,y0),vec2(x + cw,y1),6.0f * s,
+                             f_on ? HudFaded(HUD_SELECT,150) : f_over ? UIColor(255,255,255,40) : UIColor(255,255,255,14));
+            overlay->AddText(label.c_str(),vec2(x + chip_pad,y1 - 7.0f * s),chip_text,f_on ? HUD_TEXT : HUD_TEXT_DIM,UI_ALIGN_LEFT);
+            overlay_hits_drawing.push_back(OverlayHit{vec2(x,y0),vec2(x + cw,y1),OVERLAY_HIT_STATS_COLONY,(int)c});
+            x += cw + 6.0f * s;
+        }
+    }
+    ChasmStatsNow now = ChasmStatsNowOf(*e,*z,colony);
     ChasmStatsTotals totals = ChasmStatsSum(hist);
     const float head = 13.0f * s;           //a section's heading
     const float text = 14.0f * s;
@@ -724,13 +783,13 @@ void ApplicationChasm::DrawStats(float s){
         }
         y += 12.0f * s;
         //The settlements, each with its people and beds; the dead by cause.
-        snprintf(buf,sizeof(buf),"SETTLEMENTS  %i",(int)now.settlements.size());
+        snprintf(buf,sizeof(buf),"COLONIES  %i",(int)now.settlements.size());
         heading(buf);
-        //In the order founded - the economy's, by their oldest homes' ids.
+        //In the order founded - the economy's, by their oldest homes' ids - each by its colony number, as COLONY N.
         for (size_t i = 0; i < now.settlements.size(); i++){
             const ChasmStatsSettlement& st = now.settlements[i];
             snprintf(buf,sizeof(buf),"%i people, %i beds",st.people,st.beds);
-            row("settlement " + std::to_string(i + 1),buf,HUD_TEXT_DIM);
+            row("colony " + std::to_string(st.colony),buf,HUD_TEXT_DIM);
         }
         y += 12.0f * s;
         snprintf(buf,sizeof(buf),"THE DEAD  %i",now.dead);
@@ -748,7 +807,8 @@ void ApplicationChasm::DrawStats(float s){
         float x0 = l.b0;
         float x1 = l.b1;
         float y = l.top;
-        overlay->AddText(hist.from == 0 ? "SINCE THE LANDING" : "SINCE IT WAS KEPT",vec2(x0,y + 12.0f * s),head,HUD_TEXT_DIM,
+        overlay->AddText(f_founded ? "SINCE IT WAS FOUNDED" : (hist.from == 0 && !f_later) ? "SINCE THE LANDING" : "SINCE IT WAS KEPT",
+                         vec2(x0,y + 12.0f * s),head,HUD_TEXT_DIM,
                          UI_ALIGN_LEFT);
         overlay->AddLine(vec2(x0,y + 18.0f * s),vec2(x1,y + 18.0f * s),1.0f * s,STATS_GRID);
         y += 28.0f * s;
@@ -906,11 +966,22 @@ json DayJson(const EconomyDay& d){
     float food = 0.0f;
     float water = 0.0f;
     ChasmStatsDays(d,food,water);
-    return json{{"day",d.day},{"people",json{{"babies",d.people[LIFE_BABY]},{"children",d.people[LIFE_CHILD]},
-                                             {"young",d.people[LIFE_YOUNG]},{"adults",d.people[LIFE_ADULT]},
-                                             {"old",d.people[LIFE_OLD]}}},
-                {"held",held},{"food_days",food},{"water_days",water},{"felled",d.felled},{"broken",d.broken},
-                {"storeys",d.storeys},{"zombies",d.zombies}};
+    json row{{"day",d.day},{"people",json{{"babies",d.people[LIFE_BABY]},{"children",d.people[LIFE_CHILD]},
+                                          {"young",d.people[LIFE_YOUNG]},{"adults",d.people[LIFE_ADULT]},
+                                          {"old",d.people[LIFE_OLD]}}},
+             {"held",held},{"food_days",food},{"water_days",water},{"felled",d.felled},{"broken",d.broken},
+             {"storeys",d.storeys},{"zombies",d.zombies}};
+    //Its colonies' rows (BY COLONY), each the same with its `colony` - 0 nobody's.
+    if (!d.colonies.empty()){
+        json colonies = json::array();
+        for (const EconomyDay& r : d.colonies){
+            json one = DayJson(r);
+            one["colony"] = r.colony;
+            colonies.push_back(one);
+        }
+        row["colonies"] = colonies;
+    }
+    return row;
 }
 
 //A cause of death as a key: "a zombie" is the words' (EconomyDeathCause), not a name.
@@ -926,7 +997,7 @@ json EventJson(const EconomyState& e, const EconomyEvent& ev){
         }
     }
     return json{{"tick",ev.tick},{"date",ChasmStatsDate(ev.tick)},{"kind",EconomyEventName(ev.kind)},{"person",ev.person},
-                {"building",ev.building},{"plot",ev.plot},{"x",ev.pos.x},{"z",ev.pos.y},{"what",what},{"amount",ev.amount},
+                {"building",ev.building},{"plot",ev.plot},{"x",ev.pos.x},{"z",ev.pos.y},{"what",what},{"amount",ev.amount},{"colony",ev.colony},
                 {"text",ChasmJournalText(e,ev)}};
 }
 
@@ -945,12 +1016,17 @@ void ApplicationChasm::RegisterStatsTools(){
         "a row a day: day, people by stage, held, food_days, water_days, felled, broken, storeys, zombies); the last "
         "`journal` lines (default 40, -1 all: tick, date, kind, person, building, plot, x, z, what, amount, text); and "
         "`check` - empty, or what in the history disagrees with the state it was kept beside (statistics_plan.md: the "
-        "dead, the born, the forest, the zombies killed against everyone's kills, each row's people). op open / op close: the page, over the game paused under it - as Tab does. `page` says whether it "
-        "is up. include_screenshot as elsewhere.",
+        "dead, the born, the forest, the zombies killed against everyone's kills, each row's people, each row's colonies "
+        "adding up to it). op open / op close: the page, over the game paused under it - as Tab does. `page` says whether it "
+        "is up. BY COLONY (docs/settlements_plan.md, step 4): `colony` N narrows every figure but `check` to that colony - "
+        "its own rows, journal and now - and shows it on the page, as its chip does (0 all, the default; ignored with one "
+        "colony); `colonies` lists those it can show, and a row's `colonies` its colonies' rows (colony 0 nobody's). "
+        "include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
                 {"op",{{"type","string"}}},
+                {"colony",{{"type","integer"},{"description","a colony's number: its figures alone, and the page shows it; 0 all"}}},
                 {"days",{{"type","integer"},{"description","ledger rows, the newest: default all"}}},
                 {"journal",{{"type","integer"},{"description","journal lines, the newest: default 40, -1 all"}}},
                 {"include_screenshot",{{"type","boolean"}}},
@@ -974,8 +1050,19 @@ void ApplicationChasm::RegisterStatsTools(){
             if (!e || !z || e->world != z->world){
                 return json{{"error","no colony"}};
             }
-            const EconomyHistory& h = e->history;
-            ChasmStatsNow n = ChasmStatsNowOf(*e,*z);
+            //BY COLONY: the colony asked for - and the page's - else all of them.
+            std::vector<uint32_t> colonies = ChasmStatsColonies(*e);
+            uint32_t colony = (uint32_t)std::max(0,args.value("colony",0));
+            colony = (colonies.size() > 1 && std::find(colonies.begin(),colonies.end(),colony) != colonies.end()) ? colony : 0;
+            if (args.contains("colony")){
+                stats_colony = colony;
+            }
+            EconomyHistory colony_hist;
+            if (colony){
+                colony_hist = ChasmColonyHistory(e->history,colony);
+            }
+            const EconomyHistory& h = colony ? colony_hist : e->history;
+            ChasmStatsNow n = ChasmStatsNowOf(*e,*z,colony);
             json kinds_standing = json::object();
             json kinds_building = json::object();
             for (int k = 1; k < ZONE_KIND_COUNT; k++){
@@ -988,7 +1075,7 @@ void ApplicationChasm::RegisterStatsTools(){
             }
             json settlements = json::array();
             for (const ChasmStatsSettlement& st : n.settlements){
-                settlements.push_back(json{{"id",st.id},{"people",st.people},{"beds",st.beds}});
+                settlements.push_back(json{{"id",st.id},{"colony",st.colony},{"people",st.people},{"beds",st.beds}});
             }
             json dead_of = json::object();
             for (int c = 0; c < CHASM_STATS_CAUSES; c++){
@@ -1050,7 +1137,8 @@ void ApplicationChasm::RegisterStatsTools(){
                 check.push_back(p);
             }
             //The calendar's tick, as a save keeps it - the economy's own is its last tick's, one short of it after a tick.
-            json result{{"page",f_stats_open.load()},{"tick",calendar_shown.load()},{"from",h.from},{"felled_from",h.felled_from},
+            json result{{"page",f_stats_open.load()},{"colony",colony},{"colonies",colonies},{"page_colony",stats_colony.load()},
+                        {"tick",calendar_shown.load()},{"from",h.from},{"felled_from",h.felled_from},
                         {"broken_from",h.broken_from},{"kills_from",h.kills_from},{"now",now},{"totals",totals},{"seasons",seasons},
                         {"start",DayJson(h.start)},{"today",DayJson(h.today)},{"day_count",h.days.size()},{"days",days},
                         {"journal_count",h.journal.size()},{"journal",journal},{"check",check}};

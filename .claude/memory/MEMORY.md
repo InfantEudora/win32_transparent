@@ -49,6 +49,7 @@
 - [glTF sparse accessors](gltf_sparse_accessors.md) — GLTFLoader supports them (Blender shape keys); logs at DEBUG_WARN
 - [Archer terrain plan](archer_terrain_plan.md) — marching cubes from the StageBlock blockout; round OUTWARD; never remesh in NewGame
 - [OK to stop running apps](ok_to_stop_running_apps.md) — user allows killing a running app to relink or free a port; say so
+- [Link under another name](link_under_other_name.md) — make refuses EXE=; compile, then re-run the logged link line with another -o
 - [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform; vines + skinned rope built; growth next
 - [Input recording](input_recording.md) — F9/F10 + input_record/input_replay, recordings/*.rec text, trim by editing begin/end
 - [Sign text anchors](sign_text_anchors.md) — text on props via parented Cube empties text_<n>; apps/archer/Sign.h
@@ -103,7 +104,7 @@
 - [Ramparts plan](ramparts_plan.md) — walk nodes are plot+layer; tower decks + debug castle built; WalkJoin is the shared rule
 - [Chasm person picking](chasm_person_picking.md) — G-buffer readback + 8 px fallback; skinned outlines; multi-select all 3 steps built
 - [Minimised app took keystrokes](minimized_focus_leak.md) — FIXED 2026-10-18: HasFocus asks GetForegroundWindow + !IsIconic
-- [Chasm settlements](chasm_settlements.md) — territories by walk, reach by beds; founding by tent built; households move together; one camp per colony
+- [Chasm settlements](chasm_settlements.md) — part one in docs/done/; part two step 1 (per colony: number, kept, bar, stats) BUILT 2026-10-22; porters next
 - [Chasm stop work + ice](chasm_stop_work_and_ice.md) — workplaces stoppable (f_stopped); collector takes over camp drawer; posted cross ice
 - [Chasm woodcutting](chasm_woodcutting.md) — only woodcutters fell; camp 1 farmer + 1 woodcutter; logs 2/4/5; hut room by area
 - [Chasm foraging](chasm_foraging.md) — BUILT 2026-10-12: fruit from bushes + oaks, camp picker; add props with --add --merge
@@ -133,4 +134,6 @@
 - [Chasm ranks plan](chasm_ranks_plan.md) — BOTH STEPS BUILT 2026-10-19: kills + ranks (a kill each for now, rank_kills table), pace + one-shot; chasm_kills_test.py
 - [Farside space game concept](farside_space_game_concept.md) — apps/farside: waterline, sensors for player+AI, continuous altitude DECIDED; scale bench BUILT (port 8770)
 - [Chasm lifelines plan](chasm_lifelines_plan.md) — steps 1-4 + crowding BUILT (old age 2026-10-21); widows pairing (woman can still have a child) NEXT; saves/old_age_test.json + chasm_old_age_test.py
+- [Chasm steam plan](chasm_steam_plan.md) — steps 1-3 BUILT 2026-10-21 (temperature readout; steam collector P; condenser L; brass row 12); sail loft next; casm_edge.json for terrace tests
 - [Chasm modes plan](chasm_modes_plan.md) — Tutorial/Demo/Free play; track one-at-a-time, tells only; step 0 (GOALS panel honours switches) built 2026-10-19
+- [Chasm terraces plan](chasm_terraces_plan.md) — foundations + terraces BUILT 2026-10-22 (stage 3 next); ZoneGroundAt/BuildingFootHalves/ZoneTerraceStep are the single rules

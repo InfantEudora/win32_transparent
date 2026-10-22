@@ -245,11 +245,17 @@ void ApplicationChasm::DropLine(){
 //--- The drag: every other painting tool, drawn and then placed (docs/drag_plan.md) ---------------------
 
 bool ApplicationChasm::DragTool(int tool){
-    if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || tool == CHASM_TOOL_ERASE || ChasmCellTool(tool)){
+    if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT || tool == CHASM_TOOL_ERASE || tool == CHASM_TOOL_TERRACE
+        || ChasmCellTool(tool)){
         return true;
     }
     int kind = ToolKind(tool);
     return kind != ZONE_KIND_NONE && kind != ZONE_KIND_BRIDGE && !ZoneKindOnePlot(kind);
+}
+
+//A drag over coarse cells - a field's, a range's, and a terrace's squares (terraces_plan.md stage 2) - rather than plots.
+static bool CellDrag(int tool){
+    return ChasmCellTool(tool) || tool == CHASM_TOOL_TERRACE;
 }
 
 static vec2 CoarseCentre(const ChasmWorld& w, int c){
@@ -311,7 +317,7 @@ void ApplicationChasm::UpdateAreaDrag(const GridPick& hover, bool f_over_scene, 
         uint32_t owner = PaintOwner(tool);      //before the lock: it takes pick_mutex itself
         area_drag = LINE_DRAG_DRAWING;
         std::lock_guard<std::mutex> lock(pick_mutex);
-        drag_chain.assign(1,ChasmCellTool(tool) ? hover.coarse_quad : hover.plot);
+        drag_chain.assign(1,CellDrag(tool) ? hover.coarse_quad : hover.plot);
         drag_cells.assign(1,hover.coarse_quad);
         drag_tool = tool;
         f_drag_erase = main_scene->inputcontroller->IsKeyDown(INPUT_SHIFT);
@@ -330,7 +336,7 @@ void ApplicationChasm::UpdateAreaDrag(const GridPick& hover, bool f_over_scene, 
     }
     std::lock_guard<std::mutex> lock(pick_mutex);
     std::vector<int> was = drag_chain;
-    if (ChasmCellTool(drag_tool)){
+    if (CellDrag(drag_tool)){
         CellStepTo(*w,drag_chain,hover.coarse_quad,hover.at);
     }else{
         LineStepTo(*w,drag_chain,hover.plot);
@@ -390,6 +396,8 @@ bool ApplicationChasm::PlanDrag(int tool, const std::vector<int>& chain, const s
                 add(ZONE_OP_BUILD_ERASE,v,0,0);
             }else if (z->ground[v]){
                 add(ZONE_OP_GROUND_ERASE,v,0,0);
+            }else if (ZoneTerraced(*z,v)){
+                add(ZONE_OP_TERRACE_ERASE,v,0,0);       //what stood on it went first, by an earlier drag
             }
         }
         seen.clear();
@@ -403,6 +411,30 @@ bool ApplicationChasm::PlanDrag(int tool, const std::vector<int>& chain, const s
         for (int c : chain){
             if (once(c) && c < (int)z->field.size() && (!f_erase || z->field[c])){
                 add(f_erase ? ZONE_OP_FIELD_ERASE : paint,c,0,0);
+            }
+        }
+    }else if (tool == CHASM_TOOL_TERRACE){
+        /*
+            A TERRACE (terraces_plan.md stage 2), painted by the square as a field is - so its outline runs straight along
+            the squares' edges and a field fits on it - each square's nine plots. One platform, so one height for all of
+            it: the terrace the drag starts on, which it extends, or the highest ground under any of it, rounded up
+            (ZoneTerraceTopOver). What lies too far below that is refused, plot by plot.
+        */
+        std::vector<int> plots, one;
+        int lead = 0;
+        for (size_t i = 0; i < chain.size(); i++){
+            ZoneCellPlots(*w,chain[i],one);
+            for (int v : one){
+                if (once(v)){
+                    plots.push_back(v);
+                }
+            }
+            lead = (i == 0) ? (int)plots.size() : lead;
+        }
+        int top = f_erase ? ZONE_NO_TERRACE : ZoneTerraceTopOver(*w,*z,plots,lead);
+        for (int v : plots){
+            if (v < (int)z->terrace.size() && (!f_erase || ZoneTerraced(*z,v))){
+                add(f_erase ? ZONE_OP_TERRACE_ERASE : ZONE_OP_TERRACE,v,top,0);
             }
         }
     }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT){
@@ -472,6 +504,16 @@ void ApplicationChasm::PlaceDrag(){
         if (ChasmCellTool(tool)){
             SubmitZone(f_erase ? ZONE_OP_FIELD_ERASE : (tool == CHASM_TOOL_RANGE) ? ZONE_OP_RANGE_PAINT : ZONE_OP_FIELD_PAINT,at,0,
                        paint_stroke);
+        }else if (tool == CHASM_TOOL_TERRACE){
+            //A square of terrace: its nine plots, the commands PlanDrag makes for a drag of one square.
+            DragPlan plan;
+            if (PlanDrag(tool,chain,cells,f_erase,owner,plan)){
+                for (size_t i = 0; i < plan.commands.size(); i++){
+                    if (!plan.refused[i]){
+                        SubmitZone(plan.commands[i].op,plan.commands[i].index,plan.commands[i].value1,paint_stroke);
+                    }
+                }
+            }
         }else if (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT){
             SubmitZone(f_erase ? ZONE_OP_GROUND_ERASE : ZONE_OP_GROUND_PAINT,at,
                        (tool == CHASM_TOOL_GARDEN) ? ZONE_GROUND_GARDEN : ZONE_GROUND_LOT,paint_stroke,f_erase ? 0 : owner);

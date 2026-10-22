@@ -317,9 +317,11 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         GridPick pick = w.picker->Pick(at);
         return pick.f_hit ? pick.plot : -1;
     };
+    //The ground there - a terrace's top, if it stands on one (terraces_plan.md stage 2).
+    const bool f_zones = z && z->world.get() == &w;
     auto ground_at = [&](const vec2& at){
         int v = plot_at(at);
-        return (v >= 0) ? t.GroundHeight(at,t.Height(v)) : 0.0f;
+        return (v < 0) ? 0.0f : f_zones ? ZoneGroundHeight(w,*z,v,at) : t.GroundHeight(at,t.Height(v));
     };
     if (k.route.empty()){
         return ground_at(k.pos);
@@ -334,7 +336,23 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         f = (len > 1e-4f) ? std::max(0.0f,std::min(1.0f,along / len)) : 1.0f;
         pos = k.route[s] + d * f;
     }
-    if (!z || z->world.get() != &w || k.route_layer.empty()){
+    /*
+        Over a terrace's edge, on the ground (terraces_plan.md stage 2): level on the higher plot as far as the edge, then
+        down its stair - or its step - over the lower plot's half, where the stair is drawn (RoadMesh).
+    */
+    if (f_zones && s + 1 < (int)k.route.size() && EconomyRouteLayer(k,s) == WALK_GROUND && EconomyRouteLayer(k,s + 1) == WALK_GROUND){
+        int pa = plot_at(k.route[s]);
+        int pb = plot_at(k.route[s + 1]);
+        if (pa >= 0 && pb >= 0 && pa != pb && (ZoneTerraceStands(*z,pa) || ZoneTerraceStands(*z,pb))){
+            float ha = ground_at(k.route[s]);
+            float hb = ground_at(k.route[s + 1]);
+            if (ha >= hb){
+                return (f < 0.5f) ? ha : ha + (hb - ha) * ((f - 0.5f) * 2.0f);
+            }
+            return (f < 0.5f) ? ha + (hb - ha) * (f * 2.0f) : hb;
+        }
+    }
+    if (!f_zones || k.route_layer.empty()){
         return ground_at(pos);
     }
     auto at_point = [&](const vec2& at, int v, int layer){
@@ -387,7 +405,8 @@ float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker&
         vec2 at = EconomyBody(k);
         GridPick pick = w.picker->Pick(at);
         if (pick.f_hit && pick.plot >= 0){
-            return w.terrain->GroundHeight(at,w.terrain->Height(pick.plot));
+            return (z && z->world.get() == &w) ? ZoneGroundHeight(w,*z,pick.plot,at)
+                                               : w.terrain->GroundHeight(at,w.terrain->Height(pick.plot));
         }
     }
     return RouteHeight(w,z,k,k.seg,k.along);

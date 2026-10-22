@@ -53,6 +53,7 @@ std::vector<ChasmStatsSeason> ChasmStatsSeasons(const EconomyHistory& h);
 //NOW: the colony as it stands.
 struct ChasmStatsSettlement{
     uint32_t id = 0;
+    uint32_t colony = 0;            //its colony number (EconomySettlement::colony): COLONY N
     int people = 0;
     int beds = 0;
 };
@@ -72,7 +73,18 @@ struct ChasmStatsNow{
     int dead = 0;
     std::vector<ChasmStatsSettlement> settlements;
 };
-ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z);
+//`colony` (its number) narrows it to that colony - its people, homes, buildings, goods and the deaths the journal
+//puts there - 0 the whole colony's. The list of settlements is every one, either way.
+ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z, uint32_t colony = 0);
+
+/*
+    BY COLONY (settlements_plan.md, step 4): colony `colony`'s history, made from the whole's - its rows (a day's
+    colonies), its journal (EconomyEvent::colony), from the first row it has - so the sums, seasons and charts above
+    read it as they read the whole's. `from` is the tick its rows begin; a colony that never had a row has none.
+*/
+EconomyHistory ChasmColonyHistory(const EconomyHistory& h, uint32_t colony);
+//The colonies the page can show, by number: every one standing, and every one the history has a row of. Not nobody's.
+std::vector<uint32_t> ChasmStatsColonies(const EconomyState& e);
 
 /*
     THE CHECK (statistics_plan.md, "Check it three ways"): the history against the state it was kept beside -
@@ -81,7 +93,8 @@ ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z);
       - the zombies killed it counted, and the kills people were put down with, are the kills of the living and the
         dead (KILLS: nobody had any before it);
       - each row's people are the row before's, and that day's births less its deaths - across a gap the date
-        was set over, nothing is compared.
+        was set over, nothing is compared;
+      - BY COLONY: each row's colonies and nobody's add up to it - its people, goods and counts - and today's counts.
     Empty when all agree; else a line for each that does not.
 */
 std::vector<std::string> ChasmStatsCheck(const EconomyState& e);

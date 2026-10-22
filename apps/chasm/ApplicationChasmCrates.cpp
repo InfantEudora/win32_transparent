@@ -67,6 +67,7 @@ void ApplicationChasm::UploadCrates(){
     crate_built_version = version;
     std::vector<fmat4> looks[3];
     const float scales[3] = {CRATE_SCALE,rubble_scale,CHASM_CRYSTAL_SCALE};
+    std::shared_ptr<const ZoneState> zs = GetZones();
     if (f_ours){
         for (const EconomyCrate& c : e->crates){
             if (c.plot < 0 || c.plot >= (int)w->terrain->wet.size()){
@@ -74,7 +75,9 @@ void ApplicationChasm::UploadCrates(){
             }
             int look = CrateLook(c);
             float scale = scales[look];
-            float ground = w->terrain->GroundHeight(c.pos,w->terrain->Height(c.plot));
+            //On its plot's ground - a terrace's top, if it lies on one (terraces_plan.md stage 2).
+            float ground = (zs && zs->world == w) ? ZoneGroundHeight(*w,*zs,c.plot,c.pos)
+                                                  : w->terrain->GroundHeight(c.pos,w->terrain->Height(c.plot));
             looks[look].push_back(Object::ComposeTransformScale(vec3(c.pos.x,ground,c.pos.y),
                                   quat(vec3(0.0f,1.0f,0.0f),CrateYaw(c.id)),vec3(scale,scale,scale)));
         }

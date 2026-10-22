@@ -1,6 +1,7 @@
 #include "Economy.h"
 #include "Calendar.h"
 #include "ChasmWorld.h"
+#include "Climate.h"
 #include "Walkers.h"
 #include "RoadMesh.h"
 #include <algorithm>
@@ -21,6 +22,7 @@ const char* GoodName(int good){
         case GOOD_FRUIT:    return "fruit";
         case GOOD_STONE:    return "stone";
         case GOOD_FLOATSTONE: return "floatstone";
+        case GOOD_STEAM:    return "steam";
         default:            return "?";
     }
 }
@@ -85,6 +87,8 @@ const char* EconomyJobName(int job){
         case WORKER_JOB_PICKER:     return "picker";
         case WORKER_JOB_STONECUTTER: return "stonecutter";
         case WORKER_JOB_MINER:      return "miner";
+        case WORKER_JOB_STEAM:      return "steam_carrier";
+        case WORKER_JOB_CONDENSER:  return "condenser_hand";
         case WORKER_JOB_NONE:       return "none";
         case WORKER_JOB_PLAYING:    return "playing";
         case WORKER_JOB_BABY:       return "baby";
@@ -116,6 +120,8 @@ int EconomyJobOf(int kind){
         case ZONE_KIND_ROPEWALK:    return WORKER_JOB_ROPEMAKER;   //goods_plan.md
         case ZONE_KIND_STONECUTTER: return WORKER_JOB_STONECUTTER; //stone_plan.md
         case ZONE_KIND_MINE:        return WORKER_JOB_MINER;       //stone_plan.md step 5
+        case ZONE_KIND_STEAM:       return WORKER_JOB_STEAM;       //steam_plan.md
+        case ZONE_KIND_CONDENSER:   return WORKER_JOB_CONDENSER;   //steam_plan.md step 3
         default:                    return WORKER_JOB_NONE;
     }
 }
@@ -276,30 +282,90 @@ bool EconomyCounted(int kind){
 void EconomyDayLevels(const EconomyState& e, uint64_t tick, EconomyDay& row){
     row.people.fill(0);
     row.held.fill(0);
+    /*
+        BY COLONY (THE HISTORY): every colony standing has its row, and each figure goes to its colony's as well as the
+        whole's - so the two cannot disagree. A row's counts are the events', kept as they came (Economy::Event).
+    */
+    for (EconomyDay& r : row.colonies){
+        r.people.fill(0);
+        r.held.fill(0);
+    }
+    for (const EconomySettlement& st : e.settlements){
+        EconomyColonyRow(row,st.colony);
+    }
+    auto of = [&](uint32_t settlement) -> EconomyDay& {
+        return EconomyColonyRow(row,EconomyColonyNumber(e,settlement));
+    };
+    auto of_plot = [&](int v) -> EconomyDay& {
+        return of((v >= 0 && v < (int)e.settlement.size()) ? e.settlement[v] : 0);
+    };
     for (const EconomyWorker& k : e.workers){
-        int stage = EconomyStageAt(k.born,tick);
-        row.people[std::max(0,std::min(ECONOMY_STAGES - 1,stage))]++;
+        EconomyDay& mine = of(EconomyPersonLand(e,k));
+        int stage = std::max(0,std::min(ECONOMY_STAGES - 1,EconomyStageAt(k.born,tick)));
+        row.people[stage]++;
+        mine.people[stage]++;
         if (k.carry_good >= 0 && k.carry_good < GOOD_COUNT){
             row.held[k.carry_good] += std::max(0,k.carry);
+            mine.held[k.carry_good] += std::max(0,k.carry);
         }
         for (int g = 0; g < GOOD_COUNT; g++){
             row.held[g] += k.pack[g];
+            mine.held[g] += k.pack[g];
         }
     }
     for (const std::vector<std::array<int,GOOD_COUNT>>* stocks : {&e.stock,&e.pantry}){
-        for (const std::array<int,GOOD_COUNT>& s : *stocks){
+        for (size_t id = 0; id < stocks->size(); id++){
+            const std::array<int,GOOD_COUNT>& s = (*stocks)[id];
+            if (std::none_of(s.begin(),s.end(),[](int n){ return n != 0; })){
+                continue;
+            }
+            EconomyDay& theirs = of(EconomySettlementOf(e,(uint32_t)id));
             for (int g = 0; g < GOOD_COUNT; g++){
                 row.held[g] += s[g];
+                theirs.held[g] += s[g];
             }
         }
     }
     for (const EconomyCrate& c : e.crates){
         if (c.origin == CRATE_DROPPED || c.origin == CRATE_CAMP || c.origin == CRATE_SITE){
+            EconomyDay& theirs = of_plot(c.plot);
             for (int g = 0; g < GOOD_COUNT; g++){
                 row.held[g] += c.stock[g];
+                theirs.held[g] += c.stock[g];
             }
         }
     }
+    //Nobody's, and a colony gone, only while they hold anything: people, goods, or a count from today's events.
+    row.colonies.erase(std::remove_if(row.colonies.begin(),row.colonies.end(),[&](const EconomyDay& r){
+        bool f_standing = r.colony && EconomyColonySettlement(e,r.colony) != 0;
+        bool f_any = r.felled || r.broken || r.storeys || r.zombies
+                     || std::any_of(r.people.begin(),r.people.end(),[](int n){ return n != 0; })
+                     || std::any_of(r.held.begin(),r.held.end(),[](int n){ return n != 0; });
+        return !f_standing && !f_any;
+    }),row.colonies.end());
+}
+
+EconomyDay& EconomyColonyRow(EconomyDay& d, uint32_t colony){
+    auto it = std::lower_bound(d.colonies.begin(),d.colonies.end(),colony,
+                               [](const EconomyDay& r, uint32_t c){ return r.colony < c; });
+    if (it == d.colonies.end() || it->colony != colony){
+        EconomyDay r;
+        r.day = d.day;
+        r.colony = colony;
+        it = d.colonies.insert(it,r);
+    }
+    return *it;
+}
+
+uint32_t EconomyPersonLand(const EconomyState& e, const EconomyWorker& k){
+    if (uint32_t mine = EconomyPersonSettlement(e,k)){
+        return mine;
+    }
+    if (!e.world || !e.world->picker){
+        return 0;
+    }
+    GridPick at = e.world->picker->Pick(k.pos);
+    return (at.f_hit && at.plot >= 0 && at.plot < (int)e.settlement.size()) ? e.settlement[at.plot] : 0;
 }
 
 void EconomyForestCleared(const EconomyState& e, int& felled, int& broken){
@@ -334,6 +400,18 @@ void Economy::Event(EconomyEvent ev, uint64_t tick){
     if (ev.pos.x == 0.0f && ev.pos.y == 0.0f && state.world && ev.plot >= 0 && ev.plot < (int)state.world->grid->fine.pos.size()){
         ev.pos = state.world->grid->fine.pos[ev.plot];
     }
+    /*
+        ITS COLONY (THE HISTORY, BY COLONY): where it happened - its building's, else its plot's land, else its person's
+        (EconomyPersonLand) - by the colony's lasting number; 0 on land nobody holds.
+    */
+    if (!ev.colony){
+        uint32_t s = EconomySettlementOf(state,ev.building);
+        s = (!s && ev.plot >= 0 && ev.plot < (int)state.settlement.size()) ? state.settlement[ev.plot] : s;
+        for (size_t i = 0; !s && ev.person && i < state.workers.size(); i++){
+            s = (state.workers[i].id == ev.person) ? EconomyPersonLand(state,state.workers[i]) : 0;
+        }
+        ev.colony = EconomyColonyNumber(state,s);
+    }
     state.events.push_back(ev);
     if (state.events.size() > ECONOMY_EVENTS_KEPT){
         state.events.erase(state.events.begin());
@@ -347,10 +425,16 @@ void Economy::Event(EconomyEvent ev, uint64_t tick){
     if (EconomyJournaled(ev.kind)){
         state.history.journal.push_back(ev);
     }
-    today.felled += (ev.kind == EVENT_TREE_FELLED) ? 1 : 0;
-    today.broken += (ev.kind == EVENT_ROCK_BROKEN) ? 1 : 0;
-    today.storeys += (ev.kind == EVENT_STOREY_RAISED) ? 1 : 0;
-    today.zombies += (ev.kind == EVENT_ZOMBIE_FELLED) ? 1 : 0;
+    //A count to the whole's row and its colony's alike (BY COLONY).
+    if (EconomyCounted(ev.kind)){
+        EconomyDay& theirs = EconomyColonyRow(today,ev.colony);
+        for (EconomyDay* d : {&today,&theirs}){
+            d->felled += (ev.kind == EVENT_TREE_FELLED) ? 1 : 0;
+            d->broken += (ev.kind == EVENT_ROCK_BROKEN) ? 1 : 0;
+            d->storeys += (ev.kind == EVENT_STOREY_RAISED) ? 1 : 0;
+            d->zombies += (ev.kind == EVENT_ZOMBIE_FELLED) ? 1 : 0;
+        }
+    }
     state.version++;
 }
 
@@ -443,6 +527,8 @@ int EconomyJobSkill(int job){
         case WORKER_JOB_PICKER:     return SKILL_HUSBANDRY;     //knowing the plants (foraging_plan.md)
         case WORKER_JOB_STONECUTTER: return SKILL_STRENGTH;     //gameplay_plan.md's table: quarrying
         case WORKER_JOB_MINER:      return SKILL_STRENGTH;      //...and mining
+        case WORKER_JOB_STEAM:      return SKILL_INGENUITY;     //"machines and steam" (gameplay_plan.md's table)
+        case WORKER_JOB_CONDENSER:  return SKILL_INGENUITY;     //...which names the condenser too
         default:                    return SKILL_STRENGTH;      //a woodcutter, a builder, and anyone carrying
     }
 }
@@ -939,10 +1025,11 @@ int JobOf(int kind){
 }
 
 //What a worker carries off from his workplace (FetchFromWorkplace): whatever it holds - but a ropemaker the rope,
-//never the hemp waiting there to be made into it (goods_plan.md), and a woodcutter wood: the camp's (woodcutting_plan.md)
-//holds its supplies too.
+//never the hemp waiting there to be made into it (goods_plan.md), a condenser's hand the water, never its steam
+//(steam_plan.md), and a woodcutter wood: the camp's (woodcutting_plan.md) holds its supplies too.
 GoodsMask WorkplaceMakes(int job){
     return (job == WORKER_JOB_ROPEMAKER) ? GOOD_BIT(GOOD_ROPE) : (job == WORKER_JOB_WOODCUTTER) ? GOOD_BIT(GOOD_WOOD)
+         : (job == WORKER_JOB_CONDENSER) ? GOOD_BIT(GOOD_WATER)
          : (job == WORKER_JOB_STONECUTTER) ? GOOD_BIT(GOOD_STONE)
          : (job == WORKER_JOB_MINER) ? (GOOD_BIT(GOOD_STONE) | GOOD_BIT(GOOD_FLOATSTONE)) : GOODS_ALL;
 }
@@ -1144,8 +1231,12 @@ bool EconomyStraightClear(const ChasmWorld& w, const ZoneState& z, const vec2& a
             if (ZoneBoundaryBetween(z,prev,v) != ZONE_BOUNDARY_NONE && !ZoneGateBetween(w,z,prev,v)){
                 return false;
             }
+            //Never over a terrace's edge (terraces_plan.md stage 2): its wall, its stair or its step - the walkers' way.
+            if ((ZoneTerraceStands(z,v) || ZoneTerraceStands(z,prev)) && ZoneGroundAt(w,z,v) != ZoneGroundAt(w,z,prev)){
+                return false;
+            }
             float run = std::max(1e-3f,(w.grid->fine.pos[v] - w.grid->fine.pos[prev]).length());
-            if (std::fabs(t.ground[v] - t.ground[prev]) > WALKER_STEEPEST * run){
+            if (std::fabs(ZoneGroundAt(w,z,v) - ZoneGroundAt(w,z,prev)) > WALKER_STEEPEST * run){
                 return false;
             }
         }
@@ -1197,9 +1288,6 @@ void Economy::Reset(std::shared_ptr<const ChasmWorld> world){
     state = EconomyState();
     state.world = world;
     pick_up_looks.clear();
-    for (int g = 0; g < GOOD_COUNT; g++){
-        state.kept[g] = (GOODS_MADE & GOOD_BIT(g)) ? ECONOMY_KEPT_START : 0;
-    }
     now = 0;
     home_plot.clear();
     plots_of.clear();
@@ -2647,11 +2735,12 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
         }
     }
     int load = std::min(per_load,there);
-    //Water and rope only by the load: both come a unit at a time, and a trip for one is a waste - but a made good's
-    //last few for its level all the same.
-    int least = (k.job == WORKER_JOB_WATER || k.job == WORKER_JOB_ROPEMAKER) ? ECONOMY_LOAD : 1;
+    //Water, steam and rope only by the load: they come a unit at a time, and a trip for one is a waste - but a made
+    //good's last few for its level all the same.
+    int least = (k.job == WORKER_JOB_WATER || k.job == WORKER_JOB_STEAM || k.job == WORKER_JOB_CONDENSER
+                 || k.job == WORKER_JOB_ROPEMAKER) ? ECONOMY_LOAD : 1;
     if (GOODS_MADE & GOOD_BIT(good)){
-        int short_by = KeptShort(z,good);
+        int short_by = KeptShort(z,good,EconomySettlementOf(state,k.building));     //his workplace's colony's level
         load = std::min(load,short_by);
         least = std::min(least,short_by);
     }
@@ -2940,9 +3029,14 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     ground_sites.clear();
     road_sites.clear();
     wall_sites.clear();
+    ground_site_stone.assign(z.ground.size(),0);
     for (size_t v = 0; v < z.ground.size(); v++){
         bool f_wall = ZoneWallPlanned(z,(int)v);
-        if ((ZoneEnclosesGround(z.ground[v]) || f_wall) && !z.ground_built[v] && z.storeys[v] == 0){
+        //A terrace still a site (terraces_plan.md stage 2) is one too, its one good stone; nothing else is on it yet.
+        if (ZoneTerraceSite(z,(int)v)){
+            ground_sites.push_back((int)v);
+            ground_site_stone[v] = 1;
+        }else if ((ZoneEnclosesGround(z.ground[v]) || f_wall) && !z.ground_built[v] && z.storeys[v] == 0){
             ground_sites.push_back((int)v);
             if (f_wall){
                 wall_sites.push_back((int)v);
@@ -3027,7 +3121,8 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
                 standing += (z.standing[v] > 0) ? 1 : 0;
             }
             state.places[id] = (standing >= ECONOMY_ROPEWALK_MIN_PLOTS) ? 1 : 0;
-        }else if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STONECUTTER){
+        }else if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STONECUTTER
+                  || b.kind == ZONE_KIND_STEAM || b.kind == ZONE_KIND_CONDENSER){
             //WORKERS BY PLOTS (building_size_plan.md): a worker for every ECONOMY_PLOTS_PER_WORKER plots standing, rounded up.
             int standing = 0;
             for (int v : plots_of[id]){
@@ -3112,6 +3207,11 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
                     attached |= GOOD_BIT(GOOD_WOOD);
                 }else if (kind == ZONE_KIND_WATER){
                     attached |= GOOD_BIT(GOOD_WATER);
+                }else if (kind == ZONE_KIND_STEAM){
+                    attached |= GOOD_BIT(GOOD_STEAM);       //steam_plan.md
+                }else if (kind == ZONE_KIND_CONDENSER){
+                    //What it makes and what it is made from, as a ropewalk's (steam_plan.md step 3).
+                    attached |= GOOD_BIT(GOOD_STEAM) | GOOD_BIT(GOOD_WATER);
                 }else if (kind == ZONE_KIND_ROPEWALK){
                     //What it makes and what it is made from (goods_plan.md): the hemp brought there, the rope taken.
                     attached |= GOOD_BIT(GOOD_HEMP) | GOOD_BIT(GOOD_ROPE);
@@ -3211,9 +3311,11 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         }
     }
     //A collector holds by its standing floor, as a hut keeps wood (the user's, 2026-10-11): a bigger one buys a buffer.
+    //A steam collector the same (steam_plan.md), and a condenser its water.
     state.water_room.assign(n,0);
     for (size_t id = 1; id < n; id++){
-        if (z.buildings[id].kind == ZONE_KIND_WATER && z.buildings[id].size > 0){
+        int kind = z.buildings[id].kind;
+        if ((kind == ZONE_KIND_WATER || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER) && z.buildings[id].size > 0){
             state.water_room[id] = EconomyCollectorRoom(ZoneBuildingFigures(w,z,(uint32_t)id).floor_area);
         }
     }
@@ -3611,6 +3713,25 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
             }
         }
     }
+    /*
+        ITS COLONY NUMBER (Economy.h): each settlement its heart's, in the order founded - so of two hearts carrying one
+        number, the older keeps it and the one cut off from it is given the next - then every home its settlement's.
+    */
+    std::vector<uint32_t> given;
+    for (EconomySettlement& s : state.settlements){
+        uint32_t c = (s.id < state.colony.size()) ? state.colony[s.id] : 0;
+        if (!c || std::find(given.begin(),given.end(),c) != given.end()){
+            c = state.next_colony++;
+        }
+        s.colony = c;
+        given.push_back(c);
+    }
+    state.colony.assign(z.buildings.size(),0);
+    for (size_t h = 1; h < n && h < joined.size(); h++){
+        if (is_home(h) && joined[h]){
+            state.colony[h] = EconomyColonyNumber(state,joined[h]);
+        }
+    }
 }
 
 bool Economy::Ours(const EconomyWorker& k, uint32_t id) const{
@@ -3628,7 +3749,7 @@ bool Economy::Ours(const EconomyWorker& k, uint32_t id) const{
 
 bool EconomyCommandInTerritory(const EconomyState& e, const ChasmWorld& w, int op, int index){
     bool f_places = op == ZONE_OP_BUILD_PAINT || op == ZONE_OP_BUILD_ADD || op == ZONE_OP_FIELD_PAINT
-                    || op == ZONE_OP_GROUND_PAINT || op == ZONE_OP_BRIDGE || op == ZONE_OP_RANGE_PAINT;
+                    || op == ZONE_OP_GROUND_PAINT || op == ZONE_OP_BRIDGE || op == ZONE_OP_RANGE_PAINT || op == ZONE_OP_TERRACE;
     if (!f_places || e.world.get() != &w || e.settlement.empty()){
         return true;
     }
@@ -4890,6 +5011,13 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }
                 break;
             }
+            //A condenser's hand (steam_plan.md step 3): a load of its water to a store first, then steam fetched for it.
+            if (k.job == WORKER_JOB_CONDENSER){
+                if (!FetchFromWorkplace(k,z,walkers)){
+                    FeedCondenser(k,z,walkers);
+                }
+                break;
+            }
             /*
                 The camp's water carrier (settlements_plan.md): out to the water's edge to draw a load, while its
                 supplies hold less than ECONOMY_CAMP_WATER_HOLD - not while snow lies there, as a collector stops.
@@ -5036,7 +5164,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     }
                 }
                 //A made good (STOCK KEPT) no more than the stores still lack of its level.
-                int short_by = (good >= 0 && (GOODS_MADE & GOOD_BIT(good))) ? KeptShort(z,good) : ECONOMY_LOAD;
+                int short_by = (good >= 0 && (GOODS_MADE & GOOD_BIT(good)))
+                               ? KeptShort(z,good,EconomySettlementOf(state,k.building)) : ECONOMY_LOAD;
                 if (good < 0 || short_by <= 0){
                     GoHome(k,z,walkers);
                     break;
@@ -5334,6 +5463,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             if (Arrived(k)){
                 if (k.job == WORKER_JOB_ROPEMAKER){
                     AtRopewalk(k,z,walkers,pace);       //goods_plan.md: the same errand, at a ropewalk
+                }else if (k.job == WORKER_JOB_CONDENSER){
+                    AtCondenser(k,z,walkers);           //steam_plan.md step 3: steam brought to a condenser
                 }else{
                     AtWorkshop(k,z,walkers,pace);
                 }
@@ -5446,7 +5577,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }
                 if (SiteAlive(z,id) && k.carry_good >= 0 && SiteNeed(z,id)[k.carry_good] > 0){
                     if (EconomyIsGroundSite(id)){
-                        state.ground_site[EconomyGroundSitePlot(id)] += k.carry;     //wood: all a ground site takes
+                        state.ground_site[EconomyGroundSitePlot(id)] += k.carry;     //its one good: wood, or a terrace's stone
                     }else{
                         state.site[id][k.carry_good] += k.carry;
                     }
@@ -5553,8 +5684,10 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 one. While he is still thirsty he counts on a unit there, so nobody else sets out for it.
             */
             if (k.water + NEEDS_WATER_WORTH <= NEEDS_WATER_FULL && !(EconomyPressing(k) & GOODS_FOOD) && k.store < z.buildings.size()
-                && z.buildings[k.store].kind == ZONE_KIND_WATER && k.store < home_plot.size() && home_plot[k.store] >= 0
-                && !UnderSnow(*state.world,state.world->grid->fine.pos[home_plot[k.store]],tick)
+                && k.store < home_plot.size() && home_plot[k.store] >= 0
+                && ((z.buildings[k.store].kind == ZONE_KIND_WATER
+                     && !UnderSnow(*state.world,state.world->grid->fine.pos[home_plot[k.store]],tick))
+                    || z.buildings[k.store].kind == ZONE_KIND_CONDENSER)
                 && std::any_of(state.workers.begin(),state.workers.end(),[&](const EconomyWorker& o){ return o.building == k.store; })){
                 EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
                 break;
@@ -6046,13 +6179,19 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
             state.version++;
         }
     }
-    //An ORDER for more of a made good (STOCK KEPT) is done once the stores hold its level.
-    if (std::any_of(state.ordered.begin(),state.ordered.end(),[](int x){ return x > 0; })){
-        std::array<int,GOOD_COUNT> stored = EconomyStoredTotals(state,z);
-        for (int g = 0; g < GOOD_COUNT; g++){
-            if (state.ordered[g] > 0 && stored[g] >= state.ordered[g]){
-                state.ordered[g] = 0;
-                state.version++;
+    //An ORDER for more of a made good (STOCK KEPT) is done once its colony's stores hold its level.
+    for (const EconomySettlement& st : state.settlements){
+        if (st.colony >= state.ordered.size()){
+            continue;
+        }
+        std::array<int,GOOD_COUNT>& ordered = state.ordered[st.colony];
+        if (std::any_of(ordered.begin(),ordered.end(),[](int x){ return x > 0; })){
+            std::array<int,GOOD_COUNT> stored = EconomyStoredTotals(state,z,st.id);
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (ordered[g] > 0 && stored[g] >= ordered[g]){
+                    ordered[g] = 0;
+                    state.version++;
+                }
             }
         }
     }
@@ -6165,6 +6304,65 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         std::array<int,GOOD_COUNT>& s = state.stock[id];
         int hold = (id < state.water_room.size()) ? state.water_room[id] : ECONOMY_LOAD;
         if (s[GOOD_WATER] < hold && !UnderSnow(w,w.grid->fine.pos[home_plot[id]],tick)){
+            s[GOOD_WATER]++;
+            state.version++;
+        }
+    }
+    /*
+        A STEAM COLLECTOR (steam_plan.md) fills the same way with steam, a unit every ECONOMY_STEAM_SECONDS for each
+        worker at it, faster by EconomySteamYield the lower it stands - and snow does not stop it: the chasm keeps its
+        edge warm.
+    */
+    int steam_ticks = SecondsToTicks(ECONOMY_STEAM_SECONDS);
+    for (size_t id = 1; id < z.buildings.size(); id++){
+        if (z.buildings[id].kind != ZONE_KIND_STEAM || z.buildings[id].size <= 0 || home_plot[id] < 0 || working[id] <= 0.0f){
+            continue;
+        }
+        float pace = working[id] * EconomySteamYield(w,home_plot[id]);
+        int every = std::max(1,(int)std::lround((float)steam_ticks / pace));
+        if (tick % (uint64_t)every != 0){
+            continue;
+        }
+        std::array<int,GOOD_COUNT>& s = state.stock[id];
+        int hold = (id < state.water_room.size()) ? state.water_room[id] : ECONOMY_LOAD;
+        if (s[GOOD_STEAM] < hold){
+            s[GOOD_STEAM]++;
+            state.version++;
+        }
+    }
+    /*
+        A CONDENSER (steam_plan.md step 3) turns a unit of steam into a unit of water every ECONOMY_CONDENSER_SECONDS for
+        each hand at it, up to what it holds, snow or not: the steam from a steam collector beside it first - the lowest id
+        with any, so several condensers share one a unit at a time - and only then its own, what its hands brought.
+    */
+    int condense_ticks = SecondsToTicks(ECONOMY_CONDENSER_SECONDS);
+    std::vector<uint32_t> feeds;
+    for (size_t id = 1; id < z.buildings.size() && id < plots_of.size(); id++){
+        if (z.buildings[id].kind != ZONE_KIND_CONDENSER || z.buildings[id].size <= 0 || home_plot[id] < 0 || working[id] <= 0.0f){
+            continue;
+        }
+        int every = std::max(1,(int)std::lround((float)condense_ticks / working[id]));
+        if (tick % (uint64_t)every != 0){
+            continue;
+        }
+        std::array<int,GOOD_COUNT>& s = state.stock[id];
+        int hold = (id < state.water_room.size()) ? state.water_room[id] : ECONOMY_LOAD;
+        if (s[GOOD_WATER] >= hold){
+            continue;
+        }
+        EconomyCondenserFeeds(w,z,plots_of[id],feeds);
+        int* steam = NULL;
+        for (uint32_t c : feeds){
+            if (c < state.stock.size() && state.stock[c][GOOD_STEAM] > 0){
+                steam = &state.stock[c][GOOD_STEAM];
+                break;
+            }
+        }
+        if (!steam && s[GOOD_STEAM] > 0){
+            steam = &s[GOOD_STEAM];
+        }
+        if (steam){
+            (*steam)--;
             s[GOOD_WATER]++;
             state.version++;
         }
@@ -7609,6 +7807,7 @@ bool Economy::FetchFrom(const EconomyWorker& k, const ZoneState& z, uint32_t id)
         case ZONE_KIND_STORE:
         case ZONE_KIND_CAMP:
         case ZONE_KIND_WATER:
+        case ZONE_KIND_CONDENSER:               //its water (steam_plan.md step 3)
         case ZONE_KIND_WOODCUTTER:
         case ZONE_KIND_WELL:                    //water_tools_plan.md
             return true;
@@ -8073,7 +8272,7 @@ int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int goo
     //An arch's floor costs what its owner's storey would on that plot (arches_plan.md step 3).
     uint32_t owner = z.building[plot] ? 0 : z.ArchOwnerOf(plot);
     int kind = (owner && owner < z.buildings.size()) ? z.buildings[owner].kind : z.KindOf(plot);
-    return EconomyKindStoreyCost(w,kind,plot,good,level);
+    return EconomyKindStoreyCost(w,z,kind,plot,good,level);
 }
 
 int EconomyStoreysCost(const ChasmWorld& w, const ZoneState& z, int plot, int good, int from, int to){
@@ -8095,7 +8294,7 @@ int EconomyPlotLeftCost(const ChasmWorld& w, const ZoneState& z, int plot, int g
     return 0;
 }
 
-int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good, int level){
+int EconomyKindStoreyCost(const ChasmWorld& w, const ZoneState& z, int kind, int plot, int good, int level){
     if (kind == ZONE_KIND_TOWER){
         return TowerStoreyCost(w,plot,good);
     }
@@ -8110,13 +8309,18 @@ int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good, int
     if (good == GOOD_STONE && level >= ECONOMY_HIGH_STOREY){
         return StoreyGoods(kind,good) + std::max(1,(int)std::ceil(area * ECONOMY_HIGH_STONE_PER_AREA));
     }
+    //...and on a ground storey that stands on a FOUNDATION (terraces_plan.md), by its area and how far the ground
+    //rises across it - so the builders bring it before anything rises, as they bring the rest.
+    if (good == GOOD_STONE && level == 1 && ZoneNeedsFoundation(w,z,kind,plot)){
+        return StoreyGoods(kind,good) + std::max(1,(int)std::ceil(area * ZonePlotRise(w,plot) * ECONOMY_FOUNDATION_STONE));
+    }
     return StoreyGoods(kind,good);
 }
 
-int EconomyKindStoreysCost(const ChasmWorld& w, int kind, int plot, int good, int from, int to){
+int EconomyKindStoreysCost(const ChasmWorld& w, const ZoneState& z, int kind, int plot, int good, int from, int to){
     int cost = 0;
     for (int level = from + 1; level <= to; level++){
-        cost += EconomyKindStoreyCost(w,kind,plot,good,level);
+        cost += EconomyKindStoreyCost(w,z,kind,plot,good,level);
     }
     return cost;
 }
@@ -8189,6 +8393,26 @@ int EconomyCollectorRoom(float floor_area){
     return ECONOMY_LOAD + (int)std::floor(std::max(0.0f,floor_area - ECONOMY_WATER_PUMP) * ECONOMY_WATER_ROOM);
 }
 
+float EconomySteamYield(const ChasmWorld& w, int plot){
+    return 1.0f + ECONOMY_STEAM_PER_STEP * (float)ClimateStepsDown(*w.terrain,plot);
+}
+
+void EconomyCondenserFeeds(const ChasmWorld& w, const ZoneState& z, const std::vector<int>& plots, std::vector<uint32_t>& out){
+    out.clear();
+    for (int v : plots){
+        int nb[8];
+        int n = ZonePlotNeighbours(w,v,nb,8);
+        for (int j = 0; j < n; j++){
+            uint32_t c = (nb[j] >= 0 && nb[j] < (int)z.building.size()) ? z.building[nb[j]] : 0;
+            if (c && c < z.buildings.size() && z.buildings[c].kind == ZONE_KIND_STEAM && z.standing[nb[j]] > 0
+                && std::find(out.begin(),out.end(),c) == out.end()){
+                out.push_back(c);
+            }
+        }
+    }
+    std::sort(out.begin(),out.end());
+}
+
 int EconomyGroundKindCost(const ChasmWorld& w, int ground, int plot){
     if (ground == ZONE_GROUND_NONE || ground == ZONE_GROUND_ROAD){
         return 0;       //a road takes work, not wood (line_works_plan.md)
@@ -8196,25 +8420,34 @@ int EconomyGroundKindCost(const ChasmWorld& w, int ground, int plot){
     return (ground == ZONE_GROUND_WALL) ? ECONOMY_WALL_WOOD : EconomyGroundWood(w,plot);
 }
 
+int EconomyTerraceStone(const ChasmWorld& w, int plot, int top){
+    float lowest, highest;
+    ZonePlotGroundRange(w,plot,lowest,highest);
+    float fill = std::max(0.0f,(float)top * ZONE_STOREY_HEIGHT - (lowest + highest) * 0.5f);
+    return std::max(1,(int)std::ceil(w.picker->PlotArea(plot) * fill * ECONOMY_TERRACE_STONE));
+}
+
 int EconomyGroundBrought(const EconomyState& e, int plot){
     return (plot >= 0 && plot < (int)e.ground_site.size()) ? e.ground_site[plot] : 0;
 }
 
-//A site that is still one: a building that has not gone, or a garden, lot or road plot still to build.
+//A site that is still one: a building that has not gone, or a garden, lot, road or terrace plot still to build.
 bool Economy::SiteAlive(const ZoneState& z, uint32_t id) const{
     if (EconomyIsGroundSite(id)){
         int v = EconomyGroundSitePlot(id);
-        return v >= 0 && v < (int)z.ground.size() && z.ground[v] != ZONE_GROUND_NONE && !z.ground_built[v]
-               && z.storeys[v] == 0;
+        return v >= 0 && v < (int)z.ground.size() && (ZoneTerraceSite(z,v) || (z.ground[v] != ZONE_GROUND_NONE
+               && !z.ground_built[v] && z.storeys[v] == 0));
     }
     return id && id < z.buildings.size() && z.buildings[id].size > 0;
 }
 
-//What has been brought to a site, by good: a garden's, lot's or wall's plot takes wood only.
+//What has been brought to a site, by good: a garden's, lot's or wall's plot takes wood only, a terrace's stone only.
 std::array<int,GOOD_COUNT> Economy::SiteBrought(uint32_t id) const{
     std::array<int,GOOD_COUNT> brought{};
     if (EconomyIsGroundSite(id)){
-        brought[GOOD_WOOD] = EconomyGroundBrought(state,EconomyGroundSitePlot(id));
+        int v = EconomyGroundSitePlot(id);
+        bool f_stone = v >= 0 && v < (int)ground_site_stone.size() && ground_site_stone[v];
+        brought[f_stone ? GOOD_STONE : GOOD_WOOD] = EconomyGroundBrought(state,v);
     }else if (id < state.site.size()){
         brought = state.site[id];
     }
@@ -8226,7 +8459,11 @@ std::array<int,GOOD_COUNT> Economy::SiteNeed(const ZoneState& z, uint32_t id) co
     std::array<int,GOOD_COUNT> need{};
     if (EconomyIsGroundSite(id)){
         int v = EconomyGroundSitePlot(id);
-        need[GOOD_WOOD] = SiteAlive(z,id) ? EconomyGroundCost(*state.world,z,v) : 0;
+        if (ZoneTerraceSite(z,v)){
+            need[GOOD_STONE] = EconomyTerraceStone(*state.world,v,z.terrace[v]);
+        }else{
+            need[GOOD_WOOD] = SiteAlive(z,id) ? EconomyGroundCost(*state.world,z,v) : 0;
+        }
         return need;
     }
     if (id >= plots_of.size()){
@@ -8582,7 +8819,7 @@ void Economy::Build(const ZoneState& z, uint32_t id){
         if (!SiteAlive(z,id) || std::count(ground_raises.begin(),ground_raises.end(),v)){
             return;
         }
-        if (z.ground[v] == ZONE_GROUND_WALL){
+        if (z.ground[v] == ZONE_GROUND_WALL && !ZoneTerraceSite(z,v)){
             RaiseWall(z,v);
             return;
         }
@@ -8590,7 +8827,8 @@ void Economy::Build(const ZoneState& z, uint32_t id){
         if (SiteTreesStanding(z,id)){
             return;
         }
-        int cost = EconomyGroundWood(*state.world,v);
+        //A terrace's plot rises when all its stone is there (terraces_plan.md stage 2); the app raises it as one.
+        int cost = ZoneTerraceSite(z,v) ? EconomyTerraceStone(*state.world,v,z.terrace[v]) : EconomyGroundWood(*state.world,v);
         if (state.ground_site[v] >= cost){
             state.ground_site[v] -= cost;
             ground_raises.push_back(v);
@@ -8712,6 +8950,9 @@ bool EconomyPropCovered(const ZoneState& z, int plot, int coarse){
     if (ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
         return true;    //under the debug castle's stone (ramparts_plan.md)
     }
+    if (ZoneTerraceStands(z,plot)){
+        return true;    //under a terrace (terraces_plan.md stage 2)
+    }
     return coarse >= 0 && coarse < (int)z.field.size() && z.field[coarse] && z.field_built[coarse];
 }
 
@@ -8720,7 +8961,7 @@ uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse){
         if (z.building[plot] && z.storeys[plot] > 0 && z.standing[plot] == 0){
             return z.building[plot];
         }
-        if (ZoneEnclosesGround(z.ground[plot]) && !z.ground_built[plot] && z.storeys[plot] == 0){
+        if ((ZoneEnclosesGround(z.ground[plot]) && !z.ground_built[plot] && z.storeys[plot] == 0) || ZoneTerraceSite(z,plot)){
             return ECONOMY_SITE_GROUND | (uint32_t)plot;
         }
     }
@@ -9047,6 +9288,8 @@ bool EconomyCrateInTheWay(const EconomyState& e, const ChasmWorld& w, int op, in
             return EconomyCrateOn(e,index) != NULL;
         case ZONE_OP_GROUND_PAINT:
             return value != ZONE_GROUND_ROAD && EconomyCrateOn(e,index) != NULL;
+        case ZONE_OP_TERRACE:
+            return EconomyCrateOn(e,index) != NULL;     //it would be buried (terraces_plan.md stage 2)
         case ZONE_OP_FIELD_PAINT:
         case ZONE_OP_RANGE_PAINT:
             //A cell holds a crate whose point lies in it (EconomyCrateGround asks the same).
@@ -9555,14 +9798,16 @@ bool Economy::KeepTowers(EconomyWorker& k, const ZoneState& z, Walkers& walkers)
     into provisions only while this is above 0.
     SPARE is the made ones beyond what the sites and towers lack, less the stores' share of the level: what a hut
     holds past that goes to a store, so the kept ones lie where anyone posted takes from - never the sites' share.
+    BY COLONY (settlements_plan.md, step 2): all of it in settlement `settlement` alone - its builders take from nowhere
+    else - and its colony's level.
 */
-int Economy::ProvisionsLacking(const ZoneState& z, int* spare) const{
+int Economy::ProvisionsLacking(const ZoneState& z, uint32_t settlement, int* spare) const{
     int wanted = 0;
     int held = 0;
     size_t n = std::min(z.buildings.size(),state.site.size());
     for (size_t id = 1; id < n; id++){
         const ZoneBuilding& b = z.buildings[id];
-        if (b.size <= 0){
+        if (b.size <= 0 || EconomySettlementOf(state,(uint32_t)id) != settlement){
             continue;
         }
         if (site_storeys[id] > 0 || site_cells[id] > 0){
@@ -9577,55 +9822,91 @@ int Economy::ProvisionsLacking(const ZoneState& z, int* spare) const{
         }
     }
     for (const EconomyCrate& c : state.crates){
-        held += std::max(0,GoodFree(ECONOMY_STORE_CRATE | c.id,GOOD_PROVISIONS));
+        if (SettlementOfPlace(ECONOMY_STORE_CRATE | c.id) == settlement){
+            held += std::max(0,GoodFree(ECONOMY_STORE_CRATE | c.id,GOOD_PROVISIONS));
+        }
     }
     for (const EconomyWorker& o : state.workers){
-        held += (o.state == WORKER_MAKING && o.carry_good != GOOD_ROPE) ? 1 : 0;   //not a ropemaker's rope
-        held += (o.state == WORKER_TO_STORE && o.store && o.carry_good == GOOD_PROVISIONS) ? o.carry : 0;
+        //Not a ropemaker's rope; a builder makes them at his hut.
+        held += (o.state == WORKER_MAKING && o.carry_good != GOOD_ROPE && EconomySettlementOf(state,o.building) == settlement) ? 1 : 0;
+        held += (o.state == WORKER_TO_STORE && o.store && o.carry_good == GOOD_PROVISIONS && SettlementOfPlace(o.store) == settlement)
+                ? o.carry : 0;
     }
-    int level = EconomyKeptLevel(state,GOOD_PROVISIONS);
+    int level = EconomyKeptLevel(state,EconomyColonyNumber(state,settlement),GOOD_PROVISIONS);
     if (spare){
-        int stored = level - KeptShort(z,GOOD_PROVISIONS);     //in the stores and on its way there, up to the level
+        int stored = level - KeptShort(z,GOOD_PROVISIONS,settlement);     //in the stores and on its way there, up to the level
         *spare = held - wanted - std::min(level,std::max(0,stored));
     }
     return wanted + level - held;
 }
 
 /*
-    What the stores still lack of made good `good`'s level: the level, less what the stores and the camp's supplies
-    hold (EconomyStoredTotals, the top bar's count) and what anyone carries to a store.
+    What settlement `settlement`'s stores still lack of made good `good`'s level - its colony's: the level, less what
+    its stores and camp's supplies hold (EconomyStoredTotals, the top bar's count) and what anyone carries to one.
 */
-int Economy::KeptShort(const ZoneState& z, int good) const{
-    int level = EconomyKeptLevel(state,good);
+int Economy::KeptShort(const ZoneState& z, int good, uint32_t settlement) const{
+    int level = EconomyKeptLevel(state,EconomyColonyNumber(state,settlement),good);
     if (level <= 0){
         return 0;
     }
-    int stored = EconomyStoredTotals(state,z)[good];
+    int stored = EconomyStoredTotals(state,z,settlement)[good];
     for (const EconomyWorker& o : state.workers){
-        stored += (o.state == WORKER_TO_STORE && o.store && o.carry_good == good) ? o.carry : 0;
+        stored += (o.state == WORKER_TO_STORE && o.store && o.carry_good == good && SettlementOfPlace(o.store) == settlement)
+                  ? o.carry : 0;
     }
     return level - stored;
 }
 
-bool Economy::SetKept(int good, int count){
+uint32_t Economy::SettlementOfPlace(uint32_t id) const{
+    if (EconomyIsCrateStore(id)){
+        const EconomyCrate* c = CrateById(id & ~ECONOMY_STORE_CRATE);
+        return (c && c->plot >= 0 && c->plot < (int)state.settlement.size()) ? state.settlement[c->plot] : 0;
+    }
+    if (EconomyIsGroundSite(id)){
+        int v = EconomyGroundSitePlot(id);
+        return (v >= 0 && v < (int)state.settlement.size()) ? state.settlement[v] : 0;
+    }
+    return EconomySettlementOf(state,id);
+}
+
+std::array<int,GOOD_COUNT>& Economy::KeptOf(uint32_t colony){
+    while (state.kept.size() <= colony){
+        std::array<int,GOOD_COUNT> start{};
+        for (int g = 0; g < GOOD_COUNT; g++){
+            start[g] = EconomyKept(state,(uint32_t)state.kept.size(),g);      //the start's, for a colony with none
+        }
+        state.kept.push_back(start);
+    }
+    return state.kept[colony];
+}
+
+std::array<int,GOOD_COUNT>& Economy::OrderedOf(uint32_t colony){
+    while (state.ordered.size() <= colony){
+        state.ordered.push_back(std::array<int,GOOD_COUNT>{});
+    }
+    return state.ordered[colony];
+}
+
+bool Economy::SetKept(int good, int count, uint32_t colony){
     if (good < 0 || good >= GOOD_COUNT || !(GOODS_MADE & GOOD_BIT(good))){
         return false;
     }
-    state.kept[good] = std::max(0,count);
+    KeptOf(colony)[good] = std::max(0,count);
     state.version++;
     return true;
 }
 
-bool Economy::OrderMore(int good, int count, const ZoneState& z){
+bool Economy::OrderMore(int good, int count, const ZoneState& z, uint32_t colony){
     if (good < 0 || good >= GOOD_COUNT || !(GOODS_MADE & GOOD_BIT(good)) || !state.world || z.world != state.world){
         return false;
     }
     if (count <= 0){
-        state.ordered[good] = 0;
+        OrderedOf(colony)[good] = 0;
     }else{
-        int from = (state.ordered[good] > 0) ? state.ordered[good]
-                                             : std::max(state.kept[good],EconomyStoredTotals(state,z)[good]);
-        state.ordered[good] = from + count;
+        int stored = EconomyStoredTotals(state,z,EconomyColonySettlement(state,colony))[good];
+        int ordered = EconomyOrdered(state,colony,good);
+        int from = (ordered > 0) ? ordered : std::max(EconomyKept(state,colony,good),stored);
+        OrderedOf(colony)[good] = from + count;
     }
     state.version++;
     return true;
@@ -9647,8 +9928,9 @@ bool Economy::MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walk
         return false;
     }
     const std::array<int,GOOD_COUNT>& hut = state.stock[h];
+    uint32_t settlement = EconomySettlementOf(state,h);     //his hut's: what it makes them for (BY COLONY)
     int spare = 0;
-    int lacking = ProvisionsLacking(z,&spare);
+    int lacking = ProvisionsLacking(z,settlement,&spare);
     auto to_hut = [&](){
         int plot = NearestPlot(h,k.pos);
         if (plot < 0 || !RouteTo(k,z,walkers,plot,w.grid->fine.pos[plot])){
@@ -9676,7 +9958,8 @@ bool Economy::MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walk
     if (lacking <= 0){
         return false;
     }
-    //What every hut will make with what it has and what is on its way to it: its wheat and beans, in pairs.
+    //What every hut of his settlement will make with what it has and what is on its way to it: its wheat and beans,
+    //in pairs.
     auto coming = [&](uint32_t hh, int good){
         int n = 0;
         for (const EconomyWorker& o : state.workers){
@@ -9691,7 +9974,7 @@ bool Economy::MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walk
     int will_make = 0;
     int mine[2] = {0,0};
     for (size_t hh = 1; hh < z.buildings.size() && hh < state.stock.size(); hh++){
-        if (!Workshop(z,stands,(uint32_t)hh)){
+        if (!Workshop(z,stands,(uint32_t)hh) || EconomySettlementOf(state,(uint32_t)hh) != settlement){
             continue;
         }
         int wheat = state.stock[hh][GOOD_WHEAT] + coming((uint32_t)hh,GOOD_WHEAT);
@@ -9788,7 +10071,7 @@ void Economy::AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         state.version++;
     }
     int spare = 0;
-    int lacking = ProvisionsLacking(z,&spare);
+    int lacking = ProvisionsLacking(z,EconomySettlementOf(state,h),&spare);
     if (lacking > 0 && hut[GOOD_WHEAT] > 0 && hut[GOOD_BEANS] > 0 && k.stint < ECONOMY_LOAD){
         hut[GOOD_WHEAT]--;
         hut[GOOD_BEANS]--;
@@ -9924,6 +10207,95 @@ void Economy::AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     GoHome(k,z,walkers);
 }
 
+/*
+    A condenser's hand from home (steam_plan.md step 3), after a load of its water to a store (FetchFromWorkplace): with no
+    steam collector beside it, its steam run out and room for more water, a load of steam from the nearest store, camp's
+    supplies, house nobody lives in or crate with some to spare - as a ropemaker fetches hemp (MakeRope) - unless another
+    of its hands is on his way with some. Beside a collector he brings none: it waits on the collector, which is how the
+    player sees a pairing that is wrong. False if there is nothing to do, or none he can get to.
+*/
+bool Economy::FeedCondenser(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    const ChasmWorld& w = *state.world;
+    uint32_t h = k.building;
+    if (k.job != WORKER_JOB_CONDENSER || !h || h >= z.buildings.size() || h >= state.stock.size() || h >= plots_of.size()){
+        return false;
+    }
+    std::vector<uint32_t> feeds;
+    EconomyCondenserFeeds(w,z,plots_of[h],feeds);
+    const std::array<int,GOOD_COUNT>& own = state.stock[h];
+    int hold = (h < state.water_room.size()) ? state.water_room[h] : ECONOMY_LOAD;
+    if (!feeds.empty() || own[GOOD_STEAM] > 0 || own[GOOD_WATER] >= hold){
+        return false;
+    }
+    for (const EconomyWorker& o : state.workers){
+        if (&o != &k && o.building == h && o.job == WORKER_JOB_CONDENSER
+            && (o.state == WORKER_TO_INPUT || o.state == WORKER_TAKING_INPUT || o.state == WORKER_TO_WORKSHOP)){
+            return false;
+        }
+    }
+    std::vector<std::pair<float,uint32_t>> found;
+    for (size_t id = 1; id < z.buildings.size() && id < stands.size(); id++){
+        const ZoneBuilding& b = z.buildings[id];
+        bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP
+                       || (b.kind == ZONE_KIND_HOUSE && !PrivateStock(z,(uint32_t)id));
+        int plot = (b.size > 0 && f_holds && stands[id] && GoodFree((uint32_t)id,GOOD_STEAM) > 0 && Ours(k,(uint32_t)id))
+                   ? SourcePlot((uint32_t)id,k.pos) : -1;
+        if (plot >= 0){
+            found.push_back(std::make_pair((w.grid->fine.pos[plot] - k.pos).length(),(uint32_t)id));
+        }
+    }
+    for (const EconomyCrate& c : state.crates){
+        uint32_t id = ECONOMY_STORE_CRATE | c.id;
+        if (GoodFree(id,GOOD_STEAM) > 0 && Ours(k,id)){
+            found.push_back(std::make_pair((c.pos - k.pos).length(),id));
+        }
+    }
+    std::sort(found.begin(),found.end());
+    for (size_t t = 0; t < found.size() && t < 4; t++){
+        uint32_t id = found[t].second;
+        int plot = SourcePlot(id,k.pos);
+        if (plot >= 0 && RouteTo(k,z,walkers,plot,SourcePoint(id,plot,k.pos))){
+            k.store = id;
+            k.carry_good = GOOD_STEAM;  //the kind he goes for; nothing carried yet
+            k.carry = 0;
+            k.stint = std::min(ECONOMY_LOAD,GoodFree(id,GOOD_STEAM));
+            k.site = 0;
+            k.prop = -1;
+            k.state = WORKER_TO_INPUT;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    At his condenser with the steam he fetched (WORKER_TO_WORKSHOP arrived): into its stock, to be condensed in the tick,
+    and home. The condenser gone, or no longer his: what he holds to a store.
+*/
+void Economy::AtCondenser(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+    uint32_t h = k.building;
+    bool f_there = k.job == WORKER_JOB_CONDENSER && h && h < z.buildings.size() && h < state.stock.size()
+                   && z.buildings[h].kind == ZONE_KIND_CONDENSER && z.buildings[h].size > 0;
+    if (!f_there){
+        if (k.carry > 0 && FindStore(k,z,walkers)){
+            return;
+        }
+        if (k.carry > 0){
+            DropLoad(k,z);      //none takes it: put down (crates_plan.md, step 5)
+        }
+        GoHome(k,z,walkers);
+        return;
+    }
+    if (k.carry > 0 && k.carry_good >= 0){
+        state.stock[h][k.carry_good] += k.carry;
+        k.carry = 0;
+        k.carry_good = -1;
+        k.stint = 0;
+        state.version++;
+    }
+    GoHome(k,z,walkers);
+}
+
 //--- Saves -----------------------------------------------------------------------------------------
 
 EconomySaved Economy::Save() const{
@@ -9993,14 +10365,28 @@ EconomySaved EconomySaveState(const EconomyState& state){
         }
     }
     //STOCK KEPT: every made good's number, so a save keeps a 0 the start would make something else; orders running.
-    for (int g = 0; g < GOOD_COUNT; g++){
-        if (GOODS_MADE & GOOD_BIT(g)){
-            s.kept.push_back(std::make_pair(g,state.kept[g]));
-        }
-        if (state.ordered[g] > 0){
-            s.ordered.push_back(std::make_pair(g,state.ordered[g]));
+    //By colony from 1 - 0 is none - each one that has set any.
+    for (size_t c = 1; c < state.kept.size(); c++){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (GOODS_MADE & GOOD_BIT(g)){
+                s.kept.push_back({(int)c,g,state.kept[c][g]});
+            }
         }
     }
+    for (size_t c = 1; c < state.ordered.size(); c++){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (state.ordered[c][g] > 0){
+                s.ordered.push_back({(int)c,g,state.ordered[c][g]});
+            }
+        }
+    }
+    //ITS COLONY NUMBER, by the homes carrying one, and the next to be given.
+    for (size_t id = 1; id < state.colony.size(); id++){
+        if (state.colony[id]){
+            s.colonies.push_back(std::make_pair((uint32_t)id,state.colony[id]));
+        }
+    }
+    s.next_colony = state.next_colony;
     s.next_person = state.next_person;
     s.dead = state.dead;
     s.zombies = state.zombies;
@@ -10117,15 +10503,25 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
             state.endless[id] = 1;
         }
     }
-    //STOCK KEPT as set - a good the save does not name keeps the start's (Reset) - and the orders running.
+    //STOCK KEPT as set, by colony - a good the save does not name keeps the start's - and the orders running.
     for (const auto& kc : saved.kept){
-        if (kc.first >= 0 && kc.first < GOOD_COUNT && (GOODS_MADE & GOOD_BIT(kc.first))){
-            state.kept[kc.first] = std::max(0,kc.second);
+        if (kc[0] >= 0 && kc[1] >= 0 && kc[1] < GOOD_COUNT && (GOODS_MADE & GOOD_BIT(kc[1]))){
+            KeptOf((uint32_t)kc[0])[kc[1]] = std::max(0,kc[2]);
         }
     }
     for (const auto& oc : saved.ordered){
-        if (oc.first >= 0 && oc.first < GOOD_COUNT && (GOODS_MADE & GOOD_BIT(oc.first))){
-            state.ordered[oc.first] = std::max(0,oc.second);
+        if (oc[0] >= 0 && oc[1] >= 0 && oc[1] < GOOD_COUNT && (GOODS_MADE & GOOD_BIT(oc[1]))){
+            OrderedOf((uint32_t)oc[0])[oc[1]] = std::max(0,oc[2]);
+        }
+    }
+    //ITS COLONY NUMBER as the homes carried it: Derive's Settle, below, goes on from there. A save from before has
+    //none, and the settlements standing are numbered afresh in the order founded - as COLONY N was then.
+    state.colony.assign(z.buildings.size(),0);
+    state.next_colony = std::max(1u,saved.next_colony);
+    for (const auto& cc : saved.colonies){
+        if (cc.first < state.colony.size() && cc.second > 0){
+            state.colony[cc.first] = cc.second;
+            state.next_colony = std::max(state.next_colony,cc.second + 1);
         }
     }
     //CRATES as they lay. A save from before them has none.
@@ -10202,9 +10598,12 @@ std::array<int,GOOD_COUNT> EconomyReserved(const EconomyState& e, uint32_t id){
     return r;
 }
 
-std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z){
+std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z, uint32_t settlement){
     std::array<int,GOOD_COUNT> t{};
     for (size_t id = 1; id < e.stock.size() && id < z.buildings.size(); id++){
+        if (settlement != ECONOMY_EVERY_SETTLEMENT && EconomySettlementOf(e,(uint32_t)id) != settlement){
+            continue;
+        }
         //Stores, and the camp's supplies - what the colony has to hand.
         if (z.buildings[id].kind == ZONE_KIND_STORE || z.buildings[id].kind == ZONE_KIND_CAMP){
             for (int g = 0; g < GOOD_COUNT; g++){

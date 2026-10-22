@@ -4,9 +4,9 @@ aliases: settlements, territory, territories, border, borders
 kind: world
 status: partial
 summary: Homes and the land within a walk of them - further the more beds they have, and growing from every building that stands. People only take on work in their own settlement, and nothing new is placed outside every settlement.
-plans: settlements_plan.md > Decided; settlements_plan.md > Step 1: territories; settlements_plan.md > Growing from every building (the user's, 2026-10-12); settlements_plan.md > As built: step 1; settlements_plan.md > Founding: decided; settlements_plan.md > Founding: as built, step 1
-code: Economy.h: ECONOMY_SETTLEMENT_REACH ECONOMY_SETTLEMENT_FIRST ECONOMY_SETTLEMENT_PER_BED ECONOMY_SETTLEMENT_BUILDING ECONOMY_SETTLEMENT_TOWER ECONOMY_SETTLEMENT_WALL EconomySettlementReach EconomySettlementOf EconomyPersonSettlement EconomyCommandInTerritory; Economy.cpp: Settle Ours HouseFamilies; Walkers.cpp: MapFlood; ApplicationChasmBorders.cpp: UploadBorders DrawWalkTip; ApplicationChasmSelect.cpp: SelectionColony
-verified: 2026-10-17
+plans: done/settlements_plan.md > Decided; done/settlements_plan.md > Step 1: territories; done/settlements_plan.md > Growing from every building (the user's, 2026-10-12); done/settlements_plan.md > As built: step 1; done/settlements_plan.md > Founding: decided; done/settlements_plan.md > Founding: as built, step 1; settlements_plan.md > To think through
+code: Economy.h: ECONOMY_SETTLEMENT_REACH ECONOMY_SETTLEMENT_FIRST ECONOMY_SETTLEMENT_PER_BED ECONOMY_SETTLEMENT_BUILDING ECONOMY_SETTLEMENT_TOWER ECONOMY_SETTLEMENT_WALL EconomySettlementReach EconomySettlementOf EconomyPersonSettlement EconomyCommandInTerritory EconomyColonyNumber; Economy.cpp: Settle Ours HouseFamilies; Walkers.cpp: MapFlood; ApplicationChasmBorders.cpp: UploadBorders DrawWalkTip; ApplicationChasmSelect.cpp: SelectionColony
+verified: 2026-10-22
 ---
 
 A **home** founds a settlement - a [[Camp|camp]] or a [[House|house]], since a tent is just a house - and the
@@ -63,12 +63,12 @@ settlement of either end, so the far bank may lie outside. Erasing is never refu
 
 Its border is marked on the land the way The Settlers marks one: a slim post with a small terracotta flag at every
 edge of land where one settlement ends or two meet, the flag turned toward the territory - not along a cliff's edge.
-With anything selected, the top left names its colony: COLONY 1, 2, 3 in the order founded, a person's by their home.
+With anything selected, the top left names its colony, a person's by their home: COLONY 1, 2, 3, kept for good.
+With two or more, the top bar and NEEDS ATTENTION show the colony in view, and NEEDS ATTENTION the others' dangers.
 
 With a person selected, the cursor says how far it is to walk to the land under it ("37 units to walk"), amber when
 it is in another settlement or none, "No way there" if it can't be reached, and "Hidden under the clouds" under them.
 
 ## Planned
 
-- [planned] **Porters**: a job of its own, maybe with a building, carrying goods between settlements.
-- [planned] Kept stock, the top bar and NEEDS ATTENTION per settlement.
+- [planned] **Porters** carrying goods between colonies, from a depot. (The [[Statistics|Statistics page]] has each colony's.)

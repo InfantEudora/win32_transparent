@@ -1,7 +1,7 @@
 # Foraging: fruit from the wild
 
-The user's, 2026-10-11/12, while working out how a new settlement gets going (`settlements_plan.md`, "Later, to
-think through"). Farming is the only food that comes in, and only in bulk, after a while: a field is built, sown
+The user's, 2026-10-11/12, while working out how a new settlement gets going (`done/settlements_plan.md`, "Later,
+to think through"). Farming is the only food that comes in, and only in bulk, after a while: a field is built, sown
 and grown for days before its first harvest. Gathering should cover the gap. It is enough to keep a small group
 (about **4-5 people**) going from a **camp**, never a village.
 
@@ -48,8 +48,8 @@ animals yet). The user chose bushes: "fits what we currently have nicely".
 
 **The camp's picker**
 - **One place at a camp** (`ECONOMY_CAMP_PICKERS`), camp residents only, by **husbandry** - since 2026-10-14
-  residents first, then anyone in the colony no other place needs (settlements_plan.md, "The camp's own work is
-  the colony's"), so picking goes on once everyone has moved into houses. Filled after the
+  residents first, then anyone in the colony no other place needs (done/settlements_plan.md, "The camp's own work
+  is the colony's"), so picking goes on once everyone has moved into houses. Filled after the
   water carrier: a founding party of three is a woodcutter, a water carrier and a picker. A farmer's place comes
   only with fields, so it doesn't compete in a new outpost.
 - **Where**: the nearest ripe plant **in the camp's own settlement** (`Ours`, as every errand) - and a camp has

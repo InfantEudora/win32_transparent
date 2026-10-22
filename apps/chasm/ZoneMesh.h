@@ -53,9 +53,9 @@ void ZoneHarmChunks(const ChasmWorld& w, const ZoneState& z, const ZoneHarmLook&
 void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vector<vertex>& out,
                     const std::vector<uint8_t>* field_stage = NULL, const ZoneHarmLook* harm = NULL);
 
-//Plot v's own ground - the quarters of the cells round it - as a flat tile laid `lift` over the relief,
+//Plot v's own ground - the quarters of the cells round it - as a flat tile laid `lift` over its ground (a terrace's top, if it stands on one),
 //appended to `out`: the play mode's ghost of a ground tool, and a lot's outline when it is highlighted.
 //Nowhere below `floor`: a bridge's ghost lies on its deck over the water, not on the river bed under it.
-void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out, float floor = -1e30f);
+void BuildPlotTile(const ChasmWorld& w, const ZoneState& z, int v, float lift, std::vector<vertex>& out, float floor = -1e30f);
 
 #endif

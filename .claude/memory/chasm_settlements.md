@@ -1,11 +1,11 @@
 ---
 name: chasm-settlements
-description: "chasm settlements plan (docs/settlements_plan.md) - territories by walking 50 units from a camp, people work only in their own; step 1 BUILT 2026-10-11; founding by expedition and porters still to think through"
+description: "chasm settlements: part one (territories, founding by tent, one camp to a colony) FINISHED, moved to docs/done/settlements_plan.md 2026-10-21; docs/settlements_plan.md is part two - porters and per-settlement stock, to think through"
 metadata:
   node_type: memory
   type: project
   originSessionId: 5bac1302-f1b1-4435-8b32-339b4416d1b9
-  modified: 2026-10-11T23:24:41.471Z
+  modified: 2026-10-22T08:56:01.236Z
 ---
 
 Talked through with the user 2026-10-11 after a far tent was built by a villager from the camp (no task limit).
@@ -59,6 +59,36 @@ grown-up's home of their settlement (HouseFamilies) - overrules lifeline_plan's 
 zones let a camp's tents not touch, never split it); a camp never joins land with a camp in Settle (founds its own);
 camp door in its largest tent group; ECONOMY_PITCH_RINGS 4. COLONY N panel top-left (SelectionColony).
 Also open: foraging, porters, per-settlement stock. camp_3's home village dies of thirst (camp carrier only).
+2026-10-21 (the user's): part one moved whole to docs/done/settlements_plan.md (FINISHED note on top; code comments
+naming settlements_plan.md + a section mean that file - left unedited, as demo_plan's were). Foraging was built as
+foraging_plan.md. docs/settlements_plan.md is now "part two: goods between them" - porters, and kept stock /
+provisions / top bar / NEEDS ATTENTION per settlement (all colony-wide today: KeptShort, ProvisionsLacking,
+EconomyStoredTotals). Wiki plans: lines point at done/.
+DECIDED 2026-10-21: per colony FIRST (Statistics shows totals AND per colony); porters work like a zeppelin's
+route (the user to think through); a DEPOT building, only porters carry to/from it (reserving); top bar = colony
+under the camera, else under the cursor. Step 1 proposed in the plan (4 sub-steps): a LASTING colony number
+carried by homes (today's id = oldest home's, changes), kept by colony, top bar + NEEDS ATTENTION, stats rows.
+Defaults AGREED 2026-10-22 (top bar keeps last shown over open land; NEEDS ATTENTION follows it, dangers from all;
+"nobody's" share in stats). Sub-step 1 BUILT 2026-10-22: EconomyState::colony (by building id) + next_colony, set at
+the end of Settle, saved (economy.colonies/next_colony), hashed only once next_colony > 2; EconomyColonyNumber;
+SelectionColony + stats NOW use it. Test save saves/colony_numbers_test.json (colonies 2 and 3). Next: step 2, kept
+stock by colony. Built on the steam agent's UNCOMMITTED tree (the user's choice to wait for it, not for a commit).
+Step 2 BUILT 2026-10-22: kept/ordered are vectors by colony number (EconomyKept/EconomyOrdered/EconomyKeptLevel take
+the colony); KeptShort/ProvisionsLacking/EconomyStoredTotals take a SETTLEMENT id (ECONOMY_EVERY_SETTLEMENT = all);
+CHASM_CMD_KEEP value[2] = colony (0 = oldest standing); save "kept": {"1": {...}}, old flat form -> colony 1.
+Test save saves/kept_by_colony_test.json. Testing an outpost: put people BESIDE the house (its plot refuses), give
+it water (a debug well, endless) or they die of thirst in ~4 days; a store holds 22, so supply by crate.
+Step 3 BUILT 2026-10-22 (view only): ApplicationChasm::ViewColony (camera point weather_view.at, else GetHoverPick,
+else view_colony_number, else oldest; EVERY with one colony), ChasmPersonSettlement (in ApplicationChasmIssues.cpp -
+ApplicationChasmSelect.cpp's anonymous namespace runs to ~line 2724, a definition there clashes with the header),
+ChasmIssues/ChasmDaysHeld/ChasmInCamp/ChasmBarGoods take a settlement, ViewIssues adds other colonies' dangers.
+Testing: the play camera EASES to a chasm_view target (wait ~3 s); pin the cursor with chasm_tool hover_x/hover_z
+(chasm_select op hover does not move the ground pick). MOST IN NEED stays all colonies (the user's, 2026-10-22).
+Step 4 BUILT 2026-10-22: EconomyDay::colonies (rows by colony number, 0 nobody's; EconomyColonyRow), filled in
+EconomyDayLevels + Event (EconomyEvent::colony; EconomyPersonLand = whose a person is, rules side); saved after zombies;
+hashed only with a colony > 1; ChasmColonyHistory/ChasmStatsColonies/NowOf(colony); check: colonies add up; page chips
+OVERLAY_HIT_STATS_COLONY (chasm_select op press now works on the stats page); chasm_stats `colony`. Test save
+saves/stats_by_colony_test.json. ALL of step 1 (per colony) is BUILT. Next: porters/depot - the user thinks routes over.
 
 **Why:** the colony must grow as separate bases supplied deliberately, not one map-wide labour pool.
 **How to apply:** any new errand or "nearest X" search for a person must filter by Ours(k,id); kept stock,

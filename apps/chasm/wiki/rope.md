@@ -6,15 +6,15 @@ status: built
 summary: A building material made from hemp at a ropewalk. A winch is built with it, and later the zeppelin will be.
 plans: goods_plan.md > Decided; goods_plan.md > Rope as a cost; goods_plan.md > Step 3: the ropewalk; goods_plan.md > Step 4: rope as a cost; goods_plan.md > Kept in stock, and made to order
 code: Goods.h: GOOD_ROPE GoodCategory; Economy.h: ECONOMY_WINCH_ROPE; Economy.cpp: StoreyGoods EconomyRopeChain EconomyGoodHeld
-verified: 2026-10-10
+verified: 2026-10-22
 ---
 
 A **material**: something built with, once, as [[Wood|wood]] is. It is made at a [[Ropewalk]] from
 [[Hemp|hemp]], {ECONOMY_ROPE_HEMP} hemp a rope, and the colony starts with none.
 
-It waits at the ropewalk for whoever needs it, and goes to a [[Store|store]] only as far as the colony keeps
-some there - a number set on the ropewalk's card, none to start with. Every store takes rope by default, and its
-card has a chip for it. Nobody eats it, and no house keeps it.
+It waits at the ropewalk for whoever needs it, and goes to a [[Store|store]] only as far as its colony keeps
+some there - a number set on the ropewalk's card, each [[Settlement|colony]] its own, none to start with. Every
+store takes rope by default, and its card has a chip for it. Nobody eats it, and no house keeps it.
 
 ## What is built with it
 

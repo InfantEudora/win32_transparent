@@ -131,6 +131,20 @@ struct PropInstance;
       - A COLLECTOR fills while it has a carrier (not under snow); he fetches its water in loads. What it
         holds goes by its standing floor, as a hut's room does (EconomyCollectorRoom, `water_room`): a load at
         the least, or its carrier would never come, and more for the floor past its pump.
+      - A STEAM COLLECTOR (ZONE_KIND_STEAM, steam_plan.md step 2) is a water collector over the open chasm: it fills
+        with STEAM while it has its carriers (WORKER_JOB_STEAM, by ingenuity, one for every ECONOMY_PLOTS_PER_WORKER
+        plots), a unit every ECONOMY_STEAM_SECONDS each on the rim and ECONOMY_STEAM_PER_STEP faster again for every
+        step its plot stands down into the chasm (EconomySteamYield, Climate.h's ClimateStepsDown) - the warmer the
+        nearer the steam. It holds as a water collector does, and SNOW DOES NOT STOP IT: the chasm keeps its edge warm.
+        Its carrier takes it to a store in loads.
+      - A CONDENSER (ZONE_KIND_CONDENSER, steam_plan.md step 3) turns steam into water while it has its hands
+        (WORKER_JOB_CONDENSER, by ingenuity, one for every ECONOMY_PLOTS_PER_WORKER plots): a unit of steam into a unit
+        of water every ECONOMY_CONDENSER_SECONDS each, up to what it holds (a collector's room), snow or not. Its
+        steam is a STEAM COLLECTOR'S BESIDE IT first (EconomyCondenserFeeds), taken straight from its hold - several
+        condensers share one, a unit at a time, and what they leave its carrier takes on as steam; with none beside it,
+        what its hands bring from a store, a load at a time once it runs out (FeedCondenser). Beside a collector they
+        bring none: a condenser outpacing its collector waits on it. They carry its water to a store in loads, and the
+        thirsty and the houses take it there as at a water collector.
     A load is only picked up when a store (or, for a harvest, home) takes it; one nobody takes after all is
     held, waiting.
 
@@ -346,6 +360,10 @@ struct PropInstance;
     carried off to a store only while the stores hold less (KeptShort), so by default none goes there and the
     stores never fill with it. Both start at ECONOMY_KEPT_START. Set by recorded commands (CHASM_CMD_KEEP);
     saved and hashed.
+    BY COLONY (settlements_plan.md, step 2): each colony keeps its own, by its number (`kept`, `ordered`), and it
+    is all counted in its own land - its stores and camp's supplies, its sites and towers, the crates on its land and
+    its builders' huts - since its people may take from nowhere else. A builders' hut makes provisions for its own
+    colony. A new colony keeps none, as a new game.
 
     --- SETTLEMENTS (docs/settlements_plan.md) -------------------------------------------------------
     A HOME founds a SETTLEMENT - a camp or a house: a tent is just a house (the user's) - the start camp the first.
@@ -362,6 +380,12 @@ struct PropInstance;
     field, garden, lot, road, wall or crate is in the settlement of its plot (a building's door; a bridge's, either
     end's); a PERSON in his home's. Worked out from the zones (Settle), never saved. A family whose home goes is CRAMMED into another of the
     settlement it stands in (HouseFamilies).
+    ITS COLONY NUMBER (docs/settlements_plan.md, step 1): COLONY 1, 2, 3 as the player knows it - given once, when it
+    is founded, never given again - since its id changes when its heart goes, and kept stock and the statistics' rows
+    are saved by colony. Its HOMES carry it (`colony`, saved): each takes its settlement's number at every Settle, and
+    a settlement takes its heart's, so erasing the camp keeps the number - the oldest house carries it too. A heart
+    with none, or with one an older settlement took this Settle (cut off from it), is given the next (`next_colony`).
+    Two growing into one: the homes take the number of the one they joined, and the other has ended.
     TAKING A TENT (settlements_plan.md, "Founding: taking a tent"): someone ordered out may be told to take one
     (TakeTent) - off to the nearest camp with one to spare, as GATHERING goes for supplies; there he packs it, its plot
     out of the camp (TentsPacked), and carries it as his load (ECONOMY_TENT_CARRIED) - released too - until he PITCHES
@@ -450,6 +474,13 @@ struct PropInstance;
 #define ECONOMY_WATER_SECONDS       4.0f    //a collector fills one unit in this long
 #define ECONOMY_WATER_ROOM          6.0f    //and holds, uncarried, a load and this per unit of its floor area past...
 #define ECONOMY_WATER_PUMP          1.5f    //...the floor its pump takes (the user's, 2026-10-11, as a woodcutter's hut)
+//THE STEAM COLLECTOR (steam_plan.md step 2, current tuning): a unit every so long for each carrier on the rim, and this
+//share more for every step down (EconomySteamYield). It holds what a water collector of its floor would.
+#define ECONOMY_STEAM_SECONDS       8.0f
+#define ECONOMY_STEAM_PER_STEP      0.35f
+//THE CONDENSER (steam_plan.md step 3, current tuning): a unit of steam into a unit of water so long, for each hand - a
+//rim collector's own pace, so one of its size keeps one condenser of its size busy, and a deeper one more.
+#define ECONOMY_CONDENSER_SECONDS   8.0f
 #define ECONOMY_STRAIGHT_STEP       0.5f    //world units between the samples of a straight walk
 #define ECONOMY_WORKER_SPEED        1.6f    //walking straight: WALKER_SPEED_GROUND
 #define ECONOMY_PERSON_AREA         1.3f    //floor area a person needs: a house holds its floor area over this, whole people
@@ -462,6 +493,8 @@ struct PropInstance;
 #define ECONOMY_FOOTING_WOOD        2       //a FOOTING: wood a plot's ground storey takes over its area's, for a kind with a body
 #define ECONOMY_HIGH_STOREY         3       //the first storey that takes STONE...
 #define ECONOMY_HIGH_STONE_PER_AREA 1.0f    //...so much a unit of its floor area
+#define ECONOMY_FOUNDATION_STONE    1.0f    //a FOUNDATION (terraces_plan.md): stone a ground storey takes a unit of its area, a unit of rise
+#define ECONOMY_TERRACE_STONE       0.5f    //a TERRACE (terraces_plan.md stage 2): stone a plot takes a unit of its area, a unit it fills
 #define ECONOMY_PLOTS_PER_WORKER    2       //standing plots a woodcutter's hut, collector or stonecutter's hut takes a worker for
 #define ECONOMY_BUILD_SECONDS       5.0f    //building with a load, at the builder's pace
 #define ECONOMY_GROUND_WOOD_PER_AREA 0.5f   //a garden's wall or a lot's fence, per unit of the plot's area
@@ -611,7 +644,9 @@ const char* SkillName(int skill);
 #define WORKER_JOB_PICKER       7       //a camp's own: fruit from the wild (foraging_plan.md)
 #define WORKER_JOB_STONECUTTER  8       //at a stonecutter's hut: breaks rocks for stone (stone_plan.md)
 #define WORKER_JOB_MINER        9       //at a mine: digs its deposit, stone or floatstone (stone_plan.md step 5)
-#define WORKER_JOB_COUNT        10
+#define WORKER_JOB_STEAM        10      //at a steam collector: carries its steam to a store (steam_plan.md)
+#define WORKER_JOB_CONDENSER    11      //at a condenser: its water to a store, steam to it from one (steam_plan.md step 3)
+#define WORKER_JOB_COUNT        12
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
@@ -1029,6 +1064,7 @@ struct EconomyEvent{
     vec2 pos;                   //...and where on it (x, world z)
     GoodsMask what = 0;         //EVENT_RAN_OUT: GOOD_BIT(GOOD_WATER), GOODS_EATEN, or both; EVENT_HARVEST its good
     int amount = 0;             //what the kind says
+    uint32_t colony = 0;        //the colony it happened in, by its number - 0 nobody's (THE HISTORY, BY COLONY)
 };
 const char* EconomyEventName(int kind);    //"born", "tree_felled": the signal a cue table sees, and the tools' name
 int EconomyEventByName(const std::string& name);    //...and back, -1 for none
@@ -1045,6 +1081,12 @@ int EconomyEventByName(const std::string& name);    //...and back, -1 for none
     Totals are worked out from these when shown, never kept beside them, so they cannot disagree either. Nothing
     is folded away: a year is CALENDAR_SEASONS * CALENDAR_DAYS_PER_SEASON rows. Hashed as a trace part of its own
     ("history"), its tail only - it is only ever added to.
+    BY COLONY (settlements_plan.md, step 4; the user's 2026-10-21: "the totals, as well as per colony"): each row holds
+    the same again for every colony, by its lasting number - its people by their home's colony (the homeless by the
+    land they stand on), its goods by where they lie (a load or a pack by its carrier's), its counts by where they
+    happened (EconomyEvent::colony) - and NOBODY'S, colony 0, for the homeless off every colony's land and what lies
+    there. Made in the same passes as the whole's, so the colonies and nobody's add up to it, exactly (the check holds
+    them to it). A colony standing has its row even when empty; nobody's only when it holds anything.
 */
 #define ECONOMY_STAGES          5       //LIFE_BABY .. LIFE_OLD: a ledger row's people
 struct EconomyDay{
@@ -1055,7 +1097,11 @@ struct EconomyDay{
     int broken = 0;                             //EVENT_ROCK_BROKEN
     int storeys = 0;                            //EVENT_STOREY_RAISED
     int zombies = 0;                            //EVENT_ZOMBIE_FELLED
+    uint32_t colony = 0;                        //a colony's own row: its number, 0 nobody's - the whole's row leaves it 0
+    std::vector<EconomyDay> colonies;           //the whole's row: the same by colony, in number order (BY COLONY)
 };
+//The row of colony `colony` in a whole's row `d`, added in its place if it has none yet.
+EconomyDay& EconomyColonyRow(EconomyDay& d, uint32_t colony);
 struct EconomyHistory{
     /*
         Where it begins: a new colony's first tick, or the load of a save from before the history - which has none,
@@ -1348,6 +1394,7 @@ struct EconomySettlement{
     uint32_t id = 0;            //its oldest home's building id: what it is named by, and its territory's heart
     int beds = 0;               //its homes' beds - tents, and houses' room - that its reach was worked out from
     float reach = 0.0f;         //world units of walking from that home - and its land grows from every building past it
+    uint32_t colony = 0;        //ITS COLONY NUMBER, which lasts: COLONY 1, 2, 3 as the player knows it
 };
 
 struct EconomyState{
@@ -1369,9 +1416,12 @@ struct EconomyState{
     uint32_t next_crate = 1;
     std::vector<int> guards;                            //by building id: a tower's GUARD COUNT (POSTS, step 8), -1 not a tower
     std::vector<uint8_t> endless;                       //by building id: a WELL kept full (set_stock's), 0 for any other
-    std::array<int,GOOD_COUNT> kept = {};               //by good: the colony's KEPT number of a made good (STOCK KEPT)
-    std::array<int,GOOD_COUNT> ordered = {};            //...and an order's level for the stores, 0 none - cleared once reached
-    std::vector<EconomyEvent> events;                   //EVENTS: the last ECONOMY_EVENTS_KEPT, oldest first - not saved
+    //By COLONY NUMBER, then good: its KEPT number of a made good (STOCK KEPT) - a colony past the end keeps the start's
+    std::vector<std::array<int,GOOD_COUNT>> kept;
+    std::vector<std::array<int,GOOD_COUNT>> ordered;    //...and an order's level for its stores, 0 none - cleared once reached
+    std::vector<uint32_t> colony;                       //by building id: the COLONY NUMBER a home carries (Settle), 0 none
+    uint32_t next_colony = 1;                           //...and the next to be given: never one given before
+    std::vector<EconomyEvent> events;                  //EVENTS: the last ECONOMY_EVENTS_KEPT, oldest first - not saved
     uint32_t events_made = 0;                           //...and how many since the load: each reader tells the ones it has not
     //...and of each kind: felled trees soon push a scout's notice out of the ring, so a reader that looks seldom (a
     //tool) can still tell how many of a rare kind it missed.
@@ -1391,7 +1441,7 @@ struct EconomyState{
     std::vector<int> log_wood;                          //what a log taken up by a woodcutter working here is worth, 0 none
     std::vector<int> pile_room;                         //...and the wood its woodpile holds: a hut's, the camp's supplies' (ECONOMY_CAMP_WOODPILE)
     std::vector<int> hut_room;                          //...of a hut's, what it keeps indoors: the rest is on its lots
-    std::vector<int> water_room;                        //a collector's: the water it holds uncarried (EconomyCollectorRoom), 0 for any other
+    std::vector<int> water_room;                        //a collector's, of water or steam: what it holds uncarried (EconomyCollectorRoom), 0 for any other
     std::vector<int> cutter_places;                     //a camp's own woodcutter's places (ECONOMY_CAMP_WOODCUTTERS), 0 for any other
     std::vector<int> drawer_places;                     //...and its water carrier's (ECONOMY_CAMP_WATER_CARRIERS), 0 for any other
     std::vector<int> draw_plot;                         //...the plot he draws at, beside the water: -1 none, or not a camp
@@ -1460,6 +1510,31 @@ inline uint32_t EconomySettlementOf(const EconomyState& e, uint32_t id){
 inline uint32_t EconomyPersonSettlement(const EconomyState& e, const EconomyWorker& k){
     return EconomySettlementOf(e,k.house);
 }
+//...and the settlement he is counted in: his home's, else - with none - the land he stands on; 0 none.
+uint32_t EconomyPersonLand(const EconomyState& e, const EconomyWorker& k);
+//ITS COLONY NUMBER: settlement `settlement`'s (its id), 0 none.
+inline uint32_t EconomyColonyNumber(const EconomyState& e, uint32_t settlement){
+    for (const EconomySettlement& st : e.settlements){
+        if (st.id == settlement){
+            return st.colony;
+        }
+    }
+    return 0;
+}
+//...and back: the settlement (its id) numbered `colony`, 0 none - one that has ended has none.
+inline uint32_t EconomyColonySettlement(const EconomyState& e, uint32_t colony){
+    for (const EconomySettlement& st : e.settlements){
+        if (st.colony == colony){
+            return st.id;
+        }
+    }
+    return 0;
+}
+//...and the oldest standing's number, 0 none: what a tool's colony defaults to.
+inline uint32_t EconomyFirstColony(const EconomyState& e){
+    return e.settlements.empty() ? 0 : e.settlements.front().colony;
+}
+#define ECONOMY_EVERY_SETTLEMENT    0xFFFFFFFFu     //a settlement argument: all of them, the whole colony's land and none
 //SETTLEMENTS: how far a territory reaches with `beds` beds - one tent's, then more for every bed, up to the most.
 inline float EconomySettlementReach(int beds){
     return std::min(ECONOMY_SETTLEMENT_REACH,ECONOMY_SETTLEMENT_FIRST + ECONOMY_SETTLEMENT_PER_BED * (float)std::max(0,beds - 1));
@@ -1474,9 +1549,20 @@ uint32_t EconomyColonyCamp(const EconomyState& e, const ZoneState& z, int plot);
 inline int EconomyMadeAt(int kind){
     return (kind == ZONE_KIND_BUILDERS) ? GOOD_PROVISIONS : (kind == ZONE_KIND_ROPEWALK) ? GOOD_ROPE : -1;
 }
-//STOCK KEPT: what the stores are to hold of made good `good` - its kept number, or an order's level if higher.
-inline int EconomyKeptLevel(const EconomyState& e, int good){
-    return (good >= 0 && good < GOOD_COUNT) ? std::max(e.kept[good],e.ordered[good]) : 0;
+//STOCK KEPT, BY COLONY: colony `colony`'s kept number of made good `good` - the start's (ECONOMY_KEPT_START) till set...
+inline int EconomyKept(const EconomyState& e, uint32_t colony, int good){
+    if (good < 0 || good >= GOOD_COUNT || !(GOODS_MADE & GOOD_BIT(good))){
+        return 0;
+    }
+    return (colony < e.kept.size()) ? e.kept[colony][good] : ECONOMY_KEPT_START;
+}
+//...its order's level, 0 none...
+inline int EconomyOrdered(const EconomyState& e, uint32_t colony, int good){
+    return (good >= 0 && good < GOOD_COUNT && colony < e.ordered.size()) ? e.ordered[colony][good] : 0;
+}
+//...and what its stores are to hold of it: the kept number, or the order's level if higher.
+inline int EconomyKeptLevel(const EconomyState& e, uint32_t colony, int good){
+    return std::max(EconomyKept(e,colony,good),EconomyOrdered(e,colony,good));
 }
 //What tower `id` on `plot` lacks of its full stock, by good - water and provisions; nothing on the way counted.
 std::array<int,GOOD_COUNT> EconomyTowerShort(const EconomyState& e, const ChasmWorld& w, uint32_t id, int plot);
@@ -1545,8 +1631,10 @@ struct EconomySaved{
     uint32_t next_crate = 1;
     std::vector<std::pair<uint32_t,int>> guards;        //towers' guard counts: building, count
     std::vector<uint32_t> endless;                      //the endless WELLS, by building id
-    std::vector<std::pair<int,int>> kept;              //made goods' kept numbers (STOCK KEPT): good, count - none, the start's
-    std::vector<std::pair<int,int>> ordered;            //...and their orders' levels: good, level
+    std::vector<std::array<int,3>> kept;                //made goods' kept numbers (STOCK KEPT): colony, good, count - none, the start's
+    std::vector<std::array<int,3>> ordered;             //...and their orders' levels: colony, good, level
+    std::vector<std::pair<uint32_t,uint32_t>> colonies; //homes' COLONY NUMBERS: building, number
+    uint32_t next_colony = 1;
     uint32_t next_person = 1;
     std::vector<EconomyDeath> dead;
     std::vector<EconomyZombie> zombies;
@@ -1586,20 +1674,20 @@ public:
     //False if none, or refused.
     bool SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry = false, bool f_endless = false);
     /*
-        PROVISIONS (POSTS): how many are still wanted - by sites, towers and the level kept (STOCK KEPT) - beyond
-        what is made and being made; below 0, made and not wanted. With `spare`, how many lie made beyond what the
-        sites and towers still lack and the stores' share of the level: a hut's to carry to a store. The rules' own
-        figure: call it on the simulation thread, between ticks.
+        PROVISIONS (POSTS): how many are still wanted in settlement `settlement` (its id) - by its sites, its towers
+        and its colony's level kept (STOCK KEPT) - beyond what is made and being made there; below 0, made and not
+        wanted. With `spare`, how many lie made beyond what the sites and towers still lack and the stores' share of
+        the level: a hut's to carry to a store. The rules' own figure: call it on the simulation thread, between ticks.
     */
-    int ProvisionsLacking(const ZoneState& z, int* spare = NULL) const;
-    //STOCK KEPT (CHASM_CMD_KEEP): the colony's kept number of made good `good`, 0 or more. False if not a made good.
-    bool SetKept(int good, int count);
+    int ProvisionsLacking(const ZoneState& z, uint32_t settlement, int* spare = NULL) const;
+    //STOCK KEPT (CHASM_CMD_KEEP): colony `colony`'s kept number of made good `good`, 0 or more. False if not a made good.
+    bool SetKept(int good, int count, uint32_t colony);
     /*
-        ...or an ORDER for `count` more of it: the level for the stores to reach goes up by `count` from the order's
-        running now, or else from what the stores hold or the kept number, the higher. `count` 0 cancels one. Cleared
-        on the tick the stores reach it. False if not a made good.
+        ...or an ORDER for `count` more of it: the level for its stores to reach goes up by `count` from the order's
+        running now, or else from what they hold or the kept number, the higher. `count` 0 cancels one. Cleared on the
+        tick its stores reach it. False if not a made good.
     */
-    bool OrderMore(int good, int count, const ZoneState& z);
+    bool OrderMore(int good, int count, const ZoneState& z, uint32_t colony);
     /*
         An ORDER (POSTS, CHASM_CMD_ORDER): person `person` sent to stand on `plot`, or released from his post
         with -1 - on its `layer`, the one clicked (ramparts_plan.md), or with -1 its top. Applied between ticks,
@@ -1747,7 +1835,8 @@ private:
     std::vector<PickUpLook> pick_up_looks;
     std::vector<std::vector<int>> cells_of;     //by building id: a field's coarse cells, in index order (derived)
     std::vector<int> site_cells;                //by building id: a field's cells still a site (derived)
-    std::vector<int> ground_sites;              //the garden, lot and wall plots still to build, in index order (derived)
+    std::vector<int> ground_sites;              //the garden, lot, wall and terrace plots still to build, in index order (derived)
+    std::vector<uint8_t> ground_site_stone;     //...per plot, 1 where it is a terrace's: its one good stone, not wood
     std::vector<int> road_sites;                //the road plots still to lay, in index order (derived)
     std::vector<int> wall_sites;                //the wall plots still to build - their trees to fell first (derived)
     std::vector<int> pile_door;                 //by building id: the hut plot beside its woodpile, -1 none (derived)
@@ -1910,8 +1999,17 @@ private:
     //ROPE (goods_plan.md): a ropemaker's errand, from home (true if he set off); what he does at his ropewalk.
     bool MakeRope(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace);
-    //STOCK KEPT: how many of made good `good` the stores still lack of its level, less what is on its way to one.
-    int KeptShort(const ZoneState& z, int good) const;
+    bool FeedCondenser(EconomyWorker& k, const ZoneState& z, Walkers& walkers);      //steam_plan.md step 3
+    void AtCondenser(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    //STOCK KEPT: how many of made good `good` settlement `settlement`'s stores still lack of its colony's level, less
+    //what is on its way to one of them.
+    int KeptShort(const ZoneState& z, int good, uint32_t settlement) const;
+    //The settlement of a place a load goes to or is taken from - a building's (its door's), a crate's or a ground
+    //site's plot's - 0 none.
+    uint32_t SettlementOfPlace(uint32_t id) const;
+    //STOCK KEPT, BY COLONY: colony `colony`'s kept numbers and orders, made if it has none yet (the start's).
+    std::array<int,GOOD_COUNT>& KeptOf(uint32_t colony);
+    std::array<int,GOOD_COUNT>& OrderedOf(uint32_t colony);
     void Walk(EconomyWorker& k, float dt);
     //ZOMBIES (above, Zombies.cpp): every zombie a tick on - a look for its target on its tick, then its walk. With
     //`f_zones_moved`, whatever was built or taken down this tick: each one after a target looks again at once.
@@ -2093,7 +2191,9 @@ bool EconomyPrivateStock(const EconomyState& e, const ZoneState& z, uint32_t id)
 //A meal there is a unit, not a load, and only those after one count it (SeekSupply): not here. For the cards.
 std::array<int,GOOD_COUNT> EconomyReserved(const EconomyState& e, uint32_t id);
 //The colony's totals, in its stores only (not what lies at workplaces or is being carried).
-std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z);
+//`settlement` (its id) narrows them to its stores and camp's supplies (settlements_plan.md, step 2).
+std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const ZoneState& z,
+                                               uint32_t settlement = ECONOMY_EVERY_SETTLEMENT);
 
 //A prop what is BUILT has covered - a building's standing storey on its plot, a garden or lot built on it, a built field
 //cell over it: the view no longer draws it (ApplicationChasm::PropHidden, the same rule less the road's), so nobody
@@ -2179,7 +2279,7 @@ inline bool EconomyIndoors(const EconomyWorker& k){
 /*
     Construction (CONSTRUCTION): what storey `level` on `plot` takes of `good` - 1 its ground storey, an arch's first
     floor 2 - since SIZE AND HEIGHT (building_size_plan.md) a ground storey takes a FOOTING and one from
-    ECONOMY_HIGH_STOREY up STONE; the storeys over `from` up to `to` together; what is still to build on `plot` - its
+    ECONOMY_HIGH_STOREY up STONE, and a ground storey on a FOUNDATION stone too (terraces_plan.md); the storeys over `from` up to `to` together; what is still to build on `plot` - its
     storeys over those standing, or an arch's floors over those built; what all a building's planned storeys - a field
     site's cells - still take, by good; and what has been brought to it.
 */
@@ -2187,8 +2287,8 @@ int EconomyStoreyCost(const ChasmWorld& w, const ZoneState& z, int plot, int goo
 int EconomyStoreysCost(const ChasmWorld& w, const ZoneState& z, int plot, int good, int from, int to);
 int EconomyPlotLeftCost(const ChasmWorld& w, const ZoneState& z, int plot, int good);
 //...a storey of `kind` on `plot` whatever stands there now: what placing one would cost (the ghost's price tag).
-int EconomyKindStoreyCost(const ChasmWorld& w, int kind, int plot, int good, int level);
-int EconomyKindStoreysCost(const ChasmWorld& w, int kind, int plot, int good, int from, int to);
+int EconomyKindStoreyCost(const ChasmWorld& w, const ZoneState& z, int kind, int plot, int good, int level);
+int EconomyKindStoreysCost(const ChasmWorld& w, const ZoneState& z, int kind, int plot, int good, int from, int to);
 //...and what a coarse cell of a site painted on cells (a field) takes of `good`, by its kind.
 int EconomyCellCost(int kind, int good);
 std::array<int,GOOD_COUNT> EconomySiteCost(const ChasmWorld& w, const ZoneState& z, uint32_t id);
@@ -2199,10 +2299,17 @@ int EconomyGroundWood(const ChasmWorld& w, int plot);
 int EconomyGroundCost(const ChasmWorld& w, const ZoneState& z, int plot);
 //...the same for `ground` painted on `plot`, whatever lies there now; none or a road 0.
 int EconomyGroundKindCost(const ChasmWorld& w, int ground, int plot);
+//A terrace's plot with its top `top` storeys up (terraces_plan.md stage 2): the stone it takes, by its area and how far it
+//fills over the ground under it, on average - at least one.
+int EconomyTerraceStone(const ChasmWorld& w, int plot, int top);
 //The wood a woodcutter's hut of `floor_area` standing keeps indoors (woodcutting_plan.md): none for the floor he works in.
 int EconomyHutRoom(float floor_area);
 //...and the water a collector of `floor_area` standing holds: a load, and more for the floor past its pump.
 int EconomyCollectorRoom(float floor_area);
+//How much faster than on the rim a steam collector on `plot` fills: 1, and ECONOMY_STEAM_PER_STEP more a step down.
+float EconomySteamYield(const ChasmWorld& w, int plot);
+//The standing steam collectors beside a condenser of `plots` - sharing an edge with one - by id: where it draws its steam.
+void EconomyCondenserFeeds(const ChasmWorld& w, const ZoneState& z, const std::vector<int>& plots, std::vector<uint32_t>& out);
 int EconomyGroundBrought(const EconomyState& e, int plot);
 //How far a field has grown toward its harvest, 0..1 - the look's cue too.
 float EconomyFieldGrowth(const EconomyState& e, const ZoneState& z, uint32_t id);

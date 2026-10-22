@@ -23,12 +23,15 @@
 
 //What the colony holds to live on, in days of it for everyone: water, and food at what each unit is worth.
 //Stores, the camp's supplies and the houses' pantries - not what lies at a workplace or is being carried.
-void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food, float* mouths_out){
+void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food, float* mouths_out,
+                   uint32_t settlement){
+    bool f_all = settlement == ECONOMY_EVERY_SETTLEMENT || !e.world;
     int64_t water_ticks = 0;
     int64_t food_ticks = 0;
     for (size_t id = 1; id < e.stock.size() && id < z.buildings.size(); id++){
         int kind = z.buildings[id].kind;
-        if (z.buildings[id].size <= 0 || (kind != ZONE_KIND_STORE && kind != ZONE_KIND_CAMP && kind != ZONE_KIND_HOUSE)){
+        if (z.buildings[id].size <= 0 || (kind != ZONE_KIND_STORE && kind != ZONE_KIND_CAMP && kind != ZONE_KIND_HOUSE)
+            || (!f_all && EconomySettlementOf(e,(uint32_t)id) != settlement)){
             continue;
         }
         water_ticks += (int64_t)e.stock[id][GOOD_WATER] * NEEDS_WATER_WORTH;
@@ -39,7 +42,7 @@ void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, floa
     //Everyone at their SHARE (Economy.h): a baby drinks half what an adult does.
     int mouths = 0;
     for (const EconomyWorker& k : e.workers){
-        mouths += EconomyShare(k.born,e.tick);
+        mouths += (f_all || ChasmPersonSettlement(*e.world,e,k) == settlement) ? EconomyShare(k.born,e.tick) : 0;
     }
     float people_days = (float)std::max(1,mouths) / LIFE_SHARE_FULL * CALENDAR_DAY_TICKS;
     water = (float)water_ticks / people_days;
@@ -49,10 +52,18 @@ void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, floa
     }
 }
 
-int ChasmInCamp(const ZoneState& z, const EconomyState& e){
+uint32_t ChasmPersonSettlement(const ChasmWorld& w, const EconomyState& e, const EconomyWorker& k){
+    (void)w;
+    return EconomyPersonLand(e,k);      //the rules' own, which the statistics' rows count people by too
+}
+
+int ChasmInCamp(const ZoneState& z, const EconomyState& e, uint32_t settlement){
+    bool f_all = settlement == ECONOMY_EVERY_SETTLEMENT || !e.world;
     int in_camp = 0;
     for (const EconomyWorker& k : e.workers){
-        in_camp += (k.house == 0 || (k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_CAMP)) ? 1 : 0;
+        if (f_all || ChasmPersonSettlement(*e.world,e,k) == settlement){
+            in_camp += (k.house == 0 || (k.house < z.buildings.size() && z.buildings[k.house].kind == ZONE_KIND_CAMP)) ? 1 : 0;
+        }
     }
     return in_camp;
 }
@@ -80,6 +91,8 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_ROPEWALK:    return "THE ROPEWALK";
         case ZONE_KIND_STONECUTTER: return "THE STONECUTTER'S HUT";
         case ZONE_KIND_MINE:        return "THE MINE";
+        case ZONE_KIND_STEAM:       return "THE STEAM COLLECTOR";
+        case ZONE_KIND_CONDENSER:   return "THE CONDENSER";
         default:                    return "A WORKPLACE";
     }
 }
@@ -97,12 +110,38 @@ const char* TierName(int tier){
 
 }
 
-void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out, uint32_t locked){
+void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out, uint32_t locked, uint32_t settlement){
     out.clear();
     auto f_locked = [&](int tool){ return ((locked >> tool) & 1u) != 0; };
     if (e.world != z.world || e.workers.empty()){
         return;
     }
+    /*
+        ONE COLONY (settlements_plan.md, step 3): with `settlement`, only what is its own - a building or site by its door,
+        a plot by its land, a person by ChasmPersonSettlement - and what it holds, so an outpost with no collector of its
+        own is told to build one. ECONOMY_EVERY_SETTLEMENT passes everything, as it was.
+    */
+    bool f_all = settlement == ECONOMY_EVERY_SETTLEMENT;
+    auto ours = [&](uint32_t id){ return f_all || EconomySettlementOf(e,id) == settlement; };
+    auto ours_plot = [&](int v){ return f_all || (v >= 0 && v < (int)e.settlement.size() && e.settlement[v] == settlement); };
+    auto ours_person = [&](const EconomyWorker& k){ return f_all || ChasmPersonSettlement(*e.world,e,k) == settlement; };
+    //All of a good it holds: its buildings' stock, the crates on its land, what its people carry (EconomyGoodHeld's, narrowed).
+    auto held_here = [&](int good){
+        if (f_all){
+            return EconomyGoodHeld(e,good);
+        }
+        int held = 0;
+        for (size_t id = 1; id < e.stock.size(); id++){
+            held += ours((uint32_t)id) ? e.stock[id][good] : 0;
+        }
+        for (const EconomyCrate& c : e.crates){
+            held += ours_plot(c.plot) ? c.stock[good] : 0;
+        }
+        for (const EconomyWorker& k : e.workers){
+            held += (k.carry_good == good && ours_person(k)) ? std::max(0,k.carry) : 0;
+        }
+        return held;
+    };
     size_t n = z.buildings.size();
     //One pass over the plots and one over the cells: what of each building stands, and a field still a site.
     std::vector<uint8_t> stands(n,0);
@@ -133,7 +172,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     bool f_producing = false;   //a woodcutter or collector standing: goods are being made
     for (size_t id = 1; id < n; id++){
         const ZoneBuilding& b = z.buildings[id];
-        if (b.size <= 0 || b.kind >= ZONE_KIND_COUNT){
+        if (b.size <= 0 || b.kind >= ZONE_KIND_COUNT || !ours((uint32_t)id)){
             continue;
         }
         placed[b.kind]++;
@@ -144,7 +183,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     for (const EconomyField& f : e.fields){
         uint32_t id = f.building;
         if (id >= n || z.buildings[id].kind != ZONE_KIND_FIELD || z.buildings[id].size <= 0
-            || z.buildings[id].crop != ZONE_CROP_NONE || f.f_sown || f.last >= 0 || field_site[id]){
+            || z.buildings[id].crop != ZONE_CROP_NONE || f.f_sown || f.last >= 0 || field_site[id] || !ours(id)){
             continue;
         }
         ChasmIssue i;
@@ -161,7 +200,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     //2-6. The next steps, each with its deadline where there is one.
     float water_days = 0.0f;
     float food_days = 0.0f;
-    ChasmDaysHeld(z,e,water_days,food_days);
+    ChasmDaysHeld(z,e,water_days,food_days,NULL,settlement);
     auto hint = [&](const char* kind, int order, const char* text, const std::string& value, int tool, float days){
         ChasmIssue i;
         i.kind = kind;
@@ -182,12 +221,12 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         hint("build_field",3,"BUILD A FIELD",DaysText("FOOD",food_days),CHASM_TOOL_FIELD,food_days);
     }
     if (!placed[ZONE_KIND_WOODCUTTER]){
-        int wood = EconomyStoredTotals(e,z)[GOOD_WOOD];
+        int wood = EconomyStoredTotals(e,z,settlement)[GOOD_WOOD];
         char buf[32];
         snprintf(buf,sizeof(buf),"WOOD %i",wood);
         hint("build_woodcutter",4,"BUILD A WOODCUTTER",buf,CHASM_TOOL_WOODCUTTER,1e9f);
     }
-    int in_camp = ChasmInCamp(z,e);
+    int in_camp = ChasmInCamp(z,e,settlement);
     if (in_camp > 0){
         char buf[32];
         snprintf(buf,sizeof(buf),"%i IN THE CAMP",in_camp);
@@ -206,19 +245,20 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         if (k.building && k.building < n){
             working[k.building]++;
         }
-        builders += (k.job == WORKER_JOB_BUILDER) ? 1 : 0;
+        builders += (k.job == WORKER_JOB_BUILDER && ours(k.building)) ? 1 : 0;     //its own: none come from another
         if (k.house && k.house < n){
             living[k.house]++;
         }
     }
     for (size_t id = 1; id < n; id++){
         const ZoneBuilding& b = z.buildings[id];
-        if (b.size <= 0){
+        if (b.size <= 0 || !ours((uint32_t)id)){
             continue;
         }
-        bool f_workplace = b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS
+        bool f_workplace =b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS
                            || b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_TOWER || b.kind == ZONE_KIND_ROPEWALK
-                           || b.kind == ZONE_KIND_STONECUTTER || b.kind == ZONE_KIND_MINE;
+                           || b.kind == ZONE_KIND_STONECUTTER || b.kind == ZONE_KIND_MINE || b.kind == ZONE_KIND_STEAM
+                           || b.kind == ZONE_KIND_CONDENSER;
         if (f_workplace && stands[id] && id < e.places.size() && e.places[id] > 0 && working[id] == 0){
             ChasmIssue i;
             i.kind = "nobody_at";
@@ -305,7 +345,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     for (const EconomyField& f : e.fields){
         uint32_t id = f.building;
         if (id >= n || z.buildings[id].kind != ZONE_KIND_FIELD || z.buildings[id].size <= 0 || !stands[id]
-            || (id < e.farmer_of.size() && e.farmer_of[id])){
+            || (id < e.farmer_of.size() && e.farmer_of[id]) || !ours(id)){
             continue;
         }
         uint32_t o = (f.owner < n) ? f.owner : 0;
@@ -339,14 +379,14 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     int rope_wanted = 0;
     uint32_t rope_site = 0;
     for (size_t id = 1; id < n; id++){
-        int left = rope_cost[id] - EconomySiteBrought(e,(uint32_t)id,GOOD_ROPE);
+        int left = ours((uint32_t)id) ? rope_cost[id] - EconomySiteBrought(e,(uint32_t)id,GOOD_ROPE) : 0;
         if (left > 0){
             rope_wanted += left;
             rope_site = rope_site ? rope_site : (uint32_t)id;
         }
     }
     int chain = rope_wanted > 0 ? EconomyRopeChain(e,z) : ECONOMY_ROPE_MAKING;
-    if (chain != ECONOMY_ROPE_MAKING && EconomyGoodHeld(e,GOOD_ROPE) < rope_wanted){
+    if (chain != ECONOMY_ROPE_MAKING && held_here(GOOD_ROPE) < rope_wanted){
         ChasmIssue i;
         i.kind = "site_needs_rope";
         i.tier = ISSUE_STUCK;
@@ -359,7 +399,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             uint32_t field = 0;
             for (size_t id = 1; id < n; id++){
                 const ZoneBuilding& b = z.buildings[id];
-                if (b.kind == ZONE_KIND_FIELD && b.size > 0 && (!field || (stands[id] && !stands[field]))){
+                if (b.kind == ZONE_KIND_FIELD && b.size > 0 && ours((uint32_t)id) && (!field || (stands[id] && !stands[field]))){
                     field = (uint32_t)id;
                 }
             }
@@ -384,16 +424,16 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     int stone_wanted = 0;
     uint32_t stone_site = 0;
     for (size_t id = 1; id < n; id++){
-        int left = stone_cost[id] - EconomySiteBrought(e,(uint32_t)id,GOOD_STONE);
+        int left = ours((uint32_t)id) ? stone_cost[id] - EconomySiteBrought(e,(uint32_t)id,GOOD_STONE) : 0;
         if (left > 0){
             stone_wanted += left;
             stone_site = stone_site ? stone_site : (uint32_t)id;
         }
     }
     if (stone_wanted > 0){
-        int stone_have = EconomyGoodHeld(e,GOOD_STONE);
+        int stone_have = held_here(GOOD_STONE);
         for (const EconomyCrate& c : e.crates){
-            bool f_ours = c.plot >= 0 && c.plot < (int)e.settlement.size() && e.settlement[c.plot] != 0;
+            bool f_ours = f_all && c.plot >= 0 && c.plot < (int)e.settlement.size() && e.settlement[c.plot] != 0;
             stone_have += f_ours ? c.stock[GOOD_STONE] : 0;
         }
         if (stone_have < stone_wanted){
@@ -426,7 +466,8 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     //11c. A mine whose seam is dug out (stone_plan.md step 5): its miner is free, and it stands until erased.
     for (size_t id = 1; id < n; id++){
         const ZoneBuilding& b = z.buildings[id];
-        if (b.kind != ZONE_KIND_MINE || b.size <= 0 || !stands[id] || first_plot[id] < 0 || !e.world->deposits){
+        if (b.kind != ZONE_KIND_MINE || b.size <= 0 || !stands[id] || first_plot[id] < 0 || !e.world->deposits
+            || !ours((uint32_t)id)){
             continue;
         }
         int d = e.world->deposits->At(first_plot[id]);
@@ -463,6 +504,9 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         int ground_plot = -1;
         uint32_t ground_site = 0;
         for (uint32_t site : e.trees_unreached){
+            if (EconomyIsGroundSite(site) ? !ours_plot(EconomyGroundSitePlot(site)) : !ours(site)){
+                continue;
+            }
             if (EconomyIsGroundSite(site)){
                 ground_plot = (ground == 0) ? EconomyGroundSitePlot(site) : ground_plot;
                 ground_site = (ground == 0) ? site : ground_site;
@@ -537,6 +581,36 @@ bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, ve
     and takes the view there (OVERLAY_HIT_BUILDING), or takes up its tool (OVERLAY_HIT_TAKE_TOOL). Returns its
     top - `bottom` itself with nothing to say.
 */
+uint32_t ApplicationChasm::ViewIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out){
+    uint32_t view = ViewColony(e);
+    ChasmIssues(z,e,out,ToolsLocked(),view);
+    if (view == ECONOMY_EVERY_SETTLEMENT){
+        return 0;
+    }
+    uint32_t number = EconomyColonyNumber(e,view);
+    for (ChasmIssue& i : out){
+        i.colony = number;
+    }
+    std::vector<ChasmIssue> theirs;
+    for (const EconomySettlement& st : e.settlements){
+        if (st.id == view){
+            continue;
+        }
+        ChasmIssues(z,e,theirs,ToolsLocked(),st.id);
+        for (ChasmIssue& i : theirs){
+            if (i.tier == ISSUE_DANGER){
+                i.text = "COLONY " + std::to_string(st.colony) + ": " + i.text;
+                i.colony = st.colony;
+                out.push_back(i);
+            }
+        }
+    }
+    std::stable_sort(out.begin(),out.end(),[](const ChasmIssue& a, const ChasmIssue& b){
+        return (a.tier != b.tier) ? a.tier < b.tier : a.order < b.order;
+    });
+    return number;
+}
+
 float ApplicationChasm::DrawIssues(float s, float bottom){
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
@@ -544,7 +618,7 @@ float ApplicationChasm::DrawIssues(float s, float bottom){
         return bottom;
     }
     std::vector<ChasmIssue> issues;
-    ChasmIssues(*z,*e,issues,ToolsLocked());
+    uint32_t colony = ViewIssues(*z,*e,issues);
     if (issues.empty()){
         return bottom;
     }
@@ -578,7 +652,8 @@ float ApplicationChasm::DrawIssues(float s, float bottom){
     overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
     build_stack_left = std::min(build_stack_left,p0.x);     //wider than the grid, for the card to keep clear of
     float title_y = p0.y + pad * 0.8f + 11.0f * s;
-    overlay->AddText("NEEDS ATTENTION",vec2(p0.x + pad,title_y),title_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+    std::string title = colony ? "NEEDS ATTENTION, COLONY " + std::to_string(colony) : std::string("NEEDS ATTENTION");
+    overlay->AddText(title.c_str(),vec2(p0.x + pad,title_y),title_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
     if ((int)issues.size() > shown){
         char more[24];
         snprintf(more,sizeof(more),"+%i MORE",(int)issues.size() - shown);
@@ -630,7 +705,10 @@ void ApplicationChasm::RegisterIssueTools(){
         "left (a countdown's share still to run, 1 to 0) and wait/grace ticks for a field, building (what a click "
         "selects), plot (where a click takes the view: trees_unreached's roads and walls) or tool (what it takes up). "
         "trees_unreached is a row a building, its value NO WOODCUTTER NEAR, WAITS FOR THE ICE (reached over the river "
-        "once it freezes) or OVER THE ICE NOW. View only. include_screenshot as elsewhere.",
+        "once it freezes) or OVER THE ICE NOW. BY COLONY (docs/settlements_plan.md, step 3): with more than one, the "
+        "colony in view's - under the camera, else the cursor, else the last shown - as `colony` (0: one colony, all of "
+        "it), each row's `colony` too, and every other colony's dangers, their text named COLONY N. View only. "
+        "include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{
@@ -642,11 +720,12 @@ void ApplicationChasm::RegisterIssueTools(){
             std::shared_ptr<const EconomyState> e = GetEconomy();
             std::shared_ptr<const ZoneState> z = GetZones();
             json list = json::array();
+            uint32_t colony = 0;
             if (e && z){
                 std::vector<ChasmIssue> issues;
-                ChasmIssues(*z,*e,issues,ToolsLocked());
+                colony = ViewIssues(*z,*e,issues);
                 for (const ChasmIssue& i : issues){
-                    json one{{"kind",i.kind},{"tier",TierName(i.tier)},{"text",i.text},{"value",i.value}};
+                    json one{{"kind",i.kind},{"tier",TierName(i.tier)},{"text",i.text},{"value",i.value},{"colony",i.colony}};
                     if (i.left >= 0.0f){
                         one["left"] = i.left;
                         const EconomyField* f = EconomyFieldOf(*e,i.building);
@@ -665,7 +744,7 @@ void ApplicationChasm::RegisterIssueTools(){
                     list.push_back(one);
                 }
             }
-            json result{{"issues",list},{"shown",std::min(ISSUES_SHOWN,(int)list.size())}};
+            json result{{"issues",list},{"shown",std::min(ISSUES_SHOWN,(int)list.size())},{"colony",colony}};
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
         });
 }

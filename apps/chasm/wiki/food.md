@@ -6,7 +6,7 @@ status: built
 summary: Three crops (wheat, greens and beans), each grown on fields, eaten for health, and best grown in rotation - and fruit from the wild.
 plans: fields_plan.md > Decided; fields_plan.md > AUTO by food; needs_plan.md > Current tuning
 code: Economy.cpp: crop_days crop_yield crop_after EconomyFoodWorth EconomyCropYield EconomyAutoCrop
-verified: 2026-10-12
+verified: 2026-10-22
 ---
 
 | Crop | Grows for | Harvest per unit of field area | Worth eaten |
@@ -45,7 +45,8 @@ and [[Provisions|provisions]] last of all, a food made from a wheat and a beans 
 ## In the top bar
 
 FOOD at the top is the foods summed - wheat, greens, beans and fruit - since any of them feeds someone; it counts
-what lies in [[Store|stores]] and the [[Camp|camp's]] supplies. Hovering it lists each food on its own, and
+what lies in [[Store|stores]] and the [[Camp|camp's]] supplies - of the [[Settlement|colony]] in view, once there
+is more than one. Hovering it lists each food on its own, and
 [[Provisions|provisions]] beside them, which are the posted people's and not in the sum.
 
 ## Planned

@@ -379,6 +379,9 @@ void ApplicationChasm::SetupInput(){
     view_key('K',INPUT_CHASM_TOOL_ROPEWALK);
     view_key('M',INPUT_CHASM_TOOL_STONECUTTER);   //M for mason (stone_plan.md)
     view_key('O',INPUT_CHASM_TOOL_MINE);          //O for ore (stone_plan.md step 5)
+    view_key('P',INPUT_CHASM_TOOL_STEAM);         //P for plume (steam_plan.md)
+    view_key('L',INPUT_CHASM_TOOL_CONDENSER);     //L for liquid (steam_plan.md step 3)
+    view_key('Y',INPUT_CHASM_TOOL_TERRACE);       //Y, the last letter free (terraces_plan.md stage 2)
     view_key('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     view_key(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -1039,6 +1042,16 @@ ChasmSave ApplicationChasm::MakeSave(){
                 s.castle.push_back(std::make_pair((int)v,(int)z->castle_over[v]));
             }
         }
+        //Terraces (terraces_plan.md stage 2).
+        for (size_t v = 0; v < z->terrace.size(); v++){
+            if (ZoneTerraced(*z,(int)v)){
+                ZoneSavedTerrace tr;
+                tr.plot = (int)v;
+                tr.top = z->terrace[v];
+                tr.f_built = z->terrace_built[v] != 0;
+                s.terraces.push_back(tr);
+            }
+        }
     }
     s.calendar_tick = calendar_shown;
     std::shared_ptr<const Exploration> ex = GetExploration();
@@ -1072,7 +1085,7 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
         debug->Warn("Save was made on world %s, these settings now give %s - the plots may differ\n",
                     save.world_hash.c_str(),hash);
     }
-    int refused = zones.Restore(w,save.buildings,save.next_building,save.grounds,save.stroke,save.stroke_building);
+    int refused = zones.Restore(w,save.buildings,save.next_building,save.grounds,save.stroke,save.stroke_building,save.terraces);
     refused += zones.RestoreCastle(save.castle);
     paint_stroke = save.stroke;
     PublishZones();
@@ -1184,6 +1197,12 @@ void ApplicationChasm::HashSimState(StateHash& h){
         }
         if (z.castle_over[v]){
             h.Add(((uint64_t)v << 32) | 0x0E000u | z.castle_over[v]);
+        }
+    }
+    //Terraces (terraces_plan.md stage 2) - likewise only where there are some, so a colony without any hashes as before.
+    for (size_t v = 0; v < z.terrace.size(); v++){
+        if (ZoneTerraced(z,(int)v)){
+            h.Add(((uint64_t)v << 32) | 0x7E000u | ((uint32_t)(uint8_t)z.terrace[v] << 1) | (z.terrace_built[v] ? 1u : 0u));
         }
     }
     //The buildings (docs/buildings_plan.md): which each plot is part of, the table, the drag in progress.
@@ -2010,6 +2029,8 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_STONECUTTER: return ZONE_KIND_STONECUTTER;
         case CHASM_TOOL_MINE:       return ZONE_KIND_MINE;
         case CHASM_TOOL_WELL:       return ZONE_KIND_WELL;
+        case CHASM_TOOL_STEAM:      return ZONE_KIND_STEAM;
+        case CHASM_TOOL_CONDENSER:  return ZONE_KIND_CONDENSER;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -2235,6 +2256,17 @@ void ApplicationChasm::UpdatePickView(){
         }else if (tool == CHASM_TOOL_CASTLE && !z.castle.empty()){
             bool f_ok = ZoneCanCastle(*w,z,hover.plot,castle_shape,castle_storeys,NULL);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
+        }else if (tool == CHASM_TOOL_TERRACE && !z.terrace.empty()){
+            //By the square (terraces_plan.md stage 2): green if any of its plots would take the terrace a click there makes,
+            //or is one already - a drag started there extends it.
+            std::vector<int> square;
+            ZoneCellPlots(*w,hover.coarse_quad,square);
+            int top = ZoneTerraceTopOver(*w,z,square,(int)square.size());
+            bool f_ok = false;
+            for (int v : square){
+                f_ok = f_ok || ZoneTerraced(z,v) || ZoneCanTerrace(*w,z,v,top,NULL);
+            }
+            coarse_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }
         //Dragging a bridge: its whole chain, green where it may stand, red where it may not.
         int from = bridge_from.load();
@@ -2921,19 +2953,20 @@ void ApplicationChasm::UpdateView(void){
     //into a text field does not wait and fire once the field lets go.
     {
         const bool f_live = KeysLive();
-        const int keys[19] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+        const int keys[22] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
                               INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
                               INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS,INPUT_CHASM_TOOL_WALL,
                               INPUT_CHASM_TOOL_RANGE,INPUT_CHASM_TOOL_TOWER,INPUT_CHASM_TOOL_ROPEWALK,
-                              INPUT_CHASM_TOOL_STONECUTTER,INPUT_CHASM_TOOL_MINE};
-        const int tools[19] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                              INPUT_CHASM_TOOL_STONECUTTER,INPUT_CHASM_TOOL_MINE,INPUT_CHASM_TOOL_STEAM,
+                              INPUT_CHASM_TOOL_CONDENSER,INPUT_CHASM_TOOL_TERRACE};
+        const int tools[22] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
                                CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
                                CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
                                CHASM_TOOL_RANGE,CHASM_TOOL_TOWER,CHASM_TOOL_ROPEWALK,CHASM_TOOL_STONECUTTER,
-                               CHASM_TOOL_MINE};
+                               CHASM_TOOL_MINE,CHASM_TOOL_STEAM,CHASM_TOOL_CONDENSER,CHASM_TOOL_TERRACE};
         //Play mode's tools still waiting for a discovery (demo_plan.md step 6) are not on the bar, and their keys do
         //nothing - and one in hand from before (debug mode, or another colony) is put down.
         uint32_t locked = ToolsLocked();
@@ -3036,8 +3069,10 @@ void ApplicationChasm::PreRender(void){
     UploadBorders();
     UploadClouds();
     UploadHearth();
+    UploadSteamPlumes();
     UpdatePickView();
     UpdateGhost();
+    UpdateSlopeGrid();
     UploadSelection();
     UpdatePlayModeViews();
 #ifdef DEBUG
@@ -3671,6 +3706,10 @@ void ApplicationChasm::RenderChasmPanel(){
         if (ImGui::RadioButton("Stonecutter (M)##tool",tool == CHASM_TOOL_STONECUTTER)) tool = CHASM_TOOL_STONECUTTER;
         if (ImGui::RadioButton("Mine (O)##tool",tool == CHASM_TOOL_MINE)) tool = CHASM_TOOL_MINE;
         ImGui::SameLine();
+        if (ImGui::RadioButton("Steam (P)##tool",tool == CHASM_TOOL_STEAM)) tool = CHASM_TOOL_STEAM;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Condenser (L)##tool",tool == CHASM_TOOL_CONDENSER)) tool = CHASM_TOOL_CONDENSER;
+        ImGui::SameLine();
         //A debug well (water_tools_plan.md), for test maps with no river: the panel's only - no key, no build bar, never in play.
         if (ImGui::RadioButton("Well (debug)##tool",tool == CHASM_TOOL_WELL)) tool = CHASM_TOOL_WELL;
         //Water and height placed by hand (water_tools_plan.md): a new map each, so the panel's only, never in play.
@@ -4158,6 +4197,25 @@ void ApplicationChasm::RegisterMCPTools(){
                                                      {"layer",ZoneCastleLayer(*z,pick.plot)},
                                                      {"over",CastleOverJson(*z,pick.plot)}};
                     }
+                    //Its ground (terraces_plan.md stage 2): a terrace's top, or the terrain's - and the step to each
+                    //neighbour, open, a wall or a stair (ZoneTerraceStep).
+                    std::shared_ptr<const ChasmWorld> zw = GetWorld();
+                    if (zw && z->world == zw){
+                        result["zone_ground_y"] = ZoneGroundAt(*zw,*z,pick.plot);
+                        if (ZoneTerraced(*z,pick.plot)){
+                            result["zone_terrace"] = json{{"top",(int)z->terrace[pick.plot]},
+                                                          {"built",(bool)z->terrace_built[pick.plot]}};
+                        }
+                        json steps = json::array();
+                        int nb[8];
+                        int n = ZonePlotNeighbours(*zw,pick.plot,nb,8);
+                        static const char* step_names[] = {"open","wall","stair"};
+                        for (int i = 0; i < n; i++){
+                            steps.push_back(json{{"plot",nb[i]},{"ground_y",ZoneGroundAt(*zw,*z,nb[i])},
+                                                 {"step",step_names[ZoneTerraceStep(*zw,*z,pick.plot,nb[i])]}});
+                        }
+                        result["zone_steps"] = steps;
+                    }
                     //An arch over it (arches_plan.md): its storeys and the building it is part of.
                     if (z->ArchOf(pick.plot) > 0){
                         result["zone_arch"] = json{{"storeys",z->ArchOf(pick.plot)},{"owner",z->ArchOwnerOf(pick.plot)},
@@ -4275,11 +4333,13 @@ void ApplicationChasm::RegisterMCPTools(){
         "goes ON it, climbing over the passage (`over`); anything else takes the piece's place. Debug only (refused "
         "with play). Its decks are walked only by the posted: an order onto a piece stands him on its top deck. "
         "`castle_here` reports the plot's piece. STOPPING WORK (docs/stopping_work_plan.md): work_stop stops the "
-        "workplace at the place - a water collector, woodcutter's hut, ropewalk or builders' hut (`on`, default true; "
+        "workplace at the place - a water or steam collector, condenser, woodcutter's hut, ropewalk or builders' hut (`on`, default true; "
         "false sets it working again) - so it takes nobody and its people go free; range_stop the same for an archery "
         "range, by a cell of it. CANCEL (docs/construction_plan.md): site_cancel takes the building at the plot off whole "
         "while nothing of it stands - a site card's Cancel, a bridge too - field_cancel the same by a cell of a field or "
-        "range; what it was brought is left as a crate (origin site).",
+        "range; what it was brought is left as a crate (origin site). TERRACES (docs/terraces_plan.md stage 2): terrace puts a "
+        "terrace on the plot, its top `top` storeys up (by default the plot's own highest ground rounded up), standing at "
+        "once by debug, a site with play:true; terrace_erase takes it off, with nothing on it.",
         json{
             {"type","object"},
             {"properties",{
@@ -4287,7 +4347,8 @@ void ApplicationChasm::RegisterMCPTools(){
                                                   "ground_paint","ground_erase","build_add","build_paint","build_remove",
                                                   "build_erase","field_crop","field_next","field_land","field_priority",
                                                   "gate_shut","range_paint","tower_ladder","castle","work_stop","range_stop",
-                                                  "site_cancel","field_cancel"}}}},
+                                                  "site_cancel","field_cancel","terrace","terrace_erase"}}}},
+                {"top",{{"type","integer"},{"description","for terrace: its top in storeys (whole storeys from 0)"}}},
                 {"shape",{{"type","string"},{"enum",{"block","arch","stair","none"}},
                           {"description","for castle: the debug castle's piece (ramparts_plan.md) - none takes it off"}}},
                 {"storeys",{{"type","integer"},{"description","for castle: its height, 1 to 4 (an arch 2 at least; a stair rises "
@@ -4295,7 +4356,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open; for work_stop and range_stop: "
                                                         "stopped (default) or working"}}},
-                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk","stonecutter","mine","well"}},{"description","for build_* (default house); a well is a debug tool, refused with play:true (water_tools_plan.md)"}}},
+                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk","stonecutter","mine","well","steam","condenser"}},{"description","for build_* (default house); a well is a debug tool, refused with play:true (water_tools_plan.md)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","hemp","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
@@ -4388,6 +4449,12 @@ void ApplicationChasm::RegisterMCPTools(){
                 }
                 cmd.value[1] = (shape == ZONE_CASTLE_NONE) ? 0.0f
                                                            : (float)ZoneCastlePiece(shape,args.value("storeys",2));
+            }else if (op == ZONE_OP_TERRACE){
+                //A terrace (terraces_plan.md stage 2): `top` in storeys, or by default the one a drag from this plot
+                //alone would give it (its highest ground rounded up) - or the terrace it extends.
+                std::shared_ptr<const ZoneState> z = GetZones();
+                int top = (z && z->world == w) ? ZoneTerraceTopOver(*w,*z,std::vector<int>(1,index)) : ZONE_NO_TERRACE;
+                cmd.value[1] = (float)args.value("top",top);
             }
             //A PLAY command for what a discovery has not brought yet is refused, as the build bar hides its tool
             //(demo_plan.md step 6).
@@ -4397,7 +4464,8 @@ void ApplicationChasm::RegisterMCPTools(){
                     int kind = (int)cmd.value[1];
                     tool = (kind == ZONE_KIND_WATER) ? CHASM_TOOL_WATER : (kind == ZONE_KIND_WINCH) ? CHASM_TOOL_WINCH
                          : (kind == ZONE_KIND_TOWER) ? CHASM_TOOL_TOWER : (kind == ZONE_KIND_STONECUTTER) ? CHASM_TOOL_STONECUTTER
-                         : (kind == ZONE_KIND_MINE) ? CHASM_TOOL_MINE : -1;
+                         : (kind == ZONE_KIND_MINE) ? CHASM_TOOL_MINE : (kind == ZONE_KIND_STEAM) ? CHASM_TOOL_STEAM
+                         : (kind == ZONE_KIND_CONDENSER) ? CHASM_TOOL_CONDENSER : -1;
                 }else if (op == ZONE_OP_GROUND_PAINT && ground == ZONE_GROUND_WALL){
                     tool = CHASM_TOOL_WALL;
                 }else if (op == ZONE_OP_RANGE_PAINT){
@@ -4436,6 +4504,8 @@ void ApplicationChasm::RegisterMCPTools(){
                                         {"builders_huts",st.buildings[ZONE_KIND_BUILDERS]},
                                         {"fields",st.buildings[ZONE_KIND_FIELD]},{"ranges",st.buildings[ZONE_KIND_RANGE]},
                                         {"towers",st.buildings[ZONE_KIND_TOWER]},
+                                        {"steam_collectors",st.buildings[ZONE_KIND_STEAM]},
+                                        {"condensers",st.buildings[ZONE_KIND_CONDENSER]},
                                         {"built_plots",st.built_plots},
                                         {"storeys",st.storeys},{"field_cells",st.field_cells},
                                         {"floor_area",st.floor_area[ZONE_KIND_HOUSE]},{"field_area",st.floor_area[ZONE_KIND_FIELD]}};
@@ -4523,7 +4593,9 @@ void ApplicationChasm::RegisterMCPTools(){
         "pond, height and cliff, never in play (water_tools_plan.md: `width`, `height`, `radius` and `depth` set the map tools' "
         "sizes, as the panel's sliders do). With a paint tool the hover outline goes green where a click would "
         "paint and red where the rules refuse - in play mode, the ghost of what it would place, and `cost` its price "
-        "tag as last drawn (empty for none; the ghost follows a frame behind, so ask again after moving the hover) - "
+        "tag as last drawn (empty for none; the ghost follows a frame behind, so ask again after moving the hover), "
+        "`slope_grid` how many plots or cells the grid round it shows the land allowing, allowing on a foundation "
+        "(stone, docs/terraces_plan.md) and refusing the tool - "
         "during a drag the whole of it, `drag_steps` the plots or cells it has crossed. "
         "hover_x/hover_z pin the hover to that point (a script has no mouse), until a call with hover_release.",
         json{
@@ -4532,7 +4604,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
                                                     "range","tower","ropewalk","castle","stonecutter","mine","well",
-                                                    "river","pond","height","cliff"}}}},
+                                                    "river","pond","height","cliff","steam","condenser","terrace"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -4557,7 +4629,7 @@ void ApplicationChasm::RegisterMCPTools(){
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
                                    "range","tower","ropewalk","castle","stonecutter","mine","well","river","pond","height",
-                                   "cliff"};
+                                   "cliff","steam","condenser","terrace"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             //The map tools' sizes (water_tools_plan.md), the panel's sliders' for a script - `width` the cliff's in plots
             //when that is the tool in hand, else the river's.
@@ -4619,19 +4691,25 @@ void ApplicationChasm::RegisterMCPTools(){
             size_t drag = 0;
             size_t band = 0;
             std::string cost;
+            int slope[3];
             {
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 line = line_chain.size();
                 drag = drag_chain.size();
                 band = cliff_band.size();
                 cost = ghost_cost_text;
+                for (int i = 0; i < 3; i++){
+                    slope[i] = slope_counts[i];
+                }
             }
             json result{{"tool",(tool >= 0 && tool < CHASM_TOOL_COUNT) ? names[tool] : "?"},
                         {"hover_pinned",f_hover_pinned.load()},
                         {"button",(left < 0) ? "mouse" : (left ? "down" : "up")},
                         {"line_plots",line},
                         {"drag_steps",drag},
-                        {"cost",cost}};
+                        {"cost",cost},
+                        {"slope_grid",{{"allowed",slope[ZONE_LAND_ALLOWED]},{"foundation",slope[ZONE_LAND_FOUNDATION]},
+                                       {"refused",slope[ZONE_LAND_REFUSED]}}}};
             //The cliff tool's sizes, and during its drag the plots the stroke would paint (water_tools_plan.md step 6).
             if (tool == CHASM_TOOL_CLIFF){
                 result["cliff_depth"] = cliff_depth.load();

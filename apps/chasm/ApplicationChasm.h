@@ -125,6 +125,7 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_REPLAY_STOP 31      //the replay's bar: the replay stopped (demo_plan.md, step 4)
 #define OVERLAY_HIT_SITE_CANCEL 32      //a site's card: taken off whole, its goods left as a crate (construction_plan.md)
 #define OVERLAY_HIT_PLACE       33      //NEEDS ATTENTION's place on the ground: the view goes to plot `value`
+#define OVERLAY_HIT_STATS_COLONY 34     //the Statistics page's chips: colony `value` shown, 0 all (settlements_plan.md)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -149,9 +150,12 @@ struct ChasmIssue{
     uint32_t building = 0;              //the place it is about - a click selects it - or 0
     int plot = -1;                      //...or a plot on the ground a click takes the view to - a road's
     int tool = -1;                      //...or the tool a click takes up
+    uint32_t colony = 0;                //the colony number it is about, 0 the whole colony's (settlements_plan.md, step 3)
 };
 //Every issue, most urgent first. `locked`: the build tools play mode still hides (ToolsLocked), so no hint offers one.
-void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out, uint32_t locked = 0);
+//`settlement` (its id) narrows it to that one's buildings, people and land; ECONOMY_EVERY_SETTLEMENT, all of them.
+void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out, uint32_t locked = 0,
+                 uint32_t settlement = ECONOMY_EVERY_SETTLEMENT);
 
 /*
     DISCOVERIES (demo_plan.md step 6; the user's, 2026-10-16): what the colony has found or done for the first time,
@@ -227,11 +231,17 @@ vec3 ChasmSunDirection(float elevation, float azimuth);    //toward the sun, uni
     the two never disagree. View only: nothing here reaches the rules.
 */
 //Water and food held, in days of them for everyone at their shares; `mouths` is everyone in adults' worth.
-void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food, float* mouths = NULL);
+//`settlement` (its id) narrows each of these three to one colony: its buildings, its sites and its people
+//(ChasmPersonSettlement) - ECONOMY_EVERY_SETTLEMENT, the whole colony's (settlements_plan.md, step 3).
+void ChasmDaysHeld(const ZoneState& z, const EconomyState& e, float& water, float& food, float* mouths = NULL,
+                   uint32_t settlement = ECONOMY_EVERY_SETTLEMENT);
 //Those sleeping in the camp, or with no home at all: BUILD HOUSES's count.
-int ChasmInCamp(const ZoneState& z, const EconomyState& e);
+int ChasmInCamp(const ZoneState& z, const EconomyState& e, uint32_t settlement = ECONOMY_EVERY_SETTLEMENT);
 //The goods the top bar names after PEOPLE and FOOD: wood and water always, any other held or wanted by a site.
-GoodsMask ChasmBarGoods(const ZoneState& z, const EconomyState& e, const std::array<int,GOOD_COUNT>& stored);
+GoodsMask ChasmBarGoods(const ZoneState& z, const EconomyState& e, const std::array<int,GOOD_COUNT>& stored,
+                        uint32_t settlement = ECONOMY_EVERY_SETTLEMENT);
+//The settlement (its id) a person is counted in: his home's, else - with none - the land he stands on; 0 none.
+uint32_t ChasmPersonSettlement(const ChasmWorld& w, const EconomyState& e, const EconomyWorker& k);
 //MOST IN NEED: the first `count` people as the panel ranks them, and what one is short of as his row says it.
 #define NEEDIEST_SHOWN      5
 std::vector<const EconomyWorker*> ChasmNeediest(const EconomyState& e, int count);
@@ -303,6 +313,9 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define INPUT_CHASM_REPORT         INPUT_LAST+36     //F12: Report a bug (demo_plan.md, step 4)
 #define INPUT_CHASM_FPS            INPUT_LAST+37     //F11: the frame rate shown or hidden (the `show_fps` setting)
 #define INPUT_CHASM_ARCHER         INPUT_LAST+38     //X: a posted archer on the plot under the cursor, debug builds, as Z's zombie
+#define INPUT_CHASM_TOOL_STEAM     INPUT_LAST+39     //P, for plume: the steam collector (steam_plan.md)
+#define INPUT_CHASM_TOOL_CONDENSER INPUT_LAST+40     //L, for liquid: the condenser (steam_plan.md step 3)
+#define INPUT_CHASM_TOOL_TERRACE   INPUT_LAST+41     //Y, the last letter free: the terrace (terraces_plan.md stage 2)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -327,7 +340,8 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define CHASM_CMD_GUARDS            SIM_CMD_LAST+8      //a tower's guard count: subtype the tower; value[0] the count
 #define CHASM_CMD_KEEP              SIM_CMD_LAST+9      //a made good's kept number (docs/goods_plan.md): subtype the good;
                                                         //value[0] the count; value[1] 1 for an order of that many more
-                                                        //instead, a count of 0 cancelling it
+                                                        //instead, a count of 0 cancelling it; value[2] the colony's
+                                                        //number (settlements_plan.md, step 2), 0 the oldest standing
 #define CHASM_CMD_GATHER            SIM_CMD_LAST+10     //a scout's pack gathered first (docs/defence_plan.md, "Scouting"):
                                                         //subtype the person; value[0] 1 to gather, 0 straight on
 #define CHASM_CMD_TENT              SIM_CMD_LAST+11     //a tent taken first (docs/settlements_plan.md): subtype the person;
@@ -376,6 +390,9 @@ enum ChasmTool{
     CHASM_TOOL_POND,        //...and a pond dragged out from its middle; each a new map (UpdateMapDrag)
     CHASM_TOOL_HEIGHT,      //water_tools_plan.md step 5: the ground raised or lowered along a drag, a hill a click
     CHASM_TOOL_CLIFF,       //...step 6: plots set below the plateau along a drag, as a road is drawn
+    CHASM_TOOL_STEAM,       //steam_plan.md: a steam collector, a drag along a drop into the chasm
+    CHASM_TOOL_CONDENSER,   //steam_plan.md step 3: a condenser, a drag - beside a steam collector, to draw from it
+    CHASM_TOOL_TERRACE,     //terraces_plan.md stage 2: a terrace, dragged over plots as a lot is
     CHASM_TOOL_COUNT
 };
 
@@ -757,7 +774,7 @@ private:
     void SubmitOrder(uint32_t person, int plot, int layer = -1, bool f_spread = false);
     void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
     void SubmitGuards(uint32_t tower, int count);               //any thread
-    void SubmitKeep(int good, int count, bool f_order);         //any thread; f_order: `count` more, 0 cancelling
+    void SubmitKeep(int good, int count, bool f_order, uint32_t colony);   //any thread; f_order: `count` more, 0 cancelling
     void SubmitGather(uint32_t person, bool f_on);              //any thread; refused as an order is
     void SubmitTent(uint32_t person, bool f_on);                //any thread; refused as an order is
     void SubmitPitch(uint32_t person);                          //any thread; refused as an order is
@@ -973,6 +990,12 @@ private:
     void HearthFixtures(const ChasmWorld& w, const ZoneState& z, const std::vector<uint8_t>* heat,
                         std::vector<vec3>* tops, std::vector<vertex>* panes);
     void SetSmoke(Object* o, const std::vector<vec3>& tops);   //an instance set of the puff made the smoke from those
+    //The steam collectors' plumes (steam_plan.md; ApplicationChasmHearth.cpp): the chimneys' columns in white, from each
+    //hood of a collector at work.
+    Mesh* steam_puff_mesh = NULL;
+    Object* steam_plumes = NULL;
+    uint64_t steam_built_key = ~0ull;           //which hoods plume, hashed: rebuilt only when that changes
+    void UploadSteamPlumes();                   //render thread, from PreRender
     /*
         THE GHOST (ApplicationChasmGhost.cpp): in play mode, what the tool in hand would place under the
         cursor - see-through, green where the rules allow it and red where they refuse, with an outline
@@ -1005,6 +1028,32 @@ private:
     void BuildGhostScene();                     //from BuildScene
     void SetGhostUniforms();
     void UpdateGhost();                         //render thread, from PreRender
+    /*
+        THE SLOPE GRID (ApplicationChasmGhost.cpp; the user's, 2026-10-21): round the ghost, the plots - a field's
+        cells for the field and range - each outlined green where the land lets the tool in hand stand, amber where it
+        stands on a foundation (terraces_plan.md) and red where it does not, fading out a few cells away: how much room
+        there really is, which gentle-looking ground hides.
+    */
+    Shader* slope_shader = NULL;
+    int slope_shader_index = -1;
+    Object* slope_grid = NULL;
+    struct SlopeKey{
+        const void* world = NULL;
+        const void* explored = NULL;            //...and its version: nothing is shown under the clouds
+        uint32_t explored_version = 0;
+        int at = -1;                            //the plot or cell it is round
+        int rule = -1;                          //which of the land's rules it asks (ApplicationChasmGhost.cpp)
+        int kind = -1;                          //...for a building: its kind, which a foundation goes by
+        uint32_t zones_version = 0;             //the terraces, level ground the land's say counts (terraces_plan.md)
+        bool operator==(const SlopeKey& o) const{
+            return world == o.world && explored == o.explored && explored_version == o.explored_version && at == o.at
+                   && rule == o.rule && kind == o.kind && zones_version == o.zones_version;
+        }
+    };
+    SlopeKey slope_built;
+    int slope_counts[3] = {0,0,0};              //under pick_mutex: the plots or cells it shows, by ZONE_LAND_* (chasm_tool)
+    void SetSlopeUniforms();
+    void UpdateSlopeGrid();                     //render thread, from PreRender
     /*
         THE PRICE TAG (the user's, 2026-10-11): what the ghost would cost to build, by the cursor - worked out with the
         ghost, from the rules' own costs (EconomyKindStoreyCost and the rest), so it is what the site will ask for. And
@@ -1313,6 +1362,21 @@ private:
     //Any thread: the winter snow's mean front (CalendarSnowFrontZ) for the date shown, on this map.
     float SnowFrontNow();
     void DrawOverlay(void) override;            //render thread: the date and the speed, every build
+    //Render thread, from DrawOverlay: the heat and the wind at the view (steam_plan.md), a strip under the calendar
+    //whose right edge is at `right`, from `top`. Returns the strip's bottom, or `top` with nothing to show.
+    float DrawHeatReadout(float s, float right, float top);
+    float readout_wind = 0.0f;                  //render thread: the readout's wind, eased so a gust does not flick its word
+    /*
+        THE COLONY IN VIEW (settlements_plan.md, step 3; the user's 2026-10-21): the one the top bar and NEEDS ATTENTION
+        are about - the colony under the camera, else under the cursor, else the last one shown (so panning over open
+        land doesn't flick it), else the oldest. Its settlement's id; ECONOMY_EVERY_SETTLEMENT while there is one
+        colony or none, which shows everything as before. Render thread, and chasm_issues; the view's alone.
+    */
+    uint32_t ViewColony(const EconomyState& e);
+    std::atomic<uint32_t> view_colony_number{0};    //the last one shown, by its number (it lasts; an id may not)
+    //NEEDS ATTENTION's list for the colony in view: its own issues and every other colony's dangers, named. Returns its
+    //number, 0 with one colony (ChasmIssues for all of it).
+    uint32_t ViewIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIssue>& out);
 #ifdef USE_IMGUI
     void RenderTimePanel();
 #endif
@@ -1609,6 +1673,13 @@ private:
         float ground = 0.0f;                    //...its height
         float distance = 0.0f;                  //the camera's from it
         uint32_t big = 0;                       //big gusts called so far
+        float yaw = 0.0f;                       //the camera's, so the readout's wind arrow points the way it blows on screen
+        //The heat there (Climate.h), for the readout under the calendar: the air, the chasm's warmth on top, its steps down.
+        float heat_air = 0.0f;
+        float heat_chasm = 0.0f;
+        int heat_steps = 0;
+        bool f_snow = false;
+        bool f_heat = false;                    //false until a world is up
     };
     std::mutex weather_mutex;
     WeatherView weather_view;                   //physics thread writes, render thread reads: under weather_mutex
@@ -1839,6 +1910,7 @@ private:
     bool f_stats_paused_game = false;           //physics thread: the page paused the game, to be undone after
     std::atomic<int> stats_scroll{0};           //the journal's lines scrolled past, from the newest
     std::atomic<int> stats_request{0};          //chasm_stats: 1 open the page, 2 close it - served on the next pass
+    std::atomic<uint32_t> stats_colony{0};      //BY COLONY (settlements_plan.md step 4): the colony shown, 0 all of them
     size_t stats_checked_days = 0;              //physics thread, debug builds: the ledger's rows at the last check
     void OpenStats();                           //physics thread
     void CloseStats();

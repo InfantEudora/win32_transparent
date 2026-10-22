@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <functional>
 
 using json = nlohmann::json;
 
@@ -259,19 +260,29 @@ json ChasmSaveToJson(const ChasmSave& s){
         for (const auto& gc : e.guards){
             guards.push_back(json::array({gc.first,gc.second}));
         }
-        //What the colony keeps of its made goods, and the orders for more (goods_plan.md): by the good's name.
+        //What each colony keeps of its made goods, and the orders for more (goods_plan.md; settlements_plan.md step 2):
+        //by colony number, then the good's name.
         json kept = json::object();
         for (const auto& kc : e.kept){
-            kept[GoodName(kc.first)] = kc.second;
+            kept[std::to_string(kc[0])][GoodName(kc[1])] = kc[2];
         }
         json ordered = json::object();
         for (const auto& oc : e.ordered){
-            ordered[GoodName(oc.first)] = oc.second;
+            ordered[std::to_string(oc[0])][GoodName(oc[1])] = oc[2];
         }
         economy = json{{"stocks",stocks},{"pantries",pantries},{"felled",props},{"people",workers},{"fields",fields},
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
                        {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},
                        {"kept",kept},{"ordered",ordered},{"plants",plants}};
+        //The COLONY NUMBERS (settlements_plan.md, step 1): [home, number], and the next to be given - once one is.
+        if (e.next_colony > 1){
+            json colonies = json::array();
+            for (const auto& cc : e.colonies){
+                colonies.push_back(json::array({cc.first,cc.second}));
+            }
+            economy["colonies"] = colonies;
+            economy["next_colony"] = e.next_colony;
+        }
         //The endless wells (water_tools_plan.md), by building id - only once there is one.
         if (!e.endless.empty()){
             economy["endless_wells"] = e.endless;
@@ -355,31 +366,47 @@ json ChasmSaveToJson(const ChasmSave& s){
             a day a line, [day, people by stage, goods held by name, felled, broken, storeys], today's so far too -
             and the zombies killed after them, on a day there were any (KILLS).
         */
-        auto day_json = [](const EconomyDay& d){
+        /*
+            A row: [day, people, held, felled, broken, storeys], then zombies killed once there are some - and BY COLONY
+            (settlements_plan.md step 4) its colonies' rows after that, each the same array with its colony's number in
+            the day's place (zombies then always written, so the rows have their place).
+        */
+        std::function<json(const EconomyDay&, int)> day_json = [&](const EconomyDay& d, int first){
             json held = json::object();
             for (int g = 0; g < GOOD_COUNT; g++){
                 if (d.held[g]){
                     held[GoodName(g)] = d.held[g];
                 }
             }
-            json row = json::array({d.day,d.people,held,d.felled,d.broken,d.storeys});
-            if (d.zombies > 0){
+            json row = json::array({first,d.people,held,d.felled,d.broken,d.storeys});
+            if (d.zombies > 0 || !d.colonies.empty()){
                 row.push_back(d.zombies);
+            }
+            if (!d.colonies.empty()){
+                json colonies = json::array();
+                for (const EconomyDay& r : d.colonies){
+                    colonies.push_back(day_json(r,(int)r.colony));
+                }
+                row.push_back(colonies);
             }
             return row;
         };
         const EconomyHistory& h = e.history;
         json journal = json::array();
         for (const EconomyEvent& ev : h.journal){
-            journal.push_back(json::array({ev.tick,ev.kind,ev.person,ev.building,ev.plot,ev.what,ev.amount,ev.pos.x,ev.pos.y}));
+            json line = json::array({ev.tick,ev.kind,ev.person,ev.building,ev.plot,ev.what,ev.amount,ev.pos.x,ev.pos.y});
+            if (ev.colony){
+                line.push_back(ev.colony);      //where it happened, by colony (BY COLONY): none, nobody's
+            }
+            journal.push_back(line);
         }
         json days = json::array();
         for (const EconomyDay& d : h.days){
-            days.push_back(day_json(d));
+            days.push_back(day_json(d,d.day));
         }
         if (e.f_history){
-            economy["history"] = json{{"from",h.from},{"start",day_json(h.start)},{"felled_from",h.felled_from},
-                                      {"broken_from",h.broken_from},{"journal",journal},{"days",days},{"today",day_json(h.today)}};
+            economy["history"] = json{{"from",h.from},{"start",day_json(h.start,h.start.day)},{"felled_from",h.felled_from},
+                                      {"broken_from",h.broken_from},{"journal",journal},{"days",days},{"today",day_json(h.today,h.today.day)}};
             //The kills people were put down with (RANKS, debug) - only when some were.
             if (h.kills_from > 0){
                 economy["history"]["kills_from"] = h.kills_from;
@@ -390,6 +417,11 @@ json ChasmSaveToJson(const ChasmSave& s){
     json castle = json::array();
     for (const auto& pc : s.castle){
         castle.push_back(json::array({pc.first,pc.second}));
+    }
+    //Terraces (terraces_plan.md stage 2): plot, top, built - only with some.
+    json terraces = json::array();
+    for (const ZoneSavedTerrace& tr : s.terraces){
+        terraces.push_back(json::array({tr.plot,tr.top,tr.f_built ? 1 : 0}));
     }
     json out = json{
         {"chasm_save",CHASM_SAVE_VERSION},
@@ -413,6 +445,9 @@ json ChasmSaveToJson(const ChasmSave& s){
     };
     if (!castle.empty()){
         out["castle"] = castle;
+    }
+    if (!terraces.empty()){
+        out["terraces"] = terraces;
     }
     //A test map's kind (test_maps_plan.md) - only then, so a chasm save is exactly what it was before them.
     if (!GridKindHasChasm(g.kind) && g.kind < GRID_KINDS){
@@ -964,11 +999,22 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         if (e.contains("history") && e["history"].is_object()){
             const json& hj = e["history"];
             EconomyHistory& h = out.economy.history;
-            auto read_day = [](const json& dj, EconomyDay& d){
+            std::function<bool(const json&, EconomyDay&)> read_day = [&](const json& dj, EconomyDay& d){
                 if (!dj.is_array() || dj.size() < 6 || !dj[1].is_array() || !dj[2].is_object()){
                     return false;
                 }
                 d.day = dj[0].get<int>();
+                //Its colonies' rows (BY COLONY): their numbers in the day's place. None in a save from before.
+                if (dj.size() > 7 && dj[7].is_array()){
+                    for (const json& cj : dj[7]){
+                        EconomyDay r;
+                        if (read_day(cj,r)){
+                            r.colony = (uint32_t)std::max(0,r.day);
+                            r.day = d.day;
+                            d.colonies.push_back(r);
+                        }
+                    }
+                }
                 for (size_t s = 0; s < d.people.size() && s < dj[1].size(); s++){
                     d.people[s] = dj[1][s].get<int>();
                 }
@@ -1003,6 +1049,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
                 ev.what = (GoodsMask)ej[5].get<int>();
                 ev.amount = ej[6].get<int>();
                 ev.pos = vec2(ej[7].get<float>(),ej[8].get<float>());
+                ev.colony = (ej.size() > 9 && ej[9].is_number_integer()) ? ej[9].get<uint32_t>() : 0;    //BY COLONY: none before
                 h.journal.push_back(ev);
             }
             for (const json& dj : hj.value("days",json::array())){
@@ -1020,18 +1067,33 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         for (const json& id : e.value("endless_wells",json::array())){
             out.economy.endless.push_back(id.get<uint32_t>());
         }
-        //A save from before the kept numbers has none: the start's (Economy::Restore).
-        std::pair<const char*,std::vector<std::pair<int,int>>*> kept_lists[] = {{"kept",&out.economy.kept},
-                                                                                {"ordered",&out.economy.ordered}};
+        //A save from before the kept numbers has none: the start's (Economy::Restore). One from before they were by
+        //colony (settlements_plan.md, step 2) names the goods straight away, the colony's whole: colony 1's now - the
+        //oldest, numbered afresh on its load.
+        std::pair<const char*,std::vector<std::array<int,3>>*> kept_lists[] = {{"kept",&out.economy.kept},
+                                                                               {"ordered",&out.economy.ordered}};
         for (const auto& kl : kept_lists){
-            const json& by_good = e.value(kl.first,json::object());
-            for (auto it = by_good.begin(); by_good.is_object() && it != by_good.end(); ++it){
+            const json& by_colony = e.value(kl.first,json::object());
+            for (auto it = by_colony.begin(); by_colony.is_object() && it != by_colony.end(); ++it){
                 int g = GoodByName(it.key());
                 if (g >= 0 && it.value().is_number_integer()){
-                    kl.second->push_back(std::make_pair(g,it.value().get<int>()));
+                    kl.second->push_back({1,g,it.value().get<int>()});
+                    continue;
+                }
+                int colony = atoi(it.key().c_str());
+                for (auto gt = it.value().begin(); it.value().is_object() && colony > 0 && gt != it.value().end(); ++gt){
+                    g = GoodByName(gt.key());
+                    if (g >= 0 && gt.value().is_number_integer()){
+                        kl.second->push_back({colony,g,gt.value().get<int>()});
+                    }
                 }
             }
         }
+        //A save from before the colony numbers has none: those standing are numbered afresh (Economy::Restore).
+        for (const json& cc : e.value("colonies",json::array())){
+            out.economy.colonies.push_back(std::make_pair(cc[0].get<uint32_t>(),cc[1].get<uint32_t>()));
+        }
+        out.economy.next_colony = e.value("next_colony",1u);
         for (const json& f : e.value("fields",json::array())){
             EconomyField fd;
             fd.building = f[0].get<uint32_t>();
@@ -1061,6 +1123,15 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     for (const json& pc : j.value("castle",json::array())){
         if (pc.is_array() && pc.size() >= 2){
             out.castle.push_back(std::make_pair(pc[0].get<int>(),pc[1].get<int>()));
+        }
+    }
+    for (const json& tr : j.value("terraces",json::array())){
+        if (tr.is_array() && tr.size() >= 3 && tr[0].is_number_integer() && tr[1].is_number_integer() && tr[2].is_number_integer()){
+            ZoneSavedTerrace t;
+            t.plot = tr[0].get<int>();
+            t.top = tr[1].get<int>();
+            t.f_built = tr[2].get<int>() != 0;
+            out.terraces.push_back(t);
         }
     }
     //An older save's "walkers" - the debug walker, retired 2026-10-07 - are let go unread.
@@ -1161,6 +1232,18 @@ std::vector<ChasmSaveEntry> ChasmSaveEntries(){
             e.kind = text("kind");
             e.colony = text("colony");
             e.build = text("build");
+            /*
+                A name the game chose says nothing - save_20261021_221400, an autosave's slot, the quick save - so the
+                title stands in for it. One given by hand (a file renamed, then saved over from the menu, which keeps
+                it) is what the player called it: it leads, with the colony's day after it, which the title ends in
+                ("Seed 12 - year 1, spring 10").
+            */
+            bool f_chosen = e.kind != "auto" && e.kind != "quick"
+                            && !(name.compare(0,5,"save_") == 0 && name.find_first_not_of("0123456789_",5) == std::string::npos);
+            if (f_chosen && e.title != name){
+                size_t day = e.title.rfind(" - ");
+                e.title = name + ((day != std::string::npos) ? e.title.substr(day) : " - " + e.title);
+            }
         }
         if (j.contains("calendar") && j["calendar"].is_number_unsigned()){
             e.calendar_tick = j["calendar"].get<uint64_t>();

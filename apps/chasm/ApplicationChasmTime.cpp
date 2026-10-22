@@ -2,6 +2,8 @@
 #include "UIOverlay.h"
 #include "ChasmHud.h"
 #include "ChasmStats.h"
+#include "Climate.h"
+#include "Weather.h"
 #include "Window.h"
 #ifdef USE_IMGUI
 #include "imgui.h"
@@ -11,6 +13,7 @@
 #endif
 #include "Debug.h"
 #include <math.h>
+#include <cmath>
 #include <stdio.h>
 #include <algorithm>
 #include <cctype>
@@ -52,10 +55,14 @@ const float speeds[] = {1.0f,2.0f,4.0f};
 
 }
 
-GoodsMask ChasmBarGoods(const ZoneState& z, const EconomyState& e, const std::array<int,GOOD_COUNT>& stored){
+GoodsMask ChasmBarGoods(const ZoneState& z, const EconomyState& e, const std::array<int,GOOD_COUNT>& stored,
+                        uint32_t settlement){
     GoodsMask wanted = 0;
     std::vector<std::array<int,GOOD_COUNT>> cost = SiteCosts(z);
     for (size_t id = 1; id < cost.size(); id++){
+        if (settlement != ECONOMY_EVERY_SETTLEMENT && EconomySettlementOf(e,(uint32_t)id) != settlement){
+            continue;   //another colony's site: what it wants is no business of this one's bar
+        }
         for (int g = 0; g < GOOD_COUNT; g++){
             wanted |= (cost[id][g] > EconomySiteBrought(e,(uint32_t)id,g)) ? GOOD_BIT(g) : (GoodsMask)0;
         }
@@ -67,6 +74,30 @@ GoodsMask ChasmBarGoods(const ZoneState& z, const EconomyState& e, const std::ar
         }
     }
     return shown;
+}
+
+uint32_t ApplicationChasm::ViewColony(const EconomyState& e){
+    if (e.settlements.size() <= 1){
+        return ECONOMY_EVERY_SETTLEMENT;
+    }
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    auto under = [&](const GridPick& p) -> uint32_t {
+        return (p.f_hit && p.plot >= 0 && p.plot < (int)e.settlement.size()) ? e.settlement[p.plot] : 0;
+    };
+    uint32_t settlement = 0;
+    if (w && w->picker && e.world.get() == w.get()){
+        vec2 at;
+        {
+            std::lock_guard<std::mutex> lock(weather_mutex);
+            at = weather_view.at;       //the camera's point on the ground, as the heat readout reads it
+        }
+        settlement = under(w->picker->Pick(at));
+        settlement = settlement ? settlement : under(GetHoverPick());
+    }
+    settlement = settlement ? settlement : EconomyColonySettlement(e,view_colony_number.load());
+    settlement = settlement ? settlement : e.settlements.front().id;
+    view_colony_number = EconomyColonyNumber(e,settlement);
+    return settlement;
 }
 
 int ApplicationChasm::SpeedCount(){
@@ -194,6 +225,126 @@ uint32_t Faded(uint32_t c, uint8_t alpha){
     return (c & 0x00FFFFFFu) | ((uint32_t)alpha << 24);
 }
 
+//The readout's words for the wind, by its speed at the view in units a second (Weather.h; current tuning): autumn's
+//breeze reads BREEZE, the storm coming WIND and at its height STORM.
+#define READOUT_CALM        0.4f
+#define READOUT_BREEZE      2.6f
+#define READOUT_WIND        4.0f
+#define READOUT_WIND_EASE   0.03f   //of the way to the wind each frame: about half a second
+
+}
+
+/*
+    RENDER THREAD, from DrawOverlay: the HEAT and the WIND at the view (steam_plan.md, "The chasm's heat, shown"), a strip
+    under the calendar - the degrees, a mark of rising heat while the chasm's warmth is in them, and an arrow the way the
+    wind blows on screen with a word for its strength. No tip on hover (the user's, 2026-10-21): the strands say the
+    chasm is in it.
+
+    The strip keeps one width - the number's slot fits "-00", the word's the longest word - so it never jumps as they change.
+*/
+float ApplicationChasm::DrawHeatReadout(float s, float right, float top){
+    WeatherView v;
+    {
+        std::lock_guard<std::mutex> lock(weather_mutex);
+        v = weather_view;
+    }
+    if (!v.f_heat){
+        return top;
+    }
+    readout_wind += (weather_view_wind.length() - readout_wind) * READOUT_WIND_EASE;
+    const char* word = (readout_wind < READOUT_CALM) ? "CALM" : (readout_wind < READOUT_BREEZE) ? "BREEZE"
+                     : (readout_wind < READOUT_WIND) ? "WIND" : "STORM";
+    float total = v.heat_air + v.heat_chasm;
+    char num[16];
+    snprintf(num,sizeof(num),"%li",std::lround(total));
+    bool f_warm = v.heat_chasm >= 0.5f;
+    uint32_t colour = (total < 0.5f) ? season_colours[SEASON_WINTER] : HUD_TEXT;
+
+    const float text = 17.0f * s;
+    const float word_text = 13.0f * s;
+    const float pad = 12.0f * s;
+    const float mark_w = 14.0f * s;
+    const float ring = 2.6f * s;
+    const float arrow_w = 18.0f * s;
+    float num_slot = overlay->MeasureText("-00",text).x;
+    float word_slot = 0.0f;
+    for (const char* wd : {"CALM","BREEZE","WIND","STORM"}){
+        word_slot = std::max(word_slot,overlay->MeasureText(wd,word_text).x);
+    }
+    float c_w = overlay->MeasureText("C",text).x;
+    float w = pad + mark_w + 6.0f * s + num_slot + 3.0f * s + 2.0f * ring + 2.0f * s + c_w + 16.0f * s + arrow_w + 7.0f * s
+            + word_slot + pad;
+    float h = 30.0f * s;
+    vec2 q0(right - w,top);
+    vec2 q1(right,top + h);
+    overlay->AddRect(q0,q1,9.0f * s,HUD_PANEL);
+    overlay_hits_drawing.push_back(OverlayHit{q0,q1,OVERLAY_HIT_BLOCK,0});
+    float mid = top + h * 0.5f;
+    float baseline = top + 21.0f * s;
+
+    //The heat rising: three strands wavering upward and fading as they go, brighter the warmer the chasm makes it - on
+    //the weather clock, so they stand still in a pause with the water. Each its own phase, the middle one taller: drawn
+    //alike and in step they read as a pair of braces.
+    float x = q0.x + pad;
+    if (f_warm){
+        float k = std::max(0.3f,std::min(1.0f,v.heat_chasm / (CLIMATE_EDGE + 2.0f * CLIMATE_PER_STEP)));
+        const float phase[3] = {0.0f,2.4f,4.1f};
+        for (int i = 0; i < 3; i++){
+            float sx = x + (i + 0.5f) * mark_w / 3.0f;
+            float tall = (i == 1) ? 18.0f : 14.0f;
+            const int n = 6;
+            vec2 last;
+            for (int j = 0; j <= n; j++){
+                float t = (float)j / n;
+                float y = mid + (0.5f * 16.0f - tall * t) * s;
+                float wave = sinf(5.5f * t + phase[i] - 3.0f * (float)weather_seconds) * 1.3f * s;
+                vec2 p(sx + wave,y);
+                if (j > 0){
+                    //Faded toward the panel's own colour rather than made see-through: a translucent stroke shows its
+                    //joints (UIOverlay.h, AddLine).
+                    float f = k * (1.0f - 0.8f * t);
+                    uint32_t c = UIColor((uint8_t)(22.0f + (240.0f - 22.0f) * f),(uint8_t)(28.0f + (150.0f - 28.0f) * f),
+                                         (uint8_t)(32.0f + (72.0f - 32.0f) * f),255);
+                    overlay->AddLine(last,p,1.6f * s,c);
+                }
+                last = p;
+            }
+        }
+    }
+    x += mark_w + 6.0f * s;
+
+    //The degrees, and a ring for the sign the font lacks.
+    overlay->AddText(num,vec2(x,baseline),text,colour,UI_ALIGN_LEFT);
+    float nx = x + overlay->MeasureText(num,text).x + 3.0f * s;
+    vec2 rc(nx + ring,baseline - text * 0.62f);
+    overlay->AddRectOutline(vec2(rc.x - ring,rc.y - ring),vec2(rc.x + ring,rc.y + ring),ring,1.3f * s,colour);
+    overlay->AddText("C",vec2(nx + 2.0f * ring + 2.0f * s,baseline),text,colour,UI_ALIGN_LEFT);
+    x += num_slot + 3.0f * s + 2.0f * ring + 2.0f * s + c_w + 16.0f * s;
+
+    //The wind: an arrow the way it blows, turned into the camera's frame (forward is up the screen); a dot when calm.
+    vec2 ac(x + arrow_w * 0.5f,mid);
+    if (readout_wind < READOUT_CALM){
+        overlay->AddLine(ac,ac,4.0f * s,HUD_TEXT_DIM);
+    }else{
+        vec2 wd = (weather_view_wind.length() > 0.01f) ? weather_view_wind * (1.0f / weather_view_wind.length())
+                                                       : WeatherWindDir();
+        float sx = wd.x * cosf(v.yaw) - wd.y * sinf(v.yaw);
+        float sy = wd.x * sinf(v.yaw) + wd.y * cosf(v.yaw);
+        vec2 d(sx,sy);
+        vec2 tip(ac.x + d.x * arrow_w * 0.5f,ac.y + d.y * arrow_w * 0.5f);
+        vec2 tail(ac.x - d.x * arrow_w * 0.5f,ac.y - d.y * arrow_w * 0.5f);
+        overlay->AddLine(tail,tip,2.0f * s,HUD_TEXT);
+        for (float side : {-1.0f,1.0f}){
+            //The head: two strokes back from the tip, each a little over 30 degrees off the shaft.
+            vec2 back(-d.x * 0.85f + side * -d.y * 0.55f,-d.y * 0.85f + side * d.x * 0.55f);
+            overlay->AddLine(tip,vec2(tip.x + back.x * 7.0f * s,tip.y + back.y * 7.0f * s),2.0f * s,HUD_TEXT);
+        }
+    }
+    x += arrow_w + 7.0f * s;
+    overlay->AddText(word,vec2(x,top + 20.0f * s),word_text,(readout_wind >= READOUT_WIND) ? HUD_TEXT : HUD_TEXT_DIM,
+                     UI_ALIGN_LEFT);
+
+    return q1.y;
 }
 
 
@@ -342,10 +493,13 @@ void ApplicationChasm::DrawOverlay(void){
     overlay->AddText(label.c_str(),vec2(sc.x,sc.y + label_size * 0.35f),label_size,
                      f_paused ? HUD_TEXT_DIM : f_short ? HUD_AMBER : HUD_TEXT,UI_ALIGN_CENTER);
     overlay_hits_drawing.push_back(OverlayHit{speed0,speed1,OVERLAY_HIT_SPEED,0});
-    //Under the calendar, while it falls short: what it is managing - the simulation's work is the limit.
+    //Under the calendar the heat and the wind at the view; under them, while the clock falls short, what it is
+    //managing - the simulation's work is the limit.
+    float under = DrawHeatReadout(s,p1.x,p1.y + 6.0f * s);
     if (f_short){
         snprintf(buf,sizeof(buf),"RUNNING AT %.1fx",reached);
-        overlay->AddText(buf,vec2(p1.x - 4.0f * s,p1.y + 18.0f * s),13.0f * s,HUD_AMBER,UI_ALIGN_RIGHT);
+        float y = (under > p1.y + 6.0f * s) ? under + 16.0f * s : p1.y + 18.0f * s;
+        overlay->AddText(buf,vec2(p1.x - 4.0f * s,y),13.0f * s,HUD_AMBER,UI_ALIGN_RIGHT);
     }
 
     //The year: four seasons end to end, what has gone bright, a mark at today.
@@ -372,22 +526,29 @@ void ApplicationChasm::DrawOverlay(void){
         still wants it, so a colony that has never seen rope is shown no ROPE 0. FOOD is the foods summed, since any
         of them feeds someone - provisions, the posted people's, apart - and hovering it lists them. What lies in
         stores and the camp's supplies, not what waits at a workplace or is being carried.
+        BY COLONY (settlements_plan.md, step 3): with more than one, the colony in view's (ViewColony) - its stores, its
+        sites' wants and its people - named first.
     */
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
+    std::shared_ptr<const ChasmWorld> cw = GetWorld();
     std::vector<std::pair<int,std::string>> food_tip;   //FOOD hovered: each food and its line, drawn over everything
     vec2 food_tip_at;
-    if (e && z && e->world == z->world){
-        std::array<int,GOOD_COUNT> t = EconomyStoredTotals(*e,*z);
+    if (e && z && cw && e->world == z->world && e->world.get() == cw.get()){
+        uint32_t colony = ViewColony(*e);
+        std::array<int,GOOD_COUNT> t = EconomyStoredTotals(*e,*z,colony);
         int food = 0;
         for (int g = 0; g < GOOD_COUNT; g++){
             food += (GOODS_FOOD & GOOD_BIT(g)) ? t[g] : 0;
         }
-        GoodsMask shown = ChasmBarGoods(*z,*e,t);
-        int people = (int)e->workers.size();
+        GoodsMask shown = ChasmBarGoods(*z,*e,t,colony);
+        int people = 0;
         int housed = 0;
         for (const EconomyWorker& k : e->workers){
-            housed += k.house ? 1 : 0;
+            if (colony == ECONOMY_EVERY_SETTLEMENT || ChasmPersonSettlement(*cw,*e,k) == colony){
+                people++;
+                housed += k.house ? 1 : 0;
+            }
         }
         //Each item's text, measured, so the bar is as wide as what it says - centred on the screen. The goods in
         //their colours on the cards' strips (HudGoodColour): food in wheat's, the gold the foods share here.
@@ -398,6 +559,10 @@ void ApplicationChasm::DrawOverlay(void){
         };
         std::vector<BarItem> items;
         char buf[48];
+        if (colony != ECONOMY_EVERY_SETTLEMENT){
+            snprintf(buf,sizeof(buf),"COLONY %u",EconomyColonyNumber(*e,colony));
+            items.push_back(BarItem{buf,HUD_TEXT_DIM,false});
+        }
         if (housed < people){
             snprintf(buf,sizeof(buf),"PEOPLE %i/%i",housed,people);  //housed, of all of them
         }else{
@@ -524,7 +689,9 @@ void ApplicationChasm::DrawOverlay(void){
     is being built, how far along it is; at the bottom in the middle, why a placement was just refused.
 
     A row a group: a house and the ground round it; where goods are kept and got; the field, the builders
-    and the camp; the lines; the winch and the defences - the range, the tower; the workshops that make one
+    and the camp; the lines; the chasm's - the winch, the steam collector and the condenser (steam_plan.md) - and the
+    defences, the
+    range and the tower; the workshops that make one
     good of another - the ropewalk (goods_plan.md), with room for those to come - and ERASE last, on a row of
     its own. A cell with no name is left empty. Returns the top of the grid, or of the BUILDING line
     over it: what stacks over them (DrawIssues) goes above that.
@@ -535,8 +702,8 @@ const BarTool chasm_bar[] = {
     {"1","HOUSE",CHASM_TOOL_HOUSE},{"4","GARDEN",CHASM_TOOL_GARDEN},{"5","LOT",CHASM_TOOL_LOT},
     {"8","STORE",CHASM_TOOL_STORE},{"0","WATER",CHASM_TOOL_WATER},{"9","WOODCUTTER",CHASM_TOOL_WOODCUTTER},
     {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
-    {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},
-    {"H","WINCH",CHASM_TOOL_WINCH},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
+    {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},{"Y","TERRACE",CHASM_TOOL_TERRACE},
+    {"H","WINCH",CHASM_TOOL_WINCH},{"P","STEAM",CHASM_TOOL_STEAM},{"L","CONDENSER",CHASM_TOOL_CONDENSER},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
     {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
     {"3","ERASE",CHASM_TOOL_ERASE}};
 
@@ -564,6 +731,11 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
             what = "A fenced yard for a house or a woodcutter's hut. A woodcutter stacks his woodpile on it.";
             snprintf(buf,sizeof(buf),"Drag over the plots it should cover. Select the hut first to make it his.");
             break;
+        case CHASM_TOOL_TERRACE:
+            what = "Levels a hillside into a flat platform with stone walls round it, to build on as on flat ground.";
+            snprintf(buf,sizeof(buf),"Drag over the large squares it should cover: its top is level with the highest ground "
+                     "under it. Start the drag on a terrace to extend it.");
+            break;
         case CHASM_TOOL_STORE:
             what = "Holds goods for the whole colony. Next to a workplace it takes only that workplace's goods.";
             snprintf(buf,sizeof(buf),"Drag for a store of up to %i plots; past that a new one starts. "
@@ -573,6 +745,16 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
             what = "A collector at the water's edge. It fills while it has a carrier, who takes the water to a store.";
             snprintf(buf,sizeof(buf),"Only on the last dry plot of a bank. Drag along the bank for up to %i plots; "
                      "the longer, the more it holds.",plots);
+            break;
+        case CHASM_TOOL_CONDENSER:
+            what = "Turns steam into water. Beside a steam collector it takes the steam straight from it.";
+            snprintf(buf,sizeof(buf),"Drag for up to %i plots, a worker for every %i. Away from a collector, its workers "
+                     "bring steam from the stores.",plots,ECONOMY_PLOTS_PER_WORKER);
+            break;
+        case CHASM_TOOL_STEAM:
+            what = "Catches the chasm's steam where the ground drops into it. The lower it stands, the more it gathers.";
+            snprintf(buf,sizeof(buf),"Only at the edge of a drop - the rim, a balcony, an island. Drag along it for up "
+                     "to %i plots; a carrier for every %i.",plots,ECONOMY_PLOTS_PER_WORKER);
             break;
         case CHASM_TOOL_WOODCUTTER:
             what = "The only one who fells trees, both for wood and to clear roads and building sites.";
@@ -1165,9 +1347,11 @@ float ApplicationChasm::DrawJobsOverview(float s){
     std::vector<Row> rows;
     static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER,
                                 WORKER_JOB_PICKER,WORKER_JOB_ARCHER,WORKER_JOB_GUARD,WORKER_JOB_ROPEMAKER,
-                                WORKER_JOB_STONECUTTER,WORKER_JOB_MINER};
+                                WORKER_JOB_STONECUTTER,WORKER_JOB_MINER,WORKER_JOB_STEAM,
+                                WORKER_JOB_CONDENSER};
     static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","PICKERS","ARCHERS","GUARDS",
-                                  "ROPEMAKERS","STONECUTTERS","MINERS"};
+                                  "ROPEMAKERS","STONECUTTERS","MINERS","STEAM CARRIERS",
+                                  "CONDENSER HANDS"};
     static_assert(sizeof(shown) / sizeof(shown[0]) == sizeof(names) / sizeof(names[0]),"a name for every job shown");
     for (int i = 0; i < (int)(sizeof(shown) / sizeof(shown[0])); i++){
         const EconomyJobCount& c = counts[shown[i]];

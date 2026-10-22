@@ -4,7 +4,7 @@ aliases: found, take a tent, taking a tent, pitch, pitching, expedition, outpost
 kind: world
 status: partial
 summary: People sent out take a tent from a camp and pitch it where they stand. It becomes their home, and outside every settlement it founds a new one.
-plans: settlements_plan.md > Founding: decided; settlements_plan.md > Founding: as built, step 4; settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6; settlements_plan.md > Founding: steps
+plans: done/settlements_plan.md > Founding: decided; done/settlements_plan.md > Founding: as built, step 4; done/settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6; done/settlements_plan.md > Founding: steps
 code: Economy.h: ECONOMY_PITCH_RINGS ECONOMY_TENT_CARRIED EVENT_NO_TENT; Economy.cpp: TakeTent TentToPack GoForTent PitchSpot Pitched SettleHere CampSpare OwnHousehold PartnerLivingIn GoesWith WithTheGrown BringAlong HouseFamilies; Zones.h: PitchTent
 verified: 2026-10-19
 ---

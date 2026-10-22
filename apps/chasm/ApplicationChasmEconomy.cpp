@@ -1,4 +1,5 @@
 #include "ApplicationChasm.h"
+#include "Climate.h"
 #include <map>
 #ifdef USE_IMGUI
 #include "imgui.h"
@@ -92,9 +93,11 @@ void ApplicationChasm::TickEconomy(){
             finished(ev.building,plot);
         }
     }
-    //Gardens and lots the builders finished: their walls go up. Roads laid (line_works_plan.md).
+    //Gardens and lots the builders finished: their walls go up. Roads laid (line_works_plan.md). A terrace's plot
+    //(terraces_plan.md stage 2) is a ground site too, raised as a terrace.
     for (int plot : economy.GroundRaises()){
-        f_raised = zones.Apply(ZONE_OP_GROUND_RAISE,(uint32_t)plot) || f_raised;
+        int op = ZoneTerraceSite(zones.State(),plot) ? ZONE_OP_TERRACE_RAISE : ZONE_OP_GROUND_RAISE;
+        f_raised = zones.Apply(op,(uint32_t)plot) || f_raised;
     }
     //A field site built: its cells, all at once (fields_plan.md).
     for (int cell : economy.FieldRaises()){
@@ -293,10 +296,29 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     }
     //What the colony keeps of its made goods, and the orders for more (goods_plan.md) - only once set, so a colony
     //that never set one hashes as before.
-    for (int g = 0; g < GOOD_COUNT; g++){
-        if (e.kept[g] || e.ordered[g]){
-            int32_t kept[3] = {g,e.kept[g],e.ordered[g]};
-            h.Bytes(kept,sizeof(kept));
+    //By colony (settlements_plan.md, step 2): colony 1's as the colony's were, so a colony of one hashes as before.
+    size_t colonies = std::max(e.kept.size(),e.ordered.size());
+    for (size_t c = 0; c < colonies; c++){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            int kept_n = EconomyKept(e,(uint32_t)c,g);
+            int ordered_n = EconomyOrdered(e,(uint32_t)c,g);
+            if ((kept_n || ordered_n) && c == 1){
+                int32_t kept[3] = {g,kept_n,ordered_n};
+                h.Bytes(kept,sizeof(kept));
+            }else if (kept_n || ordered_n){
+                int32_t kept[4] = {(int32_t)c,g,kept_n,ordered_n};
+                h.Bytes(kept,sizeof(kept));
+            }
+        }
+    }
+    //The colony numbers the homes carry (settlements_plan.md, step 1) - only once a second has been given: until then
+    //every home of a settlement carries 1, which the zones already say, so a colony of one hashes as before.
+    if (e.next_colony > 2){
+        h.Add(((uint64_t)e.next_colony << 32) | 0xC010u);
+        for (size_t id = 1; id < e.colony.size(); id++){
+            if (e.colony[id]){
+                h.Add(((uint64_t)id << 32) | e.colony[id]);
+            }
         }
     }
     //The zombies (zombies_plan.md), each whole on its route as a person is - only once there have been any, so a colony
@@ -384,6 +406,16 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         if (d.zombies > 0){
             h.Bytes(&d.zombies,sizeof(d.zombies));
         }
+        //Its colonies' rows (BY COLONY, settlements_plan.md step 4) only on a day with a second colony, so a colony of
+        //one hashes as before: its row and nobody's are the whole's, split by what is hashed already.
+        bool f_second = std::any_of(d.colonies.begin(),d.colonies.end(),[](const EconomyDay& r){ return r.colony > 1; });
+        for (size_t i = 0; f_second && i < d.colonies.size(); i++){
+            const EconomyDay& r = d.colonies[i];
+            int32_t rc[6] = {(int32_t)r.colony,r.felled,r.broken,r.storeys,r.zombies,0};
+            h.Bytes(rc,sizeof(rc));
+            h.Bytes(r.people.data(),sizeof(int) * ECONOMY_STAGES);
+            h.Bytes(r.held.data(),sizeof(int) * GOOD_COUNT);
+        }
     };
     uint64_t head[5] = {hist.from,hist.journal.size(),hist.days.size(),(uint64_t)hist.felled_from,(uint64_t)hist.broken_from};
     h.Bytes(head,sizeof(head));
@@ -403,6 +435,9 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(&ev.tick,sizeof(ev.tick));
         h.Bytes(fields,sizeof(fields));
         h.Bytes(&ev.pos,sizeof(ev.pos));
+        if (ev.colony > 1){
+            h.Bytes(&ev.colony,sizeof(ev.colony));     //a second colony's (BY COLONY): a colony of one hashes as before
+        }
     }
 }
 
@@ -609,7 +644,10 @@ void ApplicationChasm::RegisterEconomyCommands(){
         [this](const SimCommand& cmd) -> objectid_t {
             int good = (int)cmd.subtype;
             int count = (int)cmd.value[0];
-            bool f_done = (cmd.value[1] != 0.0f) ? economy.OrderMore(good,count,zones.State()) : economy.SetKept(good,count);
+            //Its colony (settlements_plan.md, step 2) - one recorded before there was one names none: the oldest's.
+            uint32_t colony = (cmd.value[2] > 0.0f) ? (uint32_t)cmd.value[2] : EconomyFirstColony(economy.State());
+            bool f_done = (cmd.value[1] != 0.0f) ? economy.OrderMore(good,count,zones.State(),colony)
+                                                 : economy.SetKept(good,count,colony);
             if (f_done){
                 PublishEconomy();
             }
@@ -828,13 +866,14 @@ void ApplicationChasm::SubmitForage(uint32_t person, int plot, int what, bool f_
     main_scene->SubmitCommand(cmd);
 }
 
-void ApplicationChasm::SubmitKeep(int good, int count, bool f_order){
+void ApplicationChasm::SubmitKeep(int good, int count, bool f_order, uint32_t colony){
     SimCommand cmd;
     cmd.type = CHASM_CMD_KEEP;
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = (uint32_t)std::max(0,good);
     cmd.value[0] = (float)std::max(0,count);
     cmd.value[1] = f_order ? 1.0f : 0.0f;
+    cmd.value[2] = (float)colony;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -1165,9 +1204,33 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
         j["wood_room"] = (id < e->pile_room.size()) ? e->pile_room[id] : 0;
         j["log_wood"] = (id < e->log_wood.size()) ? e->log_wood[id] : 0;
     }
-    //A collector's hold, by its standing floor.
-    if (z->buildings[id].kind == ZONE_KIND_WATER){
+    //A collector's hold, by its standing floor - and a steam collector's, with how far down it stands and what that is
+    //worth (steam_plan.md).
+    if (z->buildings[id].kind == ZONE_KIND_WATER || z->buildings[id].kind == ZONE_KIND_STEAM
+        || z->buildings[id].kind == ZONE_KIND_CONDENSER){
         j["water_room"] = (id < e->water_room.size()) ? e->water_room[id] : 0;
+    }
+    if (z->buildings[id].kind == ZONE_KIND_STEAM && e->world){
+        int first = -1;
+        for (size_t v = 0; v < z->building.size() && first < 0; v++){
+            first = (z->building[v] == id) ? (int)v : -1;
+        }
+        if (first >= 0){
+            j["steps_down"] = ClimateStepsDown(*e->world->terrain,first);
+            j["yield"] = std::round(EconomySteamYield(*e->world,first) * 100.0f) / 100.0f;
+        }
+    }
+    //A condenser's: the steam collectors beside it, which it draws from (steam_plan.md step 3).
+    if (z->buildings[id].kind == ZONE_KIND_CONDENSER && e->world){
+        std::vector<int> plots;
+        for (size_t v = 0; v < z->building.size(); v++){
+            if (z->building[v] == id){
+                plots.push_back((int)v);
+            }
+        }
+        std::vector<uint32_t> feeds;
+        EconomyCondenserFeeds(*e->world,*z,plots,feeds);
+        j["fed_by"] = feeds;
     }
     //A workplace the player stopped (stopping_work_plan.md), and its places - 0 while stopped.
     if (ZoneKindStoppable(z->buildings[id].kind)){
@@ -1558,7 +1621,7 @@ void ApplicationChasm::RegisterEconomyTools(){
         "fraction, from 0 at its first dawn - and of what), the DISCOVERIES (docs/demo_plan.md step 6: river, chasm, "
         "boulder, floatstone, builders_hut, winch, balcony - each made or not, its tick and person, the build tools it "
         "brings) and tools_locked (what play mode's build bar still hides; none in debug mode). op store_allow: "
-        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope, fruit, stone, floatstone) - "
+        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope, fruit, stone, floatstone, steam) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
         "plot) goes first (`on`, default true) or back in the queue - recorded the same way; a site's "
@@ -1607,10 +1670,12 @@ void ApplicationChasm::RegisterEconomyTools(){
         "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead. A WELL (docs/water_tools_plan.md) "
         "holds water alone, as much as the seed gives it when placed: `endless` true keeps it full for good, and its water "
         "set, or `endless` false, makes it finite again; its stock shows `endless`. `provisions` reports PROVISIONS (docs/defence_plan.md): how many "
-        "are still lacking beyond what is made, and what each builders' hut holds. STOCK KEPT (docs/goods_plan.md): op keep - "
-        "the colony keeps `count` of made good `good` (provisions, rope) in its stores; op order_more - an order for `count` "
-        "more of it, 0 cancelling the one running. Both RECORDED (CHASM_CMD_KEEP). `kept` reports each made good's kept "
-        "number, its order's level (0 none), the level they make, and what the stores hold. SCOUTING (docs/defence_plan.md): "
+        "are still lacking beyond what is made, by colony, and what each builders' hut holds and for which colony. STOCK KEPT "
+        "(docs/goods_plan.md), BY COLONY (docs/settlements_plan.md, step 2): op keep - colony `colony` (its number, default "
+        "the oldest standing) keeps `count` of made good `good` (provisions, rope) in its stores; op order_more - an order for "
+        "`count` more of it, 0 cancelling the one running. Both RECORDED (CHASM_CMD_KEEP). `kept` reports, for each colony, "
+        "each made good's kept number, its order's level (0 none), the level they make, and what its stores hold. "
+        "SCOUTING (docs/defence_plan.md): "
         "op gather - person `person`, ordered out, first fills a scout's pack (`on`, default true), or goes straight on - "
         "RECORDED (CHASM_CMD_GATHER), `refusal` as for an order; a worker shows `gather`, the places still to go to. "
         "`notices` is what the rules told the player: `made` since the load, and the `last` few - nothing_to_take (told "
@@ -1619,7 +1684,8 @@ void ApplicationChasm::RegisterEconomyTools(){
         "made (Economy.h; docs/sound_plan.md) - `made` since the load and the `last` 64: tick, kind (those four, born, died, "
         "tree_felled, rock_broken, storey_raised, building_finished, harvest, settled), person, building, plot, x, z, what, "
         "amount; chasm_stats has the saved history they feed. SETTLEMENTS (docs/settlements_plan.md): "
-        "`settlements` lists each - its oldest home's id - with its beds, its reach (world units of walking), its "
+        "`settlements` lists each - its oldest home's id - with its `colony` number (COLONY N, kept for good), its beds, "
+        "its reach (world units of walking), its "
         "territory's plots and its people; a worker and a building show "
         "their `settlement`, 0 none. op take_tent - person `person`, ordered out, first takes a tent from the nearest camp "
         "with one to spare (`on`, default true), or goes straight on; op pitch - the tent he carries put up where he "
@@ -1678,6 +1744,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"post",{{"type","boolean"},{"description","add_person: ordered to stand where put down, out of the staffing; "
                                                          "with archery, a posted archer"}}},
                 {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions or rope"}}},
+                {"colony",{{"type","integer"},{"description","keep, order_more: the colony's number (COLONY N), default the oldest standing"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
                 {"pack_water",{{"type","integer"},{"description","set_needs: units of water in his pack"}}},
@@ -2263,6 +2330,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.subtype = (uint32_t)good;
                 cmd.value[0] = (float)std::max(0,args.value("count",0));
                 cmd.value[1] = (op == "order_more") ? 1.0f : 0.0f;
+                cmd.value[2] = (float)std::max(0,args.value("colony",0));     //0: the oldest standing
                 uint32_t before = keep_commands_done.load();
                 SubmitCommandAndWait(cmd);
                 result["ran"] = keep_commands_done.load() != before;
@@ -2410,25 +2478,38 @@ void ApplicationChasm::RegisterEconomyTools(){
             }
             result["sites"] = sites;
             //PROVISIONS (defence_plan.md): still lacking beyond what is made - worked out by the rules, between
-            //ticks - and what each builders' hut holds for making them.
-            int lacking = 0;
+            //ticks, for each colony (settlements_plan.md, step 2) - and what each builders' hut holds for making them.
+            std::vector<int> lacking(e->settlements.size(),0);
             main_scene->AtTickBoundary([&](){
-                lacking = economy.ProvisionsLacking(zones.State());
+                for (size_t i = 0; i < lacking.size() && i < e->settlements.size(); i++){
+                    lacking[i] = economy.ProvisionsLacking(zones.State(),e->settlements[i].id);
+                }
             });
+            json lacking_by = json::array();
+            for (size_t i = 0; i < lacking.size(); i++){
+                lacking_by.push_back(json{{"colony",e->settlements[i].colony},{"lacking",lacking[i]}});
+            }
             json huts = json::array();
             for (size_t id = 1; id < z->buildings.size(); id++){
                 if (z->buildings[id].size > 0 && z->buildings[id].kind == ZONE_KIND_BUILDERS){
-                    huts.push_back(json{{"id",id},{"holds",StockJson(*e,(uint32_t)id)}});
+                    huts.push_back(json{{"id",id},{"colony",EconomyColonyNumber(*e,EconomySettlementOf(*e,(uint32_t)id))},
+                                        {"holds",StockJson(*e,(uint32_t)id)}});
                 }
             }
-            result["provisions"] = json{{"lacking",lacking},{"huts",huts}};
-            //STOCK KEPT (goods_plan.md): each made good's number, its order, the level of the two, and the stores' count.
-            json kept = json::object();
-            for (int g = 0; g < GOOD_COUNT; g++){
-                if (GOODS_MADE & GOOD_BIT(g)){
-                    kept[GoodName(g)] = json{{"kept",e->kept[g]},{"ordered",e->ordered[g]},{"level",EconomyKeptLevel(*e,g)},
-                                             {"stored",totals[g]}};
+            result["provisions"] = json{{"lacking",lacking_by},{"huts",huts}};
+            //STOCK KEPT (goods_plan.md), by colony: each made good's number, its order, the level of the two, and its
+            //stores' count.
+            json kept = json::array();
+            for (const EconomySettlement& st : e->settlements){
+                std::array<int,GOOD_COUNT> held = EconomyStoredTotals(*e,*z,st.id);
+                json one = json{{"colony",st.colony}};
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    if (GOODS_MADE & GOOD_BIT(g)){
+                        one[GoodName(g)] = json{{"kept",EconomyKept(*e,st.colony,g)},{"ordered",EconomyOrdered(*e,st.colony,g)},
+                                                {"level",EconomyKeptLevel(*e,st.colony,g)},{"stored",held[g]}};
+                    }
                 }
+                kept.push_back(one);
             }
             result["kept"] = kept;
             //EVENTS (Economy.h; sound_plan.md): the last few the rules made, oldest first, and how many in all.
@@ -2517,7 +2598,7 @@ void ApplicationChasm::RegisterEconomyTools(){
             for (const EconomySettlement& st : e->settlements){
                 std::pair<int,int> got = settled.count(st.id) ? settled[st.id] : std::pair<int,int>(0,0);
                 Plants pl = plants.count(st.id) ? plants[st.id] : Plants();
-                settlements.push_back(json{{"id",st.id},{"beds",st.beds},{"reach",st.reach},{"plots",got.first},
+                settlements.push_back(json{{"id",st.id},{"colony",st.colony},{"beds",st.beds},{"reach",st.reach},{"plots",got.first},
                                            {"people",got.second},
                                            {"plants",json{{"bushes",pl.bushes},{"fruit_trees",pl.trees},{"gone",pl.gone},
                                                           {"ripe",pl.ripe},{"fruit",pl.fruit}}}});
@@ -2639,23 +2720,35 @@ void ApplicationChasm::RegisterEconomyTools(){
             /*
                 The HUD's figures (apps/llm/docs/void_plan.md), from the same functions the panels draw with: the days of
                 water and food held as NEEDS ATTENTION counts them - the houses' pantries too, which `stored` leaves out
-                - and the top bar as drawn. Unrounded, as the rows round days DOWN.
+                - and the top bar as drawn. Unrounded, as the rows round days DOWN. Both of the colony in view, as drawn
+                (settlements_plan.md, step 3), its number as `colony` - 0 the whole colony's, with one or none.
             */
+            uint32_t view = ViewColony(*e);
+            uint32_t view_number = (view == ECONOMY_EVERY_SETTLEMENT) ? 0 : EconomyColonyNumber(*e,view);
             float water_days = 0.0f;
             float food_days = 0.0f;
             float mouths = 0.0f;
-            ChasmDaysHeld(*z,*e,water_days,food_days,&mouths);
-            result["held"] = json{{"water_days",water_days},{"food_days",food_days},{"mouths",mouths}};
-            json bar{{"people",e->workers.size()},{"housed",housed}};
+            ChasmDaysHeld(*z,*e,water_days,food_days,&mouths,view);
+            result["held"] = json{{"water_days",water_days},{"food_days",food_days},{"mouths",mouths},{"colony",view_number}};
+            std::array<int,GOOD_COUNT> bar_totals = EconomyStoredTotals(*e,*z,view);
+            int bar_people = 0;
+            int bar_housed = 0;
+            for (const EconomyWorker& k : e->workers){
+                if (view == ECONOMY_EVERY_SETTLEMENT || ChasmPersonSettlement(*w,*e,k) == view){
+                    bar_people++;
+                    bar_housed += k.house ? 1 : 0;
+                }
+            }
+            json bar{{"people",bar_people},{"housed",bar_housed},{"colony",view_number}};
             int bar_food = 0;
             for (int g = 0; g < GOOD_COUNT; g++){
-                bar_food += (GOODS_FOOD & GOOD_BIT(g)) ? totals[g] : 0;
+                bar_food += (GOODS_FOOD & GOOD_BIT(g)) ? bar_totals[g] : 0;
             }
             bar["food"] = bar_food;
-            GoodsMask bar_goods = ChasmBarGoods(*z,*e,totals);
+            GoodsMask bar_goods = ChasmBarGoods(*z,*e,bar_totals,view);
             for (int g = 0; g < GOOD_COUNT; g++){
                 if (bar_goods & GOOD_BIT(g)){
-                    bar[GoodName(g)] = totals[g];
+                    bar[GoodName(g)] = bar_totals[g];
                 }
             }
             result["bar"] = bar;

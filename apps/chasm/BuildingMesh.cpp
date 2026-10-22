@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-#define HOUSE_FOOTING       1.2f    //how far a wall runs below the house, under a slope: a plot may rise 0.7 (Zones.cpp) and the house is rounded to a half-storey
+#define FOOTING_DEPTH       0.15f   //how far a wall runs on into the ground, under the lowest of it beneath the wall
 #define ROOF_RISE           0.85f   //ridge above the eaves
 #define WINDOW_W            0.30f   //of a wall segment's width... in world units, capped by the segment
 #define WINDOW_H            0.36f
@@ -17,6 +17,8 @@
 #define CHIMNEY_W           0.22f
 #define CHIMNEY_TOP         0.35f   //a chimney's top above the ridge
 #define CHIMNEY_SIDE_SHARE  50      //percent of houses whose chimney is a stack up a wall rather than through the roof
+#define CONDENSER_TANK_W    0.44f   //a condenser's brass tank through the roof, in a chimney's place (steam_plan.md)...
+#define CONDENSER_TANK_TOP  0.55f   //...its top above the ridge
 #define STACK_BASE_W        0.50f   //the stack's base along the wall...
 #define STACK_BASE_D        0.30f   //...and out from it
 #define STACK_FLUE_W        0.30f   //its flue above the eaves
@@ -70,6 +72,32 @@ vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b){
     return pa + e * t;
 }
 
+int BuildingFootHalves(const ChasmWorld& w, const ZoneState& z, int kind, int plot){
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    const Terrain& t = *w.terrain;
+    //On a terrace, its top: whole storeys, so exactly a number of halves (terraces_plan.md stage 2).
+    if (ZoneTerraceStands(z,plot)){
+        return (int)std::lround(ZoneTerraceTop(z,plot) / HALF);
+    }
+    if (!ZoneNeedsFoundation(w,z,kind,plot)){
+        return (int)std::lround(t.ground[plot] / HALF);
+    }
+    //Its walls run round the quarters of the cells round it, by each edge's crossing and each cell's centre.
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    float level = t.Height(plot);
+    float highest = t.ground[plot];
+    for (int i = 0; i < picker.PlotQuadCount(plot); i++){
+        int qc = picker.PlotQuadCorner(plot,i);
+        const GridQuad& q = g.fine.quads[qc / 4];
+        int k = qc % 4;
+        highest = std::max(highest,t.GroundHeight(g.FineQuadCentre(qc / 4),level));
+        highest = std::max(highest,t.GroundHeight(BuildingWallCrossing(w,plot,q.v[(k + 1) % 4]),level));
+        highest = std::max(highest,t.GroundHeight(BuildingWallCrossing(w,plot,q.v[(k + 3) % 4]),level));
+    }
+    return (int)std::ceil(highest / HALF);
+}
+
 namespace {
 
 /*
@@ -103,6 +131,8 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_STONE,{PAL_STONE_DARK,PAL_BARK_DARK},2,DOOR_W * 1.6f,2,0},       //stonecutter's hut: its own stone under slate or shingle
     {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //mine: its portal, a prop of its own (ApplicationChasmMines.cpp)
     {PAL_STONE,{PAL_ROOF,PAL_ROOF},2,DOOR_W,2,0},                         //well: drawn by BuildWell instead
+    {PAL_TIMBER,{PAL_STONE_DARK,PAL_STONE_DARK},2,DOOR_W,2,0},           //steam collector: planks under slate, its hood out over the drop
+    {PAL_STONE_LIGHT,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,100},            //condenser: a water collector's stone, a brass tank on every plot
 };
 static_assert(sizeof(kind_looks) / sizeof(kind_looks[0]) == ZONE_KIND_COUNT,"a look for every kind");
 
@@ -257,7 +287,7 @@ void BuildWell(const ChasmWorld& w, int plot, std::vector<vertex>& out){
     stones round two crossed logs and a flame, with a log to sit on. Drawn by its cell, not its tent, so it is
     drawn again whenever anything is built on a corner of the cell.
 */
-void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column);
+void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column, int row = PAL_TEMPERATE);
 
 void BuildCampFire(const ChasmWorld& w, int fine_quad, int tent, std::vector<vertex>& out){
     vec2 c = ZoneCampFireAt(w,fine_quad,tent);
@@ -395,6 +425,46 @@ void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3&
 }
 
 /*
+    STEPS DOWN FROM A DOOR (terraces_plan.md): where a door stands over the ground outside it - on a foundation's
+    plinth, or on a floor rounded up a little - a short flight of stone straight out from it, each step a block from
+    a little into the ground up to its tread, one STEP_RISE under the last. Each is measured against the ground under
+    it rather than the door's, since downhill the ground goes on falling away: the flight ends at the first step that
+    would stand less than STEP_LEAST over its own ground. `half_w` is the door's, as Opening was given it; `beyond` the
+    plot across the wall, whose ground they go down to.
+*/
+#define STEP_RISE           0.18f
+#define STEP_TREAD          0.20f
+#define STEP_SIDE           0.06f   //past the door's jambs, each side
+#define STEP_LEAST          0.07f
+#define STEP_MOST           9
+
+void DoorSteps(std::vector<vertex>& out, const ChasmWorld& w, const ZoneState& z, int beyond, const vec2& a, const vec2& b,
+               const vec3& outward, float half_w, float floor_y, int column){
+    vec2 dir = b - a;
+    float len = dir.length();
+    if (len < 1e-4f){
+        return;
+    }
+    dir = dir / len;
+    float half = std::min(half_w,len * 0.38f) + SURROUND_W + STEP_SIDE;      //Opening's door, its jambs, and a little
+    vec2 c = (a + b) * 0.5f;
+    vec2 out2(outward.x,outward.z);
+    //Down onto `beyond`, the plot across the wall: its ground - a terrace's top, if it is one (terraces_plan.md).
+    auto ground = [&](float d){
+        return std::min(ZoneGroundHeight(w,z,beyond,c + out2 * d - dir * half),ZoneGroundHeight(w,z,beyond,c + out2 * d + dir * half));
+    };
+    for (int i = 0; i < STEP_MOST; i++){
+        float d0 = i * STEP_TREAD;
+        float top = floor_y - (i + 1) * STEP_RISE;
+        float g = std::min(ground(d0),ground(d0 + STEP_TREAD));
+        if (top - g < STEP_LEAST){
+            break;
+        }
+        WallSlab(out,c + out2 * d0,dir,out2,outward,-half,half,g - 0.05f,top,STEP_TREAD,column);
+    }
+}
+
+/*
     A BREACHED door (zombies_plan.md, step 4d): the doorway Opening drew, `half_w` either side of the middle of a->b
     from y0 to y1, gone dark - and its leaf standing open out of it, turned out about one jamb (which, by `hash`) and
     hanging a little off its hinges.
@@ -434,7 +504,8 @@ void BreachedDoor(std::vector<vertex>& out, const vec2& a, const vec2& b, const 
 }
 
 //A beam of square section from a at height ya to b at height yb: a pipe running down a slope.
-void SlopedBeam(std::vector<vertex>& out, const vec2& a, float ya, const vec2& b, float yb, float thick, int column){
+void SlopedBeam(std::vector<vertex>& out, const vec2& a, float ya, const vec2& b, float yb, float thick, int column,
+                int row = PAL_TEMPERATE){
     vec2 d = b - a;
     float l = d.length();
     if (l < 1e-4f){
@@ -446,12 +517,12 @@ void SlopedBeam(std::vector<vertex>& out, const vec2& a, float ya, const vec2& b
     vec3 bl(b.x + side.x,yb,b.y + side.y), br(b.x - side.x,yb,b.y - side.y);
     vec3 up(0.0f,h,0.0f);
     vec3 n_side(side.x,0.0f,side.y);
-    MeshQuad(out,al + up,bl + up,br + up,ar + up,vec3(0,1,0),column);
-    MeshQuad(out,al - up,ar - up,br - up,bl - up,vec3(0,-1,0),column);
-    MeshQuad(out,al - up,bl - up,bl + up,al + up,n_side,column);
-    MeshQuad(out,ar - up,ar + up,br + up,br - up,n_side * -1.0f,column);
-    MeshQuad(out,al - up,al + up,ar + up,ar - up,vec3(-d.x / l,0.0f,-d.y / l),column);
-    MeshQuad(out,bl - up,br - up,br + up,bl + up,vec3(d.x / l,0.0f,d.y / l),column);
+    MeshQuad(out,al + up,bl + up,br + up,ar + up,vec3(0,1,0),column,row);
+    MeshQuad(out,al - up,ar - up,br - up,bl - up,vec3(0,-1,0),column,row);
+    MeshQuad(out,al - up,bl - up,bl + up,al + up,n_side,column,row);
+    MeshQuad(out,ar - up,ar + up,br + up,br - up,n_side * -1.0f,column,row);
+    MeshQuad(out,al - up,al + up,ar + up,ar - up,vec3(-d.x / l,0.0f,-d.y / l),column,row);
+    MeshQuad(out,bl - up,br - up,br + up,bl + up,vec3(d.x / l,0.0f,d.y / l),column,row);
 }
 
 #define PIPE_THICK          0.16f
@@ -515,18 +586,92 @@ void BuildWaterPipe(const ChasmWorld& w, int plot, std::vector<vertex>& out){
     Box(out,b,0.34f,y1 - 0.7f,y1 + 0.22f,PAL_STONE_DARK);
 }
 
+#define HOOD_BOOM           1.7f    //the boom's height over the plot's ground
+#define HOOD_PAST_LIP       1.5f    //how far past the lip the hood hangs, out over the drop
+#define HOOD_WIDE           1.0f    //its mouth, open below to the updraft...
+#define HOOD_NECK           0.45f   //...narrowing to its neck
+
+/*
+    A STEAM COLLECTOR's hood (steam_plan.md): from its wall a boom on a post at the lip, out over the drop, and hanging
+    at its end an iron hood open below to the updraft, its neck piped back up to the shed's roof - the cowl that tells it
+    from any shed on the rim. Toward its lower corners, the drop; the lip halfway to the nearest, as a winch's is. The
+    hood in brass, its mouth tarnished darker (PAL_METALS).
+*/
+//The hood's way out over the drop from `plot` - toward its lower corners - and where its lip and its end are.
+static bool SteamHoodPlace(const ChasmWorld& w, int plot, vec2& dir, vec2& lip, vec2& end){
+    const Terrain& t = *w.terrain;
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    vec2 p = g.fine.pos[plot];
+    vec2 sum(0.0f,0.0f);
+    float nearest = 1e30f;
+    for (int i = 0; i < picker.PlotQuadCount(plot); i++){
+        const GridQuad& q = g.fine.quads[picker.PlotQuadCorner(plot,i) / 4];
+        for (int k = 0; k < 4; k++){
+            if (t.steps[q.v[k]] > t.steps[plot]){
+                vec2 d = g.fine.pos[q.v[k]] - p;
+                sum = sum + d;
+                nearest = std::min(nearest,d.length());
+            }
+        }
+    }
+    float l = sum.length();
+    if (l < 1e-4f || nearest > 1e29f){
+        return false;
+    }
+    dir = sum * (1.0f / l);
+    lip = p + dir * (nearest * 0.5f);
+    end = lip + dir * HOOD_PAST_LIP;
+    return true;
+}
+
+}
+
+//Out of the file's own namespace: the plumes ask it (ApplicationChasmHearth.cpp).
+bool SteamHoodTop(const ChasmWorld& w, int plot, vec3& top){
+    vec2 dir;
+    vec2 lip;
+    vec2 end;
+    if (plot < 0 || plot >= (int)w.grid->fine.pos.size() || !SteamHoodPlace(w,plot,dir,lip,end)){
+        return false;
+    }
+    top = vec3(end.x,w.terrain->ground[plot] + HOOD_BOOM + 0.35f,end.y);
+    return true;
+}
+
+namespace {
+
+void BuildSteamHood(const ChasmWorld& w, int plot, std::vector<vertex>& out){
+    vec2 dir;
+    vec2 lip;
+    vec2 end;
+    if (!SteamHoodPlace(w,plot,dir,lip,end)){
+        return;
+    }
+    vec2 p = w.grid->fine.pos[plot];
+    float y0 = w.terrain->ground[plot];
+    float boom = y0 + HOOD_BOOM;
+    Upright(out,lip,0.14f,y0 - 0.4f,boom,PAL_BARK);
+    Beam(out,p + dir * PIPE_WALL,end + dir * 0.2f,boom,0.16f,0.18f,PAL_BARK);
+    //The hood: a wide mouth under the boom's end, its neck above, and the pipe from the neck back to the roof.
+    Box(out,end,HOOD_WIDE,boom - 0.95f,boom - 0.55f,PAL_BRASS_DARK,PAL_METALS);
+    Box(out,end,HOOD_NECK,boom - 0.55f,boom + 0.35f,PAL_BRASS,PAL_METALS);
+    SlopedBeam(out,end - dir * 0.1f,boom + 0.3f,p + dir * (PIPE_WALL - 0.3f),boom + 0.75f,PIPE_THICK * 1.4f,PAL_BRASS,
+               PAL_METALS);
+}
+
 //A box standing on (x, z) from y0 to y1, `w` across, square to the world axes - a chimney.
-void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column){
+void Box(std::vector<vertex>& out, const vec2& p, float w, float y0, float y1, int column, int row){
     float h = w * 0.5f;
     vec3 c[8];
     for (int i = 0; i < 8; i++){
         c[i] = vec3(p.x + ((i & 1) ? h : -h),(i & 4) ? y1 : y0,p.y + ((i & 2) ? h : -h));
     }
-    MeshQuad(out,c[4],c[5],c[7],c[6],vec3(0,1,0),column);
-    MeshQuad(out,c[0],c[1],c[5],c[4],vec3(0,0,-1),column);
-    MeshQuad(out,c[2],c[3],c[7],c[6],vec3(0,0,1),column);
-    MeshQuad(out,c[0],c[2],c[6],c[4],vec3(-1,0,0),column);
-    MeshQuad(out,c[1],c[3],c[7],c[5],vec3(1,0,0),column);
+    MeshQuad(out,c[4],c[5],c[7],c[6],vec3(0,1,0),column,row);
+    MeshQuad(out,c[0],c[1],c[5],c[4],vec3(0,0,-1),column,row);
+    MeshQuad(out,c[2],c[3],c[7],c[6],vec3(0,0,1),column,row);
+    MeshQuad(out,c[0],c[2],c[6],c[4],vec3(-1,0,0),column,row);
+    MeshQuad(out,c[1],c[3],c[7],c[5],vec3(1,0,0),column,row);
 }
 
 #define YARD_BEAM           0.13f   //a builders' hut's beams, square
@@ -648,7 +793,7 @@ void BuildBuildersYard(const ChasmWorld& w, const ZoneState& z, int plot, std::v
     float level = t.Height(plot);
     //The beams, along the wall.
     vec2 c = p + dir * (wall + 0.35f) + side * 0.4f;
-    float ground = t.GroundHeight(c,level);
+    float ground = ZoneGroundHeight(w,z,open,c);       //on the plot beside it - a terrace's top, if it is one
     for (int i = 0; i < 3; i++){
         float off = (i == 2) ? 0.0f : ((i == 0) ? -0.55f : 0.55f) * YARD_BEAM;
         float y = ground - 0.03f + ((i == 2) ? YARD_BEAM : 0.0f);
@@ -657,10 +802,10 @@ void BuildBuildersYard(const ChasmWorld& w, const ZoneState& z, int plot, std::v
     }
     //The ladder: two rails from the ground up to the eaves, and rungs between.
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
-    float eave = (float)std::lround(t.ground[plot] / HALF) * HALF + z.standing[plot] * ZONE_STOREY_HEIGHT - 0.1f;
+    float eave = BuildingFootHalves(w,z,z.KindOf(plot),plot) * HALF + z.standing[plot] * ZONE_STOREY_HEIGHT - 0.1f;
     vec2 at = p + dir * wall - side * 0.45f;
     vec2 foot = at + dir * LADDER_LEAN;
-    float y0 = t.GroundHeight(foot,level);
+    float y0 = ZoneGroundHeight(w,z,open,foot);
     for (int r = -1; r <= 1; r += 2){
         vec2 o = side * (r * LADDER_W * 0.5f);
         SlopedBeam(out,foot + o,y0,at + dir * 0.04f + o,eave,LADDER_RAIL,PAL_BARK_DARK);
@@ -728,7 +873,7 @@ void BuildTower(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<v
         return;
     }
     bool f_whole = standing >= z.storeys[plot];
-    float foot = t.ground[plot];
+    float foot = ZoneGroundAt(w,z,plot);       //a terrace's top, if it stands on one (terraces_plan.md)
     float top = foot + standing * ZONE_STOREY_HEIGHT;
     //The walls: logs along each side between the corner posts.
     for (int side = 0; side < n; side++){
@@ -739,7 +884,7 @@ void BuildTower(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<v
         for (int i = 0; i < logs; i++){
             float f = (TOWER_CORNER_W * 0.5f + (len - TOWER_CORNER_W) * ((float)i + 0.5f) / logs) / std::max(1e-4f,len);
             vec2 at = a + (b - a) * f;
-            float y0 = t.GroundHeight(at,level) - TOWER_LOG_SINK;
+            float y0 = ZoneGroundHeight(w,z,plot,at) - TOWER_LOG_SINK;
             float jitter = (float)(MeshHash((uint32_t)plot,(uint32_t)side,(uint32_t)i) % 100) / 100.0f * 0.06f;
             Upright(out,at,TOWER_LOG_W,y0,top - jitter,PAL_BARK);
         }
@@ -752,7 +897,7 @@ void BuildTower(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<v
     }
     float post_top = f_whole ? top + TOWER_DECK + TOWER_PARAPET + 0.08f : top + 0.05f;
     for (int i = 0; i < n; i++){
-        Upright(out,corner[i],TOWER_CORNER_W,t.GroundHeight(corner[i],level) - TOWER_LOG_SINK,post_top,PAL_BARK_DARK);
+        Upright(out,corner[i],TOWER_CORNER_W,ZoneGroundHeight(w,z,plot,corner[i]) - TOWER_LOG_SINK,post_top,PAL_BARK_DARK);
     }
     if (!f_whole){
         return;     //the rest is a site: its scaffold stands over what is built (BuildSite)
@@ -805,7 +950,7 @@ void BuildTower(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<v
     along = along * (1.0f / std::max(1e-4f,along.length()));
     vec2 at = (rim[best] + rim[(best + 1) % n]) * 0.5f + dir * 0.02f;
     vec2 ladder_foot = at + dir * LADDER_LEAN;
-    float y0 = t.GroundHeight(ladder_foot,level);
+    float y0 = ZoneGroundHeight(w,z,(ladder >= 0) ? ladder : plot,ladder_foot);
     float y1 = deck + 0.25f;
     for (int r = -1; r <= 1; r += 2){
         vec2 o = along * (r * LADDER_W * 0.5f);
@@ -899,7 +1044,7 @@ bool SiteFlagPlot(const ChasmWorld& w, const ZoneState& z, int plot){
 void SiteFlag(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
     vec2 p = w.grid->fine.pos[plot];
-    float ground = w.terrain->ground[plot];
+    float ground = ZoneGroundAt(w,z,plot);     //a terrace's top, if it stands on one
     float y0, top;
     if (z.KindOf(plot) == ZONE_KIND_BRIDGE){
         //Out on the water, from the deck's piles; on the bank, from the ground.
@@ -907,7 +1052,7 @@ void SiteFlag(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<ver
         top = std::max(y0,BridgeDeckY(w,plot)) + 0.15f;
     }else{
         //From what stands, past the scaffold's top - BuildSite's heights.
-        float foot = (float)std::lround(ground / HALF) * HALF;
+        float foot = BuildingFootHalves(w,z,z.KindOf(plot),plot) * HALF;
         y0 = (z.standing[plot] > 0) ? foot + z.standing[plot] * ZONE_STOREY_HEIGHT : ground - 0.3f;
         top = foot + z.storeys[plot] * ZONE_STOREY_HEIGHT + 0.25f;
     }
@@ -920,7 +1065,7 @@ void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<ve
     const GridPicker& picker = *w.picker;
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
     vec2 p = w.grid->fine.pos[plot];
-    float ground = w.terrain->ground[plot];
+    float ground = ZoneGroundAt(w,z,plot);     //a terrace's top, if it stands on one
     if (z.buildings[z.building[plot]].f_priority && SiteFlagPlot(w,z,plot)){
         SiteFlag(w,z,plot,out);
     }
@@ -964,7 +1109,7 @@ void BuildSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<ve
     if (n < 3){
         return;
     }
-    float foot = (float)std::lround(ground / HALF) * HALF;
+    float foot = BuildingFootHalves(w,z,z.KindOf(plot),plot) * HALF;
     int standing = z.standing[plot];
     int planned = z.storeys[plot];
     float base = foot + standing * ZONE_STOREY_HEIGHT;
@@ -1001,7 +1146,7 @@ void BuildArchSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vecto
     const GridPicker& picker = *w.picker;
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
     vec2 p = w.grid->fine.pos[plot];
-    float ground = w.terrain->ground[plot];
+    float ground = ZoneGroundAt(w,z,plot);     //a terrace's top, if it stands on one
     std::vector<std::pair<float,vec2>> corners;
     for (int i = 0; i < picker.PlotQuadCount(plot); i++){
         int q = picker.PlotQuadCorner(plot,i) / 4;
@@ -1016,7 +1161,7 @@ void BuildArchSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vecto
     if (n < 3){
         return;
     }
-    float foot = (float)std::lround(ground / HALF) * HALF;
+    float foot = BuildingFootHalves(w,z,ZONE_KIND_NONE,plot) * HALF;
     int standing = std::max(1,z.ArchStandingOf(plot));     //the passage, at least: nothing is built below it
     int planned = z.ArchOf(plot);
     float base = foot + standing * ZONE_STOREY_HEIGHT;
@@ -1144,6 +1289,10 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_WATER && picker.PlotQuadCorner(v,0) / 4 == fine_quad){
             BuildWaterPipe(w,v,out);
         }
+        //A steam collector likewise, and its hood out over the drop (steam_plan.md).
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_STEAM && picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+            BuildSteamHood(w,v,out);
+        }
         //A builders' hut too, with its beams and ladder by one wall.
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_BUILDERS && picker.PlotQuadCorner(v,0) / 4 == fine_quad
             && LowestStandingPlot(w,z,v)){
@@ -1151,7 +1300,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         }
         solid[k] = s[k] > 0;
         bid[k] = f_arch[k] ? z.ArchOwnerOf(v) : z.building[v];
-        foot[k] = (int)std::lround(t.ground[v] / HALF);
+        foot[k] = BuildingFootHalves(w,z,f_arch[k] ? ZONE_KIND_NONE : z.KindOf(v),v);
         lo[k] = foot[k] + 2 * base;
         hi[k] = foot[k] + 2 * s[k];
     }
@@ -1251,16 +1400,30 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
             vec3 outward(side.x,0.0f,side.y);
             bool f_into_arch = solid[j] && lo[j] > foot[j];
             bool f_stack = f_chimney && chimney.edge == e;      //the stack stands where its window would
+            /*
+                THE PLINTH (terraces_plan.md): a wall from this house's own floor goes on down as far as the ground
+                under it, and a little into it - so no gap shows under a house on uneven ground, and nothing hangs
+                far below it, which the selection's outline, drawn through the ground, showed a storey deep. What
+                is below the floor is stone: a course where the floor stands over the ground, and on a foundation
+                the tall downhill side of it. The ground along the wall runs straight between its ends, the ground
+                mesh's own points (TerrainMesh's fans), so the lower end is its lowest.
+            */
+            float floor_at = foot[k] * HALF;
+            float footing = std::min(floor_at,std::min(ZoneGroundHeight(w,z,plot,a),ZoneGroundHeight(w,z,plot,b)))
+                            - FOOTING_DEPTH;
+            int plinth = (kl.wall == PAL_STONE || kl.wall == PAL_STONE_LIGHT) ? PAL_STONE_DARK : PAL_STONE;
             for (int pc = 0; pc < n_pieces; pc++){
                 int from = pieces[pc][0];
                 int to = pieces[pc][1];
                 if (to <= from){
                     continue;
                 }
-                //A wall from this house's own ground goes on down below it, into the slope and under
-                //the ground's bump: no gap shows under a house on uneven ground.
-                float bottom = (from == foot[k]) ? from * HALF - HOUSE_FOOTING : from * HALF;
+                float bottom = from * HALF;
                 float top = to * HALF;
+                if (from == foot[k]){
+                    MeshQuad(out,vec3(a.x,footing,a.y),vec3(b.x,footing,b.y),vec3(b.x,bottom,b.y),vec3(a.x,bottom,a.y),
+                             outward,plinth);
+                }
                 MeshQuad(out,vec3(a.x,bottom,a.y),vec3(b.x,bottom,b.y),vec3(b.x,top,b.y),vec3(a.x,top,a.y),
                          outward,kl.wall);
                 //The gable: where the ridge carries on along this edge's far end, the wall closes up to
@@ -1286,6 +1449,10 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                     if (f_door){
                         int door = (kl.wall == PAL_BARK_DARK) ? PAL_STONE_DARK : PAL_BARK_DARK;
                         Opening(out,a,b,outward,0.5f,kl.door_w * 0.5f,floor_y,floor_y + DOOR_H,door,kl.wall,false);
+                        //Down to the ground outside - not where another building stands across the wall.
+                        if (!solid[j] || f_into_arch){
+                            DoorSteps(out,w,z,quad.v[j],a,b,outward,kl.door_w * 0.5f,floor_y,plinth);
+                        }
                         if (harm && harm->Breached(bid[k])){
                             BreachedDoor(out,a,b,outward,kl.door_w * 0.5f,floor_y,floor_y + DOOR_H,door,wall_hash >> 16);
                         }
@@ -1314,7 +1481,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
                 vec2 dir = along / std::max(1e-6f,along.length());
                 float base_top = eave - 0.20f;
                 float top = eave + ROOF_RISE + CHIMNEY_TOP;
-                WallSlab(out,c,dir,side,outward,-STACK_BASE_W * 0.5f,STACK_BASE_W * 0.5f,foot[k] * HALF - HOUSE_FOOTING,
+                WallSlab(out,c,dir,side,outward,-STACK_BASE_W * 0.5f,STACK_BASE_W * 0.5f,footing,
                          base_top,STACK_BASE_D,PAL_STONE);
                 //A block from u0 to u1 along the wall, d0 to d1 out from it, y0 to y1 up: all six faces.
                 auto block = [&](float u0, float u1, float d0, float d1, float y0, float y1, int column){
@@ -1344,7 +1511,13 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         }
 
         //--- A chimney through the roof, partway from the ridge toward the cell's centre ----------------
-        if (f_chimney && chimney.edge < 0){
+        if (f_chimney && chimney.edge < 0 && kind == ZONE_KIND_CONDENSER){
+            //A condenser's tank (steam_plan.md step 3): brass, wider and taller than a chimney, banded dark at its top.
+            vec2 at = p[k] + (centre - p[k]) * 0.45f;
+            float top = eave + ROOF_RISE + CONDENSER_TANK_TOP;
+            Box(out,at,CONDENSER_TANK_W,eave + ROOF_RISE * 0.2f,top,PAL_BRASS,PAL_METALS);
+            Box(out,at,CONDENSER_TANK_W * 1.12f,top - 0.1f,top + 0.04f,PAL_BRASS_DARK,PAL_METALS);
+        }else if (f_chimney && chimney.edge < 0){
             vec2 at = p[k] + (centre - p[k]) * 0.45f;
             Box(out,at,CHIMNEY_W,eave + ROOF_RISE * 0.3f,eave + ROOF_RISE + CHIMNEY_TOP,PAL_STONE);
             if (f_reports){
@@ -1358,7 +1531,7 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
 }
 
 float BuildingTowerDeck(const ChasmWorld& w, const ZoneState& z, int plot){
-    return w.terrain->ground[plot] + z.standing[plot] * ZONE_STOREY_HEIGHT + TOWER_DECK;
+    return ZoneGroundAt(w,z,plot) + z.standing[plot] * ZONE_STOREY_HEIGHT + TOWER_DECK;
 }
 
 float BuildingLayerHeight(const ChasmWorld& w, const ZoneState& z, int plot, int layer){
@@ -1594,7 +1767,7 @@ void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int
         e.open = open;
         //As far past the wall as past a midpoint, wherever the wall crosses (BuildingWallCrossing).
         e.at = BuildingWallCrossing(w,plot,open) + (g.fine.pos[open] - g.fine.pos[plot]) * (ROPEWALK_OUT - 0.5f);
-        e.y = t.GroundHeight(e.at,t.Height(open));
+        e.y = ZoneGroundHeight(w,z,open,e.at);     //a terrace's top beside it, if it is one
         ends.push_back(e);
         return (int)ends.size() - 1;
     };
@@ -1667,7 +1840,7 @@ void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int
             float f = (float)j / between;
             vec2 p = e0.at + d * f;
             float line = e0.y + (e1.y - e0.y) * f;      //the ground the strands keep their height over
-            float ground = t.GroundHeight(p,t.Height(e0.open));
+            float ground = ZoneGroundHeight(w,z,e0.open,p);
             if (ground < line){
                 Upright(out,p,ROPEWALK_POST,ground - 0.1f,line,PAL_TIMBER);     //down into a dip
             }
@@ -1733,17 +1906,16 @@ void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int
         f_walk_here = f_walk_here || (e.plot == yard_plot && e.open == yard_open);
     }
     float walk = f_walk_here ? reach * (ROPEWALK_OUT - 0.5f) + ROPEWALK_BAR * 0.5f : 0.2f;
-    float level = t.Height(yard_open);
     for (int i = 0; i < std::min(sheaves,ROPEWALK_SHEAVES); i++){
         vec2 p = wall + o * 0.1f + u * (ROPEWALK_SHEAF_SPACING * (i - (ROPEWALK_SHEAVES - 1) * 0.5f));
-        HempSheaf(out,p,t.GroundHeight(p,level),o * -1.0f);
+        HempSheaf(out,p,ZoneGroundHeight(w,z,yard_open,p),o * -1.0f);
     }
     //The wheel always faces the camera, across or along the walk as that runs: out past the walk by as much of
     //it as reaches that way.
     const vec2 in(1.0f,0.0f), crank(0.0f,1.0f);
     float depth = std::fabs(in.dot(o)) * ROPEWALK_WHEEL_R + std::fabs(crank.dot(o)) * 0.15f;
     vec2 wheel = wall + o * (walk + 0.05f + depth) - u * ROPEWALK_WHEEL_ASIDE;
-    SpinningWheel(out,wheel,t.GroundHeight(wheel,level),in,crank);
+    SpinningWheel(out,wheel,ZoneGroundHeight(w,z,yard_open,wheel),in,crank);
     uint32_t hash = MeshHash(id,0x726f7065u);
     for (int i = 0; i < std::min(coils,2 * ROPEWALK_COIL_STACK); i++){
         int stack = i / ROPEWALK_COIL_STACK;
@@ -1751,6 +1923,6 @@ void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int
         vec2 base = wall + o * (walk + 0.05f + ROPEWALK_COIL_R) + u * (0.15f + ROPEWALK_COIL_SPACING * stack);
         uint32_t lie = MeshHash(hash,(uint32_t)i);
         vec2 p = base + vec2((lie % 100) / 100.0f - 0.5f,((lie >> 8) % 100) / 100.0f - 0.5f) * 0.04f;
-        RopeCoil(out,p,t.GroundHeight(base,level) + layer * 2.0f * ROPEWALK_COIL_TUBE,((lie >> 16) % 100) / 100.0f);
+        RopeCoil(out,p,ZoneGroundHeight(w,z,yard_open,base) + layer * 2.0f * ROPEWALK_COIL_TUBE,((lie >> 16) % 100) / 100.0f);
     }
 }

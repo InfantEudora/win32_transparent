@@ -213,6 +213,9 @@ through, so the numbering stays.
 
 ### 1. Zeppelins float on steam
 
+*Replaced 2026-10-21 (`steam_plan.md`): a zeppelin floats only over the chasm, on its heat, and steam is an
+ingredient that fills its envelope, not a fuel. Suggestions 3 and 4 are taken up there too.*
+
 Make the zeppelin a **steam dirigible**: steam is its fuel *and* its lift. That gives three things
 for the price of one rule:
 

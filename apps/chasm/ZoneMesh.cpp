@@ -5,6 +5,7 @@
 #include "BoundaryMesh.h"
 #include "RoadMesh.h"
 #include "CastleMesh.h"
+#include "TerraceMesh.h"
 #include "TerrainMesh.h"
 #include "Economy.h"
 
@@ -14,13 +15,15 @@
 
 namespace {
 
-//A garden or lot plot's quarter in this cell, laid on the relief: corner, midpoint, centre, midpoint.
-void GroundQuarter(std::vector<vertex>& out, const Terrain& t, const vec2* p, int k, float level, int column){
+//A garden or lot plot's quarter in this cell, laid on its ground - the relief, or a terrace's top: corner, midpoint,
+//centre, midpoint.
+void GroundQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneState& z, int plot, const vec2* p, int k,
+                   int column){
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
     vec2 q[4] = {p[k],(p[k] + p[(k + 1) % 4]) * 0.5f,centre,(p[k] + p[(k + 3) % 4]) * 0.5f};
     vec3 c[4];
     for (int i = 0; i < 4; i++){
-        c[i] = vec3(q[i].x,t.GroundHeight(q[i],level) + GROUND_LIFT,q[i].y);
+        c[i] = vec3(q[i].x,ZoneGroundHeight(w,z,plot,q[i]) + GROUND_LIFT,q[i].y);
     }
     MeshQuad(out,c[0],c[1],c[2],c[3],vec3(0.0f,1.0f,0.0f),column);
 }
@@ -35,7 +38,6 @@ void GroundQuarter(std::vector<vertex>& out, const Terrain& t, const vec2* p, in
 */
 void GroundSiteCell(const ChasmWorld& w, const ZoneState& z, int q, std::vector<vertex>& out){
     const GridQuad& quad = w.grid->fine.quads[q];
-    const Terrain& t = *w.terrain;
     auto site = [&](int v){
         return ZoneEnclosesGround(z.ground[v]) && !z.ground_built[v] && z.storeys[v] == 0;
     };
@@ -55,14 +57,13 @@ void GroundSiteCell(const ChasmWorld& w, const ZoneState& z, int q, std::vector<
             continue;
         }
         int on = site(a) ? a : b;
-        float level = t.Height(on);
         vec2 mid = (p[k] + p[(k + 1) % 4]) * 0.5f;
-        MeshCord(out,vec3(centre.x,t.GroundHeight(centre,level) + MESH_SITE_CORD,centre.y),
-                 vec3(mid.x,t.GroundHeight(mid,level) + MESH_SITE_CORD,mid.y),PAL_WALL);
+        MeshCord(out,vec3(centre.x,ZoneGroundHeight(w,z,on,centre) + MESH_SITE_CORD,centre.y),
+                 vec3(mid.x,ZoneGroundHeight(w,z,on,mid) + MESH_SITE_CORD,mid.y),PAL_WALL);
         stake_on = (stake_on < 0) ? on : stake_on;
     }
     if (stake_on >= 0){
-        float ground = t.GroundHeight(centre,t.Height(stake_on));
+        float ground = ZoneGroundHeight(w,z,stake_on,centre);
         MeshPost(out,centre,0.04f,ground - 0.1f,ground + MESH_SITE_STAKE,PAL_TIMBER);
     }
 }
@@ -198,7 +199,6 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
         return;
     }
     const Grid& g = *w.grid;
-    const Terrain& t = *w.terrain;
 
     for (int q : w.mesh->chunks[chunk].quads){
         const GridQuad& quad = g.fine.quads[q];
@@ -222,8 +222,7 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
                 if (!ZoneEnclosesGround(gk) || z.storeys[quad.v[k]] > 0 || !z.ground_built[quad.v[k]]){
                     continue;
                 }
-                float level = t.Height(quad.v[k]);
-                GroundQuarter(out,t,p,k,level,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
+                GroundQuarter(out,w,z,quad.v[k],p,k,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
             }
             GroundSiteCell(w,z,q,out);
         }
@@ -241,6 +240,13 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
         if (f_house || f_ground || z.field[quad.parent]){
             BuildBoundaryCell(w,z,q,out);
         }
+        //Terraces (terraces_plan.md stage 2), under whatever stands on them.
+        for (int k = 0; k < 4; k++){
+            if (ZoneTerraced(z,quad.v[k])){
+                BuildTerraceCell(w,z,q,out);
+                break;
+            }
+        }
         //The debug castle's stone (ramparts_plan.md).
         for (int k = 0; k < 4; k++){
             if (ZoneCastleShape(z,quad.v[k]) != ZONE_CASTLE_NONE){
@@ -251,12 +257,11 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
     }
 }
 
-void BuildPlotTile(const ChasmWorld& w, int v, float lift, std::vector<vertex>& out, float floor){
+void BuildPlotTile(const ChasmWorld& w, const ZoneState& z, int v, float lift, std::vector<vertex>& out, float floor){
     const GridPicker& p = *w.picker;
     const Grid& g = *w.grid;
-    float level = w.terrain->Height(v);
     auto at = [&](const vec2& x){
-        return vec3(x.x,std::max(w.terrain->GroundHeight(x,level) + lift,floor),x.y);
+        return vec3(x.x,std::max(ZoneGroundHeight(w,z,v,x) + lift,floor),x.y);
     };
     for (int i = 0; i < p.PlotQuadCount(v); i++){
         int qc = p.PlotQuadCorner(v,i);

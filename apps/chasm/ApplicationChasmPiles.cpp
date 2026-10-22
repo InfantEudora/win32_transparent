@@ -106,7 +106,7 @@ void ApplicationChasm::UploadPiles(){
             vec2 along(-to_hut.y / l,to_hut.x / l);
             vec2 side(to_hut.x / l,to_hut.y / l);
             float yaw = atan2f(-along.y,along.x);
-            float ground = w->terrain->GroundHeight(at,w->terrain->Height(spot));
+            float ground = ZoneGroundHeight(*w,*z,spot,at);     //a terrace's top, if the lot is on one
             for (int i = 0; i < std::min(6,pile.second); i++){
                 vec2 p = at + side * across[i];
                 logs.push_back(Object::ComposeTransformScale(vec3(p.x,ground + up[i],p.y),

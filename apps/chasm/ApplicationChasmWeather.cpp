@@ -1,6 +1,7 @@
 #include "ApplicationChasm.h"
 #include "Calendar.h"
 #include "Debug.h"
+#include "Climate.h"
 #include "Weather.h"
 #ifdef USE_IMGUI
 #include "imgui.h"
@@ -236,11 +237,35 @@ void ApplicationChasm::UpdateWeather(){
         }
         debug->Info("Weather: the big gust, the view %.0f from the front's line\n",d);
     }
+    /*
+        The heat at the view (Climate.h), for the readout under the calendar: the air by the date, the storm here - a held
+        one too, so holding a storm chills the readout - and the snow the ground is drawn with, which a held storm does
+        not move; and the chasm's warmth by the rim and the steps down.
+    */
+    WeatherView heat;
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    if (w && w->grid && w->terrain && w->picker){
+        const Grid& g = *w->grid;
+        float span = g.bounds_max.y - g.bounds_min.y;
+        float north = (span > 0.0f) ? (g.bounds_max.y - at.y) / span : 0.5f;
+        int plot = w->picker->Pick(at).plot;
+        heat.f_snow = CalendarSnowAt(at,SnowFrontNow());
+        heat.heat_air = ClimateAir(calendar_shown.load(),north,storm,heat.f_snow);
+        heat.heat_chasm = ClimateChasm(g,*w->terrain,plot,at);
+        heat.heat_steps = ClimateStepsDown(*w->terrain,plot);
+        heat.f_heat = true;
+    }
     std::lock_guard<std::mutex> lock(weather_mutex);
     weather_view.at = at;
     weather_view.ground = camera_target.y;
     weather_view.distance = cam_distance;
     weather_view.big = weather_big_count;
+    weather_view.yaw = cam_yaw;
+    weather_view.heat_air = heat.heat_air;
+    weather_view.heat_chasm = heat.heat_chasm;
+    weather_view.heat_steps = heat.heat_steps;
+    weather_view.f_snow = heat.f_snow;
+    weather_view.f_heat = heat.f_heat;
 }
 
 //--- The render thread -------------------------------------------------------------------------------------------
@@ -558,6 +583,12 @@ void ApplicationChasm::RenderWeatherPanel(){
     ImGui::Text("at the view: storm %.2f, %.0f %s the front's line",weather_storm.load(),std::fabs(d),
                 (d >= 0.0f) ? "south of" : "north of, under the snow,");
     ImGui::Text("wind %.1f a second, snow %.2f, baked in %.2f ms",weather_view_wind.length(),snow_density,weather_bake_ms);
+    {
+        std::lock_guard<std::mutex> lock(weather_mutex);
+        const WeatherView& v = weather_view;
+        ImGui::Text("heat at the view: air %.1f, chasm +%.1f (%i steps down)%s",v.heat_air,v.heat_chasm,v.heat_steps,
+                    v.f_snow ? ", under snow" : "");
+    }
     ImGui::TextDisabled("big gusts %u, %s",weather_big_count,f_weather_armed ? "the next may come" : "done for this storm");
     float held = weather_held.load();
     bool f_hold = held >= 0.0f;
@@ -586,7 +617,17 @@ json ApplicationChasm::WeatherStatusJson(){
         return std::round(value * by) / by;
     };
     WeatherDate date = WeatherDateOf(calendar_shown.load());
-    return json{{"storm",r(weather_storm.load(),100.0f)},{"front_distance",r(weather_d.load(),10.0f)},
+    WeatherView v;
+    {
+        std::lock_guard<std::mutex> lock(weather_mutex);
+        v = weather_view;
+    }
+    json heat = nullptr;
+    if (v.f_heat){
+        heat = json{{"air",r(v.heat_air,10.0f)},{"chasm",r(v.heat_chasm,10.0f)},{"total",r(v.heat_air + v.heat_chasm,10.0f)},
+                    {"steps_down",v.heat_steps},{"snow",v.f_snow},{"at",json::array({r(v.at.x,10.0f),r(v.at.y,10.0f)})}};
+    }
+    return json{{"heat",heat},{"storm",r(weather_storm.load(),100.0f)},{"front_distance",r(weather_d.load(),10.0f)},
                 {"held",weather_held.load() >= 0.0f},{"strength",r(weather_strength.load(),100.0f)},
                 {"dated",json{{"storm",r(date.active,100.0f)},{"breeze",r(date.breeze,100.0f)}}},
                 {"wind",r(weather_view_wind.length(),100.0f)},{"snow",r(snow_density,100.0f)},

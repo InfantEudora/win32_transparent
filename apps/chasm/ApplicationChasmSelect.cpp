@@ -1,6 +1,7 @@
 #include "ApplicationChasm.h"
 #include "ChasmHud.h"
 #include "BuildingMesh.h"
+#include "Climate.h"
 #include "ZoneMesh.h"
 #include "MeshBuild.h"
 #include "Window.h"
@@ -103,6 +104,7 @@ bool ScreenOf(Camera* cam, float width, float height, const vec3& p, vec2& out){
 #define ICON_FRUIT      UIColor(226,96,84,255)      //a picker's berries (foraging_plan.md)
 #define ICON_LEAF       UIColor(126,178,84,255)
 #define ICON_ROPE       UIColor(206,188,146,255)    //a ropemaker's coil: rope's tan (HudGoodColour), lifted to read on the disc
+#define ICON_BRASS      UIColor(214,170,84,255)     //a steam carrier's canister (steam_plan.md)
 
 /*
     THE BADGES' ICONS: a few opaque strokes each, so where they overlap does not show (AddLine's note), on
@@ -172,6 +174,16 @@ void DrawBucketIcon(UIOverlay* o, const vec2& c, float s){
         float half = 4.6f - 1.4f * t;
         o->AddLine(p(-half,y),p(half,y),2.2f * s,(i == 0) ? HUD_WATER : ICON_WOOD);
     }
+}
+
+//A steam carrier's canister (steam_plan.md): a brass bottle, banded, its valve on top letting a puff go up to the right.
+void DrawCanisterIcon(UIOverlay* o, const vec2& c, float s){
+    auto p = [&](float x, float y){ return c + vec2(x * s,y * s); };
+    o->AddRect(p(-3.4f,-2.2f),p(1.8f,6.2f),2.0f * s,ICON_BRASS);
+    o->AddLine(p(-3.0f,2.0f),p(1.4f,2.0f),1.0f * s,ICON_WOOD);
+    o->AddLine(p(-0.8f,-2.2f),p(-0.8f,-3.8f),1.8f * s,ICON_STEEL);
+    o->AddLine(p(2.4f,-4.6f),p(2.4f,-4.6f),3.2f * s,ICON_STEEL);
+    o->AddLine(p(4.4f,-6.2f),p(4.4f,-6.2f),2.4f * s,ICON_STEEL);
 }
 
 //A builder's hammer: the handle leaning right, the head across its top.
@@ -308,6 +320,8 @@ void DrawPersonBadge(UIOverlay* o, const vec2& c, float s, const EconomyWorker& 
         case WORKER_JOB_WOODCUTTER: DrawAxeIcon(o,c,is); break;
         case WORKER_JOB_STONECUTTER: DrawPickIcon(o,c,is); break;
         case WORKER_JOB_MINER:      DrawPickIcon(o,c,is); break;
+        case WORKER_JOB_STEAM:      DrawCanisterIcon(o,c,is); break;
+        case WORKER_JOB_CONDENSER:  DrawBucketIcon(o,c,is); break;
         case WORKER_JOB_FARMER:     DrawWheatIcon(o,c,is); break;
         case WORKER_JOB_WATER:      DrawBucketIcon(o,c,is); break;
         case WORKER_JOB_PICKER:     DrawBerriesIcon(o,c,is); break;
@@ -429,9 +443,9 @@ const EconomyWorker* PersonById(const EconomyState& e, uint32_t id){
 /*
     THE COLONY (settlements_plan.md, the user's 2026-10-12: which settlement a tent belongs to "is currently not visible
     at all"): what the selection belongs to - a building, field or yard its plot's (a building's door's), a gate or a
-    crate its plot's, a person his home's, or with none the one he stands in. Named COLONY 1, 2, 3 in the order they
-    were founded (EconomyState::settlements, the oldest first). A group: each of theirs. NO COLONY for something of
-    none; empty with nothing selected.
+    crate its plot's, a person his home's, or with none the one he stands in. Named COLONY 1, 2, 3 by its number, given
+    when it was founded and kept for good (EconomySettlement::colony, step 1), so colony 2 stays COLONY 2 when colony 1
+    is gone. A group: each of theirs. NO COLONY for something of none; empty with nothing selected.
 */
 std::string SelectionColony(const PlayPick& sel, const std::vector<uint32_t>& group, const ChasmWorld& w, const EconomyState& e){
     auto of_plot = [&](int v) -> uint32_t {
@@ -439,14 +453,7 @@ std::string SelectionColony(const PlayPick& sel, const std::vector<uint32_t>& gr
     };
     auto of_person = [&](uint32_t id) -> uint32_t {
         const EconomyWorker* k = PersonById(e,id);
-        if (!k){
-            return 0;
-        }
-        if (uint32_t mine = EconomyPersonSettlement(e,*k)){
-            return mine;
-        }
-        GridPick at = w.picker->Pick(k->pos);
-        return at.f_hit ? of_plot(at.plot) : 0;
+        return k ? ChasmPersonSettlement(w,e,*k) : 0;
     };
     std::vector<uint32_t> of;
     switch (sel.kind){
@@ -472,10 +479,7 @@ std::string SelectionColony(const PlayPick& sel, const std::vector<uint32_t>& gr
     std::vector<int> numbers;
     bool f_none = false;
     for (uint32_t settlement : of){
-        int n = 0;
-        for (size_t i = 0; i < e.settlements.size(); i++){
-            n = (e.settlements[i].id == settlement) ? (int)i + 1 : n;
-        }
+        int n = (int)EconomyColonyNumber(e,settlement);
         if (!n){
             f_none = true;
         }else if (std::find(numbers.begin(),numbers.end(),n) == numbers.end()){
@@ -546,7 +550,8 @@ std::string LoadFor(const EconomyWorker& k, const ZoneState& z){
         //Home - but a harvest of the camp's own land goes into its supplies, the colony's (PickHarvest: `store` the camp).
         case WORKER_TO_PANTRY:  return (f_camp_home && k.store == k.house) ? "for the camp" : "for home";
         case WORKER_TO_WORKSHOP:
-        case WORKER_MAKING:     return (k.job == WORKER_JOB_ROPEMAKER) ? "for the ropewalk" : "for the builders' hut";
+        case WORKER_MAKING:     return (k.job == WORKER_JOB_ROPEMAKER) ? "for the ropewalk"
+                                     : (k.job == WORKER_JOB_CONDENSER) ? "for the condenser" : "for the builders' hut";
         case WORKER_TO_STORE:
         case WORKER_UNLOADING:  return k.store ? "for a store" : CampWork(k,&z) ? "for the camp" : "for the woodpile";
         //The camp's picker between plants: back to its door with them (pick_on).
@@ -675,10 +680,13 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         //A builder as a caretaker: provisions for the sites (defence_plan.md, step 5) - or a ropemaker, the same
         //errand with hemp, at his ropewalk (goods_plan.md).
         case WORKER_TO_INPUT:   return (k.carry_good == GOOD_HEMP) ? "fetching hemp for rope"
+                                     : (k.carry_good == GOOD_STEAM) ? "fetching steam for the condenser"
                                      : (k.carry_good == GOOD_BEANS) ? "fetching beans for provisions" : "fetching wheat for provisions";
         case WORKER_TAKING_INPUT: return (k.carry_good == GOOD_HEMP) ? "picking up hemp"
+                                       : (k.carry_good == GOOD_STEAM) ? "picking up steam"
                                        : (k.carry_good == GOOD_BEANS) ? "picking up beans" : "picking up wheat";
         case WORKER_TO_WORKSHOP: return (k.job == WORKER_JOB_ROPEMAKER) ? ((k.carry > 0) ? "taking hemp to the ropewalk" : "going to make rope")
+                                      : (k.job == WORKER_JOB_CONDENSER) ? "taking steam to the condenser"
                                       : (k.carry <= 0) ? "going to make provisions"
                                       : (k.carry_good == GOOD_BEANS) ? "taking beans to the hut" : "taking wheat to the hut";
         case WORKER_MAKING:     return (k.carry_good == GOOD_ROPE) ? "making rope" : "making provisions";
@@ -706,6 +714,8 @@ const char* KindTitle(int kind){
         case ZONE_KIND_STONECUTTER: return "Stonecutter's hut";
         case ZONE_KIND_MINE:        return "Mine";
         case ZONE_KIND_WELL:        return "Well (debug)";
+        case ZONE_KIND_STEAM:       return "Steam collector";
+        case ZONE_KIND_CONDENSER:   return "Condenser";
         default:                    return "?";
     }
 }
@@ -722,6 +732,8 @@ const char* JobTitle(int job){
         case WORKER_JOB_ROPEMAKER:  return "Ropemaker";
         case WORKER_JOB_STONECUTTER: return "Stonecutter";
         case WORKER_JOB_MINER:      return "Miner";
+        case WORKER_JOB_STEAM:      return "Steam carrier";
+        case WORKER_JOB_CONDENSER:  return "Condenser hand";
         case WORKER_JOB_PLAYING:    return "Child";
         case WORKER_JOB_BABY:       return "Baby";
         case WORKER_JOB_CARING:     return "Caring";
@@ -1457,20 +1469,25 @@ void YardLines(const ZoneState& z, uint32_t id, Card& c){
 }
 
 /*
-    STOCK KEPT (goods_plan.md): what the colony keeps of the good a builders' hut or a ropewalk makes - the colony's
-    number, so every one of them shows the same - against what the stores hold; the chips that set it
-    (OVERLAY_HIT_KEEP); and an order for more (OVERLAY_HIT_MAKE_MORE), how far it has got and Cancel while it runs.
+    STOCK KEPT (goods_plan.md): what the colony keeps of the good a builders' hut or ropewalk `id` makes - its own
+    colony's number (settlements_plan.md, step 2), so every one of that colony shows the same - against what its stores
+    hold; the chips that set it (OVERLAY_HIT_KEEP); and an order for more (OVERLAY_HIT_MAKE_MORE), how far it has got
+    and Cancel while it runs. Named "Colony N" once there is more than one.
 */
-void KeptLines(const EconomyState& e, const ZoneState& z, int good, Card& c){
+void KeptLines(const EconomyState& e, const ZoneState& z, uint32_t id, int good, Card& c){
     static const int steps[] = {0,5,10,20,40};
     static const int more[] = {5,10};
-    int stored = EconomyStoredTotals(e,z)[good];
-    int kept = e.kept[good];
+    uint32_t settlement = EconomySettlementOf(e,id);
+    uint32_t colony = EconomyColonyNumber(e,settlement);
+    int stored = EconomyStoredTotals(e,z,settlement)[good];
+    int kept = EconomyKept(e,colony,good);
+    int ordered = EconomyOrdered(e,colony,good);
     const char* name = GoodName(good);
+    std::string who = (e.settlements.size() > 1 && colony) ? Format("Colony %u",colony) : std::string("The colony");
     if (kept > 0){
-        c.Text(Format("The colony keeps %i %s in its stores - %i there now",kept,name,stored));
+        c.Text(Format("%s keeps %i %s in its stores - %i there now",who.c_str(),kept,name,stored));
     }else{
-        c.Text(Format("The colony keeps no %s in its stores: %s",name,
+        c.Text(Format("%s keeps no %s in its stores: %s",who.c_str(),name,
                       (good == GOOD_ROPE) ? "it waits here, for the sites" : "they are made for the sites and towers"),HUD_TEXT_DIM);
     }
     CardLine keep;
@@ -1481,8 +1498,8 @@ void KeptLines(const EconomyState& e, const ZoneState& z, int good, Card& c){
     keep.choice_on = kept;
     keep.choice_action = OVERLAY_HIT_KEEP;
     c.lines.push_back(keep);
-    if (e.ordered[good] > 0){
-        c.Text(Format("Making more: %i of %i in the stores",stored,e.ordered[good]));
+    if (ordered > 0){
+        c.Text(Format("Making more: %i of %i in the stores",stored,ordered));
     }else{
         c.Text("Make more, once",HUD_TEXT_DIM);
     }
@@ -1491,17 +1508,17 @@ void KeptLines(const EconomyState& e, const ZoneState& z, int good, Card& c){
     for (int n : more){
         order.choices.push_back(std::make_pair(Format("%i more",n),n));
     }
-    if (e.ordered[good] > 0){
+    if (ordered > 0){
         order.choices.push_back(std::make_pair(std::string("Cancel"),0));
     }
     order.choice_action = OVERLAY_HIT_MAKE_MORE;
     c.lines.push_back(order);
-    //Kept in stores no store takes it into: it can only wait at the workplace.
+    //Kept in stores no store of its colony takes it into: it can only wait at the workplace.
     bool f_taken = false;
     for (size_t s = 1; s < e.accepts.size() && !f_taken; s++){
-        f_taken = (e.accepts[s] & GOOD_BIT(good)) != 0;
+        f_taken = (e.accepts[s] & GOOD_BIT(good)) != 0 && EconomySettlementOf(e,(uint32_t)s) == settlement;
     }
-    if (EconomyKeptLevel(e,good) > 0 && !f_taken){
+    if (EconomyKeptLevel(e,colony,good) > 0 && !f_taken){
         c.Text(Format("No store takes %s: none can be kept",name),HUD_AMBER);
     }
 }
@@ -1771,7 +1788,8 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         c.lines.push_back(chips);
     }
     if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_FIELD || b.kind == ZONE_KIND_RANGE
-        || b.kind == ZONE_KIND_ROPEWALK || b.kind == ZONE_KIND_STONECUTTER || b.kind == ZONE_KIND_MINE){
+        || b.kind == ZONE_KIND_ROPEWALK || b.kind == ZONE_KIND_STONECUTTER || b.kind == ZONE_KIND_MINE || b.kind == ZONE_KIND_STEAM
+        || b.kind == ZONE_KIND_CONDENSER){
         /*
             A FIELD (fields_plan.md), once it stands: what grows on it, at what yield and how far; or, empty,
             what its farmer will sow. Then its choices - its starting crop until it has been sown once, then
@@ -1918,6 +1936,42 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             if (b.kind == ZONE_KIND_WATER && info.storeys > 0 && EconomyFrozen(w,z,id,tick)){
                 c.Text("Frozen: no water can be collected until the thaw",HUD_AMBER);
             }
+            //A STEAM COLLECTOR (steam_plan.md): how far down into the chasm it stands, and what that is worth - the lower,
+            //the warmer and the more it gathers.
+            if (b.kind == ZONE_KIND_STEAM){
+                int plot = FirstPlotOf(z,id);
+                int steps = (plot >= 0) ? ClimateStepsDown(*w.terrain,plot) : 0;
+                float yield = (plot >= 0) ? EconomySteamYield(w,plot) : 1.0f;
+                c.Text((steps == 0) ? Format("On the rim: gathers at x%.2f - every step down %i%% more",yield,
+                                             (int)std::lround(ECONOMY_STEAM_PER_STEP * 100.0f))
+                                    : Format("%i step%s down into the chasm: gathers at x%.2f",steps,(steps == 1) ? "" : "s",yield),
+                       HUD_TEXT_DIM);
+            }
+            //A CONDENSER (steam_plan.md step 3): where its steam comes from - a collector beside it, or its hands from a store.
+            if (b.kind == ZONE_KIND_CONDENSER && info.storeys > 0){
+                std::vector<int> plots;
+                for (size_t v = 0; v < z.building.size(); v++){
+                    if (z.building[v] == id){
+                        plots.push_back((int)v);
+                    }
+                }
+                std::vector<uint32_t> feeds;
+                EconomyCondenserFeeds(w,z,plots,feeds);
+                if (!feeds.empty()){
+                    int waiting = 0;
+                    for (uint32_t f : feeds){
+                        waiting += (f < e->stock.size()) ? e->stock[f][GOOD_STEAM] : 0;
+                    }
+                    c.Text((feeds.size() == 1) ? Format("Steam from the collector beside it - %i waiting there",waiting)
+                                               : Format("Steam from the %i collectors beside it - %i waiting there",
+                                                        (int)feeds.size(),waiting),HUD_TEXT_DIM);
+                }else{
+                    std::array<int,GOOD_COUNT> stored = EconomyStoredTotals(*e,z);
+                    bool f_some = stored[GOOD_STEAM] > 0 || (id < e->stock.size() && e->stock[id][GOOD_STEAM] > 0);
+                    c.Text(f_some ? "Steam brought from the stores - no steam collector beside it"
+                                  : "No steam: no steam collector beside it, and none in store",f_some ? HUD_TEXT_DIM : HUD_AMBER);
+                }
+            }
             /*
                 A ROPEWALK (goods_plan.md): too short to work below ECONOMY_ROPEWALK_MIN_PLOTS - painted, so not while
                 its second plot is still being built - and it takes no ropemaker until that many stand; longer,
@@ -1961,8 +2015,8 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 }
             }
             //WORKERS BY PLOTS (building_size_plan.md): how many it takes, and the plots that would take one more.
-            if ((b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STONECUTTER)
-                && info.storeys > 0 && !b.f_stopped && id < e->places.size() && e->places[id] > 0){
+            if ((b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STONECUTTER
+                 || b.kind == ZONE_KIND_STEAM || b.kind == ZONE_KIND_CONDENSER) && info.storeys > 0 && !b.f_stopped && id < e->places.size() && e->places[id] > 0){
                 int places = e->places[id];
                 int more = places * ECONOMY_PLOTS_PER_WORKER + 1;
                 std::string takes = (places == 1) ? std::string("Takes one worker") : Format("Takes %i workers",places);
@@ -1989,6 +2043,8 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 //Stopped by the player (stopping_work_plan.md): nobody here is meant, not a want - and a collector
                 //fills only while worked, so say what stops with it.
                 c.Text(b.kind == ZONE_KIND_WATER ? "Stopped: no water is collected until it is set working again"
+                       : b.kind == ZONE_KIND_STEAM ? "Stopped: no steam is collected until it is set working again"
+                       : b.kind == ZONE_KIND_CONDENSER ? "Stopped: no water is condensed until it is set working again"
                        : b.kind == ZONE_KIND_RANGE ? "Stopped: nobody trains here until it is set going again"
                        : "Stopped: nobody works here until it is set working again",HUD_TEXT_DIM);
             }else if (!f_worked && f_stands && !f_short && !f_dug_out){
@@ -2028,8 +2084,18 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Stock("Wood","anyone's",held,wood_room,false,EconomyReserved(*e,id));
             std::string lot = (outside > 0) ? Format("%i on its lot",outside) : std::string("no lot");
             c.Text(indoors > 0 ? Format("Keeps %i indoors, ",indoors) + lot : "Too small to keep wood indoors - " + lot,HUD_TEXT_DIM);
-        }else if (b.kind == ZONE_KIND_WATER && (info.storeys > 0 || AnyGoods(held))){
+        }else if ((b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STEAM) && (info.storeys > 0 || AnyGoods(held))){
             c.Stock("Collected","anyone's",held,(id < e->water_room.size()) ? e->water_room[id] : 0,false,EconomyReserved(*e,id));
+        }else if (b.kind == ZONE_KIND_CONDENSER && (info.storeys > 0 || AnyGoods(held))){
+            //Its water, anyone's against what it holds, and the steam brought to be condensed - its hands' alone.
+            std::array<int,GOOD_COUNT> water{};
+            std::array<int,GOOD_COUNT> steam{};
+            water[GOOD_WATER] = held[GOOD_WATER];
+            steam[GOOD_STEAM] = held[GOOD_STEAM];
+            c.Stock("Condensed","anyone's",water,(id < e->water_room.size()) ? e->water_room[id] : 0,false,EconomyReserved(*e,id));
+            if (steam[GOOD_STEAM] > 0){
+                c.Stock("Steam","to condense",steam,0,true);
+            }
         }else if (b.kind == ZONE_KIND_ROPEWALK && (info.storeys > 0 || AnyGoods(held))){
             //Its rope, anyone's against the pile it stops at, and the hemp it is to be made of - its ropemaker's alone.
             std::array<int,GOOD_COUNT> rope{};
@@ -2041,7 +2107,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 c.Stock("Hemp","to make rope of",hemp,0,true);
             }
             if (info.storeys > 0){
-                KeptLines(*e,z,GOOD_ROPE,c);
+                KeptLines(*e,z,id,GOOD_ROPE,c);
             }
         }else if (f_field && AnyGoods(held)){
             const EconomyField* land = EconomyFieldOf(*e,id);
@@ -2102,7 +2168,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             c.Text("Wheat and beans are made into provisions here, for the sites and the stores",HUD_TEXT_DIM);
         }
         if (info.storeys > 0){
-            KeptLines(*e,z,GOOD_PROVISIONS,c);
+            KeptLines(*e,z,id,GOOD_PROVISIONS,c);
         }
     }
     /*
@@ -2504,7 +2570,7 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
         std::vector<int> patch;
         GroundPatch(z,EconomyGroundSitePlot(id),patch);
         for (int v : patch){
-            BuildPlotTile(w,v,FIELD_OUTLINE_LIFT,out);
+            BuildPlotTile(w,z,v,FIELD_OUTLINE_LIFT,out);
         }
         return;
     }
@@ -2538,6 +2604,8 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
     only.standing.assign(z.standing.size(),0);
     only.ground = z.ground;
     only.ground_built = z.ground_built;
+    only.terrace = z.terrace;               //what it stands on (terraces_plan.md)
+    only.terrace_built = z.terrace_built;
     only.gate = z.gate;     //a guard tower's ladder goes on a side no wall or gate runs off (BuildTower)
     only.field.assign(z.field.size(),0);
     //Its ARCHES too (arches_plan.md): part of it, outlined with it - given here, since with its neighbours gone
@@ -2573,7 +2641,7 @@ void BuildSelectionMesh(const ChasmWorld& w, const ZoneState& z, uint32_t id, st
 
 /*
     How high what stands on a plot reaches, by how it is drawn (BuildingMesh.cpp): a house body on its
-    footing rounded to a half-storey, its storeys - a site's planned ones too, so its scaffold is picked
+    floor (BuildingFootHalves - a foundation's built up), its storeys - a site's planned ones too, so its scaffold is picked
     - and some of its roof; a tent; a winch's gantry. Below the ground (no building): -1e30.
 */
 float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
@@ -2593,8 +2661,7 @@ float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
         case ZONE_KIND_WELL:    return ground + SHAPE_WELL;
         case ZONE_KIND_BRIDGE:  return terrain_levels[w.terrain->level[plot]].height + ZONE_BRIDGE_DECK + 0.45f;
         default:{
-            const float half = ZONE_STOREY_HEIGHT * 0.5f;
-            float foot = (float)std::lround(ground / half) * half;
+            float foot = BuildingFootHalves(w,z,z.KindOf(plot),plot) * ZONE_STOREY_HEIGHT * 0.5f;
             return foot + z.storeys[plot] * ZONE_STOREY_HEIGHT + SHAPE_ROOF;
         }
     }
@@ -3301,10 +3368,13 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                     sel = play_selected;
                 }
                 std::shared_ptr<const ZoneState> z = GetZones();
+                std::shared_ptr<const EconomyState> ep = GetEconomy();
                 int good = (z && sel.kind == PLAY_PICK_BUILDING && sel.id < z->buildings.size())
                            ? EconomyMadeAt(z->buildings[sel.id].kind) : -1;
-                if (good >= 0){
-                    SubmitKeep(good,hit.value,hit.action == OVERLAY_HIT_MAKE_MORE);
+                //The building's own colony's (settlements_plan.md, step 2), as its card shows.
+                uint32_t colony = ep ? EconomyColonyNumber(*ep,EconomySettlementOf(*ep,sel.id)) : 0;
+                if (good >= 0 && colony){
+                    SubmitKeep(good,hit.value,hit.action == OVERLAY_HIT_MAKE_MORE,colony);
                 }
             }else if (hit.action == OVERLAY_HIT_GUARD_RELEASE){
                 //A guard released from his tower: the tower card's chip names him, his own card's is him (step 8).
@@ -3668,7 +3738,7 @@ void ApplicationChasm::UploadSelection(){
                         int layer = (posted->post_layer >= 0) ? posted->post_layer : (n > 0) ? ls[n - 1] : WALK_GROUND;
                         floor = (layer > 0) ? BuildingLayerHeight(*w,*z,v,layer) + FIELD_OUTLINE_LIFT : floor;
                     }
-                    BuildPlotTile(*w,v,FIELD_OUTLINE_LIFT,verts,floor);
+                    BuildPlotTile(*w,*z,v,FIELD_OUTLINE_LIFT,verts,floor);
                 }
             }else{
                 select_related_buildings = related_places.buildings;
@@ -4436,7 +4506,7 @@ void ApplicationChasm::RegisterSelectTools(){
                                                   "take_tool","building","gate","ladder","tower_guards","guard_release",
                                                   "store_allow_group","keep","make_more","gather","family",
                                                   "group_drop","tent","pitch","settle","work_stop","forage","pick_up","stats",
-                                                  "replay_stop"};
+                                                  "replay_stop","site_cancel","place","stats_colony"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             /*
                 The hover pinned at a pixel in place of the mouse's, until op hover with none - the overlay's (goods_plan.md:
